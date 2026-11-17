@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- **theme / dock / tree**: touch 密度で固定の小さい操作部品が育たず押しにくい問題を修正（#624）。dock の窓ボタン（22px / 20px）とツリーの開閉ボタン（20px）を `--banto-control-height-sm`（40px）に、dock のタイトルバーを 40px にした（新トークン `--banto-dock-button-size`・`--banto-tree-toggle-size`・touch 密度でのみ設定。標準・コンパクトは不変）。ロゴ（26px）は装飾のため据え置き。
 - **theme**: 3 つ目の表示密度 `touch`（タッチ。`data-banto-density='touch'`）を追加（#624 PR-1）。操作高 `--banto-control-height` 48px（`-lg` 52px・`-sm` 40px）、グリッド行高 52px・ヘッダ 56px、root の文字サイズ 16px（rem の型スケールごと上がる。`space-*` の値は変えないが rem なので連れて約 14% 大きくなる）、シェルのヘッダ 56px・ランチャー項目 48px。**公開 API の追加（minor）**: `ThemeDensity` が `'standard' | 'compact' | 'touch'` になる。`ThemeDensity` を網羅的な `switch` で扱う派生アプリは `'touch'` の分岐の追加が要る（型検査で気づける）。`isThemeDensity('touch')` は真になり、設定の「表示密度」に「タッチ」が増える。派生アプリが `app.html` の first-paint スクリプトを持つなら `touch` を通す（`density === 'compact' || density === 'touch'`）。
 - **charts**: 横向き `BarChart` の値軸の目盛り（`100,000` など）が、文字が大きいとき（touch 密度・キオスクの狭い幅）に重なる不具合を修正。原点（先頭）と末尾のラベルは残し、間を等間隔に間引く（グリッド線は全 tick のまま）。`ScatterChart` は右端の x 目盛り（`¥250` など）が右余白 16px 固定で欠けていたので、末尾ラベルの幅から右余白を決める。
 - **dashboard / theme**: キオスク表示（`settings.kiosk`）で dashboard の KPI を大きくする（#624 PR-2。数字 48px・ラベル 16px・アイコン 56px、タイルの最小幅 280px。375px では数字を 9vw に縮める）。`@banto/theme` に文字サイズのトークン `--banto-font-size-3xl`（48px）を追加（公開 API の追加）。キオスクの dashboard の visual 基準画像（Linux）は再生成が要る

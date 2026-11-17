@@ -594,6 +594,12 @@
 	--banto-shell-header-height: 56px;
 	--banto-shell-header-height-compact: 48px;
 	--banto-shell-launcher-item-size: 48px;
+	/* Small tap targets that are fixed-size in the other densities (#624):
+	   dock window buttons / tree toggle follow the small control height. Only
+	   set here; the components keep their own fallback sizes elsewhere. */
+	--banto-dock-titlebar-height: 40px;
+	--banto-dock-button-size: var(--banto-control-height-sm);
+	--banto-tree-toggle-size: var(--banto-control-height-sm);
 }
 
 /* <=900px the launcher is a full-width tab bar (nav-launcher-plan.md §4.6)
