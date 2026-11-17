@@ -308,6 +308,31 @@ describe('ThreePaneLayout - narrow', () => {
 		expect(document.activeElement).toBe(leftToggle());
 	});
 
+	it('keeps a left drawer that starts open in a narrow frame, without taking focus', async () => {
+		await mount({ leftDrawerOpen: true }, 800);
+		await flush();
+		expect(state().leftDrawerOpen).toBe(true);
+		expect(isInert(center())).toBe(true);
+		expect(isInert(leftPane())).toBe(false);
+		expect(document.activeElement).toBe(document.body);
+		await resize(1200);
+		expect(state().leftDrawerOpen).toBe(false);
+	});
+
+	it('keeps a right drawer that starts open in a narrow frame', async () => {
+		await mount({ rightDrawerOpen: true }, 800);
+		await flush();
+		expect(state().rightDrawerOpen).toBe(true);
+		expect(isInert(center())).toBe(true);
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('drops a drawer that starts open once the frame measures wide', async () => {
+		await mount({ leftDrawerOpen: true }, 1200);
+		await flush();
+		expect(state().leftDrawerOpen).toBe(false);
+	});
+
 	it('moves focus out of a pane that retreats when the frame turns narrow', async () => {
 		await mount();
 		screen.getByText('Detail').focus();

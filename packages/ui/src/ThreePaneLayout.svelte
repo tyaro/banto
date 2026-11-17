@@ -242,13 +242,20 @@
 	 * the way to wide (else the drawer would reappear open on the next narrow,
 	 * and an app reading `leftDrawerOpen` would see a stale `true`). In the
 	 * narrow layout one drawer at a time: whichever was opened last stays.
+	 *
+	 * Nothing is touched until the frame has been measured: before that
+	 * `isNarrow` is false only because the width is unknown, and resetting then
+	 * would throw away a drawer the app asked to start open. Once measured, a
+	 * frame that starts wide still drops a stale open (drawers never show wide).
 	 */
 	let lastLeftOpen = false;
 	$effect.pre(() => {
+		const measured = frameWidth !== null;
 		const narrowNow = isNarrow;
 		const l = leftDrawerOpen;
 		const r = rightDrawerOpen;
 		untrack(() => {
+			if (!measured) return;
 			if (!narrowNow) {
 				if (l) leftDrawerOpen = false;
 				if (r) rightDrawerOpen = false;
@@ -287,9 +294,12 @@
 		right: { ready: false, hidden: false, overlay: false, trigger: null }
 	};
 
-	function follow(side: Side, hidden: boolean, overlay: boolean): void {
+	function follow(side: Side, hidden: boolean, overlay: boolean, measured: boolean): void {
 		const track = tracks[side];
 		const pane = side === 'left' ? leftEl : rightEl;
+		// Unmeasured: the state is a placeholder (wide). Wait for the real one, so
+		// a drawer that starts open is the baseline, not an "opening" that takes focus.
+		if (!measured) return;
 		if (!track.ready) {
 			Object.assign(track, { ready: true, hidden, overlay });
 			return;
@@ -322,12 +332,14 @@
 	$effect.pre(() => {
 		const hidden = leftHidden;
 		const overlay = leftOverlay;
-		untrack(() => follow('left', hidden, overlay));
+		const measured = frameWidth !== null;
+		untrack(() => follow('left', hidden, overlay, measured));
 	});
 	$effect.pre(() => {
 		const hidden = rightHidden;
 		const overlay = rightOverlay;
-		untrack(() => follow('right', hidden, overlay));
+		const measured = frameWidth !== null;
+		untrack(() => follow('right', hidden, overlay, measured));
 	});
 
 	/*
