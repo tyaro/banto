@@ -15,7 +15,11 @@ vi.mock('@banto/admin-core', async (importOriginal) => ({
 vi.mock('#lib/toast.svelte.js', () => ({ toastStore: { push } }));
 vi.mock('#lib/paraglide/messages.js', () => ({ 'connection.recovered': () => 'reconnected' }));
 
-import { connectionStatus, startConnectionMonitor } from './connection.svelte';
+import {
+	connectionMonitoring,
+	connectionStatus,
+	startConnectionMonitor
+} from './connection.svelte';
 
 const failed = (startedAt: number) => ({
 	ok: false as const,
@@ -37,6 +41,14 @@ describe('connection store', () => {
 
 	it('is online while no monitor exists', () => {
 		expect(connectionStatus()).toBe('online');
+		expect(connectionMonitoring()).toBe(false); // Tauri / demo: no banner region at all
+	});
+
+	it('a monitor exists from start until dispose', () => {
+		const wiring = startConnectionMonitor();
+		expect(connectionMonitoring()).toBe(true);
+		wiring.dispose();
+		expect(connectionMonitoring()).toBe(false);
 	});
 
 	it('a request failing twice shows reconnecting; its answer re-reads once and toasts once', () => {
@@ -115,6 +127,28 @@ describe('connection store', () => {
 		wiring.reportRequest(answered(Date.now())); // 20ms later: no second re-read
 		expect(invalidateAll).not.toHaveBeenCalled();
 		wiring.dispose();
+	});
+
+	it('the browser going offline and back toasts once, with or without the stream', () => {
+		const win = new EventTarget();
+		vi.stubGlobal('window', win);
+		for (const streamLost of [false, true]) {
+			push.mockClear();
+			invalidateAll.mockClear();
+			const wiring = startConnectionMonitor();
+			win.dispatchEvent(new Event('offline'));
+			expect(connectionStatus()).toBe('offline');
+			if (streamLost) wiring.stream.reportStreamDisconnected();
+			win.dispatchEvent(new Event('online'));
+			if (streamLost) {
+				expect(connectionStatus()).toBe('reconnecting');
+				wiring.stream.reportStreamReconnected();
+			}
+			expect(connectionStatus(), `streamLost=${streamLost}`).toBe('online');
+			expect(push).toHaveBeenCalledTimes(1);
+			wiring.dispose();
+		}
+		vi.unstubAllGlobals();
 	});
 
 	it('a second start disposes the first monitor', () => {

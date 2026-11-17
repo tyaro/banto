@@ -6,22 +6,16 @@
  */
 import { isNetworkError, isProviderError } from '@banto/admin-core';
 import type { ConnectionStatus } from '@banto/admin-core';
-import type { BantoMode } from './setup';
 
 /** What the banner shows: nothing (`null`), or why the server cannot be reached. */
 export type ConnectionBannerKind = 'reconnecting' | 'offline';
 
 /**
- * Whether the banner shows, and which one. Only the LAN browser (`server`)
- * has a connection to lose: a Tauri webview is `invoke()` and a demo has no
- * server, so they show nothing whatever the status says. `publicViewer` is
- * not a mode - it is a session inside `server`, so it gets the banner too.
+ * Which banner shows for a status. Whether there is anything to watch at
+ * all (only the LAN browser has a monitor) is `connectionMonitoring()`'s
+ * question, decided where the monitor is wired (`setup.ts`), not here.
  */
-export function connectionBannerKind(
-	mode: BantoMode,
-	status: ConnectionStatus
-): ConnectionBannerKind | null {
-	if (mode !== 'server') return null;
+export function connectionBannerKind(status: ConnectionStatus): ConnectionBannerKind | null {
 	return status === 'online' ? null : status;
 }
 

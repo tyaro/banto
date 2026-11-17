@@ -4,8 +4,8 @@
 	 * strip right under the header while the LAN browser cannot reach the
 	 * server (`reconnecting`) or has no network (`offline`).
 	 *
-	 * - Shown only in `server` mode (`connectionBannerKind`); Tauri and demo
-	 *   have no monitor, so it is never in their DOM.
+	 * - Shown only while a monitor exists (`connectionMonitoring`); Tauri and
+	 *   demo never create one, so it is never in their DOM.
 	 * - The region itself stays mounted (`role="status"`, polite) so the
 	 *   change of its text is what gets announced - once per state change,
 	 *   not on every render. Nothing here moves focus: the banner appears
@@ -17,16 +17,17 @@
 	 */
 	import { WifiOff, TriangleAlert } from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
-	import { connectionStatus, retryConnection } from '#lib/banto/connection.svelte.js';
+	import {
+		connectionMonitoring,
+		connectionStatus,
+		retryConnection
+	} from '#lib/banto/connection.svelte.js';
 	import { connectionBannerKind } from '#lib/banto/connectionRecovery.js';
-	import { getBantoMode } from '#lib/banto/setup.js';
 
-	// Fixed for the page's life (`bantoReady` resolved before the layout mounts).
-	const mode = getBantoMode();
-	const kind = $derived(connectionBannerKind(mode, connectionStatus()));
+	const kind = $derived(connectionBannerKind(connectionStatus()));
 </script>
 
-{#if mode === 'server'}
+{#if connectionMonitoring()}
 	<div class="connection-region" role="status" aria-live="polite" data-testid="connection-region">
 		{#if kind}
 			<div class="connection-banner" data-connection={kind}>

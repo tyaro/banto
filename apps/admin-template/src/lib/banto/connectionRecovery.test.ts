@@ -4,7 +4,7 @@
  * "reconnected", and the toast for a save that failed on a lost connection.
  */
 import { describe, expect, it } from 'vitest';
-import { ProviderError, validation, type ConnectionStatus } from '@banto/admin-core';
+import { ProviderError, validation } from '@banto/admin-core';
 import {
 	RECOVERY_REFRESH_COOLDOWN_MS,
 	RECOVERY_TOAST_COOLDOWN_MS,
@@ -12,19 +12,12 @@ import {
 	decideRecovery,
 	saveErrorMessage
 } from './connectionRecovery';
-import type { BantoMode } from './setup';
 
 describe('connectionBannerKind', () => {
-	const statuses: ConnectionStatus[] = ['online', 'reconnecting', 'offline'];
-	const modes: BantoMode[] = ['tauri', 'server', 'demo'];
-
-	it('shows only in server mode, and only while not online', () => {
-		for (const mode of modes) {
-			for (const status of statuses) {
-				const expected = mode === 'server' && status !== 'online' ? status : null;
-				expect(connectionBannerKind(mode, status), `${mode}/${status}`).toBe(expected);
-			}
-		}
+	it('shows only while not online', () => {
+		expect(connectionBannerKind('online')).toBeNull();
+		expect(connectionBannerKind('reconnecting')).toBe('reconnecting');
+		expect(connectionBannerKind('offline')).toBe('offline');
 	});
 });
 

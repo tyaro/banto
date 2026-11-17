@@ -101,8 +101,10 @@ function reachable(state: ConnectionState, at: number): ConnectionState {
  * - a request without an answer: one more in a row;
  * - a stream loss: `streamLost` at once (no threshold - the stream only
  *   reports the loss of a stream that was open);
- * - `offline`: `browserOffline`; `online`: clears it only - whether the
- *   server is back is still for the other inputs to show.
+ * - `offline`: `browserOffline`; `online`: clears it and the failures
+ *   counted meanwhile (the network, not the server, failed them), so a
+ *   quiet screen recovers on `online` alone; a lost stream stays lost until
+ *   it reconnects.
  */
 export function nextConnectionState(
 	state: ConnectionState,
@@ -129,7 +131,12 @@ export function nextConnectionState(
 		case 'browserOffline':
 			return { ...state, browserOffline: true, lastFailureAt: event.at };
 		case 'browserOnline':
-			return state.browserOffline ? { ...state, browserOffline: false } : state;
+			// The requests that failed while the browser had no network were
+			// failed by that, not by the server: they stop counting. A lost
+			// stream still counts (its own reconnect shows it came back).
+			return state.browserOffline
+				? { ...state, browserOffline: false, consecutiveFailures: 0 }
+				: state;
 	}
 }
 

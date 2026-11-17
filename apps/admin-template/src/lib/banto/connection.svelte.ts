@@ -85,6 +85,14 @@ export function startConnectionMonitor(now: () => number = Date.now): Connection
 	};
 }
 
+/**
+ * Reactive. Whether a monitor exists: only the LAN browser's `setup.ts`
+ * branch creates one, so the banner asks this instead of the mode.
+ */
+export function connectionMonitoring(): boolean {
+	return monitor !== null;
+}
+
 /** Reactive. `online` whenever no monitor exists (Tauri, demo). */
 export function connectionStatus(): ConnectionStatus {
 	return monitor?.status ?? 'online';
