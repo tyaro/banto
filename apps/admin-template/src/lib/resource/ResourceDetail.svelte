@@ -58,6 +58,8 @@
 	import {
 		conflictFields,
 		keptEditsOverTheirs,
+		inputTypedDuringSave,
+		LOCK_VERSION_FIELD,
 		lockVersionOf,
 		resolvedValues,
 		type ConflictChoice,
@@ -282,6 +284,10 @@
 			// Once per save: if that conflicts again with nothing to show, the
 			// draft stays and the user saves again.
 			base = current;
+			// The re-send carries their version: the store's values must too, or
+			// the saved form is compared against the stale one afterwards.
+			const version = lockVersionOf(current);
+			if (version !== undefined) store.values = { ...store.values, [LOCK_VERSION_FIELD]: version };
 			if (retried) {
 				notify('error', m['resource.conflictNotSaved']());
 				return;
@@ -373,10 +379,7 @@
 				store.reset({ ...values, ...((result.row ?? {}) as Record<string, unknown>) });
 				// Only the fields edited during the save go back on top - the
 				// others keep what the server stored.
-				const typed: Record<string, unknown> = {};
-				for (const [key, value] of Object.entries(current)) {
-					if (JSON.stringify(value) !== JSON.stringify(values[key])) typed[key] = value;
-				}
+				const typed = inputTypedDuringSave(current, values);
 				if (Object.keys(typed).length > 0) store.values = { ...store.values, ...typed };
 			} else {
 				store.markClean();

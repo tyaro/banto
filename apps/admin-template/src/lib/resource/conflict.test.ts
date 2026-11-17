@@ -3,6 +3,7 @@ import { conflictOf, createInMemoryDataProvider } from '@banto/admin-core';
 import {
 	conflictFields,
 	defaultConflictChoices,
+	inputTypedDuringSave,
 	keptEditsOverTheirs,
 	lockVersionOf,
 	resolvedValues,
@@ -119,5 +120,22 @@ describe('lockVersionOf', () => {
 		expect(lockVersionOf({ version: 3 })).toBe(3);
 		expect(lockVersionOf({ version: '3' })).toBeUndefined();
 		expect(lockVersionOf(null)).toBeUndefined();
+	});
+});
+
+describe('inputTypedDuringSave', () => {
+	it('returns only the fields typed during the save', () => {
+		expect(inputTypedDuringSave({ name: 'a', price: 5 }, { name: 'a', price: 4 })).toEqual({
+			price: 5
+		});
+	});
+
+	it('never returns the lock version (a stale one must not undo the saved version)', () => {
+		// version-only conflict -> auto re-send: the store still held version 1
+		// while 2 was sent and 3 came back.
+		expect(inputTypedDuringSave({ name: 'a', version: 1 }, { name: 'a', version: 2 })).toEqual({});
+		expect(inputTypedDuringSave({ name: 'b', version: 1 }, { name: 'a', version: 2 })).toEqual({
+			name: 'b'
+		});
 	});
 });

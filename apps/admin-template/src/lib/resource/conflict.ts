@@ -112,3 +112,22 @@ export function keptEditsOverTheirs(
 	}
 	return kept;
 }
+
+/**
+ * The input typed while a save was in flight: the fields where the form's
+ * current values differ from what was sent. The lock `version` is never input -
+ * it is the server's metadata, and a stale one here would be put back on top
+ * of the saved record's new version (the form would stay dirty and every
+ * following save would conflict).
+ */
+export function inputTypedDuringSave(
+	current: Readonly<Record<string, unknown>>,
+	sent: Readonly<Record<string, unknown>>
+): Record<string, unknown> {
+	const typed: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(current)) {
+		if (key === LOCK_VERSION_FIELD) continue;
+		if (JSON.stringify(value) !== JSON.stringify(sent[key])) typed[key] = value;
+	}
+	return typed;
+}
