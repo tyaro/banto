@@ -91,14 +91,14 @@
 
 ### 変更の一覧
 
-### 追加（minor）: BantoTree の 3 つの口（#653、#631 のフォロー）
+#### 追加（minor）: BantoTree の 3 つの口（#653、#631 のフォロー）
 
 - `@banto/tree-svelte` の `BantoTree` に追加（既定は従来どおりで、渡さなければ見た目・挙動は変わらない）:
   - `selectionFollowsFocus?: boolean`（既定 `true`）。単一選択で `false` にすると、上下・Home・End などの移動キーはフォーカスだけを動かし `onSelectionChange` を呼ばない。Space・Enter・クリックで選ぶ（Enter は選んだうえで従来の開閉・`onActivate` も行う）。`multi`・`none` は変わらない。
   - `emptyChildren?: Snippet<[TreeNode, TreeEmptyContext]>`。`children` が空配列の枝を開いたときの案内行。渡したときだけその枝に開閉の三角が付く。案内行は上下キーを素通りし、選択・チェックの対象にならず、`aria-disabled` の `treeitem`（`aria-level` は枝 + 1）。遅延読み込みの枝は読み込み完了後に 0 件のときだけ空とみなす。型 `TreeEmptyContext`（`{ depth }`）を export。
   - 各行に `data-depth`（0 始まり。`aria-level` - 1）を付け、外から当ててよい属性として公開の約束にした（README に記載）。案内行にも `data-depth` と `data-empty-children` が付く。
 
-### 追加（minor）: users の楽観ロック（#651、#638 の続き）
+#### 追加（minor）: users の楽観ロック（#651、#638 の続き）
 
 - **migration 0012（`users.version`）**: `ALTER TABLE users ADD COLUMN version`（SQLite `INTEGER NOT NULL DEFAULT 1`／PostgreSQL `BIGINT NOT NULL DEFAULT 1`）。既存の行を書き換えない列の追加なので minor（前例 0007 の `auth_epoch`・0011）。
 - `banto_admin_services::users::UserSummary` に `version: i64` が増えた。表示名・ロールの更新（`update_user*`）が版を +1 する。パスワードの変更・リセットは版を上げない（`auth_epoch` だけが動く）。
