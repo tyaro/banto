@@ -1,6 +1,9 @@
 /**
  * The field-level values a create/update/delete audit record carries:
  * `detail = { name (users: username, role), changes: [{ field, before, after } | { field, masked }] }`.
+ * A `users` update that changed the per-user permissions (Issue #697) also
+ * carries `{ field: 'permissions', added: [...], removed: [...] }` (a set
+ * difference, no before/after).
  *
  * Plain TypeScript so the parsing and the label lookup can be unit-tested; the
  * screens (audit-log detail, the drawer's history tab) only draw the result.
@@ -18,6 +21,13 @@ export interface AuditChange {
 	masked: boolean;
 	before: unknown;
 	after: unknown;
+	/** `permissions` only (Issue #697): the keys granted / withdrawn by this update. */
+	added?: string[];
+	removed?: string[];
+}
+
+function stringList(value: unknown): string[] | undefined {
+	return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined;
 }
 
 /**
@@ -44,7 +54,19 @@ export function parseAuditChanges(
 		if (typeof entry !== 'object' || entry === null) continue;
 		const e = entry as Record<string, unknown>;
 		if (typeof e.field !== 'string') continue;
-		out.push({ field: e.field, masked: e.masked === true, before: e.before, after: e.after });
+		const change: AuditChange = {
+			field: e.field,
+			masked: e.masked === true,
+			before: e.before,
+			after: e.after
+		};
+		const added = stringList(e.added);
+		const removed = stringList(e.removed);
+		if (added || removed) {
+			change.added = added ?? [];
+			change.removed = removed ?? [];
+		}
+		out.push(change);
 	}
 	return out;
 }
@@ -88,6 +110,7 @@ export function auditFieldLabel(resource: string, field: string): string {
 	if (resource === 'users') {
 		if (field === 'displayName') return m['common.displayName']();
 		if (field === 'role') return m['common.role']();
+		if (field === 'permissions') return m['common.permissions']();
 	}
 	const def = resources.find((r) => r.name === resource);
 	// `ResourceDefinition.schema` is `unknown` (admin-core does not know the form library).

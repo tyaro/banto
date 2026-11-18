@@ -20,7 +20,28 @@
 	}
 
 	let { resource, changes, variant = 'table' }: Props = $props();
+
+	/** A set-difference entry (`permissions`: added / removed keys) has no before/after. */
+	function isSetChange(change: AuditChange): boolean {
+		return change.added !== undefined || change.removed !== undefined;
+	}
 </script>
+
+{#snippet setDiff(change: AuditChange)}
+	<span class="set-diff">
+		{#if change.added && change.added.length > 0}
+			<span
+				><span class="muted">{m['resource.changesAdded']()}:</span> {change.added.join(', ')}</span
+			>
+		{/if}
+		{#if change.removed && change.removed.length > 0}
+			<span
+				><span class="muted">{m['resource.changesRemoved']()}:</span>
+				{change.removed.join(', ')}</span
+			>
+		{/if}
+	</span>
+{/snippet}
 
 {#if changes.length === 0}
 	<p class="none">{m['resource.changesNone']()}</p>
@@ -41,6 +62,8 @@
 						<th scope="row">{auditFieldLabel(resource, change.field)}</th>
 						{#if change.masked}
 							<td colspan="2" class="muted">{m['resource.changesMasked']()}</td>
+						{:else if isSetChange(change)}
+							<td colspan="2">{@render setDiff(change)}</td>
 						{:else}
 							<td>{formatAuditValue(change.before, resource, change.field)}</td>
 							<td>{formatAuditValue(change.after, resource, change.field)}</td>
@@ -57,6 +80,8 @@
 				<span class="field">{auditFieldLabel(resource, change.field)}</span>
 				{#if change.masked}
 					<span class="muted">{m['resource.changesMasked']()}</span>
+				{:else if isSetChange(change)}
+					{@render setDiff(change)}
 				{:else}
 					<span>{formatAuditValue(change.before, resource, change.field)}</span>
 					<span class="muted" aria-hidden="true">→</span>
@@ -119,5 +144,11 @@
 
 	.field {
 		font-weight: 600;
+	}
+
+	.set-diff {
+		display: inline-flex;
+		flex-direction: column;
+		gap: var(--banto-space-1);
 	}
 </style>
