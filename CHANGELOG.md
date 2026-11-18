@@ -47,6 +47,13 @@
 - 公開 API の追加: 十字の配置と当たり判定 `crossButtons` / `guideButtonSize` / `hitGuideButton`、定数 `GUIDE_BUTTON_SIZE` / `GUIDE_BUTTON_GAP` / `GUIDE_BUTTON_MIN` / `GUIDE_INSET`、型 `GuideButton` / `CrossOptions`、`dropRegionRect` の第 3 引数（比率。既定 0.5）。`computeDropRegion` は使われなくなったが、互換のために export を残す。
 - 見た目: ドラッグ中の見た目（十字・外周のボタン、外周の枠が 1/4）だけが変わる。ドラッグの外の見た目は変わらない。
 
+### 変更: dock の浮動 window の位置固定を錠のアイコンに（#694 PR-3a）
+
+- `@banto/dock-svelte`: 浮動 window のタイトルバーの「位置と大きさの固定」のボタンを、ピン（📌）から錠（🔓／🔒、class `lock-btn`）に替えた。ピンは次の PR-3b で「自動で隠す」（ドッキング中の区画）の意味になる（VS・GX Works3 と同じ。オーナー決定の案 A。#663 の「ピンは浮動 window のタイトルバーだけ」はこれで置き換わる）。挙動は変わらない。
+- 公開 API の追加: `DockState.isLocked(id)` / `setLocked(id, locked)`、`FloatingWindow.locked?`、文言 `messages.lockWindow` / `unlockWindow`。
+- **非推奨（次の major で消す）**: `DockState.isPinned` / `setPinned`（`isLocked` / `setLocked` の別名になった）、`FloatingWindow.pinned`（もう書き出さない。古い JSON の `pinned: true` は `validateDockLayout`・`hydrate` が `locked: true` として読む）、`messages.pinWindow` / `unpinWindow`（`lockWindow` / `unlockWindow` を渡さないときだけ使う）。
+- 保存の形: 固定した window は `pinned: true` ではなく `locked: true` で書き出す。この版の JSON を古い版で読むと、固定は外れて読まれる（`version` は 2 のまま、読み込みは失敗しない）。
+
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。

@@ -36,12 +36,19 @@ export interface FloatingWindow {
 	 */
 	dockSlot?: DockSlot;
 	/**
-	 * Pinned by the user (#663 ②): the window's position and size are fixed - no
-	 * title-bar drag, no resize, no keyboard move / resize. Tabs can still be
-	 * dragged in and out and the window can be closed or raised. Optional and
-	 * written only when `true`: a layout without it (older JSON) reads as not
-	 * pinned, so the layout `version` stays 2. Lives on the window, so it is gone
-	 * when the window docks (a pane pulled out later starts unpinned).
+	 * Locked by the user (#663 ②, renamed from `pinned` in #694 PR-3): the window's
+	 * position and size are fixed - no title-bar drag, no resize, no keyboard move /
+	 * resize. Tabs can still be dragged in and out and the window can be closed or
+	 * raised. Optional and written only when `true`: a layout without it (older JSON)
+	 * reads as not locked, so the layout `version` stays 2. Lives on the window, so it
+	 * is gone when the window docks (a pane pulled out later starts unlocked).
+	 */
+	locked?: boolean;
+	/**
+	 * @deprecated Since #694 PR-3 the pin means "auto-hide" (a docked region); the
+	 * window's position lock is `locked`. Still READ: `validateDockLayout` turns an
+	 * older JSON's `pinned: true` into `locked: true` (and `DockState.isLocked` honours
+	 * it on a layout assigned without validation). Never written. Removed in the next major.
 	 */
 	pinned?: boolean;
 	/**

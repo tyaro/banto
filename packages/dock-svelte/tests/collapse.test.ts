@@ -85,17 +85,17 @@ describe('DockState collapse', () => {
 		expect(dock.layout.floating).toHaveLength(0);
 	});
 
-	it('resize does nothing while collapsed; move still works; independent of pinned', () => {
+	it('resize does nothing while collapsed; move still works; independent of locked', () => {
 		const dock = createDockState(layout());
 		dock.setCollapsed('a', true);
 		dock.resize('a', 'se', 40, 40, 800, 600);
 		expect(dock.layout.floating[0]).toMatchObject({ width: 300, height: 200 });
 		dock.move('a', 50, 50, 800, 600);
 		expect(dock.layout.floating[0]).toMatchObject({ x: 60, y: 70 });
-		dock.setPinned('a', true);
+		dock.setLocked('a', true);
 		expect(dock.isCollapsed('a')).toBe(true);
 		dock.setCollapsed('a', false);
-		expect(dock.isPinned('a')).toBe(true);
+		expect(dock.isLocked('a')).toBe(true);
 	});
 
 	it('keeps collapsed across close / open and a layout round trip', () => {
@@ -236,37 +236,37 @@ describe('DockWindow collapse button', () => {
 		expect(dock.layout.floating[0]).toMatchObject({ width: 300, height: 200 });
 	});
 
-	it('a collapsed window can still be pinned', () => {
+	it('a collapsed window can still be locked', () => {
 		const dock = createDockState(layout(true));
 		render(DockHostHarness, { dock });
 		screen.getByRole('button', { name: /の位置と大きさを固定/ }).click();
 		flushSync();
-		expect(dock.isPinned('a')).toBe(true);
+		expect(dock.isLocked('a')).toBe(true);
 		expect(dock.isCollapsed('a')).toBe(true);
 	});
 });
 
-describe('DockWindow pin focus hand-off (#685)', () => {
-	const unpinBtn = () => screen.getByRole('button', { name: /固定を外す/ });
+describe('DockWindow lock focus hand-off (#685)', () => {
+	const unlockBtn = () => screen.getByRole('button', { name: /固定を外す/ });
 	const moveBtn = () => screen.getByRole('button', { name: /をキーボードで移動/ });
 	const resizeBtn = () => screen.getByRole('button', { name: /をキーボードでサイズ変更/ });
 
-	it('moves focus from the move button to the pin button on an API pin', () => {
+	it('moves focus from the move button to the lock button on an API lock', () => {
 		const dock = createDockState(layout());
 		render(DockHostHarness, { dock });
 		moveBtn().focus();
-		dock.setPinned('a', true);
+		dock.setLocked('a', true);
 		flushSync();
-		expect(document.activeElement).toBe(unpinBtn());
+		expect(document.activeElement).toBe(unlockBtn());
 	});
 
-	it('moves focus from the resize button to the pin button on an API pin', () => {
+	it('moves focus from the resize button to the lock button on an API lock', () => {
 		const dock = createDockState(layout());
 		render(DockHostHarness, { dock });
 		resizeBtn().focus();
-		dock.setPinned('a', true);
+		dock.setLocked('a', true);
 		flushSync();
-		expect(document.activeElement).toBe(unpinBtn());
+		expect(document.activeElement).toBe(unlockBtn());
 	});
 
 	it('leaves the focus in the body input and outside the window alone', () => {
@@ -274,53 +274,53 @@ describe('DockWindow pin focus hand-off (#685)', () => {
 		render(DockHostHarness, { dock });
 		const input = screen.getByLabelText('A input');
 		input.focus();
-		dock.setPinned('a', true);
+		dock.setLocked('a', true);
 		flushSync();
 		expect(document.activeElement).toBe(input);
-		dock.setPinned('a', false);
+		dock.setLocked('a', false);
 		flushSync();
 		const outside = document.createElement('button');
 		document.body.appendChild(outside);
 		outside.focus();
-		dock.setPinned('a', true);
+		dock.setLocked('a', true);
 		flushSync();
 		expect(document.activeElement).toBe(outside);
 		outside.remove();
 	});
 
-	it('keeps the focus on the pin button when it is pressed', () => {
+	it('keeps the focus on the lock button when it is pressed', () => {
 		const dock = createDockState(layout());
 		render(DockHostHarness, { dock });
-		const pin = screen.getByRole('button', { name: /の位置と大きさを固定$/ });
-		pin.focus();
-		pin.click();
+		const lock = screen.getByRole('button', { name: /の位置と大きさを固定$/ });
+		lock.focus();
+		lock.click();
 		flushSync();
-		expect(document.activeElement).toBe(unpinBtn());
+		expect(document.activeElement).toBe(unlockBtn());
 	});
 
-	it('pinning a collapsed window and collapsing a pinned one never drop to body', () => {
+	it('locking a collapsed window and collapsing a locked one never drop to body', () => {
 		const dock = createDockState(layout(true));
 		render(DockHostHarness, { dock });
 		moveBtn().focus();
-		dock.setPinned('a', true);
+		dock.setLocked('a', true);
 		flushSync();
-		expect(document.activeElement).toBe(unpinBtn());
-		dock.setPinned('a', false);
+		expect(document.activeElement).toBe(unlockBtn());
+		dock.setLocked('a', false);
 		dock.setCollapsed('a', false);
 		flushSync();
-		dock.setPinned('a', true);
+		dock.setLocked('a', true);
 		flushSync();
-		unpinBtn().focus();
+		unlockBtn().focus();
 		dock.setCollapsed('a', true);
 		flushSync();
-		expect(document.activeElement).toBe(unpinBtn());
+		expect(document.activeElement).toBe(unlockBtn());
 	});
 
-	it('pinning and collapsing in the same flush from the resize button lands on a live button', () => {
+	it('locking and collapsing in the same flush from the resize button lands on a live button', () => {
 		const dock = createDockState(layout());
 		render(DockHostHarness, { dock });
 		resizeBtn().focus();
-		dock.setPinned('a', true);
+		dock.setLocked('a', true);
 		dock.setCollapsed('a', true);
 		flushSync();
 		expect(document.activeElement).not.toBe(document.body);
