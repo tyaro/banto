@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+### 追加（minor）: ui の `closeOpenMenus(root?, except?)`（#670）
+
+- 開いている `Menu`（`role="menu"` の popover）を閉じる口を `@banto/ui` から公開した。`root`（既定は document）の下の menu を `hidePopover()` し、閉じたものを返す。`except` の中の menu は閉じない。admin-template の `settlePrompt.svelte.ts` にあった同名の関数はこちらへ移し（テンプレート側の定義は消した）、HeaderNav の menu 項目を閉じるループも同じ関数に寄せた。
+
+### 修正: Modal / Drawer / ConfirmDialog を開くと、開いていたメニューを閉じる（#670）
+
+- メニューは top layer の popover でモーダルの scrim より上に残り、`layering.ts` ではメニューとモーダルがお互いを「上」と判定して Esc が噛み合わなかった。モーダル層（Modal・Drawer・ConfirmDialog）が開く瞬間に、開いているメニューを閉じる約束にした（層の判定は変えていない。モーダルの中のメニューと、開いた後に開くメニューは対象外）。フォーカスがメニュー項目にあったときは、閉じるときの復帰先をメニューのトリガーにする。
+
 ### 追加（minor）: ui の `MenuItem` にショートカット表示（#671）
 
 - `MenuItem` に `shortcut?`（`'Mod+Z'` 形式、`CommandSpec` と同じ）、`platform?`（省略時は初回描画を `'other'`、マウント後に `detectShortcutPlatform()`。SSR と hydration が一致する）、`ariaKeyShortcuts?`（`aria-keyshortcuts` を明示。自動変換より優先）を追加。label の右に keycap テキスト（`formatShortcut`、`aria-hidden`）を出し、アクセシブル名は label のまま、`aria-keyshortcuts` に WAI-ARIA 形式で入れる。変換用に `toAriaKeyShortcuts(shortcut, platform)` を export（`?` `%` `/` `+` など配列依存の記号キーは `undefined` を返し属性を省く）。表示のみでキーの処理はしない
