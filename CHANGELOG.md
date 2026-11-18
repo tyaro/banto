@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 追加（minor）: dock-svelte の浮動 window の折りたたみ（#663 ③-A）
+
+- 浮動 window のタイトルバーの折りたたみのボタン（▾／▸）で、タイトルバーだけに畳み、もう一度押すと元の大きさに戻る。`FloatingWindow.collapsed?` と `dock.isCollapsed(id)` / `dock.setCollapsed(id, collapsed)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。畳んでいる間、中身は破棄せず隠し（`hidden` + `inert`）、リサイズ（ハンドル・キーボードのモード・`dock.resize`）は止まる。本体の中にフォーカスがあれば折りたたみのボタンへ移す。ラベルは `messages.collapseWindow` / `expandWindow`。visual の基準画像（浮動 window を写すもの）は再生成が要る
+
 ### 追加（minor）: dock-svelte の浮動 window にピン（位置と大きさの固定）（#663 ②）
 
 - 浮動 window のタイトルバーのピンのボタンで、位置と大きさを固定できる（ドラッグ・リサイズ・キーボード操作が止まる）。`FloatingWindow.pinned?` と `dock.isPinned(id)` / `dock.setPinned(id, pinned)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。ラベルは `messages.pinWindow` / `unpinWindow`

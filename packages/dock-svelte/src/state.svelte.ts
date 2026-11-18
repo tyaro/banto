@@ -219,6 +219,27 @@ export class DockState {
 		});
 	}
 
+	/** Is the FLOATING window `id` collapsed to its title bar (#663 ③-A)? A docked / unknown id is `false`. */
+	isCollapsed(id: string): boolean {
+		return this.layout.floating.find((w) => w.id === id)?.collapsed === true;
+	}
+
+	/**
+	 * Collapse / expand the floating window `id`. The saved geometry is not
+	 * touched (expanding restores the saved height); `resize` does nothing while
+	 * collapsed. `false` drops the field rather than writing `collapsed: false`.
+	 * A no-op for a docked / unknown id.
+	 */
+	setCollapsed(id: string, collapsed: boolean): void {
+		if (this.isCollapsed(id) === collapsed) return;
+		this.#update(id, (w) => {
+			const next: FloatingWindow = { ...w };
+			if (collapsed) next.collapsed = true;
+			else delete next.collapsed;
+			return next;
+		});
+	}
+
 	/** Is the pane on screen: in the docked tree (even as a background tab) or an open floating window (#663). */
 	isVisible(id: string): boolean {
 		return this.#isDocked(id) || this.isOpen(id);
@@ -408,7 +429,7 @@ export class DockState {
 		hostH: number,
 		clamp?: ClampOptions
 	): void {
-		if (this.isPinned(id)) return;
+		if (this.isPinned(id) || this.isCollapsed(id)) return;
 		this.#update(id, (w) =>
 			applyResize(
 				displayWindowGeometry(w, hostW, hostH, clamp),
