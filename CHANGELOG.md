@@ -32,6 +32,7 @@
 ### 修正: グリッドの行高が密度に追従する（#692）
 
 - `@banto/grid-svelte`: `BantoGrid` の行高がテーマの密度（`--banto-grid-row-height`: standard 36px／compact 32px／touch 52px）に追従するようにした（#692）。これまでは `GridState.rowHeight`（既定 36）を構築時に固定していたため、compact・touch でも行は 36px のままだった。`rowHeight`（prop または `GridState` の option）を渡したときは今までどおり固定。`GridState` に `rowHeightFixed` と `followThemeRowHeight(px)` を足し、`rowHeight` は読み取り専用の getter（反応的）になった。アプリの items・監査ログの表は、compact・touch で行の高さが変わる
+- `/theme-lab`: プレビューの表に `rowHeight` を渡して密度ごとに作り直す回避（#691）を外した。表はプレビューの密度に追従する
 
 ## [7.6.0] - 2026-11-18
 

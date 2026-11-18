@@ -5,7 +5,6 @@ import {
 	STANDARD_DENSITY_VARS,
 	TOUCH_DENSITY_VARS,
 	densityVars,
-	gridRowHeight,
 	DEFAULT_FONT_STACK,
 	DEFAULT_HUE,
 	DEFAULT_RADIUS,
@@ -78,14 +77,6 @@ describe('exportCss', () => {
 
 	it('normalises an out-of-range hue', () => {
 		expect(exportCss(state({ hue: 999 }))).toContain('--banto-brand-hue: 359;');
-	});
-});
-
-describe('gridRowHeight', () => {
-	it('follows the density table (BantoGrid takes the row height as a number)', () => {
-		expect(gridRowHeight('standard')).toBe(36);
-		expect(gridRowHeight('compact')).toBe(32);
-		expect(gridRowHeight('touch')).toBe(52);
 	});
 });
 
