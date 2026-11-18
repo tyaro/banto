@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 修正（patch）: 狭い viewport で Menu などの popover の左端が画面外へ出る（#668）
+
+- `anchoredPopover` の横の補正を、左端が必ず `ANCHORED_POPOVER_GAP` 以上になる形に直した（popover が viewport より広いときは右側へはみ出す）。Menu / HeaderNav / DateInput / DateTimeInput / TimeInput / Tooltip に効く。Menu の `min-width` / `max-width` は `100vw - 2 * var(--banto-space-1)` を超えないようにした
+
 ### 追加（minor）: dock-svelte のドッキング中の区画を帯に畳む（#663 ③-B）
 
 - 分割の子になっている区画（panel または tab グループ）の見出しの折りたたみのボタン（▾／▸）で、column の split では横帯、row の split では縦帯に畳み、もう一度押すと戻る。`DockPanelNode.collapsed?` / `DockTabGroupNode.collapsed?` と `dock.isDockedCollapsed(nodeId)` / `dock.canCollapseDocked(nodeId)` / `dock.setDockedCollapsed(nodeId, collapsed)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。空いた場所は開いている区画に今の比のまま分け（`sizes` は書き換えない）、畳んだ区画に接する divider は動かせない。最後に開いている区画と木の単独の区画は畳めない。畳んでいる間、中身は破棄せず隠し（`hidden` + `inert`）、フォーカスは折りたたみのボタンへ移る。`show` / `showPanel` / `setPanelVisible(true)` は畳んだ区画を展開する。ラベルは `messages.collapsePane` / `expandPane`。docked の pane を写す visual の基準画像は再生成が要る

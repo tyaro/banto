@@ -228,8 +228,10 @@
 		position: fixed;
 		inset: auto;
 		margin: 0;
-		min-width: 180px;
-		max-width: 320px;
+		/* Never wider than the viewport minus the edge gap on both sides
+		   (ANCHORED_POPOVER_GAP = --banto-space-1; #668). */
+		min-width: min(180px, calc(100vw - 2 * var(--banto-space-1)));
+		max-width: min(320px, calc(100vw - 2 * var(--banto-space-1)));
 		padding: var(--banto-space-1);
 		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-md);
