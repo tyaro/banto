@@ -31,7 +31,8 @@
  *    {@link hasVisibleMenuLayer}). Non-modal `role="dialog"` layers (the dock's
  *    floating windows) do not block. A command with `ownerLayer` ignores its
  *    own layer and the layers below it, so the palette's Ctrl+K still closes
- *    the palette.
+ *    the palette. A command with `blockOnMenu: false` is not stopped by a
+ *    menu (a modal layer still stops it).
  *
  * The text this module produces ({@link formatShortcut}) is keycap symbols
  * only, never a sentence - UI wording stays with the app (conventions §13).
@@ -40,6 +41,13 @@ import { hasVisibleMenuLayer, hasVisibleModalLayer } from './layering';
 
 /** Which modifier `Mod` means: Meta (Command) on macOS, Ctrl elsewhere. */
 export type ShortcutPlatform = 'mac' | 'other';
+
+/**
+ * How `Mod` is matched. `'platform'` (default): Meta on macOS, Ctrl elsewhere.
+ * `'either'`: Ctrl **or** Meta on any OS (not both at once - `Ctrl+Meta+X`
+ * does not match `Mod+X`). {@link formatShortcut} still shows the platform's key.
+ */
+export type ShortcutModMode = 'platform' | 'either';
 
 /**
  * One operation, shared by the shortcut dispatcher and (by `id`) by menus,
@@ -77,6 +85,14 @@ export interface CommandSpec {
 	 * means any modal layer / menu blocks it.
 	 */
 	readonly ownerLayer?: () => Element | null;
+	/**
+	 * Does an open menu (`role="menu"`, {@link hasVisibleMenuLayer}) stop this
+	 * command? Default `true`. `false` lets the key through while a menu is
+	 * visible - e.g. Ctrl+Z / Ctrl+A / Delete with a context menu open (the
+	 * command changes the selection and the menu closes). A visible **modal**
+	 * layer still blocks it either way.
+	 */
+	readonly blockOnMenu?: boolean;
 	run(): void | Promise<void>;
 }
 
@@ -192,14 +208,24 @@ function codeFor(key: string): string | null {
 export function matchShortcut(
 	event: KeyboardEvent,
 	shortcut: string | ParsedShortcut,
-	platform: ShortcutPlatform
+	platform: ShortcutPlatform,
+	mod: ShortcutModMode = 'platform'
 ): boolean {
 	const parsed = typeof shortcut === 'string' ? parseShortcut(shortcut) : shortcut;
 	if (!parsed) return false;
 	if (event.getModifierState?.('AltGraph')) return false;
-	const wantCtrl = parsed.ctrl || (parsed.mod && platform !== 'mac');
-	const wantMeta = parsed.meta || (parsed.mod && platform === 'mac');
-	if (event.ctrlKey !== wantCtrl || event.metaKey !== wantMeta || event.altKey !== parsed.alt) {
+	if (event.altKey !== parsed.alt) return false;
+	// Exact modifier match. `'either'`: `Mod` may be Ctrl or Meta, never both.
+	const modOnCtrl = parsed.mod && (mod === 'either' || platform !== 'mac');
+	const modOnMeta = parsed.mod && (mod === 'either' || platform === 'mac');
+	const asCtrl = event.ctrlKey === (parsed.ctrl || modOnCtrl) && event.metaKey === parsed.meta;
+	const asMeta = event.ctrlKey === parsed.ctrl && event.metaKey === (parsed.meta || modOnMeta);
+	if (mod === 'either' && parsed.mod) {
+		if (!asCtrl && !asMeta) return false;
+	} else if (
+		event.ctrlKey !== (parsed.ctrl || modOnCtrl) ||
+		event.metaKey !== (parsed.meta || modOnMeta)
+	) {
 		return false;
 	}
 	// A printable symbol (`?`, `+`) may need Shift to type, so its Shift is not
@@ -349,14 +375,15 @@ function eventTarget(event: KeyboardEvent): EventTarget | null {
  */
 export function shouldHandleShortcut(
 	event: KeyboardEvent,
-	spec: Pick<CommandSpec, 'allowInEditable' | 'allowRepeat' | 'ownerLayer'> = {}
+	spec: Pick<CommandSpec, 'allowInEditable' | 'allowRepeat' | 'ownerLayer' | 'blockOnMenu'> = {}
 ): boolean {
 	if (event.isComposing || event.keyCode === 229) return false;
 	if (event.defaultPrevented) return false;
 	if (event.repeat && !spec.allowRepeat) return false;
 	if (!spec.allowInEditable && isEditableTarget(eventTarget(event))) return false;
 	const except = spec.ownerLayer?.() ?? null;
-	if (hasVisibleModalLayer({ except }) || hasVisibleMenuLayer({ except })) return false;
+	if (hasVisibleModalLayer({ except })) return false;
+	if ((spec.blockOnMenu ?? true) && hasVisibleMenuLayer({ except })) return false;
 	return true;
 }
 
@@ -400,9 +427,10 @@ interface Registration {
  * `run()` promise is the command's to handle.
  */
 export function createShortcutDispatcher(
-	options: { platform?: ShortcutPlatform } = {}
+	options: { platform?: ShortcutPlatform; mod?: ShortcutModMode } = {}
 ): ShortcutDispatcher {
 	const platform = options.platform ?? detectShortcutPlatform();
+	const mod = options.mod ?? 'platform';
 	let registrations: Registration[] = [];
 
 	return {
@@ -422,7 +450,7 @@ export function createShortcutDispatcher(
 			let chosen: CommandSpec | null = null;
 			for (let i = snapshot.length - 1; i >= 0 && !chosen; i--) {
 				for (const { command, parsed } of snapshot[i].entries) {
-					if (!matchShortcut(event, parsed, platform)) continue;
+					if (!matchShortcut(event, parsed, platform, mod)) continue;
 					if (command.visible && !command.visible()) continue;
 					chosen = command;
 					break;

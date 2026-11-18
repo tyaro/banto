@@ -146,6 +146,7 @@ export {
 	type CommandSpec,
 	type ParsedShortcut,
 	type ShortcutDispatcher,
+	type ShortcutModMode,
 	type ShortcutPlatform
 } from './shortcut';
 export { default as EmptyState } from './EmptyState.svelte';
