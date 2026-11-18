@@ -91,13 +91,17 @@ describe('canDiscardAfterSettle', () => {
 });
 
 describe('createPanelChangeHandler (plan §3.5 transition table)', () => {
-	it.each(['dock', 'undock', 'move-docked'] as const)(
+	it.each(['dock', 'undock', 'move-docked', 'reparent'] as const)(
 		'%s captures the pane and goes ahead without asking',
 		(kind) => {
 			const coordinator = fakeCoordinator();
 			const ask = vi.fn();
 			const handler = createPanelChangeHandler({ coordinator, ask });
-			expect(handler({ kind, panelId: MEMO_PANEL_ID, remount: true })).toBe(true);
+			const change =
+				kind === 'reparent'
+					? ({ kind, panelId: MEMO_PANEL_ID, cause: 'other', remount: true } as const)
+					: ({ kind, panelId: MEMO_PANEL_ID, remount: true } as const);
+			expect(handler(change)).toBe(true);
 			expect(coordinator.capture).toHaveBeenCalledWith([MEMO_PANEL_ID]);
 			expect(coordinator.settle).not.toHaveBeenCalled();
 			expect(ask).not.toHaveBeenCalled();

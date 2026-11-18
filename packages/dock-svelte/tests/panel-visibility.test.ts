@@ -476,8 +476,10 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 	});
 
 	// #665 review: the two answers of a retained pane are one decision - a tab
-	// change between them must not apply the dock over a pane never asked.
-	it('retained: the app switching the group between the two approvals makes it stale', async () => {
+	// change between them must not apply the dock over a pane never asked. The
+	// dock request is made right after the tab-switch approval, on the structure
+	// it was approved on (#666), so synchronous answers leave no gap at all.
+	it('retained: synchronous answers apply at once, with no gap between the two', () => {
 		const asked: string[] = [];
 		const hook = vi.fn((change: DockPanelChange) => {
 			asked.push(
@@ -488,12 +490,9 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 		const { dock, lifecycle } = setup({ hook, keepMounted: () => true });
 		dock.dismiss('y'); // t = [x, z], x active
 
-		const pending = lifecycle.show('y'); // x -> y approved synchronously
-		dock.setActiveTab('t', 1); // the app selects z before the dock request starts
-		expect(await pending).toBe('stale');
-		expect(asked).toEqual(['tab-switch x>y']);
-		expect(dock.isVisible('y')).toBe(false);
-		expect(activeOf(dock)).toBe('z');
+		void lifecycle.show('y');
+		expect(asked).toEqual(['tab-switch x>y', 'dock']);
+		expect(activeOf(dock)).toBe('y');
 	});
 
 	it('retained: a tab change while the dock answer is pending makes it stale too', async () => {
@@ -528,13 +527,22 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 		expect(activeOf(dock)).toBe('z');
 	});
 
-	it('restoring into a split deactivates nothing: not asked (like dock.open)', async () => {
+	// #666: a split re-made around the neighbour re-mounts the neighbour's mounted content.
+	it('restoring into a split re-made around the neighbour asks its mounted panes (reparent)', async () => {
 		const hook = vi.fn(() => false);
 		const { dock, lifecycle } = setup({ hook });
-		dock.dismiss('p');
+		dock.dismiss('p'); // s collapses: t is the root
+		const before = JSON.stringify(dock.layout);
 
+		expect(await lifecycle.show('p')).toBe('refused');
+		// x is t's active tab; y and z are not mounted (not keepMounted), so nothing of theirs is lost.
+		expect(hook.mock.calls).toEqual([
+			[{ kind: 'reparent', panelId: 'x', cause: 'p', remount: true }]
+		]);
+		expect(JSON.stringify(dock.layout)).toBe(before);
+
+		hook.mockReturnValue(true);
 		expect(await lifecycle.show('p')).toBe('applied');
-		expect(hook).not.toHaveBeenCalled();
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['x', 'y', 'z', 'p']);
 	});
 });

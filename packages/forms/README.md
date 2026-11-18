@@ -162,7 +162,7 @@ pane の外（ページや controller）で `createFormDraft` を作り、pane �
 	});
 
 	// dock の lifecycle（@banto/dock-svelte 側）とのつなぎ方は遷移ごとに分ける:
-	// - dock / undock / move-docked / tab-switch / hide: coordinator.capture([panelId]) して進める（確認しない）
+	// - dock / undock / move-docked / reparent / tab-switch / hide: coordinator.capture([panelId]) して進める（確認しない）
 	// - close: settle の結果が 'clean' / 'applied' / 'discarded' のときだけ閉じる
 	async function canClose(panelId: string): Promise<boolean> {
 		const result = await coordinator.settle([panelId], (dirtyKeys) =>

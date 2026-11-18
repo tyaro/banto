@@ -44,9 +44,9 @@ import { getContext, setContext } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
 import type { DockPanelChange, PanelLifecycle } from './lifecycle';
 import { resolveCapabilities, type DockPolicy } from './policy';
-import { findParent } from './tree';
+import { dockPanelIntoTree, findNode, findParent, removePanel } from './tree';
 import type { DockState } from '../state.svelte';
-import type { DropRegion } from '../types';
+import type { DockNode, DockPanelNode, DropRegion } from '../types';
 import { computeDropRegion } from './dropzones';
 
 /** Where a drag originated - determines which `DockState` method finishes it (see `#finish`). */
@@ -126,6 +126,24 @@ export class DragController {
 	#structural(change: DockPanelChange, target: unknown, apply: () => void): void {
 		const lifecycle = this.#getLifecycle();
 		if (lifecycle) void lifecycle.request(change, apply, { target });
+		else apply();
+	}
+
+	/**
+	 * A drop into the docked tree: also asks about the docked panes it pushes
+	 * out - a new active tab, a pane a new split / tab group is made around
+	 * (`PanelLifecycle.requestPlacement`, #666) - before `own`. Refused = the
+	 * layout is not touched (the ghost is already gone).
+	 */
+	#placement(
+		panelId: string,
+		own: DockPanelChange,
+		preview: () => DockNode | null | undefined,
+		target: unknown,
+		apply: () => void
+	): void {
+		const lifecycle = this.#getLifecycle();
+		if (lifecycle) void lifecycle.requestPlacement(panelId, () => own, preview, apply, target);
 		else apply();
 	}
 
@@ -261,16 +279,38 @@ export class DragController {
 				if (ownContainerId === hoverTargetId) return;
 			}
 			const dock = this.#dock;
+			const target = { to: hoverTargetId, region: hoverRegion };
+			// The tree the drop makes, for asking the panes it pushes out (#666). A fixed id for a
+			// new split / tab group keeps it stable across the re-checks.
+			const into = (root: DockNode | null, node: DockPanelNode): DockNode =>
+				dockPanelIntoTree(root, node, hoverTargetId, hoverRegion, () => `${panelId}:dropped`);
 			if (source === 'floating')
-				this.#structural(
+				this.#placement(
+					panelId,
 					{ kind: 'dock', panelId, remount: true },
-					{ to: hoverTargetId, region: hoverRegion },
+					() => {
+						const win = dock.layout.floating.find((w) => w.id === panelId);
+						if (!win) return undefined;
+						return into(dock.layout.docked, {
+							type: 'panel',
+							id: win.id,
+							title: win.title,
+							icon: win.icon
+						});
+					},
+					target,
 					() => dock.dockPanel(panelId, hoverTargetId, hoverRegion)
 				);
 			else
-				this.#structural(
+				this.#placement(
+					panelId,
 					{ kind: 'move-docked', panelId, remount: true },
-					{ to: hoverTargetId, region: hoverRegion },
+					() => {
+						const node = findNode(dock.layout.docked, panelId);
+						if (node?.type !== 'panel') return undefined;
+						return into(removePanel(dock.layout.docked, panelId), node);
+					},
+					target,
 					() => dock.dockExisting(panelId, hoverTargetId, hoverRegion)
 				);
 			return;
