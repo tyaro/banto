@@ -303,6 +303,61 @@ describe('shouldHandleShortcut: layers', () => {
 	});
 });
 
+describe('blockOnMenu / mod either (#669)', () => {
+	it('blockOnMenu false: a menu does not block, a modal still does', () => {
+		layer(700, { role: 'menu' });
+		const spec = { blockOnMenu: false };
+		const check = (s = {}) =>
+			press(document.body, { key: 'z', ctrlKey: true }, (e) => shouldHandleShortcut(e, s)).result;
+		expect(check()).toBe(false);
+		expect(check(spec)).toBe(true);
+		modal();
+		expect(check(spec)).toBe(false);
+	});
+
+	it('dispatcher: blockOnMenu false command runs under a menu', () => {
+		layer(700, { role: 'menu' });
+		const dispatcher = createShortcutDispatcher({ platform: 'other' });
+		const undo = command({ id: 'undo', shortcut: 'Mod+Z', blockOnMenu: false });
+		const save = command({ id: 'save', shortcut: 'Mod+S' });
+		dispatcher.register('page', [undo, save]);
+		expect(
+			press(document.body, { key: 'z', ctrlKey: true }, (e) => dispatcher.handle(e)).result
+		).toBe(true);
+		expect(
+			press(document.body, { key: 's', ctrlKey: true }, (e) => dispatcher.handle(e)).result
+		).toBe(false);
+	});
+
+	it("mod 'either' matches Ctrl or Meta on both platforms, never both", () => {
+		for (const platform of ['mac', 'other'] as const) {
+			const d = keydown;
+			expect(matchShortcut(d({ key: 's', ctrlKey: true }), 'Mod+S', platform, 'either')).toBe(true);
+			expect(matchShortcut(d({ key: 's', metaKey: true }), 'Mod+S', platform, 'either')).toBe(true);
+			expect(
+				matchShortcut(d({ key: 's', ctrlKey: true, metaKey: true }), 'Mod+S', platform, 'either')
+			).toBe(false);
+			expect(matchShortcut(d({ key: 's' }), 'Mod+S', platform, 'either')).toBe(false);
+			expect(
+				matchShortcut(d({ key: 's', ctrlKey: true, shiftKey: true }), 'Mod+S', platform, 'either')
+			).toBe(false);
+		}
+	});
+
+	it("default mod is 'platform' as before; dispatcher mod either works", () => {
+		const ctrlS = keydown({ key: 's', ctrlKey: true });
+		expect(matchShortcut(ctrlS, 'Mod+S', 'mac')).toBe(false);
+		const dispatcher = createShortcutDispatcher({ platform: 'mac', mod: 'either' });
+		dispatcher.register('page', [command({ id: 'save', shortcut: 'Mod+S' })]);
+		expect(
+			press(document.body, { key: 's', ctrlKey: true }, (e) => dispatcher.handle(e)).result
+		).toBe(true);
+		expect(
+			press(document.body, { key: 's', metaKey: true }, (e) => dispatcher.handle(e)).result
+		).toBe(true);
+	});
+});
+
 describe('createShortcutDispatcher', () => {
 	function run(dispatcher: ShortcutDispatcher, init: KeyInit, target: EventTarget = document.body) {
 		return press(target, init, (e) => dispatcher.handle(e));
