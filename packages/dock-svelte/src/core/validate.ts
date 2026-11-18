@@ -233,19 +233,20 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 					else if (!Number.isFinite(size)) add('non-finite', `${p}.size`);
 					else if (!(size > 0 && size <= 1)) add('non-positive-size', `${p}.size`);
 				}
-				const entry = raw as unknown as DockAutoHidden;
-				// A band holds a region on its own: no `collapsed` flag (`normalizeCollapsed` drops a root's).
-				autoHidden.push({
-					...entry,
-					node: (isRecord(node)
-						? normalizeCollapsed(entry.node)
-						: entry.node) as DockAutoHidden['node']
-				});
+				// Normalized only after the whole payload validated (below), like the docked tree: a
+				// malformed node (e.g. tabs without `children`) must reject, not throw.
+				autoHidden.push(raw as unknown as DockAutoHidden);
 			});
 		}
 	}
 
 	if (issues.length > 0) return { ok: false, issues };
+	// A band holds a region on its own: no `collapsed` flag (`normalizeCollapsed` drops a root's).
+	for (let i = 0; i < autoHidden.length; i++)
+		autoHidden[i] = {
+			...autoHidden[i],
+			node: normalizeCollapsed(autoHidden[i].node) as DockAutoHidden['node']
+		};
 	const layout: DockLayout = {
 		version: 2,
 		floating,

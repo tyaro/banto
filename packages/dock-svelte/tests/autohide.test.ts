@@ -251,6 +251,16 @@ describe('validateDockLayout autoHidden', () => {
 		}
 		expect(validateDockLayout({ ...layout(), autoHidden: {} }).ok).toBe(false);
 	});
+
+	it('rejects (does not throw on) a malformed tabs node in a band', () => {
+		for (const node of [
+			{ type: 'tabs', id: 'g' },
+			{ type: 'tabs', id: 'g', activeIndex: 0, children: [null] }
+		]) {
+			const result = validateDockLayout(withBand({ ...good, node }));
+			expect(result.ok).toBe(false);
+		}
+	});
 });
 
 describe('PanelLifecycle auto-hide requests', () => {
