@@ -50,6 +50,14 @@
  *   and drops its `apply` / `describe` callbacks.
  * - **Apply by id.** The `apply` callbacks look ids up when they run and are
  *   no-ops when the id is gone.
+ * - **Panes pushed out (#666).** A drop into the docked tree (and `show` of a
+ *   pane hidden from it) can change other docked panes too: the old active
+ *   tab of the group it lands in leaves the screen, and a pane that a new
+ *   split or tab group is made around is mounted again (`core/mounts.ts`:
+ *   a Svelte component cannot be moved to another parent, so this holds
+ *   for `keepMounted` panes as well). `requestPlacement` asks each of them
+ *   first (`tab-switch` / `move-docked`), then the moved pane, and applies
+ *   once all agreed on the same structure.
  *
  * ## IME composition (plan §3.5 / §4.2)
  *
@@ -83,8 +91,11 @@
  */
 import { getContext, setContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
+import { displacedChanges } from './mounts';
+import { restoreDockSlot } from './slot';
 import { findNode, findParent, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
+import type { DockNode, DockPanelNode } from '../types';
 
 /**
  * A structure change the dock UI is about to make (shared-primitives-upstream-
@@ -152,6 +163,8 @@ export class PanelLifecycle {
 	#retryTimer: ReturnType<typeof setTimeout> | null = null;
 	/** Requests not resolved yet (asked, waiting for the hook, or held), by identity. */
 	#pending = new Map<string, Promise<DockPanelChangeOutcome>>();
+	/** `requestPlacement`s not resolved yet, by identity (the whole list of changes and the target). */
+	#placements = new Map<string, Promise<DockPanelChangeOutcome>>();
 	#jobs = new Set<Job>();
 	/** The element of an open composition (`compositionstart` without `compositionend`). */
 	#composingIn: Element | null = null;
@@ -302,19 +315,19 @@ export class PanelLifecycle {
 	 *
 	 * - A docked background tab is brought up with `switchTab` (a `tab-switch`,
 	 *   like a tab click).
-	 * - A pane hidden from the dock that goes back as the active tab of a tab
-	 *   group takes the group's active pane (or the bare panel the group is
-	 *   re-made around) off the screen, unmounting it unless `keepMounted`: that
-	 *   is asked first as a `tab-switch` from that pane to this one, through
-	 *   the same `request` as a tab click (refused = the pane stays hidden;
-	 *   held while an IME composition is open). `remount` is `true` for a bare
-	 *   panel that becomes a tab (it is re-mounted either way).
+	 * - A pane hidden from the dock goes back to its remembered place through
+	 *   `requestPlacement` (#666): the docked panes it pushes out are asked
+	 *   first - the group's active pane it replaces as the active tab (or the
+	 *   bare panel a group is re-made around: `remount: true`) as a
+	 *   `tab-switch` to this pane, a pane (or the tabs of a group) a split is
+	 *   re-made around as `move-docked` (it is re-mounted) - through the same
+	 *   `request` as a tab click (refused = the pane stays hidden; held while
+	 *   an IME composition is open).
 	 * - Putting a hidden pane whose content is still mounted (`keepMounted`,
 	 *   not discarded) back into the docked tree moves that content from the
 	 *   floating layer into the tree (re-mount), so it is asked as a `dock`
-	 *   change (`remount: true`) - after the `tab-switch` when there is one,
-	 *   on the structure that `tab-switch` was approved on (changed in between
-	 *   = `stale`).
+	 *   change (`remount: true`) - after the pushed-out panes, on the structure
+	 *   they were approved on (changed in between = `stale`).
 	 */
 	show(panelId: string): Promise<DockPanelChangeOutcome> {
 		const where = this.#whereIs(panelId);
@@ -338,61 +351,26 @@ export class PanelLifecycle {
 			this.#whereIs(panelId) === 'hidden' &&
 			this.isRetained(panelId) &&
 			this.#dock.showPlacement(panelId) === 'docked';
-		// `unchanged` ties a second request to the first one's approval (below).
-		let unchanged = (): boolean => true;
-		const describeDock = (): DockPanelChange | null =>
-			unchanged() && redocksMounted() ? { kind: 'dock', panelId, remount: true } : null;
-		const dock = (): Promise<DockPanelChangeOutcome> =>
-			this.request({ kind: 'dock', panelId, remount: true }, () => this.#dock.show(panelId), {
-				target: 'show',
-				describe: describeDock
-			});
-		const describeSwitch = (): DockPanelChange | null => {
-			if (this.#whereIs(panelId) !== 'hidden') return null;
-			const s = this.#dock.showTabSwitch(panelId);
-			if (s === null) return null;
-			const remount = s.wrapped || !this.keepMounted(s.from);
-			return { kind: 'tab-switch', groupId: s.groupId, from: s.from, to: panelId, remount };
+		// The docked tree after `show`: put back in its remembered place, or unchanged
+		// (opened floating). The fixed id of a group it would re-make keeps the
+		// preview stable across the re-checks (`DockState.showTabSwitch` does the same).
+		const preview = (): DockNode | null | undefined => {
+			if (this.#whereIs(panelId) !== 'hidden') return undefined;
+			const win = this.#dock.layout.floating.find((w) => w.id === panelId)!;
+			const docked = this.#dock.layout.docked;
+			if (!win.dockSlot) return docked;
+			const node: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
+			return (
+				restoreDockSlot(docked, node, win.dockSlot, () => `${panelId}:restored-tabs`) ?? docked
+			);
 		};
-		const tabSwitch = describeSwitch();
-		if (tabSwitch === null) {
-			if (redocksMounted()) return dock();
-			this.#dock.show(panelId);
-			return Promise.resolve('applied');
-		}
-		if (!redocksMounted()) {
-			return this.request(tabSwitch, () => this.#dock.show(panelId), {
-				target: 'show',
-				describe: describeSwitch
-			});
-		}
-		// Both: the active pane agrees to step back first, then the mounted content
-		// is asked to move. The two answers are one decision about one structure:
-		// the `dock` request keeps the generation the `tab-switch` was approved on
-		// (and the same `from` / `remount`) until it applies, so a change made in
-		// between (the app switching the group to another tab, a drop, ...) makes
-		// it `stale` - like any approved request whose structure moved (module doc)
-		// - instead of applying over a pane that was never asked.
-		let approved: { revision: number; structure: string } | null = null;
-		unchanged = () =>
-			approved !== null &&
-			this.#dock.structureRevision === approved.revision &&
-			structureKey(this.#dock.layout) === approved.structure &&
-			JSON.stringify(describeSwitch()) === JSON.stringify(tabSwitch);
-		return this.request(
-			tabSwitch,
-			() => {
-				approved = {
-					revision: this.#dock.structureRevision,
-					structure: structureKey(this.#dock.layout)
-				};
-			},
-			{ target: 'show', describe: describeSwitch }
-		).then((outcome) => {
-			if (outcome !== 'applied') return outcome;
-			if (this.#disposed) return 'disposed';
-			return unchanged() ? dock() : 'stale';
-		});
+		return this.requestPlacement(
+			panelId,
+			() => (redocksMounted() ? { kind: 'dock', panelId, remount: true } : null),
+			preview,
+			() => this.#dock.show(panelId),
+			'show'
+		);
 	}
 
 	/**
@@ -402,6 +380,71 @@ export class PanelLifecycle {
 	 */
 	setVisible(panelId: string, visible: boolean): Promise<DockPanelChangeOutcome> {
 		return visible ? this.show(panelId) : this.closeButton(panelId);
+	}
+
+	/**
+	 * A change that puts `panelId` somewhere in the docked tree (a drop, `show`)
+	 * and may push other docked panes out (#666, `core/mounts.ts`): a new split
+	 * or tab group made around a pane re-mounts it, and a new active tab takes
+	 * the old one off the screen. Each pushed-out pane is asked first (in tree
+	 * order: `tab-switch` / `move-docked`), then `own` (the moved pane's own
+	 * change, `null` = not asked), one after the other; the first refusal
+	 * stops it with nothing changed, and `apply` runs after the last approval.
+	 * The answers are one decision about one structure: every request after
+	 * the first keeps the generation the first was made on, and the list of
+	 * changes is re-built and compared before each step and before `apply`
+	 * (changed = `stale`). `preview` is the docked tree `apply` would make
+	 * (`undefined` = the change no longer exists). Nothing to ask = applied
+	 * at once. The same placement while the first is waiting returns the
+	 * pending one.
+	 */
+	requestPlacement(
+		panelId: string,
+		own: () => DockPanelChange | null,
+		preview: () => DockNode | null | undefined,
+		apply: () => void,
+		target: unknown
+	): Promise<DockPanelChangeOutcome> {
+		if (this.#disposed) return Promise.resolve('disposed');
+		const describeAll = (): DockPanelChange[] | null => {
+			const after = preview();
+			if (after === undefined) return null;
+			const keep = (id: string) => this.keepMounted(id);
+			const changes = displacedChanges(this.#dock.layout.docked, after, panelId, keep);
+			const mine = own();
+			return mine ? [...changes, mine] : changes;
+		};
+		const changes = describeAll();
+		if (changes === null) return Promise.resolve('stale');
+		if (changes.length === 0) {
+			apply();
+			return Promise.resolve('applied');
+		}
+		const id = JSON.stringify([changes, target ?? null]);
+		const pending = this.#placements.get(id);
+		if (pending) return pending;
+		const revision = this.#dock.structureRevision;
+		const structure = structureKey(this.#dock.layout);
+		const same = (): boolean =>
+			this.#dock.structureRevision === revision &&
+			structureKey(this.#dock.layout) === structure &&
+			JSON.stringify(describeAll()) === JSON.stringify(changes);
+		// The next request is made from the previous one's `apply` (right after its
+		// approval, on the structure it was approved on), so synchronous answers
+		// apply synchronously, like a single request.
+		const step = (i: number): Promise<DockPanelChangeOutcome> => {
+			const last = i === changes.length - 1;
+			let next: Promise<DockPanelChangeOutcome> | null = null;
+			return this.request(changes[i], last ? apply : () => (next = step(i + 1)), {
+				target,
+				describe: () => (same() ? changes[i] : null)
+			}).then((outcome) => (outcome === 'applied' && next ? next : outcome));
+		};
+		const promise = step(0).finally(() => {
+			if (this.#placements.get(id) === promise) this.#placements.delete(id);
+		});
+		this.#placements.set(id, promise);
+		return promise;
 	}
 
 	/** Switch the docked tab group `groupId` to the tab `to` (by id; no-op when it is already active or gone). */

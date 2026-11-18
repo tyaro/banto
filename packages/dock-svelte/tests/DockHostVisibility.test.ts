@@ -102,9 +102,13 @@ describe('a View menu built on dock.panels', () => {
 		expect(calls).toEqual([{ kind: 'hide', panelId: 'a', remount: true }]);
 		expect(dock.isVisible('a')).toBe(false);
 
-		// Its content is still mounted (hidden) in the floating layer: re-docking it is asked as a dock.
+		// Its content is still mounted (hidden) in the floating layer: re-docking it is asked as a dock,
+		// after the bare pane B that a split is re-made around (re-mounted, #666).
 		expect(await host().showPanel('a')).toBe('applied');
-		expect(calls[1]).toEqual({ kind: 'dock', panelId: 'a', remount: true });
+		expect(calls.slice(1)).toEqual([
+			{ kind: 'move-docked', panelId: 'b', remount: true },
+			{ kind: 'dock', panelId: 'a', remount: true }
+		]);
 		expect(docked(dock)).toEqual(['a', 'b']);
 	});
 

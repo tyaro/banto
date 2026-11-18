@@ -226,12 +226,17 @@ describe('beforePanelChange is asked for every kind, and a sync refusal leaves t
 
 	it('dock (floating window dropped on a docked pane) and move-docked (docked onto docked)', () => {
 		const calls: DockPanelChange[] = [];
-		const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(c), false) });
+		// The pushed-out pane (P becomes a background tab, #666) agrees; the moved pane's own change is refused.
+		const { dock } = mount(mixed(), {
+			beforePanelChange: (c) => (calls.push(c), c.kind === 'tab-switch')
+		});
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
 		dragFrom(dialogOf('F')!.querySelector('.titlebar')!);
 		dragFrom(screen.getByRole('tab', { name: 'X' }));
 		expect(calls).toEqual([
+			{ kind: 'tab-switch', groupId: 'f:dropped', from: 'p', to: 'f', remount: true },
 			{ kind: 'dock', panelId: 'f', remount: true },
+			{ kind: 'tab-switch', groupId: 'x:dropped', from: 'p', to: 'x', remount: true },
 			{ kind: 'move-docked', panelId: 'x', remount: true }
 		]);
 		expect(dock.layout).toEqual(mixed());
@@ -331,8 +336,10 @@ describe('async answers: identity and generation (PR #448 review)', () => {
 	it('a drop on Y while a drop on X waits is asked on its own; X approved first applies, Y is then stale', async () => {
 		const answers = [deferred<boolean>(), deferred<boolean>()];
 		const calls: DockPanelChange[] = [];
+		// Both drops push a pane out first (#666): those are the answers that wait; the docks are allowed.
 		const { dock } = mount(mixed(), {
-			beforePanelChange: (c) => (calls.push(c), answers[calls.length - 1].promise)
+			beforePanelChange: (c) =>
+				c.kind === 'tab-switch' ? (calls.push(c), answers[calls.length - 1].promise) : true
 		});
 		const titlebar = () => dialogOf('F')!.querySelector('.titlebar')!;
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
@@ -622,5 +629,188 @@ describe('IME composition holds structure changes', () => {
 		view.unmount();
 		expect(await held).toBe('disposed');
 		expect(winOf(dock, 'a')!.open).toBe(true);
+	});
+});
+
+// #666: a drop also pushes other docked panes out - a new split or tab group
+// made around a pane re-mounts it (Svelte cannot move a component to another
+// parent), a new active tab takes the old one off the screen. Those panes are
+// asked first, like a tab click (refused = nothing changes; IME hold; an
+// approval whose structure moved meanwhile is stale), then the dropped pane.
+describe('a drop asks the docked panes it pushes out (#666)', () => {
+	/** A pane frame of 1000 x 600 at the origin, so a release near an edge is an edge drop. */
+	function paneRects(): void {
+		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+			left: 0,
+			top: 0,
+			right: 1000,
+			bottom: 600,
+			width: 1000,
+			height: 600,
+			x: 0,
+			y: 0,
+			toJSON: () => ({})
+		} as DOMRect);
+	}
+	const titlebarF = () => dialogOf('F')!.querySelector('.titlebar')!;
+	/** F dropped on the bottom edge of the bare pane P: a new column split is made around P. */
+	function dropFBelowP(): void {
+		paneRects();
+		hit = () => document.querySelector('[data-dock-drop-id="p"]');
+		dragFrom(titlebarF(), 500, 590);
+	}
+	/** F dropped in the middle of the tab group t (X active). */
+	function dropFOnTabs(): void {
+		hit = () => document.querySelector('[data-dock-drop-id="t"]');
+		dragFrom(titlebarF());
+	}
+	const label = (c: DockPanelChange) =>
+		c.kind === 'tab-switch'
+			? `tab-switch ${c.from}>${c.to}${c.remount ? '' : ' kept'}`
+			: `${c.kind} ${c.panelId}`;
+
+	describe('a new split around a bare pane', () => {
+		it('refused: nothing changes, the dropped pane is not asked, focus and ghost are left alone', () => {
+			const calls: string[] = [];
+			const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(label(c)), false) });
+			const input = inputOf('X')!;
+			input.focus();
+			dropFBelowP();
+			expect(calls).toEqual(['move-docked p']);
+			expect(dock.layout).toEqual(mixed());
+			expect(document.activeElement).toBe(input);
+			expect(document.querySelector('.drag-ghost')).toBeNull();
+			expect(document.querySelector('.snap-guide')).toBeNull();
+		});
+
+		it('allowed: P is asked, then F; F docks below P and P is mounted again', () => {
+			const calls: string[] = [];
+			const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(label(c)), true) });
+			const before = inputOf('P');
+			dropFBelowP();
+			expect(calls).toEqual(['move-docked p', 'dock f']);
+			const root = dock.layout.docked as { children: unknown[] };
+			expect(root.children[1]).toMatchObject({
+				type: 'split',
+				direction: 'column',
+				children: [{ id: 'p' }, { id: 'f' }]
+			});
+			// What the question is about: the content really is a new mount.
+			expect(inputOf('P')).not.toBeNull();
+			expect(inputOf('P')).not.toBe(before);
+		});
+
+		it('keepMounted does not save it: still asked with remount true', () => {
+			const asked: DockPanelChange[] = [];
+			mount(mixed(), {
+				beforePanelChange: (c) => (asked.push(c), false),
+				keepMounted: () => true
+			});
+			dropFBelowP();
+			expect(asked).toEqual([{ kind: 'move-docked', panelId: 'p', remount: true }]);
+		});
+
+		it('held while deferred (IME), asked and applied after resume', async () => {
+			let deferring = false;
+			let answer: (ok: boolean) => void = () => {};
+			const calls: string[] = [];
+			const { dock, host } = mount(mixed(), {
+				beforePanelChange: (c) => {
+					calls.push(label(c));
+					return c.kind === 'move-docked' ? new Promise<boolean>((r) => (answer = r)) : true;
+				},
+				isStructureChangeDeferred: () => deferring
+			});
+			dropFBelowP();
+			deferring = true; // a composition starts while the answer is pending
+			answer(true);
+			await nextTask();
+			expect(calls).toEqual(['move-docked p']);
+			expect(dock.layout).toEqual(mixed());
+			deferring = false;
+			host().resumeDeferredChange();
+			expect(calls).toEqual(['move-docked p', 'dock f']);
+			expect(winOf(dock, 'f')).toBeUndefined();
+		});
+
+		it('an approval whose structure changed meanwhile is stale: F is not asked nor docked', async () => {
+			let answer: (ok: boolean) => void = () => {};
+			const calls: string[] = [];
+			const { dock } = mount(mixed(), {
+				beforePanelChange: (c) => (calls.push(label(c)), new Promise<boolean>((r) => (answer = r)))
+			});
+			dropFBelowP();
+			dock.setActiveTab('t', 1); // the app switches a tab while the answer waits
+			answer(true);
+			await nextTask();
+			expect(calls).toEqual(['move-docked p']);
+			expect(winOf(dock, 'f')?.open).toBe(true);
+		});
+	});
+
+	describe('a drop on a tab group', () => {
+		it('refused: the active tab stays, nothing changes, the dropped pane is not asked', () => {
+			const asked: DockPanelChange[] = [];
+			const { dock } = mount(mixed(), { beforePanelChange: (c) => (asked.push(c), false) });
+			dropFOnTabs();
+			expect(asked).toEqual([
+				{ kind: 'tab-switch', groupId: 't', from: 'x', to: 'f', remount: true }
+			]);
+			expect(dock.layout).toEqual(mixed());
+		});
+
+		it('allowed: the old active tab, then F; F is the active tab', () => {
+			const calls: string[] = [];
+			const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(label(c)), true) });
+			dropFOnTabs();
+			expect(calls).toEqual(['tab-switch x>f', 'dock f']);
+			const group = groupOf(dock);
+			expect(group.children.map((c) => c.id)).toEqual(['x', 'y', 'f']);
+			expect(group.activeIndex).toBe(2);
+		});
+
+		it('a keepMounted active tab: remount false, and its DOM is kept', () => {
+			const calls: string[] = [];
+			mount(mixed(), {
+				beforePanelChange: (c) => (calls.push(label(c)), true),
+				keepMounted: (id) => id === 'x'
+			});
+			const before = inputOf('X');
+			dropFOnTabs();
+			expect(calls).toEqual(['tab-switch x>f kept', 'dock f']);
+			expect(inputOf('X')).toBe(before);
+			expect(isHiddenInert(before!.closest('.tab-content'))).toBe(true);
+		});
+
+		it('held while deferred (IME), asked and applied after resume', async () => {
+			let deferring = false;
+			let answer: (ok: boolean) => void = () => {};
+			const calls: string[] = [];
+			const { dock, host } = mount(mixed(), {
+				beforePanelChange: (c) => {
+					calls.push(label(c));
+					return c.kind === 'tab-switch' ? new Promise<boolean>((r) => (answer = r)) : true;
+				},
+				isStructureChangeDeferred: () => deferring
+			});
+			dropFOnTabs();
+			deferring = true;
+			answer(true);
+			await nextTask();
+			expect(groupOf(dock).activeIndex).toBe(0);
+			deferring = false;
+			host().resumeDeferredChange();
+			expect(calls).toEqual(['tab-switch x>f', 'dock f']);
+			expect(groupOf(dock).children[groupOf(dock).activeIndex].id).toBe('f');
+		});
+
+		it('a docked pane moved onto the group asks the active tab too', () => {
+			const calls: string[] = [];
+			const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(label(c)), false) });
+			hit = () => document.querySelector('[data-dock-drop-id="t"]');
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			expect(calls).toEqual(['tab-switch x>p']);
+			expect(dock.layout).toEqual(mixed());
+		});
 	});
 });
