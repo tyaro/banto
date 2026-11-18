@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 追加（minor）: dock-svelte に表示メニュー用の一覧と表示・非表示の口、ドックから隠した pane の元の場所への復帰（#663 ①-A）
+
+- `@banto/dock-svelte` に追加: `DockState.panels`（reactive。全 pane の `{ id, title, icon?, placement, visible }` を id を初めて見た順に）・`DockState.show` / `showPlacement` / `dismiss` / `isVisible`、`DockHost` の `showPanel(id)` と `setPanelVisible(id, visible)`（外す = ✕ と同じく `keepMounted` は hide・それ以外は close で `beforePanelChange` に聞く。`capabilities` の `close: false` は `refused`）、純関数 `captureDockSlot` / `restoreDockSlot`、型 `DockPanelInfo` / `DockSlot`。docked の pane を ✕・`hidePanel`・`closePanel` で隠すと、閉じた浮動 window に元の場所（タブグループと位置、または分割の側と割合）を `FloatingWindow.dockSlot` として覚え、`showPanel` / `dock.show` でそこへ戻す（場所が消えていれば浮動で開く）。`dockSlot` は任意のプロパティで layout の `version` は 2 のまま（古い JSON はそのまま読める）。`dock.isOpen` / `open` / `close` は従来どおり浮動 window だけを見る（`open` はドックから隠した pane を浮動で開き、覚えた場所を捨てる）。修正: `dock.ensureWindow` が docked の id を浮動として重複して足していた。
+
 ## [7.5.0] - 2026-11-18
 
 **v7.5.0 — `@banto/ui` の `ThreePaneLayout` を外から扱う 5 つの口（#655）と、`Tabs` の `hideSingleTab`（#659）。下流（banto-industrial）からの要請に応える追加。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。追加の口はすべて任意で、渡さなければ見た目・挙動は変わらない。Rust・DB・テンプレートの変更は無い。

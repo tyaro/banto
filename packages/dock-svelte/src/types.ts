@@ -27,6 +27,55 @@ export interface FloatingWindow {
 	height: number;
 	/** Closed panels keep their geometry around so reopening restores it. */
 	open: boolean;
+	/**
+	 * Where this pane was docked before it was hidden / closed (#663). Only set
+	 * on a CLOSED window that came out of the docked tree; `DockState.show`
+	 * puts the pane back there (`core/slot.ts`), `DockState.open` opens it
+	 * floating and drops the slot. Optional: a layout without it (older JSON)
+	 * reads as "no remembered place", so the layout `version` stays 2.
+	 */
+	dockSlot?: DockSlot;
+}
+
+/**
+ * A remembered docked place (#663, `core/slot.ts`). Named by ids that survive
+ * the pane's removal; `anchors` are panel ids next to it, nearest first, used
+ * when the container ids are gone.
+ *  - `tab`: a tab of the group `groupId`, at `index`.
+ *  - `split`: child `index` of the split `splitId` (`direction`), on `side` of
+ *    the node `neighborId`, with `size` (0-1) of the split's space.
+ *  - `root`: the whole docked tree (it was the only docked pane).
+ */
+export type DockSlot =
+	| { kind: 'tab'; groupId: string; index: number; anchors: string[] }
+	| {
+			kind: 'split';
+			splitId: string;
+			direction: 'row' | 'column';
+			index: number;
+			neighborId: string;
+			side: 'before' | 'after';
+			size: number;
+			anchors: string[];
+	  }
+	| { kind: 'root' };
+
+/**
+ * One row of `DockState.panels` (#663): every pane the layout knows, for a
+ * View menu with a checkbox per pane.
+ */
+export interface DockPanelInfo {
+	id: string;
+	title: string;
+	icon?: string;
+	/**
+	 * `docked`: in the docked tree, or hidden with a remembered docked place
+	 * (`show` tries to put it back there). `floating`: a floating window, open
+	 * or closed, with no remembered docked place.
+	 */
+	placement: 'docked' | 'floating';
+	/** In the docked tree (even as a background tab) or an open floating window = the checkbox is checked. */
+	visible: boolean;
 }
 
 /** A single docked panel - the leaf of the docked tree. Same id space as `FloatingWindow`: a panel is either docked or floating, never both at once. */

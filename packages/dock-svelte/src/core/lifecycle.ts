@@ -83,7 +83,7 @@
  */
 import { getContext, setContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import { findNode, structureKey } from './tree';
+import { findNode, findParent, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
 
 /**
@@ -295,6 +295,50 @@ export class PanelLifecycle {
 		return this.keepMounted(panelId) ? this.hide(panelId) : this.close(panelId);
 	}
 
+	/**
+	 * Show the pane (`DockState.show`, #663). Not asked, like `DockState.open`
+	 * - except when it puts a hidden pane whose content is still mounted
+	 * (`keepMounted`, not discarded) back into the docked tree: that moves the
+	 * content from the floating layer into the tree (re-mount), so it is asked
+	 * as a `dock` change (`remount: true`) and waits out an IME composition.
+	 * A docked background tab is brought up with `switchTab` (asked as a
+	 * `tab-switch`, like a tab click).
+	 */
+	show(panelId: string): Promise<DockPanelChangeOutcome> {
+		const where = this.#whereIs(panelId);
+		if (where === null) return Promise.resolve('stale');
+		if (where === 'docked') {
+			// A background tab: bringing it up is a tab switch (asked like a tab click).
+			const group = findParent(this.#dock.layout.docked, panelId);
+			return group?.type === 'tabs'
+				? this.switchTab(group.id, panelId)
+				: Promise.resolve('applied');
+		}
+		const redocksMounted = (): boolean =>
+			this.#whereIs(panelId) === 'hidden' &&
+			this.isRetained(panelId) &&
+			this.#dock.showPlacement(panelId) === 'docked';
+		if (!redocksMounted()) {
+			this.#dock.show(panelId);
+			return Promise.resolve('applied');
+		}
+		const describe = (): DockPanelChange | null =>
+			redocksMounted() ? { kind: 'dock', panelId, remount: true } : null;
+		return this.request({ kind: 'dock', panelId, remount: true }, () => this.#dock.show(panelId), {
+			target: 'show',
+			describe
+		});
+	}
+
+	/**
+	 * A View menu's checkbox (#663): `true` = `show`; `false` = the ✕ button
+	 * (`closeButton`: hide for a `keepMounted` pane, close otherwise, asked
+	 * through `beforePanelChange`). Already in that state = `applied`.
+	 */
+	setVisible(panelId: string, visible: boolean): Promise<DockPanelChangeOutcome> {
+		return visible ? this.show(panelId) : this.closeButton(panelId);
+	}
+
 	/** Switch the docked tab group `groupId` to the tab `to` (by id; no-op when it is already active or gone). */
 	switchTab(groupId: string, to: string, after?: () => void): Promise<DockPanelChangeOutcome> {
 		const describe = (): DockPanelChange | null => {
@@ -341,10 +385,9 @@ export class PanelLifecycle {
 		return findNode(this.#dock.layout.docked, panelId)?.type === 'panel';
 	}
 
-	/** A docked pane has no hidden state of its own: it becomes a closed floating window (geometry kept for the next open). */
+	/** A docked pane has no hidden state of its own: it becomes a closed floating window that remembers its docked place (`DockState.dismiss`, #663). */
 	#takeOffScreen(panelId: string): void {
-		if (this.#isDocked(panelId)) this.#dock.undockPanel(panelId);
-		this.#dock.close(panelId);
+		this.#dock.dismiss(panelId);
 	}
 
 	#ask(job: Job): void {
