@@ -25,8 +25,8 @@
 	 *   `aria-labelledby` and `tabindex` (there is no tab to refer to, and an
 	 *   empty frame should not take a Tab stop). The panel stays the same
 	 *   element, so changing the number of tabs never recreates its content. A
-	 *   lone disabled tab stays hidden (and unrendered) as before. `value` /
-	 *   `onchange` behave as usual. With two or more tabs nothing changes.
+	 *   lone disabled tab stays hidden as before (and, unless `keepMounted`,
+	 *   unrendered). `value` / `onchange` behave as usual. With two or more tabs nothing changes.
 	 * - Disabled tabs carry `aria-disabled` (still announced, never selected).
 	 */
 	import type { Snippet } from 'svelte';
