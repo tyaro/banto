@@ -22,67 +22,122 @@
 
 ## [Unreleased]
 
-### 修正: dock-svelte の浮動ウィンドウで、API（`setPinned`）で固定したとき移動／サイズ変更ボタンにあった DOM フォーカスをピンのボタンへ移す（#685）
+## [7.6.0] - 2026-11-18
+
+**v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。
+派生アプリへの影響: 依存のタグを `v7.5.0` から `v7.6.0` に上げるだけなら、コンパイルエラーになる変更は無い。ただし `DockPanelChange` の `kind` を網羅して扱っているアプリは型エラーになりうる（下の A. 消費側への注意 1）。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v7.5.0` → `v7.6.0`（npm と Rust を同じタグに）。API の削除・改名は無い。追加: dock-svelte（`DockState.panels`・表示/非表示の口・ピン・折りたたみ・`DockPanelChange` の `reparent`）、ui（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、`blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、forms（`isSamePage`）。`beforePanelChange` の呼ばれる回数と種類が増える。visual の基準画像の再生成が要る。 |
+| B. コピーしたテンプレート        | あり | ダッシュボードの道具帯を「表示」メニューに置き換え（`#lib/pageViewMenu.svelte.ts`・`PageViewMenu.svelte` の追加、文言キーの追加と削除）、`settlePrompt.svelte.ts` の `closeOpenMenus` を `@banto/ui` へ移した。取り込みは任意（下の B）。                                                                                                                                                                       |
+| C. DB・設定・配布資産            | なし | migration の追加は無い。`tauri.conf.json` は版数のみ。`.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続。                                                                                                                                                                                                                                                                                               |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/dock-svelte`・`@banto/ui`・`@banto/forms`（ほかのパッケージ・クレートは版数のみ）。
+- 更新: `v7.5.0` → `v7.6.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。渡さなければ既定の挙動は維持）:
+  - dock-svelte: `DockState.panels`（全 pane の一覧）と表示・非表示の口、ドックから隠した pane の元の場所への復帰、浮動 window のピン、浮動 window と docked 区画の折りたたみ、`DockPanelChange` の `reparent`。
+  - ui: `HeaderNav` の `{ kind: 'menu', ... }` 項目、`closeOpenMenus(root?, except?)`、`CommandSpec.blockOnMenu?`・`mod: 'either'`、`MenuItem` の `shortcut?` / `platform?`。
+  - forms: `guardUnsavedChanges` の `isSamePage` と `isSamePath`。
+- 挙動の修正: Modal / Drawer / ConfirmDialog を開くと開いていたメニューを閉じる。狭い viewport で popover の左端が画面外へ出ない。dock-svelte の API（`setPinned`）で固定したとき移動／サイズ変更ボタンにあった DOM フォーカスをピンのボタンへ移す。
+- 移行注意（ソース互換の破壊）: `DockPanelChange` の `kind` を網羅して扱っているアプリ（switch の網羅検査など）は、新しい `reparent` を足さないと型エラーになる（下の 1）。それ以外は無い。
+- 消費側への注意（確かめるもの）:
+  1. **`DockPanelChange` の `kind` を網羅して扱っているアプリ**: `{ kind: 'reparent'; panelId; cause; remount: true }` の分岐を足す。動かしていないのに親が変わって pane が作り直されることを表すので、`capture` して進めればよい。
+  2. **`beforePanelChange` を渡しているアプリ**: ドロップ・undock・✕・非表示・`showPanel` で呼ばれる回数と種類が増える（#681・#683。動かす pane だけでなく、押し出される pane・作り直される残りの pane にも聞く）。新しくできるタブの組への `tab-switch` の `groupId` は仮の id のことがあるので、それで組を引かない（dock-svelte の README、#686）。
+  3. **visual の基準画像（Linux で生成）**: dock の浮動 window・docked 区画・ダッシュボード・ui-demo を写すものは再生成が要る（下の「更新後の確認」）。
+- 依存を上げずに留まれるか: できる（`v7.5.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 変更あり（取り込みは任意。取り込まないと、テンプレートのダッシュボードは旧来の道具帯のまま動く）:
+  - ダッシュボードの pane の開閉を、道具帯から「表示」メニューへ置き換えた（#663 ①-C）。`#lib/pageViewMenu.svelte.ts`（`(app)/+layout.svelte` が context で持つ）と `PageViewMenu.svelte` を追加。文言キー `dashboard.viewMenu` / `dashboard.resetLayout` / `shell.pageMenuNav` を追加し、`dashboard.dockToolbarAria` / `dashboard.dockedAlwaysVisible` / `dashboard.reset` を削除。
+  - `settlePrompt.svelte.ts` の `closeOpenMenus` を `@banto/ui` へ移した（#670）。テンプレート側の定義は消えた。
+- 取り込む手順: ① 依存を `v7.6.0` に上げる。② 上の新規ファイル 2 本と、`(app)/+layout.svelte`・ダッシュボードの画面・`settlePrompt.svelte.ts` の差分をコピーする。③ 辞書（ja / en）の文言キーを追加・削除する。④ `settlePrompt` から自前の `closeOpenMenus` を使っていた箇所は `@banto/ui` の import に替える。⑤ visual の基準画像を再生成する。
+- 独自にダッシュボードの道具帯や `closeOpenMenus` を改造しているアプリは、差分を見て手で合わせる。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 追加なし。
+- 設定キー・`tauri.conf.json`: 設定キーの追加は無い。`tauri.conf.json` は版数のみ。
+- 配布物: 変更なし。
+- 依存監査: `.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続（下の「セキュリティ」）。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（画面が描画される）。`DockPanelChange` を switch で網羅しているアプリは `reparent` を足してから型検査を通す。
+2. `beforePanelChange` を渡している画面: ドロップ・undock・✕・非表示・`showPanel` で期待どおりに聞かれること（呼ばれる回数が増えて二重確認にならないか）。
+3. dock-svelte を使う画面: 浮動 window のピン・折りたたみ、docked 区画の折りたたみ、表示メニューからの表示・非表示と元の場所への復帰を実際に操作して確かめる。メニューを開いたまま Modal / Drawer を開くとメニューが閉じること。
+4. visual の基準画像（Linux で生成）の再生成が要る: dock の浮動 window・docked 区画・ダッシュボード・ui-demo を写すもの（基準画像は Linux で生成する。作業機に Docker / WSL が無ければ visual-baselines の workflow を dispatch して再生成）。
+
+### セキュリティ
+
+- **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）の `.cargo/audit.toml` での一時的な除外は、この版でも継続している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けない。外す合図は、libsqlite3-sys 0.39 以上を許す sqlx のリリース（`cargo update -p libsqlite3-sys` で除外を外す）。
+
+### 変更の一覧
+
+#### 修正: dock-svelte の浮動ウィンドウで、API（`setPinned`）で固定したとき移動／サイズ変更ボタンにあった DOM フォーカスをピンのボタンへ移す（#685）
 
 - #673（折りたたみ）と同じ `$effect.pre` に統合。ほかの場所にあるフォーカスは動かさない。
 
-### 修正: dock-svelte のドロップで押し出される pane にも `beforePanelChange` を聞く（#666）
+#### 修正: dock-svelte のドロップで押し出される pane にも `beforePanelChange` を聞く（#666）
 
 - docked の木へのドロップ（dock / move-docked）と `showPanel` で元の場所へ戻すとき、動かす pane だけでなく、変わってしまうほかの docked の pane にも先に聞くようにした。タブの組へ落とすと選択中から外れるタブは `tab-switch`、新しい分割（単独の pane の真ん中へ落としたときは新しいタブの組）に包まれて作り直される pane（と、動かして分割が 1 つに縮むときに残って作り直される pane）は新しい reason `reparent`（`remount: true`。Svelte の部品は別の親へ移せないので `keepMounted` でも作り直される）。木の順に 1 つずつ聞き、最初の拒否で何も変えずに止め、最後に動かす pane 自身に聞く。答えは 1 つの判断として、最初に聞いたときの構造が適用まで変わらないことを確かめる（変わったら `stale`）。IME 変換中はタブのクリックと同じく保留して `resumeDeferredChange` で再開する。`beforePanelChange` を渡しているアプリは、ドロップで呼ばれる回数と種類が増える
 
-### 修正: dock-svelte で docked の pane を抜くと残る pane が作り直されるとき、残る側にも聞く（#682）
+#### 修正: dock-svelte で docked の pane を抜くと残る pane が作り直されるとき、残る側にも聞く（#682）
 
 - undock（ドッキング中の pane を浮動へ出すドロップ）・✕（`closePanel` / `hidePanel` / `setPanelVisible(false)`）で、分割やタブの組が 1 枚に縮み、残る pane が作り直される（`keepMounted` でも同じ）ときは、先にその pane の `reparent`（`cause` = 抜かれる pane の id）を聞き、最後に抜かれる pane 自身の `undock` / `hide` / `close` を聞く。どれかが拒否なら何も変えない。3 枚以上の分割・タブの組から 1 枚抜くなど、残る pane が作り直されないときは従来どおり抜かれる pane だけ。`beforePanelChange` を渡しているアプリは、これらの操作で呼ばれる回数と種類が増える
 
-### 追加（minor）: dock-svelte の `DockPanelChange` に `reparent`（#666）
+#### 追加（minor）: dock-svelte の `DockPanelChange` に `reparent`（#666）
 
 - `{ kind: 'reparent'; panelId; cause; remount: true }` を追加した（公開 API の追加）。動かしていないのに親が変わって作り直される docked の pane に使う。`panelId` = 作り直される pane、`cause` = その変化を起こした、動かしている pane の id。`kind` を網羅して扱っているアプリは `reparent` を足す（`dock` / `undock` / `move-docked` と同じく `capture` して進めればよい）。
 
-### 追加（minor）: ui の `closeOpenMenus(root?, except?)`（#670）
+#### 追加（minor）: ui の `closeOpenMenus(root?, except?)`（#670）
 
 - 開いている `Menu`（`role="menu"` の popover）を閉じる口を `@banto/ui` から公開した。`root`（既定は document）の下の menu を `hidePopover()` し、閉じたものを返す。`except` の中の menu は閉じない。admin-template の `settlePrompt.svelte.ts` にあった同名の関数はこちらへ移し（テンプレート側の定義は消した）、HeaderNav の menu 項目を閉じるループも同じ関数に寄せた。
 
-### 修正: Modal / Drawer / ConfirmDialog を開くと、開いていたメニューを閉じる（#670）
+#### 修正: Modal / Drawer / ConfirmDialog を開くと、開いていたメニューを閉じる（#670）
 
 - メニューは top layer の popover でモーダルの scrim より上に残り、`layering.ts` ではメニューとモーダルがお互いを「上」と判定して Esc が噛み合わなかった。モーダル層（Modal・Drawer・ConfirmDialog）が開く瞬間に、開いているメニューを閉じる約束にした（層の判定は変えていない。モーダルの中のメニューと、開いた後に開くメニューは対象外）。フォーカスがメニュー項目にあったときは、閉じるときの復帰先をメニューのトリガーにする。
 
-### 追加（minor）: forms の `guardUnsavedChanges` に `isSamePage` の口（#675）
+#### 追加（minor）: forms の `guardUnsavedChanges` に `isSamePage` の口（#675）
 
 - `guardUnsavedChanges({ ..., isSamePage?: (from: URL, to: URL) => boolean })` と `isSamePath(from, to)`（パスが同じならクエリが違っても同じページ）を追加。クエリに画面の状態を持つページで、クエリだけが変わる `goto`・戻る・進むに未保存の確認を出さない。`isApprovedExit` にも判定関数を渡せる。既定（パス+クエリ一致）と、再読み込み・タブを閉じるの扱いは従来どおり
 
-### 修正（patch）: 狭い viewport で Menu などの popover の左端が画面外へ出る（#668）
+#### 修正（patch）: 狭い viewport で Menu などの popover の左端が画面外へ出る（#668）
 
 - `anchoredPopover` の横の補正を、左端が必ず `ANCHORED_POPOVER_GAP` 以上になる形に直した（popover が viewport より広いときは右側へはみ出す）。Menu / HeaderNav / DateInput / DateTimeInput / TimeInput / Tooltip に効く。Menu の `min-width` / `max-width` は `100vw - 2 * var(--banto-space-1)` を超えないようにした
 
-### 追加（minor）: ui のショートカットに `blockOnMenu` と `mod: 'either'`（#669）
+#### 追加（minor）: ui のショートカットに `blockOnMenu` と `mod: 'either'`（#669）
 
 - `CommandSpec.blockOnMenu?`（既定 `true`）。`false` の command はメニューが見えていても止まらない（モーダルの層は今までどおり止める）。`createShortcutDispatcher({ mod?: 'platform' | 'either' })`（既定 `'platform'`）。`'either'` は `Mod` を Ctrl・Meta のどちらでも一致させ、両方押しは一致させない。`ShortcutModMode` 型と `matchShortcut` の第 4 引数を追加
 
-### 追加（minor）: ui の `MenuItem` にショートカット表示（#671）
+#### 追加（minor）: ui の `MenuItem` にショートカット表示（#671）
 
 - `MenuItem` に `shortcut?`（`'Mod+Z'` 形式、`CommandSpec` と同じ）、`platform?`（省略時は初回描画を `'other'`、マウント後に `detectShortcutPlatform()`。SSR と hydration が一致する）、`ariaKeyShortcuts?`（`aria-keyshortcuts` を明示。自動変換より優先）を追加。label の右に keycap テキスト（`formatShortcut`、`aria-hidden`）を出し、アクセシブル名は label のまま、`aria-keyshortcuts` に WAI-ARIA 形式で入れる。変換用に `toAriaKeyShortcuts(shortcut, platform)` を export（`?` `%` `/` `+` など配列依存の記号キーは `undefined` を返し属性を省く）。表示のみでキーの処理はしない
 
-### 追加（minor）: dock-svelte のドッキング中の区画を帯に畳む（#663 ③-B）
+#### 追加（minor）: dock-svelte のドッキング中の区画を帯に畳む（#663 ③-B）
 
 - 分割の子になっている区画（panel または tab グループ）の見出しの折りたたみのボタン（▾／▸）で、column の split では横帯、row の split では縦帯に畳み、もう一度押すと戻る。`DockPanelNode.collapsed?` / `DockTabGroupNode.collapsed?` と `dock.isDockedCollapsed(nodeId)` / `dock.canCollapseDocked(nodeId)` / `dock.setDockedCollapsed(nodeId, collapsed)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。空いた場所は開いている区画に今の比のまま分け（`sizes` は書き換えない）、畳んだ区画に接する divider は動かせない。最後に開いている区画と木の単独の区画は畳めない。畳んでいる間、中身は破棄せず隠し（`hidden` + `inert`）、フォーカスは折りたたみのボタンへ移る。`show` / `showPanel` / `setPanelVisible(true)` は畳んだ区画を展開する。ラベルは `messages.collapsePane` / `expandPane`。docked の pane を写す visual の基準画像は再生成が要る
 
-### 追加（minor）: dock-svelte の浮動 window の折りたたみ（#663 ③-A）
+#### 追加（minor）: dock-svelte の浮動 window の折りたたみ（#663 ③-A）
 
 - 浮動 window のタイトルバーの折りたたみのボタン（▾／▸）で、タイトルバーだけに畳み、もう一度押すと元の大きさに戻る。`FloatingWindow.collapsed?` と `dock.isCollapsed(id)` / `dock.setCollapsed(id, collapsed)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。畳んでいる間、中身は破棄せず隠し（`hidden` + `inert`）、リサイズ（ハンドル・キーボードのモード・`dock.resize`）は止まる。本体の中にフォーカスがあれば折りたたみのボタンへ移す。ラベルは `messages.collapseWindow` / `expandWindow`。visual の基準画像（浮動 window を写すもの）は再生成が要る
 
-### 追加（minor）: dock-svelte の浮動 window にピン（位置と大きさの固定）（#663 ②）
+#### 追加（minor）: dock-svelte の浮動 window にピン（位置と大きさの固定）（#663 ②）
 
 - 浮動 window のタイトルバーのピンのボタンで、位置と大きさを固定できる（ドラッグ・リサイズ・キーボード操作が止まる）。`FloatingWindow.pinned?` と `dock.isPinned(id)` / `dock.setPinned(id, pinned)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。ラベルは `messages.pinWindow` / `unpinWindow`
 
-### 変更: テンプレートのダッシュボードの pane の開閉を「表示」メニューへ（#663 ①-C）
+#### 変更: テンプレートのダッシュボードの pane の開閉を「表示」メニューへ（#663 ①-C）
 
 - admin-template のダッシュボードの「分析ワークスペース」の上にあったツールバー（pane ごとの開閉ボタンと「リセット」）を外し、「表示」メニューに置き換えた。pane ごとのチェックボックス（入れる = `showPanel` で、ドックから隠した pane は元の場所に戻る。外す = ✕ と同じ経路）と「レイアウトを既定に戻す」を並べる。メニューバーが出ている間（`menubar` レイアウト・幅 900px 超・入りきる）はヘッダーのメニューバーの「表示」に、それ以外（サイドバー・ドック、900px 以下、入りきらずドロワーに代わっているとき）はページ見出しの横の「表示」ボタンになり、いつも 1 か所にだけある。ページがシェルへメニューを渡す汎用の口として `#lib/pageViewMenu.svelte.ts`（`(app)/+layout.svelte` が context で持つ）と `PageViewMenu.svelte` を足した。文言キー: `dashboard.viewMenu` / `dashboard.resetLayout` / `shell.pageMenuNav` を足し、使わなくなった `dashboard.dockToolbarAria` / `dashboard.dockedAlwaysVisible` / `dashboard.reset` を消した。visual の基準画像（ダッシュボードを写すもの）は再生成が要る。
 
-### 追加（minor）: dock-svelte に表示メニュー用の一覧と表示・非表示の口、ドックから隠した pane の元の場所への復帰（#663 ①-A）
+#### 追加（minor）: dock-svelte に表示メニュー用の一覧と表示・非表示の口、ドックから隠した pane の元の場所への復帰（#663 ①-A）
 
 - `@banto/dock-svelte` に追加: `DockState.panels`（reactive。全 pane の `{ id, title, icon?, placement, visible }` を id を初めて見た順に）・`DockState.show` / `showPlacement` / `showTabSwitch` / `dismiss` / `isVisible`、`DockHost` の `showPanel(id)` と `setPanelVisible(id, visible)`（外す = ✕ と同じく `keepMounted` は hide・それ以外は close で `beforePanelChange` に聞く。`capabilities` の `close: false` は `refused`）、純関数 `captureDockSlot` / `restoreDockSlot`、型 `DockPanelInfo` / `DockSlot`。docked の pane を ✕・`hidePanel`・`closePanel` で隠すと、閉じた浮動 window に元の場所（タブグループと位置、または分割の側と割合）を `FloatingWindow.dockSlot` として覚え、`showPanel` / `dock.show` でそこへ戻す（場所が消えていれば浮動で開く。タブグループへ選択中のタブとして戻すときは、それまで選択中だった pane からの `tab-switch` としてタブのクリックと同じく先に聞き、IME 変換中は待つ）。`dockSlot` は任意のプロパティで layout の `version` は 2 のまま（古い JSON はそのまま読める）。`dock.isOpen` / `open` / `close` は従来どおり浮動 window だけを見る（`open` はドックから隠した pane を浮動で開き、覚えた場所を捨てる）。修正: `dock.ensureWindow` が docked の id を浮動として重複して足していた。
 
-### 追加（minor）: ui の HeaderNav に操作を並べるメニューの項目（#663 ①-B）
+#### 追加（minor）: ui の HeaderNav に操作を並べるメニューの項目（#663 ①-B）
 
 - `@banto/ui` の `HeaderNav` に、操作を並べるメニューの項目 `{ kind: 'menu', id, label, items: HeaderNavMenuItem[] }` を足した（#663 ①-B。デスクトップのアプリの「表示」メニューの土台）。項目は `action`・`checkbox`（`menuitemcheckbox`。選んでも閉じない）・`separator` で、ui の `Menu` / `MenuItem` で描く。メニューの項目は「その他」へ移らず上段に残る（`fitCount` に任意の `pinned` を足した）。型 `HeaderNavMenuItem` と `headerNavEntryPinned` を公開。既存の `link` / `group` の挙動は変わらない。ui-demo の HeaderNav の見本に「表示」メニューを足した（visual の基準画像 `ui-demo` は再生成が要る）。
 
