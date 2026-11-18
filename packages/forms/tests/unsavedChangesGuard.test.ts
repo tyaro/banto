@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import GuardHarness from './GuardHarness.svelte';
 import {
 	hasUnsavedChanges,
+	isSamePath,
 	type LeaveNavigation,
 	type UnsavedChangesGuard
 } from '../src/unsavedChanges.svelte';
@@ -24,11 +25,11 @@ function fakeRouter() {
 			callbacks.push(callback);
 		},
 		/** Fire one navigation through every registered callback; returns whether it was cancelled. */
-		navigate(type = 'link', to: string | null = '/elsewhere'): boolean {
+		navigate(type = 'link', to: string | null = '/elsewhere', from = '/here'): boolean {
 			let cancelled = false;
 			const navigation: LeaveNavigation = {
 				type,
-				from: { url: new URL('/here', 'http://app.test') },
+				from: { url: new URL(from, 'http://app.test') },
 				to: to ? { url: new URL(to, 'http://app.test') } : null,
 				cancel: () => {
 					cancelled = true;
@@ -249,5 +250,57 @@ describe('guardUnsavedChanges', () => {
 		second.finish();
 		await second.settled;
 		expect(guard.leaving).toBe(false);
+	});
+
+	describe('isSamePage option', () => {
+		function mountDirty(confirm: () => boolean, isSamePage?: (from: URL, to: URL) => boolean) {
+			const router = fakeRouter();
+			render(GuardHarness, {
+				beforeNavigate: router.beforeNavigate,
+				confirm,
+				message: 'discard?',
+				isDirty: () => true,
+				isSamePage
+			});
+			return router;
+		}
+
+		it('does not ask for a goto or popstate that only changes the query', () => {
+			const confirm = vi.fn(() => false);
+			const router = mountDirty(confirm, isSamePath);
+			expect(router.navigate('goto', '/tags?target=b', '/tags?target=a')).toBe(false);
+			expect(router.navigate('popstate', '/tags?target=a', '/tags?target=b')).toBe(false);
+			expect(confirm).not.toHaveBeenCalled();
+			// a different path still asks, and reload still blocks
+			expect(router.navigate('goto', '/other', '/tags?target=a')).toBe(true);
+			expect(confirm).toHaveBeenCalledOnce();
+			expect(router.navigate('leave', null, '/tags')).toBe(true);
+		});
+
+		it('keeps the old behaviour by default (a query change asks)', () => {
+			const confirm = vi.fn(() => false);
+			const router = mountDirty(confirm);
+			expect(router.navigate('goto', '/tags?target=b', '/tags?target=a')).toBe(true);
+			expect(confirm).toHaveBeenCalledOnce();
+		});
+
+		it('is not "leaving" after a query-only move, but is after another path', () => {
+			const router = fakeRouter();
+			let guard!: UnsavedChangesGuard;
+			render(GuardHarness, {
+				beforeNavigate: router.beforeNavigate,
+				confirm: () => true,
+				message: 'discard?',
+				isDirty: () => true,
+				isSamePage: isSamePath,
+				onGuard: (g: UnsavedChangesGuard) => {
+					guard = g;
+				}
+			});
+			router.start('/here?tab=b');
+			expect(guard.leaving).toBe(false);
+			router.start('/other');
+			expect(guard.leaving).toBe(true);
+		});
 	});
 });

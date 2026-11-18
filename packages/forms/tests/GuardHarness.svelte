@@ -12,10 +12,12 @@
 		beforeNavigate: BeforeNavigateHook;
 		confirm: (message: string) => boolean;
 		message: string;
+		isSamePage?: (from: URL, to: URL) => boolean;
 		onGuard?: (guard: UnsavedChangesGuard) => void;
 	}
 
-	let { isDirty, isSaving, beforeNavigate, confirm, message, onGuard }: Props = $props();
+	let { isDirty, isSaving, beforeNavigate, confirm, message, isSamePage, onGuard }: Props =
+		$props();
 
 	// Props are read once here on purpose: the guard is set up at init.
 	// svelte-ignore state_referenced_locally
@@ -24,7 +26,8 @@
 		isSaving: () => isSaving?.() ?? false,
 		beforeNavigate,
 		confirm: (text) => confirm(text),
-		message: () => message
+		message: () => message,
+		isSamePage: isSamePage ? (from, to) => isSamePage(from, to) : undefined
 	});
 	// svelte-ignore state_referenced_locally
 	onGuard?.(guard);

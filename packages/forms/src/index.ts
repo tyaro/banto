@@ -30,6 +30,7 @@ export {
 	decideLeave,
 	isApprovedExit,
 	isSamePage,
+	isSamePath,
 	leaveCheckOutcome,
 	runLeaveCheck,
 	type BeforeNavigateHook,
