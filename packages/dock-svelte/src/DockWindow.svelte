@@ -111,8 +111,11 @@
 	// layout is untouched (shared-primitives-upstream-plan §3.2, #434).
 	const shown = $derived(displayWindowGeometry(win, hostW, hostH, policy.clamp));
 	const caps = $derived(resolveCapabilities(policy, win.id));
-	/** Pinned (#663 ②): position and size are fixed - no drag, no resize handles, no keyboard mode. */
-	const pinned = $derived(win.pinned === true);
+	/** Locked (#663 ②; the pin before #694 PR-3): position and size are fixed - no drag, no resize handles, no keyboard mode. */
+	const locked = $derived(win.locked === true || win.pinned === true);
+	/** The lock button's labels; a consumer's deprecated `pinWindow` / `unpinWindow` override still applies. */
+	const lockLabel = $derived(messages.lockWindow ?? messages.pinWindow ?? t.lockWindow);
+	const unlockLabel = $derived(messages.unlockWindow ?? messages.unpinWindow ?? t.unlockWindow);
 	/**
 	 * Collapsed (#663 ③-A): only the title bar is drawn. The body stays mounted but `hidden` + `inert`
 	 * (out of the tab order and the accessibility tree, its state kept); no resize handles / resize
@@ -132,7 +135,7 @@
 	let collapseBtnEl: HTMLButtonElement | null = $state(null);
 	let resizeBtnEl: HTMLButtonElement | null = $state(null);
 	let moveBtnEl: HTMLButtonElement | null = $state(null);
-	let pinBtnEl: HTMLButtonElement | null = $state(null);
+	let lockBtnEl: HTMLButtonElement | null = $state(null);
 
 	/**
 	 * Title-bar press: a `drag-candidate` session on the shared GestureOwner
@@ -146,7 +149,7 @@
 		event.preventDefault();
 		focusThis();
 		// `move: false` (consumer capability): the title bar still focuses the window but never starts a drag.
-		if (!caps.move || pinned || !windowEl) return;
+		if (!caps.move || locked || !windowEl) return;
 
 		const startX = event.clientX;
 		const startY = event.clientY;
@@ -208,7 +211,7 @@
 		// otherwise also bubble into the root's focus handler - harmless (focus
 		// is idempotent) but stopped anyway for clarity.
 		event.stopPropagation();
-		if (pinned || event.button !== 0 || event.isPrimary === false || gesture.active) return;
+		if (locked || event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
 		focusThis();
 
@@ -247,7 +250,7 @@
 			gesture.commitKeyboard();
 			return;
 		}
-		if (pinned || gesture.active) return;
+		if (locked || gesture.active) return;
 		focusThis();
 		gesture.beginKeyboard({
 			kind,
@@ -306,33 +309,33 @@
 	$effect(() => {
 		if (keyMode === 'move' && !caps.move) untrack(() => gesture.cancel('api'));
 	});
-	// Pinned while a drag / resize / keyboard mode is on this window: cancel it, which puts the pre-gesture geometry back.
+	// Locked while a drag / resize / keyboard mode is on this window: cancel it, which puts the pre-gesture geometry back.
 	$effect(() => {
-		if (pinned && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
+		if (locked && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
 	});
 	// Collapsed while a resize (pointer or keyboard) is on this window: cancel it, which puts the pre-gesture geometry back.
 	$effect(() => {
 		if (collapsed && gesture.session?.panelId === win.id && gesture.session.kind === 'resize')
 			untrack(() => gesture.cancel('api'));
 	});
-	// Collapsing hides the body and drops the resize-mode button; pinning drops the move / resize-mode
+	// Collapsing hides the body and drops the resize-mode button; locking drops the move / resize-mode
 	// buttons. If the DOM focus is in one of the vanishing elements, hand it to the button that stays
-	// (collapse button when collapsing, else the pin button) first. `.pre`: the focused element is still
+	// (collapse button when collapsing, else the lock button) first. `.pre`: the focused element is still
 	// rendered here, and a hidden / removed one would otherwise leave the focus on <body>. A focus the
 	// host put elsewhere is left alone. (#673, #685)
 	$effect.pre(() => {
-		// Read both first: a short-circuit would leave `pinned` untracked while collapsed.
+		// Read both first: a short-circuit would leave `locked` untracked while collapsed.
 		const isCollapsed = collapsed;
-		const isPinned = pinned;
-		if (!isCollapsed && !isPinned) return;
+		const isLocked = locked;
+		if (!isCollapsed && !isLocked) return;
 		untrack(() => {
 			const active = document.activeElement;
 			if (!active) return;
 			const collapseGone =
 				isCollapsed && ((!!bodyEl && bodyEl.contains(active)) || active === resizeBtnEl);
-			const pinGone = isPinned && (active === moveBtnEl || active === resizeBtnEl);
+			const lockGone = isLocked && (active === moveBtnEl || active === resizeBtnEl);
 			if (collapseGone) collapseBtnEl?.focus();
-			else if (pinGone) pinBtnEl?.focus();
+			else if (lockGone) lockBtnEl?.focus();
 		});
 	});
 	// Hidden while a gesture / keyboard mode is on this window: end it (see the module doc).
@@ -383,7 +386,7 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="titlebar"
-			class:immovable={!caps.move || pinned}
+			class:immovable={!caps.move || locked}
 			onpointerdown={handleTitlebarPointerDown}
 		>
 			{#if win.icon}
@@ -408,7 +411,7 @@
 			>
 				{collapsed ? '▸' : '▾'}
 			</button>
-			{#if caps.move && !pinned}
+			{#if caps.move && !locked}
 				<button
 					type="button"
 					class="key-btn"
@@ -424,7 +427,7 @@
 					✥
 				</button>
 			{/if}
-			{#if !pinned && !collapsed}
+			{#if !locked && !collapsed}
 				<button
 					type="button"
 					class="key-btn"
@@ -442,15 +445,15 @@
 			{/if}
 			<button
 				type="button"
-				class="pin-btn"
-				bind:this={pinBtnEl}
-				class:active={pinned}
-				aria-label={pinned ? t.unpinWindow(win.title) : t.pinWindow(win.title)}
-				aria-pressed={pinned}
+				class="lock-btn"
+				bind:this={lockBtnEl}
+				class:active={locked}
+				aria-label={locked ? unlockLabel(win.title) : lockLabel(win.title)}
+				aria-pressed={locked}
 				onpointerdown={(event) => event.stopPropagation()}
-				onclick={() => dock.setPinned(win.id, !pinned)}
+				onclick={() => dock.setLocked(win.id, !locked)}
 			>
-				📌
+				{locked ? '🔒' : '🔓'}
 			</button>
 			{#if onPopOut && caps.undock}
 				<button
@@ -496,7 +499,7 @@
 	</div>
 
 	<!-- Resize handles: pointer surfaces, hidden from assistive tech - the keyboard equivalent is the resize-mode button in the titlebar. -->
-	{#each pinned || collapsed ? [] : RESIZE_EDGES as edge (edge)}
+	{#each locked || collapsed ? [] : RESIZE_EDGES as edge (edge)}
 		<div
 			class={`handle handle-${edge}`}
 			aria-hidden="true"
@@ -580,7 +583,7 @@
 
 	.close-btn,
 	.popout-btn,
-	.pin-btn,
+	.lock-btn,
 	.collapse-btn,
 	.key-btn {
 		flex: 0 0 auto;
@@ -613,7 +616,7 @@
 
 	.close-btn:focus-visible,
 	.popout-btn:focus-visible,
-	.pin-btn:focus-visible,
+	.lock-btn:focus-visible,
 	.collapse-btn:focus-visible,
 	.key-btn:focus-visible {
 		outline: none;
@@ -621,8 +624,8 @@
 	}
 
 	.collapse-btn:hover,
-	.pin-btn:hover,
-	.pin-btn.active,
+	.lock-btn:hover,
+	.lock-btn.active,
 	.key-btn:hover,
 	.key-btn.active {
 		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);

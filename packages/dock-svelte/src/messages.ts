@@ -19,9 +19,13 @@ export interface DockMessages {
 	moveWindow?: (title: string) => string;
 	/** Keyboard resize-mode button aria-label (DockWindow titlebar), given the window's title. */
 	resizeWindow?: (title: string) => string;
-	/** Pin button aria-label while the window is NOT pinned (DockWindow titlebar); `aria-pressed` carries the state (#663 ②). */
+	/** Lock button aria-label while the window is NOT locked (DockWindow titlebar); `aria-pressed` carries the state (#663 ②, #694 PR-3). */
+	lockWindow?: (title: string) => string;
+	/** Lock button aria-label while the window IS locked: pressing it unlocks. */
+	unlockWindow?: (title: string) => string;
+	/** @deprecated Use `lockWindow` (#694 PR-3: the pin now means auto-hide). Still honoured when `lockWindow` is not given. Removed in the next major. */
 	pinWindow?: (title: string) => string;
-	/** Pin button aria-label while the window IS pinned: pressing it unpins. */
+	/** @deprecated Use `unlockWindow` (#694 PR-3). Still honoured when `unlockWindow` is not given. Removed in the next major. */
 	unpinWindow?: (title: string) => string;
 	/** Collapse button aria-label while the window is expanded (DockWindow titlebar); `aria-expanded` carries the state (#663 ③-A). */
 	collapseWindow?: (title: string) => string;
@@ -41,6 +45,8 @@ export const defaultDockMessages: Required<DockMessages> = {
 		`${title}をキーボードで移動（矢印で動かす・Shift で大きく・Enter で確定・Esc で取消）`,
 	resizeWindow: (title) =>
 		`${title}をキーボードでサイズ変更（矢印で変える・Shift で大きく・Enter で確定・Esc で取消）`,
+	lockWindow: (title) => `${title}の位置と大きさを固定`,
+	unlockWindow: (title) => `${title}の位置と大きさの固定を外す`,
 	pinWindow: (title) => `${title}の位置と大きさを固定`,
 	unpinWindow: (title) => `${title}の位置と大きさの固定を外す`,
 	collapseWindow: (title) => `${title}を折りたたむ`,

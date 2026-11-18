@@ -69,6 +69,19 @@ function isDockSlot(v: unknown): boolean {
 }
 
 /**
+ * The window's position lock was `pinned` before #694 PR-3 (the pin now means
+ * auto-hide): an older JSON's `pinned: true` reads as `locked: true`, and the
+ * deprecated field is dropped (a copy - the input is never mutated).
+ */
+function migrateLock(win: FloatingWindow): FloatingWindow {
+	if (win.pinned === undefined) return win;
+	const next: FloatingWindow = { ...win };
+	if (next.pinned === true) next.locked = true;
+	delete next.pinned;
+	return next;
+}
+
+/**
  * Validate an untrusted value (parsed JSON or a caller-supplied object) as a
  * v1 or v2 `DockLayout`. Pure. A returned layout is safe to adopt wholesale.
  */
@@ -127,11 +140,12 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 				else if (!Number.isFinite(n)) add('non-finite', `${p}.${key}`);
 				else if (!(n > 0)) add('non-positive-size', `${p}.${key}`);
 			}
+			if (raw.locked !== undefined && typeof raw.locked !== 'boolean') add('shape', `${p}.locked`);
 			if (raw.pinned !== undefined && typeof raw.pinned !== 'boolean') add('shape', `${p}.pinned`);
 			if (raw.collapsed !== undefined && typeof raw.collapsed !== 'boolean')
 				add('shape', `${p}.collapsed`);
 			if (raw.dockSlot !== undefined && !isDockSlot(raw.dockSlot)) add('shape', `${p}.dockSlot`);
-			floating.push(raw as unknown as FloatingWindow);
+			floating.push(migrateLock(raw as unknown as FloatingWindow));
 		});
 	}
 
