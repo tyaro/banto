@@ -41,7 +41,8 @@
  * for groups, overflow into "more"), with its types and pure helpers
  * (`headerNav.ts`: `fitCount`, the arrow-key tables; docs/design/
  * nav-menubar-plan.md - the app keeps the nav definition, routing, `active`,
- * RBAC, the text and the drawer fallback).
+ * RBAC, the text and the drawer fallback). #663: `menu` entries (a
+ * command menu - action / checkbox items - pinned to the top row).
  * #631 PR-1: ThreePaneLayout, the left / centre / right frame (fold, resize
  * handles, drawers at or below its own 900px; `threePane.ts` holds the props
  * and the pure width rules - the app keeps the pane contents, the target's
@@ -151,6 +152,7 @@ export { default as HeaderNav } from './HeaderNav.svelte';
 export {
 	entryActive as headerNavEntryActive,
 	entryCount as headerNavEntryCount,
+	entryPinned as headerNavEntryPinned,
 	fitCount,
 	HEADER_NAV_INSUFFICIENT,
 	HEADER_NAV_RECOVER_SLACK,
@@ -161,6 +163,7 @@ export {
 	type FitCountOptions,
 	type HeaderNavEntry,
 	type HeaderNavLink,
+	type HeaderNavMenuItem,
 	type HeaderNavSection
 } from './headerNav';
 export { default as IconButton } from './IconButton.svelte';

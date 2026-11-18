@@ -26,6 +26,10 @@
 
 - `@banto/dock-svelte` に追加: `DockState.panels`（reactive。全 pane の `{ id, title, icon?, placement, visible }` を id を初めて見た順に）・`DockState.show` / `showPlacement` / `showTabSwitch` / `dismiss` / `isVisible`、`DockHost` の `showPanel(id)` と `setPanelVisible(id, visible)`（外す = ✕ と同じく `keepMounted` は hide・それ以外は close で `beforePanelChange` に聞く。`capabilities` の `close: false` は `refused`）、純関数 `captureDockSlot` / `restoreDockSlot`、型 `DockPanelInfo` / `DockSlot`。docked の pane を ✕・`hidePanel`・`closePanel` で隠すと、閉じた浮動 window に元の場所（タブグループと位置、または分割の側と割合）を `FloatingWindow.dockSlot` として覚え、`showPanel` / `dock.show` でそこへ戻す（場所が消えていれば浮動で開く。タブグループへ選択中のタブとして戻すときは、それまで選択中だった pane からの `tab-switch` としてタブのクリックと同じく先に聞き、IME 変換中は待つ）。`dockSlot` は任意のプロパティで layout の `version` は 2 のまま（古い JSON はそのまま読める）。`dock.isOpen` / `open` / `close` は従来どおり浮動 window だけを見る（`open` はドックから隠した pane を浮動で開き、覚えた場所を捨てる）。修正: `dock.ensureWindow` が docked の id を浮動として重複して足していた。
 
+### 追加（minor）: ui の HeaderNav に操作を並べるメニューの項目（#663 ①-B）
+
+- `@banto/ui` の `HeaderNav` に、操作を並べるメニューの項目 `{ kind: 'menu', id, label, items: HeaderNavMenuItem[] }` を足した（#663 ①-B。デスクトップのアプリの「表示」メニューの土台）。項目は `action`・`checkbox`（`menuitemcheckbox`。選んでも閉じない）・`separator` で、ui の `Menu` / `MenuItem` で描く。メニューの項目は「その他」へ移らず上段に残る（`fitCount` に任意の `pinned` を足した）。型 `HeaderNavMenuItem` と `headerNavEntryPinned` を公開。既存の `link` / `group` の挙動は変わらない。ui-demo の HeaderNav の見本に「表示」メニューを足した（visual の基準画像 `ui-demo` は再生成が要る）。
+
 ## [7.5.0] - 2026-11-18
 
 **v7.5.0 — `@banto/ui` の `ThreePaneLayout` を外から扱う 5 つの口（#655）と、`Tabs` の `hideSingleTab`（#659）。下流（banto-industrial）からの要請に応える追加。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。追加の口はすべて任意で、渡さなければ見た目・挙動は変わらない。Rust・DB・テンプレートの変更は無い。
