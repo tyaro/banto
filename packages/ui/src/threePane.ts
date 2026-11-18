@@ -39,6 +39,16 @@ export interface ThreePaneLayoutProps {
 	rightMaxWidth?: number;
 	/** The side panes shrink (right first, down to their minimums) before the centre gets narrower than this. Default 320. */
 	centerMinWidth?: number;
+	/**
+	 * The left pane exists (bindable). `false` = the pane and its band toggle are not rendered (its
+	 * content is unmounted: "close" drops it; folding with `leftCollapsed` keeps it). Does not touch
+	 * `leftCollapsed`. If focus is inside the pane when it goes false, it falls to `body` (the pane
+	 * and its toggle are gone): the component picks no target, the app moves focus itself (e.g. to
+	 * the selected row of the list, after closing from the pane header's close button). Default `true`. No `left` snippet = no pane either way.
+	 */
+	leftOpen?: boolean;
+	/** Same for the right pane. Default `true`. */
+	rightOpen?: boolean;
 	/** Wide layout: the left pane is folded away (bindable). Default `false`. */
 	leftCollapsed?: boolean;
 	/** Wide layout: the right pane is folded away (bindable). Default `false`. */
@@ -52,6 +62,29 @@ export interface ThreePaneLayoutProps {
 	 * panes become drawers over the centre. Default 900.
 	 */
 	narrowBreakpoint?: number;
+	/**
+	 * Decides narrow / wide instead of the measured frame width (`true` = narrow). `narrow` follows
+	 * it. Unset = the frame's own width against `narrowBreakpoint`, as before.
+	 */
+	narrowOverride?: boolean;
+	/**
+	 * Narrow layout: the left drawer is modal (centre `inert`, scrim, focus moves in). `false` = a
+	 * non-modal drawer: the centre stays usable, no scrim, focus is not taken. Esc closes it only
+	 * while focus is inside the drawer (not from the centre, so a cell edit or search box in the
+	 * centre keeps its own Esc); focus goes back to the toggle only if it was inside). Default `true`.
+	 */
+	leftDrawerModal?: boolean;
+	/** Same for the right drawer. Default `true`. */
+	rightDrawerModal?: boolean;
+	/** Output (bindable): the left band toggle button, `undefined` while there is none. Read-only. */
+	leftToggleEl?: HTMLElement;
+	/** Output (bindable): the right band toggle button. Read-only. */
+	rightToggleEl?: HTMLElement;
+	/**
+	 * Called synchronously before a band toggle changes any state. `open` is what the pane will be
+	 * after the press (narrow: the drawer; wide: not folded). Not called for app-side changes.
+	 */
+	onToggle?: (side: 'left' | 'right', open: boolean) => void;
 	/** Output (bindable): whether the narrow layout is in effect. Setting it does nothing. */
 	narrow?: boolean;
 	/** Arrow-key step of the resize handles in px. Default 16. */

@@ -65,6 +65,8 @@ type State = {
 	leftDrawerOpen: boolean;
 	rightDrawerOpen: boolean;
 	narrow: boolean;
+	leftOpen: boolean;
+	rightOpen: boolean;
 };
 const state = (): State => JSON.parse(screen.getByTestId('state').textContent ?? '{}');
 
@@ -338,6 +340,207 @@ describe('ThreePaneLayout - narrow', () => {
 		screen.getByText('Detail').focus();
 		await resize(700);
 		expect(document.activeElement).toBe(rightToggle());
+	});
+});
+
+describe('ThreePaneLayout - outside hooks (#655)', () => {
+	const scrim = () => document.querySelector('[data-three-pane-scrim]');
+
+	it('onToggle runs before the state changes, with the open value after the press', async () => {
+		const calls: [string, boolean, boolean][] = [];
+		const onToggle = (side: 'left' | 'right', open: boolean) =>
+			calls.push([side, open, state().leftCollapsed]);
+		await mount({ onToggle }, 1200);
+		await fireEvent.click(leftToggle());
+		await fireEvent.click(leftToggle());
+		// wide: fold -> open=false (collapsed was still false at call time), unfold -> true
+		expect(calls).toEqual([
+			['left', false, false],
+			['left', true, true]
+		]);
+		await resize(800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		await fireEvent.click(rightToggle());
+		await flush();
+		expect(calls.slice(2).map((c) => c.slice(0, 2))).toEqual([
+			['right', true],
+			['right', false]
+		]);
+	});
+
+	it('hands the toggles out via leftToggleEl / rightToggleEl and clears them with the pane', async () => {
+		const { rerender } = await mount({}, 1200);
+		const out = () => screen.getByTestId('toggles');
+		expect(out().getAttribute('data-left')).toBe(leftToggle().getAttribute('aria-controls'));
+		expect(out().getAttribute('data-right')).toBe(rightToggle().getAttribute('aria-controls'));
+		await rerender({ rightOpen: false });
+		await flush();
+		expect(out().getAttribute('data-left')).not.toBe('');
+		expect(out().getAttribute('data-right')).toBe('');
+		await rerender({ leftOpen: false });
+		await flush();
+		expect(out().getAttribute('data-left')).toBe('');
+	});
+
+	it('leftOpen / rightOpen = false removes the pane and its toggle, keeps the fold state', async () => {
+		await mount({ rightCollapsed: true }, 1200);
+		expect(screen.getByText('Detail')).toBeTruthy();
+		cleanup();
+		await mount({ rightOpen: false, rightCollapsed: true, leftOpen: false }, 1200);
+		expect(screen.queryByText('Detail')).toBeNull();
+		expect(screen.queryByText('Node A')).toBeNull();
+		expect(screen.queryByRole('button', { name: R, hidden: true })).toBeNull();
+		expect(screen.queryByRole('button', { name: L, hidden: true })).toBeNull();
+		expect(screen.queryByRole('separator')).toBeNull();
+		expect(state().rightCollapsed).toBe(true);
+		expect(state().rightOpen).toBe(false);
+	});
+
+	it('shows the pane again when open goes back to true, with the fold state intact', async () => {
+		const { rerender } = await mount({ rightCollapsed: true }, 1200);
+		await rerender({ rightOpen: false });
+		await flush();
+		expect(screen.queryByText('Detail')).toBeNull();
+		await rerender({ rightOpen: true });
+		await flush();
+		expect(rightPane()).toBeTruthy();
+		expect(state().rightCollapsed).toBe(true);
+		expect(rightToggle().getAttribute('aria-expanded')).toBe('false');
+	});
+
+	it('removing a pane drops a stale drawer-open state', async () => {
+		const { rerender } = await mount({}, 800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		expect(state().rightDrawerOpen).toBe(true);
+		await rerender({ rightOpen: false });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+		expect(scrim()).toBeNull();
+		expect(isInert(center())).toBe(false);
+	});
+
+	it('a non-modal right drawer: no inert centre, no scrim, no focus grab; Esc from inside closes; one at a time', async () => {
+		await mount({ rightDrawerModal: false }, 800);
+		const body = screen.getByText('Body');
+		body.focus();
+		await fireEvent.click(rightToggle());
+		await flush();
+		expect(state().rightDrawerOpen).toBe(true);
+		expect(isInert(rightPane())).toBe(false);
+		expect(rightPane().hasAttribute('data-esc-layer')).toBe(true);
+		expect(isInert(center())).toBe(false);
+		expect(scrim()).toBeNull();
+		expect(document.activeElement).toBe(body); // focus stays where it was
+		await fireEvent.click(leftToggle()); // the left stays modal: opens, closes the right
+		await flush();
+		expect(state().leftDrawerOpen).toBe(true);
+		expect(state().rightDrawerOpen).toBe(false);
+		expect(scrim()).not.toBeNull();
+		expect(isInert(center())).toBe(true);
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(state().leftDrawerOpen).toBe(false);
+		await fireEvent.click(rightToggle());
+		await flush();
+		screen.getByText('Detail').focus();
+		await fireEvent.keyDown(screen.getByText('Detail'), { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+	});
+
+	it('a non-modal drawer: Esc after focusing inside returns focus to the band toggle (right and left)', async () => {
+		await mount({ leftDrawerModal: false, rightDrawerModal: false }, 800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		screen.getByText('Detail').focus();
+		expect(document.activeElement).toBe(screen.getByText('Detail'));
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+		expect(document.activeElement).toBe(rightToggle());
+		await fireEvent.click(leftToggle());
+		await flush();
+		screen.getByText('Node A').focus();
+		expect(document.activeElement).toBe(screen.getByText('Node A'));
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(state().leftDrawerOpen).toBe(false);
+		expect(document.activeElement).toBe(leftToggle());
+	});
+
+	it('a non-modal drawer ignores Esc from the centre or elsewhere (only focus inside closes it)', async () => {
+		await mount({ rightDrawerModal: false }, 800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		expect(state().rightDrawerOpen).toBe(true);
+		const body = screen.getByText('Body');
+		body.focus();
+		await fireEvent.keyDown(body, { key: 'Escape' });
+		await fireEvent.keyDown(screen.getByText('Outside'), { key: 'Escape' });
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(true);
+		await fireEvent.keyDown(screen.getByText('Detail'), { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+	});
+
+	it('a modal drawer still closes on Esc from outside the pane (window listener)', async () => {
+		await mount({}, 800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		await fireEvent.keyDown(screen.getByText('Outside'), { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+	});
+
+	it('a non-modal drawer does not take focus on open', async () => {
+		await mount({ rightDrawerModal: false }, 800);
+		const outside = screen.getByText('Outside');
+		outside.focus();
+		await fireEvent.click(rightToggle());
+		await flush();
+		expect(document.activeElement).toBe(outside);
+		expect(state().rightDrawerOpen).toBe(true);
+	});
+
+	it('the scrim carries data-three-pane-scrim (role presentation) and closes the drawer', async () => {
+		await mount({}, 800);
+		expect(scrim()).toBeNull();
+		await fireEvent.click(leftToggle());
+		await flush();
+		const el = scrim() as HTMLElement;
+		expect(el.getAttribute('role')).toBe('presentation');
+		await fireEvent.click(el);
+		await flush();
+		expect(state().leftDrawerOpen).toBe(false);
+		expect(scrim()).toBeNull();
+	});
+
+	it('narrowOverride beats the measured width, both ways, and narrow follows it', async () => {
+		await mount({ narrowOverride: true }, 1600);
+		expect(state().narrow).toBe(true);
+		expect(screen.queryByRole('separator')).toBeNull();
+		cleanup();
+		await mount({ narrowOverride: false }, 500);
+		expect(state().narrow).toBe(false);
+		expect(leftHandle()).toBeTruthy();
+	});
+
+	it('defaults change nothing: open, modal, no override', async () => {
+		await mount({}, 1200);
+		expect(state().leftOpen).toBe(true);
+		expect(state().rightOpen).toBe(true);
+		expect(state().narrow).toBe(false);
+		await resize(800);
+		expect(state().narrow).toBe(true);
+		await fireEvent.click(rightToggle());
+		await flush();
+		expect(isInert(center())).toBe(true);
+		expect(scrim()).not.toBeNull();
+		expect(document.activeElement).toBe(screen.getByText('Detail'));
 	});
 });
 

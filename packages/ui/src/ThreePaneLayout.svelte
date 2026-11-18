@@ -16,7 +16,8 @@
 	 *   the scrim or the app (`leftDrawerOpen = false`) closes and focus goes
 	 *   back to where it was (else the toggle). A non-modal layer that follows
 	 *   `layering.ts`'s promises: `data-esc-layer` while open, Esc at window
-	 *   level that yields to a layer above, `visibility: hidden` + `inert` when
+	 *   level (modal drawers only; a non-modal drawer closes on Esc only with
+	 *   focus inside it) that yields to a layer above, `visibility: hidden` + `inert` when
 	 *   closed, never transitioning `visibility` on open.
 	 *
 	 * The panes stay mounted across every switch (wide <-> narrow, fold,
@@ -52,12 +53,20 @@
 		rightMinWidth = D.rightMinWidth,
 		rightMaxWidth = D.rightMaxWidth,
 		centerMinWidth = D.centerMinWidth,
+		leftOpen = $bindable(true),
+		rightOpen = $bindable(true),
 		leftCollapsed = $bindable(false),
 		rightCollapsed = $bindable(false),
 		leftDrawerOpen = $bindable(false),
 		rightDrawerOpen = $bindable(false),
+		leftDrawerModal = true,
+		rightDrawerModal = true,
 		narrowBreakpoint = D.narrowBreakpoint,
+		narrowOverride,
 		narrow = $bindable(false),
+		leftToggleEl = $bindable(),
+		rightToggleEl = $bindable(),
+		onToggle,
 		resizeStep = D.resizeStep,
 		messages
 	}: ThreePaneLayoutProps = $props();
@@ -74,7 +83,11 @@
 
 	/** Frame width from the ResizeObserver; `null` until measured. */
 	let frameWidth: number | null = $state(null);
-	const isNarrow = $derived(isNarrowWidth(frameWidth, narrowBreakpoint));
+	const isNarrow = $derived(narrowOverride ?? isNarrowWidth(frameWidth, narrowBreakpoint));
+
+	/** A pane exists only while its snippet is given and the app has it `open`. */
+	const leftShown = $derived(!!left && leftOpen);
+	const rightShown = $derived(!!right && rightOpen);
 
 	$effect.pre(() => {
 		const value = isNarrow;
@@ -119,8 +132,8 @@
 
 	const leftAsked = $derived(clampPaneWidth(leftWidth, leftMinWidth, leftMaxWidth));
 	const rightAsked = $derived(clampPaneWidth(rightWidth, rightMinWidth, rightMaxWidth));
-	const leftInRow = $derived(!!left && !isNarrow && !leftCollapsed);
-	const rightInRow = $derived(!!right && !isNarrow && !rightCollapsed);
+	const leftInRow = $derived(leftShown && !isNarrow && !leftCollapsed);
+	const rightInRow = $derived(rightShown && !isNarrow && !rightCollapsed);
 	const shown = $derived(
 		fitPaneWidths({
 			available: frameWidth,
@@ -213,13 +226,24 @@
 
 	// --- open / fold --------------------------------------------------------
 
-	const leftOverlay = $derived(!!left && isNarrow && leftDrawerOpen);
-	const rightOverlay = $derived(!!right && isNarrow && rightDrawerOpen);
+	const leftOverlay = $derived(leftShown && isNarrow && leftDrawerOpen);
+	const rightOverlay = $derived(rightShown && isNarrow && rightDrawerOpen);
 	const anyOverlay = $derived(leftOverlay || rightOverlay);
+	/** An open drawer that is modal: centre `inert`, scrim, focus moves in. */
+	const modalOverlay = $derived(
+		(leftOverlay && leftDrawerModal) || (rightOverlay && rightDrawerModal)
+	);
 	const leftHidden = $derived(isNarrow ? !leftDrawerOpen : leftCollapsed);
 	const rightHidden = $derived(isNarrow ? !rightDrawerOpen : rightCollapsed);
 
 	function toggle(side: Side): void {
+		// Before the state changes; `open` is what the pane will be after the press.
+		const wasOpen = isNarrow
+			? side === 'left'
+				? leftDrawerOpen
+				: rightDrawerOpen
+			: !(side === 'left' ? leftCollapsed : rightCollapsed);
+		onToggle?.(side, !wasOpen);
 		if (isNarrow) {
 			if (side === 'left') {
 				leftDrawerOpen = !leftDrawerOpen;
@@ -254,7 +278,12 @@
 		const narrowNow = isNarrow;
 		const l = leftDrawerOpen;
 		const r = rightDrawerOpen;
+		const lGone = !leftShown;
+		const rGone = !rightShown;
 		untrack(() => {
+			// A pane the app took away (`open = false`) leaves no stale drawer state behind.
+			if (lGone && leftDrawerOpen) leftDrawerOpen = false;
+			if (rGone && rightDrawerOpen) rightDrawerOpen = false;
 			if (!measured) return;
 			if (!narrowNow) {
 				if (l) leftDrawerOpen = false;
@@ -264,6 +293,19 @@
 				else leftDrawerOpen = false;
 			}
 			lastLeftOpen = leftDrawerOpen;
+		});
+	});
+
+	// The band's toggles, handed out for the app (read-only output).
+	$effect(() => {
+		void bandEl;
+		void leftShown;
+		void rightShown;
+		const l = toggleOf('left') ?? undefined;
+		const r = toggleOf('right') ?? undefined;
+		untrack(() => {
+			if (leftToggleEl !== l) leftToggleEl = l;
+			if (rightToggleEl !== r) rightToggleEl = r;
 		});
 	});
 
@@ -288,23 +330,36 @@
 	 *   the remembered element, else the toggle (always present in the band).
 	 * - Transitions only: the effect also reads the width, which changes often.
 	 */
-	type Track = { ready: boolean; hidden: boolean; overlay: boolean; trigger: HTMLElement | null };
+	type Track = {
+		ready: boolean;
+		hidden: boolean;
+		overlay: boolean;
+		modal: boolean;
+		trigger: HTMLElement | null;
+	};
 	const tracks: Record<Side, Track> = {
-		left: { ready: false, hidden: false, overlay: false, trigger: null },
-		right: { ready: false, hidden: false, overlay: false, trigger: null }
+		left: { ready: false, hidden: false, overlay: false, modal: false, trigger: null },
+		right: { ready: false, hidden: false, overlay: false, modal: false, trigger: null }
 	};
 
-	function follow(side: Side, hidden: boolean, overlay: boolean, measured: boolean): void {
+	function follow(
+		side: Side,
+		hidden: boolean,
+		overlay: boolean,
+		modal: boolean,
+		measured: boolean
+	): void {
 		const track = tracks[side];
 		const pane = side === 'left' ? leftEl : rightEl;
 		// Unmeasured: the state is a placeholder (wide). Wait for the real one, so
 		// a drawer that starts open is the baseline, not an "opening" that takes focus.
 		if (!measured) return;
 		if (!track.ready) {
-			Object.assign(track, { ready: true, hidden, overlay });
+			Object.assign(track, { ready: true, hidden, overlay, modal });
 			return;
 		}
-		if (overlay && !track.overlay) {
+		// A non-modal drawer opens beside the work: focus stays where it is.
+		if (overlay && modal && !track.overlay) {
 			const active = document.activeElement;
 			track.trigger = active instanceof HTMLElement && active !== document.body ? active : null;
 			void tick().then(() => {
@@ -315,7 +370,7 @@
 		if (hidden && !track.hidden) {
 			const active = document.activeElement;
 			const inside = !!pane && active instanceof Node && pane.contains(active);
-			const dropped = track.overlay && (!active || active === document.body);
+			const dropped = track.overlay && track.modal && (!active || active === document.body);
 			const target = track.overlay ? track.trigger : null;
 			track.trigger = null;
 			if (inside || dropped) {
@@ -327,31 +382,37 @@
 		}
 		track.hidden = hidden;
 		track.overlay = overlay;
+		track.modal = modal;
 	}
 
 	$effect.pre(() => {
 		const hidden = leftHidden;
 		const overlay = leftOverlay;
+		const modal = leftDrawerModal;
 		const measured = frameWidth !== null;
-		untrack(() => follow('left', hidden, overlay, measured));
+		untrack(() => follow('left', hidden, overlay, modal, measured));
 	});
 	$effect.pre(() => {
 		const hidden = rightHidden;
 		const overlay = rightOverlay;
+		const modal = rightDrawerModal;
 		const measured = frameWidth !== null;
-		untrack(() => follow('right', hidden, overlay, measured));
+		untrack(() => follow('right', hidden, overlay, modal, measured));
 	});
 
 	/*
 	 * Esc closes the open drawer (layering.ts promises 1-3): the pane's own
-	 * keydown consumes and stops it (other window handlers never see it); the
-	 * window listener covers focus elsewhere. Both yield to a layer above (a
+	 * keydown consumes and stops it (other window handlers never see it); for a
+	 * modal drawer the window listener covers focus elsewhere (a non-modal one
+	 * closes only with focus inside, so the centre's own Esc is left alone). Both yield to a layer above (a
 	 * Modal opened from the drawer, a menu).
 	 */
 	$effect(() => {
 		if (!anyOverlay) return;
 		const pane = leftOverlay ? leftEl : rightEl;
 		if (!pane) return;
+		// Only one drawer is open at a time; which one decides the modality.
+		const modal = leftOverlay ? leftDrawerModal : rightDrawerModal;
 		const onPane = (event: KeyboardEvent) => {
 			if (event.key !== 'Escape' || event.defaultPrevented) return;
 			if (hasVisibleLayerAbove({ except: pane })) return;
@@ -366,10 +427,12 @@
 			closeDrawers();
 		};
 		pane.addEventListener('keydown', onPane);
-		window.addEventListener('keydown', onWindow);
+		// A non-modal drawer sits beside live work in the centre (a grid cell
+		// edit, a search box): their Esc must not close it, so no window listener.
+		if (modal) window.addEventListener('keydown', onWindow);
 		return () => {
 			pane.removeEventListener('keydown', onPane);
-			window.removeEventListener('keydown', onWindow);
+			if (modal) window.removeEventListener('keydown', onWindow);
 		};
 	});
 </script>
@@ -381,7 +444,7 @@
 	class:three-pane--settled={settled}
 	bind:this={rootEl}
 >
-	{#if left}
+	{#if left && leftOpen}
 		<aside
 			bind:this={leftEl}
 			id={leftId}
@@ -415,9 +478,9 @@
 		</aside>
 	{/if}
 
-	<div class="three-pane__center" inert={anyOverlay}>
+	<div class="three-pane__center" inert={modalOverlay}>
 		<div class="three-pane__band" bind:this={bandEl}>
-			{#if left}
+			{#if leftShown}
 				<IconButton
 					label={t.threePaneLeft()}
 					icon={PanelLeft}
@@ -429,7 +492,7 @@
 			<div class="three-pane__title">
 				{#if titleContent}{@render titleContent()}{:else if title}{title}{/if}
 			</div>
-			{#if right}
+			{#if rightShown}
 				<IconButton
 					label={t.threePaneRight()}
 					icon={PanelRight}
@@ -442,7 +505,7 @@
 		<div class="three-pane__body">{@render children()}</div>
 	</div>
 
-	{#if right}
+	{#if right && rightOpen}
 		<aside
 			bind:this={rightEl}
 			id={rightId}
@@ -476,9 +539,14 @@
 		</aside>
 	{/if}
 
-	{#if anyOverlay}
-		<!-- Pointer-only: Esc is the keyboard's way out (layering.ts). -->
-		<div class="three-pane__scrim" role="presentation" onclick={closeDrawers}></div>
+	{#if modalOverlay}
+		<!-- Pointer-only: Esc is the keyboard's way out (layering.ts). `data-three-pane-scrim` is the hook for apps and tests. -->
+		<div
+			class="three-pane__scrim"
+			role="presentation"
+			data-three-pane-scrim=""
+			onclick={closeDrawers}
+		></div>
 	{/if}
 </div>
 
