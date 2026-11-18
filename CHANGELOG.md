@@ -30,6 +30,10 @@
 
 - メニューは top layer の popover でモーダルの scrim より上に残り、`layering.ts` ではメニューとモーダルがお互いを「上」と判定して Esc が噛み合わなかった。モーダル層（Modal・Drawer・ConfirmDialog）が開く瞬間に、開いているメニューを閉じる約束にした（層の判定は変えていない。モーダルの中のメニューと、開いた後に開くメニューは対象外）。フォーカスがメニュー項目にあったときは、閉じるときの復帰先をメニューのトリガーにする。
 
+### 追加（minor）: forms の `guardUnsavedChanges` に `isSamePage` の口（#675）
+
+- `guardUnsavedChanges({ ..., isSamePage?: (from: URL, to: URL) => boolean })` と `isSamePath(from, to)`（パスが同じならクエリが違っても同じページ）を追加。クエリに画面の状態を持つページで、クエリだけが変わる `goto`・戻る・進むに未保存の確認を出さない。`isApprovedExit` にも判定関数を渡せる。既定（パス+クエリ一致）と、再読み込み・タブを閉じるの扱いは従来どおり
+
 ### 追加（minor）: ui のショートカットに `blockOnMenu` と `mod: 'either'`（#669）
 
 - `CommandSpec.blockOnMenu?`（既定 `true`）。`false` の command はメニューが見えていても止まらない（モーダルの層は今までどおり止める）。`createShortcutDispatcher({ mod?: 'platform' | 'either' })`（既定 `'platform'`）。`'either'` は `Mod` を Ctrl・Meta のどちらでも一致させ、両方押しは一致させない。`ShortcutModMode` 型と `matchShortcut` の第 4 引数を追加
