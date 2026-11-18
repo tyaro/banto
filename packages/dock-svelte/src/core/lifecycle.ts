@@ -57,7 +57,9 @@
  *   a Svelte component cannot be moved to another parent, so this holds
  *   for `keepMounted` panes as well). `requestPlacement` asks each of them
  *   first (`tab-switch` / `reparent`), then the moved pane, and applies
- *   once all agreed on the same structure.
+ *   once all agreed on the same structure. Taking a docked pane OUT of the
+ *   tree (hide / close / undock, #682) asks the pane a shrinking split or
+ *   tab group leaves, as `reparent`, the same way (`requestRemoval`).
  *
  * ## IME composition (plan §3.5 / §4.2)
  *
@@ -93,7 +95,7 @@ import { getContext, setContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { displacedChanges } from './mounts';
 import { restoreDockSlot } from './slot';
-import { findNode, findParent, structureKey } from './tree';
+import { findNode, findParent, removePanel, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
 import type { DockNode, DockPanelNode } from '../types';
 
@@ -291,7 +293,9 @@ export class PanelLifecycle {
 			panelId,
 			remount: this.#isDocked(panelId) || !this.keepMounted(panelId)
 		});
-		return this.request(describe(), () => this.#takeOffScreen(panelId), { describe });
+		const apply = (): void => this.#takeOffScreen(panelId);
+		if (where === 'docked') return this.requestRemoval(panelId, describe, apply, 'hide');
+		return this.request(describe(), apply, { describe });
 	}
 
 	/** Take the pane off the screen and discard its content (module doc). A hidden pane whose content is not kept = nothing to ask. */
@@ -299,11 +303,38 @@ export class PanelLifecycle {
 		const where = this.#whereIs(panelId);
 		if (where === null) return Promise.resolve('stale');
 		if (where === 'hidden' && !this.isRetained(panelId)) return Promise.resolve('applied');
-		return this.request({ kind: 'close', panelId }, () => {
+		const apply = (): void => {
 			// Discard first, so the window is not drawn hidden for one update.
 			this.discarded.add(panelId);
 			this.#takeOffScreen(panelId);
-		});
+		};
+		if (where === 'docked')
+			return this.requestRemoval(panelId, () => ({ kind: 'close', panelId }), apply, 'close');
+		return this.request({ kind: 'close', panelId }, apply);
+	}
+
+	/**
+	 * A change that takes the docked pane `panelId` out of the docked tree
+	 * (hide / close / undock, #682). A split or tab group that shrinks to one
+	 * child draws one level less, so the pane that is left is mounted again
+	 * (`core/mounts.ts`, `keepMounted` too): it is asked first as `reparent`
+	 * (`cause` = `panelId`), then `own` (the leaving pane's own change), through
+	 * `requestPlacement`. A removal that leaves every other pane's chain as it
+	 * was (3+ children, a bare pane) asks only `own`.
+	 */
+	requestRemoval(
+		panelId: string,
+		own: () => DockPanelChange | null,
+		apply: () => void,
+		target: unknown
+	): Promise<DockPanelChangeOutcome> {
+		return this.requestPlacement(
+			panelId,
+			() => (this.#isDocked(panelId) ? own() : null),
+			() => (this.#isDocked(panelId) ? removePanel(this.#dock.layout.docked, panelId) : undefined),
+			apply,
+			target
+		);
 	}
 
 	/** The ✕ button: `hide` for a `keepMounted` pane, `close` otherwise. */

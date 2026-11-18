@@ -80,16 +80,18 @@ describe('a View menu built on dock.panels', () => {
 		});
 
 		expect(await host().setPanelVisible('a', false)).toBe('refused');
-		expect(calls).toEqual([{ kind: 'close', panelId: 'a' }]);
+		// The split shrinks to B, which is mounted again: asked first (#682).
+		expect(calls).toEqual([{ kind: 'reparent', panelId: 'b', cause: 'a', remount: true }]);
 		expect(docked(dock)).toEqual(['a', 'b']);
 
 		allow = true;
 		expect(await host().setPanelVisible('a', false)).toBe('applied');
 		expect(docked(dock)).toEqual(['b']);
 		expect(dock.isVisible('a')).toBe(false);
+		expect(calls).toHaveLength(3); // reparent b (refused), reparent b, close a
 		// Already hidden: nothing to ask.
 		expect(await host().setPanelVisible('a', false)).toBe('applied');
-		expect(calls).toHaveLength(2);
+		expect(calls).toHaveLength(3);
 	});
 
 	it('unchecking a keepMounted pane hides it (hide, not close)', async () => {
@@ -99,13 +101,16 @@ describe('a View menu built on dock.panels', () => {
 			keepMounted: (id: string) => id === 'a'
 		});
 		expect(await host().setPanelVisible('a', false)).toBe('applied');
-		expect(calls).toEqual([{ kind: 'hide', panelId: 'a', remount: true }]);
+		expect(calls).toEqual([
+			{ kind: 'reparent', panelId: 'b', cause: 'a', remount: true },
+			{ kind: 'hide', panelId: 'a', remount: true }
+		]);
 		expect(dock.isVisible('a')).toBe(false);
 
 		// Its content is still mounted (hidden) in the floating layer: re-docking it is asked as a dock,
 		// after the bare pane B that a split is re-made around (re-mounted, #666).
 		expect(await host().showPanel('a')).toBe('applied');
-		expect(calls.slice(1)).toEqual([
+		expect(calls.slice(2)).toEqual([
 			{ kind: 'reparent', panelId: 'b', cause: 'a', remount: true },
 			{ kind: 'dock', panelId: 'a', remount: true }
 		]);
