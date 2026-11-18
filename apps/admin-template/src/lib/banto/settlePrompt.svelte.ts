@@ -26,6 +26,7 @@
  */
 import { untrack } from 'svelte';
 import type { DraftSettleChoice } from '@banto/forms';
+import { closeOpenMenus } from '@banto/ui';
 
 export interface SettlePrompt {
 	/** A question is showing. Reactive. */
@@ -70,22 +71,6 @@ class Prompt implements SettlePrompt {
 	dispose(): void {
 		this.answer('cancel');
 		this.#disposed = true;
-	}
-}
-
-/**
- * Closes every open ui `Menu` (`role="menu"` popover) in the document - the
- * same `hidePopover()` HeaderNav uses for its menu entries. A no-op without a
- * DOM (unit tests in node, SSR).
- */
-export function closeOpenMenus(doc: Document | undefined = globalThis.document): void {
-	for (const menu of doc?.querySelectorAll<HTMLElement>('[role="menu"][popover]') ?? []) {
-		if (!menu.matches(':popover-open')) continue;
-		try {
-			menu.hidePopover();
-		} catch {
-			// already closed
-		}
 	}
 }
 

@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+### 追加（minor）: ui の `closeOpenMenus(root?, except?)`（#670）
+
+- 開いている `Menu`（`role="menu"` の popover）を閉じる口を `@banto/ui` から公開した。`root`（既定は document）の下の menu を `hidePopover()` し、閉じたものを返す。`except` の中の menu は閉じない。admin-template の `settlePrompt.svelte.ts` にあった同名の関数はこちらへ移し（テンプレート側の定義は消した）、HeaderNav の menu 項目を閉じるループも同じ関数に寄せた。
+
+### 修正: Modal / Drawer / ConfirmDialog を開くと、開いていたメニューを閉じる（#670）
+
+- メニューは top layer の popover でモーダルの scrim より上に残り、`layering.ts` ではメニューとモーダルがお互いを「上」と判定して Esc が噛み合わなかった。モーダル層（Modal・Drawer・ConfirmDialog）が開く瞬間に、開いているメニューを閉じる約束にした（層の判定は変えていない。モーダルの中のメニューと、開いた後に開くメニューは対象外）。フォーカスがメニュー項目にあったときは、閉じるときの復帰先をメニューのトリガーにする。
+
 ### 追加（minor）: dock-svelte のドッキング中の区画を帯に畳む（#663 ③-B）
 
 - 分割の子になっている区画（panel または tab グループ）の見出しの折りたたみのボタン（▾／▸）で、column の split では横帯、row の split では縦帯に畳み、もう一度押すと戻る。`DockPanelNode.collapsed?` / `DockTabGroupNode.collapsed?` と `dock.isDockedCollapsed(nodeId)` / `dock.canCollapseDocked(nodeId)` / `dock.setDockedCollapsed(nodeId, collapsed)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。空いた場所は開いている区画に今の比のまま分け（`sizes` は書き換えない）、畳んだ区画に接する divider は動かせない。最後に開いている区画と木の単独の区画は畳めない。畳んでいる間、中身は破棄せず隠し（`hidden` + `inert`）、フォーカスは折りたたみのボタンへ移る。`show` / `showPanel` / `setPanelVisible(true)` は畳んだ区画を展開する。ラベルは `messages.collapsePane` / `expandPane`。docked の pane を写す visual の基準画像は再生成が要る
