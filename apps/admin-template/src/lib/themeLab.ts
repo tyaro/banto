@@ -115,14 +115,106 @@ export function exportCss(state: LabState): string {
 	return [...out, ...notes].join('\n') + '\n';
 }
 
+// --- density --------------------------------------------------------------
+
+/**
+ * Every variable that moves along the density axis, with its standard value
+ * (the `:root` value of banto.css; `initial` = not set on `:root`, so the
+ * component's own fallback applies). The preview sets all of them explicitly,
+ * so it does not depend on the density of the shell around it. A test keeps
+ * these tables equal to banto.css.
+ */
+export const STANDARD_DENSITY_VARS: Readonly<Record<string, string>> = {
+	'--banto-font-size': '14px',
+	'--banto-space-1': '0.25rem',
+	'--banto-space-2': '0.5rem',
+	'--banto-space-3': '0.75rem',
+	'--banto-space-4': '1rem',
+	'--banto-space-5': '1.25rem',
+	'--banto-space-6': '1.5rem',
+	'--banto-space-7': '2rem',
+	'--banto-space-8': '3rem',
+	'--banto-font-size-xs': '0.8572rem',
+	'--banto-font-size-sm': '0.9286rem',
+	'--banto-font-size-md': '1rem',
+	'--banto-font-size-base': '1rem',
+	'--banto-font-size-lg': '1.1429rem',
+	'--banto-font-size-xl': '1.4286rem',
+	'--banto-font-size-2xl': '2rem',
+	'--banto-font-size-3xl': '3.4286rem',
+	'--banto-checkbox-size': '1.1rem',
+	'--banto-control-height-sm': '28px',
+	'--banto-control-height': '36px',
+	'--banto-control-height-lg': '40px',
+	'--banto-grid-row-height': '36px',
+	'--banto-grid-header-height': '40px',
+	'--banto-shell-header-height': '48px',
+	'--banto-shell-header-height-compact': '40px',
+	'--banto-shell-launcher-item-size': '44px',
+	'--banto-dock-titlebar-height': '32px',
+	'--banto-dock-button-size': 'initial',
+	'--banto-tree-toggle-size': 'initial'
+};
+
+/** The `[data-banto-density='compact']` block of banto.css. */
+export const COMPACT_DENSITY_VARS: Readonly<Record<string, string>> = {
+	'--banto-control-height': '32px',
+	'--banto-control-height-lg': '36px',
+	'--banto-grid-row-height': '32px',
+	'--banto-grid-header-height': '36px',
+	'--banto-space-3': '0.5rem',
+	'--banto-space-4': '0.75rem',
+	'--banto-space-5': '1rem',
+	'--banto-space-6': '1.25rem'
+};
+
+/** The `[data-banto-density='touch']` block of banto.css. */
+export const TOUCH_DENSITY_VARS: Readonly<Record<string, string>> = {
+	'--banto-font-size': '16px',
+	'--banto-control-height-sm': '40px',
+	'--banto-control-height': '48px',
+	'--banto-control-height-lg': '52px',
+	'--banto-grid-row-height': '52px',
+	'--banto-grid-header-height': '56px',
+	'--banto-shell-header-height': '56px',
+	'--banto-shell-header-height-compact': '48px',
+	'--banto-shell-launcher-item-size': '48px',
+	'--banto-dock-titlebar-height': '40px',
+	'--banto-dock-button-size': 'var(--banto-control-height-sm)',
+	'--banto-tree-toggle-size': 'var(--banto-control-height-sm)'
+};
+
+/** All density variables of one density (standard values overlaid with its block). */
+export function densityVars(density: LabDensity): Record<string, string> {
+	const overrides =
+		density === 'compact' ? COMPACT_DENSITY_VARS : density === 'touch' ? TOUCH_DENSITY_VARS : {};
+	return { ...STANDARD_DENSITY_VARS, ...overrides };
+}
+
+/**
+ * `1.25rem` -> `calc(1.25 * var(--lab-rem))`. `rem` resolves against the
+ * `<html>` of the page (the shell's density), so the preview carries its own
+ * base size in `--lab-rem` instead.
+ */
+function remToLab(value: string): string {
+	const m = /^([\d.]+)rem$/.exec(value);
+	return m ? `calc(${m[1]} * var(--lab-rem))` : value;
+}
+
 /**
  * Inline style of the preview element. It sets every knob explicitly (also at
  * the default) and `--banto-radius`, which banto.css resolves on `:root` to the
- * md value, so a nested override of md alone would not reach it.
+ * md value, so a nested override of md alone would not reach it. The density is
+ * set the same way: explicit values for every variable of the axis (rem scales
+ * through `--lab-rem`), so it holds whatever density the shell has.
  */
 export function previewStyle(state: LabState): string {
 	const r = radiusScale(state.radiusMd);
+	const vars = densityVars(state.density);
 	return [
+		`--lab-rem: ${vars['--banto-font-size']}`,
+		...Object.entries(vars).map(([name, value]) => `${name}: ${remToLab(value)}`),
+		`font-size: ${vars['--banto-font-size']}`,
 		`--banto-brand-hue: ${clampHue(state.hue)}`,
 		`--banto-radius-sm: ${r.sm}px`,
 		`--banto-radius-md: ${r.md}px`,

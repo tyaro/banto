@@ -1107,6 +1107,7 @@
   "themeLab.density.standard": "標準",
   "themeLab.density.compact": "compact",
   "themeLab.density.touch": "touch",
+  "themeLab.density.hint": "プレビューは画面全体の密度とは別に、選んだ密度の値をすべて当てます。部品の中に直接書かれた rem だけは追従しません。",
   "themeLab.font.label": "フォント",
   "themeLab.font.system": "システム既定",
   "themeLab.font.gothic": "ゴシック（OS 同梱）",

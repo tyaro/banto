@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import rawCss from '../../../../packages/theme/src/css/banto.css?raw';
 import {
+	COMPACT_DENSITY_VARS,
+	STANDARD_DENSITY_VARS,
+	TOUCH_DENSITY_VARS,
+	densityVars,
 	DEFAULT_FONT_STACK,
 	DEFAULT_HUE,
 	DEFAULT_RADIUS,
@@ -83,6 +87,22 @@ describe('previewStyle', () => {
 		expect(style).toContain('--banto-radius-md: 10px');
 		expect(style).toContain('--banto-radius: 10px');
 		expect(style).toContain(`--banto-font-family: ${DEFAULT_FONT_STACK}`);
+	});
+
+	it('sets the density variables explicitly, rem through --lab-rem', () => {
+		const std = previewStyle(state({ density: 'standard' }));
+		expect(std).toContain('--lab-rem: 14px');
+		expect(std).toContain('--banto-control-height: 36px');
+		expect(std).toContain('--banto-space-4: calc(1 * var(--lab-rem))');
+		expect(std).toContain('--banto-dock-button-size: initial');
+		const compact = previewStyle(state({ density: 'compact' }));
+		expect(compact).toContain('--banto-control-height: 32px');
+		expect(compact).toContain('--banto-space-4: calc(0.75 * var(--lab-rem))');
+		const touch = previewStyle(state({ density: 'touch' }));
+		expect(touch).toContain('--lab-rem: 16px');
+		expect(touch).toContain('--banto-font-size: 16px');
+		expect(touch).toContain('font-size: 16px');
+		expect(densityVars('touch')['--banto-control-height-sm']).toBe('40px');
 	});
 });
 
@@ -203,5 +223,34 @@ describe('themeLab.ts mirrors banto.css', () => {
 		expect([d4.l, d4.c]).toEqual([0.285, 0.013]);
 		const pt = oklch(dark, '--banto-primary-text');
 		expect([pt.l, pt.c]).toEqual([TOKENS.dark.primaryText.l, TOKENS.dark.primaryText.c]);
+	});
+
+	// The preview sets every density variable itself (the shell may be in another
+	// density), so the tables must equal banto.css, and a variable added to a
+	// density block must be added to the table.
+	describe('density tables', () => {
+		function vars(rules: string): Record<string, string> {
+			const out: Record<string, string> = {};
+			const plain = rules.replace(/\/\*[\s\S]*?\*\//g, '');
+			for (const m of plain.matchAll(/(--banto-[\w-]+):\s*([^;]+);/g))
+				out[m[1]] = m[2].replace(/\s+/g, ' ').trim();
+			return out;
+		}
+		const rootVars = vars(root);
+		const compact = vars(block("[data-banto-density='compact']"));
+		const touch = vars(block("[data-banto-density='touch']"));
+
+		it('standard values equal :root (initial = not set there)', () => {
+			for (const [name, value] of Object.entries(STANDARD_DENSITY_VARS))
+				expect(value, name).toBe(rootVars[name] ?? 'initial');
+		});
+		it('compact and touch equal their blocks', () => {
+			expect(COMPACT_DENSITY_VARS).toEqual(compact);
+			expect(TOUCH_DENSITY_VARS).toEqual(touch);
+		});
+		it('every variable of a density block is in the standard table', () => {
+			for (const name of [...Object.keys(compact), ...Object.keys(touch)])
+				expect(Object.keys(STANDARD_DENSITY_VARS), name).toContain(name);
+		});
 	});
 });

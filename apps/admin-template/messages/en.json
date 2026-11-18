@@ -1107,6 +1107,7 @@
   "themeLab.density.standard": "Standard",
   "themeLab.density.compact": "compact",
   "themeLab.density.touch": "touch",
+  "themeLab.density.hint": "The preview applies every value of the chosen density, whatever density the page itself has. Only a rem written directly inside a component does not follow.",
   "themeLab.font.label": "Font",
   "themeLab.font.system": "System default",
   "themeLab.font.gothic": "Gothic (OS-bundled)",

@@ -84,3 +84,39 @@ test('contrast: ratios are listed and the default hue passes', async ({ page }) 
 	await expect(list.getByText('primary の上の文字', { exact: true })).toBeVisible();
 	await expect(page.getByTestId('theme-lab-contrast-note')).toHaveText('すべて 4.5:1 以上です。');
 });
+
+// The preview carries its own density: the values do not come from the shell.
+const previewPx = (page: import('@playwright/test').Page, name: string) =>
+	page.evaluate((n) => {
+		const el = document.querySelector('[data-testid="theme-lab-preview"]') as HTMLElement;
+		const probe = document.createElement('div');
+		probe.style.width = `var(${n})`;
+		el.appendChild(probe);
+		const px = getComputedStyle(probe).width;
+		probe.remove();
+		return px;
+	}, name);
+
+test('density: standard in the preview holds while the shell is compact', async ({ page }) => {
+	await page.goto('/theme-lab');
+	await expect(page.getByTestId('theme-lab-preview')).toBeVisible({ timeout: 60_000 });
+	await page.evaluate(() => document.documentElement.setAttribute('data-banto-density', 'compact'));
+	expect(await previewPx(page, '--banto-control-height')).toBe('36px');
+	expect(await previewPx(page, '--banto-space-4')).toBe('14px');
+});
+
+test('density: touch in the preview is 16px based while the shell is standard', async ({
+	page
+}) => {
+	await page.goto('/theme-lab');
+	const preview = page.getByTestId('theme-lab-preview');
+	await expect(async () => {
+		await page.getByText('touch', { exact: true }).click({ timeout: 2_000 });
+		await expect(preview).toHaveAttribute('data-banto-density', 'touch', { timeout: 2_000 });
+	}).toPass({ timeout: 60_000 });
+	expect(await previewPx(page, '--banto-space-4')).toBe('16px');
+	expect(await previewPx(page, '--banto-control-height')).toBe('48px');
+	const lg = parseFloat(await previewPx(page, '--banto-font-size-lg'));
+	expect(lg).toBeGreaterThan(18.2);
+	expect(lg).toBeLessThan(18.4);
+});

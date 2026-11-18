@@ -257,6 +257,7 @@
 							name="theme-lab-density"
 							labelledby="theme-lab-density-label"
 						/>
+						<span class="hint">{m['themeLab.density.hint']()}</span>
 					</div>
 
 					<div class="knob">
