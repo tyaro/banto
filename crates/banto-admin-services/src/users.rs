@@ -618,8 +618,11 @@ impl UsersService {
         let dialect = self.db.dialect();
         // AssertSqlSafe (all statements below): only `dialect` output and the
         // `VERSION_BUMP` constant are interpolated; values are bound.
+        // The admin-count column of `GuardRow` is not needed here; `CAST(.. AS
+        // BIGINT)` because a bare `0` is INT4 on PostgreSQL and the row decodes
+        // it as `i64` (the other guards put a `COUNT(*)`, already BIGINT).
         let guard_sql = format!(
-            "SELECT role, 0, id, username, display_name, created_at, version \
+            "SELECT role, CAST(0 AS BIGINT), id, username, display_name, created_at, version \
              FROM users WHERE id = {}",
             dialect.placeholder(1),
         );
