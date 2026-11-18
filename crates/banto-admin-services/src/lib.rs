@@ -17,6 +17,10 @@
 //! SQLite-only (theme A PR4: a Postgres handle yields an explicit error, never
 //! a panic). The REST router moves in a later PR.
 //!
+//! [`permissions`] (Issue #697, user-permissions-plan §5) adds the per-user
+//! permission vocabulary - a second axis next to [`Role`] - which
+//! `UsersService` reads and writes (`user_permissions`, migration 0013).
+//!
 //! [`system_metrics`] (ADR-0013, Issue #185) adds host/process CPU and memory
 //! sampling behind the opt-in `system-metrics` feature (`sysinfo`, feature
 //! `["system"]` only) - a deliberate exception to §3's "add no dependency"
@@ -37,10 +41,14 @@
 
 pub mod audit;
 pub mod backup;
+pub mod permissions;
 pub mod rbac;
 pub mod settings;
 pub mod system_info;
 pub mod system_metrics;
 pub mod users;
 
+pub use permissions::{
+    PermissionCatalog, PermissionDiff, PermissionEntry, PermissionKey, SessionPermissions,
+};
 pub use rbac::Role;

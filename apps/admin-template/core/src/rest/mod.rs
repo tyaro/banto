@@ -15,7 +15,7 @@
 //! | POST   | `/api/auth/login`    | `{username,password}` | `{success,error?,token?}` |
 //! | POST   | `/api/auth/logout`   | -              | 200                    |
 //! | GET    | `/api/auth/check`    | -              | `bool`                 |
-//! | GET    | `/api/auth/identity` | -              | `Identity \| null`     |
+//! | GET    | `/api/auth/identity` | -              | `Identity \| null` (`permissions` included, #697) |
 //! | POST   | `/api/auth/change-password` | `{currentPassword,newPassword}` | `{success}` (auth required) |
 //! | GET    | `/api/events`        | -              | SSE stream of `ServerEvent` |
 //! | GET    | `/api/login-notice`  | -              | `{notice}` (NO auth required) |
@@ -30,9 +30,10 @@
 // [scaffold:items] end
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityView` (admin) |
-//! | PUT    | `/api/users/{id}`    | `{displayName,role,version?}` | `UserSummary` (admin; stale `version` -> 409, #651) |
+//! | PUT    | `/api/users/{id}`    | `{displayName,role,version?,permissions?}` | `UserSummary` (admin; stale `version` -> 409, #651; unknown permission -> 422, #697) |
 //! | POST   | `/api/users/{id}/reset-password` | `{newPassword}` | `{success}` (admin) |
 //! | DELETE | `/api/users/{id}?version=` | -        | 204 (admin; stale `version` -> 409, #651) |
+//! | GET    | `/api/permissions`   | -              | `PermissionEntry[]` (admin; the app's catalog, #697) |
 //! | GET    | `/api/ui-settings/{key}` | -          | `{value: string \| null}` (any role) |
 //! | PUT    | `/api/ui-settings/{key}` | `{value}`  | 204 (any role)          |
 //! | POST   | `/api/audit-log/list?asOfId=` | `ListParams` | `AuditLogList` (`ListResult` + `asOfId`/`deletionEpoch`, admin; #248) |

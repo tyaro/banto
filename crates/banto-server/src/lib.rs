@@ -35,8 +35,8 @@ pub mod static_files;
 
 pub use auth::{
     auth_routes, rate_limit_key, require_auth, AuthState, AuthenticatedSession, Identity,
-    LoginOutcome, RateLimitPolicy, SessionAccount, SessionLookup, SessionStamp, SessionValidation,
-    TokenPolicy,
+    LoginOutcome, PermissionReader, RateLimitPolicy, SessionAccount, SessionLookup,
+    SessionPermissions, SessionStamp, SessionValidation, TokenPolicy,
 };
 pub use csrf::require_banto_client_header;
 pub use events::{sse_route, ServerEvent};

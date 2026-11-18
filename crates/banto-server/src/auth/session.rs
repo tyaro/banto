@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+pub use banto_admin_services::permissions::SessionPermissions;
 use banto_core::BantoError;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize, Serializer};
@@ -72,6 +73,21 @@ pub struct SessionAccount {
 pub type SessionLookup = Arc<
     dyn Fn(String) -> BoxFuture<'static, Result<Option<SessionAccount>, BantoError>> + Send + Sync,
 >;
+
+/// Reads the per-user permissions of account `account_id` (the
+/// [`SessionStamp::account_id`] of an account session) for one request
+/// (Issue #697, user-permissions-plan §5). Installed with
+/// [`crate::AuthState::with_permission_reader`]; for `banto-admin-services`'
+/// `UsersService` use `crate::routes::user_permission_reader`. `Err` means
+/// the store could not answer (the request fails).
+///
+/// The permissions travel next to the session, not inside it: [`Identity`]
+/// and the other session structs are built with struct literals by derived
+/// apps, so they get no new field (owner decision, user-permissions-plan
+/// §8-7). [`crate::require_auth`] puts the result into the request
+/// extensions as a [`SessionPermissions`].
+pub type PermissionReader =
+    Arc<dyn Fn(i64) -> BoxFuture<'static, Result<SessionPermissions, BantoError>> + Send + Sync>;
 
 /// How an [`AuthState`] decides that a session is still valid (Issue #204).
 /// A required argument of every constructor, so no application ends up

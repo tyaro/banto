@@ -29,6 +29,24 @@ import { CSRF_HEADER, getBantoMode } from './setup';
 
 export type Role = 'admin' | 'editor' | 'viewer';
 
+/**
+ * A per-user permission key (Issue #697, user-permissions-plan §8-1), e.g.
+ * `equipment.operate`: a second axis next to the role, granted by an admin.
+ * Named `UserPermission` so it is not mistaken for the resource-operation
+ * `ResourcePermissions` (`lib/resource/permissions.ts`). The server decides;
+ * the screen only hides what the session cannot do.
+ */
+export type UserPermission = string;
+
+/** Mirrors `banto_admin_services::permissions::PermissionEntry`: one permission the app registered (`GET /api/permissions` / `permissions_catalog`). */
+export interface PermissionEntry {
+	key: UserPermission;
+	/** Message key of the display name (the app's own messages). */
+	labelKey: string;
+	/** Message key of the description. */
+	descriptionKey: string;
+}
+
 /** Mirrors `admin_template_core::users::UserSummary` (camelCase on the wire). */
 export interface UserSummary {
 	id: number;
@@ -38,6 +56,11 @@ export interface UserSummary {
 	createdAt: string;
 	/** Optimistic-lock version (Issue #651); send back the one read when the form opened. */
 	version: number;
+	/**
+	 * The permissions stored for the account (Issue #697), sorted - including
+	 * keys the app no longer registers (show those as unregistered).
+	 */
+	permissions: UserPermission[];
 }
 
 /** Mirrors `users_create`'s `UserIdentityView` (Tauri and REST alike) - no `createdAt` (see its doc comment). */

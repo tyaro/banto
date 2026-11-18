@@ -40,10 +40,16 @@ use admin_template_core::settings::{
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
 use admin_template_core::system_metrics::SystemMetricsSampler;
-use admin_template_core::users::{Role, UserIdentity, UserIdentityView, UserSummary, UsersService};
+use admin_template_core::users::{
+    PermissionEntry, PermissionKey, Role, SessionPermissions, UserIdentity, UserIdentityView,
+    UsersService,
+};
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
-use banto_server::routes::{MetricsProbe, SystemInfo};
+use banto_server::routes::{
+    list_users_with_permissions, permission_catalog_entries, MetricsProbe, SystemInfo,
+    UserWithPermissions,
+};
 use banto_server::{
     bind as bind_listener, bind_with_port_fallback, bind_without_fallback, lan_addrs_for_bind,
     lan_urls_for_bind, reach_check_router, static_router, with_security_headers, AuthState,
@@ -365,6 +371,10 @@ struct Identity {
     /// `Role: Deserialize` for a command return value that is only ever
     /// serialized outbound.
     role: String,
+    /// Issue #697: the session's per-user permissions (registered keys
+    /// only, sorted) - the same field as REST's `GET /api/auth/identity`.
+    /// For the screen only; commands decide with [`require_permission`].
+    permissions: SessionPermissions,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -384,7 +394,7 @@ struct AuthStatusResult {
     viewer_public: bool,
 }
 
-fn identity_from(user: &UserIdentity) -> Identity {
+fn identity_from(user: &UserIdentity, permissions: SessionPermissions) -> Identity {
     // Convention shared with `admin_template_core::rest` and `banto-serve`:
     // `Identity.id` is the account's `username` (not `UserIdentity.id`'s
     // numeric row id), so any layer holding only an `Identity` can still
@@ -393,7 +403,60 @@ fn identity_from(user: &UserIdentity) -> Identity {
         id: user.username.clone(),
         name: user.display_name.clone(),
         role: user.role.to_string(),
+        permissions,
     }
+}
+
+/// The wire [`Identity`] of `session` with its per-user permissions read
+/// now ([`permissions_of_session`]).
+async fn identity_of(state: &AppState, session: &DesktopSession) -> Result<Identity, BantoError> {
+    let permissions = permissions_of_session(state, session).await?;
+    Ok(identity_from(session.identity(), permissions))
+}
+
+/// The per-user permissions `session` holds right now (Issue #697,
+/// user-permissions-plan §5) - read from the store on every call, the Tauri
+/// twin of what REST's `require_auth` reads per request:
+///
+/// - [`DesktopSession::Account`]: the account's stored permissions that the
+///   catalog registers (`UsersService::session_permissions`, which reads
+///   `UsersService::permissions_of`). They are not cached on the session, so
+///   a grant or a revocation takes effect on the next command without
+///   ending the session (no `auth_epoch` change).
+/// - [`DesktopSession::AuthDisabledLocal`]: the mode's
+///   `auth.disabled_permissions` (`SettingsService::auth_disabled_permissions`,
+///   none by default) that the catalog registers.
+async fn permissions_of_session(
+    state: &AppState,
+    session: &DesktopSession,
+) -> Result<SessionPermissions, BantoError> {
+    match session {
+        DesktopSession::Account(identity) => state.users.session_permissions(identity.id).await,
+        DesktopSession::AuthDisabledLocal(_) => {
+            let catalog = state.users.permission_catalog();
+            if catalog.is_empty() {
+                return Ok(SessionPermissions::none());
+            }
+            let stored = state.settings.auth_disabled_permissions().await?;
+            Ok(SessionPermissions::new(catalog.effective(&stored)))
+        }
+    }
+}
+
+/// The current session ([`current_session`], re-validated) and the
+/// per-user permissions it holds now (Issue #697, user-permissions-plan §5:
+/// the Tauri read function for decisions finer than a command, e.g. per
+/// equipment - REST's `Extension<SessionPermissions>`). `Ok(None)` = no
+/// session.
+#[allow(dead_code)] // The template registers no permission; derived apps call it.
+async fn session_permissions(
+    state: &AppState,
+) -> Result<Option<(UserIdentity, SessionPermissions)>, BantoError> {
+    let Some(session) = current_session(state).await? else {
+        return Ok(None);
+    };
+    let permissions = permissions_of_session(state, &session).await?;
+    Ok(Some((session.identity().clone(), permissions)))
 }
 
 /// `UserIdentity.id` shown for the synthetic auth-disabled-mode ("local")
@@ -644,6 +707,51 @@ async fn require_role(
         }
         None => Err(BantoError::Unauthorized),
     }
+}
+
+/// Require an active webview session holding the per-user `permission`
+/// (Issue #697, user-permissions-plan §5) - the Tauri twin of REST's
+/// `PermissionGuard`/`require_permission` (conventions §1: same decision,
+/// same audit, same error kinds). The role is not looked at: an admin without
+/// the permission is refused, a viewer with it passes (call [`require_role`]
+/// too when both are wanted). No session -> `Unauthorized`, not audited; a
+/// session without the permission -> `Forbidden` plus a `denied` audit row
+/// for `resource` (detail `None`, as for [`require_role`]). The session is
+/// re-validated first ([`current_session`]) and its permissions are read
+/// from the store on every call ([`permissions_of_session`]), so a revoked
+/// one stops working on the next command. A permission the app's catalog
+/// does not register is never held, so guarding with one refuses everybody.
+/// For a decision finer than a command, use [`session_permissions`].
+#[allow(dead_code)] // The template registers no permission (its catalog is empty), so no command uses it yet; derived apps do.
+async fn require_permission(
+    state: &AppState,
+    permission: &PermissionKey,
+    resource: &str,
+) -> Result<UserIdentity, BantoError> {
+    let Some(session) = current_session(state).await? else {
+        return Err(BantoError::Unauthorized);
+    };
+    let identity = session.identity().clone();
+    if permissions_of_session(state, &session)
+        .await?
+        .has(permission)
+    {
+        return Ok(identity);
+    }
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&identity.username),
+            actor_role: Some(identity.role.as_str()),
+            action: "denied",
+            resource,
+            entity_id: None,
+            detail: None,
+            origin: "tauri",
+            result: "denied",
+        })
+        .await;
+    Err(BantoError::Forbidden)
 }
 
 /// Record a successful, actor-attributed audit event from a Tauri command
@@ -1157,12 +1265,18 @@ async fn auth_check(state: State<'_, AppState>) -> Result<bool, BantoError> {
 }
 
 /// Issue #204: the CURRENT identity (role/display name as stored now).
+/// Issue #697: with its per-user `permissions`, read now.
 #[tauri::command]
 async fn auth_identity(state: State<'_, AppState>) -> Result<Option<Identity>, BantoError> {
-    Ok(current_session(&state)
-        .await?
-        .as_ref()
-        .map(|session| identity_from(session.identity())))
+    auth_identity_body(&state).await
+}
+
+/// Body of [`auth_identity`] (testable with a plain `&AppState`).
+async fn auth_identity_body(state: &AppState) -> Result<Option<Identity>, BantoError> {
+    match current_session(state).await? {
+        Some(session) => Ok(Some(identity_of(state, &session).await?)),
+        None => Ok(None),
+    }
 }
 
 /// Issue #260 (design §5.3): the frontend provider's `resolve()` - the
@@ -1211,15 +1325,21 @@ async fn resolve_body(state: &AppState) -> Result<AuthResolveResult, BantoError>
             session,
             seq_before,
             seq_after,
-        } => AuthResolveResult {
-            identity: session
-                .as_ref()
-                .map(|session| identity_from(session.identity())),
-            kind: session.as_ref().map(session_kind),
-            checked: seq_before,
-            current: seq_after,
-            stale: false,
-        },
+        } => {
+            // Issue #697: the permissions are read after the settle (they
+            // are not part of the binding, so they do not move `seq`).
+            let identity = match session.as_ref() {
+                Some(session) => Some(identity_of(state, session).await?),
+                None => None,
+            };
+            AuthResolveResult {
+                identity,
+                kind: session.as_ref().map(session_kind),
+                checked: seq_before,
+                current: seq_after,
+                stale: false,
+            }
+        }
     })
 }
 
@@ -3225,10 +3345,33 @@ async fn vibrancy_status(state: State<'_, AppState>) -> Result<VibrancyStatus, B
 }
 
 /// `admin`-only (spec M10): the user-management screen's account list.
+/// Issue #697: each row carries its stored `permissions`, the same shape as
+/// REST's `GET /api/users` (`banto_server::routes::list_users_with_permissions`).
 #[tauri::command]
-async fn users_list(state: State<'_, AppState>) -> Result<Vec<UserSummary>, BantoError> {
-    require_role(&state, Role::Admin, "users").await?;
-    state.users.list_users().await
+async fn users_list(state: State<'_, AppState>) -> Result<Vec<UserWithPermissions>, BantoError> {
+    users_list_body(&state).await
+}
+
+/// Body of [`users_list`].
+async fn users_list_body(state: &AppState) -> Result<Vec<UserWithPermissions>, BantoError> {
+    require_role(state, Role::Admin, "users").await?;
+    list_users_with_permissions(&state.users).await
+}
+
+/// `admin`-only (Issue #697, user-permissions-plan §6): the permissions the
+/// app registered, in registration order - REST's `GET /api/permissions`.
+/// Empty for the template.
+#[tauri::command]
+async fn permissions_catalog(
+    state: State<'_, AppState>,
+) -> Result<Vec<PermissionEntry>, BantoError> {
+    permissions_catalog_body(&state).await
+}
+
+/// Body of [`permissions_catalog`].
+async fn permissions_catalog_body(state: &AppState) -> Result<Vec<PermissionEntry>, BantoError> {
+    require_role(state, Role::Admin, "users").await?;
+    Ok(permission_catalog_entries(&state.users))
 }
 
 /// `admin`-only (spec M10): create an additional account.
@@ -3276,6 +3419,13 @@ async fn users_create_body(
 /// `version` (Issue #651) is the optimistic-lock check, the same as REST's
 /// `PUT /api/users/{id}` body field: a different stored version is a
 /// `conflict` and nothing is written or audited; `None` overwrites as before.
+///
+/// `permissions` (Issue #697, the same optional field as REST's body): the
+/// account's permissions after the update; `None` leaves them as they are.
+/// Malformed / unregistered keys are `validation` on `permissions` (nothing
+/// written); the change is in the same write, version check and audit row
+/// as the rest of the update. Returns the row with its permissions, like
+/// REST.
 #[tauri::command]
 async fn users_update(
     state: State<'_, AppState>,
@@ -3283,22 +3433,42 @@ async fn users_update(
     display_name: String,
     role: Role,
     version: Option<i64>,
-) -> Result<UserSummary, BantoError> {
-    users_update_body(&state, id, &display_name, role, version).await
+    permissions: Option<Vec<String>>,
+) -> Result<UserWithPermissions, BantoError> {
+    users_update_body(
+        &state,
+        id,
+        &display_name,
+        role,
+        version,
+        permissions.as_deref(),
+    )
+    .await
 }
 
 /// Body of [`users_update`] (spec M14 pattern, see [`users_create_body`]).
+/// Issue #697: the `granted_by` of new permission rows is the admin of THIS
+/// command (its re-read session), never anything the caller sends.
 async fn users_update_body(
     state: &AppState,
     id: i64,
     display_name: &str,
     role: Role,
     version: Option<i64>,
-) -> Result<UserSummary, BantoError> {
+    permissions: Option<&[String]>,
+) -> Result<UserWithPermissions, BantoError> {
     let actor = require_role(state, Role::Admin, "users").await?;
-    let (previous, updated) = state
+    let permissions = permissions.map(PermissionKey::parse_all).transpose()?;
+    let outcome = state
         .users
-        .update_user_checked_returning_previous(id, display_name, role, version)
+        .update_user_with_permissions(
+            id,
+            display_name,
+            role,
+            permissions.as_deref(),
+            version,
+            &actor.username,
+        )
         .await?;
     record_ok(
         &state.audit,
@@ -3306,12 +3476,19 @@ async fn users_update_body(
         "update",
         "users",
         Some(&id.to_string()),
-        Some(admin_template_core::users::user_update_detail(
-            &previous, &updated,
-        )),
+        Some(
+            admin_template_core::users::user_update_detail_with_permissions(
+                &outcome.previous,
+                &outcome.updated,
+                &outcome.permission_diff,
+            ),
+        ),
     )
     .await;
-    Ok(updated)
+    Ok(UserWithPermissions::new(
+        outcome.updated,
+        outcome.permissions,
+    ))
 }
 
 /// `admin`-only (spec M10): reset another account's password without
@@ -4019,7 +4196,11 @@ pub fn run() {
             // [scaffold:items] begin
             let items = ItemsService::new(db.clone()).with_events(events.clone());
             // [scaffold:items] end
-            let users = UsersService::new(db.clone());
+            // Issue #697: the app's one catalog (`admin_template_core::
+            // permission_catalog`, also used by `banto-serve`), so the
+            // desktop commands and the embedded REST server judge alike.
+            let users = UsersService::new(db.clone())
+                .with_permission_catalog(admin_template_core::permission_catalog());
             let settings = SettingsService::new(db.clone());
             // D1-a (display-preset-plan.md, Issue #190 prep): seed
             // `FIRST_BOOT_SETTINGS` BEFORE the M11 bootstrap below reads
@@ -4385,6 +4566,7 @@ pub fn run() {
             users_create,
             users_update,
             users_reset_password,
+            permissions_catalog,
             users_delete,
             audit_log_list,
             audit_config_get,
@@ -5057,12 +5239,12 @@ mod tests {
         let created = users_create_body(&state, "target", "password123", "Target", Role::Editor)
             .await
             .unwrap();
-        let updated = users_update_body(&state, created.id, "改", Role::Editor, Some(1))
+        let updated = users_update_body(&state, created.id, "改", Role::Editor, Some(1), None)
             .await
             .unwrap();
-        assert_eq!(updated.version, 2);
+        assert_eq!(updated.user.version, 2);
 
-        let stale = users_update_body(&state, created.id, "遅", Role::Viewer, Some(1)).await;
+        let stale = users_update_body(&state, created.id, "遅", Role::Viewer, Some(1), None).await;
         assert!(
             matches!(stale, Err(BantoError::Conflict { .. })),
             "{stale:?}"
@@ -5778,9 +5960,16 @@ mod tests {
                     None
                 }
                 AccountChange::Demote => {
-                    users_update_body(&operator_desktop, target_id, "対象", Role::Viewer, None)
-                        .await
-                        .unwrap();
+                    users_update_body(
+                        &operator_desktop,
+                        target_id,
+                        "対象",
+                        Role::Viewer,
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
                     None
                 }
                 AccountChange::PasswordReset => {
@@ -5916,6 +6105,7 @@ mod tests {
             target_id,
             "対象（改名）",
             Role::Admin,
+            None,
             None,
         )
         .await
@@ -9451,5 +9641,223 @@ mod tests {
         ] {
             assert_eq!(serde_json::to_value(reason).unwrap(), code);
         }
+    }
+
+    // --- Issue #697: per-user permissions on the Tauri path -----------------
+
+    fn perm(raw: &str) -> PermissionKey {
+        PermissionKey::parse(raw).unwrap()
+    }
+
+    /// [`admin_app_state`] whose `UsersService` registers two test
+    /// permissions (the template's catalog is empty), plus a viewer `op`.
+    async fn permission_app_state() -> (AppState, UserIdentity) {
+        let mut state = admin_app_state().await;
+        state.users = state.users.clone().with_permission_catalog(
+            admin_template_core::users::PermissionCatalog::empty()
+                .register("equipment.operate", "perm.operate", "perm.operate_desc")
+                .unwrap()
+                .register("alarm.ack", "perm.ack", "perm.ack_desc")
+                .unwrap(),
+        );
+        let op = state
+            .users
+            .create_user("op", REVOCATION_PASSWORD, "Op", Role::Viewer)
+            .await
+            .unwrap();
+        (state, op)
+    }
+
+    /// The Tauri twin of the REST test: `users_update` with `permissions`
+    /// grants and revokes in the same write (one version bump, one `update`
+    /// audit row with the `permissions` entry), rejects malformed /
+    /// unregistered keys as `validation` with nothing written, and the
+    /// target's NEXT command sees the change through [`require_permission`]
+    /// without a new login (read from the store per command). A refusal is
+    /// `Forbidden` + `denied` (detail `None`), whatever the role.
+    #[tokio::test]
+    async fn users_update_permissions_and_require_permission_on_the_tauri_path() {
+        let (state, op) = permission_app_state().await;
+        let operate = perm("equipment.operate");
+
+        // The admin itself does not hold it.
+        assert!(matches!(
+            require_permission(&state, &operate, "equipment").await,
+            Err(BantoError::Forbidden)
+        ));
+
+        let updated = users_update_body(
+            &state,
+            op.id,
+            "Op",
+            Role::Viewer,
+            Some(1),
+            Some(&["equipment.operate".to_string()]),
+        )
+        .await
+        .unwrap();
+        let wire = serde_json::to_value(&updated).unwrap();
+        assert_eq!(wire["version"], 2);
+        assert_eq!(
+            wire["permissions"],
+            serde_json::json!(["equipment.operate"])
+        );
+        assert_eq!(wire["username"], "op");
+
+        for bad in ["Not A Key", "other.thing"] {
+            let err = users_update_body(
+                &state,
+                op.id,
+                "Renamed",
+                Role::Viewer,
+                Some(2),
+                Some(&[bad.to_string()]),
+            )
+            .await
+            .unwrap_err();
+            match err {
+                BantoError::Validation { field_errors } => {
+                    assert_eq!(field_errors[0].field, "permissions")
+                }
+                other => panic!("{bad}: expected Validation, got {other:?}"),
+            }
+        }
+
+        // The list carries the permissions next to each row, like REST.
+        let list = serde_json::to_value(users_list_body(&state).await.unwrap()).unwrap();
+        let row = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|u| u["username"] == "op")
+            .unwrap()
+            .clone();
+        assert_eq!(row["permissions"], serde_json::json!(["equipment.operate"]));
+
+        // The viewer's own session: allowed now, and the identity shows it.
+        desktop_login(&state, "op").await;
+        let me = require_permission(&state, &operate, "equipment")
+            .await
+            .unwrap();
+        assert_eq!(me.username, "op");
+        let identity = auth_identity_body(&state).await.unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(&identity).unwrap()["permissions"],
+            serde_json::json!(["equipment.operate"])
+        );
+        let (_, held) = session_permissions(&state).await.unwrap().unwrap();
+        assert!(held.has(&operate));
+        // Unregistered key: never held.
+        assert!(matches!(
+            require_permission(&state, &perm("not.registered"), "equipment").await,
+            Err(BantoError::Forbidden)
+        ));
+
+        // Revoked by the admin while the viewer's session lives on: the next
+        // command is refused, the session itself stays.
+        state
+            .users
+            .set_permissions(op.id, &[], None, "admin")
+            .await
+            .unwrap();
+        assert!(matches!(
+            require_permission(&state, &operate, "equipment").await,
+            Err(BantoError::Forbidden)
+        ));
+        assert!(current_session(&state).await.unwrap().is_some());
+
+        // No session: Unauthorized, not audited.
+        state.set_session_for_test(None);
+        assert!(matches!(
+            require_permission(&state, &operate, "equipment").await,
+            Err(BantoError::Unauthorized)
+        ));
+
+        let rows = state.audit.list(ListParams::default()).await.unwrap().rows;
+        let denied: Vec<_> = rows
+            .iter()
+            .filter(|r| r.action == "denied" && r.resource == "equipment")
+            .map(|r| {
+                (
+                    r.actor_username.clone().unwrap(),
+                    r.origin.clone(),
+                    r.detail.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(denied.len(), 3, "{denied:?}");
+        assert!(denied
+            .iter()
+            .all(|(_, origin, detail)| origin == "tauri" && detail.is_none()));
+        let updates: Vec<serde_json::Value> = rows
+            .iter()
+            .filter(|r| r.action == "update" && r.resource == "users")
+            .map(|r| serde_json::from_str(r.detail.as_deref().unwrap()).unwrap())
+            .collect();
+        assert_eq!(updates.len(), 1, "the rejected updates left no row");
+        assert!(updates[0]["changes"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!({
+                "field": "permissions", "added": ["equipment.operate"], "removed": []
+            })));
+    }
+
+    /// `permissions_catalog` is admin-only, like REST's `GET /api/permissions`;
+    /// the template's own catalog is empty.
+    #[tokio::test]
+    async fn permissions_catalog_is_admin_only() {
+        assert!(admin_template_core::permission_catalog().is_empty());
+        let (state, _op) = permission_app_state().await;
+        let entries = permissions_catalog_body(&state).await.unwrap();
+        assert_eq!(
+            entries.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+            ["equipment.operate", "alarm.ack"]
+        );
+        desktop_login(&state, "op").await;
+        assert!(matches!(
+            permissions_catalog_body(&state).await,
+            Err(BantoError::Forbidden)
+        ));
+    }
+
+    /// Auth-disabled mode (owner decision §8-4): no permission by default;
+    /// `auth.disabled_permissions` gives the synthetic session the registered
+    /// ones, read per command.
+    #[tokio::test]
+    async fn the_auth_disabled_session_holds_only_the_configured_permissions() {
+        let (state, _op) = permission_app_state().await;
+        state
+            .settings
+            .set_auth_config(&AuthSettings {
+                disabled: true,
+                disabled_role: Role::Viewer,
+                ..AuthSettings::default()
+            })
+            .await
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::AuthDisabledLocal(local_identity(
+            Role::Viewer,
+        ))));
+        let ack = perm("alarm.ack");
+        assert!(matches!(
+            require_permission(&state, &ack, "alarm").await,
+            Err(BantoError::Forbidden)
+        ));
+        state
+            .settings
+            .set_auth_disabled_permissions(
+                &["alarm.ack".to_string()],
+                state.users.permission_catalog(),
+            )
+            .await
+            .unwrap();
+        let me = require_permission(&state, &ack, "alarm").await.unwrap();
+        assert_eq!(me.id, LOCAL_SESSION_ID);
+        let identity = auth_identity_body(&state).await.unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(&identity).unwrap()["permissions"],
+            serde_json::json!(["alarm.ack"])
+        );
     }
 }

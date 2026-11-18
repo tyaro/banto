@@ -128,7 +128,8 @@ async fn main() {
 
     let events = event_channel();
     let items = ItemsService::new(db.clone()).with_events(events.clone());
-    let users = UsersService::new(db.clone());
+    let users = UsersService::new(db.clone())
+        .with_permission_catalog(admin_template_core::permission_catalog());
     let settings = SettingsService::new(db.clone());
     // D1-a (display-preset-plan.md, Issue #190 prep): seed
     // `FIRST_BOOT_SETTINGS` before any `auth_config`/`server_config` read

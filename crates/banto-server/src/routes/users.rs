@@ -18,6 +18,12 @@ struct UpdateUserRequest {
     /// Absent / `null` keeps the old last-write-wins update.
     #[serde(default)]
     version: Option<i64>,
+    /// Issue #697 (user-permissions-plan §6): the account's permissions after
+    /// the update, as keys. Absent / `null` leaves them unchanged (a client
+    /// that does not know about permissions keeps working). A malformed or
+    /// unregistered key is `422 validation` on `permissions`, nothing written.
+    #[serde(default)]
+    permissions: Option<Vec<String>>,
 }
 
 /// `DELETE /api/users/{id}?version=N` (Issue #651): the optional `version` is
@@ -76,10 +82,57 @@ async fn acting_user(
         .ok_or(BantoError::Unauthorized)
 }
 
+/// One account on the wire with its stored permissions (Issue #697,
+/// user-permissions-plan §6): `UserSummary & { permissions: string[] }`.
+/// The `GET /api/users` rows and the `PUT /api/users/{id}` response, and the
+/// Tauri `users_list` / `users_update` return the same shape (conventions
+/// §1). A response-only wrapper, so [`UserSummary`] itself gets no field
+/// (owner decision §8-7). `permissions` are the stored keys, sorted -
+/// including ones the app no longer registers (the screen shows those as
+/// unregistered). `#[non_exhaustive]`: build it with
+/// [`UserWithPermissions::new`].
+#[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
+pub struct UserWithPermissions {
+    #[serde(flatten)]
+    pub user: UserSummary,
+    pub permissions: Vec<PermissionKey>,
+}
+
+impl UserWithPermissions {
+    pub fn new(user: UserSummary, permissions: Vec<PermissionKey>) -> Self {
+        Self { user, permissions }
+    }
+}
+
+/// Every account with its stored permissions (Issue #697): the body of
+/// `GET /api/users` and the Tauri `users_list`. Two reads (the rows, then
+/// every account's permissions at once).
+pub async fn list_users_with_permissions(
+    users: &UsersService,
+) -> Result<Vec<UserWithPermissions>, BantoError> {
+    let rows = users.list_users().await?;
+    let mut held = users.permissions_by_user().await?;
+    Ok(rows
+        .into_iter()
+        .map(|user| {
+            let permissions = held.remove(&user.id).unwrap_or_default();
+            UserWithPermissions::new(user, permissions)
+        })
+        .collect())
+}
+
+/// The registered permissions (Issue #697, user-permissions-plan §6): the
+/// body of `GET /api/permissions` and the Tauri `permissions_catalog`, in
+/// registration order. Empty for the template.
+pub fn permission_catalog_entries(users: &UsersService) -> Vec<PermissionEntry> {
+    users.permission_catalog().entries().to_vec()
+}
+
 async fn users_list(
     State(state): State<UsersAdminState>,
-) -> Result<Json<Vec<UserSummary>>, ApiError> {
-    Ok(Json(state.users.list_users().await?))
+) -> Result<Json<Vec<UserWithPermissions>>, ApiError> {
+    Ok(Json(list_users_with_permissions(&state.users).await?))
 }
 
 async fn users_create(
@@ -109,15 +162,39 @@ async fn users_create(
     Ok(Json(identity.into()))
 }
 
+/// `PUT /api/users/{id}`. Issue #697: `permissions` (optional) is applied in
+/// the same write as the display name and role (one version check, one
+/// bump); the response is the row with its permissions
+/// ([`UserWithPermissions`]). The granting admin recorded as `granted_by` is
+/// the caller of THIS request - the session `require_auth` validated - and
+/// the permissions it writes are the account's stored state only: nothing
+/// here touches any session (it still needs the admin floor of this router).
 async fn users_update(
     State(state): State<UsersAdminState>,
+    session: Option<axum::Extension<AuthenticatedSession>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
     Json(body): Json<UpdateUserRequest>,
-) -> Result<Json<UserSummary>, ApiError> {
-    let (previous, updated) = state
+) -> Result<Json<UserWithPermissions>, ApiError> {
+    let permissions = body
+        .permissions
+        .as_deref()
+        .map(PermissionKey::parse_all)
+        .transpose()?;
+    let actor = session
+        .map(|axum::Extension(session)| session.identity.id)
+        .or_else(|| actor_identity(&headers, &state.auth).map(|identity| identity.id))
+        .unwrap_or_default();
+    let outcome = state
         .users
-        .update_user_checked_returning_previous(id, &body.display_name, body.role, body.version)
+        .update_user_with_permissions(
+            id,
+            &body.display_name,
+            body.role,
+            permissions.as_deref(),
+            body.version,
+            &actor,
+        )
         .await?;
     record_write(
         &state.audit,
@@ -126,12 +203,19 @@ async fn users_update(
         "update",
         "users",
         Some(&id.to_string()),
-        Some(banto_admin_services::users::user_update_detail(
-            &previous, &updated,
-        )),
+        Some(
+            banto_admin_services::users::user_update_detail_with_permissions(
+                &outcome.previous,
+                &outcome.updated,
+                &outcome.permission_diff,
+            ),
+        ),
     )
     .await;
-    Ok(Json(updated))
+    Ok(Json(UserWithPermissions::new(
+        outcome.updated,
+        outcome.permissions,
+    )))
 }
 
 async fn users_reset_password(
@@ -197,9 +281,19 @@ async fn users_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `GET /api/permissions` (Issue #697, user-permissions-plan §6): the
+/// permissions the app registered (`UsersService::permission_catalog`), in
+/// registration order, for the admin screen's checkboxes. Empty for the
+/// template. Admin only (it rides on this router's floor), like the Tauri
+/// `permissions_catalog`.
+async fn permissions_list(State(state): State<UsersAdminState>) -> Json<Vec<PermissionEntry>> {
+    Json(permission_catalog_entries(&state.users))
+}
+
 /// `/api/users/*` (spec M10): `admin`-only account management. Guarded the
 /// same way `items_write_router` is (`require_auth` then
-/// `require_role_at_least`), just with `Role::Admin` as the floor.
+/// `require_role_at_least`), just with `Role::Admin` as the floor. Also
+/// serves `GET /api/permissions` (Issue #697) under the same floor.
 pub fn users_router(users: UsersService, audit: AuditLogService, auth: AuthState) -> Router {
     let state = UsersAdminState {
         users,
@@ -213,6 +307,7 @@ pub fn users_router(users: UsersService, audit: AuditLogService, auth: AuthState
             axum::routing::put(users_update).delete(users_delete),
         )
         .route("/api/users/{id}/reset-password", post(users_reset_password))
+        .route("/api/permissions", get(permissions_list))
         .with_state(state)
         .layer(middleware::from_fn_with_state(
             RoleGuard {

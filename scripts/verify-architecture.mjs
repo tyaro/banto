@@ -26,7 +26,8 @@
  *      ドリフト対策。実在しない `@banto/grid-core` 等の掲載を防ぐ）
  *   8. §1 REST/Tauri 両経路対称 … mutating 操作が両経路に存在するかを
  *      DUAL_PATH マニフェスト + 完全性チェックで担保（片側だけ足すのを捕捉）。
- *      maintainability-review-2026-07.md CR-1
+ *      maintainability-review-2026-07.md CR-1。ロール床（CR-6）と、ユーザーへ個別に
+ *      付ける権限のガード（PERMISSION_PAIRS、Issue #697）も両経路で照合する
  *   9. §6 セキュリティ不変条件（grep 可能なもの、CR-2）:
  *      NewAttachment に mime フィールド無し / settings_get·set は Admin 対称
  *  10. §13 app 層コンポーネントに生の日本語リテラルが無い
@@ -66,6 +67,11 @@ import { fileURLToPath } from 'node:url';
 import { readI18nMode } from './lib/i18n-mode.mjs';
 import { collectScaffoldTouchedFiles } from './lib/scaffold-touched.mjs';
 import { findRawDimensions } from './lib/raw-dimensions.mjs';
+import {
+	checkPermissionGuards,
+	collectRestPermissionGuards,
+	collectTauriPermissionGuards
+} from './lib/permission-guards.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -429,8 +435,20 @@ const isAllowedPackageImport = (spec) =>
 	const ROLE_READ = [
 		{ tauri: 'audit_config_get', rest: 'GET /api/audit-log/config', role: 'Admin' },
 		{ tauri: 'audit_log_list', rest: 'POST /api/audit-log/list', role: 'Admin' },
-		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' }
+		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' },
+		// Issue #697: the app's permission catalog (admin only, both paths).
+		{ tauri: 'permissions_catalog', rest: 'GET /api/permissions', role: 'Admin' }
 	];
+
+	// ユーザーへ個別に付ける権限のガードの対（Issue #697、user-permissions-plan §5）。
+	// ロール床（`role`）とは別の軸で、`{ tauri, rest, permission }` の `permission` は
+	// 両経路のガードに書く式（`require_permission(&state, <式>, …)` /
+	// `PermissionGuard { permission: <式>, … }`、空白・先頭の `&`・末尾の `.clone()` は無視）。
+	// 宣言の両端が同じ式であること、そして宣言していない権限のガードが無いこと（片方の経路
+	// だけに足すミス）を (f) で照合する。テンプレートは権限を登録しないので空。派生アプリが
+	// 権限で守るコマンド・ルートを足すときに、ここへ対を足す。判定は
+	// scripts/lib/permission-guards.mjs（テストあり）。
+	const PERMISSION_PAIRS = [];
 
 	// REST-only（Tauri 側に対を持たないのが正しい mutating ルート）。
 	// `POST /api/auth/grant/{kind}` は、登録済みの種類（grant）の固定 identity の
@@ -497,6 +515,8 @@ const isAllowedPackageImport = (spec) =>
 		'settings_get',
 		'ui_settings_get',
 		'users_list',
+		// Issue #697: the permission catalog (admin; REST twin in ROLE_READ).
+		'permissions_catalog',
 		'vibrancy_status'
 	]);
 
@@ -509,6 +529,7 @@ const isAllowedPackageImport = (spec) =>
 		'GET /api/events',
 		'GET /api/items/{id}',
 		'GET /api/users',
+		'GET /api/permissions',
 		'GET /api/ui-settings/{key}',
 		'GET /api/audit-log/config',
 		'GET /api/system/info',
@@ -657,10 +678,27 @@ const isAllowedPackageImport = (spec) =>
 		}
 	}
 
+	// (f) 権限のガードの対称（Issue #697）。ロール床 (e) と同じ静的解析で、
+	// PERMISSION_PAIRS に宣言した対が両経路とも同じ権限を見ていること、宣言の無い
+	// 権限のガードが無いことを照合する（判定は scripts/lib/permission-guards.mjs）。
+	if (fs.existsSync(path.join(repoRoot, tauriLib))) {
+		const tauriGuards = collectTauriPermissionGuards(read(tauriLib));
+		const restGuards = new Map();
+		for (const file of restRouterDirs.flatMap((dir) => [...walk(dir, ['.rs'])]))
+			for (const [route, permission] of collectRestPermissionGuards(read(file)))
+				restGuards.set(route, permission);
+		for (const problem of checkPermissionGuards({
+			tauriGuards,
+			restGuards,
+			pairs: PERMISSION_PAIRS
+		}))
+			fail(rule, tauriLib, problem);
+	}
+
 	if (!results.some((r) => r.includes(`[${rule}]`)))
 		pass(
 			rule,
-			`両経路対称: dual-path ${DUAL_PATH.length} 対（ロール床照合 ${DUAL_PATH.filter((d) => d.role).length} + read ${ROLE_READ.length}）+ Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルート（うち rest-only ${REST_ONLY.size}）を分類済み`
+			`両経路対称: dual-path ${DUAL_PATH.length} 対（ロール床照合 ${DUAL_PATH.filter((d) => d.role).length} + read ${ROLE_READ.length}、権限のガード ${PERMISSION_PAIRS.length} 対）+ Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルート（うち rest-only ${REST_ONLY.size}）を分類済み`
 		);
 }
 

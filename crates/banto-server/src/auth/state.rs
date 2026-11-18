@@ -76,6 +76,10 @@ pub(super) struct Inner {
     /// [`SessionValidation::DisabledNoRevocation`]. Fixed at construction,
     /// shared by every clone of this state (they share `Inner`).
     session_lookup: Option<SessionLookup>,
+    /// Issue #697: how an account session's per-user permissions are read
+    /// ([`AuthState::with_permission_reader`]). `None` = no session holds
+    /// any. Set once while the state is built, read on every request.
+    permission_reader: RwLock<Option<PermissionReader>>,
     token_policy: TokenPolicy,
     /// Long-lived policy applied to tokens issued with "Remember me" (spec
     /// M11) instead of `token_policy` - see [`TokenRecord::remembered`].
@@ -214,6 +218,7 @@ impl AuthState {
                 in_flight: Mutex::new(InFlight::default()),
                 verify_credentials,
                 session_lookup,
+                permission_reader: RwLock::new(None),
                 token_policy,
                 remembered_policy,
                 rate_limit,
@@ -224,6 +229,62 @@ impl AuthState {
 
     fn session_lookup(&self) -> Option<&SessionLookup> {
         self.inner.session_lookup.as_ref()
+    }
+
+    /// Install how an account session's per-user permissions are read
+    /// (Issue #697, user-permissions-plan §5). [`crate::require_auth`] calls
+    /// it once per request for an account session and puts the result into
+    /// the request extensions as a [`SessionPermissions`], which
+    /// `crate::routes::require_permission` and handlers (through
+    /// `Extension<SessionPermissions>`) decide on. Read per request, so a
+    /// revoked permission stops working on the next request without ending
+    /// the session.
+    ///
+    /// Without a reader no session holds any permission (fail closed). A
+    /// grant session (ADR-0017) never holds any, reader or not. Applies to
+    /// every clone of this state (they share it); call it while building the
+    /// state, before serving.
+    pub fn with_permission_reader(
+        self,
+        reader: impl Fn(i64) -> BoxFuture<'static, Result<SessionPermissions, BantoError>>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        let reader: PermissionReader = Arc::new(reader);
+        *self
+            .inner
+            .permission_reader
+            .write()
+            .expect("auth permission reader lock poisoned") = Some(reader);
+        self
+    }
+
+    /// The per-user permissions `session` is authorized with (Issue #697):
+    /// none for a grant session, for a session without an account stamp, or
+    /// when no reader is installed ([`AuthState::with_permission_reader`]);
+    /// otherwise what the reader returns for the session's account right
+    /// now. `Err` = the store could not answer (fail the request).
+    pub async fn session_permissions(
+        &self,
+        session: &AuthenticatedSession,
+    ) -> Result<SessionPermissions, BantoError> {
+        if session.grant.is_some() {
+            return Ok(SessionPermissions::none());
+        }
+        let Some(stamp) = session.stamp else {
+            return Ok(SessionPermissions::none());
+        };
+        let reader = self
+            .inner
+            .permission_reader
+            .read()
+            .expect("auth permission reader lock poisoned")
+            .clone();
+        match reader {
+            Some(reader) => reader(stamp.account_id).await,
+            None => Ok(SessionPermissions::none()),
+        }
     }
     /// Run the credential check and, when a [`SessionLookup`] is installed,
     /// establish the [`SessionStamp`] the new session is bound to (Issue

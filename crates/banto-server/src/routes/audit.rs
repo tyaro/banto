@@ -92,6 +92,23 @@ pub fn user_session_lookup(
     }
 }
 
+/// A [`crate::PermissionReader`] over a `UsersService` (Issue #697): the
+/// account's stored permissions that the service's catalog registers
+/// ([`UsersService::session_permissions`]), read per request. Installed by
+/// [`user_auth_state`]; pass it to [`AuthState::with_permission_reader`]
+/// when building an `AuthState` by hand.
+pub fn user_permission_reader(
+    users: UsersService,
+) -> impl Fn(i64) -> futures_util::future::BoxFuture<'static, Result<SessionPermissions, BantoError>>
+       + Send
+       + Sync
+       + 'static {
+    move |account_id: i64| {
+        let users = users.clone();
+        Box::pin(async move { users.session_permissions(account_id).await })
+    }
+}
+
 /// `UserIdentity` -> the wire [`Identity`] + [`SessionStamp`] a session is
 /// bound to (`Identity.id` is the username, see its doc comment).
 pub(crate) fn session_account(user: &UserIdentity) -> SessionAccount {
@@ -112,12 +129,15 @@ pub(crate) fn session_account(user: &UserIdentity) -> SessionAccount {
 /// session revocation wired in (Issue #204): [`audited_credential_verifier`]
 /// for login plus [`user_session_lookup`] for the per-request re-check.
 /// `banto-serve` and the Tauri app's embedded server both build their state
-/// here, so neither can forget the lookup.
+/// here, so neither can forget the lookup. Issue #697: also installs
+/// [`user_permission_reader`], so the per-user permissions come from the
+/// same `users` (and its catalog).
 pub fn user_auth_state(users: UsersService, audit: AuditLogService) -> AuthState {
     AuthState::new(
         audited_credential_verifier(users.clone(), audit),
-        SessionValidation::lookup(user_session_lookup(users)),
+        SessionValidation::lookup(user_session_lookup(users.clone())),
     )
+    .with_permission_reader(user_permission_reader(users))
 }
 
 /// State for [`audit_logout_middleware`]: needs `AuthState` to resolve the

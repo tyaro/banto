@@ -1700,3 +1700,63 @@ async fn require_auth_rejects_a_revoked_session_with_401() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+// --- Issue #697: per-user permissions next to the session ---------------
+
+fn perm(raw: &str) -> banto_admin_services::permissions::PermissionKey {
+    banto_admin_services::permissions::PermissionKey::parse(raw).unwrap()
+}
+
+/// A reader that gives every account `equipment.operate`.
+fn with_operate_reader(auth: AuthState) -> AuthState {
+    auth.with_permission_reader(|_account_id: i64| {
+        Box::pin(async {
+            Ok(SessionPermissions::new(
+                [perm("equipment.operate")].into_iter().collect(),
+            ))
+        })
+    })
+}
+
+#[tokio::test]
+async fn identity_carries_the_account_permissions_and_a_grant_holds_none() {
+    let store = FakeStore::default();
+    store.put("alice", "viewer", 1, 0);
+    let auth = with_operate_reader(store.auth());
+    let token = login_token(&auth, "alice", false).await;
+    let body = identity_kind(&auth_routes(auth.clone()), &token).await;
+    assert_eq!(body["kind"], "account");
+    assert_eq!(
+        body["permissions"],
+        serde_json::json!(["equipment.operate"])
+    );
+
+    // A grant session never holds any, whatever the reader says.
+    for spec in both_kinds() {
+        let auth = with_operate_reader(frozen_auth(
+            short_token_policy(),
+            RateLimitPolicy::default(),
+        ));
+        let token = issue(&auth, &spec);
+        let body = identity_kind(&auth_routes(auth.clone()), &token).await;
+        assert_eq!(body["permissions"], serde_json::json!([]));
+        let session = auth.authenticate(&token).await.unwrap().unwrap();
+        assert!(auth.session_permissions(&session).await.unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn require_auth_fails_the_request_when_the_permissions_cannot_be_read() {
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth().with_permission_reader(|_account_id: i64| {
+        Box::pin(async { Err(BantoError::Other("store unavailable".to_string())) })
+    });
+    let token = login_token(&auth, "alice", false).await;
+    let status = protected_router(&auth)
+        .oneshot(bearer_get("/protected", &token))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}

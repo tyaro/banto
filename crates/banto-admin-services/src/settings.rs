@@ -14,6 +14,7 @@ use banto_core::{BantoError, FieldError};
 use banto_storage::Db;
 use serde::{Deserialize, Serialize};
 
+use crate::permissions::{PermissionCatalog, PermissionKey};
 use crate::rbac::Role;
 
 const KEY_SERVER_ENABLED: &str = "server.enabled";
@@ -22,6 +23,7 @@ const KEY_SERVER_PORT: &str = "server.port";
 const KEY_SERVER_VIEWER_PUBLIC: &str = "server.viewer_public";
 const KEY_AUTH_DISABLED: &str = "auth.disabled";
 const KEY_AUTH_DISABLED_ROLE: &str = "auth.disabled_role";
+const KEY_AUTH_DISABLED_PERMISSIONS: &str = "auth.disabled_permissions";
 const KEY_AUTOLOGIN_ENABLED: &str = "auth.autologin.enabled";
 const KEY_AUTOLOGIN_USERNAME: &str = "auth.autologin.username";
 const KEY_AUDIT_RETENTION_DAYS: &str = "audit.retention_days";
@@ -616,6 +618,51 @@ impl SettingsService {
         .await
     }
 
+    /// The permissions of auth-disabled mode's synthetic session (Issue #697,
+    /// user-permissions-plan §5 / §8-4), stored as
+    /// `auth.disabled_permissions` next to `auth.disabled_role`. Kept apart
+    /// from [`AuthSettings`] on purpose: that struct is built with struct
+    /// literals by derived apps, so a new field there would break them
+    /// (owner decision §8-7).
+    ///
+    /// None by default (never set = a login-free desktop holds no
+    /// permission). Stored as a comma-separated list (a key never contains a
+    /// comma); the read keeps only well-formed keys, sorted and deduplicated,
+    /// so a hand-edited value degrades to fewer permissions instead of a
+    /// failed read - the same stance as `auth.disabled_role`. Whether each
+    /// key is still registered is the session builder's question
+    /// ([`PermissionCatalog::effective`]).
+    pub async fn auth_disabled_permissions(&self) -> Result<Vec<PermissionKey>, BantoError> {
+        Ok(self
+            .get(KEY_AUTH_DISABLED_PERMISSIONS)
+            .await?
+            .map(|value| parse_disabled_permissions(&value))
+            .unwrap_or_default())
+    }
+
+    /// Replace auth-disabled mode's permissions (Issue #697,
+    /// [`Self::auth_disabled_permissions`]). Every entry must be a
+    /// well-formed key that `catalog` registers; anything else is a
+    /// `Validation` error on `permissions` with nothing written (the same
+    /// rule as a user's permissions). Returns the saved keys, sorted.
+    ///
+    /// Like [`Self::set_auth_config`] this is an `auth.` key: the desktop
+    /// app's generic `settings_set` refuses it ([`Self::is_auth_key`]), so it
+    /// is written only here, under the app's auth-mode lock.
+    pub async fn set_auth_disabled_permissions(
+        &self,
+        permissions: &[String],
+        catalog: &PermissionCatalog,
+    ) -> Result<Vec<PermissionKey>, BantoError> {
+        let keys: Vec<PermissionKey> = catalog.validate(permissions)?.into_iter().collect();
+        self.set(
+            KEY_AUTH_DISABLED_PERMISSIONS,
+            &format_disabled_permissions(&keys),
+        )
+        .await?;
+        Ok(keys)
+    }
+
     /// Is `key` one of the auth-mode keys only [`Self::set_auth_config`] may
     /// write (the `auth.` namespace)? The desktop app's generic
     /// `settings_set` refuses them (freshness audit of #266, P2-2): a raw
@@ -674,6 +721,23 @@ impl SettingsService {
         .await?;
         Ok(())
     }
+}
+
+/// `auth.disabled_permissions` -> keys (Issue #697): sorted, duplicates and
+/// malformed entries dropped.
+fn parse_disabled_permissions(stored: &str) -> Vec<PermissionKey> {
+    let keys: std::collections::BTreeSet<PermissionKey> = stored
+        .split(',')
+        .filter_map(|raw| PermissionKey::parse(raw.trim()))
+        .collect();
+    keys.into_iter().collect()
+}
+
+fn format_disabled_permissions(keys: &[PermissionKey]) -> String {
+    keys.iter()
+        .map(PermissionKey::as_str)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[cfg(test)]
@@ -768,6 +832,69 @@ mod tests {
             .await
             .expect("create settings table");
         SettingsService::new(db)
+    }
+
+    /// Issue #697: `auth.disabled_permissions` defaults to none, saving
+    /// validates against the catalog, and a hand-edited value keeps only its
+    /// well-formed keys (sorted, deduped) instead of failing the read.
+    #[tokio::test]
+    async fn auth_disabled_permissions_default_validate_and_degrade() {
+        let svc = service().await;
+        assert!(svc.auth_disabled_permissions().await.unwrap().is_empty());
+        assert!(SettingsService::is_auth_key("auth.disabled_permissions"));
+
+        let catalog = PermissionCatalog::empty()
+            .register("equipment.operate", "a", "b")
+            .unwrap()
+            .register("alarm.ack", "c", "d")
+            .unwrap();
+        let saved = svc
+            .set_auth_disabled_permissions(
+                &["equipment.operate".into(), "alarm.ack".into()],
+                &catalog,
+            )
+            .await
+            .unwrap();
+        let names = |keys: &[PermissionKey]| -> Vec<String> {
+            keys.iter().map(ToString::to_string).collect()
+        };
+        assert_eq!(names(&saved), ["alarm.ack", "equipment.operate"]);
+        assert_eq!(
+            names(&svc.auth_disabled_permissions().await.unwrap()),
+            ["alarm.ack", "equipment.operate"]
+        );
+
+        // Unregistered or malformed: Validation, nothing written.
+        for bad in ["other.thing", "BAD"] {
+            match svc
+                .set_auth_disabled_permissions(&[bad.to_string()], &catalog)
+                .await
+            {
+                Err(BantoError::Validation { field_errors }) => {
+                    assert_eq!(field_errors[0].field, "permissions")
+                }
+                other => panic!("{bad}: expected Validation, got {other:?}"),
+            }
+        }
+        assert_eq!(svc.auth_disabled_permissions().await.unwrap().len(), 2);
+
+        // A hand-edited value degrades.
+        svc.set(
+            "auth.disabled_permissions",
+            "equipment.operate, BAD,,alarm.ack,alarm.ack",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            names(&svc.auth_disabled_permissions().await.unwrap()),
+            ["alarm.ack", "equipment.operate"]
+        );
+
+        // An empty list round-trips as empty.
+        svc.set_auth_disabled_permissions(&[], &catalog)
+            .await
+            .unwrap();
+        assert!(svc.auth_disabled_permissions().await.unwrap().is_empty());
     }
 
     #[tokio::test]

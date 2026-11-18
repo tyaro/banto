@@ -34,7 +34,7 @@ async fn reset_schema(url: &str) {
         .await
         .expect("connect for schema reset");
     for stmt in [
-        "DROP TABLE IF EXISTS attachments, audit_log, users, settings, items CASCADE",
+        "DROP TABLE IF EXISTS attachments, audit_log, user_permissions, users, settings, items CASCADE",
         "DROP FUNCTION IF EXISTS banto_audit_parent_detail(TEXT, TEXT)",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
@@ -330,6 +330,72 @@ async fn app_layer_crud_round_trips_on_postgres() {
     // Issue #651 (migration 0012): the BIGINT `version` decodes into i64, two
     // updates took it 1 -> 3 (the password changes above left it alone), and a
     // stale version conflicts inside the write transaction.
+    //
+    // Issue #697 (migration 0013): grant two permissions (version 3 -> 4),
+    // read them back through the session read, the admin listing and the
+    // update path, then let the delete below cascade them away.
+    let catalog = admin_template_core::users::PermissionCatalog::empty()
+        .register("equipment.operate", "perm.operate", "perm.operate_desc")
+        .unwrap()
+        .register("alarm.ack", "perm.ack", "perm.ack_desc")
+        .unwrap();
+    let perm_users = users.clone().with_permission_catalog(catalog);
+    let key = |raw: &str| admin_template_core::users::PermissionKey::parse(raw).unwrap();
+    let diff = perm_users
+        .set_permissions(
+            identity.id,
+            &[key("equipment.operate"), key("alarm.ack")],
+            Some(3),
+            "smoke-admin",
+        )
+        .await
+        .expect("set_permissions on postgres");
+    assert_eq!(diff.added.len(), 2);
+    assert!(perm_users
+        .session_permissions(identity.id)
+        .await
+        .unwrap()
+        .has(&key("alarm.ack")));
+    // The catalog-less service holds none (unregistered = not held), but the
+    // stored rows are listed.
+    assert!(users
+        .session_permissions(identity.id)
+        .await
+        .unwrap()
+        .is_empty());
+    let listed = users
+        .list_users()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|u| u.id == identity.id)
+        .unwrap();
+    assert_eq!(listed.version, 4);
+    assert_eq!(
+        users.permissions_by_user().await.unwrap().get(&identity.id),
+        Some(&vec![key("alarm.ack"), key("equipment.operate")])
+    );
+    let unknown = perm_users
+        .set_permissions(identity.id, &[key("other.thing")], Some(4), "smoke-admin")
+        .await;
+    assert!(
+        matches!(unknown, Err(banto_core::BantoError::Validation { .. })),
+        "{unknown:?}"
+    );
+    let outcome = perm_users
+        .update_user_with_permissions(
+            identity.id,
+            "Alice A.",
+            Role::Viewer,
+            Some(&[key("equipment.operate"), key("alarm.ack")]),
+            Some(4),
+            "smoke-admin",
+        )
+        .await
+        .expect("update_user_with_permissions on postgres");
+    assert!(outcome.permission_diff.is_empty());
+    assert_eq!(outcome.updated.version, 5);
+
     let stale = users
         .delete_user_checked_returning_previous(identity.id, Some(existing.id), Some(1))
         .await;
@@ -338,10 +404,17 @@ async fn app_layer_crud_round_trips_on_postgres() {
         "stale version must conflict: {stale:?}"
     );
     let removed_user = users
-        .delete_user_checked_returning_previous(identity.id, Some(existing.id), Some(3))
+        .delete_user_checked_returning_previous(identity.id, Some(existing.id), Some(5))
         .await
         .expect("users delete returning previous");
-    assert_eq!(removed_user.version, 3);
+    assert_eq!(removed_user.version, 5);
+
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_permissions WHERE user_id = $1")
+        .bind(identity.id)
+        .fetch_one(db.as_postgres().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "ON DELETE CASCADE on postgres");
     assert_eq!(removed_user.username, "alice");
     assert_eq!(removed_user.display_name, "Alice A.");
     assert_eq!(removed_user.role, Role::Viewer);
@@ -370,6 +443,17 @@ async fn app_layer_crud_round_trips_on_postgres() {
     let auth = settings.auth_config().await.expect("auth config again");
     assert!(auth.disabled);
     assert_eq!(auth.disabled_role, Role::Viewer);
+    let disabled_catalog = admin_template_core::users::PermissionCatalog::empty()
+        .register("alarm.ack", "perm.ack", "perm.ack_desc")
+        .unwrap();
+    settings
+        .set_auth_disabled_permissions(&["alarm.ack".to_string()], &disabled_catalog)
+        .await
+        .expect("auth.disabled_permissions write on postgres");
+    assert_eq!(
+        settings.auth_disabled_permissions().await.unwrap(),
+        vec![key("alarm.ack")]
+    );
 
     // --- audit: record, list, prune (both branches) --------------------------
     let audit = AuditLogService::new(db.clone());

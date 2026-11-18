@@ -117,8 +117,8 @@ pub use policy::{
 pub use routes::{auth_routes, require_auth};
 pub(crate) use routes::{bearer_token, unauthorized_response, MaybePeerAddr};
 pub use session::{
-    AuthenticatedSession, CredentialVerifier, Identity, SessionAccount, SessionLookup,
-    SessionStamp, SessionValidation,
+    AuthenticatedSession, CredentialVerifier, Identity, PermissionReader, SessionAccount,
+    SessionLookup, SessionPermissions, SessionStamp, SessionValidation,
 };
 pub use state::{ip_rate_limit_key, rate_limit_key, AuthState};
 

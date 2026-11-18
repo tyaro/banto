@@ -54,6 +54,14 @@ export interface Identity {
 	 * (`kindOfResolvedAuth`).
 	 */
 	kind?: string;
+	/**
+	 * The session's per-user permissions (Issue #697, e.g.
+	 * `equipment.operate`), separate from `role` and never derived from it.
+	 * For hiding what the user cannot do only - the server decides. Optional
+	 * like `role`: a missing value means none (fail closed). A grant session
+	 * never has any.
+	 */
+	permissions?: string[];
 }
 
 /**

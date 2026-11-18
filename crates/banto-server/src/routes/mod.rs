@@ -16,8 +16,9 @@
 //! over their state - see this crate's module doc comment), so the app's
 //! `api_router` can `.merge()` them without state-type conflicts. The
 //! services themselves stay axum-free (conventions §2); authorization
-//! ([`RoleGuard`]/[`require_role_at_least`], spec M10) and audit recording
-//! ([`record_write`], spec M14) are added here.
+//! ([`RoleGuard`]/[`require_role_at_least`], spec M10; the per-user
+//! [`PermissionGuard`]/[`require_permission`], Issue #697) and audit
+//! recording ([`record_write`], spec M14) are added here.
 //!
 //! ## Both-paths symmetry (conventions §1)
 //!
@@ -39,6 +40,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use banto_admin_services::audit::{AuditEntry, AuditLogService};
 use banto_admin_services::backup::{BackupInfo, BackupService, PendingRestoreInfo};
+use banto_admin_services::permissions::{PermissionEntry, PermissionKey};
 use banto_admin_services::settings::{AuditSettings, SettingsService};
 use banto_admin_services::users::{
     Role, UserIdentity, UserIdentityView, UserSummary, UsersService,
@@ -50,7 +52,7 @@ use std::str::FromStr;
 
 use crate::{
     require_auth, ApiError, AuthState, AuthenticatedSession, Identity, SessionAccount,
-    SessionStamp, SessionValidation,
+    SessionPermissions, SessionStamp, SessionValidation,
 };
 
 mod audit;
@@ -62,13 +64,15 @@ mod users;
 
 pub use audit::{
     audit_log_router, audit_logout_middleware, audited_credential_verifier, user_auth_state,
-    user_session_lookup, LogoutAuditState,
+    user_permission_reader, user_session_lookup, LogoutAuditState,
 };
 pub use auth::{extra_auth_router, AuthStatusExtras};
 pub use backups::backups_router;
 pub use system_info::{system_info_router, MetricsProbe, SystemInfo, SystemMetrics};
 pub use ui_settings::ui_settings_router;
-pub use users::users_router;
+pub use users::{
+    list_users_with_permissions, permission_catalog_entries, users_router, UserWithPermissions,
+};
 
 /// Extract the raw bearer token from an `Authorization: Bearer …` header.
 /// Every RBAC/audit helper below starts here; the app's own routers
@@ -237,20 +241,10 @@ pub async fn require_role_at_least(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let validated = req.extensions().get::<AuthenticatedSession>().cloned();
-    let session = match validated {
-        Some(session) => Some(session),
-        // Owned token: a borrow of `req` held across the `.await` would make
-        // this middleware's future `!Send`.
-        None => match bearer_token(req.headers()).map(str::to_owned) {
-            Some(token) => match guard.auth.authenticate(&token).await {
-                Ok(session) => session,
-                Err(err) => return ApiError(err).into_response(),
-            },
-            None => None,
-        },
+    let identity = match guarded_identity(&guard.auth, &req).await {
+        Ok(identity) => identity,
+        Err(err) => return ApiError(err).into_response(),
     };
-    let identity = session.map(|session| session.identity);
     let role = identity
         .as_ref()
         .and_then(|identity| Role::from_str(&identity.role).ok());
@@ -258,19 +252,146 @@ pub async fn require_role_at_least(
     match role {
         Some(role) if role.at_least(guard.min) => next.run(req).await,
         _ => {
-            if let Some(identity) = &identity {
-                let method = req.method().as_str().to_string();
-                let path = req.uri().path().to_string();
-                record_denied_as(
-                    &guard.audit,
-                    AuditActor::from(identity),
-                    "rest",
-                    guard.resource,
-                    json!({ "method": method, "path": path }),
-                )
-                .await;
-            }
-            forbidden_response()
+            deny(
+                &guard.audit,
+                guard.resource,
+                identity.as_ref(),
+                denied_detail(&req),
+            )
+            .await
+        }
+    }
+}
+
+/// The session a guard decides on (Issue #204): the one `require_auth`
+/// validated for THIS request, or - when that is missing - the token
+/// validated here the same way, never the identity cached on the token at
+/// login. `Ok(None)` = no session (the guard refuses without auditing);
+/// `Err` = the account store could not answer.
+fn guarded_session(
+    auth: &AuthState,
+    req: &axum::extract::Request,
+) -> impl std::future::Future<Output = Result<Option<AuthenticatedSession>, BantoError>> + Send + 'static
+{
+    // Owned values only: a borrow of `req` held across the `.await` would
+    // make the middleware's future `!Send`.
+    let validated = req.extensions().get::<AuthenticatedSession>().cloned();
+    let token = bearer_token(req.headers()).map(str::to_owned);
+    let auth = auth.clone();
+    async move {
+        match validated {
+            Some(session) => Ok(Some(session)),
+            None => match token {
+                Some(token) => auth.authenticate(&token).await,
+                None => Ok(None),
+            },
+        }
+    }
+}
+
+/// [`guarded_session`]'s identity: what a role guard decides on.
+fn guarded_identity(
+    auth: &AuthState,
+    req: &axum::extract::Request,
+) -> impl std::future::Future<Output = Result<Option<Identity>, BantoError>> + Send + 'static {
+    let session = guarded_session(auth, req);
+    async move { Ok(session.await?.map(|session| session.identity)) }
+}
+
+/// The session and its per-user permissions a permission guard decides on
+/// (Issue #697): the [`SessionPermissions`] `require_auth` put into THIS
+/// request's extensions, or - when that is missing - the ones read here
+/// for the session [`guarded_session`] found ([`AuthState::session_permissions`]).
+/// Never anything the client sent.
+fn guarded_permissions(
+    auth: &AuthState,
+    req: &axum::extract::Request,
+) -> impl std::future::Future<Output = Result<Option<(Identity, SessionPermissions)>, BantoError>>
+       + Send
+       + 'static {
+    let cached = req.extensions().get::<SessionPermissions>().cloned();
+    let session = guarded_session(auth, req);
+    let auth = auth.clone();
+    async move {
+        let Some(session) = session.await? else {
+            return Ok(None);
+        };
+        let permissions = match cached {
+            Some(permissions) => permissions,
+            None => auth.session_permissions(&session).await?,
+        };
+        Ok(Some((session.identity, permissions)))
+    }
+}
+
+/// `{ method, path }` of a refused request: the `detail` of its `denied`
+/// audit row (REST only; conventions §1 allows the Tauri side's `None`).
+fn denied_detail(req: &axum::extract::Request) -> serde_json::Value {
+    json!({ "method": req.method().as_str(), "path": req.uri().path() })
+}
+
+/// A guard's refusal: `403 forbidden`, and - when there IS an identity - the
+/// `denied` audit row (spec M14), `detail` `{ method, path }`. Shared by
+/// [`require_role_at_least`] and [`require_permission`] so a role refusal
+/// and a permission refusal record the same shape.
+async fn deny(
+    audit: &AuditLogService,
+    resource: &str,
+    identity: Option<&Identity>,
+    detail: serde_json::Value,
+) -> Response {
+    if let Some(identity) = identity {
+        record_denied_as(audit, AuditActor::from(identity), "rest", resource, detail).await;
+    }
+    forbidden_response()
+}
+
+/// `State` for [`require_permission`] (Issue #697, user-permissions-plan §5):
+/// like [`RoleGuard`], but the floor is a per-user permission instead of a
+/// role. The Tauri twin is `src-tauri`'s `require_permission(state,
+/// permission, resource)`; `scripts/verify-architecture.mjs` rule 8 checks
+/// that a guarded pair uses the same permission on both paths.
+#[derive(Clone)]
+pub struct PermissionGuard {
+    pub auth: AuthState,
+    pub permission: PermissionKey,
+    pub resource: &'static str,
+    pub audit: AuditLogService,
+}
+
+/// Axum middleware (Issue #697): stacked after `require_auth`, lets the
+/// request through only when the caller's session holds `guard.permission`
+/// (the request's [`SessionPermissions`], see [`crate::require_auth`]). The
+/// role is not looked at - an admin
+/// without the permission is refused, a viewer with it passes (combine with a
+/// [`RoleGuard`] when both are wanted). A permission the app does not
+/// register is never held (the session's permissions are filtered by the
+/// catalog when they are read), so guarding with one refuses everybody.
+/// The refusal is exactly [`require_role_at_least`]'s: `403 forbidden`, and a
+/// `denied` audit row with `detail` `{ method, path }` when there is an
+/// identity (none without a session). Attach via
+/// `middleware::from_fn_with_state(PermissionGuard { auth, permission, resource, audit }, require_permission)`.
+/// For a decision finer than a route (e.g. per equipment), a handler takes
+/// `Extension<SessionPermissions>` and calls [`SessionPermissions::has`].
+pub async fn require_permission(
+    State(guard): State<PermissionGuard>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let session = match guarded_permissions(&guard.auth, &req).await {
+        Ok(session) => session,
+        Err(err) => return ApiError(err).into_response(),
+    };
+    match session {
+        Some((_, permissions)) if permissions.has(&guard.permission) => next.run(req).await,
+        _ => {
+            deny(
+                &guard.audit,
+                guard.resource,
+                session.as_ref().map(|(identity, _)| identity),
+                denied_detail(&req),
+            )
+            .await
         }
     }
 }
@@ -421,5 +542,172 @@ mod tests {
         let without = rows.iter().find(|r| r.entity_id.is_none()).unwrap();
         assert_eq!(without.actor_username, None);
         assert_eq!(without.actor_role, None);
+    }
+
+    // --- Issue #697: PermissionGuard -----------------------------------------
+
+    fn key(raw: &str) -> PermissionKey {
+        PermissionKey::parse(raw).unwrap()
+    }
+
+    /// Account `id` (also the stamp's `account_id`): username `{role}-user`.
+    fn account(id: i64, role: &str) -> SessionAccount {
+        SessionAccount {
+            identity: Identity {
+                id: format!("{role}-user"),
+                name: role.to_string(),
+                role: role.to_string(),
+            },
+            stamp: SessionStamp {
+                account_id: id,
+                auth_epoch: 0,
+            },
+        }
+    }
+
+    /// An `AuthState` whose lookup knows a viewer (id 1, holds
+    /// `equipment.operate`) and an admin (id 2, holds `alarm.ack`), with a
+    /// permission reader over a map the test can change.
+    fn permission_auth(
+        held: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<i64, Vec<&'static str>>>>,
+    ) -> AuthState {
+        let auth = AuthState::new(
+            |_u: String, _p: String| Box::pin(async { None }),
+            SessionValidation::lookup(|username: String| {
+                Box::pin(async move {
+                    Ok(match username.as_str() {
+                        "viewer-user" => Some(account(1, "viewer")),
+                        "admin-user" => Some(account(2, "admin")),
+                        _ => None,
+                    })
+                })
+            }),
+        );
+        auth.with_permission_reader(move |account_id: i64| {
+            let keys: std::collections::BTreeSet<PermissionKey> = held
+                .lock()
+                .unwrap()
+                .get(&account_id)
+                .map(|keys| keys.iter().map(|k| key(k)).collect())
+                .unwrap_or_default();
+            Box::pin(async move { Ok(SessionPermissions::new(keys)) })
+        })
+    }
+
+    async fn call(router: &Router, token: Option<&str>) -> StatusCode {
+        use tower::ServiceExt;
+        let mut request = axum::http::Request::post("/api/equipment/1/start");
+        if let Some(token) = token {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+        router
+            .clone()
+            .oneshot(request.body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn require_permission_ignores_the_role_and_audits_a_refusal_like_a_role_guard() {
+        let audit = service().await;
+        let held = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::from([
+            (1, vec!["equipment.operate"]),
+            (2, vec!["alarm.ack"]),
+        ])));
+        let auth = permission_auth(held.clone());
+        let router = Router::new()
+            .route(
+                "/api/equipment/{id}/start",
+                post(
+                    |axum::Extension(permissions): axum::Extension<SessionPermissions>| async move {
+                        // The extractor sees the same permissions the guard did.
+                        assert!(permissions.has(&key("equipment.operate")));
+                        "started"
+                    },
+                ),
+            )
+            .layer(middleware::from_fn_with_state(
+                PermissionGuard {
+                    auth: auth.clone(),
+                    permission: key("equipment.operate"),
+                    resource: "equipment",
+                    audit: audit.clone(),
+                },
+                require_permission,
+            ))
+            .layer(middleware::from_fn_with_state(auth.clone(), require_auth));
+
+        // A viewer holding the permission passes; an admin without it does not.
+        let viewer = auth.issue_account_token(account(1, "viewer"), false);
+        let admin = auth.issue_account_token(account(2, "admin"), false);
+        assert_eq!(call(&router, Some(&viewer)).await, StatusCode::OK);
+        assert_eq!(call(&router, Some(&admin)).await, StatusCode::FORBIDDEN);
+        // No session: 401 from require_auth, nothing audited.
+        assert_eq!(call(&router, None).await, StatusCode::UNAUTHORIZED);
+
+        let rows = rows(&audit).await;
+        assert_eq!(rows.len(), 1, "only the admin's refusal is audited");
+        let r = &rows[0];
+        assert_eq!(r.actor_username.as_deref(), Some("admin-user"));
+        assert_eq!(r.actor_role.as_deref(), Some("admin"));
+        assert_eq!((r.action.as_str(), r.result.as_str()), ("denied", "denied"));
+        assert_eq!(
+            (r.resource.as_str(), r.origin.as_str()),
+            ("equipment", "rest")
+        );
+        assert_eq!(
+            r.detail.as_deref(),
+            Some(r#"{"method":"POST","path":"/api/equipment/1/start"}"#)
+        );
+
+        // Revoking takes effect on the next request (read per request), with
+        // the session itself kept.
+        held.lock().unwrap().insert(1, vec![]);
+        assert_eq!(call(&router, Some(&viewer)).await, StatusCode::FORBIDDEN);
+        assert!(auth.verify(&viewer));
+    }
+
+    #[tokio::test]
+    async fn session_permissions_are_none_for_grants_unstamped_sessions_and_without_a_reader() {
+        let held = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::from([(
+            1,
+            vec!["equipment.operate"],
+        )])));
+        let auth = permission_auth(held);
+        let viewer = auth.issue_account_token(account(1, "viewer"), false);
+        let session = auth.authenticate(&viewer).await.unwrap().unwrap();
+        assert!(auth
+            .session_permissions(&session)
+            .await
+            .unwrap()
+            .has(&key("equipment.operate")));
+
+        // The same session seen as a grant: never any.
+        let grant = AuthenticatedSession {
+            grant: Some(crate::grant::GrantKind::new("viewer-public").unwrap()),
+            ..session.clone()
+        };
+        assert!(auth.session_permissions(&grant).await.unwrap().is_empty());
+        // No account stamp: none.
+        let unstamped = AuthenticatedSession {
+            stamp: None,
+            ..session.clone()
+        };
+        assert!(auth
+            .session_permissions(&unstamped)
+            .await
+            .unwrap()
+            .is_empty());
+        // No reader installed: none.
+        let plain = AuthState::new(
+            |_u: String, _p: String| Box::pin(async { None }),
+            SessionValidation::DisabledNoRevocation,
+        );
+        assert!(plain
+            .session_permissions(&session)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }
