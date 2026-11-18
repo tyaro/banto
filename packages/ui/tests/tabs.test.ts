@@ -142,6 +142,75 @@ describe('Tabs keepMounted', () => {
 	});
 });
 
+describe('Tabs hideSingleTab (#659)', () => {
+	const ONE: TabItem[] = [{ id: 'a', label: 'Alpha' }];
+
+	it('draws no tablist / tab and a plain panel for a single tab', () => {
+		const { container } = render(TabsHarness, { tabs: ONE, hideSingleTab: true });
+		expect(screen.queryByRole('tablist')).toBeNull();
+		expect(screen.queryByRole('tab')).toBeNull();
+		expect(screen.queryByRole('tabpanel')).toBeNull();
+		const panel = container.querySelector('.banto-tabs__panel');
+		expect(panel).not.toBeNull();
+		for (const attr of ['role', 'tabindex', 'id', 'aria-labelledby', 'hidden']) {
+			expect(panel?.hasAttribute(attr)).toBe(false);
+		}
+		expect(panel?.textContent).toContain('Panel a');
+		expect(screen.getByTestId('value').textContent).toBe('a');
+	});
+
+	it('keeps the usual markup for a single tab without hideSingleTab', () => {
+		render(TabsHarness, { tabs: ONE });
+		expect(screen.getByRole('tablist')).toBeTruthy();
+		expect(screen.getAllByRole('tab')).toHaveLength(1);
+		expect(screen.getByRole('tabpanel').getAttribute('tabindex')).toBe('0');
+	});
+
+	it('keeps the usual markup for two or more tabs with hideSingleTab', () => {
+		render(TabsHarness, { tabs: TABS, hideSingleTab: true });
+		expect(screen.getByRole('tablist')).toBeTruthy();
+		expect(screen.getAllByRole('tab')).toHaveLength(3);
+		expect(screen.getByRole('tabpanel').getAttribute('tabindex')).toBe('0');
+	});
+
+	it('switches when the tabs go from two to one and back', async () => {
+		const view = render(TabsHarness, { tabs: TABS.slice(0, 2), hideSingleTab: true });
+		expect(screen.getByRole('tablist')).toBeTruthy();
+		await view.rerender({ tabs: [TABS[1]], hideSingleTab: true });
+		expect(screen.queryByRole('tablist')).toBeNull();
+		expect(screen.getByTestId('value').textContent).toBe('b');
+		expect(view.container.querySelector('.banto-tabs__panel')?.textContent).toContain('Panel b');
+		await view.rerender({ tabs: TABS.slice(0, 2), hideSingleTab: true });
+		expect(screen.getAllByRole('tab')).toHaveLength(2);
+	});
+
+	it('keeps the remaining panel element and its content across 2 -> 1 -> 2', async () => {
+		const two = TABS.slice(0, 2);
+		const view = render(TabsHarness, { tabs: two, hideSingleTab: true });
+		const panel = view.container.querySelector('.banto-tabs__panel:not([hidden])');
+		const input = screen.getByTestId('field-a') as HTMLInputElement;
+		await fireEvent.input(input, { target: { value: 'typed' } });
+		await view.rerender({ tabs: [TABS[0]], hideSingleTab: true });
+		expect(view.container.querySelector('.banto-tabs__panel')).toBe(panel);
+		expect(screen.getByTestId('field-a')).toBe(input);
+		expect(input.value).toBe('typed');
+		await view.rerender({ tabs: two, hideSingleTab: true });
+		expect(view.container.querySelector('.banto-tabs__panel:not([hidden])')).toBe(panel);
+		expect(screen.getByTestId('field-a')).toBe(input);
+		expect(input.value).toBe('typed');
+	});
+
+	it('keeps a lone disabled tab hidden and unrendered', () => {
+		const { container } = render(TabsHarness, {
+			tabs: [{ id: 'x', label: 'X', disabled: true }],
+			hideSingleTab: true
+		});
+		const panel = container.querySelector('.banto-tabs__panel');
+		expect(panel?.hasAttribute('hidden')).toBe(true);
+		expect(screen.queryByText('Panel x')).toBeNull();
+	});
+});
+
 describe('SegmentedControl', () => {
 	const OPTIONS: SegmentedOption<'s' | 'c'>[] = [
 		{ value: 's', label: 'Standard', icon: CustomIcon },

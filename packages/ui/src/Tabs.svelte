@@ -20,6 +20,14 @@
 	 *   to the caller (branch on the selected tab inside the snippet).
 	 *   The panel is focusable (`tabindex="0"`) so Tab reaches a panel without
 	 *   focusable content.
+	 * - `hideSingleTab` (default `false`): with exactly one tab (disabled ones
+	 *   count) the tablist is not drawn and the panel drops `role`, `id`,
+	 *   `aria-labelledby` and `tabindex` (there is no tab to refer to, and an
+	 *   empty frame should not take a Tab stop). The panel stays the same
+	 *   element, so changing the number of tabs never recreates its content. A
+	 *   lone disabled tab stays hidden as before (and, unless `keepMounted`,
+	 *   unrendered). `value` / `onchange` behave as usual. With two or more
+	 *   tabs nothing changes.
 	 * - Disabled tabs carry `aria-disabled` (still announced, never selected).
 	 */
 	import type { Snippet } from 'svelte';
@@ -38,6 +46,8 @@
 		onchange?: (id: string) => void;
 		/** Draw the `panel` snippet for unselected tabs too (still `hidden`). Default `false`. */
 		keepMounted?: boolean;
+		/** With exactly one tab, draw no tablist and a plain panel (see above). Default `false`. */
+		hideSingleTab?: boolean;
 		/** The selected tab's panel content; receives the tab id. */
 		panel: Snippet<[string]>;
 	}
@@ -50,6 +60,7 @@
 		activation = 'automatic',
 		onchange,
 		keepMounted = false,
+		hideSingleTab = false,
 		panel
 	}: Props = $props();
 
@@ -72,6 +83,8 @@
 	const tabStop = $derived(
 		focusedId !== undefined && enabled.some((tab) => tab.id === focusedId) ? focusedId : selected
 	);
+
+	const single = $derived(hideSingleTab && tabs.length === 1);
 
 	let listEl: HTMLElement | undefined = $state();
 
@@ -130,41 +143,45 @@
 	}
 </script>
 
-<div
-	bind:this={listEl}
-	class="banto-tabs"
-	role="tablist"
-	aria-label={label}
-	aria-labelledby={labelledby}
-	aria-orientation="horizontal"
-	onfocusout={handleFocusout}
->
-	{#each tabs as tab (tab.id)}
-		{@const Icon = tab.icon}
-		<button
-			type="button"
-			role="tab"
-			id={tabId(tab.id)}
-			aria-selected={tab.id === selected}
-			aria-controls={panelId(tab.id)}
-			aria-disabled={tab.disabled ? 'true' : undefined}
-			tabindex={tab.id === tabStop ? 0 : -1}
-			onclick={() => handleClick(tab)}
-			onkeydown={handleKeydown}
-		>
-			{#if Icon}<Icon size={16} aria-hidden="true" />{/if}
-			{tab.label}
-		</button>
-	{/each}
-</div>
+{#if !single}
+	<div
+		bind:this={listEl}
+		class="banto-tabs"
+		role="tablist"
+		aria-label={label}
+		aria-labelledby={labelledby}
+		aria-orientation="horizontal"
+		onfocusout={handleFocusout}
+	>
+		{#each tabs as tab (tab.id)}
+			{@const Icon = tab.icon}
+			<button
+				type="button"
+				role="tab"
+				id={tabId(tab.id)}
+				aria-selected={tab.id === selected}
+				aria-controls={panelId(tab.id)}
+				aria-disabled={tab.disabled ? 'true' : undefined}
+				tabindex={tab.id === tabStop ? 0 : -1}
+				onclick={() => handleClick(tab)}
+				onkeydown={handleKeydown}
+			>
+				{#if Icon}<Icon size={16} aria-hidden="true" />{/if}
+				{tab.label}
+			</button>
+		{/each}
+	</div>
+{/if}
 
 {#each tabs as tab (tab.id)}
+	<!-- role and tabindex are dropped together when single -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
 		class="banto-tabs__panel"
-		role="tabpanel"
-		id={panelId(tab.id)}
-		aria-labelledby={tabId(tab.id)}
-		tabindex="0"
+		role={single ? undefined : 'tabpanel'}
+		id={single ? undefined : panelId(tab.id)}
+		aria-labelledby={single ? undefined : tabId(tab.id)}
+		tabindex={single ? undefined : 0}
 		hidden={tab.id !== selected}
 	>
 		{#if keepMounted || tab.id === selected}
