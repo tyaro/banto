@@ -175,7 +175,7 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
   止めて何も変えない。最後に動かす pane 自身の `dock` / `move-docked`）。
   - タブの組へ落とす（戻す）と、それまで選択中だったタブが画面から外れる: `tab-switch`（`from` = そのタブ、
     `to` = 落とした pane。`remount` は `keepMounted` でなければ `true`）。単独の pane の真ん中へ落として新しい
-    タブの組ができるときも、その pane からの `tab-switch`（`remount: true`。`groupId` はまだ無い組の仮の id）。
+    タブの組ができるときも、その pane からの `tab-switch`（`remount: true`。`groupId` はまだ無い組の仮の id）。仮の id はドロップでは `${落とした pane}:dropped`、復帰では `${pane}:restored-tabs` で、適用後の木の実際の id（適用時に作られる）とは一致しない。新しくできる組への `tab-switch` の `groupId` で組を引かないこと。
   - 単独の pane（またはタブの組）の端へ落として新しい分割ができると、包まれる pane の中身は作り直される
     （Svelte の部品は別の親へ移せないので `keepMounted` でも同じ）: その pane の `reparent`（`remount: true`、`cause` = 動かす pane の id）。
     包まれるタブの組では、選択中のタブと `keepMounted` のタブのそれぞれ。docked の pane を動かして元の分割が
