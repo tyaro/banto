@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+### 追加（minor）: ui の `closeOpenMenus(root?, except?)`（#670）
+
+- 開いている `Menu`（`role="menu"` の popover）を閉じる口を `@banto/ui` から公開した。`root`（既定は document）の下の menu を `hidePopover()` し、閉じたものを返す。`except` の中の menu は閉じない。admin-template の `settlePrompt.svelte.ts` にあった同名の関数はこちらへ移し（テンプレート側の定義は消した）、HeaderNav の menu 項目を閉じるループも同じ関数に寄せた。
+
+### 修正: Modal / Drawer / ConfirmDialog を開くと、開いていたメニューを閉じる（#670）
+
+- メニューは top layer の popover でモーダルの scrim より上に残り、`layering.ts` ではメニューとモーダルがお互いを「上」と判定して Esc が噛み合わなかった。モーダル層（Modal・Drawer・ConfirmDialog）が開く瞬間に、開いているメニューを閉じる約束にした（層の判定は変えていない。モーダルの中のメニューと、開いた後に開くメニューは対象外）。フォーカスがメニュー項目にあったときは、閉じるときの復帰先をメニューのトリガーにする。
+
 ### 修正（patch）: 狭い viewport で Menu などの popover の左端が画面外へ出る（#668）
 
 - `anchoredPopover` の横の補正を、左端が必ず `ANCHORED_POPOVER_GAP` 以上になる形に直した（popover が viewport より広いときは右側へはみ出す）。Menu / HeaderNav / DateInput / DateTimeInput / TimeInput / Tooltip に効く。Menu の `min-width` / `max-width` は `100vw - 2 * var(--banto-space-1)` を超えないようにした
