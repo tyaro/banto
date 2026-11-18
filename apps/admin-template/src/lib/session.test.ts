@@ -103,4 +103,37 @@ describe('sessionStore (derived from the controller snapshot)', () => {
 		expect(sessionStore.role).toBe('viewer');
 		expect(sessionStore.publicViewer).toBe(false);
 	});
+
+	it('Issue #697: permissions come from the confirmed identity, fail closed, and are independent of the role', async () => {
+		const p = provider([
+			(r) => ({
+				status: 'active',
+				checked: r,
+				current: r,
+				identity: { id: 'bob', name: 'Bob', role: 'viewer', permissions: ['equipment.operate'] },
+				kind: 'account'
+			}),
+			account('admin'),
+			(r) => ({ status: 'none', checked: r, current: r })
+		]);
+		initBanto({ dataProvider: {} as DataProvider, authProvider: p.auth, resources: [] });
+		const controller = getSessionController();
+
+		await resolveSettled(controller);
+		expect(sessionStore.role).toBe('viewer');
+		expect(sessionStore.permissions).toEqual(['equipment.operate']);
+		expect(sessionStore.hasPermission('equipment.operate')).toBe(true);
+		expect(sessionStore.hasPermission('alarm.ack')).toBe(false);
+
+		// An admin without the field holds nothing (the role grants none).
+		p.change();
+		await resolveSettled(controller);
+		expect(sessionStore.role).toBe('admin');
+		expect(sessionStore.permissions).toEqual([]);
+		expect(sessionStore.hasPermission('equipment.operate')).toBe(false);
+
+		p.change();
+		await resolveSettled(controller);
+		expect(sessionStore.permissions).toEqual([]);
+	});
 });

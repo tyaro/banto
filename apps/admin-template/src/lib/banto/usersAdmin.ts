@@ -83,6 +83,13 @@ export interface UpdateUserInput {
 	role: Role;
 	/** The `UserSummary.version` the form was opened with (Issue #651). Omitted -> overwrite as before. */
 	version?: number;
+	/**
+	 * The permissions to store for the account (Issue #697): the complete set,
+	 * not a diff. Omitted -> unchanged (REST leaves the field out, Tauri sends
+	 * `null`), so an older caller keeps working. A key the app does not
+	 * register is a `validation` error; the same `version` guards it.
+	 */
+	permissions?: UserPermission[];
 }
 
 export const DEMO_MODE_MESSAGE = 'デモモードでは利用できません';
@@ -209,10 +216,22 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<Us
 			id,
 			displayName: input.displayName,
 			role: input.role,
-			version: input.version ?? null
+			version: input.version ?? null,
+			permissions: input.permissions ?? null
 		});
 	}
 	return httpRequest<UserSummary>(`/api/users/${id}`, { method: 'PUT', body: input });
+}
+
+/**
+ * The permissions the app registered (Issue #697; REST `GET /api/permissions`,
+ * Tauri `permissions_catalog`), in registration order. Empty for the
+ * template itself - the users screen then shows no permission field at all.
+ */
+export async function listPermissionCatalog(): Promise<PermissionEntry[]> {
+	if (!isUsersAdminAvailable()) throw demoModeError();
+	if (getBantoMode() === 'tauri') return invokeCommand<PermissionEntry[]>('permissions_catalog');
+	return httpRequest<PermissionEntry[]>('/api/permissions', { method: 'GET' });
 }
 
 export async function resetUserPassword(id: number, newPassword: string): Promise<void> {
@@ -262,4 +281,113 @@ export function shouldAdvanceEditVersion(args: {
 		args.editVersion === args.sentVersion &&
 		args.savedVersion === args.sentVersion + 1
 	);
+}
+
+/** One checkbox row of the permission field. */
+export interface PermissionRow {
+	key: UserPermission;
+	/** Display name: the app's message for the entry's `labelKey`, else the key itself. */
+	label: string;
+	/** Description from the entry's `descriptionKey`; `null` when the app has no such message. */
+	description: string | null;
+	/** `false`: the account holds this key but the app no longer registers it. */
+	registered: boolean;
+}
+
+/**
+ * Look up an app-registered message key. `source` is the Paraglide `messages`
+ * namespace (injected so this stays testable); a key it does not have - or
+ * one that throws - gives `null`, never the key's own text.
+ */
+export function lookupMessage(source: Record<string, unknown>, key: string): string | null {
+	const candidate = Object.hasOwn(source, key) ? source[key] : undefined;
+	if (typeof candidate !== 'function') return null;
+	try {
+		const text: unknown = (candidate as () => unknown)();
+		return typeof text === 'string' && text !== '' ? text : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The rows of the permission field: every catalog entry (registration order),
+ * then the keys the account holds (`held`: the server's state, NOT the draft,
+ * so unchecking one does not make its row vanish under the cursor) that the
+ * catalog no longer lists, sorted, marked unregistered.
+ */
+export function permissionRows(
+	catalog: readonly PermissionEntry[],
+	held: readonly UserPermission[],
+	messages: Record<string, unknown>
+): PermissionRow[] {
+	const registered = new Set(catalog.map((entry) => entry.key));
+	const rows: PermissionRow[] = catalog.map((entry) => ({
+		key: entry.key,
+		label: lookupMessage(messages, entry.labelKey) ?? entry.key,
+		description: lookupMessage(messages, entry.descriptionKey),
+		registered: true
+	}));
+	for (const key of [...new Set(held)].sort()) {
+		if (!registered.has(key)) rows.push({ key, label: key, description: null, registered: false });
+	}
+	return rows;
+}
+
+/** `draft` with `key` checked or unchecked: sorted, no duplicates, a new array. */
+export function withPermission(
+	draft: readonly UserPermission[],
+	key: UserPermission,
+	checked: boolean
+): UserPermission[] {
+	const next = new Set(draft);
+	if (checked) next.add(key);
+	else next.delete(key);
+	return [...next].sort();
+}
+
+/**
+ * Replay the changes `draft` made against `oldBase` on top of `newBase`
+ * (sorted, no duplicates): keys checked in the draft but not in `oldBase` are
+ * added, keys `oldBase` had but the draft unchecked are removed, everything
+ * else follows `newBase`. Used when the base moves under an open form (our
+ * own save finished after the user reselected the account), so the next
+ * complete-set save keeps both.
+ */
+export function rebasePermissions(
+	draft: readonly UserPermission[],
+	oldBase: readonly UserPermission[],
+	newBase: readonly UserPermission[]
+): UserPermission[] {
+	const before = new Set(oldBase);
+	const after = new Set(draft);
+	const next = new Set(newBase);
+	for (const key of after) if (!before.has(key)) next.add(key);
+	for (const key of before) if (!after.has(key)) next.delete(key);
+	return [...next].sort();
+}
+
+/** Same set of keys, whatever the order. */
+export function samePermissions(
+	a: readonly UserPermission[],
+	b: readonly UserPermission[]
+): boolean {
+	const left = new Set(a);
+	const right = new Set(b);
+	return left.size === right.size && [...left].every((key) => right.has(key));
+}
+
+/**
+ * The `permissions` to send on save: the draft when it differs from what the
+ * form was opened with (`base`), otherwise `undefined` so the server leaves
+ * them alone. `draft === null` means the form has no trustworthy copy (after
+ * a conflict, until the list is re-read) - nothing is sent, so a stale choice
+ * can never overwrite someone else's change.
+ */
+export function permissionsToSend(
+	draft: readonly UserPermission[] | null,
+	base: readonly UserPermission[]
+): UserPermission[] | undefined {
+	if (draft === null || samePermissions(draft, base)) return undefined;
+	return [...new Set(draft)].sort();
 }

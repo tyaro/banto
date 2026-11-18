@@ -12,11 +12,11 @@
 	 * 「クリックで編集ページへ」と同じ発想を、別ページ遷移ではなくページ内表示
 	 * にしたもの）。
 	 */
-	import { untrack, type Component } from 'svelte';
+	import { onDestroy, untrack, type Component } from 'svelte';
 	import { BantoGrid, type GridColumn } from '@banto/grid-svelte';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
-	import { isProviderError } from '@banto/admin-core';
+	import { createRequestOwner, isProviderError } from '@banto/admin-core';
 	import {
 		Eye,
 		KeyRound,
@@ -43,13 +43,22 @@
 		createUser,
 		deleteUser,
 		isUsersAdminAvailable,
+		listPermissionCatalog,
 		listUsers,
+		permissionRows,
+		permissionsToSend,
+		rebasePermissions,
 		resetUserPassword,
+		samePermissions,
 		shouldAdvanceEditVersion,
 		updateUser,
+		withPermission,
+		type PermissionEntry,
 		type Role as UserRole,
+		type UserPermission,
 		type UserSummary
 	} from '#lib/banto/usersAdmin.js';
+	import PermissionsField from './PermissionsField.svelte';
 
 	const roleOptions: { value: UserRole; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },
@@ -138,8 +147,38 @@
 		}
 	}
 
+	// Issue #697: the permissions the app registered. Read once per page (they
+	// only change with the app's own build), independent of which user is
+	// selected - so closing or switching the edit panel while it loads cannot
+	// misapply it. An empty catalog (the template's own) hides the field.
+	let catalog: PermissionEntry[] = $state([]);
+	let catalogStatus: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+	const catalogRequests = createRequestOwner();
+	onDestroy(() => catalogRequests.dispose());
+
+	async function loadCatalog(): Promise<void> {
+		if (!available || catalogStatus === 'loading' || catalogStatus === 'ready') return;
+		const request = catalogRequests.begin('catalog');
+		catalogStatus = 'loading';
+		try {
+			const loaded = await listPermissionCatalog();
+			if (!request.isCurrent()) return;
+			catalog = loaded;
+			catalogStatus = 'ready';
+		} catch (err) {
+			if (!request.isCurrent()) return;
+			catalogStatus = 'error';
+			toastStore.push('error', errorMessage(err));
+		} finally {
+			request.finish();
+		}
+	}
+
 	$effect(() => {
-		untrack(() => void reload());
+		untrack(() => {
+			void reload();
+			void loadCatalog();
+		});
 	});
 
 	async function handleCreate(values: Record<string, unknown>): Promise<void> {
@@ -205,6 +244,16 @@
 	// change made by someone else in between would be overwritten silently.
 	let editVersion = $state(0);
 	let saving = $state(false);
+	// Issue #697: the permission draft. `null` = no trustworthy copy (after a
+	// conflict, until the list is read again): the field is disabled and a
+	// save sends nothing for permissions, so a stale choice can never
+	// overwrite someone else's change. "Did it change" is judged against the
+	// selected row (what the server holds), not against the draft.
+	let editPermissions: UserPermission[] | null = $state([]);
+	const basePermissions: readonly UserPermission[] = $derived.by(() => selected?.permissions ?? []);
+	const permissionList = $derived(
+		permissionRows(catalog, basePermissions, m as unknown as Record<string, unknown>)
+	);
 
 	function selectUser(user: UserSummary): void {
 		selectionEpoch++;
@@ -212,7 +261,9 @@
 		editDisplayName = user.displayName;
 		editRole = user.role;
 		editVersion = user.version;
+		editPermissions = [...(user.permissions ?? [])];
 		resetPassword = '';
+		if (catalogStatus === 'error') void loadCatalog();
 	}
 
 	/** The `current` of a `conflict` error (the other side's latest row), or null when absent / not a user row. */
@@ -231,13 +282,56 @@
 		return null;
 	}
 
-	/** Put the form on the other side's latest row (and its version as the new base), if this selection is still the one that conflicted. */
+	/**
+	 * Put the form on the other side's latest row (and its version as the new
+	 * base), if this selection is still the one that conflicted. The conflict
+	 * body is the account row WITHOUT its permissions (Issue #697), so unless it
+	 * carries them the permission draft becomes unknown (`null`) until
+	 * `syncPermissions` reads them from the list.
+	 */
 	function showLatest(current: UserSummary | null, targetId: number, epoch: number): void {
 		if (!current || epoch !== selectionEpoch || selected?.id !== targetId) return;
-		selected = current;
+		const known = Array.isArray(current.permissions);
+		selected = known ? current : { ...current, permissions: selected.permissions ?? [] };
 		editDisplayName = current.displayName;
 		editRole = current.role;
 		editVersion = current.version;
+		editPermissions = known ? [...current.permissions] : null;
+	}
+
+	/** What `showLatest` put in the form, so `syncPermissions` can tell input made while the list was re-read. */
+	function conflictSnapshot(): { displayName: string; role: UserRole; version: number } {
+		return { displayName: editDisplayName, role: editRole, version: editVersion };
+	}
+
+	/**
+	 * After a conflict and the list re-read: take the permissions (and the row)
+	 * from the list, if the selection did not move. The name and role fields
+	 * stay editable during the re-read, so input made since `showLatest` (the
+	 * `snapshot`) is kept:
+	 * - same version as the form: only the permissions are filled in;
+	 * - a newer version: the form follows it only when nothing was typed;
+	 *   otherwise it is left alone (permissions stay unknown, the base version
+	 *   is not advanced), so the next save conflicts again instead of
+	 *   overwriting the newer change.
+	 */
+	function syncPermissions(
+		targetId: number,
+		epoch: number,
+		snapshot: { displayName: string; role: UserRole; version: number }
+	): void {
+		if (editPermissions !== null || epoch !== selectionEpoch || selected?.id !== targetId) return;
+		const row = users.find((user) => user.id === targetId);
+		if (!row || row.version < editVersion) return;
+		const edited = editDisplayName !== snapshot.displayName || editRole !== snapshot.role;
+		if (row.version > editVersion && edited) return;
+		selected = row;
+		if (!edited) {
+			editDisplayName = row.displayName;
+			editRole = row.role;
+		}
+		editVersion = row.version;
+		editPermissions = [...row.permissions];
 	}
 
 	async function saveEdit(): Promise<void> {
@@ -247,9 +341,12 @@
 		// The base version is the one the form was opened with, read now (before
 		// the await), never re-read from the list afterwards.
 		const draft = { displayName: editDisplayName, role: editRole, version: editVersion };
+		// Only a changed set is sent; otherwise the server leaves it alone.
+		const sentPermissions = editPermissions ? [...editPermissions] : null;
+		const permissions = permissionsToSend(sentPermissions, basePermissions);
 		saving = true;
 		try {
-			const updated = await updateUser(targetId, draft);
+			const updated = await updateUser(targetId, { ...draft, permissions });
 			toastStore.push('success', m['users.updated']());
 			if (epoch === selectionEpoch && selected?.id === targetId) {
 				selected = updated;
@@ -257,6 +354,12 @@
 				// Fields remain editable while saving; retain input made after submission.
 				if (editDisplayName === draft.displayName) editDisplayName = updated.displayName;
 				if (editRole === draft.role) editRole = updated.role;
+				if (
+					editPermissions === null ||
+					(sentPermissions && samePermissions(editPermissions, sentPermissions))
+				) {
+					editPermissions = [...updated.permissions];
+				}
 			} else if (
 				// Selection moved on (e.g. reselected the same user from a stale list
 				// row) before our reply: advance only the base version so the next
@@ -270,6 +373,17 @@
 				})
 			) {
 				editVersion = updated.version;
+				// Permissions are sent as a complete set, so their base must follow
+				// the version: otherwise the next save (now at the new version) would
+				// silently drop what this save just granted. Changes made in the
+				// reselected form are replayed on top of the saved set.
+				if (selected) {
+					const oldBase = selected.permissions ?? [];
+					if (editPermissions !== null) {
+						editPermissions = rebasePermissions(editPermissions, oldBase, updated.permissions);
+					}
+					selected = { ...selected, permissions: [...updated.permissions] };
+				}
 			}
 			await reload();
 		} catch (err) {
@@ -277,8 +391,10 @@
 				// Someone else saved first: show their latest values (the form's
 				// base version follows) instead of overwriting them.
 				showLatest(conflictCurrent(err), targetId, epoch);
+				const snapshot = conflictSnapshot();
 				toastStore.push('error', m['users.conflictNotSaved']());
 				await reload();
+				syncPermissions(targetId, epoch, snapshot);
 			} else {
 				toastStore.push('error', errorMessage(err));
 			}
@@ -345,8 +461,10 @@
 				// Someone else changed the account first: nothing was deleted.
 				// Show their latest values and re-read the list.
 				showLatest(conflictCurrent(err), targetId, epoch);
+				const snapshot = conflictSnapshot();
 				toastStore.push('error', m['users.conflictNotDeleted']());
 				await reload();
+				syncPermissions(targetId, epoch, snapshot);
 			} else {
 				toastStore.push('error', errorMessage(err));
 			}
@@ -445,6 +563,16 @@
 							</select>
 							<span class="banto-field-label">{m['common.role']()}</span>
 						</label>
+						{#if catalog.length > 0}
+							<PermissionsField
+								rows={permissionList}
+								checked={editPermissions ?? basePermissions}
+								disabled={editPermissions === null}
+								onchange={(key, on) => {
+									if (editPermissions) editPermissions = withPermission(editPermissions, key, on);
+								}}
+							/>
+						{/if}
 						<Button variant="primary" onclick={saveEdit} loading={saving}>
 							{m['common.save']()}
 						</Button>

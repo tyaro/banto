@@ -21,7 +21,7 @@
  * is the least-privileged `viewer` (fail closed, `parseRole`).
  */
 import { getSessionController, type Identity } from '@banto/admin-core';
-import { parseRole, type Role } from './permissions';
+import { parsePermissions, parseRole, type Role } from './permissions';
 
 class SessionStore {
 	/** The confirmed identity, or `null` unless the session is `active`. */
@@ -31,6 +31,14 @@ class SessionStore {
 	});
 
 	readonly role: Role = $derived(parseRole(this.identity));
+
+	/** The per-user permissions of the confirmed session (Issue #697); none while nothing is confirmed. */
+	readonly permissions: readonly string[] = $derived(parsePermissions(this.identity));
+
+	/** Does the confirmed session hold `key`? For showing or hiding UI only - the server decides. */
+	hasPermission(key: string): boolean {
+		return this.permissions.includes(key);
+	}
 
 	/**
 	 * Login-not-required mode (spec M11): the Tauri auth-disabled session,
