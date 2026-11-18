@@ -758,9 +758,20 @@ describe('HeaderNav menu entries (#663 ①-B)', () => {
 		await flush();
 		const anchored = vi.mocked(computeAnchoredPosition);
 		const before = anchored.mock.calls.length;
+		// Record the top row at the moment each position is computed.
+		const original = anchored.getMockImplementation();
+		const rows: string[][] = [];
+		anchored.mockImplementation((...args) => {
+			rows.push(topControls(nav).map((control) => control.textContent?.trim() ?? ''));
+			return original!(...args);
+		});
 		// Links move into "more": the trigger moves left, the window does not resize.
 		await resizeTo(250);
 		await flush();
+		anchored.mockImplementation(original!);
+		// The row was already updated when the menu re-anchored (not the old layout).
+		expect(rows.length).toBeGreaterThan(0);
+		expect(rows[rows.length - 1]).toEqual(['A', 'View', 'More']);
 		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual([
 			'A',
 			'View',

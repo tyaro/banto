@@ -448,7 +448,11 @@
 		}
 		// Same for an open menu entry: its trigger may have moved (links before
 		// it going into "More", a width change) with no window resize, which is
-		// all `Menu` listens to. `reposition` is a no-op on a closed one.
+		// all `Menu` listens to. `reposition` is a no-op on a closed one. Lay the
+		// row out first: focus in a command menu is not captured above and
+		// `openKey` does not track it, so the trigger may still sit at its old
+		// position here.
+		flushSync();
 		for (const menu of Object.values(menus)) menu?.reposition();
 	}
 
