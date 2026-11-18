@@ -650,4 +650,79 @@ mod tests {
             .expect("the upgraded account can log in");
         assert_eq!(verified.auth_epoch, 1);
     }
+
+    /// Issue #697 (user-permissions-plan, review item for PR-1): restoring a
+    /// backup taken before migration 0013 works. `BackupService` only checks
+    /// for `settings`/`users`/`audit_log` (`REQUIRED_TABLES`), so such a file
+    /// is accepted; the startup after the swap runs the migrations, which
+    /// create `user_permissions`, and the permissions can be read and
+    /// written on the restored accounts.
+    #[tokio::test]
+    async fn a_backup_from_before_0013_restores_and_gains_user_permissions() {
+        use crate::backup::BackupService;
+        use crate::users::{PermissionCatalog, PermissionKey, Role, UsersService};
+
+        let dir = tempfile::tempdir().unwrap();
+        // The pre-0013 database the backup was taken from.
+        let old_path = dir.path().join("old.sqlite3");
+        let old = Db::connect_sqlite(&old_path).await.unwrap();
+        let mut before_0013 = sqlx::migrate!("./migrations-sqlite");
+        before_0013.migrations = before_0013
+            .migrations
+            .iter()
+            .filter(|m| m.version < 13)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        let old_pool = old.as_sqlite().unwrap();
+        before_0013.run(old_pool).await.unwrap();
+        let has_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'user_permissions'",
+        )
+        .fetch_one(old_pool)
+        .await
+        .unwrap();
+        assert_eq!(has_table, 0, "the fixture is a pre-0013 schema");
+        UsersService::new(old.clone())
+            .create_user("op", "operator-password", "Op", Role::Viewer)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(old_pool)
+            .await
+            .unwrap();
+        old_pool.close().await;
+        let bytes = tokio::fs::read(&old_path).await.unwrap();
+
+        // The current database: stage the old file and restart.
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let current = init_db(&db_path).await.unwrap();
+        BackupService::new(db_path.clone(), current.clone())
+            .stage_restore_from_bytes(&bytes)
+            .await
+            .expect("a pre-0013 backup passes the restore validation");
+        current.as_sqlite().unwrap().close().await;
+        BackupService::apply_pending_restore_at_startup(&db_path)
+            .await
+            .unwrap()
+            .expect("the staged restore is applied");
+        let restored = init_db(&db_path).await.unwrap();
+
+        let catalog = PermissionCatalog::empty()
+            .register("equipment.operate", "a", "b")
+            .unwrap();
+        let users = UsersService::new(restored).with_permission_catalog(catalog);
+        let op = users.get_by_username("op").await.unwrap().unwrap();
+        assert!(users.permissions_of(op.id).await.unwrap().is_empty());
+        let operate = PermissionKey::parse("equipment.operate").unwrap();
+        users
+            .set_permissions(op.id, std::slice::from_ref(&operate), None, "owner")
+            .await
+            .unwrap();
+        assert!(users
+            .session_permissions(op.id)
+            .await
+            .unwrap()
+            .has(&operate));
+    }
 }

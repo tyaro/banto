@@ -23,6 +23,7 @@
 //! caching its *own* login token more securely than `sessionStorage`), which
 //! is an orthogonal concern from where the account database itself lives.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::OnceLock;
 
@@ -32,6 +33,10 @@ use argon2::Argon2;
 use banto_core::{BantoError, FieldError};
 use banto_storage::Db;
 use serde::Serialize;
+
+pub use crate::permissions::{
+    PermissionCatalog, PermissionDiff, PermissionEntry, PermissionKey, SessionPermissions,
+};
 
 const MIN_USERNAME_LEN: usize = 1;
 /// Longest username (in chars) an account can be created with. Public so the
@@ -190,6 +195,19 @@ pub struct UserSummary {
     pub version: i64,
 }
 
+/// What [`UsersService::update_user_with_permissions`] did (Issue #697): the
+/// row before and after, the account's stored permissions after the write
+/// (sorted, unregistered keys included) and what the write granted and
+/// revoked. `#[non_exhaustive]`: built only here, read by the wiring.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct UserUpdate {
+    pub previous: UserSummary,
+    pub updated: UserSummary,
+    pub permissions: Vec<PermissionKey>,
+    pub permission_diff: PermissionDiff,
+}
+
 /// Wire shape of a freshly created account (`users_create`'s REST body and
 /// Tauri return value, spec M10): everything [`UserIdentity`] carries except
 /// `auth_epoch`, which must never reach the wire - hence this type instead
@@ -245,6 +263,9 @@ impl From<UserIdentity> for UserIdentityView {
 #[derive(Clone)]
 pub struct UsersService {
     db: Db,
+    /// The permissions the app registered (Issue #697). Empty unless the app
+    /// calls [`UsersService::with_permission_catalog`].
+    catalog: PermissionCatalog,
 }
 
 // Issue #207 / roadmap M10: the last-admin predicate and its write must
@@ -332,6 +353,59 @@ fn guard_summary(g: &GuardRow) -> Result<UserSummary, BantoError> {
     })
 }
 
+/// Stored permission strings -> keys, sorted. A malformed value (only a
+/// hand-edited DB can hold one: every write path validates) is skipped, the
+/// same "degrade, do not fail the read" stance as an unregistered key.
+fn stored_keys(rows: Vec<String>) -> Vec<PermissionKey> {
+    let set: BTreeSet<PermissionKey> = rows
+        .iter()
+        .filter_map(|raw| PermissionKey::parse(raw))
+        .collect();
+    set.into_iter().collect()
+}
+
+/// What a permission write does (Issue #697): `desired` replaces `before`.
+/// Every desired key must be registered in `catalog` or already held (a key
+/// the app stopped registering may be sent back to keep it); anything else
+/// is a `Validation` error on `permissions`.
+fn permission_write_plan(
+    catalog: &PermissionCatalog,
+    before: &[PermissionKey],
+    desired: &BTreeSet<PermissionKey>,
+) -> Result<PermissionDiff, BantoError> {
+    if let Some(unknown) = desired
+        .iter()
+        .find(|key| !catalog.contains(key) && !before.contains(key))
+    {
+        return Err(crate::permissions::unknown_permission(unknown));
+    }
+    Ok(PermissionDiff::between(
+        &before.iter().cloned().collect(),
+        desired,
+    ))
+}
+
+/// The `{ "field": "permissions", "added": [...], "removed": [...] }` entry
+/// of an audit `changes` list (Issue #697, user-permissions-plan §7), put in
+/// field-name order like [`crate::audit::diff::diff_changes`] sorts. Nothing
+/// is added when nothing changed.
+fn push_permissions_change(changes: &mut Vec<serde_json::Value>, diff: &PermissionDiff) {
+    if diff.is_empty() {
+        return;
+    }
+    changes.push(serde_json::json!({
+        "field": "permissions",
+        "added": diff.added,
+        "removed": diff.removed,
+    }));
+    changes.sort_by(|a, b| {
+        a["field"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(b["field"].as_str().unwrap_or_default())
+    });
+}
+
 /// Optimistic-lock check (Issue #651): `expected` is the version the client
 /// read (`None` = no check, the old overwrite). Any other value than the
 /// stored one - including 0, a negative or a future version - is a
@@ -364,6 +438,24 @@ pub fn user_update_detail(before: &UserSummary, after: &UserSummary) -> serde_js
     serde_json::json!({ "username": after.username, "role": after.role, "changes": changes })
 }
 
+/// [`user_update_detail`] plus the permission change of the same update
+/// (Issue #697, user-permissions-plan §7): one more `changes` entry,
+/// `{ "field": "permissions", "added": [...], "removed": [...] }`, in
+/// field-name order with the others; nothing is added when `permissions` is
+/// empty. The REST and Tauri wiring both call this one function, so their
+/// audit rows are the same. Keys only - no secret is involved.
+pub fn user_update_detail_with_permissions(
+    before: &UserSummary,
+    after: &UserSummary,
+    permissions: &PermissionDiff,
+) -> serde_json::Value {
+    let mut detail = user_update_detail(before, after);
+    if let Some(changes) = detail["changes"].as_array_mut() {
+        push_permissions_change(changes, permissions);
+    }
+    detail
+}
+
 /// The public fields of a new user; credentials and auth state never enter
 /// the audit payload. Both transports use this function.
 pub fn user_create_detail(user: &UserIdentity) -> serde_json::Value {
@@ -394,7 +486,215 @@ pub fn user_delete_detail(user: &UserSummary) -> serde_json::Value {
 
 impl UsersService {
     pub fn new(db: Db) -> Self {
-        Self { db }
+        Self {
+            db,
+            catalog: PermissionCatalog::empty(),
+        }
+    }
+
+    /// Use `catalog` as the registered permissions (Issue #697,
+    /// user-permissions-plan §3-3): what a permission write accepts and what
+    /// [`UsersService::session_permissions`] keeps. The app builds it once at
+    /// startup; the template keeps the empty one.
+    pub fn with_permission_catalog(mut self, catalog: PermissionCatalog) -> Self {
+        self.catalog = catalog;
+        self
+    }
+
+    /// The registered permissions (`GET /api/permissions` /
+    /// `permissions_catalog`, and the filter of the auth-disabled mode's
+    /// `auth.disabled_permissions`).
+    pub fn permission_catalog(&self) -> &PermissionCatalog {
+        &self.catalog
+    }
+
+    /// `SELECT permission FROM user_permissions WHERE user_id = $1`, sorted.
+    fn permissions_sql(&self) -> String {
+        format!(
+            "SELECT permission FROM user_permissions WHERE user_id = {} ORDER BY permission",
+            self.db.dialect().placeholder(1)
+        )
+    }
+
+    /// The permissions stored for account `user_id` (Issue #697,
+    /// user-permissions-plan §5), sorted - including keys the catalog no
+    /// longer registers (the admin screen shows those as "未登録"). An
+    /// unknown id reads as no permissions. Authorization uses
+    /// [`UsersService::session_permissions`] instead, which keeps registered
+    /// keys only.
+    pub async fn permissions_of(&self, user_id: i64) -> Result<Vec<PermissionKey>, BantoError> {
+        // AssertSqlSafe: only `dialect.placeholder(n)` is interpolated.
+        let sql = self.permissions_sql();
+        let rows: Vec<String> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(user_id)
+                    .fetch_all(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(user_id)
+                    .fetch_all(pool)
+                    .await
+            }
+        }
+        .map_err(banto_storage::storage_error)?;
+        Ok(stored_keys(rows))
+    }
+
+    /// What a session of account `user_id` is authorized with (Issue #697,
+    /// user-permissions-plan §4-§5): the stored permissions the catalog
+    /// registers. Read per request (REST `require_auth`) or per command
+    /// (Tauri `require_permission`), so a revoked key stops working on the
+    /// next request without touching `auth_epoch`. An unknown id holds none.
+    pub async fn session_permissions(
+        &self,
+        user_id: i64,
+    ) -> Result<SessionPermissions, BantoError> {
+        // Nothing registered = nothing held: skip the read (the template).
+        if self.catalog.is_empty() {
+            return Ok(SessionPermissions::none());
+        }
+        let stored = self.permissions_of(user_id).await?;
+        Ok(SessionPermissions::new(self.catalog.effective(&stored)))
+    }
+
+    /// Every account's stored permissions in one read (Issue #697), keyed by
+    /// account id, each sorted - including keys the catalog no longer
+    /// registers, like [`UsersService::permissions_of`]. Accounts without
+    /// any are absent. For the user list (`GET /api/users` / `users_list`).
+    pub async fn permissions_by_user(
+        &self,
+    ) -> Result<BTreeMap<i64, Vec<PermissionKey>>, BantoError> {
+        const PERMS_SQL: &str =
+            "SELECT user_id, permission FROM user_permissions ORDER BY user_id, permission";
+        let rows: Vec<(i64, String)> = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_as(PERMS_SQL).fetch_all(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_as(PERMS_SQL).fetch_all(pool).await,
+        }
+        .map_err(banto_storage::storage_error)?;
+        let mut held: BTreeMap<i64, Vec<String>> = BTreeMap::new();
+        for (user_id, permission) in rows {
+            held.entry(user_id).or_default().push(permission);
+        }
+        Ok(held
+            .into_iter()
+            .map(|(user_id, raw)| (user_id, stored_keys(raw)))
+            .collect())
+    }
+
+    /// Replace the permissions of account `user_id` with `permissions`
+    /// (Issue #697, user-permissions-plan §5) and return what changed.
+    ///
+    /// - Every key must be registered in the catalog, or already be held (a
+    ///   key the app stopped registering may be sent back to keep it; leaving
+    ///   it out revokes it). Anything else is a `Validation` error on
+    ///   `permissions`, with nothing written.
+    /// - `expected_version` is the account row's optimistic lock (Issue #651):
+    ///   `Some` and different from the stored version is
+    ///   `BantoError::Conflict` carrying the current row; `None` overwrites.
+    /// - A real change bumps `users.version`, so another admin's edit of the
+    ///   same account conflicts; an unchanged set writes nothing. It does NOT
+    ///   advance `auth_epoch`: sessions stay, and their next request re-reads
+    ///   the permissions (user-permissions-plan §3-4).
+    /// - `actor` (the granting admin's username) is stored as `granted_by` of
+    ///   the newly granted rows; the history is the audit log's job.
+    ///
+    /// Like every service here this does not authorize the caller
+    /// (conventions §2). A user update that also changes permissions uses
+    /// [`UsersService::update_user_with_permissions`], so both writes share
+    /// one transaction and one version bump.
+    pub async fn set_permissions(
+        &self,
+        user_id: i64,
+        permissions: &[PermissionKey],
+        expected_version: Option<i64>,
+        actor: &str,
+    ) -> Result<PermissionDiff, BantoError> {
+        let desired: BTreeSet<PermissionKey> = permissions.iter().cloned().collect();
+        let dialect = self.db.dialect();
+        // AssertSqlSafe (all statements below): only `dialect` output and the
+        // `VERSION_BUMP` constant are interpolated; values are bound.
+        let guard_sql = format!(
+            "SELECT role, 0, id, username, display_name, created_at, version \
+             FROM users WHERE id = {}",
+            dialect.placeholder(1),
+        );
+        let perms_sql = self.permissions_sql();
+        let delete_sql = self.permission_delete_sql();
+        let insert_sql = self.permission_insert_sql();
+        let bump_sql = format!(
+            "UPDATE users SET version = {VERSION_BUMP}, updated_at = {} WHERE id = {}",
+            dialect.now_expr(),
+            dialect.placeholder(1),
+        );
+        let catalog = &self.catalog;
+        let diff: PermissionDiff = with_users_write_transaction!(&self.db, |tx| {
+            let guard: Option<GuardRow> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
+                .bind(user_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(banto_storage::storage_error)?;
+            let Some(guard) = guard else {
+                return Err(BantoError::NotFound {
+                    resource: "users".to_string(),
+                    id: user_id.to_string(),
+                });
+            };
+            let stored: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(perms_sql))
+                .bind(user_id)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(banto_storage::storage_error)?;
+            let before = stored_keys(stored);
+            check_version(expected_version, &guard_summary(&guard)?)?;
+            let diff = permission_write_plan(catalog, &before, &desired)?;
+            for key in &diff.removed {
+                sqlx::query(sqlx::AssertSqlSafe(delete_sql.clone()))
+                    .bind(user_id)
+                    .bind(key.as_str())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+            }
+            for key in &diff.added {
+                sqlx::query(sqlx::AssertSqlSafe(insert_sql.clone()))
+                    .bind(user_id)
+                    .bind(key.as_str())
+                    .bind(actor)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+            }
+            if !diff.is_empty() {
+                sqlx::query(sqlx::AssertSqlSafe(bump_sql))
+                    .bind(user_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+            }
+            diff
+        });
+        Ok(diff)
+    }
+
+    fn permission_delete_sql(&self) -> String {
+        let dialect = self.db.dialect();
+        format!(
+            "DELETE FROM user_permissions WHERE user_id = {} AND permission = {}",
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+        )
+    }
+
+    fn permission_insert_sql(&self) -> String {
+        format!(
+            "INSERT INTO user_permissions (user_id, permission, granted_by) VALUES ({})",
+            self.db.dialect().placeholders(3),
+        )
     }
 
     /// Has *any* account been created yet? Used by the login page (spec
@@ -919,7 +1219,42 @@ impl UsersService {
         role: Role,
         expected_version: Option<i64>,
     ) -> Result<(UserSummary, UserSummary), BantoError> {
+        let outcome = self
+            .update_user_with_permissions(id, display_name, role, None, expected_version, "")
+            .await?;
+        Ok((outcome.previous, outcome.updated))
+    }
+
+    /// [`UsersService::update_user_checked_returning_previous`] that can also
+    /// replace the account's permissions (Issue #697, user-permissions-plan
+    /// §6: the permissions ride on the user update, `PUT /api/users/{id}` /
+    /// `users_update`). `permissions: None` leaves them as they are (a client
+    /// that does not know about permissions keeps working); `Some` replaces
+    /// them by the rules of [`UsersService::set_permissions`], in the SAME
+    /// transaction as the row update - one version check, one version bump,
+    /// and a rejected permission writes nothing at all. `actor` is the
+    /// granting admin's username (`granted_by`); unused when `permissions` is
+    /// `None`.
+    ///
+    /// The returned [`UserUpdate`] carries the stored permissions after the
+    /// write and what changed, for the response and
+    /// [`user_update_detail_with_permissions`].
+    pub async fn update_user_with_permissions(
+        &self,
+        id: i64,
+        display_name: &str,
+        role: Role,
+        permissions: Option<&[PermissionKey]>,
+        expected_version: Option<i64>,
+        actor: &str,
+    ) -> Result<UserUpdate, BantoError> {
         let display_name = display_name.trim();
+        let desired: Option<BTreeSet<PermissionKey>> =
+            permissions.map(|keys| keys.iter().cloned().collect());
+        let perms_sql = self.permissions_sql();
+        let delete_sql = self.permission_delete_sql();
+        let insert_sql = self.permission_insert_sql();
+        let catalog = &self.catalog;
 
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `setup_first_user` above.
@@ -942,35 +1277,79 @@ impl UsersService {
         );
         type Guard = GuardRow;
         type Updated = (i64, String, String, String, String, i64);
-        let rows: (Option<Guard>, Option<Updated>) =
-            with_users_write_transaction!(&self.db, |tx| {
-                let guard: Option<Guard> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
-                    .bind(id)
-                    .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(banto_storage::storage_error)?;
-                // A missing row stays NotFound (below) even with a version.
-                if let Some(g) = guard.as_ref() {
-                    check_version(expected_version, &guard_summary(g)?)?;
+        type Rows = (
+            Option<Guard>,
+            Option<Updated>,
+            Vec<PermissionKey>,
+            Vec<PermissionKey>,
+        );
+        let rows: Rows = with_users_write_transaction!(&self.db, |tx| {
+            let guard: Option<Guard> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(banto_storage::storage_error)?;
+            // The permissions before the write (Issue #697), for the
+            // returned rows and the audit diff. A missing row has none.
+            let before = if guard.is_some() {
+                let stored: Vec<String> =
+                    sqlx::query_scalar(sqlx::AssertSqlSafe(perms_sql.clone()))
+                        .bind(id)
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
+                stored_keys(stored)
+            } else {
+                Vec::new()
+            };
+            // A missing row stays NotFound (below) even with a version.
+            if let Some(g) = guard.as_ref() {
+                check_version(expected_version, &guard_summary(g)?)?;
+            }
+            ensure_admin_removal_allowed(
+                id,
+                guard.as_ref().map(|g| (g.0.clone(), g.1)),
+                !role.is_admin(),
+            )?;
+            let updated: Option<Updated> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                .bind(display_name)
+                .bind(role.as_str())
+                .bind(role.as_str())
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(banto_storage::storage_error)?;
+            let mut after = before.clone();
+            if let (Some(desired), Some(_)) = (desired.as_ref(), updated.as_ref()) {
+                let diff = permission_write_plan(catalog, &before, desired)?;
+                for key in &diff.removed {
+                    sqlx::query(sqlx::AssertSqlSafe(delete_sql.clone()))
+                        .bind(id)
+                        .bind(key.as_str())
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
                 }
-                ensure_admin_removal_allowed(
-                    id,
-                    guard.as_ref().map(|g| (g.0.clone(), g.1)),
-                    !role.is_admin(),
-                )?;
-                let updated: Option<Updated> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
-                    .bind(display_name)
-                    .bind(role.as_str())
-                    .bind(role.as_str())
-                    .bind(id)
-                    .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(banto_storage::storage_error)?;
-                (guard, updated)
-            });
+                for key in &diff.added {
+                    sqlx::query(sqlx::AssertSqlSafe(insert_sql.clone()))
+                        .bind(id)
+                        .bind(key.as_str())
+                        .bind(actor)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
+                }
+                after = desired.iter().cloned().collect();
+            }
+            (guard, updated, before, after)
+        });
 
-        let (Some(guard), Some((row_id, username, display_name, role_str, created_at, version))) =
-            rows
+        let (
+            Some(guard),
+            Some((row_id, username, display_name, role_str, created_at, version)),
+            before,
+            after,
+        ) = rows
         else {
             return Err(BantoError::NotFound {
                 resource: "users".to_string(),
@@ -987,7 +1366,16 @@ impl UsersService {
             created_at,
             version,
         };
-        Ok((previous, updated))
+        let permission_diff = PermissionDiff::between(
+            &before.iter().cloned().collect(),
+            &after.iter().cloned().collect(),
+        );
+        Ok(UserUpdate {
+            previous,
+            updated,
+            permissions: after,
+            permission_diff,
+        })
     }
 
     /// Admin-initiated password reset (spec M10): unlike
@@ -1173,8 +1561,22 @@ mod tests {
         )
         .await
         .expect("create users table");
+        sqlx::query(PERMISSIONS_DDL)
+            .execute(db.as_sqlite().unwrap())
+            .await
+            .expect("create user_permissions table");
         UsersService::new(db)
     }
+
+    /// `user_permissions` (Issue #697). MUST be kept in sync with the app's
+    /// `migrations-sqlite/0013_user_permissions.sql`.
+    const PERMISSIONS_DDL: &str = "CREATE TABLE user_permissions (
+                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                permission TEXT    NOT NULL,
+                granted_by TEXT    NOT NULL,
+                granted_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, permission)
+            )";
 
     #[tokio::test]
     async fn create_delete_details_exclude_credentials_and_return_removed_row() {
@@ -2245,6 +2647,10 @@ mod tests {
         .execute(&first_pool)
         .await
         .unwrap();
+        sqlx::query(PERMISSIONS_DDL)
+            .execute(&first_pool)
+            .await
+            .unwrap();
         let first = UsersService::new(Db::Sqlite(first_pool.clone()));
         let second = UsersService::new(Db::Sqlite(second_pool.clone()));
 
@@ -2332,5 +2738,275 @@ mod tests {
     #[tokio::test]
     async fn concurrent_demotion_and_deletion_preserve_one_sqlite_admin() {
         concurrent_admin_removals(false, true).await;
+    }
+
+    // --- Issue #697: per-user permissions -----------------------------------
+
+    fn key(raw: &str) -> PermissionKey {
+        PermissionKey::parse(raw).unwrap()
+    }
+
+    fn test_catalog() -> PermissionCatalog {
+        PermissionCatalog::empty()
+            .register("equipment.operate", "perm.operate", "perm.operate_desc")
+            .unwrap()
+            .register("alarm.ack", "perm.ack", "perm.ack_desc")
+            .unwrap()
+    }
+
+    /// An owner (admin) and an operator (viewer) on a service with the test
+    /// catalog.
+    async fn permission_fixture() -> (UsersService, UserIdentity, UserIdentity) {
+        let svc = service().await.with_permission_catalog(test_catalog());
+        let owner = svc
+            .setup_first_user("owner", "owner-secret-password", "Owner")
+            .await
+            .unwrap();
+        let operator = svc
+            .create_user("operator", "operator-password", "Operator", Role::Viewer)
+            .await
+            .unwrap();
+        assert!(svc.permissions_of(operator.id).await.unwrap().is_empty());
+        (svc, owner, operator)
+    }
+
+    async fn summary_of(svc: &UsersService, id: i64) -> UserSummary {
+        svc.list_users()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|u| u.id == id)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn set_permissions_grants_and_revokes_with_a_diff_and_a_version_bump() {
+        let (svc, _owner, op) = permission_fixture().await;
+        let diff = svc
+            .set_permissions(op.id, &[key("equipment.operate")], Some(1), "owner")
+            .await
+            .unwrap();
+        assert_eq!(diff.added, vec![key("equipment.operate")]);
+        assert!(diff.removed.is_empty());
+        assert_eq!(summary_of(&svc, op.id).await.version, 2);
+        let granted_by: String = sqlx::query_scalar(
+            "SELECT granted_by FROM user_permissions WHERE user_id = ? AND permission = ?",
+        )
+        .bind(op.id)
+        .bind("equipment.operate")
+        .fetch_one(svc.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+        assert_eq!(granted_by, "owner");
+
+        // Replace: one removed, one added; the role is untouched and the
+        // sessions are kept (no auth_epoch change).
+        let diff = svc
+            .set_permissions(op.id, &[key("alarm.ack")], Some(2), "owner")
+            .await
+            .unwrap();
+        assert_eq!(
+            (diff.added, diff.removed),
+            (vec![key("alarm.ack")], vec![key("equipment.operate")])
+        );
+        let me = svc.get_by_username("operator").await.unwrap().unwrap();
+        assert_eq!(me.role, Role::Viewer);
+        assert_eq!(me.auth_epoch, op.auth_epoch);
+        let session = svc.session_permissions(op.id).await.unwrap();
+        assert!(session.has(&key("alarm.ack")));
+        assert!(!session.has(&key("equipment.operate")));
+        assert_eq!(
+            svc.permissions_of(op.id).await.unwrap(),
+            vec![key("alarm.ack")]
+        );
+        let by_user = svc.permissions_by_user().await.unwrap();
+        assert_eq!(by_user.get(&op.id), Some(&vec![key("alarm.ack")]));
+        assert!(!by_user.contains_key(&_owner.id));
+
+        // The same set again changes nothing and does not bump the version.
+        let diff = svc
+            .set_permissions(op.id, &[key("alarm.ack")], None, "owner")
+            .await
+            .unwrap();
+        assert!(diff.is_empty());
+        assert_eq!(summary_of(&svc, op.id).await.version, 3);
+    }
+
+    #[tokio::test]
+    async fn set_permissions_rejects_unknown_keys_and_stale_versions_writing_nothing() {
+        let (svc, _owner, op) = permission_fixture().await;
+        match svc
+            .set_permissions(op.id, &[key("other.thing")], None, "owner")
+            .await
+        {
+            Err(BantoError::Validation { field_errors }) => {
+                assert_eq!(field_errors[0].field, "permissions")
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+        match svc
+            .set_permissions(op.id, &[key("alarm.ack")], Some(7), "owner")
+            .await
+        {
+            Err(BantoError::Conflict { current, .. }) => {
+                assert_eq!(current.unwrap()["version"], 1)
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+        assert!(svc.permissions_of(op.id).await.unwrap().is_empty());
+        assert_eq!(summary_of(&svc, op.id).await.version, 1);
+        assert!(matches!(
+            svc.set_permissions(9999, &[], None, "owner").await,
+            Err(BantoError::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn unregistered_stored_keys_are_not_held_but_can_be_kept_or_dropped() {
+        let (svc, _owner, op) = permission_fixture().await;
+        svc.set_permissions(op.id, &[key("alarm.ack")], None, "owner")
+            .await
+            .unwrap();
+        // The app stops registering `alarm.ack`.
+        let narrowed = svc.clone().with_permission_catalog(
+            PermissionCatalog::empty()
+                .register("equipment.operate", "a", "b")
+                .unwrap(),
+        );
+        assert!(
+            narrowed
+                .session_permissions(op.id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "an unregistered key is not held"
+        );
+        // Still stored, and listed for the admin screen.
+        assert_eq!(
+            narrowed.permissions_of(op.id).await.unwrap(),
+            vec![key("alarm.ack")]
+        );
+        // Sending it back keeps it; leaving it out drops it.
+        let kept = narrowed
+            .set_permissions(
+                op.id,
+                &[key("alarm.ack"), key("equipment.operate")],
+                None,
+                "owner",
+            )
+            .await
+            .unwrap();
+        assert_eq!(kept.added, vec![key("equipment.operate")]);
+        assert!(kept.removed.is_empty());
+        let dropped = narrowed
+            .set_permissions(op.id, &[key("equipment.operate")], None, "owner")
+            .await
+            .unwrap();
+        assert_eq!(dropped.removed, vec![key("alarm.ack")]);
+    }
+
+    #[tokio::test]
+    async fn update_with_permissions_is_one_write_with_one_version_bump_and_an_audit_entry() {
+        let (svc, _owner, op) = permission_fixture().await;
+        svc.set_permissions(op.id, &[key("alarm.ack")], None, "owner")
+            .await
+            .unwrap();
+        // `None` leaves the permissions as they are.
+        let out = svc
+            .update_user_with_permissions(op.id, "Op", Role::Viewer, None, Some(2), "owner")
+            .await
+            .unwrap();
+        assert_eq!(out.permissions, vec![key("alarm.ack")]);
+        assert!(out.permission_diff.is_empty());
+        assert_eq!(out.updated.version, 3);
+        assert_eq!(
+            user_update_detail_with_permissions(&out.previous, &out.updated, &out.permission_diff)
+                ["changes"],
+            serde_json::json!([{ "field": "displayName", "before": "Operator", "after": "Op" }])
+        );
+
+        // `Some` replaces them in the same write: one bump.
+        let out = svc
+            .update_user_with_permissions(
+                op.id,
+                "Op",
+                Role::Editor,
+                Some(&[key("equipment.operate")]),
+                Some(3),
+                "owner",
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.updated.version, 4);
+        assert_eq!(out.permissions, vec![key("equipment.operate")]);
+        assert_eq!(
+            user_update_detail_with_permissions(&out.previous, &out.updated, &out.permission_diff)
+                ["changes"],
+            serde_json::json!([
+                {
+                    "field": "permissions",
+                    "added": ["equipment.operate"],
+                    "removed": ["alarm.ack"]
+                },
+                { "field": "role", "before": "viewer", "after": "editor" }
+            ])
+        );
+        // The existing detail function is unchanged: no permissions entry.
+        assert_eq!(
+            user_update_detail(&out.previous, &out.updated)["changes"],
+            serde_json::json!([{ "field": "role", "before": "viewer", "after": "editor" }])
+        );
+
+        // A rejected permission rolls the whole update back.
+        let err = svc
+            .update_user_with_permissions(
+                op.id,
+                "Renamed",
+                Role::Editor,
+                Some(&[key("not.registered")]),
+                Some(4),
+                "owner",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Validation { .. }));
+        let row = summary_of(&svc, op.id).await;
+        assert_eq!((row.display_name.as_str(), row.version), ("Op", 4));
+        assert_eq!(
+            svc.permissions_of(op.id).await.unwrap(),
+            vec![key("equipment.operate")]
+        );
+
+        // A stale version is the same conflict as before.
+        match svc
+            .update_user_with_permissions(op.id, "X", Role::Editor, Some(&[]), Some(1), "owner")
+            .await
+        {
+            Err(BantoError::Conflict { current, .. }) => {
+                assert_eq!(current.unwrap()["version"], 4)
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_a_user_cascades_its_permissions() {
+        let (svc, owner, op) = permission_fixture().await;
+        svc.set_permissions(
+            op.id,
+            &[key("alarm.ack"), key("equipment.operate")],
+            None,
+            "owner",
+        )
+        .await
+        .unwrap();
+        svc.delete_user_returning_previous(op.id, Some(owner.id))
+            .await
+            .unwrap();
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_permissions")
+            .fetch_one(svc.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(left, 0, "ON DELETE CASCADE removes the rows");
     }
 }
