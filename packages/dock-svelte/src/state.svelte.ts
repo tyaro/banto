@@ -20,6 +20,17 @@ import {
 	displayWindowGeometry,
 	type ClampOptions
 } from './core/geometry';
+import { untrack } from 'svelte';
+import {
+	autoHiddenPanelIds,
+	autoHideRegionInLayout,
+	findAutoHidden,
+	regionOf,
+	removeAutoHiddenPane,
+	restoreAutoHiddenInLayout,
+	setAutoHiddenActive,
+	type AutoHideOptions
+} from './core/autohide';
 import { captureDockSlot, restoreDockSlot } from './core/slot';
 import { validateDockLayout } from './core/validate';
 import {
@@ -40,6 +51,7 @@ import {
 	structureKey
 } from './core/tree';
 import type {
+	DockAutoHidden,
 	DockEdge,
 	DockLayout,
 	DockNode,
@@ -102,9 +114,20 @@ export class DockState {
 		// `hydrate`, a restore ...): a flag that no longer fits the tree is dropped here.
 		const docked = normalizeCollapsed(next.docked);
 		if (docked !== next.docked) next = { ...next, docked };
+		// An empty band list is not written (#694 PR-3: older JSON has none).
+		if (next.autoHidden !== undefined && next.autoHidden.length === 0) {
+			next = { ...next };
+			delete next.autoHidden;
+		}
 		this.#noteStructure(next);
 		this.#layout = next;
+		// The slid-out pane is no longer auto-hidden: it is not slid out any more.
+		const flyout = untrack(() => this.#flyout);
+		if (flyout !== null && findAutoHidden(next, flyout) === null) this.#flyout = null;
 	}
+
+	/** The auto-hidden pane slid out over the docked tree (#694 PR-3). Not saved. */
+	#flyout: string | null = $state(null);
 
 	/**
 	 * A counter that goes up every time a newly assigned layout has a different
@@ -124,14 +147,23 @@ export class DockState {
 		const prev = this.#structureSeen;
 		this.#structureSeen = next;
 		// Fast path for the geometry-only updates of a move / resize (every pointermove).
-		if (prev && prev.docked === next.docked && sameFloatingStructure(prev.floating, next.floating))
+		if (
+			prev &&
+			prev.docked === next.docked &&
+			prev.autoHidden === next.autoHidden &&
+			sameFloatingStructure(prev.floating, next.floating)
+		)
 			return;
 		const key = structureKey(next);
 		if (key === this.#structureSeenKey) return;
 		this.#structureSeenKey = key;
 		this.#structureRevision++;
 		// New ids only ever come with a structure change (the fast paths above compare ids).
-		for (const id of [...collectPanelIds(next.docked), ...next.floating.map((w) => w.id)]) {
+		for (const id of [
+			...collectPanelIds(next.docked),
+			...autoHiddenPanelIds(next),
+			...next.floating.map((w) => w.id)
+		]) {
 			if (this.#seenIds.has(id)) continue;
 			this.#seenIds.add(id);
 			this.#seenOrder.push(id);
@@ -168,6 +200,19 @@ export class DockState {
 			} else node.children.forEach(visit);
 		};
 		if (layout.docked) visit(layout.docked);
+		for (const entry of layout.autoHidden ?? []) {
+			const panes = entry.node.type === 'tabs' ? entry.node.children : [entry.node];
+			for (const p of panes) {
+				byId.set(p.id, {
+					id: p.id,
+					title: p.title,
+					icon: p.icon,
+					placement: 'docked',
+					visible: true,
+					autoHidden: true
+				});
+			}
+		}
 		for (const w of layout.floating) {
 			byId.set(w.id, {
 				id: w.id,
@@ -313,7 +358,83 @@ export class DockState {
 
 	/** Is the pane on screen: in the docked tree (even as a background tab) or an open floating window (#663). */
 	isVisible(id: string): boolean {
-		return this.#isDocked(id) || this.isOpen(id);
+		return this.#isDocked(id) || this.isAutoHidden(id) || this.isOpen(id);
+	}
+
+	// --- auto-hide (#694 PR-3, `core/autohide.ts`) ---
+
+	/** The regions auto-hidden to the host's edge bands, in band order (`layout.autoHidden`, `[]` when none). */
+	get autoHidden(): readonly DockAutoHidden[] {
+		return this.layout.autoHidden ?? [];
+	}
+
+	/** Is the pane (or region) `id` auto-hidden to an edge band? */
+	isAutoHidden(id: string): boolean {
+		return findAutoHidden(this.layout, id) !== null;
+	}
+
+	/**
+	 * Auto-hide the docked region `regionId` (a pane that is not a tab, or a tab
+	 * group; a tab's id stands for its group): it leaves the docked tree for the
+	 * band at `options.edge` (omitted = the side it is on, seen from the main
+	 * region `options.mainId` or the tree's middle) and remembers its place.
+	 * Asks nothing - `DockHost`'s pin button goes through `beforePanelChange`.
+	 * Returns whether it moved.
+	 */
+	autoHideRegion(regionId: string, options: AutoHideOptions = {}): boolean {
+		const region = regionOf(this.layout.docked, regionId);
+		if (!region) return false;
+		const next = autoHideRegionInLayout(this.layout, region.id, options);
+		if (!next) return false;
+		this.layout = next;
+		return true;
+	}
+
+	/**
+	 * Put the auto-hidden region that holds `id` (its region id or one of its
+	 * panes) back into the docked tree: at its remembered place, else at its edge.
+	 * Asks nothing. Returns whether it moved.
+	 */
+	restoreAutoHidden(id: string): boolean {
+		const next = restoreAutoHiddenInLayout(this.layout, id, this.#makeId);
+		if (!next) return false;
+		this.layout = next;
+		return true;
+	}
+
+	/** The docked tree `restoreAutoHidden(id)` would make (fixed ids for new splits, for a stable preview), or `undefined`. */
+	previewRestoreAutoHidden(id: string): DockNode | null | undefined {
+		const found = findAutoHidden(this.layout, id);
+		if (!found) return undefined;
+		const next = restoreAutoHiddenInLayout(
+			this.layout,
+			id,
+			() => `${found.entry.node.id}:restored-split`
+		);
+		return next ? next.docked : undefined;
+	}
+
+	/** The auto-hidden pane slid out over the docked tree, or `null` (not saved). */
+	get flyoutPanel(): string | null {
+		return this.#flyout;
+	}
+
+	/**
+	 * Slide the auto-hidden pane `panelId` out (a group shows that pane). Not asked:
+	 * like expanding a band, it changes no docked pane. A no-op for a pane that is
+	 * not auto-hidden.
+	 */
+	openFlyout(panelId: string): void {
+		const found = findAutoHidden(this.layout, panelId);
+		if (!found || (found.entry.node.type === 'tabs' && found.entry.node.id === panelId)) return;
+		const next = setAutoHiddenActive(this.layout, panelId);
+		if (next !== this.layout) this.layout = next;
+		this.#flyout = panelId;
+	}
+
+	/** Slide the open pane back into its band. */
+	closeFlyout(): void {
+		this.#flyout = null;
 	}
 
 	/**
@@ -358,6 +479,11 @@ export class DockState {
 			this.revealDocked(id);
 			return 'docked';
 		}
+		if (this.isAutoHidden(id)) {
+			// Auto-hidden (#694 PR-3): slide it out of its band.
+			this.openFlyout(id);
+			return 'docked';
+		}
 		if (!this.layout.floating.some((w) => w.id === id)) return null;
 		const docked = this.#restoredTree(id);
 		if (docked === null) {
@@ -374,7 +500,7 @@ export class DockState {
 
 	/** Where `show(id)` would put the pane now (`null` = unknown id). Lets a caller tell a re-dock from an open before doing it. */
 	showPlacement(id: string): 'docked' | 'floating' | null {
-		if (this.#isDocked(id)) return 'docked';
+		if (this.#isDocked(id) || this.isAutoHidden(id)) return 'docked';
 		if (!this.layout.floating.some((w) => w.id === id)) return null;
 		return this.#restoredTree(id) === null ? 'floating' : 'docked';
 	}
@@ -415,6 +541,25 @@ export class DockState {
 	 * `beforePanelChange`; calling it directly asks nothing.
 	 */
 	dismiss(id: string): void {
+		const fromBand = removeAutoHiddenPane(this.layout, id);
+		if (fromBand) {
+			// Auto-hidden (#694 PR-3): out of its band, remembering the region's docked place.
+			const index = fromBand.layout.floating.length;
+			const { pane, entry } = fromBand;
+			const win: FloatingWindow = {
+				id: pane.id,
+				title: pane.title,
+				icon: pane.icon,
+				x: index * 24,
+				y: index * 24,
+				width: DEFAULT_WINDOW_WIDTH,
+				height: DEFAULT_WINDOW_HEIGHT,
+				open: false,
+				dockSlot: entry.slot
+			};
+			this.layout = { ...fromBand.layout, floating: [...fromBand.layout.floating, win] };
+			return;
+		}
 		const node = findNode(this.layout.docked, id);
 		if (!node || node.type !== 'panel') {
 			this.close(id);
@@ -522,6 +667,7 @@ export class DockState {
 	ensureWindow(def: FloatingWindowDef, hostW: number, hostH: number): void {
 		// A docked id counts too: adding it again would duplicate the id (#663).
 		if (this.layout.floating.some((w) => w.id === def.id) || this.#isDocked(def.id)) return;
+		if (this.isAutoHidden(def.id)) return;
 		const win = placeNew(def, this.layout.floating.length, hostW, hostH);
 		this.layout = { ...this.layout, floating: [...this.layout.floating, win] };
 	}
@@ -549,7 +695,8 @@ export class DockState {
 	): void {
 		const known =
 			this.layout.floating.some((w) => w.id === def.id) ||
-			collectPanelIds(this.layout.docked).includes(def.id);
+			collectPanelIds(this.layout.docked).includes(def.id) ||
+			this.isAutoHidden(def.id);
 		if (known) return;
 
 		if (this.layout.docked !== null || targetId !== undefined) {

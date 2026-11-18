@@ -81,6 +81,9 @@ export している。
   入れさせない。メイン区画向け）。タブの組は、中の pane がすべて許すときだけ出す。
 - `dropSplit: false` — **ドロップ先として**、その pane の十字のガイドに上下左右のボタンを出さない（その pane の横に分割で
   入れさせない）。外周のボタン（下の「外周へのドッキング」）には効かない。タブの組の扱いは `dropCenter` と同じ。
+- `autoHide: false` — その pane のいる区画の見出しにピン（自動で隠す、下の節）を出さない（メイン区画向け）。タブの組は、
+  中の pane がすべて許すときだけ出す。`close`・`move`・`undock` がすべて `false` の pane の区画は「メイン区画」として、
+  自動で隠す区画の入る縁を決める基準になる。
 
 これは UI の口であって権限の仕組みではない。`dock.close(id)` などをコードから呼べば動くので、守りたい pane は
 アプリ側の呼び出しも絞ること。アプリ固定の標準配置は、独自の default layout を `createDockState(layout)` に渡す
@@ -195,6 +198,7 @@ const isEscapeBlocked = (el: HTMLElement | null) =>
 ```ts
 type DockPanelChange =
 	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: true }
+	| { kind: 'auto-hide'; panelId: string; to: 'band' | 'tree'; remount: true } // 自動で隠す・ピンで戻す（#694 PR-3）
 	| { kind: 'reparent'; panelId: string; cause: string; remount: true } // 動かしていない pane の親が変わり作り直される
 	| { kind: 'tab-switch'; groupId: string; from: string; to: string; remount: boolean }
 	| { kind: 'hide'; panelId: string; remount: boolean }
@@ -378,6 +382,41 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
 - `dock.show(id)` / `host.showPanel(id)` / `host.setPanelVisible(id, true)` で、畳んだ区画にある pane（や、そこへ戻す pane）を出すと、その区画は展開される。
 - 浮動 ⇔ ドッキングの移動、閉じて開き直し、表示メニューで隠して戻すとき、`collapsed` は持ち越さない（引き出した pane は展開で始まる。元の置き場所の記憶（slot）にも持たない）。
 - ボタンのラベルは `messages.collapsePane(title)` / `messages.expandPane(title)`。見た目が変わるので、docked の pane を写す visual の基準画像は再生成が要る。
+
+### 自動で隠す（ピン、#694 PR-3）
+
+Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング中の区画（panel 1 つ、またはタブの組）の見出しのピン（📌）を
+押すと、その区画は木から抜けて host の縁の帯に入る。帯のタブを押すと、その pane が縁からドッキング中の木の上に重なって
+引き出される。引き出した pane の見出しのピン（横に寝た 📌）を押すと、元の場所へ戻る。
+
+- どの縁に入るか: メイン区画（`capabilities` の `close`・`move`・`undock` がすべて `false` の pane の区画。無ければ木の中心）から
+  見た区画の中心の向き。分割の比から測り（DOM は見ない）、ずれの大きい軸の側。左右の帯は縦（題名は縦書き）、上下は横。
+  帯のある縁の分だけ、ドッキング中の木は内側に寄る。タブの組は帯の中でタブが並んで入る。
+- 引き出す: 帯のタブを押す（載せるだけでは開かない。タッチを考えて押して開く）。フォーカスは引き出した pane の中へ移る。
+  もう一度押す・外を押す・Esc・フォーカスが外へ出る、で引っ込める。引っ込めるときフォーカスが中にあれば、押した帯のタブへ戻す
+  （ほかへ移ったフォーカスは奪わない）。top layer（開いている `dialog`・`[popover]`。メニューや確認ダイアログ）の中のクリックや
+  フォーカスは「外」と見なさない。消費済み（`defaultPrevented`）・IME 変換中・top layer の中の Esc では引っ込めない。
+- 中身: 引き出している pane と `keepMounted` の pane だけを描く（`keepMounted` は引っ込めても `hidden` + `inert` で残る）。それ以外は
+  引き出すたびに作り直す。**引き出す・引っ込めるは `beforePanelChange` に聞かない**（畳んだ帯の展開と同じ「見せる」操作）。
+  下書きを守りたい pane は `keepMounted` にする。
+- `beforePanelChange`: 木から帯へ・帯から木へは構造の変更なので聞く。押し出される pane（縮む分割の残る側、戻すときに包まれる隣）を
+  `reparent` で先に、次に区画の中で中身を描いている pane を `{ kind: 'auto-hide', to: 'band' | 'tree', remount: true }` で聞く
+  （木と帯では描く親が違うので、`keepMounted` でも作り直す）。承認と適用の間に構造（引き出している pane も含む）が変わったら `stale`。
+- 帯の pane の ✕ は、ほかの pane と同じく hide / close（`beforePanelChange` の `hide` / `close`、`remount: true`）。その pane は帯から抜け、
+  区画の元の場所を覚えた閉じた浮動 window になる。`show(id)` / `showPanel(id)` は、帯の pane を引き出す（聞かない）。
+- ドラッグ: 帯と引き出した pane はドラッグ元にならず、ドロップ先にもならない（`data-dock-no-drop`。そこへのドロップは何も起きない）。
+  外周のボタン・ほかの区画の十字はそのまま使える（ドラッグを始める押下で、引き出した pane は引っ込む）。帯の pane を動かすときは、
+  ピンで戻してからドラッグする。引き出した pane に pop-out のボタンは出さない。
+- 保存: `DockLayout.autoHidden?: DockAutoHidden[]`（`{ node, edge, slot, size? }`）。空なら書き出さない。古い JSON はそのまま読める
+  （`version` は 2 のまま）。`validateDockLayout` は区画の形・縁・slot・`size`（0 より大きく 1 以下）と、木・浮動と id が重ならないことを確かめる。
+  引き出しているかどうかは保存しない。
+- API: `dock.autoHidden` / `dock.isAutoHidden(id)` / `dock.autoHideRegion(id, { edge?, size?, mainId? })` / `dock.restoreAutoHidden(id)`
+  （どちらも聞かない）、`dock.flyoutPanel` / `dock.openFlyout(id)` / `dock.closeFlyout()`、`host.autoHidePanel(id)` / `host.pinPanel(id)`
+  （`beforePanelChange` を通す）。`dock.panels` の行は `autoHidden: true`（`placement: 'docked'`・`visible: true`）。純関数 `autoHideEdge` /
+  `mainRegionId` / `regionOf` / `removeRegion` / `captureRegionSlot` / `restoreRegionSlot` と定数 `AUTO_HIDE_FLYOUT_RATIO`（引き出す幅の既定 0.3）。
+- 文言: `messages.autoHidePane(title)` / `pinPane(title)` / `autoHideBand(edge)`。
+- 狭い幅・キオスク・Tauri の pop-out では特別な扱いをしない（帯と引き出しはそのまま。pop-out 中の pane は木にいないのでピンも出ない）。
+  引き出した pane の幅は、隠したときの区画の幅（無ければ既定）で、ドラッグでは変えられない。
 
 ### IME 変換中は構造変更を保留する
 

@@ -146,7 +146,24 @@ export function captureDockSlot(
 		return { kind: 'tab', groupId: parent.id, index, anchors: byDistance(ids, index) };
 	}
 	// A lone tab leaves its group too: the group is what sits in the split.
-	const unit: DockNode = parent?.type === 'tabs' ? parent : node;
+	return unitSlot(root, parent?.type === 'tabs' ? parent : node);
+}
+
+/**
+ * Where the whole region `regionId` (a docked panel that is not a tab, or a tab
+ * group) is in `root`, as a `split` / `root` slot (#694 PR-3: a region auto-hidden
+ * to an edge band goes back here). `null` for a split, a tab inside a group, or an
+ * unknown id. Call it BEFORE removing the region.
+ */
+export function captureRegionSlot(root: DockNode | null, regionId: string): DockSlot | null {
+	const node = findNode(root, regionId);
+	if (!node || node.type === 'split') return null;
+	if (node.type === 'panel' && findParent(root, regionId)?.type === 'tabs') return null;
+	return unitSlot(root, node);
+}
+
+/** The `split` / `root` slot of `unit` (a panel or tab group that is a split's child or the root). */
+function unitSlot(root: DockNode | null, unit: DockNode): DockSlot {
 	const split = findParent(root, unit.id);
 	if (!split || split.type !== 'split') return { kind: 'root' };
 	const index = split.children.findIndex((c) => c.id === unit.id);
@@ -198,7 +215,7 @@ function freeId(root: DockNode, wanted: string, makeId: () => string): string {
 /** Insert into an existing split at `index`, giving the pane `share` and scaling the others. */
 function insertIntoSplit(
 	split: DockSplitNode,
-	panel: DockPanelNode,
+	panel: DockPanelNode | DockTabGroupNode,
 	index: number,
 	share: number
 ): DockSplitNode {
@@ -248,7 +265,7 @@ function restoreTab(
 
 function restoreSplit(
 	root: DockNode,
-	panel: DockPanelNode,
+	panel: DockPanelNode | DockTabGroupNode,
 	slot: Extract<DockSlot, { kind: 'split' }>,
 	makeId: () => string
 ): DockNode | null {
@@ -306,5 +323,26 @@ export function restoreDockSlot(
 	if (findNode(root, panel.id)) return null;
 	if (slot.kind === 'tab') return restoreTab(root, panel, slot, makeId);
 	if (slot.kind === 'split') return restoreSplit(root, panel, slot, makeId);
+	return null;
+}
+
+/**
+ * Put the whole region `region` (a panel or a tab group, #694 PR-3) back into
+ * `root` at a `split` / `root` slot from `captureRegionSlot`. An empty tree takes
+ * it as its root. Returns `null` when the place is gone, the slot is a `tab` slot
+ * or a `root` slot of a tree that is not empty, or one of the region's ids is in
+ * `root` already - the caller then docks it elsewhere.
+ */
+export function restoreRegionSlot(
+	root: DockNode | null,
+	region: DockPanelNode | DockTabGroupNode,
+	slot: DockSlot,
+	makeId: () => string
+): DockNode | null {
+	if (root === null) return region;
+	const ids =
+		region.type === 'tabs' ? [region.id, ...region.children.map((c) => c.id)] : [region.id];
+	if (ids.some((id) => findNode(root, id))) return null;
+	if (slot.kind === 'split') return restoreSplit(root, region, slot, makeId);
 	return null;
 }

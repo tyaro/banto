@@ -74,14 +74,21 @@
 	 * `sizes` are never rewritten; a divider next to a band is disabled, and the pixel
 	 * -> fraction conversion of the other dividers uses only the room the open children
 	 * share (`pxToFraction`).
+	 *
+	 * Auto-hide (#694 PR-3): a region that is not collapsed shows a pin button in its header
+	 * (unless a pane in it says `autoHide: false`). Pressing it moves the region to the band
+	 * on its side (`DockAutoHide.svelte`) through the lifecycle (`PanelLifecycle.autoHide`);
+	 * the button leaves with the region, so the focus then goes to the band tab of the region's
+	 * front pane - only when nothing else took it (`document.body`).
 	 */
-	import { untrack, type Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
+	import { activePanelOf, autoHideEdge, mainRegionId } from './core/autohide';
 	import { pixelDeltaToFraction } from './core/geometry';
 	import { MIN_PANE_FRACTION, isRegionCollapsed } from './core/tree';
 	import { getDragController } from './core/drag.svelte';
 	import { getGestureOwner } from './core/gesture.svelte';
 	import { getPanelLifecycle } from './core/lifecycle';
-	import { getDockPolicy, resolveCapabilities } from './core/policy';
+	import { getDockPolicy, isMainPane, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { DockNode, PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
@@ -161,6 +168,45 @@
 	function toggleCollapsed(): void {
 		if (node.type === 'split') return;
 		dock.setDockedCollapsed(node.id, !collapsed);
+	}
+
+	/** May this region be auto-hidden (#694 PR-3): every pane in it allows `autoHide`. */
+	const canAutoHide = $derived(
+		node.type === 'panel'
+			? capsOf(node.id).autoHide
+			: node.type === 'tabs'
+				? node.children.every((c) => capsOf(c.id).autoHide)
+				: false
+	);
+
+	/**
+	 * The pin button (#694 PR-3): auto-hide this region to the band on its side (seen from
+	 * the main region, `isMainPane`), through `beforePanelChange`. The slid-out size is the
+	 * region's current share of the docked area along that axis. The region (and the focused
+	 * pin button) leaves the DOM; the focus then goes to the band tab of its front pane -
+	 * unless something else took it meanwhile.
+	 */
+	function autoHide(frameEl: HTMLElement | null): void {
+		if (node.type === 'split') return;
+		const root = dock.layout.docked;
+		const mainId = mainRegionId(root, (id) => isMainPane(policy, id));
+		const edge = autoHideEdge(root, node.id, mainId);
+		const area = frameEl?.closest('.docked-layer')?.getBoundingClientRect();
+		const own = frameEl?.getBoundingClientRect();
+		const horizontal = edge === 'left' || edge === 'right';
+		const whole = horizontal ? area?.width : area?.height;
+		const part = horizontal ? own?.width : own?.height;
+		const size = whole && part ? part / whole : undefined;
+		const host = frameEl?.closest<HTMLElement>('[data-dock-host]') ?? null;
+		const front = activePanelOf(node).id;
+		void lifecycle.autoHide(node.id, { edge, size, mainId }).then(async (outcome) => {
+			if (outcome !== 'applied') return;
+			await tick();
+			const active = document.activeElement;
+			if (active && active !== document.body && active.isConnected) return;
+			const tabs = host?.querySelectorAll<HTMLElement>('[data-dock-band-tab]') ?? [];
+			[...tabs].find((el) => el.dataset.dockBandTab === front)?.focus();
+		});
 	}
 
 	/**
@@ -439,6 +485,18 @@
 				</span>
 			{/if}
 			<span class="title">{node.title}</span>
+			{#if !collapsed && canAutoHide}
+				<button
+					type="button"
+					class="pin-btn"
+					data-dock-autohide-for={node.id}
+					aria-label={t.autoHidePane(node.title)}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => autoHide(panelFrameEl)}
+				>
+					📌
+				</button>
+			{/if}
 			<button
 				type="button"
 				class="collapse-btn"
@@ -590,6 +648,18 @@
 						</div>
 					{/each}
 				</div>
+			{/if}
+			{#if !collapsed && canAutoHide}
+				<button
+					type="button"
+					class="pin-btn"
+					data-dock-autohide-for={node.id}
+					aria-label={t.autoHidePane(regionTitle)}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => autoHide(tabsFrameEl)}
+				>
+					📌
+				</button>
 			{/if}
 			<button
 				type="button"
@@ -792,6 +862,7 @@
 
 	.close-btn,
 	.popout-btn,
+	.pin-btn,
 	.collapse-btn {
 		flex: 0 0 auto;
 		width: var(--banto-dock-button-size, 20px);
@@ -817,6 +888,7 @@
 	}
 
 	.popout-btn:hover,
+	.pin-btn:hover,
 	.collapse-btn:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);
 		color: var(--banto-primary);
@@ -829,6 +901,7 @@
 
 	.close-btn:focus-visible,
 	.popout-btn:focus-visible,
+	.pin-btn:focus-visible,
 	.collapse-btn:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);

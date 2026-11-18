@@ -60,6 +60,11 @@
  *   once all agreed on the same structure. Taking a docked pane OUT of the
  *   tree (hide / close / undock, #682) asks the pane a shrinking split or
  *   tab group leaves, as `reparent`, the same way (`requestRemoval`).
+ * - **Auto-hide (#694 PR-3).** Moving a whole region between the docked tree
+ *   and an edge band (`autoHide` / `restoreAutoHidden`) goes through
+ *   `requestPlacement` too: the panes pushed out first, then every pane of the
+ *   region whose content is mounted, as `auto-hide`. Sliding a band's pane out
+ *   and back is not asked (it is showing, like expanding a collapsed band).
  *
  * ## IME composition (plan §3.5 / §4.2)
  *
@@ -93,7 +98,16 @@
  */
 import { getContext, setContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import { displacedChanges } from './mounts';
+import {
+	activePanelOf,
+	autoHiddenPanelIds,
+	findAutoHidden,
+	regionOf,
+	regionPanelIds,
+	removeRegion,
+	type AutoHideOptions
+} from './autohide';
+import { displacedChanges, mountedPanes } from './mounts';
 import { restoreDockSlot } from './slot';
 import { findNode, findParent, removePanel, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
@@ -107,9 +121,13 @@ import type { DockNode, DockPanelNode } from '../types';
  * `tab-switch` it describes the `from` pane. `close` discards the content.
  * `reparent` is a pane the user did not move, whose parent changes (a split or
  * tab group is made around it, or undone): `cause` is the pane being moved.
+ * `auto-hide` (#694 PR-3) is a pane of a region that moves between the docked
+ * tree and an edge band (`to: 'band'` = auto-hidden by its pin button, `'tree'`
+ * = pinned back): its content is drawn by another parent, so it is re-mounted.
  */
 export type DockPanelChange =
 	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: true }
+	| { kind: 'auto-hide'; panelId: string; to: 'band' | 'tree'; remount: true }
 	| { kind: 'reparent'; panelId: string; cause: string; remount: true }
 	| { kind: 'tab-switch'; groupId: string; from: string; to: string; remount: boolean }
 	| { kind: 'hide'; panelId: string; remount: boolean }
@@ -291,7 +309,8 @@ export class PanelLifecycle {
 		const describe = (): DockPanelChange => ({
 			kind: 'hide',
 			panelId,
-			remount: this.#isDocked(panelId) || !this.keepMounted(panelId)
+			remount:
+				this.#isDocked(panelId) || this.#isAutoHiddenPane(panelId) || !this.keepMounted(panelId)
 		});
 		const apply = (): void => this.#takeOffScreen(panelId);
 		if (where === 'docked') return this.requestRemoval(panelId, describe, apply, 'hide');
@@ -383,6 +402,12 @@ export class PanelLifecycle {
 				return outcome;
 			});
 		}
+		if (where === 'autohidden') {
+			// Auto-hidden (#694 PR-3): slid out of its band. Not asked, like expanding a band:
+			// no docked pane changes (the slid-out content mounts as when its band tab is pressed).
+			this.#dock.show(panelId);
+			return Promise.resolve('applied');
+		}
 		if (where === 'open') {
 			// An open floating window: `DockState.show` only brings it to the front.
 			this.#dock.show(panelId);
@@ -442,19 +467,24 @@ export class PanelLifecycle {
 	 */
 	requestPlacement(
 		panelId: string,
-		own: () => DockPanelChange | null,
+		own: () => DockPanelChange | DockPanelChange[] | null,
 		preview: () => DockNode | null | undefined,
 		apply: () => void,
-		target: unknown
+		target: unknown,
+		/** Panes that move together with `panelId` (a whole region, #694 PR-3): asked by `own`, not as `reparent`. */
+		moving: readonly string[] = []
 	): Promise<DockPanelChangeOutcome> {
 		if (this.#disposed) return Promise.resolve('disposed');
 		const describeAll = (): DockPanelChange[] | null => {
 			const after = preview();
 			if (after === undefined) return null;
 			const keep = (id: string) => this.keepMounted(id);
-			const changes = displacedChanges(this.#dock.layout.docked, after, panelId, keep);
+			const changes = displacedChanges(this.#dock.layout.docked, after, panelId, keep).filter(
+				(c) => !(c.kind === 'reparent' && moving.includes(c.panelId))
+			);
 			const mine = own();
-			return mine ? [...changes, mine] : changes;
+			if (mine === null) return changes;
+			return [...changes, ...(Array.isArray(mine) ? mine : [mine])];
 		};
 		const changes = describeAll();
 		if (changes === null) return Promise.resolve('stale');
@@ -489,6 +519,72 @@ export class PanelLifecycle {
 		});
 		this.#placements.set(id, promise);
 		return promise;
+	}
+
+	/**
+	 * Auto-hide the docked region that holds `id` (#694 PR-3, the pin button):
+	 * through `requestPlacement`, the docked panes the removal pushes out (the one
+	 * a shrinking split leaves) are asked first as `reparent`, then every pane of
+	 * the region whose content is mounted now (the shown pane, `keepMounted`
+	 * tabs) as `auto-hide` (`to: 'band'`). Its content is drawn by the band's
+	 * slide-out afterwards, so it is re-mounted (`keepMounted` too). Changed in
+	 * between = `stale`.
+	 */
+	autoHide(id: string, options: AutoHideOptions = {}): Promise<DockPanelChangeOutcome> {
+		const first = regionOf(this.#dock.layout.docked, id);
+		if (!first) return Promise.resolve('stale');
+		const regionId = first.id;
+		const ids = regionPanelIds(first);
+		const cause = activePanelOf(first).id;
+		const region = () => {
+			const now = regionOf(this.#dock.layout.docked, regionId);
+			return now && now.id === regionId ? now : null;
+		};
+		const own = (): DockPanelChange[] | null => {
+			const now = region();
+			if (!now) return null;
+			const mounted = mountedPanes(this.#dock.layout.docked, (p) => this.keepMounted(p));
+			return regionPanelIds(now)
+				.filter((p) => mounted.has(p))
+				.map((panelId) => ({ kind: 'auto-hide', panelId, to: 'band', remount: true }));
+		};
+		return this.requestPlacement(
+			cause,
+			own,
+			() => (region() ? removeRegion(this.#dock.layout.docked, regionId) : undefined),
+			() => void this.#dock.autoHideRegion(regionId, options),
+			['auto-hide', regionId],
+			ids
+		);
+	}
+
+	/**
+	 * Put the auto-hidden region that holds `id` back into the docked tree
+	 * (#694 PR-3, the pin button of a slid-out pane): the docked panes it pushes
+	 * out are asked first (`tab-switch` / `reparent`), then every pane of the
+	 * region whose content is mounted now (slid out, or `keepMounted`) as
+	 * `auto-hide` (`to: 'tree'`). Changed in between = `stale`.
+	 */
+	restoreAutoHidden(id: string): Promise<DockPanelChangeOutcome> {
+		const first = findAutoHidden(this.#dock.layout, id);
+		if (!first) return Promise.resolve('stale');
+		const regionId = first.entry.node.id;
+		const ids = regionPanelIds(first.entry.node);
+		const own = (): DockPanelChange[] | null => {
+			const now = findAutoHidden(this.#dock.layout, regionId);
+			if (!now || now.entry.node.id !== regionId) return null;
+			return regionPanelIds(now.entry.node)
+				.filter((p) => this.#isFlyoutMounted(p))
+				.map((panelId) => ({ kind: 'auto-hide', panelId, to: 'tree', remount: true }));
+		};
+		return this.requestPlacement(
+			activePanelOf(first.entry.node).id,
+			own,
+			() => this.#dock.previewRestoreAutoHidden(regionId),
+			() => void this.#dock.restoreAutoHidden(regionId),
+			['auto-hide-restore', regionId],
+			ids
+		);
 	}
 
 	/** Switch the docked tab group `groupId` to the tab `to` (by id; no-op when it is already active or gone). */
@@ -526,8 +622,9 @@ export class PanelLifecycle {
 		for (const job of [...this.#jobs]) job.resolve('disposed');
 	}
 
-	#whereIs(panelId: string): 'docked' | 'open' | 'hidden' | null {
+	#whereIs(panelId: string): 'docked' | 'autohidden' | 'open' | 'hidden' | null {
 		if (this.#isDocked(panelId)) return 'docked';
+		if (this.#isAutoHiddenPane(panelId)) return 'autohidden';
 		const win = this.#dock.layout.floating.find((w) => w.id === panelId);
 		if (!win) return null;
 		return win.open ? 'open' : 'hidden';
@@ -535,6 +632,16 @@ export class PanelLifecycle {
 
 	#isDocked(panelId: string): boolean {
 		return findNode(this.#dock.layout.docked, panelId)?.type === 'panel';
+	}
+
+	/** A pane (not a group id) of a region auto-hidden to an edge band (#694 PR-3). */
+	#isAutoHiddenPane(panelId: string): boolean {
+		return autoHiddenPanelIds(this.#dock.layout).includes(panelId);
+	}
+
+	/** Is the auto-hidden pane's content mounted now: slid out, or kept (`keepMounted`)? */
+	#isFlyoutMounted(panelId: string): boolean {
+		return this.#dock.flyoutPanel === panelId || this.keepMounted(panelId);
 	}
 
 	/** A docked pane has no hidden state of its own: it becomes a closed floating window that remembers its docked place (`DockState.dismiss`, #663). */

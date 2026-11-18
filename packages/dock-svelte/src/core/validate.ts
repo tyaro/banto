@@ -15,7 +15,7 @@
  * at render time), which is a separate policy from structural validity.
  */
 import { normalizeCollapsed, normalizeSizes } from './tree';
-import type { DockLayout, DockNode, FloatingWindow } from '../types';
+import type { DockAutoHidden, DockLayout, DockNode, FloatingWindow } from '../types';
 
 export type DockLayoutIssueCode =
 	| 'version'
@@ -214,13 +214,45 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 		docked = (rawDocked ?? null) as DockNode | null;
 	}
 
-	if (issues.length > 0) return { ok: false, issues };
-	return {
-		ok: true,
-		layout: {
-			version: 2,
-			floating,
-			docked: docked ? normalizeCollapsed(normalizeSizes(docked)) : null
+	// Regions auto-hidden to an edge band (#694 PR-3). Optional: an older layout has none.
+	const autoHidden: DockAutoHidden[] = [];
+	if (value.version === 2 && value.autoHidden !== undefined) {
+		if (!Array.isArray(value.autoHidden)) add('shape', 'autoHidden');
+		else {
+			eachSlot(value.autoHidden, 'autoHidden', (raw, p) => {
+				if (!isRecord(raw)) return add('shape', p);
+				const node = raw.node;
+				if (!isRecord(node) || (node.type !== 'panel' && node.type !== 'tabs'))
+					add('shape', `${p}.node`);
+				else checkNode(node, `${p}.node`, false);
+				if (!EDGES.has(raw.edge)) add('shape', `${p}.edge`);
+				if (!isDockSlot(raw.slot)) add('shape', `${p}.slot`);
+				const size = raw.size;
+				if (size !== undefined) {
+					if (typeof size !== 'number') add('shape', `${p}.size`);
+					else if (!Number.isFinite(size)) add('non-finite', `${p}.size`);
+					else if (!(size > 0 && size <= 1)) add('non-positive-size', `${p}.size`);
+				}
+				const entry = raw as unknown as DockAutoHidden;
+				// A band holds a region on its own: no `collapsed` flag (`normalizeCollapsed` drops a root's).
+				autoHidden.push({
+					...entry,
+					node: (isRecord(node)
+						? normalizeCollapsed(entry.node)
+						: entry.node) as DockAutoHidden['node']
+				});
+			});
 		}
+	}
+
+	if (issues.length > 0) return { ok: false, issues };
+	const layout: DockLayout = {
+		version: 2,
+		floating,
+		docked: docked ? normalizeCollapsed(normalizeSizes(docked)) : null
 	};
+	if (autoHidden.length > 0) layout.autoHidden = autoHidden;
+	return { ok: true, layout };
 }
+
+const EDGES = new Set<unknown>(['left', 'right', 'top', 'bottom']);

@@ -249,8 +249,10 @@
 	$effect(() => {
 		if (dockHostW === 0 || dockHostH === 0 || seeded) return;
 		seeded = true;
+		// Auto-hidden panes (#694 PR-3) are in the layout too: a restored layout with only bands is not empty.
 		const known = new Set([
 			...collectPanelIds(dock.layout.docked),
+			...dock.autoHidden.map((e) => e.node.id),
 			...dock.layout.floating.map((w) => w.id)
 		]);
 		if (known.size === 0) {

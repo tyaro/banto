@@ -3790,6 +3790,44 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// #694 PR-3: the pin on a docked pane's header auto-hides it to the band on
+	// its side; the band tab slides it out over the docked tree, Esc slides it
+	// back (the focus returns to the tab), and its pin puts it back in its place.
+	test('13l2. dashboard dock: unpin to the edge band, slide out, Esc, pin back', async () => {
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		const wrapper = page.locator('.dock-wrapper');
+		await wrapper.scrollIntoViewIfNeeded();
+		const pane = wrapper.locator('[data-dock-drop-id="priceBuckets"]');
+		await expect(pane).toBeVisible();
+
+		await wrapper.getByRole('button', { name: '価格帯分布を自動で隠す（ピンを外す）' }).click();
+		await expect(pane).toHaveCount(0);
+		const band = wrapper.getByRole('group', { name: '右に自動で隠したパネル' });
+		const tab = band.getByRole('button', { name: '価格帯分布' });
+		await expect(tab).toBeVisible();
+		await expect(tab).toBeFocused();
+
+		await tab.click();
+		const flyout = wrapper.locator('[data-dock-flyout="priceBuckets"]');
+		await expect(flyout).toBeVisible();
+		await expect(tab).toHaveAttribute('aria-expanded', 'true');
+
+		await page.keyboard.press('Escape');
+		await expect(flyout).toHaveCount(0);
+		await expect(tab).toBeFocused();
+
+		await tab.click();
+		await expect(flyout).toBeVisible();
+		await flyout
+			.getByRole('button', { name: '価格帯分布を元の場所に固定（ピンを留める）' })
+			.click();
+		await expect(pane).toBeVisible();
+		await expect(band).toHaveCount(0);
+
+		await resetDashboardLayout(page);
+	});
+
 	// Issue #435 PR-11: Ctrl+S in the memo is the pane's save button as a
 	// command of the app's shortcut dispatcher - taken inside the textarea, the
 	// same serialized save. With nothing to save (or a held key) it is still

@@ -38,6 +38,12 @@ export interface DockCapabilities {
 	 * are not affected). On a tab group the buttons show only when every pane in it allows it.
 	 */
 	dropSplit?: boolean;
+	/**
+	 * Offer the pin button on the docked region holding this pane (#694 PR-3): unpinning it
+	 * auto-hides the region to a band on the host's edge. `false` hides the button (e.g. the
+	 * main region). On a tab group the button shows only when every pane in it allows it.
+	 */
+	autoHide?: boolean;
 }
 
 export interface DockPolicy {
@@ -57,8 +63,19 @@ export function resolveCapabilities(
 		move: c?.move ?? true,
 		undock: c?.undock ?? true,
 		dropCenter: c?.dropCenter ?? true,
-		dropSplit: c?.dropSplit ?? true
+		dropSplit: c?.dropSplit ?? true,
+		autoHide: c?.autoHide ?? true
 	};
+}
+
+/**
+ * Is `panelId` part of the MAIN region (#694 PR-3: the band a region auto-hides to is
+ * chosen relative to it)? A pane the app made immovable: `close`, `move` and `undock`
+ * all `false`.
+ */
+export function isMainPane(policy: DockPolicy, panelId: string): boolean {
+	const c = resolveCapabilities(policy, panelId);
+	return !c.close && !c.move && !c.undock;
 }
 
 const POLICY_KEY = Symbol('banto-dock-policy');

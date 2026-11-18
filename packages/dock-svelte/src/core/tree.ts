@@ -389,7 +389,7 @@ export const EDGE_DOCK_RATIO = 0.25;
  */
 export function dockPanelAtEdge(
 	root: DockNode | null,
-	dropped: DockPanelNode,
+	dropped: DockPanelNode | DockTabGroupNode,
 	edge: DockEdge,
 	makeId: () => string = defaultMakeId
 ): DockNode {
@@ -491,6 +491,8 @@ export function resizeSplit(
  * focus / move / resize and never invalidate a structure decision). Floating
  * ids are arbitrary strings, so they are encoded as sorted `[id, open]` pairs
  * inside the JSON - never joined with a delimiter that an id could contain.
+ * Regions auto-hidden to an edge band (#694 PR-3) count with their edge and
+ * shape (a band tab chosen in a group moves its `activeIndex`).
  */
 export function structureKey(layout: DockLayout): string {
 	const node = (n: DockNode): unknown => {
@@ -501,5 +503,9 @@ export function structureKey(layout: DockLayout): string {
 	const floating = layout.floating
 		.map((w): [string, boolean] => [w.id, w.open])
 		.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : Number(a[1]) - Number(b[1])));
-	return JSON.stringify([floating, layout.docked ? node(layout.docked) : null]);
+	const docked = layout.docked ? node(layout.docked) : null;
+	// Auto-hidden regions (#694 PR-3) only when there are any, so an older layout's key is unchanged.
+	const hidden = layout.autoHidden ?? [];
+	if (hidden.length === 0) return JSON.stringify([floating, docked]);
+	return JSON.stringify([floating, docked, hidden.map((e) => [e.edge, node(e.node)])]);
 }
