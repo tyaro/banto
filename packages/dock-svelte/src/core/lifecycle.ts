@@ -297,12 +297,22 @@ export class PanelLifecycle {
 
 	/**
 	 * Show the pane (`DockState.show`, #663). Not asked, like `DockState.open`
-	 * - except when it puts a hidden pane whose content is still mounted
-	 * (`keepMounted`, not discarded) back into the docked tree: that moves the
-	 * content from the floating layer into the tree (re-mount), so it is asked
-	 * as a `dock` change (`remount: true`) and waits out an IME composition.
-	 * A docked background tab is brought up with `switchTab` (asked as a
-	 * `tab-switch`, like a tab click).
+	 * - except when it changes what another docked pane shows or puts mounted
+	 * content back into the tree:
+	 *
+	 * - A docked background tab is brought up with `switchTab` (a `tab-switch`,
+	 *   like a tab click).
+	 * - A pane hidden from the dock that goes back as the active tab of a tab
+	 *   group takes the group's active pane (or the bare panel the group is
+	 *   re-made around) off the screen, unmounting it unless `keepMounted`: that
+	 *   is asked first as a `tab-switch` from that pane to this one, through
+	 *   the same `request` as a tab click (refused = the pane stays hidden;
+	 *   held while an IME composition is open). `remount` is `true` for a bare
+	 *   panel that becomes a tab (it is re-mounted either way).
+	 * - Putting a hidden pane whose content is still mounted (`keepMounted`,
+	 *   not discarded) back into the docked tree moves that content from the
+	 *   floating layer into the tree (re-mount), so it is asked as a `dock`
+	 *   change (`remount: true`) - after the `tab-switch` when there is one.
 	 */
 	show(panelId: string): Promise<DockPanelChangeOutcome> {
 		const where = this.#whereIs(panelId);
@@ -318,16 +328,36 @@ export class PanelLifecycle {
 			this.#whereIs(panelId) === 'hidden' &&
 			this.isRetained(panelId) &&
 			this.#dock.showPlacement(panelId) === 'docked';
-		if (!redocksMounted()) {
+		const describeDock = (): DockPanelChange | null =>
+			redocksMounted() ? { kind: 'dock', panelId, remount: true } : null;
+		const dock = (): Promise<DockPanelChangeOutcome> =>
+			this.request({ kind: 'dock', panelId, remount: true }, () => this.#dock.show(panelId), {
+				target: 'show',
+				describe: describeDock
+			});
+		const describeSwitch = (): DockPanelChange | null => {
+			if (this.#whereIs(panelId) !== 'hidden') return null;
+			const s = this.#dock.showTabSwitch(panelId);
+			if (s === null) return null;
+			const remount = s.wrapped || !this.keepMounted(s.from);
+			return { kind: 'tab-switch', groupId: s.groupId, from: s.from, to: panelId, remount };
+		};
+		const tabSwitch = describeSwitch();
+		if (tabSwitch === null) {
+			if (redocksMounted()) return dock();
 			this.#dock.show(panelId);
 			return Promise.resolve('applied');
 		}
-		const describe = (): DockPanelChange | null =>
-			redocksMounted() ? { kind: 'dock', panelId, remount: true } : null;
-		return this.request({ kind: 'dock', panelId, remount: true }, () => this.#dock.show(panelId), {
-			target: 'show',
-			describe
-		});
+		if (!redocksMounted()) {
+			return this.request(tabSwitch, () => this.#dock.show(panelId), {
+				target: 'show',
+				describe: describeSwitch
+			});
+		}
+		// Both: the active pane agrees to step back first, then the mounted content is asked to move.
+		return this.request(tabSwitch, () => {}, { target: 'show', describe: describeSwitch }).then(
+			(outcome) => (outcome === 'applied' ? dock() : outcome)
+		);
 	}
 
 	/**

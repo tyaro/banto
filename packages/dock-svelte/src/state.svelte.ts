@@ -264,6 +264,33 @@ export class DockState {
 	}
 
 	/**
+	 * The docked pane that `show(id)` would take off the screen by putting the
+	 * hidden pane `id` back as the ACTIVE tab of a tab group (#663): the tab it
+	 * replaces as the active one (`wrapped: false`), or a bare docked panel that
+	 * becomes the other tab of a new group (`wrapped: true` - it is re-mounted
+	 * even when `keepMounted`). `groupId` is the group `id` ends up in (for a
+	 * new group, the id it is given when the remembered one is free). `null` =
+	 * `show(id)` deactivates no docked pane (not hidden from the dock, restored
+	 * into a split / an empty tree, or opened floating). `DockHost`'s
+	 * `showPanel` asks this as a `tab-switch` first, like a tab click.
+	 */
+	showTabSwitch(id: string): { groupId: string; from: string; wrapped: boolean } | null {
+		if (this.#isDocked(id)) return null;
+		// A fixed id for a group the preview would create: stable across calls (the request re-checks it).
+		const tree = this.#restoredTree(id, () => `${id}:restored-tabs`);
+		if (tree === null) return null;
+		const group = findParent(tree, id);
+		if (group?.type !== 'tabs') return null;
+		const before = findNode(this.layout.docked, group.id);
+		if (before?.type === 'tabs') {
+			const from = before.children[before.activeIndex]?.id;
+			return from === undefined ? null : { groupId: group.id, from, wrapped: false };
+		}
+		const from = group.children.find((c) => c.id !== id)?.id;
+		return from === undefined ? null : { groupId: group.id, from, wrapped: true };
+	}
+
+	/**
 	 * Take the pane `id` off the screen, wherever it is (#663): a docked pane
 	 * leaves the tree and becomes a CLOSED floating window that remembers its
 	 * docked place (`FloatingWindow.dockSlot`, kept by `serialize`), so `show`
@@ -303,11 +330,11 @@ export class DockState {
 	}
 
 	/** The docked tree with the closed window `id` put back in its remembered place, or `null` (no slot / place gone / not closed). */
-	#restoredTree(id: string): DockNode | null {
+	#restoredTree(id: string, makeId: () => string = this.#makeId): DockNode | null {
 		const win = this.layout.floating.find((w) => w.id === id);
 		if (!win || win.open || !win.dockSlot) return null;
 		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
-		return restoreDockSlot(this.layout.docked, panel, win.dockSlot, this.#makeId);
+		return restoreDockSlot(this.layout.docked, panel, win.dockSlot, makeId);
 	}
 
 	/** Closes the window but keeps its geometry so a later `open`/`toggle` restores the same position/size. */

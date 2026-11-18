@@ -303,9 +303,12 @@
 	 * tree goes back to its remembered docked place (a floating window when
 	 * that place is gone), a closed floating window opens, an open one comes to
 	 * front, a docked background tab becomes the active tab (asked as a
-	 * `tab-switch`). Putting a `keepMounted` pane's still-mounted content back
-	 * into the tree is asked as a `dock` change; anything else is not asked
-	 * (like `dock.open`). DOM focus is not moved.
+	 * `tab-switch`). Re-docking a pane as the active tab of a tab group is
+	 * asked first as a `tab-switch` from the group's active pane (like a tab
+	 * click: refused = it stays hidden; held during IME composition). Putting a
+	 * `keepMounted` pane's still-mounted content back into the tree is asked as
+	 * a `dock` change; anything else is not asked (like `dock.open`). DOM focus
+	 * is not moved.
 	 */
 	export function showPanel(panelId: string): Promise<DockPanelChangeOutcome> {
 		return lifecycle.show(panelId);

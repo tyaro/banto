@@ -4,7 +4,8 @@
 // share of the space); when that place is gone it opens floating; the slot
 // survives `serialize` / `hydrate` (old JSON without it still loads);
 // `panels` lists every pane in a stable order with visible flags.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PanelLifecycle, type DockPanelChange } from '../src/core/lifecycle';
 import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
 import { collectPanelIds, findNode } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
@@ -272,5 +273,117 @@ describe('panels', () => {
 
 		dock.ensureWindow({ id: 'n', title: 'N' }, 800, 600);
 		expect(dock.panels.map((r) => r.id)).toEqual(['x', 'y', 'z', 'p', 'f', 'n']);
+	});
+});
+
+// PR #665 review (Codex P1): putting a hidden pane back as the ACTIVE tab of a
+// group takes the group's active pane off the screen (unmounted unless
+// keepMounted), so it is asked like a tab click (`tab-switch`, IME hold).
+describe('show() into a tab group is asked as a tab-switch from the active pane', () => {
+	function setup(options: {
+		hook?: (change: DockPanelChange) => boolean | Promise<boolean>;
+		keepMounted?: (id: string) => boolean;
+		deferred?: () => boolean;
+	}) {
+		const dock = createDockState(tabsLayout(), counterMakeId());
+		const lifecycle = new PanelLifecycle(dock, () => ({
+			beforePanelChange: options.hook,
+			keepMounted: options.keepMounted,
+			isStructureChangeDeferred: options.deferred ?? (() => false)
+		}));
+		return { dock, lifecycle };
+	}
+	const groupT = (dock: DockState) => findNode(dock.layout.docked, 't') as DockTabGroupNode;
+	const activeOf = (dock: DockState) => groupT(dock).children[groupT(dock).activeIndex].id;
+
+	it('a veto from the active (not keepMounted) pane keeps the pane hidden and changes nothing', async () => {
+		const hook = vi.fn((change: DockPanelChange) => change.kind !== 'tab-switch');
+		const { dock, lifecycle } = setup({ hook });
+		dock.dismiss('y');
+		const before = JSON.stringify(dock.layout);
+
+		expect(await lifecycle.show('y')).toBe('refused');
+		expect(hook).toHaveBeenCalledTimes(1);
+		expect(hook).toHaveBeenCalledWith({
+			kind: 'tab-switch',
+			groupId: 't',
+			from: 'x',
+			to: 'y',
+			remount: true
+		});
+		expect(JSON.stringify(dock.layout)).toBe(before);
+		expect(dock.isVisible('y')).toBe(false);
+	});
+
+	it('allowed: restored in its old place as the active tab; keepMounted from = remount false', async () => {
+		const hook = vi.fn(() => true);
+		const { dock, lifecycle } = setup({ hook, keepMounted: (id) => id === 'x' });
+		dock.dismiss('y');
+
+		expect(await lifecycle.show('y')).toBe('applied');
+		expect(hook).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'tab-switch', from: 'x', to: 'y', remount: false })
+		);
+		expect(groupT(dock).children.map((c) => c.id)).toEqual(['x', 'y', 'z']);
+		expect(activeOf(dock)).toBe('y');
+	});
+
+	it('a bare anchor made into a group again is asked too (re-mounted: remount true)', async () => {
+		const hook = vi.fn(() => false);
+		const { dock, lifecycle } = setup({ hook, keepMounted: () => true });
+		dock.dismiss('z');
+		dock.dismiss('x'); // t collapses to the bare panel y
+		lifecycle.discarded.add('x'); // closed, not hidden: nothing of x is mounted
+
+		expect(await lifecycle.show('x')).toBe('refused');
+		expect(hook).toHaveBeenCalledWith({
+			kind: 'tab-switch',
+			groupId: 't',
+			from: 'y',
+			to: 'x',
+			remount: true
+		});
+		expect(findNode(dock.layout.docked, 't')).toBeNull();
+		expect(dock.isVisible('x')).toBe(false);
+	});
+
+	it('held while an IME composition is open, asked and applied after it ends', async () => {
+		let composing = true;
+		const hook = vi.fn(() => true);
+		const { dock, lifecycle } = setup({ hook, deferred: () => composing });
+		dock.dismiss('y');
+
+		const pending = lifecycle.show('y');
+		expect(hook).not.toHaveBeenCalled();
+		expect(dock.isVisible('y')).toBe(false);
+		composing = false;
+		lifecycle.resumeDeferred();
+		expect(await pending).toBe('applied');
+		expect(hook).toHaveBeenCalledTimes(1);
+		expect(activeOf(dock)).toBe('y');
+	});
+
+	it('a keepMounted pane still mounted is asked twice: tab-switch first, then dock', async () => {
+		const asked: string[] = [];
+		const hook = vi.fn((change: DockPanelChange) => {
+			asked.push(change.kind);
+			return true;
+		});
+		const { dock, lifecycle } = setup({ hook, keepMounted: () => true });
+		dock.dismiss('y');
+
+		expect(await lifecycle.show('y')).toBe('applied');
+		expect(asked).toEqual(['tab-switch', 'dock']);
+		expect(activeOf(dock)).toBe('y');
+	});
+
+	it('restoring into a split deactivates nothing: not asked (like dock.open)', async () => {
+		const hook = vi.fn(() => false);
+		const { dock, lifecycle } = setup({ hook });
+		dock.dismiss('p');
+
+		expect(await lifecycle.show('p')).toBe('applied');
+		expect(hook).not.toHaveBeenCalled();
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['x', 'y', 'z', 'p']);
 	});
 });

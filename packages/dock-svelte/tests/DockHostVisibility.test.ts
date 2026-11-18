@@ -13,7 +13,7 @@ import PanelsMenuHarness from './PanelsMenuHarness.svelte';
 import { collectPanelIds } from '../src/core/tree';
 import type { DockPanelChange } from '../src/core/lifecycle';
 import { createDockState, type DockState } from '../src/state.svelte';
-import type { DockLayout } from '../src/types';
+import type { DockLayout, DockTabGroupNode } from '../src/types';
 
 beforeAll(() => {
 	globalThis.ResizeObserver = class {
@@ -40,8 +40,8 @@ const layout = (): DockLayout => ({
 	}
 });
 
-function mount(props: Record<string, unknown> = {}) {
-	const dock = createDockState(layout());
+function mount(props: Record<string, unknown> = {}, initial: DockLayout = layout()) {
+	const dock = createDockState(initial);
 	const view = render(DockHostHarness, { dock, ...props });
 	const host = () => view.component.host();
 	render(PanelsMenuHarness, {
@@ -121,5 +121,59 @@ describe('a View menu built on dock.panels', () => {
 		const before = dock.serialize();
 		expect(await host().showPanel('nope')).toBe('stale');
 		expect(dock.serialize()).toBe(before);
+	});
+});
+
+// PR #665 review (Codex P1): re-docking into a tab group makes the reopened
+// pane the active tab, which unmounts the active one - asked like a tab click.
+describe('showPanel into a tab group', () => {
+	const tabsLayout = (): DockLayout => ({
+		version: 2,
+		floating: [],
+		docked: {
+			type: 'tabs',
+			id: 't',
+			activeIndex: 0,
+			children: [
+				{ type: 'panel', id: 'a', title: 'A' },
+				{ type: 'panel', id: 'b', title: 'B' },
+				{ type: 'panel', id: 'c', title: 'C' }
+			]
+		}
+	});
+	const group = (dock: DockState) => dock.layout.docked as DockTabGroupNode;
+
+	it('asks a tab-switch from the active pane: a veto keeps it hidden, an approval re-docks it active', async () => {
+		const calls: DockPanelChange[] = [];
+		let allowSwitch = false;
+		const { dock, host } = mount(
+			{
+				beforePanelChange: (c: DockPanelChange) => (
+					calls.push(c),
+					c.kind === 'tab-switch' ? allowSwitch : true
+				)
+			},
+			tabsLayout()
+		);
+		expect(await host().setPanelVisible('b', false)).toBe('applied');
+		const before = dock.serialize();
+
+		expect(await host().showPanel('b')).toBe('refused');
+		expect(calls[1]).toEqual({
+			kind: 'tab-switch',
+			groupId: 't',
+			from: 'a',
+			to: 'b',
+			remount: true
+		});
+		expect(dock.serialize()).toBe(before);
+		expect(checkbox('B').checked).toBe(false);
+
+		allowSwitch = true;
+		expect(await host().setPanelVisible('b', true)).toBe('applied');
+		flushSync();
+		expect(group(dock).children.map((c) => c.id)).toEqual(['a', 'b', 'c']);
+		expect(group(dock).activeIndex).toBe(1);
+		expect(checkbox('B').checked).toBe(true);
 	});
 });
