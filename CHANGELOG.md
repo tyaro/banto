@@ -34,6 +34,10 @@
 
 - `guardUnsavedChanges({ ..., isSamePage?: (from: URL, to: URL) => boolean })` と `isSamePath(from, to)`（パスが同じならクエリが違っても同じページ）を追加。クエリに画面の状態を持つページで、クエリだけが変わる `goto`・戻る・進むに未保存の確認を出さない。`isApprovedExit` にも判定関数を渡せる。既定（パス+クエリ一致）と、再読み込み・タブを閉じるの扱いは従来どおり
 
+### 修正（patch）: 狭い viewport で Menu などの popover の左端が画面外へ出る（#668）
+
+- `anchoredPopover` の横の補正を、左端が必ず `ANCHORED_POPOVER_GAP` 以上になる形に直した（popover が viewport より広いときは右側へはみ出す）。Menu / HeaderNav / DateInput / DateTimeInput / TimeInput / Tooltip に効く。Menu の `min-width` / `max-width` は `100vw - 2 * var(--banto-space-1)` を超えないようにした
+
 ### 追加（minor）: ui の `MenuItem` にショートカット表示（#671）
 
 - `MenuItem` に `shortcut?`（`'Mod+Z'` 形式、`CommandSpec` と同じ）、`platform?`（省略時は初回描画を `'other'`、マウント後に `detectShortcutPlatform()`。SSR と hydration が一致する）、`ariaKeyShortcuts?`（`aria-keyshortcuts` を明示。自動変換より優先）を追加。label の右に keycap テキスト（`formatShortcut`、`aria-hidden`）を出し、アクセシブル名は label のまま、`aria-keyshortcuts` に WAI-ARIA 形式で入れる。変換用に `toAriaKeyShortcuts(shortcut, platform)` を export（`?` `%` `/` `+` など配列依存の記号キーは `undefined` を返し属性を省く）。表示のみでキーの処理はしない
