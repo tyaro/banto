@@ -56,7 +56,7 @@
  *   split or tab group is made around is mounted again (`core/mounts.ts`:
  *   a Svelte component cannot be moved to another parent, so this holds
  *   for `keepMounted` panes as well). `requestPlacement` asks each of them
- *   first (`tab-switch` / `move-docked`), then the moved pane, and applies
+ *   first (`tab-switch` / `reparent`), then the moved pane, and applies
  *   once all agreed on the same structure.
  *
  * ## IME composition (plan §3.5 / §4.2)
@@ -103,9 +103,12 @@ import type { DockNode, DockPanelNode } from '../types';
  * unmounted now and mounted again later (capture a draft so the next mount can
  * restore it), `false` = its DOM is kept (`hidden` + `inert`). For
  * `tab-switch` it describes the `from` pane. `close` discards the content.
+ * `reparent` is a pane the user did not move, whose parent changes (a split or
+ * tab group is made around it, or undone): `cause` is the pane being moved.
  */
 export type DockPanelChange =
 	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: true }
+	| { kind: 'reparent'; panelId: string; cause: string; remount: true }
 	| { kind: 'tab-switch'; groupId: string; from: string; to: string; remount: boolean }
 	| { kind: 'hide'; panelId: string; remount: boolean }
 	| { kind: 'close'; panelId: string };
@@ -320,7 +323,7 @@ export class PanelLifecycle {
 	 *   first - the group's active pane it replaces as the active tab (or the
 	 *   bare panel a group is re-made around: `remount: true`) as a
 	 *   `tab-switch` to this pane, a pane (or the tabs of a group) a split is
-	 *   re-made around as `move-docked` (it is re-mounted) - through the same
+	 *   re-made around as `reparent` (it is re-mounted) - through the same
 	 *   `request` as a tab click (refused = the pane stays hidden; held while
 	 *   an IME composition is open).
 	 * - Putting a hidden pane whose content is still mounted (`keepMounted`,
@@ -387,7 +390,7 @@ export class PanelLifecycle {
 	 * and may push other docked panes out (#666, `core/mounts.ts`): a new split
 	 * or tab group made around a pane re-mounts it, and a new active tab takes
 	 * the old one off the screen. Each pushed-out pane is asked first (in tree
-	 * order: `tab-switch` / `move-docked`), then `own` (the moved pane's own
+	 * order: `tab-switch` / `reparent`), then `own` (the moved pane's own
 	 * change, `null` = not asked), one after the other; the first refusal
 	 * stops it with nothing changed, and `apply` runs after the last approval.
 	 * The answers are one decision about one structure: every request after

@@ -39,10 +39,10 @@ describe('displacedChanges', () => {
 		expect(displacedChanges(before, after, 'a', never)).toEqual([]);
 	});
 
-	it('a bare pane wrapped into a split is re-mounted: move-docked', () => {
+	it('a bare pane wrapped into a split is re-mounted: reparent', () => {
 		const after = split('n', [panel('a'), panel('b')]);
 		expect(displacedChanges(panel('a'), after, 'b', never)).toEqual([
-			{ kind: 'move-docked', panelId: 'a', remount: true }
+			{ kind: 'reparent', panelId: 'a', cause: 'b', remount: true }
 		]);
 	});
 
@@ -50,8 +50,8 @@ describe('displacedChanges', () => {
 		const before = tabs('t', ['x', 'y', 'z']);
 		const after = split('n', [tabs('t', ['x', 'y', 'z']), panel('b')]);
 		expect(displacedChanges(before, after, 'b', (id) => id === 'y')).toEqual([
-			{ kind: 'move-docked', panelId: 'x', remount: true },
-			{ kind: 'move-docked', panelId: 'y', remount: true }
+			{ kind: 'reparent', panelId: 'x', cause: 'b', remount: true },
+			{ kind: 'reparent', panelId: 'y', cause: 'b', remount: true }
 		]);
 	});
 
@@ -76,7 +76,7 @@ describe('displacedChanges', () => {
 	it('the moved pane itself is not listed; a split it leaves collapses and re-mounts the other', () => {
 		const before = split('s', [panel('a'), panel('b')]);
 		expect(displacedChanges(before, panel('b'), 'a', never)).toEqual([
-			{ kind: 'move-docked', panelId: 'b', remount: true }
+			{ kind: 'reparent', panelId: 'b', cause: 'a', remount: true }
 		]);
 		const kept = split('s', [panel('a'), panel('b'), panel('c')]);
 		expect(displacedChanges(kept, split('s', [panel('b'), panel('c')]), 'a', never)).toEqual([]);

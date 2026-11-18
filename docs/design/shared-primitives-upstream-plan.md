@@ -539,7 +539,7 @@ interface DockHostProps {
 
   | 遷移 | 中身 | つなぎ方 |
   | --- | --- | --- |
-  | `dock` / `undock` / `move-docked` | 再 mount するが未適用の入力は**保持**する | `coordinator.capture([panelId])` だけを呼んで `true` を返す。再 mount した pane が同じ key で register すると `restore` で戻る（rebind）。FormDraft を使う pane は何もしなくてよい。確認は出さない |
+  | `dock` / `undock` / `move-docked` / `reparent` | 再 mount するが未適用の入力は**保持**する | `coordinator.capture([panelId])` だけを呼んで `true` を返す。再 mount した pane が同じ key で register すると `restore` で戻る（rebind）。FormDraft を使う pane は何もしなくてよい。確認は出さない |
   | `tab-switch` / `hide` | keepMounted なら DOM を保つ。keepMounted でなければ上と同じく capture / rebind | 確認は出さない |
   | `close` | 中身を**捨てる** | `coordinator.settle([panelId], 確認UI)`。`apply` / `discard` / `cancel` を選ばせ、`clean` / `applied` / `discarded` のときだけ `true` を返して閉じる。`cancelled` / `failed` / `dirty-again`（適用の待機中に追加入力があり、成功後も dirty が残った）では `false` を返して閉じない。適用の成功応答だけを閉じてよい条件にしない（#439 のレビュー） |
 

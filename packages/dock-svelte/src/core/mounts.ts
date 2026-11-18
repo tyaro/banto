@@ -58,8 +58,10 @@ export function mountedPanes(
  *   to the new active tab, `remount` when its content does not survive (not
  *   `keepMounted`, or its chain changed);
  * - any other mounted pane whose content does not survive (a pane, or the
- *   tabs of a group, that a new split is made around) = `move-docked` with
- *   `remount: true` - its place in the tree changes and it is mounted again.
+ *   tabs of a group, that a new split is made around, or the one a split
+ *   shrinks to when the moved pane leaves it) = `reparent` (`panelId` = this
+ *   pane, `cause` = `moving`) with `remount: true` - it is not the pane being
+ *   moved, but its parent changes, so it is mounted again.
  *
  * A pane that is not mounted before (a background tab that is not
  * `keepMounted`) has nothing to lose and is not listed.
@@ -67,7 +69,7 @@ export function mountedPanes(
 export function displacedChanges(
 	before: DockNode | null,
 	after: DockNode | null,
-	moving: string | null,
+	moving: string,
 	keepMounted: (panelId: string) => boolean
 ): DockPanelChange[] {
 	const was = mountedPanes(before, keepMounted);
@@ -88,7 +90,7 @@ export function displacedChanges(
 				remount: !survives
 			});
 		} else if (!survives) {
-			changes.push({ kind: 'move-docked', panelId: id, remount: true });
+			changes.push({ kind: 'reparent', panelId: id, cause: moving, remount: true });
 		}
 	}
 	return changes;

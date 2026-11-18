@@ -7,7 +7,7 @@
  * `@banto/dock-svelte`, plan §2.1). The app connects them per transition
  * (plan §3.5 table):
  *
- * - dock / undock / move-docked (content re-mounts, input is KEPT):
+ * - dock / undock / move-docked / reparent (content re-mounts, input is KEPT):
  *   `capture([panelId])`, then let the change happen. When the re-mounted pane
  *   registers the same key, the captured state is `restore`d (rebind). No
  *   prompt. A pane built on `FormDraft` needs nothing - the draft outlives it.

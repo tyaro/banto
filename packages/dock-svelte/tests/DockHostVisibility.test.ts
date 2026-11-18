@@ -106,7 +106,7 @@ describe('a View menu built on dock.panels', () => {
 		// after the bare pane B that a split is re-made around (re-mounted, #666).
 		expect(await host().showPanel('a')).toBe('applied');
 		expect(calls.slice(1)).toEqual([
-			{ kind: 'move-docked', panelId: 'b', remount: true },
+			{ kind: 'reparent', panelId: 'b', cause: 'a', remount: true },
 			{ kind: 'dock', panelId: 'a', remount: true }
 		]);
 		expect(docked(dock)).toEqual(['a', 'b']);

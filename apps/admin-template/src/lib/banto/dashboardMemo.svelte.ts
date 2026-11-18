@@ -75,7 +75,7 @@ export interface PanelChangeHandlerOptions {
 
 /**
  * `DockHost.beforePanelChange`, transition by transition (plan §3.5's table):
- *  - `dock` / `undock` / `move-docked`, and `tab-switch` / `hide` that
+ *  - `dock` / `undock` / `move-docked` / `reparent`, and `tab-switch` / `hide` that
  *    re-mount: `capture` the pane's draft and go ahead, no prompt. (A
  *    `FormDraft` source has no `capture`, so this is a no-op for the memo -
  *    its draft outlives the pane anyway - but a pane-owned `DraftSource`

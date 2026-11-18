@@ -144,6 +144,7 @@ const isEscapeBlocked = (el: HTMLElement | null) =>
 ```ts
 type DockPanelChange =
 	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: true }
+	| { kind: 'reparent'; panelId: string; cause: string; remount: true } // 動かしていない pane の親が変わり作り直される
 	| { kind: 'tab-switch'; groupId: string; from: string; to: string; remount: boolean }
 	| { kind: 'hide'; panelId: string; remount: boolean }
 	| { kind: 'close'; panelId: string };
@@ -169,14 +170,14 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
 - **`remount`**: `true` は中身がいったん unmount され、あとで別に mount されること（draft を capture しておけば
   次の mount で戻せる）。`false` は DOM が残ること。`tab-switch` では `from` の pane のこと。dock / undock は
   docked の木と浮動の層をまたぐので、`keepMounted` でも常に `true`。
-- **押し出される pane にも聞く（#666）**: docked の木へのドロップ（dock / move-docked）と `showPanel` で元の場所へ
+- **押し出される pane にも聞く（#666）**: docked の木へのドロップ（dock / move-docked。押し出される側は `tab-switch` / `reparent`）と `showPanel` で元の場所へ
   戻すときは、動かす pane のほかに、変わってしまう docked の pane にも先に聞く（木の順に 1 つずつ、最初の拒否で
   止めて何も変えない。最後に動かす pane 自身の `dock` / `move-docked`）。
   - タブの組へ落とす（戻す）と、それまで選択中だったタブが画面から外れる: `tab-switch`（`from` = そのタブ、
     `to` = 落とした pane。`remount` は `keepMounted` でなければ `true`）。単独の pane の真ん中へ落として新しい
     タブの組ができるときも、その pane からの `tab-switch`（`remount: true`。`groupId` はまだ無い組の仮の id）。
   - 単独の pane（またはタブの組）の端へ落として新しい分割ができると、包まれる pane の中身は作り直される
-    （Svelte の部品は別の親へ移せないので `keepMounted` でも同じ）: その pane の `move-docked`（`remount: true`）。
+    （Svelte の部品は別の親へ移せないので `keepMounted` でも同じ）: その pane の `reparent`（`remount: true`、`cause` = 動かす pane の id）。
     包まれるタブの組では、選択中のタブと `keepMounted` のタブのそれぞれ。docked の pane を動かして元の分割が
     1 つに縮むときに残る側も同じ。
   - 答えはまとめて 1 つの判断: 最初に聞いたときの構造の世代のまま適用まで進み、途中で構造が変わったら
@@ -251,7 +252,7 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   - `keepMounted` で中身が残っている pane をドックへ戻すときは `dock` の変更（`remount: true`）としても聞く
     （`tab-switch` があればその後。2 つの答えは 1 つの判断で、`tab-switch` を許したときの構造が `dock` を
     当てるまでに変わったら（アプリが別のタブを選んだなど）`stale`）。分割へ戻すときに新しい分割を隣の pane
-    （またはタブの組）の周りに作り直すと、隣の中身は作り直されるので、先にその pane の `move-docked` として聞く
+    （またはタブの組）の周りに作り直すと、隣の中身は作り直されるので、先にその pane の `reparent` として聞く
     （#666、上の「押し出される pane にも聞く」）。それ以外（既にある分割へ戻す・木が空・浮動で開く）は
     `dock.open` と同じく聞かない。
   - DOM のフォーカスは動かさない（前面化・選択中のタブだけ）。メニューを閉じたあとのフォーカスはメニュー側の

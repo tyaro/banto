@@ -528,7 +528,7 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 	});
 
 	// #666: a split re-made around the neighbour re-mounts the neighbour's mounted content.
-	it('restoring into a split re-made around the neighbour asks its mounted panes (move-docked)', async () => {
+	it('restoring into a split re-made around the neighbour asks its mounted panes (reparent)', async () => {
 		const hook = vi.fn(() => false);
 		const { dock, lifecycle } = setup({ hook });
 		dock.dismiss('p'); // s collapses: t is the root
@@ -536,7 +536,9 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 
 		expect(await lifecycle.show('p')).toBe('refused');
 		// x is t's active tab; y and z are not mounted (not keepMounted), so nothing of theirs is lost.
-		expect(hook.mock.calls).toEqual([[{ kind: 'move-docked', panelId: 'x', remount: true }]]);
+		expect(hook.mock.calls).toEqual([
+			[{ kind: 'reparent', panelId: 'x', cause: 'p', remount: true }]
+		]);
 		expect(JSON.stringify(dock.layout)).toBe(before);
 
 		hook.mockReturnValue(true);

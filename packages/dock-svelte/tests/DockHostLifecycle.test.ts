@@ -2,7 +2,7 @@
 //
 // The pane lifecycle of DockHost (#432, shared-primitives-upstream-plan §3.5 /
 // §4.2 / D3-c / D4, PR-9): `beforePanelChange` is asked before every structure
-// change (dock / undock / move-docked / tab-switch / hide / close) and a
+// change (dock / undock / move-docked / reparent / tab-switch / hide / close) and a
 // refusal - sync or async - leaves the layout alone; an async answer is not
 // applied once the structure changed or the host unmounted; re-entrant hooks;
 // `keepMounted` panes keep the same DOM nodes (`hidden` + `inert`) across a tab
@@ -676,7 +676,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 			const input = inputOf('X')!;
 			input.focus();
 			dropFBelowP();
-			expect(calls).toEqual(['move-docked p']);
+			expect(calls).toEqual(['reparent p']);
 			expect(dock.layout).toEqual(mixed());
 			expect(document.activeElement).toBe(input);
 			expect(document.querySelector('.drag-ghost')).toBeNull();
@@ -688,7 +688,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 			const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(label(c)), true) });
 			const before = inputOf('P');
 			dropFBelowP();
-			expect(calls).toEqual(['move-docked p', 'dock f']);
+			expect(calls).toEqual(['reparent p', 'dock f']);
 			const root = dock.layout.docked as { children: unknown[] };
 			expect(root.children[1]).toMatchObject({
 				type: 'split',
@@ -707,7 +707,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 				keepMounted: () => true
 			});
 			dropFBelowP();
-			expect(asked).toEqual([{ kind: 'move-docked', panelId: 'p', remount: true }]);
+			expect(asked).toEqual([{ kind: 'reparent', panelId: 'p', cause: 'f', remount: true }]);
 		});
 
 		it('held while deferred (IME), asked and applied after resume', async () => {
@@ -717,7 +717,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 			const { dock, host } = mount(mixed(), {
 				beforePanelChange: (c) => {
 					calls.push(label(c));
-					return c.kind === 'move-docked' ? new Promise<boolean>((r) => (answer = r)) : true;
+					return c.kind === 'reparent' ? new Promise<boolean>((r) => (answer = r)) : true;
 				},
 				isStructureChangeDeferred: () => deferring
 			});
@@ -725,11 +725,11 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 			deferring = true; // a composition starts while the answer is pending
 			answer(true);
 			await nextTask();
-			expect(calls).toEqual(['move-docked p']);
+			expect(calls).toEqual(['reparent p']);
 			expect(dock.layout).toEqual(mixed());
 			deferring = false;
 			host().resumeDeferredChange();
-			expect(calls).toEqual(['move-docked p', 'dock f']);
+			expect(calls).toEqual(['reparent p', 'dock f']);
 			expect(winOf(dock, 'f')).toBeUndefined();
 		});
 
@@ -743,7 +743,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 			dock.setActiveTab('t', 1); // the app switches a tab while the answer waits
 			answer(true);
 			await nextTask();
-			expect(calls).toEqual(['move-docked p']);
+			expect(calls).toEqual(['reparent p']);
 			expect(winOf(dock, 'f')?.open).toBe(true);
 		});
 	});
