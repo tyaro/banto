@@ -19,6 +19,27 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 
+/**
+ * A per-user permission key (Issue #697, user-permissions-plan §8-1), e.g.
+ * `equipment.operate`: a second axis next to the role, granted by an admin.
+ * Named `UserPermission` so it is not mistaken for the resource-operation
+ * `ResourcePermissions` (`lib/resource/permissions.ts`). The server decides;
+ * the screen only hides what the session cannot do.
+ *
+ * The single definition: here, not in `usersAdmin.ts`, because the display
+ * preset removes that file while this one stays (`usersAdmin.ts` re-exports it).
+ */
+export type UserPermission = string;
+
+/** Mirrors `banto_admin_services::permissions::PermissionEntry`: one permission the app registered (`GET /api/permissions` / `permissions_catalog`). */
+export interface PermissionEntry {
+	key: UserPermission;
+	/** Message key of the display name (the app's own messages). */
+	labelKey: string;
+	/** Message key of the description. */
+	descriptionKey: string;
+}
+
 export type AuthDisabledRole = 'admin' | 'editor' | 'viewer';
 
 /** Mirrors src-tauri's `AuthSettings` (camelCase on the wire, spec M11). */
@@ -27,6 +48,12 @@ export interface AuthSettings {
 	disabledRole: AuthDisabledRole;
 	autologinEnabled: boolean;
 	autologinUsername: string | null;
+	/**
+	 * The permissions login-not-required mode's session holds (Issue #697),
+	 * sorted, only keys the app registers. Empty for the template (it
+	 * registers none).
+	 */
+	disabledPermissions: UserPermission[];
 }
 
 const ERROR_KINDS = new Set([
@@ -67,12 +94,26 @@ export function getAuthSettings(): Promise<AuthSettings> {
 	return call<AuthSettings>('auth_config_get');
 }
 
-/** Toggle login-not-required mode and its synthetic-identity role. `admin`-only, EXCEPT while the mode is currently on (escape hatch - see `auth_config_apply`'s Rust doc comment). */
+/**
+ * Toggle login-not-required mode and its synthetic-identity role. `admin`-only, EXCEPT while the mode is currently on (escape hatch - see `auth_config_apply`'s Rust doc comment).
+ *
+ * `permissions` (Issue #697) = the keys that mode's session holds. Omit it to leave them as they are: the command then gets no `permissions` argument at all. A key the app did not register is a `validation` error and nothing is saved.
+ */
 export function applyAuthSettings(
 	disabled: boolean,
-	disabledRole: AuthDisabledRole
+	disabledRole: AuthDisabledRole,
+	permissions?: UserPermission[]
 ): Promise<AuthSettings> {
-	return call<AuthSettings>('auth_config_apply', { disabled, disabledRole });
+	return call<AuthSettings>('auth_config_apply', {
+		disabled,
+		disabledRole,
+		...(permissions === undefined ? {} : { permissions })
+	});
+}
+
+/** The permissions the app registered (`permissions_catalog`; `admin`-only, empty for the template). Empty = the permissions field is not shown. */
+export function getPermissionCatalog(): Promise<PermissionEntry[]> {
+	return call<PermissionEntry[]>('permissions_catalog');
 }
 
 /** Enable desktop autologin for `username`/`password` (verified against the real account store first - a bad credential surfaces as a `ProviderError` with `kind: 'validation'`). `admin`-only. */

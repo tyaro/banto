@@ -694,6 +694,8 @@
   "settings.authDisableDesc": "ログイン画面なしでこの端末を使えるようにします。影響の大きい操作です。",
   "settings.authDisableToggle": "ログイン不要モードを有効にする",
   "settings.startupRole": "起動時のロール",
+  "settings.authDisabledPermissionsHeading": "ログイン不要モードで持つ権限",
+  "settings.authDisabledPermissionsDesc": "ログイン不要モードのとき、この端末の操作者が持つ権限です。ロールとは別に付けます。既定では何も持ちません。",
   "settings.authDisabledOn": "有効（ログイン画面なし）",
   "settings.authDisabledOff": "無効（通常のログインが必要）",
   "settings.authDisableNote": "この端末を完全に信頼できる場合のみ有効化してください。LANアクセスは閲覧公開を有効にした場合のみ併用できます。",

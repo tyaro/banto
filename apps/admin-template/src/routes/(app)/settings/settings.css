@@ -318,6 +318,37 @@
 	min-width: min(100%, 12rem);
 }
 
+/* Permissions of login-not-required mode (Issue #697): a fieldset of checkboxes. */
+.settings-page .perm-fields {
+	min-width: 0;
+	margin: var(--banto-space-3) 0;
+	padding: 0;
+	border: 0;
+}
+
+.settings-page .perm-fields > legend {
+	padding: 0;
+	font-weight: 600;
+}
+
+.settings-page .perm-option {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--banto-space-2);
+	padding: var(--banto-space-1) 0;
+}
+
+.settings-page .perm-option > input {
+	flex: none;
+	margin-top: 0.2em;
+}
+
+.settings-page .perm-desc {
+	display: block;
+	font-size: var(--banto-font-size-sm);
+	color: var(--banto-text-muted);
+}
+
 /* Save button + "discard" + unsaved marker (issue #214). */
 .settings-page .save-row {
 	display: flex;

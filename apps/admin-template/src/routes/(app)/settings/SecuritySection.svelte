@@ -17,17 +17,35 @@
 	 * `applyAuthSettingsToDrafts()` が両方を同時に更新していたのと同じ結合を
 	 * 保つため。
 	 */
+	import { onMount } from 'svelte';
 	import { refreshAll } from '$app/navigation';
 	import { ShieldAlert } from '@lucide/svelte';
 	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '#lib/paraglide/messages.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { Button, SurfaceCard } from '@banto/ui';
-	import { applyAuthSettings, type AuthDisabledRole } from '#lib/banto/authAdmin.js';
+	import {
+		applyAuthSettings,
+		getPermissionCatalog,
+		type AuthDisabledRole,
+		type PermissionEntry,
+		type UserPermission
+	} from '#lib/banto/authAdmin.js';
+	import { isAdmin } from '#lib/permissions.js';
+	import { sessionStore } from '#lib/session.svelte.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { errorMessage } from './shared';
 	import { authSettingsStore, reloadAuthSettings } from './authSettingsStore.svelte';
+	import {
+		draftFromSaved,
+		permissionDescription,
+		permissionLabel,
+		permissionsDirty,
+		permissionsToSend,
+		showPermissionsField,
+		withPermission
+	} from './disabledPermissions';
 
 	const authDisabledRoleOptions: { value: AuthDisabledRole; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },
@@ -38,6 +56,47 @@
 	let disabledDraft = $state(false);
 	let disabledRoleDraft = $state<AuthDisabledRole>('admin');
 	let applyingAuth = $state(false);
+
+	// Issue #697 PR-2b: the permissions login-not-required mode's session holds.
+	// The vocabulary is the app's catalog (empty for the template -> no field).
+	// `null` = not loaded (or not asked: only an admin can read it - the escape
+	// hatch's non-admin session never sees the field, and a save then sends no
+	// `permissions`, i.e. leaves them as they are).
+	let catalog = $state<PermissionEntry[] | null>(null);
+	let permissionsDraft = $state<UserPermission[]>([]);
+
+	/** An app's message key -> its text; a key the app has no message for gives `undefined` (the label falls back to the permission key). */
+	function lookupMessage(messageKey: string): string | undefined {
+		const message = (m as unknown as Record<string, (() => string) | undefined>)[messageKey];
+		return typeof message === 'function' ? message() : undefined;
+	}
+
+	// The catalog is read once on mount. If the section is left before it
+	// answers, the answer is dropped (no write to a destroyed component's
+	// state); a failure just leaves the field out.
+	onMount(() => {
+		let alive = true;
+		if (isAdmin(sessionStore.role)) {
+			getPermissionCatalog().then(
+				(entries) => {
+					if (alive) catalog = entries;
+				},
+				() => {
+					if (alive) catalog = [];
+				}
+			);
+		}
+		return () => {
+			alive = false;
+		};
+	});
+
+	// The draft follows the saved value (and the catalog once it arrives; the
+	// field is not shown before that, so no edit can be lost to this).
+	$effect(() => {
+		const value = authSettingsStore.value;
+		if (value && catalog) permissionsDraft = draftFromSaved(value.disabledPermissions, catalog);
+	});
 
 	// Keep the disable-mode drafts in sync with the shared AuthSettings value
 	// whenever it changes (see module doc comment above).
@@ -58,7 +117,9 @@
 		const value = authSettingsStore.value;
 		return (
 			value !== null &&
-			(disabledDraft !== value.disabled || disabledRoleDraft !== value.disabledRole)
+			(disabledDraft !== value.disabled ||
+				disabledRoleDraft !== value.disabledRole ||
+				permissionsDirty(permissionsDraft, value.disabledPermissions, catalog))
 		);
 	});
 	const guard = guardUnsavedChanges({ isDirty: () => dirty, isSaving: () => applyingAuth });
@@ -83,6 +144,7 @@
 		if (!value) return;
 		disabledDraft = value.disabled;
 		disabledRoleDraft = value.disabledRole;
+		permissionsDraft = catalog ? draftFromSaved(value.disabledPermissions, catalog) : [];
 	}
 
 	async function saveAuthSettings(): Promise<void> {
@@ -98,7 +160,14 @@
 
 		applyingAuth = true;
 		try {
-			authSettingsStore.value = await applyAuthSettings(disabledDraft, disabledRoleDraft);
+			// `permissions` only when the field is shown and changed; otherwise the
+			// server leaves them as they are.
+			const saved = authSettingsStore.value?.disabledPermissions ?? [];
+			authSettingsStore.value = await applyAuthSettings(
+				disabledDraft,
+				disabledRoleDraft,
+				permissionsToSend(permissionsDraft, saved, catalog)
+			);
 			toastStore.push('success', m['settings.authSettingsUpdated']());
 			// Issue #214: the save is done - clear the unsaved state NOW, not
 			// after `refreshAll()` below. Its `guardCategory` redirect (when
@@ -171,6 +240,36 @@
 					<span class="banto-field-label">{m['settings.startupRole']()}</span>
 				</label>
 			</div>
+
+			{#if catalog && showPermissionsField(catalog)}
+				<fieldset class="perm-fields" aria-describedby="auth-disabled-permissions-desc">
+					<legend>{m['settings.authDisabledPermissionsHeading']()}</legend>
+					<p id="auth-disabled-permissions-desc" class="note">
+						{m['settings.authDisabledPermissionsDesc']()}
+					</p>
+					{#each catalog as entry (entry.key)}
+						{@const description = permissionDescription(entry, lookupMessage)}
+						<label class="perm-option">
+							<input
+								type="checkbox"
+								checked={permissionsDraft.includes(entry.key)}
+								disabled={!editable || !disabledDraft || applyingAuth}
+								onchange={(event) =>
+									(permissionsDraft = withPermission(
+										permissionsDraft,
+										catalog ?? [],
+										entry.key,
+										event.currentTarget.checked
+									))}
+							/>
+							<span>
+								{permissionLabel(entry, lookupMessage)}
+								{#if description}<small class="perm-desc">{description}</small>{/if}
+							</span>
+						</label>
+					{/each}
+				</fieldset>
+			{/if}
 
 			<p class="note">{m['settings.explicitSaveHint']()}</p>
 			<div class="save-row">

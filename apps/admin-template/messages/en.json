@@ -694,6 +694,8 @@
   "settings.authDisableDesc": "Use this device without a login screen. A high-impact operation.",
   "settings.authDisableToggle": "Enable login-not-required mode",
   "settings.startupRole": "Role at startup",
+  "settings.authDisabledPermissionsHeading": "Permissions in login-not-required mode",
+  "settings.authDisabledPermissionsDesc": "The permissions the operator of this device holds while login-not-required mode is on. Granted separately from the role; none by default.",
   "settings.authDisabledOn": "Enabled (no login screen)",
   "settings.authDisabledOff": "Disabled (normal login required)",
   "settings.authDisableNote": "Enable it only if you completely trust this device. LAN access can only be combined with it if viewer-public is enabled.",
