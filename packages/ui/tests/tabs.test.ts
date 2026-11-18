@@ -142,6 +142,49 @@ describe('Tabs keepMounted', () => {
 	});
 });
 
+describe('Tabs hideSingleTab (#659)', () => {
+	const ONE: TabItem[] = [{ id: 'a', label: 'Alpha' }];
+
+	it('draws no tablist / tab and a plain panel for a single tab', () => {
+		const { container } = render(TabsHarness, { tabs: ONE, hideSingleTab: true });
+		expect(screen.queryByRole('tablist')).toBeNull();
+		expect(screen.queryByRole('tab')).toBeNull();
+		expect(screen.queryByRole('tabpanel')).toBeNull();
+		const panel = container.querySelector('.banto-tabs__panel');
+		expect(panel).not.toBeNull();
+		for (const attr of ['role', 'tabindex', 'id', 'aria-labelledby', 'hidden']) {
+			expect(panel?.hasAttribute(attr)).toBe(false);
+		}
+		expect(panel?.textContent).toContain('Panel a');
+		expect(screen.getByTestId('value').textContent).toBe('a');
+	});
+
+	it('keeps the usual markup for a single tab without hideSingleTab', () => {
+		render(TabsHarness, { tabs: ONE });
+		expect(screen.getByRole('tablist')).toBeTruthy();
+		expect(screen.getAllByRole('tab')).toHaveLength(1);
+		expect(screen.getByRole('tabpanel').getAttribute('tabindex')).toBe('0');
+	});
+
+	it('keeps the usual markup for two or more tabs with hideSingleTab', () => {
+		render(TabsHarness, { tabs: TABS, hideSingleTab: true });
+		expect(screen.getByRole('tablist')).toBeTruthy();
+		expect(screen.getAllByRole('tab')).toHaveLength(3);
+		expect(screen.getByRole('tabpanel').getAttribute('tabindex')).toBe('0');
+	});
+
+	it('switches when the tabs go from two to one and back', async () => {
+		const view = render(TabsHarness, { tabs: TABS.slice(0, 2), hideSingleTab: true });
+		expect(screen.getByRole('tablist')).toBeTruthy();
+		await view.rerender({ tabs: [TABS[1]], hideSingleTab: true });
+		expect(screen.queryByRole('tablist')).toBeNull();
+		expect(screen.getByTestId('value').textContent).toBe('b');
+		expect(view.container.querySelector('.banto-tabs__panel')?.textContent).toContain('Panel b');
+		await view.rerender({ tabs: TABS.slice(0, 2), hideSingleTab: true });
+		expect(screen.getAllByRole('tab')).toHaveLength(2);
+	});
+});
+
 describe('SegmentedControl', () => {
 	const OPTIONS: SegmentedOption<'s' | 'c'>[] = [
 		{ value: 's', label: 'Standard', icon: CustomIcon },

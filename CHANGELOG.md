@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 追加（minor）: Tabs に hideSingleTab（#659）
+
+- `@banto/ui` の `Tabs` に任意の `hideSingleTab?: boolean`（既定 `false`）を追加。`true` でタブが 1 つ（無効のタブも数に入れる）のとき、`role="tablist"` を描かず、パネルは `role`・`id`・`aria-labelledby`・`tabindex` の無い素の `div.banto-tabs__panel` になる（空の枠に Tab で止まらない）。`value`・`onchange` は従来どおり。2 つ以上では何も変わらない。
+
 ### 追加（minor）: ThreePaneLayout を外から扱う 5 つの口（#655、#631 のフォロー）
 
 - `@banto/ui` の `ThreePaneLayout` に追加（すべて任意。渡さなければ見た目・挙動は変わらない）:
