@@ -284,6 +284,52 @@ describe('guardUnsavedChanges', () => {
 			expect(confirm).toHaveBeenCalledOnce();
 		});
 
+		describe('with several guards, each by its own rule', () => {
+			function mountTwo(
+				first: { dirty: boolean; same?: (from: URL, to: URL) => boolean },
+				second: { dirty: boolean; same?: (from: URL, to: URL) => boolean },
+				confirm: () => boolean
+			) {
+				const router = fakeRouter();
+				for (const g of [first, second]) {
+					render(GuardHarness, {
+						beforeNavigate: router.beforeNavigate,
+						confirm,
+						message: 'discard?',
+						isDirty: () => g.dirty,
+						isSamePage: g.same
+					});
+				}
+				return router;
+			}
+			const query = ['goto', '/tags?target=b', '/tags?target=a'] as const;
+
+			it('asks when a clean isSamePath guard comes before a dirty default guard', () => {
+				const confirm = vi.fn(() => false);
+				const router = mountTwo({ dirty: false, same: isSamePath }, { dirty: true }, confirm);
+				expect(router.navigate(...query)).toBe(true);
+				expect(confirm).toHaveBeenCalledOnce();
+			});
+
+			it('does not ask when every pending guard uses isSamePath', () => {
+				const confirm = vi.fn(() => false);
+				const router = mountTwo(
+					{ dirty: true, same: isSamePath },
+					{ dirty: true, same: isSamePath },
+					confirm
+				);
+				expect(router.navigate(...query)).toBe(false);
+				expect(confirm).not.toHaveBeenCalled();
+			});
+
+			it('does not ask when the dirty guard uses isSamePath and the clean one is default', () => {
+				const confirm = vi.fn(() => false);
+				const router = mountTwo({ dirty: false }, { dirty: true, same: isSamePath }, confirm);
+				expect(router.navigate(...query)).toBe(false);
+				expect(confirm).not.toHaveBeenCalled();
+			});
+		});
+
 		it('is not "leaving" after a query-only move, but is after another path', () => {
 			const router = fakeRouter();
 			let guard!: UnsavedChangesGuard;

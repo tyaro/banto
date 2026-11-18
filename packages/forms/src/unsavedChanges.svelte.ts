@@ -110,6 +110,12 @@ export interface UnsavedChangesSource {
 	isPending(): boolean;
 	/** Resolved prompt text for this source (i18n layer ①: the host passes a resolved string). */
 	message(): string;
+	/**
+	 * This source's own "same page" rule. A pending source that sees a move as
+	 * leaving makes it a leave for everyone (so a clean guard with a lax rule
+	 * cannot hide a dirty guard's draft). Absent = the runner's `isSamePage`.
+	 */
+	isSamePage?: (from: URL, to: URL) => boolean;
 }
 
 export interface LeaveCheckOptions {
@@ -190,16 +196,18 @@ function decideAndAct(
 	options: LeaveCheckOptions
 ): LeaveCheckResult {
 	let firstPending: UnsavedChangesSource | undefined;
+	// Same page only if every pending source says so by its own rule.
+	let samePage = true;
 	for (const source of sources) {
-		if (source.isPending()) {
-			firstPending = source;
-			break;
-		}
+		if (!source.isPending()) continue;
+		firstPending ??= source;
+		if (!samePageBy(navigation, source.isSamePage ?? options.isSamePage)) samePage = false;
 	}
+	if (firstPending === undefined) samePage = samePageBy(navigation, options.isSamePage);
 	const decision = decideLeave({
 		pending: firstPending !== undefined,
 		forced: options.isForced?.(navigation) ?? false,
-		samePage: samePageBy(navigation, options.isSamePage),
+		samePage,
 		type: navigation.type
 	});
 	if (decision === 'allow') return 'allow';
@@ -288,7 +296,8 @@ export interface UnsavedChangesGuard {
 export function guardUnsavedChanges(options: UnsavedChangesGuardOptions): UnsavedChangesGuard {
 	const source: UnsavedChangesSource = {
 		isPending: () => options.isDirty() || (options.isSaving?.() ?? false),
-		message: options.message
+		message: options.message,
+		isSamePage: (from, to) => (options.isSamePage ?? isSameUrlPage)(from, to)
 	};
 	let disposed = false;
 	// The navigation this page is currently being left by (null = staying).
