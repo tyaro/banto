@@ -25,3 +25,16 @@ pub mod rest;
 // resolve unchanged: the services' location changed, not the REST/Tauri
 // exposure (conventions §1 両経路対称は不変).
 pub use banto_admin_services::{audit, backup, settings, system_info, system_metrics, users};
+
+/// The permissions this app registers (Issue #697, user-permissions-plan
+/// §3-3 / §8-2): the vocabulary of per-user permissions an admin can grant,
+/// separate from the role. The template registers none, so the admin screen
+/// shows no permission field and every permission guard refuses. A derived
+/// app registers its own here, e.g.
+/// `PermissionCatalog::empty().register("equipment.operate", "perm.equipment_operate", "perm.equipment_operate_desc")?`,
+/// and every `UsersService` of the app (the REST server and the desktop
+/// app) is built with it (`UsersService::new(db).with_permission_catalog(...)`),
+/// so both paths judge with the same catalog (conventions §1).
+pub fn permission_catalog() -> users::PermissionCatalog {
+    users::PermissionCatalog::empty()
+}

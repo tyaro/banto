@@ -4703,3 +4703,270 @@ async fn role_guard_revalidates_when_require_auth_is_missing() {
         StatusCode::FORBIDDEN
     );
 }
+
+// --- Issue #697: per-user permissions over REST ------------------------------
+
+/// A router whose `UsersService` registers two test permissions (the
+/// template's own catalog is empty), with the production session lookup so
+/// `GET /api/auth/identity` shows the permissions re-read per request. An
+/// admin `owner` and a viewer `op`.
+async fn router_with_permission_catalog() -> (Router, UsersService, AuditLogService) {
+    let pool = migrate_memory().await.expect("migrate_memory");
+    let (tx, _rx) = broadcast::channel(16);
+    let catalog = crate::users::PermissionCatalog::empty()
+        .register("equipment.operate", "perm.operate", "perm.operate_desc")
+        .unwrap()
+        .register("alarm.ack", "perm.ack", "perm.ack_desc")
+        .unwrap();
+    let users = UsersService::new(pool.clone()).with_permission_catalog(catalog);
+    users
+        .setup_first_user("owner", REVOCATION_PASSWORD, "Owner")
+        .await
+        .unwrap();
+    users
+        .create_user("op", REVOCATION_PASSWORD, "Op", Role::Viewer)
+        .await
+        .unwrap();
+    let audit = AuditLogService::new(pool.clone());
+    let auth = user_auth_state(users.clone(), audit.clone());
+    let services = Services {
+        items: ItemsService::new(pool.clone()).with_events(tx.clone()),
+        users: users.clone(),
+        settings: SettingsService::new(pool.clone()),
+        audit: audit.clone(),
+        backup: unused_backup_service(pool.clone()),
+        attachments: unused_attachments_service(pool.clone()),
+        system_info: SystemInfoService::new(pool),
+        metrics: None,
+    };
+    (api_router(services, auth, tx, false), users, audit)
+}
+
+#[tokio::test]
+async fn the_permission_catalog_is_admin_only_and_the_template_one_is_empty() {
+    assert!(crate::permission_catalog().is_empty());
+    let (router, _users, _audit) = router_with_permission_catalog().await;
+    let owner = rest_login(&router, "owner", REVOCATION_PASSWORD, false).await;
+    let op = rest_login(&router, "op", REVOCATION_PASSWORD, false).await;
+    let response = router
+        .clone()
+        .oneshot(get_auth("/api/permissions", &owner))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(response).await,
+        json!([
+            { "key": "equipment.operate", "labelKey": "perm.operate", "descriptionKey": "perm.operate_desc" },
+            { "key": "alarm.ack", "labelKey": "perm.ack", "descriptionKey": "perm.ack_desc" }
+        ])
+    );
+    let denied = router
+        .clone()
+        .oneshot(get_auth("/api/permissions", &op))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}
+
+/// `PUT /api/users/{id}` with `permissions`: applied with the update (one
+/// version bump), shown on the target's NEXT request without ending its
+/// session, audited as a `permissions` entry of the update's `changes`.
+/// Malformed / unregistered keys are `422 validation`, a stale version is
+/// `409`, and both write nothing. Omitting `permissions` keeps them.
+#[tokio::test]
+async fn users_update_grants_and_revokes_permissions_over_rest() {
+    let (router, users, audit) = router_with_permission_catalog().await;
+    let owner = rest_login(&router, "owner", REVOCATION_PASSWORD, false).await;
+    let op_token = rest_login(&router, "op", REVOCATION_PASSWORD, false).await;
+    let op = users.get_by_username("op").await.unwrap().unwrap();
+    let path = format!("/api/users/{}", op.id);
+    let identity = |token: String| {
+        let router = router.clone();
+        async move {
+            body_json(
+                router
+                    .oneshot(get_auth("/api/auth/identity", &token))
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    assert_eq!(identity(op_token.clone()).await["permissions"], json!([]));
+
+    let granted = router
+        .clone()
+        .oneshot(put_json(
+            &path,
+            &owner,
+            json!({
+                "displayName": "Op",
+                "role": "viewer",
+                "version": 1,
+                "permissions": ["equipment.operate", "equipment.operate"]
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(granted.status(), StatusCode::OK);
+    let body = body_json(granted).await;
+    assert_eq!(body["permissions"], json!(["equipment.operate"]));
+    assert_eq!(body["version"], 2);
+    // The same session, now holding it (no epoch bump, no re-login).
+    let me = identity(op_token.clone()).await;
+    assert_eq!(me["permissions"], json!(["equipment.operate"]));
+    assert_eq!(me["role"], "viewer");
+
+    for bad in [json!(["Not A Key"]), json!(["other.thing"])] {
+        let rejected = router
+            .clone()
+            .oneshot(put_json(
+                &path,
+                &owner,
+                json!({ "displayName": "Renamed", "role": "viewer", "version": 2, "permissions": bad }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let err = body_json(rejected).await;
+        assert_eq!(err["kind"], "validation");
+        assert_eq!(err["field_errors"][0]["field"], "permissions");
+    }
+    let stale = router
+        .clone()
+        .oneshot(put_json(
+            &path,
+            &owner,
+            json!({ "displayName": "Op", "role": "viewer", "version": 1, "permissions": [] }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    // The same 409 as before #697: `current` is the row as it is now.
+    assert_eq!(body_json(stale).await["current"]["version"], json!(2));
+    assert_eq!(
+        users.permissions_of(op.id).await.unwrap(),
+        vec![crate::users::PermissionKey::parse("equipment.operate").unwrap()]
+    );
+
+    // The list carries each account's permissions next to the row.
+    let list = body_json(
+        router
+            .clone()
+            .oneshot(get_auth("/api/users", &owner))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let row = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["username"] == "op")
+        .unwrap()
+        .clone();
+    assert_eq!(row["permissions"], json!(["equipment.operate"]));
+    assert_eq!(row["version"], json!(2));
+    let owner_row = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["username"] == "owner")
+        .unwrap()
+        .clone();
+    assert_eq!(owner_row["permissions"], json!([]));
+
+    // Omitted: unchanged (an older client keeps working).
+    let renamed = router
+        .clone()
+        .oneshot(put_json(
+            &path,
+            &owner,
+            json!({ "displayName": "Op 2", "role": "viewer", "version": 2 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(renamed.status(), StatusCode::OK);
+    let body = body_json(renamed).await;
+    assert_eq!(
+        (body["permissions"].clone(), body["version"].clone()),
+        (json!(["equipment.operate"]), json!(3))
+    );
+
+    // Revoke: gone on the target's next request.
+    let revoked = router
+        .clone()
+        .oneshot(put_json(
+            &path,
+            &owner,
+            json!({ "displayName": "Op 2", "role": "viewer", "version": 3, "permissions": ["alarm.ack"] }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    assert_eq!(
+        identity(op_token).await["permissions"],
+        json!(["alarm.ack"])
+    );
+
+    // Audit: one `update` row per successful PUT; the permission changes are
+    // `changes` entries; the rejected ones left nothing.
+    let rows = audit
+        .list(ListParams::default())
+        .await
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.action == "update" && r.resource == "users")
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 3);
+    let details: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| serde_json::from_str(r.detail.as_deref().unwrap()).unwrap())
+        .collect();
+    let permission_entries: Vec<serde_json::Value> = details
+        .iter()
+        .flat_map(|d| d["changes"].as_array().unwrap().clone())
+        .filter(|c| c["field"] == "permissions")
+        .collect();
+    assert_eq!(permission_entries.len(), 2);
+    assert!(permission_entries.contains(&json!({
+        "field": "permissions", "added": ["equipment.operate"], "removed": []
+    })));
+    assert!(permission_entries.contains(&json!({
+        "field": "permissions", "added": ["alarm.ack"], "removed": ["equipment.operate"]
+    })));
+    for r in &rows {
+        assert_eq!(r.actor_username.as_deref(), Some("owner"));
+        assert_eq!(r.origin, "rest");
+    }
+}
+
+/// Owner decision §8-8: `POST /api/users` does not grant permissions - a
+/// `permissions` field in the body is ignored, the new account holds none.
+#[tokio::test]
+async fn users_create_does_not_grant_permissions() {
+    let (router, users, _audit) = router_with_permission_catalog().await;
+    let owner = rest_login(&router, "owner", REVOCATION_PASSWORD, false).await;
+    let created = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/users",
+            &owner,
+            json!({
+                "username": "newbie",
+                "password": REVOCATION_PASSWORD,
+                "displayName": "Newbie",
+                "role": "viewer",
+                "permissions": ["equipment.operate"]
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    let body = body_json(created).await;
+    assert!(body.get("permissions").is_none());
+    let id = body["id"].as_i64().unwrap();
+    assert!(users.permissions_of(id).await.unwrap().is_empty());
+}
