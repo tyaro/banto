@@ -31,6 +31,21 @@ export function parseRole(identity: Pick<Identity, 'role'> | null | undefined): 
 	return isRole(identity?.role) ? identity.role : 'viewer';
 }
 
+/**
+ * The session's per-user permissions (Issue #697, e.g. `equipment.operate`):
+ * a second axis next to the role, never derived from it. Fail closed like
+ * {@link parseRole}: a missing identity, a missing value or anything that is
+ * not an array of strings gives none. Only for hiding what the user cannot do
+ * - the server decides.
+ */
+export function parsePermissions(
+	identity: Pick<Identity, 'permissions'> | null | undefined
+): readonly string[] {
+	const value: unknown = identity?.permissions;
+	if (!Array.isArray(value)) return [];
+	return value.filter((key): key is string => typeof key === 'string');
+}
+
 /** `editor` or `admin` (spec M10: "editor: + create/update/delete"). */
 export function canWriteResources(role: Role): boolean {
 	return role === 'admin' || role === 'editor';

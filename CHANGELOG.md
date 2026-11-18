@@ -78,6 +78,15 @@
 - `verify:architecture` rule 8: 権限のガードの対（`PERMISSION_PAIRS`）を両経路で照合する。`permissions_catalog` ↔ `GET /api/permissions` を登録した。
 - **既存の公開の型は変えていない**: `Identity`・`UserIdentity`・`UserSummary`・`AuthSettings`・`SessionAccount`・`SessionLookup`・`AuthenticatedSession` などにフィールドを足していない。権限は別の型（`SessionPermissions`・応答用の `UserWithPermissions`）で持つ。既存の関数・トレイトのシグネチャも変えていない（追加だけ）。構造体リテラルで組み立てている派生アプリもそのままコンパイルできる。
 
+### 追加: ユーザーへ個別に付ける権限の管理画面（#697 PR-2a）
+
+- ユーザー管理画面の編集パネルに、アプリが登録した権限（カタログ）のチェックボックスを並べる欄を足した。**カタログが空なら欄ごと出さない**（テンプレートは何も登録しないので、汎用テンプレートの見た目は変わらない）。一覧の列には出さない。作成のフォームには出さない（作った後に編集から付ける）。
+- 表示名・説明は、アプリが登録した message key で引く。見つからなければキーそのもの（説明は出さない）。カタログから外れたが持っているキーは「未登録」と出し、外せる（送り返せば残る、外して保存すれば消える）。付け外しは、変えたときだけ `permissions` を送る。競合（409）のときは、権限の欄を一覧の読み直しが終わるまで無効にし、古い選択で上書きしない。
+- クライアント: `usersAdmin.ts` に `listPermissionCatalog()`（REST `GET /api/permissions`・Tauri `permissions_catalog`）、`updateUser` の `permissions?`、`permissionRows` / `permissionsToSend` などの純関数。`sessionStore.permissions` / `hasPermission(key)`（セッションの `permissions`。画面の出し分け用で、判定はサーバー。`Identity.permissions` が無ければ空）。
+- 監査ログ: ユーザー更新の `changes` の `{ field: 'permissions', added, removed }` を、変更前後の欄ではなく「追加 / 削除」として表示する（監査ログ画面と履歴の一覧）。文言 `common.permissions`・`users.permissions*`・`resource.changesAdded` / `changesRemoved` を ja / en に足した。
+- scaffold: 新しい欄は `routes/(app)/users/` の下とすでに外れる `usersAdmin.ts` だけに置いた（display で一緒に外れる）。`common.*`・`resource.*` は display でも残る。
+- 対象外: `auth.disabledPermissions`（ログイン不要モードの権限）の画面・コマンドは PR-2b。README・recipe は PR-3。
+
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。

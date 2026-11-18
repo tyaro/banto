@@ -22,6 +22,34 @@ describe('parseAuditChanges', () => {
 		]);
 	});
 
+	it('Issue #697: reads a permissions entry as added / removed lists, next to the other fields', () => {
+		const detail = JSON.stringify({
+			username: 'bob',
+			role: 'viewer',
+			changes: [
+				{ field: 'displayName', before: 'B', after: 'Bob' },
+				{ field: 'permissions', added: ['alarm.ack', 7], removed: ['equipment.operate'] }
+			]
+		});
+		expect(parseAuditChanges('update', detail)).toEqual([
+			{ field: 'displayName', masked: false, before: 'B', after: 'Bob' },
+			{
+				field: 'permissions',
+				masked: false,
+				before: undefined,
+				after: undefined,
+				added: ['alarm.ack'],
+				removed: ['equipment.operate']
+			}
+		]);
+		// One side missing is an empty list, never undefined (the screen reads both).
+		const only = parseAuditChanges(
+			'update',
+			JSON.stringify({ changes: [{ field: 'permissions', added: ['a.b'] }] })
+		);
+		expect(only?.[0]).toMatchObject({ added: ['a.b'], removed: [] });
+	});
+
 	it('keeps an empty changes array (nothing changed) distinct from no changes', () => {
 		expect(parseAuditChanges('update', '{"name":"a","changes":[]}')).toEqual([]);
 	});
@@ -105,6 +133,8 @@ describe('auditFieldLabel / formatAuditValue', () => {
 	it('labels the users fields and role values', () => {
 		expect(auditFieldLabel('users', 'displayName')).toBe(m['common.displayName']());
 		expect(auditFieldLabel('users', 'role')).toBe(m['common.role']());
+		expect(auditFieldLabel('users', 'permissions')).toBe(m['common.permissions']());
+		expect(auditFieldLabel('items', 'permissions')).toBe('permissions');
 		expect(auditFieldLabel('users', 'other')).toBe('other');
 		expect(formatAuditValue('editor', 'users', 'role')).toBe(m['role.editor']());
 		expect(formatAuditValue('admin', 'users', 'role')).toBe(m['role.admin']());
