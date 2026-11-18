@@ -26,6 +26,7 @@
 		type StatusBadgeVariant
 	} from '@banto/ui';
 	import { BantoGrid, columnsFromSchema } from '@banto/grid-svelte';
+	import { onMount } from 'svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { copyText } from '#lib/clipboard.js';
@@ -166,9 +167,8 @@
 		toastStore.push('warning', m['themeLab.preview.toast.warning'](), sticky);
 		toastStore.push('info', m['themeLab.preview.toast.info'](), sticky);
 	}
-	$effect(() => {
-		showToasts();
-	});
+	// onMount, not $effect: showToasts reads the store's toasts (to clear them), so an effect would depend on what it writes.
+	onMount(showToasts);
 
 	interface Row {
 		code: string;
@@ -650,7 +650,7 @@
 
 	/* The grid scrolls inside a fixed height (a part's shape, conventions §9). */
 	.grid-frame {
-		height: 11rem;
+		height: 15rem;
 	}
 
 	/* `contain: layout` makes the stage the containing block of ToastHost's
