@@ -103,7 +103,16 @@ export function displayWindowGeometry(
 	opts: ClampOptions = {}
 ): FloatingWindow {
 	if (!(hostW > 0) || !(hostH > 0)) return win;
-	return clampWindowToHost(win, hostW, hostH, opts);
+	const shown = clampWindowToHost(win, hostW, hostH, opts);
+	if (win.collapsed !== true) return shown;
+	// Collapsed (#663 ③-A): only the title bar is drawn, and it is shorter than
+	// `minVisible`, so the expanded-height rule (`y >= minVisible - height`) could
+	// put the whole bar above the host (overflow: hidden) with no way to grab or
+	// expand it. Keep the bar's top inside the host instead; the saved geometry
+	// is untouched, so expanding still uses the expanded clamp.
+	const minVisible = opts.minVisible ?? DEFAULT_MIN_VISIBLE;
+	const y = clamp(shown.y, 0, Math.max(0, hostH - minVisible));
+	return y === shown.y ? shown : { ...shown, y };
 }
 
 /** Move a window by (dx, dy), then clamp to the host (spec §5.2 drag-by-titlebar). */

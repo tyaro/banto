@@ -32,6 +32,20 @@ describe('displayWindowGeometry', () => {
 		expect(displayWindowGeometry(saved, 1000, 600)).toEqual(saved);
 	});
 
+	it('keeps a collapsed window title bar inside the host, without touching the saved y (#663 ③-A)', () => {
+		// Expanded, y = -100 is allowed (48 - 200 = -152), but a collapsed window draws only its bar.
+		const above = win({ y: -100, height: 200, collapsed: true });
+		expect(displayWindowGeometry({ ...above, collapsed: undefined }, 1000, 600).y).toBe(-100);
+		const shown = displayWindowGeometry(above, 1000, 600);
+		expect(shown.y).toBe(0);
+		expect(shown.height).toBe(200);
+		expect(above.y).toBe(-100);
+		// The bottom edge rule is unchanged.
+		expect(displayWindowGeometry(win({ y: 900, collapsed: true }), 1000, 600).y).toBe(
+			600 - DEFAULT_MIN_VISIBLE
+		);
+	});
+
 	it('draws an unmeasured host (0 x 0) as saved', () => {
 		expect(displayWindowGeometry(saved, 0, 0)).toBe(saved);
 		expect(displayWindowGeometry(saved, 400, 0)).toBe(saved);
