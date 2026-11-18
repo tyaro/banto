@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 修正: dock-svelte の浮動ウィンドウで、API（`setPinned`）で固定したとき移動／サイズ変更ボタンにあった DOM フォーカスをピンのボタンへ移す（#685）
+
+- #673（折りたたみ）と同じ `$effect.pre` に統合。ほかの場所にあるフォーカスは動かさない。
+
 ### 修正: dock-svelte のドロップで押し出される pane にも `beforePanelChange` を聞く（#666）
 
 - docked の木へのドロップ（dock / move-docked）と `showPanel` で元の場所へ戻すとき、動かす pane だけでなく、変わってしまうほかの docked の pane にも先に聞くようにした。タブの組へ落とすと選択中から外れるタブは `tab-switch`、新しい分割（単独の pane の真ん中へ落としたときは新しいタブの組）に包まれて作り直される pane（と、動かして分割が 1 つに縮むときに残って作り直される pane）は新しい reason `reparent`（`remount: true`。Svelte の部品は別の親へ移せないので `keepMounted` でも作り直される）。木の順に 1 つずつ聞き、最初の拒否で何も変えずに止め、最後に動かす pane 自身に聞く。答えは 1 つの判断として、最初に聞いたときの構造が適用まで変わらないことを確かめる（変わったら `stale`）。IME 変換中はタブのクリックと同じく保留して `resumeDeferredChange` で再開する。`beforePanelChange` を渡しているアプリは、ドロップで呼ばれる回数と種類が増える
