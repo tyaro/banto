@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 追加（minor）: ui の `MenuItem` にショートカット表示（#671）
+
+- `MenuItem` に `shortcut?`（`'Mod+Z'` 形式、`CommandSpec` と同じ）と `platform?`（省略時 `detectShortcutPlatform()`）を追加。label の右に keycap テキスト（`formatShortcut`、`aria-hidden`）を出し、アクセシブル名は label のまま、`aria-keyshortcuts` に WAI-ARIA 形式で入れる。変換用に `toAriaKeyShortcuts(shortcut, platform)` を export。表示のみでキーの処理はしない
+
 ### 追加（minor）: dock-svelte のドッキング中の区画を帯に畳む（#663 ③-B）
 
 - 分割の子になっている区画（panel または tab グループ）の見出しの折りたたみのボタン（▾／▸）で、column の split では横帯、row の split では縦帯に畳み、もう一度押すと戻る。`DockPanelNode.collapsed?` / `DockTabGroupNode.collapsed?` と `dock.isDockedCollapsed(nodeId)` / `dock.canCollapseDocked(nodeId)` / `dock.setDockedCollapsed(nodeId, collapsed)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。空いた場所は開いている区画に今の比のまま分け（`sizes` は書き換えない）、畳んだ区画に接する divider は動かせない。最後に開いている区画と木の単独の区画は畳めない。畳んでいる間、中身は破棄せず隠し（`hidden` + `inert`）、フォーカスは折りたたみのボタンへ移る。`show` / `showPanel` / `setPanelVisible(true)` は畳んだ区画を展開する。ラベルは `messages.collapsePane` / `expandPane`。docked の pane を写す visual の基準画像は再生成が要る
