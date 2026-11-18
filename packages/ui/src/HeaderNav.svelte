@@ -50,6 +50,7 @@
 	import Menu from './Menu.svelte';
 	import MenuItem from './MenuItem.svelte';
 	import MenuSeparator from './MenuSeparator.svelte';
+	import { closeOpenMenus } from './openMenus';
 	import {
 		entryActive,
 		entryCount,
@@ -270,17 +271,10 @@
 
 	/**
 	 * Closes the ui `Menu`s of menu entries (their popovers live in the row's
-	 * cells, not in `popovers`). `hidePopover` skips a closed one; the guard
-	 * is for browsers that still throw on it.
+	 * cells, not in `popovers`), through the shared `closeOpenMenus` scoped to the row.
 	 */
 	function closeMenus(): void {
-		for (const menu of rowEl?.querySelectorAll<HTMLElement>('[role="menu"][popover]') ?? []) {
-			try {
-				menu.hidePopover();
-			} catch {
-				// already closed
-			}
-		}
+		if (rowEl) closeOpenMenus(rowEl);
 	}
 
 	/**
