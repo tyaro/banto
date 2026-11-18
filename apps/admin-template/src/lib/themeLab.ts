@@ -192,6 +192,15 @@ export function densityVars(density: LabDensity): Record<string, string> {
 }
 
 /**
+ * Body row height of the sample grid in px. `BantoGrid` does not read
+ * `--banto-grid-row-height` (its `GridState` takes `rowHeight` once, at
+ * creation), so the page passes this and recreates the grid on a change.
+ */
+export function gridRowHeight(density: LabDensity): number {
+	return parseInt(densityVars(density)['--banto-grid-row-height'], 10);
+}
+
+/**
  * `1.25rem` -> `calc(1.25 * var(--lab-rem))`. `rem` resolves against the
  * `<html>` of the page (the shell's density), so the preview carries its own
  * base size in `--lab-rem` instead.

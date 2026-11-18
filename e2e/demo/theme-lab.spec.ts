@@ -119,6 +119,8 @@ test('density: touch in the preview is 16px based while the shell is standard', 
 	const lg = parseFloat(await previewPx(page, '--banto-font-size-lg'));
 	expect(lg).toBeGreaterThan(18.2);
 	expect(lg).toBeLessThan(18.4);
+	// BantoGrid sets its row height inline from the rowHeight prop, not the CSS variable
+	await expect(preview.locator('[role="row"][aria-rowindex="2"]')).toHaveCSS('height', '52px');
 });
 
 test('density: compact, standard and reset in the preview hold while the shell is touch', async ({

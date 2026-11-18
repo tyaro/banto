@@ -39,6 +39,7 @@
 		clampRadius,
 		contrastRows,
 		exportCss,
+		gridRowHeight,
 		isDefaultState,
 		previewStyle,
 		radiusScale,
@@ -423,12 +424,17 @@
 				<section>
 					<h3>{m['themeLab.preview.grid']()}</h3>
 					<div class="grid-frame">
-						<BantoGrid
-							rows={gridRows}
-							columns={gridColumns}
-							getRowId={(row) => row.code}
-							messages={gridMessages()}
-						/>
+						<!-- BantoGrid takes rowHeight only at creation and does not read
+						     --banto-grid-row-height: recreate it when the density changes. -->
+						{#key density}
+							<BantoGrid
+								rows={gridRows}
+								columns={gridColumns}
+								getRowId={(row) => row.code}
+								messages={gridMessages()}
+								rowHeight={gridRowHeight(density)}
+							/>
+						{/key}
 					</div>
 				</section>
 
