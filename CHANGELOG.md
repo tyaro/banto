@@ -75,6 +75,26 @@
 
 - **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）の `.cargo/audit.toml` での一時的な除外は、この版でも継続している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けない。外す合図は、libsqlite3-sys 0.39 以上を許す sqlx のリリース（`cargo update -p libsqlite3-sys` で除外を外す）。
 
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `54a577c2`、`workflow_dispatch`）: [run 44289534097](https://github.com/tyaro/banto/actions/runs/44289534097)（success）。
+  - タグの push（`v7.6.0`、main の `54a577c2`）: [run 44289992439](https://github.com/tyaro/banto/actions/runs/44289992439)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 24.22.2                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.57.3                          |
+    | SvelteKit          | 3.2.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
+
+  - 出所: Node.js は `node: v24.22.2`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.3` など）、Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
+
 ### 変更の一覧
 
 #### 修正: dock-svelte の浮動ウィンドウで、API（`setPinned`）で固定したとき移動／サイズ変更ボタンにあった DOM フォーカスをピンのボタンへ移す（#685）
