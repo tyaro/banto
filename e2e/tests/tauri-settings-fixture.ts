@@ -44,6 +44,8 @@ export async function installTauriStub(page: Page): Promise<void> {
 		const mock = {
 			serverStatusFails: false,
 			authConfigFails: false,
+			/** What `permissions_catalog` answers (the template registers none, so the settings screen shows no permissions field). */
+			permissionCatalog: [] as { key: string; labelKey: string; descriptionKey: string }[],
 			/** When set, `server_status` waits for it (a slow first load). */
 			serverStatusGate: null as Promise<void> | null,
 			releaseServerStatus: null as (() => void) | null,
@@ -106,7 +108,8 @@ export async function installTauriStub(page: Page): Promise<void> {
 			disabled: false,
 			disabledRole: 'admin',
 			autologinEnabled: false,
-			autologinUsername: null
+			autologinUsername: null,
+			disabledPermissions: [] as string[]
 		};
 
 		async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
@@ -144,6 +147,10 @@ export async function installTauriStub(page: Page): Promise<void> {
 					const disabled = args.disabled === true;
 					authSettings.disabled = disabled;
 					authSettings.disabledRole = String(args.disabledRole);
+					// Issue #697: omitted = unchanged.
+					if (Array.isArray(args.permissions)) {
+						authSettings.disabledPermissions = args.permissions.map(String);
+					}
 					if (disabled) {
 						const rebinding = !mock.slot.local || mock.slot.role !== authSettings.disabledRole;
 						mock.slot = {
@@ -158,6 +165,8 @@ export async function installTauriStub(page: Page): Promise<void> {
 					}
 					return { ...authSettings };
 				}
+				case 'permissions_catalog':
+					return mock.permissionCatalog;
 				case 'auth_status':
 					return { initialized: true };
 				case 'auth_config_get':

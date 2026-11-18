@@ -41,8 +41,8 @@ use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
 use admin_template_core::system_metrics::SystemMetricsSampler;
 use admin_template_core::users::{
-    PermissionEntry, PermissionKey, Role, SessionPermissions, UserIdentity, UserIdentityView,
-    UsersService,
+    PermissionDiff, PermissionEntry, PermissionKey, Role, SessionPermissions, UserIdentity,
+    UserIdentityView, UsersService,
 };
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
@@ -59,6 +59,7 @@ use banto_server::{
 use qrcode::render::svg;
 use qrcode::QrCode;
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -1571,10 +1572,14 @@ fn apply_mode_to_session(
     state: &AppState,
     previous: &AuthSettings,
     saved: &AuthSettings,
+    permissions_changed: bool,
 ) -> (LocalRebind, Option<UserIdentity>) {
     if saved.disabled {
-        let changed =
-            (previous.disabled, previous.disabled_role) != (saved.disabled, saved.disabled_role);
+        // Issue #697: a change of the mode's permissions is an
+        // authorization-context change like a role change, so `seq` advances
+        // for it too (the webview then re-reads the session's `permissions`).
+        let changed = permissions_changed
+            || (previous.disabled, previous.disabled_role) != (saved.disabled, saved.disabled_role);
         (
             rebind_local_session(state, saved.disabled_role, None, changed).0,
             None,
@@ -1657,9 +1662,12 @@ async fn record_local_rebind(audit: &AuditLogService, outcome: &LocalRebind) {
 /// autologin password - `AuthSettings` itself has no such field (see its doc
 /// comment in `admin_template_core::settings`).
 #[tauri::command]
-async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettings, BantoError> {
+async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettingsView, BantoError> {
     require_role(&state, Role::Viewer, "settings").await?;
-    state.settings.auth_config().await
+    Ok(AuthSettingsView {
+        settings: state.settings.auth_config().await?,
+        disabled_permissions: auth_disabled_permissions_view(&state).await?,
+    })
 }
 
 /// Toggle auth-disabled mode and its synthetic-identity role (spec M11).
@@ -1700,6 +1708,32 @@ async fn auth_config_apply_body(
     disabled: bool,
     disabled_role: &str,
 ) -> Result<AuthSettings, BantoError> {
+    Ok(
+        auth_config_apply_with_permissions_body(state, disabled, disabled_role, None)
+            .await?
+            .settings,
+    )
+}
+
+/// [`auth_config_apply_body`] with the mode's permissions (Issue #697,
+/// user-permissions-plan §8-4): `permissions` = the keys the synthetic
+/// session holds, replacing `auth.disabled_permissions`; `None` leaves them
+/// as they are (a client that does not know the field keeps working).
+///
+/// It rides on this command - not a command of its own - so the write is
+/// under the same `auth_config_lock` and the same authz (admin, or the
+/// escape hatch / bootstrap window) as the role, and the session rebind
+/// below sees one decision. Every requested key must be one the catalog
+/// registers: validated BEFORE anything is written (`Validation` on
+/// `permissions`, like a user's). A change is audited next to the role's:
+/// the `settings_change` detail gets `authDisabledPermissions: { added,
+/// removed }` (only when something changed).
+async fn auth_config_apply_with_permissions_body(
+    state: &AppState,
+    disabled: bool,
+    disabled_role: &str,
+    permissions: Option<&[String]>,
+) -> Result<AuthSettingsView, BantoError> {
     // PR #264 re-review P2: held from the first settings read through the
     // save and the synthetic-session install below (see
     // `AppState::auth_config_lock`), so no other apply (or a logout's
@@ -1733,6 +1767,22 @@ async fn auth_config_apply_body(
     // unable to determine ANY role for the synthetic identity.
     let role = Role::from_str(disabled_role).unwrap_or(Role::Admin);
 
+    // Issue #697: validated after the authz above (a refused caller learns
+    // nothing about the catalog) and before any write, so an unregistered
+    // key leaves nothing half-saved.
+    let catalog = state.users.permission_catalog();
+    let requested = permissions.map(|raw| catalog.validate(raw)).transpose()?;
+    let permissions_before: BTreeSet<PermissionKey> = state
+        .settings
+        .auth_disabled_permissions()
+        .await?
+        .into_iter()
+        .collect();
+    let permission_diff = requested
+        .as_ref()
+        .map(|after| PermissionDiff::between(&permissions_before, after))
+        .unwrap_or_default();
+
     let mut config = state.settings.auth_config().await?;
     // The settings before this apply (read under `auth_config_lock`, so no
     // other apply changes them meanwhile): a change of the mode's role while
@@ -1740,13 +1790,29 @@ async fn auth_config_apply_body(
     let previous = config.clone();
     config.disabled = disabled;
     config.disabled_role = role;
-    if let Err(err) = (state.auth_io.save_auth_config)(config.clone()).await {
+    // The role/mode save and the permissions write are one step for the
+    // failure path below: whichever fails, the session is re-bound from what
+    // IS stored.
+    let save_result = async {
+        (state.auth_io.save_auth_config)(config.clone()).await?;
+        if let Some(keys) = &requested {
+            let keys: Vec<String> = keys.iter().map(|key| key.as_str().to_string()).collect();
+            state
+                .settings
+                .set_auth_disabled_permissions(&keys, catalog)
+                .await?;
+        }
+        Ok::<(), BantoError>(())
+    }
+    .await;
+    if let Err(err) = save_result {
         // Freshness audit of #266 (P2-3, S-104): the save is one transaction
         // (`SettingsService::set_auth_config`), but should any save fail
         // part-way, the session must still follow what IS stored: re-read
         // it and re-bind/end from that, then report the error.
         if let Ok(stored) = state.settings.auth_config().await {
-            let (rebind, ended_local) = apply_mode_to_session(state, &previous, &stored);
+            let (rebind, ended_local) =
+                apply_mode_to_session(state, &previous, &stored, !permission_diff.is_empty());
             record_mode_session_change(&state.audit, &rebind, ended_local).await;
         }
         return Err(err);
@@ -1775,7 +1841,8 @@ async fn auth_config_apply_body(
     // no `seq`; the frontend provider absorbs an unobserved `seq` advance
     // anyway - the catch-up of S-84.) Only on a `true -> false` change: a
     // re-save of `false` touches nothing.
-    let (rebind, ended_local) = apply_mode_to_session(state, &previous, &config);
+    let (rebind, ended_local) =
+        apply_mode_to_session(state, &previous, &config, !permission_diff.is_empty());
     state
         .audit
         .record(AuditEntry {
@@ -1784,7 +1851,7 @@ async fn auth_config_apply_body(
             action: "settings_change",
             resource: "settings",
             entity_id: None,
-            detail: Some(serde_json::json!({ "authDisabled": disabled })),
+            detail: Some(settings_change_detail(disabled, &permission_diff)),
             origin: "tauri",
             result: "ok",
         })
@@ -1796,16 +1863,70 @@ async fn auth_config_apply_body(
     // `login` only; from the settings screen, the admin's session end
     // (`logout`, reason `auth_disabled`) and the synthetic `login`.
     record_mode_session_change(&state.audit, &rebind, ended_local).await;
-    Ok(config)
+    let disabled_permissions = auth_disabled_permissions_view(state).await?;
+    Ok(AuthSettingsView {
+        settings: config,
+        disabled_permissions,
+    })
 }
 
+/// The `settings_change` audit detail of an auth-mode apply: `{ authDisabled }`,
+/// plus `authDisabledPermissions: { added, removed }` when the mode's
+/// permissions changed (Issue #697; the same `{ added, removed }` as a user's
+/// `permissions` change). Keys only - never a secret.
+fn settings_change_detail(disabled: bool, diff: &PermissionDiff) -> serde_json::Value {
+    let mut detail = serde_json::json!({ "authDisabled": disabled });
+    if !diff.is_empty() {
+        detail["authDisabledPermissions"] =
+            serde_json::to_value(diff).unwrap_or(serde_json::Value::Null);
+    }
+    detail
+}
+
+/// `auth.disabled_permissions` as the settings screen shows it: the stored
+/// keys the catalog registers (an unregistered leftover is not held - plan
+/// §4 - and is dropped from the screen), sorted. Empty for the template.
+async fn auth_disabled_permissions_view(state: &AppState) -> Result<Vec<String>, BantoError> {
+    let catalog = state.users.permission_catalog();
+    if catalog.is_empty() {
+        return Ok(Vec::new());
+    }
+    let stored = state.settings.auth_disabled_permissions().await?;
+    Ok(catalog
+        .effective(&stored)
+        .iter()
+        .map(|key| key.as_str().to_string())
+        .collect())
+}
+
+/// `auth_config_get` / `auth_config_apply`'s answer: [`AuthSettings`] plus
+/// `disabledPermissions` (Issue #697). A response type of its own because
+/// `AuthSettings` is built with struct literals by derived apps - a new field
+/// there would break them (owner decision §8-7).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthSettingsView {
+    #[serde(flatten)]
+    settings: AuthSettings,
+    disabled_permissions: Vec<String>,
+}
+
+/// `permissions` (Issue #697) = the keys the auth-disabled session holds;
+/// omitted = unchanged. See [`auth_config_apply_with_permissions_body`].
 #[tauri::command]
 async fn auth_config_apply(
     state: State<'_, AppState>,
     disabled: bool,
     disabled_role: String,
-) -> Result<AuthSettings, BantoError> {
-    auth_config_apply_body(&state, disabled, &disabled_role).await
+    permissions: Option<Vec<String>>,
+) -> Result<AuthSettingsView, BantoError> {
+    auth_config_apply_with_permissions_body(
+        &state,
+        disabled,
+        &disabled_role,
+        permissions.as_deref(),
+    )
+    .await
 }
 
 /// Enable desktop autologin for `username` (spec M11): verifies the
@@ -9857,6 +9978,193 @@ mod tests {
         let identity = auth_identity_body(&state).await.unwrap().unwrap();
         assert_eq!(
             serde_json::to_value(&identity).unwrap()["permissions"],
+            serde_json::json!(["alarm.ack"])
+        );
+    }
+
+    /// Settings-change audit details of `state`, oldest first.
+    async fn settings_change_details(state: &AppState) -> Vec<serde_json::Value> {
+        let rows = state.audit.list(ListParams::default()).await.unwrap().rows;
+        rows.iter()
+            .filter(|r| r.action == "settings_change" && r.resource == "settings")
+            .map(|r| serde_json::from_str(r.detail.as_deref().unwrap()).unwrap())
+            .collect()
+    }
+
+    /// Issue #697 PR-2b: `auth_config_apply` carries the auth-disabled mode's
+    /// permissions. They are saved with the role (one decision under
+    /// `auth_config_lock`), the answer carries them (`disabledPermissions`),
+    /// the synthetic session holds them on its next command, the audit
+    /// detail gets the `{ added, removed }` diff, and the slot's `seq`
+    /// advances (the webview re-reads the session's `permissions`).
+    #[tokio::test]
+    async fn auth_config_apply_saves_the_modes_permissions_with_a_diff_audit() {
+        let (state, _op) = permission_app_state().await;
+        let ack = perm("alarm.ack");
+
+        let view = auth_config_apply_with_permissions_body(
+            &state,
+            true,
+            "viewer",
+            Some(&["alarm.ack".to_string()]),
+        )
+        .await
+        .unwrap();
+        let wire = serde_json::to_value(&view).unwrap();
+        assert_eq!(wire["disabled"], true);
+        assert_eq!(wire["disabledRole"], "viewer");
+        assert_eq!(
+            wire["disabledPermissions"],
+            serde_json::json!(["alarm.ack"])
+        );
+        // The synthetic session (now installed) holds it.
+        assert!(require_permission(&state, &ack, "alarm").await.is_ok());
+        let seq_after_grant = read_slot(&state).1;
+
+        // Omitted = unchanged (a client that does not know the field), and
+        // the unchanged permissions do not advance `seq` on their own.
+        let view = auth_config_apply_with_permissions_body(&state, true, "viewer", None)
+            .await
+            .unwrap();
+        assert_eq!(view.disabled_permissions, ["alarm.ack"]);
+        assert_eq!(read_slot(&state).1, seq_after_grant);
+        // The same set again: no diff, no `seq` change.
+        auth_config_apply_with_permissions_body(
+            &state,
+            true,
+            "viewer",
+            Some(&["alarm.ack".to_string()]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(read_slot(&state).1, seq_after_grant);
+
+        // Swap one for another: the mode and role stay, `seq` advances.
+        auth_config_apply_with_permissions_body(
+            &state,
+            true,
+            "viewer",
+            Some(&["equipment.operate".to_string()]),
+        )
+        .await
+        .unwrap();
+        assert!(read_slot(&state).1 > seq_after_grant);
+        assert!(matches!(
+            require_permission(&state, &ack, "alarm").await,
+            Err(BantoError::Forbidden)
+        ));
+        // Clearing is `Some([])`.
+        let view = auth_config_apply_with_permissions_body(&state, true, "viewer", Some(&[]))
+            .await
+            .unwrap();
+        assert!(view.disabled_permissions.is_empty());
+
+        let details = settings_change_details(&state).await;
+        assert_eq!(details.len(), 5, "{details:?}");
+        assert_eq!(
+            details[0],
+            serde_json::json!({
+                "authDisabled": true,
+                "authDisabledPermissions": { "added": ["alarm.ack"], "removed": [] }
+            })
+        );
+        // No change, no `authDisabledPermissions`.
+        assert_eq!(details[1], serde_json::json!({ "authDisabled": true }));
+        assert_eq!(details[2], serde_json::json!({ "authDisabled": true }));
+        assert_eq!(
+            details[3]["authDisabledPermissions"],
+            serde_json::json!({ "added": ["equipment.operate"], "removed": ["alarm.ack"] })
+        );
+        assert_eq!(
+            details[4]["authDisabledPermissions"],
+            serde_json::json!({ "added": [], "removed": ["equipment.operate"] })
+        );
+    }
+
+    /// An unregistered or malformed key is `validation` on `permissions`
+    /// with nothing written (mode, role, permissions, audit); a non-admin
+    /// account session is `Forbidden` before the catalog is consulted; the
+    /// template's empty catalog refuses any key but accepts `[]`.
+    #[tokio::test]
+    async fn auth_config_apply_refuses_unregistered_permissions_and_non_admins() {
+        let (state, _op) = permission_app_state().await;
+        for bad in ["nope.unknown", "Not A Key", ""] {
+            let err = auth_config_apply_with_permissions_body(
+                &state,
+                true,
+                "viewer",
+                Some(&["alarm.ack".to_string(), bad.to_string()]),
+            )
+            .await
+            .unwrap_err();
+            match err {
+                BantoError::Validation { field_errors } => {
+                    assert_eq!(field_errors[0].field, "permissions", "{bad}")
+                }
+                other => panic!("expected validation for {bad:?}, got {other:?}"),
+            }
+        }
+        assert!(!state.settings.auth_config().await.unwrap().disabled);
+        assert!(state
+            .settings
+            .auth_disabled_permissions()
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(settings_change_details(&state).await.is_empty());
+
+        // A viewer account (mode off) cannot, whatever it asks for.
+        desktop_login(&state, "op").await;
+        assert!(matches!(
+            auth_config_apply_with_permissions_body(
+                &state,
+                false,
+                "admin",
+                Some(&["alarm.ack".to_string()])
+            )
+            .await,
+            Err(BantoError::Forbidden)
+        ));
+
+        // The template: empty catalog.
+        let state = admin_app_state().await;
+        assert!(auth_config_apply_with_permissions_body(
+            &state,
+            true,
+            "viewer",
+            Some(&["alarm.ack".to_string()])
+        )
+        .await
+        .is_err());
+        let view = auth_config_apply_with_permissions_body(&state, true, "viewer", Some(&[]))
+            .await
+            .unwrap();
+        assert!(view.disabled_permissions.is_empty());
+    }
+
+    /// The saved list is read back by `auth_config_get`'s view without the
+    /// keys the app no longer registers (they are not held, plan §4).
+    #[tokio::test]
+    async fn auth_disabled_permissions_view_hides_unregistered_leftovers() {
+        let (state, _op) = permission_app_state().await;
+        state
+            .settings
+            .set("auth.disabled_permissions", "alarm.ack,old.gone")
+            .await
+            .unwrap();
+        assert_eq!(
+            auth_disabled_permissions_view(&state).await.unwrap(),
+            ["alarm.ack"]
+        );
+        let wire = serde_json::to_value(AuthSettingsView {
+            settings: AuthSettings::default(),
+            disabled_permissions: vec!["alarm.ack".to_string()],
+        })
+        .unwrap();
+        assert_eq!(wire["disabled"], false);
+        assert_eq!(wire["disabledRole"], "admin");
+        assert_eq!(
+            wire["disabledPermissions"],
             serde_json::json!(["alarm.ack"])
         );
     }

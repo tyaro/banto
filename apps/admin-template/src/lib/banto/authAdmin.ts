@@ -18,6 +18,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
+import type { PermissionEntry, UserPermission } from './usersAdmin';
 
 export type AuthDisabledRole = 'admin' | 'editor' | 'viewer';
 
@@ -27,6 +28,12 @@ export interface AuthSettings {
 	disabledRole: AuthDisabledRole;
 	autologinEnabled: boolean;
 	autologinUsername: string | null;
+	/**
+	 * The permissions login-not-required mode's session holds (Issue #697),
+	 * sorted, only keys the app registers. Empty for the template (it
+	 * registers none).
+	 */
+	disabledPermissions: UserPermission[];
 }
 
 const ERROR_KINDS = new Set([
@@ -67,12 +74,26 @@ export function getAuthSettings(): Promise<AuthSettings> {
 	return call<AuthSettings>('auth_config_get');
 }
 
-/** Toggle login-not-required mode and its synthetic-identity role. `admin`-only, EXCEPT while the mode is currently on (escape hatch - see `auth_config_apply`'s Rust doc comment). */
+/**
+ * Toggle login-not-required mode and its synthetic-identity role. `admin`-only, EXCEPT while the mode is currently on (escape hatch - see `auth_config_apply`'s Rust doc comment).
+ *
+ * `permissions` (Issue #697) = the keys that mode's session holds. Omit it to leave them as they are: the command then gets no `permissions` argument at all. A key the app did not register is a `validation` error and nothing is saved.
+ */
 export function applyAuthSettings(
 	disabled: boolean,
-	disabledRole: AuthDisabledRole
+	disabledRole: AuthDisabledRole,
+	permissions?: UserPermission[]
 ): Promise<AuthSettings> {
-	return call<AuthSettings>('auth_config_apply', { disabled, disabledRole });
+	return call<AuthSettings>('auth_config_apply', {
+		disabled,
+		disabledRole,
+		...(permissions === undefined ? {} : { permissions })
+	});
+}
+
+/** The permissions the app registered (`permissions_catalog`; `admin`-only, empty for the template). Empty = the permissions field is not shown. */
+export function getPermissionCatalog(): Promise<PermissionEntry[]> {
+	return call<PermissionEntry[]>('permissions_catalog');
 }
 
 /** Enable desktop autologin for `username`/`password` (verified against the real account store first - a bad credential surfaces as a `ProviderError` with `kind: 'validation'`). `admin`-only. */
