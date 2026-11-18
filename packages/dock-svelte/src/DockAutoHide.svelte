@@ -93,10 +93,25 @@
 		return [...tabs].find((el) => el.dataset.dockBandTab === panelId);
 	}
 
-	/** Inside an open dialog / popover (the top layer, #667): never "outside" the pane. */
+	/**
+	 * A modal layer that is showing: `@banto/ui`'s Modal / ConfirmDialog are an
+	 * OverlayPanel `div` with `role="dialog"` / `"alertdialog"` and `aria-modal="true"`
+	 * (`data-layer-inactive` while it leaves). A floating DockWindow is `role="dialog"`
+	 * without `aria-modal`, so it stays "outside".
+	 */
+	const MODAL =
+		':is([role="dialog"], [role="alertdialog"])[aria-modal="true"]:not([data-layer-inactive])';
+
+	/**
+	 * Inside an open dialog / popover (the top layer, #667) or a modal layer (a
+	 * confirmation opened from the pane, #700): never "outside" the pane. A press
+	 * on a modal's scrim (the element that directly wraps it) belongs to it too.
+	 */
 	function inTopLayer(node: Node): boolean {
 		const el = node instanceof Element ? node : node.parentElement;
-		return el?.closest('dialog[open], [popover]') != null;
+		if (!el) return false;
+		if (el.closest(`dialog[open], [popover], ${MODAL}`) != null) return true;
+		return [...el.children].some((child) => child.matches(MODAL));
 	}
 
 	async function toggle(panelId: string): Promise<void> {

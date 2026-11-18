@@ -24,8 +24,8 @@
  *   for IME composition) it records the structure GENERATION of the layout:
  *   `DockState.structureRevision`, a counter that goes up on every assignment
  *   whose `structureKey` (docked tree shape, active tabs, floating ids and
- *   their open flags) differs from the previous one - geometry, split sizes and
- *   z-order do not count. Right before `apply` it checks again: the host is
+ *   their open flags) differs from the previous one, and on every slide out /
+ *   back of an auto-hidden pane - geometry, split sizes and z-order do not count. Right before `apply` it checks again: the host is
  *   still mounted, the revision (and, for a layout mutated in place, the key)
  *   is unchanged, and the change described NOW (`describe`: which pane a tab
  *   switch leaves, `remount` from `keepMounted` at this moment) is the one the

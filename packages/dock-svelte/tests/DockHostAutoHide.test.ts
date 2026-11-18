@@ -152,6 +152,74 @@ describe('DockHost auto-hide', () => {
 		dialog.remove();
 	});
 
+	/**
+	 * The DOM of `@banto/ui`'s OverlayPanel (Modal / ConfirmDialog): a scrim
+	 * `div[role=presentation]` around a `div` with `role="dialog"` /
+	 * `"alertdialog"` and `aria-modal="true"`, not a native `<dialog>` (#700).
+	 */
+	function overlayPanel(role: 'dialog' | 'alertdialog') {
+		const overlay = document.createElement('div');
+		overlay.className = 'overlay overlay--modal';
+		overlay.setAttribute('role', 'presentation');
+		const panel = document.createElement('div');
+		panel.className = 'panel panel--modal';
+		panel.setAttribute('role', role);
+		panel.setAttribute('aria-modal', 'true');
+		panel.setAttribute('aria-label', 'Confirm');
+		const button = document.createElement('button');
+		button.textContent = 'OK';
+		panel.appendChild(button);
+		overlay.appendChild(panel);
+		document.body.appendChild(overlay);
+		return { overlay, panel, button };
+	}
+
+	it('a modal layer (OverlayPanel) opened from the pane is not "outside": focus, press, scrim', async () => {
+		const dock = createDockState(layout());
+		render(DockHostHarness, { dock, capabilities });
+		await unpin();
+		bandTab().click();
+		await settle();
+		for (const role of ['alertdialog', 'dialog'] as const) {
+			const { overlay, panel, button } = overlayPanel(role);
+			flyout()!.querySelector<HTMLElement>('.body')!.focus();
+			button.focus();
+			await settle();
+			pointerdown(button);
+			pointerdown(panel);
+			pointerdown(overlay);
+			await settle();
+			expect(dock.flyoutPanel).toBe('R');
+			overlay.remove();
+		}
+		// A layer that is leaving (`data-layer-inactive`) is no longer modal.
+		const leaving = overlayPanel('alertdialog');
+		leaving.panel.setAttribute('data-layer-inactive', 'true');
+		pointerdown(leaving.button);
+		await settle();
+		expect(dock.flyoutPanel).toBeNull();
+		leaving.overlay.remove();
+	});
+
+	it('a non-modal role="dialog" (a floating DockWindow) is still outside', async () => {
+		const dock = createDockState(layout());
+		render(DockHostHarness, { dock, capabilities });
+		await unpin();
+		bandTab().click();
+		await settle();
+		const win = document.createElement('div');
+		win.setAttribute('role', 'dialog');
+		win.setAttribute('aria-label', 'Window');
+		const button = document.createElement('button');
+		win.appendChild(button);
+		document.body.appendChild(win);
+		flyout()!.querySelector<HTMLElement>('.body')!.focus();
+		button.focus();
+		await settle();
+		expect(dock.flyoutPanel).toBeNull();
+		win.remove();
+	});
+
 	it('the pin of the slid-out pane puts the region back, the focus on its pin button', async () => {
 		const asked: string[] = [];
 		const dock = createDockState(layout());

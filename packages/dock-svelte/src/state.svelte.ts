@@ -137,7 +137,8 @@ export class DockState {
 	 * structure changed at all while it waited - also when it came back to the
 	 * same shape (close -> open re-mounts the content, tab A -> B -> A
 	 * re-creates a pane that is not `keepMounted`), which comparing two keys
-	 * would miss (#432).
+	 * would miss (#432). Sliding an auto-hidden pane out or back
+	 * (`openFlyout` / `closeFlyout`) counts too: it (un)mounts the content.
 	 */
 	get structureRevision(): number {
 		return this.#structureRevision;
@@ -429,12 +430,25 @@ export class DockState {
 		if (!found || (found.entry.node.type === 'tabs' && found.entry.node.id === panelId)) return;
 		const next = setAutoHiddenActive(this.layout, panelId);
 		if (next !== this.layout) this.layout = next;
-		this.#flyout = panelId;
+		this.#setFlyout(panelId);
 	}
 
 	/** Slide the open pane back into its band. */
 	closeFlyout(): void {
-		this.#flyout = null;
+		this.#setFlyout(null);
+	}
+
+	/**
+	 * Sliding a pane out or back mounts / unmounts its content (unless
+	 * `keepMounted`, which only the lifecycle knows), so it is a new structure
+	 * generation: a `beforePanelChange` answer asked before a close -> open of
+	 * the same pane must not apply to the re-mounted content (stale, #700).
+	 * Every change counts, `keepMounted` panes too (a stale answer is the safe side).
+	 */
+	#setFlyout(panelId: string | null): void {
+		if (untrack(() => this.#flyout) === panelId) return;
+		this.#flyout = panelId;
+		this.#structureRevision++;
 	}
 
 	/**

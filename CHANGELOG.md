@@ -57,9 +57,9 @@
 ### 追加: dock の区画を自動で隠す（ピン、#694 PR-3b）
 
 - `@banto/dock-svelte`: ドッキング中の区画（panel 1 つ、またはタブの組）の見出しにピン（📌）を出し、押すとその区画を木から抜いて host の縁の帯に入れるようにした（VS・GX Works3 の「自動的に隠す」）。入る縁は、メイン区画（`close`・`move`・`undock` がすべて `false` の pane の区画。無ければ木の中心）から見た区画の側（分割の比で測る）。左右の帯は縦書き、上下は横書き。帯のある縁の分、木は内側に寄る。
-- 帯のタブを押すと、その pane を縁から木の上に重ねて引き出す（フォーカスは中へ）。もう一度押す・外を押す・Esc・フォーカスが外へ出る、で引っ込め、フォーカスが中にあったら帯のタブへ戻す。top layer（開いている `dialog`・`[popover]`）の中のクリック・フォーカス・Esc では引っ込めない。引き出した pane のピンを押すと元の場所（`showPanel` と同じ記憶）へ戻る。場所が無くなっていたら、その縁へ外周ドッキングで入る。
+- 帯のタブを押すと、その pane を縁から木の上に重ねて引き出す（フォーカスは中へ）。もう一度押す・外を押す・Esc・フォーカスが外へ出る、で引っ込め、フォーカスが中にあったら帯のタブへ戻す。top layer（開いている `dialog`・`[popover]`）と、表示中のモーダルの層（`role="dialog"`／`"alertdialog"` かつ `aria-modal="true"`。`@banto/ui` の Modal・ConfirmDialog。その背景を押すのも含む）の中のクリック・フォーカス・Esc では引っ込めない（引き出しの中から開いた確認で引っ込めない）。モーダルでない浮動 window へ移るのは外。引き出した pane のピンを押すと元の場所（`showPanel` と同じ記憶）へ戻る。場所が無くなっていたら、その縁へ外周ドッキングで入る。
 - 中身: 引き出している pane と `keepMounted` の pane だけを描く（`keepMounted` は引っ込めても残る）。ほかは引き出すたびに作り直す。引き出す・引っ込めるは `beforePanelChange` に聞かない。
-- `beforePanelChange`: 木から帯へ・帯から木へは、押し出される pane の `reparent` を先に、区画の中で中身を描いている pane を新しい種類 `{ kind: 'auto-hide'; panelId; to: 'band' | 'tree'; remount: true }` で聞く。承認と適用の間に構造が変わったら `stale`。
+- `beforePanelChange`: 木から帯へ・帯から木へは、押し出される pane の `reparent` を先に、区画の中で中身を描いている pane を新しい種類 `{ kind: 'auto-hide'; panelId; to: 'band' | 'tree'; remount: true }` で聞く。承認と適用の間に構造が変わったら `stale`。引き出す・引っ込めるも構造の世代を進めるので、待つ間に引っ込めて開き直した（中身が作り直された）場合も `stale`（`DockState.structureRevision` は引き出しの開閉でも上がる）。
 - 能力 `capabilities` に `autoHide`（既定 `true`。`false` でピンを出さない。タブの組は中の pane がすべて許すときだけ）を足した。
 - 保存: `DockLayout.autoHidden?: DockAutoHidden[]`（区画・縁・元の場所・引き出す大きさ）。空なら書き出さない。古い JSON はそのまま読める（`version` は 2 のまま）。`validateDockLayout` で形と id の重複を確かめる。この版で隠した区画を含む JSON を古い版で読むと、その区画は消えて読まれる（読み込みは失敗しない）。
 - 公開 API の追加: `DockState.autoHidden` / `isAutoHidden` / `autoHideRegion` / `restoreAutoHidden` / `previewRestoreAutoHidden` / `flyoutPanel` / `openFlyout` / `closeFlyout`、`DockHost` の `autoHidePanel(id)` / `pinPanel(id)`、純関数 `autoHideEdge` / `mainRegionId` / `regionOf` / `removeRegion` / `captureRegionSlot` / `restoreRegionSlot`、定数 `AUTO_HIDE_FLYOUT_RATIO`、型 `DockAutoHidden` / `DockRegion` / `AutoHideOptions`、`DockPanelInfo.autoHidden?`、文言 `messages.autoHidePane` / `pinPane` / `autoHideBand`。`dockPanelAtEdge` はタブの組も受け取る（引数の型を広げた）。

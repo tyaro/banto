@@ -165,7 +165,8 @@ describe('DockState auto-hide', () => {
 		dock.openFlyout('B2');
 		expect(dock.flyoutPanel).toBe('B2');
 		expect(dock.autoHidden[0].node.type === 'tabs' && dock.autoHidden[0].node.activeIndex).toBe(1);
-		expect(dock.structureRevision).toBe(before + 1);
+		// The group's active pane (a structure change) and the slide-out (a mount change).
+		expect(dock.structureRevision).toBe(before + 2);
 		dock.closeFlyout();
 		expect(dock.flyoutPanel).toBeNull();
 		dock.openFlyout('T'); // a group id is not a pane
@@ -329,6 +330,38 @@ describe('PanelLifecycle auto-hide requests', () => {
 		release(true);
 		expect(await pending).toBe('stale');
 		expect(dock.isAutoHidden('L')).toBe(true);
+	});
+
+	it('pinning back is stale after a close -> open of the same pane while the hook waits (re-mounted)', async () => {
+		let release: (v: boolean) => void = () => {};
+		let questions = 0;
+		const { dock, lifecycle } = setup(() => {
+			questions++;
+			return new Promise<boolean>((r) => (release = r));
+		});
+		dock.autoHideRegion('L');
+		dock.openFlyout('L');
+		const pending = lifecycle.restoreAutoHidden('L');
+		dock.closeFlyout();
+		dock.openFlyout('L');
+		expect(dock.flyoutPanel).toBe('L');
+		release(true);
+		expect(await pending).toBe('stale');
+		expect(questions).toBe(1);
+		expect(dock.isAutoHidden('L')).toBe(true);
+	});
+
+	it('opening the pane already slid out is not a new generation', () => {
+		const { dock } = setup();
+		dock.autoHideRegion('L');
+		dock.openFlyout('L');
+		const revision = dock.structureRevision;
+		dock.openFlyout('L');
+		expect(dock.structureRevision).toBe(revision);
+		dock.closeFlyout();
+		expect(dock.structureRevision).toBe(revision + 1);
+		dock.closeFlyout();
+		expect(dock.structureRevision).toBe(revision + 1);
 	});
 
 	it('hide / close of an auto-hidden pane are asked with remount, show slides it out', async () => {
