@@ -131,6 +131,8 @@
 	let bodyEl: HTMLDivElement | null = $state(null);
 	let collapseBtnEl: HTMLButtonElement | null = $state(null);
 	let resizeBtnEl: HTMLButtonElement | null = $state(null);
+	let moveBtnEl: HTMLButtonElement | null = $state(null);
+	let pinBtnEl: HTMLButtonElement | null = $state(null);
 
 	/**
 	 * Title-bar press: a `drag-candidate` session on the shared GestureOwner
@@ -313,15 +315,24 @@
 		if (collapsed && gesture.session?.panelId === win.id && gesture.session.kind === 'resize')
 			untrack(() => gesture.cancel('api'));
 	});
-	// Collapsing hides the body and drops the resize-mode button: if the DOM focus is in either, hand it
-	// to the collapse button first (`.pre`: the focused element is still rendered here, and a hidden /
-	// removed one would otherwise leave the focus on <body>). A focus the host put elsewhere is left alone.
+	// Collapsing hides the body and drops the resize-mode button; pinning drops the move / resize-mode
+	// buttons. If the DOM focus is in one of the vanishing elements, hand it to the button that stays
+	// (collapse button when collapsing, else the pin button) first. `.pre`: the focused element is still
+	// rendered here, and a hidden / removed one would otherwise leave the focus on <body>. A focus the
+	// host put elsewhere is left alone. (#673, #685)
 	$effect.pre(() => {
-		if (!collapsed) return;
+		// Read both first: a short-circuit would leave `pinned` untracked while collapsed.
+		const isCollapsed = collapsed;
+		const isPinned = pinned;
+		if (!isCollapsed && !isPinned) return;
 		untrack(() => {
 			const active = document.activeElement;
-			if (!active || !collapseBtnEl) return;
-			if ((bodyEl && bodyEl.contains(active)) || active === resizeBtnEl) collapseBtnEl.focus();
+			if (!active) return;
+			const collapseGone =
+				isCollapsed && ((!!bodyEl && bodyEl.contains(active)) || active === resizeBtnEl);
+			const pinGone = isPinned && (active === moveBtnEl || active === resizeBtnEl);
+			if (collapseGone) collapseBtnEl?.focus();
+			else if (pinGone) pinBtnEl?.focus();
 		});
 	});
 	// Hidden while a gesture / keyboard mode is on this window: end it (see the module doc).
@@ -401,6 +412,7 @@
 				<button
 					type="button"
 					class="key-btn"
+					bind:this={moveBtnEl}
 					class:active={keyMode === 'move'}
 					aria-label={t.moveWindow(win.title)}
 					aria-pressed={keyMode === 'move'}
@@ -431,6 +443,7 @@
 			<button
 				type="button"
 				class="pin-btn"
+				bind:this={pinBtnEl}
 				class:active={pinned}
 				aria-label={pinned ? t.unpinWindow(win.title) : t.pinWindow(win.title)}
 				aria-pressed={pinned}

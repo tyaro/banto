@@ -245,3 +245,85 @@ describe('DockWindow collapse button', () => {
 		expect(dock.isCollapsed('a')).toBe(true);
 	});
 });
+
+describe('DockWindow pin focus hand-off (#685)', () => {
+	const unpinBtn = () => screen.getByRole('button', { name: /固定を外す/ });
+	const moveBtn = () => screen.getByRole('button', { name: /をキーボードで移動/ });
+	const resizeBtn = () => screen.getByRole('button', { name: /をキーボードでサイズ変更/ });
+
+	it('moves focus from the move button to the pin button on an API pin', () => {
+		const dock = createDockState(layout());
+		render(DockHostHarness, { dock });
+		moveBtn().focus();
+		dock.setPinned('a', true);
+		flushSync();
+		expect(document.activeElement).toBe(unpinBtn());
+	});
+
+	it('moves focus from the resize button to the pin button on an API pin', () => {
+		const dock = createDockState(layout());
+		render(DockHostHarness, { dock });
+		resizeBtn().focus();
+		dock.setPinned('a', true);
+		flushSync();
+		expect(document.activeElement).toBe(unpinBtn());
+	});
+
+	it('leaves the focus in the body input and outside the window alone', () => {
+		const dock = createDockState(layout());
+		render(DockHostHarness, { dock });
+		const input = screen.getByLabelText('A input');
+		input.focus();
+		dock.setPinned('a', true);
+		flushSync();
+		expect(document.activeElement).toBe(input);
+		dock.setPinned('a', false);
+		flushSync();
+		const outside = document.createElement('button');
+		document.body.appendChild(outside);
+		outside.focus();
+		dock.setPinned('a', true);
+		flushSync();
+		expect(document.activeElement).toBe(outside);
+		outside.remove();
+	});
+
+	it('keeps the focus on the pin button when it is pressed', () => {
+		const dock = createDockState(layout());
+		render(DockHostHarness, { dock });
+		const pin = screen.getByRole('button', { name: /の位置と大きさを固定$/ });
+		pin.focus();
+		pin.click();
+		flushSync();
+		expect(document.activeElement).toBe(unpinBtn());
+	});
+
+	it('pinning a collapsed window and collapsing a pinned one never drop to body', () => {
+		const dock = createDockState(layout(true));
+		render(DockHostHarness, { dock });
+		moveBtn().focus();
+		dock.setPinned('a', true);
+		flushSync();
+		expect(document.activeElement).toBe(unpinBtn());
+		dock.setPinned('a', false);
+		dock.setCollapsed('a', false);
+		flushSync();
+		dock.setPinned('a', true);
+		flushSync();
+		unpinBtn().focus();
+		dock.setCollapsed('a', true);
+		flushSync();
+		expect(document.activeElement).toBe(unpinBtn());
+	});
+
+	it('pinning and collapsing in the same flush from the resize button lands on a live button', () => {
+		const dock = createDockState(layout());
+		render(DockHostHarness, { dock });
+		resizeBtn().focus();
+		dock.setPinned('a', true);
+		dock.setCollapsed('a', true);
+		flushSync();
+		expect(document.activeElement).not.toBe(document.body);
+		expect(document.activeElement?.tagName).toBe('BUTTON');
+	});
+});
