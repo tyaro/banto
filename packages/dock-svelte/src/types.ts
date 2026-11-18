@@ -99,8 +99,10 @@ export interface DockPanelInfo {
 	 * or closed, with no remembered docked place.
 	 */
 	placement: 'docked' | 'floating';
-	/** In the docked tree (even as a background tab) or an open floating window = the checkbox is checked. */
+	/** In the docked tree (even as a background tab), auto-hidden to an edge band, or an open floating window = the checkbox is checked. */
 	visible: boolean;
+	/** Auto-hidden to a band on the host's edge (#694 PR-3; `placement` is `docked`). Written only when `true`. */
+	autoHidden?: true;
 }
 
 /** A single docked panel - the leaf of the docked tree. Same id space as `FloatingWindow`: a panel is either docked or floating, never both at once. */
@@ -166,6 +168,23 @@ export type DropRegion = 'center' | 'left' | 'right' | 'top' | 'bottom';
  */
 export type DockEdge = Exclude<DropRegion, 'center'>;
 
+/**
+ * A docked region (a panel, or a tab group) auto-hidden to a band on the host's
+ * edge (#694 PR-3, "unpinned" in Visual Studio's words): it is out of the docked
+ * tree, its tabs sit in the band, and pressing one slides the pane out over the
+ * docked tree. The pin button on the slid-out pane puts the region back at `slot`.
+ */
+export interface DockAutoHidden {
+	/** The region as it was in the tree (never `collapsed`). Its ids share the layout's id space. */
+	node: DockPanelNode | DockTabGroupNode;
+	/** The band it sits in. */
+	edge: DockEdge;
+	/** Where it goes back (a `split` / `root` slot of `core/slot.ts`). When that place is gone it docks at `edge` instead. */
+	slot: DockSlot;
+	/** Size of the slid-out pane along the edge's axis, as a share (0-1] of the docked area. Omitted = `AUTO_HIDE_FLYOUT_RATIO`. */
+	size?: number;
+}
+
 /** Full serializable dock layout (spec §5.1: "レイアウト全体をJSONにシリアライズ/デシリアライズ可能に"). */
 export interface DockLayout {
 	/** Bump on breaking changes. v1 (M7) had no `docked` field; `DockState.hydrate` migrates it to `docked: null`. */
@@ -174,6 +193,12 @@ export interface DockLayout {
 	floating: FloatingWindow[];
 	/** The docked tree, or `null` when nothing is docked (host shows only floating windows). */
 	docked: DockNode | null;
+	/**
+	 * Regions auto-hidden to the host's edge bands (#694 PR-3), in band order.
+	 * Optional and written only when not empty: a layout without it (older JSON)
+	 * reads as "nothing auto-hidden", so the layout `version` stays 2.
+	 */
+	autoHidden?: DockAutoHidden[];
 }
 
 /** Definition passed to `DockState.ensureWindow` / `reset` for a window that may not exist in the layout yet. */

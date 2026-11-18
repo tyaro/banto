@@ -54,6 +54,19 @@
 - **非推奨（次の major で消す）**: `DockState.isPinned` / `setPinned`（`isLocked` / `setLocked` の別名になった）、`FloatingWindow.pinned`（もう書き出さない。古い JSON の `pinned: true` は `validateDockLayout`・`hydrate` が `locked: true` として読む）、`messages.pinWindow` / `unpinWindow`（`lockWindow` / `unlockWindow` を渡さないときだけ使う）。
 - 保存の形: 固定した window は `pinned: true` ではなく `locked: true` で書き出す。この版の JSON を古い版で読むと、固定は外れて読まれる（`version` は 2 のまま、読み込みは失敗しない）。
 
+### 追加: dock の区画を自動で隠す（ピン、#694 PR-3b）
+
+- `@banto/dock-svelte`: ドッキング中の区画（panel 1 つ、またはタブの組）の見出しにピン（📌）を出し、押すとその区画を木から抜いて host の縁の帯に入れるようにした（VS・GX Works3 の「自動的に隠す」）。入る縁は、メイン区画（`close`・`move`・`undock` がすべて `false` の pane の区画。無ければ木の中心）から見た区画の側（分割の比で測る）。左右の帯は縦書き、上下は横書き。帯のある縁の分、木は内側に寄る。
+- 帯のタブを押すと、その pane を縁から木の上に重ねて引き出す（フォーカスは中へ）。もう一度押す・外を押す・Esc・フォーカスが外へ出る、で引っ込め、フォーカスが中にあったら帯のタブへ戻す。top layer（開いている `dialog`・`[popover]`）と、表示中のモーダルの層（`role="dialog"`／`"alertdialog"` かつ `aria-modal="true"`。`@banto/ui` の Modal・ConfirmDialog。その背景を押すのも含む）の中のクリック・フォーカス・Esc では引っ込めない（引き出しの中から開いた確認で引っ込めない）。モーダルでない浮動 window へ移るのは外。引き出した pane のピンを押すと元の場所（`showPanel` と同じ記憶）へ戻る。場所が無くなっていたら、その縁へ外周ドッキングで入る。
+- 中身: 引き出している pane と `keepMounted` の pane だけを描く（`keepMounted` は引っ込めても残る）。ほかは引き出すたびに作り直す。引き出す・引っ込めるは `beforePanelChange` に聞かない。
+- `beforePanelChange`: 木から帯へ・帯から木へは、押し出される pane の `reparent` を先に、区画の中で中身を描いている pane を新しい種類 `{ kind: 'auto-hide'; panelId; to: 'band' | 'tree'; remount: true }` で聞く。承認と適用の間に構造が変わったら `stale`。引き出す・引っ込めるも構造の世代を進めるので、待つ間に引っ込めて開き直した（中身が作り直された）場合も `stale`（`DockState.structureRevision` は引き出しの開閉でも上がる）。
+- 能力 `capabilities` に `autoHide`（既定 `true`。`false` でピンを出さない。タブの組は中の pane がすべて許すときだけ）を足した。
+- 保存: `DockLayout.autoHidden?: DockAutoHidden[]`（区画・縁・元の場所・引き出す大きさ）。空なら書き出さない。古い JSON はそのまま読める（`version` は 2 のまま）。`validateDockLayout` で形と id の重複を確かめる。この版で隠した区画を含む JSON を古い版で読むと、その区画は消えて読まれる（読み込みは失敗しない）。
+- 公開 API の追加: `DockState.autoHidden` / `isAutoHidden` / `autoHideRegion` / `restoreAutoHidden` / `previewRestoreAutoHidden` / `flyoutPanel` / `openFlyout` / `closeFlyout`、`DockHost` の `autoHidePanel(id)` / `pinPanel(id)`、純関数 `autoHideEdge` / `mainRegionId` / `regionOf` / `removeRegion` / `captureRegionSlot` / `restoreRegionSlot`、定数 `AUTO_HIDE_FLYOUT_RATIO`、型 `DockAutoHidden` / `DockRegion` / `AutoHideOptions`、`DockPanelInfo.autoHidden?`、文言 `messages.autoHidePane` / `pinPane` / `autoHideBand`。`dockPanelAtEdge` はタブの組も受け取る（引数の型を広げた）。
+- アプリ: ダッシュボードの初回の既定配置の判定で、帯にだけ pane がある保存済みの配置を空と見なさないようにした。
+- 見た目: ドッキング中の区画の見出しにピンのボタンが増える。dashboard（分析ワークスペース）と command-palette の visual の基準画像の再生成が要る（Linux で再生成する）。
+- **型エラーの注意（派生アプリ）**: 公開の union に種類を足した — `DockPanelChange` に `auto-hide`（PR-3b）。`switch (change.kind)` を網羅検査（`never` への代入など）しているアプリは分岐を足せば通る。また、`DockMessages` を `Required<DockMessages>` として自前で全部埋めているアプリは、増えたキー（`lockWindow` / `unlockWindow`（PR-3a）、`autoHidePane` / `pinPane` / `autoHideBand`（PR-3b））を足す必要がある。
+
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。

@@ -35,6 +35,12 @@ export interface DockMessages {
 	collapsePane?: (title: string) => string;
 	/** Collapse button aria-label while the docked region IS collapsed to a band: pressing it expands. */
 	expandPane?: (title: string) => string;
+	/** Pin button aria-label of a docked region (DockedTree header, #694 PR-3): pressing it unpins = auto-hides the region to an edge band. `title` is the pane's (the front tab's) title. */
+	autoHidePane?: (title: string) => string;
+	/** Pin button aria-label of a slid-out auto-hidden pane: pressing it pins the region back in its docked place. */
+	pinPane?: (title: string) => string;
+	/** aria-label of an edge band holding auto-hidden panes (#694 PR-3). */
+	autoHideBand?: (edge: 'left' | 'right' | 'top' | 'bottom') => string;
 }
 
 export const defaultDockMessages: Required<DockMessages> = {
@@ -52,5 +58,9 @@ export const defaultDockMessages: Required<DockMessages> = {
 	collapseWindow: (title) => `${title}を折りたたむ`,
 	expandWindow: (title) => `${title}を展開`,
 	collapsePane: (title) => `${title}を帯に折りたたむ`,
-	expandPane: (title) => `${title}を帯から展開`
+	expandPane: (title) => `${title}を帯から展開`,
+	autoHidePane: (title) => `${title}を自動で隠す（ピンを外す）`,
+	pinPane: (title) => `${title}を元の場所に固定（ピンを留める）`,
+	autoHideBand: (edge) =>
+		`${{ left: '左', right: '右', top: '上', bottom: '下' }[edge]}に自動で隠したパネル`
 };

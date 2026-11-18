@@ -88,12 +88,29 @@ export {
 /** Outer-edge drop targets of the whole host (#694 PR-1, buttons since PR-2). */
 export { computeEdgeDrop, edgeButtons } from './core/edges';
 
-/** The remembered docked place of a hidden pane (#663; `DockState.dismiss` / `show` use these). */
-export { captureDockSlot, restoreDockSlot } from './core/slot';
+/** The remembered docked place of a hidden pane (#663; `DockState.dismiss` / `show` use these), and of a whole region (#694 PR-3, auto-hide). */
+export {
+	captureDockSlot,
+	captureRegionSlot,
+	restoreDockSlot,
+	restoreRegionSlot
+} from './core/slot';
+
+/** Auto-hide of a docked region to an edge band (#694 PR-3; `DockState.autoHideRegion` / `restoreAutoHidden` use these). */
+export {
+	AUTO_HIDE_FLYOUT_RATIO,
+	autoHideEdge,
+	mainRegionId,
+	regionOf,
+	removeRegion,
+	type AutoHideOptions,
+	type DockRegion
+} from './core/autohide';
 
 export { type DockCapabilities } from './core/policy';
 
 export type {
+	DockAutoHidden,
 	DockEdge,
 	DockLayout,
 	DockNode,

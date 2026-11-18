@@ -75,9 +75,11 @@
 		type DockPanelChangeOutcome
 	} from './core/lifecycle';
 	import { collectPanelIds } from './core/tree';
-	import { setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
+	import { autoHiddenPanelIds, mainRegionId, regionOf, regionPanelIds } from './core/autohide';
+	import { isMainPane, setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { PanelContent } from './types';
+	import DockAutoHide from './DockAutoHide.svelte';
 	import DockedTree from './DockedTree.svelte';
 	import DockWindow from './DockWindow.svelte';
 	import type { DockMessages } from './messages';
@@ -230,6 +232,10 @@
 	onMount(() => lifecycle.attach());
 	onDestroy(() => lifecycle.dispose());
 
+	/** Edges that hold an auto-hidden band (#694 PR-3): the docked layer is inset by them. */
+	const bandEdges = $derived(new Set(dock.autoHidden.map((e) => e.edge)));
+	const BAND = 'var(--banto-dock-titlebar-height)';
+
 	const openWindows = $derived(dock.layout.floating.filter((w) => w.open));
 	/** Open windows plus hidden ones whose content is kept (`keepMounted`, not discarded by `close`). */
 	const mountedWindows = $derived(
@@ -237,7 +243,11 @@
 	);
 	// A pane shown again (open floating or docked) is kept again by a later hide.
 	$effect(() => {
-		const shown = [...openWindows.map((w) => w.id), ...collectPanelIds(dock.layout.docked)];
+		const shown = [
+			...openWindows.map((w) => w.id),
+			...collectPanelIds(dock.layout.docked),
+			...autoHiddenPanelIds(dock.layout)
+		];
 		untrack(() => lifecycle.forgetDiscarded(shown));
 	});
 
@@ -330,6 +340,27 @@
 		return lifecycle.setVisible(panelId, visible);
 	}
 
+	/**
+	 * Auto-hide the docked region holding `panelId` to the band on its side (#694 PR-3, the
+	 * pin button): asked through `beforePanelChange` (`reparent` of the panes it pushes out,
+	 * then `auto-hide` `to: 'band'`). A region whose panes do not all allow `autoHide` is
+	 * `refused`, like its missing pin button. DOM focus is not moved.
+	 */
+	export function autoHidePanel(panelId: string): Promise<DockPanelChangeOutcome> {
+		const region = regionOf(dock.layout.docked, panelId);
+		if (!region) return Promise.resolve('stale');
+		if (!regionPanelIds(region).every((id) => capabilities?.(id)?.autoHide !== false)) {
+			return Promise.resolve('refused');
+		}
+		const mainId = mainRegionId(dock.layout.docked, (id) => isMainPane(policy, id));
+		return lifecycle.autoHide(region.id, { mainId });
+	}
+
+	/** Pin the auto-hidden region holding `panelId` back in its docked place (#694 PR-3), asked through `beforePanelChange`. DOM focus is not moved. */
+	export function pinPanel(panelId: string): Promise<DockPanelChangeOutcome> {
+		return lifecycle.restoreAutoHidden(panelId);
+	}
+
 	/** Retry a change held by `isStructureChangeDeferred` now (a custom predicate turned false without a composition / focus event). */
 	export function resumeDeferredChange(): void {
 		lifecycle.resumeDeferred();
@@ -344,10 +375,19 @@
 	bind:clientHeight={hostH}
 >
 	{#if dock.layout.docked}
-		<div class="docked-layer">
+		<div
+			class="docked-layer"
+			style:top={bandEdges.has('top') ? BAND : undefined}
+			style:bottom={bandEdges.has('bottom') ? BAND : undefined}
+			style:left={bandEdges.has('left') ? BAND : undefined}
+			style:right={bandEdges.has('right') ? BAND : undefined}
+		>
 			<DockedTree node={dock.layout.docked} {dock} {panel} {iconContent} {onPopOut} {messages} />
 		</div>
 	{/if}
+
+	<!-- Edge bands and slide-outs of auto-hidden regions (#694 PR-3): above the docked tree, below floating windows. -->
+	<DockAutoHide {dock} {panel} {iconContent} {messages} />
 
 	<div class="floating-layer">
 		{#each renderedWindows as win (win.id)}
@@ -441,9 +481,19 @@
 		border-radius: var(--banto-radius-lg);
 	}
 
+	/* Its own stacking context (#694 PR-3): a pane's positioned content with a positive
+	   z-index (e.g. a chart's reset-zoom button) stays inside the docked layer, below the
+	   auto-hide slide-out (later in the DOM) and the floating layer (z-index 1). Except while
+	   a pane shows a modal (`@banto/ui` OverlayPanel renders in place, `position: fixed` +
+	   `--banto-z-modal`): the layer is not isolated then, so the modal and its scrim stay
+	   above the floating windows (the scrim covers the rest anyway). */
 	.docked-layer {
 		position: absolute;
 		inset: 0;
+	}
+
+	.docked-layer:not(:has([aria-modal='true'])) {
+		isolation: isolate;
 	}
 
 	/* Its own stacking context (z-index 1) so the windows' z-index (1..n) stays
