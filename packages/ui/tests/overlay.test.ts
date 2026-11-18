@@ -19,6 +19,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+	closeOpenMenus,
 	defaultUiMessages,
 	focusablesIn,
 	hasVisibleLayerAbove,
@@ -44,6 +45,30 @@ beforeAll(() => {
 			}
 		});
 	}
+	// jsdom has no Popover API: a minimal stand-in (see menu.test.ts) that
+	// flips `data-popover-open` and fires the async `toggle` like a browser.
+	const proto = HTMLElement.prototype as unknown as {
+		showPopover(): void;
+		hidePopover(): void;
+	};
+	const fireToggle = (el: HTMLElement, newState: 'open' | 'closed') =>
+		queueMicrotask(() => {
+			const event = new Event('toggle');
+			Object.defineProperty(event, 'newState', { value: newState });
+			el.dispatchEvent(event);
+		});
+	proto.showPopover = function (this: HTMLElement) {
+		if (this.dataset.popoverOpen === 'true') throw new Error('already open');
+		this.dataset.popoverOpen = 'true';
+		this.style.display = 'block';
+		fireToggle(this, 'open');
+	};
+	proto.hidePopover = function (this: HTMLElement) {
+		if (this.dataset.popoverOpen !== 'true') return;
+		delete this.dataset.popoverOpen;
+		this.style.removeProperty('display');
+		fireToggle(this, 'closed');
+	};
 	const style = document.createElement('style');
 	style.textContent = '[role="presentation"] { position: fixed; z-index: 900; }';
 	document.head.append(style);
@@ -64,6 +89,7 @@ type HarnessProps = {
 	focusFallback?: () => HTMLElement | null;
 	messages?: UiMessages;
 	keepOpen?: boolean;
+	innerMenu?: boolean;
 };
 
 async function openOverlay(props: HarnessProps = {}) {
@@ -383,5 +409,53 @@ describe('Modal / Drawer: Esc layering and focus', () => {
 		} finally {
 			fallback.remove();
 		}
+	});
+});
+
+describe('Modal / Drawer: open menus close when a modal layer opens (#670)', () => {
+	const menuOpen = (label: string) =>
+		document.querySelector<HTMLElement>(`[role="menu"][aria-label="${label}"]`)?.dataset
+			.popoverOpen === 'true';
+
+	for (const kind of ['drawer', 'modal'] as const) {
+		it(`${kind}: an open menu is closed on open, and one Esc closes the layer`, async () => {
+			render(OverlayHarness, { kind });
+			await fireEvent.click(screen.getByTestId('menu-trigger'));
+			await flush();
+			expect(menuOpen('Outside menu')).toBe(true);
+
+			await fireEvent.click(screen.getByTestId('opener'));
+			await flush();
+			expect(menuOpen('Outside menu')).toBe(false);
+			expect(screen.getByRole('dialog', { name: 'Edit' })).toBeTruthy();
+
+			await escape();
+			expect(state()).toBe('closed');
+		});
+	}
+
+	it('focus that was inside the closed menu returns to its trigger, not the hidden item', async () => {
+		render(OverlayHarness, { kind: 'modal' });
+		const trigger = screen.getByTestId('menu-trigger');
+		await fireEvent.click(trigger);
+		await flush();
+		screen.getByRole('menuitem', { name: 'Outside item', hidden: true }).focus();
+
+		await fireEvent.click(screen.getByTestId('opener'));
+		await flush();
+		await escape();
+		expect(state()).toBe('closed');
+		expect(document.activeElement).toBe(trigger);
+	});
+
+	it('a menu inside the layer is not closed (a menu opened after the layer is out of scope anyway)', async () => {
+		const { dialog } = await openOverlay({ innerMenu: true });
+		await fireEvent.click(screen.getByTestId('inner-menu-trigger'));
+		await flush();
+		expect(menuOpen('Inner menu')).toBe(true);
+		closeOpenMenus(document, dialog);
+		expect(menuOpen('Inner menu')).toBe(true);
+		expect(closeOpenMenus(document)).toHaveLength(2);
+		expect(menuOpen('Inner menu')).toBe(false);
 	});
 });

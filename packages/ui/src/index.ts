@@ -128,6 +128,7 @@ export {
 	restoreFocus,
 	type OverlayCloseSource
 } from './layering';
+export { closeOpenMenus } from './openMenus';
 export {
 	defaultCommandPaletteSearch,
 	type CommandPaletteCloseReason,
