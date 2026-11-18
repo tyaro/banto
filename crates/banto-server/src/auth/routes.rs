@@ -61,13 +61,24 @@ pub(crate) fn bearer_token(req: &Request) -> Option<&str> {
 /// store failure is an error response (not a pass). The validated
 /// [`AuthenticatedSession`] (current identity) is inserted into the request's
 /// extensions for the guards and handlers behind this middleware.
+///
+/// Issue #697: so are the session's per-user permissions, as a
+/// [`SessionPermissions`] ([`AuthState::session_permissions`]: read for an
+/// account session through the installed reader, none for a grant session
+/// or without a reader). A handler takes them with
+/// `Extension<SessionPermissions>`; a store failure fails the request.
 pub async fn require_auth(State(auth): State<AuthState>, mut req: Request, next: Next) -> Response {
     let Some(token) = bearer_token(&req).map(str::to_owned) else {
         return unauthorized_response();
     };
     match auth.authenticate(&token).await {
         Ok(Some(session)) => {
+            let permissions = match auth.session_permissions(&session).await {
+                Ok(permissions) => permissions,
+                Err(err) => return crate::ApiError(err).into_response(),
+            };
             req.extensions_mut().insert(session);
+            req.extensions_mut().insert(permissions);
             next.run(req).await
         }
         Ok(None) => unauthorized_response(),
@@ -191,14 +202,33 @@ async fn check_handler(
     Ok(Json(authenticated_session(&auth, token).await?.is_some()))
 }
 
+/// The `GET /api/auth/identity` body (Issue #697): the session as before
+/// (`Identity & { kind }`) plus its `permissions` (sorted keys). A
+/// response-only type, so [`AuthenticatedSession`] itself gets no field.
+#[derive(Serialize)]
+struct IdentityResponse {
+    #[serde(flatten)]
+    session: AuthenticatedSession,
+    permissions: SessionPermissions,
+}
+
 /// `GET /api/auth/identity`: the [`AuthenticatedSession`] (serialized as
-/// `Identity & { kind }` - the grant kind or `"account"`, ADR-0017) or `null`.
+/// `Identity & { kind }` - the grant kind or `"account"`, ADR-0017) with its
+/// `permissions` (Issue #697, for the screen to hide what the user cannot
+/// do; the server still decides), or `null`.
 async fn identity_handler(
     State(auth): State<AuthState>,
     req: Request,
-) -> Result<Json<Option<AuthenticatedSession>>, crate::ApiError> {
+) -> Result<Json<Option<IdentityResponse>>, crate::ApiError> {
     let token = bearer_token(&req).map(str::to_owned);
-    Ok(Json(authenticated_session(&auth, token).await?))
+    let Some(session) = authenticated_session(&auth, token).await? else {
+        return Ok(Json(None));
+    };
+    let permissions = auth.session_permissions(&session).await?;
+    Ok(Json(Some(IdentityResponse {
+        session,
+        permissions,
+    })))
 }
 
 /// Build the `/api/auth/*` routes (spec §11, mirrors `src-tauri`'s
