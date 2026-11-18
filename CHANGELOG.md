@@ -22,6 +22,15 @@
 
 ## [Unreleased]
 
+### 追加: テーマを試せるページ `/theme-lab`（#690、洗練案 E-3）
+
+- デモビルドのサイドバー・コマンドパレットの「見本」グループに「テーマを試す」を追加した（`navigation.ts` の `demoOnly`。`/ui-demo`・`/chart-gallery` と同じ扱いで、URL ならどのビルドでも開ける）。ブランド色相（`--banto-brand-hue`、スライダーと数値）・角丸（`--banto-radius-sm/md/lg` を一緒に動かす）・密度（標準・compact・touch）・フォント（OS 同梱のスタック数種。フォントは同梱しない）・ライト／ダークを動かすと、ページ内のプレビュー領域（入れ子の `data-theme` の要素）だけに効く。シェルは変わらず、状態は保存しない（再読み込みで既定に戻る）。
+- プレビューにはボタン・StatusBadge・入力とピッカー・SurfaceCard・ToastHost・BantoGrid の小さな表・チャート（カテゴリ 8 色の円、連続／発散スケールのヒートマップ）を並べる。既定から変えた変数だけを `:root { … }` の CSS にして書き出し、コピーとファイル保存ができる。選んだ色相とテーマで、primary や状態色の文字のコントラスト比を出し、4.5:1 を割ると注意を出す。
+- 書き出す CSS・コントラスト比は `src/lib/themeLab.ts` の純関数（単体テスト `themeLab.test.ts`。定数が `banto.css` とずれたら落ちる）。vitest の `css.include` に `banto.css` を足した（`?raw` で読むため）。
+- scaffold: チャートの部分だけを `ThemeLabCharts.svelte` に分け、`--preset minimal` / `display`（charts を外す）では、そのファイル・ページの import と節（`[scaffold:charts]` の印）・`themeLab.charts.*` を外す。ページ本体は残る。`DemoNavIconKey`・`DemoNavLabelKey` に `theme-lab` の語が増えたので、charts の remover の置換元の文字列を合わせた（派生側で `scripts/scaffold.mjs` を使うなら、更新時に合わせて取り込む）。
+
+### 修正: グリッドの行高が密度に追従する（#692）
+
 - `@banto/grid-svelte`: `BantoGrid` の行高がテーマの密度（`--banto-grid-row-height`: standard 36px／compact 32px／touch 52px）に追従するようにした（#692）。これまでは `GridState.rowHeight`（既定 36）を構築時に固定していたため、compact・touch でも行は 36px のままだった。`rowHeight`（prop または `GridState` の option）を渡したときは今までどおり固定。`GridState` に `rowHeightFixed` と `followThemeRowHeight(px)` を足し、`rowHeight` は読み取り専用の getter（反応的）になった。アプリの items・監査ログの表は、compact・touch で行の高さが変わる
 
 ## [7.6.0] - 2026-11-18

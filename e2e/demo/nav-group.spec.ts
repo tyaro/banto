@@ -1,6 +1,6 @@
 /**
  * Nav group in the demo build (nav-menubar-plan D8-b, PR-5): the demo-only
- * entries (/ui-demo, /chart-gallery) carry `group: 'nav.group.demo'`, so the
+ * entries (/ui-demo, /chart-gallery, /theme-lab) carry `group: 'nav.group.demo'`, so the
  * sidebar shows them under a heading and the dock rules them off inside the
  * one main nav. A production build has no group, so
  * its sidebar and dock are unchanged (the existing visual baselines cover
@@ -21,7 +21,11 @@ test('sidebar: the demo entries sit under a heading, the others stay flat', asyn
 	const nav = page.getByRole('navigation', { name: '主要ナビゲーション' });
 	const group = nav.getByRole('group', { name: '見本' });
 	await expect(group).toBeVisible({ timeout: 60_000 });
-	await expect(group.getByRole('link')).toHaveText(['UI 部品の見本', 'チャート見本']);
+	await expect(group.getByRole('link')).toHaveText([
+		'UI 部品の見本',
+		'チャート見本',
+		'テーマを試す'
+	]);
 	// The visible heading is decoration: the group's name comes from role="group".
 	await expect(group.locator('.section-heading')).toHaveText('見本');
 	await expect(group.locator('.section-heading')).toHaveAttribute('aria-hidden', 'true');

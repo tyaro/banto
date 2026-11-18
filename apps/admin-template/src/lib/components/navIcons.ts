@@ -8,6 +8,7 @@ import type { Component } from 'svelte';
 import { LayoutDashboard, ListTree, Users, ScrollText, Settings } from '@lucide/svelte';
 import { Palette } from '@lucide/svelte';
 import { ChartColumn } from '@lucide/svelte';
+import { SlidersHorizontal } from '@lucide/svelte';
 import type { DemoNavIconKey, NavIconKey } from '#lib/navigation.js';
 
 export const NAV_ICONS: Record<NavIconKey | DemoNavIconKey, Component> = {
@@ -17,7 +18,8 @@ export const NAV_ICONS: Record<NavIconKey | DemoNavIconKey, Component> = {
 	'audit-log': ScrollText,
 	settings: Settings,
 	'ui-demo': Palette,
-	'chart-gallery': ChartColumn
+	'chart-gallery': ChartColumn,
+	'theme-lab': SlidersHorizontal
 };
 
 /** Fixed pages name an icon by key; resource entries already carry the component. */
