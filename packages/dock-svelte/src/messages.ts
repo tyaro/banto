@@ -27,6 +27,10 @@ export interface DockMessages {
 	collapseWindow?: (title: string) => string;
 	/** Collapse button aria-label while the window IS collapsed: pressing it expands. */
 	expandWindow?: (title: string) => string;
+	/** Collapse button aria-label of a docked region (DockedTree header / tab strip, #663 ③-B): `title` is the pane's (the front tab's) title. */
+	collapsePane?: (title: string) => string;
+	/** Collapse button aria-label while the docked region IS collapsed to a band: pressing it expands. */
+	expandPane?: (title: string) => string;
 }
 
 export const defaultDockMessages: Required<DockMessages> = {
@@ -40,5 +44,7 @@ export const defaultDockMessages: Required<DockMessages> = {
 	pinWindow: (title) => `${title}の位置と大きさを固定`,
 	unpinWindow: (title) => `${title}の位置と大きさの固定を外す`,
 	collapseWindow: (title) => `${title}を折りたたむ`,
-	expandWindow: (title) => `${title}を展開`
+	expandWindow: (title) => `${title}を展開`,
+	collapsePane: (title) => `${title}を帯に折りたたむ`,
+	expandPane: (title) => `${title}を帯から展開`
 };

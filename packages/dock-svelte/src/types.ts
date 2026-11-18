@@ -104,6 +104,14 @@ export interface DockPanelNode {
 	title: string;
 	/** Emoji, shown in the tab/titlebar. */
 	icon?: string;
+	/**
+	 * Collapsed to a band by the user (#663 ③-B): a child of a split that shows only
+	 * a band (icon, title, expand button). Meaningful only on a direct child of a
+	 * `split` that has another open child; anywhere else `DockState` clears it. Written
+	 * only when `true` (older JSON reads as expanded, `version` stays 2). Gone when the
+	 * pane leaves the docked tree; the split's `sizes` are never touched.
+	 */
+	collapsed?: boolean;
 }
 
 /** A group of panels presented as tabs. Spec §5.1: tab groups only ever hold panels directly - no nested splits inside a tab group in v1. */
@@ -114,6 +122,8 @@ export interface DockTabGroupNode {
 	children: DockPanelNode[];
 	/** Index into `children` of the visible tab. */
 	activeIndex: number;
+	/** Collapsed to a band (#663 ③-B); the band shows the front tab's title. Same rules as `DockPanelNode.collapsed`. */
+	collapsed?: boolean;
 }
 
 /**

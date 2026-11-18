@@ -89,12 +89,107 @@ export function collectPanelIds(root: DockNode | null): string[] {
 	return root.children.flatMap(collectPanelIds);
 }
 
-/** Collapse a split/tabs node that ended up with 0 or 1 children into `null` / that lone child. Leaves panels and multi-child nodes untouched. Pure - called after any structural removal. */
+/** A node that can be collapsed to a band (#663 ③-B): a panel or a tab group (never a split). */
+type Region = DockPanelNode | DockTabGroupNode;
+
+/** `node` without its `collapsed` flag (the same object when it has none). */
+function withoutCollapsed<T extends Region>(node: T): T {
+	if (node.collapsed === undefined) return node;
+	const next = { ...node };
+	delete next.collapsed;
+	return next;
+}
+
+/** Is `node` a panel / tab group that is collapsed to a band? */
+export function isRegionCollapsed(node: DockNode): boolean {
+	return node.type !== 'split' && node.collapsed === true;
+}
+
+/**
+ * Collapse a split/tabs node that ended up with 0 or 1 children into `null` / that lone child. Leaves panels and multi-child nodes untouched. Pure - called after any structural removal.
+ * A lone child lifted out of a split loses its `collapsed` flag (it is no longer one of several
+ * children, #663 ③-B); a tab group that shrinks to one panel keeps its collapsed state on that panel.
+ */
 export function collapse(node: DockNode): DockNode | null {
 	if (node.type === 'panel') return node;
 	if (node.children.length === 0) return null;
-	if (node.children.length === 1) return node.children[0];
+	if (node.children.length === 1) {
+		if (node.type === 'split') {
+			const only = node.children[0];
+			return only.type === 'split' ? only : withoutCollapsed(only);
+		}
+		return node.collapsed === true ? { ...node.children[0], collapsed: true } : node.children[0];
+	}
 	return node;
+}
+
+/**
+ * Repair `collapsed` flags (#663 ③-B): a flag is kept only on a panel / tab group that is a
+ * direct child of a split AND has at least one sibling that is not collapsed (a split sibling
+ * is always open). Anywhere else it is dropped - on a root region, on a panel inside a tab
+ * group, and on every child of a split whose children are ALL collapsed (nothing would be
+ * left open). The same node objects are returned when nothing needs fixing, so a caller can
+ * compare identity. `sizes` are never touched.
+ */
+export function normalizeCollapsed(root: DockNode | null): DockNode | null {
+	return root === null ? null : normalizeCollapsedNode(root, false);
+}
+
+function normalizeCollapsedNode(node: DockNode, inSplit: boolean): DockNode {
+	if (node.type === 'panel') return inSplit ? node : withoutCollapsed(node);
+	if (node.type === 'tabs') {
+		const children = node.children.map((c) => withoutCollapsed(c));
+		const base = children.some((c, i) => c !== node.children[i]) ? { ...node, children } : node;
+		return inSplit ? base : withoutCollapsed(base);
+	}
+	let children = node.children.map((c) => normalizeCollapsedNode(c, true));
+	if (children.length > 0 && children.every(isRegionCollapsed)) {
+		children = children.map((c) => (c.type === 'split' ? c : withoutCollapsed(c)));
+	}
+	return children.some((c, i) => c !== node.children[i]) ? { ...node, children } : node;
+}
+
+/**
+ * May the region `id` be collapsed (#663 ③-B)? It must be a panel / tab group that is a direct
+ * child of a split with another child that is open (not collapsed). A collapsed region in a
+ * valid tree always satisfies this, so it also says "can be left collapsed". A panel inside a
+ * tab group, a split, the root and an unknown id are `false`.
+ */
+export function canCollapseRegion(root: DockNode | null, id: string): boolean {
+	const node = findNode(root, id);
+	if (!node || node.type === 'split') return false;
+	const parent = findParent(root, id);
+	if (!parent || parent.type !== 'split') return false;
+	return parent.children.some((c) => c.id !== id && !isRegionCollapsed(c));
+}
+
+/**
+ * Collapse / expand the region `id`. Collapsing a region that `canCollapseRegion` refuses is a
+ * no-op; `false` drops the flag. `sizes` are never touched (expanding gets the old ratio back).
+ */
+export function setRegionCollapsed(
+	root: DockNode | null,
+	id: string,
+	collapsed: boolean
+): DockNode | null {
+	if (!root) return root;
+	if (collapsed && !canCollapseRegion(root, id)) return root;
+	return replaceNodeById(root, id, (node) => {
+		if (node.type === 'split') return node;
+		if (!collapsed) return withoutCollapsed(node);
+		return node.collapsed === true ? node : { ...node, collapsed: true };
+	});
+}
+
+/**
+ * Expand the region that holds the panel `panelId` (the panel itself when it is a split's
+ * child, else its tab group). A no-op for an unknown id or a region that is not collapsed.
+ */
+export function expandRegionOf(root: DockNode | null, panelId: string): DockNode | null {
+	const node = findNode(root, panelId);
+	if (!node || node.type !== 'panel') return root;
+	const parent = findParent(root, panelId);
+	return setRegionCollapsed(root, parent?.type === 'tabs' ? parent.id : panelId, false);
 }
 
 /**
@@ -200,11 +295,12 @@ function appendCenter(
 	panel: DockPanelNode,
 	makeId: () => string
 ): DockNode {
+	// The dropped panel becomes the active tab, so a collapsed target is expanded (#663 ③-B).
 	if (node.type === 'tabs') {
 		const children = [...node.children, panel];
-		return { ...node, children, activeIndex: children.length - 1 };
+		return { ...withoutCollapsed(node), children, activeIndex: children.length - 1 };
 	}
-	return { type: 'tabs', id: makeId(), children: [node, panel], activeIndex: 1 };
+	return { type: 'tabs', id: makeId(), children: [withoutCollapsed(node), panel], activeIndex: 1 };
 }
 
 /**
@@ -257,11 +353,13 @@ export function splitInsert(
  */
 export function dockPanelIntoTree(
 	root: DockNode | null,
-	panel: DockPanelNode,
+	dropped: DockPanelNode,
 	targetId: string,
 	region: DropRegion,
 	makeId: () => string = defaultMakeId
 ): DockNode {
+	// A panel taken from somewhere else never brings its collapsed flag along (#663 ③-B).
+	const panel = withoutCollapsed(dropped);
 	if (!root) return panel;
 	const target = resolveTarget(root, targetId);
 

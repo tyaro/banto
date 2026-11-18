@@ -266,7 +266,7 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
 ### 折りたたみ（浮動 window をタイトルバーだけにする）
 
 浮動 window のタイトルバーの折りたたみのボタン（`aria-expanded` / `aria-controls`、▾／▸）を押すと、タイトルバーだけに畳まれ、
-もう一度押すと元の大きさに戻る。ピンとは独立で、固定したまま畳める・畳んだまま固定できる。ドック中の領域には出ない。
+もう一度押すと元の大きさに戻る。ピンとは独立で、固定したまま畳める・畳んだまま固定できる。ドック中の領域の折りたたみは次の節。
 
 - `dock.isCollapsed(id)` / `dock.setCollapsed(id, collapsed)`。`FloatingWindow.collapsed?: boolean` は `true` のときだけ書き出す
   （`false` は項目ごと消す）。無い古い JSON は「展開」で読め、layout の `version` は 2 のまま。保存の `height` は畳んでも変えない。
@@ -278,6 +278,29 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
 - 画面内に収める補正（`clamp`）は保存の高さで考える（畳んでも位置は変わらず、展開すると元のとおり）。描く高さだけがタイトルバーになる。
 - window がドックに入ると `collapsed` は消え、あとで引き出した pane は展開で始まる。閉じて開き直しても `collapsed` は残る。
 - ボタンのラベルは `messages.collapseWindow(title)` / `messages.expandWindow(title)`。
+
+### 折りたたみ（ドッキング中の区画を帯にする）
+
+分割（split）の子になっている区画（panel 1 つ、または tab グループ 1 つ）は、見出し（panel の見出し／tab 帯）の端の折りたたみのボタン
+（`aria-expanded` / `aria-controls`、▾／▸）で、帯に畳める。もう一度押すと元に戻る。split そのものは畳まない。
+
+- 帯の形: column の split の中では見出しの高さの横帯、row の split の中では同じ幅の縦帯（題名は `writing-mode: vertical-rl`）。
+  アイコン・題名（tab グループは前面のタブの題名）・展開ボタンだけが出る。見出しの要素は畳んでも同じなので、ボタンはフォーカスを保つ。
+- 空いた場所は同じ split の開いている区画へ、今の比のまま分かれる。保存の `sizes` は書き換えない（展開すると元の比に戻る）。
+  畳んだ区画に接する境界線（divider）はドラッグ・キーボードとも動かせない（`aria-disabled`）。ほかの divider の移動量は、帯を除いた
+  開いている区画が分け合う幅で比に直す。
+- 全部は畳めない: split の中で最後に開いている区画と、親が split でない区画（木のいちばん上の単独の区画）は畳めない（ボタンは disabled）。
+  隣が閉じるなどで畳んだ区画が開いている兄弟を失う、または親が split でなくなったときは、`collapsed` を自動で外す（`layout` を代入するたびに整える）。
+- `dock.isDockedCollapsed(nodeId)` / `dock.canCollapseDocked(nodeId)` / `dock.setDockedCollapsed(nodeId, collapsed)`（浮動の `isCollapsed` / `setCollapsed` とは別）。
+  `nodeId` は panel または tab グループの id。畳めないときの `setDockedCollapsed(…, true)` は何もしない。`DockPanelNode.collapsed?` / `DockTabGroupNode.collapsed?: boolean` は
+  `true` のときだけ書き出す（古い JSON は「展開」で読め、`version` は 2 のまま）。
+- 畳んでいる間、中身は破棄せず `hidden` + `inert`（`beforePanelChange` / `keepMounted` は関係しない）。中にあった DOM のフォーカスは折りたたみのボタンへ移る
+  （API から畳んでも同じ。ほかのフォーカスは奪わない）。divider の操作の最中にそれに接する区画が畳まれたら、その操作は取り消して元の比に戻る。
+- 帯はドロップ先にならず（そこへのドロップは何も起きない）、帯からのドラッグもできない。畳んでいる間はタブが見えないので、中のタブは引き出せない。
+  親の split の端へのドロップはできる。中身のタブが閉じられて 1 枚になっても畳んだままで、タブを足す（中央へのドロップ）と展開される。
+- `dock.show(id)` / `host.showPanel(id)` / `host.setPanelVisible(id, true)` で、畳んだ区画にある pane（や、そこへ戻す pane）を出すと、その区画は展開される。
+- 浮動 ⇔ ドッキングの移動、閉じて開き直し、表示メニューで隠して戻すとき、`collapsed` は持ち越さない（引き出した pane は展開で始まる。元の置き場所の記憶（slot）にも持たない）。
+- ボタンのラベルは `messages.collapsePane(title)` / `messages.expandPane(title)`。見た目が変わるので、docked の pane を写す visual の基準画像は再生成が要る。
 
 ### IME 変換中は構造変更を保留する
 
