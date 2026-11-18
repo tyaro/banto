@@ -66,6 +66,12 @@ rule 8 が両経路で照合する**（CR-6。`DUAL_PATH` の `role` フィー�
 読み取り系の `ROLE_READ`）。機械検査の対象外は**監査記録の同一性**
 （同じ `AuditEntry` 形状か）のみで、そこはコード + テストで担保する。
 desktop-only / read の分類判断は maintainability-review-2026-07.md §3 に根拠。
+ロールとは別にユーザーへ個別に付ける**権限のガード**（Issue #697、REST の
+`PermissionGuard` / `require_permission` と Tauri の `require_permission`）も
+同じ扱いで、両経路が同じ権限を見ることを rule 8 が `PERMISSION_PAIRS` で照合し、
+宣言の無い権限のガード（片方の経路だけに足したもの）も捕捉する
+（判定は `scripts/lib/permission-guards.mjs`、user-permissions-plan §5）。
+権限での拒否も 403 `forbidden` + `denied` の監査で、ロールの拒否と同じ形にする。
 
 **監査記録の canonical 形状**（機械検査外＝コード+テストで揃える規約。逸脱は
 maintenance-review-2026-08 §5.3 で実測・是正済み）:
