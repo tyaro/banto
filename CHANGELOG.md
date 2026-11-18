@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 変更: テンプレートのダッシュボードの pane の開閉を「表示」メニューへ（#663 ①-C）
+
+- admin-template のダッシュボードの「分析ワークスペース」の上にあったツールバー（pane ごとの開閉ボタンと「リセット」）を外し、「表示」メニューに置き換えた。pane ごとのチェックボックス（入れる = `showPanel` で、ドックから隠した pane は元の場所に戻る。外す = ✕ と同じ経路）と「レイアウトを既定に戻す」を並べる。メニューバーが出ている間（`menubar` レイアウト・幅 900px 超・入りきる）はヘッダーのメニューバーの「表示」に、それ以外（サイドバー・ドック、900px 以下、入りきらずドロワーに代わっているとき）はページ見出しの横の「表示」ボタンになり、いつも 1 か所にだけある。ページがシェルへメニューを渡す汎用の口として `#lib/pageViewMenu.svelte.ts`（`(app)/+layout.svelte` が context で持つ）と `PageViewMenu.svelte` を足した。文言キー: `dashboard.viewMenu` / `dashboard.resetLayout` / `shell.pageMenuNav` を足し、使わなくなった `dashboard.dockToolbarAria` / `dashboard.dockedAlwaysVisible` / `dashboard.reset` を消した。visual の基準画像（ダッシュボードを写すもの）は再生成が要る。
+
 ### 追加（minor）: dock-svelte に表示メニュー用の一覧と表示・非表示の口、ドックから隠した pane の元の場所への復帰（#663 ①-A）
 
 - `@banto/dock-svelte` に追加: `DockState.panels`（reactive。全 pane の `{ id, title, icon?, placement, visible }` を id を初めて見た順に）・`DockState.show` / `showPlacement` / `showTabSwitch` / `dismiss` / `isVisible`、`DockHost` の `showPanel(id)` と `setPanelVisible(id, visible)`（外す = ✕ と同じく `keepMounted` は hide・それ以外は close で `beforePanelChange` に聞く。`capabilities` の `close: false` は `refused`）、純関数 `captureDockSlot` / `restoreDockSlot`、型 `DockPanelInfo` / `DockSlot`。docked の pane を ✕・`hidePanel`・`closePanel` で隠すと、閉じた浮動 window に元の場所（タブグループと位置、または分割の側と割合）を `FloatingWindow.dockSlot` として覚え、`showPanel` / `dock.show` でそこへ戻す（場所が消えていれば浮動で開く。タブグループへ選択中のタブとして戻すときは、それまで選択中だった pane からの `tab-switch` としてタブのクリックと同じく先に聞き、IME 変換中は待つ）。`dockSlot` は任意のプロパティで layout の `version` は 2 のまま（古い JSON はそのまま読める）。`dock.isOpen` / `open` / `close` は従来どおり浮動 window だけを見る（`open` はドックから隠した pane を浮動で開き、覚えた場所を捨てる）。修正: `dock.ensureWindow` が docked の id を浮動として重複して足していた。

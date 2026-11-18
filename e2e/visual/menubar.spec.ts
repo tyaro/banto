@@ -36,14 +36,25 @@ async function gotoDashboard(page: Page): Promise<void> {
 	await expect(mainNav(page).getByRole('link', { name: 'ダッシュボード' })).toBeVisible();
 }
 
+/** The dashboard's View menu in the bar (#663 ①-C): its own fixed nav after the admin one. */
+function pageMenuNav(page: Page): Locator {
+	return page.getByRole('navigation', { name: 'ページのメニュー' });
+}
+
+/** The same menu as a button in the page header (no bar on screen). */
+function pageHeaderViewButton(page: Page): Locator {
+	return page.getByRole('main').getByRole('button', { name: '表示', exact: true });
+}
+
 /**
  * Leaves the bar a fixed, small room. The production nav has few entries, so
  * a viewport just above 900px may or may not overflow depending on the OS
  * fonts; capping the bar (still above the "その他" button's width, so not the
- * §4.9 fallback) makes the overflow certain without counting items.
+ * §4.9 fallback) makes the overflow certain without counting items. The cap
+ * includes the admin nav and the dashboard's View menu (#663 ①-C).
  */
 async function narrowTheBar(page: Page): Promise<void> {
-	await page.addStyleTag({ content: 'header .menubar { max-width: 280px; }' });
+	await page.addStyleTag({ content: 'header .menubar { max-width: 340px; }' });
 }
 
 async function focusedText(page: Page): Promise<string> {
@@ -233,6 +244,74 @@ test.describe('menu bar layout (primed)', () => {
 
 		await page.setViewportSize({ width: 1200, height: 800 });
 		await expect(mainNav(page).getByRole('link', { name: 'ダッシュボード' })).toBeFocused();
+	});
+
+	test("the dashboard's View menu is in the bar while it shows, in the page header otherwise (#663 ①-C)", async ({
+		page
+	}) => {
+		await page.setViewportSize({ width: 1200, height: 800 });
+		await gotoDashboard(page);
+		const barButton = pageMenuNav(page).getByRole('button', { name: '表示' });
+		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
+		// The default layout (メモ floating) is in place once the dock has measured.
+		await expect(memoWindow).toBeVisible();
+		await expect(barButton).toBeVisible();
+		await expect(pageHeaderViewButton(page)).toHaveCount(0);
+
+		// A checkbox keeps the menu open and follows the pane.
+		await barButton.click();
+		const menu = page.getByRole('menu', { name: '表示' });
+		const memo = menu.getByRole('menuitemcheckbox', { name: 'メモ', exact: true });
+		await expect(memo).toHaveAttribute('aria-checked', 'true');
+		await memo.click();
+		await expect(memo).toHaveAttribute('aria-checked', 'false');
+		await expect(memoWindow).toHaveCount(0);
+		await page.keyboard.press('Escape');
+		await expect(barButton).toBeFocused();
+
+		// <=900px: no bar, the page header carries it. Focus on the bar's
+		// trigger follows the menu (not the drawer button the nav goes to).
+		await page.setViewportSize({ width: 768, height: 1024 });
+		await expect(pageHeaderViewButton(page)).toBeVisible();
+		await expect(pageMenuNav(page)).toHaveCount(0);
+		await expect(async () => {
+			await expect(pageHeaderViewButton(page)).toBeFocused({ timeout: 500 });
+		}).toPass();
+
+		// Back above 900px with the page header's menu open: focus goes to the
+		// bar's trigger, and the menu is not reopened there.
+		await pageHeaderViewButton(page).click();
+		await expect(menu).toBeVisible();
+		await page.setViewportSize({ width: 1000, height: 800 });
+		await expect(barButton).toBeVisible();
+		await expect(pageHeaderViewButton(page)).toHaveCount(0);
+		await expect(async () => {
+			await expect(barButton).toBeFocused({ timeout: 500 });
+		}).toPass();
+		await expect(menu).toBeHidden();
+
+		// Too narrow even for "その他": the hidden bar keeps its entry (out of
+		// the accessibility tree), the header has it - and the focus.
+		await page.evaluate(() => (document.documentElement.style.fontSize = '250%'));
+		await expect(drawerButton(page)).toBeVisible();
+		await expect(pageMenuNav(page)).toHaveCount(0);
+		await expect(pageHeaderViewButton(page)).toBeVisible();
+		await expect(async () => {
+			await expect(pageHeaderViewButton(page)).toBeFocused({ timeout: 500 });
+		}).toPass();
+		await page.evaluate(() => (document.documentElement.style.fontSize = ''));
+		await expect(drawerButton(page)).toHaveCount(0);
+		await expect(barButton).toBeVisible();
+		await expect(pageHeaderViewButton(page)).toHaveCount(0);
+		await expect(async () => {
+			await expect(barButton).toBeFocused({ timeout: 500 });
+		}).toPass();
+
+		// Focus elsewhere at the switch is left alone.
+		await mainNav(page).getByRole('link', { name: 'ダッシュボード' }).focus();
+		await page.setViewportSize({ width: 768, height: 1024 });
+		await expect(drawerButton(page)).toBeFocused();
+		await expect(pageHeaderViewButton(page)).not.toBeFocused();
 	});
 
 	test('an open admin dropdown closes when the drawer stands in (§4.9)', async ({ page }) => {

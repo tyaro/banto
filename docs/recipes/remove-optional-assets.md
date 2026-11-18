@@ -95,7 +95,8 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 ### `@banto/dock-svelte`（ダッシュボードのドッキングレイアウト）
 
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
-`DockHost`/`dock`/`onPopOut` 関連コード、`src/lib/banto/panels.ts`・
+`DockHost`/`dock`/`onPopOut` 関連コード（pane を開閉する「表示」メニュー `PageViewMenu` の
+import と配置も。`PageViewMenu.svelte`・`src/lib/pageViewMenu.svelte.ts` 自体はシェルの汎用の口なので残す。#663）、`src/lib/banto/panels.ts`・
 `src/lib/banto/popout.ts`・`src/lib/banto/dockEscape.ts` とその `.test.ts`（dock の gesture の
 Esc をどの層に譲るか。#433）・`src/routes/panel/[id]/`（ポップアウト先の
 スタンドアロンウィンドウ用ルート）、メモ pane の draft と確認ダイアログ

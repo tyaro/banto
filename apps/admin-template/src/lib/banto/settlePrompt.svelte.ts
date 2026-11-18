@@ -9,6 +9,17 @@
  *   `'cancel'` (its settle keeps everything) and shows the new one.
  * - Closing the dialog any other way (Esc, scrim, ×) is `'cancel'`.
  * - `dispose()` (page unmount) answers an open question `'cancel'`.
+ * - Asking closes every open ui `Menu` first (`closeOpenMenus`): a checkbox
+ *   item keeps its menu open on select (the dashboard's View menu hiding the
+ *   memo pane, #663 ①-C), and the menu is a top-layer popover that would
+ *   stay above the dialog's scrim, usable, and - for `layering.ts` - the
+ *   layer above it, so the dialog's Esc and focus pull-back would yield to
+ *   it. Closing it before the dialog renders keeps the question the only
+ *   active layer, and the order keeps focus right: `hidePopover()` (popover
+ *   "auto") puts focus back on the menu's trigger, the dialog then records
+ *   that trigger as its opener and takes focus, and on its close gives it
+ *   back to the trigger. Menu's own queued toggle handler leaves focus alone
+ *   since it is no longer on <body> or in the menu by then.
  *
  * State is written in `untrack` so calling `ask` from inside an `$effect`
  * cannot make the effect re-run itself (conventions §8).
@@ -42,6 +53,7 @@ class Prompt implements SettlePrompt {
 	ask(dirtyKeys: readonly string[]): Promise<DraftSettleChoice> {
 		if (this.#disposed) return Promise.resolve('cancel');
 		this.answer('cancel');
+		closeOpenMenus();
 		return new Promise<DraftSettleChoice>((resolve) => {
 			this.#resolve = resolve;
 			untrack(() => (this.#keys = [...dirtyKeys]));
@@ -58,6 +70,22 @@ class Prompt implements SettlePrompt {
 	dispose(): void {
 		this.answer('cancel');
 		this.#disposed = true;
+	}
+}
+
+/**
+ * Closes every open ui `Menu` (`role="menu"` popover) in the document - the
+ * same `hidePopover()` HeaderNav uses for its menu entries. A no-op without a
+ * DOM (unit tests in node, SSR).
+ */
+export function closeOpenMenus(doc: Document | undefined = globalThis.document): void {
+	for (const menu of doc?.querySelectorAll<HTMLElement>('[role="menu"][popover]') ?? []) {
+		if (!menu.matches(':popover-open')) continue;
+		try {
+			menu.hidePopover();
+		} catch {
+			// already closed
+		}
 	}
 }
 

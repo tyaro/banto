@@ -28,6 +28,7 @@
 	import { getBantoMode, isTauri } from '#lib/banto/setup.js';
 	import { lanShareStatus } from '#lib/banto/lanShare.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
+	import { usePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
@@ -76,6 +77,7 @@
 	);
 
 	let barHost: HTMLElement | undefined = $state();
+	const pageMenuHost = usePageViewMenuHost();
 	let drawerButtonHost: HTMLElement | undefined = $state();
 
 	// PR-2 hand-over (§4.9): HeaderNav only closes its dropdown when it turns
@@ -85,7 +87,10 @@
 	// it fits again (the button and the drawer go away).
 	async function handleMenubarInsufficient(insufficient: boolean): Promise<void> {
 		const active = document.activeElement;
-		const focusToButton = insufficient && barHost?.contains(active) === true;
+		// Focus in the page's View menu follows the menu to the page header
+		// instead (pageViewMenu.svelte.ts), not to the drawer button.
+		const focusToButton =
+			insufficient && barHost?.contains(active) === true && pageMenuHost?.owns(active) !== true;
 		const focusToBar =
 			!insufficient &&
 			(drawerButtonHost?.contains(active) === true ||
@@ -112,7 +117,8 @@
 		lastShowBar = next;
 		if (previous === undefined || next === previous) return;
 		const active = document.activeElement;
-		const fromBar = !next && barHost?.contains(active) === true;
+		const fromBar =
+			!next && barHost?.contains(active) === true && pageMenuHost?.owns(active) !== true;
 		const fromDrawer =
 			next &&
 			(drawerButtonHost?.contains(active) === true ||
