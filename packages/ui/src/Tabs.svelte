@@ -26,7 +26,8 @@
 	 *   empty frame should not take a Tab stop). The panel stays the same
 	 *   element, so changing the number of tabs never recreates its content. A
 	 *   lone disabled tab stays hidden as before (and, unless `keepMounted`,
-	 *   unrendered). `value` / `onchange` behave as usual. With two or more tabs nothing changes.
+	 *   unrendered). `value` / `onchange` behave as usual. With two or more
+	 *   tabs nothing changes.
 	 * - Disabled tabs carry `aria-disabled` (still announced, never selected).
 	 */
 	import type { Snippet } from 'svelte';
@@ -173,7 +174,8 @@
 {/if}
 
 {#each tabs as tab (tab.id)}
-	<!-- svelte-ignore a11y_no_noninteractive_tabindex -- role/tabindex are both dropped together when single -->
+	<!-- role and tabindex are dropped together when single -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
 		class="banto-tabs__panel"
 		role={single ? undefined : 'tabpanel'}
