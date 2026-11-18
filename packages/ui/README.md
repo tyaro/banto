@@ -299,14 +299,15 @@ formatShortcut('Mod+S', 'mac'); // '⌘S'（記号だけ。文言は持たない
 `defaultPrevented`、`repeat`（`allowRepeat` で受ける）、入力欄（文字入力の `input`・`textarea`・`select`・
 `contenteditable`。`allowInEditable` で受ける）、モーダルな層かメニューが出ているとき（非モーダルの
 `role="dialog"` では止めない。`ownerLayer` を渡した command は自分の層と下の層を数えない — パレットを開いた
-まま Ctrl+K で閉じる、など）。後から `register` した scope が優先し、`visible` が偽のものは次へ譲る。
+まま Ctrl+K で閉じる、など）。`blockOnMenu: false` の command はメニューが出ていても止まらない（コンテキストメニューを開いたまま Ctrl+Z など。モーダルは今までどおり止める）。後から `register` した scope が優先し、`visible` が偽のものは次へ譲る。
 
-| export                                                 | 役割                                                                                                  |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `createShortcutDispatcher({ platform? })`              | `register(scope, commands)`（外す関数を返す）と `handle(event)`（処理したら `preventDefault` して真） |
-| `shouldHandleShortcut(event, spec)`                    | 上の保護だけを判定する（自前のキー処理用）                                                            |
-| `parseShortcut`・`matchShortcut`・`formatShortcut`     | `'Mod+Shift+K'` の解釈・照合・表示                                                                    |
-| `isEditableTarget(target)`・`detectShortcutPlatform()` | 入力欄の判定・`'mac' \| 'other'`                                                                      |
+| export                                                 | 役割                                                                                                        |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `createShortcutDispatcher({ platform?, mod? })`        | `register(scope, commands)`（外す関数を返す）と `handle(event)`（処理したら `preventDefault` して真）       |
+| `shouldHandleShortcut(event, spec)`                    | 上の保護だけを判定する（自前のキー処理用）                                                                  |
+| `parseShortcut`・`matchShortcut`・`formatShortcut`     | `'Mod+Shift+K'` の解釈・照合・表示                                                                          |
+| `mod: 'either'`                                        | `Mod` を Ctrl・Meta のどちらでも一致させる（両方押しは不一致。表示は platform のまま）。既定は `'platform'` |
+| `isEditableTarget(target)`・`detectShortcutPlatform()` | 入力欄の判定・`'mac' \| 'other'`                                                                            |
 
 ## LauncherBar（段階 5）
 
