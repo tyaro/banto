@@ -20,6 +20,10 @@
  *  - The "floating area" fallback is just "inside the host but didn't hit a
  *    `[data-dock-drop-id]` element" - one more `.contains()` check, no extra
  *    bookkeeping.
+ * The exception is the host's OUTER EDGES (#694 PR-1, `core/edges.ts`): a
+ * strip along each side, tested by geometry before the panes, only while a
+ * drag is in progress and only when something else is docked. A drop there
+ * wraps the docked root (`#finishEdge`).
  * The one thing this requires of callers: the drag ghost and the snap-guide
  * overlay MUST be `pointer-events: none` (see `DockHost.svelte`), otherwise
  * they'd be the element under the cursor and everything below would be
@@ -40,14 +44,22 @@
  * so a different pointer's pointerup can no longer finish a drag, and an Esc
  * that a higher layer already consumed is no longer taken.
  */
-import { getContext, setContext } from 'svelte';
+import { getContext, setContext, tick } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
 import type { DockPanelChange, PanelLifecycle } from './lifecycle';
 import { resolveCapabilities, type DockPolicy } from './policy';
-import { dockPanelIntoTree, findNode, findParent, removePanel } from './tree';
+import {
+	collectPanelIds,
+	dockPanelAtEdge,
+	dockPanelIntoTree,
+	findNode,
+	findParent,
+	removePanel
+} from './tree';
 import type { DockState } from '../state.svelte';
-import type { DockNode, DockPanelNode, DropRegion } from '../types';
+import type { DockEdge, DockNode, DockPanelNode, DropRegion } from '../types';
 import { computeDropRegion } from './dropzones';
+import { computeEdgeDrop, edgeBandSize } from './edges';
 
 /** Where a drag originated - determines which `DockState` method finishes it (see `#finish`). */
 export type DragSource = 'floating' | 'docked';
@@ -86,6 +98,10 @@ export interface DragSnapshot {
 	hoverRegion: DropRegion | null;
 	/** True when hovering the host's empty floating area (not over any docked pane). */
 	hoverFloating: boolean;
+	/** The outer edge of the host being hovered (#694 PR-1, `core/edges.ts`); wins over `hoverTargetId` / `hoverFloating`. */
+	hoverEdge: DockEdge | null;
+	/** Thickness (px) of the outer-edge strips `DockHost` draws; `0` = no outer-edge drop offered for this drag (nothing else docked). */
+	edgeBand: number;
 	/** Host-relative snap-guide rectangle to render, or `null` if nothing to show (e.g. dragged outside the host entirely). */
 	guideRect: Rect | null;
 }
@@ -159,6 +175,8 @@ export class DragController {
 			hoverTargetId: null,
 			hoverRegion: null,
 			hoverFloating: false,
+			hoverEdge: null,
+			edgeBand: 0,
 			guideRect: null
 		};
 		this.#recomputeHover(opts.clientX, opts.clientY);
@@ -198,11 +216,40 @@ export class DragController {
 		let hoverRegion: DropRegion | null = null;
 		let hoverFloating = false;
 		let guideRect: Rect | null = null;
+		let hoverEdge: DockEdge | null = null;
+		let edgeBand = 0;
 		// A band of a collapsed region (#663 ③-B) is neither a pane to drop onto nor free
 		// space (that would float the pane): the drop there is a no-op.
 		const noDrop = (hitEl as Element | null)?.closest('[data-dock-no-drop]') != null;
 
-		if (noDrop) {
+		// The outer edges of the host (#694 PR-1) are hit-tested first, by geometry only
+		// (`core/edges.ts`): the strips are drawn `pointer-events: none` and exist only during a
+		// drag. Offered only when something else is docked - with an empty tree (or only the
+		// dragged pane) a drop behaves as before.
+		if (hostEl && this.#edgesOffered(this.state.panelId)) {
+			const hostRect = hostEl.getBoundingClientRect();
+			edgeBand = edgeBandSize(hostRect.width, hostRect.height);
+			const inHost = hitEl !== null && hostEl.contains(hitEl);
+			const edge = inHost
+				? computeEdgeDrop(
+						clientX - hostRect.left,
+						clientY - hostRect.top,
+						hostRect.width,
+						hostRect.height
+					)
+				: null;
+			if (edge) {
+				hoverEdge = edge;
+				guideRect = dropRegionRect(
+					{ x: 0, y: 0, width: hostRect.width, height: hostRect.height },
+					edge
+				);
+			}
+		}
+
+		if (hoverEdge) {
+			// outer edge: set above
+		} else if (noDrop) {
 			// no target
 		} else if (hostEl && paneEl && hostEl.contains(paneEl)) {
 			const paneRect = paneEl.getBoundingClientRect();
@@ -236,8 +283,72 @@ export class DragController {
 			hoverTargetId,
 			hoverRegion,
 			hoverFloating,
+			hoverEdge,
+			edgeBand,
 			guideRect
 		};
+	}
+
+	/** Whether a drop on the host's outer edges is offered for `panelId`: some OTHER pane is docked (there is a root to wrap). */
+	#edgesOffered(panelId: string): boolean {
+		return collectPanelIds(this.#dock.layout.docked).some((id) => id !== panelId);
+	}
+
+	/**
+	 * An outer-edge drop (#694 PR-1). Wrapping the root re-mounts every docked pane whose chain
+	 * changes, so `requestPlacement` asks them first (`reparent`), then the moved pane (`dock` /
+	 * `move-docked`); the preview uses a fixed id for the new split so the re-checks compare the
+	 * same tree. The apply is a no-op when the panel is gone by then (apply by id).
+	 */
+	#finishEdge(panelId: string, source: DragSource, edge: DockEdge): void {
+		const dock = this.#dock;
+		if (!this.#edgesOffered(panelId)) return;
+		const target = { edge };
+		const wrap = (root: DockNode | null, node: DockPanelNode): DockNode =>
+			dockPanelAtEdge(root, node, edge, () => `${panelId}:dropped`);
+		const hostEl = this.#getHostEl();
+		const withFocus = (apply: () => void) => () => {
+			const active = document.activeElement;
+			const frameId =
+				hostEl && active && hostEl.contains(active)
+					? (active.closest<HTMLElement>('[data-dock-drop-id]')?.dataset.dockDropId ?? null)
+					: undefined;
+			apply();
+			// `undefined` = the focus was not in the host: nothing to hand back.
+			if (frameId !== undefined && hostEl)
+				void tick().then(() => refocus(hostEl, frameId, panelId));
+		};
+		if (source === 'floating')
+			this.#placement(
+				panelId,
+				{ kind: 'dock', panelId, remount: true },
+				() => {
+					const win = dock.layout.floating.find((w) => w.id === panelId);
+					if (!win) return undefined;
+					return wrap(dock.layout.docked, {
+						type: 'panel',
+						id: win.id,
+						title: win.title,
+						icon: win.icon
+					});
+				},
+				target,
+				withFocus(() => dock.dockPanelAtEdge(panelId, edge))
+			);
+		else
+			this.#placement(
+				panelId,
+				{ kind: 'move-docked', panelId, remount: true },
+				() => {
+					const node = findNode(dock.layout.docked, panelId);
+					if (node?.type !== 'panel') return undefined;
+					const rest = removePanel(dock.layout.docked, panelId);
+					if (!rest) return undefined;
+					return wrap(rest, node);
+				},
+				target,
+				withFocus(() => dock.dockExistingAtEdge(panelId, edge))
+			);
 	}
 
 	#finish(snapshot: DragSnapshot): void {
@@ -252,9 +363,15 @@ export class DragController {
 			clientX,
 			clientY,
 			grabDx,
-			grabDy
+			grabDy,
+			hoverEdge
 		} = snapshot;
 		const hostEl = this.#getHostEl();
+
+		if (hoverEdge) {
+			this.#finishEdge(panelId, source, hoverEdge);
+			return;
+		}
 
 		if (hoverTargetId && hoverRegion) {
 			// Dropping a docked panel back onto its OWN group/pane, dead center,
@@ -341,6 +458,27 @@ export class DragController {
 		// No valid target (dragged outside the host entirely, or the host isn't
 		// mounted) - snap back: no DockState call at all.
 	}
+}
+
+/**
+ * After an outer-edge drop (#694 PR-1) re-mounted the docked panes: if the DOM focus was in the
+ * host and is now lost (on `<body>` / nothing - the focused element was re-created), hand it to the
+ * pane frame it was in (same `data-dock-drop-id`: a pane or a tab group keeps its id when wrapped),
+ * else to the moved pane. In the frame: its active tab (roving tabindex) or its body region. A
+ * focus that is still somewhere (the element survived, or the host / a hook moved it) is left alone.
+ */
+function refocus(hostEl: HTMLElement, frameId: string | null, movedId: string): void {
+	const active = document.activeElement;
+	if (active && active !== document.body) return;
+	if (!hostEl.isConnected) return;
+	const frames = [...hostEl.querySelectorAll<HTMLElement>('[data-dock-drop-id]')];
+	const frame =
+		(frameId !== null ? frames.find((el) => el.dataset.dockDropId === frameId) : undefined) ??
+		frames.find((el) => el.dataset.dockDropId === movedId);
+	const target =
+		frame?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]') ??
+		frame?.querySelector<HTMLElement>('[role="region"]');
+	target?.focus();
 }
 
 export function createDragController(

@@ -46,6 +46,7 @@ export {
 	collapse,
 	collectPanelIds,
 	defaultMakeId,
+	dockPanelAtEdge,
 	dockPanelIntoTree,
 	expandRegionOf,
 	findNode,
@@ -71,12 +72,16 @@ export {
 
 export { computeDropRegion } from './core/dropzones';
 
+/** Outer-edge drop targets of the whole host (#694 PR-1). */
+export { computeEdgeDrop, EDGE_DROP_BAND, edgeBandSize } from './core/edges';
+
 /** The remembered docked place of a hidden pane (#663; `DockState.dismiss` / `show` use these). */
 export { captureDockSlot, restoreDockSlot } from './core/slot';
 
 export { type DockCapabilities } from './core/policy';
 
 export type {
+	DockEdge,
 	DockLayout,
 	DockNode,
 	DockPanelInfo,

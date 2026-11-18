@@ -3881,6 +3881,44 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// #694 PR-1: a drop on the outer edge of the dock host wraps the whole docked
+	// tree and the pane spans that side (full height on the left).
+	test('13m2. dock: a floating pane dropped on the outer left edge spans the full height', async () => {
+		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
+		await expect(memoWindow).toBeVisible();
+		const host = page.locator('.dock-wrapper [data-dock-host]');
+		const hostBox = await host.boundingBox();
+		const barBox = await memoWindow.locator('.titlebar').boundingBox();
+		if (!hostBox || !barBox) throw new Error('not visible');
+
+		try {
+			const from = { x: barBox.x + 30, y: barBox.y + barBox.height / 2 };
+			const to = { x: hostBox.x + 6, y: hostBox.y + hostBox.height / 2 };
+			await page.mouse.move(from.x, from.y);
+			await page.mouse.down();
+			await page.mouse.move(from.x + 12, from.y + 12, { steps: 3 });
+			await page.mouse.move(to.x, to.y, { steps: 12 });
+			// Only during the drag: the four outer strips, the left one active.
+			await expect(host.locator('.edge-drop')).toHaveCount(4);
+			await expect(host.locator('.edge-drop.active')).toHaveAttribute('data-dock-edge', 'left');
+			await page.mouse.up();
+			await expect(host.locator('.edge-drop')).toHaveCount(0);
+
+			await expect(memoWindow).toHaveCount(0);
+			const memoPane = host.locator('[data-dock-drop-id="memo"]');
+			await expect(memoPane).toBeVisible();
+			const paneBox = await memoPane.boundingBox();
+			if (!paneBox) throw new Error('memo pane not visible');
+			expect(Math.abs(paneBox.x - hostBox.x)).toBeLessThan(8);
+			expect(paneBox.height).toBeGreaterThan(hostBox.height - 16);
+		} finally {
+			await resetDashboardLayout(page);
+		}
+	});
+
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's

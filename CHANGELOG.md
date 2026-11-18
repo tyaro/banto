@@ -34,6 +34,12 @@
 - `@banto/grid-svelte`: `BantoGrid` の行高がテーマの密度（`--banto-grid-row-height`: standard 36px／compact 32px／touch 52px）に追従するようにした（#692）。これまでは `GridState.rowHeight`（既定 36）を構築時に固定していたため、compact・touch でも行は 36px のままだった。`rowHeight`（prop または `GridState` の option）を渡したときは今までどおり固定。`GridState` に `rowHeightFixed` と `followThemeRowHeight(px)` を足し、`rowHeight` は読み取り専用の getter（反応的）になった。アプリの items・監査ログの表は、compact・touch で行の高さが変わる
 - `/theme-lab`: プレビューの表に `rowHeight` を渡して密度ごとに作り直す回避（#691）を外した。表はプレビューの密度に追従する
 
+### 追加: dock の外周へのドッキング（#694 PR-1）
+
+- `@banto/dock-svelte`: パネルを host の四辺の縁へドラッグして落とすと、docked の木全体を新しい分割で包み、その側に全高／全幅で入るようにした（分割の比率は `[0.5, 0.5]`、根が同じ向きの分割でも常に包む）。縁の当たり判定は各辺 24px の帯（`EDGE_DROP_BAND`。host の短い辺の 1/8 まで）で、区画の当たり判定より先に効く。帯はドラッグ中だけ縁に出る（`pointer-events: none`）。docked が空（またはドラッグ中の pane だけ）のときは今までどおり。`beforePanelChange` は包まれて作り直される pane の `reparent` を先に、最後に動かす pane の `dock` / `move-docked` を聞く（変更の種類は増やしていない）。
+- 公開 API の追加: `DockState.dockPanelAtEdge(id, edge)` / `dockExistingAtEdge(id, edge)`、木の操作 `dockPanelAtEdge`、当たり判定 `computeEdgeDrop` / `edgeBandSize` / `EDGE_DROP_BAND`、型 `DockEdge`。
+- 見た目: host の縁に接する区画の外側 24px の帯へ落とすと、これまでの「その区画の端」ではなく外周になる。ドラッグ中だけ縁に破線の帯が出る（ドラッグ外の見た目は変わらない）。
+
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。

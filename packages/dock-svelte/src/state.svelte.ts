@@ -26,6 +26,7 @@ import {
 	canCollapseRegion,
 	collectPanelIds,
 	defaultMakeId,
+	dockPanelAtEdge as dockPanelAtEdgeTree,
 	dockPanelIntoTree,
 	expandRegionOf,
 	findNode,
@@ -39,6 +40,7 @@ import {
 	structureKey
 } from './core/tree';
 import type {
+	DockEdge,
 	DockLayout,
 	DockNode,
 	DockPanelInfo,
@@ -611,6 +613,40 @@ export class DockState {
 		if (!node || node.type !== 'panel') return;
 		const removed = removePanel(this.layout.docked, panelId);
 		const docked = dockPanelIntoTree(removed, node, targetId, region, this.#makeId);
+		this.layout = { ...this.layout, docked };
+	}
+
+	/**
+	 * Move a currently-floating panel to an outer edge of the host (#694 PR-1): the docked root is
+	 * wrapped in a new split and the panel spans that side (`core/tree.ts#dockPanelAtEdge`). Nothing
+	 * docked yet = it becomes the root. Carries over its title/icon; a no-op if `panelId` isn't a
+	 * floating window.
+	 */
+	dockPanelAtEdge(panelId: string, edge: DockEdge): void {
+		const win = this.layout.floating.find((w) => w.id === panelId);
+		if (!win) return;
+		const panelNode: DockPanelNode = {
+			type: 'panel',
+			id: win.id,
+			title: win.title,
+			icon: win.icon
+		};
+		const docked = dockPanelAtEdgeTree(this.layout.docked, panelNode, edge, this.#makeId);
+		const floating = this.layout.floating.filter((w) => w.id !== panelId);
+		this.layout = { ...this.layout, floating, docked };
+	}
+
+	/**
+	 * Move a panel that's ALREADY docked to an outer edge of the host (#694 PR-1): removed from
+	 * where it is, then the rest of the tree is wrapped as in `dockPanelAtEdge`. A no-op if `panelId`
+	 * isn't docked, or is the only docked pane (there is nothing to wrap).
+	 */
+	dockExistingAtEdge(panelId: string, edge: DockEdge): void {
+		const node = findNode(this.layout.docked, panelId);
+		if (!node || node.type !== 'panel') return;
+		const removed = removePanel(this.layout.docked, panelId);
+		if (!removed) return;
+		const docked = dockPanelAtEdgeTree(removed, node, edge, this.#makeId);
 		this.layout = { ...this.layout, docked };
 	}
 
