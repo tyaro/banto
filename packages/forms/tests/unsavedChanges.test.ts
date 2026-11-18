@@ -94,7 +94,9 @@ describe('runLeaveCheck', () => {
 	it('uses the host isSamePage: a query-only change is not asked, the default still asks', () => {
 		const confirm = vi.fn(() => false);
 		const query = () => nav('goto', '/tags?target=a', '/tags?target=b');
-		const byPath = runLeaveCheck(query(), [source(true)], { confirm, isSamePage: isSamePath });
+		const byPath = runLeaveCheck(query(), [{ ...source(true), isSamePage: isSamePath }], {
+			confirm
+		});
 		expect(byPath).toBe('allow');
 		expect(confirm).not.toHaveBeenCalled();
 		expect(runLeaveCheck(query(), [source(true)], { confirm })).toBe('kept');

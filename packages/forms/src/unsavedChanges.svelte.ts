@@ -113,7 +113,8 @@ export interface UnsavedChangesSource {
 	/**
 	 * This source's own "same page" rule. A pending source that sees a move as
 	 * leaving makes it a leave for everyone (so a clean guard with a lax rule
-	 * cannot hide a dirty guard's draft). Absent = the runner's `isSamePage`.
+	 * cannot hide a dirty guard's draft). Absent = the default rule (origin + pathname + search),
+	 * e.g. DraftCoordinator's source.
 	 */
 	isSamePage?: (from: URL, to: URL) => boolean;
 }
@@ -201,7 +202,7 @@ function decideAndAct(
 	for (const source of sources) {
 		if (!source.isPending()) continue;
 		firstPending ??= source;
-		if (!samePageBy(navigation, source.isSamePage ?? options.isSamePage)) samePage = false;
+		if (!samePageBy(navigation, source.isSamePage)) samePage = false;
 	}
 	if (firstPending === undefined) samePage = samePageBy(navigation, options.isSamePage);
 	const decision = decideLeave({

@@ -12,6 +12,7 @@ import GuardHarness from './GuardHarness.svelte';
 import {
 	hasUnsavedChanges,
 	isSamePath,
+	joinUnsavedChangesRegistry,
 	type LeaveNavigation,
 	type UnsavedChangesGuard
 } from '../src/unsavedChanges.svelte';
@@ -309,6 +310,32 @@ describe('guardUnsavedChanges', () => {
 				const router = mountTwo({ dirty: false, same: isSamePath }, { dirty: true }, confirm);
 				expect(router.navigate(...query)).toBe(true);
 				expect(confirm).toHaveBeenCalledOnce();
+			});
+
+			it.each([
+				['clean first', false],
+				['dirty first', true]
+			])('asks once and keeps the page on "stay" (%s)', (_, dirtyFirst) => {
+				const confirm = vi.fn(() => false);
+				const clean = { dirty: false, same: isSamePath };
+				const dirty = { dirty: true };
+				const router = dirtyFirst
+					? mountTwo(dirty, clean, confirm)
+					: mountTwo(clean, dirty, confirm);
+				expect(router.navigate(...query)).toBe(true);
+				expect(confirm).toHaveBeenCalledOnce();
+			});
+
+			it('a source without isSamePage (DraftCoordinator) counts a query move as leaving', () => {
+				const confirm = vi.fn(() => false);
+				const router = mountTwo({ dirty: false, same: isSamePath }, { dirty: false }, confirm);
+				const leave = joinUnsavedChangesRegistry({
+					isPending: () => true,
+					message: () => 'draft?'
+				});
+				expect(router.navigate(...query)).toBe(true);
+				expect(confirm).toHaveBeenCalledWith('draft?');
+				leave();
 			});
 
 			it('does not ask when every pending guard uses isSamePath', () => {
