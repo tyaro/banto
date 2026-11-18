@@ -23,6 +23,10 @@ export interface DockMessages {
 	pinWindow?: (title: string) => string;
 	/** Pin button aria-label while the window IS pinned: pressing it unpins. */
 	unpinWindow?: (title: string) => string;
+	/** Collapse button aria-label while the window is expanded (DockWindow titlebar); `aria-expanded` carries the state (#663 ③-A). */
+	collapseWindow?: (title: string) => string;
+	/** Collapse button aria-label while the window IS collapsed: pressing it expands. */
+	expandWindow?: (title: string) => string;
 }
 
 export const defaultDockMessages: Required<DockMessages> = {
@@ -34,5 +38,7 @@ export const defaultDockMessages: Required<DockMessages> = {
 	resizeWindow: (title) =>
 		`${title}をキーボードでサイズ変更（矢印で変える・Shift で大きく・Enter で確定・Esc で取消）`,
 	pinWindow: (title) => `${title}の位置と大きさを固定`,
-	unpinWindow: (title) => `${title}の位置と大きさの固定を外す`
+	unpinWindow: (title) => `${title}の位置と大きさの固定を外す`,
+	collapseWindow: (title) => `${title}を折りたたむ`,
+	expandWindow: (title) => `${title}を展開`
 };

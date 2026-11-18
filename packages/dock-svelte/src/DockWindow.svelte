@@ -113,12 +113,24 @@
 	const caps = $derived(resolveCapabilities(policy, win.id));
 	/** Pinned (#663 ②): position and size are fixed - no drag, no resize handles, no keyboard mode. */
 	const pinned = $derived(win.pinned === true);
+	/**
+	 * Collapsed (#663 ③-A): only the title bar is drawn. The body stays mounted but `hidden` + `inert`
+	 * (out of the tab order and the accessibility tree, its state kept); no resize handles / resize
+	 * mode. The saved `height` is untouched and the clamp keeps using it, so expanding puts the window
+	 * back exactly where it was (the title bar sits at the top, so the clamp's "keep a strip visible"
+	 * rule is the same either way).
+	 */
+	const collapsed = $derived(win.collapsed === true);
+	const bodyId = $props.id();
 
 	function focusThis(): void {
 		dock.focus(win.id);
 	}
 
 	let windowEl: HTMLDivElement | null = $state(null);
+	let bodyEl: HTMLDivElement | null = $state(null);
+	let collapseBtnEl: HTMLButtonElement | null = $state(null);
+	let resizeBtnEl: HTMLButtonElement | null = $state(null);
 
 	/**
 	 * Title-bar press: a `drag-candidate` session on the shared GestureOwner
@@ -296,6 +308,22 @@
 	$effect(() => {
 		if (pinned && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
 	});
+	// Collapsed while a resize (pointer or keyboard) is on this window: cancel it, which puts the pre-gesture geometry back.
+	$effect(() => {
+		if (collapsed && gesture.session?.panelId === win.id && gesture.session.kind === 'resize')
+			untrack(() => gesture.cancel('api'));
+	});
+	// Collapsing hides the body and drops the resize-mode button: if the DOM focus is in either, hand it
+	// to the collapse button first (`.pre`: the focused element is still rendered here, and a hidden /
+	// removed one would otherwise leave the focus on <body>). A focus the host put elsewhere is left alone.
+	$effect.pre(() => {
+		if (!collapsed) return;
+		untrack(() => {
+			const active = document.activeElement;
+			if (!active || !collapseBtnEl) return;
+			if ((bodyEl && bodyEl.contains(active)) || active === resizeBtnEl) collapseBtnEl.focus();
+		});
+	});
 	// Hidden while a gesture / keyboard mode is on this window: end it (see the module doc).
 	$effect(() => {
 		if (hidden && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
@@ -322,7 +350,7 @@
 	style:left={`${shown.x}px`}
 	style:top={`${shown.y}px`}
 	style:width={`${shown.width}px`}
-	style:height={`${shown.height}px`}
+	style:height={collapsed ? 'auto' : `${shown.height}px`}
 	style:z-index={zIndex}
 	onpointerdown={focusThis}
 	onfocusin={focusThis}
@@ -357,6 +385,18 @@
 				</span>
 			{/if}
 			<span class="title">{win.title}</span>
+			<button
+				type="button"
+				class="collapse-btn"
+				bind:this={collapseBtnEl}
+				aria-label={collapsed ? t.expandWindow(win.title) : t.collapseWindow(win.title)}
+				aria-expanded={!collapsed}
+				aria-controls={bodyId}
+				onpointerdown={(event) => event.stopPropagation()}
+				onclick={() => dock.setCollapsed(win.id, !collapsed)}
+			>
+				{collapsed ? '▸' : '▾'}
+			</button>
 			{#if caps.move && !pinned}
 				<button
 					type="button"
@@ -372,10 +412,11 @@
 					✥
 				</button>
 			{/if}
-			{#if !pinned}
+			{#if !pinned && !collapsed}
 				<button
 					type="button"
 					class="key-btn"
+					bind:this={resizeBtnEl}
 					class:active={keyMode === 'resize'}
 					aria-label={t.resizeWindow(win.title)}
 					aria-pressed={keyMode === 'resize'}
@@ -427,13 +468,22 @@
 		     disagreement between svelte-check and axe) as `DockedTree.svelte`'s
 		     `.body`. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-		<div class="body" role="region" aria-label={win.title} tabindex="0">
+		<div
+			class="body"
+			id={bodyId}
+			role="region"
+			aria-label={win.title}
+			tabindex="0"
+			bind:this={bodyEl}
+			hidden={collapsed}
+			inert={collapsed}
+		>
 			{@render panel(win)}
 		</div>
 	</div>
 
 	<!-- Resize handles: pointer surfaces, hidden from assistive tech - the keyboard equivalent is the resize-mode button in the titlebar. -->
-	{#each pinned ? [] : RESIZE_EDGES as edge (edge)}
+	{#each pinned || collapsed ? [] : RESIZE_EDGES as edge (edge)}
 		<div
 			class={`handle handle-${edge}`}
 			aria-hidden="true"
@@ -518,6 +568,7 @@
 	.close-btn,
 	.popout-btn,
 	.pin-btn,
+	.collapse-btn,
 	.key-btn {
 		flex: 0 0 auto;
 		width: var(--banto-dock-button-size, 22px);
@@ -550,11 +601,13 @@
 	.close-btn:focus-visible,
 	.popout-btn:focus-visible,
 	.pin-btn:focus-visible,
+	.collapse-btn:focus-visible,
 	.key-btn:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
 	}
 
+	.collapse-btn:hover,
 	.pin-btn:hover,
 	.pin-btn.active,
 	.key-btn:hover,
@@ -579,6 +632,10 @@
 		min-height: 0;
 		overflow: auto;
 		background: var(--banto-surface);
+	}
+
+	.body[hidden] {
+		display: none;
 	}
 
 	.body:focus-visible {

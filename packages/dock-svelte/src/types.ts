@@ -44,6 +44,15 @@ export interface FloatingWindow {
 	 * when the window docks (a pane pulled out later starts unpinned).
 	 */
 	pinned?: boolean;
+	/**
+	 * Collapsed by the user (#663 ③-A): the window shows only its title bar. The
+	 * saved `height` is untouched (expanding restores it); the body stays mounted
+	 * but hidden. Optional and written only when `true`: a layout without it
+	 * (older JSON) reads as expanded, so the layout `version` stays 2. Lives on
+	 * the window, so it is gone when the window docks (a pane pulled out later
+	 * starts expanded); closing and reopening keeps it.
+	 */
+	collapsed?: boolean;
 }
 
 /**

@@ -263,6 +263,22 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   操作前の位置と大きさに戻る。window がドックに入ると `pinned` は消え、あとで引き出した pane は固定なしで始まる。
 - ボタンのラベルは `messages.pinWindow(title)` / `messages.unpinWindow(title)`。
 
+### 折りたたみ（浮動 window をタイトルバーだけにする）
+
+浮動 window のタイトルバーの折りたたみのボタン（`aria-expanded` / `aria-controls`、▾／▸）を押すと、タイトルバーだけに畳まれ、
+もう一度押すと元の大きさに戻る。ピンとは独立で、固定したまま畳める・畳んだまま固定できる。ドック中の領域には出ない。
+
+- `dock.isCollapsed(id)` / `dock.setCollapsed(id, collapsed)`。`FloatingWindow.collapsed?: boolean` は `true` のときだけ書き出す
+  （`false` は項目ごと消す）。無い古い JSON は「展開」で読め、layout の `version` は 2 のまま。保存の `height` は畳んでも変えない。
+- 畳んでいる間、本体は破棄せず `hidden` + `inert` で隠す（中の状態は保たれ、`beforePanelChange` / `keepMounted` は関係しない: 畳むのは閉じるではない）。
+  リサイズのハンドルとキーボードのサイズ変更ボタンは出ず、`dock.resize` も何もしない。移動・閉じる・前面に出す・別ウィンドウで開くは効く。
+  中のタブ帯を使う外へのドラッグは、本体が隠れているあいだはできない。
+- 本体の中（またはサイズ変更ボタン）に DOM のフォーカスがあるときに畳むと、フォーカスは折りたたみのボタンへ移る（API から畳んでも同じ。
+  ほかへ移したフォーカスは奪わない）。サイズ変更の最中（ポインタ・キーボードのモード）に畳まれたら、その操作は取り消して操作前の大きさに戻る。
+- 画面内に収める補正（`clamp`）は保存の高さで考える（畳んでも位置は変わらず、展開すると元のとおり）。描く高さだけがタイトルバーになる。
+- window がドックに入ると `collapsed` は消え、あとで引き出した pane は展開で始まる。閉じて開き直しても `collapsed` は残る。
+- ボタンのラベルは `messages.collapseWindow(title)` / `messages.expandWindow(title)`。
+
 ### IME 変換中は構造変更を保留する
 
 `isStructureChangeDeferred()` が `true` のあいだ（省略時: document で `compositionstart` があって
