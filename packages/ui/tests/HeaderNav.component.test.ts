@@ -751,6 +751,27 @@ describe('HeaderNav menu entries (#663 ①-B)', () => {
 		expect(menuOf(button).dataset.popoverOpen).toBeUndefined();
 	});
 
+	it('re-anchors an open menu when the row is laid out again (no window resize)', async () => {
+		const { nav } = await setup({ entries: menuEntries() });
+		const button = within(nav).getByRole('button', { name: 'View' });
+		await fireEvent.keyDown(button, { key: 'ArrowDown' });
+		await flush();
+		const anchored = vi.mocked(computeAnchoredPosition);
+		const before = anchored.mock.calls.length;
+		// Links move into "more": the trigger moves left, the window does not resize.
+		await resizeTo(250);
+		await flush();
+		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual([
+			'A',
+			'View',
+			'More'
+		]);
+		expect(menuOf(button).dataset.popoverOpen).toBe('true');
+		const calls = anchored.mock.calls.slice(before);
+		expect(calls.length).toBeGreaterThan(0);
+		expect(calls.some(([anchor]) => anchor === button)).toBe(true);
+	});
+
 	it('without overflow: the menu sits with the other entries', async () => {
 		const { nav } = await setup({ entries: menuEntries(), overflow: false });
 		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual([
