@@ -748,6 +748,54 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 		});
 	});
 
+	// PR #681 review (Codex P2): two overlapping placements that ask the same pane the same
+	// thing (`reparent p`, cause f; another edge) do not share an approval - each is asked on
+	// its own, and the one approved second is stale once the first applied (the case of the
+	// same target is in lifecycle-request.test.ts).
+	describe('two placements that ask the same pane the same thing', () => {
+		it('a drop above P while a drop below P waits is asked on its own; the second approval is stale', async () => {
+			const answers: ((ok: boolean) => void)[] = [];
+			const calls: string[] = [];
+			const { dock } = mount(mixed(), {
+				beforePanelChange: (c) => {
+					calls.push(label(c));
+					return c.kind === 'reparent' ? new Promise<boolean>((r) => answers.push(r)) : true;
+				}
+			});
+			dropFBelowP();
+			dragFrom(titlebarF(), 500, 10); // the top edge of P: another placement
+			expect(calls).toEqual(['reparent p', 'reparent p']);
+			answers[0](true);
+			await nextTask();
+			expect(calls).toEqual(['reparent p', 'reparent p', 'dock f']);
+			const below = (dock.layout.docked as { children: unknown[] }).children[1];
+			expect(below).toMatchObject({ type: 'split', children: [{ id: 'p' }, { id: 'f' }] });
+			answers[1](true);
+			await nextTask();
+			// Not asked again and not moved: the structure it was asked about is gone.
+			expect(calls).toEqual(['reparent p', 'reparent p', 'dock f']);
+			expect((dock.layout.docked as { children: unknown[] }).children[1]).toEqual(below);
+		});
+
+		it('the same drop twice while the first waits is one request', async () => {
+			let answer: (ok: boolean) => void = () => {};
+			const calls: string[] = [];
+			const { dock } = mount(mixed(), {
+				beforePanelChange: (c) => {
+					calls.push(label(c));
+					return c.kind === 'reparent' ? new Promise<boolean>((r) => (answer = r)) : true;
+				}
+			});
+			dropFBelowP();
+			dropFBelowP();
+			expect(calls).toEqual(['reparent p']);
+			answer(true);
+			await nextTask();
+			expect(calls).toEqual(['reparent p', 'dock f']);
+			expect(winOf(dock, 'f')).toBeUndefined();
+		});
+	});
+
 	describe('a drop on a tab group', () => {
 		it('refused: the active tab stays, nothing changes, the dropped pane is not asked', () => {
 			const asked: DockPanelChange[] = [];

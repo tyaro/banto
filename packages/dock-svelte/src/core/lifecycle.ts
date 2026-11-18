@@ -316,6 +316,8 @@ export class PanelLifecycle {
 	 * - except when it changes what another docked pane shows or puts mounted
 	 * content back into the tree:
 	 *
+	 * - An open floating window is only brought to the front (`DockState.show`,
+	 *   nothing to ask).
 	 * - A docked background tab is brought up with `switchTab` (a `tab-switch`,
 	 *   like a tab click).
 	 * - A pane hidden from the dock goes back to its remembered place through
@@ -349,6 +351,11 @@ export class PanelLifecycle {
 				if (outcome === 'applied') this.#dock.revealDocked(panelId);
 				return outcome;
 			});
+		}
+		if (where === 'open') {
+			// An open floating window: `DockState.show` only brings it to the front.
+			this.#dock.show(panelId);
+			return Promise.resolve('applied');
 		}
 		const redocksMounted = (): boolean =>
 			this.#whereIs(panelId) === 'hidden' &&
@@ -399,7 +406,8 @@ export class PanelLifecycle {
 	 * (changed = `stale`). `preview` is the docked tree `apply` would make
 	 * (`undefined` = the change no longer exists). Nothing to ask = applied
 	 * at once. The same placement while the first is waiting returns the
-	 * pending one.
+	 * pending one; another placement is asked on its own, even when a step
+	 * asks the same pane the same thing.
 	 */
 	requestPlacement(
 		panelId: string,
@@ -439,7 +447,9 @@ export class PanelLifecycle {
 			const last = i === changes.length - 1;
 			let next: Promise<DockPanelChangeOutcome> | null = null;
 			return this.request(changes[i], last ? apply : () => (next = step(i + 1)), {
-				target,
+				// The whole placement is part of each step's identity: another placement whose
+				// step asks the same pane the same thing must not share this one's continuation.
+				target: id,
 				describe: () => (same() ? changes[i] : null)
 			}).then((outcome) => (outcome === 'applied' && next ? next : outcome));
 		};

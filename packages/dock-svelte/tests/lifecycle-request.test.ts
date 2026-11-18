@@ -235,6 +235,67 @@ describe('requests to different destinations are told apart (review 3)', () => {
 	});
 });
 
+// PR #681 review (Codex P2): two placements whose first step is the same question to
+// the same pane (same change, same target) are still different placements - each asks
+// on its own; one approval is never used for the other, and the one approved second
+// is stale once the first applied.
+describe('placements whose first step is the same are told apart (#666)', () => {
+	/** `a` put into the tab group t as its active tab: x is pushed out (a tab switch). */
+	const preview = () => ({
+		type: 'tabs' as const,
+		id: 't',
+		activeIndex: 2,
+		children: [
+			{ type: 'panel' as const, id: 'x', title: 'X' },
+			{ type: 'panel' as const, id: 'y', title: 'Y' },
+			{ type: 'panel' as const, id: 'a', title: 'A' }
+		]
+	});
+
+	it('each is asked; the first approved applies, the other is stale', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const asked: DockPanelChange[] = [];
+		const hook = (c: DockPanelChange) => {
+			asked.push(c);
+			return c.kind === 'tab-switch' ? new Promise<boolean>((r) => answers.push(r)) : true;
+		};
+		const { dock, lifecycle } = setup({ hook });
+		const applied: string[] = [];
+		const withDock = lifecycle.requestPlacement(
+			'a',
+			() => ({ kind: 'dock', panelId: 'a', remount: true }),
+			preview,
+			() => {
+				applied.push('with-dock');
+				dock.setActiveTab('t', 1); // a structure change, as a real placement would make
+			},
+			'T'
+		);
+		const without = lifecycle.requestPlacement(
+			'a',
+			() => null,
+			preview,
+			() => applied.push('without'),
+			'T'
+		);
+		const again = lifecycle.requestPlacement(
+			'a',
+			() => null,
+			preview,
+			() => applied.push('again'),
+			'T'
+		);
+		expect(again).toBe(without);
+		expect(asked.map((c) => c.kind)).toEqual(['tab-switch', 'tab-switch']);
+		answers[0](true);
+		expect(await withDock).toBe('applied');
+		expect(asked.map((c) => c.kind)).toEqual(['tab-switch', 'tab-switch', 'dock']);
+		answers[1](true);
+		expect(await without).toBe('stale');
+		expect(applied).toEqual(['with-dock']);
+	});
+});
+
 describe('dispose resolves every waiting request (review 6)', () => {
 	it('a hook promise that never settles resolves disposed and lets go of apply', async () => {
 		const apply = vi.fn();
