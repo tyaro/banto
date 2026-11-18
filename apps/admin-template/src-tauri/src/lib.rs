@@ -98,7 +98,7 @@ struct AppState {
     /// wraps `users`/`settings` below ([`AuthIo::production`]).
     auth_io: AuthIo,
     /// Serializes "read the auth-mode settings, decide, act on the decision"
-    /// (PR #264 re-review P2): [`auth_config_apply_body`] holds it from its
+    /// (PR #264 re-review P2): [`auth_config_apply_with_permissions_body`] holds it from its
     /// first settings read through the save and the synthetic-session
     /// install, [`logout_body`] holds it around its post-clear re-read and
     /// install, and the autologin toggles hold it around their
@@ -300,7 +300,12 @@ type FirstUserSetup = Arc<dyn Fn(String, String, String) -> AuthFuture<UserIdent
 type AuthModeSource = Arc<dyn Fn() -> AuthFuture<AuthSettings> + Send + Sync>;
 /// `auth_config_apply`'s settings save. Not in design §8.3's sketch: injected
 /// so a test can hold an apply right AFTER it saved (PR #264 re-review P2).
-type AuthConfigSave = Arc<dyn Fn(AuthSettings) -> AuthFuture<()> + Send + Sync>;
+///
+/// Takes the mode's permissions too (`None` = leave them): the mode, role and
+/// permissions are written in ONE transaction (PR #703 review), so a failed
+/// save changes none of them.
+type AuthConfigSave =
+    Arc<dyn Fn(AuthSettings, Option<Vec<PermissionKey>>) -> AuthFuture<()> + Send + Sync>;
 
 /// See [`AppState::auth_io`].
 struct AuthIo {
@@ -333,9 +338,13 @@ impl AuthIo {
                 let settings = settings.clone();
                 Box::pin(async move { settings.auth_config().await })
             }),
-            save_auth_config: Arc::new(move |config| {
+            save_auth_config: Arc::new(move |config, permissions| {
                 let settings = save_settings.clone();
-                Box::pin(async move { settings.set_auth_config(&config).await })
+                Box::pin(async move {
+                    settings
+                        .set_auth_config_and_disabled_permissions(&config, permissions.as_deref())
+                        .await
+                })
             }),
         }
     }
@@ -1434,7 +1443,7 @@ async fn auth_change_password(
 
 /// The synthetic identity of auth-disabled mode (spec M11). The ONE
 /// definition shared by `run()`'s bootstrap and [`rebind_local_session`]
-/// (used by [`auth_config_apply_body`] and [`logout_body`]), so they can
+/// (used by [`auth_config_apply_with_permissions_body`] and [`logout_body`]), so they can
 /// never drift apart. `id: 0` is not a
 /// real `users` row - nothing ever looks a synthetic session up by id (no
 /// change-password/self-deletion flows apply to it), so there is no real
@@ -1700,22 +1709,12 @@ async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettingsView,
 /// without a restart - also when an account session was signed in: that
 /// session is replaced (owner review of #266 P1, [`rebind_local_session`]),
 /// so `auth.disabled == true` always goes with the synthetic session.
+///
 /// Body of [`auth_config_apply`] (spec M14 pattern) so its escape-hatch /
 /// bootstrap-window authz (the actor may be `None`) + audit behavior is
 /// testable with a plain `&AppState`.
-async fn auth_config_apply_body(
-    state: &AppState,
-    disabled: bool,
-    disabled_role: &str,
-) -> Result<AuthSettings, BantoError> {
-    Ok(
-        auth_config_apply_with_permissions_body(state, disabled, disabled_role, None)
-            .await?
-            .settings,
-    )
-}
-
-/// [`auth_config_apply_body`] with the mode's permissions (Issue #697,
+///
+/// Also carries the mode's permissions (Issue #697,
 /// user-permissions-plan §8-4): `permissions` = the keys the synthetic
 /// session holds, replacing `auth.disabled_permissions`; `None` leaves them
 /// as they are (a client that does not know the field keeps working).
@@ -1790,20 +1789,18 @@ async fn auth_config_apply_with_permissions_body(
     let previous = config.clone();
     config.disabled = disabled;
     config.disabled_role = role;
-    // The role/mode save and the permissions write are one step for the
-    // failure path below: whichever fails, the session is re-bound from what
-    // IS stored.
-    let save_result = async {
-        (state.auth_io.save_auth_config)(config.clone()).await?;
-        if let Some(keys) = &requested {
-            let keys: Vec<String> = keys.iter().map(|key| key.as_str().to_string()).collect();
-            state
-                .settings
-                .set_auth_disabled_permissions(&keys, catalog)
-                .await?;
-        }
-        Ok::<(), BantoError>(())
-    }
+    // The mode, role and permissions are ONE transaction
+    // (`SettingsService::set_auth_config_and_disabled_permissions`): either
+    // all are stored or none is. So on failure nothing changed - including
+    // the permissions - and the session is re-bound below from the stored
+    // state with the permission change counted as "none" (no `seq` advance
+    // for it; the role/mode change, if any, is still read back from storage).
+    let save_result = (state.auth_io.save_auth_config)(
+        config.clone(),
+        requested
+            .as_ref()
+            .map(|keys| keys.iter().cloned().collect::<Vec<PermissionKey>>()),
+    )
     .await;
     if let Err(err) = save_result {
         // Freshness audit of #266 (P2-3, S-104): the save is one transaction
@@ -1811,8 +1808,7 @@ async fn auth_config_apply_with_permissions_body(
         // part-way, the session must still follow what IS stored: re-read
         // it and re-bind/end from that, then report the error.
         if let Ok(stored) = state.settings.auth_config().await {
-            let (rebind, ended_local) =
-                apply_mode_to_session(state, &previous, &stored, !permission_diff.is_empty());
+            let (rebind, ended_local) = apply_mode_to_session(state, &previous, &stored, false);
             record_mode_session_change(&state.audit, &rebind, ended_local).await;
         }
         return Err(err);
@@ -4713,6 +4709,21 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`auth_config_apply_with_permissions_body`] without permissions,
+    /// returning just the settings (most tests do not care about them).
+    async fn auth_config_apply_body(
+        state: &AppState,
+        disabled: bool,
+        disabled_role: &str,
+    ) -> Result<AuthSettings, BantoError> {
+        Ok(
+            auth_config_apply_with_permissions_body(state, disabled, disabled_role, None)
+                .await?
+                .settings,
+        )
+    }
+
     use std::path::PathBuf;
 
     impl AppState {
@@ -5393,7 +5404,7 @@ mod tests {
             .expect("matching version deletes");
     }
 
-    /// [`auth_config_apply_body`]'s normal (non-escape-hatch) path records a
+    /// [`auth_config_apply_with_permissions_body`]'s normal (non-escape-hatch) path records a
     /// `settings_change`/`settings` entry attributed to the admin, with an
     /// `{authDisabled}` detail (M-review 2026-08 M-5).
     #[tokio::test]
@@ -5431,7 +5442,7 @@ mod tests {
         assert_eq!(detail, serde_json::json!({ "authDisabled": true }));
     }
 
-    /// [`auth_config_apply_body`]'s bootstrap window (choiapp-feedback-2026-09
+    /// [`auth_config_apply_with_permissions_body`]'s bootstrap window (choiapp-feedback-2026-09
     /// §5): with ZERO accounts and no session, enabling no-login mode from
     /// the first-run setup screen succeeds, records the `settings_change`
     /// with no actor, synthesizes the same "local" session `run()`'s
@@ -6961,10 +6972,12 @@ mod tests {
     fn hold_after_save(state: &mut AppState) -> Hold {
         let (slot, hold) = gate();
         let settings = state.settings.clone();
-        state.auth_io.save_auth_config = Arc::new(move |config| {
+        state.auth_io.save_auth_config = Arc::new(move |config, permissions| {
             let (slot, settings) = (slot.clone(), settings.clone());
             Box::pin(async move {
-                settings.set_auth_config(&config).await?;
+                settings
+                    .set_auth_config_and_disabled_permissions(&config, permissions.as_deref())
+                    .await?;
                 pass_gate(&slot).await;
                 Ok(())
             })
@@ -7352,7 +7365,7 @@ mod tests {
     /// `auth.disabled` and then fails (a save interrupted part-way).
     fn save_fails_after_the_mode(state: &mut AppState) {
         let settings = state.settings.clone();
-        state.auth_io.save_auth_config = Arc::new(move |config| {
+        state.auth_io.save_auth_config = Arc::new(move |config, _permissions| {
             let settings = settings.clone();
             Box::pin(async move {
                 settings
@@ -10078,6 +10091,79 @@ mod tests {
         assert_eq!(
             details[4]["authDisabledPermissions"],
             serde_json::json!({ "added": [], "removed": ["equipment.operate"] })
+        );
+    }
+
+    /// PR #703 cross-review P1: mode, role and permissions are ONE save, and
+    /// the session is re-bound right after it with no `.await` in between.
+    /// While the apply is held right after that save: the store already has
+    /// the mode AND the permissions together (never one without the other),
+    /// the slot is still the old one (the rebind has not happened), and a
+    /// concurrent resolve settles against the stored state; once released the
+    /// session holds the permission and `seq` has advanced.
+    #[tokio::test]
+    async fn apply_with_permissions_is_one_save_then_rebinds_without_a_gap() {
+        let (mut state, _op) = permission_app_state().await;
+        let ack = perm("alarm.ack");
+        let mut hold = hold_after_save(&mut state);
+        let seq_before = read_slot(&state).1;
+
+        let wanted = ["alarm.ack".to_string()];
+        let apply = auth_config_apply_with_permissions_body(&state, true, "viewer", Some(&wanted));
+        tokio::pin!(apply);
+        run_until_held!(apply, hold);
+
+        // One transaction: both are stored, or (before the save) neither.
+        assert!(state.settings.auth_config().await.unwrap().disabled);
+        assert_eq!(
+            state
+                .settings
+                .auth_disabled_permissions()
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(read_slot(&state).1, seq_before, "not re-bound yet");
+
+        hold.release.send(()).unwrap();
+        let view = apply.await.expect("apply");
+        assert_eq!(view.disabled_permissions, ["alarm.ack"]);
+        assert!(read_slot(&state).1 > seq_before);
+        assert!(is_local(&read_slot(&state).0));
+        assert!(require_permission(&state, &ack, "alarm").await.is_ok());
+    }
+
+    /// PR #703 review (P2): the mode and the permissions are saved together,
+    /// so a failed save leaves the stored permissions as they were (the
+    /// injected save is the production one, made to fail).
+    #[tokio::test]
+    async fn failed_save_leaves_the_modes_permissions_unchanged() {
+        let (mut state, _op) = permission_app_state().await;
+        auth_config_apply_with_permissions_body(
+            &state,
+            true,
+            "viewer",
+            Some(&["alarm.ack".to_string()]),
+        )
+        .await
+        .unwrap();
+        state.auth_io.save_auth_config = Arc::new(|_config, _permissions| {
+            Box::pin(async { Err(BantoError::Storage("disk full (test)".to_string())) })
+        });
+        let err = auth_config_apply_with_permissions_body(
+            &state,
+            true,
+            "viewer",
+            Some(&["equipment.operate".to_string()]),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, BantoError::Storage(_)), "{err:?}");
+        let stored = state.settings.auth_disabled_permissions().await.unwrap();
+        assert_eq!(
+            stored.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["alarm.ack"]
         );
     }
 

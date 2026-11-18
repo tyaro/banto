@@ -5,7 +5,7 @@
  * 欄の出し分け・下書きの正規化・保存時に送る値の決定だけを持つ。権限の語彙はアプリが
  * 登録したカタログ（`permissions_catalog`）で、テンプレートは何も登録しないので欄は出ない。
  */
-import type { PermissionEntry, UserPermission } from '#lib/banto/usersAdmin.js';
+import type { PermissionEntry, UserPermission } from '#lib/banto/authAdmin.js';
 
 /** カタログがあるときだけ欄を出す（空・未取得・取得失敗では出さない = テンプレートの見た目は変わらない）。 */
 export function showPermissionsField(catalog: readonly PermissionEntry[] | null): boolean {

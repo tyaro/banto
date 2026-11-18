@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PermissionEntry } from '#lib/banto/usersAdmin.js';
+import type { PermissionEntry } from '#lib/banto/authAdmin.js';
 import {
 	draftFromSaved,
 	permissionDescription,

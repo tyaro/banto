@@ -27,9 +27,10 @@
 	import {
 		applyAuthSettings,
 		getPermissionCatalog,
-		type AuthDisabledRole
+		type AuthDisabledRole,
+		type PermissionEntry,
+		type UserPermission
 	} from '#lib/banto/authAdmin.js';
-	import type { PermissionEntry, UserPermission } from '#lib/banto/usersAdmin.js';
 	import { isAdmin } from '#lib/permissions.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { toastStore } from '#lib/toast.svelte.js';

@@ -18,7 +18,22 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
-import type { PermissionEntry, UserPermission } from './usersAdmin';
+
+/**
+ * A permission key (`area.action`, Issue #697). Defined here (not imported
+ * from `usersAdmin.ts`) because the display preset removes that file while
+ * this one stays; `usersAdmin.ts` declares the same shape for the users screen.
+ */
+export type UserPermission = string;
+
+/** Mirrors `banto_admin_services::permissions::PermissionEntry` (`permissions_catalog`). */
+export interface PermissionEntry {
+	key: UserPermission;
+	/** Message key of the display name (the app's own messages). */
+	labelKey: string;
+	/** Message key of the description. */
+	descriptionKey: string;
+}
 
 export type AuthDisabledRole = 'admin' | 'editor' | 'viewer';
 

@@ -585,6 +585,24 @@ impl SettingsService {
     /// one that catches the conflict, and so the two can never disagree on
     /// whether a given combination is legal.
     pub async fn set_auth_config(&self, config: &AuthSettings) -> Result<(), BantoError> {
+        self.set_auth_config_and_disabled_permissions(config, None)
+            .await
+    }
+
+    /// [`Self::set_auth_config`] plus the mode's permissions (Issue #697,
+    /// [`Self::auth_disabled_permissions`]) in the SAME transaction: the four
+    /// auth keys and, only when `permissions` is `Some`, the permissions key
+    /// are written by one `set_many`, so a failure never leaves a new mode
+    /// with the old permissions (PR #703 review). The combination guard runs
+    /// first, so a refused combination writes nothing - permissions included.
+    /// The keys are already validated against the catalog by the caller
+    /// (they are `PermissionKey`s); `None` leaves the stored permissions as
+    /// they are.
+    pub async fn set_auth_config_and_disabled_permissions(
+        &self,
+        config: &AuthSettings,
+        permissions: Option<&[PermissionKey]>,
+    ) -> Result<(), BantoError> {
         let server = self.server_config().await?;
         if !auth_server_combination_allowed(config.disabled, server.enabled, server.viewer_public) {
             return Err(BantoError::Other(
@@ -593,10 +611,11 @@ impl SettingsService {
             ));
         }
 
-        // One transaction (freshness audit of #266, P2-3): all four keys or
+        // One transaction (freshness audit of #266, P2-3): all keys or
         // none, so a failure part-way never leaves a mode saved that the
         // desktop app's session re-bind did not follow.
-        self.set_many(&[
+        let formatted = permissions.map(format_disabled_permissions);
+        let mut pairs: Vec<(&str, &str)> = vec![
             (
                 KEY_AUTH_DISABLED,
                 if config.disabled { "true" } else { "false" },
@@ -614,8 +633,11 @@ impl SettingsService {
                 KEY_AUTOLOGIN_USERNAME,
                 config.autologin_username.as_deref().unwrap_or(""),
             ),
-        ])
-        .await
+        ];
+        if let Some(value) = &formatted {
+            pairs.push((KEY_AUTH_DISABLED_PERMISSIONS, value));
+        }
+        self.set_many(&pairs).await
     }
 
     /// The permissions of auth-disabled mode's synthetic session (Issue #697,
@@ -1113,6 +1135,54 @@ mod tests {
         svc.set_server_config(&ServerSettings::default())
             .await
             .expect("disabling (or leaving disabled) LAN access should always be allowed");
+    }
+
+    #[tokio::test]
+    async fn set_auth_config_and_permissions_writes_both_and_none_keeps_permissions() {
+        let svc = service().await;
+        let auth = |disabled| AuthSettings {
+            disabled,
+            ..AuthSettings::default()
+        };
+        let keys = [
+            PermissionKey::parse("equipment.operate").unwrap(),
+            PermissionKey::parse("alarm.ack").unwrap(),
+        ];
+        svc.set_auth_config_and_disabled_permissions(&auth(true), Some(&keys))
+            .await
+            .unwrap();
+        assert!(svc.auth_config().await.unwrap().disabled);
+        assert_eq!(svc.auth_disabled_permissions().await.unwrap().len(), 2);
+        // None = the stored permissions are untouched.
+        svc.set_auth_config_and_disabled_permissions(&auth(false), None)
+            .await
+            .unwrap();
+        assert!(!svc.auth_config().await.unwrap().disabled);
+        assert_eq!(svc.auth_disabled_permissions().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn set_auth_config_and_permissions_writes_nothing_when_combination_refused() {
+        let svc = service().await;
+        svc.set_server_config(&ServerSettings {
+            enabled: true,
+            ..ServerSettings::default()
+        })
+        .await
+        .unwrap();
+        let keys = [PermissionKey::parse("equipment.operate").unwrap()];
+        let refused = svc
+            .set_auth_config_and_disabled_permissions(
+                &AuthSettings {
+                    disabled: true,
+                    ..AuthSettings::default()
+                },
+                Some(&keys),
+            )
+            .await;
+        assert!(refused.is_err());
+        assert!(!svc.auth_config().await.unwrap().disabled);
+        assert!(svc.auth_disabled_permissions().await.unwrap().is_empty());
     }
 
     #[tokio::test]
