@@ -34,6 +34,10 @@
 
 - `guardUnsavedChanges({ ..., isSamePage?: (from: URL, to: URL) => boolean })` と `isSamePath(from, to)`（パスが同じならクエリが違っても同じページ）を追加。クエリに画面の状態を持つページで、クエリだけが変わる `goto`・戻る・進むに未保存の確認を出さない。`isApprovedExit` にも判定関数を渡せる。既定（パス+クエリ一致）と、再読み込み・タブを閉じるの扱いは従来どおり
 
+### 修正（patch）: 狭い viewport で Menu などの popover の左端が画面外へ出る（#668）
+
+- `anchoredPopover` の横の補正を、左端が必ず `ANCHORED_POPOVER_GAP` 以上になる形に直した（popover が viewport より広いときは右側へはみ出す）。Menu / HeaderNav / DateInput / DateTimeInput / TimeInput / Tooltip に効く。Menu の `min-width` / `max-width` は `100vw - 2 * var(--banto-space-1)` を超えないようにした
+
 ### 追加（minor）: ui のショートカットに `blockOnMenu` と `mod: 'either'`（#669）
 
 - `CommandSpec.blockOnMenu?`（既定 `true`）。`false` の command はメニューが見えていても止まらない（モーダルの層は今までどおり止める）。`createShortcutDispatcher({ mod?: 'platform' | 'either' })`（既定 `'platform'`）。`'either'` は `Mod` を Ctrl・Meta のどちらでも一致させ、両方押しは一致させない。`ShortcutModMode` 型と `matchShortcut` の第 4 引数を追加

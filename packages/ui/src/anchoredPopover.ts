@@ -84,7 +84,9 @@ export function computeAnchoredPosition(
 			: placement === 'bottom-center'
 				? anchorRect.left + (anchorRect.width - popoverRect.width) / 2
 				: anchorRect.right - popoverRect.width;
-	left = Math.min(Math.max(left, GAP), viewportWidth - popoverRect.width - GAP);
+	// The left edge never goes below GAP: when the popover is wider than the
+	// viewport the overflow goes to the right (#668).
+	left = Math.max(GAP, Math.min(left, viewportWidth - popoverRect.width - GAP));
 
 	return { top, left };
 }
