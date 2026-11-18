@@ -67,6 +67,17 @@
 - 見た目: ドッキング中の区画の見出しにピンのボタンが増える。dashboard（分析ワークスペース）と command-palette の visual の基準画像の再生成が要る（Linux で再生成する）。
 - **型エラーの注意（派生アプリ）**: 公開の union に種類を足した — `DockPanelChange` に `auto-hide`（PR-3b）。`switch (change.kind)` を網羅検査（`never` への代入など）しているアプリは分岐を足せば通る。また、`DockMessages` を `Required<DockMessages>` として自前で全部埋めているアプリは、増えたキー（`lockWindow` / `unlockWindow`（PR-3a）、`autoHidePane` / `pinPane` / `autoHideBand`（PR-3b））を足す必要がある。
 
+### 追加: ロールとは別に、ユーザーへ個別に付ける権限（#697 PR-1 サーバー）
+
+- **権限（permission）**: `equipment.operate` のようなキーを、管理者がアカウントごとに付け外しできるようにした。ロール（`viewer < editor < admin`）とは独立に判定し、Admin でも付けていなければ持たない。語彙はアプリが起動時に登録する（`PermissionCatalog`）。テンプレートは何も登録しない（`admin_template_core::permission_catalog()` は空。banto-serve と Tauri の両方がこの 1 つの関数を呼ぶ）。
+- DB: migration 0013 `user_permissions`（SQLite・PostgreSQL。`users` の削除で `ON DELETE CASCADE`）。0013 より前のバックアップを戻しても、起動時の migration で表ができる。
+- `banto-admin-services`: `permissions` モジュール（`PermissionKey`・`PermissionCatalog`・`PermissionEntry`・`PermissionDiff`・`SessionPermissions`）。`UsersService` に `with_permission_catalog`・`permission_catalog`・`permissions_of`・`permissions_by_user`・`session_permissions`・`set_permissions`・`update_user_with_permissions`（戻り値 `UserUpdate`）。監査の detail は新しい関数 `user_update_detail_with_permissions`（`changes` に `{ field: "permissions", added, removed }`）。`SettingsService` に `auth_disabled_permissions`・`set_auth_disabled_permissions`（キー `auth.disabled_permissions`、ログイン不要モードの権限。既定は無し）。
+- `banto-server`: `AuthState::with_permission_reader`・`AuthState::session_permissions`、型 `PermissionReader`、`SessionPermissions` の再公開。`require_auth` がアカウントのセッションの権限を要求ごとに読み、リクエストの extension に入れる（`Extension<SessionPermissions>` で取り出せる）。閲覧公開（grant）のセッションは常に権限なし。ガード `PermissionGuard` / `require_permission`（拒否は 403 `forbidden` と `denied` の監査。ロールの拒否と同じ形）。`routes::user_auth_state` は権限の読み出しも入れる（`routes::user_permission_reader`）。`routes::UserWithPermissions`・`list_users_with_permissions`・`permission_catalog_entries`。
+- REST: `GET /api/permissions`（Admin）。`PUT /api/users/{id}` の body に `permissions?: string[]`（省略で変えない。付け外しで `version` +1。未登録・形の違うキーは 422 `validation`）。`GET /api/users` の各行と `PUT` の応答、`GET /api/auth/identity` に `permissions` が増えた（JSON のフィールドの追加）。`POST /api/users` では権限を付けない。
+- Tauri: `permissions_catalog`（Admin）、`users_update` の `permissions?`、`users_list`・`users_update`・`auth_identity`・`auth_resolve` の応答に `permissions`。`require_permission(state, permission, resource)` と `session_permissions(state)`（コマンドのたびに DB から読む）。
+- `verify:architecture` rule 8: 権限のガードの対（`PERMISSION_PAIRS`）を両経路で照合する。`permissions_catalog` ↔ `GET /api/permissions` を登録した。
+- **既存の公開の型は変えていない**: `Identity`・`UserIdentity`・`UserSummary`・`AuthSettings`・`SessionAccount`・`SessionLookup`・`AuthenticatedSession` などにフィールドを足していない。権限は別の型（`SessionPermissions`・応答用の `UserWithPermissions`）で持つ。既存の関数・トレイトのシグネチャも変えていない（追加だけ）。構造体リテラルで組み立てている派生アプリもそのままコンパイルできる。
+
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。
