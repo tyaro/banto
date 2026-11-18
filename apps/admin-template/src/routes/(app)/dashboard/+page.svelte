@@ -56,6 +56,7 @@
 	import DashboardMemoField from '#lib/components/DashboardMemoField.svelte';
 	import DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
+	import PageViewMenu, { type PageViewMenuItem } from '#lib/components/PageViewMenu.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { PageHeader, LoadingState } from '@banto/ui';
 
@@ -337,28 +338,50 @@
 		return Math.max(140, (panelHeights[id] ?? 240) - 16);
 	}
 
-	function isDocked(id: string): boolean {
-		return collectPanelIds(dock.layout.docked).includes(id);
-	}
-	/** A panel counts as visible when it's in the docked tree or an open floating window. */
-	function isPanelVisible(id: string): boolean {
-		return isDocked(id) || dock.isOpen(id);
-	}
-	/** Toolbar toggle: docked panels are always shown (button disabled); floating ones open/close, and a fully-removed one re-adds as floating. */
-	function togglePanel(id: string): void {
-		if (isDocked(id)) return;
-		if (dock.isOpen(id)) {
-			// Through the dock lifecycle (not dock.close): closing discards the
-			// pane's content, so the memo's unapplied input is settled first.
-			void dockHost?.closePanel(id);
-			return;
+	/**
+	 * #663 ①-C: the View menu (PageViewMenu - the menu bar's "表示" when the
+	 * bar is on screen, else a button in this page's header) replaces the old
+	 * dock toolbar. One checkbox per panel in PANEL_DEFS order, checked = on
+	 * screen (docked, a background tab included, or an open floating window),
+	 * read from `dock.panels` so a refused / stale change shows the real state.
+	 */
+	function setPanelVisible(id: string, visible: boolean): void {
+		if (!dockHost) return;
+		if (visible) {
+			// A panel never shown yet is not in the layout: add it as a closed-
+			// or-open floating window first (a no-op for an id already docked or
+			// floating), then show it - a pane hidden from the dock goes back to
+			// its former slot.
+			const def = PANEL_DEFS.find((d) => d.id === id);
+			if (def) dock.ensureWindow(def, dockHostW, dockHostH);
 		}
-		const def = PANEL_DEFS.find((d) => d.id === id);
-		if (def) {
-			dock.ensureWindow(def, dockHostW, dockHostH);
-			dock.open(id);
-		}
+		// Hiding goes through the dock lifecycle like ✕ (closing discards the
+		// pane's content, so the memo's unapplied input is settled first).
+		void dockHost.setPanelVisible(id, visible);
 	}
+
+	const viewMenuItems: PageViewMenuItem[] = $derived.by(() => {
+		const visible = new Map(dock.panels.map((row) => [row.id, row.visible]));
+		return [
+			...PANEL_DEFS.map((def): PageViewMenuItem => {
+				const checked = visible.get(def.id) ?? false;
+				return {
+					kind: 'checkbox',
+					id: `panel:${def.id}`,
+					label: def.title,
+					checked,
+					onSelect: () => setPanelVisible(def.id, !checked)
+				};
+			}),
+			{ kind: 'separator', id: 'reset-separator' },
+			{
+				kind: 'action',
+				id: 'reset-layout',
+				label: m['dashboard.resetLayout'](),
+				onSelect: resetDockLayout
+			}
+		];
+	});
 
 	/**
 	 * v2 pop-out (spec §5.3, Tauri only): dragging a panel out via
@@ -389,11 +412,11 @@
 	// window is closed, src-tauri emits `banto://panel-closed` with that
 	// panel's id (see popout.ts's listenPanelClosed) - `dock.open` brings it
 	// back as a floating pseudo-window at its preserved geometry. (If the
-	// panel had been docked, `onPopOut` above already demoted it to floating
-	// via `undockPanel` before closing it - same permanent docked->floating
-	// transition `DockedTree`'s own ✕ button uses - so it does NOT return to
-	// the docked tree; this mirrors "closing a docked panel" everywhere else
-	// in this package.) No-op in browser mode.
+	// panel had been docked, `onPopOut`'s `closePanel` above took it out of
+	// the docked tree as a closed floating window that remembers its docked
+	// slot - the same path as the pane's ✕. `dock.open` opens it floating,
+	// not back in that slot; the View menu's `showPanel` would.) No-op in
+	// browser mode.
 	$effect(() => {
 		if (!isTauri()) return;
 		return listenPanelClosed((id) => dock.open(id));
@@ -407,6 +430,7 @@
 		description={m['dashboard.summary']({ count: list.totalCount.toLocaleString() })}
 	>
 		{#snippet actions()}
+			<PageViewMenu label={m['dashboard.viewMenu']()} items={viewMenuItems} />
 			<AnnotationButton />
 		{/snippet}
 	</PageHeader>
@@ -541,25 +565,6 @@
 				<LayoutGrid size={18} aria-hidden="true" />{m['dashboard.workspaceHeading']()}
 			</h2>
 			<p class="workspace-caption">{m['dashboard.workspaceCaption']()}</p>
-			<div class="dock-toolbar" role="toolbar" aria-label={m['dashboard.dockToolbarAria']()}>
-				{#each PANEL_DEFS as def (def.id)}
-					<button
-						type="button"
-						class="dock-toggle"
-						class:active={isPanelVisible(def.id)}
-						aria-pressed={isPanelVisible(def.id)}
-						disabled={isDocked(def.id)}
-						title={isDocked(def.id) ? m['dashboard.dockedAlwaysVisible']() : undefined}
-						onclick={() => togglePanel(def.id)}
-					>
-						{#if def.icon}<PanelIcon icon={def.icon} />{/if}
-						{def.title}
-					</button>
-				{/each}
-				<button type="button" class="dock-reset" onclick={resetDockLayout}
-					>{m['dashboard.reset']()}</button
-				>
-			</div>
 			<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
 				<DockHost
 					bind:this={dockHost}
@@ -812,58 +817,9 @@
 		text-wrap: pretty;
 	}
 
-	.dock-toolbar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--banto-space-2);
-		margin: var(--banto-space-3) 0;
-	}
-
-	.dock-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--banto-space-1);
-		border: var(--banto-border-width) solid var(--banto-border);
-		border-radius: 999px;
-		background: var(--banto-surface);
-		color: var(--banto-text-muted);
-		padding: var(--banto-space-1) var(--banto-space-4);
-		font-size: var(--banto-font-size-sm);
-		cursor: pointer;
-	}
-
-	.dock-toggle.active {
-		border-color: var(--banto-primary);
-		/* axe-core wcag2aa color-contrast (visual-refresh-plan.md §7.1): same
-		   fix as Sidebar.svelte's .nav-item.active - plain --banto-primary text
-		   on this tint background falls short of 4.5:1 in both themes. */
-		color: var(--banto-primary-hover);
-		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
-	}
-
-	.dock-toggle:focus-visible,
-	.dock-reset:focus-visible {
-		outline: none;
-		box-shadow: var(--banto-focus-ring);
-	}
-
-	.dock-reset {
-		border: var(--banto-border-width) solid var(--banto-border);
-		border-radius: 999px;
-		background: var(--banto-surface);
-		color: var(--banto-text);
-		padding: var(--banto-space-1) var(--banto-space-4);
-		font-size: var(--banto-font-size-sm);
-		cursor: pointer;
-		margin-left: auto;
-	}
-
-	.dock-reset:hover {
-		border-color: var(--banto-primary);
-	}
-
 	.dock-wrapper {
 		height: 520px;
+		margin-top: var(--banto-space-3);
 	}
 
 	.dock-panel {

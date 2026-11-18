@@ -86,6 +86,39 @@ const TXT_FILE_NAME = 'attachment-note.txt';
 const MIN_PNG_BASE64 =
 	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
+/**
+ * The dashboard's View menu (#663 ①-C). With the default sidebar layout it is
+ * the 「表示」 button in the page header (the menu bar would carry it instead).
+ */
+function dashboardViewMenu(page: Page): { open: () => Promise<Locator> } {
+	const button = page.getByRole('main').getByRole('button', { name: '表示', exact: true });
+	const menu = page.getByRole('menu', { name: '表示' });
+	return {
+		async open() {
+			await button.click();
+			await expect(menu).toBeVisible();
+			return menu;
+		}
+	};
+}
+
+/** Puts the dashboard's dock back to the default layout from the View menu. */
+async function resetDashboardLayout(page: Page): Promise<void> {
+	const menu = await dashboardViewMenu(page).open();
+	await menu.getByRole('menuitem', { name: 'レイアウトを既定に戻す' }).click();
+	await expect(menu).toHaveCount(0);
+}
+
+/** Toggles one panel's checkbox in the dashboard's View menu, then closes the menu. */
+async function toggleDashboardPanel(page: Page, name: string): Promise<void> {
+	const menu = await dashboardViewMenu(page).open();
+	await menu.getByRole('menuitemcheckbox', { name, exact: true }).click();
+	// A checkbox keeps the menu open (ui Menu); Escape closes it.
+	await expect(menu).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+}
+
 function minimalPngBuffer(): Buffer {
 	return Buffer.from(MIN_PNG_BASE64, 'base64');
 }
@@ -3590,7 +3623,6 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const workspace = page.locator('.workspace');
 		const unsaved = workspace.getByText('未保存の変更があります');
 		const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
-		const memoToggle = workspace.getByRole('toolbar').getByRole('button', { name: /メモ/ });
 
 		/** Press at `from`, cross the dock's drag threshold, release at `to`. */
 		async function drag(
@@ -3622,7 +3654,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		try {
 			await page.goto('/dashboard');
-			await workspace.getByRole('button', { name: 'リセット' }).click();
+			await resetDashboardLayout(page);
 			await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
 			await expect(memoWindow).toBeVisible();
 			await expect(unsaved).toHaveCount(0);
@@ -3654,8 +3686,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			// the docked tree fills the host). The window opens at the top left, over
 			// the tab strip, so it is first moved down with the keyboard move mode
 			// (geometry only - a pointer drag over a docked pane would dock it).
-			const trendToggle = workspace.getByRole('toolbar').getByRole('button', { name: /トレンド/ });
-			await trendToggle.click();
+			await toggleDashboardPanel(page, 'トレンド');
 			const trendWindow = page.getByRole('dialog', { name: 'トレンド' });
 			await expect(trendWindow).toBeVisible();
 			// The mode buttons are visually hidden until focused (#433-b).
@@ -3674,9 +3705,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(memoTab).toHaveCount(0);
 			await expect(memoInput).toHaveValue('unsaved');
 			await expect(unsaved).toBeVisible();
-			// A pane with nothing unapplied closes without a question (the toolbar
-			// goes through the same lifecycle as ✕).
-			await trendToggle.click();
+			// A pane with nothing unapplied closes without a question (the View
+			// menu's checkbox goes through the same lifecycle as ✕).
+			await toggleDashboardPanel(page, 'トレンド');
 			await expect(trendWindow).toHaveCount(0);
 			await expect(settleDialog).toHaveCount(0);
 
@@ -3708,8 +3739,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await memoWindow.getByRole('button', { name: 'メモを閉じる' }).click();
 			await settleDialog.getByRole('button', { name: '破棄して閉じる' }).click();
 			await expect(memoWindow).toHaveCount(0);
-			await expect(memoToggle).toHaveAttribute('aria-pressed', 'false');
-			await memoToggle.click();
+			const viewMenu = await dashboardViewMenu(page).open();
+			const memoCheckbox = viewMenu.getByRole('menuitemcheckbox', { name: 'メモ', exact: true });
+			await expect(memoCheckbox).toHaveAttribute('aria-checked', 'false');
+			await memoCheckbox.click();
+			await expect(memoCheckbox).toHaveAttribute('aria-checked', 'true');
+			await page.keyboard.press('Escape');
 			await expect(memoWindow).toBeVisible();
 			await expect(memoInput).toHaveValue('unsaved');
 			await expect(unsaved).toHaveCount(0);
@@ -3771,7 +3806,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		try {
 			await page.route(`**${memoPath}`, recordPut);
 			await page.goto('/dashboard');
-			await workspace.getByRole('button', { name: 'リセット' }).click();
+			await resetDashboardLayout(page);
 			await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
 			await expect(memoWindow).toBeVisible();
 			await memoInput.fill('saved with ctrl+s');

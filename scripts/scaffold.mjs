@@ -455,6 +455,20 @@ function removeDock() {
 		`\t/**\n\t * M8 dock demo (spec §5, @banto/dock-svelte):`,
 		`\t\treturn listenPanelClosed((id) => dock.open(id));\n\t});`
 	);
+	// #663 ①-C: dock の pane の「表示」メニュー（中身の viewMenuItems は上の「dock スクリプト
+	// 一式」の範囲）。PageViewMenu 自体はシェルの汎用の口としてコアに残る。
+	drop(
+		DASH,
+		'表示メニュー import 除去',
+		`	import PageViewMenu, { type PageViewMenuItem } from '#lib/components/PageViewMenu.svelte';
+`
+	);
+	drop(
+		DASH,
+		'表示メニュー markup 除去',
+		`			<PageViewMenu label={m['dashboard.viewMenu']()} items={viewMenuItems} />
+`
+	);
 	cutRegion(
 		DASH,
 		'分析ワークスペース(dock)markup 除去',

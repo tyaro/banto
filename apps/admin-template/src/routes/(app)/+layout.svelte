@@ -16,6 +16,7 @@
 	import ShellLauncher from '#lib/components/ShellLauncher.svelte';
 	import { settings } from '#lib/settings.svelte.js';
 	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
+	import { providePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
 	import CommandPalette from '#lib/components/CommandPalette.svelte';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 	import { appShortcuts, commandPaletteCommand } from '#lib/shortcuts.js';
@@ -242,6 +243,9 @@
 	});
 	const menubarWideDrawer = $derived(menubar && !narrowViewport.current && menubarInsufficient);
 	const showSidebar = $derived(!menubar || narrowViewport.current || menubarInsufficient);
+	// #663 ①-C: a page's View menu goes into the bar exactly while the bar is
+	// on screen (no sidebar/drawer); otherwise the page shows its own button.
+	providePageViewMenuHost(() => !showSidebar);
 	// The drawer is gone once the bar is back (wider than 900px, or the room
 	// came back): close one left open, like the sidebar layout's resize.
 	$effect(() => {

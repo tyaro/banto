@@ -13,6 +13,12 @@
 	 * into "more" (D4). Unread counts are passed as numbers (§4.5). Mounted by
 	 * Header.svelte above 900px only; `onInsufficient` reports a main nav too
 	 * narrow even for "more" so the shell falls back to the drawer (§4.9).
+	 *
+	 * A page's View menu (#663 ①-C, pageViewMenu.svelte.ts) is a third,
+	 * fixed nav after the admin one: one `kind: 'menu'` entry. It stays
+	 * mounted while the bar is insufficient (the bar is hidden and inert, and
+	 * the page shows its own button then) so its width does not hand the main
+	 * nav room that would flip the state back.
 	 */
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
@@ -27,6 +33,7 @@
 	import { navIcon } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
+	import { usePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
 	import { HeaderNav, type HeaderNavEntry, type HeaderNavLink } from '@banto/ui';
 
 	interface Props {
@@ -86,6 +93,12 @@
 			: []
 	);
 
+	const pageMenuHost = usePageViewMenuHost();
+	const pageEntries: HeaderNavEntry[] = $derived.by(() => {
+		const menu = pageMenuHost?.menu;
+		return menu ? [{ kind: 'menu', id: 'page-view', label: menu.label, items: menu.items }] : [];
+	});
+
 	const updatesLabel = (count: number): string => m['shell.navUpdates']({ count });
 </script>
 
@@ -101,6 +114,19 @@
 		<HeaderNav
 			entries={adminEntries}
 			ariaLabel={m['shell.adminNav']()}
+			moreLabel={m['shell.navMore']()}
+			{updatesLabel}
+			overflow={false}
+		/>
+	{/key}
+{/if}
+{#if pageEntries.length > 0}
+	<!-- Same remount as the admin nav: its open menu would stay shown over the
+	     hidden bar when the main nav turns insufficient. -->
+	{#key adminGeneration}
+		<HeaderNav
+			entries={pageEntries}
+			ariaLabel={m['shell.pageMenuNav']()}
 			moreLabel={m['shell.navMore']()}
 			{updatesLabel}
 			overflow={false}
