@@ -15,7 +15,7 @@
 	 */
 	import { Menu, MenuItem, MenuSeparator } from '@banto/ui';
 	import { SlidersHorizontal } from '@lucide/svelte';
-	import { usePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
+	import { pageViewMenuControl, usePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
 
 	interface Props {
 		label: string;
@@ -27,43 +27,54 @@
 	const host = usePageViewMenuHost();
 
 	$effect(() => host?.register(() => ({ label, items })));
+
+	// Registers this button with the host so focus follows the menu into the
+	// bar and back (no-op outside the `(app)` layout).
+	const attachControl = (root: HTMLElement): (() => void) | void =>
+		host ? pageViewMenuControl(host, 'page', '.view-trigger')(root) : undefined;
 </script>
 
 {#if !host?.inShell}
-	<Menu {label} placement="bottom-end">
-		{#snippet trigger(props)}
-			<button {...props} type="button" class="banto-btn banto-btn--ghost view-trigger">
-				<SlidersHorizontal size={14} aria-hidden="true" />
-				{label}
-			</button>
-		{/snippet}
-		{#each items as item (item.id)}
-			{#if item.kind === 'separator'}
-				<MenuSeparator />
-			{:else if item.kind === 'checkbox'}
-				<MenuItem
-					kind="checkbox"
-					label={item.label}
-					checked={item.checked}
-					disabled={item.disabled}
-					title={item.title}
-					onSelect={item.onSelect}
-				/>
-			{:else}
-				<MenuItem
-					label={item.label}
-					icon={item.icon}
-					danger={item.danger}
-					disabled={item.disabled}
-					title={item.title}
-					onSelect={item.onSelect}
-				/>
-			{/if}
-		{/each}
-	</Menu>
+	<div class="view-menu" {@attach attachControl}>
+		<Menu {label} placement="bottom-end">
+			{#snippet trigger(props)}
+				<button {...props} type="button" class="banto-btn banto-btn--ghost view-trigger">
+					<SlidersHorizontal size={14} aria-hidden="true" />
+					{label}
+				</button>
+			{/snippet}
+			{#each items as item (item.id)}
+				{#if item.kind === 'separator'}
+					<MenuSeparator />
+				{:else if item.kind === 'checkbox'}
+					<MenuItem
+						kind="checkbox"
+						label={item.label}
+						checked={item.checked}
+						disabled={item.disabled}
+						title={item.title}
+						onSelect={item.onSelect}
+					/>
+				{:else}
+					<MenuItem
+						label={item.label}
+						icon={item.icon}
+						danger={item.danger}
+						disabled={item.disabled}
+						title={item.title}
+						onSelect={item.onSelect}
+					/>
+				{/if}
+			{/each}
+		</Menu>
+	</div>
 {/if}
 
 <style>
+	.view-menu {
+		display: contents;
+	}
+
 	.view-trigger {
 		display: inline-flex;
 		align-items: center;

@@ -33,7 +33,7 @@
 	import { navIcon } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
-	import { usePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
+	import { pageViewMenuControl, usePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
 	import { HeaderNav, type HeaderNavEntry, type HeaderNavLink } from '@banto/ui';
 
 	interface Props {
@@ -120,16 +120,28 @@
 		/>
 	{/key}
 {/if}
-{#if pageEntries.length > 0}
+{#if pageEntries.length > 0 && pageMenuHost}
 	<!-- Same remount as the admin nav: its open menu would stay shown over the
-	     hidden bar when the main nav turns insufficient. -->
-	{#key adminGeneration}
-		<HeaderNav
-			entries={pageEntries}
-			ariaLabel={m['shell.pageMenuNav']()}
-			moreLabel={m['shell.navMore']()}
-			{updatesLabel}
-			overflow={false}
-		/>
-	{/key}
+	     hidden bar when the main nav turns insufficient. The wrapper (no box)
+	     registers the entry with the host so focus can follow the menu. -->
+	<div
+		class="page-view-nav"
+		{@attach pageViewMenuControl(pageMenuHost, 'shell', '[data-header-nav-top]')}
+	>
+		{#key adminGeneration}
+			<HeaderNav
+				entries={pageEntries}
+				ariaLabel={m['shell.pageMenuNav']()}
+				moreLabel={m['shell.navMore']()}
+				{updatesLabel}
+				overflow={false}
+			/>
+		{/key}
+	</div>
 {/if}
+
+<style>
+	.page-view-nav {
+		display: contents;
+	}
+</style>

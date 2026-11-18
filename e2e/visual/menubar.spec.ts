@@ -269,24 +269,49 @@ test.describe('menu bar layout (primed)', () => {
 		await page.keyboard.press('Escape');
 		await expect(barButton).toBeFocused();
 
-		// <=900px: no bar, the page header carries it.
+		// <=900px: no bar, the page header carries it. Focus on the bar's
+		// trigger follows the menu (not the drawer button the nav goes to).
 		await page.setViewportSize({ width: 768, height: 1024 });
 		await expect(pageHeaderViewButton(page)).toBeVisible();
 		await expect(pageMenuNav(page)).toHaveCount(0);
+		await expect(async () => {
+			await expect(pageHeaderViewButton(page)).toBeFocused({ timeout: 500 });
+		}).toPass();
 
-		// Back above 900px, then too narrow even for "その他": the hidden bar
-		// keeps its entry (out of the accessibility tree), the header has it.
+		// Back above 900px with the page header's menu open: focus goes to the
+		// bar's trigger, and the menu is not reopened there.
+		await pageHeaderViewButton(page).click();
+		await expect(menu).toBeVisible();
 		await page.setViewportSize({ width: 1000, height: 800 });
 		await expect(barButton).toBeVisible();
 		await expect(pageHeaderViewButton(page)).toHaveCount(0);
+		await expect(async () => {
+			await expect(barButton).toBeFocused({ timeout: 500 });
+		}).toPass();
+		await expect(menu).toBeHidden();
+
+		// Too narrow even for "その他": the hidden bar keeps its entry (out of
+		// the accessibility tree), the header has it - and the focus.
 		await page.evaluate(() => (document.documentElement.style.fontSize = '250%'));
 		await expect(drawerButton(page)).toBeVisible();
 		await expect(pageMenuNav(page)).toHaveCount(0);
 		await expect(pageHeaderViewButton(page)).toBeVisible();
+		await expect(async () => {
+			await expect(pageHeaderViewButton(page)).toBeFocused({ timeout: 500 });
+		}).toPass();
 		await page.evaluate(() => (document.documentElement.style.fontSize = ''));
 		await expect(drawerButton(page)).toHaveCount(0);
 		await expect(barButton).toBeVisible();
 		await expect(pageHeaderViewButton(page)).toHaveCount(0);
+		await expect(async () => {
+			await expect(barButton).toBeFocused({ timeout: 500 });
+		}).toPass();
+
+		// Focus elsewhere at the switch is left alone.
+		await mainNav(page).getByRole('link', { name: 'ダッシュボード' }).focus();
+		await page.setViewportSize({ width: 768, height: 1024 });
+		await expect(drawerButton(page)).toBeFocused();
+		await expect(pageHeaderViewButton(page)).not.toBeFocused();
 	});
 
 	test('an open admin dropdown closes when the drawer stands in (§4.9)', async ({ page }) => {
