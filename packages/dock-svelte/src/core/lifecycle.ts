@@ -312,7 +312,9 @@ export class PanelLifecycle {
 	 * - Putting a hidden pane whose content is still mounted (`keepMounted`,
 	 *   not discarded) back into the docked tree moves that content from the
 	 *   floating layer into the tree (re-mount), so it is asked as a `dock`
-	 *   change (`remount: true`) - after the `tab-switch` when there is one.
+	 *   change (`remount: true`) - after the `tab-switch` when there is one,
+	 *   on the structure that `tab-switch` was approved on (changed in between
+	 *   = `stale`).
 	 */
 	show(panelId: string): Promise<DockPanelChangeOutcome> {
 		const where = this.#whereIs(panelId);
@@ -328,8 +330,10 @@ export class PanelLifecycle {
 			this.#whereIs(panelId) === 'hidden' &&
 			this.isRetained(panelId) &&
 			this.#dock.showPlacement(panelId) === 'docked';
+		// `unchanged` ties a second request to the first one's approval (below).
+		let unchanged = (): boolean => true;
 		const describeDock = (): DockPanelChange | null =>
-			redocksMounted() ? { kind: 'dock', panelId, remount: true } : null;
+			unchanged() && redocksMounted() ? { kind: 'dock', panelId, remount: true } : null;
 		const dock = (): Promise<DockPanelChangeOutcome> =>
 			this.request({ kind: 'dock', panelId, remount: true }, () => this.#dock.show(panelId), {
 				target: 'show',
@@ -354,10 +358,33 @@ export class PanelLifecycle {
 				describe: describeSwitch
 			});
 		}
-		// Both: the active pane agrees to step back first, then the mounted content is asked to move.
-		return this.request(tabSwitch, () => {}, { target: 'show', describe: describeSwitch }).then(
-			(outcome) => (outcome === 'applied' ? dock() : outcome)
-		);
+		// Both: the active pane agrees to step back first, then the mounted content
+		// is asked to move. The two answers are one decision about one structure:
+		// the `dock` request keeps the generation the `tab-switch` was approved on
+		// (and the same `from` / `remount`) until it applies, so a change made in
+		// between (the app switching the group to another tab, a drop, ...) makes
+		// it `stale` - like any approved request whose structure moved (module doc)
+		// - instead of applying over a pane that was never asked.
+		let approved: { revision: number; structure: string } | null = null;
+		unchanged = () =>
+			approved !== null &&
+			this.#dock.structureRevision === approved.revision &&
+			structureKey(this.#dock.layout) === approved.structure &&
+			JSON.stringify(describeSwitch()) === JSON.stringify(tabSwitch);
+		return this.request(
+			tabSwitch,
+			() => {
+				approved = {
+					revision: this.#dock.structureRevision,
+					structure: structureKey(this.#dock.layout)
+				};
+			},
+			{ target: 'show', describe: describeSwitch }
+		).then((outcome) => {
+			if (outcome !== 'applied') return outcome;
+			if (this.#disposed) return 'disposed';
+			return unchanged() ? dock() : 'stale';
+		});
 	}
 
 	/**

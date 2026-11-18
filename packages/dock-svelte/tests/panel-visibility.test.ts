@@ -475,6 +475,59 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 		expect(activeOf(dock)).toBe('y');
 	});
 
+	// #665 review: the two answers of a retained pane are one decision - a tab
+	// change between them must not apply the dock over a pane never asked.
+	it('retained: the app switching the group between the two approvals makes it stale', async () => {
+		const asked: string[] = [];
+		const hook = vi.fn((change: DockPanelChange) => {
+			asked.push(
+				change.kind === 'tab-switch' ? `tab-switch ${change.from}>${change.to}` : change.kind
+			);
+			return true;
+		});
+		const { dock, lifecycle } = setup({ hook, keepMounted: () => true });
+		dock.dismiss('y'); // t = [x, z], x active
+
+		const pending = lifecycle.show('y'); // x -> y approved synchronously
+		dock.setActiveTab('t', 1); // the app selects z before the dock request starts
+		expect(await pending).toBe('stale');
+		expect(asked).toEqual(['tab-switch x>y']);
+		expect(dock.isVisible('y')).toBe(false);
+		expect(activeOf(dock)).toBe('z');
+	});
+
+	it('retained: a tab change while the dock answer is pending makes it stale too', async () => {
+		let answer: (ok: boolean) => void = () => {};
+		const hook = vi.fn((change: DockPanelChange) =>
+			change.kind === 'dock' ? new Promise<boolean>((r) => (answer = r)) : true
+		);
+		const { dock, lifecycle } = setup({ hook, keepMounted: () => true });
+		dock.dismiss('y');
+
+		const pending = lifecycle.show('y');
+		await vi.waitFor(() => expect(hook).toHaveBeenCalledTimes(2));
+		dock.setActiveTab('t', 1);
+		answer(true);
+		expect(await pending).toBe('stale');
+		expect(dock.isVisible('y')).toBe(false);
+		expect(activeOf(dock)).toBe('z');
+	});
+
+	it('not retained: a tab change while the tab-switch answer is pending makes it stale', async () => {
+		let answer: (ok: boolean) => void = () => {};
+		const hook = vi.fn(() => new Promise<boolean>((r) => (answer = r)));
+		const { dock, lifecycle } = setup({ hook });
+		dock.dismiss('y');
+
+		const pending = lifecycle.show('y');
+		dock.setActiveTab('t', 1);
+		answer(true);
+		expect(await pending).toBe('stale');
+		expect(hook).toHaveBeenCalledTimes(1);
+		expect(dock.isVisible('y')).toBe(false);
+		expect(activeOf(dock)).toBe('z');
+	});
+
 	it('restoring into a split deactivates nothing: not asked (like dock.open)', async () => {
 		const hook = vi.fn(() => false);
 		const { dock, lifecycle } = setup({ hook });
