@@ -76,6 +76,104 @@ describe('slot memory: tab group', () => {
 	});
 });
 
+// The order next to the anchors is kept, not the absolute index (#665 review):
+// a group that lost other tabs meanwhile (or collapsed to one pane) must not
+// flip the restored tab to the other side of its neighbour.
+describe('slot memory: tab order relative to the anchors', () => {
+	/** The tabs (everything docked but `p`, in order); every case keeps them in one group. */
+	const order = (dock: DockState): string[] =>
+		collectPanelIds(dock.layout.docked).filter((id) => id !== 'p');
+
+	it('[x, y, z]: hide y, hide x (lone z), show y = [y, z] (y was before z)', () => {
+		const dock = createDockState(tabsLayout(), counterMakeId());
+		dock.dismiss('y');
+		dock.dismiss('x');
+		dock.show('y');
+		expect(order(dock)).toEqual(['y', 'z']);
+		dock.show('x');
+		expect(order(dock)).toEqual(['x', 'y', 'z']);
+	});
+
+	it('mirrored: hide y, hide z (lone x), show y = [x, y] (y was after x)', () => {
+		const dock = createDockState(tabsLayout(), counterMakeId());
+		dock.dismiss('y');
+		dock.dismiss('z');
+		dock.show('y');
+		expect(order(dock)).toEqual(['x', 'y']);
+		dock.show('z');
+		expect(order(dock)).toEqual(['x', 'y', 'z']);
+	});
+
+	it('an existing group that lost the tabs before the pane keeps it after its anchor', () => {
+		// [x, y, z, w]: hide z (index 2), hide x, show z -> [y, z, w], not [y, w, z].
+		const layout = tabsLayout();
+		const t = splitOf(layout.docked).children[0] as DockTabGroupNode;
+		t.children.push(panel('w'));
+		const dock = createDockState(layout, counterMakeId());
+		dock.dismiss('z');
+		dock.dismiss('x');
+		dock.show('z');
+		expect(order(dock)).toEqual(['y', 'z', 'w']);
+	});
+
+	const four = (): DockState => {
+		const layout = tabsLayout();
+		const t = splitOf(layout.docked).children[0] as DockTabGroupNode;
+		t.children.push(panel('w'));
+		return createDockState(layout, counterMakeId());
+	};
+	// Every order of hiding two / three tabs of [x, y, z, w] and showing them again.
+	const permutations = (ids: string[]): string[][] =>
+		ids.length <= 1
+			? [ids]
+			: ids.flatMap((id, i) =>
+					permutations([...ids.slice(0, i), ...ids.slice(i + 1)]).map((rest) => [id, ...rest])
+				);
+	for (const hidden of [
+		['x', 'y'],
+		['y', 'z'],
+		['x', 'w'],
+		['x', 'y', 'z'],
+		['y', 'z', 'w'],
+		['x', 'z', 'w']
+	]) {
+		for (const hideOrder of permutations(hidden)) {
+			for (const showOrder of permutations(hidden)) {
+				it(`hide ${hideOrder.join(',')} then show ${showOrder.join(',')} = [x, y, z, w]`, () => {
+					const dock = four();
+					for (const id of hideOrder) dock.dismiss(id);
+					for (const id of showOrder) dock.show(id);
+					expect(order(dock)).toEqual(['x', 'y', 'z', 'w']);
+				});
+			}
+		}
+	}
+
+	it('a slot saved without the relative order (any old JSON) still restores at a sensible place', () => {
+		const dock = createDockState(
+			{
+				version: 2,
+				floating: [
+					{
+						id: 'q',
+						title: 'Q',
+						x: 0,
+						y: 0,
+						width: 100,
+						height: 100,
+						open: false,
+						dockSlot: { kind: 'tab', groupId: 't', index: 9, anchors: [] }
+					}
+				],
+				docked: tabsLayout().docked
+			},
+			counterMakeId()
+		);
+		dock.show('q');
+		expect(order(dock)).toEqual(['x', 'y', 'z', 'q']);
+	});
+});
+
 describe('slot memory: split', () => {
 	it('a pane of a 2-way split comes back on the same side with the same share', () => {
 		const dock = createDockState(tabsLayout(), counterMakeId());

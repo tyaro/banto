@@ -304,7 +304,10 @@ export class DockState {
 			this.close(id);
 			return;
 		}
-		const slot = captureDockSlot(this.layout.docked, id);
+		const hidden = this.layout.floating.flatMap((w) =>
+			!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
+		);
+		const slot = captureDockSlot(this.layout.docked, id, hidden);
 		const index = this.layout.floating.length;
 		const win: FloatingWindow = {
 			id: node.id,

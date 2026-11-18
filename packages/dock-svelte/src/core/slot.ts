@@ -12,9 +12,12 @@
  * it, nearest first) for when those container ids are gone. Restoring tries,
  * in order:
  *
- *  - `tab`: the same tab group (`groupId`) at the old index; else the tab group
- *    of the first anchor still docked (a bare anchor panel becomes a tab group
- *    again); the restored tab is made active.
+ *  - `tab`: the same tab group (`groupId`), else the tab group of the first
+ *    anchor still docked (a bare anchor panel becomes a tab group again). It
+ *    goes next to the nearest anchor in that group, on the side it was on
+ *    (right after a tab that was before it, right before one that was after
+ *    it), so the old order is kept whatever else closed meanwhile; with no
+ *    anchor in the group, at the old index. The restored tab is made active.
  *  - `split`: the same split (`splitId`, same direction) at the old index; else
  *    next to the old neighbour (`neighborId`) or the first anchor still docked,
  *    on the same side, with the same share of the space the two had.
@@ -43,16 +46,102 @@ function byDistance(ids: string[], index: number): string[] {
 }
 
 /**
+ * Was `anchor` before the pane in its old tab group? The inverse of
+ * `byDistance`: a tab slot's `anchors` are the group's other ids in that
+ * order, so with `index` and their count every anchor's old position is
+ * known (no extra field: slots saved before this keep working).
+ */
+function wasBefore(slot: Extract<DockSlot, { kind: 'tab' }>, anchor: string): boolean {
+	// The pane's own id cannot be an anchor; '' stands for it.
+	const order = slotOrder('', slot);
+	return order.indexOf(anchor) < order.indexOf('');
+}
+
+/** The tab group's order the slot of the hidden pane `id` remembers (the pane itself at `index`). */
+function slotOrder(id: string, slot: Extract<DockSlot, { kind: 'tab' }>): string[] {
+	const n = slot.anchors.length + 1;
+	const index = Math.min(Math.max(slot.index, 0), n - 1);
+	const positions = byDistance(
+		Array.from({ length: n }, (_, i) => String(i)),
+		index
+	);
+	const order = new Array<string>(n);
+	order[index] = id;
+	slot.anchors.forEach((anchor, k) => (order[Number(positions[k])] = anchor));
+	return order;
+}
+
+/**
+ * `base` with the ids of `other` it lacks, each put right after the nearest
+ * id before it in `other` that `base` has (else right before the nearest one
+ * after it). `base`'s own order is never changed.
+ */
+function mergeOrder(base: string[], other: string[]): string[] {
+	const out = base.slice();
+	for (let changed = true; changed;) {
+		changed = false;
+		other.forEach((id, i) => {
+			if (out.includes(id)) return;
+			for (let j = i - 1; j >= 0; j--) {
+				const at = out.indexOf(other[j]);
+				if (at !== -1) {
+					out.splice(at + 1, 0, id);
+					changed = true;
+					return;
+				}
+			}
+			for (let j = i + 1; j < other.length; j++) {
+				const at = out.indexOf(other[j]);
+				if (at !== -1) {
+					out.splice(at, 0, id);
+					changed = true;
+					return;
+				}
+			}
+		});
+	}
+	return out;
+}
+
+/** Where to put the pane among `ids`: beside the nearest anchor there, on its old side; else the old index. */
+function tabIndex(slot: Extract<DockSlot, { kind: 'tab' }>, ids: string[]): number {
+	for (const anchor of slot.anchors) {
+		const i = ids.indexOf(anchor);
+		if (i !== -1) return wasBefore(slot, anchor) ? i + 1 : i;
+	}
+	return Math.min(Math.max(slot.index, 0), ids.length);
+}
+
+/** A pane hidden from the dock and the place it remembers (`captureDockSlot`'s `hidden`). */
+export interface HiddenDockSlot {
+	id: string;
+	slot: DockSlot;
+}
+
+/**
  * Where the docked panel `panelId` is in `root`, described so `restoreDockSlot`
  * can put it back after it was removed. `null` when it is not a docked panel.
  * Call it BEFORE removing the panel.
+ *
+ * `hidden` are the panes already hidden from the dock with their slots: the
+ * ones that remember the same tab group are counted among its tabs (at the
+ * place their slot says), so tabs hidden one after another and shown again in
+ * any order come back in their old order.
  */
-export function captureDockSlot(root: DockNode | null, panelId: string): DockSlot | null {
+export function captureDockSlot(
+	root: DockNode | null,
+	panelId: string,
+	hidden: Iterable<HiddenDockSlot> = []
+): DockSlot | null {
 	const node = findNode(root, panelId);
 	if (!node || node.type !== 'panel') return null;
 	const parent = findParent(root, panelId);
 	if (parent?.type === 'tabs' && parent.children.length > 1) {
-		const ids = parent.children.map((c) => c.id);
+		let ids = parent.children.map((c) => c.id);
+		for (const h of hidden) {
+			if (h.id === panelId || h.slot.kind !== 'tab' || h.slot.groupId !== parent.id) continue;
+			ids = mergeOrder(ids, slotOrder(h.id, h.slot));
+		}
 		const index = ids.indexOf(panelId);
 		return { kind: 'tab', groupId: parent.id, index, anchors: byDistance(ids, index) };
 	}
@@ -130,7 +219,10 @@ function restoreTab(
 	makeId: () => string
 ): DockNode | null {
 	const insert = (group: DockTabGroupNode): DockNode => {
-		const at = Math.min(Math.max(slot.index, 0), group.children.length);
+		const at = tabIndex(
+			slot,
+			group.children.map((c) => c.id)
+		);
 		const children = group.children.slice();
 		children.splice(at, 0, panel);
 		return replaceNode(root, group.id, () => ({ ...group, children, activeIndex: at }));
@@ -142,7 +234,7 @@ function restoreTab(
 	const target = liftOutOfTabs(root, findNode(root, anchor)!);
 	if (target.type === 'tabs') return insert(target);
 	// The anchor is a bare panel now (its group collapsed): make the group again.
-	const at = Math.min(Math.max(slot.index, 0), 1);
+	const at = tabIndex(slot, [target.id]);
 	const children: DockPanelNode[] =
 		at === 0 ? [panel, target as DockPanelNode] : [target as DockPanelNode, panel];
 	const tabs: DockTabGroupNode = {
