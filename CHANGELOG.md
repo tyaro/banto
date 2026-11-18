@@ -25,7 +25,7 @@
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。
-派生アプリへの影響: 依存のタグを `v7.5.0` から `v7.6.0` に上げて型エラーになりうるのは、`DockPanelChange` の `kind` を網羅検査しているアプリだけ（union への `reparent` の追加。`reparent` の分岐を足せば通る。下の A. 消費側への注意 1）。公開 API の削除・改名を伴わない追加によるソース互換の破壊なので、規約の運用上の例外（docs/publishing.md「バージョニング規約」）により minor とした。
+派生アプリへの影響: 依存のタグを `v7.5.0` から `v7.6.0` に上げて型エラーになりうるのは、公開の union に足した種類を網羅検査しているアプリ（`DockPanelChange` の `reparent`、`HeaderNavEntry` の `kind: 'menu'`。分岐を足せば通る。下の A. 消費側への注意 1）。公開 API の削除・改名を伴わない追加によるソース互換の破壊なので、規約の運用上の例外（docs/publishing.md「バージョニング規約」）により minor とした。
 
 | 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -42,9 +42,9 @@
   - ui: `HeaderNav` の `{ kind: 'menu', ... }` 項目、`closeOpenMenus(root?, except?)`、`CommandSpec.blockOnMenu?`・`mod: 'either'`、`MenuItem` の `shortcut?` / `platform?`。
   - forms: `guardUnsavedChanges` の `isSamePage` と `isSamePath`。
 - 挙動の修正: Modal / Drawer / ConfirmDialog を開くと開いていたメニューを閉じる。狭い viewport で popover の左端が画面外へ出ない。dock-svelte の API（`setPinned`）で固定したとき移動／サイズ変更ボタンにあった DOM フォーカスをピンのボタンへ移す。
-- 移行注意（ソース互換の破壊）: `DockPanelChange` の `kind` を網羅して扱っているアプリ（switch の網羅検査など）は、新しい `reparent` を足さないと型エラーになる（下の 1）。それ以外は無い。
+- 移行注意（ソース互換の破壊）: 公開の union の種類を網羅して扱っているアプリ（switch の網羅検査など）は、新しい種類を足さないと型エラーになる: `DockPanelChange` の `reparent`、`HeaderNavEntry` の `kind: 'menu'`（下の 1）。
 - 消費側への注意（確かめるもの）:
-  1. **`DockPanelChange` の `kind` を網羅して扱っているアプリ**: `{ kind: 'reparent'; panelId; cause; remount: true }` の分岐を足す。動かしていないのに親が変わって pane が作り直されることを表すので、`capture` して進めればよい。
+  1. **公開の union を網羅して扱っているアプリ**: `DockPanelChange` には `{ kind: 'reparent'; panelId; cause; remount: true }` の分岐を足す（動かしていないのに親が変わって pane が作り直されることを表すので、`capture` して進めればよい）。`HeaderNavEntry` を `link` / `group` で網羅していたコードには `kind: 'menu'`（操作を並べるメニュー）の分岐を足す。
   2. **`beforePanelChange` を渡しているアプリ**: ドロップ・undock・✕・非表示・`showPanel` で呼ばれる回数と種類が増える（#681・#683。動かす pane だけでなく、押し出される pane・作り直される残りの pane にも聞く）。新しくできるタブの組への `tab-switch` の `groupId` は仮の id のことがあるので、それで組を引かない（dock-svelte の README、#686）。
   3. **visual の基準画像（Linux で生成）**: dock の浮動 window・docked 区画・ダッシュボード・ui-demo を写すものは再生成が要る（下の「更新後の確認」）。
 - 依存を上げずに留まれるか: できる（`v7.5.0` のタグに固定したまま使える）。
@@ -54,7 +54,7 @@
 - 変更あり（取り込みは任意。取り込まないと、テンプレートのダッシュボードは旧来の道具帯のまま動く）:
   - ダッシュボードの pane の開閉を、道具帯から「表示」メニューへ置き換えた（#663 ①-C）。`#lib/pageViewMenu.svelte.ts`（`(app)/+layout.svelte` が context で持つ）と `PageViewMenu.svelte` を追加。文言キー `dashboard.viewMenu` / `dashboard.resetLayout` / `shell.pageMenuNav` を追加し、`dashboard.dockToolbarAria` / `dashboard.dockedAlwaysVisible` / `dashboard.reset` を削除。
   - `settlePrompt.svelte.ts` の `closeOpenMenus` を `@banto/ui` へ移した（#670）。テンプレート側の定義は消えた。
-- 取り込む手順: ① 依存を `v7.6.0` に上げる。② 上の新規ファイル 2 本と、`(app)/+layout.svelte`・ダッシュボードの画面・`settlePrompt.svelte.ts` の差分をコピーする。③ 辞書（ja / en）の文言キーを追加・削除する。④ `settlePrompt` から自前の `closeOpenMenus` を使っていた箇所は `@banto/ui` の import に替える。⑤ visual の基準画像を再生成する。
+- 取り込む手順: ① 依存を `v7.6.0` に上げる。② 上の新規ファイル 2 本と、次の差分をコピーする: `(app)/+layout.svelte`・ダッシュボードの画面・`settlePrompt.svelte.ts`、**`lib/components/ShellMenubar.svelte`（必須。メニューバーに「表示」を描く。新しい layout はメニューバー表示中にページ側のボタンを出さないので、これを取り込まないと表示・非表示の入口が無くなる）**、`lib/components/Header.svelte`（幅が 900px をまたいだときのフォーカスの受け渡しを host に任せる）、`lib/banto/dashboardMemo.svelte.ts`（`reparent` を受ける）。③ 辞書（ja / en）の文言キーを追加・削除する。④ `settlePrompt` から自前の `closeOpenMenus` を使っていた箇所は `@banto/ui` の import に替える。⑤ visual の基準画像を再生成する。
 - 独自にダッシュボードの道具帯や `closeOpenMenus` を改造しているアプリは、差分を見て手で合わせる。
 
 ### C. DB・設定・配布資産
