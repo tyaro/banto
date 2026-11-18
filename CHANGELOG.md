@@ -36,9 +36,16 @@
 
 ### 追加: dock の外周へのドッキング（#694 PR-1）
 
-- `@banto/dock-svelte`: パネルを host の四辺の縁へドラッグして落とすと、docked の木全体を新しい分割で包み、その側に全高／全幅で入るようにした（分割の比率は `[0.5, 0.5]`、根が同じ向きの分割でも常に包む）。縁の当たり判定は各辺 24px の帯（`EDGE_DROP_BAND`。host の短い辺の 1/8 まで）で、区画の当たり判定より先に効く。帯はドラッグ中だけ縁に出る（`pointer-events: none`）。docked が空（またはドラッグ中の pane だけ）のときは今までどおり。`beforePanelChange` は包まれて作り直される pane の `reparent` を先に、最後に動かす pane の `dock` / `move-docked` を聞く（変更の種類は増やしていない）。
-- 公開 API の追加: `DockState.dockPanelAtEdge(id, edge)` / `dockExistingAtEdge(id, edge)`、木の操作 `dockPanelAtEdge`、当たり判定 `computeEdgeDrop` / `edgeBandSize` / `EDGE_DROP_BAND`、型 `DockEdge`。
-- 見た目: host の縁に接する区画の外側 24px の帯へ落とすと、これまでの「その区画の端」ではなく外周になる。ドラッグ中だけ縁に破線の帯が出る（ドラッグ外の見た目は変わらない）。
+- `@banto/dock-svelte`: パネルを host の四辺の外周のボタン（PR-2 で帯からボタンに替えた。下の節）へドラッグして落とすと、docked の木全体を新しい分割で包み、その側に全高／全幅で入るようにした。入る pane は host の 1/4（`EDGE_DOCK_RATIO` = 0.25。分割の比率は左・上なら `[0.25, 0.75]`、右・下なら `[0.75, 0.25]`）、根が同じ向きの分割でも常に包む。外周の当たり判定は区画の当たり判定より先に効く。docked が空（またはドラッグ中の pane だけ）のときは今までどおり。`beforePanelChange` は包まれて作り直される pane の `reparent` を先に、最後に動かす pane の `dock` / `move-docked` を聞く（変更の種類は増やしていない）。
+- 公開 API の追加: `DockState.dockPanelAtEdge(id, edge)` / `dockExistingAtEdge(id, edge)`、木の操作 `dockPanelAtEdge` と定数 `EDGE_DOCK_RATIO`、当たり判定 `computeEdgeDrop` / `edgeButtons`、型 `DockEdge`。
+
+### 変更: dock の十字のガイドと、ドロップ先の能力（#694 PR-2）
+
+- `@banto/dock-svelte`: ドラッグ中、指している docked の区画の真ん中に十字のボタン（中央・左・右・上・下）、host の四辺の真ん中に外周のボタンを出し、**ボタンの上で離したときだけ**ドッキングするようにした。ボタンの上にいる間は入る場所の枠（区画の全体か半分、外周は host の 1/4）を出す。ボタンは 32px 角・間隔 4px、区画・host の縁から 8px 内側。小さい区画では縮め、16px を下回るなら出さない。外周のボタンと重なる十字のボタンは出さない（外周が勝つ）。ボタンはドラッグ中だけ描かれ、`pointer-events: none`・`aria-hidden`（当たり判定は幾何で行う）。キーボードだけでドッキングする口は無い。
+- **既定の挙動の変化**: これまでの「区画の端 25% の帯へ落とすと分割、残りは中央（タブ化）」はやめた。区画の上でもボタンの外で離すと浮動になる（浮動 window はその位置へ動き、docked の pane は undock。`undock: false` なら何も起きない）。これまで区画の上ならどこで離してもドッキングしていたので、端や中央付近へ落としていた操作は、ボタンへ落とすように変わる。浮動 window の上・畳んだ区画の帯の上・自分のいる区画の中央の扱いは今までどおり。
+- pane の能力（`capabilities`）に、ドロップ先としての `dropCenter`（十字の中央 = タブとして入れる）と `dropSplit`（上下左右 = 横に分割で入れる）を足した（既定は `true`）。`false` ならそのボタンを出さない。タブの組は、中の pane がすべて許すときだけ出す。外周のボタンには効かない。`DockCapabilities` の省略可能なフィールドを足しただけなので、既存のコードはそのまま通る。
+- 公開 API の追加: 十字の配置と当たり判定 `crossButtons` / `guideButtonSize` / `hitGuideButton`、定数 `GUIDE_BUTTON_SIZE` / `GUIDE_BUTTON_GAP` / `GUIDE_BUTTON_MIN` / `GUIDE_INSET`、型 `GuideButton` / `CrossOptions`、`dropRegionRect` の第 3 引数（比率。既定 0.5）。`computeDropRegion` は使われなくなったが、互換のために export を残す。
+- 見た目: ドラッグ中の見た目（十字・外周のボタン、外周の枠が 1/4）だけが変わる。ドラッグの外の見た目は変わらない。
 
 ## [7.6.0] - 2026-11-18
 

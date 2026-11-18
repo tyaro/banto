@@ -48,6 +48,7 @@ export {
 	defaultMakeId,
 	dockPanelAtEdge,
 	dockPanelIntoTree,
+	EDGE_DOCK_RATIO,
 	expandRegionOf,
 	findNode,
 	findParent,
@@ -70,10 +71,22 @@ export {
 	type DockLayoutValidation
 } from './core/validate';
 
-export { computeDropRegion } from './core/dropzones';
+/** The cross guide on a docked pane (#694 PR-2; `computeDropRegion` is the pre-PR-2 band rule, kept for compatibility). */
+export {
+	computeDropRegion,
+	crossButtons,
+	GUIDE_BUTTON_GAP,
+	GUIDE_BUTTON_MIN,
+	GUIDE_BUTTON_SIZE,
+	GUIDE_INSET,
+	guideButtonSize,
+	hitGuideButton,
+	type CrossOptions,
+	type GuideButton
+} from './core/dropzones';
 
-/** Outer-edge drop targets of the whole host (#694 PR-1). */
-export { computeEdgeDrop, EDGE_DROP_BAND, edgeBandSize } from './core/edges';
+/** Outer-edge drop targets of the whole host (#694 PR-1, buttons since PR-2). */
+export { computeEdgeDrop, edgeButtons } from './core/edges';
 
 /** The remembered docked place of a hidden pane (#663; `DockState.dismiss` / `show` use these). */
 export { captureDockSlot, restoreDockSlot } from './core/slot';
