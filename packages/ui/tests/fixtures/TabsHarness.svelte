@@ -21,6 +21,7 @@
 <Tabs {tabs} bind:value label="Sections" {activation} {onchange} {keepMounted} {hideSingleTab}>
 	{#snippet panel(id)}
 		<p>Panel {id}</p>
+		<input data-testid="field-{id}" />
 	{/snippet}
 </Tabs>
 <output data-testid="value">{value ?? ''}</output>

@@ -21,11 +21,12 @@
 	 *   The panel is focusable (`tabindex="0"`) so Tab reaches a panel without
 	 *   focusable content.
 	 * - `hideSingleTab` (default `false`): with exactly one tab (disabled ones
-	 *   count) the tablist is not drawn and the one panel is a plain
-	 *   `<div class="banto-tabs__panel">` - no `role`, `id`, `aria-labelledby`
-	 *   or `tabindex` (there is no tab to refer to, and an empty frame should
-	 *   not take a Tab stop). `value` / `onchange` behave as usual. With two or
-	 *   more tabs nothing changes.
+	 *   count) the tablist is not drawn and the panel drops `role`, `id`,
+	 *   `aria-labelledby` and `tabindex` (there is no tab to refer to, and an
+	 *   empty frame should not take a Tab stop). The panel stays the same
+	 *   element, so changing the number of tabs never recreates its content. A
+	 *   lone disabled tab stays hidden (and unrendered) as before. `value` /
+	 *   `onchange` behave as usual. With two or more tabs nothing changes.
 	 * - Disabled tabs carry `aria-disabled` (still announced, never selected).
 	 */
 	import type { Snippet } from 'svelte';
@@ -171,23 +172,18 @@
 	</div>
 {/if}
 
-{#if single}
-	<div class="banto-tabs__panel">
-		{@render panel(tabs[0].id)}
+{#each tabs as tab (tab.id)}
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -- role/tabindex are both dropped together when single -->
+	<div
+		class="banto-tabs__panel"
+		role={single ? undefined : 'tabpanel'}
+		id={single ? undefined : panelId(tab.id)}
+		aria-labelledby={single ? undefined : tabId(tab.id)}
+		tabindex={single ? undefined : 0}
+		hidden={tab.id !== selected}
+	>
+		{#if keepMounted || tab.id === selected}
+			{@render panel(tab.id)}
+		{/if}
 	</div>
-{:else}
-	{#each tabs as tab (tab.id)}
-		<div
-			class="banto-tabs__panel"
-			role="tabpanel"
-			id={panelId(tab.id)}
-			aria-labelledby={tabId(tab.id)}
-			tabindex="0"
-			hidden={tab.id !== selected}
-		>
-			{#if keepMounted || tab.id === selected}
-				{@render panel(tab.id)}
-			{/if}
-		</div>
-	{/each}
-{/if}
+{/each}
