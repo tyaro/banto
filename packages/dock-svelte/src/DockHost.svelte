@@ -483,10 +483,16 @@
 
 	/* Its own stacking context (#694 PR-3): a pane's positioned content with a positive
 	   z-index (e.g. a chart's reset-zoom button) stays inside the docked layer, below the
-	   auto-hide slide-out (later in the DOM) and the floating layer (z-index 1). */
+	   auto-hide slide-out (later in the DOM) and the floating layer (z-index 1). Except while
+	   a pane shows a modal (`@banto/ui` OverlayPanel renders in place, `position: fixed` +
+	   `--banto-z-modal`): the layer is not isolated then, so the modal and its scrim stay
+	   above the floating windows (the scrim covers the rest anyway). */
 	.docked-layer {
 		position: absolute;
 		inset: 0;
+	}
+
+	.docked-layer:not(:has([aria-modal='true'])) {
 		isolation: isolate;
 	}
 

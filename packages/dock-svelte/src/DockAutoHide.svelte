@@ -411,10 +411,14 @@
 	}
 
 	/* Its own stacking context, like `.docked-layer`: painted above the docked tree by DOM
-	   order, below the floating layer (z-index 1), whatever z-index the slid-out pane uses. */
+	   order, below the floating layer (z-index 1), whatever z-index the slid-out pane uses -
+	   except while the slid-out pane shows a modal, which must stay above the floating windows. */
 	.flyout-area {
 		position: absolute;
 		pointer-events: none;
+	}
+
+	.flyout-area:not(:has([aria-modal='true'])) {
 		isolation: isolate;
 	}
 
