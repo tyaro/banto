@@ -76,7 +76,32 @@ export function isSamePage(navigation: Pick<LeaveNavigation, 'from' | 'to'>): bo
 	const from = navigation.from?.url;
 	const to = navigation.to?.url;
 	if (!from || !to) return false;
+	return isSameUrlPage(from, to);
+}
+
+/** The default `isSamePage` rule on two URLs: same origin + pathname + search (hash ignored). */
+function isSameUrlPage(from: URL, to: URL): boolean {
 	return from.origin === to.origin && from.pathname === to.pathname && from.search === to.search;
+}
+
+/**
+ * A ready-made `isSamePage` option for pages that keep their state in the
+ * query (`?target=&tab=`): same origin + pathname counts as the same page even
+ * when the query differs (the component, and its draft, stay mounted).
+ */
+export function isSamePath(from: URL, to: URL): boolean {
+	return from.origin === to.origin && from.pathname === to.pathname;
+}
+
+/** `options.isSamePage` applied to a navigation (unknown from/to = a different page). */
+function samePageBy(
+	navigation: Pick<LeaveNavigation, 'from' | 'to'>,
+	isSame: ((from: URL, to: URL) => boolean) | undefined
+): boolean {
+	const from = navigation.from?.url;
+	const to = navigation.to?.url;
+	if (!from || !to) return false;
+	return (isSame ?? isSameUrlPage)(from, to);
 }
 
 /** What each mounted guard contributes to the shared registry. */
@@ -85,6 +110,13 @@ export interface UnsavedChangesSource {
 	isPending(): boolean;
 	/** Resolved prompt text for this source (i18n layer ①: the host passes a resolved string). */
 	message(): string;
+	/**
+	 * This source's own "same page" rule. A pending source that sees a move as
+	 * leaving makes it a leave for everyone (so a clean guard with a lax rule
+	 * cannot hide a dirty guard's draft). Absent = the default rule (origin + pathname + search),
+	 * e.g. DraftCoordinator's source.
+	 */
+	isSamePage?: (from: URL, to: URL) => boolean;
 }
 
 export interface LeaveCheckOptions {
@@ -96,6 +128,13 @@ export interface LeaveCheckOptions {
 	confirm?: (message: string) => boolean;
 	/** Navigations that must never be held back (logout, session end). */
 	isForced?: (navigation: LeaveNavigation) => boolean;
+	/**
+	 * Which moves stay on "the same page" (the component and its draft stay
+	 * mounted, so nothing is asked). Default: same origin + pathname + search.
+	 * A page that keeps state in the query passes `isSamePath`. Applies to
+	 * back / forward too; reload / tab close (`type: 'leave'`) are never "same".
+	 */
+	isSamePage?: (from: URL, to: URL) => boolean;
 }
 
 export type LeaveCheckResult = LeaveDecision | 'confirmed' | 'kept' | 'already-handled';
@@ -144,11 +183,12 @@ export function leaveCheckOutcome(navigation: LeaveNavigation): LeaveCheckResult
  */
 export function isApprovedExit(
 	outcome: LeaveCheckResult | undefined,
-	navigation: LeaveNavigation
+	navigation: LeaveNavigation,
+	isSame?: (from: URL, to: URL) => boolean
 ): boolean {
 	if (outcome !== 'allow' && outcome !== 'confirmed') return false;
 	if (navigation.type === 'leave' || navigation.complete === undefined) return false;
-	return !isSamePage(navigation);
+	return !samePageBy(navigation, isSame);
 }
 
 function decideAndAct(
@@ -157,16 +197,18 @@ function decideAndAct(
 	options: LeaveCheckOptions
 ): LeaveCheckResult {
 	let firstPending: UnsavedChangesSource | undefined;
+	// Same page only if every pending source says so by its own rule.
+	let samePage = true;
 	for (const source of sources) {
-		if (source.isPending()) {
-			firstPending = source;
-			break;
-		}
+		if (!source.isPending()) continue;
+		firstPending ??= source;
+		if (!samePageBy(navigation, source.isSamePage)) samePage = false;
 	}
+	if (firstPending === undefined) samePage = samePageBy(navigation, options.isSamePage);
 	const decision = decideLeave({
 		pending: firstPending !== undefined,
 		forced: options.isForced?.(navigation) ?? false,
-		samePage: isSamePage(navigation),
+		samePage,
 		type: navigation.type
 	});
 	if (decision === 'allow') return 'allow';
@@ -255,7 +297,8 @@ export interface UnsavedChangesGuard {
 export function guardUnsavedChanges(options: UnsavedChangesGuardOptions): UnsavedChangesGuard {
 	const source: UnsavedChangesSource = {
 		isPending: () => options.isDirty() || (options.isSaving?.() ?? false),
-		message: options.message
+		message: options.message,
+		isSamePage: (from, to) => (options.isSamePage ?? isSameUrlPage)(from, to)
 	};
 	let disposed = false;
 	// The navigation this page is currently being left by (null = staying).
@@ -271,7 +314,7 @@ export function guardUnsavedChanges(options: UnsavedChangesGuardOptions): Unsave
 
 	options.beforeNavigate((navigation) => {
 		runLeaveCheck(navigation, registry, options);
-		if (!isApprovedExit(leaveCheckOutcome(navigation), navigation)) return;
+		if (!isApprovedExit(leaveCheckOutcome(navigation), navigation, options.isSamePage)) return;
 		leavingBy = navigation;
 		const settle = () => {
 			// Only the latest exit may clear it (an older, superseded one
