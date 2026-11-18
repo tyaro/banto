@@ -20,13 +20,18 @@ import { invoke } from '@tauri-apps/api/core';
 import { isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 
 /**
- * A permission key (`area.action`, Issue #697). Defined here (not imported
- * from `usersAdmin.ts`) because the display preset removes that file while
- * this one stays; `usersAdmin.ts` declares the same shape for the users screen.
+ * A per-user permission key (Issue #697, user-permissions-plan §8-1), e.g.
+ * `equipment.operate`: a second axis next to the role, granted by an admin.
+ * Named `UserPermission` so it is not mistaken for the resource-operation
+ * `ResourcePermissions` (`lib/resource/permissions.ts`). The server decides;
+ * the screen only hides what the session cannot do.
+ *
+ * The single definition: here, not in `usersAdmin.ts`, because the display
+ * preset removes that file while this one stays (`usersAdmin.ts` re-exports it).
  */
 export type UserPermission = string;
 
-/** Mirrors `banto_admin_services::permissions::PermissionEntry` (`permissions_catalog`). */
+/** Mirrors `banto_admin_services::permissions::PermissionEntry`: one permission the app registered (`GET /api/permissions` / `permissions_catalog`). */
 export interface PermissionEntry {
 	key: UserPermission;
 	/** Message key of the display name (the app's own messages). */

@@ -30,22 +30,12 @@ import { CSRF_HEADER, getBantoMode } from './setup';
 export type Role = 'admin' | 'editor' | 'viewer';
 
 /**
- * A per-user permission key (Issue #697, user-permissions-plan §8-1), e.g.
- * `equipment.operate`: a second axis next to the role, granted by an admin.
- * Named `UserPermission` so it is not mistaken for the resource-operation
- * `ResourcePermissions` (`lib/resource/permissions.ts`). The server decides;
- * the screen only hides what the session cannot do.
+ * The per-user permission types (Issue #697) live in `authAdmin.ts`, which
+ * every scaffold preset keeps (display drops this file); re-exported here so
+ * the users screen imports them from one place.
  */
-export type UserPermission = string;
-
-/** Mirrors `banto_admin_services::permissions::PermissionEntry`: one permission the app registered (`GET /api/permissions` / `permissions_catalog`). */
-export interface PermissionEntry {
-	key: UserPermission;
-	/** Message key of the display name (the app's own messages). */
-	labelKey: string;
-	/** Message key of the description. */
-	descriptionKey: string;
-}
+import type { PermissionEntry, UserPermission } from './authAdmin';
+export type { PermissionEntry, UserPermission } from './authAdmin';
 
 /** Mirrors `admin_template_core::users::UserSummary` (camelCase on the wire). */
 export interface UserSummary {

@@ -87,6 +87,14 @@
 - scaffold: 新しい欄は `routes/(app)/users/` の下とすでに外れる `usersAdmin.ts` だけに置いた（display で一緒に外れる）。`common.*`・`resource.*` は display でも残る。
 - 対象外: `auth.disabledPermissions`（ログイン不要モードの権限）の画面・コマンドは PR-2b。README・recipe は PR-3。
 
+### 追加: ログイン不要モードの権限の入口（#697 PR-2b）
+
+- 設定 > セキュリティの「起動時のロール」の下に、ログイン不要モードで持つ権限を選ぶ欄を足した（アプリが権限を登録しているときだけ表示。既定は権限なし）。
+- Tauri の `auth_config_apply` に省略可の `permissions` を足した（省略で変えない。未登録のキーは 422 `validation`）。`auth_config_get` / `auth_config_apply` の応答に `disabledPermissions`（登録済みのキーだけ）が増える（Rust の `AuthSettings` には足さず、応答用の別の型）。デスクトップ専用の入口なので、REST の入口は無い。
+- モード・ロール・権限は 1 つのトランザクションで保存し、保存の直後にセッションを切り替える（`SettingsService::set_auth_config_and_disabled_permissions` を追加。`set_auth_config` はそれを権限なしで呼ぶ）。権限だけの変更でもセッションの `seq` を進める。
+- 監査: 設定変更（`settings_change`）の detail に、変わったときだけ `authDisabledPermissions: { added, removed }` を足す。
+- クライアント: 型 `UserPermission`・`PermissionEntry` は `authAdmin.ts` に 1 か所で定義し（display プリセットでも残る）、`usersAdmin.ts` は再 export する。
+
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。
