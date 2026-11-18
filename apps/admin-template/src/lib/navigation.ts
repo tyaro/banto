@@ -25,8 +25,8 @@ export type NavLabelKey =
 
 /** Keys of the demo-only catalog entry (`NavItem.demoOnly`). Kept out of the unions above on purpose:
  *  scaffold's removers edit those unions by exact text (scripts/scaffold.mjs). */
-export type DemoNavIconKey = 'ui-demo' | 'chart-gallery';
-export type DemoNavLabelKey = 'nav.uiDemo' | 'nav.chartGallery';
+export type DemoNavIconKey = 'ui-demo' | 'chart-gallery' | 'theme-lab';
+export type DemoNavLabelKey = 'nav.uiDemo' | 'nav.chartGallery' | 'nav.themeLab';
 
 /** Dictionary key of a nav group's name (`NavItem.group`). A separate union from the icon / label
  *  unions above on purpose: scaffold's removers edit those by exact text (scripts/scaffold.mjs). */
@@ -135,6 +135,13 @@ const allNavItems: NavItem[] = [
 		path: '/chart-gallery',
 		labelKey: 'nav.chartGallery',
 		icon: 'chart-gallery',
+		demoOnly: true,
+		group: 'nav.group.demo'
+	},
+	{
+		path: '/theme-lab',
+		labelKey: 'nav.themeLab',
+		icon: 'theme-lab',
 		demoOnly: true,
 		group: 'nav.group.demo'
 	},

@@ -294,6 +294,7 @@ const RESOURCES_INDEX = `${APP}/src/lib/banto/resources/index.ts`;
 const SETTINGS_STORE = `${APP}/src/lib/settings.svelte.ts`;
 const ROOT_PAGE_TS = `${APP}/src/routes/+page.ts`;
 const LOGIN = `${APP}/src/routes/login/+page.svelte`;
+const THEME_LAB = `${APP}/src/routes/(app)/theme-lab/+page.svelte`;
 const ROOT_PKG = 'package.json';
 const PLAYWRIGHT_CONFIG = 'e2e/playwright.config.ts';
 const E2E_SMOKE = 'e2e/tests/smoke.spec.ts';
@@ -357,14 +358,14 @@ function removeCharts() {
 	swapText(
 		NAV,
 		'nav: DemoNavIconKey から chart-gallery 除去',
-		`DemoNavIconKey = 'ui-demo' | 'chart-gallery';`,
-		`DemoNavIconKey = 'ui-demo';`
+		`DemoNavIconKey = 'ui-demo' | 'chart-gallery' | 'theme-lab';`,
+		`DemoNavIconKey = 'ui-demo' | 'theme-lab';`
 	);
 	swapText(
 		NAV,
 		'nav: DemoNavLabelKey から nav.chartGallery 除去',
-		`DemoNavLabelKey = 'nav.uiDemo' | 'nav.chartGallery';`,
-		`DemoNavLabelKey = 'nav.uiDemo';`
+		`DemoNavLabelKey = 'nav.uiDemo' | 'nav.chartGallery' | 'nav.themeLab';`,
+		`DemoNavLabelKey = 'nav.uiDemo' | 'nav.themeLab';`
 	);
 	drop(
 		NAV_ICONS,
@@ -372,14 +373,26 @@ function removeCharts() {
 		`import { ChartColumn } from '@lucide/svelte';
 `
 	);
-	swapText(
+	drop(
 		NAV_ICONS,
 		'navIcons: chart-gallery エントリ除去',
-		`	'ui-demo': Palette,
-	'chart-gallery': ChartColumn
-`,
-		`	'ui-demo': Palette
+		`	'chart-gallery': ChartColumn,
 `
+	);
+	// /theme-lab（テーマを試すデモ専用ルート）はチャート見本の部分だけを charts と
+	// 一緒に外す（ページ本体は charts なしでも使えるので残す）。ThemeLabCharts.svelte
+	// と、ページの import・チャートの節（`[scaffold:charts]` の印で挟む）・文言キーを消す。
+	cutMarked(THEME_LAB, 'theme-lab: ThemeLabCharts import 除去', 'charts', '	');
+	cutRegion(
+		THEME_LAB,
+		'theme-lab: チャートの節除去',
+		`
+				<!-- [scaffold:charts] begin -->`,
+		`<!-- [scaffold:charts] end -->`
+	);
+	removeFile(
+		`${APP}/src/routes/(app)/theme-lab/ThemeLabCharts.svelte`,
+		'ThemeLabCharts.svelte 削除'
 	);
 	for (const [file, label] of [
 		[MSG_JA, 'messages/ja'],
@@ -387,7 +400,8 @@ function removeCharts() {
 	])
 		removeMessageKeys(file, `${label}: chartGallery.* / nav.chartGallery キー除去`, [
 			'chartGallery',
-			'nav.chartGallery'
+			'nav.chartGallery',
+			'themeLab.charts'
 		]);
 	// dashboard.ts（stat タイル用に残すが M24 集計だけは `@banto/charts` の GanttTask に
 	// 依存するので切り離す）。GanttTask import と M24 セクション（EOFまで）を外す。

@@ -128,7 +128,10 @@ Esc をどの層に譲るか。#433）・`src/routes/panel/[id]/`（ポップア
 `src/lib/navigation.ts` の `allNavItems` の `/chart-gallery` 行と
 `DemoNavIconKey`（`'chart-gallery'`）・`DemoNavLabelKey`（`'nav.chartGallery'`）の語、
 `src/lib/components/navIcons.ts` の `ChartColumn` の import と `'chart-gallery'` の行、
-`messages/{ja,en}.json` の `chartGallery.*`・`nav.chartGallery` を外す。`items`
+`messages/{ja,en}.json` の `chartGallery.*`・`nav.chartGallery` を外す。
+テーマを試すページ `src/routes/(app)/theme-lab/` は残し、チャートの部分だけを外す
+（`ThemeLabCharts.svelte` の削除、`+page.svelte` の `ThemeLabCharts` の import と
+`[scaffold:charts]` の印で挟んだ節、`messages/{ja,en}.json` の `themeLab.charts.*`）。`items`
 自体は他機能（CSVエクスポート等）で使うため残してよい。
 `package.json` の `@banto/charts` 依存を外す（外した後に `@banto/charts` を参照する
 ファイルが残らないこと）。

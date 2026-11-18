@@ -13,6 +13,8 @@ import { defineConfig } from 'vite';
 export default defineConfig({
 	plugins: [sveltekit()],
 	test: {
-		environment: 'node'
+		environment: 'node',
+		// themeLab.test.ts reads banto.css with ?raw; vitest empties CSS it does not process.
+		css: { include: [/theme\/src\/css\/banto\.css/] }
 	}
 });

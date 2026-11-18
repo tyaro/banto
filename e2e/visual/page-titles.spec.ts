@@ -21,6 +21,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 		['/audit-log', copy['nav.auditLog']],
 		['/ui-demo', copy['nav.uiDemo']],
 		['/chart-gallery', copy['nav.chartGallery']],
+		['/theme-lab', copy['nav.themeLab']],
 		['/settings/account', copy['nav.settings']]
 	];
 
