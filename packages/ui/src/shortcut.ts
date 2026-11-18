@@ -295,6 +295,40 @@ export function formatShortcut(shortcut: string, platform: ShortcutPlatform): st
 	return mac ? `${mods.join('')}${key}` : [...mods, key].join('+');
 }
 
+/**
+ * `aria-keyshortcuts` value for a shortcut (WAI-ARIA syntax: `Control+Shift+Z`,
+ * `Meta+Z`; modifiers first, then the key). `Mod` resolves by `platform`
+ * (`'mac'` -> `Meta`, else `Control`). Letters are upper-cased, a space is
+ * `Space`; digits and named keys (`Enter`, `Escape`, `Delete`, `ArrowUp`,
+ * `F1` ...) pass through.
+ *
+ * Returns `undefined` (the attribute is omitted) for an unparsable shortcut and
+ * for a **symbol key** (`?`, `%`, `/`, `+` ...): ARIA wants the physical key
+ * plus modifiers (US `%` is `Shift+5`), which depends on the keyboard layout
+ * and cannot be derived here. Pass the value explicitly where it is needed
+ * (`MenuItem`'s `ariaKeyShortcuts`).
+ */
+export function toAriaKeyShortcuts(
+	shortcut: string,
+	platform: ShortcutPlatform
+): string | undefined {
+	const parsed = parseShortcut(shortcut);
+	if (!parsed) return undefined;
+	if (parsed.key.length === 1 && parsed.key !== ' ' && !/^[a-z0-9]$/.test(parsed.key)) {
+		return undefined;
+	}
+	const mac = platform === 'mac';
+	const parts: string[] = [];
+	if (parsed.ctrl || (parsed.mod && !mac)) parts.push('Control');
+	if (parsed.alt) parts.push('Alt');
+	if (parsed.shift) parts.push('Shift');
+	if (parsed.meta || (parsed.mod && mac)) parts.push('Meta');
+	const key =
+		parsed.key === ' ' ? 'Space' : parsed.key.length === 1 ? parsed.key.toUpperCase() : parsed.key;
+	parts.push(key);
+	return parts.join('+');
+}
+
 /** `'mac'` on macOS / iOS (from `navigator.userAgentData.platform` or `navigator.platform`), else `'other'`. */
 export function detectShortcutPlatform(): ShortcutPlatform {
 	if (typeof navigator === 'undefined') return 'other';

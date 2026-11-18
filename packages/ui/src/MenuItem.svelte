@@ -9,7 +9,10 @@
 	 * attribute (§7.5) so the item stays reachable for `aria-disabled`
 	 * inspection during traversal while visually/interactively inert.
 	 */
+	import { onMount } from 'svelte';
 	import { getMenuContext } from './menuContext';
+	import { detectShortcutPlatform, formatShortcut, toAriaKeyShortcuts } from './shortcut';
+	import type { ShortcutPlatform } from './shortcut';
 	import type { UiIconComponent } from './types';
 
 	interface Props {
@@ -33,6 +36,25 @@
 		kind?: 'radio' | 'checkbox';
 		/** Native tooltip (e.g. why a disabled item is unavailable). */
 		title?: string;
+		/**
+		 * Key shown right-aligned as keycap text (`'Mod+Z'`, same syntax as
+		 * `CommandSpec.shortcut`). Display only (the key itself is handled by a
+		 * dispatcher): the accessible name stays `label`, the key goes to
+		 * `aria-keyshortcuts`.
+		 */
+		shortcut?: string;
+		/**
+		 * Platform for the keycap text. Omitted: `'other'` for the first render
+		 * (matches SSR, so hydration agrees) and `detectShortcutPlatform()` once
+		 * mounted. Given: used as is.
+		 */
+		platform?: ShortcutPlatform;
+		/**
+		 * Explicit `aria-keyshortcuts` value, used as is instead of the automatic
+		 * conversion. Needed for layout-dependent symbol keys (`'?'`, `'Shift+%'`),
+		 * which the automatic conversion omits.
+		 */
+		ariaKeyShortcuts?: string;
 		onSelect: () => void;
 	}
 
@@ -44,10 +66,24 @@
 		checked,
 		kind = 'radio',
 		title,
+		shortcut,
+		platform,
+		ariaKeyShortcuts,
 		onSelect
 	}: Props = $props();
 
 	const menu = getMenuContext();
+
+	// First render is 'other' (same as SSR); the real platform arrives after mount.
+	let detectedPlatform: ShortcutPlatform = $state('other');
+	onMount(() => {
+		detectedPlatform = detectShortcutPlatform();
+	});
+	const resolvedPlatform = $derived(platform ?? detectedPlatform);
+	const shortcutText = $derived(shortcut ? formatShortcut(shortcut, resolvedPlatform) : undefined);
+	const ariaKeys = $derived(
+		ariaKeyShortcuts ?? (shortcut ? toAriaKeyShortcuts(shortcut, resolvedPlatform) : undefined)
+	);
 
 	let itemEl: HTMLButtonElement | undefined = $state();
 
@@ -74,6 +110,7 @@
 			: 'menuitemradio'}
 	{title}
 	aria-checked={checked === undefined ? undefined : checked}
+	aria-keyshortcuts={ariaKeys}
 	tabindex="-1"
 	class="menu-item"
 	class:danger
@@ -94,7 +131,10 @@
 	{#if Icon}
 		<Icon size={16} aria-hidden="true" />
 	{/if}
-	<span>{label}</span>
+	<span class="label">{label}</span>
+	{#if shortcutText}
+		<span class="shortcut" aria-hidden="true">{shortcutText}</span>
+	{/if}
 </button>
 
 <style>
@@ -128,6 +168,20 @@
 		text-align: left;
 		cursor: pointer;
 		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.label {
+		min-width: 0;
+		flex: 1 1 auto;
+	}
+
+	/* Never shrinks or wraps: a long label wraps, the key stays. */
+	.shortcut {
+		flex: none;
+		margin-inline-start: var(--banto-space-4);
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-sm);
+		white-space: nowrap;
 	}
 
 	.menu-item:hover,

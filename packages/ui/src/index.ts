@@ -138,6 +138,7 @@ export {
 	createShortcutDispatcher,
 	detectShortcutPlatform,
 	formatShortcut,
+	toAriaKeyShortcuts,
 	isEditableTarget,
 	matchShortcut,
 	parseShortcut,
