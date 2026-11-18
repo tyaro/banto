@@ -3,7 +3,7 @@
  * one question at a time, and every way out that is not a choice is 'cancel'.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { closeOpenMenus, createSettlePrompt } from './settlePrompt.svelte';
+import { createSettlePrompt } from './settlePrompt.svelte';
 
 describe('createSettlePrompt', () => {
 	it('ask opens the question and the answer closes it', async () => {
@@ -46,7 +46,7 @@ describe('createSettlePrompt', () => {
 	});
 });
 
-/** A `role="menu"` popover stand-in: just what closeOpenMenus touches. */
+/** A `role="menu"` popover stand-in: just what closeOpenMenus (@banto/ui) touches. */
 function fakeMenu(open: boolean) {
 	const menu = {
 		open,
@@ -66,22 +66,9 @@ function fakeDocument(menus: ReturnType<typeof fakeMenu>[]) {
 	} as unknown as Document;
 }
 
-describe('closeOpenMenus (#663: a question is the only active layer)', () => {
+describe('ask closes open menus (#663: a question is the only active layer)', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
-	});
-
-	it('hides the open menus and leaves closed ones alone', () => {
-		const openMenu = fakeMenu(true);
-		const closedMenu = fakeMenu(false);
-		closeOpenMenus(fakeDocument([openMenu, closedMenu]));
-		expect(openMenu.hidePopover).toHaveBeenCalledTimes(1);
-		expect(openMenu.open).toBe(false);
-		expect(closedMenu.hidePopover).not.toHaveBeenCalled();
-	});
-
-	it('is a no-op without a DOM', () => {
-		expect(() => closeOpenMenus(undefined)).not.toThrow();
 	});
 
 	it('ask closes an open menu before the question shows', async () => {

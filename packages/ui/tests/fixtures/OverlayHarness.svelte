@@ -4,7 +4,7 @@
 	// stack), and an optional CommandPalette over everything. The parent owns
 	// `open` like a real caller: `onclose` sets it to false (unless `keepOpen`,
 	// a parent that decides not to close).
-	import { CommandPalette, Drawer, Modal, type UiMessages } from '../../src/index';
+	import { CommandPalette, Drawer, Menu, MenuItem, Modal, type UiMessages } from '../../src/index';
 
 	let {
 		kind = 'drawer',
@@ -17,7 +17,8 @@
 		dirty,
 		onBlockedClose,
 		focusFallback,
-		messages
+		messages,
+		innerMenu = false
 	}: {
 		kind?: 'drawer' | 'modal';
 		title?: string;
@@ -30,6 +31,7 @@
 		onBlockedClose?: () => void;
 		focusFallback?: () => HTMLElement | null;
 		messages?: UiMessages;
+		innerMenu?: boolean;
 	} = $props();
 
 	let open = $state(false);
@@ -40,6 +42,12 @@
 
 <button type="button" data-testid="opener" onclick={() => (open = true)}>Open</button>
 <button type="button" data-testid="outside">Outside</button>
+<Menu label="Outside menu">
+	{#snippet trigger(props)}
+		<button {...props} type="button" data-testid="menu-trigger">Menu</button>
+	{/snippet}
+	<MenuItem label="Outside item" onSelect={() => {}} />
+</Menu>
 <span data-testid="state">{open ? 'open' : 'closed'}</span>
 <span data-testid="nested-state">{nestedOpen ? 'open' : 'closed'}</span>
 
@@ -65,6 +73,14 @@
 	<button type="button" data-testid="open-palette" onclick={() => (paletteOpen = true)}>
 		Palette
 	</button>
+	{#if innerMenu}
+		<Menu label="Inner menu">
+			{#snippet trigger(props)}
+				<button {...props} type="button" data-testid="inner-menu-trigger">Inner</button>
+			{/snippet}
+			<MenuItem label="Inner item" onSelect={() => {}} />
+		</Menu>
+	{/if}
 	<Modal open={nestedOpen} title="Confirm" onclose={() => (nestedOpen = false)}>
 		<button type="button" data-testid="nested-ok">OK</button>
 	</Modal>

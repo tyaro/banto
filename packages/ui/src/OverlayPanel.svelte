@@ -50,6 +50,7 @@
 	} from './layering';
 	import { defaultUiMessages } from './messages';
 	import type { OverlayProps } from './overlay';
+	import { closeOpenMenus } from './openMenus';
 
 	interface Props extends OverlayProps {
 		variant: 'modal' | 'drawer';
@@ -173,8 +174,13 @@
 				// mount-time `focusFirst` does not run again - do it here.
 				if (leaving) void tick().then(() => panelEl && focusFirst(panelEl));
 				leaving = false;
+				// A modal layer is the only active layer (#670): menus open now
+				// (a popover would stay above the scrim) are closed. Focus that
+				// sat inside one goes back to the menu's trigger, not to the
+				// item that is about to be hidden.
 				const active = document.activeElement;
-				opener = active instanceof HTMLElement ? active : null;
+				const trigger = menuTriggerFor(active, closeOpenMenus(document, panelEl));
+				opener = trigger ?? (active instanceof HTMLElement ? active : null);
 			} else {
 				const previous = opener;
 				opener = null;
@@ -197,6 +203,12 @@
 		if (!node) return;
 		return attachFocusTrap(node);
 	});
+
+	/** The trigger of the menu `active` was in (Menu marks it `aria-expanded`), or null. */
+	function menuTriggerFor(active: Element | null, closed: HTMLElement[]): HTMLElement | null {
+		if (!closed.some((menu) => menu.contains(active))) return null;
+		return document.querySelector<HTMLElement>('[aria-haspopup="menu"][aria-expanded="true"]');
+	}
 
 	function focusFirst(node: HTMLElement): void {
 		(initialFocus?.(node) ?? focusablesIn(node)[0] ?? node).focus();
