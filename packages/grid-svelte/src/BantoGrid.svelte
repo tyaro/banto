@@ -22,11 +22,11 @@
 		type SortState
 	} from './types';
 	import CellEditor from './CellEditor.svelte';
-	import { GridState } from './state.svelte';
+	import { DEFAULT_ROW_HEIGHT, GridState } from './state.svelte';
 	import { CellSelection } from './selection.svelte';
 	import { getColumnValue, sortRows } from './core/sort';
 	import { filterRows } from './core/filter';
-	import { computeWindow } from './core/virtual';
+	import { computeWindow, parseRowHeightPx } from './core/virtual';
 	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
 	import { prepareCommit, isColumnEditable } from './core/edit';
 	import { buildGroupedView, type FlatEntry } from './core/group';
@@ -48,6 +48,12 @@
 		columns: GridColumn<TRow>[];
 		state?: GridState<TRow>;
 		getRowId: (row: TRow) => string | number;
+		/**
+		 * Fixed row height in px (spec §4.2). Pass it to pin the height; omit it
+		 * and rows follow the theme density through `--banto-grid-row-height`
+		 * (standard 36 / compact 32 / touch 52). With an external `state`, the
+		 * state's own `rowHeightFixed` decides and this prop is ignored.
+		 */
 		rowHeight?: number;
 		/**
 		 * Default 'client'. Row grouping (spec §4.3, `state.groupBy`/
@@ -125,8 +131,10 @@
 	const editErrorId = `${gridId}-edit-error`;
 
 	// Created once per component instance. If the caller passes `state`, that
-	// instance is the single source of truth (including its own rowHeight);
-	// otherwise we own one internally, seeded from the `rowHeight` prop.
+	// instance is the single source of truth (including whether its rowHeight is
+	// fixed); otherwise we own one internally, seeded from the `rowHeight` prop
+	// (passed = fixed, omitted = follows `--banto-grid-row-height`, see the
+	// probe effect below).
 	// Capturing only the initial prop values here is by design.
 	// svelte-ignore state_referenced_locally
 	const gridState: GridState<TRow> = externalState ?? new GridState(columns, { rowHeight });
@@ -134,6 +142,7 @@
 	const OVERSCAN = 8;
 
 	let containerEl: HTMLDivElement | undefined = $state();
+	let rowHeightProbeEl: HTMLDivElement | undefined = $state();
 	let frameEl: HTMLDivElement | undefined = $state();
 	let errorRegionEl: HTMLDivElement | undefined = $state();
 	let headerRowEl: HTMLDivElement | undefined = $state();
@@ -153,6 +162,25 @@
 			viewportHeight = containerEl!.clientHeight;
 		});
 		observer.observe(containerEl);
+		return () => observer.disconnect();
+	});
+
+	// Theme density (spec §4.2): an invisible probe sized by
+	// `--banto-grid-row-height` is measured (computed height, not offsetHeight)
+	// and fed to the state whenever it resizes, i.e. when `data-banto-density`
+	// changes the variable. A fixed `rowHeight` makes `followThemeRowHeight` a no-op.
+	$effect(() => {
+		const probe = rowHeightProbeEl;
+		if (!probe) return;
+		const measure = () =>
+			untrack(() =>
+				gridState.followThemeRowHeight(
+					parseRowHeightPx(getComputedStyle(probe).height, DEFAULT_ROW_HEIGHT)
+				)
+			);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(probe);
 		return () => observer.disconnect();
 	});
 
@@ -1237,6 +1265,7 @@
 </script>
 
 <div class="banto-grid-frame" bind:this={frameEl}>
+	<div class="row-height-probe" aria-hidden="true" bind:this={rowHeightProbeEl}></div>
 	<div
 		class="banto-grid"
 		bind:this={containerEl}
@@ -1490,6 +1519,15 @@
 		height: 100%;
 		min-width: 0;
 		min-height: 0;
+	}
+	.row-height-probe {
+		position: absolute;
+		inset-block-start: 0;
+		inset-inline-start: 0;
+		width: 0;
+		height: var(--banto-grid-row-height);
+		visibility: hidden;
+		pointer-events: none;
 	}
 	.banto-grid {
 		position: relative;

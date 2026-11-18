@@ -18,6 +18,11 @@ import {
 export const DEFAULT_ROW_HEIGHT = 36;
 
 export interface GridStateOptions {
+	/**
+	 * Fixed row height in px. Omit it to follow the theme density
+	 * (`--banto-grid-row-height`): BantoGrid then feeds the measured value in
+	 * through `followThemeRowHeight()`. Passing it pins the height.
+	 */
 	rowHeight?: number;
 }
 
@@ -67,7 +72,23 @@ export class GridState<TRow = unknown> {
 	 */
 	collapsedGroups: Set<string> = new SvelteSet<string>();
 
-	readonly rowHeight: number;
+	#rowHeight = $state(DEFAULT_ROW_HEIGHT);
+	#rowHeightFixed: boolean;
+
+	/**
+	 * Current row height in px (read-only; reactive). Fixed when
+	 * `options.rowHeight` was given, otherwise follows the theme density via
+	 * `followThemeRowHeight()` (36 until BantoGrid has measured it). Not part
+	 * of `serialize()`/`hydrate()`.
+	 */
+	get rowHeight(): number {
+		return this.#rowHeight;
+	}
+
+	/** True when `options.rowHeight` pinned the height (theme density is ignored). */
+	get rowHeightFixed(): boolean {
+		return this.#rowHeightFixed;
+	}
 
 	#columns: GridColumn<TRow>[];
 
@@ -80,7 +101,17 @@ export class GridState<TRow = unknown> {
 		this.widths = Object.fromEntries(
 			columns.map((column) => [column.id, column.width ?? DEFAULT_COLUMN_WIDTH])
 		);
-		this.rowHeight = options.rowHeight ?? DEFAULT_ROW_HEIGHT;
+		this.#rowHeightFixed = options.rowHeight !== undefined;
+		this.#rowHeight = options.rowHeight ?? DEFAULT_ROW_HEIGHT;
+	}
+
+	/**
+	 * Applies the row height measured from `--banto-grid-row-height`. No-op when
+	 * the height is fixed or `px` is not a finite positive number.
+	 */
+	followThemeRowHeight(px: number): void {
+		if (this.#rowHeightFixed || !Number.isFinite(px) || px <= 0) return;
+		this.#rowHeight = px;
 	}
 
 	/**

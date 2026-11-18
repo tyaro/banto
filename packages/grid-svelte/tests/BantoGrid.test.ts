@@ -14,7 +14,7 @@
  */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
 import { GridState } from '../src/state.svelte';
 import type { GridColumn } from '../src/types';
@@ -179,5 +179,106 @@ describe('BantoGrid', () => {
 		expect(screen.getByText('データがありません')).toBeTruthy();
 		// still a grid, just with only the header row.
 		expect(within(screen.getByRole('grid')).queryByText('ペン')).toBeNull();
+	});
+});
+
+describe('theme density row height', () => {
+	/**
+	 * Locally replaces ResizeObserver (so the test can fire the callbacks) and
+	 * `getComputedStyle` (height of the hidden probe only), restoring both after.
+	 */
+	function stubDensity() {
+		const callbacks: Array<() => void> = [];
+		const previousObserver = globalThis.ResizeObserver;
+		globalThis.ResizeObserver = class {
+			constructor(callback: () => void) {
+				callbacks.push(callback);
+			}
+			observe() {}
+			unobserve() {}
+			disconnect() {}
+		} as unknown as typeof ResizeObserver;
+		let height = '36px';
+		const realGetComputedStyle = window.getComputedStyle.bind(window);
+		const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el, pseudo) => {
+			const style = realGetComputedStyle(el, pseudo);
+			if (!(el as HTMLElement).classList?.contains('row-height-probe')) return style;
+			return new Proxy(style, {
+				get: (target, prop) => (prop === 'height' ? height : Reflect.get(target, prop, target))
+			});
+		});
+		return {
+			async set(value: string) {
+				height = value;
+				for (const callback of callbacks) callback();
+				await tick();
+			},
+			restore() {
+				spy.mockRestore();
+				globalThis.ResizeObserver = previousObserver;
+			}
+		};
+	}
+
+	function dataRowHeights(container: HTMLElement): string[] {
+		return [...container.querySelectorAll<HTMLElement>('[role="row"]')]
+			.filter((row) => row.querySelector('[data-cell-row]'))
+			.map((row) => row.style.height);
+	}
+
+	it('follows the density variable when rowHeight is not passed', async () => {
+		const density = stubDensity();
+		try {
+			const { container } = render(BantoGrid<Row>, {
+				rows,
+				columns,
+				getRowId: (row: Row) => row.id
+			});
+			await tick();
+			expect(dataRowHeights(container)).toEqual(['36px', '36px']);
+			await density.set('32px');
+			expect(dataRowHeights(container)).toEqual(['32px', '32px']);
+			await density.set('52px');
+			expect(dataRowHeights(container)).toEqual(['52px', '52px']);
+			await density.set('36px');
+			expect(dataRowHeights(container)).toEqual(['36px', '36px']);
+		} finally {
+			density.restore();
+		}
+	});
+
+	it('also follows it for an externally passed state without rowHeight', async () => {
+		const density = stubDensity();
+		try {
+			const state = new GridState<Row>(columns);
+			const { container } = render(BantoGrid<Row>, {
+				rows,
+				columns,
+				state,
+				getRowId: (row: Row) => row.id
+			});
+			await density.set('52px');
+			expect(state.rowHeight).toBe(52);
+			expect(dataRowHeights(container)).toEqual(['52px', '52px']);
+		} finally {
+			density.restore();
+		}
+	});
+
+	it('keeps a rowHeight prop fixed', async () => {
+		const density = stubDensity();
+		try {
+			const { container } = render(BantoGrid<Row>, {
+				rows,
+				columns,
+				rowHeight: 48,
+				getRowId: (row: Row) => row.id
+			});
+			await density.set('52px');
+			await density.set('32px');
+			expect(dataRowHeights(container)).toEqual(['48px', '48px']);
+		} finally {
+			density.restore();
+		}
 	});
 });

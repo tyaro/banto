@@ -43,3 +43,13 @@ export function computeWindow(params: ComputeWindowParams): WindowResult {
 
 	return { start, end, offsetY: start * rowHeight, totalHeight };
 }
+
+/**
+ * Parses a computed CSS length such as "32px" (what `getComputedStyle(el).height`
+ * returns for a resolved `--banto-grid-row-height`) into a pixel count.
+ * Empty, non-numeric, or non-positive input yields `fallback`. Pure: no DOM.
+ */
+export function parseRowHeightPx(value: string, fallback: number): number {
+	const parsed = Number.parseFloat(value);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
