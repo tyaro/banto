@@ -4727,16 +4727,23 @@ async fn router_with_permission_catalog() -> (Router, UsersService, AuditLogServ
         .create_user("op", REVOCATION_PASSWORD, "Op", Role::Viewer)
         .await
         .unwrap();
-    let audit = AuditLogService::new(pool.clone());
+    // Written like the other routers in this file (a `let` per service, field
+    // shorthand) so the scaffold presets can drop `items` / `attachments`.
+    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    let settings = SettingsService::new(pool.clone());
+    let backup = unused_backup_service(pool.clone());
+    let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
+    let audit = AuditLogService::new(pool);
     let auth = user_auth_state(users.clone(), audit.clone());
     let services = Services {
-        items: ItemsService::new(pool.clone()).with_events(tx.clone()),
+        items,
         users: users.clone(),
-        settings: SettingsService::new(pool.clone()),
+        settings,
         audit: audit.clone(),
-        backup: unused_backup_service(pool.clone()),
-        attachments: unused_attachments_service(pool.clone()),
-        system_info: SystemInfoService::new(pool),
+        backup,
+        attachments,
+        system_info,
         metrics: None,
     };
     (api_router(services, auth, tx, false), users, audit)
