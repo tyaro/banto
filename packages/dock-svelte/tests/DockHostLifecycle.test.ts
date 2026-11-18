@@ -15,7 +15,7 @@
 // afterAll. Pointer events are plain `Event`s with the fields assigned.
 import { cleanup, render, screen } from '@testing-library/svelte';
 import { flushSync } from 'svelte';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import DockHostHarness from './DockHostHarness.svelte';
 import { createDockState, type DockState } from '../src/state.svelte';
 import type { DockPanelChange } from '../src/core/lifecycle';
@@ -49,6 +49,28 @@ afterAll(() => {
 		else Reflect.deleteProperty(target, prop);
 	}
 });
+
+/**
+ * Every element is 1000 x 600 at the origin, so the cross guide of a pane (#694 PR-2) has its
+ * buttons around (500, 300): CENTRE, and the split buttons 36 px from it (`core/dropzones.ts`).
+ * A release at the default (300, 300) is off every button.
+ */
+beforeEach(() => {
+	vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+		left: 0,
+		top: 0,
+		right: 1000,
+		bottom: 600,
+		width: 1000,
+		height: 600,
+		x: 0,
+		y: 0,
+		toJSON: () => ({})
+	} as DOMRect);
+});
+const CENTRE = [500, 300] as const;
+const BELOW = [500, 336] as const;
+const ABOVE = [500, 264] as const;
 
 afterEach(() => {
 	cleanup();
@@ -246,8 +268,8 @@ describe('beforePanelChange is asked for every kind, and a sync refusal leaves t
 			beforePanelChange: (c) => (calls.push(c), c.kind === 'tab-switch')
 		});
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
-		dragFrom(dialogOf('F')!.querySelector('.titlebar')!);
-		dragFrom(screen.getByRole('tab', { name: 'X' }));
+		dragFrom(dialogOf('F')!.querySelector('.titlebar')!, ...CENTRE);
+		dragFrom(screen.getByRole('tab', { name: 'X' }), ...CENTRE);
 		expect(calls).toEqual([
 			{ kind: 'tab-switch', groupId: 'f:dropped', from: 'p', to: 'f', remount: true },
 			{ kind: 'dock', panelId: 'f', remount: true },
@@ -358,9 +380,9 @@ describe('async answers: identity and generation (PR #448 review)', () => {
 		});
 		const titlebar = () => dialogOf('F')!.querySelector('.titlebar')!;
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
-		dragFrom(titlebar());
+		dragFrom(titlebar(), ...CENTRE);
 		hit = () => document.querySelector('[data-dock-drop-id="t"]');
-		dragFrom(titlebar());
+		dragFrom(titlebar(), ...CENTRE);
 		expect(calls).toHaveLength(2);
 		answers[1].resolve(true); // the later drop (onto the tab group) is approved first
 		await nextTask();
@@ -653,34 +675,16 @@ describe('IME composition holds structure changes', () => {
 // asked first, like a tab click (refused = nothing changes; IME hold; an
 // approval whose structure moved meanwhile is stale), then the dropped pane.
 describe('a drop asks the docked panes it pushes out (#666)', () => {
-	/**
-	 * A pane frame of 1000 x 600 at the origin, so a release near an edge is an edge drop. The host
-	 * gets the same rect, so the release stays outside the host's outer-edge strip (#694 PR-1).
-	 */
-	function paneRects(): void {
-		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-			left: 0,
-			top: 0,
-			right: 1000,
-			bottom: 600,
-			width: 1000,
-			height: 600,
-			x: 0,
-			y: 0,
-			toJSON: () => ({})
-		} as DOMRect);
-	}
 	const titlebarF = () => dialogOf('F')!.querySelector('.titlebar')!;
-	/** F dropped on the bottom edge of the bare pane P: a new column split is made around P. */
+	/** F dropped on the bottom button of the bare pane P's cross: a new column split is made around P. */
 	function dropFBelowP(): void {
-		paneRects();
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
-		dragFrom(titlebarF(), 500, 560);
+		dragFrom(titlebarF(), ...BELOW);
 	}
-	/** F dropped in the middle of the tab group t (X active). */
+	/** F dropped on the centre button of the tab group t (X active). */
 	function dropFOnTabs(): void {
 		hit = () => document.querySelector('[data-dock-drop-id="t"]');
-		dragFrom(titlebarF());
+		dragFrom(titlebarF(), ...CENTRE);
 	}
 	const label = (c: DockPanelChange) =>
 		c.kind === 'tab-switch'
@@ -781,7 +785,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 				}
 			});
 			dropFBelowP();
-			dragFrom(titlebarF(), 500, 40); // the top edge of P: another placement
+			dragFrom(titlebarF(), ...ABOVE); // the top button of P: another placement
 			expect(calls).toEqual(['reparent p', 'reparent p']);
 			answers[0](true);
 			await nextTask();
@@ -874,7 +878,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 			const calls: string[] = [];
 			const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(label(c)), false) });
 			hit = () => document.querySelector('[data-dock-drop-id="t"]');
-			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }), ...CENTRE);
 			expect(calls).toEqual(['tab-switch x>p']);
 			expect(dock.layout).toEqual(mixed());
 		});

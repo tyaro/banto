@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 //
-// Docking on the host's outer edges (#694 PR-1): the pure tree operation
-// (`dockPanelAtEdge`), the outer-edge hit strips (`core/edges.ts`), the
+// Docking on the host's outer edges (#694 PR-1, buttons since PR-2): the pure
+// tree operation (`dockPanelAtEdge`, a quarter of the host), the outer-edge
+// buttons (`core/edges.ts`), the
 // `DockState` methods, and the drop through `DockHost` - the panes whose
 // chain the wrap changes are asked first (`reparent`), then the moved pane
 // (`dock` / `move-docked`); a structure change while the answer waits is
-// `stale`; an empty tree behaves as before; the strips exist only during a
+// `stale`; an empty tree behaves as before; the buttons exist only during a
 // drag; a focus lost to the re-mount is handed back.
 //
 // jsdom has no layout engine: every element's rect is 1000 x 600 at the
@@ -16,7 +17,7 @@ import { cleanup, render } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import DockHostHarness from './DockHostHarness.svelte';
-import { computeEdgeDrop, EDGE_DROP_BAND, edgeBandSize } from '../src/core/edges';
+import { computeEdgeDrop, edgeButtons } from '../src/core/edges';
 import type { DockPanelChange } from '../src/core/lifecycle';
 import { dockPanelAtEdge } from '../src/core/tree';
 import { createDockState } from '../src/state.svelte';
@@ -34,24 +35,27 @@ describe('dockPanelAtEdge (core/tree)', () => {
 		children: [panel('a'), panel('b')]
 	};
 
-	it('wraps the root in a new split, the panel on the given side, even sizes', () => {
+	it('wraps the root in a new split, the panel on the given side with a quarter of it', () => {
 		expect(dockPanelAtEdge(root, panel('n'), 'left', fixedId)).toEqual({
 			type: 'split',
 			id: 'new',
 			direction: 'row',
-			sizes: [0.5, 0.5],
+			sizes: [0.25, 0.75],
 			children: [panel('n'), root]
 		});
 		expect(dockPanelAtEdge(root, panel('n'), 'right', fixedId)).toMatchObject({
 			direction: 'row',
+			sizes: [0.75, 0.25],
 			children: [root, panel('n')]
 		});
 		expect(dockPanelAtEdge(root, panel('n'), 'top', fixedId)).toMatchObject({
 			direction: 'column',
+			sizes: [0.25, 0.75],
 			children: [panel('n'), root]
 		});
 		expect(dockPanelAtEdge(root, panel('n'), 'bottom', fixedId)).toMatchObject({
 			direction: 'column',
+			sizes: [0.75, 0.25],
 			children: [root, panel('n')]
 		});
 	});
@@ -73,32 +77,32 @@ describe('dockPanelAtEdge (core/tree)', () => {
 	});
 });
 
-describe('computeEdgeDrop / edgeBandSize (core/edges)', () => {
-	it('a strip of EDGE_DROP_BAND px on each side; strict boundary; the centre is none', () => {
-		const b = EDGE_DROP_BAND;
-		expect(computeEdgeDrop(0, 300, 1000, 600)).toBe('left');
-		expect(computeEdgeDrop(b - 1, 300, 1000, 600)).toBe('left');
-		expect(computeEdgeDrop(b, 300, 1000, 600)).toBeNull();
-		expect(computeEdgeDrop(999, 300, 1000, 600)).toBe('right');
-		expect(computeEdgeDrop(500, 2, 1000, 600)).toBe('top');
-		expect(computeEdgeDrop(500, 598, 1000, 600)).toBe('bottom');
+describe('computeEdgeDrop / edgeButtons (core/edges)', () => {
+	// 1000 x 600 host: 32 px buttons, 8 px in from each side, at the middle of the side.
+	it('one button per side at its middle; only the button is a target', () => {
+		expect(edgeButtons(1000, 600)).toEqual([
+			{ region: 'left', rect: { x: 8, y: 284, width: 32, height: 32 } },
+			{ region: 'right', rect: { x: 960, y: 284, width: 32, height: 32 } },
+			{ region: 'top', rect: { x: 484, y: 8, width: 32, height: 32 } },
+			{ region: 'bottom', rect: { x: 484, y: 560, width: 32, height: 32 } }
+		]);
+		expect(computeEdgeDrop(24, 300, 1000, 600)).toBe('left');
+		expect(computeEdgeDrop(8, 284, 1000, 600)).toBe('left');
+		expect(computeEdgeDrop(40, 300, 1000, 600)).toBeNull();
+		expect(computeEdgeDrop(976, 300, 1000, 600)).toBe('right');
+		expect(computeEdgeDrop(500, 24, 1000, 600)).toBe('top');
+		expect(computeEdgeDrop(500, 576, 1000, 600)).toBe('bottom');
+		// The old 24 px strip along a side is no longer a target.
+		expect(computeEdgeDrop(2, 300, 1000, 600)).toBeNull();
+		expect(computeEdgeDrop(2, 100, 1000, 600)).toBeNull();
 		expect(computeEdgeDrop(500, 300, 1000, 600)).toBeNull();
-	});
-
-	it('corners go to the nearer side, ties to left > right > top > bottom; outside is none', () => {
-		expect(computeEdgeDrop(10, 2, 1000, 600)).toBe('top');
-		expect(computeEdgeDrop(2, 10, 1000, 600)).toBe('left');
-		expect(computeEdgeDrop(5, 5, 1000, 600)).toBe('left');
-		expect(computeEdgeDrop(-1, 300, 1000, 600)).toBeNull();
-		expect(computeEdgeDrop(1001, 300, 1000, 600)).toBeNull();
 		expect(computeEdgeDrop(0, 0, 0, 600)).toBeNull();
 	});
 
-	it('a small host gets a thinner strip (an eighth of the smaller side)', () => {
-		expect(edgeBandSize(1000, 600)).toBe(EDGE_DROP_BAND);
-		expect(edgeBandSize(400, 80)).toBe(10);
-		expect(computeEdgeDrop(12, 40, 400, 80)).toBeNull();
-		expect(edgeBandSize(0, 600)).toBe(0);
+	it('a small host gets smaller buttons, and none below the minimum', () => {
+		expect(edgeButtons(400, 80)[0].rect).toEqual({ x: 8, y: 31, width: 18, height: 18 });
+		expect(edgeButtons(400, 60)).toEqual([]);
+		expect(computeEdgeDrop(10, 30, 400, 60)).toBeNull();
 	});
 });
 
@@ -246,38 +250,52 @@ const label = (c: DockPanelChange) =>
 	c.kind === 'tab-switch' ? `tab-switch ${c.from}>${c.to}` : `${c.kind} ${c.panelId}`;
 
 describe('a drop on the outer edge of the host (DockHost)', () => {
-	it('the strips are drawn only during a drag; the hovered one is active with a half-host guide', () => {
+	it('the buttons are drawn only during a drag; the hovered one is active with a quarter-host guide', () => {
 		mount(mixed());
-		expect(document.querySelectorAll('.edge-drop')).toHaveLength(0);
-		dragTo(titlebarOf('F'), 5, 300);
-		const strips = [...document.querySelectorAll<HTMLElement>('.edge-drop')];
-		expect(strips.map((s) => s.dataset.dockEdge)).toEqual(['left', 'right', 'top', 'bottom']);
+		expect(document.querySelectorAll('.guide-button')).toHaveLength(0);
+		dragTo(titlebarOf('F'), 24, 300);
+		const buttons = [...document.querySelectorAll<HTMLElement>('.guide-button.outer')];
+		expect(buttons.map((s) => s.dataset.dockEdge)).toEqual(['left', 'right', 'top', 'bottom']);
+		expect(buttons.every((b) => b.getAttribute('aria-hidden') === 'true')).toBe(true);
 		expect(
-			strips.filter((s) => s.classList.contains('active')).map((s) => s.dataset.dockEdge)
+			buttons.filter((s) => s.classList.contains('active')).map((s) => s.dataset.dockEdge)
 		).toEqual(['left']);
 		const guide = document.querySelector<HTMLElement>('.snap-guide')!;
 		expect([guide.style.left, guide.style.top, guide.style.width, guide.style.height]).toEqual([
 			'0px',
 			'0px',
-			'500px',
+			'250px',
 			'600px'
 		]);
+		firePointer(window, 'pointermove', 995, 300);
+		flushSync();
+		// Off the button (still near the side): no edge guide, the floating preview instead.
+		expect(document.querySelector('.guide-button.active')).toBeNull();
+		expect(document.querySelector<HTMLElement>('.snap-guide')!.style.width).toBe('300px');
 		release(500, 300);
-		expect(document.querySelectorAll('.edge-drop')).toHaveLength(0);
+		expect(document.querySelectorAll('.guide-button')).toHaveLength(0);
+	});
+
+	it('a release near a side but off its button does not dock (the window moves)', () => {
+		const { dock } = mount(mixed());
+		dragTo(titlebarOf('F'), 5, 300);
+		release(5, 300);
+		expect(dock.layout.docked).toEqual(mixed().docked);
+		expect(dock.layout.floating.map((w) => w.id)).toEqual(['f']);
 	});
 
 	it('asks the wrapped panes first (reparent, tree order), then the dropped pane; docks along the edge', () => {
 		const calls: string[] = [];
 		const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(label(c)), true) });
 		const before = inputOf('P');
-		dragTo(titlebarOf('F'), 5, 300);
-		release(5, 300);
+		dragTo(titlebarOf('F'), 24, 300);
+		release(24, 300);
 		expect(calls).toEqual(['reparent x', 'reparent p', 'dock f']);
 		expect(dock.layout.floating).toEqual([]);
 		expect(dock.layout.docked).toMatchObject({
 			type: 'split',
 			direction: 'row',
-			sizes: [0.5, 0.5],
+			sizes: [0.25, 0.75],
 			children: [{ id: 'f' }, { id: 's' }]
 		});
 		// What the question is about: P's content really is a new mount.
@@ -285,11 +303,11 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 		expect(inputOf('P')).not.toBe(before);
 	});
 
-	it('the outer edge wins over the edge band of the pane under it', () => {
+	it('an outer-edge button wins over the pane under it', () => {
 		const { dock } = mount(mixed());
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
-		dragTo(titlebarOf('F'), 995, 300);
-		release(995, 300);
+		dragTo(titlebarOf('F'), 976, 300);
+		release(976, 300);
 		expect(dock.layout.docked).toMatchObject({
 			direction: 'row',
 			children: [{ id: 's' }, { id: 'f' }]
@@ -301,8 +319,8 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 		const { dock } = mount(mixed(), {
 			beforePanelChange: (c) => (calls.push(label(c)), c.kind !== 'reparent')
 		});
-		dragTo(titlebarOf('F'), 5, 300);
-		release(5, 300);
+		dragTo(titlebarOf('F'), 24, 300);
+		release(24, 300);
 		expect(calls).toEqual(['reparent x']);
 		expect(dock.layout).toEqual(mixed());
 	});
@@ -310,8 +328,8 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 	it('keepMounted panes are asked too (a background tab is re-mounted as well)', () => {
 		const asked: DockPanelChange[] = [];
 		mount(mixed(), { beforePanelChange: (c) => (asked.push(c), true), keepMounted: () => true });
-		dragTo(titlebarOf('F'), 500, 595);
-		release(500, 595);
+		dragTo(titlebarOf('F'), 500, 576);
+		release(500, 576);
 		expect(asked).toEqual([
 			{ kind: 'reparent', panelId: 'x', cause: 'f', remount: true },
 			{ kind: 'reparent', panelId: 'y', cause: 'f', remount: true },
@@ -323,8 +341,8 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 	it('a docked pane moved to the edge: only the panes whose chain changes are asked, then move-docked', () => {
 		const calls: string[] = [];
 		const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(label(c)), true) });
-		dragTo(tabOf('x'), 995, 300);
-		release(995, 300);
+		dragTo(tabOf('x'), 976, 300);
+		release(976, 300);
 		// x leaves t (t collapses to the bare pane y, which was not mounted); p moves one level down.
 		expect(calls).toEqual(['reparent p', 'move-docked x']);
 		expect(dock.layout.docked).toMatchObject({
@@ -340,8 +358,8 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 		const { dock } = mount(mixed(), {
 			beforePanelChange: (c) => (calls.push(label(c)), new Promise<boolean>((r) => (answer = r)))
 		});
-		dragTo(titlebarOf('F'), 5, 300);
-		release(5, 300);
+		dragTo(titlebarOf('F'), 24, 300);
+		release(24, 300);
 		dock.setActiveTab('t', 1); // the app switches a tab while the answer waits
 		answer(true);
 		await nextTask();
@@ -349,16 +367,16 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['f']);
 	});
 
-	it('an empty tree: no strips, a drop near the border moves the floating window as before', () => {
+	it('an empty tree: no buttons, a drop near the border moves the floating window as before', () => {
 		const layout: DockLayout = {
 			version: 2,
 			floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 			docked: null
 		};
 		const { dock } = mount(layout);
-		dragTo(titlebarOf('F'), 5, 300);
-		expect(document.querySelectorAll('.edge-drop')).toHaveLength(0);
-		release(5, 300);
+		dragTo(titlebarOf('F'), 24, 300);
+		expect(document.querySelectorAll('.guide-button')).toHaveLength(0);
+		release(24, 300);
 		expect(dock.layout.docked).toBeNull();
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['f']);
 	});
@@ -367,17 +385,37 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 		const layout: DockLayout = { version: 2, floating: [], docked: panel('p') };
 		const { dock } = mount(layout);
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
-		dragTo(document.querySelector('[data-dock-drop-id="p"] [role="toolbar"]')!, 5, 300);
-		expect(document.querySelectorAll('.edge-drop')).toHaveLength(0);
-		release(5, 300);
-		expect(dock.layout.docked).toEqual(panel('p'));
+		dragTo(document.querySelector('[data-dock-drop-id="p"] [role="toolbar"]')!, 24, 300);
+		expect(document.querySelectorAll('.guide-button.outer')).toHaveLength(0);
+		release(24, 300);
+		// Where the left button would be is off every button: the pane floats, nothing is wrapped.
+		expect(dock.layout.docked).toBeNull();
+		expect(dock.layout.floating.map((w) => w.id)).toEqual(['p']);
+	});
+
+	it('a small pane on the border: the cross buttons under an outer button are not offered, the outer one wins', () => {
+		const { dock } = mount(mixed());
+		const paneP = document.querySelector('[data-dock-drop-id="p"]')!;
+		const whole = Element.prototype.getBoundingClientRect.call(document.body);
+		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+			this: Element
+		) {
+			if (this !== paneP) return whole;
+			return { ...whole, left: 0, top: 220, right: 160, bottom: 380, width: 160, height: 160 };
+		});
+		hit = () => paneP;
+		dragTo(titlebarOf('F'), 24, 300);
+		const cross = [...document.querySelectorAll<HTMLElement>('.guide-button:not(.outer)')];
+		expect(cross.map((b) => b.dataset.dockCross)).toEqual(['center', 'right', 'top', 'bottom']);
+		release(24, 300);
+		expect(dock.layout.docked).toMatchObject({ children: [{ id: 'f' }, { id: 's' }] });
 	});
 
 	it('a focus lost to the re-mount goes back to the frame it was in (the active tab of t)', async () => {
 		mount(mixed());
 		inputOf('X')!.focus();
-		dragTo(titlebarOf('F'), 5, 300);
-		release(5, 300);
+		dragTo(titlebarOf('F'), 24, 300);
+		release(24, 300);
 		await tick();
 		expect(document.activeElement).toBe(tabOf('x'));
 	});
@@ -387,8 +425,8 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 		document.body.append(outside);
 		mount(mixed(), { beforePanelChange: (c) => (c.kind === 'dock' && outside.focus(), true) });
 		inputOf('X')!.focus();
-		dragTo(titlebarOf('F'), 5, 300);
-		release(5, 300);
+		dragTo(titlebarOf('F'), 24, 300);
+		release(24, 300);
 		await tick();
 		expect(document.activeElement).toBe(outside);
 		outside.remove();

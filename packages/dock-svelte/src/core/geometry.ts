@@ -268,22 +268,23 @@ export function pixelDeltaToFraction(deltaPx: number, containerSizePx: number): 
 /**
  * The snap-guide sub-rectangle for a `DropRegion` within a drop target's full
  * `rect` (M8 Phase B, spec §5.2 "ドラッグ中のドロップ位置プレビュー（スナップ
- * ガイド表示）") - half the target for an edge region (matching
- * `computeDropRegion`'s `edgeRatio`-independent split-in-half convention,
- * since that's where `core/tree.ts#splitInsert` actually divides the space),
- * the whole target for `'center'` (a new/joined tab covers the whole pane).
+ * ガイド表示）") - the `ratio` of the target on that side for an edge region
+ * (default half: where `core/tree.ts#splitInsert` divides a pane; the host's outer
+ * edges pass `EDGE_DOCK_RATIO`, #694 PR-2), the whole target for `'center'` (a
+ * new/joined tab covers the whole pane). `ratio` is clamped to [0, 1].
  */
-export function dropRegionRect(rect: Rect, region: DropRegion): Rect {
+export function dropRegionRect(rect: Rect, region: DropRegion, ratio = 0.5): Rect {
 	const { x, y, width, height } = rect;
+	const r = Math.min(1, Math.max(0, ratio));
 	switch (region) {
 		case 'left':
-			return { x, y, width: width / 2, height };
+			return { x, y, width: width * r, height };
 		case 'right':
-			return { x: x + width / 2, y, width: width / 2, height };
+			return { x: x + width * (1 - r), y, width: width * r, height };
 		case 'top':
-			return { x, y, width, height: height / 2 };
+			return { x, y, width, height: height * r };
 		case 'bottom':
-			return { x, y: y + height / 2, width, height: height / 2 };
+			return { x, y: y + height * (1 - r), width, height: height * r };
 		default:
 			return rect;
 	}

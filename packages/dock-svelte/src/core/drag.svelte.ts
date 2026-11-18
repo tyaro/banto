@@ -20,12 +20,16 @@
  *  - The "floating area" fallback is just "inside the host but didn't hit a
  *    `[data-dock-drop-id]` element" - one more `.contains()` check, no extra
  *    bookkeeping.
- * The exception is the host's OUTER EDGES (#694 PR-1, `core/edges.ts`): a
- * strip along each side, tested by geometry before the panes, only while a
- * drag is in progress and only when something else is docked. A drop there
- * wraps the docked root (`#finishEdge`).
- * The one thing this requires of callers: the drag ghost and the snap-guide
- * overlay MUST be `pointer-events: none` (see `DockHost.svelte`), otherwise
+ * The pane under the pointer only says WHERE the guide goes: since #694 PR-2 a
+ * drag docks only on a guide button - the cross in the middle of that pane
+ * (`core/dropzones.ts#crossButtons`) or one of the host's OUTER-EDGE buttons
+ * (#694 PR-1/PR-2, `core/edges.ts`; offered only when something else is docked,
+ * tested before the cross, a drop there wraps the docked root, `#finishEdge`).
+ * Both are laid out and hit-tested by geometry here, only while a drag is in
+ * progress. A release in the host off every button floats the pane (or moves the
+ * floating window), like a release on free space.
+ * The one thing this requires of callers: the drag ghost, the guide buttons and
+ * the snap-guide overlay MUST be `pointer-events: none` (see `DockHost.svelte`), otherwise
  * they'd be the element under the cursor and everything below would be
  * unreachable.
  *
@@ -51,6 +55,7 @@ import { resolveCapabilities, type DockPolicy } from './policy';
 import {
 	collectPanelIds,
 	dockPanelAtEdge,
+	EDGE_DOCK_RATIO,
 	dockPanelIntoTree,
 	findNode,
 	findParent,
@@ -58,8 +63,8 @@ import {
 } from './tree';
 import type { DockState } from '../state.svelte';
 import type { DockEdge, DockNode, DockPanelNode, DropRegion } from '../types';
-import { computeDropRegion } from './dropzones';
-import { computeEdgeDrop, edgeBandSize } from './edges';
+import { crossButtons, hitGuideButton, rectsOverlap, type GuideButton } from './dropzones';
+import { edgeButtons } from './edges';
 
 /** Where a drag originated - determines which `DockState` method finishes it (see `#finish`). */
 export type DragSource = 'floating' | 'docked';
@@ -93,15 +98,18 @@ export interface DragSnapshot {
 	/** Pointer-to-origin offset captured at drag start (see `DragStartOptions`). */
 	grabDx: number;
 	grabDy: number;
-	/** `data-dock-drop-id` of the hovered docked pane/tabs-group, if any. */
+	/** `data-dock-drop-id` of the docked pane/tabs-group under the pointer (the one `crossButtons` is drawn on), if any. */
 	hoverTargetId: string | null;
+	/** The cross button the pointer is on (#694 PR-2); `null` = off the buttons (no dock into `hoverTargetId`). */
 	hoverRegion: DropRegion | null;
-	/** True when hovering the host's empty floating area (not over any docked pane). */
+	/** True when a release here floats the pane / moves the window: in the host, on no guide button and no collapsed band. */
 	hoverFloating: boolean;
-	/** The outer edge of the host being hovered (#694 PR-1, `core/edges.ts`); wins over `hoverTargetId` / `hoverFloating`. */
+	/** The outer-edge button being hovered (#694 PR-1/PR-2, `core/edges.ts`); wins over `hoverRegion` / `hoverFloating`. */
 	hoverEdge: DockEdge | null;
-	/** Thickness (px) of the outer-edge strips `DockHost` draws; `0` = no outer-edge drop offered for this drag (nothing else docked). */
-	edgeBand: number;
+	/** Host-relative outer-edge buttons `DockHost` draws; empty = no outer-edge drop offered for this drag (nothing else docked, or the host is too small). */
+	edgeButtons: GuideButton<DockEdge>[];
+	/** Host-relative cross buttons on `hoverTargetId` (#694 PR-2), minus the ones its panes' capabilities withhold and the ones under an outer-edge button. */
+	crossButtons: GuideButton[];
 	/** Host-relative snap-guide rectangle to render, or `null` if nothing to show (e.g. dragged outside the host entirely). */
 	guideRect: Rect | null;
 }
@@ -176,7 +184,8 @@ export class DragController {
 			hoverRegion: null,
 			hoverFloating: false,
 			hoverEdge: null,
-			edgeBand: 0,
+			edgeButtons: [],
+			crossButtons: [],
 			guideRect: null
 		};
 		this.#recomputeHover(opts.clientX, opts.clientY);
@@ -217,63 +226,63 @@ export class DragController {
 		let hoverFloating = false;
 		let guideRect: Rect | null = null;
 		let hoverEdge: DockEdge | null = null;
-		let edgeBand = 0;
+		let edges: GuideButton<DockEdge>[] = [];
+		let cross: GuideButton[] = [];
 		// A band of a collapsed region (#663 ③-B) is neither a pane to drop onto nor free
 		// space (that would float the pane): the drop there is a no-op.
 		const noDrop = (hitEl as Element | null)?.closest('[data-dock-no-drop]') != null;
 
-		// The outer edges of the host (#694 PR-1) are hit-tested first, by geometry only
-		// (`core/edges.ts`): the strips are drawn `pointer-events: none` and exist only during a
-		// drag. Offered only when something else is docked - with an empty tree (or only the
-		// dragged pane) a drop behaves as before.
-		if (hostEl && this.#edgesOffered(this.state.panelId)) {
+		if (hostEl) {
 			const hostRect = hostEl.getBoundingClientRect();
-			edgeBand = edgeBandSize(hostRect.width, hostRect.height);
+			const x = clientX - hostRect.left;
+			const y = clientY - hostRect.top;
 			const inHost = hitEl !== null && hostEl.contains(hitEl);
-			const edge = inHost
-				? computeEdgeDrop(
-						clientX - hostRect.left,
-						clientY - hostRect.top,
-						hostRect.width,
-						hostRect.height
-					)
-				: null;
-			if (edge) {
-				hoverEdge = edge;
-				guideRect = dropRegionRect(
-					{ x: 0, y: 0, width: hostRect.width, height: hostRect.height },
-					edge
-				);
+			// The outer-edge buttons (#694 PR-1/PR-2) are hit-tested first, by geometry only
+			// (`core/edges.ts`): drawn `pointer-events: none`, only during a drag, and only when
+			// something else is docked - with an empty tree (or only the dragged pane) a drop
+			// behaves as before.
+			if (this.#edgesOffered(this.state.panelId)) {
+				edges = edgeButtons(hostRect.width, hostRect.height);
+				hoverEdge = inHost ? hitGuideButton(edges, x, y) : null;
+				if (hoverEdge)
+					guideRect = dropRegionRect(
+						{ x: 0, y: 0, width: hostRect.width, height: hostRect.height },
+						hoverEdge,
+						EDGE_DOCK_RATIO
+					);
 			}
-		}
 
-		if (hoverEdge) {
-			// outer edge: set above
-		} else if (noDrop) {
-			// no target
-		} else if (hostEl && paneEl && hostEl.contains(paneEl)) {
-			const paneRect = paneEl.getBoundingClientRect();
-			const hostRect = hostEl.getBoundingClientRect();
-			const localX = clientX - paneRect.left;
-			const localY = clientY - paneRect.top;
-			hoverTargetId = paneEl.dataset.dockDropId ?? null;
-			hoverRegion = computeDropRegion(localX, localY, paneRect.width, paneRect.height);
-			const hostRelative: Rect = {
-				x: paneRect.left - hostRect.left,
-				y: paneRect.top - hostRect.top,
-				width: paneRect.width,
-				height: paneRect.height
-			};
-			guideRect = dropRegionRect(hostRelative, hoverRegion);
-		} else if (hostEl && hitEl && hostEl.contains(hitEl)) {
-			hoverFloating = true;
-			const hostRect = hostEl.getBoundingClientRect();
-			guideRect = {
-				x: clientX - hostRect.left - this.state.grabDx,
-				y: clientY - hostRect.top - this.state.grabDy,
-				width: this.state.width,
-				height: this.state.height
-			};
+			if (!noDrop && paneEl && hostEl.contains(paneEl)) {
+				const paneRect = paneEl.getBoundingClientRect();
+				const hostRelative: Rect = {
+					x: paneRect.left - hostRect.left,
+					y: paneRect.top - hostRect.top,
+					width: paneRect.width,
+					height: paneRect.height
+				};
+				hoverTargetId = paneEl.dataset.dockDropId ?? null;
+				if (hoverTargetId !== null) {
+					// An outer-edge button wins where they meet (a small pane on the host's border):
+					// the cross buttons under one are not offered.
+					cross = crossButtons(hostRelative, this.#crossOptions(hoverTargetId)).filter(
+						(b) => !edges.some((e) => rectsOverlap(e.rect, b.rect))
+					);
+					if (!hoverEdge) {
+						hoverRegion = hitGuideButton(cross, x, y);
+						if (hoverRegion) guideRect = dropRegionRect(hostRelative, hoverRegion);
+					}
+				}
+			}
+
+			if (!hoverEdge && !hoverRegion && !noDrop && inHost) {
+				hoverFloating = true;
+				guideRect = {
+					x: x - this.state.grabDx,
+					y: y - this.state.grabDy,
+					width: this.state.width,
+					height: this.state.height
+				};
+			}
 		}
 
 		this.state = {
@@ -284,9 +293,22 @@ export class DragController {
 			hoverRegion,
 			hoverFloating,
 			hoverEdge,
-			edgeBand,
+			edgeButtons: edges,
+			crossButtons: cross,
 			guideRect
 		};
+	}
+
+	/**
+	 * Which cross buttons the drop target `targetId` (a pane or a tab group) offers (#694 PR-2):
+	 * `dropCenter` / `dropSplit` of its panes, every pane of a group must allow it.
+	 */
+	#crossOptions(targetId: string): { center: boolean; split: boolean } {
+		const policy = this.#getPolicy();
+		if (!policy?.capabilities) return { center: true, split: true };
+		const ids = collectPanelIds(findNode(this.#dock.layout.docked, targetId));
+		const caps = ids.map((id) => resolveCapabilities(policy, id));
+		return { center: caps.every((c) => c.dropCenter), split: caps.every((c) => c.dropSplit) };
 	}
 
 	/** Whether a drop on the host's outer edges is offered for `panelId`: some OTHER pane is docked (there is a root to wrap). */

@@ -2,63 +2,54 @@
  * Outer-edge drop targets of the whole host (#694 PR-1; spec §5.2 "画面端・
  * グループ端にドロップして分割"). Pure, no Svelte imports.
  *
- * Kept apart from `core/dropzones.ts` (a pane's own edge bands and centre) on
- * purpose: the outer edge is a different target (the whole docked root is
- * wrapped, `core/tree.ts#dockPanelAtEdge`), it is hit-tested BEFORE the panes
- * (so it wins over the outermost strip of a pane and over a floating window
- * lying on the host's border), and the next step (#694 PR-2) replaces its band
- * with buttons drawn like the cross guide - only this module changes then.
+ * Kept apart from `core/dropzones.ts` (a pane's own cross guide) on purpose: the
+ * outer edge is a different target (the whole docked root is wrapped,
+ * `core/tree.ts#dockPanelAtEdge`), and it is hit-tested BEFORE the panes (so it wins
+ * over a pane's cross and over a floating window lying on the host's border).
  *
- * The hit area is a strip of `band` px along each side of the host. It exists
- * only while a drag is in progress (`DragController` calls this from its own
- * hover update; `DockHost` draws the strips with `pointer-events: none`), so
- * it never takes a pointer or a hit test outside a drag. The snap guide for an
- * edge is `dropRegionRect(hostRect, edge)` - the half of the host the new
- * split gives the pane (`dockPanelAtEdge`'s even sizes).
+ * Since #694 PR-2 the target is one guide button per side (drawn like the cross's
+ * buttons), at the middle of that side, `GUIDE_INSET` px in. They exist only while a
+ * drag is in progress (`DragController` lays them out and hit-tests them from its own
+ * hover update; `DockHost` draws them with `pointer-events: none`), so they never
+ * take a pointer or a hit test outside a drag. The snap guide for an edge is
+ * `dropRegionRect(hostRect, edge, EDGE_DOCK_RATIO)` - the quarter of the host the new
+ * split gives the pane (`dockPanelAtEdge`'s sizes).
  */
+import { GUIDE_INSET, guideButtonSize, hitGuideButton, type GuideButton } from './dropzones';
 import type { DockEdge } from '../types';
 
-/** Default thickness (px) of the outer-edge strip. */
-export const EDGE_DROP_BAND = 24;
-
 /**
- * The strip thickness for a host of `width` x `height`: `band`, but never more
- * than an eighth of the smaller side, so a small host keeps most of its panes'
- * own drop bands (`core/dropzones.ts` uses the outer 25% of each pane).
+ * The outer-edge buttons of a `width` x `height` host (origin top-left), in the order
+ * left, right, top, bottom. The button side is the cross's (`guideButtonSize` of the
+ * host); empty when the host is too small for it.
  */
-export function edgeBandSize(width: number, height: number, band = EDGE_DROP_BAND): number {
-	const limit = Math.min(width, height) / 8;
-	if (!(limit > 0)) return 0;
-	return Math.min(band, limit);
+export function edgeButtons(width: number, height: number): GuideButton<DockEdge>[] {
+	const b = guideButtonSize(width, height);
+	if (b <= 0) return [];
+	const midX = width / 2 - b / 2;
+	const midY = height / 2 - b / 2;
+	const at = (region: DockEdge, x: number, y: number): GuideButton<DockEdge> => ({
+		region,
+		rect: { x, y, width: b, height: b }
+	});
+	return [
+		at('left', GUIDE_INSET, midY),
+		at('right', width - GUIDE_INSET - b, midY),
+		at('top', midX, GUIDE_INSET),
+		at('bottom', midX, height - GUIDE_INSET - b)
+	];
 }
 
 /**
- * Which outer edge (if any) a host-local point (`localX`, `localY`; origin
- * top-left of a `width` x `height` host) is on. A point outside the host is on
- * none. In a corner (two strips at once) the nearer side wins; on an exact
- * tie the order is left > right > top > bottom (like `computeDropRegion`).
- * Boundary: a point exactly `size` px from a side is NOT on it (strict `<`).
+ * Which outer-edge button (if any) a host-local point (`localX`, `localY`; origin
+ * top-left of a `width` x `height` host) is on. Between the buttons = none.
  */
 export function computeEdgeDrop(
 	localX: number,
 	localY: number,
 	width: number,
-	height: number,
-	band = EDGE_DROP_BAND
+	height: number
 ): DockEdge | null {
 	if (width <= 0 || height <= 0) return null;
-	if (localX < 0 || localY < 0 || localX > width || localY > height) return null;
-	const size = edgeBandSize(width, height, band);
-	if (size <= 0) return null;
-	const candidates: { edge: DockEdge; dist: number }[] = [
-		{ edge: 'left', dist: localX },
-		{ edge: 'right', dist: width - localX },
-		{ edge: 'top', dist: localY },
-		{ edge: 'bottom', dist: height - localY }
-	];
-	let best: { edge: DockEdge; dist: number } | null = null;
-	for (const c of candidates) {
-		if (c.dist < size && (best === null || c.dist < best.dist)) best = c;
-	}
-	return best?.edge ?? null;
+	return hitGuideButton(edgeButtons(width, height), localX, localY);
 }

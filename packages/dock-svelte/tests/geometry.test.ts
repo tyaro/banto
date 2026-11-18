@@ -6,7 +6,8 @@ import {
 	applyResize,
 	bringToFront,
 	cascadePosition,
-	clampWindowToHost
+	clampWindowToHost,
+	dropRegionRect
 } from '../src/core/geometry';
 import type { DockLayout, FloatingWindow } from '../src/types';
 
@@ -282,5 +283,23 @@ describe('cascadePosition', () => {
 		const { x, y } = cascadePosition(5, 100, 100, 300, 200);
 		expect(x).toBeGreaterThanOrEqual(0);
 		expect(y).toBeGreaterThanOrEqual(0);
+	});
+});
+
+describe('dropRegionRect', () => {
+	const rect = { x: 10, y: 20, width: 400, height: 200 };
+
+	it('half of the target by default; the whole target for the centre', () => {
+		expect(dropRegionRect(rect, 'left')).toEqual({ x: 10, y: 20, width: 200, height: 200 });
+		expect(dropRegionRect(rect, 'bottom')).toEqual({ x: 10, y: 120, width: 400, height: 100 });
+		expect(dropRegionRect(rect, 'center')).toEqual(rect);
+	});
+
+	it('a ratio gives that share on the side (the outer edges use a quarter, #694 PR-2)', () => {
+		expect(dropRegionRect(rect, 'left', 0.25)).toEqual({ x: 10, y: 20, width: 100, height: 200 });
+		expect(dropRegionRect(rect, 'right', 0.25)).toEqual({ x: 310, y: 20, width: 100, height: 200 });
+		expect(dropRegionRect(rect, 'top', 0.25)).toEqual({ x: 10, y: 20, width: 400, height: 50 });
+		expect(dropRegionRect(rect, 'bottom', 0.25)).toEqual({ x: 10, y: 170, width: 400, height: 50 });
+		expect(dropRegionRect(rect, 'left', 2)).toEqual(rect);
 	});
 });

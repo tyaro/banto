@@ -3662,7 +3662,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await memoInput.fill('unsaved');
 			await expect(unsaved).toBeVisible();
 
-			// dock: the floating title bar onto the centre of the 月別更新件数 pane.
+			// dock: the floating title bar onto the centre button of the 月別更新件数 pane's cross
+			// guide (#694 PR-2: drawn at the centre of the pane).
 			const titlebar = memoWindow.locator('.titlebar');
 			const barBox = await titlebar.boundingBox();
 			if (!barBox) throw new Error('no title bar');
@@ -3685,7 +3686,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			// undock: the tab onto another floating window (= free floating space,
 			// the docked tree fills the host). The window opens at the top left, over
 			// the tab strip, so it is first moved down with the keyboard move mode
-			// (geometry only - a pointer drag over a docked pane would dock it).
+			// (geometry only - a pointer drag over a docked pane could land on its cross guide).
 			await toggleDashboardPanel(page, 'トレンド');
 			const trendWindow = page.getByRole('dialog', { name: 'トレンド' });
 			await expect(trendWindow).toBeVisible();
@@ -3881,8 +3882,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
-	// #694 PR-1: a drop on the outer edge of the dock host wraps the whole docked
-	// tree and the pane spans that side (full height on the left).
+	// #694 PR-1/PR-2: a drop on the outer left button of the dock host wraps the whole
+	// docked tree and the pane spans that side (full height, a quarter of the width).
 	test('13m2. dock: a floating pane dropped on the outer left edge spans the full height', async () => {
 		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
 		await page.goto('/dashboard');
@@ -3896,16 +3897,20 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		try {
 			const from = { x: barBox.x + 30, y: barBox.y + barBox.height / 2 };
-			const to = { x: hostBox.x + 6, y: hostBox.y + hostBox.height / 2 };
+			// The left outer button: 8 px in from the side, 32 px, at mid height (`core/edges.ts`).
+			const to = { x: hostBox.x + 24, y: hostBox.y + hostBox.height / 2 };
 			await page.mouse.move(from.x, from.y);
 			await page.mouse.down();
 			await page.mouse.move(from.x + 12, from.y + 12, { steps: 3 });
 			await page.mouse.move(to.x, to.y, { steps: 12 });
-			// Only during the drag: the four outer strips, the left one active.
-			await expect(host.locator('.edge-drop')).toHaveCount(4);
-			await expect(host.locator('.edge-drop.active')).toHaveAttribute('data-dock-edge', 'left');
+			// Only during the drag: the four outer buttons, the left one active.
+			await expect(host.locator('.guide-button.outer')).toHaveCount(4);
+			await expect(host.locator('.guide-button.outer.active')).toHaveAttribute(
+				'data-dock-edge',
+				'left'
+			);
 			await page.mouse.up();
-			await expect(host.locator('.edge-drop')).toHaveCount(0);
+			await expect(host.locator('.guide-button')).toHaveCount(0);
 
 			await expect(memoWindow).toHaveCount(0);
 			const memoPane = host.locator('[data-dock-drop-id="memo"]');
@@ -3914,6 +3919,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			if (!paneBox) throw new Error('memo pane not visible');
 			expect(Math.abs(paneBox.x - hostBox.x)).toBeLessThan(8);
 			expect(paneBox.height).toBeGreaterThan(hostBox.height - 16);
+			// A quarter of the host (`EDGE_DOCK_RATIO`), not half.
+			expect(paneBox.width).toBeLessThan(hostBox.width * 0.3);
 		} finally {
 			await resetDashboardLayout(page);
 		}

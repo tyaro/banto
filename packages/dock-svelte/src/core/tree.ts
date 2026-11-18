@@ -372,11 +372,15 @@ export function dockPanelIntoTree(
 	return splitInsert(root, target, panel, region, makeId);
 }
 
+/** The share of the host a pane docked on an outer edge gets (`dockPanelAtEdge`, #694 PR-2); the rest stays with the old root. */
+export const EDGE_DOCK_RATIO = 0.25;
+
 /**
  * Dock `dropped` along an outer edge of the whole host (#694 PR-1): the root
  * is wrapped in a new split, and the panel spans the full height (`left` /
- * `right`) or width (`top` / `bottom`) on that side, with the split's default
- * even sizes (`[0.5, 0.5]`, like `splitInsert`'s new split). The root is
+ * `right`) or width (`top` / `bottom`) on that side, taking `EDGE_DOCK_RATIO` of
+ * it (`[0.25, 0.75]` for left / top, `[0.75, 0.25]` for right / bottom; #694 PR-2 -
+ * a pane split by `splitInsert` still gets half). The root is
  * ALWAYS wrapped, even when it is already a split in the same direction - the
  * edge pane must span the whole host, which a sibling inside the root split
  * would only do by accident. `root === null` (nothing docked) = the panel
@@ -398,7 +402,7 @@ export function dockPanelAtEdge(
 		id: makeId(),
 		direction,
 		children: before ? [panel, root] : [root, panel],
-		sizes: [0.5, 0.5]
+		sizes: before ? [EDGE_DOCK_RATIO, 1 - EDGE_DOCK_RATIO] : [1 - EDGE_DOCK_RATIO, EDGE_DOCK_RATIO]
 	};
 }
 
