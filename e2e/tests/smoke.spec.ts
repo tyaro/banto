@@ -3750,6 +3750,27 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(unsaved).toHaveCount(0);
 			expect(putBodies).toHaveLength(1);
 
+			// Hiding the dirty memo from the View menu asks too. The checkbox keeps
+			// its menu open, so asking closes it first: the question is the only
+			// layer (no menu over the scrim) and holds focus; Esc cancels it and
+			// focus goes back to the menu's button.
+			await memoInput.fill('menu check');
+			const memoItem = (await dashboardViewMenu(page).open()).getByRole('menuitemcheckbox', {
+				name: 'メモ',
+				exact: true
+			});
+			await memoItem.click();
+			await expect(settleDialog).toBeVisible();
+			await expect(page.getByRole('menu', { name: '表示' })).toHaveCount(0);
+			await expect(settleDialog.locator(':focus')).toHaveCount(1);
+			await page.keyboard.press('Escape');
+			await expect(settleDialog).toHaveCount(0);
+			await expect(
+				page.getByRole('main').getByRole('button', { name: '表示', exact: true })
+			).toBeFocused();
+			await expect(memoWindow).toBeVisible();
+			await expect(memoInput).toHaveValue('menu check');
+
 			// Leaving with unapplied input asks (the router guard): stay, then leave.
 			await memoInput.fill('leave check');
 			dialogs.answer(false);
