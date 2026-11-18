@@ -608,6 +608,16 @@ describe('DockedTree: dividers next to a band', () => {
 		expect(sizes(dock)[0]).toBe(0.2);
 	});
 
+	it('the open children grow to fill the room the band leaves (grow factors normalized)', () => {
+		const dock = mount(['a']);
+		const grows = [...document.querySelectorAll<HTMLElement>('.dock-split > .split-child')].map(
+			(el) => el.style.flexGrow
+		);
+		// sizes 0.4 + 0.4 of the open children add up to 0.8: each grows by 0.5, together 1
+		expect(grows).toEqual(['0', '0.5', '0.5']);
+		expect(sizes(dock)).toEqual([0.2, 0.4, 0.4]);
+	});
+
 	it('without a band the plain px / size is used (unchanged)', () => {
 		const dock = mount([]);
 		const second = screen.getAllByRole('separator')[1];

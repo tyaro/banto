@@ -69,7 +69,8 @@
 	 * stays mounted but `hidden` + `inert`; the band is not a drag source (no drag from
 	 * it) and not a drop target (no `data-dock-drop-id`; `data-dock-no-drop` makes a
 	 * drop on it a no-op). The split gives the freed space to the open children through
-	 * flex (`flex-grow` = the saved `sizes`, the band is `flex: 0 0 <header height>`), so
+	 * flex (`flex-grow` = the saved `sizes` over the open children's sum, the band is
+	 * `flex: 0 0 <header height>`), so
 	 * `sizes` are never rewritten; a divider next to a band is disabled, and the pixel
 	 * -> fraction conversion of the other dividers uses only the room the open children
 	 * share (`pxToFraction`).
@@ -129,6 +130,24 @@
 	const collapsed = $derived(node.type !== 'split' && node.collapsed === true);
 	/** May this region be collapsed now (a split child with another open child)? Expanding is always allowed. */
 	const canCollapse = $derived(node.type !== 'split' && dock.canCollapseDocked(node.id));
+	/**
+	 * Sum of the saved `sizes` of the open (not collapsed) children of this split. CSS flex
+	 * hands out only `sum(flex-grow)` of the free room when the grow factors add up to less
+	 * than 1, so the open children grow by `sizes[i] / openGrowShare` (they fill the room the
+	 * bands leave; with no band this is the saved share as before). `sizes` stay untouched.
+	 */
+	const openGrowShare = $derived(
+		node.type === 'split'
+			? node.children.reduce(
+					(sum, c, i) => (isRegionCollapsed(c) ? sum : sum + (node.sizes[i] ?? 0)),
+					0
+				)
+			: 0
+	);
+	function growOf(i: number): number {
+		const share = node.type === 'split' ? (node.sizes[i] ?? 0) : 0;
+		return openGrowShare > 0 ? share / openGrowShare : share;
+	}
 	/** The band's title: the pane's, or the front tab's. */
 	const regionTitle = $derived(
 		node.type === 'panel'
@@ -620,7 +639,7 @@
 			<div
 				class="split-child"
 				class:collapsed={band}
-				style:flex-grow={band ? 0 : (node.sizes[i] ?? 0)}
+				style:flex-grow={band ? 0 : growOf(i)}
 				style:flex-shrink={band ? 0 : undefined}
 				style:flex-basis={band ? 'var(--banto-dock-titlebar-height)' : '0%'}
 			>
