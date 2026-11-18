@@ -9,6 +9,7 @@ import {
 	decideLeave,
 	isApprovedExit,
 	isSamePage,
+	isSamePath,
 	runLeaveCheck,
 	type LeaveDecision,
 	type LeaveDecisionInput,
@@ -50,7 +51,12 @@ describe('decideLeave', () => {
 		[{ pending: true, type: 'goto', forced: true }, 'allow'],
 		[{ pending: true, type: 'leave', forced: true }, 'allow'],
 		// Staying on the same page keeps the draft mounted: nothing to lose.
-		[{ pending: true, type: 'link', samePage: true }, 'allow']
+		[{ pending: true, type: 'link', samePage: true }, 'allow'],
+		// Same page by the host's rule (query-only change): never asked, back / forward included.
+		[{ pending: true, type: 'goto', samePage: true }, 'allow'],
+		[{ pending: true, type: 'popstate', samePage: true }, 'allow'],
+		// Reload / tab close are never "same page".
+		[{ pending: true, type: 'leave', samePage: true }, 'block']
 	];
 
 	it.each(cases)('%o -> %s', (input, expected) => {
@@ -73,7 +79,35 @@ describe('isSamePage', () => {
 	});
 });
 
+describe('isSamePath', () => {
+	const url = (path: string) => new URL(path, 'http://app.test');
+
+	it('ignores the query and hash, not the path or origin', () => {
+		expect(isSamePath(url('/tags?target=a'), url('/tags?target=b&tab=x'))).toBe(true);
+		expect(isSamePath(url('/tags'), url('/tags#top'))).toBe(true);
+		expect(isSamePath(url('/tags'), url('/other'))).toBe(false);
+		expect(isSamePath(url('/tags'), new URL('http://other.test/tags'))).toBe(false);
+	});
+});
+
 describe('runLeaveCheck', () => {
+	it('uses the host isSamePage: a query-only change is not asked, the default still asks', () => {
+		const confirm = vi.fn(() => false);
+		const query = () => nav('goto', '/tags?target=a', '/tags?target=b');
+		const byPath = runLeaveCheck(query(), [{ ...source(true), isSamePage: isSamePath }], {
+			confirm
+		});
+		expect(byPath).toBe('allow');
+		expect(confirm).not.toHaveBeenCalled();
+		expect(runLeaveCheck(query(), [source(true)], { confirm })).toBe('kept');
+		expect(confirm).toHaveBeenCalledOnce();
+	});
+
+	it('still blocks an unload whatever isSamePage says', () => {
+		const navigation = nav('leave', '/tags?a=1', null);
+		expect(runLeaveCheck(navigation, [source(true)], { isSamePage: () => true })).toBe('block');
+	});
+
 	it('allows without asking when nothing is pending', () => {
 		const confirm = vi.fn(() => false);
 		const navigation = nav('link', '/items/new', '/dashboard');
@@ -140,6 +174,12 @@ describe('isApprovedExit', () => {
 		expect(isApprovedExit('kept', away)).toBe(false);
 		expect(isApprovedExit('block', away)).toBe(false);
 		expect(isApprovedExit(undefined, away)).toBe(false);
+	});
+
+	it('uses the given isSamePage for the same-page check', () => {
+		const query = withComplete(nav('goto', '/tags?a=1', '/tags?a=2'));
+		expect(isApprovedExit('allow', query)).toBe(true);
+		expect(isApprovedExit('allow', query, isSamePath)).toBe(false);
 	});
 
 	it('excludes same-page moves, unloads and navigations without `complete`', () => {
