@@ -322,9 +322,17 @@ export class PanelLifecycle {
 		if (where === 'docked') {
 			// A background tab: bringing it up is a tab switch (asked like a tab click).
 			const group = findParent(this.#dock.layout.docked, panelId);
-			return group?.type === 'tabs'
-				? this.switchTab(group.id, panelId)
-				: Promise.resolve('applied');
+			if (group?.type !== 'tabs') {
+				this.#dock.revealDocked(panelId);
+				return Promise.resolve('applied');
+			}
+			const switched = this.switchTab(group.id, panelId);
+			// Showing the pane also expands a region collapsed to a band (#663 ③-B). It is not a
+			// structure decision (nothing is mounted or unmounted), so it needs no request of its own.
+			return switched.then((outcome) => {
+				if (outcome === 'applied') this.#dock.revealDocked(panelId);
+				return outcome;
+			});
 		}
 		const redocksMounted = (): boolean =>
 			this.#whereIs(panelId) === 'hidden' &&

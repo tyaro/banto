@@ -14,7 +14,7 @@
  * registry. Unknown ids are kept as-is (the host component / consumer decides
  * at render time), which is a separate policy from structural validity.
  */
-import { normalizeSizes } from './tree';
+import { normalizeCollapsed, normalizeSizes } from './tree';
 import type { DockLayout, DockNode, FloatingWindow } from '../types';
 
 export type DockLayoutIssueCode =
@@ -147,10 +147,14 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 		if (raw.type === 'panel') {
 			if (typeof raw.title !== 'string') add('shape', `${p}.title`);
 			if (raw.icon !== undefined && typeof raw.icon !== 'string') add('shape', `${p}.icon`);
+			if (raw.collapsed !== undefined && typeof raw.collapsed !== 'boolean')
+				add('shape', `${p}.collapsed`);
 			return;
 		}
 		if (inTabs) return add('shape', `${p}.type`); // tab groups hold panels only
 		if (raw.type === 'tabs') {
+			if (raw.collapsed !== undefined && typeof raw.collapsed !== 'boolean')
+				add('shape', `${p}.collapsed`);
 			if (!Array.isArray(raw.children) || raw.children.length === 0) {
 				return add('shape', `${p}.children`);
 			}
@@ -199,6 +203,10 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 	if (issues.length > 0) return { ok: false, issues };
 	return {
 		ok: true,
-		layout: { version: 2, floating, docked: docked ? normalizeSizes(docked) : null }
+		layout: {
+			version: 2,
+			floating,
+			docked: docked ? normalizeCollapsed(normalizeSizes(docked)) : null
+		}
 	};
 }

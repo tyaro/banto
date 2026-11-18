@@ -23,15 +23,19 @@ import {
 import { captureDockSlot, restoreDockSlot } from './core/slot';
 import { validateDockLayout } from './core/validate';
 import {
+	canCollapseRegion,
 	collectPanelIds,
 	defaultMakeId,
 	dockPanelIntoTree,
+	expandRegionOf,
 	findNode,
 	findParent,
 	moveTabWithinGroup,
+	normalizeCollapsed,
 	removePanel,
 	resizeSplit as resizeSplitTree,
 	setActiveTab as setActiveTabTree,
+	setRegionCollapsed,
 	structureKey
 } from './core/tree';
 import type {
@@ -92,6 +96,10 @@ export class DockState {
 	}
 
 	set layout(next: DockLayout) {
+		// Collapsed regions (#663 ③-B) are kept valid on EVERY assignment (a close, a drop,
+		// `hydrate`, a restore ...): a flag that no longer fits the tree is dropped here.
+		const docked = normalizeCollapsed(next.docked);
+		if (docked !== next.docked) next = { ...next, docked };
 		this.#noteStructure(next);
 		this.#layout = next;
 	}
@@ -240,6 +248,49 @@ export class DockState {
 		});
 	}
 
+	/**
+	 * Is the docked region `nodeId` (a docked panel that is a split's child, or a tab group)
+	 * collapsed to a band (#663 ③-B)? Not `isCollapsed`, which is the FLOATING window's. A
+	 * panel inside a tab group, a split, a floating or unknown id is `false`.
+	 */
+	isDockedCollapsed(nodeId: string): boolean {
+		const node = findNode(this.layout.docked, nodeId);
+		return node !== null && node.type !== 'split' && node.collapsed === true;
+	}
+
+	/**
+	 * May the docked region `nodeId` be collapsed (#663 ③-B)? Only a panel / tab group that is
+	 * a direct child of a split with another child that is not collapsed: the last open region
+	 * of a split and a lone root region cannot be. A region that is already collapsed is `true`.
+	 */
+	canCollapseDocked(nodeId: string): boolean {
+		return canCollapseRegion(this.layout.docked, nodeId);
+	}
+
+	/**
+	 * Collapse / expand the docked region `nodeId` to a band (#663 ③-B). The split's saved
+	 * `sizes` are not touched (the open regions share the freed space in their current ratio;
+	 * expanding gets the old layout back). Collapsing a region `canCollapseDocked` refuses, or
+	 * an unknown id, does nothing. `false` drops the field rather than writing `collapsed: false`.
+	 * The content stays mounted. No `beforePanelChange`: collapsing is not closing.
+	 */
+	setDockedCollapsed(nodeId: string, collapsed: boolean): void {
+		const next = setRegionCollapsed(this.layout.docked, nodeId, collapsed);
+		if (next === this.layout.docked) return;
+		this.layout = { ...this.layout, docked: next };
+	}
+
+	/**
+	 * Expand the docked region that holds the pane `panelId` (the pane itself when it is a
+	 * split's child, else its tab group). Does nothing for a pane that is not docked or a
+	 * region that is not collapsed. `show` and the pane lifecycle's `show` use it.
+	 */
+	revealDocked(panelId: string): void {
+		const next = expandRegionOf(this.layout.docked, panelId);
+		if (next === this.layout.docked) return;
+		this.layout = { ...this.layout, docked: next };
+	}
+
 	/** Is the pane on screen: in the docked tree (even as a background tab) or an open floating window (#663). */
 	isVisible(id: string): boolean {
 		return this.#isDocked(id) || this.isOpen(id);
@@ -270,7 +321,8 @@ export class DockState {
 	 *    (`core/slot.ts`) as the active tab; when that place is gone, open it
 	 *    floating (at its saved geometry);
 	 *  - a closed floating window: `open`.
-	 * Moves no DOM focus (z-order / active tab only, like `open`). Returns where
+	 * A region collapsed to a band that holds the pane (or that the pane goes back into) is
+	 * expanded (#663 ③-B). Moves no DOM focus (z-order / active tab only, like `open`). Returns where
 	 * the pane is now, or `null` for an unknown id (nothing changes).
 	 */
 	show(id: string): 'docked' | 'floating' | null {
@@ -282,6 +334,8 @@ export class DockState {
 					parent.children.findIndex((c) => c.id === id)
 				);
 			}
+			// A region collapsed to a band is expanded to show the pane (#663 ③-B).
+			this.revealDocked(id);
 			return 'docked';
 		}
 		if (!this.layout.floating.some((w) => w.id === id)) return null;
@@ -293,7 +347,7 @@ export class DockState {
 		this.layout = {
 			...this.layout,
 			floating: this.layout.floating.filter((w) => w.id !== id),
-			docked
+			docked: expandRegionOf(docked, id)
 		};
 		return 'docked';
 	}

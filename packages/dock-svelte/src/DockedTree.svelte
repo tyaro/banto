@@ -60,10 +60,24 @@
 	 * (#432, shared-primitives-upstream-plan §3.5 / D3-c), so switching tabs
 	 * keeps a `keepMounted` pane's DOM. The wrapper is `display: contents`
 	 * while shown, so the active tab lays out exactly as before.
+	 *
+	 * Collapsing (#663 ③-B): a panel / tabs group that is a child of a split can be
+	 * collapsed to a band (`node.collapsed`). The SAME header element stays - only its
+	 * look changes (a header-high strip in a column split, a header-wide vertical strip
+	 * with a vertical-rl title in a row split) - so the collapse button is one element
+	 * for the whole life of the region and keeps the DOM focus when pressed. The body
+	 * stays mounted but `hidden` + `inert`; the band is not a drag source (no drag from
+	 * it) and not a drop target (no `data-dock-drop-id`; `data-dock-no-drop` makes a
+	 * drop on it a no-op). The split gives the freed space to the open children through
+	 * flex (`flex-grow` = the saved `sizes` over the open children's sum, the band is
+	 * `flex: 0 0 <header height>`), so
+	 * `sizes` are never rewritten; a divider next to a band is disabled, and the pixel
+	 * -> fraction conversion of the other dividers uses only the room the open children
+	 * share (`pxToFraction`).
 	 */
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import { pixelDeltaToFraction } from './core/geometry';
-	import { MIN_PANE_FRACTION } from './core/tree';
+	import { MIN_PANE_FRACTION, isRegionCollapsed } from './core/tree';
 	import { getDragController } from './core/drag.svelte';
 	import { getGestureOwner } from './core/gesture.svelte';
 	import { getPanelLifecycle } from './core/lifecycle';
@@ -80,11 +94,21 @@
 		iconContent?: Snippet<[string]>;
 		/** Pop-out affordance (spec §5.3 v2), forwarded unchanged from `DockHost` - see its doc comment. Absent in browser mode (no button rendered). */
 		onPopOut?: (content: PanelContent) => void;
+		/** The direction of the split this node is a child of (`undefined` for the root): the orientation of its band when collapsed (#663 ③-B). */
+		parentDirection?: 'row' | 'column';
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings, threaded into recursive `DockedTree` instances. Defaults reproduce today's Japanese output. */
 		messages?: Partial<DockMessages>;
 	}
 
-	let { node, dock, panel, iconContent, onPopOut, messages = {} }: Props = $props();
+	let {
+		node,
+		dock,
+		panel,
+		iconContent,
+		onPopOut,
+		parentDirection,
+		messages = {}
+	}: Props = $props();
 
 	// i18n layer 1: an override bundle merged over the defaults. `$derived`, so a
 	// parent that swaps `messages` later (a locale switch) is followed.
@@ -100,6 +124,44 @@
 	const lifecycle = getPanelLifecycle();
 	/** Per-pane capabilities from the host's `capabilities` prop (all allowed when absent). */
 	const capsOf = (id: string) => resolveCapabilities(policy, id);
+
+	// Collapsed to a band (#663 ③-B). Only a panel / tab group can be; the state lives in the tree.
+	const bodyId = $props.id();
+	const collapsed = $derived(node.type !== 'split' && node.collapsed === true);
+	/** May this region be collapsed now (a split child with another open child)? Expanding is always allowed. */
+	const canCollapse = $derived(node.type !== 'split' && dock.canCollapseDocked(node.id));
+	/**
+	 * Sum of the saved `sizes` of the open (not collapsed) children of this split. CSS flex
+	 * hands out only `sum(flex-grow)` of the free room when the grow factors add up to less
+	 * than 1, so the open children grow by `sizes[i] / openGrowShare` (they fill the room the
+	 * bands leave; with no band this is the saved share as before). `sizes` stay untouched.
+	 */
+	const openGrowShare = $derived(
+		node.type === 'split'
+			? node.children.reduce(
+					(sum, c, i) => (isRegionCollapsed(c) ? sum : sum + (node.sizes[i] ?? 0)),
+					0
+				)
+			: 0
+	);
+	function growOf(i: number): number {
+		const share = node.type === 'split' ? (node.sizes[i] ?? 0) : 0;
+		return openGrowShare > 0 ? share / openGrowShare : share;
+	}
+	/** The band's title: the pane's, or the front tab's. */
+	const regionTitle = $derived(
+		node.type === 'panel'
+			? node.title
+			: node.type === 'tabs'
+				? (node.children[node.activeIndex]?.title ?? '')
+				: ''
+	);
+	let collapseBtnEl: HTMLButtonElement | null = $state(null);
+
+	function toggleCollapsed(): void {
+		if (node.type === 'split') return;
+		dock.setDockedCollapsed(node.id, !collapsed);
+	}
 
 	/**
 	 * Arms a drag candidate on a titlebar/tab pointerdown. `frameEl` is the
@@ -184,21 +246,72 @@
 	): void {
 		if (event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
+		if (dividerDisabled(dividerIndex)) return;
 		const splitId = node.id;
 		let last = direction === 'row' ? event.clientX : event.clientY;
 		const step = (e: PointerEvent) => {
 			const pos = direction === 'row' ? e.clientX : e.clientY;
 			const deltaPx = pos - last;
 			last = pos;
-			const size = direction === 'row' ? (splitEl?.clientWidth ?? 0) : (splitEl?.clientHeight ?? 0);
-			dock.resizeSplit(splitId, dividerIndex, pixelDeltaToFraction(deltaPx, size));
+			dock.resizeSplit(splitId, dividerIndex, pxToFraction(deltaPx, direction));
 		};
-		gesture.begin(event, {
+		const began = gesture.begin(event, {
 			kind: 'divider',
 			move: step,
-			commit: step,
+			commit: (e) => {
+				activeDivider = null;
+				step(e);
+			},
+			cancel: () => {
+				activeDivider = null;
+			},
 			restore: (snapshot) => dock.restoreSplitSizes(splitId, snapshot)
 		});
+		if (began) activeDivider = dividerIndex;
+	}
+
+	/** The divider whose drag is running in THIS split (#663 ③-B: cancelled when a region next to it is collapsed). */
+	let activeDivider: number | null = $state(null);
+
+	/** A divider next to a collapsed band cannot be moved (neither by pointer nor by keyboard). */
+	function dividerDisabled(i: number): boolean {
+		if (node.type !== 'split') return false;
+		const a = node.children[i];
+		const b = node.children[i + 1];
+		return (a !== undefined && isRegionCollapsed(a)) || (b !== undefined && isRegionCollapsed(b));
+	}
+
+	$effect(() => {
+		const i = activeDivider;
+		if (i === null) return;
+		// Collapsing a region next to the divider in the middle of its drag: the units the drag
+		// was measured in no longer hold, so undo it (the press-time sizes come back).
+		if (dividerDisabled(i)) untrack(() => gesture.cancel('api'));
+	});
+
+	/**
+	 * A pixel distance along the split's axis as a change in `sizes` (a fraction of the
+	 * split's total). `sizes` are shares of the WHOLE split, but collapsed bands are fixed
+	 * strips that take their pixels first: the open children share only what is left, and
+	 * their shares add up to `openShare`, so `px / openPx * openShare` is the matching change.
+	 * Without a band it is plain `px / size`.
+	 */
+	function pxToFraction(px: number, direction: 'row' | 'column'): number {
+		const vertical = direction === 'row';
+		const size = vertical ? (splitEl?.clientWidth ?? 0) : (splitEl?.clientHeight ?? 0);
+		if (node.type !== 'split' || !node.children.some(isRegionCollapsed)) {
+			return pixelDeltaToFraction(px, size);
+		}
+		let bandPx = 0;
+		for (const el of splitEl?.querySelectorAll<HTMLElement>(':scope > .split-child.collapsed') ??
+			[]) {
+			bandPx += vertical ? el.clientWidth : el.clientHeight;
+		}
+		let openShare = 0;
+		node.children.forEach((c, i) => {
+			if (!isRegionCollapsed(c)) openShare += node.type === 'split' ? (node.sizes[i] ?? 0) : 0;
+		});
+		return pixelDeltaToFraction(px, size - bandPx) * openShare;
 	}
 
 	/** A key the dock may handle: not consumed, not IME composition, no Ctrl / Alt / Meta. */
@@ -220,10 +333,15 @@
 		dividerIndex: number,
 		direction: 'row' | 'column'
 	): void {
-		if (node.type !== 'split' || !isPlainKey(event)) return;
+		if (node.type !== 'split' || !isPlainKey(event) || dividerDisabled(dividerIndex)) return;
 		const back = direction === 'row' ? 'ArrowLeft' : 'ArrowUp';
 		const forward = direction === 'row' ? 'ArrowRight' : 'ArrowDown';
-		const step = event.shiftKey ? KEY_STEP_LARGE_FRACTION : KEY_STEP_FRACTION;
+		let step = event.shiftKey ? KEY_STEP_LARGE_FRACTION : KEY_STEP_FRACTION;
+		// The step is a share of the visible split: with a band next to it, a different share of `sizes`.
+		if (node.children.some(isRegionCollapsed)) {
+			const size = direction === 'row' ? (splitEl?.clientWidth ?? 0) : (splitEl?.clientHeight ?? 0);
+			step = pxToFraction(step * size, direction);
+		}
 		// Home / End: `resizeSplit` clamps to the pair's minimum / maximum.
 		let delta: number;
 		if (event.key === back) delta = -step;
@@ -262,12 +380,28 @@
 
 	let panelFrameEl: HTMLDivElement | null = $state(null);
 	let tabsFrameEl: HTMLDivElement | null = $state(null);
+
+	// Collapsing hides the body and replaces the tab strip / the pop-out and close buttons: if the DOM
+	// focus is anywhere in this region except the collapse button, hand it to the button first (`.pre`:
+	// the focused element is still rendered here). A focus the host put outside the region is left alone.
+	$effect.pre(() => {
+		if (!collapsed) return;
+		untrack(() => {
+			const active = document.activeElement;
+			const frame = node.type === 'panel' ? panelFrameEl : tabsFrameEl;
+			if (!active || !collapseBtnEl || !frame || active === collapseBtnEl) return;
+			if (frame.contains(active)) collapseBtnEl.focus();
+		});
+	});
 </script>
 
 {#if node.type === 'panel'}
 	<div
 		class="dock-pane"
-		data-dock-drop-id={node.id}
+		class:collapsed
+		class:band-row={collapsed && parentDirection === 'row'}
+		data-dock-drop-id={collapsed ? undefined : node.id}
+		data-dock-no-drop={collapsed ? '' : undefined}
 		bind:this={panelFrameEl}
 		role="group"
 		aria-label={node.title}
@@ -293,7 +427,7 @@
 			class="titlebar"
 			role="toolbar"
 			aria-label={node.title}
-			onpointerdown={(event) => panelFrameEl && armDrag(event, panelFrameEl, node)}
+			onpointerdown={(event) => !collapsed && panelFrameEl && armDrag(event, panelFrameEl, node)}
 		>
 			{#if node.icon}
 				<span class="icon" aria-hidden="true">
@@ -305,7 +439,20 @@
 				</span>
 			{/if}
 			<span class="title">{node.title}</span>
-			{#if onPopOut && capsOf(node.id).undock}
+			<button
+				type="button"
+				class="collapse-btn"
+				bind:this={collapseBtnEl}
+				aria-label={collapsed ? t.expandPane(node.title) : t.collapsePane(node.title)}
+				aria-expanded={!collapsed}
+				aria-controls={bodyId}
+				disabled={!collapsed && !canCollapse}
+				onpointerdown={(event) => event.stopPropagation()}
+				onclick={toggleCollapsed}
+			>
+				{collapsed ? '▸' : '▾'}
+			</button>
+			{#if !collapsed && onPopOut && capsOf(node.id).undock}
 				<button
 					type="button"
 					class="popout-btn"
@@ -316,7 +463,7 @@
 					⧉
 				</button>
 			{/if}
-			{#if capsOf(node.id).close}
+			{#if !collapsed && capsOf(node.id).close}
 				<button
 					type="button"
 					class="close-btn"
@@ -336,7 +483,15 @@
 		     WAI-ARIA-recognized scrollable-region pattern axe itself expects,
 		     so the svelte-check warning is the one to suppress. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-		<div class="body" role="region" aria-label={node.title} tabindex="0">
+		<div
+			class="body"
+			id={bodyId}
+			role="region"
+			aria-label={node.title}
+			tabindex="0"
+			hidden={collapsed}
+			inert={collapsed}
+		>
 			{@render panel(node)}
 		</div>
 	</div>
@@ -344,7 +499,10 @@
 	{@const active = node.children[node.activeIndex]}
 	<div
 		class="dock-pane"
-		data-dock-drop-id={node.id}
+		class:collapsed
+		class:band-row={collapsed && parentDirection === 'row'}
+		data-dock-drop-id={collapsed ? undefined : node.id}
+		data-dock-no-drop={collapsed ? '' : undefined}
 		bind:this={tabsFrameEl}
 		role="group"
 		aria-label={active?.title}
@@ -362,61 +520,102 @@
 			never exercised by the axe scan in `e2e/visual/a11y.spec.ts` - flagged
 			here for whoever next touches tab-strip interaction/keyboard support.
 		-->
-		<div class="tab-strip" role="tablist" bind:this={tabStripEl}>
-			{#each node.children as child, i (child.id)}
-				<div
-					class="tab"
-					class:active={i === node.activeIndex}
-					role="tab"
-					data-dock-tab-id={child.id}
-					tabindex={i === node.activeIndex ? 0 : -1}
-					aria-selected={i === node.activeIndex}
-					aria-label={child.title}
-					onpointerdown={(event) =>
-						tabsFrameEl &&
-						armDrag(event, tabsFrameEl, child, () => void lifecycle.switchTab(node.id, child.id))}
-					onkeydown={(event) => handleTabKeydown(event, i)}
-				>
-					{#if child.icon}
-						<span class="icon" aria-hidden="true">
-							{#if iconContent}
-								{@render iconContent(child.icon)}
-							{:else}
-								{child.icon}
+		<div class="tab-header">
+			{#if collapsed}
+				{#if active?.icon}
+					<span class="icon" aria-hidden="true">
+						{#if iconContent}
+							{@render iconContent(active.icon)}
+						{:else}
+							{active.icon}
+						{/if}
+					</span>
+				{/if}
+				<span class="title">{active?.title}</span>
+			{:else}
+				<div class="tab-strip" role="tablist" bind:this={tabStripEl}>
+					{#each node.children as child, i (child.id)}
+						<div
+							class="tab"
+							class:active={i === node.activeIndex}
+							role="tab"
+							data-dock-tab-id={child.id}
+							tabindex={i === node.activeIndex ? 0 : -1}
+							aria-selected={i === node.activeIndex}
+							aria-label={child.title}
+							onpointerdown={(event) =>
+								tabsFrameEl &&
+								armDrag(
+									event,
+									tabsFrameEl,
+									child,
+									() => void lifecycle.switchTab(node.id, child.id)
+								)}
+							onkeydown={(event) => handleTabKeydown(event, i)}
+						>
+							{#if child.icon}
+								<span class="icon" aria-hidden="true">
+									{#if iconContent}
+										{@render iconContent(child.icon)}
+									{:else}
+										{child.icon}
+									{/if}
+								</span>
 							{/if}
-						</span>
-					{/if}
-					<span class="title">{child.title}</span>
-					{#if i === node.activeIndex}
-						{#if onPopOut && capsOf(child.id).undock}
-							<button
-								type="button"
-								class="popout-btn"
-								aria-label={t.popOut(child.title)}
-								onpointerdown={(event) => event.stopPropagation()}
-								onclick={() => onPopOut?.(child)}
-							>
-								⧉
-							</button>
-						{/if}
-						{#if capsOf(child.id).close}
-							<button
-								type="button"
-								class="close-btn"
-								aria-label={t.close(child.title)}
-								onpointerdown={(event) => event.stopPropagation()}
-								onclick={() => void lifecycle.closeButton(child.id)}
-							>
-								✕
-							</button>
-						{/if}
-					{/if}
+							<span class="title">{child.title}</span>
+							{#if i === node.activeIndex}
+								{#if onPopOut && capsOf(child.id).undock}
+									<button
+										type="button"
+										class="popout-btn"
+										aria-label={t.popOut(child.title)}
+										onpointerdown={(event) => event.stopPropagation()}
+										onclick={() => onPopOut?.(child)}
+									>
+										⧉
+									</button>
+								{/if}
+								{#if capsOf(child.id).close}
+									<button
+										type="button"
+										class="close-btn"
+										aria-label={t.close(child.title)}
+										onpointerdown={(event) => event.stopPropagation()}
+										onclick={() => void lifecycle.closeButton(child.id)}
+									>
+										✕
+									</button>
+								{/if}
+							{/if}
+						</div>
+					{/each}
 				</div>
-			{/each}
+			{/if}
+			<button
+				type="button"
+				class="collapse-btn"
+				bind:this={collapseBtnEl}
+				aria-label={collapsed ? t.expandPane(regionTitle) : t.collapsePane(regionTitle)}
+				aria-expanded={!collapsed}
+				aria-controls={bodyId}
+				disabled={!collapsed && !canCollapse}
+				onpointerdown={(event) => event.stopPropagation()}
+				onclick={toggleCollapsed}
+			>
+				{collapsed ? '▸' : '▾'}
+			</button>
 		</div>
 		<!-- Same scrollable-region-focusable rationale (and svelte-ignore) as the `panel` branch's `.body` above. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-		<div class="body" role="region" aria-label={active?.title} tabindex="0">
+		<div
+			class="body"
+			id={bodyId}
+			role="region"
+			aria-label={active?.title}
+			tabindex="0"
+			hidden={collapsed}
+			inert={collapsed}
+		>
 			{#each node.children as child, i (child.id)}
 				{@const shown = i === node.activeIndex}
 				{#if shown || lifecycle.keepMounted(child.id)}
@@ -435,19 +634,38 @@
 		bind:this={splitEl}
 	>
 		{#each node.children as child, i (child.id)}
-			<div class="split-child" style:flex-grow={node.sizes[i] ?? 0} style:flex-basis="0%">
-				<DockedTree node={child} {dock} {panel} {iconContent} {onPopOut} {messages} />
+			{@const band = isRegionCollapsed(child)}
+			<!-- A collapsed child is a fixed band (header size); the open ones share the rest by `sizes`. -->
+			<div
+				class="split-child"
+				class:collapsed={band}
+				style:flex-grow={band ? 0 : growOf(i)}
+				style:flex-shrink={band ? 0 : undefined}
+				style:flex-basis={band ? 'var(--banto-dock-titlebar-height)' : '0%'}
+			>
+				<DockedTree
+					node={child}
+					{dock}
+					{panel}
+					{iconContent}
+					{onPopOut}
+					{messages}
+					parentDirection={node.direction}
+				/>
 			</div>
 			{#if i < node.children.length - 1}
 				{@const values = splitterValues(node.sizes, i)}
+				{@const locked = dividerDisabled(i)}
 				<!-- A focusable separator is an interactive widget (WAI-ARIA Window Splitter, #433-b). -->
 				<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 				<div
 					class="divider"
 					class:row={node.direction === 'row'}
 					class:column={node.direction === 'column'}
+					class:locked
 					role="separator"
-					tabindex="0"
+					tabindex={locked ? -1 : 0}
+					aria-disabled={locked ? 'true' : undefined}
 					aria-orientation={node.direction === 'row' ? 'vertical' : 'horizontal'}
 					aria-label={t.resizeHandle()}
 					aria-valuenow={values.now}
@@ -506,13 +724,25 @@
 		display: none;
 	}
 
-	.tab-strip {
+	/* The strip's row: the tab strip (or, collapsed, the front tab's label) and the collapse button. */
+	.tab-header {
 		flex: 0 0 auto;
 		display: flex;
-		align-items: stretch;
+		align-items: center;
+		gap: var(--banto-space-1);
 		height: var(--banto-dock-titlebar-height);
+		padding-right: var(--banto-space-2);
 		background: var(--banto-surface-raised);
 		border-bottom: var(--banto-border-width) solid var(--banto-border);
+		user-select: none;
+	}
+
+	.tab-strip {
+		flex: 1 1 auto;
+		min-width: 0;
+		display: flex;
+		align-items: stretch;
+		align-self: stretch;
 		overflow-x: auto;
 		overflow-y: hidden;
 	}
@@ -561,7 +791,8 @@
 	}
 
 	.close-btn,
-	.popout-btn {
+	.popout-btn,
+	.collapse-btn {
 		flex: 0 0 auto;
 		width: var(--banto-dock-button-size, 20px);
 		height: var(--banto-dock-button-size, 20px);
@@ -585,15 +816,53 @@
 		color: var(--banto-danger);
 	}
 
-	.popout-btn:hover {
+	.popout-btn:hover,
+	.collapse-btn:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);
 		color: var(--banto-primary);
 	}
 
+	.collapse-btn:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
 	.close-btn:focus-visible,
-	.popout-btn:focus-visible {
+	.popout-btn:focus-visible,
+	.collapse-btn:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
+	}
+
+	/* Collapsed to a band (#663 ③-B). The header stays the same element; only its look changes. */
+	.body[hidden] {
+		display: none;
+	}
+
+	.dock-pane.collapsed .titlebar {
+		cursor: default;
+	}
+
+	/* In a row split the band is a strip as wide as a header is high, the title running down. */
+	.dock-pane.band-row .titlebar,
+	.dock-pane.band-row .tab-header {
+		flex: 1 1 auto;
+		min-height: 0;
+		height: auto;
+		flex-direction: column;
+		padding: var(--banto-space-2) 0;
+		border-bottom: none;
+		border-right: var(--banto-border-width) solid var(--banto-border);
+	}
+
+	.dock-pane.band-row .title {
+		flex: 1 1 auto;
+		min-height: 0;
+		writing-mode: vertical-rl;
+	}
+
+	.dock-pane.band-row .collapse-btn {
+		order: -1;
 	}
 
 	.body {
@@ -640,6 +909,10 @@
 
 	.divider:hover {
 		background: var(--banto-dock-divider-hover);
+	}
+
+	.divider.locked {
+		cursor: default;
 	}
 
 	.divider:focus-visible {

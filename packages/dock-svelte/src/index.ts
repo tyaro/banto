@@ -42,18 +42,23 @@ export {
 } from './core/geometry';
 
 export {
+	canCollapseRegion,
 	collapse,
 	collectPanelIds,
 	defaultMakeId,
 	dockPanelIntoTree,
+	expandRegionOf,
 	findNode,
 	findParent,
+	isRegionCollapsed,
 	MIN_PANE_FRACTION,
 	moveTabWithinGroup,
+	normalizeCollapsed,
 	normalizeSizes,
 	removePanel,
 	resizeSplit,
 	setActiveTab,
+	setRegionCollapsed,
 	splitInsert
 } from './core/tree';
 

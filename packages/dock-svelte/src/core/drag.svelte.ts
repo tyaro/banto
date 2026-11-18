@@ -192,8 +192,13 @@ export class DragController {
 		let hoverRegion: DropRegion | null = null;
 		let hoverFloating = false;
 		let guideRect: Rect | null = null;
+		// A band of a collapsed region (#663 ③-B) is neither a pane to drop onto nor free
+		// space (that would float the pane): the drop there is a no-op.
+		const noDrop = (hitEl as Element | null)?.closest('[data-dock-no-drop]') != null;
 
-		if (hostEl && paneEl && hostEl.contains(paneEl)) {
+		if (noDrop) {
+			// no target
+		} else if (hostEl && paneEl && hostEl.contains(paneEl)) {
 			const paneRect = paneEl.getBoundingClientRect();
 			const hostRect = hostEl.getBoundingClientRect();
 			const localX = clientX - paneRect.left;
