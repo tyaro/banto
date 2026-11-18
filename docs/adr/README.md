@@ -76,6 +76,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0028](0028-chrono-local-date.md)                   | アプリのローカル日付は `chrono`（`clock` のみ）で求める（ADR-0002 の例外）                                                                                                                      | Accepted                   |
 | [0029](0029-chrono-datetime-formatting.md)          | 日時の文字列変換は `banto-core` の 1 か所で `chrono`（feature なし）を使う（ADR-0002 の例外）                                                                                                   | Accepted                   |
 | [0030](0030-resource-page.md)                       | リソースの画面は app 層の共通部品 `ResourceListPage` / `ResourceDetail` で組み、ナビとコマンドはリソース定義から導出する（ルートは動的化しない）                                                | Accepted                   |
+| [0031](0031-user-permissions-separate-axis.md)      | ロールとは別の軸として、ユーザーへ個別に付ける権限（permission）を持つ（利用側がカタログで登録・Admin も既定では持たない）                                                                      | Accepted                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 

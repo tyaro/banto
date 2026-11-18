@@ -16,6 +16,11 @@ RBAC は `viewer < editor < admin` の3ロール固定（spec M10）で、大半
 `RoleGuard`・Tauri の `require_role`・DB の CHECK 制約・フロントの選択 UI で
 共有される）。足す前に次を検討する:
 
+- **ロールではなく権限（permission）ではないか。** 「Admin でも既定では持たない」
+  「Viewer に付けてよい」「editor と admin の間に収まらない」許可は、全順序のロールに
+  載らない。ユーザーへ個別に付ける権限として足す（[add-permission.md](add-permission.md)、
+  [ADR-0031](../adr/0031-user-permissions-separate-axis.md)）。「上の段が下の段を全部できる」
+  ときだけロールを足す。
 - **既存3ロールの床で表現できないか。** 「特定リソースだけ書ける」程度なら、
   ロールを増やすより該当ルートの `RoleGuard { min }` を調整する方が影響が
   小さい。
@@ -57,6 +62,7 @@ cargo test                 # rbac の順序テスト + REST の認可テスト
 - 片方の経路（REST or Tauri）だけに新ロールの床を設定する（conventions §1）。
 - 既存マイグレーション `0004_user_roles.sql` を書き換えて CHECK 制約を変える
   （適用済み DB と食い違う。必ず新しい連番マイグレーションで足す。conventions §11）。
-- 非全順序の権限を無理に `rank()` へ押し込む（前提の判断に戻る。設計変更なら ADR）。
+- 非全順序の権限を無理に `rank()` へ押し込む（前提の判断に戻る。個別に付ける許可なら
+  [add-permission.md](add-permission.md)。それでも収まらない設計変更は ADR）。
 - 認証設定の `disabled_role`（`SettingsService.AuthSettings`）が新ロールと
   整合するか未確認のまま出す（`Role` を参照しているため影響する）。

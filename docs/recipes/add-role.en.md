@@ -18,6 +18,12 @@ floor** (the `Role` enum is shared by REST's `RoleGuard`, Tauri's
 `require_role`, the DB CHECK constraint, and the frontend picker UI). Before
 adding one, consider:
 
+- **Is it a permission rather than a role?** A grant that "even an Admin does not
+  have by default", "a Viewer may hold", or "does not fit between editor and
+  admin" does not fit the total-order role ladder. Add it as a per-user permission
+  instead ([add-permission.md](add-permission.en.md),
+  [ADR-0031](../adr/0031-user-permissions-separate-axis.en.md)). Add a role only
+  when "a higher step can do everything a lower one can".
 - **Can the existing three-role floor express it?** If it's just "can write one
   specific resource," adjusting that route's `RoleGuard { min }` is smaller than
   adding a role.
@@ -63,7 +69,8 @@ side of step 3 with code review plus the weekly Tauri CI, and note it as
   would diverge from already-applied DBs; always add a new sequential migration,
   conventions §11).
 - Force a non-total-order permission into `rank()` (go back to the prerequisite
-  decision; if it's a design change, write an ADR).
+  decision; for a grant held per user, use
+  [add-permission.md](add-permission.en.md); any other design change needs an ADR).
 - Ship without checking that the auth setting `disabled_role`
   (`SettingsService.AuthSettings`) is consistent with the new role (it
   references `Role`, so it is affected).

@@ -78,6 +78,7 @@ corresponding ADR exists, be traced from there.
 | [0028](0028-chrono-local-date.en.md)                   | Get the app's local date with `chrono` (`clock` only) (exception to ADR-0002)                                                                                                                            | Accepted                   |
 | [0029](0029-chrono-datetime-formatting.en.md)          | Format dates and times in one place in `banto-core` with `chrono` (no features) (exception to ADR-0002)                                                                                                  | Accepted                   |
 | [0030](0030-resource-page.en.md)                       | Build resource screens from app-layer shared components `ResourceListPage` / `ResourceDetail`, and derive navigation and commands from the resource definition (routes stay non-dynamic)                 | Accepted                   |
+| [0031](0031-user-permissions-separate-axis.en.md)      | Keep per-user permissions as an axis separate from roles (the consuming app registers them in a catalog; even an Admin does not hold them by default)                                                    | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 
