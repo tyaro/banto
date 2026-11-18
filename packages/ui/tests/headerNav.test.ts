@@ -17,6 +17,7 @@ import {
 	headerNavBadgeText,
 	headerNavEntryActive,
 	headerNavEntryCount,
+	headerNavEntryPinned,
 	headerNavListTarget,
 	headerNavOverflowSections,
 	headerNavTopRowTarget,
@@ -101,6 +102,38 @@ describe('fitCount', () => {
 			expect(fitCount(widths, 100, 60, 10, options)).toBe(0);
 		});
 	});
+
+	describe('pinned entries (menu entries, #663)', () => {
+		// a 100, menu 80 (pinned), b 100, c 100; 10px gaps (total 410), "more" 60.
+		const mixed = [100, 80, 100, 100];
+		const pinned = [false, true, false, false];
+
+		it.each([
+			['everything fits (no "more")', 410, 3],
+			// Links get 409 - 80 - 10 = 319 < 320: "more" takes the last link.
+			['one px short: "more" takes the last link, the menu stays', 409, 2],
+			// "more" + the menu: 60 + 80 + 10 = 150.
+			['only the menu and "more" fit', 150, 0],
+			['not even the menu and "more" fit', 149, INSUFFICIENT]
+		])('%s (available %d -> %d links)', (_label, available, expected) => {
+			expect(fitCount(mixed, available, 60, 10, { pinned })).toBe(expected);
+		});
+
+		it('with only pinned entries there is no "more": they fit or the nav is insufficient', () => {
+			expect(fitCount([80, 70], 160, 60, 10, { pinned: [true, true] })).toBe(0);
+			expect(fitCount([80, 70], 159, 60, 10, { pinned: [true, true] })).toBe(INSUFFICIENT);
+		});
+
+		it('keeps the recover slack', () => {
+			const options = { pinned, previous: INSUFFICIENT };
+			expect(fitCount(mixed, 150, 60, 10, options)).toBe(INSUFFICIENT);
+			expect(fitCount(mixed, 150 + HEADER_NAV_RECOVER_SLACK, 60, 10, options)).toBe(0);
+		});
+
+		it('an all-false `pinned` is the plain count', () => {
+			expect(fitCount(widths, 319, 60, 10, { pinned: [false, false, false] })).toBe(2);
+		});
+	});
 });
 
 describe('headerNavBadgeText', () => {
@@ -149,6 +182,26 @@ describe('counts and active', () => {
 		expect(headerNavEntryActive(group('g', ['a', 'b'], { active: 'b' }))).toBe(true);
 		expect(headerNavEntryActive(group('g', ['a', 'b']))).toBe(false);
 		expect(headerNavEntryActive(link('a', { active: true }))).toBe(true);
+	});
+
+	it('a menu entry has no count, is never active and is the only pinned kind', () => {
+		const menu: HeaderNavEntry = {
+			kind: 'menu',
+			id: 'view',
+			label: 'View',
+			items: [{ kind: 'checkbox', id: 'log', label: 'Log', checked: true, onSelect: () => {} }]
+		};
+		expect(headerNavEntryCount(menu)).toBe(0);
+		expect(headerNavEntryActive(menu)).toBe(false);
+		expect(headerNavEntryPinned(menu)).toBe(true);
+		expect(headerNavEntryPinned(link('a'))).toBe(false);
+		expect(headerNavEntryPinned(group('g', ['a']))).toBe(false);
+		expect(headerNavOverflowSections([link('a'), menu, link('b')])).toEqual([
+			{
+				id: 'a',
+				items: [expect.objectContaining({ id: 'a' }), expect.objectContaining({ id: 'b' })]
+			}
+		]);
 	});
 });
 

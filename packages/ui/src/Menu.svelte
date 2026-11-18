@@ -85,6 +85,15 @@
 		coords = computeAnchoredPosition(triggerEl, popoverEl, placement);
 	}
 
+	/**
+	 * Re-places an open menu under its trigger. For a host that moves the
+	 * trigger without a window resize (HeaderNav re-laying out its row).
+	 * No-op while closed.
+	 */
+	export function reposition(): void {
+		if (open) computePosition();
+	}
+
 	let focusIntent: 'first' | 'last' | 'none' = 'none';
 
 	function openMenu(intent: 'first' | 'last' | 'none'): void {

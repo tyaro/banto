@@ -380,19 +380,36 @@ ADR-0018 §12）。上段は単独のリンク（素の `<a href>`）とグル�
 右端から「その他 ▾」へ移し、その中ではグループを見出しで区切ってリンクを平らに並べる。**表示と操作だけ**を持ち、
 ナビの定義・どの項目を出すか（権限）・現在のページの判定（`active`）・未読の件数・文言はすべて呼び出し側が渡す。
 
-| props            | 型                                | 既定         | 内容                                                                                                                           |
-| ---------------- | --------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `entries`        | `HeaderNavEntry[]`                | （必須）     | `{ kind: 'link', ...HeaderNavLink }` か `{ kind: 'group', id, label, items: HeaderNavLink[] }` の並び                          |
-| `ariaLabel`      | `string`                          | （必須）     | `<nav>` の名前                                                                                                                 |
-| `moreLabel`      | `string`                          | （必須）     | 「その他」のボタンの文言                                                                                                       |
-| `updatesLabel`   | `(count: number) => string`       | 件数そのもの | 未読の件数の読み上げ（リンクとボタンの名前に足す。例: 3 →「3 件の未確認の更新」）                                              |
-| `overflow`       | `boolean`                         | `true`       | `false` ではあふれを測らず「その他」も出さず、入れ物も伸ばさない（管理ナビの「管理 ▾」1 グループのように、いつも全部出すもの） |
-| `onInsufficient` | `(insufficient: boolean) => void` | なし         | 「その他」のボタンさえ入らなくなったとき `true`、戻ったとき `false`。シェルはこの間ドロワーに切り替える                        |
+| props            | 型                                | 既定         | 内容                                                                                                                                                           |
+| ---------------- | --------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entries`        | `HeaderNavEntry[]`                | （必須）     | `{ kind: 'link', ...HeaderNavLink }`・`{ kind: 'group', id, label, items: HeaderNavLink[] }`・`{ kind: 'menu', id, label, items: HeaderNavMenuItem[] }` の並び |
+| `ariaLabel`      | `string`                          | （必須）     | `<nav>` の名前                                                                                                                                                 |
+| `moreLabel`      | `string`                          | （必須）     | 「その他」のボタンの文言                                                                                                                                       |
+| `updatesLabel`   | `(count: number) => string`       | 件数そのもの | 未読の件数の読み上げ（リンクとボタンの名前に足す。例: 3 →「3 件の未確認の更新」）                                                                              |
+| `overflow`       | `boolean`                         | `true`       | `false` ではあふれを測らず「その他」も出さず、入れ物も伸ばさない（管理ナビの「管理 ▾」1 グループのように、いつも全部出すもの）                                 |
+| `onInsufficient` | `(insufficient: boolean) => void` | なし         | 「その他」のボタンさえ入らなくなったとき `true`、戻ったとき `false`。シェルはこの間ドロワーに切り替える                                                        |
 
 `HeaderNavLink` は `{ id, href, label, icon?, active?, count? }`。上段は文字だけで、`icon` はドロップダウンの中でだけ
 描く。`active` のリンクに `aria-current="page"` が付き、それを持つグループ・「その他」のボタンには見た目のアクティブ
 表示だけが付く（ボタンはページではないので `aria-current` は付けない）。`count` は**数値**で渡す: リンクは「99+」で
 頭打ちのバッジ、グループ・「その他」のボタンは中の合計があれば点を出し、それぞれの名前に `updatesLabel(件数)` を足す。
+
+**コマンドのメニュー**（`kind: 'menu'`、#663）: デスクトップのアプリの「表示」メニューのような、リンクではなく
+操作を並べる項目。ボタンを押すと ui の `Menu`（`role="menu"`）が開き、`HeaderNavMenuItem` を `MenuItem` /
+`MenuSeparator` で描く（リンクの開閉（disclosure）の中に ARIA の menu の役割を混ぜないため、別の部品にしている）。
+
+- `HeaderNavMenuItem` は `{ kind: 'action', id, label, icon?, disabled?, danger?, title?, onSelect }`（選ぶと
+  `onSelect` を呼んで閉じる）・`{ kind: 'checkbox', id, label, checked, disabled?, title?, onSelect }`
+  （`role="menuitemcheckbox"`。選ぶと `onSelect` だけを呼び、開いたまま・フォーカスもそのまま）・
+  `{ kind: 'separator', id }` のどれか。チェックの状態は呼び出し側が持ち、`onSelect` で切り替える（開いている
+  間も新しい `checked` が出る）。
+- キーボードとフォーカスは `Menu` と同じ（Enter / Space / 下の矢印で開いて先頭へ、上の矢印で末尾へ、Esc で閉じて
+  ボタンへ戻る。`onSelect` がフォーカスをほかへ移したときは奪い返さない）。ボタンは上段の左右の矢印の移動に
+  加わり、開いたメニューの中の左右の矢印はドロップダウンと同じく閉じて上段の隣へ移る。
+- **「その他」へは移らない**（上段に固定）。あふれの計算では先にメニューの幅を取り、残りでリンクとグループを
+  並べる（`fitCount` の `pinned`）。メニューと「その他」さえ入らないときは、ほかの項目と一緒に隠れて
+  `onInsufficient(true)` になる（開いていたメニューは閉じる）。そのときドロワーに切り替えるシェルは、同じ操作を
+  ドロワーの側にも用意する。
 
 - **キーボード**（APG の disclosure navigation。`role="menubar"` / ロービング tabindex は使わない）: Tab で上段の
   全項目に止まる。上段では左右の矢印で隣へ（端で回り込む。「その他」も 1 項目）、Home / End で先頭 / 末尾へ。
@@ -401,7 +418,7 @@ ADR-0018 §12）。上段は単独のリンク（素の `<a href>`）とグル�
 - **あふれ**: 入れ物は `flex: 1 1 0; min-width: 0` で、ヘッダーの行が残した幅を取る。見えない測定用の行
   （`aria-hidden`・`inert`、`<span>` だけ）で全部の項目を測り、ResizeObserver・`entries` の変化・フォントの読み込みで
   測り直す（1 フレームにまとめ、個数が変わったときだけ書き換える）。個数の計算は純粋関数
-  `fitCount(widths, available, moreWidth, gap, { previous? })` として公開している（入りきらないときは
+  `fitCount(widths, available, moreWidth, gap, { previous?, pinned? })` として公開している（入りきらないときは
   `HEADER_NAV_INSUFFICIENT`（-1）。そこから戻るには `HEADER_NAV_RECOVER_SLACK` px の余裕が要る）。
 - **寸法**はトークン `--banto-shell-menubar-*`（[@banto/theme](../theme/README.md)）。ドロップダウンは popover の
   最上位の層に出すので、glass のヘッダー（`backdrop-filter`）の中に置いても位置がずれない。

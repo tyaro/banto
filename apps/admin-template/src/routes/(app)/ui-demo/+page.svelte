@@ -98,6 +98,9 @@
 	// HeaderNav card (nav-menubar-plan PR-2): one set of entries drawn twice -
 	// in a wide frame (groups, a badge) and a narrow one (entries moved into
 	// "more"). The links point at in-page anchors so a click goes nowhere.
+	// The "View" menu entry (#663) is pinned: it stays on the top row in the
+	// narrow frame too. Its checkboxes flip demo-only state (no panels here).
+	let headerNavPanels = $state({ log: true, properties: false });
 	const headerNavEntries: HeaderNavEntry[] = $derived([
 		{
 			kind: 'link',
@@ -148,6 +151,34 @@
 			href: '#ui-demo-nav',
 			label: m['uiDemo.headerNav.reports'](),
 			icon: ChartColumn
+		},
+		{
+			kind: 'menu',
+			id: 'view',
+			label: m['uiDemo.headerNav.view'](),
+			items: [
+				{
+					kind: 'checkbox',
+					id: 'log',
+					label: m['uiDemo.headerNav.viewLog'](),
+					checked: headerNavPanels.log,
+					onSelect: () => (headerNavPanels.log = !headerNavPanels.log)
+				},
+				{
+					kind: 'checkbox',
+					id: 'properties',
+					label: m['uiDemo.headerNav.viewProperties'](),
+					checked: headerNavPanels.properties,
+					onSelect: () => (headerNavPanels.properties = !headerNavPanels.properties)
+				},
+				{ kind: 'separator', id: 'sep' },
+				{
+					kind: 'action',
+					id: 'reset',
+					label: m['uiDemo.headerNav.viewReset'](),
+					onSelect: () => (headerNavPanels = { log: true, properties: false })
+				}
+			]
 		}
 	]);
 	const headerNavAdmin: HeaderNavEntry[] = $derived([

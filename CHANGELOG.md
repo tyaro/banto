@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- `@banto/ui` の `HeaderNav` に、操作を並べるメニューの項目 `{ kind: 'menu', id, label, items: HeaderNavMenuItem[] }` を足した（#663 ①-B。デスクトップのアプリの「表示」メニューの土台）。項目は `action`・`checkbox`（`menuitemcheckbox`。選んでも閉じない）・`separator` で、ui の `Menu` / `MenuItem` で描く。メニューの項目は「その他」へ移らず上段に残る（`fitCount` に任意の `pinned` を足した）。型 `HeaderNavMenuItem` と `headerNavEntryPinned` を公開。既存の `link` / `group` の挙動は変わらない。ui-demo の HeaderNav の見本に「表示」メニューを足した（visual の基準画像 `ui-demo` は再生成が要る）。
+
 ## [7.5.0] - 2026-11-18
 
 **v7.5.0 — `@banto/ui` の `ThreePaneLayout` を外から扱う 5 つの口（#655）と、`Tabs` の `hideSingleTab`（#659）。下流（banto-industrial）からの要請に応える追加。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。追加の口はすべて任意で、渡さなければ見た目・挙動は変わらない。Rust・DB・テンプレートの変更は無い。

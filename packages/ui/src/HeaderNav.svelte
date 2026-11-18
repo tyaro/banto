@@ -30,15 +30,30 @@
 	 * - Top items are text only, dropdown links icon + text (D5). Unread
 	 *   counts come in as numbers: links show a capped badge, group / "more"
 	 *   buttons a dot, and each adds `updatesLabel(count)` to its name (§4.5).
+	 * - Menu entries (#663 ①-B, a desktop-style "View" menu): a button that
+	 *   opens the ui `Menu` (`role="menu"`) with action / checkbox items and
+	 *   separators - commands, kept apart from the link disclosures. Keyboard
+	 *   and focus are Menu's (Enter / Space / ArrowDown open on the first item,
+	 *   ArrowUp on the last; Esc closes and returns focus to the button; a
+	 *   checkbox keeps the menu open). On top of that the button joins the
+	 *   top-row arrows, and ArrowLeft / Right inside the open menu close it and
+	 *   move to the neighbouring top item, like a dropdown. A menu entry is
+	 *   pinned: it never moves into "more" (its width is reserved first,
+	 *   `fitCount`'s `pinned`), and it hides with the row when insufficient,
+	 *   its open menu closed like a dropdown.
 	 *
 	 * Text, icons and state all come through props; imports nothing but
 	 * `svelte` (conventions §5). No `.svelte.ts` (conventions §14).
 	 */
 	import { flushSync, untrack, type Snippet } from 'svelte';
 	import { computeAnchoredPosition, watchAnchoredPopover } from './anchoredPopover';
+	import Menu from './Menu.svelte';
+	import MenuItem from './MenuItem.svelte';
+	import MenuSeparator from './MenuSeparator.svelte';
 	import {
 		entryActive,
 		entryCount,
+		entryPinned,
 		fitCount,
 		HEADER_NAV_INSUFFICIENT,
 		headerNavBadgeText,
@@ -87,11 +102,17 @@
 	let measured = $state(false);
 
 	const insufficient = $derived(overflow && fit === HEADER_NAV_INSUFFICIENT);
+	/** Entries that can move into "more"; pinned ones (menus) always stay. */
+	const flowEntries = $derived(entries.filter((entry) => !entryPinned(entry)));
+	/** How many of `flowEntries` stay on top (pinned entries not counted). */
 	const shownCount = $derived(
-		!overflow ? entries.length : Math.max(0, Math.min(fit, entries.length))
+		!overflow ? flowEntries.length : Math.max(0, Math.min(fit, flowEntries.length))
 	);
-	const shown = $derived(entries.slice(0, shownCount));
-	const moved = $derived(overflow ? entries.slice(shownCount) : []);
+	const shown = $derived.by(() => {
+		let flowIndex = 0;
+		return entries.filter((entry) => entryPinned(entry) || flowIndex++ < shownCount);
+	});
+	const moved = $derived(overflow ? flowEntries.slice(shownCount) : []);
 	const moreSections = $derived(overflowSections(moved));
 	const moreCount = $derived(moved.reduce((sum, entry) => sum + entryCount(entry), 0));
 	const moreActive = $derived(moved.some(entryActive));
@@ -103,6 +124,8 @@
 	let coords = $state<{ key: string; top: number; left: number } | null>(null);
 	const popovers: Record<string, HTMLElement> = {};
 	const buttons: Record<string, HTMLElement> = {};
+	// Menu entries' `Menu` instances, to re-anchor an open one after a re-layout.
+	const menus: Record<string, { reposition: () => void } | undefined> = {};
 	let focusIntent: 'first' | 'last' | 'none' = 'none';
 
 	function groupKey(id: string): string {
@@ -245,6 +268,47 @@
 			closeDropdown(key);
 	}
 
+	/**
+	 * Closes the ui `Menu`s of menu entries (their popovers live in the row's
+	 * cells, not in `popovers`). `hidePopover` skips a closed one; the guard
+	 * is for browsers that still throw on it.
+	 */
+	function closeMenus(): void {
+		for (const menu of rowEl?.querySelectorAll<HTMLElement>('[role="menu"][popover]') ?? []) {
+			try {
+				menu.hidePopover();
+			} catch {
+				// already closed
+			}
+		}
+	}
+
+	/**
+	 * On a menu entry's cell: ArrowLeft / Right on an item of its open menu
+	 * close the menu and move to the neighbouring top item (wrapping, not
+	 * opened), the same as inside a dropdown (§4.7). Focus moves after the
+	 * menu hides, so Menu's own "give focus back to the button" (which acts
+	 * only when focus would drop to <body>) leaves it there.
+	 */
+	function handleMenuCellKeydown(event: KeyboardEvent): void {
+		if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+		const cell = event.currentTarget as HTMLElement;
+		const menu = (event.target as HTMLElement | null)?.closest?.('[role="menu"]');
+		if (!rowEl || !(menu instanceof HTMLElement) || !cell.contains(menu)) return;
+		const items = Array.from(rowEl.querySelectorAll<HTMLElement>('[data-header-nav-top]'));
+		const button = cell.querySelector<HTMLElement>('[data-header-nav-top]');
+		const target = button ? topRowTarget(items.indexOf(button), items.length, event.key) : null;
+		if (target === null) return;
+		event.preventDefault();
+		event.stopPropagation();
+		try {
+			menu.hidePopover();
+		} catch {
+			// already closed
+		}
+		items[target]?.focus();
+	}
+
 	function handleTopKeydown(event: KeyboardEvent): void {
 		if (!rowEl) return;
 		const items = Array.from(rowEl.querySelectorAll<HTMLElement>('[data-header-nav-top]'));
@@ -288,7 +352,7 @@
 			entries.map((entry) =>
 				entry.kind === 'link'
 					? [entry.id, entry.label, entry.count ?? 0]
-					: [entry.id, entry.label, entryCount(entry)]
+					: [entry.kind, entry.id, entry.label, entryCount(entry)]
 			)
 		])
 	);
@@ -344,17 +408,18 @@
 	function measure(): void {
 		if (!overflow || !navEl || !measureEl) return;
 		// "more" carries its own marker so an entry whose id is 'more' is never mistaken for it.
-		const widths = Array.from(
-			measureEl.querySelectorAll<HTMLElement>('[data-header-nav-measure]'),
-			(item) => item.getBoundingClientRect().width
+		const measuredItems = Array.from(
+			measureEl.querySelectorAll<HTMLElement>('[data-header-nav-measure]')
 		);
+		const widths = measuredItems.map((item) => item.getBoundingClientRect().width);
+		const pinned = measuredItems.map((item) => item.hasAttribute('data-header-nav-pinned'));
 		const moreEl = measureEl.querySelector<HTMLElement>('[data-header-nav-measure-more]');
 		const next = fitCount(
 			widths,
 			navEl.getBoundingClientRect().width,
 			moreEl?.getBoundingClientRect().width ?? 0,
 			gapOf(measureEl),
-			{ previous: fit }
+			{ previous: fit, pinned }
 		);
 		// Write only on a change (§4.4 ちらつき防止 (2)).
 		if (next !== fit) {
@@ -364,7 +429,10 @@
 			const now = next === HEADER_NAV_INSUFFICIENT;
 			// The row hides while insufficient; an open dropdown (top layer, its own
 			// `visibility`) would stay usable without its button, so close it.
-			if (now && !was) closeDropdown();
+			if (now && !was) {
+				closeDropdown();
+				closeMenus();
+			}
 			if (was !== now) onInsufficient?.(now);
 			if (focus) {
 				flushSync();
@@ -378,6 +446,14 @@
 			flushSync();
 			reposition();
 		}
+		// Same for an open menu entry: its trigger may have moved (links before
+		// it going into "More", a width change) with no window resize, which is
+		// all `Menu` listens to. `reposition` is a no-op on a closed one. Lay the
+		// row out first: focus in a command menu is not captured above and
+		// `openKey` does not track it, so the trigger may still sit at its old
+		// position here.
+		flushSync();
+		for (const menu of Object.values(menus)) menu?.reposition();
 	}
 
 	// `overflow` turned off while the width was insufficient: nothing measures
@@ -515,7 +591,11 @@
 		<div class="measure-clip" aria-hidden="true" inert>
 			<div bind:this={measureEl} class="row measure">
 				{#each entries as entry (entry.id)}
-					<span class="item" data-header-nav-measure={entry.id}>
+					<span
+						class="item"
+						data-header-nav-measure={entry.id}
+						data-header-nav-pinned={entryPinned(entry) ? '' : undefined}
+					>
 						<span>{entry.label}</span>
 						{#if entry.kind === 'link'}
 							{#if (entry.count ?? 0) > 0}<span class="badge"
@@ -542,13 +622,60 @@
 		style:visibility={overflow && (!measured || insufficient) ? 'hidden' : undefined}
 	>
 		{#each shown as entry (entry.id)}
+			<!-- The keydown only catches ArrowLeft / Right bubbling up from the
+			     items of a menu entry's open Menu (handleMenuCellKeydown); the
+			     cell itself takes no input. -->
+			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 			<li
 				class="cell"
 				onfocusout={(event) => {
 					if (entry.kind === 'group') handleCellFocusout(groupKey(entry.id), event);
 				}}
+				onkeydown={entry.kind === 'menu' ? handleMenuCellKeydown : undefined}
 			>
-				{#if entry.kind === 'link'}
+				{#if entry.kind === 'menu'}
+					<Menu bind:this={menus[entry.id]} label={entry.label} placement="bottom-start">
+						{#snippet trigger(props)}
+							<button
+								type="button"
+								class="item"
+								{...props}
+								data-header-nav-top
+								data-header-nav-id={entry.id}
+								onkeydown={(event) => {
+									props.onkeydown(event);
+									if (!event.defaultPrevented) handleTopKeydown(event);
+								}}
+							>
+								<span>{entry.label}</span>
+								{@render caret()}
+							</button>
+						{/snippet}
+						{#each entry.kind === 'menu' ? entry.items : [] as item (item.id)}
+							{#if item.kind === 'separator'}
+								<MenuSeparator />
+							{:else if item.kind === 'checkbox'}
+								<MenuItem
+									kind="checkbox"
+									label={item.label}
+									checked={item.checked}
+									disabled={item.disabled}
+									title={item.title}
+									onSelect={item.onSelect}
+								/>
+							{:else}
+								<MenuItem
+									label={item.label}
+									icon={item.icon}
+									danger={item.danger}
+									disabled={item.disabled}
+									title={item.title}
+									onSelect={item.onSelect}
+								/>
+							{/if}
+						{/each}
+					</Menu>
+				{:else if entry.kind === 'link'}
 					<a
 						href={entry.href}
 						class="item"
