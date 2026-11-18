@@ -243,6 +243,22 @@ describe('permission rows and draft (Issue #697)', () => {
 		expect(draft).toEqual(['b.x', 'a.x']);
 	});
 
+	it('rebasePermissions: replays the draft changes on a moved base (own save landed after reselect)', async () => {
+		const { rebasePermissions, permissionsToSend } = await import('./usersAdmin');
+		// Saved a.x (base [] -> [a.x]); the reselected form (base []) then checked b.y.
+		const draft = rebasePermissions(['b.y'], [], ['a.x']);
+		expect(draft).toEqual(['a.x', 'b.y']);
+		// The next save keeps what the first save granted.
+		expect(permissionsToSend(draft, ['a.x'])).toEqual(['a.x', 'b.y']);
+		// Unchecking against the old base still removes; untouched keys follow the new base.
+		expect(rebasePermissions(['c.z'], ['a.x', 'c.z'], ['a.x', 'b.y', 'c.z'])).toEqual([
+			'b.y',
+			'c.z'
+		]);
+		// No change in the draft -> exactly the new base.
+		expect(rebasePermissions([], [], ['a.x'])).toEqual(['a.x']);
+	});
+
 	it('permissionsToSend: only a changed set; nothing for an unchanged or unknown draft', async () => {
 		const { permissionsToSend } = await import('./usersAdmin');
 		expect(permissionsToSend(['b.x', 'a.x'], ['a.x', 'b.x'])).toBeUndefined();

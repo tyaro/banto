@@ -47,6 +47,7 @@
 		listUsers,
 		permissionRows,
 		permissionsToSend,
+		rebasePermissions,
 		resetUserPassword,
 		samePermissions,
 		shouldAdvanceEditVersion,
@@ -298,14 +299,37 @@
 		editPermissions = known ? [...current.permissions] : null;
 	}
 
-	/** After a conflict and the list re-read: take the row (and its permissions) from the list, if it is at least as new as the form and the selection did not move. */
-	function syncPermissions(targetId: number, epoch: number): void {
+	/** What `showLatest` put in the form, so `syncPermissions` can tell input made while the list was re-read. */
+	function conflictSnapshot(): { displayName: string; role: UserRole; version: number } {
+		return { displayName: editDisplayName, role: editRole, version: editVersion };
+	}
+
+	/**
+	 * After a conflict and the list re-read: take the permissions (and the row)
+	 * from the list, if the selection did not move. The name and role fields
+	 * stay editable during the re-read, so input made since `showLatest` (the
+	 * `snapshot`) is kept:
+	 * - same version as the form: only the permissions are filled in;
+	 * - a newer version: the form follows it only when nothing was typed;
+	 *   otherwise it is left alone (permissions stay unknown, the base version
+	 *   is not advanced), so the next save conflicts again instead of
+	 *   overwriting the newer change.
+	 */
+	function syncPermissions(
+		targetId: number,
+		epoch: number,
+		snapshot: { displayName: string; role: UserRole; version: number }
+	): void {
 		if (editPermissions !== null || epoch !== selectionEpoch || selected?.id !== targetId) return;
 		const row = users.find((user) => user.id === targetId);
 		if (!row || row.version < editVersion) return;
+		const edited = editDisplayName !== snapshot.displayName || editRole !== snapshot.role;
+		if (row.version > editVersion && edited) return;
 		selected = row;
-		editDisplayName = row.displayName;
-		editRole = row.role;
+		if (!edited) {
+			editDisplayName = row.displayName;
+			editRole = row.role;
+		}
 		editVersion = row.version;
 		editPermissions = [...row.permissions];
 	}
@@ -349,6 +373,17 @@
 				})
 			) {
 				editVersion = updated.version;
+				// Permissions are sent as a complete set, so their base must follow
+				// the version: otherwise the next save (now at the new version) would
+				// silently drop what this save just granted. Changes made in the
+				// reselected form are replayed on top of the saved set.
+				if (selected) {
+					const oldBase = selected.permissions ?? [];
+					if (editPermissions !== null) {
+						editPermissions = rebasePermissions(editPermissions, oldBase, updated.permissions);
+					}
+					selected = { ...selected, permissions: [...updated.permissions] };
+				}
 			}
 			await reload();
 		} catch (err) {
@@ -356,9 +391,10 @@
 				// Someone else saved first: show their latest values (the form's
 				// base version follows) instead of overwriting them.
 				showLatest(conflictCurrent(err), targetId, epoch);
+				const snapshot = conflictSnapshot();
 				toastStore.push('error', m['users.conflictNotSaved']());
 				await reload();
-				syncPermissions(targetId, epoch);
+				syncPermissions(targetId, epoch, snapshot);
 			} else {
 				toastStore.push('error', errorMessage(err));
 			}
@@ -425,9 +461,10 @@
 				// Someone else changed the account first: nothing was deleted.
 				// Show their latest values and re-read the list.
 				showLatest(conflictCurrent(err), targetId, epoch);
+				const snapshot = conflictSnapshot();
 				toastStore.push('error', m['users.conflictNotDeleted']());
 				await reload();
-				syncPermissions(targetId, epoch);
+				syncPermissions(targetId, epoch, snapshot);
 			} else {
 				toastStore.push('error', errorMessage(err));
 			}

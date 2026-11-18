@@ -346,6 +346,27 @@ export function withPermission(
 	return [...next].sort();
 }
 
+/**
+ * Replay the changes `draft` made against `oldBase` on top of `newBase`
+ * (sorted, no duplicates): keys checked in the draft but not in `oldBase` are
+ * added, keys `oldBase` had but the draft unchecked are removed, everything
+ * else follows `newBase`. Used when the base moves under an open form (our
+ * own save finished after the user reselected the account), so the next
+ * complete-set save keeps both.
+ */
+export function rebasePermissions(
+	draft: readonly UserPermission[],
+	oldBase: readonly UserPermission[],
+	newBase: readonly UserPermission[]
+): UserPermission[] {
+	const before = new Set(oldBase);
+	const after = new Set(draft);
+	const next = new Set(newBase);
+	for (const key of after) if (!before.has(key)) next.add(key);
+	for (const key of before) if (!after.has(key)) next.delete(key);
+	return [...next].sort();
+}
+
 /** Same set of keys, whatever the order. */
 export function samePermissions(
 	a: readonly UserPermission[],
