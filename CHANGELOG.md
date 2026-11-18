@@ -22,11 +22,58 @@
 
 ## [Unreleased]
 
-### 追加（minor）: Tabs に hideSingleTab（#659）
+## [7.5.0] - 2026-11-18
+
+**v7.5.0 — `@banto/ui` の `ThreePaneLayout` を外から扱う 5 つの口（#655）と、`Tabs` の `hideSingleTab`（#659）。下流（banto-industrial）からの要請に応える追加。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。追加の口はすべて任意で、渡さなければ見た目・挙動は変わらない。Rust・DB・テンプレートの変更は無い。
+派生アプリへの影響: 依存のタグを `v7.4.0` から `v7.5.0` に上げるだけなら、コンパイルエラーになる変更は無い。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v7.4.0` → `v7.5.0`（npm と Rust を同じタグに）。API の削除・改名は無い。追加のみ（`ThreePaneLayout` の `onToggle`・`leftToggleEl`/`rightToggleEl`・`leftOpen`/`rightOpen`・`leftDrawerModal`/`rightDrawerModal`・`narrowOverride`・スクリムの `data-three-pane-scrim`、`Tabs` の `hideSingleTab`）。Rust のクレートは版数のみ。 |
+| B. コピーしたテンプレート        | なし | テンプレートの画面・辞書・`src-tauri` の変更は無い（版数のみ）。                                                                                                                                                                                                                                                                 |
+| C. DB・設定・配布資産            | なし | migration の追加は無い。`tauri.conf.json` は版数のみ。`.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続。                                                                                                                                                                                                                |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/ui`（ほかのパッケージ・クレートは版数のみ）。
+- 更新: `v7.4.0` → `v7.5.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。既定の挙動は維持）:
+  - `ThreePaneLayout`: `onToggle`、`leftToggleEl` / `rightToggleEl`（bindable、読むだけ）、`leftOpen` / `rightOpen`（既定 `true`、bindable）、`leftDrawerModal` / `rightDrawerModal`（既定 `true`）、`narrowOverride`、スクリムの `data-three-pane-scrim`。
+  - `Tabs`: `hideSingleTab`（既定 `false`）。
+- 移行注意（ソース互換の破壊）: 無い。
+- 消費側への注意（型エラーにはならないが、確かめるもの）:
+  1. **ThreePaneLayout の回避を外すとき**: 外から帯のボタンを探す・スクリムを当てる・Esc を横取りするなどの回避を入れていた場合は、新しい口に置き換えてから回避を外す（両方を残すと二重に動く）。非モーダルのドロワー（`*DrawerModal=false`）では、`*Open=false` で閉じたときのフォーカスの戻し先はアプリが決める。
+  2. **`hideSingleTab` に置き換えるとき**: タブ列を CSS で隠していた回避（例: `.view-tabs.single`）を外す。無効のタブもタブの数に入る。2 つ以上のときは何も変わらない。
+- 依存を上げずに留まれるか: できる（`v7.4.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 変更なし（`package.json`・`tauri.conf.json` の版数のみ）。取り込みは不要。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 追加なし。
+- 設定キー・`tauri.conf.json`: 設定キーの追加は無い。`tauri.conf.json` は版数のみ。
+- 配布物: 変更なし。
+- 依存監査: `.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続（下の「セキュリティ」）。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（画面が描画される）。
+2. `ThreePaneLayout`・`Tabs` を使う画面: 新しい口を渡さない限り、見た目・挙動は変わらないこと。回避を新しい口に置き換えた画面は、帯のボタン・狭い幅のドロワー（開閉・Esc・フォーカス）・タブ 1 つのときの表示を実際に操作して確かめる。
+3. visual の基準画像（Linux で生成）の再生成が要る変更は無い見込み（どちらも既定で見た目が変わらない）。
+
+### セキュリティ
+
+- **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）の `.cargo/audit.toml` での一時的な除外は、この版でも継続している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けない。外す合図は、libsqlite3-sys 0.39 以上を許す sqlx のリリース（`cargo update -p libsqlite3-sys` で除外を外す）。
+
+### 変更の一覧
+
+#### 追加（minor）: Tabs に hideSingleTab（#659）
 
 - `@banto/ui` の `Tabs` に任意の `hideSingleTab?: boolean`（既定 `false`）を追加。`true` でタブが 1 つ（無効のタブも数に入れる）のとき、`role="tablist"` を描かず、パネルは同じ要素のまま `role`・`id`・`aria-labelledby`・`tabindex` だけを外す（空の枠に Tab で止まらない。タブの数が変わっても中身は作り直さない。無効な唯一のタブは従来どおり隠れ、既定（`keepMounted` なし）では中身も描かない）。`value`・`onchange` は従来どおり。2 つ以上では何も変わらない。
 
-### 追加（minor）: ThreePaneLayout を外から扱う 5 つの口（#655、#631 のフォロー）
+#### 追加（minor）: ThreePaneLayout を外から扱う 5 つの口（#655、#631 のフォロー）
 
 - `@banto/ui` の `ThreePaneLayout` に追加（すべて任意。渡さなければ見た目・挙動は変わらない）:
   - `onToggle?: (side, open) => void`（帯のボタンで状態を変える直前に同期で呼ぶ。`open` は押した後の値）と、`leftToggleEl` / `rightToggleEl`（bindable、読むだけの出力。無いときは `undefined`）。
