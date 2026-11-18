@@ -120,3 +120,37 @@ test('density: touch in the preview is 16px based while the shell is standard', 
 	expect(lg).toBeGreaterThan(18.2);
 	expect(lg).toBeLessThan(18.4);
 });
+
+test('density: compact, standard and reset in the preview hold while the shell is touch', async ({
+	page
+}) => {
+	await page.goto('/theme-lab');
+	const preview = page.getByTestId('theme-lab-preview');
+	await expect(preview).toBeVisible({ timeout: 60_000 });
+	// the shell's touch block also sets values compact leaves alone (control-height-sm, font size)
+	await page.evaluate(() => document.documentElement.setAttribute('data-banto-density', 'touch'));
+
+	await expect(async () => {
+		await page.getByText('compact', { exact: true }).click({ timeout: 2_000 });
+		await expect(preview).toHaveAttribute('data-banto-density', 'compact', { timeout: 2_000 });
+	}).toPass({ timeout: 60_000 });
+	expect(await previewPx(page, '--banto-control-height')).toBe('32px');
+	expect(await previewPx(page, '--banto-control-height-sm')).toBe('28px');
+	expect(await previewPx(page, '--banto-space-4')).toBe('10.5px');
+	expect(await previewPx(page, '--banto-font-size')).toBe('14px');
+
+	const expectStandard = async () => {
+		await expect(preview).not.toHaveAttribute('data-banto-density');
+		expect(await previewPx(page, '--banto-control-height')).toBe('36px');
+		expect(await previewPx(page, '--banto-control-height-sm')).toBe('28px');
+		expect(await previewPx(page, '--banto-space-4')).toBe('14px');
+		expect(await previewPx(page, '--banto-font-size')).toBe('14px');
+	};
+	await page.getByText('標準', { exact: true }).click();
+	await expectStandard();
+
+	await page.getByText('compact', { exact: true }).click();
+	await expect(preview).toHaveAttribute('data-banto-density', 'compact');
+	await page.getByRole('button', { name: '既定に戻す', exact: true }).click();
+	await expectStandard();
+});
