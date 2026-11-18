@@ -1,6 +1,6 @@
 /**
  * The "見本" nav group (nav-menubar-plan.md D7-b, §4.10, §7.2) in the menu bar
- * layout. The group holds the demo-only entries (`/ui-demo`, `/chart-gallery`),
+ * layout. The group holds the demo-only entries (`/ui-demo`, `/chart-gallery`, `/theme-lab`),
  * so it exists only in a demo build: this runs in the `demo` project (`vite
  * dev` with VITE_BANTO_DEMO=1). The production-build behaviour of the bar is
  * in visual/menubar.spec.ts. Depends on the template's demo entries - a
