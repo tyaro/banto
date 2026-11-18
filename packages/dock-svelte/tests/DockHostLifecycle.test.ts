@@ -190,7 +190,8 @@ describe('beforePanelChange is asked for every kind, and a sync refusal leaves t
 		flushSync();
 		expect(calls).toEqual([
 			{ kind: 'hide', panelId: 'x', remount: true },
-			{ kind: 'close', panelId: 'p' }
+			// P leaves the split: the tab group is mounted again, asked first; the refusal stops it (#682).
+			{ kind: 'reparent', panelId: 'x', cause: 'p', remount: true }
 		]);
 		expect(dock.layout).toEqual(mixed());
 	});
@@ -219,9 +220,23 @@ describe('beforePanelChange is asked for every kind, and a sync refusal leaves t
 		const calls: DockPanelChange[] = [];
 		const { dock } = mount(mixed(), { beforePanelChange: (c) => (calls.push(c), false) });
 		dragFrom(screen.getByRole('toolbar', { name: 'P' }));
-		expect(calls).toEqual([{ kind: 'undock', panelId: 'p', remount: true }]);
+		expect(calls).toEqual([{ kind: 'reparent', panelId: 'x', cause: 'p', remount: true }]);
 		expect(dock.layout).toEqual(mixed());
 		expect(document.querySelector('.drag-ghost')).toBeNull();
+	});
+
+	it('undock of a pane that leaves a split asks the pane that is left first, then itself (#682)', () => {
+		const calls: string[] = [];
+		const { dock } = mount(mixed(), {
+			beforePanelChange: (c) => (
+				calls.push(c.kind === 'reparent' ? `reparent ${c.panelId}` : c.kind),
+				true
+			)
+		});
+		dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+		expect(calls).toEqual(['reparent x', 'undock']);
+		expect(winOf(dock, 'p')!.open).toBe(true);
+		expect(dock.layout.docked).toMatchObject({ type: 'tabs', id: 't' });
 	});
 
 	it('dock (floating window dropped on a docked pane) and move-docked (docked onto docked)', () => {

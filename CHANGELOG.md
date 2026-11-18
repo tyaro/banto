@@ -26,6 +26,10 @@
 
 - docked の木へのドロップ（dock / move-docked）と `showPanel` で元の場所へ戻すとき、動かす pane だけでなく、変わってしまうほかの docked の pane にも先に聞くようにした。タブの組へ落とすと選択中から外れるタブは `tab-switch`、新しい分割（単独の pane の真ん中へ落としたときは新しいタブの組）に包まれて作り直される pane（と、動かして分割が 1 つに縮むときに残って作り直される pane）は新しい reason `reparent`（`remount: true`。Svelte の部品は別の親へ移せないので `keepMounted` でも作り直される）。木の順に 1 つずつ聞き、最初の拒否で何も変えずに止め、最後に動かす pane 自身に聞く。答えは 1 つの判断として、最初に聞いたときの構造が適用まで変わらないことを確かめる（変わったら `stale`）。IME 変換中はタブのクリックと同じく保留して `resumeDeferredChange` で再開する。`beforePanelChange` を渡しているアプリは、ドロップで呼ばれる回数と種類が増える
 
+### 修正: dock-svelte で docked の pane を抜くと残る pane が作り直されるとき、残る側にも聞く（#682）
+
+- undock（ドッキング中の pane を浮動へ出すドロップ）・✕（`closePanel` / `hidePanel` / `setPanelVisible(false)`）で、分割やタブの組が 1 枚に縮み、残る pane が作り直される（`keepMounted` でも同じ）ときは、先にその pane の `reparent`（`cause` = 抜かれる pane の id）を聞き、最後に抜かれる pane 自身の `undock` / `hide` / `close` を聞く。どれかが拒否なら何も変えない。3 枚以上の分割・タブの組から 1 枚抜くなど、残る pane が作り直されないときは従来どおり抜かれる pane だけ。`beforePanelChange` を渡しているアプリは、これらの操作で呼ばれる回数と種類が増える
+
 ### 追加（minor）: dock-svelte の `DockPanelChange` に `reparent`（#666）
 
 - `{ kind: 'reparent'; panelId; cause; remount: true }` を追加した（公開 API の追加）。動かしていないのに親が変わって作り直される docked の pane に使う。`panelId` = 作り直される pane、`cause` = その変化を起こした、動かしている pane の id。`kind` を網羅して扱っているアプリは `reparent` を足す（`dock` / `undock` / `move-docked` と同じく `capture` して進めればよい）。

@@ -118,18 +118,6 @@ export class DragController {
 	}
 
 	/**
-	 * A structure change: asked through the lifecycle (`beforePanelChange`, IME
-	 * hold) when there is one. `target` (where it is dropped) is part of the
-	 * request's identity, so a drop on Y while a drop on X waits is asked on
-	 * its own instead of being taken for the X request (`core/lifecycle.ts`).
-	 */
-	#structural(change: DockPanelChange, target: unknown, apply: () => void): void {
-		const lifecycle = this.#getLifecycle();
-		if (lifecycle) void lifecycle.request(change, apply, { target });
-		else apply();
-	}
-
-	/**
 	 * A drop into the docked tree: also asks about the docked panes it pushes
 	 * out - a new active tab, a pane a new split / tab group is made around
 	 * (`PanelLifecycle.requestPlacement`, #666) - before `own`. Refused = the
@@ -325,9 +313,17 @@ export class DragController {
 				// `undock: false` panes stay docked: a drop on free space is ignored.
 				if (policy && !resolveCapabilities(policy, panelId).undock) return;
 				const dock = this.#dock;
-				this.#structural({ kind: 'undock', panelId, remount: true }, { x, y, width, height }, () =>
-					dock.undockPanel(panelId, { x, y, width, height })
-				);
+				const apply = () => dock.undockPanel(panelId, { x, y, width, height });
+				const lifecycle = this.#getLifecycle();
+				// Asks the pane a shrinking split / tab group leaves first (`reparent`, #682).
+				if (lifecycle)
+					void lifecycle.requestRemoval(
+						panelId,
+						() => ({ kind: 'undock', panelId, remount: true }),
+						apply,
+						{ x, y, width, height }
+					);
+				else apply();
 			} else {
 				const win = this.#dock.layout.floating.find((w) => w.id === panelId);
 				if (win) {

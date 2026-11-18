@@ -9,7 +9,7 @@
 // destinations are told apart; dispose resolves every waiting request.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PanelLifecycle, type DockPanelChange } from '../src/core/lifecycle';
-import { structureKey } from '../src/core/tree';
+import { collectPanelIds, structureKey } from '../src/core/tree';
 import { createDockState, type DockState } from '../src/state.svelte';
 import type { DockLayout, DockTabGroupNode } from '../src/types';
 
@@ -353,5 +353,216 @@ describe('a late approval does not push out a newer held request (PR #448 re-rev
 		lifecycle.resumeDeferred();
 		expect(await b).toBe('applied');
 		expect(winOf(dock, 'a').open).toBe(true);
+	});
+});
+
+// #682: taking a docked pane out of the tree (hide / close / undock) shrinks a
+// split or tab group; the pane that is left is mounted again, so it is asked
+// first (`reparent`, cause = the leaving pane), then the leaving pane itself.
+describe('a pane leaving the docked tree asks the pane that is left (#682)', () => {
+	const shrinking = (): DockLayout => ({
+		version: 2,
+		floating: [],
+		docked: {
+			type: 'split',
+			id: 's',
+			direction: 'row',
+			sizes: [0.5, 0.5],
+			children: [
+				{
+					type: 'tabs',
+					id: 't',
+					activeIndex: 0,
+					children: [
+						{ type: 'panel', id: 'x', title: 'X' },
+						{ type: 'panel', id: 'y', title: 'Y' }
+					]
+				},
+				{ type: 'panel', id: 'p', title: 'P' }
+			]
+		}
+	});
+
+	type Path = 'close' | 'hide' | 'undock';
+	const paths: Path[] = ['close', 'hide', 'undock'];
+
+	function make(
+		options: Parameters<typeof setup>[0],
+		initial: DockLayout = shrinking()
+	): {
+		dock: DockState;
+		lifecycle: PanelLifecycle;
+		run: (id: string, path: Path) => Promise<string>;
+	} {
+		const dock = createDockState(initial);
+		const lifecycle = new PanelLifecycle(dock, () => ({
+			beforePanelChange: options.hook,
+			keepMounted: options.keepMounted,
+			isStructureChangeDeferred: options.deferred
+		}));
+		detach = lifecycle.attach();
+		const run = (id: string, path: Path): Promise<string> =>
+			path === 'close'
+				? lifecycle.close(id)
+				: path === 'hide'
+					? lifecycle.hide(id)
+					: lifecycle.requestRemoval(
+							id,
+							() => ({ kind: 'undock', panelId: id, remount: true }),
+							() => dock.undockPanel(id),
+							'undock'
+						);
+		return { dock, lifecycle, run };
+	}
+	const ids = (dock: DockState) => collectPanelIds(dock.layout.docked);
+	const label = (c: DockPanelChange) =>
+		c.kind === 'reparent'
+			? `reparent ${c.panelId}<-${c.cause}`
+			: `${c.kind} ${'panelId' in c ? c.panelId : ''}`;
+
+	describe.each(paths)('%s', (path) => {
+		it('refused: only the left pane is asked, nothing changes', async () => {
+			const calls: string[] = [];
+			const { dock, run } = make({ hook: (c) => (calls.push(label(c)), false) });
+			const before = dock.serialize();
+			expect(await run('p', path)).toBe('refused');
+			expect(calls).toEqual(['reparent x<-p']);
+			expect(dock.serialize()).toBe(before);
+		});
+
+		it('allowed: the left pane first, the leaving pane last, then applied', async () => {
+			const calls: string[] = [];
+			const { dock, run } = make({ hook: (c) => (calls.push(label(c)), true) });
+			expect(await run('p', path)).toBe('applied');
+			expect(calls).toEqual(['reparent x<-p', `${path} p`]);
+			expect(ids(dock)).toEqual(['x', 'y']);
+		});
+
+		it('the leaving pane refusing last changes nothing', async () => {
+			const { dock, run } = make({ hook: (c) => c.kind === 'reparent' });
+			const before = dock.serialize();
+			expect(await run('p', path)).toBe('refused');
+			expect(dock.serialize()).toBe(before);
+		});
+
+		it('held for IME composition, asked and applied after resume', async () => {
+			let deferring = true;
+			const calls: string[] = [];
+			const { dock, lifecycle, run } = make({
+				hook: (c) => (calls.push(label(c)), true),
+				deferred: () => deferring
+			});
+			const pending = run('p', path);
+			expect(calls).toEqual([]);
+			expect(ids(dock)).toEqual(['x', 'y', 'p']);
+			deferring = false;
+			lifecycle.resumeDeferred();
+			expect(await pending).toBe('applied');
+			expect(calls).toEqual(['reparent x<-p', `${path} p`]);
+			expect(ids(dock)).toEqual(['x', 'y']);
+		});
+
+		it('the structure changing while an answer is awaited is stale', async () => {
+			const answer = deferred<boolean>();
+			const { dock, run } = make({ hook: () => answer.promise });
+			const pending = run('p', path);
+			dock.setActiveTab('t', 1);
+			answer.resolve(true);
+			expect(await pending).toBe('stale');
+			expect(ids(dock)).toEqual(['x', 'y', 'p']);
+		});
+
+		it('the leaving pane gone while waiting is stale', async () => {
+			const answer = deferred<boolean>();
+			const { dock, run } = make({ hook: () => answer.promise });
+			const pending = run('p', path);
+			dock.undockPanel('p');
+			answer.resolve(true);
+			expect(await pending).toBe('stale');
+		});
+
+		it('a split of three or more: nobody is mounted again, only the leaving pane is asked', async () => {
+			const three: DockLayout = {
+				version: 2,
+				floating: [],
+				docked: {
+					type: 'split',
+					id: 's',
+					direction: 'row',
+					sizes: [0.4, 0.3, 0.3],
+					children: [
+						{ type: 'panel', id: 'p', title: 'P' },
+						{ type: 'panel', id: 'q', title: 'Q' },
+						{ type: 'panel', id: 'r', title: 'R' }
+					]
+				}
+			};
+			const calls: string[] = [];
+			const { dock, run } = make({ hook: (c) => (calls.push(label(c)), true) }, three);
+			expect(await run('p', path)).toBe('applied');
+			expect(calls).toEqual([`${path} p`]);
+			expect(ids(dock)).toEqual(['q', 'r']);
+		});
+
+		it('a tab group of three or more: asked only about the leaving pane', async () => {
+			const tabs: DockLayout = {
+				version: 2,
+				floating: [],
+				docked: {
+					type: 'tabs',
+					id: 't',
+					activeIndex: 0,
+					children: [
+						{ type: 'panel', id: 'x', title: 'X' },
+						{ type: 'panel', id: 'y', title: 'Y' },
+						{ type: 'panel', id: 'z', title: 'Z' }
+					]
+				}
+			};
+			const calls: string[] = [];
+			const { run } = make(
+				{ hook: (c) => (calls.push(label(c)), true), keepMounted: () => true },
+				tabs
+			);
+			expect(await run('x', path)).toBe('applied');
+			expect(calls).toEqual([`${path} x`]);
+		});
+
+		it('a tab group of two shrinks to a bare pane: a keepMounted left tab is asked, one that is not mounted is not', async () => {
+			const pair: DockLayout = {
+				version: 2,
+				floating: [],
+				docked: {
+					type: 'tabs',
+					id: 't',
+					activeIndex: 0,
+					children: [
+						{ type: 'panel', id: 'x', title: 'X' },
+						{ type: 'panel', id: 'y', title: 'Y' }
+					]
+				}
+			};
+			const kept: string[] = [];
+			const a = make({ hook: (c) => (kept.push(label(c)), true), keepMounted: () => true }, pair);
+			expect(await a.run('x', path)).toBe('applied');
+			expect(kept).toEqual(['reparent y<-x', `${path} x`]);
+			detach?.();
+			const plain: string[] = [];
+			const b = make({ hook: (c) => (plain.push(label(c)), true) }, pair);
+			expect(await b.run('x', path)).toBe('applied');
+			expect(plain).toEqual([`${path} x`]);
+		});
+	});
+
+	it('a pane that is not docked keeps the old single request', async () => {
+		const calls: string[] = [];
+		const floatingOnly: DockLayout = {
+			version: 2,
+			floating: [{ id: 'a', title: 'A', x: 0, y: 0, width: 100, height: 100, open: true }],
+			docked: null
+		};
+		const { run } = make({ hook: (c) => (calls.push(label(c)), true) }, floatingOnly);
+		expect(await run('a', 'close')).toBe('applied');
+		expect(calls).toEqual(['close a']);
 	});
 });

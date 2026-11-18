@@ -180,6 +180,7 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
     （Svelte の部品は別の親へ移せないので `keepMounted` でも同じ）: その pane の `reparent`（`remount: true`、`cause` = 動かす pane の id）。
     包まれるタブの組では、選択中のタブと `keepMounted` のタブのそれぞれ。docked の pane を動かして元の分割が
     1 つに縮むときに残る側も同じ。
+  - docked の pane を木から抜く操作（undock のドロップ・✕ / `closePanel` / `hidePanel` / `setPanelVisible(false)`、#682）で分割やタブの組が 1 枚に縮み、残る pane が作り直されるときも、先に残る側の `reparent`（`cause` = 抜かれる pane の id）を聞き、最後に抜かれる pane 自身の `undock` / `hide` / `close`。残る pane が作り直されない縮み方（3 枚以上から 1 枚抜く、など）は聞かない。
   - 答えはまとめて 1 つの判断: 最初に聞いたときの構造の世代のまま適用まで進み、途中で構造が変わったら
     `stale`。同期の答えだけなら同期で適用する。IME 変換中はタブのクリックと同じく保留する。
 - **`keepMounted`**: その pane の中身を、表示していないタブのあいだ・hide した浮動 window のあいだ、
