@@ -66,6 +66,15 @@ test('density, light / dark and corner radius reach the preview and the export',
 		await expect(preview).toHaveAttribute('data-banto-density', 'compact', { timeout: 2_000 });
 	}).toPass({ timeout: 60_000 });
 	await expect(page.getByTestId('theme-lab-css')).toContainText("applyDensity('compact')");
+	// The sample grid follows the preview's density without being recreated (#692).
+	const rowHeights = () =>
+		preview
+			.getByRole('grid')
+			.locator('[role="row"]:has([data-cell-row])')
+			.evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+	await expect.poll(async () => [...new Set(await rowHeights())]).toEqual([32]);
+	await page.getByText('touch', { exact: true }).click();
+	await expect.poll(async () => [...new Set(await rowHeights())]).toEqual([52]);
 
 	await page.getByText('ダーク', { exact: true }).click();
 	await expect(preview).toHaveAttribute('data-theme', 'dark');
