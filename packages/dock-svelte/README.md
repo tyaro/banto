@@ -251,6 +251,18 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   `false` / 何もしない）。`dock.open(id)` でドックから隠した pane を開くと浮動で開き、覚えた場所は捨てる。
   `dock.ensureWindow` は docked の id を浮動として足さなくなった（id の重複を作っていた）。
 
+### ピン（浮動 window の位置と大きさの固定）
+
+浮動 window のタイトルバーのピンのボタン（`aria-pressed`）を押すと、その window の位置と大きさが固定される。固定中は
+タイトルバーのドラッグ・リサイズのハンドル・キーボードの移動 / サイズ変更ができない（ハンドルと両ボタンは出ない）。
+中のタブの出し入れ・閉じる・前面に出すは効く。画面内に収める補正（`clamp`）も固定中に効く。ドック中の領域にはピンは出ない。
+
+- `dock.isPinned(id)` / `dock.setPinned(id, pinned)`。`FloatingWindow.pinned?: boolean` は `true` のときだけ書き出す
+  （`false` は項目ごと消す）。無い古い JSON は「固定なし」で読め、layout の `version` は 2 のまま。
+- 固定中の `dock.move` / `dock.resize` は何もしない。ドラッグ・リサイズの最中に固定されたら、その操作は取り消して
+  操作前の位置と大きさに戻る。window がドックに入ると `pinned` は消え、あとで引き出した pane は固定なしで始まる。
+- ボタンのラベルは `messages.pinWindow(title)` / `messages.unpinWindow(title)`。
+
 ### IME 変換中は構造変更を保留する
 
 `isStructureChangeDeferred()` が `true` のあいだ（省略時: document で `compositionstart` があって

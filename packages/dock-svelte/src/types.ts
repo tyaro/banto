@@ -35,6 +35,15 @@ export interface FloatingWindow {
 	 * reads as "no remembered place", so the layout `version` stays 2.
 	 */
 	dockSlot?: DockSlot;
+	/**
+	 * Pinned by the user (#663 ②): the window's position and size are fixed - no
+	 * title-bar drag, no resize, no keyboard move / resize. Tabs can still be
+	 * dragged in and out and the window can be closed or raised. Optional and
+	 * written only when `true`: a layout without it (older JSON) reads as not
+	 * pinned, so the layout `version` stays 2. Lives on the window, so it is gone
+	 * when the window docks (a pane pulled out later starts unpinned).
+	 */
+	pinned?: boolean;
 }
 
 /**

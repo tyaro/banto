@@ -111,6 +111,8 @@
 	// layout is untouched (shared-primitives-upstream-plan §3.2, #434).
 	const shown = $derived(displayWindowGeometry(win, hostW, hostH, policy.clamp));
 	const caps = $derived(resolveCapabilities(policy, win.id));
+	/** Pinned (#663 ②): position and size are fixed - no drag, no resize handles, no keyboard mode. */
+	const pinned = $derived(win.pinned === true);
 
 	function focusThis(): void {
 		dock.focus(win.id);
@@ -130,7 +132,7 @@
 		event.preventDefault();
 		focusThis();
 		// `move: false` (consumer capability): the title bar still focuses the window but never starts a drag.
-		if (!caps.move || !windowEl) return;
+		if (!caps.move || pinned || !windowEl) return;
 
 		const startX = event.clientX;
 		const startY = event.clientY;
@@ -192,7 +194,7 @@
 		// otherwise also bubble into the root's focus handler - harmless (focus
 		// is idempotent) but stopped anyway for clarity.
 		event.stopPropagation();
-		if (event.button !== 0 || event.isPrimary === false || gesture.active) return;
+		if (pinned || event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
 		focusThis();
 
@@ -231,7 +233,7 @@
 			gesture.commitKeyboard();
 			return;
 		}
-		if (gesture.active) return;
+		if (pinned || gesture.active) return;
 		focusThis();
 		gesture.beginKeyboard({
 			kind,
@@ -290,6 +292,10 @@
 	$effect(() => {
 		if (keyMode === 'move' && !caps.move) untrack(() => gesture.cancel('api'));
 	});
+	// Pinned while a drag / resize / keyboard mode is on this window: cancel it, which puts the pre-gesture geometry back.
+	$effect(() => {
+		if (pinned && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
+	});
 	// Hidden while a gesture / keyboard mode is on this window: end it (see the module doc).
 	$effect(() => {
 		if (hidden && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
@@ -336,7 +342,11 @@
 			titlebar itself stays a non-focusable drag surface.
 		-->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="titlebar" class:immovable={!caps.move} onpointerdown={handleTitlebarPointerDown}>
+		<div
+			class="titlebar"
+			class:immovable={!caps.move || pinned}
+			onpointerdown={handleTitlebarPointerDown}
+		>
 			{#if win.icon}
 				<span class="icon" aria-hidden="true">
 					{#if iconContent}
@@ -347,7 +357,7 @@
 				</span>
 			{/if}
 			<span class="title">{win.title}</span>
-			{#if caps.move}
+			{#if caps.move && !pinned}
 				<button
 					type="button"
 					class="key-btn"
@@ -362,18 +372,31 @@
 					✥
 				</button>
 			{/if}
+			{#if !pinned}
+				<button
+					type="button"
+					class="key-btn"
+					class:active={keyMode === 'resize'}
+					aria-label={t.resizeWindow(win.title)}
+					aria-pressed={keyMode === 'resize'}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => toggleKeyboardMode('resize')}
+					onkeydown={(event) => handleModeKeydown(event, 'resize')}
+					onblur={() => handleModeBlur('resize')}
+				>
+					⤡
+				</button>
+			{/if}
 			<button
 				type="button"
-				class="key-btn"
-				class:active={keyMode === 'resize'}
-				aria-label={t.resizeWindow(win.title)}
-				aria-pressed={keyMode === 'resize'}
+				class="pin-btn"
+				class:active={pinned}
+				aria-label={pinned ? t.unpinWindow(win.title) : t.pinWindow(win.title)}
+				aria-pressed={pinned}
 				onpointerdown={(event) => event.stopPropagation()}
-				onclick={() => toggleKeyboardMode('resize')}
-				onkeydown={(event) => handleModeKeydown(event, 'resize')}
-				onblur={() => handleModeBlur('resize')}
+				onclick={() => dock.setPinned(win.id, !pinned)}
 			>
-				⤡
+				📌
 			</button>
 			{#if onPopOut && caps.undock}
 				<button
@@ -410,7 +433,7 @@
 	</div>
 
 	<!-- Resize handles: pointer surfaces, hidden from assistive tech - the keyboard equivalent is the resize-mode button in the titlebar. -->
-	{#each RESIZE_EDGES as edge (edge)}
+	{#each pinned ? [] : RESIZE_EDGES as edge (edge)}
 		<div
 			class={`handle handle-${edge}`}
 			aria-hidden="true"
@@ -494,6 +517,7 @@
 
 	.close-btn,
 	.popout-btn,
+	.pin-btn,
 	.key-btn {
 		flex: 0 0 auto;
 		width: var(--banto-dock-button-size, 22px);
@@ -525,11 +549,14 @@
 
 	.close-btn:focus-visible,
 	.popout-btn:focus-visible,
+	.pin-btn:focus-visible,
 	.key-btn:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
 	}
 
+	.pin-btn:hover,
+	.pin-btn.active,
 	.key-btn:hover,
 	.key-btn.active {
 		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);

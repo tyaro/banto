@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 追加（minor）: dock-svelte の浮動 window にピン（位置と大きさの固定）（#663 ②）
+
+- 浮動 window のタイトルバーのピンのボタンで、位置と大きさを固定できる（ドラッグ・リサイズ・キーボード操作が止まる）。`FloatingWindow.pinned?` と `dock.isPinned(id)` / `dock.setPinned(id, pinned)` を追加し、レイアウトの JSON に保存・復元する（`version` は 2 のまま、古い JSON はそのまま読める）。ラベルは `messages.pinWindow` / `unpinWindow`
+
 ### 変更: テンプレートのダッシュボードの pane の開閉を「表示」メニューへ（#663 ①-C）
 
 - admin-template のダッシュボードの「分析ワークスペース」の上にあったツールバー（pane ごとの開閉ボタンと「リセット」）を外し、「表示」メニューに置き換えた。pane ごとのチェックボックス（入れる = `showPanel` で、ドックから隠した pane は元の場所に戻る。外す = ✕ と同じ経路）と「レイアウトを既定に戻す」を並べる。メニューバーが出ている間（`menubar` レイアウト・幅 900px 超・入りきる）はヘッダーのメニューバーの「表示」に、それ以外（サイドバー・ドック、900px 以下、入りきらずドロワーに代わっているとき）はページ見出しの横の「表示」ボタンになり、いつも 1 か所にだけある。ページがシェルへメニューを渡す汎用の口として `#lib/pageViewMenu.svelte.ts`（`(app)/+layout.svelte` が context で持つ）と `PageViewMenu.svelte` を足した。文言キー: `dashboard.viewMenu` / `dashboard.resetLayout` / `shell.pageMenuNav` を足し、使わなくなった `dashboard.dockToolbarAria` / `dashboard.dockedAlwaysVisible` / `dashboard.reset` を消した。visual の基準画像（ダッシュボードを写すもの）は再生成が要る。

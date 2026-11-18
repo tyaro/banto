@@ -127,6 +127,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 				else if (!Number.isFinite(n)) add('non-finite', `${p}.${key}`);
 				else if (!(n > 0)) add('non-positive-size', `${p}.${key}`);
 			}
+			if (raw.pinned !== undefined && typeof raw.pinned !== 'boolean') add('shape', `${p}.pinned`);
 			if (raw.dockSlot !== undefined && !isDockSlot(raw.dockSlot)) add('shape', `${p}.dockSlot`);
 			floating.push(raw as unknown as FloatingWindow);
 		});

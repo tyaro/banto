@@ -198,6 +198,27 @@ export class DockState {
 		return this.layout.floating.find((w) => w.id === id)?.open ?? false;
 	}
 
+	/** Is the FLOATING window `id` pinned (position and size fixed, #663 ②)? A docked / unknown id is `false`. */
+	isPinned(id: string): boolean {
+		return this.layout.floating.find((w) => w.id === id)?.pinned === true;
+	}
+
+	/**
+	 * Pin / unpin the floating window `id`. Pinned, `move` and `resize` do
+	 * nothing (and the window host stops gestures); everything else (tabs,
+	 * close, focus) is unchanged. `false` drops the field rather than writing
+	 * `pinned: false`. A no-op for a docked / unknown id.
+	 */
+	setPinned(id: string, pinned: boolean): void {
+		if (this.isPinned(id) === pinned) return;
+		this.#update(id, (w) => {
+			const next: FloatingWindow = { ...w };
+			if (pinned) next.pinned = true;
+			else delete next.pinned;
+			return next;
+		});
+	}
+
 	/** Is the pane on screen: in the docked tree (even as a background tab) or an open floating window (#663). */
 	isVisible(id: string): boolean {
 		return this.#isDocked(id) || this.isOpen(id);
@@ -370,6 +391,8 @@ export class DockState {
 		hostH: number,
 		clamp?: ClampOptions
 	): void {
+		// Pinned (#663 ②): the preference stays; the drawn clamp still applies at render.
+		if (this.isPinned(id)) return;
 		this.#update(id, (w) =>
 			applyDrag(displayWindowGeometry(w, hostW, hostH, clamp), dx, dy, hostW, hostH, clamp)
 		);
@@ -385,6 +408,7 @@ export class DockState {
 		hostH: number,
 		clamp?: ClampOptions
 	): void {
+		if (this.isPinned(id)) return;
 		this.#update(id, (w) =>
 			applyResize(
 				displayWindowGeometry(w, hostW, hostH, clamp),
