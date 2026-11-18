@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeWindow } from '../src/core/virtual';
+import { computeWindow, parseRowHeightPx } from '../src/core/virtual';
 
 describe('computeWindow', () => {
 	const rowHeight = 36;
@@ -78,5 +78,18 @@ describe('computeWindow', () => {
 		});
 		expect(result.start).toBe(0);
 		expect(result.end).toBeGreaterThan(0);
+	});
+});
+
+describe('parseRowHeightPx', () => {
+	it('parses a computed px length', () => {
+		expect(parseRowHeightPx('32px', 36)).toBe(32);
+		expect(parseRowHeightPx('52.5px', 36)).toBe(52.5);
+	});
+
+	it('falls back for empty, auto, zero, or negative values', () => {
+		for (const value of ['', 'auto', 'px', '0px', '-8px']) {
+			expect(parseRowHeightPx(value, 36)).toBe(36);
+		}
 	});
 });

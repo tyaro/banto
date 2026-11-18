@@ -29,6 +29,10 @@
 - 書き出す CSS・コントラスト比は `src/lib/themeLab.ts` の純関数（単体テスト `themeLab.test.ts`。定数が `banto.css` とずれたら落ちる）。vitest の `css.include` に `banto.css` を足した（`?raw` で読むため）。
 - scaffold: チャートの部分だけを `ThemeLabCharts.svelte` に分け、`--preset minimal` / `display`（charts を外す）では、そのファイル・ページの import と節（`[scaffold:charts]` の印）・`themeLab.charts.*` を外す。ページ本体は残る。`DemoNavIconKey`・`DemoNavLabelKey` に `theme-lab` の語が増えたので、charts の remover の置換元の文字列を合わせた（派生側で `scripts/scaffold.mjs` を使うなら、更新時に合わせて取り込む）。
 
+### 修正: グリッドの行高が密度に追従する（#692）
+
+- `@banto/grid-svelte`: `BantoGrid` の行高がテーマの密度（`--banto-grid-row-height`: standard 36px／compact 32px／touch 52px）に追従するようにした（#692）。これまでは `GridState.rowHeight`（既定 36）を構築時に固定していたため、compact・touch でも行は 36px のままだった。`rowHeight`（prop または `GridState` の option）を渡したときは今までどおり固定。`GridState` に `rowHeightFixed` と `followThemeRowHeight(px)` を足し、`rowHeight` は読み取り専用の getter（反応的）になった。アプリの items・監査ログの表は、compact・touch で行の高さが変わる
+
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。

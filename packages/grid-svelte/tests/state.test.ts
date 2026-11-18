@@ -27,6 +27,38 @@ describe('GridState', () => {
 		expect(state.rowHeight).toBe(48);
 	});
 
+	describe('row height (fixed vs theme-following)', () => {
+		it('follows the theme when no rowHeight option is given', () => {
+			const state = new GridState(columns);
+			expect(state.rowHeightFixed).toBe(false);
+			state.followThemeRowHeight(52);
+			expect(state.rowHeight).toBe(52);
+			state.followThemeRowHeight(32);
+			expect(state.rowHeight).toBe(32);
+		});
+
+		it('ignores the theme when rowHeight is fixed', () => {
+			const state = new GridState(columns, { rowHeight: 48 });
+			expect(state.rowHeightFixed).toBe(true);
+			state.followThemeRowHeight(52);
+			expect(state.rowHeight).toBe(48);
+		});
+
+		it('ignores non-finite or non-positive values', () => {
+			const state = new GridState(columns);
+			for (const bad of [0, -4, Number.NaN, Number.POSITIVE_INFINITY]) {
+				state.followThemeRowHeight(bad);
+				expect(state.rowHeight).toBe(36);
+			}
+		});
+
+		it('does not serialize the row height', () => {
+			const state = new GridState(columns);
+			state.followThemeRowHeight(52);
+			expect(JSON.stringify(state.serialize())).not.toContain('52');
+		});
+	});
+
 	describe('toggleSort', () => {
 		it('non-additive click cycles asc -> desc -> removed for a single column', () => {
 			const state = new GridState(columns);
