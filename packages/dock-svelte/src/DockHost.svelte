@@ -77,7 +77,7 @@
 	import { collectPanelIds } from './core/tree';
 	import { setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
 	import type { DockState } from './state.svelte';
-	import type { PanelContent } from './types';
+	import type { DockEdge, PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
 	import DockWindow from './DockWindow.svelte';
 	import type { DockMessages } from './messages';
@@ -219,6 +219,9 @@
 	let hostW: number = $state(0);
 	let hostH: number = $state(0);
 	let hostEl: HTMLDivElement | null = $state(null);
+
+	/** The outer-edge drop strips drawn during a drag (#694 PR-1). */
+	const EDGES: readonly DockEdge[] = ['left', 'right', 'top', 'bottom'];
 
 	// svelte-ignore state_referenced_locally
 	const lifecycle = new PanelLifecycle(dock, () => ({
@@ -369,6 +372,19 @@
 	</div>
 
 	{#if drag.state}
+		{#if drag.state.edgeBand > 0}
+			<!-- Outer-edge drop strips (#694 PR-1): drawn only during a drag, never hit-tested
+			     (`pointer-events: none`; `core/edges.ts` tests by geometry). -->
+			{#each EDGES as edge (edge)}
+				<div
+					class="edge-drop edge-{edge}"
+					class:active={drag.state.hoverEdge === edge}
+					data-dock-edge={edge}
+					aria-hidden="true"
+					style:--edge-band={`${drag.state.edgeBand}px`}
+				></div>
+			{/each}
+		{/if}
 		{#if drag.state.guideRect}
 			<div
 				class="snap-guide"
@@ -434,6 +450,52 @@
 		box-sizing: border-box;
 		pointer-events: none;
 		z-index: 20;
+	}
+
+	/* Outer-edge drop strips (#694 PR-1): only during a drag, below the snap guide. The
+	   thickness is the hit strip of `core/edges.ts` (a shape, set by the controller). */
+	.edge-drop {
+		position: absolute;
+		box-sizing: border-box;
+		border: var(--banto-border-width) dashed var(--banto-dock-snap-border);
+		border-radius: var(--banto-radius-sm);
+		pointer-events: none;
+		z-index: 19;
+	}
+
+	.edge-drop.active {
+		background: var(--banto-dock-snap-fill);
+		border-style: solid;
+	}
+
+	.edge-left,
+	.edge-right {
+		top: 0;
+		bottom: 0;
+		width: var(--edge-band);
+	}
+
+	.edge-top,
+	.edge-bottom {
+		left: 0;
+		right: 0;
+		height: var(--edge-band);
+	}
+
+	.edge-left {
+		left: 0;
+	}
+
+	.edge-right {
+		right: 0;
+	}
+
+	.edge-top {
+		top: 0;
+	}
+
+	.edge-bottom {
+		bottom: 0;
 	}
 
 	/* Drag ghost follows the pointer every move - no transition, same reason as .snap-guide. */

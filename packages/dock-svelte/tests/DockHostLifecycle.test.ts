@@ -653,7 +653,10 @@ describe('IME composition holds structure changes', () => {
 // asked first, like a tab click (refused = nothing changes; IME hold; an
 // approval whose structure moved meanwhile is stale), then the dropped pane.
 describe('a drop asks the docked panes it pushes out (#666)', () => {
-	/** A pane frame of 1000 x 600 at the origin, so a release near an edge is an edge drop. */
+	/**
+	 * A pane frame of 1000 x 600 at the origin, so a release near an edge is an edge drop. The host
+	 * gets the same rect, so the release stays outside the host's outer-edge strip (#694 PR-1).
+	 */
 	function paneRects(): void {
 		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
 			left: 0,
@@ -672,7 +675,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 	function dropFBelowP(): void {
 		paneRects();
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
-		dragFrom(titlebarF(), 500, 590);
+		dragFrom(titlebarF(), 500, 560);
 	}
 	/** F dropped in the middle of the tab group t (X active). */
 	function dropFOnTabs(): void {
@@ -778,7 +781,7 @@ describe('a drop asks the docked panes it pushes out (#666)', () => {
 				}
 			});
 			dropFBelowP();
-			dragFrom(titlebarF(), 500, 10); // the top edge of P: another placement
+			dragFrom(titlebarF(), 500, 40); // the top edge of P: another placement
 			expect(calls).toEqual(['reparent p', 'reparent p']);
 			answers[0](true);
 			await nextTask();

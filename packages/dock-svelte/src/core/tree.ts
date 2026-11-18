@@ -11,6 +11,7 @@
  * deterministic counter and assert on generated ids.
  */
 import type {
+	DockEdge,
 	DockLayout,
 	DockNode,
 	DockPanelNode,
@@ -369,6 +370,36 @@ export function dockPanelIntoTree(
 		);
 	}
 	return splitInsert(root, target, panel, region, makeId);
+}
+
+/**
+ * Dock `dropped` along an outer edge of the whole host (#694 PR-1): the root
+ * is wrapped in a new split, and the panel spans the full height (`left` /
+ * `right`) or width (`top` / `bottom`) on that side, with the split's default
+ * even sizes (`[0.5, 0.5]`, like `splitInsert`'s new split). The root is
+ * ALWAYS wrapped, even when it is already a split in the same direction - the
+ * edge pane must span the whole host, which a sibling inside the root split
+ * would only do by accident. `root === null` (nothing docked) = the panel
+ * becomes the bare root, as in `dockPanelIntoTree`. The dropped panel never
+ * brings its collapsed flag along (#663 ③-B).
+ */
+export function dockPanelAtEdge(
+	root: DockNode | null,
+	dropped: DockPanelNode,
+	edge: DockEdge,
+	makeId: () => string = defaultMakeId
+): DockNode {
+	const panel = withoutCollapsed(dropped);
+	if (!root) return panel;
+	const direction: 'row' | 'column' = edge === 'left' || edge === 'right' ? 'row' : 'column';
+	const before = edge === 'left' || edge === 'top';
+	return {
+		type: 'split',
+		id: makeId(),
+		direction,
+		children: before ? [panel, root] : [root, panel],
+		sizes: [0.5, 0.5]
+	};
 }
 
 /** Change the visible tab of a tab group. Out-of-range indices clamp; an unknown `groupId` (or a `null` tree) is a no-op. */

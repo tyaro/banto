@@ -153,6 +153,12 @@ export type DockNode = DockPanelNode | DockTabGroupNode | DockSplitNode;
  */
 export type DropRegion = 'center' | 'left' | 'right' | 'top' | 'bottom';
 
+/**
+ * An outer edge of the whole host (#694 PR-1): a drop there wraps the docked
+ * root in a new split and the pane spans that side (`core/tree.ts#dockPanelAtEdge`).
+ */
+export type DockEdge = Exclude<DropRegion, 'center'>;
+
 /** Full serializable dock layout (spec §5.1: "レイアウト全体をJSONにシリアライズ/デシリアライズ可能に"). */
 export interface DockLayout {
 	/** Bump on breaking changes. v1 (M7) had no `docked` field; `DockState.hydrate` migrates it to `docked: null`. */

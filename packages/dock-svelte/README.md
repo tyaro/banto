@@ -98,6 +98,31 @@ divider）は、host ごとに 1 つの持ち主が 1 回の操作として扱�
 - 浮動 window は `pointerdown` に加えて `focusin`（Tab や中の入力欄へのフォーカス）でも前面に来る。
   前面化は `z-index` で行い、DOM の順（= Tab の順）は変えない。
 
+## 外周へのドッキング（#694）
+
+浮動 window のタイトルバーや docked のタイトルバー・タブをドラッグして、host の四辺の縁へ落とすと、
+docked の木全体（根）を新しい分割で包み、その側に全高（左・右）／全幅（上・下）で入る（分割の比率は
+区画の端へ落としたときと同じ `[0.5, 0.5]`）。根がすでに同じ向きの分割でも、その分割に足さずに常に包む。
+
+- 縁の当たり判定は、host の各辺から `EDGE_DROP_BAND`（24px。host の短い辺の 1/8 を超えない）の帯。区画の
+  当たり判定（区画の端 25% と中央）より先に判定するので、host の縁に接する区画の外側の帯と、縁に重なった浮動
+  window の上でも外周が勝つ。帯はドラッグ中だけ縁に破線で出て、指している辺は塗られ、入る場所（host の半分）の
+  ガイドが出る。帯は `pointer-events: none` で、ドラッグの外では何も奪わない。
+- 外周を出すのは、ドラッグしている pane のほかに docked の pane があるときだけ。docked が空（またはドラッグしている
+  pane だけ）のときは縁にも何も出ず、ドロップは今までどおり（空き領域なら浮動の移動・undock）。
+- `move: false` の pane はドラッグが始まらないので外周へも動かせない。外周へ動かすのは docked の木の中での再配置
+  なので `undock: false` の pane も動かせる。
+- 確認（`beforePanelChange`）は区画へのドロップと同じ: 包まれて作り直される pane の `reparent` が先、最後に
+  動かす pane の `dock` / `move-docked`（上の「押し出される pane にも聞く」）。待つあいだに構造が変わったら `stale`。
+- 包むと作り直される pane にフォーカスがあったときは、適用後、同じ区画（タブの組なら選択中のタブ、単独の pane
+  なら本文の領域）へ戻す。その区画が無ければ動かした pane へ。`<body>` に落ちていないフォーカス（残った要素や、
+  hook・ホストが移した先）は動かさない。
+- コードからは `dock.dockPanelAtEdge(id, edge)`（浮動 window を外周へ）・`dock.dockExistingAtEdge(id, edge)`
+  （docked の pane を外周へ。docked の pane がそれだけなら何もしない）。木の純粋な操作は `dockPanelAtEdge(root,
+panel, edge)`。これらは確認（`beforePanelChange`）を通らない（`dock.dockPanel` などと同じ）。
+- Tauri の pop-out した window からは host へドラッグできない（別の OS の window のため）。外周へ入れるには、
+  host へ戻してからドラッグする。
+
 ## キーボード操作と操作の hook
 
 キーは、フォーカスが dock の中の操作要素（divider・タブ・浮動 window のモードのボタン）にあるときだけ
@@ -180,6 +205,11 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
     （Svelte の部品は別の親へ移せないので `keepMounted` でも同じ）: その pane の `reparent`（`remount: true`、`cause` = 動かす pane の id）。
     包まれるタブの組では、選択中のタブと `keepMounted` のタブのそれぞれ。docked の pane を動かして元の分割が
     1 つに縮むときに残る側も同じ。
+  - host の外周へ落とす（下の「外周へのドッキング」）と、木の根が新しい分割で包まれ、根の中の pane は
+    木の段が 1 つ深くなって作り直される: 中身が載っている各 pane（各タブの組の選択中のタブと `keepMounted` のタブ）の
+    `reparent`（`cause` = 動かす pane の id）を木の順に聞き、最後に動かす pane の `dock` / `move-docked`。docked の
+    pane を外周へ動かすときは、先に抜いた残りの木を包むので、抜いたことで段が変わらない pane（縮んだ分割の残る側が
+    結果として同じ段に来るもの）は聞かない。
   - docked の pane を木から抜く操作（undock のドロップ・✕ / `closePanel` / `hidePanel` / `setPanelVisible(false)`、#682）で分割やタブの組が 1 枚に縮み、残る pane が作り直されるときも、先に残る側の `reparent`（`cause` = 抜かれる pane の id）を聞き、最後に抜かれる pane 自身の `undock` / `hide` / `close`。残る pane が作り直されない縮み方（3 枚以上から 1 枚抜く、など）は聞かない。
   - 答えはまとめて 1 つの判断: 最初に聞いたときの構造の世代のまま適用まで進み、途中で構造が変わったら
     `stale`。同期の答えだけなら同期で適用する。IME 変換中はタブのクリックと同じく保留する。
