@@ -26,10 +26,63 @@ export interface HeaderNavLink {
 	count?: number;
 }
 
-/** A top-row entry: a single link, or a group whose links open in a dropdown. */
+/**
+ * One item of a `menu` entry (#663 ①-B): a command, not a link. Rendered as a
+ * `MenuItem` of the ui `Menu` (`role="menu"`), never inside the link
+ * disclosure - ARIA menu roles and disclosure navigation are not mixed.
+ *
+ * - `action`: runs `onSelect` and closes the menu (focus goes back to the
+ *   button unless `onSelect` moved it somewhere else).
+ * - `checkbox`: `role="menuitemcheckbox"` with `aria-checked`; selecting it
+ *   calls `onSelect` only and leaves the menu open with focus on the item.
+ *   The state lives with the host: flip it in `onSelect`, and the next
+ *   `checked` shows even while the menu is open.
+ * - `separator`: a divider (`role="separator"`). `id` is only the `{#each}` key.
+ *
+ * `id` is unique within its menu.
+ */
+export type HeaderNavMenuItem =
+	| {
+			kind: 'action';
+			id: string;
+			label: string;
+			/** Decorative, before the label. */
+			icon?: UiIconComponent;
+			disabled?: boolean;
+			danger?: boolean;
+			/** Native tooltip (e.g. why a disabled item is unavailable). */
+			title?: string;
+			onSelect: () => void;
+	  }
+	| {
+			kind: 'checkbox';
+			id: string;
+			label: string;
+			checked: boolean;
+			disabled?: boolean;
+			title?: string;
+			onSelect: () => void;
+	  }
+	| { kind: 'separator'; id: string };
+
+/**
+ * A top-row entry: a single link, a group whose links open in a dropdown, or
+ * a menu of commands (#663 ①-B, e.g. a desktop-style "View" menu).
+ *
+ * A `menu` entry is **pinned** to the top row: it never moves into "more",
+ * and its width is reserved before the links are fitted (`fitCount`'s
+ * `pinned`). In the insufficient state (§4.9) it hides with the rest of the
+ * row, so a host that falls back to a drawer offers the same commands there.
+ */
 export type HeaderNavEntry =
 	| ({ kind: 'link' } & HeaderNavLink)
-	| { kind: 'group'; id: string; label: string; items: HeaderNavLink[] };
+	| { kind: 'group'; id: string; label: string; items: HeaderNavLink[] }
+	| { kind: 'menu'; id: string; label: string; items: HeaderNavMenuItem[] };
+
+/** Whether the entry stays on the top row however narrow the nav is (#663 ①-B). */
+export function entryPinned(entry: HeaderNavEntry): boolean {
+	return entry.kind === 'menu';
+}
 
 /** Result of `fitCount` when not even the "more" button fits (§4.9). */
 export const HEADER_NAV_INSUFFICIENT = -1;
@@ -53,6 +106,14 @@ export interface FitCountOptions {
 	previous?: number;
 	/** Defaults to `HEADER_NAV_RECOVER_SLACK`. */
 	recoverSlack?: number;
+	/**
+	 * Per entry, whether it is pinned (a `menu` entry, #663 ①-B). Pinned
+	 * entries always stay: their widths (and a gap each) are taken off
+	 * `available` first, and the result counts only the other entries -
+	 * how many of them, in order, stay on top. When even the pinned entries
+	 * and "more" do not fit, the result is `HEADER_NAV_INSUFFICIENT`.
+	 */
+	pinned?: readonly boolean[];
 }
 
 /**
@@ -74,20 +135,37 @@ export function fitCount(
 	gap: number,
 	options: FitCountOptions = {}
 ): number {
-	const result = fitAt(widths, available + EPSILON, moreWidth, gap);
+	const pinned = options.pinned;
+	const flow = pinned ? widths.filter((_, i) => pinned[i] !== true) : widths;
+	const fixed = pinned ? widths.filter((_, i) => pinned[i] === true) : [];
+	const at = (room: number) => fitWithPinned(flow, fixed, room, moreWidth, gap);
+	const result = at(available + EPSILON);
 	if (
 		options.previous === HEADER_NAV_INSUFFICIENT &&
 		result !== HEADER_NAV_INSUFFICIENT &&
-		fitAt(
-			widths,
-			available + EPSILON - (options.recoverSlack ?? HEADER_NAV_RECOVER_SLACK),
-			moreWidth,
-			gap
-		) === HEADER_NAV_INSUFFICIENT
+		at(available + EPSILON - (options.recoverSlack ?? HEADER_NAV_RECOVER_SLACK)) ===
+			HEADER_NAV_INSUFFICIENT
 	) {
 		return HEADER_NAV_INSUFFICIENT;
 	}
 	return result;
+}
+
+function fitWithPinned(
+	flow: readonly number[],
+	fixed: readonly number[],
+	room: number,
+	moreWidth: number,
+	gap: number
+): number {
+	if (fixed.length === 0) return fitAt(flow, room, moreWidth, gap);
+	const fixedTotal = fixed.reduce((sum, width) => sum + width, 0);
+	if (flow.length === 0) {
+		// Only pinned entries: no "more" to fall back to.
+		return fixedTotal + gap * (fixed.length - 1) <= room ? 0 : HEADER_NAV_INSUFFICIENT;
+	}
+	// Each pinned entry takes its width and the gap to its neighbour.
+	return fitAt(flow, room - fixedTotal - gap * fixed.length, moreWidth, gap);
 }
 
 function fitAt(widths: readonly number[], room: number, moreWidth: number, gap: number): number {
@@ -114,12 +192,14 @@ export function headerNavBadgeText(count: number): string {
 /** The unread total of the links under an entry (a link: its own count). */
 export function entryCount(entry: HeaderNavEntry): number {
 	if (entry.kind === 'link') return Math.max(entry.count ?? 0, 0);
+	if (entry.kind === 'menu') return 0;
 	return entry.items.reduce((sum, item) => sum + Math.max(item.count ?? 0, 0), 0);
 }
 
 /** Whether the entry is, or holds, the current page. */
 export function entryActive(entry: HeaderNavEntry): boolean {
 	if (entry.kind === 'link') return entry.active === true;
+	if (entry.kind === 'menu') return false;
 	return entry.items.some((item) => item.active === true);
 }
 
@@ -140,6 +220,8 @@ export interface HeaderNavSection {
 export function overflowSections(entries: readonly HeaderNavEntry[]): HeaderNavSection[] {
 	const sections: HeaderNavSection[] = [];
 	for (const entry of entries) {
+		// Pinned, so never moved; skipped should a caller pass one anyway.
+		if (entry.kind === 'menu') continue;
 		if (entry.kind === 'group') {
 			sections.push({ id: entry.id, heading: entry.label, items: entry.items });
 			continue;

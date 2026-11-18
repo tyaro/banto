@@ -544,3 +544,220 @@ describe('HeaderNav', () => {
 		outside.remove();
 	});
 });
+
+describe('HeaderNav menu entries (#663 ①-B)', () => {
+	function menuEntries(
+		options: { logChecked?: boolean; onLog?: () => void; onReset?: () => void } = {}
+	) {
+		const link = (id: string) => ({ id, href: `/${id}`, label: id.toUpperCase() });
+		return [
+			{ kind: 'link', ...link('a') },
+			{ kind: 'link', ...link('b') },
+			{
+				kind: 'menu',
+				id: 'view',
+				label: 'View',
+				items: [
+					{
+						kind: 'checkbox',
+						id: 'log',
+						label: 'Log',
+						checked: options.logChecked ?? false,
+						onSelect: options.onLog ?? (() => {})
+					},
+					{ kind: 'separator', id: 'sep' },
+					{
+						kind: 'action',
+						id: 'reset',
+						label: 'Reset layout',
+						icon: CustomIcon,
+						onSelect: options.onReset ?? (() => {})
+					}
+				]
+			},
+			{ kind: 'link', ...link('c') }
+		] satisfies HeaderNavEntry[];
+	}
+
+	beforeEach(() => {
+		widthOf.view = 80;
+	});
+
+	const menuOf = (button: HTMLElement) =>
+		button.parentElement!.querySelector<HTMLElement>('[role="menu"]')!;
+
+	it('renders a menu button and a role="menu" with checkbox, separator and action items', async () => {
+		const { nav } = await setup({ entries: menuEntries({ logChecked: true }) });
+		const button = within(nav).getByRole('button', { name: 'View' });
+		expect(button.getAttribute('aria-haspopup')).toBe('menu');
+		expect(button.getAttribute('aria-expanded')).toBe('false');
+		// Not a link disclosure: no aria-controls, no links inside.
+		expect(button.hasAttribute('aria-controls')).toBe(false);
+		const menu = menuOf(button);
+		expect(menu.getAttribute('aria-label')).toBe('View');
+		expect(menu.querySelectorAll('a')).toHaveLength(0);
+		// Closed (hidden, so out of the a11y queries) until opened: read the roles directly.
+		expect(
+			Array.from(menu.querySelectorAll('[role]'), (el) => [
+				el.getAttribute('role'),
+				el.textContent?.trim(),
+				el.getAttribute('aria-checked')
+			])
+		).toEqual([
+			['menuitemcheckbox', 'Log', 'true'],
+			['separator', '', null],
+			['menuitem', 'Reset layout', null]
+		]);
+		// Measured with the rest, marked pinned.
+		expect(
+			nav.querySelector('[data-header-nav-measure="view"]')?.hasAttribute('data-header-nav-pinned')
+		).toBe(true);
+	});
+
+	it('opens from the keyboard on the first / last item', async () => {
+		const { nav } = await setup({ entries: menuEntries() });
+		const button = within(nav).getByRole('button', { name: 'View' });
+		await fireEvent.keyDown(button, { key: 'ArrowDown' });
+		await flush();
+		expect(button.getAttribute('aria-expanded')).toBe('true');
+		expect(document.activeElement).toBe(screen.getByRole('menuitemcheckbox', { name: 'Log' }));
+		(menuOf(button) as PopoverElement).hidePopover();
+		await flush();
+		await fireEvent.keyDown(button, { key: 'ArrowUp' });
+		await flush();
+		expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Reset layout' }));
+	});
+
+	it('Esc (light dismiss) closes and returns focus to the button', async () => {
+		const { nav } = await setup({ entries: menuEntries() });
+		const button = within(nav).getByRole('button', { name: 'View' });
+		await fireEvent.keyDown(button, { key: 'Enter' });
+		await flush();
+		expect(menuOf(button).contains(document.activeElement)).toBe(true);
+		// The browser closes an auto popover on Esc; the stand-in does it directly.
+		(menuOf(button) as PopoverElement).hidePopover();
+		await flush();
+		expect(button.getAttribute('aria-expanded')).toBe('false');
+		expect(document.activeElement).toBe(button);
+	});
+
+	it('a checkbox calls onSelect, keeps the menu open and shows the new state while open', async () => {
+		const onLog = vi.fn();
+		const { nav, rerender } = await setup({ entries: menuEntries({ onLog }) });
+		const button = within(nav).getByRole('button', { name: 'View' });
+		await fireEvent.keyDown(button, { key: 'ArrowDown' });
+		await flush();
+		const checkbox = screen.getByRole('menuitemcheckbox', { name: 'Log' });
+		expect(checkbox.getAttribute('aria-checked')).toBe('false');
+		await fireEvent.click(checkbox);
+		await flush();
+		expect(onLog).toHaveBeenCalledTimes(1);
+		expect(menuOf(button).dataset.popoverOpen).toBe('true');
+		expect(document.activeElement).toBe(checkbox);
+		await rerender({ entries: menuEntries({ onLog, logChecked: true }) });
+		expect(screen.getByRole('menuitemcheckbox', { name: 'Log' }).getAttribute('aria-checked')).toBe(
+			'true'
+		);
+		expect(menuOf(button).dataset.popoverOpen).toBe('true');
+	});
+
+	it('an action calls onSelect, closes the menu and returns focus to the button', async () => {
+		const onReset = vi.fn();
+		const { nav } = await setup({ entries: menuEntries({ onReset }) });
+		const button = within(nav).getByRole('button', { name: 'View' });
+		await fireEvent.keyDown(button, { key: 'ArrowUp' });
+		await flush();
+		await fireEvent.click(screen.getByRole('menuitem', { name: 'Reset layout' }));
+		await flush();
+		expect(onReset).toHaveBeenCalledTimes(1);
+		expect(menuOf(button).dataset.popoverOpen).toBeUndefined();
+		expect(document.activeElement).toBe(button);
+	});
+
+	it('leaves focus where an action moved it', async () => {
+		const elsewhere = document.createElement('button');
+		document.body.append(elsewhere);
+		const { nav } = await setup({ entries: menuEntries({ onReset: () => elsewhere.focus() }) });
+		const button = within(nav).getByRole('button', { name: 'View' });
+		await fireEvent.keyDown(button, { key: 'ArrowUp' });
+		await flush();
+		await fireEvent.click(screen.getByRole('menuitem', { name: 'Reset layout' }));
+		await flush();
+		expect(document.activeElement).toBe(elsewhere);
+		elsewhere.remove();
+	});
+
+	it('stays on the top row when links move into "more", and is reached with the arrows', async () => {
+		const { nav } = await setup({ entries: menuEntries() });
+		// Links 100 each, the menu 80 + gap 0: 60 (more) + 80 + 100 = 240 <= 250.
+		await resizeTo(250);
+		const tops = topControls(nav);
+		expect(tops.map((control) => control.textContent?.trim())).toEqual(['A', 'View', 'More']);
+		expect(nav.getAttribute('data-header-nav-shown')).toBe('1');
+		const more = within(nav).getByRole('button', { name: 'More' });
+		await fireEvent.click(more);
+		await flush();
+		const popover = document.getElementById(more.getAttribute('aria-controls') ?? '')!;
+		expect(
+			within(popover)
+				.getAllByRole('link')
+				.map((link) => link.textContent?.trim())
+		).toEqual(['B', 'C']);
+		expect(within(popover).queryByRole('menuitemcheckbox')).toBeNull();
+		tops[0].focus();
+		await fireEvent.keyDown(tops[0], { key: 'ArrowRight' });
+		expect(document.activeElement).toBe(tops[1]);
+		await fireEvent.keyDown(tops[1], { key: 'ArrowRight' });
+		expect(document.activeElement).toBe(more);
+		// Narrower still: only the menu and "more" are left.
+		await resizeTo(140);
+		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual([
+			'View',
+			'More'
+		]);
+	});
+
+	it('closes on left / right inside the open menu and moves to the neighbouring top item', async () => {
+		const { nav } = await setup({ entries: menuEntries() });
+		const [, b, view, c] = topControls(nav);
+		await fireEvent.keyDown(view, { key: 'ArrowDown' });
+		await flush();
+		await fireEvent.keyDown(screen.getByRole('menuitemcheckbox', { name: 'Log' }), {
+			key: 'ArrowRight'
+		});
+		await flush();
+		expect(document.activeElement).toBe(c);
+		expect(view.getAttribute('aria-expanded')).toBe('false');
+		await fireEvent.keyDown(view, { key: 'ArrowDown' });
+		await flush();
+		await fireEvent.keyDown(screen.getByRole('menuitemcheckbox', { name: 'Log' }), {
+			key: 'ArrowLeft'
+		});
+		await flush();
+		expect(document.activeElement).toBe(b);
+	});
+
+	it('closes an open menu when the width becomes insufficient', async () => {
+		const onInsufficient = vi.fn();
+		const { nav } = await setup({ entries: menuEntries(), onInsufficient });
+		const button = within(nav).getByRole('button', { name: 'View' });
+		await fireEvent.keyDown(button, { key: 'ArrowDown' });
+		await flush();
+		expect(menuOf(button).dataset.popoverOpen).toBe('true');
+		// The menu (80) and "more" (60) no longer fit.
+		await resizeTo(100);
+		await flush();
+		expect(onInsufficient).toHaveBeenLastCalledWith(true);
+		expect(menuOf(button).dataset.popoverOpen).toBeUndefined();
+	});
+
+	it('without overflow: the menu sits with the other entries', async () => {
+		const { nav } = await setup({ entries: menuEntries(), overflow: false });
+		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual([
+			'A',
+			'B',
+			'View',
+			'C'
+		]);
+	});
+});
