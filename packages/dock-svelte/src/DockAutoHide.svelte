@@ -410,9 +410,12 @@
 		box-shadow: var(--banto-focus-ring);
 	}
 
+	/* Its own stacking context, like `.docked-layer`: painted above the docked tree by DOM
+	   order, below the floating layer (z-index 1), whatever z-index the slid-out pane uses. */
 	.flyout-area {
 		position: absolute;
 		pointer-events: none;
+		isolation: isolate;
 	}
 
 	.flyout {

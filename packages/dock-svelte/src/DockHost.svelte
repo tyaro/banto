@@ -481,9 +481,13 @@
 		border-radius: var(--banto-radius-lg);
 	}
 
+	/* Its own stacking context (#694 PR-3): a pane's positioned content with a positive
+	   z-index (e.g. a chart's reset-zoom button) stays inside the docked layer, below the
+	   auto-hide slide-out (later in the DOM) and the floating layer (z-index 1). */
 	.docked-layer {
 		position: absolute;
 		inset: 0;
+		isolation: isolate;
 	}
 
 	/* Its own stacking context (z-index 1) so the windows' z-index (1..n) stays
