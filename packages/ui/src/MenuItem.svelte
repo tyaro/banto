@@ -9,6 +9,7 @@
 	 * attribute (§7.5) so the item stays reachable for `aria-disabled`
 	 * inspection during traversal while visually/interactively inert.
 	 */
+	import { onMount } from 'svelte';
 	import { getMenuContext } from './menuContext';
 	import { detectShortcutPlatform, formatShortcut, toAriaKeyShortcuts } from './shortcut';
 	import type { ShortcutPlatform } from './shortcut';
@@ -42,8 +43,18 @@
 		 * `aria-keyshortcuts`.
 		 */
 		shortcut?: string;
-		/** Platform for the keycap text; default `detectShortcutPlatform()`. */
+		/**
+		 * Platform for the keycap text. Omitted: `'other'` for the first render
+		 * (matches SSR, so hydration agrees) and `detectShortcutPlatform()` once
+		 * mounted. Given: used as is.
+		 */
 		platform?: ShortcutPlatform;
+		/**
+		 * Explicit `aria-keyshortcuts` value, used as is instead of the automatic
+		 * conversion. Needed for layout-dependent symbol keys (`'?'`, `'Shift+%'`),
+		 * which the automatic conversion omits.
+		 */
+		ariaKeyShortcuts?: string;
 		onSelect: () => void;
 	}
 
@@ -57,14 +68,22 @@
 		title,
 		shortcut,
 		platform,
+		ariaKeyShortcuts,
 		onSelect
 	}: Props = $props();
 
 	const menu = getMenuContext();
 
-	const resolvedPlatform = $derived(platform ?? detectShortcutPlatform());
+	// First render is 'other' (same as SSR); the real platform arrives after mount.
+	let detectedPlatform: ShortcutPlatform = $state('other');
+	onMount(() => {
+		detectedPlatform = detectShortcutPlatform();
+	});
+	const resolvedPlatform = $derived(platform ?? detectedPlatform);
 	const shortcutText = $derived(shortcut ? formatShortcut(shortcut, resolvedPlatform) : undefined);
-	const ariaKeys = $derived(shortcut ? toAriaKeyShortcuts(shortcut, resolvedPlatform) : undefined);
+	const ariaKeys = $derived(
+		ariaKeyShortcuts ?? (shortcut ? toAriaKeyShortcuts(shortcut, resolvedPlatform) : undefined)
+	);
 
 	let itemEl: HTMLButtonElement | undefined = $state();
 

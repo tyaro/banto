@@ -12,4 +12,6 @@
 	{/snippet}
 	<MenuItem label="Undo" shortcut="Mod+Shift+Z" {platform} onSelect={() => {}} />
 	<MenuItem label="Redo" onSelect={() => {}} />
+	<MenuItem label="Help" shortcut="?" onSelect={() => {}} />
+	<MenuItem label="Zoom" shortcut="Mod+/" ariaKeyShortcuts="Control+Slash" onSelect={() => {}} />
 </Menu>

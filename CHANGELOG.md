@@ -24,7 +24,7 @@
 
 ### 追加（minor）: ui の `MenuItem` にショートカット表示（#671）
 
-- `MenuItem` に `shortcut?`（`'Mod+Z'` 形式、`CommandSpec` と同じ）と `platform?`（省略時 `detectShortcutPlatform()`）を追加。label の右に keycap テキスト（`formatShortcut`、`aria-hidden`）を出し、アクセシブル名は label のまま、`aria-keyshortcuts` に WAI-ARIA 形式で入れる。変換用に `toAriaKeyShortcuts(shortcut, platform)` を export。表示のみでキーの処理はしない
+- `MenuItem` に `shortcut?`（`'Mod+Z'` 形式、`CommandSpec` と同じ）、`platform?`（省略時は初回描画を `'other'`、マウント後に `detectShortcutPlatform()`。SSR と hydration が一致する）、`ariaKeyShortcuts?`（`aria-keyshortcuts` を明示。自動変換より優先）を追加。label の右に keycap テキスト（`formatShortcut`、`aria-hidden`）を出し、アクセシブル名は label のまま、`aria-keyshortcuts` に WAI-ARIA 形式で入れる。変換用に `toAriaKeyShortcuts(shortcut, platform)` を export（`?` `%` `/` `+` など配列依存の記号キーは `undefined` を返し属性を省く）。表示のみでキーの処理はしない
 
 ### 追加（minor）: dock-svelte のドッキング中の区画を帯に畳む（#663 ③-B）
 

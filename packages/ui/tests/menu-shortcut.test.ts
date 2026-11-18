@@ -6,7 +6,7 @@
  * so role/name queries see the items.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import MenuShortcutHarness from './fixtures/MenuShortcutHarness.svelte';
 import { toAriaKeyShortcuts } from '../src/index';
 
@@ -28,9 +28,12 @@ beforeAll(() => {
 	};
 });
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	vi.unstubAllGlobals();
+});
 
-async function open(platform: 'mac' | 'other') {
+async function open(platform?: 'mac' | 'other') {
 	render(MenuShortcutHarness, { platform });
 	await fireEvent.click(screen.getByRole('button', { name: 'Open' }));
 	await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -61,6 +64,33 @@ describe('MenuItem shortcut', () => {
 	});
 });
 
+describe('MenuItem platform / ariaKeyShortcuts', () => {
+	it('detects the platform after mount when none is given', async () => {
+		vi.stubGlobal('navigator', { platform: 'MacIntel' });
+		await open();
+		const item = screen.getByRole('menuitem', { name: 'Undo' });
+		expect(item.querySelector('.shortcut')?.textContent).toBe('⇧⌘Z');
+		expect(item.getAttribute('aria-keyshortcuts')).toBe('Shift+Meta+Z');
+	});
+
+	it('an explicit platform wins over detection', async () => {
+		vi.stubGlobal('navigator', { platform: 'MacIntel' });
+		await open('other');
+		const item = screen.getByRole('menuitem', { name: 'Undo' });
+		expect(item.querySelector('.shortcut')?.textContent).toBe('Ctrl+Shift+Z');
+	});
+
+	it('omits aria-keyshortcuts for a symbol key, but ariaKeyShortcuts overrides', async () => {
+		await open('other');
+		const help = screen.getByRole('menuitem', { name: 'Help' });
+		expect(help.querySelector('.shortcut')?.textContent).toBe('?');
+		expect(help.hasAttribute('aria-keyshortcuts')).toBe(false);
+		expect(screen.getByRole('menuitem', { name: 'Zoom' }).getAttribute('aria-keyshortcuts')).toBe(
+			'Control+Slash'
+		);
+	});
+});
+
 describe('toAriaKeyShortcuts', () => {
 	it('resolves Mod by platform and orders modifiers', () => {
 		expect(toAriaKeyShortcuts('Mod+Z', 'mac')).toBe('Meta+Z');
@@ -70,7 +100,15 @@ describe('toAriaKeyShortcuts', () => {
 	it('names special keys and rejects garbage', () => {
 		expect(toAriaKeyShortcuts('Ctrl+Space', 'other')).toBe('Control+Space');
 		expect(toAriaKeyShortcuts('Escape', 'other')).toBe('Escape');
-		expect(toAriaKeyShortcuts('Mod++', 'other')).toBe('Control+Plus');
 		expect(toAriaKeyShortcuts('Mod+Bogus', 'other')).toBeUndefined();
+		expect(toAriaKeyShortcuts('Shift+Delete', 'other')).toBe('Shift+Delete');
+		expect(toAriaKeyShortcuts('F1', 'other')).toBe('F1');
+		expect(toAriaKeyShortcuts('Mod+1', 'mac')).toBe('Meta+1');
+	});
+	it('omits layout-dependent symbol keys', () => {
+		expect(toAriaKeyShortcuts('?', 'other')).toBeUndefined();
+		expect(toAriaKeyShortcuts('Shift+%', 'other')).toBeUndefined();
+		expect(toAriaKeyShortcuts('Mod+/', 'other')).toBeUndefined();
+		expect(toAriaKeyShortcuts('Mod++', 'other')).toBeUndefined();
 	});
 });
