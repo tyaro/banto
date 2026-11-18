@@ -40,6 +40,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const isIndex = (v: unknown): boolean => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+const isIdList = (v: unknown): boolean =>
+	Array.isArray(v) && v.length === Object.keys(v).length && v.every((s) => typeof s === 'string');
+
+/** The optional remembered docked place of a closed window (#663, `DockSlot`). Its ids are hints, not checked against the tree. */
+function isDockSlot(v: unknown): boolean {
+	if (!isRecord(v)) return false;
+	if (v.kind === 'root') return true;
+	if (v.kind === 'tab') {
+		return typeof v.groupId === 'string' && isIndex(v.index) && isIdList(v.anchors);
+	}
+	if (v.kind === 'split') {
+		return (
+			typeof v.splitId === 'string' &&
+			(v.direction === 'row' || v.direction === 'column') &&
+			isIndex(v.index) &&
+			typeof v.neighborId === 'string' &&
+			(v.side === 'before' || v.side === 'after') &&
+			typeof v.size === 'number' &&
+			Number.isFinite(v.size) &&
+			v.size >= 0 &&
+			v.size <= 1 &&
+			isIdList(v.anchors)
+		);
+	}
+	return false;
+}
+
 /**
  * Validate an untrusted value (parsed JSON or a caller-supplied object) as a
  * v1 or v2 `DockLayout`. Pure. A returned layout is safe to adopt wholesale.
@@ -99,6 +127,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 				else if (!Number.isFinite(n)) add('non-finite', `${p}.${key}`);
 				else if (!(n > 0)) add('non-positive-size', `${p}.${key}`);
 			}
+			if (raw.dockSlot !== undefined && !isDockSlot(raw.dockSlot)) add('shape', `${p}.dockSlot`);
 			floating.push(raw as unknown as FloatingWindow);
 		});
 	}

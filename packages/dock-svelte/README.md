@@ -182,11 +182,74 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
 | `host.hidePanel(id)`              | hide（上と同じ）                                                                                               | `hide`              |
 | `host.closePanel(id)`             | close。`keepMounted` の pane でも中身を捨てる（隠れている中身も捨てる）。次に開くと新しく mount する           | `close`             |
 
-どれも window の位置と寸法は残す（次の `dock.open(id)` で同じ場所に出る）。`hidePanel` / `closePanel` /
+どれも window の位置と寸法は残す（次の `dock.open(id)` で同じ場所に出る）。docked の pane は、ドックの中の
+場所も覚える（次の「表示メニュー」節の `showPanel` で元の場所に戻る。`dock.open(id)` は従来どおり浮動で開く）。`hidePanel` / `closePanel` /
 `resumeDeferredChange` は `bind:this` で得た `DockHost` から呼び、結果（`DockPanelChangeOutcome`:
 `applied` / `refused` / `stale` / `superseded` / `disposed`）を返す。中身を捨てる close を ✕ 以外（メニュー・
 コマンド）に置くのはアプリ。アプリでのつなぎ方（hide・tab-switch・dock は draft の capture だけ、close は
 確認して apply / discard / cancel）は計画書 §3.5 の遷移ごとの表を見る。
+
+### 表示メニュー（pane の一覧と表示・非表示、#663）
+
+「表示」メニューに pane ごとのチェックボックスを並べるための口。メニューの部品はアプリ（または `@banto/ui`）が持ち、
+dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない）。
+
+```svelte
+<script lang="ts">
+	let host: ReturnType<typeof DockHost> | undefined = $state();
+</script>
+
+<DockHost bind:this={host} {dock} {panel} />
+
+{#each dock.panels as row (row.id)}
+	<label>
+		<input
+			type="checkbox"
+			checked={row.visible}
+			onchange={(e) => host?.setPanelVisible(row.id, e.currentTarget.checked)}
+		/>
+		{row.title}
+	</label>
+{/each}
+```
+
+- **`dock.panels`**（reactive）: layout にあるすべての pane の `{ id, title, icon?, placement, visible }`。
+  - `visible` — docked の木にある（裏のタブも含む）か、開いた浮動 window なら `true`。✕・`hidePanel`・ドラッグ・
+    `hydrate` に追従する。
+  - `placement` — `'docked'` は docked の木にあるか、ドックから隠した pane（戻す場所を覚えている）。`'floating'` は
+    それ以外の浮動 window（開閉どちらも）。
+  - 並び順は、その `DockState` が id を初めて見た順（最初の layout の docked の木を木の順に、続けて浮動 window を
+    配列の順に。あとから増えた id は末尾）。前面化・ドック・隠す操作では並び替わらない。`hydrate` / `layout = ...`
+    でも既知の id は位置を保ち、新しい id は末尾に付く。アプリ独自の順にしたいときは行をアプリで並べ替える。
+- **`host.setPanelVisible(id, visible)`**: チェックを外す = ✕ と同じ（`keepMounted` の pane は hide、それ以外は close。
+  `beforePanelChange` に聞き、拒否なら `refused`）。`capabilities` の `close: false` の pane は外さない（`refused`）。
+  チェックを入れる = `showPanel`。外すときに既に隠れていれば聞かずに `applied`。拒否されたときはチェックボックスを
+  `row.visible` に戻すのはメニュー側（変わらない値は Svelte が書き戻さない）。
+- **`host.showPanel(id)`**: どこにあっても見える状態にする。
+  - ドックから隠した pane は**覚えている元の場所に戻す**（VS Code / Visual Studio のツールウィンドウと同じ）。
+    タブだった pane は同じタブグループの同じ位置に（選択中のタブにする）、分割の片側だった pane は同じ側に、
+    もとの割合で戻る。元のタブグループ・分割が消えていれば、隣にあった pane を目印にして同じ関係で戻す。
+    目印もドックに無ければ浮動 window として開く（保存してある位置・寸法）。docked の木が空なら、木そのものになる。
+  - 閉じた浮動 window は開いて前面に、開いている浮動 window は前面に、docked の裏のタブは選択中のタブにする
+    （`tab-switch` として聞く）。
+  - タブグループへ選択中のタブとして戻すと、それまで選択中だった pane が画面から外れる（`keepMounted` でなければ
+    unmount）。そこで先に、その pane から戻す pane への `tab-switch` として聞く（タブのクリックと同じ。拒否なら
+    `refused` で隠れたまま、IME 変換中は変換が終わるまで待つ）。1 つになっていたタブグループを作り直すときは、
+    残っていた pane が新しいグループに入って作り直されるので `remount: true`。
+  - `keepMounted` で中身が残っている pane をドックへ戻すときは `dock` の変更（`remount: true`）としても聞く
+    （`tab-switch` があればその後。2 つの答えは 1 つの判断で、`tab-switch` を許したときの構造が `dock` を
+    当てるまでに変わったら（アプリが別のタブを選んだなど）`stale`）。それ以外（分割へ戻す・木が空・浮動で開く）は `dock.open` と同じく聞かない。
+  - DOM のフォーカスは動かさない（前面化・選択中のタブだけ）。メニューを閉じたあとのフォーカスはメニュー側の
+    約束に従い、pane の中へ移すかはアプリが決める。
+- 戻す場所は閉じた浮動 window の `dockSlot` として layout に入り、`serialize()` / `hydrate()` を通る（layout の
+  `version` は 2 のまま。`dockSlot` の無い古い JSON はそのまま読め、その pane は浮動で開く）。
+- `DockState` だけで扱う口もある（`beforePanelChange` には聞かない）: `dock.dismiss(id)`（隠す。docked なら場所を
+  覚える）・`dock.show(id)`（上の `showPanel` の layout の部分。戻り値は `'docked'` / `'floating'` / `null`）・
+  `dock.showPlacement(id)`（`show` がどこに出すか）・`dock.showTabSwitch(id)`（`show` が選択中から外す pane）・
+  `dock.isVisible(id)`。
+- `dock.isOpen(id)` / `dock.open(id)` / `dock.close(id)` は従来どおり**浮動 window だけ**を見る（docked の id には
+  `false` / 何もしない）。`dock.open(id)` でドックから隠した pane を開くと浮動で開き、覚えた場所は捨てる。
+  `dock.ensureWindow` は docked の id を浮動として足さなくなった（id の重複を作っていた）。
 
 ### IME 変換中は構造変更を保留する
 

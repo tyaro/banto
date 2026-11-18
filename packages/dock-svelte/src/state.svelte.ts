@@ -20,12 +20,14 @@ import {
 	displayWindowGeometry,
 	type ClampOptions
 } from './core/geometry';
+import { captureDockSlot, restoreDockSlot } from './core/slot';
 import { validateDockLayout } from './core/validate';
 import {
 	collectPanelIds,
 	defaultMakeId,
 	dockPanelIntoTree,
 	findNode,
+	findParent,
 	moveTabWithinGroup,
 	removePanel,
 	resizeSplit as resizeSplitTree,
@@ -35,6 +37,7 @@ import {
 import type {
 	DockLayout,
 	DockNode,
+	DockPanelInfo,
 	DockPanelNode,
 	DropRegion,
 	FloatingWindow,
@@ -74,6 +77,14 @@ export class DockState {
 	/** The layout last seen by the setter and its `structureKey` (plain fields: the setter never reads `$state`). */
 	#structureSeen: DockLayout | null = null;
 	#structureSeenKey = '';
+	/**
+	 * Every panel id ever seen in a layout, in the order first seen (plain, not
+	 * reactive: it only changes together with `#layout`, which `panels` reads).
+	 * Ids that leave the layout keep their place, so a pane that comes back
+	 * returns to the same row of a View menu.
+	 */
+	#seenOrder: string[] = [];
+	#seenIds = new Set<string>();
 
 	/** The layout. Assign a new object to change it (every method here does); the setter counts structure changes. */
 	get layout(): DockLayout {
@@ -109,6 +120,59 @@ export class DockState {
 		if (key === this.#structureSeenKey) return;
 		this.#structureSeenKey = key;
 		this.#structureRevision++;
+		// New ids only ever come with a structure change (the fast paths above compare ids).
+		for (const id of [...collectPanelIds(next.docked), ...next.floating.map((w) => w.id)]) {
+			if (this.#seenIds.has(id)) continue;
+			this.#seenIds.add(id);
+			this.#seenOrder.push(id);
+		}
+	}
+
+	#panels: DockPanelInfo[] = $derived.by(() => this.#listPanels(this.#layout));
+
+	/**
+	 * Every pane in the layout, for a View menu with a checkbox per pane (#663).
+	 * Reactive: it follows the close button, `hidePanel` / `closePanel`, drags
+	 * and `hydrate`. Order: the order each id was first seen by this `DockState`
+	 * (the initial layout's docked tree in tree order, then its floating windows
+	 * in array order; later additions at the end). Focus / z-order, docking and
+	 * hiding do not reorder it; after `hydrate` / `layout = ...` known ids keep
+	 * their place and new ones are appended. Apps that want their own order sort
+	 * the rows themselves.
+	 */
+	get panels(): DockPanelInfo[] {
+		return this.#panels;
+	}
+
+	#listPanels(layout: DockLayout): DockPanelInfo[] {
+		const byId = new Map<string, DockPanelInfo>();
+		const visit = (node: DockNode): void => {
+			if (node.type === 'panel') {
+				byId.set(node.id, {
+					id: node.id,
+					title: node.title,
+					icon: node.icon,
+					placement: 'docked',
+					visible: true
+				});
+			} else node.children.forEach(visit);
+		};
+		if (layout.docked) visit(layout.docked);
+		for (const w of layout.floating) {
+			byId.set(w.id, {
+				id: w.id,
+				title: w.title,
+				icon: w.icon,
+				placement: !w.open && w.dockSlot ? 'docked' : 'floating',
+				visible: w.open
+			});
+		}
+		const out: DockPanelInfo[] = [];
+		for (const id of this.#seenOrder) {
+			const info = byId.get(id);
+			if (info) out.push(info);
+		}
+		return out;
 	}
 	/** Injected id generator for newly-created split/tabs nodes - defaults to `crypto.randomUUID` (see `core/tree.ts#defaultMakeId`); tests pass a deterministic counter instead. */
 	#makeId: () => string;
@@ -125,15 +189,155 @@ export class DockState {
 		}
 	}
 
+	/**
+	 * Is the FLOATING window `id` open? Floating only (unchanged, #663): a
+	 * docked id is `false`. For "is this pane on screen" (a View menu's
+	 * checkbox) use `isVisible` / `panels`.
+	 */
 	isOpen(id: string): boolean {
 		return this.layout.floating.find((w) => w.id === id)?.open ?? false;
 	}
 
-	/** Opens (marking `open: true`) and brings the window to front. No-op if the id doesn't exist yet - see `ensureWindow`. */
+	/** Is the pane on screen: in the docked tree (even as a background tab) or an open floating window (#663). */
+	isVisible(id: string): boolean {
+		return this.#isDocked(id) || this.isOpen(id);
+	}
+
+	/**
+	 * Opens the FLOATING window `id` (marking `open: true`) and brings it to
+	 * front. No-op if the id is not a floating window (a docked id included) -
+	 * see `ensureWindow`. A pane hidden from the docked tree opens floating here
+	 * and forgets its docked place; `show` puts it back into the tree instead.
+	 */
 	open(id: string): void {
 		if (!this.layout.floating.some((w) => w.id === id)) return;
-		this.#update(id, (w) => ({ ...w, open: true }));
+		this.#update(id, (w) => {
+			const next: FloatingWindow = { ...w, open: true };
+			delete next.dockSlot;
+			return next;
+		});
 		this.focus(id);
+	}
+
+	/**
+	 * Show the pane `id` wherever it belongs (#663, the View menu's "check"):
+	 *  - docked: make its tab the active one;
+	 *  - an open floating window: bring it to front;
+	 *  - hidden from the docked tree (`dismiss`, the close button, `hidePanel` /
+	 *    `closePanel`): put it back into its remembered docked place
+	 *    (`core/slot.ts`) as the active tab; when that place is gone, open it
+	 *    floating (at its saved geometry);
+	 *  - a closed floating window: `open`.
+	 * Moves no DOM focus (z-order / active tab only, like `open`). Returns where
+	 * the pane is now, or `null` for an unknown id (nothing changes).
+	 */
+	show(id: string): 'docked' | 'floating' | null {
+		const parent = findParent(this.layout.docked, id);
+		if (this.#isDocked(id)) {
+			if (parent?.type === 'tabs') {
+				this.setActiveTab(
+					parent.id,
+					parent.children.findIndex((c) => c.id === id)
+				);
+			}
+			return 'docked';
+		}
+		if (!this.layout.floating.some((w) => w.id === id)) return null;
+		const docked = this.#restoredTree(id);
+		if (docked === null) {
+			this.open(id);
+			return 'floating';
+		}
+		this.layout = {
+			...this.layout,
+			floating: this.layout.floating.filter((w) => w.id !== id),
+			docked
+		};
+		return 'docked';
+	}
+
+	/** Where `show(id)` would put the pane now (`null` = unknown id). Lets a caller tell a re-dock from an open before doing it. */
+	showPlacement(id: string): 'docked' | 'floating' | null {
+		if (this.#isDocked(id)) return 'docked';
+		if (!this.layout.floating.some((w) => w.id === id)) return null;
+		return this.#restoredTree(id) === null ? 'floating' : 'docked';
+	}
+
+	/**
+	 * The docked pane that `show(id)` would take off the screen by putting the
+	 * hidden pane `id` back as the ACTIVE tab of a tab group (#663): the tab it
+	 * replaces as the active one (`wrapped: false`), or a bare docked panel that
+	 * becomes the other tab of a new group (`wrapped: true` - it is re-mounted
+	 * even when `keepMounted`). `groupId` is the group `id` ends up in (for a
+	 * new group, the id it is given when the remembered one is free). `null` =
+	 * `show(id)` deactivates no docked pane (not hidden from the dock, restored
+	 * into a split / an empty tree, or opened floating). `DockHost`'s
+	 * `showPanel` asks this as a `tab-switch` first, like a tab click.
+	 */
+	showTabSwitch(id: string): { groupId: string; from: string; wrapped: boolean } | null {
+		if (this.#isDocked(id)) return null;
+		// A fixed id for a group the preview would create: stable across calls (the request re-checks it).
+		const tree = this.#restoredTree(id, () => `${id}:restored-tabs`);
+		if (tree === null) return null;
+		const group = findParent(tree, id);
+		if (group?.type !== 'tabs') return null;
+		const before = findNode(this.layout.docked, group.id);
+		if (before?.type === 'tabs') {
+			const from = before.children[before.activeIndex]?.id;
+			return from === undefined ? null : { groupId: group.id, from, wrapped: false };
+		}
+		const from = group.children.find((c) => c.id !== id)?.id;
+		return from === undefined ? null : { groupId: group.id, from, wrapped: true };
+	}
+
+	/**
+	 * Take the pane `id` off the screen, wherever it is (#663): a docked pane
+	 * leaves the tree and becomes a CLOSED floating window that remembers its
+	 * docked place (`FloatingWindow.dockSlot`, kept by `serialize`), so `show`
+	 * can put it back; a floating window is `close`d. This is the layout half of
+	 * the close button - `DockHost`'s `hidePanel` / `closePanel` call it after
+	 * `beforePanelChange`; calling it directly asks nothing.
+	 */
+	dismiss(id: string): void {
+		const node = findNode(this.layout.docked, id);
+		if (!node || node.type !== 'panel') {
+			this.close(id);
+			return;
+		}
+		const hidden = this.layout.floating.flatMap((w) =>
+			!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
+		);
+		const slot = captureDockSlot(this.layout.docked, id, hidden);
+		const index = this.layout.floating.length;
+		const win: FloatingWindow = {
+			id: node.id,
+			title: node.title,
+			icon: node.icon,
+			// Same placement as `undockPanel` without a drop point.
+			x: index * 24,
+			y: index * 24,
+			width: DEFAULT_WINDOW_WIDTH,
+			height: DEFAULT_WINDOW_HEIGHT,
+			open: false,
+			...(slot ? { dockSlot: slot } : {})
+		};
+		this.layout = {
+			...this.layout,
+			docked: removePanel(this.layout.docked, id),
+			floating: [...this.layout.floating, win]
+		};
+	}
+
+	#isDocked(id: string): boolean {
+		return findNode(this.layout.docked, id)?.type === 'panel';
+	}
+
+	/** The docked tree with the closed window `id` put back in its remembered place, or `null` (no slot / place gone / not closed). */
+	#restoredTree(id: string, makeId: () => string = this.#makeId): DockNode | null {
+		const win = this.layout.floating.find((w) => w.id === id);
+		if (!win || win.open || !win.dockSlot) return null;
+		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
+		return restoreDockSlot(this.layout.docked, panel, win.dockSlot, makeId);
 	}
 
 	/** Closes the window but keeps its geometry so a later `open`/`toggle` restores the same position/size. */
@@ -197,7 +401,8 @@ export class DockState {
 
 	/** Adds `def` with a cascade position if it isn't in the layout yet; otherwise a no-op (existing geometry/open-state is left untouched). */
 	ensureWindow(def: FloatingWindowDef, hostW: number, hostH: number): void {
-		if (this.layout.floating.some((w) => w.id === def.id)) return;
+		// A docked id counts too: adding it again would duplicate the id (#663).
+		if (this.layout.floating.some((w) => w.id === def.id) || this.#isDocked(def.id)) return;
 		const win = placeNew(def, this.layout.floating.length, hostW, hostH);
 		this.layout = { ...this.layout, floating: [...this.layout.floating, win] };
 	}

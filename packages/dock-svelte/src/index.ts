@@ -66,12 +66,17 @@ export {
 
 export { computeDropRegion } from './core/dropzones';
 
+/** The remembered docked place of a hidden pane (#663; `DockState.dismiss` / `show` use these). */
+export { captureDockSlot, restoreDockSlot } from './core/slot';
+
 export { type DockCapabilities } from './core/policy';
 
 export type {
 	DockLayout,
 	DockNode,
+	DockPanelInfo,
 	DockPanelNode,
+	DockSlot,
 	DockSplitNode,
 	DockTabGroupNode,
 	DropRegion,

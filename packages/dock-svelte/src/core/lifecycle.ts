@@ -83,7 +83,7 @@
  */
 import { getContext, setContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import { findNode, structureKey } from './tree';
+import { findNode, findParent, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
 
 /**
@@ -295,6 +295,107 @@ export class PanelLifecycle {
 		return this.keepMounted(panelId) ? this.hide(panelId) : this.close(panelId);
 	}
 
+	/**
+	 * Show the pane (`DockState.show`, #663). Not asked, like `DockState.open`
+	 * - except when it changes what another docked pane shows or puts mounted
+	 * content back into the tree:
+	 *
+	 * - A docked background tab is brought up with `switchTab` (a `tab-switch`,
+	 *   like a tab click).
+	 * - A pane hidden from the dock that goes back as the active tab of a tab
+	 *   group takes the group's active pane (or the bare panel the group is
+	 *   re-made around) off the screen, unmounting it unless `keepMounted`: that
+	 *   is asked first as a `tab-switch` from that pane to this one, through
+	 *   the same `request` as a tab click (refused = the pane stays hidden;
+	 *   held while an IME composition is open). `remount` is `true` for a bare
+	 *   panel that becomes a tab (it is re-mounted either way).
+	 * - Putting a hidden pane whose content is still mounted (`keepMounted`,
+	 *   not discarded) back into the docked tree moves that content from the
+	 *   floating layer into the tree (re-mount), so it is asked as a `dock`
+	 *   change (`remount: true`) - after the `tab-switch` when there is one,
+	 *   on the structure that `tab-switch` was approved on (changed in between
+	 *   = `stale`).
+	 */
+	show(panelId: string): Promise<DockPanelChangeOutcome> {
+		const where = this.#whereIs(panelId);
+		if (where === null) return Promise.resolve('stale');
+		if (where === 'docked') {
+			// A background tab: bringing it up is a tab switch (asked like a tab click).
+			const group = findParent(this.#dock.layout.docked, panelId);
+			return group?.type === 'tabs'
+				? this.switchTab(group.id, panelId)
+				: Promise.resolve('applied');
+		}
+		const redocksMounted = (): boolean =>
+			this.#whereIs(panelId) === 'hidden' &&
+			this.isRetained(panelId) &&
+			this.#dock.showPlacement(panelId) === 'docked';
+		// `unchanged` ties a second request to the first one's approval (below).
+		let unchanged = (): boolean => true;
+		const describeDock = (): DockPanelChange | null =>
+			unchanged() && redocksMounted() ? { kind: 'dock', panelId, remount: true } : null;
+		const dock = (): Promise<DockPanelChangeOutcome> =>
+			this.request({ kind: 'dock', panelId, remount: true }, () => this.#dock.show(panelId), {
+				target: 'show',
+				describe: describeDock
+			});
+		const describeSwitch = (): DockPanelChange | null => {
+			if (this.#whereIs(panelId) !== 'hidden') return null;
+			const s = this.#dock.showTabSwitch(panelId);
+			if (s === null) return null;
+			const remount = s.wrapped || !this.keepMounted(s.from);
+			return { kind: 'tab-switch', groupId: s.groupId, from: s.from, to: panelId, remount };
+		};
+		const tabSwitch = describeSwitch();
+		if (tabSwitch === null) {
+			if (redocksMounted()) return dock();
+			this.#dock.show(panelId);
+			return Promise.resolve('applied');
+		}
+		if (!redocksMounted()) {
+			return this.request(tabSwitch, () => this.#dock.show(panelId), {
+				target: 'show',
+				describe: describeSwitch
+			});
+		}
+		// Both: the active pane agrees to step back first, then the mounted content
+		// is asked to move. The two answers are one decision about one structure:
+		// the `dock` request keeps the generation the `tab-switch` was approved on
+		// (and the same `from` / `remount`) until it applies, so a change made in
+		// between (the app switching the group to another tab, a drop, ...) makes
+		// it `stale` - like any approved request whose structure moved (module doc)
+		// - instead of applying over a pane that was never asked.
+		let approved: { revision: number; structure: string } | null = null;
+		unchanged = () =>
+			approved !== null &&
+			this.#dock.structureRevision === approved.revision &&
+			structureKey(this.#dock.layout) === approved.structure &&
+			JSON.stringify(describeSwitch()) === JSON.stringify(tabSwitch);
+		return this.request(
+			tabSwitch,
+			() => {
+				approved = {
+					revision: this.#dock.structureRevision,
+					structure: structureKey(this.#dock.layout)
+				};
+			},
+			{ target: 'show', describe: describeSwitch }
+		).then((outcome) => {
+			if (outcome !== 'applied') return outcome;
+			if (this.#disposed) return 'disposed';
+			return unchanged() ? dock() : 'stale';
+		});
+	}
+
+	/**
+	 * A View menu's checkbox (#663): `true` = `show`; `false` = the ✕ button
+	 * (`closeButton`: hide for a `keepMounted` pane, close otherwise, asked
+	 * through `beforePanelChange`). Already in that state = `applied`.
+	 */
+	setVisible(panelId: string, visible: boolean): Promise<DockPanelChangeOutcome> {
+		return visible ? this.show(panelId) : this.closeButton(panelId);
+	}
+
 	/** Switch the docked tab group `groupId` to the tab `to` (by id; no-op when it is already active or gone). */
 	switchTab(groupId: string, to: string, after?: () => void): Promise<DockPanelChangeOutcome> {
 		const describe = (): DockPanelChange | null => {
@@ -341,10 +442,9 @@ export class PanelLifecycle {
 		return findNode(this.#dock.layout.docked, panelId)?.type === 'panel';
 	}
 
-	/** A docked pane has no hidden state of its own: it becomes a closed floating window (geometry kept for the next open). */
+	/** A docked pane has no hidden state of its own: it becomes a closed floating window that remembers its docked place (`DockState.dismiss`, #663). */
 	#takeOffScreen(panelId: string): void {
-		if (this.#isDocked(panelId)) this.#dock.undockPanel(panelId);
-		this.#dock.close(panelId);
+		this.#dock.dismiss(panelId);
 	}
 
 	#ask(job: Job): void {

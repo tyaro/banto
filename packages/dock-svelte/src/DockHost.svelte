@@ -282,7 +282,8 @@
 	/**
 	 * Hide a pane through `beforePanelChange` (`hide`): a `keepMounted` floating
 	 * window keeps its content mounted (`hidden` + `inert`); a docked pane
-	 * becomes a closed floating window (re-mounted). Geometry is kept.
+	 * becomes a closed floating window (re-mounted) that remembers its docked
+	 * place for `showPanel` (#663). Geometry is kept.
 	 */
 	export function hidePanel(panelId: string): Promise<DockPanelChangeOutcome> {
 		return lifecycle.hide(panelId);
@@ -295,6 +296,38 @@
 	 */
 	export function closePanel(panelId: string): Promise<DockPanelChangeOutcome> {
 		return lifecycle.close(panelId);
+	}
+
+	/**
+	 * Show a pane wherever it belongs (#663): a pane hidden from the docked
+	 * tree goes back to its remembered docked place (a floating window when
+	 * that place is gone), a closed floating window opens, an open one comes to
+	 * front, a docked background tab becomes the active tab (asked as a
+	 * `tab-switch`). Re-docking a pane as the active tab of a tab group is
+	 * asked first as a `tab-switch` from the group's active pane (like a tab
+	 * click: refused = it stays hidden; held during IME composition). Putting a
+	 * `keepMounted` pane's still-mounted content back into the tree is asked as
+	 * a `dock` change; anything else is not asked (like `dock.open`). DOM focus
+	 * is not moved.
+	 */
+	export function showPanel(panelId: string): Promise<DockPanelChangeOutcome> {
+		return lifecycle.show(panelId);
+	}
+
+	/**
+	 * A View menu's checkbox (#663): `true` = `showPanel`, `false` = the ✕
+	 * button (hide for a `keepMounted` pane, close otherwise, through
+	 * `beforePanelChange`). A pane whose `capabilities` say `close: false` is
+	 * not taken off the screen (`refused`), like its missing ✕ button.
+	 */
+	export function setPanelVisible(
+		panelId: string,
+		visible: boolean
+	): Promise<DockPanelChangeOutcome> {
+		if (!visible && dock.isVisible(panelId) && capabilities?.(panelId)?.close === false) {
+			return Promise.resolve('refused');
+		}
+		return lifecycle.setVisible(panelId, visible);
 	}
 
 	/** Retry a change held by `isStructureChangeDeferred` now (a custom predicate turned false without a composition / focus event). */
