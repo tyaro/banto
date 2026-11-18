@@ -446,7 +446,6 @@
 						<ToastHost store={toastStore} messages={{ toastClose: () => m['common.close']() }} />
 					</div>
 				</section>
-
 				<!-- [scaffold:charts] begin -->
 				<section>
 					<h3>{m['themeLab.charts.heading']()}</h3>
