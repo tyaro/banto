@@ -296,7 +296,7 @@ function lastSplitSlot(
 				parent?.type === 'split' &&
 				parent.id === outer.splitId &&
 				parent.direction === outer.direction;
-	if (!pending.every((h) => atOuter(h.slot.outer))) return null;
+	if (!pending.every((h) => h.slot.kind === 'split' && atOuter(h.slot.outer))) return null;
 	const ids = splitOrder([unit], pending);
 	const slot = splitSlotAt([unit], ids, unit.id, splitId, direction, 1 / ids.length);
 	return { ...slot, outer: unitSlot(root, unit, hidden) };
@@ -420,8 +420,10 @@ function splitPending(
 		}
 		return true;
 	};
-	const outer = [...latest.values()].flatMap((h) =>
-		h.slot.outer && inSplit(h.slot.outer) && gone(h.slot) ? [{ id: h.id, slot: h.slot.outer }] : []
+	const outer = [...latest.values()].flatMap(({ id, slot }) =>
+		slot.kind !== 'root' && slot.outer && inSplit(slot.outer) && gone(slot)
+			? [{ id, slot: slot.outer }]
+			: []
 	);
 	return [...direct, ...outer];
 }
