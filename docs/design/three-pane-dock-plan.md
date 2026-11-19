@@ -1,7 +1,7 @@
 # 3 ペインを dock に並べるモード 計画書
 
 作成日: 2026-11-19
-状態: **実装中**。PR-1（`persistent`、#719）・PR-2（キーボードでの移動、#720）・PR-3（`ThreePaneDock`・既定レイアウト・保存値の照合・操作の口）・PR-4（狭い表示・`arrange={false}`・touch のボタンの大きさ）・PR-5（レイアウトの保存を `dockLayoutStore.svelte.ts` に出し、利用者・セッションに結び付ける）・PR-6（アプリのデモ `/tree/workspace-dock`、e2e、visual の spec、scaffold の `removeDock`）を実装。残りは PR-7 以降。§8 の要確認は 2026-11-19 に推奨どおりで決定（§9）。
+状態: **完了**（2026-11-19）。PR-1（`persistent`、#719）・PR-2（キーボードでの移動、#720）・PR-3（`ThreePaneDock`・既定レイアウト・保存値の照合・操作の口）・PR-4（狭い表示・`arrange={false}`・touch のボタンの大きさ）・PR-5（レイアウトの保存を `dockLayoutStore.svelte.ts` に出し、利用者・セッションに結び付ける）・PR-6（アプリのデモ `/tree/workspace-dock`、e2e、visual の spec、scaffold の `removeDock`）を実装、PR-7（アプリ作者向けの recipe `docs/recipes/three-pane-dock.md` と README の索引）で文書も揃えた。PR-8（利用者の操作でのモード切り替え）は §9 Q1 の決定で作らない（要望が出たら起票）。§8 の要確認は 2026-11-19 に推奨どおりで決定（§9）。
 トラック: 保守者向け（トラックA）
 Issue: [#663](https://github.com/tyaro/banto/issues/663) の段階 ④（①〜③ = #664・#665・#667・#672〜#674、穴埋め = #681・#683・#686・#687、ドッキングの操作 = #694）
 関連: [shared-primitives-upstream-plan.md](shared-primitives-upstream-plan.md)（§3.3 gesture と keyboard、§3.5 `beforePanelChange`）、
@@ -275,7 +275,7 @@ CHANGELOG の `[Unreleased]` に 1 行、この文書の状態行の更新。
 | PR-5 | アプリ: `lib/banto/dockLayoutStore.svelte.ts` をダッシュボードから出し、保存値を利用者・セッションの世代に結び付ける（§4.4）。scaffold の `removeDock` に追加 | なし | ダッシュボードの保存・復元・既定へ戻すが今と同じ。利用者が替わったとき、前の利用者の写し・読み込み結果・保留中の書き込みを使わない（単体テスト） | 単体（store）、既存 e2e（dashboard）。**scaffold の 4 プリセットの dry-run 要**（`removeDock` が変わる） |
 | PR-6 | アプリ: `/tree/workspace-dock` のデモ（表示メニュー、ツールバーのボタン例、kiosk・touch の配線、文言キー）。scaffold の `removeDock` に追加、template-scope §3 と remove-optional-assets.md | PR-2・PR-3・PR-4・PR-5 | §6 の 1〜10 を満たす | e2e 新規（切り離し・再ドッキング・中央の同一性・キーボード・既定へ戻す・狭い表示・未保存）、visual 新規の基準画像（Linux、dispatch）、**scaffold の 4 プリセット + dock だけ消す dry-run 要** |
 | PR-7 | 文書: アプリ作者向けの recipe（`docs/recipes/`、temp-scada の使い方の例）と README の索引、この文書の状態を「完了」に | PR-6 | リンク切れなし | `pnpm format:check` |
-| （PR-8） | 利用者の操作でのモード切り替え（§4.3 (b)）。Q1 で「作る」と決まったときだけ | PR-6 | | e2e・scaffold dry-run |
+| （PR-8） | 利用者の操作でのモード切り替え（§4.3 (b)）。**作らない**（Q1 の決定、§9）。要望が出たら起票 | PR-6 | | e2e・scaffold dry-run |
 
 ## 8. 要確認（オーナーの判断）
 
