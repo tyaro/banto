@@ -313,10 +313,6 @@ test.describe('three-pane workspace on a dock', () => {
 		const scan = async () =>
 			(
 				await new AxeBuilder({ page })
-					.withTags(['wcag2a', 'wcag2aa'])
-					// the demo tree's count badge is 4.36:1 (muted text on the muted surface) - the same
-					// parts as /tree/workspace, whose baselines this PR does not move: not this screen's
-					.exclude('.workspace-tree .count')
 					.analyze()
 			).violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
 		expect(await scan()).toEqual([]);

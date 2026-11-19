@@ -166,7 +166,7 @@
 		border-radius: var(--banto-radius-full, 999px);
 		background: var(--banto-surface-muted, var(--banto-border));
 		font-size: var(--banto-font-size-sm);
-		color: var(--banto-text-muted);
+		color: var(--banto-text);
 	}
 
 	/* A zero-size, invisible position marker for the Menu (never a visible control). */
