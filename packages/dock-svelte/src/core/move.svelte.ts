@@ -203,12 +203,21 @@ export class PanelMover {
 		return null;
 	}
 
-	/** Hand `target` to the drag's own drop path; `null` = the drag would not offer it. */
-	#start(panelId: string, target: DockMoveTarget): Promise<DockPanelChangeOutcome> | null {
+	/**
+	 * Hand `target` to the drag's own drop path; `null` = the drag would not offer it. `fromMenu`
+	 * turns the drag's own focus repair off: `move` then places the focus once, after the outcome
+	 * (#720 review: the repair ran first and put it on the group left behind).
+	 */
+	#start(
+		panelId: string,
+		target: DockMoveTarget,
+		fromMenu: boolean
+	): Promise<DockPanelChangeOutcome> | null {
 		const source = this.#offered(panelId, target);
 		if (!source) return null;
 		const guard = () => this.#offered(panelId, target) === source;
-		if ('edge' in target) return this.#drag.placeAtEdge(panelId, source, target.edge, guard);
+		if ('edge' in target)
+			return this.#drag.placeAtEdge(panelId, source, target.edge, guard, { refocus: !fromMenu });
 		if ('tabWith' in target || 'splitWith' in target) {
 			const otherId = 'tabWith' in target ? target.tabWith : target.splitWith;
 			const targetId = this.#targetOf(panelId, otherId);
@@ -259,7 +268,7 @@ export class PanelMover {
 		const hostEl = this.#getHostEl();
 		const active = document.activeElement;
 		const focusWasInHost = !!hostEl && !!active && hostEl.contains(active);
-		const started = this.#start(panelId, target);
+		const started = this.#start(panelId, target, options.returnFocus !== undefined);
 		const outcome: DockMoveOutcome = started ? await started : 'unavailable';
 		const t = this.#options.messages();
 		if (outcome === 'applied') this.#announce(this.#applied(title, target, otherTitle));
@@ -279,10 +288,12 @@ export class PanelMover {
 				outcome === 'applied'
 					? (titleBarFocusTarget(host, panelId) ?? back)
 					: (back ?? titleBarFocusTarget(host, panelId));
-			// Only a focus the move dropped, or one still where the user started (the button, the
-			// moved pane), is moved: one the user / app took elsewhere while the answer waited (an
-			// input in another pane, a dialog in or outside the host) is left alone (#720 review).
-			const stayed = now === options.returnFocus || (!!now && paneHolds(panelId, now));
+			// Only a focus the move dropped, or one still on the button, is moved: one the user / app
+			// took elsewhere while the answer waited (an input or a dialog in this pane or another,
+			// in or outside the host) is left alone (#720 review). Applied, a focus on the moved
+			// pane's own title bar (its tab, button or frame, not its content) is moved too.
+			const stayed =
+				now === options.returnFocus || (outcome === 'applied' && !!now && onTitleBar(panelId, now));
 			if (to && (dropped || stayed)) to.focus();
 		} else if (focusWasInHost && dropped) {
 			titleBarFocusTarget(host, panelId)?.focus();
@@ -309,6 +320,19 @@ function paneHolds(panelId: string, el: Element): boolean {
 			t.getAttribute('aria-selected') === 'true' &&
 			t.closest('[data-dock-drop-id]') === frame
 	);
+}
+
+/**
+ * Whether `el` is the pane `panelId`'s title bar rather than its content (#720 review): its tab,
+ * its "panel actions" button, or its window / frame / content region element itself.
+ */
+function onTitleBar(panelId: string, el: Element): boolean {
+	if (el.getAttribute('data-dock-tab-id') === panelId) return true;
+	if (el.closest('[data-dock-menu-for]')?.getAttribute('data-dock-menu-for') === panelId)
+		return true;
+	if (el.getAttribute('data-dock-window-id') === panelId) return true;
+	if (el.getAttribute('data-dock-drop-id') === panelId) return true;
+	return el.getAttribute('role') === 'region' && paneHolds(panelId, el);
 }
 
 /**

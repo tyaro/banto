@@ -235,6 +235,36 @@ describe('movePanel through the menu: every target', () => {
 		expect(document.activeElement).toBe(menuButton('tree'));
 	});
 
+	// #720 review (Codex): the drag's own refocus after an edge drop used to run first and put the
+	// focus on the group left behind; from the menu, the mover alone places it (on the moved pane).
+	it('outer edge from a tab group: the focus is on the moved tab, not on the group left behind', async () => {
+		const dock = createDockState({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.5, 0.5],
+				children: [
+					{
+						type: 'tabs',
+						id: 'g',
+						activeIndex: 0,
+						children: [panel('a'), panel('b'), panel('c')]
+					},
+					panel('d')
+				]
+			},
+			floating: []
+		});
+		mount({ dock });
+		await openWithKeyboard('a');
+		await chooseByKeyboard('右端にドッキング');
+		expect(findParent(dock.layout.docked, 'a')?.type).toBe('split');
+		expect(document.activeElement).not.toBe(document.body);
+		expect(document.activeElement).toBe(menuButton('a'));
+	});
+
 	it('tabs: the pane joins the target as a tab; the focus is on its tab', async () => {
 		const { dock } = mount();
 		await openWithKeyboard('tree');
@@ -608,6 +638,53 @@ describe('the focus after an answer that waited', () => {
 		await settle();
 		expect(document.activeElement).toBe(dialog);
 	});
+	// #720 review (クロスレビュー): 動かそうとした pane そのものの中へ移したフォーカスも、
+	// 拒否・stale（pane は元の場所のまま）なら保持する。
+	/** An element (`input` or a `role="dialog"` box with a button) put in the content of the docked pane `tree`, focused. */
+	function inTree(what: 'input' | 'dialog'): HTMLElement {
+		const frame = document.querySelector('[data-dock-drop-id="tree"]');
+		const region = frame?.querySelector('[role="region"]') ?? frame;
+		if (!region) throw new Error('no frame of tree');
+		let target: HTMLElement;
+		if (what === 'input') {
+			target = document.createElement('input');
+			region.appendChild(target);
+		} else {
+			const dialog = document.createElement('div');
+			dialog.setAttribute('role', 'dialog');
+			target = document.createElement('button');
+			dialog.appendChild(target);
+			region.appendChild(dialog);
+		}
+		target.focus();
+		expect(document.activeElement).toBe(target);
+		return target;
+	}
+	for (const what of ['input', 'dialog'] as const) {
+		for (const how of ['refused', 'stale'] as const) {
+			it(`${how}: ${what === 'input' ? 'an input' : 'a dialog'} in the pane being moved keeps the focus`, async () => {
+				// stale = `undock` withdrawn while the answer waits: the layout does not change.
+				let caps: Record<string, DockCapabilities> = {};
+				let resolve!: (ok: boolean) => void;
+				const { dock } = mount({
+					capabilities: (id) => caps[id],
+					beforePanelChange: () => new Promise<boolean>((r) => (resolve = r))
+				});
+				await openWithKeyboard('tree');
+				await chooseByKeyboard('浮かせる');
+				const target = inTree(what);
+				const before = JSON.stringify(dock.layout);
+				if (how === 'stale') caps = { tree: { undock: false } };
+				resolve(how === 'stale');
+				await settle();
+				expect(live()).toContain(how === 'stale' ? '移動できません' : '取り消されました');
+				expect(JSON.stringify(dock.layout)).toBe(before);
+				expect(dock.layout.floating.some((w) => w.id === 'tree')).toBe(false);
+				expect(target.isConnected).toBe(true);
+				expect(document.activeElement).toBe(target);
+			});
+		}
+	}
 });
 
 // #720 review (Codex): panes floated one after another out of the same tab group / split come back
@@ -667,6 +744,77 @@ describe('"back" for several panes floated out of the same place', () => {
 					expect(await host().movePanel(id, { back: true })).toBe('applied');
 				expect(order(dock)).toEqual(before);
 			});
+		}
+	}
+});
+
+// #720 review (3 回目の同種の指摘): 4 枚のタブの組・split（向き両方）から 2〜3 枚を浮かせる
+// すべての順序 × 戻すすべての順序で、全部戻した最後の並びが元と同じ（途中は問わない）。
+describe('"back" for every float order x every back order of 2-3 of 4 panes', () => {
+	const ids = ['a', 'b', 'c', 'd'];
+	const permutations = (xs: string[]): string[][] =>
+		xs.length <= 1
+			? [xs]
+			: xs.flatMap((x, i) =>
+					permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((rest) => [x, ...rest])
+				);
+	const subsets = (xs: string[], k: number): string[][] =>
+		k === 0 ? [[]] : xs.flatMap((x, i) => subsets(xs.slice(i + 1), k - 1).map((r) => [x, ...r]));
+	const layouts: Record<string, () => DockLayout> = {
+		tabs: () => ({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.6, 0.4],
+				children: [{ type: 'tabs', id: 'g', activeIndex: 0, children: ids.map(panel) }, panel('p')]
+			},
+			floating: []
+		}),
+		row: () => ({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.25, 0.25, 0.25, 0.25],
+				children: ids.map(panel)
+			},
+			floating: []
+		}),
+		column: () => ({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'column',
+				sizes: [0.25, 0.25, 0.25, 0.25],
+				children: ids.map(panel)
+			},
+			floating: []
+		})
+	};
+	for (const [kind, make] of Object.entries(layouts)) {
+		for (const k of [2, 3]) {
+			for (const floated of subsets(ids, k)) {
+				it(`${kind} [a,b,c,d]: float ${floated.join(',')} (every order x every order)`, async () => {
+					const failures: string[] = [];
+					for (const floatOrder of permutations(floated)) {
+						for (const backOrder of permutations(floated)) {
+							const dock = createDockState(make());
+							const { host } = mount({ dock });
+							for (const id of floatOrder) await host().movePanel(id, { float: true });
+							for (const id of backOrder) await host().movePanel(id, { back: true });
+							const got = collectPanelIds(dock.layout.docked).filter((id) => id !== 'p');
+							if (got.join(',') !== ids.join(','))
+								failures.push(`float ${floatOrder} back ${backOrder} -> ${got}`);
+							cleanup();
+						}
+					}
+					expect(failures).toEqual([]);
+				});
+			}
 		}
 	}
 });

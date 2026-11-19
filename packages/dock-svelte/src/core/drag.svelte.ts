@@ -372,13 +372,15 @@ export class DragController {
 	 * `move-docked`); the preview uses a fixed id for the new split so the re-checks compare the
 	 * same tree. The apply is a no-op when the panel is gone by then (apply by id).
 	 * `null` = not offered (nothing else docked): nothing is asked or changed. Also the keyboard
-	 * path (`DockHost.movePanel`, #663 ④).
+	 * path (`DockHost.movePanel`, #663 ④); from the menu it passes `refocus: false`: the mover
+	 * alone places the focus after the outcome (#720 review), so this repair does not take it first.
 	 */
 	placeAtEdge(
 		panelId: string,
 		source: DragSource,
 		edge: DockEdge,
-		guard?: MoveGuard
+		guard?: MoveGuard,
+		{ refocus: repair = true }: { refocus?: boolean } = {}
 	): Promise<DockPanelChangeOutcome> | null {
 		const dock = this.#dock;
 		if (!this.#edgesOffered(panelId)) return null;
@@ -395,7 +397,7 @@ export class DragController {
 			apply();
 			this.homeSlots.delete(panelId);
 			// `undefined` = the focus was not in the host: nothing to hand back.
-			if (frameId !== undefined && hostEl)
+			if (repair && frameId !== undefined && hostEl)
 				void tick().then(() => refocus(hostEl, frameId, panelId));
 		};
 		if (source === 'floating')

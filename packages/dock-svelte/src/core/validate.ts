@@ -62,7 +62,8 @@ function isDockSlot(v: unknown): boolean {
 			Number.isFinite(v.size) &&
 			v.size >= 0 &&
 			v.size <= 1 &&
-			isIdList(v.anchors)
+			isIdList(v.anchors) &&
+			(v.otherAnchors === undefined || isIdList(v.otherAnchors))
 		);
 	}
 	return false;

@@ -313,6 +313,31 @@ describe('serialize / hydrate', () => {
 		expect(splitOf(restored.layout.docked).children.map((c) => c.id)).toEqual(['t', 'p']);
 	});
 
+	it('a split slot keeps `otherAnchors` through a round trip; a malformed one is rejected (#720 review)', () => {
+		const dock = createDockState(
+			{
+				version: 2,
+				floating: [],
+				docked: {
+					type: 'split',
+					id: 's',
+					direction: 'row',
+					sizes: [0.3, 0.3, 0.4],
+					children: [panel('a'), panel('b'), panel('c')]
+				}
+			},
+			counterMakeId()
+		);
+		dock.dismiss('b');
+		const slot = winOf(dock, 'b')?.dockSlot;
+		expect(slot).toMatchObject({ kind: 'split', anchors: ['c'], otherAnchors: ['a'] });
+		const restored = createDockState(dock.serialize(), counterMakeId());
+		expect(winOf(restored, 'b')?.dockSlot).toEqual(slot);
+		const bad = JSON.parse(dock.serialize());
+		bad.floating[0].dockSlot.otherAnchors = [1];
+		expect(validateDockLayout(bad).ok).toBe(false);
+	});
+
 	it('old JSON (v1, and v2 without dockSlot) still loads; a closed window there opens floating', () => {
 		const v1 = JSON.stringify({
 			version: 1,
@@ -545,4 +570,80 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 		expect(await lifecycle.show('p')).toBe('applied');
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['x', 'y', 'z', 'p']);
 	});
+});
+
+// #720 review (3 回目の同種の指摘): 同じタブの組・同じ split から何枚隠しても、どの順で
+// 戻しても、全部戻せば元の並びになる。途中の並びは問わない。3〜5 枚から 2〜3 枚を選び、
+// 隠す順 × 戻す順のすべてを総当たりで確かめる（タブの組と、split の向き両方）。
+// 1 枚は残す: 全部を隠すと最後の 1 枚は `root` の slot になり、先に戻すものの手がかりが無い。
+describe('slot memory: every hide order x every show order comes back to the old order', () => {
+	const permutations = (ids: string[]): string[][] =>
+		ids.length <= 1
+			? [ids]
+			: ids.flatMap((id, i) =>
+					permutations([...ids.slice(0, i), ...ids.slice(i + 1)]).map((rest) => [id, ...rest])
+				);
+	const subsets = (ids: string[], k: number): string[][] =>
+		k === 0
+			? [[]]
+			: ids.flatMap((id, i) => subsets(ids.slice(i + 1), k - 1).map((rest) => [id, ...rest]));
+	const names = ['a', 'b', 'c', 'd', 'e'];
+	const layouts: Record<string, (ids: string[]) => DockLayout> = {
+		tabs: (ids) => ({
+			version: 2,
+			floating: [],
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.6, 0.4],
+				children: [{ type: 'tabs', id: 't', activeIndex: 0, children: ids.map(panel) }, panel('p')]
+			}
+		}),
+		row: (ids) => ({
+			version: 2,
+			floating: [],
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: ids.map(() => 1 / ids.length),
+				children: ids.map(panel)
+			}
+		}),
+		column: (ids) => ({
+			version: 2,
+			floating: [],
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'column',
+				sizes: ids.map(() => 1 / ids.length),
+				children: ids.map(panel)
+			}
+		})
+	};
+	for (const [kind, make] of Object.entries(layouts)) {
+		for (const n of [3, 4, 5]) {
+			const ids = names.slice(0, n);
+			for (const k of [2, 3].filter((k) => k < n)) {
+				for (const hidden of subsets(ids, k)) {
+					it(`${kind} [${ids.join(',')}] hide ${hidden.join(',')} (every order x every order)`, () => {
+						const failures: string[] = [];
+						for (const hideOrder of permutations(hidden)) {
+							for (const showOrder of permutations(hidden)) {
+								const dock = createDockState(make(ids), counterMakeId());
+								for (const id of hideOrder) dock.dismiss(id);
+								for (const id of showOrder) dock.show(id);
+								const got = collectPanelIds(dock.layout.docked).filter((id) => id !== 'p');
+								if (got.join(',') !== ids.join(','))
+									failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
+							}
+						}
+						expect(failures).toEqual([]);
+					});
+				}
+			}
+		}
+	}
 });
