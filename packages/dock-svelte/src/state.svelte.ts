@@ -983,12 +983,17 @@ export class DockState {
 		}
 		const result = validateDockLayout(parsed);
 		if (!result.ok) return false;
+		// Another layout replaces this one: the floated panes' places belong to the old tree, even
+		// for an id that is floating in both (#738 review). A rejected payload keeps them (above).
+		this.#homeSlots.clear();
 		this.layout = result.layout;
 		return true;
 	}
 
 	/** Discard the current layout (docked tree included) and re-place every def at its cascade default, all open, floating. */
 	reset(defs: FloatingWindowDef[], hostW: number, hostH: number): void {
+		// Same as `hydrate`: the remembered places belong to the discarded tree.
+		this.#homeSlots.clear();
 		this.layout = {
 			version: 2,
 			floating: defs.map((def, index) => placeNew(def, index, hostW, hostH)),

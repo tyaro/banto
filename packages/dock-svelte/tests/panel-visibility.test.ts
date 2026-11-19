@@ -1537,6 +1537,30 @@ describe('homeSlot follows the layout, not the path (#735)', () => {
 		expect(dock.homeSlot('a')).toBeUndefined();
 	});
 
+	// #738 review: the id stays floating across the swap, so the setter alone would keep it.
+	it('another layout hydrated with the same pane floating: forgotten; a rejected one keeps it', () => {
+		const dock = fresh();
+		dock.undockPanel('a');
+		expect(dock.hydrate('{ not json')).toBe(false);
+		expect(dock.hydrate(JSON.stringify({ version: 2, floating: 1, docked: null }))).toBe(false);
+		expect(dock.homeSlot('a')).toBeDefined();
+		const other = createDockState(
+			{ version: 2, floating: [], docked: splitNode('t', 'column', ['a', 'b', 'c'].map(panel)) },
+			counterMakeId()
+		);
+		other.undockPanel('a');
+		expect(dock.hydrate(other.serialize())).toBe(true);
+		expect(dock.layout.floating.some((w) => w.id === 'a')).toBe(true);
+		expect(dock.homeSlot('a')).toBeUndefined();
+	});
+
+	it('reset re-creating the same pane as a floating window: forgotten', () => {
+		const dock = fresh();
+		dock.undockPanel('a');
+		dock.reset([{ id: 'a', title: 'A' }], 1000, 800);
+		expect(dock.homeSlot('a')).toBeUndefined();
+	});
+
 	it('hidden and shown in its new place: the old place is not kept', () => {
 		const dock = fresh();
 		dock.undockPanel('b');
