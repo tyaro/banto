@@ -436,4 +436,50 @@ describe('createTauriUiSettings write serialization', () => {
 		pending[1].resolve('old');
 		await expect(got).resolves.toBe('old');
 	});
+
+	describe('getSessionRevision', () => {
+		it('drops the held write when the revision changed before it would be sent', async () => {
+			const { invoke, pending, calls } = makeInvoke();
+			let revision = 'rev-alice';
+			const provider = createTauriUiSettings({ invoke, getSessionRevision: () => revision });
+
+			const p1 = provider.set('theme.mode', 'a');
+			const p2 = provider.set('theme.mode', 'b');
+			await flush();
+			revision = 'rev-bob';
+			pending[0].resolve(undefined);
+			await expect(p1).resolves.toBeUndefined();
+			await expect(p2).resolves.toBeUndefined();
+			await flush();
+			expect(calls.map((c) => c.args)).toEqual([{ key: 'theme.mode', value: 'a' }]);
+		});
+
+		it('sends the held write when the revision is unchanged', async () => {
+			const { invoke, pending, calls } = makeInvoke();
+			const provider = createTauriUiSettings({ invoke, getSessionRevision: () => 'rev-alice' });
+
+			const p1 = provider.set('theme.mode', 'a');
+			const p2 = provider.set('theme.mode', 'b');
+			await flush();
+			pending[0].resolve(undefined);
+			await flush();
+			expect(calls[1].args).toEqual({ key: 'theme.mode', value: 'b' });
+			pending[1].resolve(undefined);
+			await Promise.all([p1, p2]);
+		});
+
+		it('does not check the session when omitted (as before)', async () => {
+			const { invoke, pending, calls } = makeInvoke();
+			const provider = createTauriUiSettings({ invoke });
+
+			const p1 = provider.set('theme.mode', 'a');
+			const p2 = provider.set('theme.mode', 'b');
+			await flush();
+			pending[0].resolve(undefined);
+			await flush();
+			expect(calls[1].args).toEqual({ key: 'theme.mode', value: 'b' });
+			pending[1].resolve(undefined);
+			await Promise.all([p1, p2]);
+		});
+	});
 });

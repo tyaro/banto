@@ -26,10 +26,12 @@
  *   (only the latest one); when the in-flight write finishes (success or
  *   failure) the held value is sent. Intermediate values are never sent.
  *   Different keys do not wait for each other.
- * - HTTP only: the token is captured when `set` is called. If `getToken()`
- *   differs right before sending (logout / another user), or there is no
- *   token, the write is dropped, not sent. Tauri has no token; session checks
- *   stay in the Tauri command (it rejects writes after logout).
+ * - Session check: a session key is captured when `set` is called. If it
+ *   differs right before sending (logout / another user), the held write is
+ *   dropped, not sent. HTTP uses the bearer token (no token = dropped too).
+ *   Tauri uses the optional `getSessionRevision` (normally
+ *   `authProvider.credentialRevision()`); without it the session is not
+ *   checked (as before) and the Tauri command saves for whoever is logged in.
  * - `get(key)` waits until that key's writes (the in-flight one and the held
  *   one) are done, then reads. A failed write never makes `get` reject.
  * - `set` resolves when its write was sent and succeeded, or was dropped
@@ -84,7 +86,7 @@ function toProviderError(err: unknown): ProviderError {
 
 interface PendingWrite {
 	value: string;
-	/** Token captured at `set` time (HTTP only; `null` = no token). */
+	/** Session key captured at `set` time (`null` = none). */
 	token: string | null;
 	settle: Array<{ resolve: () => void; reject: (reason: unknown) => void }>;
 }
@@ -92,12 +94,15 @@ interface PendingWrite {
 /**
  * Wraps a raw (unserialized) provider with the per-key write serialization
  * described in the file header. Module-private; shared by the Tauri and HTTP
- * providers. `getToken` is omitted for Tauri (no token: nothing is ever
- * dropped for a session change, see header).
+ * providers. `getSessionKey` identifies the session (HTTP: token, Tauri:
+ * credential revision); when omitted nothing is dropped for a session change.
+ * `requireKey` additionally drops writes whose key was empty/null at accept time
+ * (HTTP: no token).
  */
 function serializeWrites(
 	inner: UiSettingsProvider,
-	getToken?: () => string | null
+	getSessionKey?: () => string | null,
+	requireKey = false
 ): UiSettingsProvider {
 	/** Keys with a write in flight -> the latest value held meanwhile (or null). */
 	const held = new Map<string, PendingWrite | null>();
@@ -105,8 +110,9 @@ function serializeWrites(
 	const drains = new Map<string, Promise<void>>();
 
 	function shouldDrop(write: PendingWrite): boolean {
-		if (!getToken) return false;
-		return write.token === null || write.token === '' || getToken() !== write.token;
+		if (!getSessionKey) return false;
+		if (requireKey && (write.token === null || write.token === '')) return true;
+		return getSessionKey() !== write.token;
 	}
 
 	async function drain(key: string, first: PendingWrite): Promise<void> {
@@ -147,7 +153,7 @@ function serializeWrites(
 			} catch (err) {
 				return Promise.reject(err);
 			}
-			const token = getToken ? getToken() : null;
+			const token = getSessionKey ? getSessionKey() : null;
 			return new Promise<void>((resolve, reject) => {
 				const entry: PendingWrite = { value, token, settle: [{ resolve, reject }] };
 				if (!held.has(key)) {
@@ -203,6 +209,11 @@ export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiS
 export interface TauriUiSettingsOptions {
 	/** Injected so this module has no `@tauri-apps/api` dependency of its own (same as `TauriInvokeOptions`). */
 	invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+	/**
+	 * ふつうは `authProvider.credentialRevision()`。受け付け時と送る直前で違えば、
+	 * 控えた書き込みを送らずに捨てる。省略時はセッションを見ない（従来どおり）。
+	 */
+	getSessionRevision?: () => string;
 }
 
 /**
@@ -218,17 +229,21 @@ export function createTauriUiSettings(options: TauriUiSettingsOptions): UiSettin
 		}
 	}
 
-	return serializeWrites({
-		async get(key: string): Promise<string | null> {
-			assertValidKey(key);
-			return (await call<string | null>('ui_settings_get', { key })) ?? null;
-		},
+	const { getSessionRevision } = options;
+	return serializeWrites(
+		{
+			async get(key: string): Promise<string | null> {
+				assertValidKey(key);
+				return (await call<string | null>('ui_settings_get', { key })) ?? null;
+			},
 
-		async set(key: string, value: string): Promise<void> {
-			assertValidKey(key);
-			await call<void>('ui_settings_set', { key, value });
-		}
-	});
+			async set(key: string, value: string): Promise<void> {
+				assertValidKey(key);
+				await call<void>('ui_settings_set', { key, value });
+			}
+		},
+		getSessionRevision ? () => getSessionRevision() : undefined
+	);
 }
 
 // --- REST (embedded server) ------------------------------------------------
@@ -315,6 +330,7 @@ export function createHttpUiSettings(options: HttpUiSettingsOptions): UiSettings
 				if (!response.ok) throw await errorFromResponse(response);
 			}
 		},
-		options.getToken
+		options.getToken,
+		true
 	);
 }

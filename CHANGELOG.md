@@ -24,7 +24,7 @@
 
 ### Fixed
 
-- `@banto/admin-core` の `createHttpUiSettings` / `createTauriUiSettings` の `set` をキーごとに直列化（#707）。送信中の書き込みは 1 本だけにし、送信中に来た値は最後の 1 つだけ控えて送り（間の値は送らない）、`get` はそのキーの書き込みが済むまで待つ。HTTP は、受け付け時と送信直前でトークンが違えば送らずに捨てる。**挙動の変更**: トークンが無いときの HTTP `set` は、送って 401 で reject する代わりに、送らずに resolve する。公開 API（export・型）は変わらない。
+- `@banto/admin-core` の `createHttpUiSettings` / `createTauriUiSettings` の `set` をキーごとに直列化（#707）。送信中の書き込みは 1 本だけにし、送信中に来た値は最後の 1 つだけ控えて送り（間の値は送らない）、`get` はそのキーの書き込みが済むまで待つ。HTTP は、受け付け時と送信直前でトークンが違えば送らずに捨てる。Tauri は `createTauriUiSettings` に `getSessionRevision`（省略可。テンプレートは `authProvider.credentialRevision()` を渡す）を渡すと、セッションが替わったとき控えた書き込みを捨てる。**挙動の変更**: トークンが無いときの HTTP `set` は、送って 401 で reject する代わりに、送らずに resolve する。公開 API（export・型）は変わらない。
 
 ## [7.7.0] - 2026-11-19
 
