@@ -77,8 +77,12 @@ export interface FloatingWindow {
  * `outer` (optional, #721) on a `tab` / `split` slot: where the container itself
  * (the tab group / split) was, as a `split` / `root` slot - tried, with the pane
  * placed as a bare pane, when the container and every anchor are gone (all of
- * its panes were taken out). A layout without it (older JSON) works as before,
- * so the layout `version` stays 2.
+ * its panes were taken out). It may have an `outer` of its own (#727): the place
+ * of the container around that one, tried next (the slot and its `outer` chain at
+ * most `MAX_SLOT_DEPTH` (8) deep). A layout without it (older JSON) works as before,
+ * so the layout `version` stays 2 - and so does one whose slots are at most 4 deep;
+ * a deeper slot makes it `version: 3` (`core/layoutVersion.ts`), which the releases
+ * before #727 do not read.
  */
 export type DockSlot =
 	| { kind: 'tab'; groupId: string; index: number; anchors: string[]; outer?: DockSlot }
@@ -198,8 +202,13 @@ export interface DockAutoHidden {
 
 /** Full serializable dock layout (spec §5.1: "レイアウト全体をJSONにシリアライズ/デシリアライズ可能に"). */
 export interface DockLayout {
-	/** Bump on breaking changes. v1 (M7) had no `docked` field; `DockState.hydrate` migrates it to `docked: null`. */
-	version: 2;
+	/**
+	 * Bump on breaking changes. v1 (M7) had no `docked` field; `DockState.hydrate` migrates it to
+	 * `docked: null`. v3 (#727) is v2 with a slot more than 4 deep (`DockSlot.outer`), which the
+	 * releases before it reject: a layout is written as 3 only then, as 2 otherwise - decided from the
+	 * content each time (`DockState` sets it on every assignment; a `{ version: 2, ... }` you build is fine).
+	 */
+	version: 2 | 3;
 	/** Render order = z-order; last entry is frontmost. */
 	floating: FloatingWindow[];
 	/** The docked tree, or `null` when nothing is docked (host shows only floating windows). */

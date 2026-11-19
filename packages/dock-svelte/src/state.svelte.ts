@@ -32,6 +32,7 @@ import {
 	type AutoHideOptions
 } from './core/autohide';
 import { captureDockSlot, restoreDockSlot } from './core/slot';
+import { withLayoutVersion } from './core/layoutVersion';
 import { validateDockLayout } from './core/validate';
 import {
 	canCollapseRegion,
@@ -111,6 +112,9 @@ export class DockState {
 	}
 
 	set layout(next: DockLayout) {
+		// The version follows the content (#727, `core/layoutVersion.ts`): 3 only while a slot is
+		// deeper than a version 2 reader takes, so `layout` / `serialize()` are always safe to save.
+		next = withLayoutVersion(next);
 		// Collapsed regions (#663 ③-B) are kept valid on EVERY assignment (a close, a drop,
 		// `hydrate`, a restore ...): a flag that no longer fits the tree is dropped here.
 		const docked = normalizeCollapsed(next.docked);

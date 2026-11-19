@@ -421,7 +421,10 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   - ドックから隠した pane は**覚えている元の場所に戻す**（VS Code / Visual Studio のツールウィンドウと同じ）。
     タブだった pane は同じタブグループの同じ位置に（選択中のタブにする）、分割の片側だった pane は同じ側に、
     もとの割合で戻る。元のタブグループ・分割が消えていれば、隣にあった pane を目印にして同じ関係で戻す。
-    目印もドックに無ければ浮動 window として開く（保存してある位置・寸法）。docked の木が空なら、木そのものになる。
+    入れ子の分割では、目印の pane だけでなく、それを含む入れ物（同じ側にあった pane だけでできたもの）ごと包んで
+    戻す（`column[row[a,b], c]` の `c` は `b` の隣でなく `row[a,b]` の隣へ。#727）。目印も入れ物も無ければ、
+    入れ物があった場所へ、それも無ければさらに外側の入れ物があった場所へ戻す（#721・#727）。
+    どれもドックに無ければ浮動 window として開く（保存してある位置・寸法）。docked の木が空なら、木そのものになる。
   - 閉じた浮動 window は開いて前面に、開いている浮動 window は前面に、docked の裏のタブは選択中のタブにする
     （`tab-switch` として聞く）。
   - タブグループへ選択中のタブとして戻すと、それまで選択中だった pane が画面から外れる（`keepMounted` でなければ
@@ -438,6 +441,13 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
     約束に従い、pane の中へ移すかはアプリが決める。
 - 戻す場所は閉じた浮動 window の `dockSlot` として layout に入り、`serialize()` / `hydrate()` を通る（layout の
   `version` は 2 のまま。`dockSlot` の無い古い JSON はそのまま読め、その pane は浮動で開く）。
+- 入れ子の入れ物から隠すと、`dockSlot`（と端の帯の `slot`）は外側の入れ物の場所を `outer` で入れ子に覚える
+  （#727。slot 自身を含めて最大 8 段）。**5 段以上の slot を 1 つでも含む layout は `version: 3`** になり、
+  #727 より前の版では読めない（`validateDockLayout` が `version` で拒み、その利用者の layout は既定に戻る）。
+  4 段までなら今までどおり `version: 2` で、前の版でも読める。版は中身から毎回決まる（`dock.layout` に入れるたび・
+  `serialize()`・`layoutSnapshot()`。深い slot が消えれば 2 に戻る）。読むときは `version: 2`（と 1）の slot は
+  4 段まで、`version: 3` だけ 8 段まで受ける。`DockLayout['version']` の型は `2 | 3` なので、`version` で分岐する
+  コードは 3 の分岐も足す（`{ version: 2, ... }` と書いて渡す既存のコードはそのまま通る）。
 - `DockState` だけで扱う口もある（`beforePanelChange` には聞かない）: `dock.dismiss(id)`（隠す。docked なら場所を
   覚える）・`dock.show(id)`（上の `showPanel` の layout の部分。戻り値は `'docked'` / `'floating'` / `null`）・
   `dock.showPlacement(id)`（`show` がどこに出すか）・`dock.showTabSwitch(id)`（`show` が選択中から外す pane）・

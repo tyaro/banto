@@ -11,6 +11,7 @@
 import { autoHiddenPanelIds, autoHideRegionInLayout } from './core/autohide';
 import { cascadePosition, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH } from './core/geometry';
 import { captureDockSlot, type HiddenDockSlot } from './core/slot';
+import { withLayoutVersion } from './core/layoutVersion';
 import {
 	collectPanelIds,
 	dockPanelAtEdge,
@@ -265,7 +266,7 @@ export function threePaneSavedLayout(layout: DockLayout): ThreePaneSavedLayout {
 			: [entry.node.id])
 			ids.add(id);
 	for (const w of layout.floating) ids.add(w.id);
-	return { schema: 1, panels: [...ids], layout };
+	return { schema: 1, panels: [...ids], layout: withLayoutVersion(layout) };
 }
 
 /**
@@ -464,12 +465,12 @@ export function reconcileThreePaneLayout(
 		changed = true;
 	}
 
-	layout = {
+	layout = withLayoutVersion({
 		version: 2,
 		floating: floatingTitled,
 		docked,
 		...(autoHiddenTitled.length > 0 ? { autoHidden: autoHiddenTitled } : {})
-	};
+	});
 	// The result went through the same checks as any restored layout.
 	const final = validateDockLayout(layout);
 	if (!final.ok) return fallback();
