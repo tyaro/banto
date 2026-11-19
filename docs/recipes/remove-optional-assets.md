@@ -98,7 +98,7 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 `DockHost`/`dock`/`onPopOut` 関連コード（pane を開閉する「表示」メニュー `PageViewMenu` の
 import と配置も。`PageViewMenu.svelte`・`src/lib/pageViewMenu.svelte.ts` 自体はシェルの汎用の口なので残す。#663）、`src/lib/banto/panels.ts`・
 `src/lib/banto/popout.ts`・`src/lib/banto/dockEscape.ts` とその `.test.ts`（dock の gesture の
-Esc をどの層に譲るか。#433）・`src/lib/banto/dockLayoutStore.svelte.ts` とその `.test.ts`（レイアウトの保存を利用者・セッションに結び付ける。#663）・`src/routes/panel/[id]/`（ポップアウト先の
+Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とその `.test.ts`（dock の文言を `dock.*` から作る。`messages/{ja,en}.json` の `dock.*` キーも外す。#729）・`src/lib/banto/dockLayoutStore.svelte.ts` とその `.test.ts`（レイアウトの保存を利用者・セッションに結び付ける。#663）・`src/routes/panel/[id]/`（ポップアウト先の
 スタンドアロンウィンドウ用ルート）、メモ pane の draft と確認ダイアログ
 （`src/lib/banto/dashboardMemo.svelte.ts`・`src/lib/banto/settlePrompt.svelte.ts` と
 それぞれの `.test.ts`、`src/lib/components/DashboardMemoField.svelte`・

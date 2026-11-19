@@ -38,6 +38,7 @@
 	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
+	import { dockMessages } from '#lib/banto/dockMessages.js';
 	import { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
@@ -521,6 +522,7 @@
 					{onPopOut}
 					{beforePanelChange}
 					isEscapeBlocked={isDockEscapeBlocked}
+					messages={dockMessages()}
 				/>
 			</div>
 			<DraftSettleDialog

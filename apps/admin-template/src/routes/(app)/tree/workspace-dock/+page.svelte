@@ -30,6 +30,7 @@
 	import { EmptyState, PageHeader, Tabs } from '@banto/ui';
 	import { tick, untrack } from 'svelte';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
+	import { dockMessages } from '#lib/banto/dockMessages.js';
 	import { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';
 	import { getUiSettings } from '#lib/banto/setup.js';
 	import { confirmAction, confirmStore } from '#lib/confirm.svelte.js';
@@ -303,11 +304,14 @@
 		{ id: 'settings', label: m['tree.workspace.tabSettings']() }
 	]);
 
-	const dockMessages = $derived({
-		threePaneLeft: () => m['tree.workspace.paneTree'](),
-		threePaneCenter: () => m['tree.workspaceDock.paneCenter'](),
-		threePaneRight: () => m['tree.workspace.paneDetail']()
-	});
+	// The shared dock strings (`dock.*`) + this page's own three pane names.
+	const paneDockMessages = $derived(
+		dockMessages({
+			threePaneLeft: () => m['tree.workspace.paneTree'](),
+			threePaneCenter: () => m['tree.workspaceDock.paneCenter'](),
+			threePaneRight: () => m['tree.workspace.paneDetail']()
+		})
+	);
 
 	// A pick in the tree takes effect: narrow, the tree's flyout slides back in.
 	$effect(() => {
@@ -374,7 +378,7 @@
 			{dock}
 			initialLayout={layoutTarget.initialLayout}
 			{arrange}
-			messages={dockMessages}
+			messages={paneDockMessages}
 			isEscapeBlocked={isDockEscapeBlocked}
 		>
 			{#snippet left()}

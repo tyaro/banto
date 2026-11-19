@@ -453,6 +453,20 @@ function removeDock() {
 		'dockLayoutStore import 除去',
 		`\timport { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';\n`
 	);
+	// #729: dock の文言（DockMessages）を paraglide の `dock.*` から作る橋。dock と一緒に消える
+	// （/tree/workspace-dock も同じ関数を使うが、そのルートは下で消える）。
+	drop(
+		DASH,
+		'dockMessages import 除去',
+		`\timport { dockMessages } from '#lib/banto/dockMessages.js';\n`
+	);
+	removeFile(`${APP}/src/lib/banto/dockMessages.ts`, 'dockMessages.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dockMessages.test.ts`, 'dockMessages.test.ts 削除');
+	for (const [file, label] of [
+		[MSG_JA, 'messages/ja'],
+		[MSG_EN, 'messages/en']
+	])
+		removeMessageKeys(file, `${label}: dock.* キー除去`, ['dock']);
 	// #432 PR-10: メモ pane の draft と dock の lifecycle の配線（中身は下の「dock スクリプト
 	// 一式」・ワークスペース markup・dockPanel snippet の範囲に収めてある）。
 	drop(
