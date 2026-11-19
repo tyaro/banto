@@ -2391,6 +2391,56 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(palette).toHaveCount(0);
 	});
 
+	// #711 (B-5): the palette finds a record by what is typed and opens it in the
+	// list's drawer; the record then shows under "recently opened" for an empty
+	// query. The record is created here and deleted at the end.
+	test('9b. command palette: search a record, open it in the drawer, then find it under recent records', async () => {
+		const name = `E2Eパレット商品-${Date.now()}`;
+		await page.goto('/items/new');
+		await page.getByLabel('商品名').fill(name);
+		await page.getByLabel('価格').fill('100');
+		await page.getByLabel('在庫').fill('1');
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+		await expect(page.getByRole('button', { name: '新規作成' })).toBeVisible();
+
+		const palette = page.getByRole('dialog', { name: 'コマンドパレット' });
+		// The Ctrl+K listener may not be mounted yet right after the navigation.
+		await expect(async () => {
+			await page.keyboard.press('Control+K');
+			await expect(palette).toBeVisible({ timeout: 1_000 });
+		}).toPass();
+		await page.getByPlaceholder('画面・操作を検索…').fill(name);
+		// The hit appears under the resource's heading (the source is debounced).
+		const hit = palette.getByRole('option', { name, exact: true });
+		await expect(hit).toBeVisible();
+		await hit.click();
+
+		await expect(page).toHaveURL(/\/items\?id=\d+$/);
+		const id = new URL(page.url()).searchParams.get('id') ?? '';
+		await expect(itemDrawer(page, id)).toBeVisible();
+
+		// Empty query: the record just opened is the first thing offered.
+		await page.keyboard.press('Escape');
+		await expect(itemDrawer(page, id)).toHaveCount(0);
+		await expect(async () => {
+			await page.keyboard.press('Control+K');
+			await expect(palette).toBeVisible({ timeout: 1_000 });
+		}).toPass();
+		await expect(palette.getByText('最近開いたレコード', { exact: true })).toBeVisible();
+		await expect(palette.getByRole('option', { name, exact: true })).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(palette).toHaveCount(0);
+
+		// Cleanup.
+		await page.goto(`/items/${id}`);
+		await confirmInDialog(page, page.locator('.form-panel').getByRole('button', { name: '削除' }), {
+			title: '削除の確認',
+			confirm: '削除'
+		});
+		await expect(page).toHaveURL(/\/items$/);
+	});
+
 	test('10. header: the sun/moon button pins the opposite theme and sets data-theme', async () => {
 		await page.goto('/settings');
 

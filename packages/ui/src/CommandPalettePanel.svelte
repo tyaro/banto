@@ -5,7 +5,7 @@
 	 * "closed" - the opener is captured on mount and focus is restored in the
 	 * cleanup. See CommandPalette.svelte for the contract.
 	 */
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import {
 		defaultCommandPaletteSearch,
 		groupCommandPaletteItems,
@@ -19,6 +19,7 @@
 		items: readonly T[];
 		search?: (query: string, items: readonly T[]) => readonly T[];
 		recentIds?: readonly string[];
+		onQueryChange?: (query: string) => void;
 		onExecute: (item: T) => void | Promise<void>;
 		focusFallback?: () => HTMLElement | null | undefined;
 		messages?: UiMessages;
@@ -29,6 +30,7 @@
 		items,
 		search = defaultCommandPaletteSearch,
 		recentIds = [],
+		onQueryChange,
 		onExecute,
 		focusFallback,
 		messages,
@@ -45,6 +47,13 @@
 	let executing = $state(false);
 	let inputEl: HTMLInputElement | undefined = $state();
 	let paletteEl: HTMLDivElement | undefined = $state();
+
+	// Tell the app what was typed (async sources, #711). `untrack`: the
+	// callback may touch state of its own, which must not re-run this effect.
+	$effect(() => {
+		const current = query;
+		untrack(() => onQueryChange?.(current));
+	});
 
 	const results = $derived(search(query, items));
 
