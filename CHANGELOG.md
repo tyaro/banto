@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+## [7.8.0] - 2026-11-19
+
+**v7.8.0 — `@banto/admin-core` の UiSettings のプロバイダ（HTTP・Tauri）の書き込みをキーごとに直列化（#707、PR #708）。** 版の種類: minor（後方互換の機能追加）。理由: `TauriUiSettingsOptions` に省略可能な `getSessionRevision` を足した。`crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（`v7.7.0` との差分で確認）。migration なし。
+
+派生アプリへの影響: 型エラーにはならない。ただし Tauri の派生アプリは `createTauriUiSettings({ invoke, getSessionRevision: () => authProvider.credentialRevision() })` を渡すこと（渡さないと、利用者の切替をまたいで控えた値が送られうる）。テンプレートの `apps/admin-template/src/lib/banto/setup.ts` を取り込むなら、その変更（`getSessionRevision` の受け渡し）を取り込む（`setup.ts` のみ変更）。
+
+挙動の変更（消費側への注意）: `set` は送信中があれば最後の値だけを後で送り、間の値に置き換えられた `set` は送らずに resolve する。HTTP はトークンが替わった・無い書き込みを送らずに `ProviderError`（kind `unauthorized`）で reject する（従来の 401 と同じ結果）。`get` はそのキーの書き込みが済むまで待つ。
+
 ### Fixed
 
 - `@banto/admin-core` の `createHttpUiSettings` / `createTauriUiSettings` の `set` をキーごとに直列化（#707）。送信中の書き込みは 1 本だけにし、送信中に来た値は最後の 1 つだけ控えて送り（間の値は送らない）、`get` はそのキーの書き込みが済むまで待つ。HTTP は、受け付け時と送信直前でトークンが違えば送らずに捨てる。Tauri は `createTauriUiSettings` に `getSessionRevision`（省略可。テンプレートは `authProvider.credentialRevision()` を渡す）を渡すと、セッションが替わったとき控えた書き込みを捨てる。セッションが替わった・トークンが無い書き込みは、送らずに `unauthorized` で reject する（従来の 401 と同じ結果。`createSavedSetting` は保存済みにしない）。派生アプリは `createTauriUiSettings` に `getSessionRevision: () => authProvider.credentialRevision()` を渡すこと。公開 API（export・型）は変わらない。
