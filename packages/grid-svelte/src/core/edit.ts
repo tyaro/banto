@@ -26,10 +26,16 @@ export type PrepareCommitResult<TRow> =
  * `false` here is the single source of truth every edit entry point
  * (double-click, F2, Enter, paste, checkbox toggle, `startEditing`) goes
  * through, so none of them need their own `column.cell` check.
+ *
+ * `renderer: 'link'` (#713) is the same kind of control (an `<a>`) and is
+ * never editable either. `badge` / `progress` / `boolean` only draw the cell
+ * at rest and BantoGrid shows the editor instead while editing, so they
+ * follow `editable` - the minimal rule that keeps a status badge editable
+ * with a `select` editor and a boolean with a `checkbox`.
  */
 export function isColumnEditable<TRow>(column: GridColumn<TRow>, row: TRow): boolean {
 	// `render` (#591) is custom content (a button), the same as `cell` here.
-	if (column.cell || column.render) return false;
+	if (column.cell || column.render || column.renderer === 'link') return false;
 	return typeof column.editable === 'function' ? column.editable(row) : column.editable === true;
 }
 

@@ -143,3 +143,172 @@ describe('BantoGrid.adjacentRow (#591)', () => {
 		expect(component.adjacentRow(3, -1)).toBeUndefined();
 	});
 });
+
+describe('GridColumn.renderer / tone (#713)', () => {
+	interface R {
+		id: number;
+		status: string;
+		done: number;
+		ok: boolean;
+	}
+	const data: R[] = [
+		{ id: 1, status: '稼働', done: 0.4, ok: true },
+		{ id: 2, status: '停止', done: 1, ok: false }
+	];
+	const cols: GridColumn<R>[] = [
+		{
+			id: 'status',
+			header: '状態',
+			accessor: 'status',
+			renderer: 'badge',
+			tone: (v) => (v === '稼働' ? 'success' : 'danger')
+		},
+		{ id: 'done', header: '進捗', accessor: 'done', renderer: 'progress' },
+		{ id: 'ok', header: '有効', accessor: 'ok', renderer: 'boolean' }
+	];
+
+	it('draws a badge, an accessible progressbar and a readable boolean', () => {
+		const { container } = render(BantoGrid<R>, {
+			rows: data,
+			columns: cols,
+			state: new GridState<R>(cols),
+			getRowId: (row: R) => row.id
+		});
+		expect(container.querySelector('.cell-badge')?.textContent).toBe('稼働');
+		expect(
+			container
+				.querySelector('[data-cell-row="0"][data-cell-field="status"]')
+				?.getAttribute('data-tone')
+		).toBe('success');
+		const bars = screen.getAllByRole('progressbar');
+		expect(bars[0].getAttribute('aria-valuenow')).toBe('40');
+		expect(bars[0].getAttribute('aria-valuetext')).toBe('40%');
+		expect(bars[1].getAttribute('aria-valuenow')).toBe('100');
+		const okCells = container.querySelectorAll('[data-cell-field="ok"]');
+		expect(okCells[0].textContent).toContain('はい');
+		expect(okCells[1].textContent).toContain('いいえ');
+	});
+
+	it('boolean labels come from messages', () => {
+		const { container } = render(BantoGrid<R>, {
+			rows: data,
+			columns: cols,
+			state: new GridState<R>(cols),
+			getRowId: (row: R) => row.id,
+			messages: { booleanTrue: () => 'yes', booleanFalse: () => 'no' }
+		});
+		expect(
+			container.querySelector('[data-cell-row="0"][data-cell-field="ok"]')?.textContent
+		).toContain('yes');
+	});
+});
+
+describe('cell / editing cells skip the view (#713)', () => {
+	interface V {
+		id: number;
+		name: string;
+		url: string | undefined;
+	}
+	const vrows: V[] = [{ id: 1, name: 'a', url: undefined }];
+
+	it('a `cell` column never calls format, but its tone still applies', () => {
+		const format = vi.fn((v: unknown) => String(v));
+		const cols: GridColumn<V>[] = [
+			{
+				id: 'url',
+				header: 'URL',
+				accessor: 'url',
+				format,
+				cell: () => ({ text: '-' }),
+				tone: () => 'danger'
+			}
+		];
+		const { container } = render(BantoGrid<V>, {
+			rows: vrows,
+			columns: cols,
+			state: new GridState<V>(cols),
+			getRowId: (row: V) => row.id
+		});
+		const cell = container.querySelector('[data-cell-row="0"][data-cell-field="url"]');
+		expect(cell?.textContent).toContain('-');
+		expect(cell?.getAttribute('data-tone')).toBe('danger');
+		expect(format).not.toHaveBeenCalled();
+	});
+
+	it('an editing cell does not call format', async () => {
+		const format = vi.fn((v: unknown) => String(v));
+		const cols: GridColumn<V>[] = [
+			{
+				id: 'name',
+				header: 'Name',
+				accessor: 'name',
+				editable: true,
+				editor: 'text',
+				renderer: 'badge',
+				format
+			}
+		];
+		const { container } = render(BantoGrid<V>, {
+			rows: vrows,
+			columns: cols,
+			state: new GridState<V>(cols),
+			getRowId: (row: V) => row.id,
+			onCellEdit: vi.fn()
+		});
+		const cell = container.querySelector<HTMLElement>(
+			'[data-cell-row="0"][data-cell-field="name"]'
+		)!;
+		expect(format).toHaveBeenCalled();
+		format.mockClear();
+		await fireEvent.doubleClick(cell);
+		await tick();
+		expect(screen.getByRole('textbox', { name: 'Name' })).toBeTruthy();
+		expect(format).not.toHaveBeenCalled();
+	});
+});
+
+describe('renderer link keyboard (#713)', () => {
+	interface LinkRow {
+		id: number;
+		name: string;
+		url: string;
+	}
+	const linkRows: LinkRow[] = [
+		{ id: 1, name: 'a', url: '/a' },
+		{ id: 2, name: 'b', url: '' }
+	];
+	const linkColumns: GridColumn<LinkRow>[] = [
+		{ id: 'name', header: '名', accessor: 'name', renderer: 'link', href: (r) => r.url }
+	];
+	function setup() {
+		const onRowClick = vi.fn();
+		const view = render(BantoGrid<LinkRow>, {
+			rows: linkRows,
+			columns: linkColumns,
+			state: new GridState<LinkRow>(linkColumns),
+			getRowId: (row: LinkRow) => row.id,
+			onRowClick
+		});
+		return { onRowClick, container: view.container };
+	}
+
+	for (const key of ['Enter', ' ']) {
+		it(`${JSON.stringify(key)} on a drawn link clicks it, not onRowClick`, async () => {
+			const { onRowClick, container } = setup();
+			const clicked = vi.fn((e: Event) => e.preventDefault());
+			container.querySelector('a.cell-link')!.addEventListener('click', clicked, { once: true });
+			await fireEvent.pointerDown(container.querySelector('[data-cell-row="0"]')!);
+			await fireEvent.keyDown(screen.getByRole('grid'), { key });
+			expect(clicked).toHaveBeenCalledTimes(1);
+			expect(onRowClick).not.toHaveBeenCalled();
+		});
+
+		it(`${JSON.stringify(key)} on a text-fallback row still calls onRowClick`, async () => {
+			const { onRowClick, container } = setup();
+			expect(container.querySelectorAll('a.cell-link')).toHaveLength(1);
+			await fireEvent.pointerDown(container.querySelector('[data-cell-row="1"]')!);
+			await fireEvent.keyDown(screen.getByRole('grid'), { key });
+			expect(onRowClick).toHaveBeenCalledWith(linkRows[1]);
+		});
+	}
+});

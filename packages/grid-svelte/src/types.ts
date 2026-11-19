@@ -93,6 +93,12 @@ export interface CellRange {
 	fieldEnd: number;
 }
 
+/** Built-in cell drawing of `GridColumn.renderer` (#713). */
+export type CellRenderer = 'badge' | 'progress' | 'boolean' | 'link';
+
+/** Role colour of `GridColumn.tone` (#713), mapped to the theme's state tokens. */
+export type CellTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+
 export interface GridColumn<TRow> {
 	/** Stable identifier; used as SortState.field / FilterState.field. */
 	id: string;
@@ -149,6 +155,45 @@ export interface GridColumn<TRow> {
 	 * never both apply to the same cell.
 	 */
 	cell?: (row: TRow) => { text: string; href?: string };
+	/**
+	 * Built-in way to draw the cell (#713). Precedence: `render` (snippet) >
+	 * `cell` > `renderer` > plain text. A value that cannot be drawn that way
+	 * (non-numeric `progress`, non-boolean `boolean`, `link` without a safe
+	 * `href`) falls back to its text.
+	 *
+	 * - `badge`: the formatted value as a small pill; colour from `tone`
+	 *   (neutral when none).
+	 * - `progress`: a number as a bar plus a label. The value is divided by
+	 *   `progressMax` (default 1, so 0..1) and clamped to 0..1; the label is
+	 *   `format`'s result or else the rounded percentage. The bar is a
+	 *   `progressbar` (valuenow 0..100) whose value text is the label.
+	 * - `boolean`: a check mark for true, blank for false, with the
+	 *   `booleanTrue` / `booleanFalse` message as its text for screen readers.
+	 * - `link`: the formatted value as an `<a>` to `href(row)` (http(s),
+	 *   mailto, tel or a relative URL only). Use `cell` instead when the text
+	 *   itself depends on the row.
+	 *
+	 * Editability (`isColumnEditable`): the renderer only draws the cell at
+	 * rest and the inline editor replaces it while editing, so `badge` /
+	 * `progress` / `boolean` follow `editable` unchanged. `link` is never
+	 * editable, like `cell` (an `<a>` and an editor cannot share a cell).
+	 * Copy and CSV export use the raw value, exactly as without a renderer.
+	 */
+	renderer?: CellRenderer;
+	/** `renderer: 'progress'`: the value that means 100%. Default 1. Ignored unless it is > 0. */
+	progressMax?: number;
+	/** `renderer: 'link'`: the link target for a row (see `renderer`). */
+	href?: (row: TRow) => string;
+	/**
+	 * Conditional format (#713): a role colour for a cell from its value;
+	 * `null` means none. Colours come from the theme's state tokens
+	 * (`--banto-success` etc.; a badge uses the `-tint` pair), never raw
+	 * values. Applies to plain text, `cell` and every `renderer`; not to a
+	 * `render` snippet, which owns its own look. The role is also exposed as
+	 * `data-tone` on the cell. Colour alone should not carry meaning, so pair
+	 * it with text (`format`, a badge label).
+	 */
+	tone?: (value: unknown, row: TRow) => CellTone | null;
 	/**
 	 * Custom cell content (#591): the snippet is rendered in the cell in
 	 * place of the value - e.g. a small "open" button at the start of the

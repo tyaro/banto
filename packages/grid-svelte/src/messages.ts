@@ -71,6 +71,10 @@ export interface GridMessages {
 	filterChipIn?: () => string;
 	/** FilterChips: separator between the two ends of a `between` (range) filter. */
 	filterChipRangeSeparator?: () => string;
+	/** `renderer: 'boolean'`: text read for a true value (the check mark itself is hidden from assistive tech). */
+	booleanTrue?: () => string;
+	/** `renderer: 'boolean'`: text read for a false value (nothing is drawn). */
+	booleanFalse?: () => string;
 }
 
 export const defaultGridMessages: Required<GridMessages> = {
@@ -105,5 +109,7 @@ export const defaultGridMessages: Required<GridMessages> = {
 	filterChipIsNull: () => '空',
 	filterChipNotNull: () => '空でない',
 	filterChipIn: () => 'いずれか',
-	filterChipRangeSeparator: () => '〜'
+	filterChipRangeSeparator: () => '〜',
+	booleanTrue: () => 'はい',
+	booleanFalse: () => 'いいえ'
 };

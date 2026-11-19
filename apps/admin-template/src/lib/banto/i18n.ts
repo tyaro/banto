@@ -49,7 +49,9 @@ export function gridMessages(): Partial<GridMessages> {
 		filterChipIsNull: () => m['grid.filterChipIsNull'](),
 		filterChipNotNull: () => m['grid.filterChipNotNull'](),
 		filterChipIn: () => m['grid.filterChipIn'](),
-		filterChipRangeSeparator: () => m['grid.filterChipRangeSeparator']()
+		filterChipRangeSeparator: () => m['grid.filterChipRangeSeparator'](),
+		booleanTrue: () => m['grid.booleanTrue'](),
+		booleanFalse: () => m['grid.booleanFalse']()
 	};
 }
 
