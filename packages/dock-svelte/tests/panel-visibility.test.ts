@@ -637,6 +637,60 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 		expect(await lifecycle.show('p')).toBe('applied');
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['x', 'y', 'z', 'p']);
 	});
+
+	// #727: the split is re-made around the whole row `a` and `b` are in again, so both are asked.
+	it('restoring around a whole inner split asks every pane of it (reparent)', async () => {
+		const asked: DockPanelChange[] = [];
+		let allow = false;
+		const hook = (change: DockPanelChange) => {
+			asked.push(change);
+			return allow;
+		};
+		const dock = createDockState(
+			{
+				version: 2,
+				floating: [],
+				docked: {
+					type: 'split',
+					id: 's',
+					direction: 'column',
+					sizes: [0.5, 0.5],
+					children: [
+						{
+							type: 'split',
+							id: 'in',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [panel('a'), panel('b')]
+						},
+						panel('c')
+					]
+				}
+			},
+			counterMakeId()
+		);
+		const lifecycle = new PanelLifecycle(dock, () => ({
+			beforePanelChange: hook,
+			isStructureChangeDeferred: () => false
+		}));
+		dock.dismiss('a');
+		dock.dismiss('c');
+		dock.show('a'); // row[a, b] is the root
+		const before = JSON.stringify(dock.layout);
+
+		expect(await lifecycle.show('c')).toBe('refused');
+		expect(asked).toEqual([{ kind: 'reparent', panelId: 'a', cause: 'c', remount: true }]);
+		expect(JSON.stringify(dock.layout)).toBe(before);
+
+		allow = true;
+		asked.length = 0;
+		expect(await lifecycle.show('c')).toBe('applied');
+		expect(asked).toEqual([
+			{ kind: 'reparent', panelId: 'a', cause: 'c', remount: true },
+			{ kind: 'reparent', panelId: 'b', cause: 'c', remount: true }
+		]);
+		expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'b'] }, 'c'] });
+	});
 });
 
 // #720 review (3 回目の同種の指摘): 同じタブの組・同じ split から何枚隠しても、どの順で
@@ -790,23 +844,20 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 		// The same direction inside (an edge dock wraps the root even then; cross-review P2 on #725).
 		'row[row[a,b], p]': () => nested('row', ['a', 'b'], ['p'], true, true),
 		'row[p, row[a,b,c]]': () => nested('row', ['a', 'b', 'c'], ['p'], false, true),
-		'column[column[a,b,c], p]': () => nested('column', ['a', 'b', 'c'], ['p'], true, true)
+		'column[column[a,b,c], p]': () => nested('column', ['a', 'b', 'c'], ['p'], true, true),
+		// #727: two outer siblings (`c` came back around the anchor `b`, not around `row[a,b]`).
+		'column[row[a,b], c, d]': () => nested('column', ['a', 'b'], ['c', 'd']),
+		'column[c, d, row[a,b]]': () => nested('column', ['a', 'b'], ['c', 'd'], false)
 	};
-	// Not covered yet (they failed before #721 too): a pane of the inner split hidden before the
-	// outer sibling, every pane hidden, or two outer siblings (`column[row[a,b], c, d]` hide c, d:
-	// `c` comes back around the anchor `b`, not around the whole `row[a,b]`).
-	// The panes outside the inner split (`d` / `c`) first: the inner one is gone only after.
-	const outerFirst = (inner: string[]) => (order: string[]) =>
-		order.every((id, i) => i === 0 || inner.includes(id) || !inner.includes(order[i - 1]));
 	for (const [name, make] of Object.entries(layouts)) {
 		const ids = collectPanelIds(make());
-		const inner = collectPanelIds(findNode(make(), 'in')!);
-		for (let k = 2; k < ids.length; k++) {
+		// #727: every pane too (k = n), and every hide order (an inner pane before the outer sibling).
+		for (let k = 2; k <= ids.length; k++) {
 			for (const hidden of subsets(ids, k)) {
 				it(`${name} hide ${hidden.join(',')} (every order x every order)`, () => {
 					const want = JSON.stringify(shapeOf(make()));
 					const failures: string[] = [];
-					for (const hideOrder of permutations(hidden).filter(outerFirst(inner))) {
+					for (const hideOrder of permutations(hidden)) {
 						for (const showOrder of permutations(hidden)) {
 							const dock = createDockState(
 								{ version: 2, floating: [], docked: make() },
@@ -969,6 +1020,13 @@ const L = {
 		splitNode('s', 'column', [
 			splitNode('r1', 'row', [panel('a'), tabsNode('t', ['b', 'c'])]),
 			splitNode('r2', 'row', [panel('d'), panel('e')])
+		]),
+	// #727: two outer siblings of an inner split.
+	'column[row[a,b],c,d]': () =>
+		splitNode('s', 'column', [
+			splitNode('in', 'row', [panel('a'), panel('b')]),
+			panel('c'),
+			panel('d')
 		])
 } satisfies Record<string, () => DockNode>;
 
@@ -1006,6 +1064,19 @@ describe('slot memory: regressions found by walking every sequence (#721)', () =
 			'-a -c +a -b -d +b +c +d -d -c +d +c',
 			// c's column names b, whose group names a, docked again: the column's place is a's.
 			'a hidden container whose panes lead to a docked pane is not a sibling'
+		],
+		// #727, found while walking every sequence with the fix half done:
+		[
+			'row[a,column[b,row[c,d]]]',
+			'-b -a -c +b -b +c +a +b -b -c +b +c',
+			// When c leaves, `in` (gone) and `s` (gone) both name the row: the inner one, `in`.
+			'the innermost gone split is the place of the last child'
+		],
+		[
+			'row[column[tabs[a,b],c],d]',
+			'-a -d +a -c +d -d +c +d -d -c +d +c',
+			// The column is all that is left of the row `s` (d hidden), with the tab group in it.
+			'a container in a gone split names a tab group inside it'
 		]
 	];
 	for (const [name, steps, why] of cases) {

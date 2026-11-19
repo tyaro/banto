@@ -14,6 +14,7 @@
  * registry. Unknown ids are kept as-is (the host component / consumer decides
  * at render time), which is a separate policy from structural validity.
  */
+import { MAX_SLOT_DEPTH } from './slot';
 import { normalizeCollapsed, normalizeSizes } from './tree';
 import type { DockAutoHidden, DockLayout, DockNode, FloatingWindow } from '../types';
 
@@ -43,9 +44,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const isIndex = (v: unknown): boolean => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 const isIdList = (v: unknown): boolean =>
 	Array.isArray(v) && v.length === Object.keys(v).length && v.every((s) => typeof s === 'string');
-
-/** How deep `outer` may nest in a saved slot (#721 writes one level; the rest is headroom, not a format promise). */
-const MAX_SLOT_DEPTH = 4;
 
 /**
  * The optional remembered docked place of a closed window (#663, `DockSlot`). Its ids are hints,

@@ -23,12 +23,16 @@
  *    side, `anchors` / `otherAnchors`), else at the old index; when the split is
  *    gone, next to the old neighbour or the nearest anchor still docked, on the
  *    side it was on, with the same share of the space the two had (a new split
- *    around it, never spliced into the split it is in now).
+ *    around it, never spliced into the split it is in now). With an `outer`,
+ *    around the node holding that one made of nothing but the panels the slot
+ *    names on that side (#727: the whole child of the split again, say the row
+ *    of `column[row[a,b], c]`, not the anchor `b` alone).
  *  - `outer` (#721): where the container itself was (a `split` / `root` slot),
  *    the pane put there as a bare pane - when every pane of the container was
  *    taken out, so neither the container nor any anchor is docked. The panes
  *    shown after it join it through the anchors (a bare anchor becomes a tab
- *    group / split again).
+ *    group / split again). Then the `outer` of that one - the place of the
+ *    container around it (#727: nested, at most `MAX_SLOT_DEPTH` deep).
  *  - an empty docked tree: the pane becomes its root (any slot kind).
  *  - otherwise `null` - the caller opens it as a floating window instead.
  *
@@ -36,10 +40,19 @@
  * container collapsed when its other panes left), so `captureDockSlot` finds
  * the container in the slots of the panes taken out before it (`hidden`) and
  * records the container's slot for it, not the place the bare pane has now
- * (that becomes its `outer`).
+ * (that becomes its `outer`). The same holds for a container that is all that
+ * is left of a gone split (#727): its `outer` is that split's place. And a
+ * hidden pane counts among the panels of the child of a split it belongs to
+ * (`remnantPanes`), so the slots taken there name the whole child.
  */
 import { collectPanelIds, findNode, findParent } from './tree';
 import type { DockNode, DockPanelNode, DockSlot, DockSplitNode, DockTabGroupNode } from '../types';
+
+/**
+ * How deep a slot may be: the slot itself and its `outer` chain (#727 nests `outer`). `validate.ts`
+ * rejects a saved slot deeper than this; `captureDockSlot` never writes one.
+ */
+export const MAX_SLOT_DEPTH = 4;
 
 /** The smallest / largest share a restored pane takes of the space it splits (keeps both sides visible). */
 const MIN_SHARE = 0.05;
@@ -166,28 +179,78 @@ export function captureDockSlot(
 			groupId: parent.id,
 			index,
 			anchors: byDistance(ids, index),
-			outer: unitSlot(root, parent, before)
+			outer: placeOf(root, parent, before, 1)
 		};
 	}
 	// A lone tab leaves its group too: the group is what sits in the split.
 	const unit = parent?.type === 'tabs' ? parent : node;
 	return (
 		lastTabSlot(root, unit, panelId, before) ??
-		lastSplitSlot(root, unit, before) ??
-		withOuter(unitSlot(root, unit, before), root, unit, before)
+		lastSplitSlot(root, unit, before, 0) ??
+		hereOf(root, unit, before, 0)
 	);
 }
 
-/** A split slot of `unit` with `outer` = where its split is (`unitSlot` of the split); a root slot as it is. */
-function withOuter(
-	slot: DockSlot,
+/**
+ * Where `node` (a panel, tab group or split that is a split's child or the root) is now: its
+ * `unitSlot`, with `outer` = where its split is, and so on up (#727: nested `outer`), while the
+ * slot is less than `MAX_SLOT_DEPTH` deep (`depth` = how deep the returned slot is).
+ */
+function hereOf(
 	root: DockNode | null,
-	unit: DockNode,
-	hidden: HiddenDockSlot[]
+	node: DockNode,
+	hidden: HiddenDockSlot[],
+	depth: number
 ): DockSlot {
-	if (slot.kind !== 'split') return slot;
-	const split = findParent(root, unit.id);
-	return split ? { ...slot, outer: unitSlot(root, split, hidden) } : slot;
+	const slot = unitSlot(root, node, hidden);
+	if (slot.kind !== 'split' || depth + 1 >= MAX_SLOT_DEPTH) return slot;
+	const split = findParent(root, node.id);
+	return split ? { ...slot, outer: placeOf(root, split, hidden, depth + 1) } : slot;
+}
+
+/**
+ * Where the container `node` is, for an `outer`: the slot of the gone split it is all that is left
+ * of (`lastSplitSlot`, #727 - say `column[row[a,b], c]` with `c` hidden: the row is the root now,
+ * but its place is beside `c`), else where it is now (`hereOf`). Only when every panel of `node`
+ * is named by a slot of that split: a pane docked into `node` since (say `d` was all that was left
+ * of a row, and `b` was shown beside it in a new column) means `node` is not what is left of it.
+ */
+function placeOf(
+	root: DockNode | null,
+	node: DockNode,
+	hidden: HiddenDockSlot[],
+	depth: number
+): DockSlot {
+	const last = lastSplitSlot(root, node, hidden, depth);
+	if (last?.kind === 'split') {
+		const named = new Set(
+			hidden
+				.filter((h) => stillHidden(root, h))
+				.flatMap((h) => {
+					const out: string[] = [];
+					for (let s: DockSlot | undefined = h.slot; s && s.kind !== 'root'; s = s.outer)
+						if (s.kind === 'split' && s.splitId === last.splitId) out.push(...slotNames(s));
+					return out;
+				})
+		);
+		const parts = node.type === 'split' ? node.children : [node];
+		if (parts.every((c) => named.has(c.id) || collectPanelIds(c).some((id) => named.has(id))))
+			return last;
+	}
+	return hereOf(root, node, hidden, depth);
+}
+
+/** The tab groups / splits a slot names by its `outer` chain, nearest first. */
+function slotContainers(slot: DockSlot): string[] {
+	const out: string[] = [];
+	for (let s: DockSlot | undefined = slot; s && s.kind !== 'root'; s = s.outer)
+		out.push(s.kind === 'tab' ? s.groupId : s.splitId);
+	return out;
+}
+
+/** The ids of `node` and every node inside it. */
+function nodeIds(node: DockNode): string[] {
+	return node.type === 'panel' ? [node.id] : [node.id, ...node.children.flatMap(nodeIds)];
 }
 
 /** A hidden pane that is not docked (a stale entry for a docked one is ignored). */
@@ -229,7 +292,7 @@ function lastTabSlot(
 		groupId,
 		index,
 		anchors: byDistance(ids, index),
-		outer: unitSlot(root, unit, hidden)
+		outer: placeOf(root, unit, hidden, 1)
 	};
 }
 
@@ -246,20 +309,53 @@ function lastTabSlot(
 function lastSplitSlot(
 	root: DockNode | null,
 	unit: DockNode,
-	hidden: HiddenDockSlot[]
+	hidden: HiddenDockSlot[],
+	depth: number
 ): DockSlot | null {
-	const own = new Set([unit.id, ...collectPanelIds(unit)]);
-	const named = (slot: Extract<DockSlot, { kind: 'split' }>) => [
-		slot.neighborId,
-		...slot.anchors,
-		...(slot.otherAnchors ?? [])
-	];
-	const gone = hidden.filter(
-		(h) => h.slot.kind === 'split' && stillHidden(root, h) && !findNode(root, h.slot.splitId)
+	// Every id in `unit`: its panels and the tab groups / splits inside it (#727: `unit` may be a
+	// container, `placeOf`).
+	const own = new Set(nodeIds(unit));
+	const named = slotNames;
+	// The slots of gone splits: a hidden pane's own, and (#727) an `outer` of it - the place of a
+	// container every pane of which is hidden (its most recent one per container; `child` = that
+	// container, standing in for it in the split).
+	const byKey = new Map<string, HiddenDockSlot & { child?: string }>();
+	for (const h of hidden) {
+		if (!stillHidden(root, h)) continue;
+		let child: string | undefined;
+		// A pane named inside the container that is docked: the container is not all hidden.
+		let left = false;
+		let s: DockSlot | undefined = h.slot;
+		for (let level = 0; s && s.kind !== 'root' && level < MAX_SLOT_DEPTH; level++) {
+			if (left) break;
+			if (
+				s.kind === 'split' &&
+				!findNode(root, s.splitId) &&
+				(child === undefined || !findNode(root, child))
+			) {
+				const key = JSON.stringify([child ?? null, child === undefined ? h.id : '', s.splitId]);
+				byKey.delete(key);
+				byKey.set(key, { id: h.id, slot: s, child });
+			}
+			child = s.kind === 'tab' ? s.groupId : s.splitId;
+			left = slotNames(s).some((id) => findNode(root, id) !== null);
+			s = s.outer;
+		}
+	}
+	const gone = [...byKey.values()];
+	// Not a split that was inside `unit` (#727: its slot's `outer` chain names `unit`, say a row
+	// gone from inside a column that is `unit`).
+	const inside = (slot: DockSlot): boolean => slotContainers(slot).slice(1).includes(unit.id);
+	const candidates = gone.filter(
+		(h) => h.slot.kind === 'split' && named(h.slot).some((id) => own.has(id)) && !inside(h.slot)
 	);
-	const last = gone
-		.filter((h) => h.slot.kind === 'split' && named(h.slot).some((id) => own.has(id)))
-		.at(-1);
+	// The innermost one (#727): not a split another one was inside (say `in` of `column[row(in)[a,b],
+	// c]` over `s` once `a` and `c` are hidden), else the most recent.
+	const around = (h: HiddenDockSlot): boolean => {
+		const id = slotContainers(h.slot)[0];
+		return candidates.some((o) => o !== h && slotContainers(o.slot).slice(1).includes(id));
+	};
+	const last = candidates.filter((h) => !around(h)).at(-1) ?? candidates.at(-1);
 	if (!last || last.slot.kind !== 'split') return null;
 	const { splitId, direction } = last.slot;
 	const pending = gone.filter(
@@ -289,17 +385,58 @@ function lastSplitSlot(
 	// Else (`unit` docked into another split since, say a row it shares with a pane shown again
 	// later, or a slot without `outer`) the split's place is not known: no guess.
 	const parent = findParent(root, unit.id);
-	const atOuter = (outer: DockSlot | undefined): boolean =>
-		outer?.kind === 'root'
+	// A split around it that is gone too (#727, nested `outer`): its own place, and so on out.
+	const atOuter = (slot: DockSlot | undefined): boolean => {
+		let outer = slot;
+		for (
+			let depth = 0;
+			outer?.kind === 'split' && !findNode(root, outer.splitId) && depth < MAX_SLOT_DEPTH;
+			depth++
+		)
+			outer = outer.outer;
+		return outer?.kind === 'root'
 			? parent === null
 			: outer?.kind === 'split' &&
-				parent?.type === 'split' &&
-				parent.id === outer.splitId &&
-				parent.direction === outer.direction;
+					parent?.type === 'split' &&
+					parent.id === outer.splitId &&
+					parent.direction === outer.direction;
+	};
 	if (!pending.every((h) => h.slot.kind === 'split' && atOuter(h.slot.outer))) return null;
 	const ids = splitOrder([unit], pending);
-	const slot = splitSlotAt([unit], ids, unit.id, splitId, direction, 1 / ids.length);
-	return { ...slot, outer: unitSlot(root, unit, hidden) };
+	// The other hidden panes of a container standing in for it (`remnantPanes`).
+	const remnants = new Map<string, string[]>();
+	for (const e of pending) {
+		if (e.child === undefined || !ids.includes(e.id)) continue;
+		const more = hidden.filter(
+			(h) =>
+				h.id !== e.id &&
+				!ids.includes(h.id) &&
+				stillHidden(root, h) &&
+				slotContainers(h.slot).includes(e.child!)
+		);
+		if (more.length > 0)
+			remnants.set(
+				e.id,
+				more.map((h) => h.id)
+			);
+	}
+	const slot = splitSlotAt([unit], ids, unit.id, splitId, direction, 1 / ids.length, remnants);
+	if (depth + 1 >= MAX_SLOT_DEPTH) return slot;
+	// The split's place: inside a split that is gone too (#727), that one's place as the newest
+	// slot remembers it; else where `unit` is now.
+	const place = last.slot.outer;
+	const outer =
+		place?.kind === 'split' && !findNode(root, place.splitId)
+			? cut(place, depth + 1)
+			: hereOf(root, unit, hidden, depth + 1);
+	return { ...slot, outer };
+}
+
+/** `slot` as the slot `depth` deep: its `outer` chain cut at `MAX_SLOT_DEPTH`. */
+function cut(slot: DockSlot, depth: number): DockSlot {
+	if (slot.kind === 'root') return slot;
+	const { outer, ...rest } = slot;
+	return outer && depth + 1 < MAX_SLOT_DEPTH ? { ...rest, outer: cut(outer, depth + 1) } : rest;
 }
 
 /**
@@ -358,8 +495,74 @@ function unitSlot(
 		unit.id,
 		split.id,
 		split.direction,
-		split.sizes[own] ?? 1 / split.children.length
+		split.sizes[own] ?? 1 / split.children.length,
+		remnantPanes(root, split, [...hidden], ids)
 	);
+}
+
+/** The ids a slot names: a tab slot's anchors, a split slot's neighbour and anchors (both sides). */
+function slotNames(slot: DockSlot): string[] {
+	return slot.kind === 'tab'
+		? [...slot.anchors]
+		: slot.kind === 'split'
+			? [slot.neighborId, ...slot.anchors, ...(slot.otherAnchors ?? [])]
+			: [];
+}
+
+/**
+ * The hidden panes that belong to a child of `split` (#727): a pane hidden out of a container
+ * docked in that child, or one whose container (or one around it, by its `outer` chain) was a
+ * child of `split` and is gone, its panes left beside the pane named there (say
+ * `column[row[a,b], c]` with `a` hidden: `b` is all that is left of the row).
+ * Keyed by that child's id, so a slot taken in `split` counts them among the panels of that child
+ * (`anchors` / `otherAnchors`) - and `restoreSplit` wraps the whole child again once they are
+ * back. The ones counted in `split` already (`ids`) are left out.
+ */
+function remnantPanes(
+	root: DockNode | null,
+	split: DockSplitNode,
+	hidden: HiddenDockSlot[],
+	ids: string[]
+): Map<string, string[]> {
+	const out = new Map<string, string[]>();
+	const docked = (id: string) => findNode(root, id) !== null;
+	// The containers each hidden pane's slot names, by its `outer` chain.
+	const containers = new Map(hidden.map((h) => [h.id, slotContainers(h.slot)]));
+	for (const h of hidden) {
+		if (docked(h.id) || ids.includes(h.id)) continue;
+		// Hidden out of a tab group / split still docked inside a child: one of that child's panes
+		// (say `row[column[a,b,c], d]` with `a` hidden: `d`'s slot names it with `b` and `c`).
+		const [own] = slotContainers(h.slot);
+		if (own !== undefined && docked(own)) {
+			const child = split.children.find((c) => nodeIds(c).includes(own));
+			if (child) out.set(child.id, [...(out.get(child.id) ?? []), h.id]);
+			continue;
+		}
+		// The ids named on the way out: the pane's own container may name a pane left in the child
+		// when the one around it names only hidden panes (say a tab group inside the gone split).
+		const names: string[] = [];
+		let s: DockSlot | undefined = h.slot;
+		for (let depth = 0; s && s.kind !== 'root' && depth < MAX_SLOT_DEPTH; depth++, s = s.outer) {
+			names.push(...slotNames(s));
+			const outer: DockSlot | undefined = s.outer;
+			if (
+				outer?.kind !== 'split' ||
+				outer.splitId !== split.id ||
+				outer.direction !== split.direction
+			)
+				continue;
+			const container = s.kind === 'tab' ? s.groupId : s.splitId;
+			if (docked(container)) break;
+			// The child left of the container; or, every pane of it hidden, the hidden pane that
+			// stands for it among `ids` (`splitPending`: one per container).
+			const child =
+				split.children.find((c) => collectPanelIds(c).some((id) => names.includes(id)))?.id ??
+				ids.find((id) => !docked(id) && containers.get(id)?.includes(container));
+			if (child !== undefined) out.set(child, [...(out.get(child) ?? []), h.id]);
+			break;
+		}
+	}
+	return out;
 }
 
 /**
@@ -470,7 +673,8 @@ function splitSlotAt(
 	unitId: string,
 	splitId: string,
 	direction: 'row' | 'column',
-	size: number
+	size: number,
+	remnants: Map<string, string[]> = new Map()
 ): Extract<DockSlot, { kind: 'split' }> {
 	const index = ids.indexOf(unitId);
 	const hasNext = index + 1 < ids.length;
@@ -478,9 +682,9 @@ function splitSlotAt(
 	const panels = (side: string[], reverse: boolean) =>
 		side.flatMap((id) => {
 			const child = children.find((c) => c.id === id);
-			if (!child) return [id];
+			if (!child) return [id, ...(remnants.get(id) ?? [])];
 			const p = collectPanelIds(child);
-			return reverse ? p.reverse() : p;
+			return [...(reverse ? p.reverse() : p), ...(remnants.get(id) ?? [])];
 		});
 	const next = panels(ids.slice(index + 1), false);
 	const prev = panels(ids.slice(0, index).reverse(), true);
@@ -624,7 +828,7 @@ function restoreSplit(
 		break;
 	}
 	if (!found) return null;
-	const neighbor = liftOutOfTabs(root, found);
+	const neighbor = besideWhat(root, liftOutOfTabs(root, found), slot, before);
 	// Always a new split around the neighbour, even inside a split of the same direction (a
 	// row in a row from an edge dock, cross-review P2 on #725): splicing into that one would
 	// merge the gone split into it.
@@ -636,6 +840,33 @@ function restoreSplit(
 		sizes: before ? [share, 1 - share] : [1 - share, share]
 	};
 	return replaceNode(root, neighbor.id, () => split);
+}
+
+/**
+ * What a pane of the gone split of `slot` goes beside, found `node` (#727): `node`, or the node
+ * around it made of nothing but the panels the slot names on that side - the whole child of the
+ * split again (say `column[row[a,b], c]`: `c` goes beside the row `a` and `b` are in again, not
+ * beside `b`). Not above the split the gone one was in (`outer`), and only with an `outer` (a
+ * slot without one - older JSON, a region's - goes beside `node`, as before).
+ */
+function besideWhat(
+	root: DockNode,
+	node: DockNode,
+	slot: Extract<DockSlot, { kind: 'split' }>,
+	before: boolean
+): DockNode {
+	if (!slot.outer) return node;
+	const near = before === (slot.side === 'before');
+	const named = new Set(near ? [slot.neighborId, ...slot.anchors] : (slot.otherAnchors ?? []));
+	const stop = slot.outer.kind === 'split' ? slot.outer.splitId : null;
+	let target = node;
+	for (
+		let parent = findParent(root, target.id);
+		parent && parent.id !== stop && collectPanelIds(parent).every((id) => named.has(id));
+		parent = findParent(root, parent.id)
+	)
+		target = parent;
+	return target;
 }
 
 /**
@@ -657,10 +888,14 @@ export function restoreDockSlot(
 			: s.kind === 'split'
 				? restoreSplit(root, panel, s, makeId)
 				: null;
-	if (slot.kind === 'root') return null;
-	// The container's own place (#721) only after the container and the anchors. One level: an
-	// `outer` of an `outer` is not tried.
-	return place(slot) ?? (slot.outer ? place(slot.outer) : null);
+	// The container's own place (#721) only after the container and the anchors; then the place of
+	// the container around it (#727: nested `outer`), and so on, at most `MAX_SLOT_DEPTH` deep.
+	let s: DockSlot | undefined = slot;
+	for (let depth = 0; s && s.kind !== 'root' && depth < MAX_SLOT_DEPTH; depth++, s = s.outer) {
+		const next = place(s);
+		if (next) return next;
+	}
+	return null;
 }
 
 /**

@@ -77,8 +77,9 @@ export interface FloatingWindow {
  * `outer` (optional, #721) on a `tab` / `split` slot: where the container itself
  * (the tab group / split) was, as a `split` / `root` slot - tried, with the pane
  * placed as a bare pane, when the container and every anchor are gone (all of
- * its panes were taken out). A layout without it (older JSON) works as before,
- * so the layout `version` stays 2.
+ * its panes were taken out). It may have an `outer` of its own (#727): the place
+ * of the container around that one, tried next (at most 3 levels). A layout
+ * without it (older JSON) works as before, so the layout `version` stays 2.
  */
 export type DockSlot =
 	| { kind: 'tab'; groupId: string; index: number; anchors: string[]; outer?: DockSlot }
