@@ -36,7 +36,7 @@ describe('dockMessages (#729)', () => {
 		const en = render(dockMessages());
 		expect(Object.keys(en).length).toBe(Object.keys(render(defaultDockMessages)).length);
 		for (const [key, text] of Object.entries(en)) {
-			expect(text, key).not.toMatch(/[　-ヿ一-鿿＀-￯]/);
+			expect(text, key).not.toMatch(/[\u3000-\u30ff\u4e00-\u9fff\uff00-\uffef]/);
 			expect(text, key).not.toBe('');
 		}
 		expect(dockMessages().close?.('Chart')).toBe('Close Chart');
