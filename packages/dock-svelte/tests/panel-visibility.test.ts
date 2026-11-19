@@ -1194,8 +1194,8 @@ describe('slot memory: regressions found by walking every sequence (#721)', () =
 
 // Codex P2 on #732: b's slot names `r2`, and the chain of the splits around it (c1, r1, s) was cut at
 // `MAX_SLOT_DEPTH` (4 then; 8 now) before the root. The place of `s` that another hidden pane (a) remembers is
-// still b's place: b goes back into the row, not floating. (main of 82b82246 does not bring this one
-// back either; the main before #727 did.)
+// still b's place: b goes back into the row, not floating. (The main before #727, 82b82246, brings this
+// one back too; 243958c5, before #725, did not.)
 it('column[row[a,column[row[b,c],d]],e]: -a -e -c -d -b +d +b +e +c +a -> the old shape (an outer chain four splits deep)', () => {
 	const make = L['column[row[a,column[row[b,c],d]],e]'];
 	const dock = runSteps(make, '-a -e -c -d -b +d +b +e +c +a'.split(' '));
