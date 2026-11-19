@@ -843,13 +843,43 @@ describe('slot memory: a hidden container still holds its place in the outer spl
 		for (const id of ['b', 'c', 'd']) dock.show(id);
 		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 	});
+
+	it('row[a,column[b,c],d]: hide b,a, show b, hide d,c, show d,c,a -> the old shape (Codex P2)', () => {
+		// a's slot (taken while b was hidden) names only c, d; b is back in the column when c
+		// leaves, so c is not the whole surviving child and keeps its place in the column.
+		const make = (): DockNode => ({
+			type: 'split',
+			id: 's',
+			direction: 'row',
+			sizes: [0.3, 0.4, 0.3],
+			children: [
+				panel('a'),
+				{
+					type: 'split',
+					id: 'in',
+					direction: 'column',
+					sizes: [0.5, 0.5],
+					children: [panel('b'), panel('c')]
+				},
+				panel('d')
+			]
+		});
+		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		for (const id of ['b', 'a']) dock.dismiss(id);
+		dock.show('b');
+		for (const id of ['d', 'c']) dock.dismiss(id);
+		for (const id of ['d', 'c', 'a']) dock.show(id);
+		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
+	});
 });
 
 // Codex keeps finding regressions in orders that interleave hiding and showing (#725). Random
 // interleaved sequences (fixed seed) on a few layouts: every sequence that came back to the old
 // shape before #721 must still do so. `known` are the ones that do not come back now - each was
-// checked to fail before #721 too (main at 243958c5) - left out. If the generator changes,
-// regenerate it and check again against that version of `src/core/slot.ts`.
+// checked to fail before #721 too (main at 243958c5) - left out. If the generator or the layouts
+// change, regenerate it: log `failures` per layout with an empty list, once with that version of
+// `src/core/slot.ts` (`git show 243958c5:packages/dock-svelte/src/core/slot.ts`) and once with
+// this one; every failure now must be a failure there too, and the list is the failures now.
 describe('slot memory: interleaved hide / show orders do not regress', () => {
 	const even = (n: number) => Array.from({ length: n }, () => 1 / n);
 	const split = (id: string, direction: 'row' | 'column', children: DockNode[]): DockNode => ({
@@ -880,6 +910,16 @@ describe('slot memory: interleaved hide / show orders do not regress', () => {
 				panel('a'),
 				tabs('t', ['b', 'c']),
 				split('in', 'column', [panel('d'), panel('e')])
+			]),
+		'row[a,column[b,c],d]': () =>
+			split('s', 'row', [panel('a'), split('in', 'column', [panel('b'), panel('c')]), panel('d')]),
+		'column[a,row[b,c],d]': () =>
+			split('s', 'column', [panel('a'), split('in', 'row', [panel('b'), panel('c')]), panel('d')]),
+		'row[tabs[a,b],column[c,d],e]': () =>
+			split('s', 'row', [
+				tabs('t', ['a', 'b']),
+				split('in', 'column', [panel('c'), panel('d')]),
+				panel('e')
 			])
 	};
 	// mulberry32: a small seeded generator, so the sequences are the same on every run.
@@ -889,7 +929,10 @@ describe('slot memory: interleaved hide / show orders do not regress', () => {
 		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
 		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 	};
-	/** `-x` hides x, `+x` shows it; 6 steps with at least one show between hides, then the rest shown. */
+	/**
+	 * `-x` hides x, `+x` shows it; 6 to 10 steps (the count random too) with at least one show
+	 * between hides, then the rest shown.
+	 */
 	const sequences = (ids: string[], count: number, seed: number): string[] => {
 		const random = rng(seed);
 		const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
@@ -897,7 +940,8 @@ describe('slot memory: interleaved hide / show orders do not regress', () => {
 		for (let tries = 0; out.size < count && tries < count * 20; tries++) {
 			const hidden: string[] = [];
 			const steps: string[] = [];
-			for (let i = 0; i < 6; i++) {
+			const length = 6 + Math.floor(random() * 5);
+			for (let i = 0; i < length; i++) {
 				const docked = ids.filter((id) => !hidden.includes(id));
 				const show = hidden.length > 0 && (docked.length === 0 || random() < 0.4);
 				const id = pick(show ? hidden : docked);
@@ -913,13 +957,14 @@ describe('slot memory: interleaved hide / show orders do not regress', () => {
 		}
 		return [...out];
 	};
+	const COUNT = 600;
 	const known: Record<string, string[]> = knownInterleaved;
 	for (const [name, make] of Object.entries(layouts)) {
-		it(`${name}: 200 interleaved sequences`, () => {
+		it(`${name}: ${COUNT} interleaved sequences`, () => {
 			const want = JSON.stringify(shapeOf(make()));
 			const skip = new Set(known[name] ?? []);
 			const failures: string[] = [];
-			for (const seq of sequences(collectPanelIds(make()), 200, 721)) {
+			for (const seq of sequences(collectPanelIds(make()), COUNT, 721)) {
 				const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
 				for (const step of seq.split(' ')) {
 					if (step[0] === '-') dock.dismiss(step.slice(1));

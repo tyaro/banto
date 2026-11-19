@@ -239,8 +239,8 @@ function lastTabSlot(
  * or an anchor. The split's children are rebuilt from their slots (`splitOrder`), and the slot is
  * a child of that split, with `outer` = where `unit` is now. `size` is an even share (the share
  * the last child had is not known). The most recent such split (the last in `hidden`) wins.
- * Only when `unit` is the whole surviving child: no pane the slot names is docked outside it.
- * `null` when there is none.
+ * Only when `unit` is the whole surviving child: no pane named by any slot of that split is
+ * docked outside it. `null` when there is none.
  */
 function lastSplitSlot(
 	root: DockNode | null,
@@ -248,27 +248,29 @@ function lastSplitSlot(
 	hidden: HiddenDockSlot[]
 ): DockSlot | null {
 	const own = new Set([unit.id, ...collectPanelIds(unit)]);
-	// `unit` must be all that is left of the split's surviving child (Codex P2 on #725): a pane
-	// named there that is still docked outside `unit` (say `unit` is one pane of a surviving
-	// column) means the child is still there, so `unit` keeps its slot in that child.
-	const whole = (id: string) => own.has(id) || !findNode(root, id);
-	const names = (slot: Extract<DockSlot, { kind: 'split' }>) => {
-		const named = [slot.neighborId, ...slot.anchors, ...(slot.otherAnchors ?? [])];
-		return named.some((id) => own.has(id)) && named.every(whole);
-	};
-	const mine = hidden.filter(
-		(h) =>
-			h.slot.kind === 'split' &&
-			stillHidden(root, h) &&
-			!findNode(root, h.slot.splitId) &&
-			names(h.slot)
+	const named = (slot: Extract<DockSlot, { kind: 'split' }>) => [
+		slot.neighborId,
+		...slot.anchors,
+		...(slot.otherAnchors ?? [])
+	];
+	const gone = hidden.filter(
+		(h) => h.slot.kind === 'split' && stillHidden(root, h) && !findNode(root, h.slot.splitId)
 	);
-	const last = mine.at(-1);
+	const last = gone
+		.filter((h) => h.slot.kind === 'split' && named(h.slot).some((id) => own.has(id)))
+		.at(-1);
 	if (!last || last.slot.kind !== 'split') return null;
 	const { splitId, direction } = last.slot;
-	const pending = mine.filter(
+	const pending = gone.filter(
 		(h) => h.slot.kind === 'split' && h.slot.splitId === splitId && h.slot.direction === direction
 	);
+	// `unit` must be all that is left of the split's surviving child (Codex P2 on #725, twice): a
+	// pane named by ANY slot of the split that is docked outside `unit` (say `unit` is one pane
+	// of a surviving column) means the child is still there, so `unit` keeps its slot in that
+	// child. One old slot is not enough: a pane hidden when it was taken (so not named there) may
+	// be docked again beside `unit` - a newer slot of the split names it.
+	const whole = (id: string) => own.has(id) || !findNode(root, id);
+	if (!pending.every((h) => h.slot.kind === 'split' && named(h.slot).every(whole))) return null;
 	const ids = splitOrder([unit], pending);
 	const slot = splitSlotAt([unit], ids, unit.id, splitId, direction, 1 / ids.length);
 	return { ...slot, outer: unitSlot(root, unit, hidden) };
