@@ -203,6 +203,70 @@ describe('GridColumn.renderer / tone (#713)', () => {
 	});
 });
 
+describe('cell / editing cells skip the view (#713)', () => {
+	interface V {
+		id: number;
+		name: string;
+		url: string | undefined;
+	}
+	const vrows: V[] = [{ id: 1, name: 'a', url: undefined }];
+
+	it('a `cell` column never calls format, but its tone still applies', () => {
+		const format = vi.fn((v: unknown) => String(v));
+		const cols: GridColumn<V>[] = [
+			{
+				id: 'url',
+				header: 'URL',
+				accessor: 'url',
+				format,
+				cell: () => ({ text: '-' }),
+				tone: () => 'danger'
+			}
+		];
+		const { container } = render(BantoGrid<V>, {
+			rows: vrows,
+			columns: cols,
+			state: new GridState<V>(cols),
+			getRowId: (row: V) => row.id
+		});
+		const cell = container.querySelector('[data-cell-row="0"][data-cell-field="url"]');
+		expect(cell?.textContent).toContain('-');
+		expect(cell?.getAttribute('data-tone')).toBe('danger');
+		expect(format).not.toHaveBeenCalled();
+	});
+
+	it('an editing cell does not call format', async () => {
+		const format = vi.fn((v: unknown) => String(v));
+		const cols: GridColumn<V>[] = [
+			{
+				id: 'name',
+				header: 'Name',
+				accessor: 'name',
+				editable: true,
+				editor: 'text',
+				renderer: 'badge',
+				format
+			}
+		];
+		const { container } = render(BantoGrid<V>, {
+			rows: vrows,
+			columns: cols,
+			state: new GridState<V>(cols),
+			getRowId: (row: V) => row.id,
+			onCellEdit: vi.fn()
+		});
+		const cell = container.querySelector<HTMLElement>(
+			'[data-cell-row="0"][data-cell-field="name"]'
+		)!;
+		expect(format).toHaveBeenCalled();
+		format.mockClear();
+		await fireEvent.doubleClick(cell);
+		await tick();
+		expect(screen.getByRole('textbox', { name: 'Name' })).toBeTruthy();
+		expect(format).not.toHaveBeenCalled();
+	});
+});
+
 describe('renderer link keyboard (#713)', () => {
 	interface LinkRow {
 		id: number;

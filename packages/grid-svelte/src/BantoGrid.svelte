@@ -29,7 +29,7 @@
 	import { computeWindow, parseRowHeightPx } from './core/virtual';
 	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
 	import { prepareCommit, isColumnEditable } from './core/edit';
-	import { resolveCellPresentation } from './core/cellView';
+	import { resolveCellPresentation, resolveTone } from './core/cellView';
 	import { buildGroupedView, type FlatEntry } from './core/group';
 	import HeaderCell from './HeaderCell.svelte';
 	import CellEditError from './CellEditError.svelte';
@@ -1340,8 +1340,16 @@
 						{@const isEditingCell =
 							editing?.rowId === getRowId(row) && editing?.field === column.id}
 						{@const linkInfo = column.cell?.(row)}
-						{@const presentation = column.render ? null : resolveCellPresentation(column, row)}
-						{@const tone = presentation?.tone ?? null}
+						<!-- `render` draws its own content; `cell` and an editing cell never use the
+						     view, so only the tone is resolved (no format / href call). Only the
+						     `{:else}` branch below reads `presentation!`. -->
+						{@const viewless = !!column.render || !!linkInfo || isEditingCell}
+						{@const presentation = viewless ? null : resolveCellPresentation(column, row)}
+						{@const tone = presentation
+							? presentation.tone
+							: column.render
+								? null
+								: resolveTone(column, row)}
 						<!--
 						Keyboard focus/activation for cells is handled at the grid
 						container level (roving "virtual" focus via `selection.active`
