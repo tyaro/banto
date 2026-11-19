@@ -332,6 +332,45 @@ describe('focus and scroll after a move', () => {
 		expect(document.activeElement).toBe(input);
 	});
 
+	it('the scroll offset of the standard .body frame comes back after an undock and a dock back', async () => {
+		// Offsets live per element (jsdom has no layout): the frame is re-created by each move.
+		const tops = new WeakMap<Element, number>();
+		const proto = Element.prototype;
+		const original = Object.getOwnPropertyDescriptor(proto, 'scrollTop');
+		Object.defineProperty(proto, 'scrollTop', {
+			configurable: true,
+			get(this: Element) {
+				return tops.get(this) ?? 0;
+			},
+			set(this: Element, v: number) {
+				tops.set(this, v);
+			}
+		});
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'p' });
+			const bodyOf = () =>
+				document.querySelector('[data-dock-persistent-slot="p"]')!.closest<HTMLElement>('.body')!;
+			const first = bodyOf();
+			first.scrollTop = 70;
+			first.dispatchEvent(new Event('scroll'));
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			await settle();
+			const floating = bodyOf();
+			expect(floating).not.toBe(first);
+			expect(floating.scrollTop).toBe(70);
+			floating.scrollTop = 90;
+			floating.dispatchEvent(new Event('scroll'));
+			hit = () => document.querySelector('[data-dock-drop-id="t"]');
+			dragFrom(dialogOf('P')!.querySelector('.titlebar')!, ...CENTRE);
+			await settle();
+			expect(dock.layout.floating.find((w) => w.id === 'p')).toBeUndefined();
+			expect(bodyOf().scrollTop).toBe(90);
+		} finally {
+			if (original) Object.defineProperty(proto, 'scrollTop', original);
+			else Reflect.deleteProperty(proto, 'scrollTop');
+		}
+	});
+
 	it('auto-hide and pin back: same DOM; a focus inside stays there (the host does not move it to the pin)', async () => {
 		const layout: DockLayout = {
 			version: 2,

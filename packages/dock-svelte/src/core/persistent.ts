@@ -23,7 +23,11 @@
  * - **Scroll.** Every element inside a content that scrolls is recorded on its
  *   `scroll` event (capture on the content), and the recorded offsets are put
  *   back after each move into a receptacle (an element that is not rendered -
- *   the stash is `hidden` - has no scroll offset of its own).
+ *   the stash is `hidden` - has no scroll offset of its own). The standard
+ *   frame around a receptacle (`.body` of the tree, a window, an auto-hide
+ *   flyout; `overflow: auto`) is outside the content and is re-created by a
+ *   move: its offset is recorded on its own `scroll` event, per pane, and put
+ *   back onto the `.body` around the receptacle the content moved into.
  * - **`iframe`.** A moved `iframe` loads its document again (browsers do that on
  *   every re-insertion); nothing here can keep it. README "Persistent panes".
  *
@@ -42,6 +46,8 @@ interface Entry {
 	slots: HTMLElement[];
 	/** Last seen scroll offsets of the scrolled elements inside the content. */
 	scroll: Map<Element, { top: number; left: number }>;
+	/** Last seen scroll offset of the standard `.body` frame around a receptacle. */
+	body: { top: number; left: number } | null;
 	/** The focused element inside the content right before a structure change. */
 	focus: HTMLElement | null;
 	onScroll: (event: Event) => void;
@@ -71,6 +77,7 @@ export class PersistentContents {
 					entry.content = null;
 					entry.home = null;
 					entry.scroll.clear();
+					entry.body = null;
 					entry.focus = null;
 				}
 				this.#forgetIfUnused(panelId);
@@ -83,8 +90,19 @@ export class PersistentContents {
 		return (el) => {
 			const entry = this.#entry(panelId);
 			entry.slots.push(el);
+			// The frame scrolls itself (its `scroll` event does not bubble to the receptacle).
+			const frame = el.closest<HTMLElement>('.body');
+			const onFrameScroll = () => {
+				if (!frame || entry.slots.at(-1) !== el) return;
+				entry.body =
+					frame.scrollTop === 0 && frame.scrollLeft === 0
+						? null
+						: { top: frame.scrollTop, left: frame.scrollLeft };
+			};
+			frame?.addEventListener('scroll', onFrameScroll);
 			this.#place(panelId);
 			return () => {
+				frame?.removeEventListener('scroll', onFrameScroll);
 				const i = entry.slots.indexOf(el);
 				if (i !== -1) entry.slots.splice(i, 1);
 				this.#place(panelId);
@@ -122,6 +140,7 @@ export class PersistentContents {
 				home: null,
 				slots: [],
 				scroll,
+				body: null,
 				focus: null,
 				onScroll: (event) => {
 					const target = event.target;
@@ -176,6 +195,11 @@ export class PersistentContents {
 				continue;
 			}
 			if (!moved.has(panelId)) continue;
+			const frame = entry.slots.at(-1)?.closest<HTMLElement>('.body');
+			if (frame && entry.body) {
+				frame.scrollTop = entry.body.top;
+				frame.scrollLeft = entry.body.left;
+			}
 			for (const [target, offset] of entry.scroll) {
 				if (!el.contains(target)) {
 					entry.scroll.delete(target);
