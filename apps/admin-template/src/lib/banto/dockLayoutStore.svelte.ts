@@ -270,7 +270,18 @@ export function createDockLayoutStore(options: DockLayoutStoreOptions): DockLayo
 		reset() {
 			if (disposed) return;
 			const layout = options.defaultLayout();
-			if (layout !== null) dock.layout = layout;
+			if (layout === null) return;
+			dock.layout = layout;
+			if (!live()) return;
+			// An explicit reset is saved even when the default is what is shown already
+			// (e.g. the read failed and the default was drawn): otherwise the next good
+			// read brings the old layout back. `changed` does not fire for an equal JSON.
+			const json = dock.serialize();
+			baseline = null;
+			writeLocal(json);
+			pending = json;
+			clearTimeout(timer);
+			timer = setTimeout(flush, debounceMs);
 		},
 
 		dispose() {

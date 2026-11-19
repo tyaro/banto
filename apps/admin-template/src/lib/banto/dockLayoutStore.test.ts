@@ -339,4 +339,21 @@ describe('saving', () => {
 		vi.advanceTimersByTime(500);
 		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(DEFAULT));
 	});
+
+	it('saves an explicit reset even when the default is already shown (read failed)', async () => {
+		const provider = fakeProvider(async () => {
+			throw new Error('offline');
+		});
+		const { dock, store, report } = setup({ provider });
+		await store.load();
+		report();
+		expect(dock.layout.floating.map((w) => w.id)).toEqual(['default']);
+		vi.runAllTimers();
+		expect(provider.set).not.toHaveBeenCalled();
+		store.reset();
+		report();
+		vi.advanceTimersByTime(500);
+		expect(provider.set).toHaveBeenCalledTimes(1);
+		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(DEFAULT));
+	});
 });
