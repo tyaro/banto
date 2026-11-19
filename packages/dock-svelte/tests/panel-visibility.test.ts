@@ -11,6 +11,7 @@ import { collectPanelIds, findNode } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import { createDockState, type DockState } from '../src/state.svelte';
 import type { DockLayout, DockNode, DockSplitNode, DockTabGroupNode } from '../src/types';
+import knownInterleaved from './panel-visibility.interleaved-known.json';
 
 function counterMakeId(): () => string {
 	let n = 0;
@@ -817,5 +818,117 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 				});
 			}
 		}
+	}
+});
+
+// Codex P2 on #725 (the last tab recorded as a `tab` slot): the tab group's place in the outer
+// split must still be counted among that split's children by the panes hidden after it.
+describe('slot memory: a hidden container still holds its place in the outer split', () => {
+	it('row[tabs[a,b],c,d]: hide b,a,c, show a, hide d, show b,c,d -> the old shape', () => {
+		const make = (): DockNode => ({
+			type: 'split',
+			id: 's',
+			direction: 'row',
+			sizes: [0.4, 0.3, 0.3],
+			children: [
+				{ type: 'tabs', id: 't', activeIndex: 0, children: [panel('a'), panel('b')] },
+				panel('c'),
+				panel('d')
+			]
+		});
+		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		for (const id of ['b', 'a', 'c']) dock.dismiss(id);
+		dock.show('a');
+		dock.dismiss('d');
+		for (const id of ['b', 'c', 'd']) dock.show(id);
+		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
+	});
+});
+
+// Codex keeps finding regressions in orders that interleave hiding and showing (#725). Random
+// interleaved sequences (fixed seed) on a few layouts: every sequence that came back to the old
+// shape before #721 must still do so. `known` are the ones that do not come back now - each was
+// checked to fail before #721 too (main at 243958c5) - left out. If the generator changes,
+// regenerate it and check again against that version of `src/core/slot.ts`.
+describe('slot memory: interleaved hide / show orders do not regress', () => {
+	const even = (n: number) => Array.from({ length: n }, () => 1 / n);
+	const split = (id: string, direction: 'row' | 'column', children: DockNode[]): DockNode => ({
+		type: 'split',
+		id,
+		direction,
+		sizes: even(children.length),
+		children
+	});
+	const tabs = (id: string, ids: string[]): DockNode => ({
+		type: 'tabs',
+		id,
+		activeIndex: 0,
+		children: ids.map(panel)
+	});
+	const layouts: Record<string, () => DockNode> = {
+		'row[tabs[a,b],c,d]': () => split('s', 'row', [tabs('t', ['a', 'b']), panel('c'), panel('d')]),
+		'row[a,b,c,d]': () => split('s', 'row', ['a', 'b', 'c', 'd'].map(panel)),
+		'row[column[a,b],c,d]': () =>
+			split('s', 'row', [split('in', 'column', [panel('a'), panel('b')]), panel('c'), panel('d')]),
+		'column[tabs[a,b,c],row[d,e]]': () =>
+			split('s', 'column', [
+				tabs('t', ['a', 'b', 'c']),
+				split('in', 'row', [panel('d'), panel('e')])
+			]),
+		'row[a,tabs[b,c],column[d,e]]': () =>
+			split('s', 'row', [
+				panel('a'),
+				tabs('t', ['b', 'c']),
+				split('in', 'column', [panel('d'), panel('e')])
+			])
+	};
+	// mulberry32: a small seeded generator, so the sequences are the same on every run.
+	const rng = (seed: number) => () => {
+		seed = (seed + 0x6d2b79f5) | 0;
+		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+	/** `-x` hides x, `+x` shows it; 6 steps with at least one show between hides, then the rest shown. */
+	const sequences = (ids: string[], count: number, seed: number): string[] => {
+		const random = rng(seed);
+		const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
+		const out = new Set<string>();
+		for (let tries = 0; out.size < count && tries < count * 20; tries++) {
+			const hidden: string[] = [];
+			const steps: string[] = [];
+			for (let i = 0; i < 6; i++) {
+				const docked = ids.filter((id) => !hidden.includes(id));
+				const show = hidden.length > 0 && (docked.length === 0 || random() < 0.4);
+				const id = pick(show ? hidden : docked);
+				if (show) hidden.splice(hidden.indexOf(id), 1);
+				else hidden.push(id);
+				steps.push(`${show ? '+' : '-'}${id}`);
+			}
+			while (hidden.length > 0)
+				steps.push(`+${hidden.splice(Math.floor(random() * hidden.length), 1)[0]}`);
+			// Interleaved only: a show before the last hide.
+			const lastHide = steps.map((s) => s[0]).lastIndexOf('-');
+			if (steps.slice(0, lastHide).some((s) => s[0] === '+')) out.add(steps.join(' '));
+		}
+		return [...out];
+	};
+	const known: Record<string, string[]> = knownInterleaved;
+	for (const [name, make] of Object.entries(layouts)) {
+		it(`${name}: 200 interleaved sequences`, () => {
+			const want = JSON.stringify(shapeOf(make()));
+			const skip = new Set(known[name] ?? []);
+			const failures: string[] = [];
+			for (const seq of sequences(collectPanelIds(make()), 200, 721)) {
+				const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+				for (const step of seq.split(' ')) {
+					if (step[0] === '-') dock.dismiss(step.slice(1));
+					else dock.show(step.slice(1));
+				}
+				const got = JSON.stringify(shapeOf(dock.layout.docked));
+				if (got !== want && !skip.has(seq)) failures.push(seq);
+			}
+			expect(failures).toEqual([]);
+		});
 	}
 });

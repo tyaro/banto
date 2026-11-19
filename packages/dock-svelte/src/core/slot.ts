@@ -322,13 +322,7 @@ function unitSlot(
 	const split = findParent(root, unit.id);
 	if (!split || split.type !== 'split') return { kind: 'root' };
 	const own = split.children.findIndex((c) => c.id === unit.id);
-	const pending = [...hidden].filter(
-		(h) =>
-			h.slot.kind === 'split' &&
-			h.slot.splitId === split.id &&
-			h.slot.direction === split.direction &&
-			!findNode(root, h.id)
-	);
+	const pending = splitPending(root, split, [...hidden]);
 	const ids = splitOrder(split.children, pending);
 	return splitSlotAt(
 		split.children,
@@ -338,6 +332,44 @@ function unitSlot(
 		split.direction,
 		split.sizes[own] ?? 1 / split.children.length
 	);
+}
+
+/**
+ * The hidden panes counted among the children of `split`, each with its split slot there: the
+ * ones whose slot is in `split`, and (Codex P2 on #725) a container every pane of which is
+ * hidden - its last pane remembers the container (a `tab` slot, or a split slot of a gone
+ * split) and the container's place in `split` as `outer`. That place stays counted, so the panes
+ * hidden after it keep it among their anchors. One entry per container (the most recent).
+ */
+function splitPending(
+	root: DockNode | null,
+	split: DockSplitNode,
+	hidden: HiddenDockSlot[]
+): HiddenDockSlot[] {
+	const docked = (id: string) => findNode(root, id) !== null;
+	// Not a type guard: a split slot of another split is still a split slot.
+	const inSplit = (slot: DockSlot | undefined): boolean =>
+		slot?.kind === 'split' && slot.splitId === split.id && slot.direction === split.direction;
+	// The container's own place is gone: neither it nor a pane it names is docked.
+	const gone = (slot: DockSlot): boolean =>
+		slot.kind === 'tab'
+			? !docked(slot.groupId) && !slot.anchors.some(docked)
+			: slot.kind === 'split' &&
+				!docked(slot.splitId) &&
+				![slot.neighborId, ...slot.anchors, ...(slot.otherAnchors ?? [])].some(docked);
+	const direct: HiddenDockSlot[] = [];
+	const outer = new Map<string, HiddenDockSlot>();
+	for (const h of hidden) {
+		const slot = h.slot;
+		if (docked(h.id) || slot.kind === 'root') continue;
+		if (inSplit(slot)) direct.push(h);
+		else if (slot.outer && inSplit(slot.outer) && gone(slot)) {
+			const key = slot.kind === 'tab' ? slot.groupId : slot.splitId;
+			outer.delete(key);
+			outer.set(key, { id: h.id, slot: slot.outer });
+		}
+	}
+	return [...direct, ...outer.values()];
 }
 
 /**
@@ -537,7 +569,6 @@ function restoreSplit(
 	}
 	if (!found) return null;
 	const neighbor = liftOutOfTabs(root, found);
-	const parent = findParent(root, neighbor.id);
 	// Always a new split around the neighbour, even inside a split of the same direction (a
 	// row in a row from an edge dock, cross-review P2 on #725): splicing into that one would
 	// merge the gone split into it.
