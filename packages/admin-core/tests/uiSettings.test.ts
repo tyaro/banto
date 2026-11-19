@@ -259,7 +259,7 @@ describe('createHttpUiSettings write serialization', () => {
 		]);
 	});
 
-	it('drops a held write when the token changed, and its set resolves', async () => {
+	it('drops a held write when the token changed: the sent set resolves, the dropped one rejects unauthorized', async () => {
 		const { fetchFn, pending, calls } = makeFetch();
 		let token: string | null = 'tok';
 		const provider = createHttpUiSettings({ getToken: () => token, fetchFn });
@@ -270,7 +270,7 @@ describe('createHttpUiSettings write serialization', () => {
 		token = 'other';
 		pending[0].resolve(ok204());
 		await expect(p1).resolves.toBeUndefined();
-		await expect(p2).resolves.toBeUndefined();
+		await expect(p2).rejects.toMatchObject({ body: { kind: 'unauthorized' } });
 		expect(putBodies(calls)).toEqual(['{"value":"a"}']);
 	});
 
@@ -284,15 +284,18 @@ describe('createHttpUiSettings write serialization', () => {
 		await flush();
 		token = null;
 		pending[0].resolve(ok204());
-		await Promise.all([p1, p2]);
+		await expect(p1).resolves.toBeUndefined();
+		await expect(p2).rejects.toMatchObject({ body: { kind: 'unauthorized' } });
 		expect(calls).toHaveLength(1);
 	});
 
-	it('does not send when there is no token, and resolves', async () => {
+	it('does not send when there is no token, and rejects unauthorized', async () => {
 		const { fetchFn, calls } = makeFetch();
 		const provider = createHttpUiSettings({ getToken: () => null, fetchFn });
 
-		await expect(provider.set('theme.mode', 'a')).resolves.toBeUndefined();
+		await expect(provider.set('theme.mode', 'a')).rejects.toMatchObject({
+			body: { kind: 'unauthorized' }
+		});
 		expect(calls).toHaveLength(0);
 	});
 
@@ -449,7 +452,7 @@ describe('createTauriUiSettings write serialization', () => {
 			revision = 'rev-bob';
 			pending[0].resolve(undefined);
 			await expect(p1).resolves.toBeUndefined();
-			await expect(p2).resolves.toBeUndefined();
+			await expect(p2).rejects.toMatchObject({ body: { kind: 'unauthorized' } });
 			await flush();
 			expect(calls.map((c) => c.args)).toEqual([{ key: 'theme.mode', value: 'a' }]);
 		});

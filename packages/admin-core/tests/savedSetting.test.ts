@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ProviderError } from '../src/errors';
-import type { UiSettingsProvider } from '../src/providers/uiSettings';
+import { createHttpUiSettings, type UiSettingsProvider } from '../src/providers/uiSettings';
 import {
 	createSavedSetting,
 	type SavedSetting,
@@ -126,6 +126,34 @@ describe('save', () => {
 		expect(s.saved).toEqual({ x: 1 });
 		expect(s.current).toEqual({ x: 2 });
 		expect(s.dirty).toBe(true);
+	});
+});
+
+describe('a write dropped by the provider (#707)', () => {
+	it('is not treated as saved: save() is false, saved unchanged, error set', async () => {
+		let token: string | null = 'tok-a';
+		const calls: string[] = [];
+		let release!: () => void;
+		const gate = new Promise<void>((res) => (release = res));
+		const gated = (async (_url: string, init: RequestInit) => {
+			calls.push(String(init.body));
+			await gate;
+			return new Response(null, { status: 204 });
+		}) as unknown as typeof fetch;
+		const provider = createHttpUiSettings({ getToken: () => token, fetchFn: gated });
+		// An in-flight write for the same key holds the next one back.
+		const inflight = provider.set('layout', raw(1));
+		const s = createSavedSetting(options(provider));
+		s.set({ x: 2 });
+		const done = s.save();
+		token = 'tok-b'; // the session changed while the write was held
+		release();
+		await inflight;
+		expect(await done).toBe(false);
+		expect(s.saved).toBeUndefined();
+		expect(s.error).toBeInstanceOf(ProviderError);
+		expect((s.error as ProviderError).body.kind).toBe('unauthorized');
+		expect(calls).toEqual([JSON.stringify({ value: raw(1) })]);
 	});
 });
 

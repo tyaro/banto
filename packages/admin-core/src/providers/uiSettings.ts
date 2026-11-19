@@ -34,9 +34,11 @@
  *   checked (as before) and the Tauri command saves for whoever is logged in.
  * - `get(key)` waits until that key's writes (the in-flight one and the held
  *   one) are done, then reads. A failed write never makes `get` reject.
- * - `set` resolves when its write was sent and succeeded, or was dropped
- *   (token mismatch / no token / superseded by a later value); it rejects only
- *   when its own write was sent and failed.
+ * - `set` resolves when its write was sent and succeeded, or was superseded by
+ *   a later value (an intermediate value, never sent). It rejects when its own
+ *   write was sent and failed, or was dropped for a session difference / no
+ *   token (`ProviderError` kind `unauthorized`, same outcome as the old 401), so
+ *   callers never treat an unsent value as saved.
  * - Key validation still fails immediately, at the `set`/`get` call.
  */
 import { ProviderError, type ErrorBody } from '../errors';
@@ -96,8 +98,8 @@ interface PendingWrite {
  * described in the file header. Module-private; shared by the Tauri and HTTP
  * providers. `getSessionKey` identifies the session (HTTP: token, Tauri:
  * credential revision); when omitted nothing is dropped for a session change.
- * `requireKey` additionally drops writes whose key was empty/null at accept time
- * (HTTP: no token).
+ * A write dropped for a session difference is rejected with `unauthorized`. `requireKey` additionally drops writes whose key was
+ * empty/null at accept time (HTTP: no token).
  */
 function serializeWrites(
 	inner: UiSettingsProvider,
@@ -120,8 +122,10 @@ function serializeWrites(
 		while (item) {
 			const current: PendingWrite = item;
 			if (shouldDrop(current)) {
-				// Session changed (or none) since the write was accepted: drop it.
-				current.settle.forEach((s) => s.resolve());
+				// Session changed (or none) since the write was accepted: drop it, and
+				// reject so the caller does not treat an unsent value as saved.
+				const dropped = new ProviderError({ kind: 'unauthorized' });
+				current.settle.forEach((s) => s.reject(dropped));
 			} else {
 				try {
 					await inner.set(key, current.value);
@@ -211,7 +215,7 @@ export interface TauriUiSettingsOptions {
 	invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 	/**
 	 * ふつうは `authProvider.credentialRevision()`。受け付け時と送る直前で違えば、
-	 * 控えた書き込みを送らずに捨てる。省略時はセッションを見ない（従来どおり）。
+	 * 控えた書き込みを送らずに捨てる（unauthorized で reject）。省略時はセッションを見ない（従来どおり）。
 	 */
 	getSessionRevision?: () => string;
 }
