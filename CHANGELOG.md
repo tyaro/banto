@@ -27,6 +27,10 @@
 - `@banto/dock-svelte` の `DockHost` に `persistent?: (panelId) => boolean`（据え置き、#663 段階 ④ PR-1）。その pane の中身は木の外で 1 回だけ描き、受け皿へ DOM ごと移すので、undock / dock・外周へのドッキング・周りの組み替え・自動で隠す・タブの切替で作り直さない（フォーカスと scroll 位置は移したあとに戻す。`iframe` は読み直される）。`keepMounted` を兼ねる。`DockPanelChange` の `dock` / `undock` / `move-docked` / `auto-hide` / `reparent` の `remount` の型を `true` から `boolean` に広げた（`persistent` の pane は `false`）。
 - `@banto/dock-svelte`: キーボードだけでパネルを動かせるように（#663 段階 ④ PR-2）。タイトルバーの「パネルの操作」メニュー（外周・タブ・隣へ分割・浮かせる・元の場所へ）と `DockHost.movePanel`、結果の `aria-live` の読み上げ。ドラッグと同じ capabilities・`dropCenter`/`dropSplit`・`beforePanelChange` を通り、承認待ちの間に移動できなくなったら適用しない。`DockMessages` にキーを追加（`Required<DockMessages>` を使う利用側は型エラー）。同じ split から続けて隠した・浮かせた pane は、どの順で戻しても元の並びに戻る（`DockSlot` の split に任意の `otherAnchors` を追加）。
 
+### Changed
+
+- テンプレート（B. コピーしたテンプレート）: ダッシュボードのレイアウトの保存を `src/lib/banto/dockLayoutStore.svelte.ts` に出し、保存値を利用者とセッションに結び付けた（#663 段階 ④ PR-5、three-pane-dock-plan §4.4）。localStorage の写しは確定した利用者のキー `banto.dock.dashboard:<owner>`（`account:<id>`・`local`・`publicViewer` など）でだけ読み書きし、利用者が確定していなければ使わない。古い固定キー `banto.dock.dashboard` は読まずに消す。設定（`UiSettingsProvider` の `dock.dashboard`）の読み込み結果・debounce 中の書き込み・unmount の flush は、取得した時点のセッション（`currentSessionScope()`）が替わっていれば捨てる。設定が空・エラー・壊れた値のときは写しではなく既定の配置に戻す（以前は写しを残した）。既定の配置・読み込んだ配置は設定へ書き戻さない。scaffold の dock の削除にこのファイルとテストを足した。
+
 ## [7.8.0] - 2026-11-19
 
 **v7.8.0 — `@banto/admin-core` の UiSettings のプロバイダ（HTTP・Tauri）の書き込みをキーごとに直列化（#707、PR #708）。** 版の種類: minor（後方互換の機能追加）。理由: `TauriUiSettingsOptions` に省略可能な `getSessionRevision` を足した。`crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（`v7.7.0` との差分で確認）。migration なし。
