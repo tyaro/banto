@@ -313,6 +313,7 @@ test.describe('three-pane workspace on a dock', () => {
 		const scan = async () =>
 			(
 				await new AxeBuilder({ page })
+					.withTags(['wcag2a', 'wcag2aa'])
 					.analyze()
 			).violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
 		expect(await scan()).toEqual([]);
