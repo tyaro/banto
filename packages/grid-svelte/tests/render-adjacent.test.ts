@@ -143,3 +143,62 @@ describe('BantoGrid.adjacentRow (#591)', () => {
 		expect(component.adjacentRow(3, -1)).toBeUndefined();
 	});
 });
+
+describe('GridColumn.renderer / tone (#713)', () => {
+	interface R {
+		id: number;
+		status: string;
+		done: number;
+		ok: boolean;
+	}
+	const data: R[] = [
+		{ id: 1, status: '稼働', done: 0.4, ok: true },
+		{ id: 2, status: '停止', done: 1, ok: false }
+	];
+	const cols: GridColumn<R>[] = [
+		{
+			id: 'status',
+			header: '状態',
+			accessor: 'status',
+			renderer: 'badge',
+			tone: (v) => (v === '稼働' ? 'success' : 'danger')
+		},
+		{ id: 'done', header: '進捗', accessor: 'done', renderer: 'progress' },
+		{ id: 'ok', header: '有効', accessor: 'ok', renderer: 'boolean' }
+	];
+
+	it('draws a badge, an accessible progressbar and a readable boolean', () => {
+		const { container } = render(BantoGrid<R>, {
+			rows: data,
+			columns: cols,
+			state: new GridState<R>(cols),
+			getRowId: (row: R) => row.id
+		});
+		expect(container.querySelector('.cell-badge')?.textContent).toBe('稼働');
+		expect(
+			container
+				.querySelector('[data-cell-row="0"][data-cell-field="status"]')
+				?.getAttribute('data-tone')
+		).toBe('success');
+		const bars = screen.getAllByRole('progressbar');
+		expect(bars[0].getAttribute('aria-valuenow')).toBe('40');
+		expect(bars[0].getAttribute('aria-valuetext')).toBe('40%');
+		expect(bars[1].getAttribute('aria-valuenow')).toBe('100');
+		const okCells = container.querySelectorAll('[data-cell-field="ok"]');
+		expect(okCells[0].textContent).toContain('はい');
+		expect(okCells[1].textContent).toContain('いいえ');
+	});
+
+	it('boolean labels come from messages', () => {
+		const { container } = render(BantoGrid<R>, {
+			rows: data,
+			columns: cols,
+			state: new GridState<R>(cols),
+			getRowId: (row: R) => row.id,
+			messages: { booleanTrue: () => 'yes', booleanFalse: () => 'no' }
+		});
+		expect(
+			container.querySelector('[data-cell-row="0"][data-cell-field="ok"]')?.textContent
+		).toContain('yes');
+	});
+});

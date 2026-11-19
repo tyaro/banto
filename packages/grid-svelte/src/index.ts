@@ -34,6 +34,7 @@ export { filterRows } from './core/filter';
 export { searchRows, searchableColumns } from './core/search';
 export { computeWindow, type ComputeWindowParams, type WindowResult } from './core/virtual';
 export { rangeToTsv, parseTsv, parseCellInput } from './core/clipboard';
+export { resolveCellView, resolveTone, safeHref, cellText, type CellView } from './core/cellView';
 export { prepareCommit, type PrepareCommitResult } from './core/edit';
 export { buildGroupedView, type GroupEntry, type RowEntry, type FlatEntry } from './core/group';
 export {
@@ -76,6 +77,8 @@ export type {
 	CellEditorType,
 	CellEdit,
 	CellRange,
-	AggregateKind
+	AggregateKind,
+	CellRenderer,
+	CellTone
 } from './types';
 export { DEFAULT_COLUMN_WIDTH, DEFAULT_MIN_WIDTH } from './types';

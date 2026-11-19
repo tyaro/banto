@@ -29,6 +29,7 @@
 	import { computeWindow, parseRowHeightPx } from './core/virtual';
 	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
 	import { prepareCommit, isColumnEditable } from './core/edit';
+	import { cellText, resolveCellView, resolveTone } from './core/cellView';
 	import { buildGroupedView, type FlatEntry } from './core/group';
 	import HeaderCell from './HeaderCell.svelte';
 	import CellEditError from './CellEditError.svelte';
@@ -424,13 +425,6 @@
 		containerEl?.focus();
 		selection.setActive(rowIndex, selection.active?.field ?? orderedFieldIds[0], false);
 		gridState.toggleGroup(key);
-	}
-
-	function renderCell(column: GridColumn<TRow>, row: TRow): string {
-		const raw = getColumnValue(row, column);
-		if (column.format) return column.format(raw, row);
-		if (raw === null || raw === undefined) return '';
-		return String(raw);
 	}
 
 	// .cell is a flex container with a single text node, so horizontal
@@ -1325,6 +1319,7 @@
 						{@const isEditingCell =
 							editing?.rowId === getRowId(row) && editing?.field === column.id}
 						{@const linkInfo = column.cell?.(row)}
+						{@const tone = column.render ? null : resolveTone(column, row)}
 						<!--
 						Keyboard focus/activation for cells is handled at the grid
 						container level (roving "virtual" focus via `selection.active`
@@ -1342,6 +1337,7 @@
 							aria-busy={isEditingCell ? !!editing?.pending : undefined}
 							data-cell-row={rowIndex}
 							data-cell-field={column.id}
+							data-tone={tone ?? undefined}
 							style:justify-content={justifyFor(column.align)}
 							class:active={isActiveCell}
 							class:in-range={isInRange && !isActiveCell}
@@ -1393,7 +1389,41 @@
 									onBlur={(event) => handleEditorBlur(event, column, row)}
 								/>
 							{:else}
-								{renderCell(column, row)}
+								{@const view = resolveCellView(column, row)}
+								{#if view.kind === 'badge'}
+									<span class="cell-badge">{view.text}</span>
+								{:else if view.kind === 'progress'}
+									<span class="cell-progress">
+										<span
+											class="cell-progress-track"
+											role="progressbar"
+											aria-label={column.header.trim() || column.id}
+											aria-valuemin={0}
+											aria-valuemax={100}
+											aria-valuenow={Math.round(view.ratio * 100)}
+											aria-valuetext={view.text}
+										>
+											<span class="cell-progress-bar" style:width={`${view.ratio * 100}%`}></span>
+										</span>
+										<span class="cell-progress-text" aria-hidden="true">{view.text}</span>
+									</span>
+								{:else if view.kind === 'boolean'}
+									<span class="cell-boolean">
+										<span aria-hidden="true">{view.checked ? '✓' : ''}</span>
+										<span class="cell-sr-only">
+											{view.checked ? t.booleanTrue() : t.booleanFalse()}
+										</span>
+									</span>
+								{:else if view.kind === 'link'}
+									<a
+										class="cell-link"
+										href={view.href}
+										onclick={(event) => event.stopPropagation()}
+										ondblclick={(event) => event.stopPropagation()}>{view.text}</a
+									>
+								{:else}
+									{view.text}
+								{/if}
 							{/if}
 						</div>
 					{/each}
@@ -1706,6 +1736,87 @@
 
 	.cell-link:hover {
 		text-decoration: underline;
+	}
+
+	/* Conditional format (#713): state tokens only. --banto-<state> are the
+	   text-grade hues; a badge swaps to the -tint pair. */
+	.cell[data-tone='success'] {
+		--cell-tone: var(--banto-success);
+		--cell-tint: var(--banto-success-tint);
+		--cell-tint-text: var(--banto-success-tint-text);
+	}
+	.cell[data-tone='warning'] {
+		--cell-tone: var(--banto-warning);
+		--cell-tint: var(--banto-warning-tint);
+		--cell-tint-text: var(--banto-warning-tint-text);
+	}
+	.cell[data-tone='danger'] {
+		--cell-tone: var(--banto-danger);
+		--cell-tint: var(--banto-danger-tint);
+		--cell-tint-text: var(--banto-danger-tint-text);
+	}
+	.cell[data-tone='info'] {
+		--cell-tone: var(--banto-info);
+		--cell-tint: var(--banto-info-tint);
+		--cell-tint-text: var(--banto-info-tint-text);
+	}
+	.cell[data-tone='neutral'] {
+		--cell-tone: var(--banto-text-muted);
+		--cell-tint: var(--banto-surface-subtle);
+		--cell-tint-text: var(--banto-text-muted);
+	}
+	.cell[data-tone] {
+		color: var(--cell-tone);
+	}
+
+	.cell-badge {
+		display: inline-block;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		padding: 0 var(--banto-space-2);
+		border-radius: 999px;
+		font-size: var(--banto-font-size-xs);
+		line-height: 1.5;
+		background: var(--cell-tint, var(--banto-surface-subtle));
+		color: var(--cell-tint-text, var(--banto-text-muted));
+	}
+
+	.cell-progress {
+		display: flex;
+		align-items: center;
+		gap: var(--banto-space-2);
+		width: 100%;
+	}
+	.cell-progress-track {
+		flex: 1;
+		min-width: 2rem;
+		height: 0.5rem;
+		border-radius: 999px;
+		overflow: hidden;
+		background: var(--banto-surface-subtle);
+	}
+	.cell-progress-bar {
+		display: block;
+		height: 100%;
+		background: var(--cell-tone, var(--banto-primary));
+	}
+	.cell-progress-text {
+		flex: none;
+		font-size: var(--banto-font-size-xs);
+	}
+
+	.cell-boolean {
+		font-weight: 600;
+	}
+	/* Visually hidden, still read (the boolean's yes / no). */
+	.cell-sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
 
 	.empty-row {

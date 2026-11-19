@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `@banto/grid-svelte` の列に組み込みの描き方 `renderer: 'badge' | 'progress' | 'boolean' | 'link'`（`progressMax`・`href` 付き）と、条件つき書式 `tone: (value, row) => 'success' | 'warning' | 'danger' | 'info' | 'neutral' | null`（#713 C-3 の 1 つ目の PR）。解決は `core/cellView.ts` の純関数（`resolveCellView` / `resolveTone` / `safeHref`）、色はテーマの状態色トークンのみ。優先順位は `render` > `cell` > `renderer` > 素の文字。`link` だけ編集不可（他は `editable` に従う）。コピー・CSV は従来どおり生の値。boolean の読み上げは `messages.booleanTrue` / `booleanFalse`（既定は「はい」「いいえ」）。ui-demo のグリッドに状態（badge + tone）・進捗・速達の列を追加（visual の基準画像が変わる）。型: `Required<GridMessages>` を使う利用側は 2 キー分の型エラー。
+
 ## [7.9.0] - 2026-11-20
 
 **v7.9.0 — `@banto/dock-svelte` の dock の拡張（`ThreePaneDock`・据え置き pane・キーボード移動・隠した pane の元の位置の復元。#663 段階 ④、#721・#727・#733・#734・#735・#736・#741）とコマンドパレットの非同期の提供元（#711）、テンプレートの dock 配線。** 版の種類: minor（docs/publishing.md「バージョニング規約」の運用上の例外、オーナー判断）。`crates/*/src` の `pub` と `packages/*/src/index.ts` の export の削除・改名は無いが、既存の型を広げた変更（`DockPanelChange` の `remount` の `true` → `boolean`、`DockLayout['version']` の `2` → `2 | 3`）とキーの追加で、既存のコードが型エラーになりうる。実行時の値が変わるのは新しい機能を使ったときだけ（`remount: false` は `persistent` の pane だけ、`version: 3` は 5 段以上の slot を含むレイアウトを保存したときだけ）なので、下の「消費側への注意」に追従の手順を明記して minor とする。migration なし。

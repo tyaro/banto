@@ -86,7 +86,7 @@
 	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
-	import { BantoGrid, columnsFromSchema, type CellEdit } from '@banto/grid-svelte';
+	import { BantoGrid, columnsFromSchema, type CellEdit, type GridColumn } from '@banto/grid-svelte';
 	import {
 		columnValidationMessages,
 		dateInputMessages,
@@ -333,13 +333,30 @@
 		code: string;
 		due: string | null;
 		shippedAt: string | null;
+		late: boolean;
+		progress: number;
+		express: boolean;
 	}
 	let shipments = $state<Shipment[]>([
-		{ code: 'A-100', due: '2026-11-07', shippedAt: '2026-11-06T09:30' },
-		{ code: 'B-200', due: null, shippedAt: null },
-		{ code: 'C-300', due: '2026-11-20', shippedAt: '2026-11-19T15:00' }
+		{
+			code: 'A-100',
+			due: '2026-11-07',
+			shippedAt: '2026-11-06T09:30',
+			late: false,
+			progress: 1,
+			express: true
+		},
+		{ code: 'B-200', due: null, shippedAt: null, late: true, progress: 0.35, express: false },
+		{
+			code: 'C-300',
+			due: '2026-11-20',
+			shippedAt: '2026-11-19T15:00',
+			late: false,
+			progress: 0.7,
+			express: false
+		}
 	]);
-	const shipmentColumns = columnsFromSchema<Shipment>(
+	const shipmentSchemaColumns = columnsFromSchema<Shipment>(
 		{
 			fields: [
 				{ name: 'code', label: m['uiDemo.gridDate.code'](), type: 'text', readonly: true },
@@ -361,6 +378,36 @@
 		},
 		{ messages: columnValidationMessages() }
 	);
+	// Built-in cell drawing (#713): a badge coloured by tone, a progress bar and
+	// a boolean mark. Display only (not editable), so the page stays deterministic.
+	const shipmentColumns: GridColumn<Shipment>[] = [
+		...shipmentSchemaColumns,
+		{
+			id: 'state',
+			header: m['uiDemo.gridDate.state'](),
+			accessor: 'late',
+			width: 110,
+			renderer: 'badge',
+			format: (v) => (v ? m['uiDemo.gridDate.stateLate']() : m['uiDemo.gridDate.stateOnTime']()),
+			tone: (v) => (v ? 'danger' : 'success')
+		},
+		{
+			id: 'progress',
+			header: m['uiDemo.gridDate.progress'](),
+			accessor: 'progress',
+			width: 150,
+			renderer: 'progress',
+			tone: (v) => (typeof v === 'number' && v >= 1 ? 'success' : null)
+		},
+		{
+			id: 'express',
+			header: m['uiDemo.gridDate.express'](),
+			accessor: 'express',
+			width: 90,
+			align: 'center',
+			renderer: 'boolean'
+		}
+	];
 	function saveShipment(edit: CellEdit<Shipment>) {
 		shipments = shipments.map((row) =>
 			row.code === edit.rowId ? { ...row, [edit.field]: edit.value } : row
