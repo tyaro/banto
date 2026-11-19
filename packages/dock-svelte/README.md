@@ -684,8 +684,9 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   `unavailable`）は何も変えない。`viewMenuItems` は空。`restoreLayout` と狭い表示への切り替えは効く（保存済みの配置を見せる
   ための操作で、利用者の組み替えではない）。
 
-`DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
-行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
+`DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent?, saved? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
+行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない。保存した値（`serialize()` /
+`savedLayout()`）を入れるときは `saved: true` を渡す。浮かせたパネルの「元の場所に戻す」の控えを、`hydrate` と同じく入れるのと同時に捨てる）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
 
 ## 保存の約束（serialize / hydrate と書き込みは別）
 

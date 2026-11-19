@@ -557,9 +557,26 @@ describe('ThreePaneDock: floated panes places across whole-layout replacements (
 		const control = ratio(start().dock);
 		cleanup();
 		const { dock, api } = start();
-		const { outcome } = await api().restoreLayout(api().layoutSnapshot());
+		// What a save reacting to each layout change would write (cross-review on 49cbabc6): never
+		// the new layout with the old places (a share counted twice).
+		const proto = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(dock), 'layout')!;
+		const written: string[] = [];
+		Object.defineProperty(dock, 'layout', {
+			configurable: true,
+			get() {
+				return proto.get!.call(this);
+			},
+			set(value: DockLayout) {
+				proto.set!.call(this, value);
+				written.push(JSON.stringify(dock.savedLayout()));
+			}
+		});
+		const saved = api().layoutSnapshot();
+		const { outcome } = await api().restoreLayout(saved);
 		expect(outcome).toBe('applied');
 		expect(dock.homeSlot('left')).toBeUndefined();
+		expect(written.length).toBeGreaterThan(0);
+		for (const json of written) expect(JSON.parse(json)).toEqual(saved.layout);
 		expect(ratio(dock)).toBeCloseTo(control, 9);
 	});
 });

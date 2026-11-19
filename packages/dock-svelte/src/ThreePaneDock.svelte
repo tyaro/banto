@@ -317,12 +317,12 @@
 			const kept = dock.savedLayout();
 			outcome = await host.replaceLayout(threePaneNarrowLayout(base, narrowOptions()), {
 				focusPanel: CENTER,
-				isCurrent: () => current() && dock.layout === base
+				isCurrent: () => current() && dock.layout === base,
+				// A closed floated pane stays floating in the narrow display, so its `homeSlot` would
+				// survive and be counted again by the kept shares (#739 review): dropped in the same step.
+				saved: true
 			});
 			if (outcome === 'applied') {
-				// A closed floated pane stays floating in the narrow display, so its `homeSlot` would
-				// survive and be counted again by shares that no longer count it (#739 review).
-				forgetHomeSlots(dock);
 				wideLayout = kept;
 				wideIsDefault = false;
 				narrowShown = true;
@@ -691,12 +691,11 @@
 		const outcome = await host.replaceLayout(shown, {
 			focusPanel: CENTER,
 			// The display switched while it was asked: what it was built for is gone.
-			isCurrent: () => narrowShown === wasNarrow
+			isCurrent: () => narrowShown === wasNarrow,
+			// A saved (or default) layout, not today's: the floated panes' places go in the same step
+			// (#739 review). A live replacement (`syncPanels`) keeps them.
+			saved: true
 		});
-		// A saved (or default) layout, not today's: its shares do not count the floated panes' places
-		// (`savedLayout()`), so those places go, as by `hydrate` (#739 review). Only here - a live
-		// replacement (`syncPanels`) keeps them.
-		if (outcome === 'applied') forgetHomeSlots(dock);
 		if (outcome === 'applied' && wasNarrow) {
 			wideLayout = next;
 			wideIsDefault = isDefault;
