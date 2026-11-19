@@ -81,4 +81,14 @@ describe('displacedChanges', () => {
 		const kept = split('s', [panel('a'), panel('b'), panel('c')]);
 		expect(displacedChanges(kept, split('s', [panel('b'), panel('c')]), 'a', never)).toEqual([]);
 	});
+
+	it('a persistent pane (#663 ④) is moved, not re-mounted: no reparent, a tab-switch kept', () => {
+		const before = split('s', [panel('a'), panel('b')]);
+		const always = () => true;
+		expect(displacedChanges(before, panel('b'), 'a', always, always)).toEqual([]);
+		const after = tabs('g', ['b', 'f'], 1);
+		expect(displacedChanges(panel('b'), after, 'f', always, always)).toEqual([
+			{ kind: 'tab-switch', groupId: 'g', from: 'b', to: 'f', remount: false }
+		]);
+	});
 });

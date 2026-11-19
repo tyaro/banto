@@ -149,14 +149,20 @@ export class DragController {
 	 */
 	#placement(
 		panelId: string,
-		own: DockPanelChange,
+		/** Re-evaluated on every re-check, so a `persistent` that changes while the answer is pending makes it stale (#663 ④). */
+		own: () => DockPanelChange,
 		preview: () => DockNode | null | undefined,
 		target: unknown,
 		apply: () => void
 	): void {
 		const lifecycle = this.#getLifecycle();
-		if (lifecycle) void lifecycle.requestPlacement(panelId, () => own, preview, apply, target);
+		if (lifecycle) void lifecycle.requestPlacement(panelId, own, preview, apply, target);
 		else apply();
+	}
+
+	/** `remount` of the moved pane's own change: `false` for a `persistent` pane (#663 ④). */
+	#remounts(panelId: string): boolean {
+		return this.#getLifecycle()?.remounts(panelId) ?? true;
 	}
 
 	/** True while a drag is in progress - handy guard for consumers that don't need the full snapshot. */
@@ -343,7 +349,7 @@ export class DragController {
 		if (source === 'floating')
 			this.#placement(
 				panelId,
-				{ kind: 'dock', panelId, remount: true },
+				() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
 				() => {
 					const win = dock.layout.floating.find((w) => w.id === panelId);
 					if (!win) return undefined;
@@ -360,7 +366,7 @@ export class DragController {
 		else
 			this.#placement(
 				panelId,
-				{ kind: 'move-docked', panelId, remount: true },
+				() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
 				() => {
 					const node = findNode(dock.layout.docked, panelId);
 					if (node?.type !== 'panel') return undefined;
@@ -414,7 +420,7 @@ export class DragController {
 			if (source === 'floating')
 				this.#placement(
 					panelId,
-					{ kind: 'dock', panelId, remount: true },
+					() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
 					() => {
 						const win = dock.layout.floating.find((w) => w.id === panelId);
 						if (!win) return undefined;
@@ -431,7 +437,7 @@ export class DragController {
 			else
 				this.#placement(
 					panelId,
-					{ kind: 'move-docked', panelId, remount: true },
+					() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
 					() => {
 						const node = findNode(dock.layout.docked, panelId);
 						if (node?.type !== 'panel') return undefined;
@@ -458,7 +464,7 @@ export class DragController {
 				if (lifecycle)
 					void lifecycle.requestRemoval(
 						panelId,
-						() => ({ kind: 'undock', panelId, remount: true }),
+						() => ({ kind: 'undock', panelId, remount: lifecycle.remounts(panelId) }),
 						apply,
 						{ x, y, width, height }
 					);
