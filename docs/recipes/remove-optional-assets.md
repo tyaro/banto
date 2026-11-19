@@ -103,7 +103,11 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockLayoutStore.svelte.t
 （`src/lib/banto/dashboardMemo.svelte.ts`・`src/lib/banto/settlePrompt.svelte.ts` と
 それぞれの `.test.ts`、`src/lib/components/DashboardMemoField.svelte`・
 `src/lib/components/DraftSettleDialog.svelte`。#432。メモの Ctrl+S の登録もここ。#435）を削除し、ダッシュボードページを固定
-レイアウトのパネル羅列に置き換える。`apps/admin-template/package.json` の
+レイアウトのパネル羅列に置き換える。3 ペインの dock 版の見本（`ThreePaneDock`、#663 ④）
+`src/routes/(app)/tree/workspace-dock/`（ルート丸ごと。固定版の見本 `tree/workspace/` は残る）も削除し、
+`/tree` の索引（`src/routes/(app)/tree/+page.svelte`）の「dock 版」のリンクカードと
+`messages/{ja,en}.json` の `tree.workspaceDock.*` キーを外す（ツリーデモごと消すなら、これらはツリーの削除に含まれる）。
+`apps/admin-template/package.json` の
 `@banto/dock-svelte` 依存と、`apps/admin-template/vite.config.ts` の
 `optimizeDeps.exclude` にある `'@banto/dock-svelte'` 行を外す（残すと
 `pnpm verify:architecture` の `optimizedeps-svelte-source` が「不要なのに

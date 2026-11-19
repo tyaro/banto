@@ -86,6 +86,15 @@
 		>
 	</SurfaceCard>
 
+	<SurfaceCard
+		title={m['tree.workspaceDock.linkTitle']()}
+		description={m['tree.workspaceDock.linkHint']()}
+	>
+		<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace-dock')}
+			>{m['tree.workspaceDock.linkOpen']()}</a
+		>
+	</SurfaceCard>
+
 	<SurfaceCard title={m['tree.demo.explorerTitle']()} description={m['tree.demo.explorerHint']()}>
 		<BantoTree
 			nodes={explorerTree}

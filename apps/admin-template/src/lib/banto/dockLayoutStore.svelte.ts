@@ -52,6 +52,15 @@ export interface DockLayoutTarget {
 	readonly autoHidden: readonly { node: { id: string } }[];
 	hydrate(json: string): boolean;
 	serialize(): string;
+	/**
+	 * For a target that applies a layout later than the `hydrate` / `layout` assignment returns
+	 * (a `ThreePaneDock`'s async `restoreLayout`, or a value held until mount): the store registers a
+	 * listener once, and the target calls it when what it applied is in place - `serialize()` then
+	 * answers the layout really shown, and the store takes that as its baseline (unless a user's
+	 * change came in meanwhile). Until then `serialize()` must keep answering what it answered right
+	 * after the assignment. `DockState` applies synchronously and omits it.
+	 */
+	onApplied?(listener: () => void): void;
 }
 
 export interface DockLayoutStoreOptions {
@@ -213,6 +222,13 @@ export function createDockLayoutStore(options: DockLayoutStoreOptions): DockLayo
 	}
 	// What the dock starts with is applied, not a user change.
 	baseline = dock.serialize();
+	// A target that finishes applying later: what it shows once done is still the applied layout,
+	// not a user change - unless one came in meanwhile (`changed` / `reset` cleared the baseline).
+	dock.onApplied?.(() => {
+		if (baseline === null || !live()) return;
+		baseline = dock.serialize();
+		writeLocal(baseline);
+	});
 
 	return {
 		scope,
