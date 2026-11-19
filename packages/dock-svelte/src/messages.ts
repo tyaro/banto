@@ -41,7 +41,45 @@ export interface DockMessages {
 	pinPane?: (title: string) => string;
 	/** aria-label of an edge band holding auto-hidden panes (#694 PR-3). */
 	autoHideBand?: (edge: 'left' | 'right' | 'top' | 'bottom') => string;
+	/** "Panel actions" menu button aria-label and the menu's name (#663 ④: DockedTree pane titlebar / active tab, DockWindow titlebar), given the panel's title. */
+	panelMenu?: (title: string) => string;
+	/** Menu item: dock the panel at an outer edge of the host. */
+	moveToEdge?: (edge: 'left' | 'right' | 'top' | 'bottom') => string;
+	/** Menu item: join the docked panel `target` as a tab. */
+	moveToTabs?: (target: string) => string;
+	/** Menu item opening the side choice for docking next to the panel `target` (a submenu). */
+	moveToSplit?: (target: string) => string;
+	/** Item of that submenu: the side next to the target. */
+	splitSide?: (side: 'left' | 'right' | 'top' | 'bottom') => string;
+	/** Item of that submenu going back to the first list. */
+	menuBack?: () => string;
+	/** Menu item: float the docked panel as a window. */
+	floatPanel?: () => string;
+	/** Menu item: dock the floating panel back where it was floated from. */
+	dockBack?: () => string;
+	/** Announced (`aria-live="polite"`) after the panel `title` was docked at an outer edge. */
+	movedToEdge?: (title: string, edge: 'left' | 'right' | 'top' | 'bottom') => string;
+	/** Announced after the panel `title` joined `target` as a tab. */
+	movedToTabs?: (title: string, target: string) => string;
+	/** Announced after the panel `title` was docked next to `target` on `side`. */
+	movedToSplit?: (
+		title: string,
+		target: string,
+		side: 'left' | 'right' | 'top' | 'bottom'
+	) => string;
+	/** Announced after the panel `title` was floated. */
+	floated?: (title: string) => string;
+	/** Announced after the panel `title` went back to its docked place. */
+	dockedBack?: (title: string) => string;
+	/** Announced when `beforePanelChange` refused the move: nothing changed. */
+	moveCancelled?: (title: string) => string;
+	/** Announced when the layout changed while the move was being confirmed (`stale`): nothing changed. */
+	moveStale?: (title: string) => string;
+	/** Announced when the move is not offered (capabilities, a locked window, the target is gone): nothing changed. */
+	moveUnavailable?: (title: string) => string;
 }
+
+const SIDE = { left: '左', right: '右', top: '上', bottom: '下' } as const;
 
 export const defaultDockMessages: Required<DockMessages> = {
 	popOut: (title) => `${title}を別ウィンドウで開く`,
@@ -61,6 +99,21 @@ export const defaultDockMessages: Required<DockMessages> = {
 	expandPane: (title) => `${title}を帯から展開`,
 	autoHidePane: (title) => `${title}を自動で隠す（ピンを外す）`,
 	pinPane: (title) => `${title}を元の場所に固定（ピンを留める）`,
-	autoHideBand: (edge) =>
-		`${{ left: '左', right: '右', top: '上', bottom: '下' }[edge]}に自動で隠したパネル`
+	autoHideBand: (edge) => `${SIDE[edge]}に自動で隠したパネル`,
+	panelMenu: (title) => `${title}のパネルの操作`,
+	moveToEdge: (edge) => `${SIDE[edge]}端にドッキング`,
+	moveToTabs: (target) => `${target}とタブにまとめる`,
+	moveToSplit: (target) => `${target}の隣にドッキング`,
+	splitSide: (side) => `${SIDE[side]}に`,
+	menuBack: () => '戻る',
+	floatPanel: () => '浮かせる',
+	dockBack: () => '元の場所に戻す',
+	movedToEdge: (title, edge) => `${title}を${SIDE[edge]}端にドッキングしました`,
+	movedToTabs: (title, target) => `${title}を${target}とタブにまとめました`,
+	movedToSplit: (title, target, side) => `${title}を${target}の${SIDE[side]}にドッキングしました`,
+	floated: (title) => `${title}を浮かせました`,
+	dockedBack: (title) => `${title}を元の場所に戻しました`,
+	moveCancelled: (title) => `${title}の移動は取り消されました`,
+	moveStale: (title) => `移動できません: 確かめている間にレイアウトが変わりました（${title}）`,
+	moveUnavailable: (title) => `移動できません: ${title}はその場所へ移せません`
 };

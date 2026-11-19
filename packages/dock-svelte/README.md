@@ -152,6 +152,74 @@ panel, edge)`。これらは確認（`beforePanelChange`）を通らない（`do
 - Tauri の pop-out した window からは host へドラッグできない（別の OS の window のため）。外周へ入れるには、
   host へ戻してからドラッグする。
 
+## ドラッグせずに動かす（「パネルの操作」メニューと `movePanel`、#663 ④）
+
+docked の pane のタイトルバー（タブの組なら選択中のタブ）と浮動 window のタイトルバーに「パネルの操作」の
+ボタン（⋯）が出る。開くと、その pane をドラッグで置ける先が並ぶ: 「左端に／右端に／上端に／下端にドッキング」
+（外周）、「〇〇とタブにまとめる」、「〇〇の隣にドッキング」（開くと「左に／右に／上に／下に」を選ぶ）、
+「浮かせる」（docked の pane）、「元の場所に戻す」（この host で浮かせた window）。ポインタでも使える
+（ドラッグの代わり）。移動のショートカットキーは割り当てない（キーボードの経路はこのメニューだけ）。
+
+- キー（WAI-ARIA の menu button）: ボタンで Enter / Space / ↓ で開いて先頭へ、↑ で末尾へ。メニューの中は ↑ ↓
+  （端で折り返す）・Home / End で移り、Enter / Space で選ぶ。「〇〇の隣に」は → か Enter で辺の一覧を開き、← か
+  Esc で元の一覧のその項目へ戻る。Esc でメニューを閉じてボタンへフォーカスを戻す。Tab・外のクリックで閉じる。
+  メニューの中のキーとポインタの押下は、周りのタブ（← →）やタイトルバーのドラッグに届かない。
+- 項目は**ドラッグと同じ規則**で出し分ける: `move: false` の pane・錠（`locked`）のかかった浮動 window・
+  帯に畳んだ区画・自動で隠した pane は動かない（ボタンを出さない。錠の window でも閉じる・前面化などは今のまま）。
+  「浮かせる」は `undock` も要る。「とタブに」は相手の区画の `dropCenter`、「の隣に」は `dropSplit` が要る
+  （十字のガイドと同じ）。外周は、ほかに docked の pane があるときだけ。自分と同じタブの組へ「タブにまとめる」は出ない。
+- 選ぶと、先にメニューを閉じて（フォーカスはボタン）から移す。確認（`beforePanelChange`）は**ドラッグと同じ要求**:
+  押し出される pane（前面のタブ・包まれる・作り直される隣）の `tab-switch` / `reparent` が先、最後に動かす pane の
+  `dock` / `move-docked` / `undock`。拒否や、待つあいだに構造が変わった（`stale`）ときは何も変えない。
+- 結果は host の中の `aria-live="polite"` の領域で読み上げる（例「ツリーを右端にドッキングしました」
+  「ツリーの移動は取り消されました」「移動できません: …」）。
+- フォーカス: 移したら動かした pane のタイトルバー（タブの組ならそのタブ、ほかは ⋯ ボタン）へ。拒否・中断の
+  ときはメニューのボタンへ戻す（ボタンが無ければ pane のタイトルバーへ）。ボタンが消える（錠をかけた、ほかの
+  pane が無くなった）ときにフォーカスがあれば、そのタブか、タイトルバーの次のボタンへ移す。
+- 「元の場所に戻す」の場所は、この host が mount されている間だけ覚える（保存するレイアウトには入れない）。
+  その場所が無くなったら項目を出さない。
+
+アプリのツールバーなどからは `host.movePanel(id, target)` で同じことができる（ドラッグと同じ経路・同じ確認）:
+
+```ts
+await host.movePanel('tree', { edge: 'left' }); // 外周（host の 1/4）
+await host.movePanel('tree', { tabWith: 'detail' }); // detail のタブの組へ
+await host.movePanel('tree', { splitWith: 'main', side: 'bottom' }); // main の区画の下へ
+await host.movePanel('tree', { float: true }); // 浮かせる
+await host.movePanel('tree', { back: true }); // 浮かせた場所から元へ
+// → 'applied' | 'refused' | 'stale' | 'superseded' | 'disposed' | 'unavailable'（ドラッグでは出さない移動。何も変えない）
+```
+
+`movePanel` はフォーカスを動かさない（移したことで `<body>` に落ちたフォーカスだけ、動かした pane のタイトルバーへ戻す）。
+結果は同じく読み上げる。型は `DockMoveTarget` / `DockMoveOutcome`。
+
+見える文言は `messages` の `panelMenu`（ボタンの `aria-label` とメニューの名前）・`moveToEdge`・`moveToTabs`・
+`moveToSplit`・`splitSide`・`menuBack`・`floatPanel`・`dockBack`（項目）と、`movedToEdge`・`movedToTabs`・
+`movedToSplit`・`floated`・`dockedBack`・`moveCancelled`・`moveStale`・`moveUnavailable`（読み上げ）で差し替える。
+英語の例:
+
+```ts
+const side = { left: 'left', right: 'right', top: 'top', bottom: 'bottom' } as const;
+const messages: Partial<DockMessages> = {
+	panelMenu: (title) => `${title} panel actions`,
+	moveToEdge: (edge) => `Dock at the ${side[edge]} edge`,
+	moveToTabs: (target) => `Group as a tab with ${target}`,
+	moveToSplit: (target) => `Dock next to ${target}`,
+	splitSide: (s) => `To the ${side[s]}`,
+	menuBack: () => 'Back',
+	floatPanel: () => 'Float',
+	dockBack: () => 'Dock back where it was',
+	movedToEdge: (title, edge) => `${title} docked at the ${side[edge]} edge`,
+	movedToTabs: (title, target) => `${title} grouped as a tab with ${target}`,
+	movedToSplit: (title, target, s) => `${title} docked to the ${side[s]} of ${target}`,
+	floated: (title) => `${title} floated`,
+	dockedBack: (title) => `${title} docked back where it was`,
+	moveCancelled: (title) => `Moving ${title} was cancelled`,
+	moveStale: (title) => `Not moved: the layout changed while ${title} was being confirmed`,
+	moveUnavailable: (title) => `Not moved: ${title} cannot go there`
+};
+```
+
 ## キーボード操作と操作の hook
 
 キーは、フォーカスが dock の中の操作要素（divider・タブ・浮動 window のモードのボタン）にあるときだけ

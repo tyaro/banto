@@ -57,6 +57,7 @@ import type {
 	DockNode,
 	DockPanelInfo,
 	DockPanelNode,
+	DockSlot,
 	DropRegion,
 	FloatingWindow,
 	FloatingWindowDef,
@@ -827,6 +828,26 @@ export class DockState {
 		if (!removed) return;
 		const docked = dockPanelAtEdgeTree(removed, node, edge, this.#makeId);
 		this.layout = { ...this.layout, docked };
+	}
+
+	/**
+	 * Move the OPEN floating window `panelId` back into the docked place `slot` describes (#663 ④,
+	 * `DockHost.movePanel`'s `{ back: true }`): `core/slot.ts#restoreDockSlot`, the same as `show` does
+	 * for a hidden pane. Returns `false` (nothing changes) when it is not an open floating window or
+	 * the place is gone.
+	 */
+	dockAtSlot(panelId: string, slot: DockSlot, makeId: () => string = this.#makeId): boolean {
+		const win = this.layout.floating.find((w) => w.id === panelId);
+		if (!win || !win.open) return false;
+		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
+		const docked = restoreDockSlot(this.layout.docked, panel, slot, makeId);
+		if (docked === null) return false;
+		this.layout = {
+			...this.layout,
+			floating: this.layout.floating.filter((w) => w.id !== panelId),
+			docked: expandRegionOf(docked, panelId)
+		};
+		return true;
 	}
 
 	/** Change the visible tab of the docked tab group `groupId`. No-op if unknown. */
