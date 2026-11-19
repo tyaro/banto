@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
 import { collectPanelIds, findNode, removePanel } from '../src/core/tree';
 import { createDockState, type DockState } from '../src/state.svelte';
-import type { DockLayout, DockNode, DockSlot } from '../src/types';
+import type { DockLayout, DockNode, DockSlot, DropRegion } from '../src/types';
 import { keyOf, shapeOf, simStep, type Sim, type SlotImpl } from './fixtures/visibility-sim';
 
 const nowSlot: SlotImpl = { capture: captureDockSlot, restore: restoreDockSlot };
@@ -185,6 +185,10 @@ const counterMakeId = (): (() => string) => {
  * (`dockPanel`, not back to its place), `*x` open the closed `x` floating (`open`: it forgets its
  * docked place), `@` save and load (`serialize` / `hydrate`: the floated
  * panes' `homeSlot`s are not saved, so they stay floating), with `createDockState`.
+ * #741: `>x:y:region` docks the floating `x` at that side of `y` (`left` / `right` / `top` /
+ * `bottom`: into `y`'s split when it runs that way), and `!x` takes the floating or hidden `x`
+ * out of the layout with an assignment made from today's layout (what `ThreePaneDock`'s
+ * `syncPanels` does for a panel removed from `panels`).
  */
 const runSteps = (
 	make: () => DockNode,
@@ -203,9 +207,11 @@ const runSteps = (
 		else if (step[0] === '+') dock.show(id);
 		else if (step[0] === '~') dock.undockPanel(id);
 		else if (step[0] === '*') dock.open(id);
+		else if (step[0] === '!')
+			dock.layout = { ...dock.layout, floating: dock.layout.floating.filter((w) => w.id !== id) };
 		else if (step[0] === '>') {
-			const [panelId, target] = id.split(':');
-			dock.dockPanel(panelId, target, 'center');
+			const [panelId, target, region] = id.split(':');
+			dock.dockPanel(panelId, target, (region ?? 'center') as DropRegion);
 		} else {
 			const slot = dock.homeSlot(id);
 			if (slot) dock.dockAtSlot(id, slot);
@@ -404,6 +410,93 @@ describe('split sizes come back in any show order (#733)', () => {
 	});
 });
 
+describe('a pane out of the tree that leaves the layout, or goes back into its split elsewhere (#741)', () => {
+	const rowOf = (dock: DockState) => {
+		const root = dock.layout.docked;
+		if (root?.type !== 'split') throw new Error('no split');
+		return Object.fromEntries(root.children.map((c, i) => [c.id, root.sizes[i]]));
+	};
+	const slotOf = (d: DockState, id: string) => d.layout.floating.find((w) => w.id === id)?.dockSlot;
+
+	// The third item: an assignment made from today's layout that drops a pane out of the tree
+	// (`ThreePaneDock`'s `syncPanels` for a panel removed from `panels`, `replaceLayout` without
+	// `saved`): it no longer holds its share, whether it was floated or hidden.
+	it('row[a .2, b .3, c .5]: a out, b hidden, a taken out of the layout, show b -> b : c = 3 : 5', () => {
+		for (const steps of [
+			'~a -b !a +b',
+			'-a -b !a +b',
+			'-b ~a !a +b',
+			'~a -b !a @ +b',
+			'~a -b +b !a'
+		]) {
+			const dock = runSteps(L['row[a,b,c] uneven'], steps.split(' '));
+			expect(shapeOf(dock.layout.docked), steps).toEqual({ row: ['b', 'c'] });
+			expect(sameSizes(sizesOf(dock.layout.docked), [[0.375, 0.625]]), steps).toBe(true);
+			expect(dock.layout.floating, steps).toEqual([]);
+		}
+		// A floated pane still there keeps its place, its share taken without the one removed.
+		const dock = runSteps(L['row[a,b,c,d]'], ['~a', '-b', '~c', '!a']);
+		expect(dock.homeSlot('a')).toBeUndefined();
+		const home = dock.homeSlot('c');
+		expect(home?.kind === 'split' && home.share).toBeCloseTo(0.3 / 0.9, 9);
+		const hidden = slotOf(dock, 'b');
+		expect(hidden?.kind === 'split' && hidden.share).toBeCloseTo(0.2 / 0.9, 9);
+		dock.show('b');
+		dock.dockAtSlot('c', dock.homeSlot('c')!);
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['b', 'c', 'd'] });
+		expect(sameSizes(sizesOf(dock.layout.docked), [[2 / 9, 3 / 9, 4 / 9]])).toBe(true);
+	});
+
+	// The second item: a floated pane docked again into the split it left, at another place
+	// (`dockPanel`, a drop on a side of a pane of that split - not `dockAtSlot`). A `share` is of the
+	// whole split, the panes out of it counted. The split has the pane again - at the size
+	// `dockPanel` gives it (it evens the split), not the share it left with - so the shares of the
+	// panes still out are still of the whole split: each comes back at its own share, the panes in
+	// the split scaled around it. Nothing is counted twice and nothing is left counted for a pane
+	// that is not coming, so the slots are left as they are.
+	it('row[a .1, b .2, c .3, d .4]: float a, hide b, dock a beside d, show b -> b takes .2 of the row', () => {
+		const make = L['row[a,b,c,d]'];
+		for (const steps of ['~a -b >a:d:right +b', '-b ~a >a:d:right +b', '~a -b >a:c:left +b']) {
+			const before = runSteps(make, steps.split(' ').slice(0, 3));
+			const dock = runSteps(make, steps.split(' '));
+			const was = rowOf(before);
+			const now = rowOf(dock);
+			expect(Object.keys(now).sort(), steps).toEqual(['a', 'b', 'c', 'd']);
+			expect(now.b, steps).toBeCloseTo(0.2, 9);
+			// The panes that were in the row keep their sizes against each other.
+			for (const id of ['a', 'c', 'd']) expect(now[id], steps).toBeCloseTo(was[id] * 0.8, 9);
+		}
+		// The hidden pane's slot is not touched by the dock ...
+		expect(slotOf(runSteps(make, ['~a', '-b', '>a:d:right']), 'b')).toEqual(
+			slotOf(runSteps(make, ['~a', '-b']), 'b')
+		);
+		// ... and two hidden panes come back at their own shares, in either order.
+		// (Five panes, .05 / .15 / .2 / .25 / .35: two stay docked, so the row itself stays.)
+		const five = L5['row[a,b,c,d,e]'];
+		for (const steps of ['~a -b -c >a:d:right +b +c', '~a -b -c >a:d:right +c +b']) {
+			const now = rowOf(runSteps(five, steps.split(' ')));
+			expect(now.b, steps).toBeCloseTo(0.15, 9);
+			expect(now.c, steps).toBeCloseTo(0.2, 9);
+			expect(now.a, steps).toBeCloseTo(now.d, 9);
+		}
+		// One of them shown before the dock: the one after it still takes its share of the row.
+		const mixed = rowOf(runSteps(five, '~a -b -c +b >a:d:right +c'.split(' ')));
+		expect(mixed.c).toBeCloseTo(0.2, 9);
+	});
+
+	it('docked out of the split instead (below d, into its tabs): b takes its share of row[b,c,d]', () => {
+		const make = L['row[a,b,c,d]'];
+		for (const steps of ['~a -b >a:d:bottom +b', '~a -b >a:c:center +b', '~a -b +b >a:d:bottom']) {
+			const root = runSteps(make, steps.split(' ')).layout.docked;
+			expect(root?.type === 'split' && root.sizes, steps).toEqual([
+				expect.closeTo(2 / 9, 9),
+				expect.closeTo(3 / 9, 9),
+				expect.closeTo(4 / 9, 9)
+			]);
+		}
+	});
+});
+
 // Every sequence: once every pane is back in the old shape, the sizes are the old ones too; on the
 // way, every split's sizes stay above 0 and add up to 1. As many steps as fit in about a second
 // per layout.
@@ -448,7 +541,9 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 		count: number,
 		seed: number,
 		reload = false,
-		elsewhere = false
+		elsewhere = false,
+		// #741: a pane out of the tree is now and then taken out of the layout (`!x`) instead of put back.
+		remove = false
 	): string[] => {
 		const random = rng(seed);
 		const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
@@ -472,7 +567,17 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 				if (docked.length === 0 && away.size === 0) break;
 				const back = away.size > 0 && (docked.length === 0 || random() < 0.4);
 				const id = pick(back ? [...away.keys()] : docked);
-				if (back && elsewhere && away.get(id) === '~' && docked.length > 0 && random() < 0.6) {
+				if (back && remove && random() < 0.35) {
+					steps.push(`!${id}`);
+					away.delete(id);
+					lost.add(id);
+				} else if (
+					back &&
+					elsewhere &&
+					away.get(id) === '~' &&
+					docked.length > 0 &&
+					random() < 0.6
+				) {
 					const target = pick(docked);
 					steps.push(`>${id}:${target}`);
 					away.delete(id);
@@ -585,6 +690,145 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 			expect(moved).toBeGreaterThan(ELSEWHERE / 10);
 			expect(opened).toBeGreaterThan(ELSEWHERE / 20);
 			expect(wrong.slice(0, 5)).toEqual([]);
+		});
+	}
+	// #741: panes out of the tree (hidden or floated) taken out of the layout by an assignment made
+	// from today's layout (`!x`: `ThreePaneDock`'s `syncPanels`, `replaceLayout` without `saved`):
+	// they no longer hold a share, so once the rest is back the tree is the old tree without them -
+	// as for the panes a reload leaves floating. (More sequences: the ones that empty the tree on
+	// the way are not checked, and the panes taken out do not come back to fill it.)
+	const REMOVED = 600;
+	for (const [name, make] of Object.entries(L5)) {
+		it(`${name}: ${REMOVED} sequences taking panes out of the layout`, () => {
+			const ids = collectPanelIds(make());
+			const wrong: string[] = [];
+			let sameShape = 0;
+			let removed = 0;
+			for (const seq of sequences(ids, REMOVED, 741, false, false, true)) {
+				let emptied = false;
+				const dock = runSteps(make, seq.split(' '), (d) => {
+					emptied ||= d.layout.docked === null;
+				});
+				const docked = dock.layout.docked;
+				expect(badSizes(docked), seq).toEqual([]);
+				// As with reloads: every pane out with some lost on the way is not checked.
+				if (emptied) continue;
+				const lost = ids.filter((id) => !findNode(docked, id));
+				const old = lost.reduce<DockNode | null>((t, id) => removePanel(t, id), make());
+				if (JSON.stringify(shapeOf(docked)) !== JSON.stringify(shapeOf(old))) continue;
+				sameShape++;
+				if (seq.includes('!')) removed++;
+				if (!sameSizes(sizesOf(docked), sizesOf(old)))
+					wrong.push(
+						`${seq} -> ${JSON.stringify(sizesOf(docked))} (${JSON.stringify(sizesOf(old))})`
+					);
+			}
+			expect(sameShape).toBeGreaterThan(REMOVED / 6);
+			expect(removed).toBeGreaterThan(REMOVED / 10);
+			expect(wrong.slice(0, 5)).toEqual([]);
+		});
+	}
+
+	// #741: one row, every step checked against what the shares mean. A pane out of the row (hidden
+	// or floated) holds its share of the whole row - the panes in it and the ones out that still hold
+	// theirs; put back, it takes that share of the row without the ones still out. A pane out stops
+	// holding its share when it is taken out of the layout (`!x`), opened floating (`*x`) or left
+	// floating by a reload (`@`): the shares of the ones still out are then of the row without it.
+	// Docked again INTO the row at another place (`>x:y:left` / `:right`, `dockPanel`) it is a pane
+	// of the row again, at the size `dockPanel` gives it: the shares of the ones still out stay as
+	// they are - of the whole row, which has it again (the second item of #741: nothing to re-base).
+	const ROWS = 400;
+	for (const [name, make] of [
+		['row[a,b,c,d,e]', L5['row[a,b,c,d,e]']],
+		['row[a,b,c,d]', L['row[a,b,c,d]']]
+	] as const) {
+		it(`${name}: ${ROWS} sequences, each pane back at its share of the row as it is then`, () => {
+			const random = rng(7412);
+			const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
+			const count = { back: 0, removed: 0, opened: 0, redocked: 0, reloads: 0, afterRedock: 0 };
+			for (let n = 0; n < ROWS; n++) {
+				const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+				/** The panes out that hold a share of the row: the share, and how they left. */
+				const out = new Map<string, { share: number; kind: '-' | '~' }>();
+				const steps: string[] = [];
+				let redocked = false;
+				const row = () => {
+					const root = dock.layout.docked;
+					expect(root?.type === 'split' && root.id, steps.join(' ')).toBe('s');
+					return root as Extract<DockNode, { type: 'split' }>;
+				};
+				const sizeOf = (id: string) => row().sizes[row().children.findIndex((c) => c.id === id)];
+				const held = (except?: string) =>
+					[...out].reduce((sum, [id, o]) => (id === except ? sum : sum + o.share), 0);
+				const release = (id: string) => {
+					const gone = out.get(id)!.share;
+					out.delete(id);
+					for (const o of out.values()) o.share /= 1 - gone;
+				};
+				const length = 8 + Math.floor(random() * 9);
+				for (let i = 0; i < length; i++) {
+					const docked = row().children.map((c) => c.id);
+					// The row itself stays: two panes are always docked (the ones lost do not come back).
+					if (out.size === 0 && docked.length <= 2) break;
+					if (out.size > 0 && random() < 0.08) {
+						steps.push('@');
+						for (const [id, o] of [...out]) if (o.kind === '~') release(id);
+						expect(dock.hydrate(dock.serialize()), steps.join(' ')).toBe(true);
+						count.reloads++;
+						continue;
+					}
+					if (out.size > 0 && (docked.length <= 2 || random() < 0.45)) {
+						const id = pick([...out.keys()]);
+						const { share, kind } = out.get(id)!;
+						const r = random();
+						if (r < 0.15) {
+							steps.push(`!${id}`);
+							dock.layout = {
+								...dock.layout,
+								floating: dock.layout.floating.filter((w) => w.id !== id)
+							};
+							release(id);
+							count.removed++;
+						} else if (r < 0.25 && kind === '-') {
+							steps.push(`*${id}`);
+							dock.open(id);
+							release(id);
+							count.opened++;
+						} else if (r < 0.5 && kind === '~') {
+							const target = pick(docked);
+							const side = pick(['left', 'right'] as const);
+							steps.push(`>${id}:${target}:${side}`);
+							dock.dockPanel(id, target, side);
+							out.delete(id);
+							expect(findNode(row(), id)?.type, steps.join(' ')).toBe('panel');
+							redocked = true;
+							count.redocked++;
+						} else {
+							steps.push(`${kind === '-' ? '+' : '^'}${id}`);
+							if (kind === '-') dock.show(id);
+							else expect(dock.dockAtSlot(id, dock.homeSlot(id)!), steps.join(' ')).toBe(true);
+							const expected = Math.min(0.95, Math.max(0.05, share / (1 - held(id))));
+							expect(sizeOf(id), steps.join(' ')).toBeCloseTo(expected, 6);
+							out.delete(id);
+							count.back++;
+							if (redocked) count.afterRedock++;
+						}
+					} else {
+						const id = pick(docked);
+						const kind = random() < 0.6 ? '-' : '~';
+						const share = sizeOf(id) * (1 - held());
+						steps.push(`${kind}${id}`);
+						if (kind === '-') dock.dismiss(id);
+						else dock.undockPanel(id);
+						out.set(id, { share, kind });
+					}
+					expect(badSizes(dock.layout.docked), steps.join(' ')).toEqual([]);
+				}
+			}
+			expect(count.back).toBeGreaterThan(ROWS);
+			expect(count.afterRedock).toBeGreaterThan(ROWS / 10);
+			for (const key of ['removed', 'opened', 'redocked', 'reloads'] as const)
+				expect(count[key], key).toBeGreaterThan(ROWS / 10);
 		});
 	}
 });

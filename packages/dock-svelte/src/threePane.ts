@@ -10,7 +10,7 @@
  */
 import { autoHiddenPanelIds, autoHideRegionInLayout } from './core/autohide';
 import { cascadePosition, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH } from './core/geometry';
-import { captureDockSlot, type HiddenDockSlot } from './core/slot';
+import { captureDockSlot, slotWithoutShares, type HiddenDockSlot } from './core/slot';
 import { withLayoutVersion } from './core/layoutVersion';
 import {
 	collectPanelIds,
@@ -365,10 +365,37 @@ function dockAtSide(
  * tab. A value that is not a usable layout, or whose centre is not in the docked tree (floating,
  * closed, auto-hidden, missing - the UI never allows those), gives the default layout. Never
  * throws for a bad saved value (only for a reserved / duplicated extra id, like the default).
+ *
+ * A hidden pane it drops (a closed window that remembers its docked place) no longer holds its
+ * share of the split it was hidden from (#741): the `share`s of the hidden panes kept are taken
+ * without it (`slotWithoutShares`), as when it is shown before them. So the result is a saved
+ * value again - for `initialLayout` / `hydrate` / `replaceLayout(..., { saved: true })`, not for
+ * `dock.layout = ...` over the layout it was made from (the setter would take the share out again).
  */
 export function reconcileThreePaneLayout(
 	saved: unknown,
 	options: ThreePaneDockLayoutOptions
+): { layout: DockLayout; status: ThreePaneRestoreStatus } {
+	return reconcile(saved, options, false);
+}
+
+/**
+ * `reconcileThreePaneLayout` for the layout a `DockState` holds now, assigned back to it with
+ * `dock.layout = ...` (not exported from the package; `ThreePaneDock`'s `syncPanels`, #741): the
+ * slots are left as they are - the setter takes the shares of the panes dropped out of the others',
+ * the floated panes' (`homeSlot`, which only it knows) included. Once, not twice.
+ */
+export function fitThreePaneLayout(
+	layout: DockLayout,
+	options: ThreePaneDockLayoutOptions
+): { layout: DockLayout; status: ThreePaneRestoreStatus } {
+	return reconcile(layout, options, true);
+}
+
+function reconcile(
+	saved: unknown,
+	options: ThreePaneDockLayoutOptions,
+	live: boolean
 ): { layout: DockLayout; status: ThreePaneRestoreStatus } {
 	const fallback = () => ({ layout: threePaneDockLayout(options), status: 'default' as const });
 	const { panels } = options;
@@ -396,8 +423,23 @@ export function reconcileThreePaneLayout(
 			changed = true;
 		}
 	}
-	const floating = layout.floating.filter((w) => known(w.id));
+	let floating = layout.floating.filter((w) => known(w.id));
 	if (floating.length !== layout.floating.length) changed = true;
+	if (!live) {
+		// The hidden panes dropped no longer hold a share (#741), counted on the tree as saved.
+		const all: HiddenDockSlot[] = layout.floating.flatMap((w) =>
+			!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
+		);
+		const kept = all.filter((h) => known(h.id));
+		if (kept.length !== all.length) {
+			const root = layout.docked;
+			floating = floating.map((w) => {
+				if (w.open || !w.dockSlot) return w;
+				const dockSlot = slotWithoutShares(root, w.dockSlot, all, kept);
+				return dockSlot === w.dockSlot ? w : { ...w, dockSlot };
+			});
+		}
+	}
 	const autoHidden: DockAutoHidden[] = [];
 	for (const entry of layout.autoHidden ?? []) {
 		const kept = pruneAutoHidden(entry, known);

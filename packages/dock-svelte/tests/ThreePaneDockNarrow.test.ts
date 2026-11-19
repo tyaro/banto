@@ -433,6 +433,60 @@ describe('ThreePaneDock: arrange={false} (plan §4.5 table)', () => {
 	});
 });
 
+// #741: the kept wide layout is a saved value. A hidden panel removed from `panels` while narrow
+// releases its share there (no `DockState` holds that layout), and the places of the panes floated
+// while narrow belong to the narrow tree: they do not outlive the switch back.
+describe('ThreePaneDock: the kept wide layout and the shares (#741)', () => {
+	const LOG: ThreePaneExtraPanelDef = { id: 'log', title: 'Log' };
+	const row = (): DockLayout => ({
+		version: 2,
+		floating: [],
+		docked: {
+			type: 'split',
+			id: 's',
+			direction: 'row',
+			sizes: [0.2, 0.3, 0.5],
+			children: [
+				{ type: 'panel', id: 'log', title: 'Log' },
+				{ type: 'panel', id: 'right', title: 'R' },
+				{ type: 'panel', id: 'center', title: 'C' }
+			]
+		}
+	});
+
+	it('a hidden panel removed from panels while narrow: right comes back at .375 when wide again', async () => {
+		const { dock, view, api } = mount({ withLeft: false, extra: [LOG], initialLayout: row() });
+		dock.dismiss('log');
+		dock.dismiss('right');
+		await resize(700);
+		expect(view.component.isNarrow()).toBe(true);
+		await view.rerender({ extra: [] });
+		await settle();
+		const kept = api().layoutSnapshot().layout as DockLayout;
+		const slot = kept.floating.find((w) => w.id === 'right')?.dockSlot;
+		expect(kept.floating.map((w) => w.id)).toEqual(['right']);
+		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.375, 9);
+		await resize(1000);
+		expect(view.component.isNarrow()).toBe(false);
+		dock.show('right');
+		expect((dock.layout.docked as DockSplitNode).sizes[0]).toBeCloseTo(0.375, 9);
+	});
+
+	it('a pane floated while narrow: its place is forgotten when the wide layout comes back', async () => {
+		const { dock, view } = mount({ extra: [{ ...LOG, initial: 'floating' }] });
+		await resize(700);
+		expect(view.component.isNarrow()).toBe(true);
+		dock.open('log');
+		dock.dockPanel('log', 'center', 'right');
+		dock.undockPanel('log');
+		expect(dock.homeSlot('log')).toBeDefined();
+		await resize(1000);
+		expect(view.component.isNarrow()).toBe(false);
+		expect(dock.layout.floating.map((w) => w.id)).toContain('log');
+		expect(dock.homeSlot('log')).toBeUndefined();
+	});
+});
+
 describe('touch: the drop guides follow the density token', () => {
 	it('reads --banto-dock-guide-button-size and does not shrink below the default size', () => {
 		const el = document.createElement('div');

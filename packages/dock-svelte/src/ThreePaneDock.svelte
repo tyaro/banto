@@ -62,6 +62,7 @@
 	import {
 		assertExtraPanelIds,
 		defaultThreePaneDockMessages,
+		fitThreePaneLayout,
 		isPaneShown,
 		isThreePaneNarrow,
 		reconcileThreePaneLayout,
@@ -251,8 +252,19 @@
 			adoptLayout(dock, threePaneDockLayout(options));
 			status = 'fresh';
 		} else {
-			const result = reconcileThreePaneLayout(initialLayout ?? dock.layout, options);
-			adoptLayout(dock, result.layout);
+			// A saved value, or the layout the given `dock` holds now (#741): the first is taken as a
+			// whole, as by `hydrate` - the places of the panes floated in `dock` belong to the layout
+			// replaced; the second goes in like any change of today's layout (the setter takes the
+			// share of a pane out of the tree that is dropped out of the others').
+			const live = initialLayout === undefined;
+			const result = live
+				? fitThreePaneLayout(dock.layout, options)
+				: reconcileThreePaneLayout(initialLayout, options);
+			if (live && result.status !== 'default') dock.layout = result.layout;
+			else {
+				forgetHomeSlots(dock);
+				adoptLayout(dock, result.layout);
+			}
 			status = result.status;
 		}
 		if (status === 'fresh' || status === 'default') installedDefault = dock.layout;
@@ -331,7 +343,10 @@
 			const kept = wideLayout;
 			outcome = await host.replaceLayout(wideTarget(), {
 				focusPanel: CENTER,
-				isCurrent: () => current() && wideLayout === kept
+				isCurrent: () => current() && wideLayout === kept,
+				// The kept layout is a saved one (or the default), not made from the narrow display
+				// (#741): the places of the panes floated while narrow belong to the narrow tree.
+				saved: true
 			});
 			if (outcome === 'applied') {
 				wideLayout = null;
@@ -422,7 +437,10 @@
 			const kept = reconcileThreePaneLayout(wideLayout, options);
 			if (kept.status !== 'default') wideLayout = kept.layout;
 		}
-		const result = reconcileThreePaneLayout(dock.layout, options);
+		// Today's layout, assigned back with the setter (below, and `replaceLayout` without `saved`):
+		// a pane out of the tree that is dropped releases its share there (#741), the kept wide
+		// layout's in `reconcileThreePaneLayout` (a saved value: no `DockState` holds it).
+		const result = fitThreePaneLayout(dock.layout, options);
 		if (result.status === 'default') {
 			panelTarget = null;
 			return;
@@ -452,7 +470,7 @@
 		panelTarget = target;
 		if (target === JSON.stringify(dock.layout)) return;
 		if (!host || structureKey(next) === structureKey(dock.layout)) {
-			adoptLayout(dock, next);
+			dock.layout = next;
 			return;
 		}
 		const outcome = await host.replaceLayout(next, {

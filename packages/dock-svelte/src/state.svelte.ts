@@ -101,7 +101,11 @@ let adoptImpl: (dock: DockState, layout: DockLayout) => void;
  * `dock.layout = layout` for a layout taken as a whole (not exported from the package): the slots
  * of its panes out of the tree are as given, as `hydrate` takes them - the panes pending before
  * belong to the layout replaced (Codex P2 on #739). For the library's own whole-layout
- * replacements (`DockHost.replaceLayout`, `ThreePaneDock`'s installs, a cancelled gesture's snapshot).
+ * replacements by a layout that is not made from today's: a saved or default one
+ * (`DockHost.replaceLayout` with `saved`, `ThreePaneDock`'s installs - with `forgetHomeSlots`:
+ * the floated panes' places belong to the layout replaced too) and a cancelled gesture's snapshot.
+ * A layout made from today's (`ThreePaneDock`'s `syncPanels`, `replaceLayout` without `saved`) is
+ * assigned with the setter instead (#741): a pane out of the tree it drops releases its share.
  */
 export function adoptLayout(dock: DockState, layout: DockLayout): void {
 	adoptImpl(dock, layout);
