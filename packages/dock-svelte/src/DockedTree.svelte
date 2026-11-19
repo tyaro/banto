@@ -92,6 +92,7 @@
 	import type { DockState } from './state.svelte';
 	import type { DockNode, PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
+	import DockPanelMenu from './DockPanelMenu.svelte';
 	import { defaultDockMessages, type DockMessages } from './messages';
 
 	interface Props {
@@ -485,6 +486,9 @@
 				</span>
 			{/if}
 			<span class="title">{node.title}</span>
+			{#if !collapsed}
+				<DockPanelMenu panelId={node.id} title={node.title} {t} />
+			{/if}
 			{#if !collapsed && canAutoHide}
 				<button
 					type="button"
@@ -622,6 +626,7 @@
 							{/if}
 							<span class="title">{child.title}</span>
 							{#if i === node.activeIndex}
+								<DockPanelMenu panelId={child.id} title={child.title} {t} />
 								{#if onPopOut && capsOf(child.id).undock}
 									<button
 										type="button"

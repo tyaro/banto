@@ -50,7 +50,8 @@
  */
 import { getContext, setContext, tick } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
-import type { DockPanelChange, PanelLifecycle } from './lifecycle';
+import type { DockPanelChange, DockPanelChangeOutcome, PanelLifecycle } from './lifecycle';
+import { captureDockSlot, restoreDockSlot } from './slot';
 import { resolveCapabilities, type DockPolicy } from './policy';
 import {
 	collectPanelIds,
@@ -62,7 +63,7 @@ import {
 	removePanel
 } from './tree';
 import type { DockState } from '../state.svelte';
-import type { DockEdge, DockNode, DockPanelNode, DropRegion } from '../types';
+import type { DockEdge, DockNode, DockPanelNode, DockSlot, DropRegion } from '../types';
 import { crossButtons, hitGuideButton, rectsOverlap, type GuideButton } from './dropzones';
 import { edgeButtons } from './edges';
 
@@ -114,6 +115,36 @@ export interface DragSnapshot {
 	guideRect: Rect | null;
 }
 
+/**
+ * Read right before a move is applied (#663 ④, `DockHost.movePanel`): `false` = the move is no
+ * longer allowed (a window locked, a capability withdrawn while `beforePanelChange` waited -
+ * neither is part of `structureKey`), so nothing is applied and the outcome is `stale`.
+ */
+export type MoveGuard = () => boolean;
+
+/**
+ * Run `request` with an `apply` that first reads `guard`; without a lifecycle (`request`
+ * returns `undefined`) it applies at once. An apply the guard stopped turns `applied` into `stale`.
+ */
+function guarded(
+	guard: MoveGuard | undefined,
+	request: (run: () => void) => Promise<DockPanelChangeOutcome> | undefined,
+	apply: () => void
+): Promise<DockPanelChangeOutcome> {
+	let stopped = false;
+	const run = () => {
+		if (guard && !guard()) stopped = true;
+		else apply();
+	};
+	const pending = request(run);
+	if (!pending) {
+		run();
+		return Promise.resolve(stopped ? 'stale' : 'applied');
+	}
+	if (!guard) return pending;
+	return pending.then((outcome) => (outcome === 'applied' && stopped ? 'stale' : outcome));
+}
+
 export class DragController {
 	#dock: DockState;
 	#getHostEl: () => HTMLElement | null;
@@ -145,7 +176,8 @@ export class DragController {
 	 * A drop into the docked tree: also asks about the docked panes it pushes
 	 * out - a new active tab, a pane a new split / tab group is made around
 	 * (`PanelLifecycle.requestPlacement`, #666) - before `own`. Refused = the
-	 * layout is not touched (the ghost is already gone).
+	 * layout is not touched (the ghost is already gone). `guard` (`MoveGuard`) is read right
+	 * before `apply`.
 	 */
 	#placement(
 		panelId: string,
@@ -153,11 +185,15 @@ export class DragController {
 		own: () => DockPanelChange,
 		preview: () => DockNode | null | undefined,
 		target: unknown,
-		apply: () => void
-	): void {
+		apply: () => void,
+		guard?: MoveGuard
+	): Promise<DockPanelChangeOutcome> {
 		const lifecycle = this.#getLifecycle();
-		if (lifecycle) void lifecycle.requestPlacement(panelId, own, preview, apply, target);
-		else apply();
+		return guarded(
+			guard,
+			(run) => lifecycle?.requestPlacement(panelId, own, preview, run, target),
+			apply
+		);
 	}
 
 	/** `remount` of the moved pane's own change: `false` for a `persistent` pane (#663 ④). */
@@ -323,14 +359,31 @@ export class DragController {
 	}
 
 	/**
+	 * Where each pane floated by `floatDocked` was docked (#663 ④, `DockHost.movePanel`'s
+	 * `{ back: true }`): captured right before it leaves the tree, dropped when it docks again
+	 * through this controller. Kept for the host's lifetime only (not part of the saved layout);
+	 * a place that is gone by then is found out by `restoreDockSlot` (`placeBack` = not offered).
+	 */
+	readonly homeSlots = new Map<string, DockSlot>();
+
+	/**
 	 * An outer-edge drop (#694 PR-1). Wrapping the root re-mounts every docked pane whose chain
 	 * changes, so `requestPlacement` asks them first (`reparent`), then the moved pane (`dock` /
 	 * `move-docked`); the preview uses a fixed id for the new split so the re-checks compare the
 	 * same tree. The apply is a no-op when the panel is gone by then (apply by id).
+	 * `null` = not offered (nothing else docked): nothing is asked or changed. Also the keyboard
+	 * path (`DockHost.movePanel`, #663 ④); from the menu it passes `refocus: false`: the mover
+	 * alone places the focus after the outcome (#720 review), so this repair does not take it first.
 	 */
-	#finishEdge(panelId: string, source: DragSource, edge: DockEdge): void {
+	placeAtEdge(
+		panelId: string,
+		source: DragSource,
+		edge: DockEdge,
+		guard?: MoveGuard,
+		{ refocus: repair = true }: { refocus?: boolean } = {}
+	): Promise<DockPanelChangeOutcome> | null {
 		const dock = this.#dock;
-		if (!this.#edgesOffered(panelId)) return;
+		if (!this.#edgesOffered(panelId)) return null;
 		const target = { edge };
 		const wrap = (root: DockNode | null, node: DockPanelNode): DockNode =>
 			dockPanelAtEdge(root, node, edge, () => `${panelId}:dropped`);
@@ -342,12 +395,13 @@ export class DragController {
 					? (active.closest<HTMLElement>('[data-dock-drop-id]')?.dataset.dockDropId ?? null)
 					: undefined;
 			apply();
+			this.homeSlots.delete(panelId);
 			// `undefined` = the focus was not in the host: nothing to hand back.
-			if (frameId !== undefined && hostEl)
+			if (repair && frameId !== undefined && hostEl)
 				void tick().then(() => refocus(hostEl, frameId, panelId));
 		};
 		if (source === 'floating')
-			this.#placement(
+			return this.#placement(
 				panelId,
 				() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
 				() => {
@@ -361,22 +415,206 @@ export class DragController {
 					});
 				},
 				target,
-				withFocus(() => dock.dockPanelAtEdge(panelId, edge))
+				withFocus(() => dock.dockPanelAtEdge(panelId, edge)),
+				guard
 			);
-		else
-			this.#placement(
+		return this.#placement(
+			panelId,
+			() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
+			() => {
+				const node = findNode(dock.layout.docked, panelId);
+				if (node?.type !== 'panel') return undefined;
+				const rest = removePanel(dock.layout.docked, panelId);
+				if (!rest) return undefined;
+				return wrap(rest, node);
+			},
+			target,
+			withFocus(() => dock.dockExistingAtEdge(panelId, edge)),
+			guard
+		);
+	}
+
+	/**
+	 * Which drops onto the docked pane / tab group `targetId` are offered (#694 PR-2, the cross
+	 * guide's buttons): `center` = join it as a tab (`dropCenter`), `split` = split it
+	 * (`dropSplit`). Also read by the keyboard path (#663 ④) so both offer the same targets.
+	 */
+	dropOptions(targetId: string): { center: boolean; split: boolean } {
+		return this.#crossOptions(targetId);
+	}
+
+	/**
+	 * A drop onto the docked pane / tab group `targetId` (a cross button, #694 PR-2): the docked
+	 * panes it pushes out are asked first (#666), then the moved pane (`dock` / `move-docked`).
+	 * Does not check the target's `dropCenter` / `dropSplit` (the caller offered only allowed
+	 * buttons; see `dropOptions`). Also the keyboard path (`DockHost.movePanel`, #663 ④).
+	 */
+	placeOnto(
+		panelId: string,
+		source: DragSource,
+		targetId: string,
+		region: DropRegion,
+		guard?: MoveGuard
+	): Promise<DockPanelChangeOutcome> {
+		const dock = this.#dock;
+		const target = { to: targetId, region };
+		// The tree the drop makes, for asking the panes it pushes out (#666). A fixed id for a
+		// new split / tab group keeps it stable across the re-checks.
+		const into = (root: DockNode | null, node: DockPanelNode): DockNode =>
+			dockPanelIntoTree(root, node, targetId, region, () => `${panelId}:dropped`);
+		if (source === 'floating')
+			return this.#placement(
 				panelId,
-				() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
+				() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
 				() => {
-					const node = findNode(dock.layout.docked, panelId);
-					if (node?.type !== 'panel') return undefined;
-					const rest = removePanel(dock.layout.docked, panelId);
-					if (!rest) return undefined;
-					return wrap(rest, node);
+					const win = dock.layout.floating.find((w) => w.id === panelId);
+					if (!win) return undefined;
+					return into(dock.layout.docked, {
+						type: 'panel',
+						id: win.id,
+						title: win.title,
+						icon: win.icon
+					});
 				},
 				target,
-				withFocus(() => dock.dockExistingAtEdge(panelId, edge))
+				() => {
+					dock.dockPanel(panelId, targetId, region);
+					this.homeSlots.delete(panelId);
+				},
+				guard
 			);
+		return this.#placement(
+			panelId,
+			() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
+			() => {
+				const node = findNode(dock.layout.docked, panelId);
+				if (node?.type !== 'panel') return undefined;
+				return into(removePanel(dock.layout.docked, panelId), node);
+			},
+			target,
+			() => dock.dockExisting(panelId, targetId, region),
+			guard
+		);
+	}
+
+	/**
+	 * Float the docked pane `panelId` (a drop on free space): asks the pane a shrinking split /
+	 * tab group leaves first (`reparent`, #682), then `undock`. Its docked place is remembered
+	 * for `placeBack` (`homeSlots`). `null` = its `undock` capability withholds it: nothing
+	 * changes. Also the keyboard path (`DockHost.movePanel`, #663 ④).
+	 */
+	floatDocked(
+		panelId: string,
+		geometry?: { x: number; y: number; width: number; height: number },
+		guard?: MoveGuard
+	): Promise<DockPanelChangeOutcome> | null {
+		const policy = this.#getPolicy();
+		// `undock: false` panes stay docked: a drop on free space is ignored.
+		if (policy && !resolveCapabilities(policy, panelId).undock) return null;
+		const dock = this.#dock;
+		const apply = () => {
+			const hidden = dock.layout.floating.flatMap((w) =>
+				!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
+			);
+			// The panes floated from the dock before remember their places too (#720 review):
+			// counted the same way, so they keep their old order whichever goes back first.
+			for (const [id, slot] of this.homeSlots)
+				if (id !== panelId && !findNode(dock.layout.docked, id)) hidden.push({ id, slot });
+			const slot = captureDockSlot(dock.layout.docked, panelId, hidden);
+			dock.undockPanel(panelId, geometry);
+			if (slot && dock.layout.floating.some((w) => w.id === panelId && w.open))
+				this.homeSlots.set(panelId, slot);
+		};
+		const lifecycle = this.#getLifecycle();
+		return guarded(
+			guard,
+			(run) =>
+				lifecycle?.requestRemoval(
+					panelId,
+					() => ({ kind: 'undock', panelId, remount: this.#remounts(panelId) }),
+					run,
+					geometry ?? 'float'
+				),
+			apply
+		);
+	}
+
+	/**
+	 * The docked tree `placeBack(panelId)` would make now; `undefined` = nothing to do (no
+	 * remembered place, not an open window, the place is gone, or the drag would not drop it
+	 * there: `#backAllowed`). Re-read by the lifecycle before each step and before the apply,
+	 * so a rule that changes while the answer waits makes it `stale`.
+	 */
+	#backPreview(panelId: string, slot: DockSlot | undefined): DockNode | undefined {
+		const win = this.#dock.layout.floating.find((w) => w.id === panelId);
+		if (!win || !win.open || !slot) return undefined;
+		const node: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
+		const after = restoreDockSlot(
+			this.#dock.layout.docked,
+			node,
+			slot,
+			() => `${panelId}:restored`
+		);
+		return after && this.#backAllowed(after, panelId) ? after : undefined;
+	}
+
+	/**
+	 * Would the drag drop `panelId` where `after` puts it (#663 ④)? The targets' `dropCenter` /
+	 * `dropSplit`, as the cross guide offers them (`#crossOptions`): into a tab group = every
+	 * other pane of the group allows `dropCenter`; into a split = a pane / tab group next to it
+	 * allows `dropSplit` (a drop next to that one makes the same place); a new root split (the
+	 * old root wrapped) = an outer-edge drop, always offered; the only pane = no target.
+	 */
+	#backAllowed(after: DockNode, panelId: string): boolean {
+		const policy = this.#getPolicy();
+		if (!policy?.capabilities) return true;
+		const parent = findParent(after, panelId);
+		if (!parent) return true;
+		const allow = (nodes: DockNode[], key: 'dropCenter' | 'dropSplit') =>
+			nodes.flatMap((n) => collectPanelIds(n)).every((id) => resolveCapabilities(policy, id)[key]);
+		if (parent.type === 'tabs')
+			return allow(
+				parent.children.filter((c) => c.id !== panelId),
+				'dropCenter'
+			);
+		if (parent.type !== 'split') return true;
+		if (parent === after && !findNode(this.#dock.layout.docked, parent.id)) return true;
+		const i = parent.children.findIndex((c) => c.id === panelId);
+		return [parent.children[i - 1], parent.children[i + 1]].some(
+			(n) => n !== undefined && allow([n], 'dropSplit')
+		);
+	}
+
+	/**
+	 * Dock the floating window `panelId` back where `floatDocked` took it from (#663 ④): asked
+	 * like any other drop into the tree (the panes it pushes out, then `dock`). `null` = no
+	 * remembered place, or the place is gone: nothing changes.
+	 */
+	placeBack(panelId: string, guard?: MoveGuard): Promise<DockPanelChangeOutcome> | null {
+		const dock = this.#dock;
+		const slot = this.homeSlots.get(panelId);
+		if (!slot || this.#backPreview(panelId, slot) === undefined) return null;
+		return this.#placement(
+			panelId,
+			() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
+			() => this.#backPreview(panelId, slot),
+			{ back: slot },
+			() => {
+				if (dock.dockAtSlot(panelId, slot, () => `${panelId}:restored`))
+					this.homeSlots.delete(panelId);
+			},
+			guard
+		);
+	}
+
+	/** Whether `placeBack(panelId)` would do something now (a remembered place that still exists and the drag would drop it there). */
+	canPlaceBack(panelId: string): boolean {
+		return this.#backPreview(panelId, this.homeSlots.get(panelId)) !== undefined;
+	}
+
+	/** Whether an outer-edge drop is offered for `panelId` (some OTHER pane is docked). */
+	edgesOffered(panelId: string): boolean {
+		return this.#edgesOffered(panelId);
 	}
 
 	#finish(snapshot: DragSnapshot): void {
@@ -397,7 +635,7 @@ export class DragController {
 		const hostEl = this.#getHostEl();
 
 		if (hoverEdge) {
-			this.#finishEdge(panelId, source, hoverEdge);
+			void this.placeAtEdge(panelId, source, hoverEdge);
 			return;
 		}
 
@@ -411,41 +649,7 @@ export class DragController {
 				const ownContainerId = parent?.id ?? panelId;
 				if (ownContainerId === hoverTargetId) return;
 			}
-			const dock = this.#dock;
-			const target = { to: hoverTargetId, region: hoverRegion };
-			// The tree the drop makes, for asking the panes it pushes out (#666). A fixed id for a
-			// new split / tab group keeps it stable across the re-checks.
-			const into = (root: DockNode | null, node: DockPanelNode): DockNode =>
-				dockPanelIntoTree(root, node, hoverTargetId, hoverRegion, () => `${panelId}:dropped`);
-			if (source === 'floating')
-				this.#placement(
-					panelId,
-					() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
-					() => {
-						const win = dock.layout.floating.find((w) => w.id === panelId);
-						if (!win) return undefined;
-						return into(dock.layout.docked, {
-							type: 'panel',
-							id: win.id,
-							title: win.title,
-							icon: win.icon
-						});
-					},
-					target,
-					() => dock.dockPanel(panelId, hoverTargetId, hoverRegion)
-				);
-			else
-				this.#placement(
-					panelId,
-					() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
-					() => {
-						const node = findNode(dock.layout.docked, panelId);
-						if (node?.type !== 'panel') return undefined;
-						return into(removePanel(dock.layout.docked, panelId), node);
-					},
-					target,
-					() => dock.dockExisting(panelId, hoverTargetId, hoverRegion)
-				);
+			void this.placeOnto(panelId, source, hoverTargetId, hoverRegion);
 			return;
 		}
 
@@ -455,20 +659,7 @@ export class DragController {
 			const y = clientY - hostRect.top - grabDy;
 			const policy = this.#getPolicy();
 			if (source === 'docked') {
-				// `undock: false` panes stay docked: a drop on free space is ignored.
-				if (policy && !resolveCapabilities(policy, panelId).undock) return;
-				const dock = this.#dock;
-				const apply = () => dock.undockPanel(panelId, { x, y, width, height });
-				const lifecycle = this.#getLifecycle();
-				// Asks the pane a shrinking split / tab group leaves first (`reparent`, #682).
-				if (lifecycle)
-					void lifecycle.requestRemoval(
-						panelId,
-						() => ({ kind: 'undock', panelId, remount: lifecycle.remounts(panelId) }),
-						apply,
-						{ x, y, width, height }
-					);
-				else apply();
+				void this.floatDocked(panelId, { x, y, width, height });
 			} else {
 				const win = this.#dock.layout.floating.find((w) => w.id === panelId);
 				if (win) {

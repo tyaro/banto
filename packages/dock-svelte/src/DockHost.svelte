@@ -90,7 +90,13 @@
 	import DockAutoHide from './DockAutoHide.svelte';
 	import DockedTree from './DockedTree.svelte';
 	import DockWindow from './DockWindow.svelte';
-	import type { DockMessages } from './messages';
+	import { defaultDockMessages, type DockMessages } from './messages';
+	import {
+		PanelMover,
+		setPanelMover,
+		type DockMoveOutcome,
+		type DockMoveTarget
+	} from './core/move.svelte';
 
 	interface Props {
 		dock: DockState;
@@ -333,6 +339,17 @@
 	);
 	setDragController(drag);
 
+	// The keyboard path for re-docking (#663 ④): the same drop methods as `drag`.
+	// svelte-ignore state_referenced_locally
+	const mover = new PanelMover(
+		dock,
+		drag,
+		() => hostEl,
+		() => policy,
+		{ messages: () => ({ ...defaultDockMessages, ...messages }) }
+	);
+	setPanelMover(mover);
+
 	// svelte-ignore state_referenced_locally
 	const gesture = new GestureOwner(
 		dock,
@@ -421,6 +438,23 @@
 		return lifecycle.restoreAutoHidden(panelId);
 	}
 
+	/**
+	 * Move a pane without a drag (#663 ④, the "panel actions" menu uses it too): to an outer edge
+	 * (`{ edge }`), into the tab group of a docked pane (`{ tabWith }`), next to a docked pane's
+	 * region (`{ splitWith, side }`), out as a floating window (`{ float: true }`), or a window
+	 * floated from the tree back to where it was (`{ back: true }`; remembered while this host is
+	 * mounted). It goes through the drag's own drop path: the same capabilities (`move`, `undock`,
+	 * the target's `dropCenter` / `dropSplit`), a locked window does not move, and the same
+	 * `beforePanelChange` requests (the panes it pushes out, then `dock` / `move-docked` /
+	 * `undock`). A move the drag would not offer resolves `unavailable` and changes nothing; a
+	 * refusal or a structure change while it was asked changes nothing either. The result is
+	 * announced in the host's `aria-live="polite"` region. DOM focus is only repaired (a focus the
+	 * move dropped goes to the moved pane's title bar).
+	 */
+	export function movePanel(panelId: string, target: DockMoveTarget): Promise<DockMoveOutcome> {
+		return mover.move(panelId, target);
+	}
+
 	/** Retry a change held by `isStructureChangeDeferred` now (a custom predicate turned false without a composition / focus event). */
 	export function resumeDeferredChange(): void {
 		lifecycle.resumeDeferred();
@@ -474,6 +508,9 @@
 			/>
 		{/each}
 	</div>
+
+	<!-- The result of a move (#663 ④, `movePanel` / the panel actions menu), read out politely. -->
+	<div class="dock-live" aria-live="polite" aria-atomic="true">{mover.announcement}</div>
 
 	<!-- Persistent panes (module doc): each content is rendered here once and moved into its receptacle. -->
 	<div class="persistent-stash" hidden>
@@ -611,6 +648,19 @@
 		inset: 0;
 		z-index: 1;
 		pointer-events: none;
+	}
+
+	/* Visually hidden, still read (the usual "sr-only" shape: a 1px box clipped away). */
+	.dock-live {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		margin: -1px;
+		padding: 0;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	/* Snap guide follows the pointer every move - no transition, it must track instantly. */

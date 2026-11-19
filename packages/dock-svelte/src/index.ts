@@ -25,6 +25,11 @@ export type {
 export { structureKey, type DockPanelChange, type DockPanelChangeOutcome } from './core/lifecycle';
 export { DockState, createDockState } from './state.svelte';
 export { defaultDockMessages, type DockMessages } from './messages';
+/**
+ * `DockHost.movePanel(panelId, target)` (#663 ④): re-dock a pane without a drag, through the
+ * drag's own drop path (the "panel actions" menu uses it too).
+ */
+export type { DockMoveOutcome, DockMoveTarget } from './core/move.svelte';
 
 export {
 	applyDrag,

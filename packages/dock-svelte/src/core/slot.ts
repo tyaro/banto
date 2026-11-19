@@ -18,9 +18,11 @@
  *    (right after a tab that was before it, right before one that was after
  *    it), so the old order is kept whatever else closed meanwhile; with no
  *    anchor in the group, at the old index. The restored tab is made active.
- *  - `split`: the same split (`splitId`, same direction) at the old index; else
- *    next to the old neighbour (`neighborId`) or the first anchor still docked,
- *    on the same side, with the same share of the space the two had.
+ *  - `split`: the same split (`splitId`, same direction), next to its child
+ *    holding the old neighbour (`neighborId`) or the nearest anchor (either
+ *    side, `anchors` / `otherAnchors`), else at the old index; when the split is
+ *    gone, next to the old neighbour or the nearest anchor still docked, on the
+ *    side it was on, with the same share of the space the two had.
  *  - an empty docked tree: the pane becomes its root (any slot kind).
  *  - otherwise `null` - the caller opens it as a floating window instead.
  */
@@ -126,7 +128,10 @@ export interface HiddenDockSlot {
  * `hidden` are the panes already hidden from the dock with their slots: the
  * ones that remember the same tab group are counted among its tabs (at the
  * place their slot says), so tabs hidden one after another and shown again in
- * any order come back in their old order.
+ * any order come back in their old order. The same holds for panes hidden out
+ * of the same split: they are counted among its children (next to the
+ * neighbour their slot names), so the slot may name a hidden pane as its
+ * neighbour, with the docked ones beyond it as `anchors`.
  */
 export function captureDockSlot(
 	root: DockNode | null,
@@ -146,7 +151,7 @@ export function captureDockSlot(
 		return { kind: 'tab', groupId: parent.id, index, anchors: byDistance(ids, index) };
 	}
 	// A lone tab leaves its group too: the group is what sits in the split.
-	return unitSlot(root, parent?.type === 'tabs' ? parent : node);
+	return unitSlot(root, parent?.type === 'tabs' ? parent : node, hidden, panelId);
 }
 
 /**
@@ -162,24 +167,98 @@ export function captureRegionSlot(root: DockNode | null, regionId: string): Dock
 	return unitSlot(root, node);
 }
 
-/** The `split` / `root` slot of `unit` (a panel or tab group that is a split's child or the root). */
-function unitSlot(root: DockNode | null, unit: DockNode): DockSlot {
+/** A split slot's anchors as places to try, nearest first (the neighbour's side first at each distance). */
+interface Anchor {
+	id: string;
+	/** The pane goes before this one (else after it). */
+	before: boolean;
+}
+
+function splitAnchors(slot: Extract<DockSlot, { kind: 'split' }>): Anchor[] {
+	const near = slot.side === 'before';
+	const others = slot.otherAnchors ?? [];
+	const out: Anchor[] = [];
+	for (let d = 0; d < Math.max(slot.anchors.length, others.length); d++) {
+		if (d < slot.anchors.length) out.push({ id: slot.anchors[d], before: near });
+		if (d < others.length) out.push({ id: others[d], before: !near });
+	}
+	return out;
+}
+
+/**
+ * The `split` / `root` slot of `unit` (a panel or tab group that is a split's child or the root).
+ * `hidden` (`captureDockSlot`'s, but `selfId`) remembering the same split are counted among its
+ * children, beside the nearest of their anchors found there (#720 review): so every pane hidden
+ * out of the split comes back in the old order whichever is shown first. The slot records the
+ * panels on both sides (`anchors` on the neighbour's side, `otherAnchors` on the other), and
+ * `index` is the place among those reconstructed children. With no hidden ones this is the
+ * split's own children.
+ */
+function unitSlot(
+	root: DockNode | null,
+	unit: DockNode,
+	hidden: Iterable<HiddenDockSlot> = [],
+	selfId?: string
+): DockSlot {
 	const split = findParent(root, unit.id);
 	if (!split || split.type !== 'split') return { kind: 'root' };
-	const index = split.children.findIndex((c) => c.id === unit.id);
-	const hasNext = index + 1 < split.children.length;
-	const neighbor = split.children[hasNext ? index + 1 : index - 1];
-	const neighborIds = collectPanelIds(neighbor);
+	const own = split.children.findIndex((c) => c.id === unit.id);
+	const ids = split.children.map((c) => c.id);
+	const pending = [...hidden].filter(
+		(h) =>
+			h.id !== selfId &&
+			h.slot.kind === 'split' &&
+			h.slot.splitId === split.id &&
+			h.slot.direction === split.direction &&
+			!findNode(root, h.id)
+	);
+	// Where a panel id (a hidden pane stands for itself) is among `ids`, or -1.
+	const at = (id: string): number => {
+		const i = ids.indexOf(id);
+		if (i !== -1) return i;
+		const child = split.children.find((c) => collectPanelIds(c).includes(id));
+		return child ? ids.indexOf(child.id) : -1;
+	};
+	for (let changed = true; changed;) {
+		changed = false;
+		for (const h of pending) {
+			if (ids.includes(h.id)) continue;
+			const slot = h.slot as Extract<DockSlot, { kind: 'split' }>;
+			const candidates = [
+				{ id: slot.neighborId, before: slot.side === 'before' },
+				...splitAnchors(slot)
+			];
+			for (const c of candidates) {
+				const n = at(c.id);
+				if (n === -1) continue;
+				ids.splice(c.before ? n : n + 1, 0, h.id);
+				changed = true;
+				break;
+			}
+		}
+	}
+	const index = ids.indexOf(unit.id);
+	const hasNext = index + 1 < ids.length;
+	// Nearest first: the panels on each side (a hidden pane stands for itself).
+	const panels = (side: string[], reverse: boolean) =>
+		side.flatMap((id) => {
+			const child = split.children.find((c) => c.id === id);
+			if (!child) return [id];
+			const p = collectPanelIds(child);
+			return reverse ? p.reverse() : p;
+		});
+	const next = panels(ids.slice(index + 1), false);
+	const prev = panels(ids.slice(0, index).reverse(), true);
 	return {
 		kind: 'split',
 		splitId: split.id,
 		direction: split.direction,
 		index,
-		neighborId: neighbor.id,
+		neighborId: hasNext ? ids[index + 1] : ids[index - 1],
 		side: hasNext ? 'before' : 'after',
-		size: split.sizes[index] ?? 1 / split.children.length,
-		// Nearest first: the neighbour's panels on the side that touched the pane.
-		anchors: hasNext ? neighborIds : neighborIds.reverse()
+		size: split.sizes[own] ?? 1 / split.children.length,
+		anchors: hasNext ? next : prev,
+		...(hasNext && prev.length > 0 ? { otherAnchors: prev } : {})
 	};
 }
 
@@ -263,6 +342,17 @@ function restoreTab(
 	return replaceNode(root, target.id, () => tabs);
 }
 
+/** The child of `split` that is or holds the node `id`, or `null`. */
+function childHolding(root: DockNode, split: DockSplitNode, id: string): DockNode | null {
+	let node = findNode(root, id);
+	while (node) {
+		const parent = findParent(root, node.id);
+		if (parent?.id === split.id) return node;
+		node = parent;
+	}
+	return null;
+}
+
 function restoreSplit(
 	root: DockNode,
 	panel: DockPanelNode | DockTabGroupNode,
@@ -270,19 +360,34 @@ function restoreSplit(
 	makeId: () => string
 ): DockNode | null {
 	const share = clampShare(slot.size);
+	// The old neighbour, then the anchors by distance (either side): the first one found decides.
+	const candidates: Anchor[] = [
+		{ id: slot.neighborId, before: slot.side === 'before' },
+		...splitAnchors(slot)
+	];
 	const same = findNode(root, slot.splitId);
 	if (same?.type === 'split' && same.direction === slot.direction) {
-		// Still there (it had 3+ children): next to the old neighbour when it is a child, else at the old index.
-		const n = same.children.findIndex((c) => c.id === slot.neighborId);
-		const index = n === -1 ? slot.index : slot.side === 'before' ? n : n + 1;
-		return replaceNode(root, same.id, () => insertIntoSplit(same, panel, index, share));
+		// Still there: next to the nearest child holding an anchor (#720 review), else at the old index.
+		for (const c of candidates) {
+			const child = childHolding(root, same, c.id);
+			if (!child) continue;
+			const n = same.children.indexOf(child);
+			return replaceNode(root, same.id, () =>
+				insertIntoSplit(same, panel, c.before ? n : n + 1, share)
+			);
+		}
+		return replaceNode(root, same.id, () => insertIntoSplit(same, panel, slot.index, share));
 	}
-	const found =
-		findNode(root, slot.neighborId) ??
-		(() => {
-			const anchor = slot.anchors.find((id) => isDockedPanel(root, id));
-			return anchor === undefined ? null : findNode(root, anchor);
-		})();
+	let found: DockNode | null = null;
+	let before = slot.side === 'before';
+	for (const [k, c] of candidates.entries()) {
+		const node = findNode(root, c.id);
+		// The neighbour may be a tab group / split; an anchor is a panel.
+		if (!node || (k > 0 && node.type !== 'panel')) continue;
+		found = node;
+		before = c.before;
+		break;
+	}
 	if (!found) return null;
 	const neighbor = liftOutOfTabs(root, found);
 	const parent = findParent(root, neighbor.id);
@@ -292,7 +397,7 @@ function restoreSplit(
 		const room = parent.sizes[n] ?? 0;
 		const sizes = parent.sizes.slice();
 		const children = parent.children.slice();
-		const at = slot.side === 'before' ? n : n + 1;
+		const at = before ? n : n + 1;
 		sizes[n] = room * (1 - share);
 		sizes.splice(at, 0, room * share);
 		children.splice(at, 0, panel);
@@ -302,8 +407,8 @@ function restoreSplit(
 		type: 'split',
 		id: freeId(root, slot.splitId, makeId),
 		direction: slot.direction,
-		children: slot.side === 'before' ? [panel, neighbor] : [neighbor, panel],
-		sizes: slot.side === 'before' ? [share, 1 - share] : [1 - share, share]
+		children: before ? [panel, neighbor] : [neighbor, panel],
+		sizes: before ? [share, 1 - share] : [1 - share, share]
 	};
 	return replaceNode(root, neighbor.id, () => split);
 }

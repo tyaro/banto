@@ -3964,6 +3964,81 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// #663 ④: the same moves with the keyboard only - the "panel actions" menu on the title bar
+	// (a WAI-ARIA menu button): dock at the outer left edge, float, and dock back where it was.
+	// Each result is read out by the host's polite live region.
+	test('13m3. dock: keyboard only - panel actions menu docks at the left edge, floats, docks back', async () => {
+		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
+		await expect(memoWindow).toBeVisible();
+		const host = page.locator('.dock-wrapper [data-dock-host]');
+		const live = host.locator('[aria-live="polite"]');
+		const menuButton = host.getByRole('button', { name: 'メモのパネルの操作', exact: true });
+		const menu = page.getByRole('menu', { name: 'メモのパネルの操作', exact: true });
+		/** Focus the button, Enter: the menu opens with the focus on its first item. */
+		async function openMenu(): Promise<void> {
+			await expect(async () => {
+				if (!(await menu.isVisible())) {
+					await menuButton.focus();
+					await page.keyboard.press('Enter');
+				}
+				await expect(menu).toBeVisible({ timeout: 1000 });
+			}).toPass();
+			await expect(menu.getByRole('menuitem').first()).toBeFocused();
+		}
+
+		try {
+			// 1. Outer left edge (the first item).
+			await openMenu();
+			await expect(
+				menu.getByRole('menuitem', { name: '左端にドッキング', exact: true })
+			).toBeFocused();
+			await page.keyboard.press('Enter');
+			await expect(menu).toHaveCount(0);
+			await expect(memoWindow).toHaveCount(0);
+			const memoPane = host.locator('[data-dock-drop-id="memo"]');
+			await expect(memoPane).toBeVisible();
+			const hostBox = await host.boundingBox();
+			const paneBox = await memoPane.boundingBox();
+			if (!hostBox || !paneBox) throw new Error('not visible');
+			expect(Math.abs(paneBox.x - hostBox.x)).toBeLessThan(8);
+			expect(paneBox.width).toBeLessThan(hostBox.width * 0.3);
+			await expect(live).toHaveText('メモを左端にドッキングしました');
+			// The focus is on the moved pane's title bar (its menu button).
+			await expect(menuButton).toBeFocused();
+
+			// 2. Float it (the last item of a docked pane's menu).
+			await openMenu();
+			await page.keyboard.press('End');
+			await expect(menu.getByRole('menuitem', { name: '浮かせる', exact: true })).toBeFocused();
+			await page.keyboard.press('Enter');
+			await expect(memoWindow).toBeVisible();
+			await expect(live).toHaveText('メモを浮かせました');
+
+			// 3. Back where it was floated from (the left edge), via Esc once to check it closes.
+			await openMenu();
+			await page.keyboard.press('Escape');
+			await expect(menu).toHaveCount(0);
+			await expect(menuButton).toBeFocused();
+			await openMenu();
+			await page.keyboard.press('End');
+			await expect(
+				menu.getByRole('menuitem', { name: '元の場所に戻す', exact: true })
+			).toBeFocused();
+			await page.keyboard.press('Enter');
+			await expect(memoWindow).toHaveCount(0);
+			await expect(memoPane).toBeVisible();
+			const backBox = await memoPane.boundingBox();
+			if (!backBox) throw new Error('memo pane not visible');
+			expect(Math.abs(backBox.x - hostBox.x)).toBeLessThan(8);
+			await expect(live).toHaveText('メモを元の場所に戻しました');
+		} finally {
+			await resetDashboardLayout(page);
+		}
+	});
+
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's

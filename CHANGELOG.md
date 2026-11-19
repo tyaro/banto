@@ -25,6 +25,7 @@
 ### Added
 
 - `@banto/dock-svelte` の `DockHost` に `persistent?: (panelId) => boolean`（据え置き、#663 段階 ④ PR-1）。その pane の中身は木の外で 1 回だけ描き、受け皿へ DOM ごと移すので、undock / dock・外周へのドッキング・周りの組み替え・自動で隠す・タブの切替で作り直さない（フォーカスと scroll 位置は移したあとに戻す。`iframe` は読み直される）。`keepMounted` を兼ねる。`DockPanelChange` の `dock` / `undock` / `move-docked` / `auto-hide` / `reparent` の `remount` の型を `true` から `boolean` に広げた（`persistent` の pane は `false`）。
+- `@banto/dock-svelte`: キーボードだけでパネルを動かせるように（#663 段階 ④ PR-2）。タイトルバーの「パネルの操作」メニュー（外周・タブ・隣へ分割・浮かせる・元の場所へ）と `DockHost.movePanel`、結果の `aria-live` の読み上げ。ドラッグと同じ capabilities・`dropCenter`/`dropSplit`・`beforePanelChange` を通り、承認待ちの間に移動できなくなったら適用しない。`DockMessages` にキーを追加（`Required<DockMessages>` を使う利用側は型エラー）。同じ split から続けて隠した・浮かせた pane は、どの順で戻しても元の並びに戻る（`DockSlot` の split に任意の `otherAnchors` を追加）。
 
 ## [7.8.0] - 2026-11-19
 

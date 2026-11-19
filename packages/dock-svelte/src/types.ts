@@ -68,7 +68,10 @@ export interface FloatingWindow {
  * when the container ids are gone.
  *  - `tab`: a tab of the group `groupId`, at `index`.
  *  - `split`: child `index` of the split `splitId` (`direction`), on `side` of
- *    the node `neighborId`, with `size` (0-1) of the split's space.
+ *    the node `neighborId`, with `size` (0-1) of the split's space. `anchors`
+ *    are the panels on the neighbour's side, `otherAnchors` (optional, #720
+ *    review) the ones on the other side, both nearest first; `index` counts
+ *    the panes hidden out of the same split before it among the children.
  *  - `root`: the whole docked tree (it was the only docked pane).
  */
 export type DockSlot =
@@ -82,6 +85,7 @@ export type DockSlot =
 			side: 'before' | 'after';
 			size: number;
 			anchors: string[];
+			otherAnchors?: string[];
 	  }
 	| { kind: 'root' };
 

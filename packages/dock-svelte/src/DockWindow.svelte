@@ -61,6 +61,7 @@
 	import type { DockState } from './state.svelte';
 	import type { FloatingWindow, PanelContent, ResizeEdge } from './types';
 	import { defaultDockMessages, type DockMessages } from './messages';
+	import DockPanelMenu from './DockPanelMenu.svelte';
 
 	interface Props {
 		win: FloatingWindow;
@@ -358,6 +359,7 @@
 	role="dialog"
 	aria-label={win.title}
 	tabindex="-1"
+	data-dock-window-id={win.id}
 	bind:this={windowEl}
 	{hidden}
 	inert={hidden}
@@ -399,6 +401,9 @@
 				</span>
 			{/if}
 			<span class="title">{win.title}</span>
+			{#if !hidden}
+				<DockPanelMenu panelId={win.id} title={win.title} {t} />
+			{/if}
 			<button
 				type="button"
 				class="collapse-btn"
