@@ -652,8 +652,20 @@ export class DockState {
 	#restoredTree(id: string, makeId: () => string = this.#makeId): DockNode | null {
 		const win = this.layout.floating.find((w) => w.id === id);
 		if (!win || win.open || !win.dockSlot) return null;
+		return this.restoredAt(id, win.dockSlot, makeId);
+	}
+
+	/**
+	 * The docked tree with the floating window `id` (open or closed) put at `slot`
+	 * (`core/slot.ts#restoreDockSlot`), counting the other panes that remember a docked place
+	 * (#733: the share it takes of a split leaves theirs); `null` = no such window, or the place
+	 * is gone. Pure: the layout does not change. For the previews of `show` / "back".
+	 */
+	restoredAt(id: string, slot: DockSlot, makeId: () => string = this.#makeId): DockNode | null {
+		const win = this.layout.floating.find((w) => w.id === id);
+		if (!win) return null;
 		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
-		return restoreDockSlot(this.layout.docked, panel, win.dockSlot, makeId);
+		return restoreDockSlot(this.layout.docked, panel, slot, makeId, this.#pendingSlots(id));
 	}
 
 	/** Closes the window but keeps its geometry so a later `open`/`toggle` restores the same position/size. */
@@ -885,8 +897,7 @@ export class DockState {
 	dockAtSlot(panelId: string, slot: DockSlot, makeId: () => string = this.#makeId): boolean {
 		const win = this.layout.floating.find((w) => w.id === panelId);
 		if (!win || !win.open) return false;
-		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
-		const docked = restoreDockSlot(this.layout.docked, panel, slot, makeId);
+		const docked = this.restoredAt(panelId, slot, makeId);
 		if (docked === null) return false;
 		this.layout = {
 			...this.layout,

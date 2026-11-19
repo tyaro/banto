@@ -16,7 +16,9 @@ export interface SlotImpl {
 		root: DockNode | null,
 		panel: DockPanelNode,
 		slot: DockSlot,
-		makeId: () => string
+		makeId: () => string,
+		/** The other panes out of the tree with their slots (#733: the share it takes leaves theirs). */
+		hidden?: HiddenDockSlot[]
 	): DockNode | null;
 	/**
 	 * The wiring before #734: `dismiss` counted the closed windows' slots only, not the floated
@@ -51,6 +53,11 @@ function makeIdFor(sim: Sim): () => string {
 	};
 }
 
+/** The panes out of the tree but `id`, as `DockState`'s `#pendingSlots` lists them (hidden, then floated). */
+function pendingOf(sim: Sim, id: string): HiddenDockSlot[] {
+	return [...sim.hidden, ...(sim.floated ?? [])].filter((h) => h.id !== id);
+}
+
 export function simDismiss(impl: SlotImpl, sim: Sim, id: string): Sim {
 	const node = findNode(sim.docked, id);
 	// Not docked: `dismiss` only closes a window, the tree does not change.
@@ -82,7 +89,13 @@ export function simBack(impl: SlotImpl, sim: Sim, id: string): Sim {
 	// An empty list is left out, so the state's key is the same as before any float.
 	const rest = sim.floated!.filter((h) => h.id !== id);
 	const floated = rest.length > 0 ? rest : undefined;
-	const docked = impl.restore(sim.docked, panelOf(id), entry.slot, makeIdFor(sim));
+	const docked = impl.restore(
+		sim.docked,
+		panelOf(id),
+		entry.slot,
+		makeIdFor(sim),
+		pendingOf(sim, id)
+	);
 	if (docked === null) return { ...sim, floated, floating: [...sim.floating, id] };
 	return { ...sim, docked, floated };
 }
@@ -91,7 +104,13 @@ export function simShow(impl: SlotImpl, sim: Sim, id: string): Sim {
 	const entry = sim.hidden.find((h) => h.id === id);
 	if (!entry) return sim;
 	const hidden = sim.hidden.filter((h) => h.id !== id);
-	const docked = impl.restore(sim.docked, panelOf(id), entry.slot, makeIdFor(sim));
+	const docked = impl.restore(
+		sim.docked,
+		panelOf(id),
+		entry.slot,
+		makeIdFor(sim),
+		pendingOf(sim, id)
+	);
 	// The place is gone: `show` opens it floating and the slot is forgotten.
 	if (docked === null) return { ...sim, hidden, floating: [...sim.floating, id] };
 	return { ...sim, docked, hidden };
