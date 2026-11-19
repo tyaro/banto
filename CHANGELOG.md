@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `@banto/admin-core` の `createHttpUiSettings` / `createTauriUiSettings` の `set` をキーごとに直列化（#707）。送信中の書き込みは 1 本だけにし、送信中に来た値は最後の 1 つだけ控えて送り（間の値は送らない）、`get` はそのキーの書き込みが済むまで待つ。HTTP は、受け付け時と送信直前でトークンが違えば送らずに捨てる。**挙動の変更**: トークンが無いときの HTTP `set` は、送って 401 で reject する代わりに、送らずに resolve する。公開 API（export・型）は変わらない。
+
 ## [7.7.0] - 2026-11-19
 
 **v7.7.0 — `@banto/dock-svelte` のドッキング操作の作り直し（#694: 外周へのドッキング、十字のガイドとボタンの上で離したときだけドッキング、位置固定を錠へ、ピン = 区画を自動で隠す）、ロールとは別にユーザーへ個別に付ける権限（#697: `user_permissions`・migration 0013・管理画面・ログイン不要モードの入口・recipe と ADR-0031）、テーマを試せる `/theme-lab`（#690）、グリッドの行高の密度への追従（#692）。** 版の種類: minor（機能追加と追加の migration。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（`packages/dock-svelte/src/index.ts` の export は移動しただけで消えていない。`isPinned` / `setPinned` / `FloatingWindow.pinned` / `messages.pinWindow` / `unpinWindow` は非推奨の別名として残り、旧名のまま動く）。公開の型へのフィールド追加（`DockPanelChange` の `auto-hide`、`DockMessages` のキー）はソース互換の破壊になりうるが、規約の運用上の例外（docs/publishing.md「バージョニング規約」）により minor + 消費側への注意とした。migration 0013 は新しい表を足すだけで、既存の列・行を変えない（追加の migration = minor + 適用手順の注意）。
