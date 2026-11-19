@@ -260,6 +260,7 @@ const APP_PKG = `${APP}/package.json`;
 const VITE = `${APP}/vite.config.ts`;
 const DASH = `${APP}/src/routes/(app)/dashboard/+page.svelte`;
 const DASH_LIB = `${APP}/src/lib/banto/dashboard.ts`;
+const TREE_PAGE = `${APP}/src/routes/(app)/tree/+page.svelte`;
 const LAYOUT = `${APP}/src/routes/(app)/+layout.svelte`;
 const HEADER = `${APP}/src/lib/components/Header.svelte`;
 // settings-split refactor (choiapp-feedback-2026-09 §3): the glass/vibrancy
@@ -516,6 +517,21 @@ function removeDock() {
 	removeFile(`${APP}/src/lib/components/DashboardMemoField.svelte`, 'DashboardMemoField 削除');
 	removeFile(`${APP}/src/lib/components/DraftSettleDialog.svelte`, 'DraftSettleDialog 削除');
 	removeDir(`${APP}/src/routes/panel`, 'pop-out panel ルート削除');
+	// #663 ④ PR-6: 3 ペインの dock 版デモ（`ThreePaneDock`）。tree 配下なので tree を消せばルートごと消えるが、
+	// dock だけ消すときは、このルートと /tree の索引のリンクカード・文言キーを外す（tree の見本 /tree/workspace は残る）。
+	removeDir(`${APP}/src/routes/(app)/tree/workspace-dock`, '3 ペイン dock 版デモルート削除');
+	drop(
+		TREE_PAGE,
+		'tree デモ: dock 版へのリンクカード除去',
+		`\t<SurfaceCard\n\t\ttitle={m['tree.workspaceDock.linkTitle']()}\n\t\tdescription={m['tree.workspaceDock.linkHint']()}\n\t>\n` +
+			`\t\t<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace-dock')}\n` +
+			`\t\t\t>{m['tree.workspaceDock.linkOpen']()}</a\n\t\t>\n\t</SurfaceCard>\n\n`
+	);
+	for (const [file, label] of [
+		[MSG_JA, 'messages/ja'],
+		[MSG_EN, 'messages/en']
+	])
+		removeMessageKeys(file, `${label}: tree.workspaceDock.* キー除去`, ['tree.workspaceDock']);
 	removeAppDep('@banto/dock-svelte');
 	// dock-svelte は .svelte.ts を持つので optimizeDeps.exclude（issue #150 / ADR-0007）に
 	// も載っている。依存を外すと verify:architecture の optimizedeps-svelte-source が
