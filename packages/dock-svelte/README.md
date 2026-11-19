@@ -440,7 +440,7 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   - DOM のフォーカスは動かさない（前面化・選択中のタブだけ）。メニューを閉じたあとのフォーカスはメニュー側の
     約束に従い、pane の中へ移すかはアプリが決める。
 - 戻す場所は閉じた浮動 window の `dockSlot` として layout に入り、`serialize()` / `hydrate()` を通る（layout の
-  `version` は 2 のまま。`dockSlot` の無い古い JSON はそのまま読め、その pane は浮動で開く）。
+  `version` は 2 のまま（slot は 4 段まで。それより深いと下の `version: 3`）。`dockSlot` の無い古い JSON はそのまま読め、その pane は浮動で開く）。
 - 入れ子の入れ物から隠すと、`dockSlot`（と端の帯の `slot`）は外側の入れ物の場所を `outer` で入れ子に覚える
   （#727。slot 自身を含めて最大 8 段）。**5 段以上の slot を 1 つでも含む layout は `version: 3`** になり、
   #727 より前の版では読めない（`validateDockLayout` が `version` で拒み、その利用者の layout は既定に戻る）。
