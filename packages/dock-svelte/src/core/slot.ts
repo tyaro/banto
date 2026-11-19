@@ -238,6 +238,7 @@ function lastTabSlot(
  * or an anchor. The split's children are rebuilt from their slots (`splitOrder`), and the slot is
  * a child of that split, with `outer` = where `unit` is now. `size` is an even share (the share
  * the last child had is not known). The most recent such split (the last in `hidden`) wins.
+ * Only when `unit` is the whole surviving child: no pane the slot names is docked outside it.
  * `null` when there is none.
  */
 function lastSplitSlot(
@@ -246,10 +247,14 @@ function lastSplitSlot(
 	hidden: HiddenDockSlot[]
 ): DockSlot | null {
 	const own = new Set([unit.id, ...collectPanelIds(unit)]);
-	const names = (slot: Extract<DockSlot, { kind: 'split' }>) =>
-		own.has(slot.neighborId) ||
-		slot.anchors.some((id) => own.has(id)) ||
-		(slot.otherAnchors ?? []).some((id) => own.has(id));
+	// `unit` must be all that is left of the split's surviving child (Codex P2 on #725): a pane
+	// named there that is still docked outside `unit` (say `unit` is one pane of a surviving
+	// column) means the child is still there, so `unit` keeps its slot in that child.
+	const whole = (id: string) => own.has(id) || !findNode(root, id);
+	const names = (slot: Extract<DockSlot, { kind: 'split' }>) => {
+		const named = [slot.neighborId, ...slot.anchors, ...(slot.otherAnchors ?? [])];
+		return named.some((id) => own.has(id)) && named.every(whole);
+	};
 	const mine = hidden.filter(
 		(h) =>
 			h.slot.kind === 'split' &&

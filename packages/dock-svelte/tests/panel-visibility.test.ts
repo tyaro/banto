@@ -724,3 +724,83 @@ describe('slot memory: every hide order x every show order comes back to the old
 		}
 	}
 });
+
+// Codex P2 on #725: the surviving child of a split that is gone is itself a split. One pane of
+// that child is not "the whole child", so it keeps its slot in the child (not the gone split's).
+describe('slot memory: the surviving child of a gone split is a split', () => {
+	const even = (n: number) => Array.from({ length: n }, () => 1 / n);
+	const nested = (
+		outer: 'row' | 'column',
+		inner: string[],
+		rest: string[],
+		innerFirst = true
+	): DockNode => {
+		const innerNode: DockNode = {
+			type: 'split',
+			id: 'in',
+			direction: outer === 'row' ? 'column' : 'row',
+			sizes: even(inner.length),
+			children: inner.map(panel)
+		};
+		const children = innerFirst ? [innerNode, ...rest.map(panel)] : [...rest.map(panel), innerNode];
+		return { type: 'split', id: 'out', direction: outer, sizes: even(children.length), children };
+	};
+
+	it('row[column[a,b,c], d]: hide d then a, show d then a -> the old shape', () => {
+		const make = () => nested('row', ['a', 'b', 'c'], ['d']);
+		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		dock.dismiss('d');
+		dock.dismiss('a');
+		dock.show('d');
+		dock.show('a');
+		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
+	});
+
+	const permutations = (ids: string[]): string[][] =>
+		ids.length <= 1
+			? [ids]
+			: ids.flatMap((id, i) =>
+					permutations([...ids.slice(0, i), ...ids.slice(i + 1)]).map((rest) => [id, ...rest])
+				);
+	const subsets = (ids: string[], k: number): string[][] =>
+		k === 0
+			? [[]]
+			: ids.flatMap((id, i) => subsets(ids.slice(i + 1), k - 1).map((rest) => [id, ...rest]));
+	const layouts: Record<string, () => DockNode> = {
+		'row[column[a,b,c], d]': () => nested('row', ['a', 'b', 'c'], ['d']),
+		'row[d, column[a,b,c]]': () => nested('row', ['a', 'b', 'c'], ['d'], false),
+		'column[row[a,b], c]': () => nested('column', ['a', 'b'], ['c']),
+		'column[c, row[a,b]]': () => nested('column', ['a', 'b'], ['c'], false)
+	};
+	// Not covered yet (they failed before #721 too): a pane of the inner split hidden before the
+	// outer sibling, every pane hidden, or two outer siblings (`column[row[a,b], c, d]` hide c, d:
+	// `c` comes back around the anchor `b`, not around the whole `row[a,b]`).
+	// The panes outside the inner split (`d` / `c`) first: the inner one is gone only after.
+	const outerFirst = (inner: string[]) => (order: string[]) =>
+		order.every((id, i) => i === 0 || inner.includes(id) || !inner.includes(order[i - 1]));
+	for (const [name, make] of Object.entries(layouts)) {
+		const ids = collectPanelIds(make());
+		const inner = collectPanelIds(findNode(make(), 'in')!);
+		for (let k = 2; k < ids.length; k++) {
+			for (const hidden of subsets(ids, k)) {
+				it(`${name} hide ${hidden.join(',')} (every order x every order)`, () => {
+					const want = JSON.stringify(shapeOf(make()));
+					const failures: string[] = [];
+					for (const hideOrder of permutations(hidden).filter(outerFirst(inner))) {
+						for (const showOrder of permutations(hidden)) {
+							const dock = createDockState(
+								{ version: 2, floating: [], docked: make() },
+								counterMakeId()
+							);
+							for (const id of hideOrder) dock.dismiss(id);
+							for (const id of showOrder) dock.show(id);
+							const got = JSON.stringify(shapeOf(dock.layout.docked));
+							if (got !== want) failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
+						}
+					}
+					expect(failures).toEqual([]);
+				});
+			}
+		}
+	}
+});
