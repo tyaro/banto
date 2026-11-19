@@ -827,3 +827,18 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
    監査に `permissions` の追加・削除と `denied` が残ること。
 3. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
 4. 同期記録に「ユーザー権限（#697）取込済（PR 番号）」を書く。
+
+### 例 8: v7.7.x → v7.8.0（UiSettings の書き込みの直列化。A と B）
+
+`@banto/admin-core` の `createHttpUiSettings` / `createTauriUiSettings` の `set` がキーごとに直列化される
+（#707）。API の削除・改名はなく、**minor**。
+
+- A（依存）: タグを `v7.8.0` に上げる（npm と Rust を同じタグに）。Tauri の派生アプリは
+  `createTauriUiSettings({ invoke, getSessionRevision: () => authProvider.credentialRevision() })` を渡す
+  （渡さないと、利用者の切替をまたいで控えた値が送られうる）。
+- B（テンプレート）: `apps/admin-template/src/lib/banto/setup.ts` の `createTauriUiSettings` の呼び出しだけが変わる。
+  取り込むなら同じ変更を写す。
+- 挙動: 送信中の `set` があれば最後の値だけを後で送り、間の値の `set` は送らずに resolve する。HTTP はトークンが
+  替わった・無い書き込みを `unauthorized` で reject する。`get` はそのキーの書き込みが済むまで待つ。
+- 確認: `pnpm check`。Tauri の派生アプリは、依存の更新と `getSessionRevision` の配線を同じ更新で入れる
+  （省略しても型検査は通るため）。利用者 A で設定を変えた直後に B へ切り替え、A の値が B に保存・表示されないことを確かめる。
