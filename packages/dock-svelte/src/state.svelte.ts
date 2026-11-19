@@ -138,17 +138,72 @@ export class DockState {
 			next = { ...next };
 			delete next.autoHidden;
 		}
+		// Whatever put a floated pane back in the tree (#735): its remembered place is spent.
+		const spent =
+			this.#homeSlots.size > 0
+				? untrack(() => {
+						const floating = new Set(next.floating.map((w) => w.id));
+						return [...this.#homeSlots.keys()].filter((id) => !floating.has(id));
+					})
+				: [];
+		if (spent.length > 0) next = untrack(() => this.#withoutSpentShares(next, spent));
 		this.#noteStructure(next);
 		this.#layout = next;
-		// Whatever put a floated pane back in the tree (#735): its remembered place is spent.
-		if (this.#homeSlots.size > 0) {
-			const floating = untrack(() => new Set(next.floating.map((w) => w.id)));
-			for (const id of [...this.#homeSlots.keys()])
-				if (!floating.has(id)) this.#homeSlots.delete(id);
-		}
+		for (const id of spent) this.#homeSlots.delete(id);
 		// The slid-out pane is no longer auto-hidden: it is not slid out any more.
 		const flyout = untrack(() => this.#flyout);
 		if (flyout !== null && findAutoHidden(next, flyout) === null) this.#flyout = null;
+	}
+
+	/**
+	 * `next` with the closed windows' `dockSlot` `share`s (and the `homeSlot`s of the panes still
+	 * floating) taken without the floated panes of `spent` whose `homeSlot` is dropped (Codex P2
+	 * on #739): a `share` counts the shares of the panes hidden from its split (#733), those
+	 * `homeSlot`s among them. A pane docked again
+	 * elsewhere (`dockPanel` beside another pane, auto-hidden, gone) no longer holds its share of
+	 * the split, so a pane shown later would be scaled by a share nobody comes back to - say
+	 * `row[a .2, b .3, c .5]`, `a` floated, `b` hidden, `a` docked into `c`: `b` comes back at
+	 * `.375` (of `row[b, c]`), as when it is shown before `a` is docked. A pane that went back to
+	 * the container of its `homeSlot` (or of a level of its `outer`), or into an empty tree, holds
+	 * its share again: kept.
+	 * Counted on the tree before `next` (`splitPending` counts no docked pane), as `savedLayout`.
+	 */
+	#withoutSpentShares(next: DockLayout, spent: string[]): DockLayout {
+		const containers = (slot: DockSlot): Set<string> => {
+			const out = new Set<string>();
+			for (let s: DockSlot | undefined = slot; s && s.kind !== 'root'; s = s.outer)
+				out.add(s.kind === 'tab' ? s.groupId : s.splitId);
+			return out;
+		};
+		const home = (id: string): boolean => {
+			const slot = this.#homeSlots.get(id)!;
+			// The tree was empty: any place is its place (the panes out come back beside it).
+			if (next.docked?.id === id) return true;
+			if (findNode(next.docked, id)?.type !== 'panel') return false;
+			const parent = findParent(next.docked, id);
+			return parent !== null && containers(slot).has(parent.id);
+		};
+		const gone = new Set(spent.filter((id) => !home(id)));
+		if (gone.size === 0) return next;
+		const all: HiddenDockSlot[] = next.floating.flatMap((w) =>
+			!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
+		);
+		for (const [id, slot] of this.#homeSlots)
+			if (!all.some((h) => h.id === id)) all.push({ id, slot });
+		const kept = all.filter((h) => !gone.has(h.id));
+		const root = this.#layout.docked;
+		// The `homeSlot`s of the panes still floating count them too (#733): taken the same way.
+		for (const [id, slot] of this.#homeSlots)
+			if (!spent.includes(id)) this.#homeSlots.set(id, slotWithoutShares(root, slot, all, kept));
+		let changed = false;
+		const floating = next.floating.map((w) => {
+			if (w.open || !w.dockSlot) return w;
+			const dockSlot = slotWithoutShares(root, w.dockSlot, all, kept);
+			if (dockSlot === w.dockSlot) return w;
+			changed = true;
+			return { ...w, dockSlot };
+		});
+		return changed ? { ...next, floating } : next;
 	}
 
 	/** The auto-hidden pane slid out over the docked tree (#694 PR-3). Not saved. */
