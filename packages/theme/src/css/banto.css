@@ -600,6 +600,9 @@
 	--banto-dock-titlebar-height: 40px;
 	--banto-dock-button-size: var(--banto-control-height-sm);
 	--banto-tree-toggle-size: var(--banto-control-height-sm);
+	/* The dock's drop-guide buttons (#663 ④, three-pane-dock-plan §4.5): read by
+	   @banto/dock-svelte when a drag starts; not shrunk below their default 32px. */
+	--banto-dock-guide-button-size: var(--banto-control-height-sm);
 }
 
 /* <=900px the launcher is a full-width tab bar (nav-launcher-plan.md §4.6)

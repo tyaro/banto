@@ -64,7 +64,14 @@ import {
 } from './tree';
 import type { DockState } from '../state.svelte';
 import type { DockEdge, DockNode, DockPanelNode, DockSlot, DropRegion } from '../types';
-import { crossButtons, hitGuideButton, rectsOverlap, type GuideButton } from './dropzones';
+import {
+	crossButtons,
+	hitGuideButton,
+	readGuideSizing,
+	rectsOverlap,
+	type GuideButton,
+	type GuideSizing
+} from './dropzones';
 import { edgeButtons } from './edges';
 
 /** Where a drag originated - determines which `DockState` method finishes it (see `#finish`). */
@@ -152,6 +159,8 @@ export class DragController {
 
 	#getPolicy: () => DockPolicy | undefined;
 	#getLifecycle: () => PanelLifecycle | undefined;
+	/** The guide buttons' sizing of the current drag (`readGuideSizing` at `start`). */
+	#sizing: GuideSizing = {};
 
 	/**
 	 * `getPolicy` supplies the host's clamp options and pane capabilities (see
@@ -211,6 +220,8 @@ export class DragController {
 		// cannot normally happen; bail defensively anyway.
 		if (this.state) return;
 
+		// The guide buttons' size for the host's density (touch: bigger, #663 ④), read once per drag.
+		this.#sizing = readGuideSizing(this.#getHostEl());
 		this.state = {
 			panelId: opts.panelId,
 			title: opts.title,
@@ -284,7 +295,7 @@ export class DragController {
 			// something else is docked - with an empty tree (or only the dragged pane) a drop
 			// behaves as before.
 			if (this.#edgesOffered(this.state.panelId)) {
-				edges = edgeButtons(hostRect.width, hostRect.height);
+				edges = edgeButtons(hostRect.width, hostRect.height, this.#sizing);
 				hoverEdge = inHost ? hitGuideButton(edges, x, y) : null;
 				if (hoverEdge)
 					guideRect = dropRegionRect(
@@ -345,12 +356,18 @@ export class DragController {
 	 * Which cross buttons the drop target `targetId` (a pane or a tab group) offers (#694 PR-2):
 	 * `dropCenter` / `dropSplit` of its panes, every pane of a group must allow it.
 	 */
-	#crossOptions(targetId: string): { center: boolean; split: boolean } {
+	#crossOptions(targetId: string): GuideSizing & { center: boolean; split: boolean } {
+		const sizing = this.#sizing;
 		const policy = this.#getPolicy();
-		if (!policy?.capabilities) return { center: true, split: true };
+		if (!policy || (!policy.capabilities && policy.arrange !== false))
+			return { ...sizing, center: true, split: true };
 		const ids = collectPanelIds(findNode(this.#dock.layout.docked, targetId));
 		const caps = ids.map((id) => resolveCapabilities(policy, id));
-		return { center: caps.every((c) => c.dropCenter), split: caps.every((c) => c.dropSplit) };
+		return {
+			...sizing,
+			center: caps.every((c) => c.dropCenter),
+			split: caps.every((c) => c.dropSplit)
+		};
 	}
 
 	/** Whether a drop on the host's outer edges is offered for `panelId`: some OTHER pane is docked (there is a root to wrap). */
