@@ -56,7 +56,8 @@
 		type DockMoveTarget
 	} from './core/move.svelte';
 	import type { DockCapabilities } from './core/policy';
-	import { structureKey } from './core/tree';
+	import { autoHiddenPanelIds } from './core/autohide';
+	import { collectPanelIds, structureKey } from './core/tree';
 	import { createDockState, type DockState } from './state.svelte';
 	import {
 		assertExtraPanelIds,
@@ -228,8 +229,12 @@
 	let measuredWidth: number | null = $state(null);
 	/** The narrow display is on screen (`dock.layout` is the temporary layout). */
 	let narrowShown = $state(false);
-	/** The layout to save and to go back to while `narrowShown` (plain: never rendered). */
-	let wideLayout: DockLayout | null = null;
+	/**
+	 * The layout to save and to go back to while `narrowShown`. Never rendered, but `$state.raw`: an
+	 * app saving `layoutSnapshot()` from an effect on `dock.layout` sees it change too - a reset or
+	 * restore while narrow replaces `dock.layout` first and this right after (PR #726 review).
+	 */
+	let wideLayout: DockLayout | null = $state.raw(null);
 	/** `wideLayout` is the untouched default: measured again at the width it comes back at. */
 	let wideIsDefault = false;
 	/** The display last asked for (the newest wish; an older switch still being asked is `stale` when it differs). */
@@ -412,16 +417,38 @@
 			panelTarget = null;
 			return;
 		}
-		const target = JSON.stringify(result.layout);
+		let next = result.layout;
+		// Narrow: a pane new to the layout is docked by the reconcile beside the centre - the narrow
+		// display has the centre docked alone (PR #726 review). Built again from the kept wide layout:
+		// the panes shown now stay in their bands, a new one goes to its band when the kept layout
+		// shows it, else to a closed window. Only while the narrow display is still on screen (a
+		// switch back to wide replaces `dock.layout` before `narrowShown` follows).
+		const wasNarrow = narrowShown;
+		const present = new Set([
+			...collectPanelIds(dock.layout.docked),
+			...autoHiddenPanelIds(dock.layout),
+			...dock.layout.floating.map((w) => w.id)
+		]);
+		const added = collectPanelIds(next.docked).filter((id) => !present.has(id));
+		if (wasNarrow && dock.layout.docked?.type === 'panel' && added.length > 0) {
+			const base = wideTarget();
+			const ids = [THREE_PANE_IDS.left, THREE_PANE_IDS.right, ...panels.map((p) => p.id)];
+			const shown = ids.filter(
+				(id) => known(id) && isPaneShown(added.includes(id) ? base : dock.layout, id)
+			);
+			next = threePaneNarrowLayout(base, narrowOptions(shown));
+		}
+		const target = JSON.stringify(next);
 		panelTarget = target;
 		if (target === JSON.stringify(dock.layout)) return;
-		if (!host || structureKey(result.layout) === structureKey(dock.layout)) {
-			dock.layout = result.layout;
+		if (!host || structureKey(next) === structureKey(dock.layout)) {
+			dock.layout = next;
 			return;
 		}
-		const outcome = await host.replaceLayout(result.layout, {
+		const outcome = await host.replaceLayout(next, {
 			focusPanel: CENTER,
-			isCurrent: () => panelTarget === target
+			// The display switched while it was asked: what it was built for is gone.
+			isCurrent: () => panelTarget === target && narrowShown === wasNarrow
 		});
 		if (gen !== panelSync || outcome === 'disposed') return;
 		writeOpen();

@@ -27,7 +27,8 @@ import {
 	threePaneDockLayout,
 	threePaneNarrowLayout,
 	type ThreePaneExtraPanelDef,
-	type ThreePanePanels
+	type ThreePanePanels,
+	type ThreePaneSavedLayout
 } from '../src/threePane';
 import type { DockSplitNode } from '../src/types';
 
@@ -96,6 +97,8 @@ function mount(
 		beforePanelChange?: (change: DockPanelChange) => boolean | Promise<boolean>;
 		narrowOverride?: boolean;
 		arrange?: boolean;
+		onSave?: (snapshot: ThreePaneSavedLayout) => void;
+		withLeft?: boolean;
 	} = {}
 ) {
 	const dock = props.dock ?? createDockState();
@@ -254,6 +257,41 @@ describe('ThreePaneDock: the narrow display', () => {
 		await resize(800);
 		expect(await api().resetLayout()).toBe('applied');
 		expect(dock.isAutoHidden('left')).toBe(true);
+		await resize(1000);
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['left', 'center', 'right']);
+	});
+
+	it('lets an effect on dock.layout save the default after a reset while narrow (PR #726 review)', async () => {
+		const saves: string[] = [];
+		const { api, dock } = mount({ onSave: (snapshot) => saves.push(JSON.stringify(snapshot)) });
+		const fresh = JSON.stringify(api().layoutSnapshot());
+		const root = dock.layout.docked as DockSplitNode;
+		const sizes = root.sizes.map((_, i) => (i === 0 ? 0.4 : 0.6 / (root.sizes.length - 1)));
+		dock.layout = { ...dock.layout, docked: { ...root, sizes } };
+		await settle();
+		const custom = JSON.stringify(api().layoutSnapshot());
+		expect(custom).not.toBe(fresh);
+		await resize(800);
+		expect(saves.at(-1)).toBe(custom);
+		expect(await api().resetLayout()).toBe('applied');
+		await settle();
+		// The default measured at today's (narrow) width: not the custom shares, and what it keeps.
+		expect(saves.at(-1)).not.toBe(custom);
+		expect(saves.at(-1)).toBe(JSON.stringify(api().layoutSnapshot()));
+		await resize(1000);
+		expect(saves.at(-1)).toBe(fresh);
+	});
+
+	it('puts a left pane given while narrow in its band, and docks it on the left when wide (PR #726 review)', async () => {
+		const { view, dock, harness } = mount({ withLeft: false });
+		await resize(800);
+		expect(harness.isNarrow()).toBe(true);
+		await view.rerender({ withLeft: true });
+		await settle();
+		expect(harness.isNarrow()).toBe(true);
+		expect(dock.layout.docked).toMatchObject({ type: 'panel', id: 'center' });
+		expect(autoHiddenPanelIds(dock.layout)).toEqual(['left', 'right']);
+		expect(validateDockLayout(dock.layout).ok).toBe(true);
 		await resize(1000);
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['left', 'center', 'right']);
 	});
