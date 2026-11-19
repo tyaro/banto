@@ -113,7 +113,11 @@ describe('ThreePaneDock: the starting layout', () => {
 		};
 		const { dock, harness } = mount({ initialLayout: behind, onRestore: (s) => statuses.push(s) });
 		expect(statuses).toEqual(['repaired']);
-		expect(findNode(dock.layout.docked, 'g')).toMatchObject({ activeIndex: 1 });
+		// The centre is split out of the tab group (no tab can hide it later).
+		expect(dock.layout.docked).toMatchObject({
+			type: 'split',
+			children: [{ id: 'center' }, { id: 'right' }]
+		});
 		expect(findNode(dock.layout.docked, 'center')).toMatchObject({ title: '中央のペイン' });
 		expect(harness.open()).toEqual({ left: false, right: true });
 	});
@@ -371,5 +375,84 @@ describe('ThreePaneDock: the View menu', () => {
 			.viewMenuItems({ resetLayout: 'R' })
 			.map((i) => i.id);
 		expect(ids).toEqual(['panel:left', 'separator', 'reset-layout']);
+	});
+});
+
+describe('ThreePaneDock: a change of panels that changes the structure (PR #723 review)', () => {
+	const LOG: ThreePaneExtraPanelDef = { id: 'log', title: 'Log', initial: { edge: 'bottom' } };
+
+	it('asks beforePanelChange; a refusal keeps the layout and the inputs, a later change retries', async () => {
+		let allow = false;
+		const asked: DockPanelChange[] = [];
+		const { dock, view } = mount({
+			extra: [LOG],
+			beforePanelChange: (c) => (asked.push(c), allow)
+		});
+		expect(collectPanelIds(dock.layout.docked)).toContain('log');
+		const input = view.container.querySelector<HTMLInputElement>('[aria-label="left input"]')!;
+		input.value = 'typed';
+		const before = dock.serialize();
+
+		await view.rerender({ extra: [] });
+		await settle();
+		// The split around the log is gone and the rest re-joins: the side panes are asked.
+		expect(asked.map((c) => 'panelId' in c && c.panelId)).toContain('left');
+		expect(dock.serialize()).toBe(before);
+		expect(view.container.querySelector('[aria-label="left input"]')).toBe(input);
+		expect(input.value).toBe('typed');
+
+		allow = true;
+		await view.rerender({ extra: [] });
+		await settle();
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['left', 'center', 'right']);
+	});
+
+	it('changes titles only without asking', async () => {
+		const asked: DockPanelChange[] = [];
+		const { dock, view } = mount({
+			extra: [LOG],
+			beforePanelChange: (c) => (asked.push(c), false)
+		});
+		await view.rerender({ extra: [{ ...LOG, title: 'Journal' }] });
+		await settle();
+		expect(asked).toEqual([]);
+		expect(findNode(dock.layout.docked, 'log')).toMatchObject({ title: 'Journal' });
+	});
+});
+
+describe('ThreePaneDock: a restored centre never sits in a tab group (PR #723 review)', () => {
+	it('splits the centre out of a saved tab group, so no tab can hide it', async () => {
+		const tabbed: DockLayout = {
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.6, 0.4],
+				children: [
+					{
+						type: 'tabs',
+						id: 'g',
+						activeIndex: 0,
+						children: [
+							{ type: 'panel', id: 'center', title: 'C' },
+							{ type: 'panel', id: 'right', title: 'R' }
+						]
+					},
+					{ type: 'panel', id: 'left', title: 'L' }
+				]
+			},
+			floating: []
+		};
+		const { api, dock, view } = mount();
+		const result = await api().restoreLayout(tabbed);
+		expect(result).toEqual({ status: 'repaired', outcome: 'applied' });
+		await settle();
+		expect(findNode(dock.layout.docked, 'g')).toBeNull();
+		// Every tab on screen is pressed: the centre stays shown.
+		for (const tab of view.container.querySelectorAll<HTMLElement>('[role="tab"]')) tab.click();
+		await settle();
+		expect(view.container.querySelector('[data-pane="center"]')).not.toBeNull();
+		expect(view.container.querySelectorAll('[role="tablist"]').length).toBe(0);
 	});
 });

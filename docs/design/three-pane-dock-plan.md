@@ -194,6 +194,8 @@ temp-scada の現行の中央は SVG（`CanvasWorkspace` → `Renderer`）で、
   `close` に加えて**折りたたみ・auto-hide も禁止**（`autoHide: false`）にし、浮かせない（`undock` 禁止）。
   既定の配置だけでなく、**復元した保存値**（`reconcileThreePaneLayout`）でも中央が閉じている・畳まれている・
   auto-hide の帯にいる・浮いているなら、中央をドッキングして開いた状態に直す（クロスレビュー P2）。
+  タブの組に入っている保存値は、中央を組から抜いて組の隣に分割で置く（組のままだと別のタブを押して中央を
+  隠せる。`dropCenter: false` は新しい合流しか止めない。PR #723 のクロスレビュー）。
 - **ペインが自分で入力を持つ場合**（アプリの追加パネルなど）: `beforePanelChange` にダッシュボードの
   `createPanelChangeHandler` の型（close は settle してから、ほかは capture）を渡す。`ThreePaneDock` はそのまま
   `DockHost` に渡すだけ。README にこの使い分けを書く。
@@ -211,6 +213,9 @@ temp-scada の現行の中央は SVG（`CanvasWorkspace` → `Renderer`）で、
 `panels?: ThreePaneExtraPanel[]`（`{ id, title, icon?, content: Snippet, initial?: 'hidden' | 'floating' | { edge } , width?, height? }`）。
 初回は `initial` に従って置き、以後は保存したレイアウトに従う。「表示」メニューに並び、浮かせる・ドッキング・
 固定・折りたたみは 3 ペインと同じ。id は `left`/`center`/`right` と重ならないこと（重なったら開発時に例外）。
+`panels` を後から変えて構造が変わる（外周の追加パネルを外して周りが組み直される等）ときは、`resetLayout` と同じく
+`beforePanelChange` を通す（直接書くのはタイトル等だけ）。拒否されたら今のレイアウトのまま（外したパネルは空の区画で
+残る）で、次に `panels` が変わったときに照らし直す（PR #723 のレビュー）。
 
 ### 4.10 テンプレートでの置き場と scaffold
 

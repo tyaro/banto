@@ -204,7 +204,53 @@ describe('reconcileThreePaneLayout', () => {
 		};
 		const b = reconcileThreePaneLayout(behind, base);
 		expect(b.status).toBe('repaired');
-		expect(findNode(b.layout.docked, 'g')).toMatchObject({ activeIndex: 1 });
+		// The centre leaves the tab group (another tab could hide it again, PR #723 review) and
+		// stands beside what is left of it, after the left pane.
+		expect(findParent(b.layout.docked, 'center')).toMatchObject({
+			type: 'split',
+			direction: 'row',
+			children: [{ id: 'left' }, { id: 'center' }]
+		});
+		expect(collectPanelIds(b.layout.docked)).toEqual(['left', 'center', 'right']);
+		expect(validateDockLayout(b.layout).ok).toBe(true);
+	});
+
+	it('takes the centre out of a tab group even when it is the active tab', () => {
+		const tabbed: DockLayout = {
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.3, 0.7],
+				children: [
+					panel('left'),
+					{
+						type: 'tabs',
+						id: 'g',
+						activeIndex: 0,
+						children: [panel('center'), panel('right'), panel('log')]
+					}
+				]
+			},
+			floating: []
+		};
+		const result = reconcileThreePaneLayout(tabbed, {
+			...base,
+			panels: { ...PANES, extra: [{ id: 'log', title: 'Log' }] }
+		});
+		expect(result.status).toBe('repaired');
+		const docked = result.layout.docked as DockSplitNode;
+		// The group keeps its place and share; the centre comes before it.
+		expect(docked.sizes).toEqual([0.3, 0.7]);
+		expect(docked.children[1]).toMatchObject({
+			type: 'split',
+			children: [
+				{ type: 'panel', id: 'center' },
+				{ type: 'tabs', id: 'g', children: [{ id: 'right' }, { id: 'log' }] }
+			]
+		});
+		expect(validateDockLayout(result.layout).ok).toBe(true);
 	});
 
 	it('gives the default when the centre is floating, closed, auto-hidden or missing', () => {

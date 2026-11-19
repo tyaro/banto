@@ -566,3 +566,76 @@ describe('a pane leaving the docked tree asks the pane that is left (#682)', () 
 		expect(calls).toEqual(['close a']);
 	});
 });
+
+describe('replacements to different layouts are told apart (PR #723 review)', () => {
+	/** The floating pane a docked on one side or the other of t: the same list of changes. */
+	const sided = (side: 'left' | 'right'): DockLayout => {
+		const a = { type: 'panel' as const, id: 'a', title: 'A' };
+		const t = layout().docked!;
+		return {
+			version: 2,
+			floating: layout().floating.filter((w) => w.id !== 'a'),
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.5, 0.5],
+				children: side === 'left' ? [a, t] : [t, a]
+			}
+		};
+	};
+
+	it('each is asked; the first approved applies, the other is stale', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const asked: DockPanelChange[] = [];
+		const hook = (c: DockPanelChange) => {
+			asked.push(c);
+			return new Promise<boolean>((r) => answers.push(r));
+		};
+		const { dock, lifecycle } = setup({ hook });
+		const left = sided('left');
+		const right = sided('right');
+		const toLeft = lifecycle.requestReplace(
+			() => left,
+			(l) => (dock.layout = l)
+		);
+		const toRight = lifecycle.requestReplace(
+			() => right,
+			(l) => (dock.layout = l)
+		);
+		// The same replacement while it is asked shares the pending one.
+		expect(
+			lifecycle.requestReplace(
+				() => sided('left'),
+				(l) => (dock.layout = l)
+			)
+		).toBe(toLeft);
+		expect(asked.length).toBe(2);
+		expect(JSON.stringify(asked[0])).toBe(JSON.stringify(asked[1]));
+		while (answers.length > 0) {
+			answers.shift()!(true);
+			await nextTask();
+		}
+		// Both approved: the one applied first wins, the other finds the structure changed.
+		expect(await toLeft).toBe('applied');
+		expect(await toRight).toBe('stale');
+		expect(dock.layout.docked).toMatchObject({ children: [{ id: 'a' }, { id: 't' }] });
+	});
+
+	it('a preview that gives another layout later makes it stale', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const { dock, lifecycle } = setup({
+			hook: () => new Promise<boolean>((r) => answers.push(r))
+		});
+		let next = sided('left');
+		const before = structureKey(dock.layout);
+		const outcome = lifecycle.requestReplace(
+			() => next,
+			(l) => (dock.layout = l)
+		);
+		next = sided('right');
+		answers.splice(0).forEach((r) => r(true));
+		expect(await outcome).toBe('stale');
+		expect(structureKey(dock.layout)).toBe(before);
+	});
+});

@@ -522,16 +522,25 @@ export class PanelLifecycle {
 	 * like `requestPlacement`: a refusal stops it with nothing changed, a structure change while it
 	 * waits makes it `stale`, and `preview` (the layout `apply` would install; `undefined` = no
 	 * longer possible) is re-read and compared before each step and before `apply`. Nothing to ask
-	 * = applied at once.
+	 * = applied at once. The layout `preview` gives now is part of the request's identity: the same
+	 * replacement while it is asked shares the pending one, another destination is asked on its own
+	 * (whichever is applied first wins, the other is `stale`), and a `preview` that later gives
+	 * another layout makes it `stale`.
 	 */
 	requestReplace(
 		preview: () => DockLayout | undefined,
 		apply: (next: DockLayout) => void
 	): Promise<DockPanelChangeOutcome> {
 		if (this.#disposed) return Promise.resolve('disposed');
+		const first = preview();
+		if (first === undefined) return Promise.resolve('stale');
+		// The destination is part of the request's identity (PR #723 review): two replacements whose
+		// changes read the same (a floating pane docked on one side or the other) are asked apart,
+		// and the one applied second finds the structure changed (`stale`).
+		const destination = JSON.stringify(first);
 		const describeAll = (): DockPanelChange[] | null => {
 			const next = preview();
-			if (next === undefined) return null;
+			if (next === undefined || JSON.stringify(next) !== destination) return null;
 			return layoutChanges(
 				this.#dock.layout,
 				next,
@@ -546,7 +555,7 @@ export class PanelLifecycle {
 				const next = preview();
 				if (next !== undefined) apply(next);
 			},
-			{ replace: true }
+			{ replace: destination }
 		);
 	}
 

@@ -24,8 +24,8 @@
 	 *   `setVisible`, and a refused change writes the real state back.
 	 * - Every method goes through `DockHost` (`setPanelVisible` / `movePanel` / `replaceLayout`), so
 	 *   `beforePanelChange` is asked; nothing here assigns `dock.layout` after the first render
-	 *   except the measured default's shares and today's titles / panel set (no structure change of
-	 *   a mounted pane).
+	 *   except the measured default's shares and today's titles (no structure change). A change of
+	 *   `panels` that changes the structure goes through `replaceLayout` too (`syncPanels`).
 	 * - Saving is the app's (plan §4.4, PR-5): pass the saved value as `initialLayout` (or restore
 	 *   later with `restoreLayout`), and save `layoutSnapshot()` when `dock.layout` changes.
 	 *
@@ -42,6 +42,7 @@
 		type DockMoveTarget
 	} from './core/move.svelte';
 	import type { DockCapabilities } from './core/policy';
+	import { structureKey } from './core/tree';
 	import { createDockState, type DockState } from './state.svelte';
 	import {
 		assertExtraPanelIds,
@@ -221,16 +222,38 @@
 	});
 
 	// Today's panes and titles (a locale change renames them; an extra panel added / removed).
-	// Only titles and panes that are not mounted change, so nothing is asked.
 	$effect(() => {
 		const options = layoutOptions(0);
-		untrack(() => {
-			const result = reconcileThreePaneLayout(dock.layout, options);
-			if (result.status === 'default') return;
-			if (JSON.stringify(result.layout) !== JSON.stringify(dock.layout))
-				dock.layout = result.layout;
-		});
+		untrack(() => void syncPanels(options));
 	});
+
+	/** The newest `syncPanels` that went through `replaceLayout` (an older one's outcome is not acted on). */
+	let panelSync = 0;
+
+	/**
+	 * Fit `dock.layout` to today's panes (`reconcileThreePaneLayout`). Titles / icons only (the same
+	 * structure) are written directly: nothing mounted changes. A structure change (an extra panel
+	 * removed - its region gone, the tree around it re-joined - or added) goes through
+	 * `DockHost.replaceLayout`, so `beforePanelChange` and the IME hold are honoured. Refused (or
+	 * `invalid` / `disposed`): the layout stays as it is - a removed panel keeps its place, empty,
+	 * until the next sync (the next change of `panels` or the messages) or `resetLayout` /
+	 * `restoreLayout`. `stale` (the structure changed while it was asked): fitted again to the new
+	 * layout. A newer sync while one is asked takes over.
+	 */
+	async function syncPanels(options: ThreePaneDockLayoutOptions): Promise<void> {
+		const result = reconcileThreePaneLayout(dock.layout, options);
+		if (result.status === 'default') return;
+		if (JSON.stringify(result.layout) === JSON.stringify(dock.layout)) return;
+		const gen = ++panelSync;
+		if (!host || structureKey(result.layout) === structureKey(dock.layout)) {
+			dock.layout = result.layout;
+			return;
+		}
+		const outcome = await host.replaceLayout(result.layout, { focusPanel: CENTER });
+		if (gen !== panelSync || outcome === 'disposed') return;
+		writeOpen();
+		if (outcome === 'stale') void syncPanels(layoutOptions(0));
+	}
 
 	// --- leftOpen / rightOpen: one state with `dock.panels` (plan §4.1, `writeOpen` below) ---
 

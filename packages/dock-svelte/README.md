@@ -585,6 +585,13 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 - **パネルの id** は `left`・`center`・`right` に固定。追加パネル（`panels`、`ThreePaneExtraPanel`）の id がこれと重なる・
   重複すると例外（開発時の誤り）。追加パネルは `initial` で最初の置き場を決める（`hidden` = 閉じた浮動〔既定〕・
   `floating` = 開いた浮動・`{ edge }` = 外周にドッキング）。以後は保存したレイアウトに従う。
+- **`panels` を後から変えたとき**: タイトル・アイコンだけの違いは聞かずに直す。構造が変わる（追加パネルを外して、
+  それを包んでいた split が消え、残りが組み直される・パネルを足す）ときは `resetLayout` と同じく
+  `DockHost.replaceLayout` を通す（`beforePanelChange` と IME の変換中の保留が効く。消えた区画にあったフォーカスは
+  中央へ）。拒否されたら（`invalid` / `disposed` も）レイアウトはそのまま: 外したパネルは中身の無い区画として残り、
+  自動では再試行しない。次に `panels`・文言が変わったとき、または `resetLayout` / `restoreLayout` で照らし直す。
+  承認待ちの間に構造が変わった（`stale`）ときは、新しいレイアウトに照らして聞き直す。承認待ちの間にまた `panels` が
+  変わると、新しいほうが引き継ぐ。
 - **既定レイアウト**は純関数 `threePaneDockLayout({ hostWidth, leftWidth, rightWidth, panels })`: 左 | 中央 | 右の行で、
   `leftWidth`（既定 280）・`rightWidth`（既定 360）の px をマウント時に測った幅の比率に直す（中央が 320px を下回るなら
   左右を縮める）。マウント時の `leftOpen`/`rightOpen` が `false` の側は隠れた状態で始まる（元の場所を覚える）。
@@ -605,7 +612,9 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   | `viewMenuItems(labels)`            | 「表示」メニューの項目                                                                                       | `ThreePaneViewMenuItem[]`                              |
 
   同じ変更を承認待ちの間にもう一度呼ぶ（`toggle` の連打）と、同じ 1 つの依頼を共有する。`resetLayout` の承認待ちの間に
-  ほかの操作でレイアウトが変わると、`resetLayout` は `stale` で何も変えない。
+  ほかの操作でレイアウトが変わると、`resetLayout` は `stale` で何も変えない。`restoreLayout` を承認待ちの間に別の値で
+  もう一度呼ぶと（聞く変更の一覧が同じでも、行き先のレイアウトが違えば）別々に聞き、先に適用されたほうが勝って、
+  もう一方は `stale`。行き先が同じなら 1 つの依頼を共有する。
 
 - **`dockBack(id)` が戻れないとき**（[#721](https://github.com/tyaro/banto/issues/721)）: まず浮かせる前の場所
   （`movePanel(id, { back: true })`）へ戻す。覚えている場所が無い（この部品のマウント前に浮かせた・同じ入れ物の
@@ -623,7 +632,9 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   それらの JSON 文字列のどれでもよい。マウント時に 1 回だけ読む）。マウント後に届いた値は `restoreLayout(saved)`。
   どちらも `reconcileThreePaneLayout` で今のパネルの集合と照らす: `validateDockLayout` に通らない値は既定、知らない id は
   捨てる、足りない左右は既定の側に、足りない追加パネルは閉じた浮動で足す、タイトルは今の文言に直す、中央が畳まれて
-  いる・タブの裏にいるなら表に直す、中央が木に無い（浮動・閉じている・自動で隠れている）なら既定（`status: 'default'`）。
+  いるなら展開し、タブの組に入っている（裏でも表でも）なら組から抜いて組の隣に分割で置く（組の場所と比率は保ち、
+  左のパネルを含む組なら中央はその右、ほかは左。`dropCenter: false` は新しい合流しか止めないので、組のままだと
+  別のタブを押して中央を隠せてしまう）、中央が木に無い（浮動・閉じている・自動で隠れている）なら既定（`status: 'default'`）。
   保存のきっかけは、自分で持った `dock` の `dock.layout` を `$effect` で見る。
 - **パネル自身が入力を持つ**（追加パネルのフォームなど）ときは、`beforePanelChange` で下書きを控える（下の「pane の
   lifecycle」）。`resetLayout`・`restoreLayout` は、画面から外す・作り直す pane ごとに `hide` / `dock` / `undock` /

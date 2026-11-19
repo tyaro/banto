@@ -27,6 +27,7 @@ import type {
 	DockLayout,
 	DockNode,
 	DockPanelNode,
+	DockTabGroupNode,
 	FloatingWindow
 } from './types';
 
@@ -406,12 +407,10 @@ export function reconcileThreePaneLayout(
 	if (findNode(docked, THREE_PANE_IDS.center)?.type !== 'panel') return fallback();
 	const centreGroup = findParent(docked, THREE_PANE_IDS.center);
 	if (centreGroup?.type === 'tabs') {
-		const index = centreGroup.children.findIndex((c) => c.id === THREE_PANE_IDS.center);
-		if (centreGroup.activeIndex !== index) {
-			const group = { ...centreGroup, activeIndex: index };
-			docked = replaceById(docked!, group.id, group);
-			changed = true;
-		}
+		// A tab group would let a click on another tab hide the centre (`dropCenter: false` only
+		// stops new merges): the centre leaves the group and is split in beside it (PR #723 review).
+		docked = centreOutOfTabs(docked!, centreGroup);
+		changed = true;
 	}
 	const expanded = expandRegionOf(docked, THREE_PANE_IDS.center);
 	if (expanded !== docked) {
@@ -474,6 +473,29 @@ export function reconcileThreePaneLayout(
 	const final = validateDockLayout(layout);
 	if (!final.ok) return fallback();
 	return { layout: final.layout, status: changed ? 'repaired' : 'restored' };
+}
+
+/**
+ * Take the centre out of the tab group `group` and put it beside what is left of the group, in a
+ * new row split that keeps the group's place and share (the centre after a group holding the left
+ * pane, before any other). The centre's tab never stays behind another one.
+ */
+function centreOutOfTabs(root: DockNode, group: DockTabGroupNode): DockNode {
+	const centre = group.children.find((c) => c.id === THREE_PANE_IDS.center)!;
+	const sibling = group.children.find((c) => c.id !== THREE_PANE_IDS.center)!;
+	const rest = removePanel(root, THREE_PANE_IDS.center)!;
+	// Two tabs leave a bare panel (the group's id is gone), more keep the group.
+	const remaining = findNode(rest, group.id) ?? findNode(rest, sibling.id)!;
+	const after = group.children.some((c) => c.id === THREE_PANE_IDS.left);
+	const pane: DockPanelNode = { ...centre };
+	delete pane.collapsed;
+	return replaceById(rest, remaining.id, {
+		type: 'split',
+		id: freshId(rest, 'three-pane:center'),
+		direction: 'row',
+		children: after ? [remaining, pane] : [pane, remaining],
+		sizes: after ? [0.4, 0.6] : [0.6, 0.4]
+	});
 }
 
 function replaceById(root: DockNode, id: string, next: DockNode): DockNode {
