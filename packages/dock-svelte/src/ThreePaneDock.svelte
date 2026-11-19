@@ -27,9 +27,23 @@
 	 *   except the measured default's shares and today's titles (no structure change). A change of
 	 *   `panels` that changes the structure goes through `replaceLayout` too (`syncPanels`).
 	 * - Saving is the app's (plan §4.4, PR-5): pass the saved value as `initialLayout` (or restore
-	 *   later with `restoreLayout`), and save `layoutSnapshot()` when `dock.layout` changes.
-	 *
-	 * Not yet (later PRs of the plan): the narrow display and `arrange={false}` (§4.5).
+	 *   later with `restoreLayout`), and save `layoutSnapshot()` - not `dock.serialize()` - when
+	 *   `dock.layout` changes.
+	 * - Narrow (plan §4.5, §9 Q7): at a component width `<= narrowBreakpoint` (or `narrowOverride`)
+	 *   the dock shows a temporary layout (`threePaneNarrowLayout`): the centre alone, the shown
+	 *   sides in edge bands (their flyout is the drawer), everything else hidden. The layout to save
+	 *   is kept aside meanwhile - `layoutSnapshot()` returns it, and changes made while narrow are
+	 *   not saved - and comes back when the width does. Both switches go through `replaceLayout`
+	 *   (`beforePanelChange` is asked for the panes it moves; the centre is `persistent`, so it is
+	 *   never re-mounted); a refused switch keeps the current display until the next crossing. The
+	 *   first measurement right after mount installs the narrow display directly (nothing mounted
+	 *   has state yet).
+	 * - `arrange={false}` (plan §4.5, §9 Q4: kiosk): `DockHost`'s `arrange`, and every method that
+	 *   rearranges (`setVisible` / `toggle` / `leftOpen` / `rightOpen` writes / `float` / `dockBack`
+	 *   / `move` / `resetLayout`) is refused with nothing changed; `viewMenuItems` is empty.
+	 *   `restoreLayout` and the narrow switch still work (they show the saved layout, not the user's).
+	 * - Touch: the title-bar and drop-guide buttons follow the density tokens of `@banto/theme`
+	 *   (`--banto-dock-button-size`, `--banto-dock-guide-button-size`); nothing to pass here.
 	 */
 	import { onMount, untrack } from 'svelte';
 	import DockHost from './DockHost.svelte';
@@ -47,9 +61,13 @@
 	import {
 		assertExtraPanelIds,
 		defaultThreePaneDockMessages,
+		isPaneShown,
+		isThreePaneNarrow,
 		reconcileThreePaneLayout,
 		THREE_PANE_IDS,
+		THREE_PANE_NARROW_BREAKPOINT,
 		threePaneDockLayout,
+		threePaneNarrowLayout,
 		threePaneSavedLayout,
 		type ThreePaneDockLayoutOptions,
 		type ThreePaneDockMessages,
@@ -110,6 +128,14 @@
 		/** Panes kept by moving their DOM (`DockHost`'s `persistent`). The centre always is (plan §9 Q6). */
 		persistent?: (panelId: string) => boolean;
 		isStructureChangeDeferred?: () => boolean;
+		/** Narrow display at this component width (px) or below (plan §4.5). Default 900. */
+		narrowBreakpoint?: number;
+		/** `true` / `false` forces the narrow / wide display regardless of the width. */
+		narrowOverride?: boolean;
+		/** Output (bindable): the narrow display is shown now. Read-only for the app. */
+		narrow?: boolean;
+		/** `false` = the user cannot rearrange the layout (kiosk, plan §4.5 / §9 Q4; module doc). Default `true`. */
+		arrange?: boolean;
 	}
 
 	let {
@@ -135,7 +161,11 @@
 		beforePanelChange,
 		keepMounted,
 		persistent,
-		isStructureChangeDeferred
+		isStructureChangeDeferred,
+		narrowBreakpoint = THREE_PANE_NARROW_BREAKPOINT,
+		narrowOverride,
+		narrow = $bindable(false),
+		arrange = true
 	}: Props = $props();
 
 	// svelte-ignore state_referenced_locally
@@ -193,6 +223,19 @@
 	/** The `*Open` values last written or seen here: a different value is the app asking (declared before the first `writeOpen`). */
 	const seen = { left: untrack(() => leftOpen), right: untrack(() => rightOpen) };
 
+	// --- the narrow display's state (plan §4.5) ---
+	/** The component's measured width (`null` until mounted). */
+	let measuredWidth: number | null = $state(null);
+	/** The narrow display is on screen (`dock.layout` is the temporary layout). */
+	let narrowShown = $state(false);
+	/** The layout to save and to go back to while `narrowShown` (plain: never rendered). */
+	let wideLayout: DockLayout | null = null;
+	/** `wideLayout` is the untouched default: measured again at the width it comes back at. */
+	let wideIsDefault = false;
+	/** The display last asked for (the newest wish; an older switch still being asked is `stale` when it differs). */
+	let narrowWish: boolean | null = null;
+	let narrowGen = 0;
+
 	// --- the starting layout (before the first render, so nothing is mounted twice) ---
 	/** The default layout this component installed and nobody changed yet (its shares are re-measured at mount). */
 	let installedDefault: DockLayout | null = null;
@@ -208,17 +251,127 @@
 			status = result.status;
 		}
 		if (status === 'fresh' || status === 'default') installedDefault = dock.layout;
+		// Narrow forced from the start: shown before anything is mounted.
+		if (narrowOverride === true) enterNarrowNow();
 		writeOpen();
 		onRestore?.(status);
 	});
 
+	// --- the narrow display (plan §4.5; its state is declared above the starting layout) ---
+
+	const wantNarrow = $derived(narrowOverride ?? isThreePaneNarrow(measuredWidth, narrowBreakpoint));
+
+	$effect.pre(() => {
+		const value = narrowShown;
+		untrack(() => {
+			if (narrow !== value) narrow = value;
+		});
+	});
+
+	function narrowOptions(shown?: readonly string[]) {
+		const { width, height } = hostSize();
+		return { panels: defs, shown, hostWidth: width, hostHeight: height };
+	}
+
+	/** Install the narrow display without asking (before / right at mount: nothing has state yet). */
+	function enterNarrowNow(): void {
+		wideLayout = dock.layout;
+		wideIsDefault = installedDefault !== null && dock.layout === installedDefault;
+		installedDefault = null;
+		dock.layout = threePaneNarrowLayout(wideLayout, narrowOptions());
+		narrowShown = true;
+	}
+
+	/** The wide layout to show again: the default measured now, or the kept one fitted to today's panes. */
+	function wideTarget(): DockLayout {
+		const { width, height } = hostSize();
+		const options = layoutOptions(width, height);
+		if (wideIsDefault || wideLayout === null) return threePaneDockLayout(options);
+		return reconcileThreePaneLayout(wideLayout, options).layout;
+	}
+
+	/**
+	 * Switch to the narrow / wide display through `DockHost.replaceLayout` (module doc). Applied only
+	 * while it is still the newest wish and the layout it was built from is still there; `stale`
+	 * (the structure changed meanwhile) is built again from the new layout.
+	 */
+	async function switchNarrow(want: boolean): Promise<void> {
+		narrowWish = want;
+		if (!host || want === narrowShown) return;
+		const gen = ++narrowGen;
+		const current = () => narrowWish === want && gen === narrowGen;
+		let outcome: DockPanelChangeOutcome | 'invalid';
+		if (want) {
+			const base = dock.layout;
+			outcome = await host.replaceLayout(threePaneNarrowLayout(base, narrowOptions()), {
+				focusPanel: CENTER,
+				isCurrent: () => current() && dock.layout === base
+			});
+			if (outcome === 'applied') {
+				wideLayout = base;
+				wideIsDefault = false;
+				narrowShown = true;
+			}
+		} else {
+			const kept = wideLayout;
+			outcome = await host.replaceLayout(wideTarget(), {
+				focusPanel: CENTER,
+				isCurrent: () => current() && wideLayout === kept
+			});
+			if (outcome === 'applied') {
+				wideLayout = null;
+				wideIsDefault = false;
+				narrowShown = false;
+			}
+		}
+		if (outcome === 'disposed') return;
+		writeOpen();
+		if (outcome === 'stale' && gen === narrowGen && narrowWish !== null)
+			void switchNarrow(narrowWish);
+	}
+
 	onMount(() => {
 		// The default layout's shares come from the measured width (plan §4.1: px -> share).
 		const { width, height } = hostSize();
-		if (width > 0 && installedDefault !== null && dock.layout === installedDefault) {
+		if (
+			!narrowShown &&
+			width > 0 &&
+			installedDefault !== null &&
+			dock.layout === installedDefault
+		) {
 			dock.layout = threePaneDockLayout(layoutOptions(width, height));
+			installedDefault = dock.layout;
+		}
+		measuredWidth = width > 0 ? width : null;
+		// Narrow at the first measurement: installed directly (just mounted, nothing to lose).
+		if (
+			!narrowShown &&
+			narrowOverride === undefined &&
+			isThreePaneNarrow(measuredWidth, narrowBreakpoint)
+		) {
+			enterNarrowNow();
+			writeOpen();
 		}
 		installedDefault = null;
+		narrowWish = narrowShown;
+		if (typeof ResizeObserver === 'undefined' || !rootEl) return;
+		const observer = new ResizeObserver(() => {
+			const w = rootEl?.clientWidth ?? 0;
+			measuredWidth = w > 0 ? w : null;
+		});
+		observer.observe(rootEl);
+		return () => observer.disconnect();
+	});
+
+	// The width (or `narrowOverride`) crossed the breakpoint: switch (declared after `onMount`, so the
+	// first run sees its measurement).
+	$effect(() => {
+		const want = wantNarrow;
+		const mounted = host;
+		if (!mounted) return;
+		untrack(() => {
+			if (want !== narrowWish) void switchNarrow(want);
+		});
 	});
 
 	// Today's panes and titles (a locale change renames them; an extra panel added / removed).
@@ -249,6 +402,11 @@
 	 */
 	async function syncPanels(options: ThreePaneDockLayoutOptions): Promise<void> {
 		const gen = ++panelSync;
+		// Narrow: the kept wide layout follows today's panes too (not on screen: nothing to ask).
+		if (narrowShown && wideLayout !== null && !wideIsDefault) {
+			const kept = reconcileThreePaneLayout(wideLayout, options);
+			if (kept.status !== 'default') wideLayout = kept.layout;
+		}
 		const result = reconcileThreePaneLayout(dock.layout, options);
 		if (result.status === 'default') {
 			panelTarget = null;
@@ -384,11 +542,16 @@
 			writeOpen();
 			return 'unavailable';
 		}
+		if (!arrange) {
+			writeOpen();
+			return 'refused';
+		}
 		wanted.set(id, visible);
 		const wasInside = focusInside();
-		const outcome = await host.setPanelVisible(id, visible, {
-			isCurrent: () => wanted.get(id) === visible
-		});
+		const isCurrent = () => wanted.get(id) === visible;
+		if (narrowShown && visible && id !== CENTER && !isVisible(id))
+			return revealNarrow(id, isCurrent);
+		const outcome = await host.setPanelVisible(id, visible, { isCurrent });
 		if (outcome === 'disposed') return outcome;
 		writeOpen();
 		if (outcome === 'applied' && !visible) {
@@ -398,6 +561,34 @@
 		return outcome;
 	}
 
+	/**
+	 * Narrow (plan §4.5): a hidden pane asked to show goes to its edge band and slides out (the
+	 * flyout is the drawer), through `replaceLayout`; the other panes keep showing or hidden.
+	 */
+	async function revealNarrow(
+		id: string,
+		isCurrent: () => boolean
+	): Promise<DockPanelChangeOutcome | 'unavailable'> {
+		if (!host) return 'unavailable';
+		const ids = [THREE_PANE_IDS.left, THREE_PANE_IDS.right, ...panels.map((p) => p.id)];
+		const shown = [...ids.filter((x) => known(x) && isPaneShown(dock.layout, x)), id];
+		const next = threePaneNarrowLayout(wideLayout ?? dock.layout, narrowOptions(shown));
+		const outcome = await host.replaceLayout(next, {
+			focusPanel: CENTER,
+			isCurrent: () => isCurrent() && narrowShown
+		});
+		if (outcome === 'disposed') return outcome;
+		if (outcome === 'applied') dock.openFlyout(id);
+		writeOpen();
+		return outcome === 'invalid' ? 'unavailable' : outcome;
+	}
+
+	/** A View menu checkbox: `toggle`, but - narrow - a pane in an edge band slides out (its drawer). */
+	function choose(id: string): Promise<unknown> {
+		if (narrowShown && arrange && host && dock.isAutoHidden(id)) return host.showPanel(id);
+		return toggle(id);
+	}
+
 	/** `setVisible(id, !isVisible(id))`, read when called (a repeat while it is asked asks the same change). */
 	export function toggle(id: string): Promise<DockPanelChangeOutcome | 'unavailable'> {
 		return setVisible(id, !isVisible(id));
@@ -405,7 +596,7 @@
 
 	/** Move a pane (`DockHost.movePanel`, the "panel actions" menu's path). The centre never moves (`unavailable`). */
 	export async function move(id: string, target: DockMoveTarget): Promise<DockMoveOutcome> {
-		if (!known(id) || !host) return 'unavailable';
+		if (!known(id) || !host || !arrange) return 'unavailable';
 		const outcome = await host.movePanel(id, target);
 		writeOpen();
 		return outcome;
@@ -424,7 +615,7 @@
 	 * offered (an extra panel with no `initial` edge whose place is gone).
 	 */
 	export function dockBack(id: string): Promise<DockMoveOutcome> {
-		if (!known(id) || !host) return Promise.resolve('unavailable');
+		if (!known(id) || !host || !arrange) return Promise.resolve('unavailable');
 		if (!dock.layout.floating.some((w) => w.id === id && w.open))
 			return Promise.resolve('unavailable');
 		if (host.canMovePanel(id, { back: true })) return move(id, { back: true });
@@ -437,21 +628,46 @@
 	 * Replace the layout with the default (plan §4.4, no confirm dialog - §9 Q3): every pane, its
 	 * place, open state and lock, measured at today's width. Asked through `beforePanelChange` for
 	 * every pane it takes off the screen or re-mounts (`DockHost.replaceLayout`); a change while it
-	 * is asked makes it `stale`. A focus it dropped goes to the centre.
+	 * is asked makes it `stale`. A focus it dropped goes to the centre. Narrow: the kept layout
+	 * becomes the default (shown when the width comes back) and the narrow display is built again
+	 * from it. `refused` when `arrange` is `false`.
 	 */
 	export async function resetLayout(): Promise<DockPanelChangeOutcome | 'invalid' | 'unavailable'> {
 		if (!host) return 'unavailable';
+		if (!arrange) return 'refused';
 		const { width, height } = hostSize();
-		const outcome = await host.replaceLayout(threePaneDockLayout(layoutOptions(width, height)), {
-			focusPanel: CENTER
+		const next = threePaneDockLayout(layoutOptions(width, height));
+		return install(next, true);
+	}
+
+	/**
+	 * Show `next` as the wide layout (`resetLayout` / `restoreLayout`): replaced through
+	 * `replaceLayout`, or - narrow - kept for later, with the narrow display built from it.
+	 */
+	async function install(
+		next: DockLayout,
+		isDefault: boolean
+	): Promise<DockPanelChangeOutcome | 'invalid' | 'unavailable'> {
+		if (!host) return 'unavailable';
+		const wasNarrow = narrowShown;
+		const shown = wasNarrow ? threePaneNarrowLayout(next, narrowOptions()) : next;
+		const outcome = await host.replaceLayout(shown, {
+			focusPanel: CENTER,
+			// The display switched while it was asked: what it was built for is gone.
+			isCurrent: () => narrowShown === wasNarrow
 		});
+		if (outcome === 'applied' && wasNarrow) {
+			wideLayout = next;
+			wideIsDefault = isDefault;
+		}
 		writeOpen();
 		return outcome;
 	}
 
 	/**
 	 * Restore a saved layout (`initialLayout`'s forms) after mount, e.g. once the app's settings
-	 * arrived: reconciled with today's panes, then installed like `resetLayout`.
+	 * arrived: reconciled with today's panes, then installed like `resetLayout` (also when
+	 * `arrange` is `false`: it shows the saved layout, it does not rearrange).
 	 */
 	export async function restoreLayout(saved: unknown): Promise<{
 		status: ThreePaneRestoreStatus;
@@ -460,22 +676,24 @@
 		const { width, height } = hostSize();
 		const result = reconcileThreePaneLayout(saved, layoutOptions(width, height));
 		if (!host) return { status: result.status, outcome: 'unavailable' };
-		const outcome = await host.replaceLayout(result.layout, { focusPanel: CENTER });
-		writeOpen();
+		const outcome = await install(result.layout, false);
 		return { status: result.status, outcome };
 	}
 
-	/** The value to save now (plan §4.4). */
+	/** The value to save now (plan §4.4): while narrow, the kept wide layout (the narrow display is never saved). */
 	export function layoutSnapshot(): ThreePaneSavedLayout {
-		return threePaneSavedLayout(dock.layout);
+		return threePaneSavedLayout(narrowShown && wideLayout !== null ? wideLayout : dock.layout);
 	}
 
 	/**
 	 * Items of a View menu (plan §4.8): a checkbox per pane - left, right, then the extra panels; not
 	 * the centre - checked from `dock.panels`, a separator, and "reset layout". Structurally
-	 * `@banto/ui`'s `HeaderNavMenuItem[]`. Reactive (call it in a `$derived`).
+	 * `@banto/ui`'s `HeaderNavMenuItem[]`. Reactive (call it in a `$derived`). Narrow: choosing a
+	 * pane in an edge band slides it out (a hidden one goes to its band first). Empty when
+	 * `arrange` is `false` (plan §4.5: no View menu in a kiosk).
 	 */
 	export function viewMenuItems(labels: ThreePaneViewMenuLabels): ThreePaneViewMenuItem[] {
+		if (!arrange) return [];
 		const ids = [
 			...(left ? [THREE_PANE_IDS.left] : []),
 			...(right ? [THREE_PANE_IDS.right] : []),
@@ -487,7 +705,7 @@
 				id: `panel:${id}`,
 				label: titleOf(id),
 				checked: isVisible(id),
-				onSelect: () => void toggle(id)
+				onSelect: () => void choose(id)
 			})),
 			{ kind: 'separator', id: 'separator' },
 			{
@@ -517,6 +735,7 @@
 		{keepMounted}
 		persistent={panePersistent}
 		{isStructureChangeDeferred}
+		{arrange}
 	/>
 </div>
 

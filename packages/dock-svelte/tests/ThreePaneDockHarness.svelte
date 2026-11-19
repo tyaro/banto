@@ -2,10 +2,12 @@
 	Test-only harness for `ThreePaneDock.test.ts` (#663 ④): the snippets cannot be written from a
 	`.ts` test, so this wrapper renders the three panes (and the extra panels named in `extraIds`)
 	with a text input each, binds `leftOpen` / `rightOpen` / `dock`, and exposes the component
-	(`api()`) and the bound values (`open()`, `setOpen()`).
+	(`api()`) and the bound values (`open()`, `setOpen()`, `isNarrow()`); the centre also holds a
+	`PersistentProbe` that reports its mounts (`onCenterMounted`).
 -->
 <script lang="ts">
 	import ThreePaneDock from '../src/ThreePaneDock.svelte';
+	import PersistentProbe from './PersistentProbe.svelte';
 	import type { DockPanelChange } from '../src/core/lifecycle';
 	import type { DockCapabilities } from '../src/core/policy';
 	import type { DockState } from '../src/state.svelte';
@@ -20,7 +22,11 @@
 		initialLeftOpen = true,
 		beforePanelChange,
 		capabilities,
-		onRestore
+		onRestore,
+		narrowOverride,
+		narrowBreakpoint,
+		arrange = true,
+		onCenterMounted
 	}: {
 		dock?: DockState;
 		withLeft?: boolean;
@@ -31,12 +37,21 @@
 		beforePanelChange?: (change: DockPanelChange) => boolean | Promise<boolean>;
 		capabilities?: (id: string) => DockCapabilities | undefined;
 		onRestore?: (status: ThreePaneRestoreStatus | 'fresh') => void;
+		narrowOverride?: boolean;
+		narrowBreakpoint?: number;
+		arrange?: boolean;
+		onCenterMounted?: (id: string) => void;
 	} = $props();
 
 	// svelte-ignore state_referenced_locally
 	let leftOpen = $state(initialLeftOpen);
 	let rightOpen = $state(true);
+	let narrow = $state(false);
 	let ref: ReturnType<typeof ThreePaneDock> | undefined = $state();
+
+	export function isNarrow(): boolean {
+		return narrow;
+	}
 
 	export function api(): ReturnType<typeof ThreePaneDock> {
 		if (!ref) throw new Error('ThreePaneDock is not mounted');
@@ -77,6 +92,11 @@
 	{beforePanelChange}
 	{capabilities}
 	{onRestore}
+	{narrowOverride}
+	{narrowBreakpoint}
+	{arrange}
+	bind:narrow
 >
 	<div data-pane="center">CENTER<input aria-label="center input" /></div>
+	<PersistentProbe id="center" title="probe" onMounted={onCenterMounted} />
 </ThreePaneDock>

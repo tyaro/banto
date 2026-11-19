@@ -38,6 +38,10 @@ export {
 	THREE_PANE_IDS,
 	threePaneDockLayout,
 	threePaneSavedLayout,
+	THREE_PANE_NARROW_BREAKPOINT,
+	threePaneNarrowLayout,
+	isThreePaneNarrow,
+	type ThreePaneNarrowLayoutOptions,
 	type ThreePaneDockLayoutOptions,
 	type ThreePaneDockMessages,
 	type ThreePaneExtraPanelDef,
@@ -111,7 +115,9 @@ export {
 	guideButtonSize,
 	hitGuideButton,
 	type CrossOptions,
-	type GuideButton
+	type GuideButton,
+	type GuideSizing,
+	readGuideSizing
 } from './core/dropzones';
 
 /** Outer-edge drop targets of the whole host (#694 PR-1, buttons since PR-2). */

@@ -15,16 +15,27 @@
  * `dropRegionRect(hostRect, edge, EDGE_DOCK_RATIO)` - the quarter of the host the new
  * split gives the pane (`dockPanelAtEdge`'s sizes).
  */
-import { GUIDE_INSET, guideButtonSize, hitGuideButton, type GuideButton } from './dropzones';
+import {
+	GUIDE_INSET,
+	guideButtonSize,
+	hitGuideButton,
+	type GuideButton,
+	type GuideSizing
+} from './dropzones';
 import type { DockEdge } from '../types';
 
 /**
  * The outer-edge buttons of a `width` x `height` host (origin top-left), in the order
  * left, right, top, bottom. The button side is the cross's (`guideButtonSize` of the
- * host); empty when the host is too small for it.
+ * host, with `sizing` - the touch density's, `readGuideSizing`); empty when the host is
+ * too small for it.
  */
-export function edgeButtons(width: number, height: number): GuideButton<DockEdge>[] {
-	const b = guideButtonSize(width, height);
+export function edgeButtons(
+	width: number,
+	height: number,
+	sizing: GuideSizing = {}
+): GuideButton<DockEdge>[] {
+	const b = guideButtonSize(width, height, sizing.size, sizing.min);
 	if (b <= 0) return [];
 	const midX = width / 2 - b / 2;
 	const midY = height / 2 - b / 2;
