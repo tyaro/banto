@@ -280,8 +280,9 @@
 
 	/** Install the narrow display without asking (before / right at mount: nothing has state yet). */
 	function enterNarrowNow(): void {
-		wideLayout = dock.layout;
 		wideIsDefault = installedDefault !== null && dock.layout === installedDefault;
+		// As saved (#739 review): the floated panes' places do not outlive the narrow display.
+		wideLayout = dock.savedLayout();
 		installedDefault = null;
 		adoptLayout(dock, threePaneNarrowLayout(wideLayout, narrowOptions()));
 		narrowShown = true;
@@ -308,12 +309,16 @@
 		let outcome: DockPanelChangeOutcome | 'invalid';
 		if (want) {
 			const base = dock.layout;
+			// Kept as saved (#739 review): the floated panes' `homeSlot`s are dropped by the narrow
+			// display, so the kept wide layout - saved by `layoutSnapshot` and shown again - must not
+			// count them. Taken before the switch, while they are still there.
+			const kept = dock.savedLayout();
 			outcome = await host.replaceLayout(threePaneNarrowLayout(base, narrowOptions()), {
 				focusPanel: CENTER,
 				isCurrent: () => current() && dock.layout === base
 			});
 			if (outcome === 'applied') {
-				wideLayout = base;
+				wideLayout = kept;
 				wideIsDefault = false;
 				narrowShown = true;
 			}

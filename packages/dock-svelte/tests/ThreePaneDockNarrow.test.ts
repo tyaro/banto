@@ -30,7 +30,7 @@ import {
 	type ThreePanePanels,
 	type ThreePaneSavedLayout
 } from '../src/threePane';
-import type { DockSplitNode } from '../src/types';
+import type { DockLayout, DockSplitNode } from '../src/types';
 
 const saved: [object, string, PropertyDescriptor | undefined][] = [];
 let width = 1000;
@@ -173,6 +173,24 @@ describe('ThreePaneDock: the narrow display', () => {
 		);
 		expect(input.value).toBe('typed');
 		expect(mounts).toEqual(['center']);
+	});
+
+	// #739 review (Codex): a floated pane's place is not saved, so the kept wide layout is saved -
+	// and shown again - with the hidden panes' shares taken without it, as before the switch.
+	it('keeps the wide layout as saved: a floated pane is not counted in the hidden ones', async () => {
+		const { api, dock } = mount();
+		dock.undockPanel('left');
+		dock.dismiss('right');
+		const wide = api().layoutSnapshot();
+		const share = (layout: DockLayout) => {
+			const slot = layout.floating.find((w) => w.id === 'right')?.dockSlot;
+			return slot?.kind === 'split' ? slot.share : undefined;
+		};
+		expect(share(wide.layout)).not.toBe(share(dock.layout));
+		await resize(700);
+		expect(api().layoutSnapshot()).toEqual(wide);
+		await resize(1000);
+		expect(share(dock.layout)).toBe(share(wide.layout));
 	});
 
 	it('does not save what is changed while narrow, and goes back to the kept layout', async () => {
