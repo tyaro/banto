@@ -253,6 +253,35 @@ describe('reconcileThreePaneLayout', () => {
 		expect(validateDockLayout(result.layout).ok).toBe(true);
 	});
 
+	it('turns a tab group of the centre alone into the centre, at the root or nested', () => {
+		const group = { type: 'tabs' as const, id: 'g', activeIndex: 0, children: [panel('center')] };
+		const atRoot: DockLayout = { version: 2, docked: group, floating: [] };
+		const a = reconcileThreePaneLayout(atRoot, base);
+		expect(a.status).toBe('repaired');
+		expect(findNode(a.layout.docked, 'g')).toBeNull();
+		expect(findNode(a.layout.docked, 'center')?.type).toBe('panel');
+		expect(findParent(a.layout.docked, 'center')?.type).not.toBe('tabs');
+		expect(validateDockLayout(a.layout).ok).toBe(true);
+
+		const nested: DockLayout = {
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.3, 0.4, 0.3],
+				children: [panel('left'), { ...group, collapsed: true }, panel('right')]
+			},
+			floating: []
+		};
+		const b = reconcileThreePaneLayout(nested, base);
+		expect(b.status).toBe('repaired');
+		const docked = b.layout.docked as DockSplitNode;
+		expect(docked.sizes).toEqual([0.3, 0.4, 0.3]);
+		expect(docked.children[1]).toEqual({ type: 'panel', id: 'center', title: 'Work' });
+		expect(validateDockLayout(b.layout).ok).toBe(true);
+	});
+
 	it('gives the default when the centre is floating, closed, auto-hidden or missing', () => {
 		const win = { title: 'Work', x: 0, y: 0, width: 100, height: 100 };
 		const cases: DockLayout[] = [
@@ -315,6 +344,39 @@ describe('layoutChanges (DockHost.replaceLayout)', () => {
 			// keyed child): neither is asked.
 			{ kind: 'dock', panelId: 'left', remount: true },
 			{ kind: 'hide', panelId: 'log', remount: true }
+		]);
+	});
+
+	it('tells a persistent pane kept as a closed window from one left out (close = discarded)', () => {
+		const win = (id: string, open: boolean) => ({
+			id,
+			title: id,
+			x: 0,
+			y: 0,
+			width: 100,
+			height: 100,
+			open
+		});
+		const before: DockLayout = {
+			version: 2,
+			docked: panel('center'),
+			floating: [win('kept', true), win('gone', true), win('closed', false)]
+		};
+		const after: DockLayout = {
+			version: 2,
+			docked: panel('center'),
+			floating: [win('kept', false), win('closed', false)]
+		};
+		const persistent = (id: string) => id !== 'center';
+		expect(layoutChanges(before, after, keepNone, persistent)).toEqual([
+			{ kind: 'hide', panelId: 'kept', remount: false },
+			{ kind: 'close', panelId: 'gone' }
+		]);
+		// Left out while closed (mounted, not shown): discarded too.
+		const empty: DockLayout = { version: 2, docked: panel('center'), floating: [] };
+		expect(layoutChanges(after, empty, keepNone, persistent)).toEqual([
+			{ kind: 'close', panelId: 'kept' },
+			{ kind: 'close', panelId: 'closed' }
 		]);
 	});
 

@@ -227,8 +227,14 @@
 		untrack(() => void syncPanels(options));
 	});
 
-	/** The newest `syncPanels` that went through `replaceLayout` (an older one's outcome is not acted on). */
+	/** The newest `syncPanels` (an older one's outcome is not acted on). */
 	let panelSync = 0;
+	/**
+	 * The layout the newest `syncPanels` wants (JSON; `null` = none it can name). A replacement still
+	 * being asked is applied only while it is this one (PR #723 review): `panels` changed back while
+	 * it waits (today's layout fits again) retires it, a newer sync to the same layout keeps it.
+	 */
+	let panelTarget: string | null = null;
 
 	/**
 	 * Fit `dock.layout` to today's panes (`reconcileThreePaneLayout`). Titles / icons only (the same
@@ -238,18 +244,27 @@
 	 * `invalid` / `disposed`): the layout stays as it is - a removed panel keeps its place, empty,
 	 * until the next sync (the next change of `panels` or the messages) or `resetLayout` /
 	 * `restoreLayout`. `stale` (the structure changed while it was asked): fitted again to the new
-	 * layout. A newer sync while one is asked takes over.
+	 * layout. A newer sync while one is asked takes over: one to another layout - today's included,
+	 * when `panels` changed back - makes the older one `stale` right before it would be applied.
 	 */
 	async function syncPanels(options: ThreePaneDockLayoutOptions): Promise<void> {
-		const result = reconcileThreePaneLayout(dock.layout, options);
-		if (result.status === 'default') return;
-		if (JSON.stringify(result.layout) === JSON.stringify(dock.layout)) return;
 		const gen = ++panelSync;
+		const result = reconcileThreePaneLayout(dock.layout, options);
+		if (result.status === 'default') {
+			panelTarget = null;
+			return;
+		}
+		const target = JSON.stringify(result.layout);
+		panelTarget = target;
+		if (target === JSON.stringify(dock.layout)) return;
 		if (!host || structureKey(result.layout) === structureKey(dock.layout)) {
 			dock.layout = result.layout;
 			return;
 		}
-		const outcome = await host.replaceLayout(result.layout, { focusPanel: CENTER });
+		const outcome = await host.replaceLayout(result.layout, {
+			focusPanel: CENTER,
+			isCurrent: () => panelTarget === target
+		});
 		if (gen !== panelSync || outcome === 'disposed') return;
 		writeOpen();
 		if (outcome === 'stale') void syncPanels(layoutOptions(0));
@@ -285,16 +300,20 @@
 		untrack(() => {
 			if (left && wantLeft !== seen.left) {
 				seen.left = wantLeft;
-				if (wantLeft !== isVisible(THREE_PANE_IDS.left))
-					void setVisible(THREE_PANE_IDS.left, wantLeft);
+				wantOpen(THREE_PANE_IDS.left, wantLeft);
 			}
 			if (right && wantRight !== seen.right) {
 				seen.right = wantRight;
-				if (wantRight !== isVisible(THREE_PANE_IDS.right))
-					void setVisible(THREE_PANE_IDS.right, wantRight);
+				wantOpen(THREE_PANE_IDS.right, wantRight);
 			}
 		});
 	});
+
+	/** The app's newest `leftOpen` / `rightOpen`: asked when it differs from the screen, else it only retires an older request (`wanted`). */
+	function wantOpen(id: string, open: boolean): void {
+		if (open !== isVisible(id)) void setVisible(id, open);
+		else wanted.set(id, open);
+	}
 
 	// --- DockHost wiring ---
 	const paneCaps = (id: string): DockCapabilities | undefined =>
@@ -345,9 +364,17 @@
 	}
 
 	/**
+	 * The newest visibility asked per pane (`setVisible`, `leftOpen` / `rightOpen`). A request still
+	 * being asked is applied only while it is the newest wish (PR #723 review): the opposite asked
+	 * meanwhile - even when the pane is already there and nothing new is asked - makes it `stale`.
+	 */
+	const wanted = new Map<string, boolean>();
+
+	/**
 	 * Show / hide a pane (`DockHost.setPanelVisible`): `refused` for the centre's hide, `unavailable`
 	 * for an unknown id or before mount. A focus the hide dropped goes to the centre. Two calls for
-	 * the same change while it is asked share the one request.
+	 * the same change while it is asked share the one request; a call for the opposite while it is
+	 * asked makes it `stale` (the newest wins, even when it changes nothing).
 	 */
 	export async function setVisible(
 		id: string,
@@ -357,8 +384,12 @@
 			writeOpen();
 			return 'unavailable';
 		}
+		wanted.set(id, visible);
 		const wasInside = focusInside();
-		const outcome = await host.setPanelVisible(id, visible);
+		const outcome = await host.setPanelVisible(id, visible, {
+			isCurrent: () => wanted.get(id) === visible
+		});
+		if (outcome === 'disposed') return outcome;
 		writeOpen();
 		if (outcome === 'applied' && !visible) {
 			await Promise.resolve();

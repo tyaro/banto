@@ -482,7 +482,13 @@ export function reconcileThreePaneLayout(
  */
 function centreOutOfTabs(root: DockNode, group: DockTabGroupNode): DockNode {
 	const centre = group.children.find((c) => c.id === THREE_PANE_IDS.center)!;
-	const sibling = group.children.find((c) => c.id !== THREE_PANE_IDS.center)!;
+	const sibling = group.children.find((c) => c.id !== THREE_PANE_IDS.center);
+	if (!sibling) {
+		// A group of the centre alone (valid on its own): the centre takes the group's place.
+		const alone: DockPanelNode = { ...centre };
+		delete alone.collapsed;
+		return replaceById(root, group.id, alone);
+	}
 	const rest = removePanel(root, THREE_PANE_IDS.center)!;
 	// Two tabs leave a bare panel (the group's id is gone), more keep the group.
 	const remaining = findNode(rest, group.id) ?? findNode(rest, sibling.id)!;

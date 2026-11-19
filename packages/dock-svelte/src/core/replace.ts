@@ -14,8 +14,9 @@
  * - it is re-mounted = `dock` (floating / band -> tree), `undock` (-> floating window),
  *   `auto-hide` `to: 'band'` (-> band), `move-docked` (another place in the tree), `tab-switch`
  *   when it ends as a background tab, all `remount: true`;
- * - it leaves the screen and is not kept = `hide`, `remount: true` (a `persistent` pane:
- *   `remount: false`; `closePanel` is the only discard).
+ * - it leaves the screen and is not kept = `hide`, `remount: true`; a `persistent` pane that is
+ *   still in the layout (a closed floating window) = `hide`, `remount: false`, and one that is
+ *   left out of the layout altogether = `close` (its content is discarded, as by `closePanel`).
  *
  * A pane that is not mounted now (a background tab, a closed window, a band pane not slid out)
  * has nothing to lose and is not listed. Order: docked panes (tree order), band panes, floating
@@ -59,6 +60,11 @@ function placeOf(layout: DockLayout, id: string): Where | null {
 	if (collectPanelIds(layout.docked).includes(id)) return 'docked';
 	if (autoHiddenPanelIds(layout).includes(id)) return 'band';
 	return layout.floating.some((w) => w.id === id && w.open) ? 'floating' : null;
+}
+
+/** The pane `id` is anywhere in `layout`: docked, auto-hidden or a floating window (open or closed). */
+function inLayout(layout: DockLayout, id: string): boolean {
+	return placeOf(layout, id) !== null || layout.floating.some((w) => w.id === id);
 }
 
 /** The tab group holding the docked pane `id` in `root`, with its active pane. */
@@ -117,7 +123,11 @@ export function layoutChanges(
 			continue;
 		}
 		if (place === null) {
-			changes.push({ kind: 'hide', panelId: id, remount: !persistent(id) });
+			const stays = inLayout(after, id);
+			// A persistent closed window that stays closed: still kept, nothing changes.
+			if (persistent(id) && stays && !mount.shown) continue;
+			if (persistent(id) && !stays) changes.push({ kind: 'close', panelId: id });
+			else changes.push({ kind: 'hide', panelId: id, remount: !persistent(id) });
 		} else if (background && group && mount.shown) {
 			changes.push({
 				kind: 'tab-switch',

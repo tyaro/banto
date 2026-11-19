@@ -639,3 +639,45 @@ describe('replacements to different layouts are told apart (PR #723 review)', ()
 		expect(structureKey(dock.layout)).toBe(before);
 	});
 });
+
+describe('guarded: the caller retires a request it no longer wants (PR #723 re-review)', () => {
+	it('a guard that turns false before the answer makes the request stale', async () => {
+		const answer = deferred<boolean>();
+		const { dock, lifecycle } = setup({ hook: () => answer.promise });
+		let wanted = true;
+		const close = lifecycle.guarded(
+			() => wanted,
+			() => lifecycle.close('a')
+		);
+		wanted = false;
+		answer.resolve(true);
+		expect(await close).toBe('stale');
+		expect(winOf(dock, 'a').open).toBe(true);
+	});
+
+	it('every step of a sequence keeps the guard (requestReplace)', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const { dock, lifecycle } = setup({
+			hook: () => new Promise<boolean>((r) => answers.push(r))
+		});
+		const next: DockLayout = { ...layout(), floating: [] };
+		let wanted = true;
+		const replace = lifecycle.guarded(
+			() => wanted,
+			() =>
+				lifecycle.requestReplace(
+					() => next,
+					(l) => (dock.layout = l)
+				)
+		);
+		await nextTask();
+		answers.shift()!(true);
+		await nextTask();
+		// The second step (pane b) is asked; the caller gives up before its answer.
+		expect(answers.length).toBe(1);
+		wanted = false;
+		answers.shift()!(true);
+		expect(await replace).toBe('stale');
+		expect(dock.layout.floating.map((w) => w.id)).toEqual(['a', 'b']);
+	});
+});

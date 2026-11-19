@@ -215,6 +215,44 @@ describe('ThreePaneDock: the API', () => {
 		expect(harness.open().left).toBe(false);
 	});
 
+	it('drops a hide still being asked when leftOpen goes back to true (PR #723 review)', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const { harness, dock } = mount({
+			beforePanelChange: () => new Promise<boolean>((r) => answers.push(r))
+		});
+		harness.setOpen('left', false);
+		await settle();
+		expect(answers.length).toBe(1);
+		harness.setOpen('left', true);
+		await settle();
+		while (answers.length > 0) {
+			answers.shift()!(true);
+			await settle();
+		}
+		expect(dock.isVisible('left')).toBe(true);
+		expect(harness.open().left).toBe(true);
+	});
+
+	it('drops a hide still being asked when setVisible asks the opposite', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const { api, dock } = mount({
+			beforePanelChange: () => new Promise<boolean>((r) => answers.push(r))
+		});
+		const first = api().setVisible('right', false);
+		await settle();
+		expect(answers.length).toBe(1);
+		// Already on screen: nothing new is asked, but the older hide is no longer wanted.
+		const second = api().setVisible('right', true);
+		await settle();
+		while (answers.length > 0) {
+			answers.shift()!(true);
+			await settle();
+		}
+		expect(await first).toBe('stale');
+		expect(await second).toBe('applied');
+		expect(dock.isVisible('right')).toBe(true);
+	});
+
 	it('moves the focus to the centre when a hide drops it', async () => {
 		const { api, view } = mount();
 		const input = view.container.querySelector<HTMLInputElement>('[aria-label="left input"]')!;
@@ -405,6 +443,27 @@ describe('ThreePaneDock: a change of panels that changes the structure (PR #723 
 		await view.rerender({ extra: [] });
 		await settle();
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['left', 'center', 'right']);
+	});
+
+	it('drops a removal still being asked when panels change back before the answer', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const { dock, view } = mount({
+			extra: [LOG],
+			beforePanelChange: () => new Promise<boolean>((r) => answers.push(r))
+		});
+		const before = dock.serialize();
+		await view.rerender({ extra: [] });
+		await settle();
+		expect(answers.length).toBeGreaterThan(0);
+		// Put back before the answer: today's layout fits again, nothing new is asked.
+		await view.rerender({ extra: [LOG] });
+		await settle();
+		while (answers.length > 0) {
+			answers.shift()!(true);
+			await settle();
+		}
+		expect(dock.serialize()).toBe(before);
+		expect(collectPanelIds(dock.layout.docked)).toContain('log');
 	});
 
 	it('changes titles only without asking', async () => {

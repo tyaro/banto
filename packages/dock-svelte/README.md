@@ -399,8 +399,9 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   - 並び順は、その `DockState` が id を初めて見た順（最初の layout の docked の木を木の順に、続けて浮動 window を
     配列の順に。あとから増えた id は末尾）。前面化・ドック・隠す操作では並び替わらない。`hydrate` / `layout = ...`
     でも既知の id は位置を保ち、新しい id は末尾に付く。アプリ独自の順にしたいときは行をアプリで並べ替える。
-- **`host.setPanelVisible(id, visible)`**: チェックを外す = ✕ と同じ（`keepMounted` の pane は hide、それ以外は close。
-  `beforePanelChange` に聞き、拒否なら `refused`）。`capabilities` の `close: false` の pane は外さない（`refused`）。
+- **`host.setPanelVisible(id, visible, { isCurrent? })`**: チェックを外す = ✕ と同じ（`keepMounted` の pane は hide、それ以外は close。
+  `beforePanelChange` に聞き、拒否なら `refused`。`isCurrent` は適用の直前に読み直し、`false` なら `stale` で何も変えない
+  — 承認待ちの間にアプリが逆を望み、それが今の状態と同じで新しく聞くことが無いときに、古い依頼を失効させる）。`capabilities` の `close: false` の pane は外さない（`refused`）。
   チェックを入れる = `showPanel`。外すときに既に隠れていれば聞かずに `applied`。拒否されたときはチェックボックスを
   `row.visible` に戻すのはメニュー側（変わらない値は Svelte が書き戻さない）。
 - **`host.showPanel(id)`**: どこにあっても見える状態にする。
@@ -591,13 +592,15 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   中央へ）。拒否されたら（`invalid` / `disposed` も）レイアウトはそのまま: 外したパネルは中身の無い区画として残り、
   自動では再試行しない。次に `panels`・文言が変わったとき、または `resetLayout` / `restoreLayout` で照らし直す。
   承認待ちの間に構造が変わった（`stale`）ときは、新しいレイアウトに照らして聞き直す。承認待ちの間にまた `panels` が
-  変わると、新しいほうが引き継ぐ。
+  変わると、新しいほうが引き継ぐ: 行き先が同じなら同じ依頼のまま、違えば古い依頼は適用の直前に `stale` になる。
+  外したパネルを承認の前に元へ戻した（今の配置のままでよくなった）ときも、古い依頼は承認されても適用しない。
 - **既定レイアウト**は純関数 `threePaneDockLayout({ hostWidth, leftWidth, rightWidth, panels })`: 左 | 中央 | 右の行で、
   `leftWidth`（既定 280）・`rightWidth`（既定 360）の px をマウント時に測った幅の比率に直す（中央が 320px を下回るなら
   左右を縮める）。マウント時の `leftOpen`/`rightOpen` が `false` の側は隠れた状態で始まる（元の場所を覚える）。
 - **`leftOpen` / `rightOpen`（bindable）は「表示」メニューのチェックと同じ 1 か所の状態**（`dock.panels` の `visible`）。
   ✕・メニュー・メソッドのどれで変わっても書き戻る。アプリが書き換えると `setVisible` と同じ依頼になり、
-  `beforePanelChange` が断ったら本当の状態が書き戻る。
+  `beforePanelChange` が断ったら本当の状態が書き戻る。承認待ちの間に元の値へ戻すと（`false` → `true` など）、
+  古い依頼は承認されても適用しない（`stale`）。
 - **操作の口**（`bind:this` のメソッド。すべて `DockHost` を通るので `beforePanelChange` が効く）:
 
   | メソッド                           | 中身                                                                                                         | 戻り値                                                 |
@@ -611,7 +614,9 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   | `layoutSnapshot()`                 | 保存する値                                                                                                   | `ThreePaneSavedLayout`                                 |
   | `viewMenuItems(labels)`            | 「表示」メニューの項目                                                                                       | `ThreePaneViewMenuItem[]`                              |
 
-  同じ変更を承認待ちの間にもう一度呼ぶ（`toggle` の連打）と、同じ 1 つの依頼を共有する。`resetLayout` の承認待ちの間に
+  同じ変更を承認待ちの間にもう一度呼ぶ（`toggle` の連打）と、同じ 1 つの依頼を共有する。`setVisible` を承認待ちの間に
+  逆の値で呼ぶと、最新の値が勝つ: 古い依頼は適用の直前に `stale` になる（逆の値が今の状態と同じで、新しく聞くことが
+  無くても）。`resetLayout` の承認待ちの間に
   ほかの操作でレイアウトが変わると、`resetLayout` は `stale` で何も変えない。`restoreLayout` を承認待ちの間に別の値で
   もう一度呼ぶと（聞く変更の一覧が同じでも、行き先のレイアウトが違えば）別々に聞き、先に適用されたほうが勝って、
   もう一方は `stale`。行き先が同じなら 1 つの依頼を共有する。
@@ -639,10 +644,12 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 - **パネル自身が入力を持つ**（追加パネルのフォームなど）ときは、`beforePanelChange` で下書きを控える（下の「pane の
   lifecycle」）。`resetLayout`・`restoreLayout` は、画面から外す・作り直す pane ごとに `hide` / `dock` / `undock` /
   `move-docked` / `tab-switch` / `auto-hide` として聞く（`DockHost.replaceLayout`）。画面に残る据え置きの pane は聞かない。
+  据え置きの pane のうち、閉じた浮動 window として残るものは `hide`（`remount: false`、中身は保たれる）、置き換え先の
+  レイアウトから消えるものは `close`（中身は破棄される。`closePanel` と同じ）。
 - まだ無いもの（後続の PR）: 狭い幅の表示（`narrowBreakpoint`）と組み替え不可（`arrange={false}`、§4.5）。
 
-`DockHost` 単体でも、`replaceLayout(layout, { focusPanel? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
-行う。不正な値は `invalid`）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
+`DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
+行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
 
 ## 保存の約束（serialize / hydrate と書き込みは別）
 
