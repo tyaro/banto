@@ -73,9 +73,15 @@ export interface FloatingWindow {
  *    review) the ones on the other side, both nearest first; `index` counts
  *    the panes hidden out of the same split before it among the children.
  *  - `root`: the whole docked tree (it was the only docked pane).
+ *
+ * `outer` (optional, #721) on a `tab` / `split` slot: where the container itself
+ * (the tab group / split) was, as a `split` / `root` slot - tried, with the pane
+ * placed as a bare pane, when the container and every anchor are gone (all of
+ * its panes were taken out). A layout without it (older JSON) works as before,
+ * so the layout `version` stays 2.
  */
 export type DockSlot =
-	| { kind: 'tab'; groupId: string; index: number; anchors: string[] }
+	| { kind: 'tab'; groupId: string; index: number; anchors: string[]; outer?: DockSlot }
 	| {
 			kind: 'split';
 			splitId: string;
@@ -86,6 +92,7 @@ export type DockSlot =
 			size: number;
 			anchors: string[];
 			otherAnchors?: string[];
+			outer?: DockSlot;
 	  }
 	| { kind: 'root' };
 

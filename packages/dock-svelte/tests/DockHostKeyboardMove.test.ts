@@ -17,7 +17,7 @@ import type { DockPanelChange } from '../src/core/lifecycle';
 import type { DockCapabilities } from '../src/core/policy';
 import { collectPanelIds, findParent } from '../src/core/tree';
 import { createDockState, type DockState } from '../src/state.svelte';
-import type { DockLayout, DockPanelNode } from '../src/types';
+import type { DockLayout, DockNode, DockPanelNode } from '../src/types';
 
 const saved: [object, string, PropertyDescriptor | undefined][] = [];
 
@@ -748,10 +748,10 @@ describe('"back" for several panes floated out of the same place', () => {
 	}
 });
 
-// #720 review (3 回目の同種の指摘): 4 枚のタブの組・split（向き両方）から 2〜3 枚を浮かせる
-// すべての順序 × 戻すすべての順序で、全部戻した最後の並びが元と同じ（途中は問わない）。
-describe('"back" for every float order x every back order of 2-3 of 4 panes', () => {
-	const ids = ['a', 'b', 'c', 'd'];
+// #720 review (3 回目の同種の指摘): タブの組・split（向き両方）から 2 枚以上を浮かせるすべての順序 ×
+// 戻すすべての順序で、全部戻した最後の木の形が元と同じ（途中は問わない）。#721: 入れ物の全部を浮かせる
+// （3 枚の全部）まで広げ、隣 `p` のある配置・無い配置の両方で、並びでなく木の形（種別・向き・子の id）を比べる。
+describe('"back" for every float order x every back order (up to every pane of the container)', () => {
 	const permutations = (xs: string[]): string[][] =>
 		xs.length <= 1
 			? [xs]
@@ -760,61 +760,75 @@ describe('"back" for every float order x every back order of 2-3 of 4 panes', ()
 				);
 	const subsets = (xs: string[], k: number): string[][] =>
 		k === 0 ? [[]] : xs.flatMap((x, i) => subsets(xs.slice(i + 1), k - 1).map((r) => [x, ...r]));
-	const layouts: Record<string, () => DockLayout> = {
-		tabs: () => ({
-			version: 2,
-			docked: {
-				type: 'split',
-				id: 's',
-				direction: 'row',
-				sizes: [0.6, 0.4],
-				children: [{ type: 'tabs', id: 'g', activeIndex: 0, children: ids.map(panel) }, panel('p')]
-			},
-			floating: []
-		}),
-		row: () => ({
-			version: 2,
-			docked: {
-				type: 'split',
-				id: 's',
-				direction: 'row',
-				sizes: [0.25, 0.25, 0.25, 0.25],
-				children: ids.map(panel)
-			},
-			floating: []
-		}),
-		column: () => ({
-			version: 2,
-			docked: {
-				type: 'split',
-				id: 's',
-				direction: 'column',
-				sizes: [0.25, 0.25, 0.25, 0.25],
-				children: ids.map(panel)
-			},
-			floating: []
-		})
+	// Kind, direction and child ids: not generated ids, sizes or the active tab.
+	const shapeOf = (node: DockNode | null): unknown =>
+		node === null
+			? null
+			: node.type === 'panel'
+				? node.id
+				: node.type === 'tabs'
+					? { tabs: node.children.map((c) => c.id) }
+					: { [node.direction]: node.children.map(shapeOf) };
+	const split = (direction: 'row' | 'column', ids: string[]): DockNode => ({
+		type: 'split',
+		id: 's',
+		direction,
+		sizes: ids.map(() => 1 / ids.length),
+		children: ids.map(panel)
+	});
+	const tabs = (ids: string[]): DockNode => ({
+		type: 'tabs',
+		id: 'g',
+		activeIndex: 0,
+		children: ids.map(panel)
+	});
+	// Next to `p` in an outer split of the other direction.
+	const besideP = (inner: DockNode, direction: 'row' | 'column'): DockNode => ({
+		type: 'split',
+		id: 'o',
+		direction,
+		sizes: [0.6, 0.4],
+		children: [inner, panel('p')]
+	});
+	const layouts: Record<string, (ids: string[]) => DockNode> = {
+		'tabs beside p': (ids) => besideP(tabs(ids), 'row'),
+		'tabs alone': tabs,
+		'row beside p': (ids) => besideP(split('row', ids), 'column'),
+		'row alone': (ids) => split('row', ids),
+		'column beside p': (ids) => besideP(split('column', ids), 'row'),
+		'column alone': (ids) => split('column', ids)
 	};
-	for (const [kind, make] of Object.entries(layouts)) {
-		for (const k of [2, 3]) {
-			for (const floated of subsets(ids, k)) {
-				// Up to 36 mounts each (3! x 3!): over 5 s on a slow CI runner, as slow on main as here (PR #723).
-				it(`${kind} [a,b,c,d]: float ${floated.join(',')} (every order x every order)`, async () => {
-					const failures: string[] = [];
+	// 3 panes: every layout, 2 and all 3 floated. 4 panes: the layouts of #720, 2-3 floated.
+	const cases: [string[], string[]][] = [
+		[['a', 'b', 'c'], Object.keys(layouts)],
+		[
+			['a', 'b', 'c', 'd'],
+			['tabs beside p', 'row alone', 'column alone']
+		]
+	];
+	for (const [ids, kinds] of cases) {
+		for (const kind of kinds) {
+			const make = layouts[kind];
+			for (const k of [2, 3]) {
+				for (const floated of subsets(ids, k)) {
 					for (const floatOrder of permutations(floated)) {
-						for (const backOrder of permutations(floated)) {
-							const dock = createDockState(make());
-							const { host } = mount({ dock });
-							for (const id of floatOrder) await host().movePanel(id, { float: true });
-							for (const id of backOrder) await host().movePanel(id, { back: true });
-							const got = collectPanelIds(dock.layout.docked).filter((id) => id !== 'p');
-							if (got.join(',') !== ids.join(','))
-								failures.push(`float ${floatOrder} back ${backOrder} -> ${got}`);
-							cleanup();
-						}
+						// Up to 6 mounts each (3!): split by float order to stay well under the timeout on a slow CI runner.
+						it(`${kind} [${ids.join(',')}]: float ${floatOrder.join(',')} (every back order)`, async () => {
+							const want = JSON.stringify(shapeOf(make(ids)));
+							const failures: string[] = [];
+							for (const backOrder of permutations(floated)) {
+								const dock = createDockState({ version: 2, docked: make(ids), floating: [] });
+								const { host } = mount({ dock });
+								for (const id of floatOrder) await host().movePanel(id, { float: true });
+								for (const id of backOrder) await host().movePanel(id, { back: true });
+								const got = JSON.stringify(shapeOf(dock.layout.docked));
+								if (got !== want) failures.push(`back ${backOrder} -> ${got}`);
+								cleanup();
+							}
+							expect(failures).toEqual([]);
+						}, 30_000);
 					}
-					expect(failures).toEqual([]);
-				}, 30_000);
+				}
 			}
 		}
 	}

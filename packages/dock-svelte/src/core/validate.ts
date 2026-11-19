@@ -44,10 +44,23 @@ const isIndex = (v: unknown): boolean => typeof v === 'number' && Number.isInteg
 const isIdList = (v: unknown): boolean =>
 	Array.isArray(v) && v.length === Object.keys(v).length && v.every((s) => typeof s === 'string');
 
-/** The optional remembered docked place of a closed window (#663, `DockSlot`). Its ids are hints, not checked against the tree. */
-function isDockSlot(v: unknown): boolean {
-	if (!isRecord(v)) return false;
+/** How deep `outer` may nest in a saved slot (#721 writes one level; the rest is headroom, not a format promise). */
+const MAX_SLOT_DEPTH = 4;
+
+/**
+ * The optional remembered docked place of a closed window (#663, `DockSlot`). Its ids are hints,
+ * not checked against the tree. `outer` (#721) is itself a `split` / `root` slot, checked the same
+ * way down to `MAX_SLOT_DEPTH` (deeper = invalid, so a value that contains itself ends too).
+ */
+function isDockSlot(v: unknown, depth = 0): boolean {
+	if (!isRecord(v) || depth >= MAX_SLOT_DEPTH) return false;
 	if (v.kind === 'root') return true;
+	const outerOk =
+		v.outer === undefined ||
+		(isRecord(v.outer) &&
+			(v.outer.kind === 'split' || v.outer.kind === 'root') &&
+			isDockSlot(v.outer, depth + 1));
+	if (!outerOk) return false;
 	if (v.kind === 'tab') {
 		return typeof v.groupId === 'string' && isIndex(v.index) && isIdList(v.anchors);
 	}

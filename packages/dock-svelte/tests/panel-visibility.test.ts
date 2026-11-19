@@ -338,6 +338,68 @@ describe('serialize / hydrate', () => {
 		expect(validateDockLayout(bad).ok).toBe(false);
 	});
 
+	it('`outer` (#721) survives a round trip; a tab outer, a bad outer or one nested too deep is rejected', () => {
+		const dock = createDockState(tabsLayout(), counterMakeId());
+		dock.dismiss('x');
+		const slot = winOf(dock, 'x')?.dockSlot;
+		expect(slot).toMatchObject({
+			kind: 'tab',
+			groupId: 't',
+			outer: { kind: 'split', splitId: 's', neighborId: 'p', side: 'before' }
+		});
+		const restored = createDockState(dock.serialize(), counterMakeId());
+		expect(winOf(restored, 'x')?.dockSlot).toEqual(slot);
+		const withOuter = (outer: unknown) => {
+			const raw = JSON.parse(dock.serialize());
+			raw.floating.find((w: { id: string }) => w.id === 'x').dockSlot.outer = outer;
+			return validateDockLayout(raw).ok;
+		};
+		expect(withOuter({ kind: 'root' })).toBe(true);
+		expect(withOuter({ kind: 'tab', groupId: 'g', index: 0, anchors: [] })).toBe(false);
+		expect(withOuter({ kind: 'split', splitId: 's' })).toBe(false);
+		expect(withOuter('root')).toBe(false);
+		// Nesting is headroom for later (one level is written today), but bounded.
+		let deep: Record<string, unknown> = { kind: 'root' };
+		for (let i = 0; i < 8; i++) deep = { ...(slot?.kind === 'tab' ? slot.outer : {}), outer: deep };
+		expect(withOuter(deep)).toBe(false);
+	});
+
+	it('the last tab of a group remembers the group, not the bare place it had (#721)', () => {
+		const dock = createDockState(tabsLayout(), counterMakeId());
+		dock.dismiss('x');
+		dock.dismiss('y');
+		dock.dismiss('z');
+		expect(winOf(dock, 'z')?.dockSlot).toMatchObject({
+			kind: 'tab',
+			groupId: 't',
+			index: 2,
+			anchors: ['y', 'x'],
+			outer: { kind: 'split', splitId: 's', neighborId: 'p' }
+		});
+		// x first: neither the group nor an anchor is docked, so x takes the group's place next to p.
+		expect(dock.show('x')).toBe('docked');
+		expect(dock.show('z')).toBe('docked');
+		expect(dock.show('y')).toBe('docked');
+		const s = splitOf(dock.layout.docked);
+		expect(s.children.map((c) => c.type)).toEqual(['tabs', 'panel']);
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['x', 'y', 'z', 'p']);
+	});
+
+	it('a hidden pane that is docked again (a stale entry) does not make a last pane of it (#721)', () => {
+		const root: DockNode = {
+			type: 'split',
+			id: 's',
+			direction: 'row',
+			sizes: [0.5, 0.5],
+			children: [panel('a'), panel('b')]
+		};
+		const stale = {
+			id: 'a',
+			slot: { kind: 'tab' as const, groupId: 'gone', index: 0, anchors: ['b'] }
+		};
+		expect(captureDockSlot(root, 'b', [stale])).toMatchObject({ kind: 'split', splitId: 's' });
+	});
+
 	it('old JSON (v1, and v2 without dockSlot) still loads; a closed window there opens floating', () => {
 		const v1 = JSON.stringify({
 			version: 1,
@@ -576,7 +638,22 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 // 戻しても、全部戻せば元の並びになる。途中の並びは問わない。3〜5 枚から 2〜3 枚を選び、
 // 隠す順 × 戻す順のすべてを総当たりで確かめる（タブの組と、split の向き両方）。
 // 1 枚は残す: 全部を隠すと最後の 1 枚は `root` の slot になり、先に戻すものの手がかりが無い。
-describe('slot memory: every hide order x every show order comes back to the old order', () => {
+/**
+ * The tree's shape (#721): kind, direction and child ids - not generated ids of splits / groups,
+ * sizes or the active tab. A tab put back as a split's sibling does not match a tab group.
+ */
+const shapeOf = (node: DockNode | null): unknown =>
+	node === null
+		? null
+		: node.type === 'panel'
+			? node.id
+			: node.type === 'tabs'
+				? { tabs: node.children.map((c) => c.id) }
+				: { [node.direction]: node.children.map(shapeOf) };
+
+// #721: up to "every pane of the container" (k = n), with and without a neighbour `p` next to the
+// container, and the whole tree's shape compared (not only the order of the panel ids).
+describe('slot memory: every hide order x every show order comes back to the old shape', () => {
 	const permutations = (ids: string[]): string[][] =>
 		ids.length <= 1
 			? [ids]
@@ -588,56 +665,56 @@ describe('slot memory: every hide order x every show order comes back to the old
 			? [[]]
 			: ids.flatMap((id, i) => subsets(ids.slice(i + 1), k - 1).map((rest) => [id, ...rest]));
 	const names = ['a', 'b', 'c', 'd', 'e'];
-	const layouts: Record<string, (ids: string[]) => DockLayout> = {
-		tabs: (ids) => ({
-			version: 2,
-			floating: [],
-			docked: {
-				type: 'split',
-				id: 's',
-				direction: 'row',
-				sizes: [0.6, 0.4],
-				children: [{ type: 'tabs', id: 't', activeIndex: 0, children: ids.map(panel) }, panel('p')]
-			}
-		}),
-		row: (ids) => ({
-			version: 2,
-			floating: [],
-			docked: {
-				type: 'split',
-				id: 's',
-				direction: 'row',
-				sizes: ids.map(() => 1 / ids.length),
-				children: ids.map(panel)
-			}
-		}),
-		column: (ids) => ({
-			version: 2,
-			floating: [],
-			docked: {
-				type: 'split',
-				id: 's',
-				direction: 'column',
-				sizes: ids.map(() => 1 / ids.length),
-				children: ids.map(panel)
-			}
-		})
+	const even = (ids: string[]) => ids.map(() => 1 / ids.length);
+	const split = (direction: 'row' | 'column', ids: string[]): DockNode => ({
+		type: 'split',
+		id: 's',
+		direction,
+		sizes: even(ids),
+		children: ids.map(panel)
+	});
+	const tabs = (ids: string[]): DockNode => ({
+		type: 'tabs',
+		id: 't',
+		activeIndex: 0,
+		children: ids.map(panel)
+	});
+	// The container next to `p` in an outer split of the other direction (a split's child never has its direction).
+	const besideP = (inner: DockNode, direction: 'row' | 'column'): DockNode => ({
+		type: 'split',
+		id: 'o',
+		direction,
+		sizes: [0.6, 0.4],
+		children: [inner, panel('p')]
+	});
+	const layouts: Record<string, (ids: string[]) => DockNode> = {
+		'tabs beside p': (ids) => besideP(tabs(ids), 'row'),
+		'tabs alone': (ids) => tabs(ids),
+		'row beside p': (ids) => besideP(split('row', ids), 'column'),
+		'row alone': (ids) => split('row', ids),
+		'column beside p': (ids) => besideP(split('column', ids), 'row'),
+		'column alone': (ids) => split('column', ids)
 	};
 	for (const [kind, make] of Object.entries(layouts)) {
-		for (const n of [3, 4, 5]) {
+		for (const n of [2, 3, 4, 5]) {
 			const ids = names.slice(0, n);
-			for (const k of [2, 3].filter((k) => k < n)) {
+			// Every pane (k = n) up to 4 panes: 5! x 5! runs per case would be too slow.
+			const ks = [2, 3, 4].filter((k) => k <= n && (n <= 4 || k <= 3));
+			for (const k of ks) {
 				for (const hidden of subsets(ids, k)) {
 					it(`${kind} [${ids.join(',')}] hide ${hidden.join(',')} (every order x every order)`, () => {
+						const want = JSON.stringify(shapeOf(make(ids)));
 						const failures: string[] = [];
 						for (const hideOrder of permutations(hidden)) {
 							for (const showOrder of permutations(hidden)) {
-								const dock = createDockState(make(ids), counterMakeId());
+								const dock = createDockState(
+									{ version: 2, floating: [], docked: make(ids) },
+									counterMakeId()
+								);
 								for (const id of hideOrder) dock.dismiss(id);
 								for (const id of showOrder) dock.show(id);
-								const got = collectPanelIds(dock.layout.docked).filter((id) => id !== 'p');
-								if (got.join(',') !== ids.join(','))
-									failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
+								const got = JSON.stringify(shapeOf(dock.layout.docked));
+								if (got !== want) failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
 							}
 						}
 						expect(failures).toEqual([]);
