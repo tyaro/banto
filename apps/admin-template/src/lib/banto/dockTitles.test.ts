@@ -108,7 +108,7 @@ describe('refreshPanelTitles (#729 review)', () => {
 
 		// The dock's own action names built from the refreshed title are English.
 		const t = dockMessages();
-		expect(t.panelMenu(memo.title)).not.toMatch(JA);
+		expect(t.panelMenu?.(memo.title)).not.toMatch(JA);
 	});
 
 	it('resolves auto-hidden known panels too', () => {
