@@ -91,7 +91,7 @@
 		type DockCapabilities,
 		type DockPolicy
 	} from './core/policy';
-	import type { DockState } from './state.svelte';
+	import { adoptLayout, type DockState } from './state.svelte';
 	import type { DockLayout, DockNode, PanelContent } from './types';
 	import { validateDockLayout } from './core/validate';
 	import DockAutoHide from './DockAutoHide.svelte';
@@ -563,7 +563,7 @@
 		const outcome = await lifecycle.guarded(options.isCurrent, () =>
 			lifecycle.requestReplace(
 				() => layout,
-				(l) => (dock.layout = l)
+				(l) => adoptLayout(dock, l)
 			)
 		);
 		if (outcome !== 'applied' || !focusWasInHost) return outcome;

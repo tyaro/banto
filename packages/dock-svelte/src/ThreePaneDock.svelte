@@ -58,7 +58,7 @@
 	import type { DockCapabilities } from './core/policy';
 	import { autoHiddenPanelIds } from './core/autohide';
 	import { collectPanelIds, structureKey } from './core/tree';
-	import { createDockState, type DockState } from './state.svelte';
+	import { adoptLayout, createDockState, type DockState } from './state.svelte';
 	import {
 		assertExtraPanelIds,
 		defaultThreePaneDockMessages,
@@ -248,11 +248,11 @@
 		const options = layoutOptions(0);
 		let status: ThreePaneRestoreStatus | 'fresh';
 		if (initialLayout === undefined && isEmpty(dock.layout)) {
-			dock.layout = threePaneDockLayout(options);
+			adoptLayout(dock, threePaneDockLayout(options));
 			status = 'fresh';
 		} else {
 			const result = reconcileThreePaneLayout(initialLayout ?? dock.layout, options);
-			dock.layout = result.layout;
+			adoptLayout(dock, result.layout);
 			status = result.status;
 		}
 		if (status === 'fresh' || status === 'default') installedDefault = dock.layout;
@@ -283,7 +283,7 @@
 		wideLayout = dock.layout;
 		wideIsDefault = installedDefault !== null && dock.layout === installedDefault;
 		installedDefault = null;
-		dock.layout = threePaneNarrowLayout(wideLayout, narrowOptions());
+		adoptLayout(dock, threePaneNarrowLayout(wideLayout, narrowOptions()));
 		narrowShown = true;
 	}
 
@@ -344,7 +344,7 @@
 			installedDefault !== null &&
 			dock.layout === installedDefault
 		) {
-			dock.layout = threePaneDockLayout(layoutOptions(width, height));
+			adoptLayout(dock, threePaneDockLayout(layoutOptions(width, height)));
 			installedDefault = dock.layout;
 		}
 		measuredWidth = width > 0 ? width : null;
@@ -442,7 +442,7 @@
 		panelTarget = target;
 		if (target === JSON.stringify(dock.layout)) return;
 		if (!host || structureKey(next) === structureKey(dock.layout)) {
-			dock.layout = next;
+			adoptLayout(dock, next);
 			return;
 		}
 		const outcome = await host.replaceLayout(next, {

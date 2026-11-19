@@ -70,7 +70,7 @@
  *   unconsumed Esc of an active session.
  */
 import { getContext, setContext } from 'svelte';
-import type { DockState } from '../state.svelte';
+import { adoptLayout, type DockState } from '../state.svelte';
 import type { DockLayout } from '../types';
 
 /**
@@ -290,7 +290,7 @@ export class GestureOwner {
 		const { session, spec } = ended;
 		if (LIVE_KINDS.has(session.kind)) {
 			if (spec.restore) spec.restore(session.snapshot);
-			else this.#dock.layout = session.snapshot;
+			else adoptLayout(this.#dock, session.snapshot);
 		}
 		spec.cancel?.(reason);
 		this.#getOptions().onEnd?.(session, 'cancel', reason);
