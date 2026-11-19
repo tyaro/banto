@@ -27,8 +27,72 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
+  # 基準画像だけの作り直しの再実行で、重いジョブを飛ばすかを決める。
+  # 流れ: PR の CI → visual-baselines.yml（commit: true、bot の push では CI が
+  # 走らない）→ 人が push し直す → CI がもう一度走る。この 2 回目で、PR の head
+  # の祖先（first-parent、最大 10 個）のうち「同じ PR・同じ base で ci.yml の run
+  # が成功した」もっとも近いコミットからの差分が `e2e/visual/**/*-snapshots/*.png`
+  # だけなら full=false にし、E2E (visual + axe-core) 以外を飛ばす。
+  # 安全側: pull_request 以外・fork・API や git の失敗・該当 run なし（force-push
+  # で履歴が変わった場合を含む）・base の変化・それ以外のパスの差分は、どれも
+  # full=true（従来どおり全部走らせる）。判定の理由はログに出す。
+  # 注意: Rust は matrix なので job ごと飛ばすとチェック名が必須チェック
+  # 「Rust (…) (ubuntu-latest)」等と合わなくなる。そのため job は起動して
+  # ステップだけ飛ばす。ほかのジョブは skipped（= 成功扱い）でよい。
+  # changes が失敗しても下流は `!cancelled()` で動き、出力が空なので全部走る。
+  changes:
+    name: Changes (visual baselines only?)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      full: ${{ steps.decide.outputs.full }}
+    steps:
+      - name: Checkout PR head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 11
+          persist-credentials: false
+
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          full() { echo "判定: 全部走らせる（$1）"; echo "full=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          [ "$EVENT" = pull_request ] || full "pull_request 以外: $EVENT"
+          [ "$HEAD_REPO" = "$REPO" ] || full "fork からの PR"
+          ancestors=$(git rev-list --first-parent --max-count=11 "$HEAD_SHA" | tail -n +2) || full "git rev-list に失敗"
+          base=""
+          for c in $ancestors; do
+            n=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$c&event=pull_request&status=success&per_page=50" \
+              --jq "[.workflow_runs[] | select(any(.pull_requests[]; .number == $PR_NUMBER and .base.sha == \"$BASE_SHA\"))] | length") \
+              || full "workflow run の取得に失敗"
+            if [ "$n" -gt 0 ]; then base=$c; break; fi
+          done
+          [ -n "$base" ] || full "直近 10 コミットに、同じ PR・同じ base で CI が成功したコミットが無い"
+          echo "基準: $base（CI 成功）→ head: $HEAD_SHA"
+          files=$(git diff --no-renames --name-only "$base" "$HEAD_SHA") || full "git diff に失敗"
+          echo "差分のファイル:"; echo "${files:-（なし）}"
+          other=$(printf '%s\n' "$files" | grep -v -E '^$|^e2e/visual/(.+/)?[^/]+-snapshots/[^/]+\.png$' || true)
+          [ -z "$other" ] || full "基準画像以外の差分あり: $(printf '%s' "$other" | head -n 3 | tr '\n' ' ')"
+          echo "判定: 基準画像だけの差分。E2E (visual + axe-core) 以外を飛ばす"
+          echo "full=false" >> "$GITHUB_OUTPUT"
+
   frontend:
     name: Frontend (check / test / build)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -105,6 +169,8 @@ jobs:
   # (scripts/check-i18n-nonempty.mjs) が非空カタログを保証すること、を検証する。
   i18n-offline:
     name: i18n (CDN-blocked reproducibility)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -140,6 +206,8 @@ jobs:
 
   rust:
     name: Rust (fmt / clippy / check / test)
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -148,20 +216,24 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
+        if: needs.changes.outputs.full != 'false'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust toolchain
+        if: needs.changes.outputs.full != 'false'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - name: Setup Rust cache
+        if: needs.changes.outputs.full != 'false'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       # rustfmt only parses/reformats - no compilation, so unlike the steps
       # below it can safely cover every workspace member (including
       # `admin-template`/src-tauri) without needing its native system deps.
       - name: Format check (rustfmt)
+        if: needs.changes.outputs.full != 'false'
         run: cargo fmt --all -- --check
 
       # Scope: only the Tauri-independent crates are checked/linted/tested
@@ -174,12 +246,15 @@ jobs:
       # in CI.
       # (clippy for it runs in tauri-check.yml, which has the system deps.)
       - name: Cargo check
+        if: needs.changes.outputs.full != 'false'
         run: cargo check -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core -p admin-template-fw-elev
 
       - name: Clippy
+        if: needs.changes.outputs.full != 'false'
         run: cargo clippy -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core -p admin-template-fw-elev --all-targets -- -D warnings
 
       - name: Cargo test
+        if: needs.changes.outputs.full != 'false'
         run: cargo test -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core -p admin-template-fw-elev
 
   # banto-storage の PostgreSQL 接続ヘルパ（feature `postgres`）向け統合テスト。
@@ -190,6 +265,8 @@ jobs:
   # PostgreSQL 無しで通る）ので、CI 側でこの env を設定して実接続を検証する。
   storage-postgres:
     name: banto-storage (PostgreSQL integration)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -234,6 +311,8 @@ jobs:
   # ローカルの PostgreSQL 無し環境では通る仕様）。
   app-postgres:
     name: admin-template-core (PostgreSQL smoke)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -288,6 +367,8 @@ jobs:
 
   e2e:
     name: E2E (Playwright smoke)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -417,6 +498,8 @@ jobs:
 
   audit:
     name: Dependency audit (pnpm audit / cargo audit)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
