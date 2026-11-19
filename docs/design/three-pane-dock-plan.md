@@ -91,7 +91,8 @@ conventions §4 / §5 / §8 / §9 / §10 / §13 / §14、template-scope §3
 ### 4.2 中央を組み替えで再マウントしない（temp-scada）
 
 いまは、ユーザーが左ペインを浮かせるだけで木の形が変わり、中央は `reparent`（`remount: true`）で
-作り直される。キャンバス（WebGL の文脈・描画のキャッシュ・ズーム）にとっては致命的。
+作り直される。キャンバス（描画のキャッシュ・ズーム・選択。将来の利用例では WebGL の文脈も）にとっては致命的。
+temp-scada の現行の中央は SVG（`CanvasWorkspace` → `Renderer`）で、`iframe`・ネイティブの埋め込みは無い（2026-11-19 確認、§9 Q9）。
 
 | 手段 | 守れる範囲 | 費用・弱点 |
 | --- | --- | --- |
@@ -128,6 +129,14 @@ conventions §4 / §5 / §8 / §9 / §10 / §13 / §14、template-scope §3
   `validateDockLayout` に通し、**今のパネルの集合と照らし合わせる**: 知らない id は捨て、足りない
   パネルは既定の位置（追加パネルは閉じた浮動）に足し、中央が無い・壊れている値は既定に戻す
   （純関数 `reconcileThreePaneLayout`、単体テスト）。ピン（固定）・折りたたみ・auto-hide はレイアウトに含む。
+- **保存値は利用者（セッション）に結び付ける**（クロスレビュー P2）。今のダッシュボードの方式（固定キーの localStorage、
+  debounce の実行時に provider を呼ぶ）をそのまま共通化しない:
+  - localStorage の写しは、利用者が確定してからその利用者のキー（`…:<userId>`）でだけ読み書きする。利用者が
+    確定する前・ログイン不要モードで利用者が無いときは写しを使わず既定で描く（写しは省略してよい）。
+  - provider の読み込み結果・debounce 中の書き込み・unmount 時の flush は、取得した時点のセッションの世代
+    （`getSessionRevision`、#707 と同じ）を控え、世代が替わっていたら捨てる。前の利用者の配置を、設定の無い
+    別の利用者に見せない・土台にして保存しない。
+  - provider が `null`・エラーのときは既定に戻す（前の利用者の写しで代用しない）。
 - 既定へ戻す: 「表示」メニューの「レイアウトを既定に戻す」（ダッシュボードと同じ文言キー）と
   `resetLayout()`。開いているパネル・浮動の位置・固定もすべて既定に戻す。確認は出さない（元に戻せる操作は
   無いが、失うのは配置だけ）→ 要確認 Q3。
@@ -142,6 +151,17 @@ conventions §4 / §5 / §8 / §9 / §10 / §13 / §14、template-scope §3
 - **kiosk**（`settings.kiosk`）: 操作員に配置を崩させない。**推奨: `arrange={false}`**（保存済みの配置で表示し、
   ドラッグ・浮かせる・✕・ピン・既定へ戻すを出さない。`capabilities` を全パネルで `move`/`undock`/`close` 禁止にするのと同じ）。
   kiosk で配置を変えたいときは管理者が通常の画面で整えて保存する → 要確認 Q4。
+  `capabilities` の `move`/`undock`/`close` だけでは止まらない操作があるので、`arrange={false}` で止めるものを明記する（クロスレビュー P2）:
+
+  | 操作 | kiosk |
+  | --- | --- |
+  | 分割線のリサイズ（ポインタ・キーボード） | 禁止 |
+  | 浮動ウィンドウの移動・リサイズ（ポインタ・キーボード） | 禁止（全パネルを錠＝`locked` と同じ扱い） |
+  | 折りたたみ・auto-hide（ピン）の切り替え | 禁止（保存済みの状態のまま） |
+  | ドラッグでのドッキング・浮かせる・✕・タブの出し入れ | 禁止 |
+  | 「パネルの操作」メニュー・「表示」メニューの開閉・「既定に戻す」 | 出さない |
+  | 部品のメソッド（`toggle`・`float`・`dockBack`・`move`・`resetLayout`） | 拒否して状態を変えない（アプリのツールバーからも崩せない） |
+  | タブの切り替え・前面化・auto-hide 済みのパネルの引き出し | 許す（見るための操作） |
 - **touch 密度**: モードは変えない。ドッキングのガイドのボタン・タイトルバーのボタンの大きさを
   密度のトークンから取る（`guideButtonSize` の最小値を touch で引き上げる）。ドラッグは pointer events なので
   そのまま動く。長押しなどの専用の操作は作らない。
@@ -170,7 +190,10 @@ conventions §4 / §5 / §8 / §9 / §10 / §13 / §14、template-scope §3
   そのまま効き、パネル操作では**確認を出さない**のが推奨（出すと、見た目を変えるだけの操作で毎回止まる）。
 - 再マウントで失うのは、フォーカス・スクロール・IME の変換中の文字。IME は `DockHost` の既定
   （`isStructureChangeDeferred` = 変換中は保留）で守られる。中央は据え置き（§4.2）で全部残る。
-- 中央は閉じられない（主領域）ので、「設定」タブの保存ボタンが見えなくなることは無い。
+- 中央は閉じられない（主領域）ので、「設定」タブの保存ボタンが見えなくなることは無い。そのために中央は
+  `close` に加えて**折りたたみ・auto-hide も禁止**（`autoHide: false`）にし、浮かせない（`undock` 禁止）。
+  既定の配置だけでなく、**復元した保存値**（`reconcileThreePaneLayout`）でも中央が閉じている・畳まれている・
+  auto-hide の帯にいる・浮いているなら、中央をドッキングして開いた状態に直す（クロスレビュー P2）。
 - **ペインが自分で入力を持つ場合**（アプリの追加パネルなど）: `beforePanelChange` にダッシュボードの
   `createPanelChangeHandler` の型（close は settle してから、ほかは capture）を渡す。`ThreePaneDock` はそのまま
   `DockHost` に渡すだけ。README にこの使い分けを書く。
@@ -216,6 +239,7 @@ temp-scada の要望:
    押された状態は `leftOpen`/`rightOpen` の bind で読める。
 3. 中央のキャンバスは、左右の切り離し・ドッキング・外周へのドッキング・auto-hide・タブ化・狭い表示への切り替え・
    既定へ戻す、のどれでも**再マウントしない**（e2e で同じ DOM 要素であること・mount の回数が 1 のままを確かめる）。
+   移したあともフォーカス・スクロール・倍率・ポインタ操作が保たれる（実ブラウザで確認）。
 
 全体:
 
@@ -223,7 +247,11 @@ temp-scada の要望:
 5. 「表示」メニューのチェックとパネルの ✕ が同じ状態を指し、閉じたパネルは前回の位置に戻る。
 6. レイアウト（ピン・折りたたみ・auto-hide 含む）がユーザーごと・画面ごとに保存され、再読み込みで戻る。
    パネルの集合が変わった保存値も壊れずに読める。「既定に戻す」で初期に戻る。
-7. 900px 以下は狭い表示、kiosk は組み替え不可、touch はボタンが touch の大きさ。
+   同じ端末で利用者が替わっても、前の利用者の配置を表示しない・保存しない（localStorage の写し、provider の
+   読み込み、debounce、unmount の flush のどれでも。設定の無い別の利用者は既定で始まる）。
+   中央は既定の配置でも復元した配置でも、閉じていない・畳まれていない・auto-hide されていない・浮いていない。
+7. 900px 以下は狭い表示、kiosk は §4.5 の表のとおり組み替え不可（リサイズ・折りたたみ・auto-hide・メソッドからの変更も含む）、
+   touch はボタンが touch の大きさ。
 8. キーボードだけで全パネルの移動・浮かせる・戻すができ、結果が読み上げられる。axe の違反なし。
 9. `/tree/workspace` の未保存の確認が今と同じに効き、パネル操作では確認が出ない。
 10. scaffold の 4 プリセットと「dock だけ消す」組み合わせで型チェック・ビルドが通る。
@@ -237,10 +265,10 @@ CHANGELOG の `[Unreleased]` に 1 行、この文書の状態行の更新。
 | --- | --- | --- | --- | --- |
 | PR-1 | dock-svelte: `DockHost` の `persistent`（据え置き、§4.2 C）。フォーカス・スクロールの記録と復元 | なし | `persistent` のパネルが undock / dock / 外周 / reparent / auto-hide / タブ切り替えで同じ DOM・mount 1 回。`keepMounted` の既存テストが通る | 単体（`DockHost*.test.ts` に追加）。visual は変化なし（既存が通る）。scaffold 不要 |
 | PR-2 | dock-svelte: `movePanel` と「パネルの操作」メニュー、`aria-live` の通知、`DockMessages` の追加（§4.6） | なし（PR-1 と並行可） | キーボードだけで外周・タブ・浮動・元に戻すができ、拒否で状態が変わらない。読み上げ文が出る | 単体（`DockHostKeyboard.test.ts` 等）。e2e（ダッシュボードでキーボード移動 1 本）。visual: タイトルバーにボタンが増えるので基準画像を `visual-baselines.yml` の dispatch で再生成。scaffold 不要 |
-| PR-3 | dock-svelte: `ThreePaneDock`、`threePaneDockLayout`、`reconcileThreePaneLayout`、操作の口、`viewMenuItems`、追加パネル（§4.1・§4.4・§4.8・§4.9）。README | PR-1 | 純関数の単体テスト、部品のテスト（初期の並び・API・メニュー項目・中央が閉じられない） | 単体。アプリに配線しないので e2e・visual・scaffold 不要 |
-| PR-4 | dock-svelte: 狭い表示と `arrange={false}`、touch のボタンの大きさ（§4.5） | PR-3 | 境界をまたいでも保存値が変わらず、中央が再マウントしない。`arrange={false}` で組み替えの口が出ない | 単体。visual・scaffold 不要（配線前） |
-| PR-5 | アプリ: `lib/banto/dockLayoutStore.svelte.ts` をダッシュボードから出す（挙動は同じ）。scaffold の `removeDock` に追加 | なし | ダッシュボードの保存・復元・既定へ戻すが今と同じ | 単体（store）、既存 e2e（dashboard）。**scaffold の 4 プリセットの dry-run 要**（`removeDock` が変わる） |
-| PR-6 | アプリ: `/tree/workspace-dock` のデモ（表示メニュー、ツールバーのボタン例、kiosk・touch の配線、文言キー）。scaffold の `removeDock` に追加、template-scope §3 と remove-optional-assets.md | PR-3・PR-4・PR-5 | §6 の 1〜10 を満たす | e2e 新規（切り離し・再ドッキング・中央の同一性・キーボード・既定へ戻す・狭い表示・未保存）、visual 新規の基準画像（Linux、dispatch）、**scaffold の 4 プリセット + dock だけ消す dry-run 要** |
+| PR-3 | dock-svelte: `ThreePaneDock`、`threePaneDockLayout`、`reconcileThreePaneLayout`、操作の口、`viewMenuItems`、追加パネル（§4.1・§4.4・§4.8・§4.9）。README | PR-1・PR-2（`move` が `DockHost.movePanel` を通るため） | 純関数の単体テスト、部品のテスト（初期の並び・API・メニュー項目・中央が閉じられない・復元で中央が隠れた保存値を直す） | 単体。アプリに配線しないので e2e・visual・scaffold 不要 |
+| PR-4 | dock-svelte: 狭い表示と `arrange={false}`、touch のボタンの大きさ（§4.5） | PR-3 | 境界をまたいでも保存値が変わらず、中央が再マウントしない。`arrange={false}` で §4.5 の表の禁止の操作がポインタ・キーボード・メソッドのどれでもできない | 単体。visual・scaffold 不要（配線前） |
+| PR-5 | アプリ: `lib/banto/dockLayoutStore.svelte.ts` をダッシュボードから出し、保存値を利用者・セッションの世代に結び付ける（§4.4）。scaffold の `removeDock` に追加 | なし | ダッシュボードの保存・復元・既定へ戻すが今と同じ。利用者が替わったとき、前の利用者の写し・読み込み結果・保留中の書き込みを使わない（単体テスト） | 単体（store）、既存 e2e（dashboard）。**scaffold の 4 プリセットの dry-run 要**（`removeDock` が変わる） |
+| PR-6 | アプリ: `/tree/workspace-dock` のデモ（表示メニュー、ツールバーのボタン例、kiosk・touch の配線、文言キー）。scaffold の `removeDock` に追加、template-scope §3 と remove-optional-assets.md | PR-2・PR-3・PR-4・PR-5 | §6 の 1〜10 を満たす | e2e 新規（切り離し・再ドッキング・中央の同一性・キーボード・既定へ戻す・狭い表示・未保存）、visual 新規の基準画像（Linux、dispatch）、**scaffold の 4 プリセット + dock だけ消す dry-run 要** |
 | PR-7 | 文書: アプリ作者向けの recipe（`docs/recipes/`、temp-scada の使い方の例）と README の索引、この文書の状態を「完了」に | PR-6 | リンク切れなし | `pnpm format:check` |
 | （PR-8） | 利用者の操作でのモード切り替え（§4.3 (b)）。Q1 で「作る」と決まったときだけ | PR-6 | | e2e・scaffold dry-run |
 
@@ -268,5 +296,9 @@ CHANGELOG の `[Unreleased]` に 1 行、この文書の状態行の更新。
 - Q6: 据え置き（§4.2 C）を既定で効かせるのは中央だけ。左右・追加パネルはアプリが選ぶ。
 - Q7: 狭い幅は dock の中の「狭い表示」にする（`ThreePaneLayout` には落とさない）。
 - Q8: デモは別ルート `/tree/workspace-dock`。
-- Q9: 事実の確認なので未決。temp-scada の側（別のセッション）に確かめる。`iframe` やネイティブの埋め込みがあると
-  分かったら、PR-1 の前に §4.2 を見直す。それまでは据え置き（C）のまま進める。
+- Q9: 確認済み（2026-11-19 クロスレビュー）。temp-scada の現行の中央（`App` → `CanvasWorkspace` → `Renderer` の SVG）に
+  `iframe`・ネイティブの埋め込みは無い。据え置き（C）のまま進める。DOM を移したあとのフォーカス・スクロール・倍率・
+  ポインタ操作は PR-1 と PR-6 の実ブラウザ検証に残す。
+
+同日のクロスレビュー（P2×2・P3）を反映: 保存値のセッション分離（§4.4・§6-6・PR-5）、kiosk で止める操作の表と
+中央が隠れない条件（§4.5・§4.7・§6-6/7・PR-3/4）、PR-3・PR-6 の依存に PR-2 を追加（§7）。
