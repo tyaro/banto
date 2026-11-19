@@ -49,14 +49,29 @@ the consuming app.
   - REST: stack `middleware::from_fn_with_state(PermissionGuard { auth, permission, resource, audit }, require_permission)`
     after `require_auth`. Build `permission` with `PermissionKey::parse("equipment.operate")`.
     A refusal is 403 `forbidden` plus a `denied` audit row (same shape as a role refusal).
-  - Tauri: call `require_permission(state, &permission, resource)?` next to `require_role`.
+  - Tauri: call `require_permission(state, &permission, resource).await?` next to `require_role`
+    (both are `async fn`).
     A refusal is `BantoError::Forbidden` plus a `denied` audit row. It reads the DB on
     every command, so a revoked permission stops working at the next command.
   - To require both, also apply `RoleGuard` / `require_role` (a permission never looks at the role).
 - **Finer than a route** (e.g. per piece of equipment):
   - REST: the handler takes `Extension<SessionPermissions>` and calls `has(&PermissionKey)`
     (the `has_permission` check).
-  - Tauri: read with `session_permissions(state)` and check with `has`.
+  - Tauri: read with `session_permissions(state).await?`. It returns
+    `Option<(UserIdentity, SessionPermissions)>`; `None` means unauthenticated, so refuse it,
+    then take the permissions out of the tuple and check with `has`:
+
+    ```rust
+    let Some((_identity, held)) = session_permissions(state).await? else {
+        return Err(BantoError::Unauthorized);
+    };
+    if !held.has(&permission) {
+        return Err(BantoError::Forbidden);
+    }
+    ```
+
+    This form does not write a `denied` audit row by itself. If the refusal must be audited,
+    use the route-level `require_permission`, or record it yourself as role refusals do.
 - Viewer-public (grant) sessions **never hold permissions**. No-login mode holds only
   what is in `auth.disabledPermissions`.
 - A key not in the catalog is treated as **held by nobody** (even if a row remains; the

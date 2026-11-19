@@ -45,14 +45,29 @@
   - REST: `middleware::from_fn_with_state(PermissionGuard { auth, permission, resource, audit }, require_permission)`
     を `require_auth` の後ろに積む。`permission` は `PermissionKey::parse("equipment.operate")` で作る。
     拒否は 403 `forbidden` と `denied` の監査（ロールの拒否と同じ形）。
-  - Tauri: `require_permission(state, &permission, resource)?` を `require_role` の隣で呼ぶ。
+  - Tauri: `require_permission(state, &permission, resource).await?` を `require_role` の隣で呼ぶ
+    （どちらも `async fn`）。
     拒否は `BantoError::Forbidden` と `denied` の監査。コマンドのたびに DB から読むので、
     外せば次のコマンドから効く。
   - ロールと両方求めたいときは `RoleGuard`・`require_role` も重ねる（権限はロールを見ない）。
 - **経路より細かい単位**（たとえば設備ごと）で分けたいとき:
   - REST: ハンドラが `Extension<SessionPermissions>` を受け取り、`has(&PermissionKey)`
     （`has_permission` の判定）で調べる。
-  - Tauri: `session_permissions(state)` で読み、同じく `has` で調べる。
+  - Tauri: `session_permissions(state).await?` で読む。返り値は
+    `Option<(UserIdentity, SessionPermissions)>` で、未認証は `None` なので拒否し、
+    タプルから権限を取り出して `has` で調べる:
+
+    ```rust
+    let Some((_identity, held)) = session_permissions(state).await? else {
+        return Err(BantoError::Unauthorized);
+    };
+    if !held.has(&permission) {
+        return Err(BantoError::Forbidden);
+    }
+    ```
+
+    この形では `denied` の監査は自動で残らない。拒否を監査に残したいときは、経路単位の
+    `require_permission` を使うか、ロールの拒否と同じように自分で記録する。
 - 閲覧公開（grant のセッション）は**常に権限なし**。ログイン不要モードは
   `auth.disabledPermissions` に入れたものだけを持つ。
 - カタログに登録されていないキーは**誰も持っていない**ものとして扱う（表に残っていても。
