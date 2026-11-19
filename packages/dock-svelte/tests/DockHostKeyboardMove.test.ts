@@ -394,6 +394,120 @@ describe('refused / unavailable: nothing changes', () => {
 	});
 });
 
+describe('"back" keeps the drop rules of the drag at the place it goes back to', () => {
+	/** a | b as tabs, next to c; `caps` is read on every check (it may change meanwhile). */
+	function tabsLayout(): DockState {
+		return createDockState({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.5, 0.5],
+				children: [
+					{ type: 'tabs', id: 'g', activeIndex: 0, children: [panel('a'), panel('b')] },
+					panel('c')
+				]
+			},
+			floating: []
+		});
+	}
+
+	it('a pane floated out of a tab group does not go back into it once the group withholds `dropCenter`', async () => {
+		let caps: Record<string, DockCapabilities> = {};
+		const { dock, host } = mount({ dock: tabsLayout(), capabilities: (id) => caps[id] });
+		expect(await host().movePanel('a', { float: true })).toBe('applied');
+		caps = { b: { dropCenter: false } };
+		const before = JSON.stringify(dock.layout);
+		// The same rule as `tabWith` ...
+		expect(await host().movePanel('a', { tabWith: 'b' })).toBe('unavailable');
+		// ... holds for "back": not offered in the menu, refused by the API.
+		await openWithKeyboard('a');
+		expect(labels()).not.toContain('元の場所に戻す');
+		key(document.activeElement as Element, 'Escape');
+		await settle();
+		expect(await host().movePanel('a', { back: true })).toBe('unavailable');
+		expect(JSON.stringify(dock.layout)).toBe(before);
+		// Allowed again: it goes back.
+		caps = {};
+		expect(await host().movePanel('a', { back: true })).toBe('applied');
+		expect(findParent(dock.layout.docked, 'a')?.type).toBe('tabs');
+	});
+
+	it('a pane floated out of a split does not go back between neighbours that withhold `dropSplit`', async () => {
+		let caps: Record<string, DockCapabilities> = {};
+		const { dock, host } = mount({ capabilities: (id) => caps[id] });
+		expect(await host().movePanel('main', { float: true })).toBe('applied');
+		caps = { tree: { dropSplit: false }, detail: { dropSplit: false } };
+		expect(await host().movePanel('main', { back: true })).toBe('unavailable');
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['tree', 'detail']);
+		// One neighbour that allows it is enough (the drag could drop next to it).
+		caps = { tree: { dropSplit: false } };
+		expect(await host().movePanel('main', { back: true })).toBe('applied');
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['tree', 'main', 'detail']);
+	});
+
+	it('the rule is read again right before the apply (it changed while the answer waited)', async () => {
+		let caps: Record<string, DockCapabilities> = {};
+		let resolve!: (ok: boolean) => void;
+		const { dock, host } = mount({
+			dock: tabsLayout(),
+			capabilities: (id) => caps[id],
+			beforePanelChange: (c) =>
+				c.kind === 'dock' ? new Promise<boolean>((r) => (resolve = r)) : true
+		});
+		expect(await host().movePanel('a', { float: true })).toBe('applied');
+		const pending = host().movePanel('a', { back: true });
+		await settle();
+		caps = { b: { dropCenter: false } };
+		const before = JSON.stringify(dock.layout);
+		resolve(true);
+		expect(await pending).not.toBe('applied');
+		expect(JSON.stringify(dock.layout)).toBe(before);
+		await settle();
+		expect(live()).not.toContain('戻しました');
+	});
+});
+
+describe('the move is checked again right before it is applied', () => {
+	it('a window locked while the answer waits is not moved, and no success is announced', async () => {
+		let resolve!: (ok: boolean) => void;
+		const { dock, host } = mount({
+			beforePanelChange: (c) =>
+				c.kind === 'dock' ? new Promise<boolean>((r) => (resolve = r)) : true
+		});
+		const pending = host().movePanel('w', { edge: 'left' });
+		await settle();
+		dock.setLocked('w', true);
+		const before = JSON.stringify(dock.layout);
+		resolve(true);
+		expect(await pending).toBe('stale');
+		expect(JSON.stringify(dock.layout)).toBe(before);
+		expect(dock.layout.floating.some((w) => w.id === 'w' && w.open)).toBe(true);
+		await settle();
+		expect(live()).toContain('移動できません');
+	});
+
+	it('a capability withdrawn while the answer waits stops it the same way', async () => {
+		let caps: Record<string, DockCapabilities> = {};
+		let resolve!: (ok: boolean) => void;
+		const { dock, host } = mount({
+			capabilities: (id) => caps[id],
+			beforePanelChange: (c) =>
+				c.kind === 'move-docked' ? new Promise<boolean>((r) => (resolve = r)) : true
+		});
+		const pending = host().movePanel('tree', { tabWith: 'detail' });
+		await settle();
+		caps = { detail: { dropCenter: false } };
+		const before = JSON.stringify(dock.layout);
+		resolve(true);
+		expect(await pending).toBe('stale');
+		expect(JSON.stringify(dock.layout)).toBe(before);
+		await settle();
+		expect(live()).not.toContain('タブ');
+	});
+});
+
 describe('a locked floating window does not move', () => {
 	it('no menu button and `unavailable`; locking with the focus in the menu hands it to the next button', async () => {
 		const { dock, host } = mount();

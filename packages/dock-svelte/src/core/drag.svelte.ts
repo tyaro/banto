@@ -115,6 +115,36 @@ export interface DragSnapshot {
 	guideRect: Rect | null;
 }
 
+/**
+ * Read right before a move is applied (#663 ④, `DockHost.movePanel`): `false` = the move is no
+ * longer allowed (a window locked, a capability withdrawn while `beforePanelChange` waited -
+ * neither is part of `structureKey`), so nothing is applied and the outcome is `stale`.
+ */
+export type MoveGuard = () => boolean;
+
+/**
+ * Run `request` with an `apply` that first reads `guard`; without a lifecycle (`request`
+ * returns `undefined`) it applies at once. An apply the guard stopped turns `applied` into `stale`.
+ */
+function guarded(
+	guard: MoveGuard | undefined,
+	request: (run: () => void) => Promise<DockPanelChangeOutcome> | undefined,
+	apply: () => void
+): Promise<DockPanelChangeOutcome> {
+	let stopped = false;
+	const run = () => {
+		if (guard && !guard()) stopped = true;
+		else apply();
+	};
+	const pending = request(run);
+	if (!pending) {
+		run();
+		return Promise.resolve(stopped ? 'stale' : 'applied');
+	}
+	if (!guard) return pending;
+	return pending.then((outcome) => (outcome === 'applied' && stopped ? 'stale' : outcome));
+}
+
 export class DragController {
 	#dock: DockState;
 	#getHostEl: () => HTMLElement | null;
@@ -146,19 +176,23 @@ export class DragController {
 	 * A drop into the docked tree: also asks about the docked panes it pushes
 	 * out - a new active tab, a pane a new split / tab group is made around
 	 * (`PanelLifecycle.requestPlacement`, #666) - before `own`. Refused = the
-	 * layout is not touched (the ghost is already gone).
+	 * layout is not touched (the ghost is already gone). `guard` (`MoveGuard`) is read right
+	 * before `apply`.
 	 */
 	#placement(
 		panelId: string,
 		own: DockPanelChange,
 		preview: () => DockNode | null | undefined,
 		target: unknown,
-		apply: () => void
+		apply: () => void,
+		guard?: MoveGuard
 	): Promise<DockPanelChangeOutcome> {
 		const lifecycle = this.#getLifecycle();
-		if (lifecycle) return lifecycle.requestPlacement(panelId, () => own, preview, apply, target);
-		apply();
-		return Promise.resolve('applied');
+		return guarded(
+			guard,
+			(run) => lifecycle?.requestPlacement(panelId, () => own, preview, run, target),
+			apply
+		);
 	}
 
 	/** True while a drag is in progress - handy guard for consumers that don't need the full snapshot. */
@@ -337,7 +371,8 @@ export class DragController {
 	placeAtEdge(
 		panelId: string,
 		source: DragSource,
-		edge: DockEdge
+		edge: DockEdge,
+		guard?: MoveGuard
 	): Promise<DockPanelChangeOutcome> | null {
 		const dock = this.#dock;
 		if (!this.#edgesOffered(panelId)) return null;
@@ -372,7 +407,8 @@ export class DragController {
 					});
 				},
 				target,
-				withFocus(() => dock.dockPanelAtEdge(panelId, edge))
+				withFocus(() => dock.dockPanelAtEdge(panelId, edge)),
+				guard
 			);
 		return this.#placement(
 			panelId,
@@ -385,7 +421,8 @@ export class DragController {
 				return wrap(rest, node);
 			},
 			target,
-			withFocus(() => dock.dockExistingAtEdge(panelId, edge))
+			withFocus(() => dock.dockExistingAtEdge(panelId, edge)),
+			guard
 		);
 	}
 
@@ -408,7 +445,8 @@ export class DragController {
 		panelId: string,
 		source: DragSource,
 		targetId: string,
-		region: DropRegion
+		region: DropRegion,
+		guard?: MoveGuard
 	): Promise<DockPanelChangeOutcome> {
 		const dock = this.#dock;
 		const target = { to: targetId, region };
@@ -434,7 +472,8 @@ export class DragController {
 				() => {
 					dock.dockPanel(panelId, targetId, region);
 					this.homeSlots.delete(panelId);
-				}
+				},
+				guard
 			);
 		return this.#placement(
 			panelId,
@@ -445,7 +484,8 @@ export class DragController {
 				return into(removePanel(dock.layout.docked, panelId), node);
 			},
 			target,
-			() => dock.dockExisting(panelId, targetId, region)
+			() => dock.dockExisting(panelId, targetId, region),
+			guard
 		);
 	}
 
@@ -457,7 +497,8 @@ export class DragController {
 	 */
 	floatDocked(
 		panelId: string,
-		geometry?: { x: number; y: number; width: number; height: number }
+		geometry?: { x: number; y: number; width: number; height: number },
+		guard?: MoveGuard
 	): Promise<DockPanelChangeOutcome> | null {
 		const policy = this.#getPolicy();
 		// `undock: false` panes stay docked: a drop on free space is ignored.
@@ -473,25 +514,62 @@ export class DragController {
 				this.homeSlots.set(panelId, slot);
 		};
 		const lifecycle = this.#getLifecycle();
-		if (lifecycle)
-			return lifecycle.requestRemoval(
-				panelId,
-				() => ({ kind: 'undock', panelId, remount: true }),
-				apply,
-				geometry ?? 'float'
-			);
-		apply();
-		return Promise.resolve('applied');
+		return guarded(
+			guard,
+			(run) =>
+				lifecycle?.requestRemoval(
+					panelId,
+					() => ({ kind: 'undock', panelId, remount: true }),
+					run,
+					geometry ?? 'float'
+				),
+			apply
+		);
 	}
 
-	/** The docked tree `placeBack(panelId)` would make now; `undefined` = nothing to do (no remembered place, not an open window, or the place is gone). */
+	/**
+	 * The docked tree `placeBack(panelId)` would make now; `undefined` = nothing to do (no
+	 * remembered place, not an open window, the place is gone, or the drag would not drop it
+	 * there: `#backAllowed`). Re-read by the lifecycle before each step and before the apply,
+	 * so a rule that changes while the answer waits makes it `stale`.
+	 */
 	#backPreview(panelId: string, slot: DockSlot | undefined): DockNode | undefined {
 		const win = this.#dock.layout.floating.find((w) => w.id === panelId);
 		if (!win || !win.open || !slot) return undefined;
 		const node: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
-		return (
-			restoreDockSlot(this.#dock.layout.docked, node, slot, () => `${panelId}:restored`) ??
-			undefined
+		const after = restoreDockSlot(
+			this.#dock.layout.docked,
+			node,
+			slot,
+			() => `${panelId}:restored`
+		);
+		return after && this.#backAllowed(after, panelId) ? after : undefined;
+	}
+
+	/**
+	 * Would the drag drop `panelId` where `after` puts it (#663 ④)? The targets' `dropCenter` /
+	 * `dropSplit`, as the cross guide offers them (`#crossOptions`): into a tab group = every
+	 * other pane of the group allows `dropCenter`; into a split = a pane / tab group next to it
+	 * allows `dropSplit` (a drop next to that one makes the same place); a new root split (the
+	 * old root wrapped) = an outer-edge drop, always offered; the only pane = no target.
+	 */
+	#backAllowed(after: DockNode, panelId: string): boolean {
+		const policy = this.#getPolicy();
+		if (!policy?.capabilities) return true;
+		const parent = findParent(after, panelId);
+		if (!parent) return true;
+		const allow = (nodes: DockNode[], key: 'dropCenter' | 'dropSplit') =>
+			nodes.flatMap((n) => collectPanelIds(n)).every((id) => resolveCapabilities(policy, id)[key]);
+		if (parent.type === 'tabs')
+			return allow(
+				parent.children.filter((c) => c.id !== panelId),
+				'dropCenter'
+			);
+		if (parent.type !== 'split') return true;
+		if (parent === after && !findNode(this.#dock.layout.docked, parent.id)) return true;
+		const i = parent.children.findIndex((c) => c.id === panelId);
+		return [parent.children[i - 1], parent.children[i + 1]].some(
+			(n) => n !== undefined && allow([n], 'dropSplit')
 		);
 	}
 
@@ -500,7 +578,7 @@ export class DragController {
 	 * like any other drop into the tree (the panes it pushes out, then `dock`). `null` = no
 	 * remembered place, or the place is gone: nothing changes.
 	 */
-	placeBack(panelId: string): Promise<DockPanelChangeOutcome> | null {
+	placeBack(panelId: string, guard?: MoveGuard): Promise<DockPanelChangeOutcome> | null {
 		const dock = this.#dock;
 		const slot = this.homeSlots.get(panelId);
 		if (!slot || this.#backPreview(panelId, slot) === undefined) return null;
@@ -512,11 +590,12 @@ export class DragController {
 			() => {
 				if (dock.dockAtSlot(panelId, slot, () => `${panelId}:restored`))
 					this.homeSlots.delete(panelId);
-			}
+			},
+			guard
 		);
 	}
 
-	/** Whether `placeBack(panelId)` would do something now (a remembered place that still exists). */
+	/** Whether `placeBack(panelId)` would do something now (a remembered place that still exists and the drag would drop it there). */
 	canPlaceBack(panelId: string): boolean {
 		return this.#backPreview(panelId, this.homeSlots.get(panelId)) !== undefined;
 	}

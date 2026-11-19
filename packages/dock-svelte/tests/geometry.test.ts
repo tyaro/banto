@@ -7,7 +7,8 @@ import {
 	bringToFront,
 	cascadePosition,
 	clampWindowToHost,
-	dropRegionRect
+	dropRegionRect,
+	placeMenu
 } from '../src/core/geometry';
 import type { DockLayout, FloatingWindow } from '../src/types';
 
@@ -301,5 +302,44 @@ describe('dropRegionRect', () => {
 		expect(dropRegionRect(rect, 'top', 0.25)).toEqual({ x: 10, y: 20, width: 400, height: 50 });
 		expect(dropRegionRect(rect, 'bottom', 0.25)).toEqual({ x: 10, y: 170, width: 400, height: 50 });
 		expect(dropRegionRect(rect, 'left', 2)).toEqual(rect);
+	});
+});
+
+describe('placeMenu (the panel actions menu, #663 ④)', () => {
+	const viewport = { width: 1000, height: 600 };
+	const content = { width: 200, height: 150 };
+
+	it('under the button when it fits, right edges aligned', () => {
+		expect(placeMenu({ top: 80, bottom: 100, right: 500 }, content, viewport)).toEqual({
+			top: 100,
+			left: 300,
+			maxHeight: 360
+		});
+	});
+
+	it('above the button when it does not fit under but fits above', () => {
+		const p = placeMenu({ top: 500, bottom: 520, right: 500 }, content, viewport);
+		expect(p.top).toBe(350);
+		expect(p.maxHeight).toBe(360);
+	});
+
+	it('fits neither side: the side with more room, clipped to it (scrolls inside, stays on screen)', () => {
+		const tall = { width: 200, height: 1000 };
+		const short = { width: 1000, height: 300 };
+		// More room above (180 > 100).
+		const up = placeMenu({ top: 180, bottom: 200, right: 500 }, tall, short);
+		expect(up.maxHeight).toBe(180);
+		expect(up.top).toBe(0);
+		// More room below (170 > 110).
+		const down = placeMenu({ top: 110, bottom: 130, right: 500 }, tall, short);
+		expect(down.top).toBe(130);
+		expect(down.maxHeight).toBe(170);
+		expect(down.top + down.maxHeight).toBeLessThanOrEqual(short.height);
+	});
+
+	it('never more than the cap of the viewport, and kept inside it horizontally', () => {
+		const p = placeMenu({ top: 0, bottom: 20, right: 50 }, { width: 200, height: 2000 }, viewport);
+		expect(p.maxHeight).toBe(360);
+		expect(p.left).toBe(0);
 	});
 });

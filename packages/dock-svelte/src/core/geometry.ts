@@ -289,3 +289,34 @@ export function dropRegionRect(rect: Rect, region: DropRegion, ratio = 0.5): Rec
 			return rect;
 	}
 }
+
+/** Where `placeMenu` puts a popup menu: viewport px, and the height its content scrolls within. */
+export interface MenuPlacement {
+	top: number;
+	left: number;
+	maxHeight: number;
+}
+
+/**
+ * Place a popup menu (the "panel actions" menu, #663 ④) at its button, in viewport px: right
+ * edges aligned (kept on screen), under the button when its content fits there, else above
+ * when it fits there, else on the side with more room. `maxHeight` is that side's room
+ * (capped at `capRatio` of the viewport), so a menu taller than the room scrolls inside and
+ * every item stays reachable on a short screen. `content` = the menu's full (unclipped) size.
+ */
+export function placeMenu(
+	button: { top: number; bottom: number; right: number },
+	content: { width: number; height: number },
+	viewport: { width: number; height: number },
+	capRatio = 0.6
+): MenuPlacement {
+	const cap = viewport.height * capRatio;
+	const below = Math.max(0, viewport.height - button.bottom);
+	const above = Math.max(0, button.top);
+	const height = Math.min(content.height, cap);
+	const left = Math.max(0, Math.min(button.right - content.width, viewport.width - content.width));
+	const under = height <= below || (height > above && below >= above);
+	const room = Math.min(cap, under ? below : above);
+	const top = under ? button.bottom : button.top - Math.min(height, room);
+	return { top, left, maxHeight: room };
+}

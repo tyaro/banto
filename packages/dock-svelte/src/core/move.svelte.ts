@@ -177,33 +177,45 @@ export class PanelMover {
 		);
 	}
 
-	/** Hand `target` to the drag's own drop path; `null` = the drag would not offer it. */
-	#start(panelId: string, target: DockMoveTarget): Promise<DockPanelChangeOutcome> | null {
+	/**
+	 * Is `target` offered for `panelId` now (the menu's rules: `#movable`, the capabilities, the
+	 * targets' `dropCenter` / `dropSplit`, "back"'s place)? The pane's source, or `null`. Read
+	 * when the move starts AND right before it is applied (the drag's `MoveGuard`): a lock or a
+	 * capability is not part of `structureKey`, so a change while `beforePanelChange` waits is
+	 * caught here (`stale`, nothing applied, no success announced).
+	 */
+	#offered(panelId: string, target: DockMoveTarget): 'docked' | 'floating' | null {
 		const source = this.#movable(panelId);
 		if (!source) return null;
 		const offered = this.options(panelId);
-		if ('edge' in target) {
-			if (!offered.edges.includes(target.edge)) return null;
-			return this.#drag.placeAtEdge(panelId, source, target.edge);
-		}
+		if ('edge' in target) return offered.edges.includes(target.edge) ? source : null;
 		if ('tabWith' in target || 'splitWith' in target) {
 			const otherId = 'tabWith' in target ? target.tabWith : target.splitWith;
 			const list = 'tabWith' in target ? offered.tabWith : offered.splitWith;
 			if (!list.some((p) => p.id === otherId)) return null;
 			if ('splitWith' in target && !EDGES.includes(target.side)) return null;
+			return source;
+		}
+		if ('float' in target) return offered.float ? source : null;
+		if ('back' in target) return offered.back ? source : null;
+		return null;
+	}
+
+	/** Hand `target` to the drag's own drop path; `null` = the drag would not offer it. */
+	#start(panelId: string, target: DockMoveTarget): Promise<DockPanelChangeOutcome> | null {
+		const source = this.#offered(panelId, target);
+		if (!source) return null;
+		const guard = () => this.#offered(panelId, target) === source;
+		if ('edge' in target) return this.#drag.placeAtEdge(panelId, source, target.edge, guard);
+		if ('tabWith' in target || 'splitWith' in target) {
+			const otherId = 'tabWith' in target ? target.tabWith : target.splitWith;
 			const targetId = this.#targetOf(panelId, otherId);
 			if (targetId === null) return null;
 			const region = 'tabWith' in target ? 'center' : target.side;
-			return this.#drag.placeOnto(panelId, source, targetId, region);
+			return this.#drag.placeOnto(panelId, source, targetId, region, guard);
 		}
-		if ('float' in target) {
-			if (!offered.float) return null;
-			return this.#drag.floatDocked(panelId);
-		}
-		if ('back' in target) {
-			if (!offered.back) return null;
-			return this.#drag.placeBack(panelId);
-		}
+		if ('float' in target) return this.#drag.floatDocked(panelId, undefined, guard);
+		if ('back' in target) return this.#drag.placeBack(panelId, guard);
 		return null;
 	}
 

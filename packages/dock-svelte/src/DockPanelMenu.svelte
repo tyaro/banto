@@ -17,6 +17,7 @@
 	 * never see them.
 	 */
 	import { tick, untrack } from 'svelte';
+	import { placeMenu } from './core/geometry';
 	import { getPanelMover, type DockMoveTarget } from './core/move.svelte';
 	import type { DockMessages } from './messages';
 	import type { DockEdge } from './types';
@@ -46,6 +47,8 @@
 	let menuEl: HTMLDivElement | null = $state(null);
 	let top = $state(0);
 	let left = $state(0);
+	/** The room on the side the menu opens to (`placeMenu`); its content scrolls inside. */
+	let maxHeight: number | null = $state(null);
 
 	type Item =
 		| { key: string; label: string; target: DockMoveTarget }
@@ -105,12 +108,21 @@
 	function place(): void {
 		if (!buttonEl || !menuEl) return;
 		const b = buttonEl.getBoundingClientRect();
-		const w = menuEl.offsetWidth;
-		const h = menuEl.offsetHeight;
-		const vw = document.documentElement.clientWidth || window.innerWidth;
-		const vh = document.documentElement.clientHeight || window.innerHeight;
-		left = Math.max(0, Math.min(b.right - w, vw - w));
-		top = b.bottom + h > vh && b.top - h >= 0 ? b.top - h : b.bottom;
+		// The full height (not clipped by the last `max-height`): content + padding + border.
+		const border = menuEl.offsetHeight - menuEl.clientHeight;
+		const content = { width: menuEl.offsetWidth, height: menuEl.scrollHeight + border };
+		const viewport = {
+			width: document.documentElement.clientWidth || window.innerWidth,
+			height: document.documentElement.clientHeight || window.innerHeight
+		};
+		const at = placeMenu(b, content, viewport);
+		top = at.top;
+		left = at.left;
+		// `max-height` is the content box's: the padding and the border are outside it.
+		const style = getComputedStyle(menuEl);
+		const frame =
+			border + parseFloat(style.paddingTop || '0') + parseFloat(style.paddingBottom || '0');
+		maxHeight = Math.max(0, at.maxHeight - (Number.isFinite(frame) ? frame : 0));
 	}
 
 	async function openMenu(focus: 'first' | 'last'): Promise<void> {
@@ -313,6 +325,7 @@
 			bind:this={menuEl}
 			style:top={`${top}px`}
 			style:left={`${left}px`}
+			style:max-height={maxHeight === null ? undefined : `${maxHeight}px`}
 			onpointerdown={(event) => event.stopPropagation()}
 			onkeydown={handleMenuKeydown}
 			onfocusout={handleFocusOut}
