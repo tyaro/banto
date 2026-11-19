@@ -136,8 +136,14 @@
 	// Collapsed to a band (#663 ③-B). Only a panel / tab group can be; the state lives in the tree.
 	const bodyId = $props.id();
 	const collapsed = $derived(node.type !== 'split' && node.collapsed === true);
-	/** May this region be collapsed now (a split child with another open child)? Expanding is always allowed. */
-	const canCollapse = $derived(node.type !== 'split' && dock.canCollapseDocked(node.id));
+	/** May this region be collapsed now (a split child with another open child, and every pane's `collapse` capability)? Expanding is always allowed. */
+	const canCollapse = $derived(
+		node.type !== 'split' &&
+			(node.type === 'tabs' ? node.children.map((c) => c.id) : [node.id]).every(
+				(id) => capsOf(id).collapse
+			) &&
+			dock.canCollapseDocked(node.id)
+	);
 	/**
 	 * Sum of the saved `sizes` of the open (not collapsed) children of this split. CSS flex
 	 * hands out only `sum(flex-grow)` of the free room when the grow factors add up to less

@@ -798,6 +798,7 @@ describe('"back" for every float order x every back order of 2-3 of 4 panes', ()
 	for (const [kind, make] of Object.entries(layouts)) {
 		for (const k of [2, 3]) {
 			for (const floated of subsets(ids, k)) {
+				// Up to 36 mounts each (3! x 3!): over 5 s on a slow CI runner, as slow on main as here (PR #723).
 				it(`${kind} [a,b,c,d]: float ${floated.join(',')} (every order x every order)`, async () => {
 					const failures: string[] = [];
 					for (const floatOrder of permutations(floated)) {
@@ -813,7 +814,7 @@ describe('"back" for every float order x every back order of 2-3 of 4 panes', ()
 						}
 					}
 					expect(failures).toEqual([]);
-				});
+				}, 30_000);
 			}
 		}
 	}

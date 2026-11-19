@@ -566,3 +566,150 @@ describe('a pane leaving the docked tree asks the pane that is left (#682)', () 
 		expect(calls).toEqual(['close a']);
 	});
 });
+
+describe('replacements to different layouts are told apart (PR #723 review)', () => {
+	/** The floating pane a docked on one side or the other of t: the same list of changes. */
+	const sided = (side: 'left' | 'right'): DockLayout => {
+		const a = { type: 'panel' as const, id: 'a', title: 'A' };
+		const t = layout().docked!;
+		return {
+			version: 2,
+			floating: layout().floating.filter((w) => w.id !== 'a'),
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.5, 0.5],
+				children: side === 'left' ? [a, t] : [t, a]
+			}
+		};
+	};
+
+	it('each is asked; the first approved applies, the other is stale', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const asked: DockPanelChange[] = [];
+		const hook = (c: DockPanelChange) => {
+			asked.push(c);
+			return new Promise<boolean>((r) => answers.push(r));
+		};
+		const { dock, lifecycle } = setup({ hook });
+		const left = sided('left');
+		const right = sided('right');
+		const toLeft = lifecycle.requestReplace(
+			() => left,
+			(l) => (dock.layout = l)
+		);
+		const toRight = lifecycle.requestReplace(
+			() => right,
+			(l) => (dock.layout = l)
+		);
+		// The same replacement while it is asked shares the pending one.
+		expect(
+			lifecycle.requestReplace(
+				() => sided('left'),
+				(l) => (dock.layout = l)
+			)
+		).toBe(toLeft);
+		expect(asked.length).toBe(2);
+		expect(JSON.stringify(asked[0])).toBe(JSON.stringify(asked[1]));
+		while (answers.length > 0) {
+			answers.shift()!(true);
+			await nextTask();
+		}
+		// Both approved: the one applied first wins, the other finds the structure changed.
+		expect(await toLeft).toBe('applied');
+		expect(await toRight).toBe('stale');
+		expect(dock.layout.docked).toMatchObject({ children: [{ id: 'a' }, { id: 't' }] });
+	});
+
+	it('a preview that gives another layout later makes it stale', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const { dock, lifecycle } = setup({
+			hook: () => new Promise<boolean>((r) => answers.push(r))
+		});
+		let next = sided('left');
+		const before = structureKey(dock.layout);
+		const outcome = lifecycle.requestReplace(
+			() => next,
+			(l) => (dock.layout = l)
+		);
+		next = sided('right');
+		answers.splice(0).forEach((r) => r(true));
+		expect(await outcome).toBe('stale');
+		expect(structureKey(dock.layout)).toBe(before);
+	});
+});
+
+describe('guarded: the caller retires a request it no longer wants (PR #723 re-review)', () => {
+	it('a guard that turns false before the answer makes the request stale', async () => {
+		const answer = deferred<boolean>();
+		const { dock, lifecycle } = setup({ hook: () => answer.promise });
+		let wanted = true;
+		const close = lifecycle.guarded(
+			() => wanted,
+			() => lifecycle.close('a')
+		);
+		wanted = false;
+		answer.resolve(true);
+		expect(await close).toBe('stale');
+		expect(winOf(dock, 'a').open).toBe(true);
+	});
+
+	it('every step of a sequence keeps the guard (requestReplace)', async () => {
+		const answers: ((ok: boolean) => void)[] = [];
+		const { dock, lifecycle } = setup({
+			hook: () => new Promise<boolean>((r) => answers.push(r))
+		});
+		const next: DockLayout = { ...layout(), floating: [] };
+		let wanted = true;
+		const replace = lifecycle.guarded(
+			() => wanted,
+			() =>
+				lifecycle.requestReplace(
+					() => next,
+					(l) => (dock.layout = l)
+				)
+		);
+		await nextTask();
+		answers.shift()!(true);
+		await nextTask();
+		// The second step (pane b) is asked; the caller gives up before its answer.
+		expect(answers.length).toBe(1);
+		wanted = false;
+		answers.shift()!(true);
+		expect(await replace).toBe('stale');
+		expect(dock.layout.floating.map((w) => w.id)).toEqual(['a', 'b']);
+	});
+
+	it('a replacement with nothing to ask still honours the guard (PR #723 re-review 3)', async () => {
+		const hook = vi.fn(() => true);
+		const { dock, lifecycle } = setup({ hook });
+		// Only a floating window's position differs: no pane is asked.
+		const next: DockLayout = {
+			...layout(),
+			floating: layout().floating.map((w) => (w.id === 'a' ? { ...w, x: 200 } : w))
+		};
+		const outcome = lifecycle.guarded(
+			() => false,
+			() =>
+				lifecycle.requestReplace(
+					() => next,
+					(l) => (dock.layout = l)
+				)
+		);
+		expect(await outcome).toBe('stale');
+		expect(hook).not.toHaveBeenCalled();
+		expect(winOf(dock, 'a').x).toBe(40);
+		// The same replacement still wanted applies without asking.
+		const applied = lifecycle.guarded(
+			() => true,
+			() =>
+				lifecycle.requestReplace(
+					() => next,
+					(l) => (dock.layout = l)
+				)
+		);
+		expect(await applied).toBe('applied');
+		expect(winOf(dock, 'a').x).toBe(200);
+	});
+});

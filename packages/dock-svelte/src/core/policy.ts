@@ -44,6 +44,13 @@ export interface DockCapabilities {
 	 * main region). On a tab group the button shows only when every pane in it allows it.
 	 */
 	autoHide?: boolean;
+	/**
+	 * Offer the collapse button on the docked region holding this pane (#663 ④, three-pane-dock-plan
+	 * §4.7: the main region of `ThreePaneDock` is never folded to a band). `false` disables the button
+	 * while the region is expanded (a region already collapsed can still be expanded). On a tab group
+	 * the button collapses only when every pane in it allows it.
+	 */
+	collapse?: boolean;
 }
 
 export interface DockPolicy {
@@ -64,7 +71,8 @@ export function resolveCapabilities(
 		undock: c?.undock ?? true,
 		dropCenter: c?.dropCenter ?? true,
 		dropSplit: c?.dropSplit ?? true,
-		autoHide: c?.autoHide ?? true
+		autoHide: c?.autoHide ?? true,
+		collapse: c?.collapse ?? true
 	};
 }
 

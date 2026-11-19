@@ -108,10 +108,11 @@ import {
 	type AutoHideOptions
 } from './autohide';
 import { displacedChanges, mountedPanes } from './mounts';
+import { layoutChanges } from './replace';
 import { restoreDockSlot } from './slot';
 import { findNode, findParent, removePanel, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
-import type { DockNode, DockPanelNode } from '../types';
+import type { DockLayout, DockNode, DockPanelNode } from '../types';
 
 /**
  * A structure change the dock UI is about to make (shared-primitives-upstream-
@@ -161,12 +162,16 @@ export interface PanelChangeRequestOptions {
 	target?: unknown;
 	/** The change as it would be described now; `null` = it no longer exists. Re-checked right before `apply`. */
 	describe?: () => DockPanelChange | null;
+	/** Is the caller still asking for it? `false` = `stale`. Re-checked like `describe` (`guarded`). */
+	guard?: () => boolean;
 }
 
 interface Job {
 	change: DockPanelChange;
 	apply: () => void;
 	describe: (() => DockPanelChange | null) | undefined;
+	/** The caller's own "still wanted" check (`guarded`); `false` = `stale`. */
+	guard: (() => boolean) | undefined;
 	/** The structure generation the request is about (when it was made or first held). */
 	revision: number;
 	structure: string;
@@ -194,6 +199,8 @@ export class PanelLifecycle {
 	/** `requestPlacement`s not resolved yet, by identity (the whole list of changes and the target). */
 	#placements = new Map<string, Promise<DockPanelChangeOutcome>>();
 	#jobs = new Set<Job>();
+	/** The `guarded` check of the call being made now (taken by every request it makes). */
+	#guard: (() => boolean) | undefined = undefined;
 	/** The element of an open composition (`compositionstart` without `compositionend`). */
 	#composingIn: Element | null = null;
 	/** Panes whose content was discarded by `close` - not kept mounted while hidden, until shown again. */
@@ -278,6 +285,7 @@ export class PanelLifecycle {
 			change,
 			apply,
 			describe: options.describe,
+			guard: options.guard ?? this.#guard,
 			revision: this.#dock.structureRevision,
 			structure: structureKey(this.#dock.layout),
 			approved: false,
@@ -294,6 +302,7 @@ export class PanelLifecycle {
 				// Let go of the consumer's closures (the hook's promise may keep `job` alive).
 				job.apply = () => {};
 				job.describe = undefined;
+				job.guard = undefined;
 				this.#jobs.delete(job);
 				if (this.#pending.get(id) === promise) this.#pending.delete(id);
 				if (this.#held === job) this.#held = null;
@@ -305,6 +314,23 @@ export class PanelLifecycle {
 		if (this.isDeferred()) this.#hold(job);
 		else this.#ask(job);
 		return promise;
+	}
+
+	/**
+	 * Run `make` (which makes requests: `setVisible`, `requestReplace`, ...) with `guard` attached to
+	 * every request it makes, now or later in the same sequence (PR #723 review): right before
+	 * `apply` - and before each further step - `guard()` is re-read, and `false` makes the request
+	 * `stale` with nothing changed. A caller whose newer wish needs no change (the pane is already
+	 * where it wants it) uses it to retire an older request still being asked.
+	 */
+	guarded<T>(guard: (() => boolean) | undefined, make: () => T): T {
+		const outer = this.#guard;
+		this.#guard = guard ?? outer;
+		try {
+			return make();
+		} finally {
+			this.#guard = outer;
+		}
 	}
 
 	/** Retry the request held for IME composition now (when the consumer's predicate turned false). */
@@ -511,9 +537,65 @@ export class PanelLifecycle {
 			if (mine === null) return changes;
 			return [...changes, ...(Array.isArray(mine) ? mine : [mine])];
 		};
+		return this.#sequence(describeAll, apply, target);
+	}
+
+	/**
+	 * Replace the whole layout (#663 ④, `DockHost.replaceLayout`: `ThreePaneDock`'s `resetLayout` /
+	 * `restoreLayout`). Every pane whose content the replacement takes off the screen or re-mounts
+	 * is asked first, in the order `layoutChanges` lists them (`core/replace.ts`), as one decision
+	 * like `requestPlacement`: a refusal stops it with nothing changed, a structure change while it
+	 * waits makes it `stale`, and `preview` (the layout `apply` would install; `undefined` = no
+	 * longer possible) is re-read and compared before each step and before `apply`. Nothing to ask
+	 * = applied at once. The layout `preview` gives now is part of the request's identity: the same
+	 * replacement while it is asked shares the pending one, another destination is asked on its own
+	 * (whichever is applied first wins, the other is `stale`), and a `preview` that later gives
+	 * another layout makes it `stale`.
+	 */
+	requestReplace(
+		preview: () => DockLayout | undefined,
+		apply: (next: DockLayout) => void
+	): Promise<DockPanelChangeOutcome> {
+		if (this.#disposed) return Promise.resolve('disposed');
+		const first = preview();
+		if (first === undefined) return Promise.resolve('stale');
+		// The destination is part of the request's identity (PR #723 review): two replacements whose
+		// changes read the same (a floating pane docked on one side or the other) are asked apart,
+		// and the one applied second finds the structure changed (`stale`).
+		const destination = JSON.stringify(first);
+		const describeAll = (): DockPanelChange[] | null => {
+			const next = preview();
+			if (next === undefined || JSON.stringify(next) !== destination) return null;
+			return layoutChanges(
+				this.#dock.layout,
+				next,
+				(id) => this.keepMounted(id),
+				(id) => this.persistent(id),
+				this.#dock.flyoutPanel
+			);
+		};
+		return this.#sequence(
+			describeAll,
+			() => {
+				const next = preview();
+				if (next !== undefined) apply(next);
+			},
+			{ replace: destination }
+		);
+	}
+
+	/** The asking loop shared by `requestPlacement` and `requestReplace` (see `requestPlacement`). */
+	#sequence(
+		describeAll: () => DockPanelChange[] | null,
+		apply: () => void,
+		target: unknown
+	): Promise<DockPanelChangeOutcome> {
+		const guard = this.#guard;
 		const changes = describeAll();
 		if (changes === null) return Promise.resolve('stale');
 		if (changes.length === 0) {
+			// Nothing to ask, but the caller's "still wanted" check holds all the same.
+			if (guard && !guard()) return Promise.resolve('stale');
 			apply();
 			return Promise.resolve('applied');
 		}
@@ -536,7 +618,8 @@ export class PanelLifecycle {
 				// The whole placement is part of each step's identity: another placement whose
 				// step asks the same pane the same thing must not share this one's continuation.
 				target: id,
-				describe: () => (same() ? changes[i] : null)
+				describe: () => (same() ? changes[i] : null),
+				guard
 			}).then((outcome) => (outcome === 'applied' && next ? next : outcome));
 		};
 		const promise = step(0).finally(() => {
@@ -741,6 +824,7 @@ export class PanelLifecycle {
 	/** Is the structure still the one the job was asked about (module doc)? Calls `describe` (consumer code) first. */
 	#isCurrent(job: Job): boolean {
 		if (job.describe && JSON.stringify(job.describe()) !== JSON.stringify(job.change)) return false;
+		if (job.guard && !job.guard()) return false;
 		return (
 			!this.#disposed &&
 			this.#dock.structureRevision === job.revision &&

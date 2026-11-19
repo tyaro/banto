@@ -84,6 +84,8 @@ export している。
 - `autoHide: false` — その pane のいる区画の見出しにピン（自動で隠す、下の節）を出さない（メイン区画向け）。タブの組は、
   中の pane がすべて許すときだけ出す。`close`・`move`・`undock` がすべて `false` の pane の区画は「メイン区画」として、
   自動で隠す区画の入る縁を決める基準になる。
+- `collapse: false` — その pane のいる区画の折りたたみボタンを押せなくする（帯にしない。メイン区画向け、#663 ④）。
+  すでに畳まれている区画は展開できる。タブの組は、中の pane がすべて許すときだけ畳める。
 
 これは UI の口であって権限の仕組みではない。`dock.close(id)` などをコードから呼べば動くので、守りたい pane は
 アプリ側の呼び出しも絞ること。アプリ固定の標準配置は、独自の default layout を `createDockState(layout)` に渡す
@@ -397,8 +399,9 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   - 並び順は、その `DockState` が id を初めて見た順（最初の layout の docked の木を木の順に、続けて浮動 window を
     配列の順に。あとから増えた id は末尾）。前面化・ドック・隠す操作では並び替わらない。`hydrate` / `layout = ...`
     でも既知の id は位置を保ち、新しい id は末尾に付く。アプリ独自の順にしたいときは行をアプリで並べ替える。
-- **`host.setPanelVisible(id, visible)`**: チェックを外す = ✕ と同じ（`keepMounted` の pane は hide、それ以外は close。
-  `beforePanelChange` に聞き、拒否なら `refused`）。`capabilities` の `close: false` の pane は外さない（`refused`）。
+- **`host.setPanelVisible(id, visible, { isCurrent? })`**: チェックを外す = ✕ と同じ（`keepMounted` の pane は hide、それ以外は close。
+  `beforePanelChange` に聞き、拒否なら `refused`。`isCurrent` は適用の直前に読み直し、`false` なら `stale` で何も変えない
+  — 承認待ちの間にアプリが逆を望み、それが今の状態と同じで新しく聞くことが無いときに、古い依頼を失効させる）。`capabilities` の `close: false` の pane は外さない（`refused`）。
   チェックを入れる = `showPanel`。外すときに既に隠れていれば聞かずに `applied`。拒否されたときはチェックボックスを
   `row.visible` に戻すのはメニュー側（変わらない値は Svelte が書き戻さない）。
 - **`host.showPanel(id)`**: どこにあっても見える状態にする。
@@ -541,6 +544,112 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 2. `isStructureChangeDeferred` — `drag` を始めない（変換中）。
 3. `canStartGesture` — 操作を始めるか（`drag` は閾値を越えたとき）。
 4. `beforePanelChange` — 操作が確定したとき・ボタンを押したときに、layout を変えるか。
+
+## 3 ペインを dock に並べる（`ThreePaneDock`、#663 ④）
+
+`@banto/ui` の固定の `ThreePaneLayout` と同じ中身（左 = 対象を選ぶ・中央 = 作業・右 = 詳細）を dock のパネルとして
+並べる部品（[three-pane-dock-plan](../../docs/design/three-pane-dock-plan.md) §4.1）。利用者は左右を浮かせ・別の場所に
+ドッキングし直し・タブにまとめ・自動で隠せる。`ThreePaneLayout` と意味が同じ props は同じ名前。
+
+```svelte
+<script lang="ts">
+	import { ThreePaneDock, createDockState } from '@banto/dock-svelte';
+
+	const dock = createDockState(); // 保存したいときは自分で持つ（下の「保存」）
+	let threePane: ReturnType<typeof ThreePaneDock> | undefined = $state();
+	let leftOpen = $state(true);
+	const viewItems = $derived(
+		threePane?.viewMenuItems({ resetLayout: m['dashboard.resetLayout']() }) ?? []
+	);
+</script>
+
+<ThreePaneDock
+	bind:this={threePane}
+	{dock}
+	bind:leftOpen
+	panels={[{ id: 'log', title: 'ログ', content: log, initial: { edge: 'bottom' } }]}
+	messages={{
+		threePaneLeft: () => '一覧',
+		threePaneCenter: () => '作業',
+		threePaneRight: () => '詳細'
+	}}
+>
+	{#snippet left()}…{/snippet}
+	{#snippet right()}…{/snippet}
+	<Workspace />
+</ThreePaneDock>
+```
+
+- **中央（`children`）はメイン区画**: 据え置き（`persistent`、中身の DOM を作り直さない）で、capabilities は
+  `close`・`move`・`undock`・`dropCenter`・`autoHide`・`collapse` がすべて `false`（アプリの `capabilities` より優先）。
+  閉じない・畳まない・自動で隠さない・浮かせない。左右と追加パネルはアプリの `capabilities` / `persistent` に従う。
+- **パネルの id** は `left`・`center`・`right` に固定。追加パネル（`panels`、`ThreePaneExtraPanel`）の id がこれと重なる・
+  重複すると例外（開発時の誤り）。追加パネルは `initial` で最初の置き場を決める（`hidden` = 閉じた浮動〔既定〕・
+  `floating` = 開いた浮動・`{ edge }` = 外周にドッキング）。以後は保存したレイアウトに従う。
+- **`panels` を後から変えたとき**: タイトル・アイコンだけの違いは聞かずに直す。構造が変わる（追加パネルを外して、
+  それを包んでいた split が消え、残りが組み直される・パネルを足す）ときは `resetLayout` と同じく
+  `DockHost.replaceLayout` を通す（`beforePanelChange` と IME の変換中の保留が効く。消えた区画にあったフォーカスは
+  中央へ）。拒否されたら（`invalid` / `disposed` も）レイアウトはそのまま: 外したパネルは中身の無い区画として残り、
+  自動では再試行しない。次に `panels`・文言が変わったとき、または `resetLayout` / `restoreLayout` で照らし直す。
+  承認待ちの間に構造が変わった（`stale`）ときは、新しいレイアウトに照らして聞き直す。承認待ちの間にまた `panels` が
+  変わると、新しいほうが引き継ぐ: 行き先が同じなら同じ依頼のまま、違えば古い依頼は適用の直前に `stale` になる。
+  外したパネルを承認の前に元へ戻した（今の配置のままでよくなった）ときも、古い依頼は承認されても適用しない。
+- **既定レイアウト**は純関数 `threePaneDockLayout({ hostWidth, leftWidth, rightWidth, panels })`: 左 | 中央 | 右の行で、
+  `leftWidth`（既定 280）・`rightWidth`（既定 360）の px をマウント時に測った幅の比率に直す（中央が 320px を下回るなら
+  左右を縮める）。マウント時の `leftOpen`/`rightOpen` が `false` の側は隠れた状態で始まる（元の場所を覚える）。
+- **`leftOpen` / `rightOpen`（bindable）は「表示」メニューのチェックと同じ 1 か所の状態**（`dock.panels` の `visible`）。
+  ✕・メニュー・メソッドのどれで変わっても書き戻る。アプリが書き換えると `setVisible` と同じ依頼になり、
+  `beforePanelChange` が断ったら本当の状態が書き戻る。承認待ちの間に元の値へ戻すと（`false` → `true` など）、
+  古い依頼は承認されても適用しない（`stale`）。
+- **操作の口**（`bind:this` のメソッド。すべて `DockHost` を通るので `beforePanelChange` が効く）:
+
+  | メソッド                           | 中身                                                                                                         | 戻り値                                                 |
+  | ---------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+  | `isVisible(id)`                    | 画面にあるか（reactive）                                                                                     | `boolean`                                              |
+  | `setVisible(id, v)` / `toggle(id)` | 表示・非表示（`DockHost.setPanelVisible`）。中央を隠すのは `refused`。隠したパネルにあったフォーカスは中央へ | `DockPanelChangeOutcome \| 'unavailable'`              |
+  | `float(id)` / `move(id, target)`   | 浮かせる・移す（`DockHost.movePanel`）                                                                       | `DockMoveOutcome`                                      |
+  | `dockBack(id)`                     | 開いた浮動のパネルを戻す（下記）                                                                             | `DockMoveOutcome`                                      |
+  | `resetLayout()`                    | 既定のレイアウトに戻す（確認は出さない）                                                                     | `DockPanelChangeOutcome \| 'invalid' \| 'unavailable'` |
+  | `restoreLayout(saved)`             | 保存値をマウント後に読み込む                                                                                 | `{ status, outcome }`                                  |
+  | `layoutSnapshot()`                 | 保存する値                                                                                                   | `ThreePaneSavedLayout`                                 |
+  | `viewMenuItems(labels)`            | 「表示」メニューの項目                                                                                       | `ThreePaneViewMenuItem[]`                              |
+
+  同じ変更を承認待ちの間にもう一度呼ぶ（`toggle` の連打）と、同じ 1 つの依頼を共有する。`setVisible` を承認待ちの間に
+  逆の値で呼ぶと、最新の値が勝つ: 古い依頼は適用の直前に `stale` になる（逆の値が今の状態と同じで、新しく聞くことが
+  無くても）。`resetLayout` の承認待ちの間に
+  ほかの操作でレイアウトが変わると、`resetLayout` は `stale` で何も変えない。`restoreLayout` を承認待ちの間に別の値で
+  もう一度呼ぶと（聞く変更の一覧が同じでも、行き先のレイアウトが違えば）別々に聞き、先に適用されたほうが勝って、
+  もう一方は `stale`。行き先が同じなら 1 つの依頼を共有する。
+
+- **`dockBack(id)` が戻れないとき**（[#721](https://github.com/tyaro/banto/issues/721)）: まず浮かせる前の場所
+  （`movePanel(id, { back: true })`）へ戻す。覚えている場所が無い（この部品のマウント前に浮かせた・同じ入れ物の
+  パネルを全部外して入れ物が消えた）ときは、そのパネルの**既定の側の外周**（左 = `left`、右 = `right`、追加パネルは
+  `initial` の `edge`）にドッキングする。どちらもできない（`edge` の無い追加パネル）・開いた浮動でないときは
+  `unavailable` を返し、浮動のまま何も変えない。
+- **「表示」メニュー**: `viewMenuItems({ resetLayout })` は `{ kind: 'checkbox' | 'action' | 'separator', id, label, checked?, onSelect }`
+  の素の配列（`@banto/ui` の `HeaderNavMenuItem` と構造で互換。型は import しない）。並びは左・右・追加パネル（中央は
+  出さない）、区切り、「レイアウトを既定に戻す」。チェックは `dock.panels` の `visible` から読む（`$derived` の中で呼ぶ）。
+  id は `panel:<パネルの id>`・`separator`・`reset-layout`。トグルの帯は出さない（ツールバーから `toggle` を呼ぶ）。
+- **文言**: `messages` は `DockMessages` に `threePaneLeft`・`threePaneCenter`・`threePaneRight`（パネルのタイトルと
+  メニューの項目名）を足したもの。`@banto/ui` の `UiMessages` と同じキーなので、同じ関数を両方に渡せる。
+- **保存**（実際の読み書きはアプリ、three-pane-dock-plan §4.4）: 保存する値は `layoutSnapshot()` の
+  `{ schema: 1, panels, layout }`。最初の描画で使う値は `initialLayout` に渡す（`ThreePaneSavedLayout`・`DockLayout`・
+  それらの JSON 文字列のどれでもよい。マウント時に 1 回だけ読む）。マウント後に届いた値は `restoreLayout(saved)`。
+  どちらも `reconcileThreePaneLayout` で今のパネルの集合と照らす: `validateDockLayout` に通らない値は既定、知らない id は
+  捨てる、足りない左右は既定の側に、足りない追加パネルは閉じた浮動で足す、タイトルは今の文言に直す、中央が畳まれて
+  いるなら展開し、タブの組に入っている（裏でも表でも）なら組から抜いて組の隣に分割で置く（組の場所と比率は保ち、
+  左のパネルを含む組なら中央はその右、ほかは左。`dropCenter: false` は新しい合流しか止めないので、組のままだと
+  別のタブを押して中央を隠せてしまう）、中央が木に無い（浮動・閉じている・自動で隠れている）なら既定（`status: 'default'`）。
+  保存のきっかけは、自分で持った `dock` の `dock.layout` を `$effect` で見る。
+- **パネル自身が入力を持つ**（追加パネルのフォームなど）ときは、`beforePanelChange` で下書きを控える（下の「pane の
+  lifecycle」）。`resetLayout`・`restoreLayout` は、画面から外す・作り直す pane ごとに `hide` / `dock` / `undock` /
+  `move-docked` / `tab-switch` / `auto-hide` として聞く（`DockHost.replaceLayout`）。画面に残る据え置きの pane は聞かない。
+  据え置きの pane のうち、閉じた浮動 window として残るものは `hide`（`remount: false`、中身は保たれる）、置き換え先の
+  レイアウトから消えるものは `close`（中身は破棄される。`closePanel` と同じ）。
+- まだ無いもの（後続の PR）: 狭い幅の表示（`narrowBreakpoint`）と組み替え不可（`arrange={false}`、§4.5）。
+
+`DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
+行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
 
 ## 保存の約束（serialize / hydrate と書き込みは別）
 

@@ -66,7 +66,7 @@
 	 * commits (after the gesture closed) or a button is pressed, whether the
 	 * layout changes.
 	 */
-	import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
+	import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte';
 	import { createDragController, setDragController } from './core/drag.svelte';
 	import {
 		GestureOwner,
@@ -86,7 +86,8 @@
 	import { autoHiddenPanelIds, mainRegionId, regionOf, regionPanelIds } from './core/autohide';
 	import { isMainPane, setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
 	import type { DockState } from './state.svelte';
-	import type { DockNode, PanelContent } from './types';
+	import type { DockLayout, DockNode, PanelContent } from './types';
+	import { validateDockLayout } from './core/validate';
 	import DockAutoHide from './DockAutoHide.svelte';
 	import DockedTree from './DockedTree.svelte';
 	import DockWindow from './DockWindow.svelte';
@@ -94,6 +95,7 @@
 	import {
 		PanelMover,
 		setPanelMover,
+		titleBarFocusTarget,
 		type DockMoveOutcome,
 		type DockMoveTarget
 	} from './core/move.svelte';
@@ -406,15 +408,19 @@
 	 * button (hide for a `keepMounted` pane, close otherwise, through
 	 * `beforePanelChange`). A pane whose `capabilities` say `close: false` is
 	 * not taken off the screen (`refused`), like its missing ✕ button.
+	 * `options.isCurrent` (PR #723 review) is re-read right before the change is applied (and
+	 * before each further request it makes): `false` = `stale`, nothing changed - e.g. the app
+	 * asked for the opposite meanwhile and the pane is already where that wants it.
 	 */
 	export function setPanelVisible(
 		panelId: string,
-		visible: boolean
+		visible: boolean,
+		options: { isCurrent?: () => boolean } = {}
 	): Promise<DockPanelChangeOutcome> {
 		if (!visible && dock.isVisible(panelId) && capabilities?.(panelId)?.close === false) {
 			return Promise.resolve('refused');
 		}
-		return lifecycle.setVisible(panelId, visible);
+		return lifecycle.guarded(options.isCurrent, () => lifecycle.setVisible(panelId, visible));
 	}
 
 	/**
@@ -453,6 +459,52 @@
 	 */
 	export function movePanel(panelId: string, target: DockMoveTarget): Promise<DockMoveOutcome> {
 		return mover.move(panelId, target);
+	}
+
+	/**
+	 * Whether `movePanel(panelId, target)` would be offered now (the same rules; reactive). Nothing is
+	 * asked, changed or announced (#663 ④: `ThreePaneDock.dockBack` picks its target with it).
+	 */
+	export function canMovePanel(panelId: string, target: DockMoveTarget): boolean {
+		return mover.offers(panelId, target);
+	}
+
+	/**
+	 * Replace the whole layout (#663 ④, three-pane-dock-plan §4.4: `ThreePaneDock`'s `resetLayout` /
+	 * `restoreLayout`) through `beforePanelChange`: every pane whose content the replacement takes
+	 * off the screen or re-mounts is asked first (`hide` / `close` / `tab-switch` / `dock` / `undock` /
+	 * `move-docked` / `auto-hide`, `core/replace.ts`), one after the other as one decision; a
+	 * refusal, or a structure change while it is asked (`stale`), leaves the layout as it is. A
+	 * `persistent` pane that stays on screen is not asked. `next` is checked by `validateDockLayout`
+	 * first: an invalid one resolves `invalid` and changes nothing. DOM focus is only repaired (a
+	 * focus the replacement dropped from the host goes to `focusPanel`'s title bar, default the
+	 * first docked pane's); a focus the app took elsewhere meanwhile is left alone.
+	 * `options.isCurrent` is re-read before each request and right before the replacement is
+	 * applied: `false` = `stale`, nothing changed (like `setPanelVisible`'s).
+	 */
+	export async function replaceLayout(
+		next: DockLayout,
+		options: { focusPanel?: string; isCurrent?: () => boolean } = {}
+	): Promise<DockPanelChangeOutcome | 'invalid'> {
+		const checked = validateDockLayout(next);
+		if (!checked.ok) return 'invalid';
+		const layout = checked.layout;
+		const active = document.activeElement;
+		const focusWasInHost = !!hostEl && !!active && hostEl.contains(active);
+		const outcome = await lifecycle.guarded(options.isCurrent, () =>
+			lifecycle.requestReplace(
+				() => layout,
+				(l) => (dock.layout = l)
+			)
+		);
+		if (outcome !== 'applied' || !focusWasInHost) return outcome;
+		await tick();
+		const now = document.activeElement;
+		if (hostEl?.isConnected && (!now || now === document.body)) {
+			const to = options.focusPanel ?? collectPanelIds(dock.layout.docked)[0];
+			if (to) titleBarFocusTarget(hostEl, to)?.focus();
+		}
+		return outcome;
 	}
 
 	/** Retry a change held by `isStructureChangeDeferred` now (a custom predicate turned false without a composition / focus event). */
