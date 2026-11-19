@@ -967,12 +967,21 @@ const tabsNode = (id: string, ids: string[]): DockNode => ({
 	activeIndex: 0,
 	children: ids.map(panel)
 });
-/** `-x` hides x, `+x` shows it, with `createDockState`. */
+/**
+ * `-x` hides x, `+x` shows it, `~x` floats it (`undockPanel`, #734), `^x` puts it back where it
+ * was (`dockAtSlot` with its `homeSlot`, the panel menu's "back"), with `createDockState`.
+ */
 const runSteps = (make: () => DockNode, steps: string[]): DockState => {
 	const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
 	for (const step of steps) {
-		if (step[0] === '-') dock.dismiss(step.slice(1));
-		else dock.show(step.slice(1));
+		const id = step.slice(1);
+		if (step[0] === '-') dock.dismiss(id);
+		else if (step[0] === '+') dock.show(id);
+		else if (step[0] === '~') dock.undockPanel(id);
+		else {
+			const slot = dock.homeSlot(id);
+			if (slot) dock.dockAtSlot(id, slot);
+		}
 	}
 	return dock;
 };
@@ -1398,4 +1407,152 @@ describe('slot memory: interleaved hide / show orders do not regress', () => {
 			expect(failures).toEqual([]);
 		});
 	}
+});
+
+// #734: a pane floated out of the tree (`undockPanel`, its `homeSlot`) and a pane hidden from it
+// (`dismiss`, its closed window's `dockSlot`) count each other, whichever is put back first.
+// Before, `dismiss` counted the closed windows only (the floated panes' places were kept by the
+// `DragController`), so `~b -a ^b +a` on row[a,b,c] came back as row[b,a,c].
+describe('slot memory: floated and hidden panes out of the same container (#734)', () => {
+	const mainSplit: SlotImpl = { ...mainSlot, split: true };
+	const row3 = () => splitNode('s', 'row', ['a', 'b', 'c'].map(panel));
+
+	it('row[a,b,c]: ~b -a ^b +a -> the old shape (row[b,a,c] before #734)', () => {
+		const steps = '~b -a ^b +a'.split(' ');
+		const want = shapeOf(row3());
+		expect(shapeOf(simRun(mainSplit, row3(), steps).docked)).toEqual({ row: ['b', 'a', 'c'] });
+		expect(shapeOf(simRun(nowSlot, row3(), steps).docked)).toEqual(want);
+		expect(shapeOf(runSteps(row3, steps).layout.docked)).toEqual(want);
+	});
+
+	it('row[a,b,c]: -b ~a +b ^a -> the old shape (the float counts the hidden pane, as before)', () => {
+		const steps = '-b ~a +b ^a'.split(' ');
+		expect(shapeOf(runSteps(row3, steps).layout.docked)).toEqual(shapeOf(row3()));
+	});
+
+	it('row[a,b,c]: every mixed sequence up to 8 steps comes back to the old shape', () => {
+		const result = enumerateSequences(row3, mainSplit, nowSlot, 8, { mixed: true });
+		expect(result.regressions).toEqual([]);
+		expect(result.improvements).toBeGreaterThan(0);
+		expect(result.nowRestores).toBe(result.sequences);
+	});
+
+	// Every sequence of hide / show / float / back steps, run with main's slot and main's wiring
+	// (`split`: `dismiss` did not count the floated panes) beside the current ones: every sequence
+	// that comes back to the old shape on main still does. Up to five panes, the steps as many as
+	// fit in a few seconds (a docked pane can be hidden or floated: twice the branches).
+	for (const [name, make] of Object.entries(L)) {
+		const n = collectPanelIds(make()).length;
+		if (n > 5) continue;
+		const steps = n <= 3 ? 8 : 6;
+		it(`${name}: every mixed sequence up to ${steps} steps`, { timeout: 60_000 }, () => {
+			const result = enumerateSequences(make, mainSplit, nowSlot, steps, { mixed: true });
+			expect(result.mainRestores).toBeGreaterThan(0);
+			expect(result.regressions.slice(0, 5)).toEqual([]);
+		});
+	}
+
+	// Longer mixed sequences at random (fixed seed) with `createDockState`, checked against the
+	// model of the walk above and against main.
+	const rng = (seed: number) => () => {
+		seed = (seed + 0x6d2b79f5) | 0;
+		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+	/** 10 to 16 steps, each pane out of the tree hidden or floated at random, with both kinds in each. */
+	const sequences = (ids: string[], count: number, seed: number): string[] => {
+		const random = rng(seed);
+		const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
+		const out = new Set<string>();
+		for (let tries = 0; out.size < count && tries < count * 20; tries++) {
+			const away = new Map<string, '-' | '~'>();
+			const steps: string[] = [];
+			const length = 10 + Math.floor(random() * 7);
+			for (let i = 0; i < length; i++) {
+				const docked = ids.filter((id) => !away.has(id));
+				const back = away.size > 0 && (docked.length === 0 || random() < 0.4);
+				const id = pick(back ? [...away.keys()] : docked);
+				if (back) {
+					steps.push(`${away.get(id) === '-' ? '+' : '^'}${id}`);
+					away.delete(id);
+				} else {
+					const kind = random() < 0.5 ? '-' : '~';
+					away.set(id, kind);
+					steps.push(`${kind}${id}`);
+				}
+			}
+			for (const [id, kind] of away) steps.push(`${kind === '-' ? '+' : '^'}${id}`);
+			const kinds = new Set(steps.map((s) => s[0]));
+			if (kinds.has('-') && kinds.has('~')) out.add(steps.join(' '));
+		}
+		return [...out];
+	};
+	const COUNT = 300;
+	for (const [name, make] of Object.entries(L)) {
+		it(`${name}: ${COUNT} mixed sequences with createDockState`, () => {
+			const want = JSON.stringify(shapeOf(make()));
+			const failures: string[] = [];
+			for (const seq of sequences(collectPanelIds(make()), COUNT, 734)) {
+				const steps = seq.split(' ');
+				const got = JSON.stringify(shapeOf(runSteps(make, steps).layout.docked));
+				expect(JSON.stringify(shapeOf(simRun(nowSlot, make(), steps).docked)), seq).toBe(got);
+				const onMain = JSON.stringify(shapeOf(simRun(mainSplit, make(), steps).docked));
+				if (onMain === want && got !== want) failures.push(seq);
+			}
+			expect(failures).toEqual([]);
+		});
+	}
+});
+
+// #735: a floated pane's `homeSlot` is dropped once the pane is not a floating window any more,
+// whichever path docked it (before, only a drop through the `DragController` did).
+describe('homeSlot follows the layout, not the path (#735)', () => {
+	const make = () => splitNode('s', 'row', ['a', 'b', 'c'].map(panel));
+	const fresh = () =>
+		createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+
+	it('docked through the API, then floated again: back puts it at the new place', () => {
+		const dock = fresh();
+		dock.undockPanel('a');
+		expect(dock.homeSlot('a')).toBeDefined();
+		dock.dockPanel('a', 'c', 'right');
+		expect(dock.homeSlot('a')).toBeUndefined();
+		dock.undockPanel('a');
+		const slot = dock.homeSlot('a');
+		expect(slot).toBeDefined();
+		expect(dock.dockAtSlot('a', slot!)).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['b', 'c', 'a'] });
+		expect(dock.homeSlot('a')).toBeUndefined();
+	});
+
+	it('docked by `layout = ...`, or gone and loaded again floating: forgotten', () => {
+		const dock = fresh();
+		dock.undockPanel('a');
+		const json = dock.serialize();
+		dock.layout = { ...dock.layout, floating: [], docked: make() };
+		expect(dock.homeSlot('a')).toBeUndefined();
+		// The saved layout with `a` floating: no place comes back with it (not saved).
+		expect(dock.hydrate(json)).toBe(true);
+		expect(dock.homeSlot('a')).toBeUndefined();
+	});
+
+	it('hidden and shown in its new place: the old place is not kept', () => {
+		const dock = fresh();
+		dock.undockPanel('b');
+		dock.dockPanel('b', 'c', 'right');
+		dock.dismiss('b');
+		expect(dock.show('b')).toBe('docked');
+		expect(dock.homeSlot('b')).toBeUndefined();
+	});
+
+	it('a floated window closed and opened again keeps its place (as before)', () => {
+		const dock = fresh();
+		dock.undockPanel('b');
+		dock.close('b');
+		expect(dock.homeSlot('b')).toBeDefined();
+		dock.open('b');
+		expect(dock.dockAtSlot('b', dock.homeSlot('b')!)).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
+	});
 });

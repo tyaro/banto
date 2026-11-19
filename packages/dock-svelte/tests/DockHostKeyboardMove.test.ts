@@ -833,3 +833,84 @@ describe('"back" for every float order x every back order (up to every pane of t
 		}
 	}
 });
+
+// #734: the place a floated pane remembers (`DockState.homeSlot`) and the place a hidden pane
+// remembers (its closed window's `dockSlot`) count each other: one list for both.
+describe('"back" and "show" for panes floated and hidden out of the same container (#734)', () => {
+	const row = () =>
+		createDockState({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.25, 0.25, 0.5],
+				children: [panel('a'), panel('b'), panel('c')]
+			},
+			floating: []
+		});
+	const order = (dock: DockState) => collectPanelIds(dock.layout.docked);
+
+	it('float b, hide a, back b, show a = the old order (was [b, a, c])', async () => {
+		const dock = row();
+		const { host } = mount({ dock });
+		expect(await host().movePanel('b', { float: true })).toBe('applied');
+		expect(await host().hidePanel('a')).toBe('applied');
+		expect(await host().movePanel('b', { back: true })).toBe('applied');
+		expect(await host().showPanel('a')).toBe('applied');
+		expect(order(dock)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('hide b, float a, show b, back a = the old order', async () => {
+		const dock = row();
+		const { host } = mount({ dock });
+		expect(await host().hidePanel('b')).toBe('applied');
+		expect(await host().movePanel('a', { float: true })).toBe('applied');
+		expect(await host().showPanel('b')).toBe('applied');
+		expect(await host().movePanel('a', { back: true })).toBe('applied');
+		expect(order(dock)).toEqual(['a', 'b', 'c']);
+	});
+});
+
+// #735: the remembered place is dropped once the pane is docked again by any path, so "back"
+// never points at a place it left before an API call docked it.
+describe('"back" after the pane was docked through the API (#735)', () => {
+	it('docked by `DockState.dockPanel`, floated again by the API: back = where it was last', async () => {
+		const { dock, host } = mount();
+		expect(await host().movePanel('tree', { float: true })).toBe('applied');
+		dock.dockPanel('tree', 'detail', 'right');
+		dock.undockPanel('tree');
+		expect(await host().movePanel('tree', { back: true })).toBe('applied');
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['main', 'detail', 'tree']);
+	});
+
+	it('docked by `DockState.dockPanel`, then floating again by a layout of its own: no "back"', async () => {
+		const { dock, host } = mount();
+		expect(await host().movePanel('tree', { float: true })).toBe('applied');
+		const floated = dock.layout;
+		dock.dockPanel('tree', 'detail', 'right');
+		dock.layout = floated;
+		expect(await host().movePanel('tree', { back: true })).toBe('unavailable');
+		await openWithKeyboard('tree');
+		expect(labels()).not.toContain('元の場所に戻す');
+	});
+
+	it('docked and floated again through the API while "back" waits: stale, nothing changes', async () => {
+		let resolve!: (ok: boolean) => void;
+		const { dock, host } = mount({
+			beforePanelChange: (c) =>
+				c.kind === 'dock' && c.panelId === 'tree'
+					? new Promise<boolean>((r) => (resolve = r))
+					: true
+		});
+		expect(await host().movePanel('tree', { float: true })).toBe('applied');
+		const pending = host().movePanel('tree', { back: true });
+		await settle();
+		dock.dockPanel('tree', 'detail', 'right');
+		dock.undockPanel('tree');
+		const before = JSON.stringify(dock.layout);
+		resolve(true);
+		expect(await pending).toBe('stale');
+		expect(JSON.stringify(dock.layout)).toBe(before);
+	});
+});
