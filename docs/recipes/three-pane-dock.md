@@ -59,7 +59,9 @@
 - 左右のペインを出し入れするツールバーのボタンは `three.toggle('left')` / `three.toggle('right')` を呼び、
   `aria-pressed={leftOpen}` で状態を示す（トグルの帯は出ない。見本の `+page.svelte`）。
 - 操作の口は `bind:this` のメソッド（`isVisible`・`setVisible`・`toggle`・`float`・`dockBack`・`move`・`resetLayout`・
-  `restoreLayout`・`layoutSnapshot`・`viewMenuItems`）。すべて `beforePanelChange` を通る。
+  `restoreLayout`・`layoutSnapshot`・`viewMenuItems`）。変更系（`setVisible`・`toggle`・`float`・`dockBack`・`move`・
+  `resetLayout`・`restoreLayout`）は、表示から外れる・作り直されるなど確認が要るパネルに対して `beforePanelChange` を
+  通す。状態の取得（`isVisible`・`layoutSnapshot`・`viewMenuItems`）は通さない。
 - 「表示」メニュー: `viewMenuItems({ resetLayout })` は `{ kind, id, label, checked?, onSelect }` の素の配列
   （左・右・追加パネルのチェック、区切り、「既定に戻す」）。見本はこれを `PageViewMenu` に渡し、`reset-layout` の
   `onSelect` だけ自前（`resetLayout()` の結果を保存に反映する）に差し替えている。`$derived` の中で呼ぶ。
@@ -86,7 +88,7 @@
 
 ## 狭い表示・`arrange={false}`・touch
 
-- **狭い表示**: 部品自身の幅が `narrowBreakpoint`（既定 900）以下、または `narrowOverride` が `true` のとき、保存済みの
+- **狭い表示**: 部品自身の幅が `narrowBreakpoint`（既定 900）以下、または `narrowOverride` が `true` のとき（`false` なら幅に関係なく広い表示）、保存済みの
   配置には触れずに一時のレイアウトで見せる。中央だけがドッキングされ、見えていた左右は端の帯になり、帯を押すと
   引き出し（flyout）が開く。浮動と追加パネルは隠れ、「表示」メニューで選ぶと帯から開く。狭いあいだの操作は保存しない
   （`layoutSnapshot()` は控えた配置）。幅が戻れば元の配置に戻る。今の表示は `bind:narrow`（読み取り専用）で読める。
