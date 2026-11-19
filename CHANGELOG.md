@@ -28,6 +28,10 @@
 - `@banto/dock-svelte`: キーボードだけでパネルを動かせるように（#663 段階 ④ PR-2）。タイトルバーの「パネルの操作」メニュー（外周・タブ・隣へ分割・浮かせる・元の場所へ）と `DockHost.movePanel`、結果の `aria-live` の読み上げ。ドラッグと同じ capabilities・`dropCenter`/`dropSplit`・`beforePanelChange` を通り、承認待ちの間に移動できなくなったら適用しない。`DockMessages` にキーを追加（`Required<DockMessages>` を使う利用側は型エラー）。同じ split から続けて隠した・浮かせた pane は、どの順で戻しても元の並びに戻る（`DockSlot` の split に任意の `otherAnchors` を追加）。
 - `@banto/dock-svelte` に 3 ペインを dock に並べる部品 `ThreePaneDock`（#663 段階 ④ PR-3）。中央（`children`）は据え置きのメイン区画（閉じない・畳まない・自動で隠さない・浮かせない）、`leftOpen`/`rightOpen` は「表示」メニューのチェックと同じ状態、操作の口（`setVisible`・`toggle`・`float`・`dockBack`・`move`・`resetLayout`・`restoreLayout`・`layoutSnapshot`・`viewMenuItems`）はすべて `beforePanelChange` を通る。追加パネル（`panels`）。純関数 `threePaneDockLayout`・`reconcileThreePaneLayout`・`threePaneSavedLayout`。保存値の中央がタブの組にいるときは組から抜いて隣に置く。`panels` の変更で構造が変わるときも `beforePanelChange` を通す。`DockHost` に `replaceLayout`（行き先のレイアウトが違う置き換えは別々に聞く）・`canMovePanel`、`DockCapabilities` に `collapse` を追加（`Required<DockCapabilities>` を使う利用側は型エラー）。アプリへの配線はまだ無い。
 
+### Changed
+
+- テンプレート（B. コピーしたテンプレート）: ダッシュボードのレイアウトの保存を `src/lib/banto/dockLayoutStore.svelte.ts` に出し、保存値を利用者とセッションに結び付けた（#663 段階 ④ PR-5、three-pane-dock-plan §4.4）。localStorage の写しは確定した利用者のキー `banto.dock.dashboard:<owner>`（`account:<id>`・`local`・`publicViewer` など）でだけ読み書きし、利用者が確定していなければ使わない。古い固定キー `banto.dock.dashboard` は読まずに消す。設定（`UiSettingsProvider` の `dock.dashboard`）の読み込み結果・debounce 中の書き込み・unmount の flush は、取得した時点のセッション（`currentSessionScope()`）が替わっていれば捨てる。設定が空・エラー・壊れた値のときは写しではなく既定の配置に戻す（以前は写しを残した）。既定の配置・読み込んだ配置は設定へ書き戻さない。scaffold の dock の削除にこのファイルとテストを足した。
+
 ## [7.8.0] - 2026-11-19
 
 **v7.8.0 — `@banto/admin-core` の UiSettings のプロバイダ（HTTP・Tauri）の書き込みをキーごとに直列化（#707、PR #708）。** 版の種類: minor（後方互換の機能追加）。理由: `TauriUiSettingsOptions` に省略可能な `getSessionRevision` を足した。`crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（`v7.7.0` との差分で確認）。migration なし。

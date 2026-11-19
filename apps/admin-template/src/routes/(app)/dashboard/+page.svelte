@@ -11,7 +11,6 @@
 	import {
 		DockHost,
 		clampWindowToHost,
-		collectPanelIds,
 		createDockState,
 		type DockLayout,
 		type PanelContent
@@ -39,6 +38,7 @@
 	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
+	import { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
 	import {
@@ -143,18 +143,24 @@
 		};
 	}
 
-	// M12 (spec §12.1): the UiSettingsProvider key the layout is ALSO saved
-	// under (settings DB via Tauri/REST; localStorage in demo mode).
-	// localStorage (DOCK_STORAGE_KEY) stays the synchronous first-paint
-	// source; the provider copy is reconciled once after mount, below.
+	// M12 (spec §12.1): the UiSettingsProvider key the layout is saved under
+	// (settings DB via Tauri/REST; localStorage in demo mode). A per-user
+	// localStorage copy (`${DOCK_STORAGE_KEY}:<owner>`) is the synchronous
+	// first-paint source; the provider copy is reconciled once after mount.
+	// Both are bound to the signed-in user and session (dockLayoutStore.svelte.ts,
+	// three-pane-dock-plan §4.4).
 	const DOCK_SETTING_KEY = 'dock.dashboard';
 
-	function loadDockLayout(): string | undefined {
-		if (typeof localStorage === 'undefined') return undefined;
-		return localStorage.getItem(DOCK_STORAGE_KEY) ?? undefined;
-	}
-
-	const dock = createDockState(loadDockLayout());
+	const dock = createDockState();
+	const dockLayout = createDockLayoutStore({
+		dock,
+		storageKey: DOCK_STORAGE_KEY,
+		settingKey: DOCK_SETTING_KEY,
+		provider: getUiSettings,
+		// Not before the host is measured: the floating メモ is clamped into it.
+		defaultLayout: () =>
+			dockHostW === 0 || dockHostH === 0 ? null : defaultLayout(dockHostW, dockHostH)
+	});
 	let dockHost: ReturnType<typeof DockHost> | undefined = $state();
 
 	/**
@@ -241,96 +247,35 @@
 
 	let dockHostW = $state(0);
 	let dockHostH = $state(0);
-	let seeded = $state(false);
 
 	// Seed the docked default once the host has a real measured size, but only
 	// if nothing was restored from storage (an empty layout = fresh visit).
 	// After seeding, a panel the user fully removed stays removed.
 	$effect(() => {
-		if (dockHostW === 0 || dockHostH === 0 || seeded) return;
-		seeded = true;
-		// Auto-hidden panes (#694 PR-3) are in the layout too: a restored layout with only bands is not empty.
-		const known = new Set([
-			...collectPanelIds(dock.layout.docked),
-			...dock.autoHidden.map((e) => e.node.id),
-			...dock.layout.floating.map((w) => w.id)
-		]);
-		if (known.size === 0) {
-			dock.layout = defaultLayout(dockHostW, dockHostH);
-		}
+		dockLayout.seedIfEmpty();
 	});
 
-	// M12: after the localStorage-seeded first paint, read the provider's
-	// copy once - if it holds a layout that differs from the local cache
-	// (e.g. saved from another client/session), it wins: hydrate + refresh
-	// the cache. A missing key or any provider failure keeps the local state.
-	let providerChecked = false;
-	$effect(() => {
-		if (providerChecked) return;
-		providerChecked = true;
-		void (async () => {
-			try {
-				const remote = await getUiSettings().get(DOCK_SETTING_KEY);
-				if (remote !== null && remote !== localStorage.getItem(DOCK_STORAGE_KEY)) {
-					// Cache only what the dock accepted: a rejected (invalid) layout
-					// would otherwise replace the valid local copy and reset the
-					// dashboard on the next load.
-					if (dock.hydrate(remote)) localStorage.setItem(DOCK_STORAGE_KEY, remote);
-				}
-			} catch {
-				// Best-effort: offline/unauthenticated reads keep the local layout.
-			}
-		})();
-	});
-
-	// M12 provider autosave, debounced: a divider/window drag serializes on
-	// every pointermove, and each of those must NOT become a settings-DB
-	// write. localStorage (cheap, synchronous) still saves immediately below;
-	// the provider gets one write 500ms after the layout stops changing (plus
-	// a flush on unmount so the last change is never lost).
-	const DOCK_SAVE_DEBOUNCE_MS = 500;
-	let dockSaveTimer: ReturnType<typeof setTimeout> | undefined;
-	let pendingDockJson: string | null = null;
-	let dockSaveArmed = false;
-
-	function flushDockSave(): void {
-		if (pendingDockJson === null) return;
-		const json = pendingDockJson;
-		pendingDockJson = null;
-		void getUiSettings()
-			.set(DOCK_SETTING_KEY, json)
-			.catch(() => {});
-	}
+	// M12: after the first paint, read the provider's copy once - it wins
+	// (also over a move made meanwhile); nothing saved / a failure restores the
+	// default. A read for a session that has ended is dropped.
+	$effect(() => untrack(() => void dockLayout.load()));
 
 	// Autosave the whole layout on every change (reading dock.serialize() ties
-	// this effect to every move/resize/dock/undock/tab/close).
+	// this effect to every move/resize/dock/undock/tab/close). The local copy
+	// saves immediately; the provider gets one write 500ms after the layout
+	// stops changing (a drag serializes on every pointermove).
 	$effect(() => {
 		const json = dock.serialize();
-		if (typeof localStorage !== 'undefined') {
-			localStorage.setItem(DOCK_STORAGE_KEY, json);
-		}
-		// First run is the just-loaded layout, not a user change - arming
-		// here avoids echoing it straight back into the settings DB.
-		if (!dockSaveArmed) {
-			dockSaveArmed = true;
-			return;
-		}
-		pendingDockJson = json;
-		clearTimeout(dockSaveTimer);
-		dockSaveTimer = setTimeout(flushDockSave, DOCK_SAVE_DEBOUNCE_MS);
+		untrack(() => dockLayout.changed(json));
 	});
 
 	// Unmount: flush (not drop) a pending provider save, so navigating away
-	// right after a drag still persists the final layout.
-	$effect(() => {
-		return () => {
-			clearTimeout(dockSaveTimer);
-			flushDockSave();
-		};
-	});
+	// right after a drag still persists the final layout - unless the session
+	// changed (that is what unmounts the page on a user switch).
+	$effect(() => () => dockLayout.dispose());
 
 	function resetDockLayout() {
-		dock.layout = defaultLayout(dockHostW, dockHostH);
+		dockLayout.reset();
 	}
 
 	// Each docked pane / floating window body measures its own height so the
