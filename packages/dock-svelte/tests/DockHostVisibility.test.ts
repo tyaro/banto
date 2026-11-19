@@ -259,4 +259,46 @@ describe('replaceLayout with { saved: true } (#739 review)', () => {
 		expect(dock.serialize()).toBe(before);
 		expect(dock.homeSlot('a')).toBeDefined();
 	});
+
+	// #741: without `saved`, the layout is one made from today's and goes in like `dock.layout = ...`:
+	// a pane out of the tree that it drops no longer holds its share; one it keeps keeps its place.
+	for (const [name, away] of [
+		['floated', (d: DockState) => d.undockPanel('a')],
+		['hidden', (d: DockState) => d.dismiss('a')]
+	] as const) {
+		it(`without saved: a ${name} pane dropped by the replacement releases its share`, async () => {
+			const { dock, host } = mount({}, initial());
+			away(dock);
+			dock.dismiss('b');
+			const next = { ...dock.layout, floating: dock.layout.floating.filter((w) => w.id !== 'a') };
+			expect(await host().replaceLayout(next)).toBe('applied');
+			expect(dock.layout.floating.map((w) => w.id)).toEqual(['b']);
+			dock.show('b');
+			const root = dock.layout.docked;
+			expect(root?.type === 'split' && root.sizes).toEqual([
+				expect.closeTo(0.375, 9),
+				expect.closeTo(0.625, 9)
+			]);
+		});
+	}
+
+	it('without saved: a floated pane kept by the replacement keeps its place and its share', async () => {
+		const { dock, host } = mount({}, initial());
+		dock.undockPanel('a');
+		dock.dismiss('b');
+		const next = {
+			...dock.layout,
+			floating: dock.layout.floating.map((w) => (w.id === 'a' ? { ...w, x: w.x + 10 } : w))
+		};
+		expect(await host().replaceLayout(next)).toBe('applied');
+		dock.show('b');
+		expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
+		const root = dock.layout.docked;
+		expect(root?.type === 'split' && root.children.map((c) => c.id)).toEqual(['a', 'b', 'c']);
+		expect(root?.type === 'split' && root.sizes).toEqual([
+			expect.closeTo(0.2, 9),
+			expect.closeTo(0.3, 9),
+			expect.closeTo(0.5, 9)
+		]);
+	});
 });

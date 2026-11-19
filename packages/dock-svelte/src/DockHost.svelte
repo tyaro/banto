@@ -551,7 +551,9 @@
 	 * `options.saved`: `next` is a saved layout (`serialize()` / `savedLayout()`), not one built from
 	 * today's: its shares do not count the floated panes' places (#739), so they are dropped in the
 	 * same step that puts it in, as by `hydrate` - a save reacting to the change never sees the new
-	 * layout with the old places. Leave it off for a layout made from the live one.
+	 * layout with the old places. Leave it off for a layout made from the live one: it goes in like
+	 * `dock.layout = next` (#741) - the places are kept, and a pane out of the tree (floated or
+	 * hidden) that `next` drops, or shows somewhere else, no longer holds its share of its split.
 	 * `options.isCurrent` is re-read before each request and right before the replacement is
 	 * applied: `false` = `stale`, nothing changed (like `setPanelVisible`'s).
 	 */
@@ -568,8 +570,10 @@
 			lifecycle.requestReplace(
 				() => layout,
 				(l) => {
-					if (options.saved) forgetHomeSlots(dock);
-					adoptLayout(dock, l);
+					if (options.saved) {
+						forgetHomeSlots(dock);
+						adoptLayout(dock, l);
+					} else dock.layout = l;
 				}
 			)
 		);
