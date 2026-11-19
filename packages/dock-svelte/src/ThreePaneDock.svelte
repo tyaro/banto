@@ -709,7 +709,10 @@
 
 	/** The value to save now (plan §4.4): while narrow, the kept wide layout (the narrow display is never saved). */
 	export function layoutSnapshot(): ThreePaneSavedLayout {
-		return threePaneSavedLayout(narrowShown && wideLayout !== null ? wideLayout : dock.layout);
+		// `savedLayout()`, not `layout`: the floated panes' places are not saved (#739 review).
+		return threePaneSavedLayout(
+			narrowShown && wideLayout !== null ? wideLayout : dock.savedLayout()
+		);
 	}
 
 	/**

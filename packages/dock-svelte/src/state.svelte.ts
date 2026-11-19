@@ -970,7 +970,7 @@ export class DockState {
 
 	/** Serialize the whole layout for persistence (spec §5.1). */
 	serialize(): string {
-		return JSON.stringify(this.#savedLayout());
+		return JSON.stringify(this.savedLayout());
 	}
 
 	/**
@@ -978,8 +978,10 @@ export class DockState {
 	 * saved, so the closed windows' `dockSlot` `share`s - of a split, counting them (#733) - are
 	 * written as shares without them (`slotWithoutShares`), as `show` takes them after `hydrate`.
 	 * The layout itself keeps them as they are (a `show` before any reload still counts them).
+	 * Save this - not `layout` - when the layout is saved as an object rather than through
+	 * `serialize` (`ThreePaneDock`'s `layoutSnapshot` does).
 	 */
-	#savedLayout(): DockLayout {
+	savedLayout(): DockLayout {
 		if (this.#homeSlots.size === 0) return this.layout;
 		const all = this.#pendingSlots('');
 		const kept = all.filter((h) => !this.#homeSlots.has(h.id));

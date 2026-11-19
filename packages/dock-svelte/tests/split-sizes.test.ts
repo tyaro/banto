@@ -301,6 +301,9 @@ describe('split sizes come back in any show order (#733)', () => {
 		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.3, 9);
 		const saved = (JSON.parse(dock.serialize()) as DockLayout).floating.find((w) => w.id === 'b');
 		expect(saved?.dockSlot?.kind === 'split' && saved.dockSlot.share).toBeCloseTo(0.375, 9);
+		// The same as an object, for apps that save the layout itself (`ThreePaneDock.layoutSnapshot`).
+		expect(dock.savedLayout()).toEqual(JSON.parse(dock.serialize()));
+		expect(dock.savedLayout()).not.toBe(dock.layout);
 	});
 });
 
