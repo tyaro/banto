@@ -425,7 +425,11 @@ function removeCharts() {
 function removeDock() {
 	cutRegion(DASH, 'dock import 除去', `\timport {\n\t\tDockHost,`, `} from '@banto/dock-svelte';`);
 	swapText(DASH, 'lucide から LayoutGrid 除去', `LayoutGrid, JapaneseYen`, `JapaneseYen`);
-	drop(DASH, 'panels import 除去', `\timport { PANEL_DEFS } from '#lib/banto/panels.js';\n`);
+	drop(
+		DASH,
+		'panels import 除去',
+		`\timport { PANEL_DEFS, findPanelDef } from '#lib/banto/panels.js';\n`
+	);
 	drop(
 		DASH,
 		'PanelIcon import 除去',
@@ -453,6 +457,31 @@ function removeDock() {
 		'dockLayoutStore import 除去',
 		`\timport { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';\n`
 	);
+	// #729: dock の文言（DockMessages）を paraglide の `dock.*` から作る橋。dock と一緒に消える
+	// （/tree/workspace-dock も同じ関数を使うが、そのルートは下で消える）。
+	drop(
+		DASH,
+		'dockMessages import 除去',
+		`\timport { dockMessages } from '#lib/banto/dockMessages.js';\n`
+	);
+	removeFile(`${APP}/src/lib/banto/dockMessages.ts`, 'dockMessages.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dockMessages.test.ts`, 'dockMessages.test.ts 削除');
+	// 保存済みレイアウトの title を今の言語で解決し直す（dock の validate フック）。
+	drop(
+		DASH,
+		'dockTitles import 除去',
+		`	import { refreshPanelTitles } from '#lib/banto/dockTitles.js';
+`
+	);
+	removeFile(`${APP}/src/lib/banto/dockTitles.ts`, 'dockTitles.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dockTitles.test.ts`, 'dockTitles.test.ts 削除');
+	// dock の文言 / 3 ペイン dock の visual は dock が無いと成り立たない。
+	removeFile('e2e/visual/dock-i18n.spec.ts', 'e2e/visual/dock-i18n.spec.ts 削除');
+	for (const [file, label] of [
+		[MSG_JA, 'messages/ja'],
+		[MSG_EN, 'messages/en']
+	])
+		removeMessageKeys(file, `${label}: dock.* キー除去`, ['dock']);
 	// #432 PR-10: メモ pane の draft と dock の lifecycle の配線（中身は下の「dock スクリプト
 	// 一式」・ワークスペース markup・dockPanel snippet の範囲に収めてある）。
 	drop(

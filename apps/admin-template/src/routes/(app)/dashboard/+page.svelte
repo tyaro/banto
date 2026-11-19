@@ -34,10 +34,12 @@
 		stockByCategoryPriceBand,
 		updatesByMonth
 	} from '#lib/banto/dashboard.js';
-	import { PANEL_DEFS } from '#lib/banto/panels.js';
+	import { PANEL_DEFS, findPanelDef } from '#lib/banto/panels.js';
 	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
+	import { dockMessages } from '#lib/banto/dockMessages.js';
+	import { refreshPanelTitles } from '#lib/banto/dockTitles.js';
 	import { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
@@ -157,6 +159,8 @@
 		storageKey: DOCK_STORAGE_KEY,
 		settingKey: DOCK_SETTING_KEY,
 		provider: getUiSettings,
+		// A layout saved in another locale: today's titles by panel id (dockTitles.ts, #729 review).
+		validate: (json) => refreshPanelTitles(json, (id) => findPanelDef(id)?.title),
 		// Not before the host is measured: the floating メモ is clamped into it.
 		defaultLayout: () =>
 			dockHostW === 0 || dockHostH === 0 ? null : defaultLayout(dockHostW, dockHostH)
@@ -521,6 +525,7 @@
 					{onPopOut}
 					{beforePanelChange}
 					isEscapeBlocked={isDockEscapeBlocked}
+					messages={dockMessages()}
 				/>
 			</div>
 			<DraftSettleDialog
