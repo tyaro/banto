@@ -194,6 +194,46 @@ describe('CommandPalette: keyboard and execution', () => {
 		expect(selectedTitle()).toBe(titles()[0]);
 	});
 
+	it('keeps the selected item when the same query gets more results (late async provider)', async () => {
+		const onExecute = vi.fn();
+		const first = ITEMS.slice(0, 2);
+		const view = render(CommandPaletteHarness, { items: first, onExecute, onClose: vi.fn() });
+		const opener = screen.getByTestId('opener');
+		opener.focus();
+		await fireEvent.click(opener);
+		await flush();
+		const input = screen.getByRole('combobox') as HTMLInputElement;
+		await fireEvent.keyDown(input, { key: 'ArrowDown' });
+		expect(selectedTitle()).toBe('Users');
+		// A slower provider answers: a row appears before the selected one.
+		await view.rerender({ items: [{ id: 'rec.1', title: 'Record', group: 'Records' }, ...first] });
+		await flush();
+		expect(selectedTitle()).toBe('Users');
+		expect(input.getAttribute('aria-activedescendant')).toBe(option('Users').id);
+		await fireEvent.keyDown(input, { key: 'Enter' });
+		await flush();
+		expect(onExecute).toHaveBeenCalledTimes(1);
+		expect(onExecute.mock.calls[0]?.[0].id).toBe('nav.users');
+	});
+
+	it('falls back to the first selectable row when the selected item disappears for the same query', async () => {
+		const view = render(CommandPaletteHarness, {
+			items: ITEMS.slice(0, 2),
+			onExecute: vi.fn(),
+			onClose: vi.fn()
+		});
+		const opener = screen.getByTestId('opener');
+		opener.focus();
+		await fireEvent.click(opener);
+		await flush();
+		const input = screen.getByRole('combobox') as HTMLInputElement;
+		await fireEvent.keyDown(input, { key: 'ArrowDown' });
+		expect(selectedTitle()).toBe('Users');
+		await view.rerender({ items: [ITEMS[0]!] });
+		await flush();
+		expect(selectedTitle()).toBe('Items');
+	});
+
 	it('marks disabled rows and never executes them', async () => {
 		const { onExecute } = await openPalette();
 		const locked = option('Locked page');

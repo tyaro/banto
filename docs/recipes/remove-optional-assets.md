@@ -154,7 +154,8 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockLayoutStore.svelte.t
 
 `apps/admin-template/src/lib/components/CommandPalette.svelte`・
 `src/lib/commandPalette.svelte.ts`・`src/lib/commands.ts`・`src/lib/commands.test.ts`・
-`src/lib/recentCommands.ts`・`src/lib/recentCommands.test.ts` を削除し
+`src/lib/recentCommands.ts`・`src/lib/recentCommands.test.ts`・
+`src/lib/recordSearch.ts`・`src/lib/recordSearch.test.ts`（レコード検索、#711）を削除し
 （テストを残すと、消したモジュールを import して `pnpm --filter admin-template test` が落ちる）、
 `src/routes/(app)/+layout.svelte` と `src/lib/components/Header.svelte`
 からの参照（`commandPaletteStore`・Ctrl+K の command の登録とパレットの host・パレット起動

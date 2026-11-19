@@ -38,6 +38,27 @@ export interface PaletteCommand {
 	run: () => void | Promise<void>;
 }
 
+/**
+ * A provider of palette candidates that depend on what was typed (record
+ * search, #711). The core only owns this type and the runner
+ * (`createPaletteSourceSearch`); which sources exist is the app's business
+ * (conventions §4: no core -> option dependency).
+ */
+export interface PaletteSource {
+	/** Stable and unique among the sources (also the key of its in-flight request). */
+	id: string;
+	/** Section heading its results (and its "searching" / "failed" row) appear under. */
+	group: string | (() => string);
+	/** RBAC/mode gate, evaluated each time a query runs. Omitted = always. */
+	visible?: () => boolean;
+	/**
+	 * Candidates for the (trimmed, non-empty) `query`. `signal` aborts when a
+	 * newer query supersedes this one; honour it where the work can stop. A
+	 * result that arrives after that is dropped by the runner either way.
+	 */
+	search: (query: string, signal: AbortSignal) => Promise<PaletteCommand[]>;
+}
+
 /** Match strength for one candidate string against the (already trimmed+lowercased) query. Higher = better; 0 = no match. */
 function matchScore(candidate: string, query: string): number {
 	const lower = candidate.toLowerCase();

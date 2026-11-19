@@ -31,7 +31,7 @@ import {
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
 
-function isNavItemVisible(item: NavItem): boolean {
+export function isNavItemVisible(item: NavItem): boolean {
 	const { main, admin } = navSections({
 		publicViewer: sessionStore.publicViewer,
 		role: sessionStore.role
@@ -60,8 +60,8 @@ function navigationCommands(): PaletteCommand[] {
  * definitions. `visible()` follows `resourcePermissions` and the session role,
  * so a viewer (incl. the LAN viewer-public session) and resources without the
  * `create` capability never get one. The resource list is read per call, so
- * zero resources yields zero commands (display preset). Record search is out of
- * scope.
+ * zero resources yields zero commands (display preset). Records are found by
+ * `recordSearch.ts` (#711).
  */
 function createCommands(): PaletteCommand[] {
 	return resources.map((resource) => ({

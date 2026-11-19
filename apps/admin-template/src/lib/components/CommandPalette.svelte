@@ -15,7 +15,9 @@
 	 */
 	import * as m from '#lib/paraglide/messages.js';
 	import { CommandPalette } from '@banto/ui';
+	import { onDestroy } from 'svelte';
 	import {
+		createPaletteSourceSearch,
 		currentSessionScope,
 		isCurrentSessionScope,
 		isProviderError,
@@ -25,10 +27,40 @@
 	} from '@banto/admin-core';
 	import { buildCommands } from '#lib/commands.js';
 	import { loadRecentCommandIds, recordRecentCommand } from '#lib/recentCommands.js';
+	import { recentRecordCommands, recordSources } from '#lib/recordSearch.js';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 
 	// Built once per mount (navItems is static).
-	const commands = buildCommands();
+	const commands: PaletteRow[] = buildCommands();
+
+	/** A palette row; `disabled` ones are the "searching" / "failed" notes of a source. */
+	type PaletteRow = PaletteCommand & { disabled?: boolean };
+
+	// Record search (#711): one async source per resource. The runner debounces
+	// the query (200ms), keeps at most 5 hits per source and drops a superseded
+	// answer, so a slow or failing source only shows its own note.
+	const sourceSearch = createPaletteSourceSearch(recordSources(), { debounceMs: 200, limit: 5 });
+	onDestroy(() => sourceSearch.dispose());
+
+	function sourceRows(): PaletteRow[] {
+		return sourceSearch.states.flatMap((state): PaletteRow[] => {
+			if (state.status === 'ready') {
+				return state.items.filter((item) => item.visible?.() ?? true);
+			}
+			const failed = state.status === 'error';
+			return [
+				{
+					id: `status.${state.id}`,
+					title: failed
+						? m['commandPalette.recordsFailed']()
+						: m['commandPalette.recordsSearching'](),
+					group: state.group,
+					disabled: true,
+					run: () => {}
+				}
+			];
+		});
+	}
 
 	// The session this palette was opened for. The palette sits OUTSIDE
 	// (app)/+layout.svelte's `{#key}` on the session generation, so it is not
@@ -55,8 +87,15 @@
 	// first as the tie-breaker and for the empty query). Recency is an
 	// ordering here, not a separate section, so the package's `recentIds`
 	// prop is not used.
-	function search(query: string, items: readonly PaletteCommand[]): PaletteCommand[] {
-		return searchCommands([...items], query, recentIds);
+	function search(query: string, items: readonly PaletteRow[]): PaletteRow[] {
+		const found: PaletteRow[] = searchCommands([...items], query, recentIds);
+		// Records: recently opened ones for an empty query (first), the async
+		// sources' hits after the synchronous matches otherwise (other
+		// candidates never wait for a source).
+		if (query.trim() === '') {
+			return [...recentRecordCommands().filter((row) => row.visible?.() ?? true), ...found];
+		}
+		return [...found, ...sourceRows()];
 	}
 
 	// The package disables the rows while this runs and closes afterwards
@@ -70,7 +109,8 @@
 		} catch (err) {
 			notify('error', isProviderError(err) ? err.message : String(err));
 		}
-		recordRecentCommand(scope, command.id);
+		// A record is remembered by the detail it opens (`ResourceDetail`), not as a command.
+		if (!command.id.startsWith('record.')) recordRecentCommand(scope, command.id);
 	}
 </script>
 
@@ -78,6 +118,7 @@
 	open
 	items={commands}
 	{search}
+	onQueryChange={(query) => sourceSearch.setQuery(query)}
 	onExecute={execute}
 	onClose={() => commandPaletteStore.hide()}
 	messages={{
