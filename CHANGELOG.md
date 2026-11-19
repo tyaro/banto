@@ -39,7 +39,7 @@
 - 更新: `v7.6.0` → `v7.7.0`（npm と Rust を同じタグに）。
 - 追加 API（いずれも任意。権限は登録しなければ判定も見た目も変わらない）:
   - dock-svelte: 外周ドッキング（`dockPanelAtEdge` ほか）、十字のガイドとボタン（`crossButtons` ほか）、能力 `dropCenter`・`dropSplit`・`autoHide`、錠（`isLocked` / `setLocked`・`FloatingWindow.locked`）、自動で隠す（`autoHidden`・`autoHidePanel` / `pinPanel` ほか）、`DockPanelChange` の `auto-hide`、文言 `lockWindow` / `unlockWindow` / `autoHidePane` / `pinPane` / `autoHideBand`。
-  - grid-svelte: `BantoGrid` の行高がテーマの密度（`--banto-grid-row-height`）に追従する。`GridState.rowHeightFixed`・`followThemeRowHeight(px)`。`rowHeight` は読み取り専用の getter になった。
+  - grid-svelte: `BantoGrid` の行高がテーマの密度（`--banto-grid-row-height`）に追従する。`GridState.rowHeightFixed`・`followThemeRowHeight(px)`（`rowHeight` は以前から読み取り専用で、getter に変わっただけ）。
   - banto-admin-services: `permissions` モジュール（`PermissionKey`・`PermissionCatalog`・`SessionPermissions` ほか）、`UsersService` と `SettingsService` の権限の関数。banto-server: `PermissionGuard` / `require_permission`、`AuthState::with_permission_reader` ほか。既存の公開の型にフィールドは足していない（構造体リテラルで組み立てているコードもそのままコンパイルできる）。
 - 挙動の変化:
   - **ドラッグ**: 区画の上でも**ボタン（十字・外周）の上で離したときだけドッキング**する。ボタンの外で離すと浮動になる（docked の pane は undock。`undock: false` なら何も起きない）。以前は端 25% の帯・中央付近へ落とせばドッキングしたので、その操作はボタンへ落とすように変わる。キーボードだけでドッキングする口は無い。
@@ -52,7 +52,7 @@
   3. **`beforePanelChange` を渡しているアプリ**: 外周ドッキングで包まれて作り直される pane の `reparent` を先に聞く。自動で隠す・戻すときは `auto-hide` を聞く（引き出す・引っ込めるは聞かない）。
   4. **`setPinned` / `isPinned` を位置固定の意味で使っているアプリ**: 動くが非推奨。`setLocked` / `isLocked` に替える。「ピン = 自動で隠す」の入口は `autoHidePanel` / `pinPanel`。
   5. **ドラッグでのドッキングを前提にした E2E・手順**: ボタンの上で離す操作に直す。
-  6. **`GridState.rowHeight` を代入しているコード**: 読み取り専用になったので、option（`rowHeight`）で渡す。渡さないと密度に追従して行の高さが変わる。
+  6. **`rowHeight` を渡していない `BantoGrid` / `GridState`**: 行の高さがテーマの密度に追従する（compact 32px・touch 52px）。これまでどおり 36px に固定したいときは、prop か option で `rowHeight` を渡す。
   7. **visual の基準画像（Linux で生成）**: dashboard（分析ワークスペース）と command-palette を写すものは再生成が要る（下の「更新後の確認」）。
 - 依存を上げずに留まれるか: できる（`v7.6.0` のタグに固定したまま使える）。
 
