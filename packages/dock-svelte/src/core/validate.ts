@@ -85,6 +85,33 @@ function isDockSlot(v: unknown, maxDepth: number, depth = 0): boolean {
 }
 
 /**
+ * Whether a slot (already shaped by `isDockSlot`) agrees with itself, down its `outer` chain
+ * (#736): no id twice among `anchors` / `otherAnchors` of one slot, none of those or `neighborId`
+ * the remembered pane itself (`selfId`: the window or the auto-hidden region), and a tab slot's
+ * `index` among its group (the pane plus its `anchors`, so at most `anchors.length`; a slot with
+ * no `anchors` at all is the form of the releases before they were kept, whose `index` is only
+ * clamped on reading, so it passes). `neighborId`
+ * may repeat in `anchors` (the neighbour is the first pane on its side). A split slot's `index` is
+ * a place among the children of the split, whose panes `anchors` count only on one side, so no
+ * bound is checked there. A contradicting slot is not a reason to reject the layout: the caller
+ * drops it ("no remembered place").
+ */
+function isDockSlotConsistent(v: unknown, selfId: string): boolean {
+	// A slot of the wrong shape is reported as such by the caller; nothing to check here.
+	if (!isDockSlot(v, MAX_SLOT_DEPTH)) return true;
+	for (let s = v; isRecord(s); s = s.outer) {
+		if (s.kind === 'root') return true;
+		const ids = [...(s.anchors as string[])];
+		if (s.kind === 'split') {
+			ids.push(...((s.otherAnchors as string[] | undefined) ?? []));
+			if (s.neighborId === selfId) return false;
+		} else if (ids.length > 0 && (s.index as number) > ids.length) return false;
+		if (new Set(ids).size !== ids.length || ids.includes(selfId)) return false;
+	}
+	return true;
+}
+
+/**
  * The window's position lock was `pinned` before #694 PR-3 (the pin now means
  * auto-hide): an older JSON's `pinned: true` reads as `locked: true`, and the
  * deprecated field is dropped (a copy - the input is never mutated).
@@ -163,7 +190,13 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 				add('shape', `${p}.collapsed`);
 			if (raw.dockSlot !== undefined && !isDockSlot(raw.dockSlot, maxSlotDepth))
 				add('shape', `${p}.dockSlot`);
-			floating.push(migrateLock(raw as unknown as FloatingWindow));
+			let win = migrateLock(raw as unknown as FloatingWindow);
+			// A slot that contradicts itself is dropped, not the layout (#736): the window opens floating.
+			if (win.dockSlot !== undefined && !isDockSlotConsistent(win.dockSlot, win.id)) {
+				win = { ...win };
+				delete win.dockSlot;
+			}
+			floating.push(win);
 		});
 	}
 
@@ -253,7 +286,12 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 				}
 				// Normalized only after the whole payload validated (below), like the docked tree: a
 				// malformed node (e.g. tabs without `children`) must reject, not throw.
-				autoHidden.push(raw as unknown as DockAutoHidden);
+				const band = raw as unknown as DockAutoHidden;
+				// Same as a window's `dockSlot` (#736); the band's `slot` is required, so it becomes the root.
+				const id = isRecord(node) && typeof node.id === 'string' ? node.id : '';
+				autoHidden.push(
+					isDockSlotConsistent(band.slot, id) ? band : { ...band, slot: { kind: 'root' } }
+				);
 			});
 		}
 	}
