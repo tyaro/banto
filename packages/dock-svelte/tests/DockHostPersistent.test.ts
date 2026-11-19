@@ -282,6 +282,31 @@ describe('persistent is read when the change is applied', () => {
 		expect(await outcome).toBe('stale');
 		expect(dock.layout).toEqual(mixed());
 	});
+
+	it.each([
+		['the outer edge', () => document.querySelector('[data-dock-host]'), 24, 300],
+		['a pane target', () => document.querySelector('[data-dock-drop-id="p"]'), ...BELOW]
+	] as const)(
+		'a drop on %s approved while it was persistent is stale once it is not',
+		async (_name, target, x, y) => {
+			let keep = true;
+			let resolve!: (v: boolean) => void;
+			const asked: DockPanelChange[] = [];
+			// x and p stay persistent so only f's own change is asked (no reparent of them).
+			const { dock } = mount(mixed(), {
+				persistent: (id) => id === 'x' || id === 'p' || (id === 'f' && keep),
+				beforePanelChange: (c) => (asked.push(c), new Promise<boolean>((r) => (resolve = r)))
+			});
+			hit = target;
+			dragFrom(dialogOf('F')!.querySelector('.titlebar')!, x, y);
+			await settle();
+			expect(asked).toEqual([{ kind: 'dock', panelId: 'f', remount: false }]);
+			keep = false;
+			resolve(true);
+			await settle();
+			expect(dock.layout).toEqual(mixed());
+		}
+	);
 });
 
 describe('focus and scroll after a move', () => {

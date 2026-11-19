@@ -149,13 +149,14 @@ export class DragController {
 	 */
 	#placement(
 		panelId: string,
-		own: DockPanelChange,
+		/** Re-evaluated on every re-check, so a `persistent` that changes while the answer is pending makes it stale (#663 ④). */
+		own: () => DockPanelChange,
 		preview: () => DockNode | null | undefined,
 		target: unknown,
 		apply: () => void
 	): void {
 		const lifecycle = this.#getLifecycle();
-		if (lifecycle) void lifecycle.requestPlacement(panelId, () => own, preview, apply, target);
+		if (lifecycle) void lifecycle.requestPlacement(panelId, own, preview, apply, target);
 		else apply();
 	}
 
@@ -348,7 +349,7 @@ export class DragController {
 		if (source === 'floating')
 			this.#placement(
 				panelId,
-				{ kind: 'dock', panelId, remount: this.#remounts(panelId) },
+				() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
 				() => {
 					const win = dock.layout.floating.find((w) => w.id === panelId);
 					if (!win) return undefined;
@@ -365,7 +366,7 @@ export class DragController {
 		else
 			this.#placement(
 				panelId,
-				{ kind: 'move-docked', panelId, remount: this.#remounts(panelId) },
+				() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
 				() => {
 					const node = findNode(dock.layout.docked, panelId);
 					if (node?.type !== 'panel') return undefined;
@@ -419,7 +420,7 @@ export class DragController {
 			if (source === 'floating')
 				this.#placement(
 					panelId,
-					{ kind: 'dock', panelId, remount: this.#remounts(panelId) },
+					() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
 					() => {
 						const win = dock.layout.floating.find((w) => w.id === panelId);
 						if (!win) return undefined;
@@ -436,7 +437,7 @@ export class DragController {
 			else
 				this.#placement(
 					panelId,
-					{ kind: 'move-docked', panelId, remount: this.#remounts(panelId) },
+					() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
 					() => {
 						const node = findNode(dock.layout.docked, panelId);
 						if (node?.type !== 'panel') return undefined;
