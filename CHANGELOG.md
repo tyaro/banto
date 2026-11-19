@@ -22,6 +22,17 @@
 
 ## [Unreleased]
 
+## [7.9.0] - 2026-11-20
+
+**v7.9.0 — `@banto/dock-svelte` の dock の拡張（`ThreePaneDock`・据え置き pane・キーボード移動・隠した pane の元の位置の復元。#663 段階 ④、#721・#727・#733・#734・#735・#736・#741）とコマンドパレットの非同期の提供元（#711）、テンプレートの dock 配線。** 版の種類: minor（後方互換の機能追加）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除・改名は無い。migration なし。
+
+消費側への注意（ソース互換・挙動。いずれも下の各項目に詳細）:
+
+- 型: `DockMessages` にキーが増えた（`Required<DockMessages>` を使う利用側は型エラー）。`DockCapabilities` に `collapse` が増えた（`Required<DockCapabilities>` を使う利用側は型エラー）。`DockPanelChange` の `remount` の型が `true` から `boolean` に広がった。`DockLayout['version']` が `2 | 3` になった（`version` で分岐しているコードは 3 の分岐を足す）。
+- 保存形式: 5 段以上の slot を含むレイアウトは `version: 3` で保存され、v7.8.0 以前では読めず既定に戻る。浅いレイアウトは今までどおり `version: 2`。
+- レイアウトをオブジェクトのまま保存しているアプリは、`dock.layout` ではなく `DockState.savedLayout()` を保存する。保存した値を `DockHost.replaceLayout` で入れるときは `saved: true` を渡す。
+- テンプレート（B）: ダッシュボードの localStorage のキーが利用者ごと（`banto.dock.dashboard:<owner>`）に変わり、古い固定キー `banto.dock.dashboard` は読まずに消される（設定 `UiSettingsProvider` の `dock.dashboard` の保存値はそのまま）。
+
 ### Added
 
 - `@banto/dock-svelte` の `DockHost` に `persistent?: (panelId) => boolean`（据え置き、#663 段階 ④ PR-1）。その pane の中身は木の外で 1 回だけ描き、受け皿へ DOM ごと移すので、undock / dock・外周へのドッキング・周りの組み替え・自動で隠す・タブの切替で作り直さない（フォーカスと scroll 位置は移したあとに戻す。`iframe` は読み直される）。`keepMounted` を兼ねる。`DockPanelChange` の `dock` / `undock` / `move-docked` / `auto-hide` / `reparent` の `remount` の型を `true` から `boolean` に広げた（`persistent` の pane は `false`）。
