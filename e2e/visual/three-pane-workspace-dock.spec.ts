@@ -311,11 +311,9 @@ test.describe('three-pane workspace on a dock', () => {
 	}) => {
 		await open(page, '?target=line-a-press&row=line-a-press-3');
 		const scan = async () =>
-			(
-				await new AxeBuilder({ page })
-					.withTags(['wcag2a', 'wcag2aa'])
-					.analyze()
-			).violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
+			(await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations.map(
+				(v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`
+			);
 		expect(await scan()).toEqual([]);
 		await toolbarButton(page, 'ツリーを切り離す').click();
 		await expect(windowOf(page, TREE)).toBeVisible();
