@@ -27,11 +27,11 @@ import * as m from '#lib/paraglide/messages.js';
 // getter defers resolution to the point the title is read (the dashboard
 // toolbar / `defaultLayout()` / the pop-out route), by which point the locale
 // is resolved — keeping the default (ja) display byte-identical.
-// NOTE (B3 follow-up): the dashboard serializes each panel's title INTO the
-// persisted dock layout at the moment the layout is built, so a saved layout
-// stores the title in whatever locale was active then. That is invisible for a
-// single-locale (ja) install, but a future language switch (B3) should key the
-// layout on panel id and resolve titles at render, not persist them.
+// NOTE: the dashboard serializes each panel's title INTO the persisted dock
+// layout, so a saved layout stores the title in the locale active then. The
+// dashboard's `createDockLayoutStore({ validate })` re-resolves known panels'
+// titles by id on restore (dockTitles.ts, #729 review); the language picker
+// reloads the page, so a switch takes effect on the next load.
 export const PANEL_DEFS: FloatingWindowDef[] = [
 	{
 		id: 'monthly',

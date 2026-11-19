@@ -22,10 +22,15 @@ for (const path of ['/dashboard', '/tree/workspace-dock']) {
 		const host = page.locator('[data-dock-host]');
 		const menuButton = host.getByRole('button', { name: /^Panel actions for / }).first();
 		await expect(menuButton).toBeVisible();
-		// No dock title-bar button keeps a Japanese accessible name.
+		// No dock-drawn button keeps a Japanese accessible name. Only the dock's own chrome counts:
+		// anything inside a pane / window body (`.body` of DockedTree / DockWindow, e.g. BantoTree's
+		// "Collapse <row name>" with demo-data names) is the app's content, not a dock string. The
+		// panel names inside `{title}` are today's (English) panel titles, not data.
 		const names = await host
 			.locator('button[aria-label]')
-			.evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') ?? ''));
+			.evaluateAll((els) =>
+				els.filter((e) => !e.closest('.body')).map((e) => e.getAttribute('aria-label') ?? '')
+			);
 		expect(names.length).toBeGreaterThan(0);
 		expect(names.filter((n) => JAPANESE.test(n))).toEqual([]);
 		// The menu's items are English too.
