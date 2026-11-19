@@ -842,3 +842,25 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
   替わった・無い書き込みを `unauthorized` で reject する。`get` はそのキーの書き込みが済むまで待つ。
 - 確認: `pnpm check`。Tauri の派生アプリは、依存の更新と `getSessionRevision` の配線を同じ更新で入れる
   （省略しても型検査は通るため）。利用者 A で設定を変えた直後に B へ切り替え、A の値が B に保存・表示されないことを確かめる。
+
+### 例 9: v7.8.x → v7.9.0（dock の拡張。A と B）
+
+`@banto/dock-svelte` に `ThreePaneDock`・据え置き pane（`persistent`）・キーボード移動・隠した pane の元の位置の復元
+（#663 段階 ④、#721・#727・#733〜#736・#741）、`@banto/admin-core` / `@banto/ui` にコマンドパレットの非同期の提供元
+（#711）が入る。API の削除・改名はない。既存の型を広げた変更で型エラーになりうるが、実行時の値が変わるのは新しい機能を使ったときだけなので、規約の運用上の例外（オーナー判断）で **minor**。次の型・保存形式の注意がある。
+
+- A（依存）: タグを `v7.9.0` に上げる（npm と Rust を同じタグに）。
+  - `DockMessages` にキーが増え、`DockCapabilities` に `collapse` が増えた。`Required<DockMessages>` /
+    `Required<DockCapabilities>` を使っている箇所は型エラーになるので、足されたキーを埋める。
+  - `DockPanelChange` の `remount` が `true` から `boolean` に広がった。`remount` を `true` 型として扱っているコードを直す。
+  - `DockLayout['version']` が `2 | 3` になった。`version` で分岐しているコードは 3 の分岐を足す。5 段以上の slot を含む
+    レイアウトは `version: 3` で保存され、v7.8.0 以前では読めず既定に戻る（浅いレイアウトは今までどおり 2）。
+    利用者に古い版へ戻す可能性があるなら、先に配布の順を決める。
+  - レイアウトをオブジェクトのまま保存しているアプリは、`dock.layout` ではなく `dock.savedLayout()` を保存する。
+    保存した値を `DockHost.replaceLayout` で入れるときは `saved: true` を渡す（`serialize()` の文字列を保存して `hydrate()` で戻すアプリは変更不要。その文字列を JSON として読んで `replaceLayout` に渡すアプリは `saved: true` が要る）。
+- B（テンプレート）: ダッシュボードの保存を `apps/admin-template/src/lib/banto/dockLayoutStore.svelte.ts` に出した。
+  localStorage のキーが利用者ごと（`banto.dock.dashboard:<owner>`）になり、古い固定キー `banto.dock.dashboard` は読まずに
+  消される（設定 `dock.dashboard` の保存値はそのまま）。dock の文言は `lib/banto/dockMessages.ts`（`dock.*` キー）に
+  配線された。取り込むなら、これらと `/dashboard`・`/tree/workspace-dock` の変更を写す。
+- 確認: `pnpm check`・`cargo test`。保存したレイアウトを使うアプリは、更新前の保存値が読めること（既定に戻らないこと）、
+  利用者を切り替えたときダッシュボードの配置が混ざらないことを確かめる。
