@@ -58,7 +58,7 @@
 	import type { DockCapabilities } from './core/policy';
 	import { autoHiddenPanelIds } from './core/autohide';
 	import { collectPanelIds, structureKey } from './core/tree';
-	import { adoptLayout, createDockState, type DockState } from './state.svelte';
+	import { adoptLayout, createDockState, forgetHomeSlots, type DockState } from './state.svelte';
 	import {
 		assertExtraPanelIds,
 		defaultThreePaneDockMessages,
@@ -283,6 +283,8 @@
 		wideIsDefault = installedDefault !== null && dock.layout === installedDefault;
 		// As saved (#739 review): the floated panes' places do not outlive the narrow display.
 		wideLayout = dock.savedLayout();
+		// ... nor a closed one's, which the narrow display keeps floating (the kept shares do not count it).
+		forgetHomeSlots(dock);
 		installedDefault = null;
 		adoptLayout(dock, threePaneNarrowLayout(wideLayout, narrowOptions()));
 		narrowShown = true;
@@ -318,6 +320,9 @@
 				isCurrent: () => current() && dock.layout === base
 			});
 			if (outcome === 'applied') {
+				// A closed floated pane stays floating in the narrow display, so its `homeSlot` would
+				// survive and be counted again by shares that no longer count it (#739 review).
+				forgetHomeSlots(dock);
 				wideLayout = kept;
 				wideIsDefault = false;
 				narrowShown = true;

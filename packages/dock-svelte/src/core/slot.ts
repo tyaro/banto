@@ -526,7 +526,13 @@ export function captureRegionSlot(root: DockNode | null, regionId: string): Dock
 	const node = findNode(root, regionId);
 	if (!node || node.type === 'split') return null;
 	if (node.type === 'panel' && findParent(root, regionId)?.type === 'tabs') return null;
-	return unitSlot(root, node);
+	const slot = unitSlot(root, node);
+	// No `share` (#739 review): the panes hidden from the split are not known here, so the share of
+	// the whole split is not either - a pane later hidden from the band (`dismiss` copies this slot)
+	// comes back by `size`, as before #733.
+	if (slot.kind !== 'split' || slot.share === undefined) return slot;
+	const { share: _share, ...rest } = slot;
+	return rest;
 }
 
 /** A split slot's anchors as places to try, nearest first (the neighbour's side first at each distance). */

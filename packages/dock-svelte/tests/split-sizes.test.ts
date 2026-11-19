@@ -214,6 +214,22 @@ const runSteps = (
 	return dock;
 };
 
+// #739 review (Codex): a region's slot for the edge band does not know the panes hidden from its
+// split, so it has no `share` - a pane hidden from the band comes back by `size`, as before.
+describe('a pane auto-hidden after a sibling was hidden (#739 review)', () => {
+	it('row[a .2, b .3, c .5]: hide a, auto-hide b, hide b, show b, show a -> .2 / .3 / .5', () => {
+		const dock = runSteps(L['row[a,b,c] uneven'], ['-a']);
+		dock.autoHideRegion('b');
+		const band = dock.layout.autoHidden?.find((e) => e.node.id === 'b')?.slot;
+		expect(band?.kind === 'split' && band.share).toBe(undefined);
+		dock.dismiss('b');
+		dock.show('b');
+		dock.show('a');
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c'] });
+		expect(sameSizes(sizesOf(dock.layout.docked), [[0.2, 0.3, 0.5]])).toBe(true);
+	});
+});
+
 describe('split sizes come back in any show order (#733)', () => {
 	it('row[a,b,c] (thirds): hide a and b, show a then b -> thirds again (was 0.17 / 0.50 / 0.33)', () => {
 		const make = L['row[a,b,c] even'];

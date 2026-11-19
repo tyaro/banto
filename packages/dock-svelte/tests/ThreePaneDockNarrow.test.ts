@@ -193,6 +193,25 @@ describe('ThreePaneDock: the narrow display', () => {
 		expect(share(dock.layout)).toBe(share(wide.layout));
 	});
 
+	// #739 review (Codex): a closed floated pane stays floating in the narrow display; its place is
+	// forgotten, so `right` comes back by the kept share (not scaled by `left` again).
+	it('a closed floated pane: its place is forgotten across the narrow display', async () => {
+		const { api, dock } = mount();
+		dock.undockPanel('left');
+		dock.close('left');
+		dock.dismiss('right');
+		const kept = api().layoutSnapshot();
+		const slot = kept.layout.floating.find((w) => w.id === 'right')?.dockSlot;
+		await resize(700);
+		expect(dock.homeSlot('left')).toBeUndefined();
+		await resize(1000);
+		dock.show('right');
+		const root = dock.layout.docked as DockSplitNode;
+		const at = root.children.findIndex((c) => c.id === 'right');
+		expect(slot?.kind === 'split' && slot.share).toBeTruthy();
+		expect(root.sizes[at]).toBeCloseTo(slot?.kind === 'split' ? slot.share! : NaN, 9);
+	});
+
 	it('does not save what is changed while narrow, and goes back to the kept layout', async () => {
 		const { api, dock } = mount();
 		const root = dock.layout.docked as DockSplitNode;

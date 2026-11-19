@@ -107,6 +107,18 @@ export function adoptLayout(dock: DockState, layout: DockLayout): void {
 	adoptImpl(dock, layout);
 }
 
+let forgetImpl: (dock: DockState) => void;
+
+/**
+ * Drop every floated pane's `homeSlot` (not exported from the package): for a layout kept as
+ * `savedLayout()` gives it - shares taken without them - and shown again later (`ThreePaneDock`'s
+ * narrow display, #739 review). A floated pane still floating (say closed) would otherwise be
+ * counted again by the shares that no longer count it.
+ */
+export function forgetHomeSlots(dock: DockState): void {
+	forgetImpl(dock);
+}
+
 export class DockState {
 	#layout: DockLayout = $state(emptyLayout());
 	/** The structure revision (plain, not reactive) - see `structureRevision`. */
@@ -1156,6 +1168,7 @@ export class DockState {
 
 	static {
 		adoptImpl = (dock, layout) => dock.#adopt(layout);
+		forgetImpl = (dock) => dock.#homeSlots.clear();
 	}
 
 	#update(id: string, fn: (win: FloatingWindow) => FloatingWindow): void {
