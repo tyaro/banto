@@ -568,6 +568,17 @@
 		}
 	}
 
+	function activeCellHasRendererLink(column: GridColumn<TRow>): boolean {
+		// Only a `renderer: 'link'` cell that really drew its <a> (not the
+		// text fallback, not `cell` / `render`): that link wins over the row action.
+		if (column.render || column.cell || column.renderer !== 'link' || !selection.active)
+			return false;
+		const { rowIndex, field } = selection.active;
+		return !!containerEl?.querySelector(
+			`[data-cell-row="${rowIndex}"][data-cell-field="${CSS.escape(field)}"] a.cell-link`
+		);
+	}
+
 	/**
 	 * A11y fix (spec §4.7; known regression confirmed in the M3 review):
 	 * Enter/Space on the active cell previously did nothing useful when the
@@ -583,17 +594,6 @@
 	 * active cell, since every navigation keeps it in view via
 	 * `scrollActiveIntoView`). Returns whether a link was found and clicked.
 	 */
-	function activeCellHasRendererLink(column: GridColumn<TRow>): boolean {
-		// Only a `renderer: 'link'` cell that really drew its <a> (not the
-		// text fallback, not `cell` / `render`): that link wins over the row action.
-		if (column.render || column.cell || column.renderer !== 'link' || !selection.active)
-			return false;
-		const { rowIndex, field } = selection.active;
-		return !!containerEl?.querySelector(
-			`[data-cell-row="${rowIndex}"][data-cell-field="${CSS.escape(field)}"] a.cell-link`
-		);
-	}
-
 	function navigateActiveLink(): boolean {
 		if (!containerEl || !selection.active) return false;
 		const { rowIndex, field } = selection.active;
