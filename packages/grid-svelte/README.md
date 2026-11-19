@@ -88,22 +88,32 @@ Tab / Shift+Tab はブラウザの標準移動を使う非modalのまま。
 ## 組み込みのセル表現と条件つき書式（#713）
 
 列に `renderer` を付けると、値を文字以外で描く。解決は `core/cellView.ts` の純関数
-（`resolveCellView`）で、描画だけが `BantoGrid.svelte`。
+（`resolveCellView`。値を 1 回だけ読んで view と tone を返す `resolveCellPresentation` もある）で、描画だけが `BantoGrid.svelte`。
 
 ```ts
+interface Job {
+	id: number;
+	state: 'late' | 'ok';
+	done: number; // 0..1
+	qty: number;
+	enabled: boolean;
+	title: string;
+	url: string;
+}
+
 const columns: GridColumn<Job>[] = [
 	{
-		id: state,
-		header: 状態,
-		accessor: state,
-		renderer: badge,
-		format: (v) => (v === late ? 遅れ : 順調),
-		tone: (v) => (v === late ? danger : success)
+		id: 'state',
+		header: '状態',
+		accessor: 'state',
+		renderer: 'badge',
+		format: (v) => (v === 'late' ? '遅れ' : '順調'),
+		tone: (v) => (v === 'late' ? 'danger' : 'success')
 	},
-	{ id: done, header: 進捗, accessor: done, renderer: progress }, // 0..1
-	{ id: qty, header: 達成, accessor: qty, renderer: progress, progressMax: 200 },
-	{ id: on, header: 有効, accessor: enabled, renderer: boolean },
-	{ id: doc, header: 資料, accessor: title, renderer: link, href: (row) => row.url }
+	{ id: 'done', header: '進捗', accessor: 'done', renderer: 'progress' }, // 0..1
+	{ id: 'qty', header: '達成', accessor: 'qty', renderer: 'progress', progressMax: 200 },
+	{ id: 'on', header: '有効', accessor: 'enabled', renderer: 'boolean' },
+	{ id: 'doc', header: '資料', accessor: 'title', renderer: 'link', href: (row) => row.url }
 ];
 ```
 
@@ -115,6 +125,7 @@ const columns: GridColumn<Job>[] = [
 | `link`     | `href(row)` への `<a>`。http(s)・mailto・tel・相対 URL だけ（`javascript:` などは文字に落とす）。文字が行で決まるなら従来の `cell` を使う                                                                        |
 
 - 描く優先順位は `render`（snippet） > `cell` > `renderer` > 素の文字。値が描き方に合わない行（数値でない progress、boolean でない値、安全な href の無い link）は文字にフォールバックする。
+- キーボード: `link` の `<a>` が実際に描かれたセルでは、Enter / Space が行操作（`onRowClick`）より先にそのリンクを開く。文字にフォールバックした行や `cell` 列は従来どおり。
 - 編集: `link` は `cell` / `render` と同じく編集不可。`badge` / `progress` / `boolean` は表示だけを変えるので `editable` に従い、編集中は編集欄に置き換わる。
 - コピー・CSV は従来どおり生の値（`format` も `renderer` も通さない）。列メニュー・列の並べ替え・グループ化・仮想スクロール・server モードの挙動は変わらない。
 - `tone: (value, row) => success | warning | danger | info | neutral | null` は素の文字・`cell`・`renderer` のセルに役割の色を付ける（`render` には効かない）。色は theme の `--banto-success` などの状態色トークンのみで、バッジは `-tint` の組。値は `data-tone` にも出る。色だけに意味を持たせず、`format` やバッジの文字でも伝えること。

@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { cellText, resolveCellView, resolveTone, safeHref } from '../src/core/cellView';
+import { describe, expect, it, vi } from 'vitest';
+import {
+	cellText,
+	resolveCellPresentation,
+	resolveCellView,
+	resolveTone,
+	safeHref
+} from '../src/core/cellView';
 import { isColumnEditable } from '../src/core/edit';
 import { rangeToTsv } from '../src/core/clipboard';
 import { getColumnValue } from '../src/core/sort';
@@ -151,5 +157,23 @@ describe('renderers with editing and copy', () => {
 			getColumnValue
 		);
 		expect(tsv).toBe('0.25');
+	});
+});
+
+describe('accessor reads (#713)', () => {
+	it('reads the value once per cell for view, text and presentation', () => {
+		const accessor = vi.fn((r: Row) => r.status);
+		const c = col({ accessor, renderer: 'badge', tone: () => 'success' });
+		resolveCellView(c, row);
+		expect(accessor).toHaveBeenCalledTimes(1);
+		accessor.mockClear();
+		resolveCellView(col({ accessor }), row);
+		expect(accessor).toHaveBeenCalledTimes(1);
+		accessor.mockClear();
+		expect(resolveCellPresentation(c, row)).toEqual({
+			view: { kind: 'badge', text: '稼働' },
+			tone: 'success'
+		});
+		expect(accessor).toHaveBeenCalledTimes(1);
 	});
 });

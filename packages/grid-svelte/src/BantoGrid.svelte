@@ -29,7 +29,7 @@
 	import { computeWindow, parseRowHeightPx } from './core/virtual';
 	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
 	import { prepareCommit, isColumnEditable } from './core/edit';
-	import { cellText, resolveCellView, resolveTone } from './core/cellView';
+	import { resolveCellPresentation } from './core/cellView';
 	import { buildGroupedView, type FlatEntry } from './core/group';
 	import HeaderCell from './HeaderCell.svelte';
 	import CellEditError from './CellEditError.svelte';
@@ -583,6 +583,17 @@
 	 * active cell, since every navigation keeps it in view via
 	 * `scrollActiveIntoView`). Returns whether a link was found and clicked.
 	 */
+	function activeCellHasRendererLink(column: GridColumn<TRow>): boolean {
+		// Only a `renderer: 'link'` cell that really drew its <a> (not the
+		// text fallback, not `cell` / `render`): that link wins over the row action.
+		if (column.render || column.cell || column.renderer !== 'link' || !selection.active)
+			return false;
+		const { rowIndex, field } = selection.active;
+		return !!containerEl?.querySelector(
+			`[data-cell-row="${rowIndex}"][data-cell-field="${CSS.escape(field)}"] a.cell-link`
+		);
+	}
+
 	function navigateActiveLink(): boolean {
 		if (!containerEl || !selection.active) return false;
 		const { rowIndex, field } = selection.active;
@@ -774,6 +785,8 @@
 				if (!activeColumn || !activeRow) break;
 				if (isEditable(activeColumn, activeRow)) {
 					startEditing(selection.active.rowIndex, activeColumn, activeRow);
+				} else if (activeCellHasRendererLink(activeColumn) && navigateActiveLink()) {
+					// #713: a `renderer: 'link'` cell's own link beats the row action.
 				} else if (!hasEditableColumns && onRowClick) {
 					onRowClick(activeRow);
 				} else if (navigateActiveLink()) {
@@ -800,7 +813,15 @@
 					gridState.toggleGroup(spaceGroupKey);
 					break;
 				}
-				if (!hasEditableColumns && onRowClick && activeRow) {
+				if (
+					activeColumn &&
+					activeRow &&
+					!isEditable(activeColumn, activeRow) &&
+					activeCellHasRendererLink(activeColumn) &&
+					navigateActiveLink()
+				) {
+					event.preventDefault();
+				} else if (!hasEditableColumns && onRowClick && activeRow) {
 					event.preventDefault();
 					onRowClick(activeRow);
 				} else if (
@@ -1319,7 +1340,8 @@
 						{@const isEditingCell =
 							editing?.rowId === getRowId(row) && editing?.field === column.id}
 						{@const linkInfo = column.cell?.(row)}
-						{@const tone = column.render ? null : resolveTone(column, row)}
+						{@const presentation = column.render ? null : resolveCellPresentation(column, row)}
+						{@const tone = presentation?.tone ?? null}
 						<!--
 						Keyboard focus/activation for cells is handled at the grid
 						container level (roving "virtual" focus via `selection.active`
@@ -1389,7 +1411,7 @@
 									onBlur={(event) => handleEditorBlur(event, column, row)}
 								/>
 							{:else}
-								{@const view = resolveCellView(column, row)}
+								{@const view = presentation!.view}
 								{#if view.kind === 'badge'}
 									<span class="cell-badge">{view.text}</span>
 								{:else if view.kind === 'progress'}

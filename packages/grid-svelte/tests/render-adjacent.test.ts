@@ -202,3 +202,49 @@ describe('GridColumn.renderer / tone (#713)', () => {
 		).toContain('yes');
 	});
 });
+
+describe('renderer link keyboard (#713)', () => {
+	interface LinkRow {
+		id: number;
+		name: string;
+		url: string;
+	}
+	const linkRows: LinkRow[] = [
+		{ id: 1, name: 'a', url: '/a' },
+		{ id: 2, name: 'b', url: '' }
+	];
+	const linkColumns: GridColumn<LinkRow>[] = [
+		{ id: 'name', header: '名', accessor: 'name', renderer: 'link', href: (r) => r.url }
+	];
+	function setup() {
+		const onRowClick = vi.fn();
+		const view = render(BantoGrid<LinkRow>, {
+			rows: linkRows,
+			columns: linkColumns,
+			state: new GridState<LinkRow>(linkColumns),
+			getRowId: (row: LinkRow) => row.id,
+			onRowClick
+		});
+		return { onRowClick, container: view.container };
+	}
+
+	for (const key of ['Enter', ' ']) {
+		it(`${JSON.stringify(key)} on a drawn link clicks it, not onRowClick`, async () => {
+			const { onRowClick, container } = setup();
+			const clicked = vi.fn((e: Event) => e.preventDefault());
+			container.querySelector('a.cell-link')!.addEventListener('click', clicked, { once: true });
+			await fireEvent.pointerDown(container.querySelector('[data-cell-row="0"]')!);
+			await fireEvent.keyDown(screen.getByRole('grid'), { key });
+			expect(clicked).toHaveBeenCalledTimes(1);
+			expect(onRowClick).not.toHaveBeenCalled();
+		});
+
+		it(`${JSON.stringify(key)} on a text-fallback row still calls onRowClick`, async () => {
+			const { onRowClick, container } = setup();
+			expect(container.querySelectorAll('a.cell-link')).toHaveLength(1);
+			await fireEvent.pointerDown(container.querySelector('[data-cell-row="1"]')!);
+			await fireEvent.keyDown(screen.getByRole('grid'), { key });
+			expect(onRowClick).toHaveBeenCalledWith(linkRows[1]);
+		});
+	}
+});

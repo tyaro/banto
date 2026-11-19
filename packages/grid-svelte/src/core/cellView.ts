@@ -29,7 +29,10 @@ export type CellView =
 
 /** Display text: `format` when given, else the value as a string ('' for null / undefined). */
 export function cellText<TRow>(column: GridColumn<TRow>, row: TRow): string {
-	const raw = getColumnValue(row, column);
+	return textOf(column, row, getColumnValue(row, column));
+}
+
+function textOf<TRow>(column: GridColumn<TRow>, row: TRow, raw: unknown): string {
 	if (column.format) return column.format(raw, row);
 	if (raw === null || raw === undefined) return '';
 	return String(raw);
@@ -42,7 +45,12 @@ export function cellText<TRow>(column: GridColumn<TRow>, row: TRow): string {
  */
 export function resolveTone<TRow>(column: GridColumn<TRow>, row: TRow): CellTone | null {
 	if (!column.tone) return null;
-	const tone = column.tone(getColumnValue(row, column), row);
+	return toneOf(column, row, getColumnValue(row, column));
+}
+
+function toneOf<TRow>(column: GridColumn<TRow>, row: TRow, raw: unknown): CellTone | null {
+	if (!column.tone) return null;
+	const tone = column.tone(raw, row);
 	return tone !== null && CELL_TONES.includes(tone) ? tone : null;
 }
 
@@ -80,8 +88,23 @@ function toNumber(value: unknown): number | null {
  * degrades to its text instead of a broken widget.
  */
 export function resolveCellView<TRow>(column: GridColumn<TRow>, row: TRow): CellView {
-	const text = cellText(column, row);
+	return viewOf(column, row, getColumnValue(row, column));
+}
+
+/**
+ * A cell's view and tone together, reading the value (the column's accessor)
+ * once - what BantoGrid draws per cell.
+ */
+export function resolveCellPresentation<TRow>(
+	column: GridColumn<TRow>,
+	row: TRow
+): { view: CellView; tone: CellTone | null } {
 	const raw = getColumnValue(row, column);
+	return { view: viewOf(column, row, raw), tone: toneOf(column, row, raw) };
+}
+
+function viewOf<TRow>(column: GridColumn<TRow>, row: TRow, raw: unknown): CellView {
+	const text = textOf(column, row, raw);
 	switch (column.renderer) {
 		case 'badge':
 			return text === '' ? { kind: 'text', text } : { kind: 'badge', text };

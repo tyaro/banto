@@ -24,7 +24,7 @@
 
 ### Added
 
-- `@banto/grid-svelte` の列に組み込みの描き方 `renderer: 'badge' | 'progress' | 'boolean' | 'link'`（`progressMax`・`href` 付き）と、条件つき書式 `tone: (value, row) => 'success' | 'warning' | 'danger' | 'info' | 'neutral' | null`（#713 C-3 の 1 つ目の PR）。解決は `core/cellView.ts` の純関数（`resolveCellView` / `resolveTone` / `safeHref`）、色はテーマの状態色トークンのみ。優先順位は `render` > `cell` > `renderer` > 素の文字。`link` だけ編集不可（他は `editable` に従う）。コピー・CSV は従来どおり生の値。boolean の読み上げは `messages.booleanTrue` / `booleanFalse`（既定は「はい」「いいえ」）。ui-demo のグリッドに状態（badge + tone）・進捗・速達の列を追加（visual の基準画像が変わる）。型: `Required<GridMessages>` を使う利用側は 2 キー分の型エラー。
+- `@banto/grid-svelte` の列に組み込みの描き方 `renderer: 'badge' | 'progress' | 'boolean' | 'link'`（`progressMax`・`href` 付き）と、条件つき書式 `tone: (value, row) => 'success' | 'warning' | 'danger' | 'info' | 'neutral' | null`（#713 C-3 の 1 つ目の PR）。解決は `core/cellView.ts` の純関数（`resolveCellView` / `resolveCellPresentation` / `resolveTone` / `safeHref`）、色はテーマの状態色トークンのみ。優先順位は `render` > `cell` > `renderer` > 素の文字。`link` だけ編集不可（他は `editable` に従う）。コピー・CSV は従来どおり生の値。boolean の読み上げは `messages.booleanTrue` / `booleanFalse`（既定は「はい」「いいえ」）。ui-demo のグリッドに状態（badge + tone）・進捗・速達の列を追加（visual の基準画像が変わる）。型: `Required<GridMessages>` を使う利用側は 2 キー分の型エラー。
 
 ## [7.9.0] - 2026-11-20
 
