@@ -59,6 +59,26 @@
 - `@banto/dock-svelte`: 入れ子の split で、隠す・戻す順によっては全部戻しても元の木の形に戻らなかった（#727・#721 の残り）。内側のパネルを外側の兄弟より先に隠す（`column[row[a,b], c]` で `a` → `c`）、全部隠す、外側の兄弟が 2 枚（`column[row[a,b], c, d]`）の場合。戻すときは目印のパネルだけでなく、同じ側のパネルだけでできた入れ物ごと包む。隠すときは、消えた入れ物に属する隠れたパネルも目印に数え、`outer` を入れ子にして外側の入れ物の場所も覚える（slot 自身を含めて最大 8 段。`DockSlot` の形は変えず、古い JSON は従来どおり読める）。5 段以上の slot を含むレイアウトは `version: 3` で保存し、それより前の版では読めない（その利用者のレイアウトは既定に戻る）。浅いレイアウトは今までどおり `version: 2` で、`version: 2` の JSON の slot は今までどおり 4 段まで受ける。型の注意: `DockLayout['version']` は `2 | 3` になったので、`version` で分岐しているコードは 3 の分岐を足す。
 - `@banto/dock-svelte`: 同じ入れ物から浮かせたパネルと隠したパネルが混ざると、戻す順しだいで元の位置に戻れなかった（#734）。また、API（`DockState.dockPanel` など）で直接ドッキングしてから外すと、「元の場所に戻す」が前の場所を指すことがあった（#735）。浮かせたパネルの元の場所を `DragController` から `DockState` に移し（新しい `DockState.homeSlot(id)`。保存はしない）、隠すときも浮かせるときも、隠したパネルと浮かせたパネルの両方を数える。元の場所は、どの経路でもパネルが浮動ウィンドウでなくなった時点で忘れる。挙動の変更: `DockState.undockPanel` を直接呼んで浮かせたパネルにも、メニューの「元の場所に戻す」（`movePanel(id, { back: true })`）が出る。
 
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `c017882a`、`workflow_dispatch`）: [run 44610524176](https://github.com/tyaro/banto/actions/runs/44610524176)（success）。
+  - タグの push（`v7.9.0`、main の `c017882a`）: [run 44610943716](https://github.com/tyaro/banto/actions/runs/44610943716)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 24.22.2                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.57.3                          |
+    | SvelteKit          | 3.2.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
+
+  - 出所: Node.js は `node: v24.22.2`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.3` など）、Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
+
 ## [7.8.0] - 2026-11-19
 
 **v7.8.0 — `@banto/admin-core` の UiSettings のプロバイダ（HTTP・Tauri）の書き込みをキーごとに直列化（#707、PR #708）。** 版の種類: minor（後方互換の機能追加）。理由: `TauriUiSettingsOptions` に省略可能な `getSessionRevision` を足した。`crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（`v7.7.0` との差分で確認）。migration なし。
