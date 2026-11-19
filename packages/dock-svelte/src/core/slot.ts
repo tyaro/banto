@@ -385,15 +385,16 @@ function lastSplitSlot(
 	// Else (`unit` docked into another split since, say a row it shares with a pane shown again
 	// later, or a slot without `outer`) the split's place is not known: no guess.
 	const parent = findParent(root, unit.id);
-	// A split around it that is gone too (#727, nested `outer`): its own place, and so on out.
+	// A split around it that is gone too (#727, nested `outer`): its own place, and so on out. A
+	// chain cut at `MAX_SLOT_DEPTH` (Codex P2 on #732) goes on with the place another hidden pane
+	// remembers for the last split it names.
 	const atOuter = (slot: DockSlot | undefined): boolean => {
 		let outer = slot;
-		for (
-			let depth = 0;
-			outer?.kind === 'split' && !findNode(root, outer.splitId) && depth < MAX_SLOT_DEPTH;
-			depth++
-		)
-			outer = outer.outer;
+		const seen = new Set<string>();
+		while (outer?.kind === 'split' && !findNode(root, outer.splitId) && !seen.has(outer.splitId)) {
+			seen.add(outer.splitId);
+			outer = outer.outer ?? placeOfGone(root, outer, hidden);
+		}
 		return outer?.kind === 'root'
 			? parent === null
 			: outer?.kind === 'split' &&
@@ -401,7 +402,12 @@ function lastSplitSlot(
 					parent.id === outer.splitId &&
 					parent.direction === outer.direction;
 	};
-	if (!pending.every((h) => h.slot.kind === 'split' && atOuter(h.slot.outer))) return null;
+	if (
+		!pending.every(
+			(h) => h.slot.kind === 'split' && atOuter(h.slot.outer ?? placeOfGone(root, h.slot, hidden))
+		)
+	)
+		return null;
 	const ids = splitOrder([unit], pending);
 	// The other hidden panes of a container standing in for it (`remnantPanes`).
 	const remnants = new Map<string, string[]>();
@@ -427,16 +433,59 @@ function lastSplitSlot(
 	const place = last.slot.outer;
 	const outer =
 		place?.kind === 'split' && !findNode(root, place.splitId)
-			? cut(place, depth + 1)
+			? cut(place, depth + 1, (gone) => placeOfGone(root, gone, hidden))
 			: hereOf(root, unit, hidden, depth + 1);
 	return { ...slot, outer };
 }
 
-/** `slot` as the slot `depth` deep: its `outer` chain cut at `MAX_SLOT_DEPTH`. */
-function cut(slot: DockSlot, depth: number): DockSlot {
+/**
+ * Where the gone split of `slot` was, when `slot` is where a hidden pane's `outer` chain was cut at
+ * `MAX_SLOT_DEPTH` (so it has no `outer`): by the newest slot of a hidden pane that names that
+ * split with an `outer` (Codex P2 on #732). `undefined` when none does, or when `slot` is not cut
+ * there (say an older JSON slot without `outer`: its split's place is not known, as before).
+ */
+function placeOfGone(
+	root: DockNode | null,
+	slot: Extract<DockSlot, { kind: 'split' }>,
+	hidden: HiddenDockSlot[]
+): DockSlot | undefined {
+	if (slot.outer) return slot.outer;
+	const cutHere = hidden.some((h) => {
+		let s: DockSlot | undefined = h.slot;
+		for (let level = 0; s && level < MAX_SLOT_DEPTH - 1; level++)
+			s = s.kind === 'root' ? undefined : s.outer;
+		return s === slot;
+	});
+	if (!cutHere) return undefined;
+	for (const h of [...hidden].reverse()) {
+		if (!stillHidden(root, h)) continue;
+		for (let s: DockSlot | undefined = h.slot; s && s.kind !== 'root'; s = s.outer)
+			if (
+				s.kind === 'split' &&
+				s.splitId === slot.splitId &&
+				s.direction === slot.direction &&
+				s.outer
+			)
+				return s.outer;
+	}
+	return undefined;
+}
+
+/**
+ * `slot` as the slot `depth` deep: its `outer` chain cut at `MAX_SLOT_DEPTH`. Where the chain was
+ * cut before, at a shallower place now (Codex P2 on #732), it goes on with `onwards` (the place
+ * another hidden pane remembers for that split, `placeOfGone`).
+ */
+function cut(
+	slot: DockSlot,
+	depth: number,
+	onwards: (gone: Extract<DockSlot, { kind: 'split' }>) => DockSlot | undefined
+): DockSlot {
 	if (slot.kind === 'root') return slot;
-	const { outer, ...rest } = slot;
-	return outer && depth + 1 < MAX_SLOT_DEPTH ? { ...rest, outer: cut(outer, depth + 1) } : rest;
+	const { outer: own, ...rest } = slot;
+	if (depth + 1 >= MAX_SLOT_DEPTH) return rest;
+	const outer = own ?? (slot.kind === 'split' ? onwards(slot) : undefined);
+	return outer ? { ...rest, outer: cut(outer, depth + 1, onwards) } : rest;
 }
 
 /**
@@ -531,13 +580,20 @@ function remnantPanes(
 	for (const h of hidden) {
 		if (docked(h.id) || ids.includes(h.id)) continue;
 		// Hidden out of a tab group / split still docked inside a child: one of that child's panes
-		// (say `row[column[a,b,c], d]` with `a` hidden: `d`'s slot names it with `b` and `c`).
-		const [own] = slotContainers(h.slot);
-		if (own !== undefined && docked(own)) {
-			const child = split.children.find((c) => nodeIds(c).includes(own));
-			if (child) out.set(child.id, [...(out.get(child.id) ?? []), h.id]);
+		// (say `row[column[a,b,c], d]` with `a` hidden: `d`'s slot names it with `b` and `c`). Or
+		// out of one that is gone, inside one still docked there (Codex P2 on #732: `b` of
+		// `column[row[a,column[row[b,c],d]],e]`, its row gone, is still one of the panes of `a`'s
+		// row): the nearest container of its `outer` chain that is docked.
+		const containersOf = slotContainers(h.slot);
+		const [own] = containersOf;
+		const near = containersOf.find(docked);
+		const holder =
+			near === undefined ? undefined : split.children.find((c) => nodeIds(c).includes(near));
+		if (holder) {
+			out.set(holder.id, [...(out.get(holder.id) ?? []), h.id]);
 			continue;
 		}
+		if (own !== undefined && docked(own)) continue;
 		// The ids named on the way out: the pane's own container may name a pane left in the child
 		// when the one around it names only hidden panes (say a tab group inside the gone split).
 		const names: string[] = [];

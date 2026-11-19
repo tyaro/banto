@@ -847,7 +847,9 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 		'column[column[a,b,c], p]': () => nested('column', ['a', 'b', 'c'], ['p'], true, true),
 		// #727: two outer siblings (`c` came back around the anchor `b`, not around `row[a,b]`).
 		'column[row[a,b], c, d]': () => nested('column', ['a', 'b'], ['c', 'd']),
-		'column[c, d, row[a,b]]': () => nested('column', ['a', 'b'], ['c', 'd'], false)
+		'column[c, d, row[a,b]]': () => nested('column', ['a', 'b'], ['c', 'd'], false),
+		// Codex P2 on #732: four splits deep (`L` below; the describe body runs after the module).
+		'column[row[a,column[row[b,c],d]],e]': () => L['column[row[a,column[row[b,c],d]],e]']()
 	};
 	for (const [name, make] of Object.entries(layouts)) {
 		const ids = collectPanelIds(make());
@@ -1027,6 +1029,15 @@ const L = {
 			splitNode('in', 'row', [panel('a'), panel('b')]),
 			panel('c'),
 			panel('d')
+		]),
+	// Codex P2 on #732: four splits deep, so a slot's `outer` chain is cut at `MAX_SLOT_DEPTH`.
+	'column[row[a,column[row[b,c],d]],e]': () =>
+		splitNode('s', 'column', [
+			splitNode('r1', 'row', [
+				panel('a'),
+				splitNode('c1', 'column', [splitNode('r2', 'row', [panel('b'), panel('c')]), panel('d')])
+			]),
+			panel('e')
 		])
 } satisfies Record<string, () => DockNode>;
 
@@ -1077,6 +1088,14 @@ describe('slot memory: regressions found by walking every sequence (#721)', () =
 			'-a -d +a -c +d -d +c +d -d -c +d +c',
 			// The column is all that is left of the row `s` (d hidden), with the tab group in it.
 			'a container in a gone split names a tab group inside it'
+		],
+		// Codex P2 on #732, found by the walk below once the deep layout was in it:
+		[
+			'column[row[a,column[row[b,c],d]],e]',
+			'-a -b -e +a +e -e -a +b +e +a',
+			// b's row is gone, but the column around it is still in a's row: b is one of that
+			// row's panes when e leaves (so e goes beside the whole row again, not beside d).
+			'a pane hidden out of a gone split inside a docked one'
 		]
 	];
 	for (const [name, steps, why] of cases) {
@@ -1087,6 +1106,17 @@ describe('slot memory: regressions found by walking every sequence (#721)', () =
 			expect(shapeOf(runSteps(make, steps.split(' ')).layout.docked)).toEqual(want);
 		});
 	}
+});
+
+// Codex P2 on #732: b's slot names `r2`, and the chain of the splits around it (c1, r1, s) is cut at
+// `MAX_SLOT_DEPTH` before the root. The place of `s` that another hidden pane (a) remembers is
+// still b's place: b goes back into the row, not floating. (main of 243958c5 does not bring this one
+// back either; the main before #727 did.)
+it('column[row[a,column[row[b,c],d]],e]: -a -e -c -d -b +d +b +e +c +a -> the old shape (an outer chain cut at the depth limit)', () => {
+	const make = L['column[row[a,column[row[b,c],d]],e]'];
+	const dock = runSteps(make, '-a -e -c -d -b +d +b +e +c +a'.split(' '));
+	expect(dock.layout.floating).toEqual([]);
+	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 });
 
 // Codex kept finding regressions in orders that interleave hiding and showing (#725). Every
