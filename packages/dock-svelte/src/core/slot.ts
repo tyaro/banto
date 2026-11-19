@@ -22,7 +22,8 @@
  *    holding the old neighbour (`neighborId`) or the nearest anchor (either
  *    side, `anchors` / `otherAnchors`), else at the old index; when the split is
  *    gone, next to the old neighbour or the nearest anchor still docked, on the
- *    side it was on, with the same share of the space the two had.
+ *    side it was on, with the same share of the space the two had (a new split
+ *    around it, never spliced into the split it is in now).
  *  - `outer` (#721): where the container itself was (a `split` / `root` slot),
  *    the pane put there as a bare pane - when every pane of the container was
  *    taken out, so neither the container nor any anchor is docked. The panes
@@ -537,18 +538,9 @@ function restoreSplit(
 	if (!found) return null;
 	const neighbor = liftOutOfTabs(root, found);
 	const parent = findParent(root, neighbor.id);
-	if (parent?.type === 'split' && parent.direction === slot.direction) {
-		// Splice in beside the neighbour, splitting the neighbour's space (keeps the tree shallow).
-		const n = parent.children.findIndex((c) => c.id === neighbor.id);
-		const room = parent.sizes[n] ?? 0;
-		const sizes = parent.sizes.slice();
-		const children = parent.children.slice();
-		const at = before ? n : n + 1;
-		sizes[n] = room * (1 - share);
-		sizes.splice(at, 0, room * share);
-		children.splice(at, 0, panel);
-		return replaceNode(root, parent.id, () => ({ ...parent, children, sizes }));
-	}
+	// Always a new split around the neighbour, even inside a split of the same direction (a
+	// row in a row from an edge dock, cross-review P2 on #725): splicing into that one would
+	// merge the gone split into it.
 	const split: DockSplitNode = {
 		type: 'split',
 		id: freeId(root, slot.splitId, makeId),

@@ -733,18 +733,29 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 		outer: 'row' | 'column',
 		inner: string[],
 		rest: string[],
-		innerFirst = true
+		innerFirst = true,
+		sameDirection = false
 	): DockNode => {
 		const innerNode: DockNode = {
 			type: 'split',
 			id: 'in',
-			direction: outer === 'row' ? 'column' : 'row',
+			direction: sameDirection ? outer : outer === 'row' ? 'column' : 'row',
 			sizes: even(inner.length),
 			children: inner.map(panel)
 		};
 		const children = innerFirst ? [innerNode, ...rest.map(panel)] : [...rest.map(panel), innerNode];
 		return { type: 'split', id: 'out', direction: outer, sizes: even(children.length), children };
 	};
+
+	it('row[row[a,b], p]: hide a and b, show a then b -> the inner row again (not row[a,b,p])', () => {
+		const make = () => nested('row', ['a', 'b'], ['p'], true, true);
+		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		dock.dismiss('a');
+		dock.dismiss('b');
+		dock.show('a');
+		dock.show('b');
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: [{ row: ['a', 'b'] }, 'p'] });
+	});
 
 	it('row[column[a,b,c], d]: hide d then a, show d then a -> the old shape', () => {
 		const make = () => nested('row', ['a', 'b', 'c'], ['d']);
@@ -770,7 +781,11 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 		'row[column[a,b,c], d]': () => nested('row', ['a', 'b', 'c'], ['d']),
 		'row[d, column[a,b,c]]': () => nested('row', ['a', 'b', 'c'], ['d'], false),
 		'column[row[a,b], c]': () => nested('column', ['a', 'b'], ['c']),
-		'column[c, row[a,b]]': () => nested('column', ['a', 'b'], ['c'], false)
+		'column[c, row[a,b]]': () => nested('column', ['a', 'b'], ['c'], false),
+		// The same direction inside (an edge dock wraps the root even then; cross-review P2 on #725).
+		'row[row[a,b], p]': () => nested('row', ['a', 'b'], ['p'], true, true),
+		'row[p, row[a,b,c]]': () => nested('row', ['a', 'b', 'c'], ['p'], false, true),
+		'column[column[a,b,c], p]': () => nested('column', ['a', 'b', 'c'], ['p'], true, true)
 	};
 	// Not covered yet (they failed before #721 too): a pane of the inner split hidden before the
 	// outer sibling, every pane hidden, or two outer siblings (`column[row[a,b], c, d]` hide c, d:
