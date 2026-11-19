@@ -704,6 +704,10 @@ function removeCommandPalette() {
 	removeFile(`${APP}/src/lib/commandPalette.svelte.ts`, 'commandPalette.svelte.ts 削除');
 	removeFile(`${APP}/src/lib/commands.ts`, 'commands.ts 削除');
 	removeFile(`${APP}/src/lib/commands.test.ts`, 'commands.test.ts 削除');
+	// レコード検索（#711）: パレット専用。最近開いたレコードの記録（resource/recentRecords.ts）と
+	// recordTitle は ResourceDetail が使う core 側なので残す。
+	removeFile(`${APP}/src/lib/recordSearch.ts`, 'recordSearch.ts 削除');
+	removeFile(`${APP}/src/lib/recordSearch.test.ts`, 'recordSearch.test.ts 削除');
 	removeFile(`${APP}/src/lib/recentCommands.ts`, 'recentCommands.ts 削除');
 	removeFile(`${APP}/src/lib/recentCommands.test.ts`, 'recentCommands.test.ts 削除');
 }

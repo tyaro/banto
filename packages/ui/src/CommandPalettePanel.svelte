@@ -5,7 +5,7 @@
 	 * "closed" - the opener is captured on mount and focus is restored in the
 	 * cleanup. See CommandPalette.svelte for the contract.
 	 */
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import {
 		defaultCommandPaletteSearch,
 		groupCommandPaletteItems,
@@ -19,6 +19,7 @@
 		items: readonly T[];
 		search?: (query: string, items: readonly T[]) => readonly T[];
 		recentIds?: readonly string[];
+		onQueryChange?: (query: string) => void;
 		onExecute: (item: T) => void | Promise<void>;
 		focusFallback?: () => HTMLElement | null | undefined;
 		messages?: UiMessages;
@@ -29,6 +30,7 @@
 		items,
 		search = defaultCommandPaletteSearch,
 		recentIds = [],
+		onQueryChange,
 		onExecute,
 		focusFallback,
 		messages,
@@ -45,6 +47,13 @@
 	let executing = $state(false);
 	let inputEl: HTMLInputElement | undefined = $state();
 	let paletteEl: HTMLDivElement | undefined = $state();
+
+	// Tell the app what was typed (async sources, #711). `untrack`: the
+	// callback may touch state of its own, which must not re-run this effect.
+	$effect(() => {
+		const current = query;
+		untrack(() => onQueryChange?.(current));
+	});
 
 	const results = $derived(search(query, items));
 
@@ -87,13 +96,29 @@
 		return origin;
 	}
 
-	// A fresh query means a fresh result set - pin the selection to the first
-	// selectable row rather than whatever now occupies the old index.
+	// A changed query means a fresh result set - pin the selection to the first
+	// selectable row. With the same query, results can still grow or shrink
+	// (async providers answer one by one): keep the selected id if it survives
+	// and is selectable, otherwise fall back to the first selectable row.
+	// Plain variables - read inside the effect without becoming dependencies.
+	let lastQuery: string | undefined;
+	let lastOrdered: readonly T[] = [];
 	$effect(() => {
 		const list = ordered;
+		const q = query;
 		const first = list.findIndex((item) => !item.disabled);
+		let next = first;
+		if (q === lastQuery) {
+			const prev = lastOrdered[untrack(() => selectedIndex)];
+			if (prev) {
+				const kept = list.findIndex((item) => item.id === prev.id);
+				if (kept >= 0 && !list[kept]?.disabled) next = kept;
+			}
+		}
+		lastQuery = q;
+		lastOrdered = list;
 		// -1 (no selectable row) means nothing is selected - never a disabled row.
-		selectedIndex = first;
+		selectedIndex = next;
 	});
 
 	// The element focused when the palette opened (promise 5, layering.ts).

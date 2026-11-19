@@ -161,6 +161,11 @@ export interface AppResourceDefinition extends ResourceDefinition {
 	nav?: false | ResourceNav;
 	/** One line under the list's heading. */
 	description?: () => string;
+	/**
+	 * How a record is named in the command palette (record search, recent
+	 * records, #711). Default: the row's `name` / `title` / `label`, then `#id`.
+	 */
+	recordTitle?: (row: ResourceRow) => string;
 	/** The list page (`ResourceListPage`). */
 	list?: ResourceListOptions;
 	csv?: ResourceCsvOptions;

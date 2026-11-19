@@ -55,6 +55,8 @@
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { resolveAppPath } from '#lib/appPath.js';
 	import ConflictDialog from './ConflictDialog.svelte';
+	import { recordRecentRecord } from './recentRecords';
+	import { recordTitle } from './recordTitle';
 	import {
 		conflictFields,
 		keptEditsOverTheirs,
@@ -215,6 +217,16 @@
 			base = formResource.initialValues;
 			store = createFormStore(schema, formResource.initialValues, formValidationMessages());
 			storeReady = true;
+			// #711: the palette's "recent records" - once the record exists, so
+			// a deleted one never lands there. Written for `scope` only (see
+			// `recordRecentRecord`).
+			if (!destroyed) {
+				recordRecentRecord(scope, {
+					resource: def.name,
+					id: parsedId,
+					title: recordTitle(def, { id: parsedId, ...formResource.initialValues })
+				});
+			}
 		}
 	}
 

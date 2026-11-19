@@ -191,8 +191,15 @@ export { createTauriEventProvider, createSseEventProvider, connectEvents } from 
 export type { SseParser } from './sse-parser';
 export { createSseParser } from './sse-parser';
 
-export type { PaletteCommand } from './commands';
+export type { PaletteCommand, PaletteSource } from './commands';
 export { searchCommands } from './commands';
+export {
+	createPaletteSourceSearch,
+	type PaletteSourceSearch,
+	type PaletteSourceSearchOptions,
+	type PaletteSourceState,
+	type PaletteSourceStatus
+} from './paletteSources.svelte';
 
 export type { ListViewSnapshot, LastEditedRecord } from './listViewState';
 export {
