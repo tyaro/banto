@@ -508,6 +508,10 @@ export class DragController {
 			const hidden = dock.layout.floating.flatMap((w) =>
 				!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
 			);
+			// The panes floated from the dock before remember their places too (#720 review):
+			// counted the same way, so they keep their old order whichever goes back first.
+			for (const [id, slot] of this.homeSlots)
+				if (id !== panelId && !findNode(dock.layout.docked, id)) hidden.push({ id, slot });
 			const slot = captureDockSlot(dock.layout.docked, panelId, hidden);
 			dock.undockPanel(panelId, geometry);
 			if (slot && dock.layout.floating.some((w) => w.id === panelId && w.open))

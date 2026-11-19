@@ -126,7 +126,10 @@ export interface HiddenDockSlot {
  * `hidden` are the panes already hidden from the dock with their slots: the
  * ones that remember the same tab group are counted among its tabs (at the
  * place their slot says), so tabs hidden one after another and shown again in
- * any order come back in their old order.
+ * any order come back in their old order. The same holds for panes hidden out
+ * of the same split: they are counted among its children (next to the
+ * neighbour their slot names), so the slot may name a hidden pane as its
+ * neighbour, with the docked ones beyond it as `anchors`.
  */
 export function captureDockSlot(
 	root: DockNode | null,
@@ -146,7 +149,7 @@ export function captureDockSlot(
 		return { kind: 'tab', groupId: parent.id, index, anchors: byDistance(ids, index) };
 	}
 	// A lone tab leaves its group too: the group is what sits in the split.
-	return unitSlot(root, parent?.type === 'tabs' ? parent : node);
+	return unitSlot(root, parent?.type === 'tabs' ? parent : node, hidden, panelId);
 }
 
 /**
@@ -162,24 +165,61 @@ export function captureRegionSlot(root: DockNode | null, regionId: string): Dock
 	return unitSlot(root, node);
 }
 
-/** The `split` / `root` slot of `unit` (a panel or tab group that is a split's child or the root). */
-function unitSlot(root: DockNode | null, unit: DockNode): DockSlot {
+/**
+ * The `split` / `root` slot of `unit` (a panel or tab group that is a split's child or the root).
+ * `hidden` (`captureDockSlot`'s, but `selfId`) remembering the same split are counted among its
+ * children, next to the neighbour their slot names (#720 review): a pane hidden next to one
+ * hidden before names that one as its neighbour, so both come back in the old order whichever is
+ * shown first. With no hidden ones this is the split's own children.
+ */
+function unitSlot(
+	root: DockNode | null,
+	unit: DockNode,
+	hidden: Iterable<HiddenDockSlot> = [],
+	selfId?: string
+): DockSlot {
 	const split = findParent(root, unit.id);
 	if (!split || split.type !== 'split') return { kind: 'root' };
-	const index = split.children.findIndex((c) => c.id === unit.id);
-	const hasNext = index + 1 < split.children.length;
-	const neighbor = split.children[hasNext ? index + 1 : index - 1];
-	const neighborIds = collectPanelIds(neighbor);
+	const own = split.children.findIndex((c) => c.id === unit.id);
+	const ids = split.children.map((c) => c.id);
+	const pending = [...hidden].filter(
+		(h) =>
+			h.id !== selfId &&
+			h.slot.kind === 'split' &&
+			h.slot.splitId === split.id &&
+			h.slot.direction === split.direction &&
+			!findNode(root, h.id)
+	);
+	for (let changed = true; changed;) {
+		changed = false;
+		for (const h of pending) {
+			const slot = h.slot as Extract<DockSlot, { kind: 'split' }>;
+			if (ids.includes(h.id)) continue;
+			const n = ids.indexOf(slot.neighborId);
+			if (n === -1) continue;
+			ids.splice(slot.side === 'before' ? n : n + 1, 0, h.id);
+			changed = true;
+		}
+	}
+	const index = ids.indexOf(unit.id);
+	const hasNext = index + 1 < ids.length;
+	const side = hasNext ? ids.slice(index + 1) : ids.slice(0, index).reverse();
+	// Nearest first: the panels on the side that touched the pane (a hidden pane stands for itself).
+	const anchors = side.flatMap((id) => {
+		const child = split.children.find((c) => c.id === id);
+		if (!child) return [id];
+		const panels = collectPanelIds(child);
+		return hasNext ? panels : panels.reverse();
+	});
 	return {
 		kind: 'split',
 		splitId: split.id,
 		direction: split.direction,
-		index,
-		neighborId: neighbor.id,
+		index: own,
+		neighborId: side[0],
 		side: hasNext ? 'before' : 'after',
-		size: split.sizes[index] ?? 1 / split.children.length,
-		// Nearest first: the neighbour's panels on the side that touched the pane.
-		anchors: hasNext ? neighborIds : neighborIds.reverse()
+		size: split.sizes[own] ?? 1 / split.children.length,
+		anchors
 	};
 }
 

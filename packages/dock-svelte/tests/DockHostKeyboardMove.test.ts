@@ -550,3 +550,123 @@ describe('the live region', () => {
 		observer.disconnect();
 	});
 });
+
+// #720 review: a focus the user took elsewhere while the app's answer waited is left alone; only
+// a dropped focus or one still on the button / in the moved pane is moved.
+describe('the focus after an answer that waited', () => {
+	/** `beforePanelChange` waits for `answer(ok)`. */
+	function waiting() {
+		let resolve!: (ok: boolean) => void;
+		const mounted = mount({ beforePanelChange: () => new Promise<boolean>((r) => (resolve = r)) });
+		return { ...mounted, answer: (ok: boolean) => resolve(ok) };
+	}
+	/** An input in the floating window `w` (another pane), focused. */
+	function inputInW(): HTMLInputElement {
+		const win = document.querySelector('[data-dock-window-id="w"]');
+		if (!win) throw new Error('no window w');
+		const input = document.createElement('input');
+		win.appendChild(input);
+		input.focus();
+		return input;
+	}
+
+	for (const ok of [false, true]) {
+		it(`${ok ? 'applied' : 'refused'}: an input in another pane focused meanwhile keeps the focus`, async () => {
+			const { dock, answer } = waiting();
+			await openWithKeyboard('tree');
+			await chooseByKeyboard('浮かせる');
+			const input = inputInW();
+			answer(ok);
+			await settle();
+			expect(dock.layout.floating.some((w) => w.id === 'tree')).toBe(ok);
+			expect(document.activeElement).toBe(input);
+		});
+
+		it(`${ok ? 'applied' : 'refused'}: a focus still on the button is moved as before`, async () => {
+			const { answer } = waiting();
+			const button = await openWithKeyboard('tree');
+			await chooseByKeyboard('浮かせる');
+			button.focus();
+			answer(ok);
+			await settle();
+			expect(document.activeElement).toBe(ok ? menuButton('tree') : button);
+			if (ok) expect(menuButton('tree')?.closest('[data-dock-window-id="tree"]')).not.toBeNull();
+		});
+	}
+
+	it('a dialog of the app inside the host keeps the focus too (stale)', async () => {
+		const { dock, answer } = waiting();
+		await openWithKeyboard('tree');
+		await chooseByKeyboard('浮かせる');
+		// Put in the host, next to its live region.
+		const dialog = document.createElement('button');
+		dialog.setAttribute('role', 'dialog');
+		document.querySelector('[aria-live="polite"]')!.parentElement!.appendChild(dialog);
+		dialog.focus();
+		dock.dockExistingAtEdge('main', 'bottom');
+		answer(true);
+		await settle();
+		expect(document.activeElement).toBe(dialog);
+	});
+});
+
+// #720 review (Codex): panes floated one after another out of the same tab group / split come back
+// in their old order whatever order they are put back in.
+describe('"back" for several panes floated out of the same place', () => {
+	const order = (dock: DockState) => collectPanelIds(dock.layout.docked);
+	function tabs(): DockState {
+		return createDockState({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.5, 0.5],
+				children: [
+					{
+						type: 'tabs',
+						id: 'g',
+						activeIndex: 0,
+						children: [panel('a'), panel('b'), panel('c')]
+					},
+					panel('d')
+				]
+			},
+			floating: []
+		});
+	}
+	function row(): DockState {
+		return createDockState({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.25, 0.25, 0.5],
+				children: [panel('a'), panel('b'), panel('c')]
+			},
+			floating: []
+		});
+	}
+
+	for (const [name, make] of [
+		['tabs [a, b, c]', tabs],
+		['split [a, b, c]', row]
+	] as const) {
+		for (const backOrder of [
+			['b', 'a'],
+			['a', 'b']
+		]) {
+			it(`${name}: float b, float a, back ${backOrder.join(' then ')} = the old order`, async () => {
+				const dock = make();
+				const before = order(dock);
+				const { host } = mount({ dock });
+				expect(await host().movePanel('b', { float: true })).toBe('applied');
+				expect(await host().movePanel('a', { float: true })).toBe('applied');
+				for (const id of backOrder)
+					expect(await host().movePanel(id, { back: true })).toBe('applied');
+				expect(order(dock)).toEqual(before);
+			});
+		}
+	}
+});

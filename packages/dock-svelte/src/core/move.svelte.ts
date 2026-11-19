@@ -14,8 +14,10 @@
  * The result is announced in the host's `aria-live="polite"` region (`announcement`), worded
  * by `DockMessages`. Focus: when the move came from the menu (`returnFocus` = its button), an
  * applied move puts the focus on the moved pane's title bar (its tab, or its menu button) and
- * anything else hands it back to the button; an API call only repairs a focus the move dropped
- * (it was in the host and is now on `<body>`).
+ * anything else hands it back to the button - only when the focus was dropped (`<body>`) or is
+ * still on the button / in the moved pane, not when it was taken elsewhere while the app's answer
+ * waited; an API call only repairs a focus the move dropped (it was in the host and is now on
+ * `<body>`).
  *
  * No keyboard shortcut is bound (plan §9 Q5): the menu is the keyboard path.
  */
@@ -277,13 +279,36 @@ export class PanelMover {
 				outcome === 'applied'
 					? (titleBarFocusTarget(host, panelId) ?? back)
 					: (back ?? titleBarFocusTarget(host, panelId));
-			// A focus the app moved meanwhile (outside the host, e.g. its own dialog) is left alone.
-			if (to && (dropped || host.contains(now))) to.focus();
+			// Only a focus the move dropped, or one still where the user started (the button, the
+			// moved pane), is moved: one the user / app took elsewhere while the answer waited (an
+			// input in another pane, a dialog in or outside the host) is left alone (#720 review).
+			const stayed = now === options.returnFocus || (!!now && paneHolds(panelId, now));
+			if (to && (dropped || stayed)) to.focus();
 		} else if (focusWasInHost && dropped) {
 			titleBarFocusTarget(host, panelId)?.focus();
 		}
 		return outcome;
 	}
+}
+
+/**
+ * Whether `el` is in the pane `panelId` (#663 ④): its floating window, its docked frame, its
+ * tab, or the content of a tab group whose selected tab it is.
+ */
+function paneHolds(panelId: string, el: Element): boolean {
+	if (el.closest('[data-dock-window-id]')?.getAttribute('data-dock-window-id') === panelId)
+		return true;
+	const tab = el.closest('[data-dock-tab-id]');
+	if (tab) return tab.getAttribute('data-dock-tab-id') === panelId;
+	const frame = el.closest('[data-dock-drop-id]');
+	if (!frame) return false;
+	if (frame.getAttribute('data-dock-drop-id') === panelId) return true;
+	return [...frame.querySelectorAll('[role="tab"][data-dock-tab-id]')].some(
+		(t) =>
+			t.getAttribute('data-dock-tab-id') === panelId &&
+			t.getAttribute('aria-selected') === 'true' &&
+			t.closest('[data-dock-drop-id]') === frame
+	);
 }
 
 /**
