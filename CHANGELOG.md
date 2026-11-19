@@ -34,6 +34,26 @@
 
 - `@banto/admin-core` の `createHttpUiSettings` / `createTauriUiSettings` の `set` をキーごとに直列化（#707）。送信中の書き込みは 1 本だけにし、送信中に来た値は最後の 1 つだけ控えて送り（間の値は送らない）、`get` はそのキーの書き込みが済むまで待つ。HTTP は、受け付け時と送信直前でトークンが違えば送らずに捨てる。Tauri は `createTauriUiSettings` に `getSessionRevision`（省略可。テンプレートは `authProvider.credentialRevision()` を渡す）を渡すと、セッションが替わったとき控えた書き込みを捨てる。セッションが替わった・トークンが無い書き込みは、送らずに `unauthorized` で reject する（従来の 401 と同じ結果。`createSavedSetting` は保存済みにしない）。派生アプリは `createTauriUiSettings` に `getSessionRevision: () => authProvider.credentialRevision()` を渡すこと。export の削除・改名は無い（型は `TauriUiSettingsOptions` に省略可能な `getSessionRevision` を足しただけ）。
 
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `8e76b322`、`workflow_dispatch`）: [run 44446534428](https://github.com/tyaro/banto/actions/runs/44446534428)（success）。
+  - タグの push（`v7.8.0`、main の `8e76b322`）: [run 44446751890](https://github.com/tyaro/banto/actions/runs/44446751890)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。ただし Node.js だけは、タグの前の run の `npm`（Git deps → dev + Playwright → check → build）ジョブが 24.22.3、ほかのジョブは 24.22.2（タグの push の run は全ジョブ 24.22.2）。
+
+    | 項目               | 版                                |
+    | ------------------ | --------------------------------- |
+    | Node.js            | 24.22.2（一部のジョブは 24.22.3） |
+    | pnpm               | 10.33.0                           |
+    | Svelte             | 5.57.3                            |
+    | SvelteKit          | 3.2.0                             |
+    | Vite               | 8.3.8                             |
+    | vite-plugin-svelte | 7.3.1                             |
+    | TypeScript         | 6.0.3                             |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09）   |
+
+  - 出所: Node.js は `node: v24.22.2`（タグの前の run の `npm` ジョブは `node: v24.22.3`）、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.3` など）、Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
+
 ## [7.7.0] - 2026-11-19
 
 **v7.7.0 — `@banto/dock-svelte` のドッキング操作の作り直し（#694: 外周へのドッキング、十字のガイドとボタンの上で離したときだけドッキング、位置固定を錠へ、ピン = 区画を自動で隠す）、ロールとは別にユーザーへ個別に付ける権限（#697: `user_permissions`・migration 0013・管理画面・ログイン不要モードの入口・recipe と ADR-0031）、テーマを試せる `/theme-lab`（#690）、グリッドの行高の密度への追従（#692）。** 版の種類: minor（機能追加と追加の migration。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（`packages/dock-svelte/src/index.ts` の export は移動しただけで消えていない。`isPinned` / `setPinned` / `FloatingWindow.pinned` / `messages.pinWindow` / `unpinWindow` は非推奨の別名として残り、旧名のまま動く）。公開の型へのフィールド追加（`DockPanelChange` の `auto-hide`、`DockMessages` のキー）はソース互換の破壊になりうるが、規約の運用上の例外（docs/publishing.md「バージョニング規約」）により minor + 消費側への注意とした。migration 0013 は新しい表を足すだけで、既存の列・行を変えない（追加の migration = minor + 適用手順の注意）。
