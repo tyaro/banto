@@ -29,13 +29,20 @@ env:
 jobs:
   # 基準画像だけの作り直しの再実行で、重いジョブを飛ばすかを決める。
   # 流れ: PR の CI → visual-baselines.yml（commit: true、bot の push では CI が
-  # 走らない）→ 人が push し直す → CI がもう一度走る。この 2 回目で、PR の head
-  # の祖先（first-parent、最大 10 個）のうち「同じ PR・同じ base で ci.yml の run
-  # が成功した」もっとも近いコミットからの差分が `e2e/visual/**/*-snapshots/*.png`
-  # だけなら full=false にし、E2E (visual + axe-core) 以外を飛ばす。
-  # 安全側: pull_request 以外・fork・API や git の失敗・該当 run なし（force-push
-  # で履歴が変わった場合を含む）・base の変化・それ以外のパスの差分は、どれも
-  # full=true（従来どおり全部走らせる）。判定の理由はログに出す。
+  # 走らない）→ 人が push し直す → CI がもう一度走る。
+  # 記録: 各 run は、実際に checkout した merge commit（refs/pull/N/merge）の親
+  # （HEAD^1 = 検証した base、HEAD^2 = 検証した head）と full を artifact
+  # `ci-verified-base` に残す。REST の pull_requests[].base.sha は使わない
+  # （merge commit の base 親と一致する保証が無いため）。
+  # 判定: head の祖先（first-parent、最大 10 個）を近い順に見て、ci.yml の run が
+  # 成功（= 全ジョブ成功）し、その記録が full=true・記録した head がそのコミット・
+  # 記録した base が今の HEAD^1 と一致するもっとも近いものを基準にする。基準からの
+  # 差分が `e2e/visual/**/*-snapshots/*.png` だけなら full=false にし、
+  # E2E (visual + axe-core) 以外を飛ばす。飛ばした run の記録は full=false なので
+  # 次の基準にはならない（全部走って成功した run だけが基準）。
+  # 安全側: pull_request 以外・fork・API / git / artifact の失敗・記録なし・
+  # base の不一致（旧 base で成功 → main が進む → 基準画像だけ、を含む）・
+  # それ以外のパスの差分は、どれも full=true。判定の理由はログに出す。
   # 注意: Rust は matrix なので job ごと飛ばすとチェック名が必須チェック
   # 「Rust (…) (ubuntu-latest)」等と合わなくなる。そのため job は起動して
   # ステップだけ飛ばす。ほかのジョブは skipped（= 成功扱い）でよい。
@@ -50,12 +57,13 @@ jobs:
     outputs:
       full: ${{ steps.decide.outputs.full }}
     steps:
-      - name: Checkout PR head
+      # 既定の ref（pull_request では refs/pull/N/merge）= ほかのジョブが検証する
+      # merge commit と同じものを取る。
+      - name: Checkout merge commit
         if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 11
+          fetch-depth: 12
           persist-credentials: false
 
       - name: Decide
@@ -65,29 +73,50 @@ jobs:
           EVENT: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RECORD_DIR: ${{ runner.temp }}/ci-verified-base
         run: |
-          full() { echo "判定: 全部走らせる（$1）"; echo "full=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          mkdir -p "$RECORD_DIR"
+          record() { # 検証した merge commit の親と full を残す（取れなければ残さない）
+            [ -n "${VBASE:-}" ] && [ -n "${VHEAD:-}" ] || return 0
+            printf 'base=%s\nhead=%s\nfull=%s\n' "$VBASE" "$VHEAD" "$1" > "$RECORD_DIR/record.txt"; echo "recorded=true" >> "$GITHUB_OUTPUT"
+          }
+          full() { echo "判定: 全部走らせる（$1）"; record true; echo "full=true" >> "$GITHUB_OUTPUT"; exit 0; }
           [ "$EVENT" = pull_request ] || full "pull_request 以外: $EVENT"
+          VBASE=$(git rev-parse HEAD^1) && VHEAD=$(git rev-parse HEAD^2) || { VBASE=""; VHEAD=""; full "merge commit の親が取れない"; }
+          echo "検証する merge commit: base=$VBASE head=$VHEAD"
           [ "$HEAD_REPO" = "$REPO" ] || full "fork からの PR"
-          ancestors=$(git rev-list --first-parent --max-count=11 "$HEAD_SHA" | tail -n +2) || full "git rev-list に失敗"
-          base=""
+          ancestors=$(git rev-list --first-parent --max-count=11 "$VHEAD" | tail -n +2) || full "git rev-list に失敗"
+          ref=""
           for c in $ancestors; do
-            n=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$c&event=pull_request&status=success&per_page=50" \
-              --jq "[.workflow_runs[] | select(any(.pull_requests[]; .number == $PR_NUMBER and .base.sha == \"$BASE_SHA\"))] | length") \
-              || full "workflow run の取得に失敗"
-            if [ "$n" -gt 0 ]; then base=$c; break; fi
+            ids=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$c&event=pull_request&status=success&per_page=20"               --jq '.workflow_runs[].id') || full "workflow run の取得に失敗"
+            for id in $ids; do
+              d="$RUNNER_TEMP/rec-$id"
+              if ! gh run download "$id" -R "$REPO" -n ci-verified-base -D "$d" >/dev/null 2>&1; then
+                echo "run $id（$c）: 記録なし"; continue
+              fi
+              rb=$(sed -n 's/^base=//p' "$d/record.txt"); rh=$(sed -n 's/^head=//p' "$d/record.txt"); rf=$(sed -n 's/^full=//p' "$d/record.txt")
+              if [ "$rf" != true ]; then echo "run $id（$c）: 一部を飛ばした run なので基準にしない"; continue; fi
+              if [ "$rh" != "$c" ]; then echo "run $id（$c）: 記録した head が $rh で不一致"; continue; fi
+              if [ "$rb" != "$VBASE" ]; then echo "run $id（$c）: 検証した base が $rb で今の $VBASE と不一致"; continue; fi
+              ref=$c; echo "基準: run $id（head $c、base $rb、全部成功）"; break 2
+            done
           done
-          [ -n "$base" ] || full "直近 10 コミットに、同じ PR・同じ base で CI が成功したコミットが無い"
-          echo "基準: $base（CI 成功）→ head: $HEAD_SHA"
-          files=$(git diff --no-renames --name-only "$base" "$HEAD_SHA") || full "git diff に失敗"
+          [ -n "$ref" ] || full "直近 10 コミットに、同じ base を全部検証して成功した run の記録が無い"
+          files=$(git diff --no-renames --name-only "$ref" "$VHEAD") || full "git diff に失敗"
           echo "差分のファイル:"; echo "${files:-（なし）}"
           other=$(printf '%s\n' "$files" | grep -v -E '^$|^e2e/visual/(.+/)?[^/]+-snapshots/[^/]+\.png$' || true)
           [ -z "$other" ] || full "基準画像以外の差分あり: $(printf '%s' "$other" | head -n 3 | tr '\n' ' ')"
           echo "判定: 基準画像だけの差分。E2E (visual + axe-core) 以外を飛ばす"
+          record false
           echo "full=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified base record
+        if: always() && steps.decide.outputs.recorded == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-verified-base
+          path: ${{ runner.temp }}/ci-verified-base/record.txt
+          retention-days: 7
 
   frontend:
     name: Frontend (check / test / build)

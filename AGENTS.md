@@ -126,7 +126,8 @@ CI は `.github/workflows/ci.yml` の各ジョブ（frontend / i18n-offline / ru
 storage-postgres / app-postgres / e2e / audit）に加えて、週次+トリガ型の
 `template-acceptance.yml`（copy→rename→check + scaffold 4プリセットの受け入れ）、
 `visual-baselines.yml`（Linux visual ベースライン再生成、dispatch。`commit: true` の
-あと push し直した CI は、前回 CI が通ったコミットからの差分が基準画像だけなら
+あと push し直した CI は、同じ base（merge commit の親）を全部検証して通った run の
+記録からの差分が基準画像だけなら
 ci.yml の `changes` ジョブの判定で e2e-visual 以外を飛ばす）、
 `external-consumer.yml`（外部利用 fixture: `@banto/*`・`banto-*` を Git 依存で導入して
 dev 起動・描画・check・build・cargo check。packages/crates を触る PR・タグ・dispatch、
