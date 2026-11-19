@@ -769,23 +769,28 @@ describe('slot memory: every hide order x every show order comes back to the old
 			const ks = [2, 3, 4].filter((k) => k <= n && (n <= 4 || k <= 3));
 			for (const k of ks) {
 				for (const hidden of subsets(ids, k)) {
-					it(`${kind} [${ids.join(',')}] hide ${hidden.join(',')} (every order x every order)`, () => {
-						const want = JSON.stringify(shapeOf(make(ids)));
-						const failures: string[] = [];
-						for (const hideOrder of permutations(hidden)) {
-							for (const showOrder of permutations(hidden)) {
-								const dock = createDockState(
-									{ version: 2, floating: [], docked: make(ids) },
-									counterMakeId()
-								);
-								for (const id of hideOrder) dock.dismiss(id);
-								for (const id of showOrder) dock.show(id);
-								const got = JSON.stringify(shapeOf(dock.layout.docked));
-								if (got !== want) failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
+					// Up to 4! x 4! runs: an explicit timeout for a slow CI runner (2-3 times slower).
+					it(
+						`${kind} [${ids.join(',')}] hide ${hidden.join(',')} (every order x every order)`,
+						{ timeout: 60_000 },
+						() => {
+							const want = JSON.stringify(shapeOf(make(ids)));
+							const failures: string[] = [];
+							for (const hideOrder of permutations(hidden)) {
+								for (const showOrder of permutations(hidden)) {
+									const dock = createDockState(
+										{ version: 2, floating: [], docked: make(ids) },
+										counterMakeId()
+									);
+									for (const id of hideOrder) dock.dismiss(id);
+									for (const id of showOrder) dock.show(id);
+									const got = JSON.stringify(shapeOf(dock.layout.docked));
+									if (got !== want) failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
+								}
 							}
+							expect(failures).toEqual([]);
 						}
-						expect(failures).toEqual([]);
-					});
+					);
 				}
 			}
 		}
@@ -868,23 +873,28 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 		// #727: every pane too (k = n), and every hide order (an inner pane before the outer sibling).
 		for (let k = 2; k <= ids.length; k++) {
 			for (const hidden of subsets(ids, k)) {
-				it(`${name} hide ${hidden.join(',')} (every order x every order)`, () => {
-					const want = JSON.stringify(shapeOf(make()));
-					const failures: string[] = [];
-					for (const hideOrder of permutations(hidden)) {
-						for (const showOrder of permutations(hidden)) {
-							const dock = createDockState(
-								{ version: 2, floating: [], docked: make() },
-								counterMakeId()
-							);
-							for (const id of hideOrder) dock.dismiss(id);
-							for (const id of showOrder) dock.show(id);
-							const got = JSON.stringify(shapeOf(dock.layout.docked));
-							if (got !== want) failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
+				// Up to 5! x 5! runs (7-9 s on CI): an explicit timeout, as for the walks below.
+				it(
+					`${name} hide ${hidden.join(',')} (every order x every order)`,
+					{ timeout: 60_000 },
+					() => {
+						const want = JSON.stringify(shapeOf(make()));
+						const failures: string[] = [];
+						for (const hideOrder of permutations(hidden)) {
+							for (const showOrder of permutations(hidden)) {
+								const dock = createDockState(
+									{ version: 2, floating: [], docked: make() },
+									counterMakeId()
+								);
+								for (const id of hideOrder) dock.dismiss(id);
+								for (const id of showOrder) dock.show(id);
+								const got = JSON.stringify(shapeOf(dock.layout.docked));
+								if (got !== want) failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
+							}
 						}
+						expect(failures).toEqual([]);
 					}
-					expect(failures).toEqual([]);
-				});
+				);
 			}
 		}
 	}
@@ -1042,7 +1052,8 @@ const L = {
 			panel('c'),
 			panel('d')
 		]),
-	// Codex P2 on #732: four splits deep, so a slot's `outer` chain is cut at `MAX_SLOT_DEPTH`.
+	// Codex P2 on #732: four splits deep (a slot's `outer` chain was cut here when `MAX_SLOT_DEPTH`
+	// was 4).
 	'column[row[a,column[row[b,c],d]],e]': () =>
 		splitNode('s', 'column', [
 			splitNode('r1', 'row', [
@@ -1087,7 +1098,8 @@ const L = {
 			splitNode('c1', 'column', [tabsNode('t1', ['a', 'b']), panel('c')]),
 			splitNode('c2', 'column', [panel('d'), tabsNode('t2', ['e', 'f'])])
 		]),
-	// A tab group five containers deep: its last tab's `outer` chain is cut at `MAX_SLOT_DEPTH`.
+	// A tab group five containers deep (its last tab's `outer` chain was cut when `MAX_SLOT_DEPTH`
+	// was 4, and the tab opened floating).
 	'column[row[a,column[row[tabs[b,c],x],d]],e]': () =>
 		splitNode('s', 'column', [
 			splitNode('r1', 'row', [
@@ -1098,6 +1110,18 @@ const L = {
 				])
 			]),
 			panel('e')
+		]),
+	// A tab group five containers deep the other way round (cut, too, when the limit was 4).
+	'row[a,column[b,row[c,column[tabs[d,e],f]]]]': () =>
+		splitNode('s', 'row', [
+			panel('a'),
+			splitNode('c1', 'column', [
+				panel('b'),
+				splitNode('r', 'row', [
+					panel('c'),
+					splitNode('c2', 'column', [tabsNode('t', ['d', 'e']), panel('f')])
+				])
+			])
 		])
 } satisfies Record<string, () => DockNode>;
 
@@ -1168,13 +1192,23 @@ describe('slot memory: regressions found by walking every sequence (#721)', () =
 	}
 });
 
-// Codex P2 on #732: b's slot names `r2`, and the chain of the splits around it (c1, r1, s) is cut at
-// `MAX_SLOT_DEPTH` before the root. The place of `s` that another hidden pane (a) remembers is
+// Codex P2 on #732: b's slot names `r2`, and the chain of the splits around it (c1, r1, s) was cut at
+// `MAX_SLOT_DEPTH` (4 then; 8 now) before the root. The place of `s` that another hidden pane (a) remembers is
 // still b's place: b goes back into the row, not floating. (main of 243958c5 does not bring this one
 // back either; the main before #727 did.)
-it('column[row[a,column[row[b,c],d]],e]: -a -e -c -d -b +d +b +e +c +a -> the old shape (an outer chain cut at the depth limit)', () => {
+it('column[row[a,column[row[b,c],d]],e]: -a -e -c -d -b +d +b +e +c +a -> the old shape (an outer chain four splits deep)', () => {
 	const make = L['column[row[a,column[row[b,c],d]],e]'];
 	const dock = runSteps(make, '-a -e -c -d -b +d +b +e +c +a'.split(' '));
+	expect(dock.layout.floating).toEqual([]);
+	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
+});
+
+// Codex P2 on #732 (the third one): the last tab c of a tab group five containers deep. Its chain
+// (t, r2, c1, r1) was cut at `MAX_SLOT_DEPTH` (4 then) at a split that is gone, so c opened
+// floating; with the limit at 8 it goes back beside e, and the rest follow.
+it('column[row[a,column[row[tabs[b,c],x],d]],e]: -a -b -x -d -c +c +d +x +b +a -> the old shape (a chain five containers deep)', () => {
+	const make = L['column[row[a,column[row[tabs[b,c],x],d]],e]'];
+	const dock = runSteps(make, '-a -b -x -d -c +c +d +x +b +a'.split(' '));
 	expect(dock.layout.floating).toEqual([]);
 	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 });
@@ -1198,12 +1232,13 @@ describe('slot memory: every hide order then every show order (merged states)', 
 		['row[b,c,column[tabs[d,e],tabs[f,g]]]', 'all'],
 		['row[a,column[b,row[tabs[c,d],e]]]', 'all'],
 		['column[row[a,tabs[b,c]],tabs[d,e],f]', 'all'],
-		['row[column[tabs[a,b],c],column[d,tabs[e,f]]]', 'all']
-		// Not here: `column[row[a,column[row[tabs[b,c],x],d]],e]` (a tab group five containers
-		// deep). With every pane but e hidden, the last tab's chain (t, r2, c1, r1) is cut at
-		// `MAX_SLOT_DEPTH` at a split that is gone, and `restoreDockSlot` has nothing to go on with:
-		// the tab opens floating (`-a -b -x -d -c +c ...`), where main puts it beside e. Open
-		// (#727 follow-up); the walk above (up to 8 steps) has it.
+		['row[column[tabs[a,b],c],column[d,tabs[e,f]]]', 'all'],
+		// A tab group five containers deep. With `MAX_SLOT_DEPTH` at 4, the last tab's chain
+		// (t, r2, c1, r1) was cut at a split that is gone, and `restoreDockSlot` had nothing to go
+		// on with: the tab opened floating (`-a -b -x -d -c +c ...`), where main puts it beside e.
+		// The limit is 8 now (#727).
+		['column[row[a,column[row[tabs[b,c],x],d]],e]', 'all'],
+		['row[a,column[b,row[c,column[tabs[d,e],f]]]]', 'all']
 	];
 	for (const [name, want] of cases) {
 		it(

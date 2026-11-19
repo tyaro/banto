@@ -52,7 +52,7 @@ import type { DockNode, DockPanelNode, DockSlot, DockSplitNode, DockTabGroupNode
  * How deep a slot may be: the slot itself and its `outer` chain (#727 nests `outer`). `validate.ts`
  * rejects a saved slot deeper than this; `captureDockSlot` never writes one.
  */
-export const MAX_SLOT_DEPTH = 4;
+export const MAX_SLOT_DEPTH = 8;
 
 /** The smallest / largest share a restored pane takes of the space it splits (keeps both sides visible). */
 const MIN_SHARE = 0.05;

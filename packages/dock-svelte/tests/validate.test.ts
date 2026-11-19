@@ -47,9 +47,10 @@ function codes(value: unknown): string[] {
 }
 
 describe('validateDockLayout: accepted inputs', () => {
-	// #727 / Codex P2 on #732: a slot and its `outer` chain at most `MAX_SLOT_DEPTH` (4) deep. A
+	// #727 / Codex P2 on #732: a slot and its `outer` chain at most `MAX_SLOT_DEPTH` (8) deep. A
 	// chain cut there ends at a split slot without `outer` (the place of the gone split is not
-	// kept) - the shape `captureDockSlot` makes four splits deep.
+	// kept) - the shape `captureDockSlot` makes eight splits deep. A slot saved when the limit
+	// was 4 (four deep or less) still reads.
 	const splitSlot = (id: string, outer?: unknown) => ({
 		kind: 'split',
 		splitId: id,
@@ -61,15 +62,28 @@ describe('validateDockLayout: accepted inputs', () => {
 		anchors: ['x'],
 		...(outer === undefined ? {} : { outer })
 	});
-	it('accepts a dockSlot four deep that ends at a cut split, not five deep', () => {
+	// `n` split slots, the innermost one first, ending at `last` (a cut chain when undefined).
+	const chain = (n: number, last?: unknown): unknown => {
+		let s = last;
+		for (let i = n - 1; i >= 0; i--) s = splitSlot(`s${i}`, s);
+		return s;
+	};
+	it('accepts a dockSlot eight deep that ends at a cut split, not nine deep', () => {
+		expect(validateDockLayout(layoutOf([win('b', { dockSlot: chain(8) })])).ok).toBe(true);
+		const withRoot = chain(7, { kind: 'root' });
+		expect(validateDockLayout(layoutOf([win('b', { dockSlot: withRoot })])).ok).toBe(true);
+		for (const nine of [chain(9), chain(8, { kind: 'root' })]) {
+			const r = validateDockLayout(layoutOf([win('b', { dockSlot: nine })]));
+			expect(r.ok).toBe(false);
+			if (!r.ok) expect(r.issues).toContainEqual({ code: 'shape', path: 'floating[0].dockSlot' });
+		}
+	});
+
+	it('still accepts a dockSlot saved when the limit was four deep', () => {
 		const four = splitSlot('r2', splitSlot('c1', splitSlot('r1', splitSlot('s'))));
 		expect(validateDockLayout(layoutOf([win('b', { dockSlot: four })])).ok).toBe(true);
 		const withRoot = splitSlot('c1', splitSlot('r1', splitSlot('s', { kind: 'root' })));
 		expect(validateDockLayout(layoutOf([win('b', { dockSlot: withRoot })])).ok).toBe(true);
-		const five = splitSlot('r2', withRoot);
-		const r = validateDockLayout(layoutOf([win('b', { dockSlot: five })]));
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.issues).toContainEqual({ code: 'shape', path: 'floating[0].dockSlot' });
 	});
 
 	it('accepts a normal v2 layout with a docked tree', () => {
