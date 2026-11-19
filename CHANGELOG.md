@@ -22,24 +22,91 @@
 
 ## [Unreleased]
 
-### 追加: テーマを試せるページ `/theme-lab`（#690、洗練案 E-3）
+## [7.7.0] - 2026-11-19
+
+**v7.7.0 — `@banto/dock-svelte` のドッキング操作の作り直し（#694: 外周へのドッキング、十字のガイドとボタンの上で離したときだけドッキング、位置固定を錠へ、ピン = 区画を自動で隠す）、ロールとは別にユーザーへ個別に付ける権限（#697: `user_permissions`・migration 0013・管理画面・ログイン不要モードの入口・recipe と ADR-0031）、テーマを試せる `/theme-lab`（#690）、グリッドの行高の密度への追従（#692）。** 版の種類: minor（機能追加と追加の migration。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（`packages/dock-svelte/src/index.ts` の export は移動しただけで消えていない。`isPinned` / `setPinned` / `FloatingWindow.pinned` / `messages.pinWindow` / `unpinWindow` は非推奨の別名として残り、旧名のまま動く）。公開の型へのフィールド追加（`DockPanelChange` の `auto-hide`、`DockMessages` のキー）はソース互換の破壊になりうるが、規約の運用上の例外（docs/publishing.md「バージョニング規約」）により minor + 消費側への注意とした。migration 0013 は新しい表を足すだけで、既存の列・行を変えない（追加の migration = minor + 適用手順の注意）。
+派生アプリへの影響: 依存のタグを `v7.6.0` から `v7.7.0` に上げて型エラーになりうるのは、公開の union に足した種類を網羅検査しているアプリ（`DockPanelChange` の `auto-hide`。分岐を足せば通る）と、`Required<DockMessages>` を自前で全部埋めているアプリ（増えたキーを足す）。下の A. 消費側への注意 1・2。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v7.6.0` → `v7.7.0`（npm と Rust を同じタグに）。API の削除・改名は無い。追加: dock-svelte（外周ドッキング・十字のガイド・錠・自動で隠す・`DockPanelChange` の `auto-hide`・`DockMessages` のキー）、grid-svelte（行高の追従）、`banto-admin-services`・`banto-server`（権限の型・関数・ガード）。ドラッグの既定の挙動と、ピンの意味が変わる。visual の基準画像の再生成が要る。 |
+| B. コピーしたテンプレート        | あり | `/theme-lab` ページ、ユーザー管理の権限の欄、設定 > セキュリティの権限の欄、`authAdmin.ts`・`usersAdmin.ts`、`permission_catalog()`、Tauri の `permissions_catalog` ほか、辞書。取り込みは任意（下の B）。権限を登録しなければ見た目も判定も変わらない。                                                                                                                        |
+| C. DB・設定・配布資産            | あり | **migration 0013（`user_permissions` 表、SQLite・PostgreSQL）が増える**。起動時に自動適用。設定キー `auth.disabled_permissions` の追加。応答 JSON に `permissions`・`disabledPermissions` が増える。`tauri.conf.json` は版数のみ。`.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続。                                                                                   |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/dock-svelte`・`@banto/grid-svelte`・`banto-admin-services`・`banto-server`（ほかのパッケージ・クレートは版数のみ）。
+- 更新: `v7.6.0` → `v7.7.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。権限は登録しなければ判定も見た目も変わらない）:
+  - dock-svelte: 外周ドッキング（`dockPanelAtEdge` ほか）、十字のガイドとボタン（`crossButtons` ほか）、能力 `dropCenter`・`dropSplit`・`autoHide`、錠（`isLocked` / `setLocked`・`FloatingWindow.locked`）、自動で隠す（`autoHidden`・`autoHidePanel` / `pinPanel` ほか）、`DockPanelChange` の `auto-hide`、文言 `lockWindow` / `unlockWindow` / `autoHidePane` / `pinPane` / `autoHideBand`。
+  - grid-svelte: `BantoGrid` の行高がテーマの密度（`--banto-grid-row-height`）に追従する。`GridState.rowHeightFixed`・`followThemeRowHeight(px)`（`rowHeight` は以前から読み取り専用で、getter に変わっただけ）。
+  - banto-admin-services: `permissions` モジュール（`PermissionKey`・`PermissionCatalog`・`SessionPermissions` ほか）、`UsersService` と `SettingsService` の権限の関数。banto-server: `PermissionGuard` / `require_permission`、`AuthState::with_permission_reader` ほか。既存の公開の型にフィールドは足していない（構造体リテラルで組み立てているコードもそのままコンパイルできる）。
+- 挙動の変化:
+  - **ドラッグ**: 区画の上でも**ボタン（十字・外周）の上で離したときだけドッキング**する。ボタンの外で離すと浮動になる（docked の pane は undock。`undock: false` なら何も起きない）。以前は端 25% の帯・中央付近へ落とせばドッキングしたので、その操作はボタンへ落とすように変わる。キーボードだけでドッキングする口は無い。
+  - **ピンの意味**: 浮動 window の「位置と大きさの固定」は錠（🔓／🔒）に替わり、ピン（📌）はドッキング中の区画を**自動で隠す**ボタンになった。位置固定の API は `isLocked` / `setLocked` / `locked`。旧名の `isPinned` / `setPinned` / `FloatingWindow.pinned` / `messages.pinWindow` / `unpinWindow` は非推奨の別名で、動く（次の major で消す）。`setPinned` は「位置固定」のままで、自動で隠すものではない。
+  - 保存の形: 固定した window は `locked: true` で書き出す（古い JSON の `pinned: true` は `locked: true` として読む）。この版の JSON を古い版で読むと、固定は外れ、隠した区画（`autoHidden`）は消えて読まれる（読み込みは失敗しない。`version` は 2 のまま）。
+- 移行注意（ソース互換の破壊）: 公開の型にフィールド・種類を足した。`DockPanelChange` の `auto-hide`、`DockMessages` のキー（下の 1・2）。
+- 消費側への注意（確かめるもの）:
+  1. **`DockPanelChange` を `switch (change.kind)` で網羅しているアプリ**（`never` への代入など）: `{ kind: 'auto-hide'; panelId; to: 'band' | 'tree'; remount: true }` の分岐を足す（区画の中で中身を描いている pane が、自動で隠す・戻すで作り直されることを表す。`capture` して進めればよい）。
+  2. **`Required<DockMessages>` を自前で全部埋めているアプリ**: 増えたキー `lockWindow` / `unlockWindow` / `autoHidePane` / `pinPane` / `autoHideBand` を足す。
+  3. **`beforePanelChange` を渡しているアプリ**: 外周ドッキングで包まれて作り直される pane の `reparent` を先に聞く。自動で隠す・戻すときは `auto-hide` を聞く（引き出す・引っ込めるは聞かない）。
+  4. **`setPinned` / `isPinned` を位置固定の意味で使っているアプリ**: 動くが非推奨。`setLocked` / `isLocked` に替える。「ピン = 自動で隠す」の入口は `autoHidePanel` / `pinPanel`。
+  5. **ドラッグでのドッキングを前提にした E2E・手順**: ボタンの上で離す操作に直す。
+  6. **`rowHeight` を渡していない `BantoGrid` / `GridState`**: 行の高さがテーマの密度に追従する（compact 32px・touch 52px）。これまでどおり 36px に固定したいときは、prop か option で `rowHeight` を渡す。
+  7. **visual の基準画像（Linux で生成）**: dashboard（分析ワークスペース）と command-palette を写すものは再生成が要る（下の「更新後の確認」）。
+- 依存を上げずに留まれるか: できる（`v7.6.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 変更あり（取り込みは任意。取り込まなくても動く。権限を登録しなければ、取り込んでも欄は出ない）:
+  - ユーザー管理の編集パネルの権限の欄（カタログが空なら出ない）、設定 > セキュリティの「ログイン不要モードの権限」の欄、型 `UserPermission`・`PermissionEntry`（`lib/banto/authAdmin.ts`）、`listPermissionCatalog`（`usersAdmin.ts`）、`sessionStore.hasPermission`、監査ログの `permissions` の追加・削除の表示、辞書（`common.permissions`・`users.permissions*`・`resource.changesAdded` / `changesRemoved`）。
+  - `admin_template_core::permission_catalog()`（空のカタログ。banto-serve と Tauri の両方が呼ぶ）、`src-tauri/src/lib.rs` の `permissions_catalog`・`users_update` / `auth_config_apply` の `permissions?`・`require_permission`・`session_permissions`。
+  - デモビルドのページ `/theme-lab`（`themeLab.ts`・`ThemeLabCharts.svelte`、`navigation.ts` の `demoOnly`）。
+  - ダッシュボードの初回の既定配置の判定（帯にだけ pane がある保存済みの配置を空と見なさない）。
+- 取り込む手順: ① 依存を `v7.7.0` に上げる。② 権限を使う派生アプリは [add-permission](docs/recipes/add-permission.md) の手順（カタログに登録、message key を辞書に足す、`PermissionGuard`・`require_permission` を両経路に置く）。使わないなら上の差分の取り込みは任意。③ ユーザー管理を外している（display）派生アプリは `routes/(app)/users/` ごと外れているので権限の欄は要らない（型 `UserPermission`・`PermissionEntry` は `authAdmin.ts` に 1 か所なので残る）。④ scaffold を使う派生アプリは `scripts/scaffold.mjs` を取り込み（`/theme-lab` のチャート部分の印と remover が変わった）、4 プリセットの `pnpm scaffold --dry-run` を通す。⑤ visual の基準画像を再生成する。
+- 詳しい手順と確認項目は [upgrading.md の例 7](docs/upgrading.md)。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: **0013 `user_permissions`（SQLite・PostgreSQL の両方）が増える**。新しい表を足すだけで、既存の列・行は変えない（`users` の削除で `ON DELETE CASCADE`）。起動時に自動適用される。**戻せる条件**: マイグレーションは前進のみ（down は無い）。戻すには、適用前のバックアップを復元し、旧版のバイナリで起動する。戻せる境界は「新版を本番 DB で最初に起動するまで」（[upgrading.md 4 節](docs/upgrading.md)）。0013 より前のバックアップを戻しても、起動時に表ができる。本番 DB の前に、検証用のコピーで起動して 0013 が当たることを確かめる。
+- 応答の形（JSON、フィールドの追加のみ。古いクライアントは読み飛ばす）: `GET /api/users`・`PUT /api/users/{id}`・`GET /api/auth/identity`、Tauri の `users_list`・`users_update`・`auth_identity`・`auth_resolve` の応答に `permissions`。Tauri の `auth_config_get` / `auth_config_apply` の応答に `disabledPermissions`（登録済みのキーだけ。Rust の `AuthSettings` は変えず、応答用の別の型）。新しい口: `GET /api/permissions`（Admin）、`PUT /api/users/{id}` の `permissions?`、Tauri の `permissions_catalog`。
+- 設定キー: `auth.disabled_permissions`（ログイン不要モードの権限。既定は無し）。`tauri.conf.json` は版数のみ。
+- 配布物: 変更なし。
+- 依存監査: `.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続（下の「セキュリティ」）。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm verify:architecture`（rule 8 に権限のガードの対が加わる）/ `pnpm dev`（画面が描画される）。`DockPanelChange` を switch で網羅しているアプリは `auto-hide` を足してから型検査を通す。
+2. dock-svelte を使う画面: ドラッグ中に十字・外周のボタンが出て、ボタンの上で離したときだけドッキングし、外で離すと浮動になること。錠で位置が固定されること。区画のピンで帯へ畳まれ、帯のタブで引き出せること。
+3. 権限を登録したアプリは、ユーザー編集で付け外しでき、持たないユーザー（Admin を含む）の操作が 403 になり、監査に `permissions` の追加・削除と `denied` が残ること。
+4. 起動時に migration 0013 が当たること（検証用のコピーで）。
+5. visual の基準画像（Linux で生成）の再生成が要る: dashboard・command-palette（基準画像は Linux で生成する。作業機に Docker / WSL が無ければ visual-baselines の workflow を dispatch して再生成）。
+6. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
+
+### セキュリティ
+
+- **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）の `.cargo/audit.toml` での一時的な除外は、この版でも継続している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けない。外す合図は、libsqlite3-sys 0.39 以上を許す sqlx のリリース（`cargo update -p libsqlite3-sys` で除外を外す）。
+
+### 変更の一覧
+
+#### 追加: テーマを試せるページ `/theme-lab`（#690、洗練案 E-3）
 
 - デモビルドのサイドバー・コマンドパレットの「見本」グループに「テーマを試す」を追加した（`navigation.ts` の `demoOnly`。`/ui-demo`・`/chart-gallery` と同じ扱いで、URL ならどのビルドでも開ける）。ブランド色相（`--banto-brand-hue`、スライダーと数値）・角丸（`--banto-radius-sm/md/lg` を一緒に動かす）・密度（標準・compact・touch）・フォント（OS 同梱のスタック数種。フォントは同梱しない）・ライト／ダークを動かすと、ページ内のプレビュー領域（入れ子の `data-theme` の要素）だけに効く。シェルは変わらず、状態は保存しない（再読み込みで既定に戻る）。
 - プレビューにはボタン・StatusBadge・入力とピッカー・SurfaceCard・ToastHost・BantoGrid の小さな表・チャート（カテゴリ 8 色の円、連続／発散スケールのヒートマップ）を並べる。既定から変えた変数だけを `:root { … }` の CSS にして書き出し、コピーとファイル保存ができる。選んだ色相とテーマで、primary や状態色の文字のコントラスト比を出し、4.5:1 を割ると注意を出す。
 - 書き出す CSS・コントラスト比は `src/lib/themeLab.ts` の純関数（単体テスト `themeLab.test.ts`。定数が `banto.css` とずれたら落ちる）。vitest の `css.include` に `banto.css` を足した（`?raw` で読むため）。
 - scaffold: チャートの部分だけを `ThemeLabCharts.svelte` に分け、`--preset minimal` / `display`（charts を外す）では、そのファイル・ページの import と節（`[scaffold:charts]` の印）・`themeLab.charts.*` を外す。ページ本体は残る。`DemoNavIconKey`・`DemoNavLabelKey` に `theme-lab` の語が増えたので、charts の remover の置換元の文字列を合わせた（派生側で `scripts/scaffold.mjs` を使うなら、更新時に合わせて取り込む）。
 
-### 修正: グリッドの行高が密度に追従する（#692）
+#### 修正: グリッドの行高が密度に追従する（#692）
 
 - `@banto/grid-svelte`: `BantoGrid` の行高がテーマの密度（`--banto-grid-row-height`: standard 36px／compact 32px／touch 52px）に追従するようにした（#692）。これまでは `GridState.rowHeight`（既定 36）を構築時に固定していたため、compact・touch でも行は 36px のままだった。`rowHeight`（prop または `GridState` の option）を渡したときは今までどおり固定。`GridState` に `rowHeightFixed` と `followThemeRowHeight(px)` を足し、`rowHeight` は読み取り専用の getter（反応的）になった。アプリの items・監査ログの表は、compact・touch で行の高さが変わる
 - `/theme-lab`: プレビューの表に `rowHeight` を渡して密度ごとに作り直す回避（#691）を外した。表はプレビューの密度に追従する
 
-### 追加: dock の外周へのドッキング（#694 PR-1）
+#### 追加: dock の外周へのドッキング（#694 PR-1）
 
 - `@banto/dock-svelte`: パネルを host の四辺の外周のボタン（PR-2 で帯からボタンに替えた。下の節）へドラッグして落とすと、docked の木全体を新しい分割で包み、その側に全高／全幅で入るようにした。入る pane は host の 1/4（`EDGE_DOCK_RATIO` = 0.25。分割の比率は左・上なら `[0.25, 0.75]`、右・下なら `[0.75, 0.25]`）、根が同じ向きの分割でも常に包む。外周の当たり判定は区画の当たり判定より先に効く。docked が空（またはドラッグ中の pane だけ）のときは今までどおり。`beforePanelChange` は包まれて作り直される pane の `reparent` を先に、最後に動かす pane の `dock` / `move-docked` を聞く（変更の種類は増やしていない）。
 - 公開 API の追加: `DockState.dockPanelAtEdge(id, edge)` / `dockExistingAtEdge(id, edge)`、木の操作 `dockPanelAtEdge` と定数 `EDGE_DOCK_RATIO`、当たり判定 `computeEdgeDrop` / `edgeButtons`、型 `DockEdge`。
 
-### 変更: dock の十字のガイドと、ドロップ先の能力（#694 PR-2）
+#### 変更: dock の十字のガイドと、ドロップ先の能力（#694 PR-2）
 
 - `@banto/dock-svelte`: ドラッグ中、指している docked の区画の真ん中に十字のボタン（中央・左・右・上・下）、host の四辺の真ん中に外周のボタンを出し、**ボタンの上で離したときだけ**ドッキングするようにした。ボタンの上にいる間は入る場所の枠（区画の全体か半分、外周は host の 1/4）を出す。ボタンは 32px 角・間隔 4px、区画・host の縁から 8px 内側。小さい区画では縮め、16px を下回るなら出さない。外周のボタンと重なる十字のボタンは出さない（外周が勝つ）。ボタンはドラッグ中だけ描かれ、`pointer-events: none`・`aria-hidden`（当たり判定は幾何で行う）。キーボードだけでドッキングする口は無い。
 - **既定の挙動の変化**: これまでの「区画の端 25% の帯へ落とすと分割、残りは中央（タブ化）」はやめた。区画の上でもボタンの外で離すと浮動になる（浮動 window はその位置へ動き、docked の pane は undock。`undock: false` なら何も起きない）。これまで区画の上ならどこで離してもドッキングしていたので、端や中央付近へ落としていた操作は、ボタンへ落とすように変わる。浮動 window の上・畳んだ区画の帯の上・自分のいる区画の中央の扱いは今までどおり。
@@ -47,14 +114,14 @@
 - 公開 API の追加: 十字の配置と当たり判定 `crossButtons` / `guideButtonSize` / `hitGuideButton`、定数 `GUIDE_BUTTON_SIZE` / `GUIDE_BUTTON_GAP` / `GUIDE_BUTTON_MIN` / `GUIDE_INSET`、型 `GuideButton` / `CrossOptions`、`dropRegionRect` の第 3 引数（比率。既定 0.5）。`computeDropRegion` は使われなくなったが、互換のために export を残す。
 - 見た目: ドラッグ中の見た目（十字・外周のボタン、外周の枠が 1/4）だけが変わる。ドラッグの外の見た目は変わらない。
 
-### 変更: dock の浮動 window の位置固定を錠のアイコンに（#694 PR-3a）
+#### 変更: dock の浮動 window の位置固定を錠のアイコンに（#694 PR-3a）
 
 - `@banto/dock-svelte`: 浮動 window のタイトルバーの「位置と大きさの固定」のボタンを、ピン（📌）から錠（🔓／🔒、class `lock-btn`）に替えた。ピンは次の PR-3b で「自動で隠す」（ドッキング中の区画）の意味になる（VS・GX Works3 と同じ。オーナー決定の案 A。#663 の「ピンは浮動 window のタイトルバーだけ」はこれで置き換わる）。挙動は変わらない。
 - 公開 API の追加: `DockState.isLocked(id)` / `setLocked(id, locked)`、`FloatingWindow.locked?`、文言 `messages.lockWindow` / `unlockWindow`。
 - **非推奨（次の major で消す）**: `DockState.isPinned` / `setPinned`（`isLocked` / `setLocked` の別名になった）、`FloatingWindow.pinned`（もう書き出さない。古い JSON の `pinned: true` は `validateDockLayout`・`hydrate` が `locked: true` として読む）、`messages.pinWindow` / `unpinWindow`（`lockWindow` / `unlockWindow` を渡さないときだけ使う）。
 - 保存の形: 固定した window は `pinned: true` ではなく `locked: true` で書き出す。この版の JSON を古い版で読むと、固定は外れて読まれる（`version` は 2 のまま、読み込みは失敗しない）。
 
-### 追加: dock の区画を自動で隠す（ピン、#694 PR-3b）
+#### 追加: dock の区画を自動で隠す（ピン、#694 PR-3b）
 
 - `@banto/dock-svelte`: ドッキング中の区画（panel 1 つ、またはタブの組）の見出しにピン（📌）を出し、押すとその区画を木から抜いて host の縁の帯に入れるようにした（VS・GX Works3 の「自動的に隠す」）。入る縁は、メイン区画（`close`・`move`・`undock` がすべて `false` の pane の区画。無ければ木の中心）から見た区画の側（分割の比で測る）。左右の帯は縦書き、上下は横書き。帯のある縁の分、木は内側に寄る。
 - 帯のタブを押すと、その pane を縁から木の上に重ねて引き出す（フォーカスは中へ）。もう一度押す・外を押す・Esc・フォーカスが外へ出る、で引っ込め、フォーカスが中にあったら帯のタブへ戻す。top layer（開いている `dialog`・`[popover]`）と、表示中のモーダルの層（`role="dialog"`／`"alertdialog"` かつ `aria-modal="true"`。`@banto/ui` の Modal・ConfirmDialog。その背景を押すのも含む）の中のクリック・フォーカス・Esc では引っ込めない（引き出しの中から開いた確認で引っ込めない）。モーダルでない浮動 window へ移るのは外。引き出した pane のピンを押すと元の場所（`showPanel` と同じ記憶）へ戻る。場所が無くなっていたら、その縁へ外周ドッキングで入る。
@@ -67,7 +134,7 @@
 - 見た目: ドッキング中の区画の見出しにピンのボタンが増える。dashboard（分析ワークスペース）と command-palette の visual の基準画像の再生成が要る（Linux で再生成する）。
 - **型エラーの注意（派生アプリ）**: 公開の union に種類を足した — `DockPanelChange` に `auto-hide`（PR-3b）。`switch (change.kind)` を網羅検査（`never` への代入など）しているアプリは分岐を足せば通る。また、`DockMessages` を `Required<DockMessages>` として自前で全部埋めているアプリは、増えたキー（`lockWindow` / `unlockWindow`（PR-3a）、`autoHidePane` / `pinPane` / `autoHideBand`（PR-3b））を足す必要がある。
 
-### 追加: ロールとは別に、ユーザーへ個別に付ける権限（#697 PR-1 サーバー）
+#### 追加: ロールとは別に、ユーザーへ個別に付ける権限（#697 PR-1 サーバー）
 
 - **権限（permission）**: `equipment.operate` のようなキーを、管理者がアカウントごとに付け外しできるようにした。ロール（`viewer < editor < admin`）とは独立に判定し、Admin でも付けていなければ持たない。語彙はアプリが起動時に登録する（`PermissionCatalog`）。テンプレートは何も登録しない（`admin_template_core::permission_catalog()` は空。banto-serve と Tauri の両方がこの 1 つの関数を呼ぶ）。
 - DB: migration 0013 `user_permissions`（SQLite・PostgreSQL。`users` の削除で `ON DELETE CASCADE`）。0013 より前のバックアップを戻しても、起動時の migration で表ができる。
@@ -78,7 +145,7 @@
 - `verify:architecture` rule 8: 権限のガードの対（`PERMISSION_PAIRS`）を両経路で照合する。`permissions_catalog` ↔ `GET /api/permissions` を登録した。
 - **既存の公開の型は変えていない**: `Identity`・`UserIdentity`・`UserSummary`・`AuthSettings`・`SessionAccount`・`SessionLookup`・`AuthenticatedSession` などにフィールドを足していない。権限は別の型（`SessionPermissions`・応答用の `UserWithPermissions`）で持つ。既存の関数・トレイトのシグネチャも変えていない（追加だけ）。構造体リテラルで組み立てている派生アプリもそのままコンパイルできる。
 
-### 追加: ユーザーへ個別に付ける権限の管理画面（#697 PR-2a）
+#### 追加: ユーザーへ個別に付ける権限の管理画面（#697 PR-2a）
 
 - ユーザー管理画面の編集パネルに、アプリが登録した権限（カタログ）のチェックボックスを並べる欄を足した。**カタログが空なら欄ごと出さない**（テンプレートは何も登録しないので、汎用テンプレートの見た目は変わらない）。一覧の列には出さない。作成のフォームには出さない（作った後に編集から付ける）。
 - 表示名・説明は、アプリが登録した message key で引く。見つからなければキーそのもの（説明は出さない）。カタログから外れたが持っているキーは「未登録」と出し、外せる（送り返せば残る、外して保存すれば消える）。付け外しは、変えたときだけ `permissions` を送る。競合（409）のときは、権限の欄を一覧の読み直しが終わるまで無効にし、古い選択で上書きしない。
@@ -87,7 +154,7 @@
 - scaffold: 新しい欄は `routes/(app)/users/` の下とすでに外れる `usersAdmin.ts` だけに置いた（display で一緒に外れる）。`common.*`・`resource.*` は display でも残る。
 - 対象外: `auth.disabledPermissions`（ログイン不要モードの権限）の画面・コマンドは PR-2b。README・recipe は PR-3。
 
-### 追加: ログイン不要モードの権限の入口（#697 PR-2b）
+#### 追加: ログイン不要モードの権限の入口（#697 PR-2b）
 
 - 設定 > セキュリティの「起動時のロール」の下に、ログイン不要モードで持つ権限を選ぶ欄を足した（アプリが権限を登録しているときだけ表示。既定は権限なし）。
 - Tauri の `auth_config_apply` に省略可の `permissions` を足した（省略で変えない。未登録のキーは 422 `validation`）。`auth_config_get` / `auth_config_apply` の応答に `disabledPermissions`（登録済みのキーだけ）が増える（Rust の `AuthSettings` には足さず、応答用の別の型）。デスクトップ専用の入口なので、REST の入口は無い。
@@ -95,7 +162,7 @@
 - 監査: 設定変更（`settings_change`）の detail に、変わったときだけ `authDisabledPermissions: { added, removed }` を足す。
 - クライアント: 型 `UserPermission`・`PermissionEntry` は `authAdmin.ts` に 1 か所で定義し（display プリセットでも残る）、`usersAdmin.ts` は再 export する。
 
-### 追加: ユーザーへ個別に付ける権限の文書（#697 PR-3）
+#### 追加: ユーザーへ個別に付ける権限の文書（#697 PR-3）
 
 - recipe [add-permission](docs/recipes/add-permission.md)（権限を足す手順。ロールか権限かの判断を add-role と相互に記載）、[ADR-0031](docs/adr/0031-user-permissions-separate-axis.md)、README の入口、[upgrading](docs/upgrading.md) の例 7（migration 0013・応答の `disabledPermissions` / `permissions` の追加）。コードの変更なし。
 

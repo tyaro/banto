@@ -791,11 +791,11 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 4. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
 5. 同期記録に「ナビのメニューバー表示取込済（PR 番号）」を書く。
 
-### 例 7: v7.6.x → 次の minor（ユーザーへ個別に付ける権限と dock の自動で隠す。A と B と C）
+### 例 7: v7.6.x → v7.7.0（ユーザーへ個別に付ける権限と dock の自動で隠す。A と B と C）
 
 ロールとは別に、ユーザーへ個別に付ける権限（Issue #697、PR #701・#702・#703。判断は
 [ADR-0031](adr/0031-user-permissions-separate-axis.md)、足し方は
-[recipes/add-permission.md](recipes/add-permission.md)）が入る。同じ版に、`@banto/dock-svelte` の
+[recipes/add-permission.md](recipes/add-permission.md)）が入る。この版（v7.7.0）に、`@banto/dock-svelte` の
 パネルを自動で隠す機能（#694 PR-3a・PR-3b）も入る。API の削除・改名はなく、**minor**。
 **テンプレートは権限を 1 つも登録しないので、何もしなければ見た目も判定も変わらない**。
 
