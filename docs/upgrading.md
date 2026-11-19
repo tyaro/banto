@@ -847,7 +847,7 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 
 `@banto/dock-svelte` に `ThreePaneDock`・据え置き pane（`persistent`）・キーボード移動・隠した pane の元の位置の復元
 （#663 段階 ④、#721・#727・#733〜#736・#741）、`@banto/admin-core` / `@banto/ui` にコマンドパレットの非同期の提供元
-（#711）が入る。API の削除・改名はなく、**minor**。ただし次の型・保存形式の注意がある。
+（#711）が入る。API の削除・改名はない。既存の型を広げた変更で型エラーになりうるが、実行時の値が変わるのは新しい機能を使ったときだけなので、規約の運用上の例外（オーナー判断）で **minor**。次の型・保存形式の注意がある。
 
 - A（依存）: タグを `v7.9.0` に上げる（npm と Rust を同じタグに）。
   - `DockMessages` にキーが増え、`DockCapabilities` に `collapse` が増えた。`Required<DockMessages>` /
@@ -857,8 +857,7 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
     レイアウトは `version: 3` で保存され、v7.8.0 以前では読めず既定に戻る（浅いレイアウトは今までどおり 2）。
     利用者に古い版へ戻す可能性があるなら、先に配布の順を決める。
   - レイアウトをオブジェクトのまま保存しているアプリは、`dock.layout` ではなく `dock.savedLayout()` を保存する。
-    保存した値を `DockHost.replaceLayout` で入れるときは `saved: true` を渡す（文字列の `serialize()` を保存している
-    アプリは変更不要）。
+    保存した値を `DockHost.replaceLayout` で入れるときは `saved: true` を渡す（`serialize()` の文字列を保存して `hydrate()` で戻すアプリは変更不要。その文字列を JSON として読んで `replaceLayout` に渡すアプリは `saved: true` が要る）。
 - B（テンプレート）: ダッシュボードの保存を `apps/admin-template/src/lib/banto/dockLayoutStore.svelte.ts` に出した。
   localStorage のキーが利用者ごと（`banto.dock.dashboard:<owner>`）になり、古い固定キー `banto.dock.dashboard` は読まずに
   消される（設定 `dock.dashboard` の保存値はそのまま）。dock の文言は `lib/banto/dockMessages.ts`（`dock.*` キー）に
