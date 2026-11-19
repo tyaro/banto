@@ -24,6 +24,30 @@ export type {
  */
 export { structureKey, type DockPanelChange, type DockPanelChangeOutcome } from './core/lifecycle';
 export { DockState, createDockState } from './state.svelte';
+/**
+ * The three-pane screen on a dock (#663 ④, three-pane-dock-plan §4.1 / §4.4 / §4.8 / §4.9):
+ * `ThreePaneDock` and its pure half (the default layout, reconciling a saved layout, the saved
+ * value, the View menu items' shape).
+ */
+export { default as ThreePaneDock, type ThreePaneExtraPanel } from './ThreePaneDock.svelte';
+export {
+	assertExtraPanelIds,
+	defaultThreePaneDockMessages,
+	reconcileThreePaneLayout,
+	THREE_PANE_DEFAULTS,
+	THREE_PANE_IDS,
+	threePaneDockLayout,
+	threePaneSavedLayout,
+	type ThreePaneDockLayoutOptions,
+	type ThreePaneDockMessages,
+	type ThreePaneExtraPanelDef,
+	type ThreePanePaneDef,
+	type ThreePanePanels,
+	type ThreePaneRestoreStatus,
+	type ThreePaneSavedLayout,
+	type ThreePaneViewMenuItem,
+	type ThreePaneViewMenuLabels
+} from './threePane';
 export { defaultDockMessages, type DockMessages } from './messages';
 /**
  * `DockHost.movePanel(panelId, target)` (#663 ④): re-dock a pane without a drag, through the

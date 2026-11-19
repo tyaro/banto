@@ -203,6 +203,11 @@ export class PanelMover {
 		return null;
 	}
 
+	/** Whether `target` is offered for `panelId` now (`DockHost.canMovePanel`): nothing is asked or announced. */
+	offers(panelId: string, target: DockMoveTarget): boolean {
+		return this.#offered(panelId, target) !== null;
+	}
+
 	/**
 	 * Hand `target` to the drag's own drop path; `null` = the drag would not offer it. `fromMenu`
 	 * turns the drag's own focus repair off: `move` then places the focus once, after the outcome

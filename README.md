@@ -239,7 +239,8 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
   ゲージ、SPC 系（ヒストグラム・パレート図・箱ひげ図）、積立エリア（`StackedAreaChart` —
   積立棒は `BarChart` の `stacked`）・ガントチャート（`GanttChart`）の全14種。
 - **ドッキングレイアウト**（`@banto/dock-svelte`）: フローティングウィンドウ + 分割・タブ化・
-  ドラッグでの再配置・スナップ、レイアウトの JSON 保存/復元。
+  ドラッグでの再配置・スナップ、レイアウトの JSON 保存/復元。3 ペインの画面を dock に並べる
+  `ThreePaneDock`（左右を浮かせる・ドッキングし直す、中央は作り直さない）。
 - **refine ライクなコア**（`@banto/admin-core`）: リソース定義、`DataProvider`/`AuthProvider`
   抽象、`createListResource`/`createFormResource` コンポーザブル。バックエンドは Tauri
   `invoke()`（ローカル Rust）を既定に、InMemory/HTTP を差し替え可能。

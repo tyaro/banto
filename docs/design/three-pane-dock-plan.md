@@ -1,7 +1,7 @@
 # 3 ペインを dock に並べるモード 計画書
 
 作成日: 2026-11-19
-状態: **実装中**。PR-1（`persistent`、#719）と PR-2（キーボードでの移動、#720）を実装。残りは PR-3 以降。§8 の要確認は 2026-11-19 に推奨どおりで決定（§9）。
+状態: **実装中**。PR-1（`persistent`、#719）と PR-2（キーボードでの移動、#720）と PR-3（`ThreePaneDock`・既定レイアウト・保存値の照合・操作の口）を実装。残りは PR-4 以降。§8 の要確認は 2026-11-19 に推奨どおりで決定（§9）。
 トラック: 保守者向け（トラックA）
 Issue: [#663](https://github.com/tyaro/banto/issues/663) の段階 ④（①〜③ = #664・#665・#667・#672〜#674、穴埋め = #681・#683・#686・#687、ドッキングの操作 = #694）
 関連: [shared-primitives-upstream-plan.md](shared-primitives-upstream-plan.md)（§3.3 gesture と keyboard、§3.5 `beforePanelChange`）、

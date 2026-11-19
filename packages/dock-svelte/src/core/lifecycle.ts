@@ -108,10 +108,11 @@ import {
 	type AutoHideOptions
 } from './autohide';
 import { displacedChanges, mountedPanes } from './mounts';
+import { layoutChanges } from './replace';
 import { restoreDockSlot } from './slot';
 import { findNode, findParent, removePanel, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
-import type { DockNode, DockPanelNode } from '../types';
+import type { DockLayout, DockNode, DockPanelNode } from '../types';
 
 /**
  * A structure change the dock UI is about to make (shared-primitives-upstream-
@@ -511,6 +512,50 @@ export class PanelLifecycle {
 			if (mine === null) return changes;
 			return [...changes, ...(Array.isArray(mine) ? mine : [mine])];
 		};
+		return this.#sequence(describeAll, apply, target);
+	}
+
+	/**
+	 * Replace the whole layout (#663 ④, `DockHost.replaceLayout`: `ThreePaneDock`'s `resetLayout` /
+	 * `restoreLayout`). Every pane whose content the replacement takes off the screen or re-mounts
+	 * is asked first, in the order `layoutChanges` lists them (`core/replace.ts`), as one decision
+	 * like `requestPlacement`: a refusal stops it with nothing changed, a structure change while it
+	 * waits makes it `stale`, and `preview` (the layout `apply` would install; `undefined` = no
+	 * longer possible) is re-read and compared before each step and before `apply`. Nothing to ask
+	 * = applied at once.
+	 */
+	requestReplace(
+		preview: () => DockLayout | undefined,
+		apply: (next: DockLayout) => void
+	): Promise<DockPanelChangeOutcome> {
+		if (this.#disposed) return Promise.resolve('disposed');
+		const describeAll = (): DockPanelChange[] | null => {
+			const next = preview();
+			if (next === undefined) return null;
+			return layoutChanges(
+				this.#dock.layout,
+				next,
+				(id) => this.keepMounted(id),
+				(id) => this.persistent(id),
+				this.#dock.flyoutPanel
+			);
+		};
+		return this.#sequence(
+			describeAll,
+			() => {
+				const next = preview();
+				if (next !== undefined) apply(next);
+			},
+			{ replace: true }
+		);
+	}
+
+	/** The asking loop shared by `requestPlacement` and `requestReplace` (see `requestPlacement`). */
+	#sequence(
+		describeAll: () => DockPanelChange[] | null,
+		apply: () => void,
+		target: unknown
+	): Promise<DockPanelChangeOutcome> {
 		const changes = describeAll();
 		if (changes === null) return Promise.resolve('stale');
 		if (changes.length === 0) {
