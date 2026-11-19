@@ -268,15 +268,16 @@ const isEscapeBlocked = (el: HTMLElement | null) =>
 
 ```ts
 type DockPanelChange =
-	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: true }
-	| { kind: 'auto-hide'; panelId: string; to: 'band' | 'tree'; remount: true } // 自動で隠す・ピンで戻す（#694 PR-3）
-	| { kind: 'reparent'; panelId: string; cause: string; remount: true } // 動かしていない pane の親が変わり作り直される
+	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: boolean }
+	| { kind: 'auto-hide'; panelId: string; to: 'band' | 'tree'; remount: boolean } // 自動で隠す・ピンで戻す（#694 PR-3）
+	| { kind: 'reparent'; panelId: string; cause: string; remount: boolean } // 動かしていない pane の親が変わり作り直される
 	| { kind: 'tab-switch'; groupId: string; from: string; to: string; remount: boolean }
 	| { kind: 'hide'; panelId: string; remount: boolean }
 	| { kind: 'close'; panelId: string };
 
 beforePanelChange?: (change: DockPanelChange) => boolean | Promise<boolean>; // true のときだけ変える
 keepMounted?: (panelId: string) => boolean; // 見えないあいだも中身を mount したままにする pane
+persistent?: (panelId: string) => boolean; // 中身を一度だけ描き、組み替えでも作り直さない pane（据え置き、下記）
 isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を保留（省略時は IME 変換中）
 ```
 
@@ -295,7 +296,8 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
   resize・divider（幾何だけの変更）と、アプリが `DockState` を直接呼ぶ変更は聞かない。
 - **`remount`**: `true` は中身がいったん unmount され、あとで別に mount されること（draft を capture しておけば
   次の mount で戻せる）。`false` は DOM が残ること。`tab-switch` では `from` の pane のこと。dock / undock は
-  docked の木と浮動の層をまたぐので、`keepMounted` でも常に `true`。
+  docked の木と浮動の層をまたぐので、`keepMounted` でも `true`。`persistent` の pane（下記）は、どの変更でも `false`
+  （`reparent` としては聞かない）。
 - **押し出される pane にも聞く（#666）**: docked の木へのドロップ（dock / move-docked。押し出される側は `tab-switch` / `reparent`）と `showPanel` で元の場所へ
   戻すときは、動かす pane のほかに、変わってしまう docked の pane にも先に聞く（木の順に 1 つずつ、最初の拒否で
   止めて何も変えない。最後に動かす pane 自身の `dock` / `move-docked`）。
@@ -317,6 +319,35 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
 - **`keepMounted`**: その pane の中身を、表示していないタブのあいだ・hide した浮動 window のあいだ、
   `hidden` + `inert` で同じ DOM のまま残す（IME・選択・scroll・未完成の入力が残る）。そのぶんメモリと effect は
   常にかかる。`keepMounted` でない pane は今までどおり、見えなくなると unmount する。
+
+### 据え置き（`persistent`、#663）
+
+`persistent` が `true` の pane は、`keepMounted` の上位互換で、**どの組み替えでも中身を作り直さない**
+（設計は docs/design/three-pane-dock-plan.md の §4.2 C）。キャンバス（描画のキャッシュ・ズーム・選択）のように
+作り直しが致命的な中身に使う。
+
+```svelte
+<DockHost {dock} {panel} persistent={(id) => id === 'canvas'} />
+```
+
+- `DockHost` は、その pane の `panel` snippet を木の外（host の中の隠した預かり場所）に **1 回だけ** 描く。
+  木の中（docked の pane・タブ・浮動 window・自動で隠した pane の引き出し）には空の受け皿だけを置き、
+  受け皿が mount されたら中身の要素を `appendChild` で移し、外れたら預かりへ戻す。undock / dock・外周への
+  ドッキング・周りの組み替え（`reparent`）・自動で隠す / ピンで戻す・タブの切替のどれでも、同じ DOM 要素・
+  同じ Svelte の部品のまま（mount は 1 回）。受け皿と中身の要素は `display: contents` なので、見た目は
+  `persistent` でないときと同じ。
+- `keepMounted` を兼ねる（✕ は hide、隠したタブ・浮動 window でも中身が残る）。`closePanel`（close）は中身を捨て、
+  次に開くと新しく mount する。`beforePanelChange` には今までどおり聞くが、その pane の変更は `remount: false`
+  で、周りの組み替えで親が変わるだけのときは聞かない（作り直さないので失うものがない）。`persistent` も
+  `keepMounted` と同じく適用の直前に読み直し、聞いたときと `remount` が変わったら `stale`。
+- DOM を移すと失われるものは戻す: 移す前に中のフォーカスのある要素を控え、移したあと（同じ更新の後の
+  microtask）にそこへ戻す。ただし、そのときフォーカスが `<body>` 以外（host やアプリが別の場所へ移した）なら
+  奪わない。中の要素の scroll 位置は `scroll` イベントで控えておき、受け皿へ移すたびに戻す。受け皿が無く
+  預かりへ戻った中身にはフォーカスを残さない（`<body>` へ外す）。
+- **`iframe` は移すたびに読み直される**（ブラウザは移した `iframe` の文書を読み込み直す）。`iframe` や
+  ネイティブの埋め込みを持つ中身は、据え置きでも状態を守れない。
+- 位置・大きさ・倍率・ポインタ操作の状態は中身の部品が持つので残るが、`ResizeObserver` 等で受け皿の大きさを
+  測る中身は、移した直後に大きさが変わることがある（新しい親の大きさになる）。
 
 ### hide と close（D4）
 

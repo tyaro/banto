@@ -124,11 +124,14 @@ import type { DockNode, DockPanelNode } from '../types';
  * `auto-hide` (#694 PR-3) is a pane of a region that moves between the docked
  * tree and an edge band (`to: 'band'` = auto-hidden by its pin button, `'tree'`
  * = pinned back): its content is drawn by another parent, so it is re-mounted.
+ * A `persistent` pane (#663 ④, three-pane-dock-plan §4.2 C) is never re-mounted
+ * by any of these (its content lives outside the tree and is only moved):
+ * `remount: false`, and it is not asked as `reparent` at all.
  */
 export type DockPanelChange =
-	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: true }
-	| { kind: 'auto-hide'; panelId: string; to: 'band' | 'tree'; remount: true }
-	| { kind: 'reparent'; panelId: string; cause: string; remount: true }
+	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: boolean }
+	| { kind: 'auto-hide'; panelId: string; to: 'band' | 'tree'; remount: boolean }
+	| { kind: 'reparent'; panelId: string; cause: string; remount: boolean }
 	| { kind: 'tab-switch'; groupId: string; from: string; to: string; remount: boolean }
 	| { kind: 'hide'; panelId: string; remount: boolean }
 	| { kind: 'close'; panelId: string };
@@ -144,6 +147,8 @@ export type DockPanelChangeOutcome = 'applied' | 'refused' | 'stale' | 'supersed
 export interface PanelLifecycleOptions {
 	beforePanelChange?: (change: DockPanelChange) => boolean | Promise<boolean>;
 	keepMounted?: (panelId: string) => boolean;
+	/** Panes whose content is drawn once outside the tree and moved (#663 ④). Implies `keepMounted`. */
+	persistent?: (panelId: string) => boolean;
 	isStructureChangeDeferred?: () => boolean;
 }
 
@@ -211,9 +216,23 @@ export class PanelLifecycle {
 		};
 	}
 
-	/** Is this pane's content kept mounted while it is not shown (the consumer's `keepMounted`)? */
+	/** Is this pane's content kept mounted while it is not shown (the consumer's `keepMounted`, or `persistent`)? */
 	keepMounted(panelId: string): boolean {
-		return this.#getOptions().keepMounted?.(panelId) === true;
+		return this.#getOptions().keepMounted?.(panelId) === true || this.persistent(panelId);
+	}
+
+	/**
+	 * Is this pane's content drawn once outside the docked tree and moved into
+	 * whichever place shows it (the consumer's `persistent`, #663 ④,
+	 * three-pane-dock-plan §4.2 C)? Read at the moment it is asked, like `keepMounted`.
+	 */
+	persistent(panelId: string): boolean {
+		return this.#getOptions().persistent?.(panelId) === true;
+	}
+
+	/** Does moving this pane to another parent re-mount its content (`false` for a `persistent` pane)? */
+	remounts(panelId: string): boolean {
+		return !this.persistent(panelId);
 	}
 
 	/** Is a hidden floating window's content kept mounted right now (`keepMounted` and not discarded by `close`)? */
@@ -310,7 +329,8 @@ export class PanelLifecycle {
 			kind: 'hide',
 			panelId,
 			remount:
-				this.#isDocked(panelId) || this.#isAutoHiddenPane(panelId) || !this.keepMounted(panelId)
+				this.remounts(panelId) &&
+				(this.#isDocked(panelId) || this.#isAutoHiddenPane(panelId) || !this.keepMounted(panelId))
 		});
 		const apply = (): void => this.#takeOffScreen(panelId);
 		if (where === 'docked') return this.requestRemoval(panelId, describe, apply, 'hide');
@@ -432,7 +452,7 @@ export class PanelLifecycle {
 		};
 		return this.requestPlacement(
 			panelId,
-			() => (redocksMounted() ? { kind: 'dock', panelId, remount: true } : null),
+			() => (redocksMounted() ? { kind: 'dock', panelId, remount: this.remounts(panelId) } : null),
 			preview,
 			() => this.#dock.show(panelId),
 			'show'
@@ -479,9 +499,14 @@ export class PanelLifecycle {
 			const after = preview();
 			if (after === undefined) return null;
 			const keep = (id: string) => this.keepMounted(id);
-			const changes = displacedChanges(this.#dock.layout.docked, after, panelId, keep).filter(
-				(c) => !(c.kind === 'reparent' && moving.includes(c.panelId))
-			);
+			const persists = (id: string) => this.persistent(id);
+			const changes = displacedChanges(
+				this.#dock.layout.docked,
+				after,
+				panelId,
+				keep,
+				persists
+			).filter((c) => !(c.kind === 'reparent' && moving.includes(c.panelId)));
 			const mine = own();
 			if (mine === null) return changes;
 			return [...changes, ...(Array.isArray(mine) ? mine : [mine])];
@@ -546,7 +571,12 @@ export class PanelLifecycle {
 			const mounted = mountedPanes(this.#dock.layout.docked, (p) => this.keepMounted(p));
 			return regionPanelIds(now)
 				.filter((p) => mounted.has(p))
-				.map((panelId) => ({ kind: 'auto-hide', panelId, to: 'band', remount: true }));
+				.map((panelId) => ({
+					kind: 'auto-hide',
+					panelId,
+					to: 'band',
+					remount: this.remounts(panelId)
+				}));
 		};
 		return this.requestPlacement(
 			cause,
@@ -575,7 +605,12 @@ export class PanelLifecycle {
 			if (!now || now.entry.node.id !== regionId) return null;
 			return regionPanelIds(now.entry.node)
 				.filter((p) => this.#isFlyoutMounted(p))
-				.map((panelId) => ({ kind: 'auto-hide', panelId, to: 'tree', remount: true }));
+				.map((panelId) => ({
+					kind: 'auto-hide',
+					panelId,
+					to: 'tree',
+					remount: this.remounts(panelId)
+				}));
 		};
 		return this.requestPlacement(
 			activePanelOf(first.entry.node).id,

@@ -12,7 +12,9 @@
  * link and the content is unmounted and mounted again - even `keepMounted`,
  * because a Svelte component cannot be moved to another parent. The dock UI
  * therefore asks `beforePanelChange` about those panes too (`displacedChanges`),
- * besides the pane being moved.
+ * besides the pane being moved. A `persistent` pane (#663 ④, three-pane-dock-plan
+ * §4.2 C) is the exception: its content is drawn outside the tree and only moved
+ * into the new place, so it always survives.
  */
 import type { DockPanelChange } from './lifecycle';
 import type { DockNode } from '../types';
@@ -64,13 +66,15 @@ export function mountedPanes(
  *   moved, but its parent changes, so it is mounted again.
  *
  * A pane that is not mounted before (a background tab that is not
- * `keepMounted`) has nothing to lose and is not listed.
+ * `keepMounted`) has nothing to lose and is not listed, nor is a `persistent`
+ * one whose parent changes (it is moved, not re-mounted).
  */
 export function displacedChanges(
 	before: DockNode | null,
 	after: DockNode | null,
 	moving: string,
-	keepMounted: (panelId: string) => boolean
+	keepMounted: (panelId: string) => boolean,
+	persistent: (panelId: string) => boolean = () => false
 ): DockPanelChange[] {
 	const was = mountedPanes(before, keepMounted);
 	const now = mountedPanes(after, keepMounted);
@@ -79,7 +83,7 @@ export function displacedChanges(
 	for (const [id, mount] of was) {
 		if (id === moving) continue;
 		const next = now.get(id);
-		const survives = next !== undefined && next.key === mount.key;
+		const survives = next !== undefined && (next.key === mount.key || persistent(id));
 		const tabs = allTabs.get(id);
 		if (mount.shown && tabs && tabs.active !== id) {
 			changes.push({

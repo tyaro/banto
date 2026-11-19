@@ -52,6 +52,13 @@
 	 * a `keepMounted` pane and closes (discards) any other; `hidePanel` /
 	 * `closePanel` below are the same two actions for an app's own UI.
 	 *
+	 * Persistent panes (#663 ④, three-pane-dock-plan §4.2 C, `core/persistent.ts`):
+	 * the `panel` snippet of a pane the consumer marks `persistent` is rendered
+	 * once, into a hidden stash at the end of the host, and the tree (docked pane,
+	 * tab, floating window, auto-hide slide-out) only draws an empty receptacle for
+	 * it; the content element is moved into the receptacle while one is mounted and
+	 * back to the stash when none is. Focus and scroll are put back after a move.
+	 *
 	 * Which guard applies first (README "Pane lifecycle"): `capabilities` decide
 	 * whether the control exists at all (no ✕, no drag); then a `drag` does not
 	 * start while `isStructureChangeDeferred()` is true; then `canStartGesture`
@@ -74,11 +81,12 @@
 		type DockPanelChange,
 		type DockPanelChangeOutcome
 	} from './core/lifecycle';
+	import { PersistentContents } from './core/persistent';
 	import { collectPanelIds } from './core/tree';
 	import { autoHiddenPanelIds, mainRegionId, regionOf, regionPanelIds } from './core/autohide';
 	import { isMainPane, setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
 	import type { DockState } from './state.svelte';
-	import type { PanelContent } from './types';
+	import type { DockNode, PanelContent } from './types';
 	import DockAutoHide from './DockAutoHide.svelte';
 	import DockedTree from './DockedTree.svelte';
 	import DockWindow from './DockWindow.svelte';
@@ -184,9 +192,22 @@
 		 * is hidden (D3-c): IME state, selection, scroll and unfinished input
 		 * survive. For such a pane the ✕ button HIDES (D4-a); `closePanel`
 		 * discards the content. Moving between the docked tree and the floating
-		 * layer (dock / undock) still re-mounts. Omitted = none (today's behaviour).
+		 * layer (dock / undock) still re-mounts (`persistent` does not). Omitted = none (today's behaviour).
 		 */
 		keepMounted?: (panelId: string) => boolean;
+		/**
+		 * Panes whose content is never re-mounted by the dock (#663 ④,
+		 * three-pane-dock-plan §4.2 C) - `keepMounted` and more: the `panel`
+		 * snippet is rendered ONCE outside the docked tree and the same DOM element
+		 * is moved (`appendChild`) into whichever place shows the pane, so undock /
+		 * dock, a drop on an outer edge, a split made around it, auto-hide and a tab
+		 * switch keep its DOM and component state. The focus inside it and the scroll
+		 * offsets of its scrolled elements are put back after a move. Changes about
+		 * such a pane say `remount: false`, and it is not asked as `reparent`.
+		 * `closePanel` still discards it. An `iframe` inside is reloaded by every
+		 * move (browsers reload a moved `iframe`). Omitted = none.
+		 */
+		persistent?: (panelId: string) => boolean;
 		/**
 		 * `true` = hold structure changes now (shared-primitives-upstream-plan §3.5 /
 		 * §4.2): a `drag` does not start, and a requested change waits - it is
@@ -210,6 +231,7 @@
 		isEscapeBlocked,
 		beforePanelChange,
 		keepMounted,
+		persistent,
 		isStructureChangeDeferred
 	}: Props = $props();
 
@@ -232,11 +254,26 @@
 	const lifecycle = new PanelLifecycle(dock, () => ({
 		beforePanelChange,
 		keepMounted,
+		persistent,
 		isStructureChangeDeferred
 	}));
 	setPanelLifecycle(lifecycle);
 	onMount(() => lifecycle.attach());
 	onDestroy(() => lifecycle.dispose());
+
+	// Persistent panes (module doc, `core/persistent.ts`).
+	const persistentContents = new PersistentContents();
+	onDestroy(() => persistentContents.dispose());
+	// Before the tree's blocks update for a structure change (`.pre`, and declared before the
+	// template), record the focus inside each persistent content: the move drops it.
+	$effect.pre(() => {
+		// Read every source first: a short-circuit would leave one untracked (conventions §8).
+		const layout = dock.layout;
+		const flyout = dock.flyoutPanel;
+		const discarded = lifecycle.discarded.size;
+		void [layout, flyout, discarded];
+		untrack(() => persistentContents.snapshot());
+	});
 
 	/** Edges that hold an auto-hidden band (#694 PR-3): the docked layer is inset by them. */
 	const bandEdges = $derived(new Set(dock.autoHidden.map((e) => e.edge)));
@@ -267,6 +304,29 @@
 	});
 	/** id → stacking position (index in `layout.floating`'s open windows = z-order). */
 	const zOrder = $derived(new Map(openWindows.map((w, i) => [w.id, i])));
+
+	/**
+	 * The persistent panes whose content is alive: every pane the tree may draw a
+	 * receptacle for (docked, auto-hidden, open or kept floating windows), by id.
+	 */
+	const persistentPanes = $derived.by((): PanelContent[] => {
+		const isPersistent = persistent;
+		if (!isPersistent) return [];
+		const out: PanelContent[] = [];
+		const visit = (node: DockNode | null): void => {
+			if (!node) return;
+			if (node.type === 'panel') out.push(node);
+			else node.children.forEach(visit);
+		};
+		visit(dock.layout.docked);
+		for (const entry of dock.layout.autoHidden ?? []) visit(entry.node);
+		out.push(...mountedWindows);
+		// One entry per id (a keyed `{#each}`), even for a layout that names a pane twice.
+		const byId = new Map<string, PanelContent>();
+		for (const content of out)
+			if (!byId.has(content.id) && isPersistent(content.id)) byId.set(content.id, content);
+		return [...byId.values()];
+	});
 
 	// `dock` is a stable DockState instance for this component's lifetime, so
 	// capturing it once to build the drag controller is intentional.
@@ -416,12 +476,19 @@
 			style:left={bandEdges.has('left') ? BAND : undefined}
 			style:right={bandEdges.has('right') ? BAND : undefined}
 		>
-			<DockedTree node={dock.layout.docked} {dock} {panel} {iconContent} {onPopOut} {messages} />
+			<DockedTree
+				node={dock.layout.docked}
+				{dock}
+				panel={treePanel}
+				{iconContent}
+				{onPopOut}
+				{messages}
+			/>
 		</div>
 	{/if}
 
 	<!-- Edge bands and slide-outs of auto-hidden regions (#694 PR-3): above the docked tree, below floating windows. -->
-	<DockAutoHide {dock} {panel} {iconContent} {messages} />
+	<DockAutoHide {dock} panel={treePanel} {iconContent} {messages} />
 
 	<div class="floating-layer">
 		{#each renderedWindows as win (win.id)}
@@ -434,7 +501,7 @@
 				hidden={!win.open}
 				frontmost={win.open && z === openWindows.length - 1}
 				zIndex={z + 1}
-				{panel}
+				panel={treePanel}
 				{iconContent}
 				{onPopOut}
 				{messages}
@@ -444,6 +511,24 @@
 
 	<!-- The result of a move (#663 ④, `movePanel` / the panel actions menu), read out politely. -->
 	<div class="dock-live" aria-live="polite" aria-atomic="true">{mover.announcement}</div>
+
+	<!-- Persistent panes (module doc): each content is rendered here once and moved into its receptacle. -->
+	<div class="persistent-stash" hidden>
+		{#each persistentPanes as content (content.id)}
+			<!-- The id as a `@const` (a derived string): the attachment re-runs only if it changes, not
+			     on every new node object of the same pane (that would move the content out and back). -->
+			{@const id = content.id}
+			<div class="persistent-home">
+				<div
+					class="persistent-content"
+					data-dock-persistent={id}
+					{@attach persistentContents.content(id)}
+				>
+					{@render panel(content)}
+				</div>
+			</div>
+		{/each}
+	</div>
 
 	{#if drag.state}
 		<!-- Guide buttons (#694 PR-1/PR-2): the host's outer-edge buttons and the cross on the pane
@@ -507,6 +592,21 @@
 	{/if}
 </div>
 
+<!-- What the tree draws for a pane: an empty receptacle for a persistent one (module doc), else the app's snippet. -->
+{#snippet treePanel(content: PanelContent)}
+	{@const id = content.id}
+	{#if persistent?.(id)}
+		<!-- `id` as a `@const` for the same reason as in the stash. -->
+		<div
+			class="persistent-slot"
+			data-dock-persistent-slot={id}
+			{@attach persistentContents.slot(id)}
+		></div>
+	{:else}
+		{@render panel(content)}
+	{/if}
+{/snippet}
+
 <style>
 	.dock-host {
 		position: relative;
@@ -527,6 +627,13 @@
 	.docked-layer {
 		position: absolute;
 		inset: 0;
+	}
+
+	/* A persistent pane's receptacle and content add no box: the app's content lays out as if
+	   it were rendered in place. */
+	.persistent-slot,
+	.persistent-content {
+		display: contents;
 	}
 
 	.docked-layer:not(:has([aria-modal='true'])) {
