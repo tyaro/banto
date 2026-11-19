@@ -19,6 +19,27 @@
  * round-tripped 4xx). Errors are normalized to `ProviderError` like every
  * other provider - callers that treat settings persistence as best-effort
  * (the app's settings store) simply catch and ignore.
+ *
+ * Write ordering (#707; Tauri and HTTP providers): writes are serialized per
+ * key so a late-arriving older write can never overwrite a newer one.
+ * - At most one write per key is in flight. A value arriving meanwhile is held
+ *   (only the latest one); when the in-flight write finishes (success or
+ *   failure) the held value is sent. Intermediate values are never sent.
+ *   Different keys do not wait for each other.
+ * - Session check: a session key is captured when `set` is called. If it
+ *   differs right before sending (logout / another user), the held write is
+ *   dropped, not sent. HTTP uses the bearer token (no token = dropped too).
+ *   Tauri uses the optional `getSessionRevision` (normally
+ *   `authProvider.credentialRevision()`); without it the session is not
+ *   checked (as before) and the Tauri command saves for whoever is logged in.
+ * - `get(key)` waits until that key's writes (the in-flight one and the held
+ *   one) are done, then reads. A failed write never makes `get` reject.
+ * - `set` resolves when its write was sent and succeeded, or was superseded by
+ *   a later value (an intermediate value, never sent). It rejects when its own
+ *   write was sent and failed, or was dropped for a session difference / no
+ *   token (`ProviderError` kind `unauthorized`, same outcome as the old 401), so
+ *   callers never treat an unsent value as saved.
+ * - Key validation still fails immediately, at the `set`/`get` call.
  */
 import { ProviderError, type ErrorBody } from '../errors';
 
@@ -63,6 +84,98 @@ function toProviderError(err: unknown): ProviderError {
 	return new ProviderError({ kind: 'other', message });
 }
 
+// --- per-key write serialization (#707) ------------------------------------
+
+interface PendingWrite {
+	value: string;
+	/** Session key captured at `set` time (`null` = none). */
+	token: string | null;
+	settle: Array<{ resolve: () => void; reject: (reason: unknown) => void }>;
+}
+
+/**
+ * Wraps a raw (unserialized) provider with the per-key write serialization
+ * described in the file header. Module-private; shared by the Tauri and HTTP
+ * providers. `getSessionKey` identifies the session (HTTP: token, Tauri:
+ * credential revision); when omitted nothing is dropped for a session change.
+ * A write dropped for a session difference is rejected with `unauthorized`. `requireKey` additionally drops writes whose key was
+ * empty/null at accept time (HTTP: no token).
+ */
+function serializeWrites(
+	inner: UiSettingsProvider,
+	getSessionKey?: () => string | null,
+	requireKey = false
+): UiSettingsProvider {
+	/** Keys with a write in flight -> the latest value held meanwhile (or null). */
+	const held = new Map<string, PendingWrite | null>();
+	/** Keys with a write in flight -> the drain promise `get` waits on (never rejects). */
+	const drains = new Map<string, Promise<void>>();
+
+	function shouldDrop(write: PendingWrite): boolean {
+		if (!getSessionKey) return false;
+		if (requireKey && (write.token === null || write.token === '')) return true;
+		return getSessionKey() !== write.token;
+	}
+
+	async function drain(key: string, first: PendingWrite): Promise<void> {
+		let item: PendingWrite | null = first;
+		while (item) {
+			const current: PendingWrite = item;
+			if (shouldDrop(current)) {
+				// Session changed (or none) since the write was accepted: drop it, and
+				// reject so the caller does not treat an unsent value as saved.
+				const dropped = new ProviderError({ kind: 'unauthorized' });
+				current.settle.forEach((s) => s.reject(dropped));
+			} else {
+				try {
+					await inner.set(key, current.value);
+					current.settle.forEach((s) => s.resolve());
+				} catch (error) {
+					current.settle.forEach((s) => s.reject(error));
+				}
+			}
+			item = held.get(key) ?? null;
+			held.set(key, null);
+		}
+		held.delete(key);
+		drains.delete(key);
+	}
+
+	return {
+		async get(key: string): Promise<string | null> {
+			assertValidKey(key);
+			// Wait while writes remain; a write accepted while waiting is awaited too.
+			for (let d = drains.get(key); d; d = drains.get(key)) {
+				await d;
+			}
+			return inner.get(key);
+		},
+
+		set(key: string, value: string): Promise<void> {
+			try {
+				assertValidKey(key);
+			} catch (err) {
+				return Promise.reject(err);
+			}
+			const token = getSessionKey ? getSessionKey() : null;
+			return new Promise<void>((resolve, reject) => {
+				const entry: PendingWrite = { value, token, settle: [{ resolve, reject }] };
+				if (!held.has(key)) {
+					held.set(key, null);
+					// drain() runs synchronously up to its first await, so register it
+					// only if it is still in flight (a dropped write ends without awaiting).
+					const d = drain(key, entry);
+					if (held.has(key)) drains.set(key, d);
+					return;
+				}
+				// In flight: the held intermediate value is superseded (resolved as dropped).
+				held.get(key)?.settle.forEach((s) => s.resolve());
+				held.set(key, entry);
+			});
+		}
+	};
+}
+
 // --- localStorage ----------------------------------------------------------
 
 const LOCAL_PREFIX = 'banto.ui.';
@@ -100,6 +213,11 @@ export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiS
 export interface TauriUiSettingsOptions {
 	/** Injected so this module has no `@tauri-apps/api` dependency of its own (same as `TauriInvokeOptions`). */
 	invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+	/**
+	 * ふつうは `authProvider.credentialRevision()`。受け付け時と送る直前で違えば、
+	 * 控えた書き込みを送らずに捨てる（unauthorized で reject）。省略時はセッションを見ない（従来どおり）。
+	 */
+	getSessionRevision?: () => string;
 }
 
 /**
@@ -115,17 +233,21 @@ export function createTauriUiSettings(options: TauriUiSettingsOptions): UiSettin
 		}
 	}
 
-	return {
-		async get(key: string): Promise<string | null> {
-			assertValidKey(key);
-			return (await call<string | null>('ui_settings_get', { key })) ?? null;
-		},
+	const { getSessionRevision } = options;
+	return serializeWrites(
+		{
+			async get(key: string): Promise<string | null> {
+				assertValidKey(key);
+				return (await call<string | null>('ui_settings_get', { key })) ?? null;
+			},
 
-		async set(key: string, value: string): Promise<void> {
-			assertValidKey(key);
-			await call<void>('ui_settings_set', { key, value });
-		}
-	};
+			async set(key: string, value: string): Promise<void> {
+				assertValidKey(key);
+				await call<void>('ui_settings_set', { key, value });
+			}
+		},
+		getSessionRevision ? () => getSessionRevision() : undefined
+	);
 }
 
 // --- REST (embedded server) ------------------------------------------------
@@ -147,7 +269,8 @@ export interface HttpUiSettingsOptions {
  * - `get` -> `GET {base}/api/ui-settings/{key}` -> `{"value": string | null}`
  * - `set` -> `PUT {base}/api/ui-settings/{key}` with `{"value": string}` -> `204`
  * Same CSRF header (`X-Banto-Client: banto`) + `Authorization: Bearer`
- * conventions as `createHttpDataProvider`.
+ * conventions as `createHttpDataProvider`. Writes are serialized per key and
+ * dropped on a token change / no token (see the file header, #707).
  */
 export function createHttpUiSettings(options: HttpUiSettingsOptions): UiSettingsProvider {
 	const baseUrl = options.baseUrl ?? '';
@@ -178,36 +301,40 @@ export function createHttpUiSettings(options: HttpUiSettingsOptions): UiSettings
 		});
 	}
 
-	return {
-		async get(key: string): Promise<string | null> {
-			assertValidKey(key);
-			let response: Response;
-			try {
-				response = await fetchFn(`${baseUrl}/api/ui-settings/${key}`, {
-					method: 'GET',
-					headers: headers(false)
-				});
-			} catch {
-				throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
-			}
-			if (!response.ok) throw await errorFromResponse(response);
-			const body = (await response.json()) as { value: string | null };
-			return body.value ?? null;
-		},
+	return serializeWrites(
+		{
+			async get(key: string): Promise<string | null> {
+				assertValidKey(key);
+				let response: Response;
+				try {
+					response = await fetchFn(`${baseUrl}/api/ui-settings/${key}`, {
+						method: 'GET',
+						headers: headers(false)
+					});
+				} catch {
+					throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
+				}
+				if (!response.ok) throw await errorFromResponse(response);
+				const body = (await response.json()) as { value: string | null };
+				return body.value ?? null;
+			},
 
-		async set(key: string, value: string): Promise<void> {
-			assertValidKey(key);
-			let response: Response;
-			try {
-				response = await fetchFn(`${baseUrl}/api/ui-settings/${key}`, {
-					method: 'PUT',
-					headers: headers(true),
-					body: JSON.stringify({ value })
-				});
-			} catch {
-				throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
+			async set(key: string, value: string): Promise<void> {
+				assertValidKey(key);
+				let response: Response;
+				try {
+					response = await fetchFn(`${baseUrl}/api/ui-settings/${key}`, {
+						method: 'PUT',
+						headers: headers(true),
+						body: JSON.stringify({ value })
+					});
+				} catch {
+					throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
+				}
+				if (!response.ok) throw await errorFromResponse(response);
 			}
-			if (!response.ok) throw await errorFromResponse(response);
-		}
-	};
+		},
+		options.getToken,
+		true
+	);
 }
