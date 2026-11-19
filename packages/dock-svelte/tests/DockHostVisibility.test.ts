@@ -211,3 +211,52 @@ describe('showPanel of an open floating window', () => {
 		expect(docked(dock)).toEqual(['a', 'b']);
 	});
 });
+
+// #739 review: `replaceLayout(saved, { saved: true })` drops the floated panes' places in the same
+// step that puts the saved layout in (its shares do not count them); a refusal changes neither.
+describe('replaceLayout with { saved: true } (#739 review)', () => {
+	const panel = (id: string) => ({ type: 'panel' as const, id, title: id });
+	const initial = (): DockLayout => ({
+		version: 2,
+		floating: [],
+		docked: {
+			type: 'split',
+			id: 's',
+			direction: 'row',
+			sizes: [0.2, 0.3, 0.5],
+			children: ['a', 'b', 'c'].map(panel)
+		}
+	});
+
+	it('row[a .2, b .3, c .5]: float a, hide b, put the saved layout back, show b -> 3 : 5', async () => {
+		const { dock, host } = mount({}, initial());
+		dock.undockPanel('a');
+		dock.dismiss('b');
+		const saved = JSON.parse(dock.serialize()) as DockLayout;
+		expect(await host().replaceLayout(saved, { saved: true })).toBe('applied');
+		expect(dock.homeSlot('a')).toBeUndefined();
+		dock.show('b');
+		const root = dock.layout.docked;
+		expect(root?.type === 'split' && root.sizes[0]).toBeCloseTo(0.375, 9);
+	});
+
+	it('a refusal keeps the layout and the places', async () => {
+		const { dock, host } = mount({ beforePanelChange: () => false }, initial());
+		dock.undockPanel('a');
+		dock.dismiss('b');
+		const before = dock.serialize();
+		const other = JSON.parse(before) as DockLayout;
+		// `a` docked beside `c`: the pane moved is asked (`dock`).
+		other.floating = other.floating.filter((w) => w.id !== 'a');
+		other.docked = {
+			type: 'split',
+			id: 't',
+			direction: 'row',
+			sizes: [0.5, 0.5],
+			children: [panel('c'), panel('a')]
+		};
+		expect(await host().replaceLayout(other, { saved: true })).toBe('refused');
+		expect(dock.serialize()).toBe(before);
+		expect(dock.homeSlot('a')).toBeDefined();
+	});
+});

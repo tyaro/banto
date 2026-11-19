@@ -109,10 +109,9 @@ import {
 } from './autohide';
 import { displacedChanges, mountedPanes } from './mounts';
 import { layoutChanges } from './replace';
-import { restoreDockSlot } from './slot';
 import { findNode, findParent, removePanel, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
-import type { DockLayout, DockNode, DockPanelNode } from '../types';
+import type { DockLayout, DockNode } from '../types';
 
 /**
  * A structure change the dock UI is about to make (shared-primitives-upstream-
@@ -471,9 +470,8 @@ export class PanelLifecycle {
 			const win = this.#dock.layout.floating.find((w) => w.id === panelId)!;
 			const docked = this.#dock.layout.docked;
 			if (!win.dockSlot) return docked;
-			const node: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
 			return (
-				restoreDockSlot(docked, node, win.dockSlot, () => `${panelId}:restored-tabs`) ?? docked
+				this.#dock.restoredAt(panelId, win.dockSlot, () => `${panelId}:restored-tabs`) ?? docked
 			);
 		};
 		return this.requestPlacement(

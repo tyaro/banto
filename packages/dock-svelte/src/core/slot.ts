@@ -321,7 +321,8 @@ function lastTabSlot(
  * `hidden` remember a split that is gone and name `unit` (or a panel in it) as their neighbour
  * or an anchor. The split's children are rebuilt from their slots (`splitOrder`), and the slot is
  * a child of that split, with `outer` = where `unit` is now. `size` is an even share (the share
- * the last child had is not known). The most recent such split (the last in `hidden`) wins.
+ * the last child had is not known); `share` (#733) what the hidden children's shares leave. The
+ * most recent such split (the last in `hidden`) wins.
  * Only when `unit` is the whole surviving child: no pane (or container) named by any slot of
  * that split - a hidden pane's own slot or an `outer` of it, nested too - is docked outside it.
  * `null` when there is none.
@@ -447,7 +448,13 @@ function lastSplitSlot(
 				more.map((h) => h.id)
 			);
 	}
-	const slot = splitSlotAt([unit], ids, unit.id, splitId, direction, 1 / ids.length, remnants);
+	// `size` an even share of the reconstructed children, as before; #733: `share` what the hidden
+	// children's shares leave of the whole split (only when theirs are all known).
+	const rest = 1 - pendingShare(pending, ids);
+	const slot = withShare(
+		splitSlotAt([unit], ids, unit.id, splitId, direction, 1 / ids.length, remnants),
+		rest
+	);
 	if (depth + 1 >= MAX_SLOT_DEPTH) return slot;
 	// The split's place: inside a split that is gone too (#727), that one's place as the newest
 	// slot remembers it; else where `unit` is now.
@@ -519,7 +526,13 @@ export function captureRegionSlot(root: DockNode | null, regionId: string): Dock
 	const node = findNode(root, regionId);
 	if (!node || node.type === 'split') return null;
 	if (node.type === 'panel' && findParent(root, regionId)?.type === 'tabs') return null;
-	return unitSlot(root, node);
+	const slot = unitSlot(root, node);
+	// No `share` (#739 review): the panes hidden from the split are not known here, so the share of
+	// the whole split is not either - a pane later hidden from the band (`dismiss` copies this slot)
+	// comes back by `size`, as before #733.
+	if (slot.kind !== 'split' || slot.share === undefined) return slot;
+	const { share: _share, ...rest } = slot;
+	return rest;
 }
 
 /** A split slot's anchors as places to try, nearest first (the neighbour's side first at each distance). */
@@ -559,15 +572,34 @@ function unitSlot(
 	const own = split.children.findIndex((c) => c.id === unit.id);
 	const pending = splitPending(root, split, [...hidden]);
 	const ids = splitOrder(split.children, pending);
-	return splitSlotAt(
+	// #733: `share`, of the whole split, the hidden panes' shares counted - the docked children
+	// share what they left. `size` stays the share among the docked children, as before.
+	const rest = 1 - pendingShare(pending, ids);
+	const size = split.sizes[own] ?? 1 / split.children.length;
+	const slot = splitSlotAt(
 		split.children,
 		ids,
 		unit.id,
 		split.id,
 		split.direction,
-		split.sizes[own] ?? 1 / split.children.length,
+		size,
 		remnantPanes(root, split, [...hidden], ids)
 	);
+	return withShare(slot, rest * size);
+}
+
+/**
+ * `slot` with `share` (#733, `DockSlot`) when it is known (a number in (0, 1]); without, when the
+ * shares of the panes hidden from the split are not all known (one of them a slot taken before
+ * #733) - it then comes back by `size`, as before.
+ */
+function withShare(
+	slot: Extract<DockSlot, { kind: 'split' }>,
+	share: number
+): Extract<DockSlot, { kind: 'split' }> {
+	const next = { ...slot };
+	delete next.share;
+	return share > 1e-9 && share <= 1 ? { ...next, share } : next;
 }
 
 /** The ids a slot names: a tab slot's anchors, a split slot's neighbour and anchors (both sides). */
@@ -656,9 +688,9 @@ function remnantPanes(
  */
 function splitPending(
 	root: DockNode | null,
-	split: DockSplitNode,
+	split: Pick<DockSplitNode, 'id' | 'direction'>,
 	hidden: HiddenDockSlot[]
-): HiddenDockSlot[] {
+): PendingSlot[] {
 	const docked = (id: string) => findNode(root, id) !== null;
 	// Not a type guard: a split slot of another split is still a split slot.
 	const inSplit = (slot: DockSlot | undefined): boolean =>
@@ -710,17 +742,39 @@ function splitPending(
 		return true;
 	};
 	const counted = new Set(direct.map((h) => h.id));
-	const outer: HiddenDockSlot[] = [];
-	for (const { id, chain } of latest.values()) {
+	const outer: PendingSlot[] = [];
+	for (const [container, { id, chain }] of latest.entries()) {
 		const slot = chain[chain.length - 1];
 		if (counted.has(id)) continue;
 		const place =
 			slot.outer ?? (slot.kind === 'split' ? placeOfGone(root, slot, hidden) : undefined);
 		if (!place || !inSplit(place) || !chain.every(gone)) continue;
 		counted.add(id);
-		outer.push({ id, slot: place });
+		outer.push({ id, slot: place, container });
 	}
 	return [...direct, ...outer];
+}
+
+/** A hidden pane counted among a split's children (`splitPending`): for a container, the container's id. */
+interface PendingSlot extends HiddenDockSlot {
+	container?: string;
+}
+
+/**
+ * The share of the split the pending panes placed among `ids` remember, summed (#733: a split
+ * slot's `share` is its share of the whole split, the hidden children counted). `NaN` when one of
+ * them has no `share` (a slot taken before #733: its `size` is a share of the split as it was
+ * then, which cannot be added up with the others).
+ */
+function pendingShare(pending: HiddenDockSlot[], ids: string[]): number {
+	let sum = 0;
+	const counted = new Set<string>();
+	for (const h of pending) {
+		if (h.slot.kind !== 'split' || !ids.includes(h.id) || counted.has(h.id)) continue;
+		counted.add(h.id);
+		sum += h.slot.share ?? NaN;
+	}
+	return sum;
 }
 
 /**
@@ -888,9 +942,10 @@ function restoreSplit(
 	root: DockNode,
 	panel: DockPanelNode | DockTabGroupNode,
 	slot: Extract<DockSlot, { kind: 'split' }>,
-	makeId: () => string
+	makeId: () => string,
+	size: number = slot.size
 ): DockNode | null {
-	const share = clampShare(slot.size);
+	const share = clampShare(size);
 	// The old neighbour, then the anchors by distance (either side): the first one found decides.
 	const candidates: Anchor[] = [
 		{ id: slot.neighborId, before: slot.side === 'before' },
@@ -962,23 +1017,102 @@ function besideWhat(
 }
 
 /**
+ * The share a pane put back at the split slot `slot` takes of the space it splits (#733): `share`
+ * is its share of the whole split, the panes hidden from it counted, so it is scaled up by the
+ * share of the hidden children of the split still out (`hidden`, as `splitPending` counts them;
+ * not the containers `mine` - the ones the pane itself comes back from). Say `row[a,b,c]` with `a`
+ * and `b` hidden: `a` shown first takes 1/2 beside `c`, then `b` 1/3 of the row. When it has no
+ * `share`, or one of those has none (a slot taken before #733, cross review on #739), or the
+ * shares do not add up (a split changed since), `size` as before: its share of the split when it
+ * was taken.
+ */
+function restoreShare(
+	root: DockNode,
+	slot: Extract<DockSlot, { kind: 'split' }>,
+	hidden: HiddenDockSlot[],
+	mine: Set<string>
+): number {
+	const share = slot.share;
+	if (share === undefined) return slot.size;
+	if (hidden.length === 0) return share;
+	const pending = splitPending(
+		root,
+		{ id: slot.splitId, direction: slot.direction },
+		hidden
+	).filter((h) => h.container === undefined || !mine.has(h.container));
+	const sum = pendingShare(
+		pending,
+		pending.map((h) => h.id)
+	);
+	return sum >= 0 && sum + share < 1 + 1e-9 ? Math.min(1, share / (1 - sum)) : slot.size;
+}
+
+/**
+ * `slot` (a closed window's `dockSlot`) with every split level's `share` taken as a share of the
+ * split without the panes of `all` that are not in `kept` (Codex P2 on #739): `share` counts the
+ * shares of the panes hidden from the split (#733), the floated panes' `homeSlot`s among them, but
+ * those are not saved - after `serialize` / `hydrate` they no longer count, and `restoreShare`
+ * would scale it by a share the split has lost. Say `row[a .2, b .3, c .5]`, `a` floated and `b`
+ * hidden: `b`'s share `.3` (of the whole row) is saved as `.375` (of `row[b,c]`). Counted as
+ * `restoreShare` does (`splitPending` / `pendingShare`). A level whose shares do not add up (one
+ * of them taken before #733, a split changed since) loses its `share`: it comes back by `size`,
+ * which counts no hidden pane.
+ */
+export function slotWithoutShares(
+	root: DockNode | null,
+	slot: DockSlot,
+	all: HiddenDockSlot[],
+	kept: HiddenDockSlot[]
+): DockSlot {
+	if (slot.kind === 'root') return slot;
+	const outer = slot.outer && slotWithoutShares(root, slot.outer, all, kept);
+	const next: DockSlot = outer === slot.outer ? slot : { ...slot, outer };
+	if (next.kind !== 'split' || next.share === undefined) return next;
+	const split = { id: next.splitId, direction: next.direction };
+	const sum = (hidden: HiddenDockSlot[]): number => {
+		const pending = splitPending(root, split, hidden);
+		return pendingShare(
+			pending,
+			pending.map((h) => h.id)
+		);
+	};
+	const whole = sum(all);
+	const gone = whole - sum(kept);
+	if (gone === 0) return next;
+	// `whole` is 1 when no child of the split is docked (they are all out).
+	const ok = whole < 1 + 1e-9 && gone > 0 && gone < 1 - 1e-9;
+	return withShare(next, ok ? next.share / (1 - gone) : NaN);
+}
+
+/**
  * Put `panel` back into `root` at `slot` (module doc for the order of tries).
  * Returns the new root, or `null` when the place is gone (the caller falls
  * back to a floating window). `panel` must not be in `root` already.
+ *
+ * `hidden` are the other panes out of the tree that remember a place (as for
+ * `captureDockSlot`): the share it takes of a split leaves theirs for them
+ * (#733), so a split's sizes come back whatever order its panes are shown in.
  */
 export function restoreDockSlot(
 	root: DockNode | null,
 	panel: DockPanelNode,
 	slot: DockSlot,
-	makeId: () => string
+	makeId: () => string,
+	hidden: Iterable<HiddenDockSlot> = []
 ): DockNode | null {
 	if (root === null) return panel;
 	if (findNode(root, panel.id)) return null;
+	const others = [...hidden].filter((h) => h.id !== panel.id);
+	// The containers the pane comes back from: a hidden pane standing for one of them is not a
+	// sibling of its own (say `b` of `column[row[a,b], c]`, when `a` goes back to the row's place).
+	const mine = new Set<string>();
+	for (let s: DockSlot | undefined = slot; s && s.kind !== 'root'; s = s.outer)
+		mine.add(s.kind === 'tab' ? s.groupId : s.splitId);
 	const place = (s: DockSlot): DockNode | null =>
 		s.kind === 'tab'
 			? restoreTab(root, panel, s, makeId)
 			: s.kind === 'split'
-				? restoreSplit(root, panel, s, makeId)
+				? restoreSplit(root, panel, s, makeId, restoreShare(root, s, others, mine))
 				: null;
 	// The container's own place (#721) only after the container and the anchors; then the place of
 	// the container around it (#727: nested `outer`), and so on, at most `MAX_SLOT_DEPTH` deep.

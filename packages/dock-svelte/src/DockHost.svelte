@@ -91,7 +91,7 @@
 		type DockCapabilities,
 		type DockPolicy
 	} from './core/policy';
-	import type { DockState } from './state.svelte';
+	import { adoptLayout, forgetHomeSlots, type DockState } from './state.svelte';
 	import type { DockLayout, DockNode, PanelContent } from './types';
 	import { validateDockLayout } from './core/validate';
 	import DockAutoHide from './DockAutoHide.svelte';
@@ -548,12 +548,16 @@
 	 * first: an invalid one resolves `invalid` and changes nothing. DOM focus is only repaired (a
 	 * focus the replacement dropped from the host goes to `focusPanel`'s title bar, default the
 	 * first docked pane's); a focus the app took elsewhere meanwhile is left alone.
+	 * `options.saved`: `next` is a saved layout (`serialize()` / `savedLayout()`), not one built from
+	 * today's: its shares do not count the floated panes' places (#739), so they are dropped in the
+	 * same step that puts it in, as by `hydrate` - a save reacting to the change never sees the new
+	 * layout with the old places. Leave it off for a layout made from the live one.
 	 * `options.isCurrent` is re-read before each request and right before the replacement is
 	 * applied: `false` = `stale`, nothing changed (like `setPanelVisible`'s).
 	 */
 	export async function replaceLayout(
 		next: DockLayout,
-		options: { focusPanel?: string; isCurrent?: () => boolean } = {}
+		options: { focusPanel?: string; isCurrent?: () => boolean; saved?: boolean } = {}
 	): Promise<DockPanelChangeOutcome | 'invalid'> {
 		const checked = validateDockLayout(next);
 		if (!checked.ok) return 'invalid';
@@ -563,7 +567,10 @@
 		const outcome = await lifecycle.guarded(options.isCurrent, () =>
 			lifecycle.requestReplace(
 				() => layout,
-				(l) => (dock.layout = l)
+				(l) => {
+					if (options.saved) forgetHomeSlots(dock);
+					adoptLayout(dock, l);
+				}
 			)
 		);
 		if (outcome !== 'applied' || !focusWasInHost) return outcome;

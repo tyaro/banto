@@ -51,7 +51,6 @@
 import { getContext, setContext, tick } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
 import type { DockPanelChange, DockPanelChangeOutcome, PanelLifecycle } from './lifecycle';
-import { restoreDockSlot } from './slot';
 import { resolveCapabilities, type DockPolicy } from './policy';
 import {
 	collectPanelIds,
@@ -544,13 +543,7 @@ export class DragController {
 	#backPreview(panelId: string, slot: DockSlot | undefined): DockNode | undefined {
 		const win = this.#dock.layout.floating.find((w) => w.id === panelId);
 		if (!win || !win.open || !slot) return undefined;
-		const node: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
-		const after = restoreDockSlot(
-			this.#dock.layout.docked,
-			node,
-			slot,
-			() => `${panelId}:restored`
-		);
+		const after = this.#dock.restoredAt(panelId, slot, () => `${panelId}:restored`);
 		return after && this.#backAllowed(after, panelId) ? after : undefined;
 	}
 

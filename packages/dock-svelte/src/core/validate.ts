@@ -77,6 +77,9 @@ function isDockSlot(v: unknown, maxDepth: number, depth = 0): boolean {
 			Number.isFinite(v.size) &&
 			v.size >= 0 &&
 			v.size <= 1 &&
+			// #733 (optional): a share of the whole split, above 0.
+			(v.share === undefined ||
+				(typeof v.share === 'number' && Number.isFinite(v.share) && v.share > 0 && v.share <= 1)) &&
 			isIdList(v.anchors) &&
 			(v.otherAnchors === undefined || isIdList(v.otherAnchors))
 		);

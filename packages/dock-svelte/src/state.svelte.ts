@@ -31,7 +31,12 @@ import {
 	setAutoHiddenActive,
 	type AutoHideOptions
 } from './core/autohide';
-import { captureDockSlot, restoreDockSlot, type HiddenDockSlot } from './core/slot';
+import {
+	captureDockSlot,
+	restoreDockSlot,
+	slotWithoutShares,
+	type HiddenDockSlot
+} from './core/slot';
 import { withLayoutVersion } from './core/layoutVersion';
 import { validateDockLayout } from './core/validate';
 import {
@@ -90,6 +95,30 @@ function sameFloatingStructure(a: FloatingWindow[], b: FloatingWindow[]): boolea
 	return a.every((w, i) => w.id === b[i].id && w.open === b[i].open);
 }
 
+let adoptImpl: (dock: DockState, layout: DockLayout) => void;
+
+/**
+ * `dock.layout = layout` for a layout taken as a whole (not exported from the package): the slots
+ * of its panes out of the tree are as given, as `hydrate` takes them - the panes pending before
+ * belong to the layout replaced (Codex P2 on #739). For the library's own whole-layout
+ * replacements (`DockHost.replaceLayout`, `ThreePaneDock`'s installs, a cancelled gesture's snapshot).
+ */
+export function adoptLayout(dock: DockState, layout: DockLayout): void {
+	adoptImpl(dock, layout);
+}
+
+let forgetImpl: (dock: DockState) => void;
+
+/**
+ * Drop every floated pane's `homeSlot` (not exported from the package): for a layout kept as
+ * `savedLayout()` gives it - shares taken without them - and shown again later (`ThreePaneDock`'s
+ * narrow display, #739 review). A floated pane still floating (say closed) would otherwise be
+ * counted again by the shares that no longer count it.
+ */
+export function forgetHomeSlots(dock: DockState): void {
+	forgetImpl(dock);
+}
+
 export class DockState {
 	#layout: DockLayout = $state(emptyLayout());
 	/** The structure revision (plain, not reactive) - see `structureRevision`. */
@@ -133,17 +162,105 @@ export class DockState {
 			next = { ...next };
 			delete next.autoHidden;
 		}
+		// Whatever put a floated pane back in the tree (#735): its remembered place is spent.
+		const spent =
+			this.#homeSlots.size > 0
+				? untrack(() => {
+						const floating = new Set(next.floating.map((w) => w.id));
+						return [...this.#homeSlots.keys()].filter((id) => !floating.has(id));
+					})
+				: [];
+		// A pane out of the tree that no longer holds its share of a split: the others' are taken
+		// without it (Codex P2 on #739). Not for `hydrate` / `reset`: they take a layout as a whole.
+		if (!this.#adopting) next = untrack(() => this.#withoutGoneShares(next));
 		this.#noteStructure(next);
 		this.#layout = next;
-		// Whatever put a floated pane back in the tree (#735): its remembered place is spent.
-		if (this.#homeSlots.size > 0) {
-			const floating = untrack(() => new Set(next.floating.map((w) => w.id)));
-			for (const id of [...this.#homeSlots.keys()])
-				if (!floating.has(id)) this.#homeSlots.delete(id);
-		}
+		for (const id of spent) this.#homeSlots.delete(id);
 		// The slid-out pane is no longer auto-hidden: it is not slid out any more.
 		const flyout = untrack(() => this.#flyout);
 		if (flyout !== null && findAutoHidden(next, flyout) === null) this.#flyout = null;
+	}
+
+	/** Set while `hydrate` / `reset` / the constructor assign a layout taken as a whole (no `#withoutGoneShares`). */
+	#adopting = false;
+
+	/**
+	 * The panes out of the tree that remember a docked place in `layout`, by id (as
+	 * `#pendingSlots`): a closed window's `dockSlot`, else the `homeSlot` of a pane floating in it.
+	 */
+	#pendingById(layout: DockLayout): Map<string, DockSlot> {
+		const out = new Map<string, DockSlot>();
+		for (const w of layout.floating) if (!w.open && w.dockSlot) out.set(w.id, w.dockSlot);
+		const floating = new Set(layout.floating.map((w) => w.id));
+		for (const [id, slot] of this.#homeSlots)
+			if (floating.has(id) && !out.has(id)) out.set(id, slot);
+		return out;
+	}
+
+	/**
+	 * `next` with the `share`s of the slots still pending - the closed windows' `dockSlot`s and the
+	 * `homeSlot`s of the panes still floating - taken without the panes that were pending before and
+	 * are no longer, unless they went back into their place (Codex P2 on #739, generalising the
+	 * fix for `homeSlot`s): a `share` counts the shares of the panes out of its split (#733). A pane
+	 * that left its place for good - opened floating (`open` / `toggle` / `show` with the place
+	 * gone), docked elsewhere (`dockPanel`), auto-hidden, removed, or its `dockSlot` dropped by an
+	 * assignment - no longer holds its share, so a pane shown later would be scaled by a share
+	 * nobody comes back to: say `row[a .2, b .3, c .5]`, `a` and `b` hidden, `a` opened floating:
+	 * `b` comes back at `.375` (of `row[b, c]`), as when it is shown before `a` is opened.
+	 *
+	 * A pane back in the container of its slot (or of a level of its `outer`), or in an empty tree,
+	 * holds its share again: kept. A pane pending before and after keeps its share too, unless its
+	 * slot moved to another place (not in the containers of the old one's innermost). Counted on
+	 * the tree before `next` (`splitPending` counts no docked pane), as `savedLayout`.
+	 */
+	#withoutGoneShares(next: DockLayout): DockLayout {
+		const before = this.#pendingById(this.#layout);
+		if (before.size === 0) return next;
+		const after = this.#pendingById(next);
+		const containers = (slot: DockSlot): Set<string> => {
+			const out = new Set<string>();
+			for (let s: DockSlot | undefined = slot; s && s.kind !== 'root'; s = s.outer)
+				out.add(s.kind === 'tab' ? s.groupId : s.splitId);
+			return out;
+		};
+		const innermost = (slot: DockSlot): string | null =>
+			slot.kind === 'root' ? null : slot.kind === 'tab' ? slot.groupId : slot.splitId;
+		const home = (id: string, slot: DockSlot): boolean => {
+			// The tree was empty: any place is its place (the panes out come back beside it).
+			if (next.docked?.id === id) return true;
+			if (findNode(next.docked, id)?.type !== 'panel') return false;
+			const parent = findParent(next.docked, id);
+			return parent !== null && containers(slot).has(parent.id);
+		};
+		const gone = new Set<string>();
+		for (const [id, slot] of before) {
+			const now = after.get(id);
+			if (now === undefined) {
+				if (!home(id, slot)) gone.add(id);
+			} else if (now !== slot) {
+				// Still pending, at another slot: gone only when it left the old one's container.
+				const inner = innermost(slot);
+				if (inner !== null && !containers(now).has(inner)) gone.add(id);
+			}
+		}
+		if (gone.size === 0) return next;
+		const all: HiddenDockSlot[] = [...before].map(([id, slot]) => ({ id, slot }));
+		const kept = all.filter((h) => !gone.has(h.id));
+		const root = this.#layout.docked;
+		// The `homeSlot`s of the panes still floating count them too (#733): taken the same way.
+		const floatingNext = new Set(next.floating.map((w) => w.id));
+		for (const [id, slot] of this.#homeSlots)
+			if (!gone.has(id) && floatingNext.has(id))
+				this.#homeSlots.set(id, slotWithoutShares(root, slot, all, kept));
+		let changed = false;
+		const floating = next.floating.map((w) => {
+			if (w.open || !w.dockSlot || gone.has(w.id)) return w;
+			const dockSlot = slotWithoutShares(root, w.dockSlot, all, kept);
+			if (dockSlot === w.dockSlot) return w;
+			changed = true;
+			return { ...w, dockSlot };
+		});
+		return changed ? { ...next, floating } : next;
 	}
 
 	/** The auto-hidden pane slid out over the docked tree (#694 PR-3). Not saved. */
@@ -261,7 +378,7 @@ export class DockState {
 			this.hydrate(initial);
 		} else if (initial) {
 			const result = validateDockLayout(initial);
-			if (result.ok) this.layout = result.layout;
+			if (result.ok) this.#adopt(result.layout);
 		}
 	}
 
@@ -652,8 +769,20 @@ export class DockState {
 	#restoredTree(id: string, makeId: () => string = this.#makeId): DockNode | null {
 		const win = this.layout.floating.find((w) => w.id === id);
 		if (!win || win.open || !win.dockSlot) return null;
+		return this.restoredAt(id, win.dockSlot, makeId);
+	}
+
+	/**
+	 * The docked tree with the floating window `id` (open or closed) put at `slot`
+	 * (`core/slot.ts#restoreDockSlot`), counting the other panes that remember a docked place
+	 * (#733: the share it takes of a split leaves theirs); `null` = no such window, or the place
+	 * is gone. Pure: the layout does not change. For the previews of `show` / "back".
+	 */
+	restoredAt(id: string, slot: DockSlot, makeId: () => string = this.#makeId): DockNode | null {
+		const win = this.layout.floating.find((w) => w.id === id);
+		if (!win) return null;
 		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
-		return restoreDockSlot(this.layout.docked, panel, win.dockSlot, makeId);
+		return restoreDockSlot(this.layout.docked, panel, slot, makeId, this.#pendingSlots(id));
 	}
 
 	/** Closes the window but keeps its geometry so a later `open`/`toggle` restores the same position/size. */
@@ -885,8 +1014,7 @@ export class DockState {
 	dockAtSlot(panelId: string, slot: DockSlot, makeId: () => string = this.#makeId): boolean {
 		const win = this.layout.floating.find((w) => w.id === panelId);
 		if (!win || !win.open) return false;
-		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
-		const docked = restoreDockSlot(this.layout.docked, panel, slot, makeId);
+		const docked = this.restoredAt(panelId, slot, makeId);
 		if (docked === null) return false;
 		this.layout = {
 			...this.layout,
@@ -954,7 +1082,31 @@ export class DockState {
 
 	/** Serialize the whole layout for persistence (spec §5.1). */
 	serialize(): string {
-		return JSON.stringify(this.layout);
+		return JSON.stringify(this.savedLayout());
+	}
+
+	/**
+	 * The layout as `serialize` writes it (Codex P2 on #739): the floated panes' `homeSlot`s are not
+	 * saved, so the closed windows' `dockSlot` `share`s - of a split, counting them (#733) - are
+	 * written as shares without them (`slotWithoutShares`), as `show` takes them after `hydrate`.
+	 * The layout itself keeps them as they are (a `show` before any reload still counts them).
+	 * Save this - not `layout` - when the layout is saved as an object rather than through
+	 * `serialize` (`ThreePaneDock`'s `layoutSnapshot` does).
+	 */
+	savedLayout(): DockLayout {
+		if (this.#homeSlots.size === 0) return this.layout;
+		const all = this.#pendingSlots('');
+		const kept = all.filter((h) => !this.#homeSlots.has(h.id));
+		if (kept.length === all.length) return this.layout;
+		const root = this.layout.docked;
+		return {
+			...this.layout,
+			floating: this.layout.floating.map((w) =>
+				!w.open && w.dockSlot
+					? { ...w, dockSlot: slotWithoutShares(root, w.dockSlot, all, kept) }
+					: w
+			)
+		};
 	}
 
 	/**
@@ -986,7 +1138,7 @@ export class DockState {
 		// Another layout replaces this one: the floated panes' places belong to the old tree, even
 		// for an id that is floating in both (#738 review). A rejected payload keeps them (above).
 		this.#homeSlots.clear();
-		this.layout = result.layout;
+		this.#adopt(result.layout);
 		return true;
 	}
 
@@ -994,11 +1146,29 @@ export class DockState {
 	reset(defs: FloatingWindowDef[], hostW: number, hostH: number): void {
 		// Same as `hydrate`: the remembered places belong to the discarded tree.
 		this.#homeSlots.clear();
-		this.layout = {
+		this.#adopt({
 			version: 2,
 			floating: defs.map((def, index) => placeNew(def, index, hostW, hostH)),
 			docked: null
-		};
+		});
+	}
+
+	/**
+	 * Assign a layout taken as a whole (`hydrate` / `reset` / the constructor, and `adoptLayout`):
+	 * its slots are as given - the panes pending before belong to the layout replaced.
+	 */
+	#adopt(layout: DockLayout): void {
+		this.#adopting = true;
+		try {
+			this.layout = layout;
+		} finally {
+			this.#adopting = false;
+		}
+	}
+
+	static {
+		adoptImpl = (dock, layout) => dock.#adopt(layout);
+		forgetImpl = (dock) => dock.#homeSlots.clear();
 	}
 
 	#update(id: string, fn: (win: FloatingWindow) => FloatingWindow): void {

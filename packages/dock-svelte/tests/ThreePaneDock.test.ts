@@ -515,3 +515,68 @@ describe('ThreePaneDock: a restored centre never sits in a tab group (PR #723 re
 		expect(view.container.querySelectorAll('[role="tablist"]').length).toBe(0);
 	});
 });
+
+// #739 review: a restored saved layout has shares that do not count the floated panes, so their
+// places go (as by `hydrate`); a live replacement (a change of panels) keeps them. Either way
+// `right` comes back at the same share of the row as with nothing in between.
+describe('ThreePaneDock: floated panes places across whole-layout replacements (#739 review)', () => {
+	const LOG: ThreePaneExtraPanelDef = { id: 'log', title: 'Log', initial: { edge: 'bottom' } };
+	/** right : centre in the split that holds them once `right` is shown again. */
+	const ratio = (dock: DockState): number => {
+		dock.show('right');
+		const parent = (function find(n: DockLayout['docked']): DockSplitNode | null {
+			if (!n || n.type !== 'split') return null;
+			if (n.children.some((c) => c.id === 'right')) return n;
+			for (const c of n.children) {
+				const hit = find(c);
+				if (hit) return hit;
+			}
+			return null;
+		})(dock.layout.docked)!;
+		const at = (id: string) => parent.sizes[parent.children.findIndex((c) => c.id === id)];
+		return at('right') / at('center');
+	};
+	const start = (extra: ThreePaneExtraPanelDef[] = []) => {
+		const m = mount({ extra });
+		m.dock.undockPanel('left');
+		m.dock.dismiss('right');
+		return m;
+	};
+
+	it('a change of panels keeps the place of a floated pane and the shares', async () => {
+		const control = ratio(start().dock);
+		cleanup();
+		const { dock, view } = start();
+		await view.rerender({ extra: [LOG] });
+		await settle();
+		expect(dock.homeSlot('left')).toBeDefined();
+		expect(ratio(dock)).toBeCloseTo(control, 9);
+	});
+
+	it('restoring a saved layout drops the places, and the shares stay right', async () => {
+		const control = ratio(start().dock);
+		cleanup();
+		const { dock, api } = start();
+		// What a save reacting to each layout change would write (cross-review on 49cbabc6): never
+		// the new layout with the old places (a share counted twice).
+		const proto = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(dock), 'layout')!;
+		const written: string[] = [];
+		Object.defineProperty(dock, 'layout', {
+			configurable: true,
+			get() {
+				return proto.get!.call(this);
+			},
+			set(value: DockLayout) {
+				proto.set!.call(this, value);
+				written.push(JSON.stringify(dock.savedLayout()));
+			}
+		});
+		const saved = api().layoutSnapshot();
+		const { outcome } = await api().restoreLayout(saved);
+		expect(outcome).toBe('applied');
+		expect(dock.homeSlot('left')).toBeUndefined();
+		expect(written.length).toBeGreaterThan(0);
+		for (const json of written) expect(JSON.parse(json)).toEqual(saved.layout);
+		expect(ratio(dock)).toBeCloseTo(control, 9);
+	});
+});

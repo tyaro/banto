@@ -420,7 +420,8 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
 - **`host.showPanel(id)`**: どこにあっても見える状態にする。
   - ドックから隠した pane は**覚えている元の場所に戻す**（VS Code / Visual Studio のツールウィンドウと同じ）。
     タブだった pane は同じタブグループの同じ位置に（選択中のタブにする）、分割の片側だった pane は同じ側に、
-    もとの割合で戻る。元のタブグループ・分割が消えていれば、隣にあった pane を目印にして同じ関係で戻す。
+    もとの割合で戻る。同じ分割から何枚か隠したときは、まだ隠れている pane の分を空けて戻すので、どの順で戻しても
+    全部戻せば元の割合になる（#733）。元のタブグループ・分割が消えていれば、隣にあった pane を目印にして同じ関係で戻す。
     入れ子の分割では、目印の pane だけでなく、それを含む入れ物（同じ側にあった pane だけでできたもの）ごと包んで
     戻す（`column[row[a,b], c]` の `c` は `b` の隣でなく `row[a,b]` の隣へ。#727）。目印も入れ物も無ければ、
     入れ物があった場所へ、それも無ければさらに外側の入れ物があった場所へ戻す（#721・#727）。
@@ -683,8 +684,9 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   `unavailable`）は何も変えない。`viewMenuItems` は空。`restoreLayout` と狭い表示への切り替えは効く（保存済みの配置を見せる
   ための操作で、利用者の組み替えではない）。
 
-`DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
-行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
+`DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent?, saved? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
+行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない。保存した値（`serialize()` /
+`savedLayout()`）を入れるときは `saved: true` を渡す。浮かせたパネルの「元の場所に戻す」の控えを、`hydrate` と同じく入れるのと同時に捨てる）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
 
 ## 保存の約束（serialize / hydrate と書き込みは別）
 

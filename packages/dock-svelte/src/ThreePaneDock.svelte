@@ -58,7 +58,7 @@
 	import type { DockCapabilities } from './core/policy';
 	import { autoHiddenPanelIds } from './core/autohide';
 	import { collectPanelIds, structureKey } from './core/tree';
-	import { createDockState, type DockState } from './state.svelte';
+	import { adoptLayout, createDockState, forgetHomeSlots, type DockState } from './state.svelte';
 	import {
 		assertExtraPanelIds,
 		defaultThreePaneDockMessages,
@@ -248,11 +248,11 @@
 		const options = layoutOptions(0);
 		let status: ThreePaneRestoreStatus | 'fresh';
 		if (initialLayout === undefined && isEmpty(dock.layout)) {
-			dock.layout = threePaneDockLayout(options);
+			adoptLayout(dock, threePaneDockLayout(options));
 			status = 'fresh';
 		} else {
 			const result = reconcileThreePaneLayout(initialLayout ?? dock.layout, options);
-			dock.layout = result.layout;
+			adoptLayout(dock, result.layout);
 			status = result.status;
 		}
 		if (status === 'fresh' || status === 'default') installedDefault = dock.layout;
@@ -280,10 +280,13 @@
 
 	/** Install the narrow display without asking (before / right at mount: nothing has state yet). */
 	function enterNarrowNow(): void {
-		wideLayout = dock.layout;
 		wideIsDefault = installedDefault !== null && dock.layout === installedDefault;
+		// As saved (#739 review): the floated panes' places do not outlive the narrow display.
+		wideLayout = dock.savedLayout();
+		// ... nor a closed one's, which the narrow display keeps floating (the kept shares do not count it).
+		forgetHomeSlots(dock);
 		installedDefault = null;
-		dock.layout = threePaneNarrowLayout(wideLayout, narrowOptions());
+		adoptLayout(dock, threePaneNarrowLayout(wideLayout, narrowOptions()));
 		narrowShown = true;
 	}
 
@@ -308,12 +311,19 @@
 		let outcome: DockPanelChangeOutcome | 'invalid';
 		if (want) {
 			const base = dock.layout;
+			// Kept as saved (#739 review): the floated panes' `homeSlot`s are dropped by the narrow
+			// display, so the kept wide layout - saved by `layoutSnapshot` and shown again - must not
+			// count them. Taken before the switch, while they are still there.
+			const kept = dock.savedLayout();
 			outcome = await host.replaceLayout(threePaneNarrowLayout(base, narrowOptions()), {
 				focusPanel: CENTER,
-				isCurrent: () => current() && dock.layout === base
+				isCurrent: () => current() && dock.layout === base,
+				// A closed floated pane stays floating in the narrow display, so its `homeSlot` would
+				// survive and be counted again by the kept shares (#739 review): dropped in the same step.
+				saved: true
 			});
 			if (outcome === 'applied') {
-				wideLayout = base;
+				wideLayout = kept;
 				wideIsDefault = false;
 				narrowShown = true;
 			}
@@ -344,7 +354,7 @@
 			installedDefault !== null &&
 			dock.layout === installedDefault
 		) {
-			dock.layout = threePaneDockLayout(layoutOptions(width, height));
+			adoptLayout(dock, threePaneDockLayout(layoutOptions(width, height)));
 			installedDefault = dock.layout;
 		}
 		measuredWidth = width > 0 ? width : null;
@@ -442,7 +452,7 @@
 		panelTarget = target;
 		if (target === JSON.stringify(dock.layout)) return;
 		if (!host || structureKey(next) === structureKey(dock.layout)) {
-			dock.layout = next;
+			adoptLayout(dock, next);
 			return;
 		}
 		const outcome = await host.replaceLayout(next, {
@@ -681,7 +691,10 @@
 		const outcome = await host.replaceLayout(shown, {
 			focusPanel: CENTER,
 			// The display switched while it was asked: what it was built for is gone.
-			isCurrent: () => narrowShown === wasNarrow
+			isCurrent: () => narrowShown === wasNarrow,
+			// A saved (or default) layout, not today's: the floated panes' places go in the same step
+			// (#739 review). A live replacement (`syncPanels`) keeps them.
+			saved: true
 		});
 		if (outcome === 'applied' && wasNarrow) {
 			wideLayout = next;
@@ -709,7 +722,10 @@
 
 	/** The value to save now (plan §4.4): while narrow, the kept wide layout (the narrow display is never saved). */
 	export function layoutSnapshot(): ThreePaneSavedLayout {
-		return threePaneSavedLayout(narrowShown && wideLayout !== null ? wideLayout : dock.layout);
+		// `savedLayout()`, not `layout`: the floated panes' places are not saved (#739 review).
+		return threePaneSavedLayout(
+			narrowShown && wideLayout !== null ? wideLayout : dock.savedLayout()
+		);
 	}
 
 	/**
