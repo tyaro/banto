@@ -27,8 +27,101 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
+  # 基準画像だけの作り直しの再実行で、重いジョブを飛ばすかを決める。
+  # 流れ: PR の CI → visual-baselines.yml（commit: true、bot の push では CI が
+  # 走らない）→ 人が push し直す → CI がもう一度走る。
+  # 記録: 各 run は、実際に checkout した merge commit（refs/pull/N/merge）の親
+  # （HEAD^1 = 検証した base、HEAD^2 = 検証した head）と full を artifact
+  # `ci-verified-base` に残す。REST の pull_requests[].base.sha は使わない
+  # （merge commit の base 親と一致する保証が無いため）。
+  # 判定: head の祖先（first-parent、最大 10 個）を近い順に見て、ci.yml の run が
+  # 成功（= 全ジョブ成功）し、その記録が full=true・記録した head がそのコミット・
+  # 記録した base が今の HEAD^1 と一致するもっとも近いものを基準にする。基準からの
+  # 差分が `e2e/visual/**/*-snapshots/*.png` だけなら full=false にし、
+  # E2E (visual + axe-core) 以外を飛ばす。飛ばした run の記録は full=false なので
+  # 次の基準にはならない（全部走って成功した run だけが基準）。
+  # 安全側: pull_request 以外・fork・API / git / artifact の失敗・記録なし・
+  # base の不一致（旧 base で成功 → main が進む → 基準画像だけ、を含む）・
+  # それ以外のパスの差分は、どれも full=true。判定の理由はログに出す。
+  # 注意: Rust は matrix なので job ごと飛ばすとチェック名が必須チェック
+  # 「Rust (…) (ubuntu-latest)」等と合わなくなる。そのため job は起動して
+  # ステップだけ飛ばす。ほかのジョブは skipped（= 成功扱い）でよい。
+  # changes が失敗しても下流は `!cancelled()` で動き、出力が空なので全部走る。
+  changes:
+    name: Changes (visual baselines only?)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      full: ${{ steps.decide.outputs.full }}
+    steps:
+      # 既定の ref（pull_request では refs/pull/N/merge）= ほかのジョブが検証する
+      # merge commit と同じものを取る。
+      - name: Checkout merge commit
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 12
+          persist-credentials: false
+
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          RECORD_DIR: ${{ runner.temp }}/ci-verified-base
+        run: |
+          mkdir -p "$RECORD_DIR"
+          record() { # 検証した merge commit の親と full を残す（取れなければ残さない）
+            [ -n "${VBASE:-}" ] && [ -n "${VHEAD:-}" ] || return 0
+            printf 'base=%s\nhead=%s\nfull=%s\n' "$VBASE" "$VHEAD" "$1" > "$RECORD_DIR/record.txt"; echo "recorded=true" >> "$GITHUB_OUTPUT"
+          }
+          full() { echo "判定: 全部走らせる（$1）"; record true; echo "full=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          [ "$EVENT" = pull_request ] || full "pull_request 以外: $EVENT"
+          VBASE=$(git rev-parse HEAD^1) && VHEAD=$(git rev-parse HEAD^2) || { VBASE=""; VHEAD=""; full "merge commit の親が取れない"; }
+          echo "検証する merge commit: base=$VBASE head=$VHEAD"
+          [ "$HEAD_REPO" = "$REPO" ] || full "fork からの PR"
+          ancestors=$(git rev-list --first-parent --max-count=11 "$VHEAD" | tail -n +2) || full "git rev-list に失敗"
+          ref=""
+          for c in $ancestors; do
+            ids=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$c&event=pull_request&status=success&per_page=20"               --jq '.workflow_runs[].id') || full "workflow run の取得に失敗"
+            for id in $ids; do
+              d="$RUNNER_TEMP/rec-$id"
+              if ! gh run download "$id" -R "$REPO" -n ci-verified-base -D "$d" >/dev/null 2>&1; then
+                echo "run $id（$c）: 記録なし"; continue
+              fi
+              rb=$(sed -n 's/^base=//p' "$d/record.txt"); rh=$(sed -n 's/^head=//p' "$d/record.txt"); rf=$(sed -n 's/^full=//p' "$d/record.txt")
+              if [ "$rf" != true ]; then echo "run $id（$c）: 一部を飛ばした run なので基準にしない"; continue; fi
+              if [ "$rh" != "$c" ]; then echo "run $id（$c）: 記録した head が $rh で不一致"; continue; fi
+              if [ "$rb" != "$VBASE" ]; then echo "run $id（$c）: 検証した base が $rb で今の $VBASE と不一致"; continue; fi
+              ref=$c; echo "基準: run $id（head $c、base $rb、全部成功）"; break 2
+            done
+          done
+          [ -n "$ref" ] || full "直近 10 コミットに、同じ base を全部検証して成功した run の記録が無い"
+          files=$(git diff --no-renames --name-only "$ref" "$VHEAD") || full "git diff に失敗"
+          echo "差分のファイル:"; echo "${files:-（なし）}"
+          other=$(printf '%s\n' "$files" | grep -v -E '^$|^e2e/visual/(.+/)?[^/]+-snapshots/[^/]+\.png$' || true)
+          [ -z "$other" ] || full "基準画像以外の差分あり: $(printf '%s' "$other" | head -n 3 | tr '\n' ' ')"
+          echo "判定: 基準画像だけの差分。E2E (visual + axe-core) 以外を飛ばす"
+          record false
+          echo "full=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified base record
+        if: always() && steps.decide.outputs.recorded == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-verified-base
+          path: ${{ runner.temp }}/ci-verified-base/record.txt
+          retention-days: 7
+
   frontend:
     name: Frontend (check / test / build)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -105,6 +198,8 @@ jobs:
   # (scripts/check-i18n-nonempty.mjs) が非空カタログを保証すること、を検証する。
   i18n-offline:
     name: i18n (CDN-blocked reproducibility)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -140,6 +235,8 @@ jobs:
 
   rust:
     name: Rust (fmt / clippy / check / test)
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -148,20 +245,24 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
+        if: needs.changes.outputs.full != 'false'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust toolchain
+        if: needs.changes.outputs.full != 'false'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - name: Setup Rust cache
+        if: needs.changes.outputs.full != 'false'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       # rustfmt only parses/reformats - no compilation, so unlike the steps
       # below it can safely cover every workspace member (including
       # `admin-template`/src-tauri) without needing its native system deps.
       - name: Format check (rustfmt)
+        if: needs.changes.outputs.full != 'false'
         run: cargo fmt --all -- --check
 
       # Scope: only the Tauri-independent crates are checked/linted/tested
@@ -174,12 +275,15 @@ jobs:
       # in CI.
       # (clippy for it runs in tauri-check.yml, which has the system deps.)
       - name: Cargo check
+        if: needs.changes.outputs.full != 'false'
         run: cargo check -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core -p admin-template-fw-elev
 
       - name: Clippy
+        if: needs.changes.outputs.full != 'false'
         run: cargo clippy -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core -p admin-template-fw-elev --all-targets -- -D warnings
 
       - name: Cargo test
+        if: needs.changes.outputs.full != 'false'
         run: cargo test -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core -p admin-template-fw-elev
 
   # banto-storage の PostgreSQL 接続ヘルパ（feature `postgres`）向け統合テスト。
@@ -190,6 +294,8 @@ jobs:
   # PostgreSQL 無しで通る）ので、CI 側でこの env を設定して実接続を検証する。
   storage-postgres:
     name: banto-storage (PostgreSQL integration)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -234,6 +340,8 @@ jobs:
   # ローカルの PostgreSQL 無し環境では通る仕様）。
   app-postgres:
     name: admin-template-core (PostgreSQL smoke)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -288,6 +396,8 @@ jobs:
 
   e2e:
     name: E2E (Playwright smoke)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -417,6 +527,8 @@ jobs:
 
   audit:
     name: Dependency audit (pnpm audit / cargo audit)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
