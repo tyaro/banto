@@ -86,7 +86,7 @@ export const shapeOf = (node: DockNode | null): unknown =>
 				: { [node.direction]: node.children.map(shapeOf) };
 
 /** Sizes, the active tab and titles do not decide any later shape: left out of the state's key. */
-const keyOf = (sim: Sim): string =>
+export const keyOf = (sim: Sim): string =>
 	JSON.stringify(sim, (k, v: unknown) =>
 		k === 'sizes' || k === 'size' || k === 'activeIndex' || k === 'title' ? undefined : v
 	);

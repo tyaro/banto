@@ -240,12 +240,32 @@ function placeOf(
 	return hereOf(root, node, hidden, depth);
 }
 
-/** The tab groups / splits a slot names by its `outer` chain, nearest first. */
-function slotContainers(slot: DockSlot): string[] {
-	const out: string[] = [];
-	for (let s: DockSlot | undefined = slot; s && s.kind !== 'root'; s = s.outer)
-		out.push(s.kind === 'tab' ? s.groupId : s.splitId);
+/**
+ * `slot` and its `outer` chain, nearest first, without the root. A chain cut at `MAX_SLOT_DEPTH`
+ * goes on with the place another hidden pane remembers for the split it was cut at (`placeOfGone`,
+ * Codex P2 on #732): every walk over the chain on the capture side goes through here.
+ */
+function chainOf(
+	root: DockNode | null,
+	slot: DockSlot,
+	hidden: HiddenDockSlot[]
+): Exclude<DockSlot, { kind: 'root' }>[] {
+	const out: Exclude<DockSlot, { kind: 'root' }>[] = [];
+	const seen = new Set<string>();
+	let s: DockSlot | undefined = slot;
+	while (s && s.kind !== 'root') {
+		const key = s.kind === 'tab' ? s.groupId : s.splitId;
+		if (seen.has(key)) break;
+		seen.add(key);
+		out.push(s);
+		s = s.outer ?? (s.kind === 'split' ? placeOfGone(root, s, hidden) : undefined);
+	}
 	return out;
+}
+
+/** The tab groups / splits a slot names by its `outer` chain (`chainOf`), nearest first. */
+function slotContainers(root: DockNode | null, slot: DockSlot, hidden: HiddenDockSlot[]): string[] {
+	return chainOf(root, slot, hidden).map((s) => (s.kind === 'tab' ? s.groupId : s.splitId));
 }
 
 /** The ids of `node` and every node inside it. */
@@ -325,8 +345,7 @@ function lastSplitSlot(
 		let child: string | undefined;
 		// A pane named inside the container that is docked: the container is not all hidden.
 		let left = false;
-		let s: DockSlot | undefined = h.slot;
-		for (let level = 0; s && s.kind !== 'root' && level < MAX_SLOT_DEPTH; level++) {
+		for (const s of chainOf(root, h.slot, hidden)) {
 			if (left) break;
 			if (
 				s.kind === 'split' &&
@@ -339,21 +358,23 @@ function lastSplitSlot(
 			}
 			child = s.kind === 'tab' ? s.groupId : s.splitId;
 			left = slotNames(s).some((id) => findNode(root, id) !== null);
-			s = s.outer;
 		}
 	}
 	const gone = [...byKey.values()];
 	// Not a split that was inside `unit` (#727: its slot's `outer` chain names `unit`, say a row
 	// gone from inside a column that is `unit`).
-	const inside = (slot: DockSlot): boolean => slotContainers(slot).slice(1).includes(unit.id);
+	const inside = (slot: DockSlot): boolean =>
+		slotContainers(root, slot, hidden).slice(1).includes(unit.id);
 	const candidates = gone.filter(
 		(h) => h.slot.kind === 'split' && named(h.slot).some((id) => own.has(id)) && !inside(h.slot)
 	);
 	// The innermost one (#727): not a split another one was inside (say `in` of `column[row(in)[a,b],
 	// c]` over `s` once `a` and `c` are hidden), else the most recent.
 	const around = (h: HiddenDockSlot): boolean => {
-		const id = slotContainers(h.slot)[0];
-		return candidates.some((o) => o !== h && slotContainers(o.slot).slice(1).includes(id));
+		const id = slotContainers(root, h.slot, hidden)[0];
+		return candidates.some(
+			(o) => o !== h && slotContainers(root, o.slot, hidden).slice(1).includes(id)
+		);
 	};
 	const last = candidates.filter((h) => !around(h)).at(-1) ?? candidates.at(-1);
 	if (!last || last.slot.kind !== 'split') return null;
@@ -418,7 +439,7 @@ function lastSplitSlot(
 				h.id !== e.id &&
 				!ids.includes(h.id) &&
 				stillHidden(root, h) &&
-				slotContainers(h.slot).includes(e.child!)
+				slotContainers(root, h.slot, hidden).includes(e.child!)
 		);
 		if (more.length > 0)
 			remnants.set(
@@ -430,7 +451,7 @@ function lastSplitSlot(
 	if (depth + 1 >= MAX_SLOT_DEPTH) return slot;
 	// The split's place: inside a split that is gone too (#727), that one's place as the newest
 	// slot remembers it; else where `unit` is now.
-	const place = last.slot.outer;
+	const place = last.slot.outer ?? placeOfGone(root, last.slot, hidden);
 	const outer =
 		place?.kind === 'split' && !findNode(root, place.splitId)
 			? cut(place, depth + 1, (gone) => placeOfGone(root, gone, hidden))
@@ -576,7 +597,7 @@ function remnantPanes(
 	const out = new Map<string, string[]>();
 	const docked = (id: string) => findNode(root, id) !== null;
 	// The containers each hidden pane's slot names, by its `outer` chain.
-	const containers = new Map(hidden.map((h) => [h.id, slotContainers(h.slot)]));
+	const containers = new Map(hidden.map((h) => [h.id, slotContainers(root, h.slot, hidden)]));
 	for (const h of hidden) {
 		if (docked(h.id) || ids.includes(h.id)) continue;
 		// Hidden out of a tab group / split still docked inside a child: one of that child's panes
@@ -584,7 +605,7 @@ function remnantPanes(
 		// out of one that is gone, inside one still docked there (Codex P2 on #732: `b` of
 		// `column[row[a,column[row[b,c],d]],e]`, its row gone, is still one of the panes of `a`'s
 		// row): the nearest container of its `outer` chain that is docked.
-		const containersOf = slotContainers(h.slot);
+		const containersOf = slotContainers(root, h.slot, hidden);
 		const [own] = containersOf;
 		const near = containersOf.find(docked);
 		const holder =
@@ -597,10 +618,10 @@ function remnantPanes(
 		// The ids named on the way out: the pane's own container may name a pane left in the child
 		// when the one around it names only hidden panes (say a tab group inside the gone split).
 		const names: string[] = [];
-		let s: DockSlot | undefined = h.slot;
-		for (let depth = 0; s && s.kind !== 'root' && depth < MAX_SLOT_DEPTH; depth++, s = s.outer) {
+		const chain = chainOf(root, h.slot, hidden);
+		for (const [level, s] of chain.entries()) {
 			names.push(...slotNames(s));
-			const outer: DockSlot | undefined = s.outer;
+			const outer: DockSlot | undefined = chain[level + 1];
 			if (
 				outer?.kind !== 'split' ||
 				outer.splitId !== split.id ||
@@ -627,7 +648,11 @@ function remnantPanes(
  * hidden - its last pane remembers the container (a `tab` slot, or a split slot of a gone
  * split) and the container's place in `split` as `outer`. That place stays counted, so the panes
  * hidden after it keep it among their anchors. One entry per container: its most recent slot,
- * and only when that one remembers `split`.
+ * and only when that one remembers `split`. The container may be further out along the `outer`
+ * chain (Codex P2 on #732, the second one: `g` of `row[b,c,column[tabs[d,e],tabs[f,g]]]`, hidden
+ * last of the column, remembers its tab group, the group's place in the gone column, and the
+ * column's place in the row): every container of the chain counts, the inner ones gone too. A
+ * chain cut at `MAX_SLOT_DEPTH` goes on with `placeOfGone`.
  */
 function splitPending(
 	root: DockNode | null,
@@ -642,7 +667,9 @@ function splitPending(
 	// The most recent slot of each container, whatever its `outer` (Codex P2 on #725): an older
 	// one may remember a place in `split` the container has left since (its last pane was docked
 	// again elsewhere and hidden from there).
-	const latest = new Map<string, HiddenDockSlot>();
+	// Keyed by the container, with the slots of the pane's chain up to it (the container's slot
+	// last).
+	const latest = new Map<string, { id: string; chain: Exclude<DockSlot, { kind: 'root' }>[] }>();
 	for (const h of hidden) {
 		const slot = h.slot;
 		if (docked(h.id) || slot.kind === 'root') continue;
@@ -650,9 +677,12 @@ function splitPending(
 			direct.push(h);
 			continue;
 		}
-		const key = slot.kind === 'tab' ? slot.groupId : slot.splitId;
-		latest.delete(key);
-		latest.set(key, h);
+		const chain = chainOf(root, slot, hidden);
+		for (const [level, s] of chain.entries()) {
+			const key = s.kind === 'tab' ? s.groupId : s.splitId;
+			latest.delete(key);
+			latest.set(key, { id: h.id, chain: chain.slice(0, level + 1) });
+		}
 	}
 	// The container's own place is gone: neither it nor a pane it names is docked - nor one named
 	// by the slot of a hidden pane it names, and so on (Codex P2 on #725). Say its last pane was
@@ -679,11 +709,17 @@ function splitPending(
 		}
 		return true;
 	};
-	const outer = [...latest.values()].flatMap(({ id, slot }) =>
-		slot.kind !== 'root' && slot.outer && inSplit(slot.outer) && gone(slot)
-			? [{ id, slot: slot.outer }]
-			: []
-	);
+	const counted = new Set(direct.map((h) => h.id));
+	const outer: HiddenDockSlot[] = [];
+	for (const { id, chain } of latest.values()) {
+		const slot = chain[chain.length - 1];
+		if (counted.has(id)) continue;
+		const place =
+			slot.outer ?? (slot.kind === 'split' ? placeOfGone(root, slot, hidden) : undefined);
+		if (!place || !inSplit(place) || !chain.every(gone)) continue;
+		counted.add(id);
+		outer.push({ id, slot: place });
+	}
 	return [...direct, ...outer];
 }
 

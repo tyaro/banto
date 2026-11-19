@@ -15,7 +15,15 @@ import {
 	captureDockSlot as mainCapture,
 	restoreDockSlot as mainRestore
 } from './fixtures/slot-main';
-import { enumerateSequences, simRun, type SlotImpl } from './fixtures/visibility-sim';
+import {
+	enumerateSequences,
+	keyOf,
+	simDismiss,
+	simRun,
+	simShow,
+	type Sim,
+	type SlotImpl
+} from './fixtures/visibility-sim';
 
 function counterMakeId(): () => string {
 	let n = 0;
@@ -849,7 +857,11 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 		'column[row[a,b], c, d]': () => nested('column', ['a', 'b'], ['c', 'd']),
 		'column[c, d, row[a,b]]': () => nested('column', ['a', 'b'], ['c', 'd'], false),
 		// Codex P2 on #732: four splits deep (`L` below; the describe body runs after the module).
-		'column[row[a,column[row[b,c],d]],e]': () => L['column[row[a,column[row[b,c],d]],e]']()
+		'column[row[a,column[row[b,c],d]],e]': () => L['column[row[a,column[row[b,c],d]],e]'](),
+		// Codex P2 on #732 (the second one): tab groups inside a split inside a split, five panes
+		// (every pane too). Six and seven: the walk with merged states below.
+		'column[tabs[a,b],row[c,tabs[d,e]]]': () => L['column[tabs[a,b],row[c,tabs[d,e]]]'](),
+		'row[a,column[tabs[b,c],tabs[d,e]]]': () => L['row[a,column[tabs[b,c],tabs[d,e]]]']()
 	};
 	for (const [name, make] of Object.entries(layouts)) {
 		const ids = collectPanelIds(make());
@@ -1038,6 +1050,54 @@ const L = {
 				splitNode('c1', 'column', [splitNode('r2', 'row', [panel('b'), panel('c')]), panel('d')])
 			]),
 			panel('e')
+		]),
+	// Codex P2 on #732 (the second one): tab groups inside a split inside a split.
+	'row[b,c,column[tabs[d,e],tabs[f,g]]]': () =>
+		splitNode('s', 'row', [
+			panel('b'),
+			panel('c'),
+			splitNode('c1', 'column', [tabsNode('t1', ['d', 'e']), tabsNode('t2', ['f', 'g'])])
+		]),
+	'column[tabs[a,b],row[c,tabs[d,e]]]': () =>
+		splitNode('s', 'column', [
+			tabsNode('t1', ['a', 'b']),
+			splitNode('r', 'row', [panel('c'), tabsNode('t2', ['d', 'e'])])
+		]),
+	'row[a,column[tabs[b,c],tabs[d,e]]]': () =>
+		splitNode('s', 'row', [
+			panel('a'),
+			splitNode('c1', 'column', [tabsNode('t1', ['b', 'c']), tabsNode('t2', ['d', 'e'])])
+		]),
+	'row[a,column[b,row[tabs[c,d],e]]]': () =>
+		splitNode('s', 'row', [
+			panel('a'),
+			splitNode('c1', 'column', [
+				panel('b'),
+				splitNode('r', 'row', [tabsNode('t1', ['c', 'd']), panel('e')])
+			])
+		]),
+	'column[row[a,tabs[b,c]],tabs[d,e],f]': () =>
+		splitNode('s', 'column', [
+			splitNode('r', 'row', [panel('a'), tabsNode('t1', ['b', 'c'])]),
+			tabsNode('t2', ['d', 'e']),
+			panel('f')
+		]),
+	'row[column[tabs[a,b],c],column[d,tabs[e,f]]]': () =>
+		splitNode('s', 'row', [
+			splitNode('c1', 'column', [tabsNode('t1', ['a', 'b']), panel('c')]),
+			splitNode('c2', 'column', [panel('d'), tabsNode('t2', ['e', 'f'])])
+		]),
+	// A tab group five containers deep: its last tab's `outer` chain is cut at `MAX_SLOT_DEPTH`.
+	'column[row[a,column[row[tabs[b,c],x],d]],e]': () =>
+		splitNode('s', 'column', [
+			splitNode('r1', 'row', [
+				panel('a'),
+				splitNode('c1', 'column', [
+					splitNode('r2', 'row', [tabsNode('t', ['b', 'c']), panel('x')]),
+					panel('d')
+				])
+			]),
+			panel('e')
 		])
 } satisfies Record<string, () => DockNode>;
 
@@ -1119,6 +1179,91 @@ it('column[row[a,column[row[b,c],d]],e]: -a -e -c -d -b +d +b +e +c +a -> the ol
 	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 });
 
+// Codex P2 on #732 (the second one): g's tab group `t2` is all that is left of the column `c1`, so
+// g's slot remembers `t2` with `outer` = `c1`'s place, and the row `s` is `outer.outer`. The
+// group of d and e (gone too) still counts among the row's children for b and c hidden after it.
+it('row[b,c,column[tabs[d,e],tabs[f,g]]]: -g -d -e -f -b -c +f +b +c +d +g +e -> the old shape (a container counted by a nested outer)', () => {
+	const make = L['row[b,c,column[tabs[d,e],tabs[f,g]]]'];
+	const dock = runSteps(make, '-g -d -e -f -b -c +f +b +c +d +g +e'.split(' '));
+	expect(dock.layout.floating).toEqual([]);
+	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
+});
+
+// Codex P2 on #732 (the second one): every hide order of every set of panes, then every show order,
+// with the states merged on the way (`keyOf`), so six and seven panes fit - not every order x
+// every order run one by one (7! x 7! of them). Run with main's slot (243958c5) beside the current
+// one: every one comes back to the old shape (`all`), or at least every one that does on main.
+describe('slot memory: every hide order then every show order (merged states)', () => {
+	const cases: [keyof typeof L, 'all' | 'main'][] = [
+		['row[b,c,column[tabs[d,e],tabs[f,g]]]', 'all'],
+		['row[a,column[b,row[tabs[c,d],e]]]', 'all'],
+		['column[row[a,tabs[b,c]],tabs[d,e],f]', 'all'],
+		['row[column[tabs[a,b],c],column[d,tabs[e,f]]]', 'all']
+		// Not here: `column[row[a,column[row[tabs[b,c],x],d]],e]` (a tab group five containers
+		// deep). With every pane but e hidden, the last tab's chain (t, r2, c1, r1) is cut at
+		// `MAX_SLOT_DEPTH` at a split that is gone, and `restoreDockSlot` has nothing to go on with:
+		// the tab opens floating (`-a -b -x -d -c +c ...`), where main puts it beside e. Open
+		// (#727 follow-up); the walk above (up to 8 steps) has it.
+	];
+	for (const [name, want] of cases) {
+		it(
+			`${name} (${want === 'all' ? 'every one' : 'every one main brings back'})`,
+			{ timeout: 60_000 },
+			() => {
+				const make = L[name];
+				const ids = collectPanelIds(make());
+				const shape = JSON.stringify(shapeOf(make()));
+				const ok = (sim: Sim) =>
+					sim.floating.length === 0 && JSON.stringify(shapeOf(sim.docked)) === shape;
+				interface Entry {
+					main: Sim;
+					now: Sim;
+					showing: boolean;
+					steps: string[];
+				}
+				const start: Sim = { docked: make(), hidden: [], floating: [] };
+				let level: Entry[] = [{ main: start, now: start, showing: false, steps: [] }];
+				const failures: string[] = [];
+				let checked = 0;
+				while (level.length > 0) {
+					const next = new Map<string, Entry>();
+					const add = (e: Entry) => {
+						const key = `${e.showing}${keyOf(e.main)}${keyOf(e.now)}`;
+						if (!next.has(key)) next.set(key, e);
+					};
+					for (const e of level) {
+						// The panes to show: hidden in the current run (a floating one is not docked again).
+						const hidden = e.now.hidden.map((h) => h.id);
+						if (e.showing && hidden.length === 0) {
+							checked++;
+							if (!ok(e.now) && (want === 'all' || ok(e.main)))
+								failures.push(
+									`${e.steps.join(' ')} -> ${JSON.stringify(shapeOf(e.now.docked))} floating [${e.now.floating}]`
+								);
+							continue;
+						}
+						const step = (id: string, show: boolean): Entry => ({
+							main: show ? simShow(mainSlot, e.main, id) : simDismiss(mainSlot, e.main, id),
+							now: show ? simShow(nowSlot, e.now, id) : simDismiss(nowSlot, e.now, id),
+							showing: show,
+							steps: [...e.steps, `${show ? '+' : '-'}${id}`]
+						});
+						if (e.showing) {
+							for (const id of hidden) add(step(id, true));
+							continue;
+						}
+						if (hidden.length > 0) add({ ...e, showing: true });
+						for (const id of ids) if (findNode(e.now.docked, id)) add(step(id, false));
+					}
+					level = [...next.values()];
+				}
+				expect(checked).toBeGreaterThan(0);
+				expect(failures.slice(0, 5)).toEqual([]);
+			}
+		);
+	}
+});
+
 // Codex kept finding regressions in orders that interleave hiding and showing (#725). Every
 // sequence of hide / show steps up to `steps` long on these layouts, run with main's slot
 // (`fixtures/slot-main.ts`, 243958c5) and the current one side by side (`fixtures/visibility-sim.ts`):
@@ -1127,7 +1272,10 @@ it('column[row[a,column[row[b,c],d]],e]: -a -e -c -d -b +d +b +e +c +a -> the ol
 // run once by hand, with no regression). A sequence of odd length never shows every pane again.
 describe('slot memory: no hide / show sequence regresses from main (every sequence)', () => {
 	for (const [name, make] of Object.entries(L)) {
-		const steps = collectPanelIds(make()).length <= 4 ? 12 : 10;
+		// Six panes and more: 8 steps (10 takes 20 s for seven; the merged walk below covers every
+		// pane hidden then shown).
+		const n = collectPanelIds(make()).length;
+		const steps = n <= 4 ? 12 : n === 5 ? 10 : 8;
 		it(`${name}: every sequence up to ${steps} steps`, { timeout: 60_000 }, () => {
 			const result = enumerateSequences(make, mainSlot, nowSlot, steps);
 			expect(result.mainRestores).toBeGreaterThan(0);
