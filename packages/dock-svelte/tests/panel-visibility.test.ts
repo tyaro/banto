@@ -1126,7 +1126,7 @@ const L = {
 } satisfies Record<string, () => DockNode>;
 
 // Codex P2 on #725 (the fifth on the same place) and what walking every sequence (below) found
-// next to it: each comes back to the old shape on main (243958c5), not with the slot of 0f354140.
+// next to it: each comes back to the old shape on main (82b82246), not with the slot of 0f354140.
 describe('slot memory: regressions found by walking every sequence (#721)', () => {
 	const cases: [keyof typeof L, string, string][] = [
 		[
@@ -1194,7 +1194,7 @@ describe('slot memory: regressions found by walking every sequence (#721)', () =
 
 // Codex P2 on #732: b's slot names `r2`, and the chain of the splits around it (c1, r1, s) was cut at
 // `MAX_SLOT_DEPTH` (4 then; 8 now) before the root. The place of `s` that another hidden pane (a) remembers is
-// still b's place: b goes back into the row, not floating. (main of 243958c5 does not bring this one
+// still b's place: b goes back into the row, not floating. (main of 82b82246 does not bring this one
 // back either; the main before #727 did.)
 it('column[row[a,column[row[b,c],d]],e]: -a -e -c -d -b +d +b +e +c +a -> the old shape (an outer chain four splits deep)', () => {
 	const make = L['column[row[a,column[row[b,c],d]],e]'];
@@ -1225,7 +1225,7 @@ it('row[b,c,column[tabs[d,e],tabs[f,g]]]: -g -d -e -f -b -c +f +b +c +d +g +e ->
 
 // Codex P2 on #732 (the second one): every hide order of every set of panes, then every show order,
 // with the states merged on the way (`keyOf`), so six and seven panes fit - not every order x
-// every order run one by one (7! x 7! of them). Run with main's slot (243958c5) beside the current
+// every order run one by one (7! x 7! of them). Run with main's slot (82b82246) beside the current
 // one: every one comes back to the old shape (`all`), or at least every one that does on main.
 describe('slot memory: every hide order then every show order (merged states)', () => {
 	const cases: [keyof typeof L, 'all' | 'main'][] = [
@@ -1301,7 +1301,7 @@ describe('slot memory: every hide order then every show order (merged states)', 
 
 // Codex kept finding regressions in orders that interleave hiding and showing (#725). Every
 // sequence of hide / show steps up to `steps` long on these layouts, run with main's slot
-// (`fixtures/slot-main.ts`, 243958c5) and the current one side by side (`fixtures/visibility-sim.ts`):
+// (`fixtures/slot-main.ts`, 82b82246) and the current one side by side (`fixtures/visibility-sim.ts`):
 // every sequence that comes back to the old shape on main must still do so. The steps are as
 // many as fit in a second or two per layout (12 for 4 panes, 10 for 5; 14 for all of them was
 // run once by hand, with no regression). A sequence of odd length never shows every pane again.
