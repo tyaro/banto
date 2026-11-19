@@ -680,4 +680,36 @@ describe('guarded: the caller retires a request it no longer wants (PR #723 re-r
 		expect(await replace).toBe('stale');
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['a', 'b']);
 	});
+
+	it('a replacement with nothing to ask still honours the guard (PR #723 re-review 3)', async () => {
+		const hook = vi.fn(() => true);
+		const { dock, lifecycle } = setup({ hook });
+		// Only a floating window's position differs: no pane is asked.
+		const next: DockLayout = {
+			...layout(),
+			floating: layout().floating.map((w) => (w.id === 'a' ? { ...w, x: 200 } : w))
+		};
+		const outcome = lifecycle.guarded(
+			() => false,
+			() =>
+				lifecycle.requestReplace(
+					() => next,
+					(l) => (dock.layout = l)
+				)
+		);
+		expect(await outcome).toBe('stale');
+		expect(hook).not.toHaveBeenCalled();
+		expect(winOf(dock, 'a').x).toBe(40);
+		// The same replacement still wanted applies without asking.
+		const applied = lifecycle.guarded(
+			() => true,
+			() =>
+				lifecycle.requestReplace(
+					() => next,
+					(l) => (dock.layout = l)
+				)
+		);
+		expect(await applied).toBe('applied');
+		expect(winOf(dock, 'a').x).toBe(200);
+	});
 });

@@ -594,6 +594,8 @@ export class PanelLifecycle {
 		const changes = describeAll();
 		if (changes === null) return Promise.resolve('stale');
 		if (changes.length === 0) {
+			// Nothing to ask, but the caller's "still wanted" check holds all the same.
+			if (guard && !guard()) return Promise.resolve('stale');
 			apply();
 			return Promise.resolve('applied');
 		}
