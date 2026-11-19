@@ -5,9 +5,9 @@
 // by `panel-visibility.test.ts`); the shape against main is checked there, the sizes here.
 import { describe, expect, it } from 'vitest';
 import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
-import { collectPanelIds, findNode } from '../src/core/tree';
+import { collectPanelIds, findNode, removePanel } from '../src/core/tree';
 import { createDockState, type DockState } from '../src/state.svelte';
-import type { DockNode } from '../src/types';
+import type { DockLayout, DockNode, DockSlot } from '../src/types';
 import { keyOf, shapeOf, simStep, type Sim, type SlotImpl } from './fixtures/visibility-sim';
 
 const nowSlot: SlotImpl = { capture: captureDockSlot, restore: restoreDockSlot };
@@ -180,11 +180,23 @@ const counterMakeId = (): (() => string) => {
 	return () => `gen-${n++}`;
 };
 
-/** `-x` hide, `+x` show, `~x` float, `^x` back, with `createDockState`. */
-const runSteps = (make: () => DockNode, steps: string[]): DockState => {
+/**
+ * `-x` hide, `+x` show, `~x` float, `^x` back, `@` save and load (`serialize` / `hydrate`: the
+ * floated panes' `homeSlot`s are not saved, so they stay floating), with `createDockState`.
+ */
+const runSteps = (
+	make: () => DockNode,
+	steps: string[],
+	each?: (dock: DockState) => void
+): DockState => {
 	const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
 	for (const step of steps) {
+		each?.(dock);
 		const id = step.slice(1);
+		if (step === '@') {
+			expect(dock.hydrate(dock.serialize()), 'hydrate').toBe(true);
+			continue;
+		}
 		if (step[0] === '-') dock.dismiss(id);
 		else if (step[0] === '+') dock.show(id);
 		else if (step[0] === '~') dock.undockPanel(id);
@@ -238,6 +250,57 @@ describe('split sizes come back in any show order (#733)', () => {
 		const dock = runSteps(L['row[a,b,c] uneven'], ['-b']);
 		const slot = dock.layout.floating.find((w) => w.id === 'b')?.dockSlot;
 		expect(slot?.kind === 'split' && slot.size).toBeCloseTo(0.3, 9);
+		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.3, 9);
+	});
+
+	it('`size` keeps its old meaning (the share of the split then), `share` is of the whole split', () => {
+		const dock = runSteps(L['row[a,b,c] uneven'], ['-a', '-b']);
+		const slot = dock.layout.floating.find((w) => w.id === 'b')?.dockSlot;
+		expect(slot?.kind === 'split' && slot.size).toBeCloseTo(0.375, 9);
+		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.3, 9);
+	});
+
+	// Cross review on #739: a slot saved by a release before #733 has no `share`, and its `size` is
+	// a share of the split as it was then - it comes back as it did there.
+	it('slots saved before #733 (no `share`): row[a,b,c] in thirds, hide a then b, show b then a -> thirds', () => {
+		const strip = (slot: DockSlot): DockSlot => {
+			if (slot.kind === 'root') return slot;
+			const out = { ...slot, ...(slot.outer ? { outer: strip(slot.outer) } : {}) };
+			if (out.kind === 'split') delete out.share;
+			return out;
+		};
+		const before = runSteps(L['row[a,b,c] even'], ['-a', '-b']);
+		const layout = JSON.parse(before.serialize()) as DockLayout;
+		const old: DockLayout = {
+			...layout,
+			floating: layout.floating.map((w) => (w.dockSlot ? { ...w, dockSlot: strip(w.dockSlot) } : w))
+		};
+		const sizes = old.floating.map((w) => (w.dockSlot?.kind === 'split' ? w.dockSlot.size : NaN));
+		expect(sizes[0]).toBeCloseTo(1 / 3, 9);
+		expect(sizes[1]).toBeCloseTo(1 / 2, 9);
+		// b then a came back in thirds before #733 (a then b did not: #733 itself).
+		const dock = createDockState({ version: 2, floating: [], docked: null }, counterMakeId());
+		expect(dock.hydrate(JSON.stringify(old))).toBe(true);
+		dock.show('b');
+		dock.show('a');
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c'] });
+		expect(sameSizes(sizesOf(dock.layout.docked), [[1 / 3, 1 / 3, 1 / 3]])).toBe(true);
+	});
+
+	// Codex P2 on #739: the floated pane's `homeSlot` is not saved, so the hidden pane's `share` is
+	// saved without it - shown after a reload it comes back as it would have before #733.
+	it('row[a .2, b .3, c .5]: float a, hide b, show b -> b : c = 3 : 5 with or without a reload', () => {
+		for (const steps of ['~a -b +b', '~a -b @ +b', '~a @ -b +b']) {
+			const dock = runSteps(L['row[a,b,c] uneven'], steps.split(' '));
+			expect(shapeOf(dock.layout.docked), steps).toEqual({ row: ['b', 'c'] });
+			expect(sameSizes(sizesOf(dock.layout.docked), [[0.375, 0.625]]), steps).toBe(true);
+		}
+		// Not saved: the layout itself keeps the share of the whole row, `a` still counted.
+		const dock = runSteps(L['row[a,b,c] uneven'], ['~a', '-b']);
+		const slot = dock.layout.floating.find((w) => w.id === 'b')?.dockSlot;
+		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.3, 9);
+		const saved = (JSON.parse(dock.serialize()) as DockLayout).floating.find((w) => w.id === 'b');
+		expect(saved?.dockSlot?.kind === 'split' && saved.dockSlot.share).toBeCloseTo(0.375, 9);
 	});
 });
 
@@ -272,8 +335,11 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
 		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 	};
-	/** 8 to 16 steps, each pane out of the tree hidden or floated at random, then the rest put back. */
-	const sequences = (ids: string[], count: number, seed: number): string[] => {
+	/**
+	 * 8 to 16 steps, each pane out of the tree hidden or floated at random, then the rest put back.
+	 * With `reload`, a save and load (`@`) now and then: the panes floating then stay floating.
+	 */
+	const sequences = (ids: string[], count: number, seed: number, reload = false): string[] => {
 		const random = rng(seed);
 		const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
 		const out = new Set<string>();
@@ -281,8 +347,19 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 			const away = new Map<string, '-' | '~'>();
 			const steps: string[] = [];
 			const length = 8 + Math.floor(random() * 9);
+			const lost = new Set<string>();
 			for (let i = 0; i < length; i++) {
-				const docked = ids.filter((id) => !away.has(id));
+				if (reload && random() < 0.15) {
+					steps.push('@');
+					for (const [id, kind] of away)
+						if (kind === '~') {
+							away.delete(id);
+							lost.add(id);
+						}
+					continue;
+				}
+				const docked = ids.filter((id) => !away.has(id) && !lost.has(id));
+				if (docked.length === 0 && away.size === 0) break;
 				const back = away.size > 0 && (docked.length === 0 || random() < 0.4);
 				const id = pick(back ? [...away.keys()] : docked);
 				if (back) {
@@ -316,6 +393,37 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 					wrong.push(`${seq} -> ${JSON.stringify(sizesOf(docked))}`);
 			}
 			expect(sameShape).toBeGreaterThan(COUNT / 2);
+			expect(wrong.slice(0, 5)).toEqual([]);
+		});
+	}
+	// With a save and load on the way (Codex P2 on #739): the panes floating then are not put back
+	// (their `homeSlot` is not saved), so what comes back is the old tree without them (as
+	// `removePanel` leaves it).
+	const RELOADS = 150;
+	for (const [name, make] of Object.entries(L5)) {
+		it(`${name}: ${RELOADS} sequences with reloads`, () => {
+			const ids = collectPanelIds(make());
+			const wrong: string[] = [];
+			let sameShape = 0;
+			for (const seq of sequences(ids, RELOADS, 739, true)) {
+				let emptied = false;
+				const docked = runSteps(make, seq.split(' '), (d) => {
+					emptied ||= d.layout.docked === null;
+				}).layout.docked;
+				expect(badSizes(docked), seq).toEqual([]);
+				// Every pane out with some lost on the way: what the lost ones' shares were is not
+				// known any more to the panes put back into the empty tree - not checked.
+				if (emptied) continue;
+				const lost = ids.filter((id) => !findNode(docked, id));
+				const old = lost.reduce<DockNode | null>((t, id) => removePanel(t, id), make());
+				if (JSON.stringify(shapeOf(docked)) !== JSON.stringify(shapeOf(old))) continue;
+				sameShape++;
+				if (!sameSizes(sizesOf(docked), sizesOf(old)))
+					wrong.push(
+						`${seq} -> ${JSON.stringify(sizesOf(docked))} (${JSON.stringify(sizesOf(old))})`
+					);
+			}
+			expect(sameShape).toBeGreaterThan(RELOADS / 2);
 			expect(wrong.slice(0, 5)).toEqual([]);
 		});
 	}

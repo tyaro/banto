@@ -390,6 +390,17 @@ describe('validateDockLayout: a slot that contradicts itself', () => {
 		expect(slotOfWindow(tab({ outer: split() })).dockSlot).toEqual(tab({ outer: split() }));
 	});
 
+	// #733: `share` (optional) is a share of the whole split, in (0, 1]; a slot without it is the
+	// form of the releases before, read as it was.
+	it('takes a split slot with a share in (0, 1] or none, and rejects any other share', () => {
+		for (const share of [undefined, 0.25, 1])
+			expect(slotOfWindow(split({ share })).dockSlot).toEqual(split({ share }));
+		for (const share of [0, -0.1, 1.5, Number.NaN, '0.5', null]) {
+			const r = validateDockLayout(layoutOf([win('b', { dockSlot: split({ share }) })]));
+			expect(r.ok, String(share)).toBe(false);
+		}
+	});
+
 	it('keeps a tab slot saved without anchors, whatever its index (older JSON)', () => {
 		expect(slotOfWindow(tab({ index: 9, anchors: [] })).dockSlot).toEqual(
 			tab({ index: 9, anchors: [] })

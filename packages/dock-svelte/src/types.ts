@@ -68,7 +68,13 @@ export interface FloatingWindow {
  * when the container ids are gone.
  *  - `tab`: a tab of the group `groupId`, at `index`.
  *  - `split`: child `index` of the split `splitId` (`direction`), on `side` of
- *    the node `neighborId`, with `size` (0-1) of the split's space. `anchors`
+ *    the node `neighborId`, with `size` (0-1) of the split's space when it
+ *    was taken. `share` (optional, #733, in (0, 1]): its share of the whole
+ *    split, the panes hidden out of it then counted - put back while some of
+ *    those are still out, it leaves their shares for them, so the split's
+ *    sizes come back whatever order its panes are shown in. A slot without it
+ *    (taken before #733, or beside one that was) comes back by `size` as
+ *    before; a release before it reads `size` and ignores `share`. `anchors`
  *    are the panels on the neighbour's side, `otherAnchors` (optional, #720
  *    review) the ones on the other side, both nearest first; `index` counts
  *    the panes hidden out of the same split before it among the children.
@@ -94,6 +100,7 @@ export type DockSlot =
 			neighborId: string;
 			side: 'before' | 'after';
 			size: number;
+			share?: number;
 			anchors: string[];
 			otherAnchors?: string[];
 			outer?: DockSlot;
