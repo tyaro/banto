@@ -61,6 +61,21 @@ describe('createThreePaneLayoutTarget', () => {
 		expect(target.serialize()).toBe('{"schema":1,"name":"saved"}');
 	});
 
+	it('serialize() still reads layoutSnapshot() while a stored value is being installed (keeps the effect dependency)', () => {
+		const { api } = fakeDock();
+		let reads = 0;
+		const counting: ThreePaneLayoutApi = {
+			layoutSnapshot: () => (reads++, api.layoutSnapshot()),
+			restoreLayout: () => new Promise(() => {})
+		};
+		const { target, mount } = make();
+		mount(counting);
+		target.hydrate('{"schema":1,"name":"saved"}');
+		reads = 0;
+		expect(target.serialize()).toBe('{"schema":1,"name":"saved"}');
+		expect(reads).toBe(1);
+	});
+
 	it('does not install a stored value that is already what is shown', () => {
 		const { state, api } = fakeDock({ schema: 1, name: 'same' });
 		const { target, mount } = make();

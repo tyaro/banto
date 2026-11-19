@@ -102,9 +102,12 @@ export function createThreePaneLayoutTarget(
 			return true;
 		},
 		serialize(): string {
-			if (applying !== null) return applying;
 			const api = getApi();
-			return api ? snapshot(api) : (initial ?? '');
+			// Read the snapshot even while a stored value is being installed: the page's autosave effect
+			// reads this, and `applying` is a plain variable, so skipping the read would drop its
+			// reactive dependency on the layout for good.
+			const current = api ? snapshot(api) : (initial ?? '');
+			return applying !== null ? applying : current;
 		},
 		attach() {
 			const api = getApi();
