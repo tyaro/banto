@@ -30,7 +30,7 @@
 	import { tick, untrack, type Snippet } from 'svelte';
 	import { clampFlyoutSize } from './core/autohide';
 	import { getPanelLifecycle } from './core/lifecycle';
-	import { getDockPolicy, resolveCapabilities } from './core/policy';
+	import { canArrange, getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { DockAutoHidden, DockEdge, DockPanelNode, PanelContent } from './types';
 	import { defaultDockMessages, type DockMessages } from './messages';
@@ -273,14 +273,16 @@
 							</span>
 						{/if}
 						<span class="title">{item.pane.title}</span>
-						<button
-							type="button"
-							class="pin-btn unpinned"
-							aria-label={t.pinPane(item.pane.title)}
-							onclick={() => pinBack(item)}
-						>
-							<span aria-hidden="true">📌</span>
-						</button>
+						{#if canArrange(policy)}
+							<button
+								type="button"
+								class="pin-btn unpinned"
+								aria-label={t.pinPane(item.pane.title)}
+								onclick={() => pinBack(item)}
+							>
+								<span aria-hidden="true">📌</span>
+							</button>
+						{/if}
 						{#if resolveCapabilities(policy, item.pane.id).close}
 							<button
 								type="button"

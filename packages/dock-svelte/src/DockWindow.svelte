@@ -57,7 +57,7 @@
 	import { displayWindowGeometry } from './core/geometry';
 	import { getGestureOwner } from './core/gesture.svelte';
 	import { getPanelLifecycle } from './core/lifecycle';
-	import { getDockPolicy, resolveCapabilities } from './core/policy';
+	import { canArrange, getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { FloatingWindow, PanelContent, ResizeEdge } from './types';
 	import { defaultDockMessages, type DockMessages } from './messages';
@@ -114,6 +114,8 @@
 	const caps = $derived(resolveCapabilities(policy, win.id));
 	/** Locked (#663 ②; the pin before #694 PR-3): position and size are fixed - no drag, no resize handles, no keyboard mode. */
 	const locked = $derived(win.locked === true || win.pinned === true);
+	/** Position and size fixed: locked, or the host may not be rearranged (`arrange`, #663 ④ - no lock button then). */
+	const fixed = $derived(locked || !canArrange(policy));
 	/** The lock button's labels; a consumer's deprecated `pinWindow` / `unpinWindow` override still applies. */
 	const lockLabel = $derived(messages.lockWindow ?? messages.pinWindow ?? t.lockWindow);
 	const unlockLabel = $derived(messages.unlockWindow ?? messages.unpinWindow ?? t.unlockWindow);
@@ -150,7 +152,7 @@
 		event.preventDefault();
 		focusThis();
 		// `move: false` (consumer capability): the title bar still focuses the window but never starts a drag.
-		if (!caps.move || locked || !windowEl) return;
+		if (!caps.move || fixed || !windowEl) return;
 
 		const startX = event.clientX;
 		const startY = event.clientY;
@@ -212,7 +214,7 @@
 		// otherwise also bubble into the root's focus handler - harmless (focus
 		// is idempotent) but stopped anyway for clarity.
 		event.stopPropagation();
-		if (locked || event.button !== 0 || event.isPrimary === false || gesture.active) return;
+		if (fixed || event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
 		focusThis();
 
@@ -251,7 +253,7 @@
 			gesture.commitKeyboard();
 			return;
 		}
-		if (locked || gesture.active) return;
+		if (fixed || gesture.active) return;
 		focusThis();
 		gesture.beginKeyboard({
 			kind,
@@ -312,7 +314,7 @@
 	});
 	// Locked while a drag / resize / keyboard mode is on this window: cancel it, which puts the pre-gesture geometry back.
 	$effect(() => {
-		if (locked && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
+		if (fixed && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
 	});
 	// Collapsed while a resize (pointer or keyboard) is on this window: cancel it, which puts the pre-gesture geometry back.
 	$effect(() => {
@@ -327,7 +329,7 @@
 	$effect.pre(() => {
 		// Read both first: a short-circuit would leave `locked` untracked while collapsed.
 		const isCollapsed = collapsed;
-		const isLocked = locked;
+		const isLocked = fixed;
 		if (!isCollapsed && !isLocked) return;
 		untrack(() => {
 			const active = document.activeElement;
@@ -388,7 +390,7 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="titlebar"
-			class:immovable={!caps.move || locked}
+			class:immovable={!caps.move || fixed}
 			onpointerdown={handleTitlebarPointerDown}
 		>
 			{#if win.icon}
@@ -404,19 +406,21 @@
 			{#if !hidden}
 				<DockPanelMenu panelId={win.id} title={win.title} {t} />
 			{/if}
-			<button
-				type="button"
-				class="collapse-btn"
-				bind:this={collapseBtnEl}
-				aria-label={collapsed ? t.expandWindow(win.title) : t.collapseWindow(win.title)}
-				aria-expanded={!collapsed}
-				aria-controls={bodyId}
-				onpointerdown={(event) => event.stopPropagation()}
-				onclick={() => dock.setCollapsed(win.id, !collapsed)}
-			>
-				{collapsed ? '▸' : '▾'}
-			</button>
-			{#if caps.move && !locked}
+			{#if canArrange(policy)}
+				<button
+					type="button"
+					class="collapse-btn"
+					bind:this={collapseBtnEl}
+					aria-label={collapsed ? t.expandWindow(win.title) : t.collapseWindow(win.title)}
+					aria-expanded={!collapsed}
+					aria-controls={bodyId}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => dock.setCollapsed(win.id, !collapsed)}
+				>
+					{collapsed ? '▸' : '▾'}
+				</button>
+			{/if}
+			{#if caps.move && !fixed}
 				<button
 					type="button"
 					class="key-btn"
@@ -432,7 +436,7 @@
 					✥
 				</button>
 			{/if}
-			{#if !locked && !collapsed}
+			{#if !fixed && !collapsed}
 				<button
 					type="button"
 					class="key-btn"
@@ -448,18 +452,20 @@
 					⤡
 				</button>
 			{/if}
-			<button
-				type="button"
-				class="lock-btn"
-				bind:this={lockBtnEl}
-				class:active={locked}
-				aria-label={locked ? unlockLabel(win.title) : lockLabel(win.title)}
-				aria-pressed={locked}
-				onpointerdown={(event) => event.stopPropagation()}
-				onclick={() => dock.setLocked(win.id, !locked)}
-			>
-				{locked ? '🔒' : '🔓'}
-			</button>
+			{#if canArrange(policy)}
+				<button
+					type="button"
+					class="lock-btn"
+					bind:this={lockBtnEl}
+					class:active={locked}
+					aria-label={locked ? unlockLabel(win.title) : lockLabel(win.title)}
+					aria-pressed={locked}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => dock.setLocked(win.id, !locked)}
+				>
+					{locked ? '🔒' : '🔓'}
+				</button>
+			{/if}
 			{#if onPopOut && caps.undock}
 				<button
 					type="button"
@@ -504,7 +510,7 @@
 	</div>
 
 	<!-- Resize handles: pointer surfaces, hidden from assistive tech - the keyboard equivalent is the resize-mode button in the titlebar. -->
-	{#each locked || collapsed ? [] : RESIZE_EDGES as edge (edge)}
+	{#each fixed || collapsed ? [] : RESIZE_EDGES as edge (edge)}
 		<div
 			class={`handle handle-${edge}`}
 			aria-hidden="true"

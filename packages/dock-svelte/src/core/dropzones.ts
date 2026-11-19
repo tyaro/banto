@@ -34,17 +34,45 @@ export interface GuideButton<R extends DropRegion = DropRegion> {
 /**
  * The button side for a guide drawn inside a `width` x `height` area: `size`, shrunk
  * so a full cross (three buttons and two gaps) plus `GUIDE_INSET` on each side fits
- * the smaller side; `0` (= no guide) when that would be under `GUIDE_BUTTON_MIN`.
+ * the smaller side; `0` (= no guide) when that would be under `min` (`GUIDE_BUTTON_MIN`).
  */
-export function guideButtonSize(width: number, height: number, size = GUIDE_BUTTON_SIZE): number {
+export function guideButtonSize(
+	width: number,
+	height: number,
+	size = GUIDE_BUTTON_SIZE,
+	min = GUIDE_BUTTON_MIN
+): number {
 	const room = Math.min(width, height) - 2 * GUIDE_INSET - 2 * GUIDE_BUTTON_GAP;
 	if (!(room > 0)) return 0;
 	const fit = Math.min(size, Math.floor(room / 3));
-	return fit >= GUIDE_BUTTON_MIN ? fit : 0;
+	return fit >= min ? fit : 0;
 }
 
-/** What a pane accepts (`DockCapabilities.dropCenter` / `dropSplit` of its panes). */
-export interface CrossOptions {
+/** The guide buttons' side and the smallest side they are shrunk to (`guideButtonSize`). */
+export interface GuideSizing {
+	size?: number;
+	min?: number;
+}
+
+/**
+ * The guide sizing the host's density asks for (#663 ④, three-pane-dock-plan §4.5): the
+ * CSS custom property `--banto-dock-guide-button-size` on `el` (the touch density of
+ * `@banto/theme` sets it to the small control height) is the buttons' side, and they are
+ * not shrunk below `GUIDE_BUTTON_SIZE` (a pane too small for that shows no cross; the
+ * outer-edge buttons and free space still take the drop). Unset or not a positive px
+ * length = the defaults (`GUIDE_BUTTON_SIZE`, `GUIDE_BUTTON_MIN`).
+ */
+export function readGuideSizing(el: Element | null): GuideSizing {
+	if (!el) return {};
+	const raw = getComputedStyle(el).getPropertyValue('--banto-dock-guide-button-size').trim();
+	const match = /^(\d+(?:\.\d+)?)px$/.exec(raw);
+	const size = match ? Number(match[1]) : NaN;
+	if (!(size > 0)) return {};
+	return { size, min: Math.min(size, GUIDE_BUTTON_SIZE) };
+}
+
+/** What a pane accepts (`DockCapabilities.dropCenter` / `dropSplit` of its panes), and the button sizing. */
+export interface CrossOptions extends GuideSizing {
 	/** Offer the centre (join as a tab). Default `true`. */
 	center?: boolean;
 	/** Offer up / down / left / right (split beside it). Default `true`. */
@@ -57,7 +85,7 @@ export interface CrossOptions {
  * the pane is too small (`guideButtonSize`).
  */
 export function crossButtons(rect: Rect, options: CrossOptions = {}): GuideButton[] {
-	const b = guideButtonSize(rect.width, rect.height);
+	const b = guideButtonSize(rect.width, rect.height, options.size, options.min);
 	if (b <= 0) return [];
 	const step = b + GUIDE_BUTTON_GAP;
 	const cx = rect.x + rect.width / 2 - b / 2;

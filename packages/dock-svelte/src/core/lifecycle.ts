@@ -731,6 +731,15 @@ export class PanelLifecycle {
 		);
 	}
 
+	/**
+	 * Resolve every request still being asked or held as `stale`, with nothing changed (#663 ④:
+	 * `DockHost`'s `arrange` turned off - a change the user started before must not land after).
+	 * A later answer of the hook is ignored.
+	 */
+	invalidatePending(): void {
+		for (const job of [...this.#jobs]) job.resolve('stale');
+	}
+
 	/** `DockHost` unmounts: nothing held or pending is applied any more, and every waiting request resolves `disposed` now. */
 	dispose(): void {
 		this.#disposed = true;

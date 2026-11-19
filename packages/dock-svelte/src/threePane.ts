@@ -8,6 +8,7 @@
  * collapsed, auto-hidden or floated) and `right` (the selected row's details), plus the app's own
  * extra panels (`ThreePaneExtraPanel`, plan §4.9), whose ids must not be one of the three.
  */
+import { autoHiddenPanelIds, autoHideRegionInLayout } from './core/autohide';
 import { cascadePosition, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH } from './core/geometry';
 import { captureDockSlot, type HiddenDockSlot } from './core/slot';
 import {
@@ -508,6 +509,111 @@ function replaceById(root: DockNode, id: string, next: DockNode): DockNode {
 	if (root.id === id) return next;
 	if (root.type !== 'split') return root;
 	return { ...root, children: root.children.map((c) => replaceById(c, id, next)) };
+}
+
+/** Narrow at this component width or below (plan §4.5; `@banto/ui`'s `ThreePaneLayout` default). */
+export const THREE_PANE_NARROW_BREAKPOINT = 900;
+
+/** Is `width` (`null` = not measured yet) narrow for `breakpoint`? Same rule as `ThreePaneLayout`. */
+export function isThreePaneNarrow(width: number | null, breakpoint: number): boolean {
+	return width !== null && width > 0 && width <= breakpoint;
+}
+
+/** Is the pane on screen in `layout`: docked, auto-hidden, or an open floating window? */
+export function isPaneShown(layout: DockLayout, id: string): boolean {
+	return (
+		findNode(layout.docked, id)?.type === 'panel' ||
+		autoHiddenPanelIds(layout).includes(id) ||
+		layout.floating.some((w) => w.id === id && w.open)
+	);
+}
+
+export interface ThreePaneNarrowLayoutOptions {
+	panels: ThreePanePanels;
+	/**
+	 * The panes (besides the centre) to put in an edge band. Omitted = the left / right panes
+	 * that are shown in the wide layout.
+	 */
+	shown?: readonly string[];
+	/** For the closed windows of panes the wide layout does not float; `<= 0` = the defaults. */
+	hostWidth?: number;
+	hostHeight?: number;
+}
+
+/**
+ * The narrow display (plan §4.5, §9 Q7), built from the wide layout `wide` and today's panes: the
+ * centre docked alone; the panes in `shown` auto-hidden to an edge band - left on the left edge,
+ * right on the right, an extra panel on its `initial` edge (else the right) - so their flyout is
+ * the drawer; every other pane a closed floating window (its geometry kept from `wide` when it
+ * floats there; no remembered docked place, no lock, not collapsed). `wide` itself is not changed:
+ * the caller keeps it as the layout to save and to go back to.
+ */
+export function threePaneNarrowLayout(
+	wide: DockLayout,
+	options: ThreePaneNarrowLayoutOptions
+): DockLayout {
+	const { panels } = options;
+	const defs = new Map<string, ThreePanePaneDef>();
+	const homes = new Map<string, DockEdge>();
+	if (panels.left) {
+		defs.set(THREE_PANE_IDS.left, panels.left);
+		homes.set(THREE_PANE_IDS.left, 'left');
+	}
+	if (panels.right) {
+		defs.set(THREE_PANE_IDS.right, panels.right);
+		homes.set(THREE_PANE_IDS.right, 'right');
+	}
+	for (const def of panels.extra ?? []) {
+		defs.set(def.id, def);
+		homes.set(def.id, typeof def.initial === 'object' ? def.initial.edge : 'right');
+	}
+	const shown = new Set(
+		(
+			options.shown ??
+			[THREE_PANE_IDS.left, THREE_PANE_IDS.right].filter((id) => isPaneShown(wide, id))
+		).filter((id) => defs.has(id))
+	);
+
+	let layout: DockLayout = {
+		version: 2,
+		floating: [],
+		docked: paneNode(THREE_PANE_IDS.center, panels.center)
+	};
+	for (const [id, def] of defs) {
+		if (!shown.has(id)) continue;
+		const edge = homes.get(id) ?? 'right';
+		const docked = dockPanelAtEdge(
+			layout.docked,
+			paneNode(id, def),
+			edge,
+			() => `three-pane:narrow:${id}`
+		);
+		layout = autoHideRegionInLayout({ ...layout, docked }, id, { edge }) ?? layout;
+	}
+
+	const width = (options.hostWidth ?? 0) > 0 ? options.hostWidth! : THREE_PANE_DEFAULTS.hostWidth;
+	const height =
+		(options.hostHeight ?? 0) > 0 ? options.hostHeight! : THREE_PANE_DEFAULTS.hostHeight;
+	const floating: FloatingWindow[] = [];
+	for (const [id, def] of defs) {
+		if (shown.has(id)) continue;
+		const was = wide.floating.find((w) => w.id === id);
+		floating.push(
+			was
+				? {
+						id,
+						title: def.title,
+						...(def.icon !== undefined ? { icon: def.icon } : {}),
+						x: was.x,
+						y: was.y,
+						width: was.width,
+						height: was.height,
+						open: false
+					}
+				: extraWindow({ id, ...def }, floating.length, width, height, false)
+		);
+	}
+	return { ...layout, floating };
 }
 
 /**

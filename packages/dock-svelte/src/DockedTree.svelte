@@ -88,7 +88,7 @@
 	import { getDragController } from './core/drag.svelte';
 	import { getGestureOwner } from './core/gesture.svelte';
 	import { getPanelLifecycle } from './core/lifecycle';
-	import { getDockPolicy, isMainPane, resolveCapabilities } from './core/policy';
+	import { canArrange, getDockPolicy, isMainPane, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { DockNode, PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
@@ -326,9 +326,10 @@
 	/** The divider whose drag is running in THIS split (#663 ③-B: cancelled when a region next to it is collapsed). */
 	let activeDivider: number | null = $state(null);
 
-	/** A divider next to a collapsed band cannot be moved (neither by pointer nor by keyboard). */
+	/** A divider next to a collapsed band, or of a host that may not be rearranged (`arrange`), cannot be moved (neither by pointer nor by keyboard). */
 	function dividerDisabled(i: number): boolean {
 		if (node.type !== 'split') return false;
+		if (!canArrange(policy)) return true;
 		const a = node.children[i];
 		const b = node.children[i + 1];
 		return (a !== undefined && isRegionCollapsed(a)) || (b !== undefined && isRegionCollapsed(b));
@@ -507,19 +508,21 @@
 					📌
 				</button>
 			{/if}
-			<button
-				type="button"
-				class="collapse-btn"
-				bind:this={collapseBtnEl}
-				aria-label={collapsed ? t.expandPane(node.title) : t.collapsePane(node.title)}
-				aria-expanded={!collapsed}
-				aria-controls={bodyId}
-				disabled={!collapsed && !canCollapse}
-				onpointerdown={(event) => event.stopPropagation()}
-				onclick={toggleCollapsed}
-			>
-				{collapsed ? '▸' : '▾'}
-			</button>
+			{#if canArrange(policy)}
+				<button
+					type="button"
+					class="collapse-btn"
+					bind:this={collapseBtnEl}
+					aria-label={collapsed ? t.expandPane(node.title) : t.collapsePane(node.title)}
+					aria-expanded={!collapsed}
+					aria-controls={bodyId}
+					disabled={!collapsed && !canCollapse}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={toggleCollapsed}
+				>
+					{collapsed ? '▸' : '▾'}
+				</button>
+			{/if}
 			{#if !collapsed && onPopOut && capsOf(node.id).undock}
 				<button
 					type="button"
@@ -672,19 +675,21 @@
 					📌
 				</button>
 			{/if}
-			<button
-				type="button"
-				class="collapse-btn"
-				bind:this={collapseBtnEl}
-				aria-label={collapsed ? t.expandPane(regionTitle) : t.collapsePane(regionTitle)}
-				aria-expanded={!collapsed}
-				aria-controls={bodyId}
-				disabled={!collapsed && !canCollapse}
-				onpointerdown={(event) => event.stopPropagation()}
-				onclick={toggleCollapsed}
-			>
-				{collapsed ? '▸' : '▾'}
-			</button>
+			{#if canArrange(policy)}
+				<button
+					type="button"
+					class="collapse-btn"
+					bind:this={collapseBtnEl}
+					aria-label={collapsed ? t.expandPane(regionTitle) : t.collapsePane(regionTitle)}
+					aria-expanded={!collapsed}
+					aria-controls={bodyId}
+					disabled={!collapsed && !canCollapse}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={toggleCollapsed}
+				>
+					{collapsed ? '▸' : '▾'}
+				</button>
+			{/if}
 		</div>
 		<!-- Same scrollable-region-focusable rationale (and svelte-ignore) as the `panel` branch's `.body` above. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->

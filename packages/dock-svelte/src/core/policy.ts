@@ -56,14 +56,37 @@ export interface DockCapabilities {
 export interface DockPolicy {
 	readonly clamp: ClampOptions | undefined;
 	readonly capabilities: ((panelId: string) => DockCapabilities | undefined) | undefined;
+	/**
+	 * `false` = the layout cannot be rearranged from the dock UI (#663 ④, three-pane-dock-plan
+	 * §4.5, `DockHost`'s `arrange`): every capability reads `false`, dividers and floating windows
+	 * are fixed, the collapse / lock / pin-back buttons are not drawn. Omitted = `true`.
+	 */
+	readonly arrange?: boolean;
 }
 
 const NO_POLICY: DockPolicy = { clamp: undefined, capabilities: undefined };
+
+/** Every capability withheld (`arrange: false`). */
+const FIXED: Required<DockCapabilities> = {
+	close: false,
+	move: false,
+	undock: false,
+	dropCenter: false,
+	dropSplit: false,
+	autoHide: false,
+	collapse: false
+};
+
+/** May the layout be rearranged from the dock UI (`DockPolicy.arrange`, default `true`)? */
+export function canArrange(policy: DockPolicy): boolean {
+	return policy.arrange !== false;
+}
 
 export function resolveCapabilities(
 	policy: DockPolicy,
 	panelId: string
 ): Required<DockCapabilities> {
+	if (!canArrange(policy)) return { ...FIXED };
 	const c = policy.capabilities?.(panelId);
 	return {
 		close: c?.close ?? true,

@@ -281,7 +281,20 @@ beforePanelChange?: (change: DockPanelChange) => boolean | Promise<boolean>; // 
 keepMounted?: (panelId: string) => boolean; // 見えないあいだも中身を mount したままにする pane
 persistent?: (panelId: string) => boolean; // 中身を一度だけ描き、組み替えでも作り直さない pane（据え置き、下記）
 isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を保留（省略時は IME 変換中）
+arrange?: boolean; // false = 利用者が組み替えられない（キオスク、下記）。既定 true
 ```
+
+- **`arrange={false}`**（#663 ④、three-pane-dock-plan §4.5）: `capabilities` の全項目を `false` として扱う（✕・ドラッグ・浮かせる・
+  pop-out・ピン・折りたたみ・「パネルの操作」メニュー・ドロップ先を出さない）。分割線と浮動 window はポインタでもキーボードでも
+  動かず（window はロックと同じ扱い）、折りたたみ・ロックのボタンと、引き出した pane のピン（戻す）ボタンも出さない。タブの
+  切り替え・前面化・自動で隠れた pane の引き出しは許す。`movePanel` は `unavailable`、`autoHidePanel`・`pinPanel` は `refused`。
+  アプリ自身の `showPanel`・`hidePanel`・`closePanel`・`setPanelVisible`・`replaceLayout`（と `DockState` の呼び出し）は止めない。
+  実行中に `false` にすると、進行中のジェスチャは取り消し、承認待ち・保留中の変更はすべて `stale` にする。消えるボタンに
+  フォーカスがあれば、その pane（タブか本文）へ移す。
+- **touch の密度**: タイトルバーのボタンは `--banto-dock-button-size`、ドッキングのガイドのボタンは
+  `--banto-dock-guide-button-size`（`@banto/theme` の touch 密度が小さい操作部品の高さ 40px を入れる）。ガイドはドラッグの
+  開始時に host の値を読み、その大きさで描く。入りきらなければ既定の 32px までは縮め、それより小さくはしない
+  （収まらない pane には十字を出さず、外周のボタンと空き場所へのドロップは残る）。純関数 `readGuideSizing(el)`。
 
 - **`beforePanelChange`**: `true`（または `true` に解決）のときだけ layout を変える。`false`・ほかの値・例外・
   reject では変えない（変えないのは対象だけで、layout 全体を戻すことはしない）。確認の UI はアプリが出す。
@@ -640,13 +653,25 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   いるなら展開し、タブの組に入っている（裏でも表でも）なら組から抜いて組の隣に分割で置く（組の場所と比率は保ち、
   左のパネルを含む組なら中央はその右、ほかは左。`dropCenter: false` は新しい合流しか止めないので、組のままだと
   別のタブを押して中央を隠せてしまう）、中央が木に無い（浮動・閉じている・自動で隠れている）なら既定（`status: 'default'`）。
-  保存のきっかけは、自分で持った `dock` の `dock.layout` を `$effect` で見る。
+  保存のきっかけは、自分で持った `dock` の `dock.layout` を `$effect` で見る。保存するのは `layoutSnapshot()` で、
+  `dock.serialize()` ではない（狭い表示のあいだ `dock.layout` は一時のレイアウト）。
 - **パネル自身が入力を持つ**（追加パネルのフォームなど）ときは、`beforePanelChange` で下書きを控える（下の「pane の
   lifecycle」）。`resetLayout`・`restoreLayout` は、画面から外す・作り直す pane ごとに `hide` / `dock` / `undock` /
   `move-docked` / `tab-switch` / `auto-hide` として聞く（`DockHost.replaceLayout`）。画面に残る据え置きの pane は聞かない。
   据え置きの pane のうち、閉じた浮動 window として残るものは `hide`（`remount: false`、中身は保たれる）、置き換え先の
   レイアウトから消えるものは `close`（中身は破棄される。`closePanel` と同じ）。
-- まだ無いもの（後続の PR）: 狭い幅の表示（`narrowBreakpoint`）と組み替え不可（`arrange={false}`、§4.5）。
+- **狭い表示**（three-pane-dock-plan §4.5・§9 Q7）: 部品自身の幅が `narrowBreakpoint`（既定 900）以下、または
+  `narrowOverride` が `true` のとき、保存済みの配置には触れずに一時のレイアウト（純関数 `threePaneNarrowLayout`）で表示する:
+  中央だけをドッキングし、見えていた左右は端の自動で隠す帯へ（引き出しがドロワーの代わり）、浮動と追加パネルは隠す。
+  「表示」メニューで帯の pane を選ぶと引き出し、隠れた pane を選ぶと帯へ置いて引き出す。狭い表示のあいだの操作は保存しない
+  （`layoutSnapshot()` は控えた配置を返す。`resetLayout`・`restoreLayout` は控えを置き換える）。幅が戻れば控えた配置に戻す
+  （控えが既定なら、その幅で測り直す）。切り替えは `replaceLayout` を通るので、動かす pane は `beforePanelChange` に聞く。
+  拒否されたら今の表示のまま、次に境界をまたぐまで試さない。マウント直後の最初の測定が狭いときだけは聞かずに入れる
+  （まだ状態が無い）。中央は据え置きなので、どちらの切り替えでも作り直さない。`narrow`（bind 用の出力）で今の表示を読める。
+- **組み替え不可**（`arrange={false}`、キオスク、§9 Q4）: `DockHost` の `arrange`（上）に加えて、部品のメソッドのうち配置を
+  変えるもの（`setVisible`・`toggle`・`leftOpen`/`rightOpen` の書き込み・`resetLayout` は `refused`、`float`・`dockBack`・`move` は
+  `unavailable`）は何も変えない。`viewMenuItems` は空。`restoreLayout` と狭い表示への切り替えは効く（保存済みの配置を見せる
+  ための操作で、利用者の組み替えではない）。
 
 `DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
 行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。

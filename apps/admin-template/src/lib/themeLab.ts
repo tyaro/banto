@@ -153,7 +153,8 @@ export const STANDARD_DENSITY_VARS: Readonly<Record<string, string>> = {
 	'--banto-shell-launcher-item-size': '44px',
 	'--banto-dock-titlebar-height': '32px',
 	'--banto-dock-button-size': 'initial',
-	'--banto-tree-toggle-size': 'initial'
+	'--banto-tree-toggle-size': 'initial',
+	'--banto-dock-guide-button-size': 'initial'
 };
 
 /** The `[data-banto-density='compact']` block of banto.css. */
@@ -181,7 +182,8 @@ export const TOUCH_DENSITY_VARS: Readonly<Record<string, string>> = {
 	'--banto-shell-launcher-item-size': '48px',
 	'--banto-dock-titlebar-height': '40px',
 	'--banto-dock-button-size': 'var(--banto-control-height-sm)',
-	'--banto-tree-toggle-size': 'var(--banto-control-height-sm)'
+	'--banto-tree-toggle-size': 'var(--banto-control-height-sm)',
+	'--banto-dock-guide-button-size': 'var(--banto-control-height-sm)'
 };
 
 /** All density variables of one density (standard values overlaid with its block). */

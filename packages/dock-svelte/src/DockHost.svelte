@@ -84,7 +84,13 @@
 	import { PersistentContents } from './core/persistent';
 	import { collectPanelIds } from './core/tree';
 	import { autoHiddenPanelIds, mainRegionId, regionOf, regionPanelIds } from './core/autohide';
-	import { isMainPane, setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
+	import {
+		isMainPane,
+		resolveCapabilities,
+		setDockPolicy,
+		type DockCapabilities,
+		type DockPolicy
+	} from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { DockLayout, DockNode, PanelContent } from './types';
 	import { validateDockLayout } from './core/validate';
@@ -218,6 +224,19 @@
 		 * in progress in the document.
 		 */
 		isStructureChangeDeferred?: () => boolean;
+		/**
+		 * `false` = the user cannot rearrange the layout (#663 ④, three-pane-dock-plan §4.5, e.g. a
+		 * kiosk): every `capabilities` field reads `false` (no ✕, drag, float, pop-out, pin, collapse,
+		 * "panel actions" menu, drop target), dividers and floating windows do not move or resize
+		 * (pointer or keyboard), and the collapse / lock buttons and an auto-hidden pane's pin-back
+		 * button are not drawn. Switching a tab, raising a window and sliding an auto-hidden pane out
+		 * still work. `movePanel` / `autoHidePanel` / `pinPanel` resolve `unavailable` / `refused`;
+		 * the app's own `showPanel` / `hidePanel` / `closePanel` / `setPanelVisible` /
+		 * `replaceLayout` (and `DockState` calls) are not affected. Turning it off cancels a gesture
+		 * in progress and makes every request still being asked `stale`; a focus on a control that
+		 * goes away moves to its pane. Default `true`.
+		 */
+		arrange?: boolean;
 	}
 
 	let {
@@ -234,7 +253,8 @@
 		beforePanelChange,
 		keepMounted,
 		persistent,
-		isStructureChangeDeferred
+		isStructureChangeDeferred,
+		arrange = true
 	}: Props = $props();
 
 	// Published through context; getters keep reading the live props.
@@ -244,6 +264,9 @@
 		},
 		get capabilities() {
 			return capabilities;
+		},
+		get arrange() {
+			return arrange;
 		}
 	};
 	setDockPolicy(policy);
@@ -368,6 +391,51 @@
 	setGestureOwner(gesture);
 	onDestroy(() => gesture.dispose());
 
+	// `arrange` turned off (#663 ④, three-pane-dock-plan §4.5): a gesture in progress is cancelled
+	// (its target goes back to how it was) and a change still being asked is not applied (`stale`).
+	// Before the controls go away (`.pre`), note the pane holding the DOM focus; after, a focus they
+	// dropped goes to that pane (its tab, or its body), else to the first docked pane's. A focus the
+	// app put elsewhere meanwhile is left alone.
+	let arrangeFocusPanel: string | null = null;
+	$effect.pre(() => {
+		const allowed = arrange;
+		if (allowed) return;
+		untrack(() => {
+			if (gesture.active) gesture.cancel('api');
+			lifecycle.invalidatePending();
+			const active = document.activeElement;
+			if (!hostEl || !active || !hostEl.contains(active)) return;
+			const owner = active.closest<HTMLElement>(
+				'[data-dock-drop-id], [data-dock-window-id], [data-dock-flyout]'
+			);
+			arrangeFocusPanel =
+				owner?.dataset.dockDropId ??
+				owner?.dataset.dockWindowId ??
+				owner?.dataset.dockFlyout ??
+				null;
+		});
+	});
+	$effect(() => {
+		const allowed = arrange;
+		if (allowed) return;
+		untrack(() => {
+			const from = arrangeFocusPanel;
+			arrangeFocusPanel = null;
+			if (from === null || !hostEl) return;
+			const dropped = () => !document.activeElement || document.activeElement === document.body;
+			if (!dropped()) return;
+			const flyout = [...hostEl.querySelectorAll<HTMLElement>('[data-dock-flyout]')].find(
+				(el) => el.dataset.dockFlyout === from
+			);
+			(
+				flyout?.querySelector<HTMLElement>('[role="region"]') ?? titleBarFocusTarget(hostEl, from)
+			)?.focus();
+			if (!dropped()) return;
+			const first = collectPanelIds(dock.layout.docked)[0];
+			if (first) titleBarFocusTarget(hostEl, first)?.focus();
+		});
+	});
+
 	/**
 	 * Hide a pane through `beforePanelChange` (`hide`): a `keepMounted` floating
 	 * window keeps its content mounted (`hidden` + `inert`); a docked pane
@@ -432,7 +500,7 @@
 	export function autoHidePanel(panelId: string): Promise<DockPanelChangeOutcome> {
 		const region = regionOf(dock.layout.docked, panelId);
 		if (!region) return Promise.resolve('stale');
-		if (!regionPanelIds(region).every((id) => capabilities?.(id)?.autoHide !== false)) {
+		if (!regionPanelIds(region).every((id) => resolveCapabilities(policy, id).autoHide)) {
 			return Promise.resolve('refused');
 		}
 		const mainId = mainRegionId(dock.layout.docked, (id) => isMainPane(policy, id));
@@ -441,6 +509,7 @@
 
 	/** Pin the auto-hidden region holding `panelId` back in its docked place (#694 PR-3), asked through `beforePanelChange`. DOM focus is not moved. */
 	export function pinPanel(panelId: string): Promise<DockPanelChangeOutcome> {
+		if (!arrange) return Promise.resolve('refused');
 		return lifecycle.restoreAutoHidden(panelId);
 	}
 

@@ -27,6 +27,8 @@
 		items: readonly T[];
 		/** Replaces the built-in search (`defaultCommandPaletteSearch`). Must return the items to show, in display order. */
 		search?: (query: string, items: readonly T[]) => readonly T[];
+		/** Called with the query whenever it changes (and once with `''` on open) - lets an app run async sources; the app feeds their results back through `search`. */
+		onQueryChange?: (query: string) => void;
 		/** Ids shown first under the "recent" heading when the query is empty (the app owns the store). */
 		recentIds?: readonly string[];
 		/** Runs the chosen item. The palette disables its rows while a returned promise is pending, then closes. Handle errors inside (a rejection is not caught). */
@@ -44,6 +46,7 @@
 		items,
 		search,
 		recentIds,
+		onQueryChange,
 		onExecute,
 		onClose,
 		focusFallback,
@@ -62,6 +65,7 @@
 		{items}
 		{search}
 		{recentIds}
+		{onQueryChange}
 		{onExecute}
 		{focusFallback}
 		{messages}
