@@ -693,6 +693,10 @@
 			// The display switched while it was asked: what it was built for is gone.
 			isCurrent: () => narrowShown === wasNarrow
 		});
+		// A saved (or default) layout, not today's: its shares do not count the floated panes' places
+		// (`savedLayout()`), so those places go, as by `hydrate` (#739 review). Only here - a live
+		// replacement (`syncPanels`) keeps them.
+		if (outcome === 'applied') forgetHomeSlots(dock);
 		if (outcome === 'applied' && wasNarrow) {
 			wideLayout = next;
 			wideIsDefault = isDefault;

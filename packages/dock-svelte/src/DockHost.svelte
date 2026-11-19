@@ -91,7 +91,7 @@
 		type DockCapabilities,
 		type DockPolicy
 	} from './core/policy';
-	import { adoptLayout, forgetHomeSlots, type DockState } from './state.svelte';
+	import { adoptLayout, type DockState } from './state.svelte';
 	import type { DockLayout, DockNode, PanelContent } from './types';
 	import { validateDockLayout } from './core/validate';
 	import DockAutoHide from './DockAutoHide.svelte';
@@ -563,12 +563,7 @@
 		const outcome = await lifecycle.guarded(options.isCurrent, () =>
 			lifecycle.requestReplace(
 				() => layout,
-				(l) => {
-					// A whole layout, as `hydrate` takes it (#739 review): its shares do not count the
-					// floated panes' places of the layout replaced, so those places go too.
-					forgetHomeSlots(dock);
-					adoptLayout(dock, l);
-				}
+				(l) => adoptLayout(dock, l)
 			)
 		);
 		if (outcome !== 'applied' || !focusWasInHost) return outcome;
