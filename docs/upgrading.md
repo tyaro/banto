@@ -790,3 +790,40 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 3. 900px 以下で、メニューバーの代わりにドロワーのボタンが出ること。
 4. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
 5. 同期記録に「ナビのメニューバー表示取込済（PR 番号）」を書く。
+
+### 例 7: v7.6.x → 次の minor（ユーザーへ個別に付ける権限と dock の自動で隠す。A と B と C）
+
+ロールとは別に、ユーザーへ個別に付ける権限（Issue #697、PR #701・#702・#703。判断は
+[ADR-0031](adr/0031-user-permissions-separate-axis.md)、足し方は
+[recipes/add-permission.md](recipes/add-permission.md)）が入る。同じ版に、`@banto/dock-svelte` の
+パネルを自動で隠す機能（#694 PR-3a・PR-3b）も入る。API の削除・改名はなく、**minor**。
+**テンプレートは権限を 1 つも登録しないので、何もしなければ見た目も判定も変わらない**。
+
+| 経路 | 項目 | 取り込み |
+| ---- | ---- | -------- |
+| A | `banto-admin-services`・`banto-server` を上げる | 新しい型（`PermissionKey`・`PermissionCatalog`・`SessionPermissions` など）と関数の追加だけ。`Identity`・`UserIdentity` などの既存の公開の型にフィールドは足していない（構造体リテラルで組み立てているコードもそのままコンパイルできる） |
+| A | `@banto/dock-svelte` を上げる | `DockPanelChange` に種類 `auto-hide` が増えた。`switch (change.kind)` を網羅検査しているアプリは分岐を足す。`Required<DockMessages>` を自前で全部埋めているアプリは、増えたキーを足す（CHANGELOG の該当節） |
+| B | `admin_template_core::permission_catalog()`・`routes/(app)/users/`・`settings/SecuritySection.svelte`・`lib/banto/authAdmin.ts`・`usersAdmin.ts`・`messages/{ja,en}.json` | カタログ（空）の組み立て、ユーザー編集の権限の欄（カタログが空なら出ない）、ログイン不要モードの権限の欄、型 `UserPermission`・`PermissionEntry`（`authAdmin.ts`）、`listPermissionCatalog`（`usersAdmin.ts`）。権限を使わない派生アプリが取り込むかは任意（取り込んでも欄は出ない） |
+| B | `src-tauri/src/lib.rs` | `permissions_catalog` コマンド、`users_update` の `permissions?`、`auth_config_apply` の `permissions?`、`require_permission`・`session_permissions` |
+| C | DB | **migration 0013（`user_permissions` 表、SQLite・PostgreSQL の両方）が増える**。起動時に自動適用され、戻せるのは新版を最初に起動するまで（4 節）。0013 より前のバックアップを戻しても、起動時に表ができる |
+| C | 応答の形（JSON） | `auth_config_get` / `auth_config_apply` の応答に `disabledPermissions` が増える（登録済みのキーだけ。Rust の `AuthSettings`（`AuthConfigSave` を含む）は変えず、応答用の別の型）。`GET /api/users`・`PUT /api/users/{id}`・`GET /api/auth/identity`、Tauri の `users_list`・`users_update`・`auth_identity`・`auth_resolve` の応答に `permissions` が増える。いずれもフィールドの追加で、古いクライアントは読み飛ばす |
+| C | 設定キー | `auth.disabled_permissions`（ログイン不要モードの権限。既定は無し） |
+| C | 見た目 | dock の区画の見出しにピンが増える。dashboard と command-palette の visual の基準画像を Linux で再生成する |
+
+進め方:
+
+1. A のタグを上げ、`pnpm check`・`cargo test` を通す。
+2. コピーしたテンプレートは B の差分を読んで写す。ユーザー管理を外している（display）派生アプリは、
+   `routes/(app)/users/` ごと外れているので権限の欄は要らない。型 `UserPermission`・`PermissionEntry` は
+   `authAdmin.ts` に 1 か所なので、プリセットを外しても残る。
+3. 権限を使うアプリは [add-permission.md](recipes/add-permission.md) の手順で、カタログに登録し、
+   message key を辞書に足し、判定（`PermissionGuard`・`require_permission`）を両経路に置く。
+4. 本番 DB より前に、検証用のコピーで起動して 0013 が当たることを確かめる（4 節）。
+
+確認項目:
+
+1. `pnpm check`・`pnpm build`・`pnpm verify:architecture`（rule 8 に権限のガードの対が加わる）。
+2. 権限を登録したアプリは、ユーザー編集で付け外しでき、持たないユーザー（Admin を含む）の操作が 403 になり、
+   監査に `permissions` の追加・削除と `denied` が残ること。
+3. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
+4. 同期記録に「ユーザー権限（#697）取込済（PR 番号）」を書く。

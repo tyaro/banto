@@ -56,7 +56,10 @@ Architecture overview (Japanese, Mermaid diagrams):
 - **Auth, RBAC, and user management**: argon2id credential store with
   first-run setup, three roles (admin/editor/viewer), a user management
   screen, and identical permission checks across both the REST and Tauri
-  paths.
+  paths. Separately from roles, users can hold individually granted
+  **permissions** (`equipment.operate` style); the app registers the
+  vocabulary and the template registers none (no field appears in the admin
+  screen). See [docs/recipes/add-permission.en.md](docs/recipes/add-permission.en.md).
 - **Audit log**, a settings framework (`SettingsProvider`), and an
   auto-login / no-login mode. The desktop first-run screen offers "Start
   without a login" - a small app can begin with no account at all and

@@ -196,6 +196,7 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
 | 表示専用アプリ（カンバン / 常設ダッシュボード / 展示デモ）を作る                      | 同上の [`--preset display`](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)                                                                                                                                                                         |
 | ログイン無しの小さなアプリとして始める                                                | [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)                                                                                                                                                                                                               |
 | RBAC ロールを足す                                                                     | [docs/recipes/add-role.md](docs/recipes/add-role.md)                                                                                                                                                                                                                       |
+| ユーザーへ個別の権限を足す（ロールの段では表せない許可）                              | [docs/recipes/add-permission.md](docs/recipes/add-permission.md)                                                                                                                                                                                                           |
 | LAN の他端末に配信する / 閲覧公開 / TLS / PWA                                         | [docs/recipes/lan-access.md](docs/recipes/lan-access.md)                                                                                                                                                                                                                   |
 | DB の切り替え（SQLite / PostgreSQL）・バックアップ                                    | [docs/recipes/database-backup.md](docs/recipes/database-backup.md)                                                                                                                                                                                                         |
 | スキャナ入力 / 通知トースト / ツリービュー / 画像の取り込みを組み込む                 | [docs/recipes/scan-wedge.md](docs/recipes/scan-wedge.md) / [notifications.md](docs/recipes/notifications.md) / [tree-svelte.md](docs/recipes/tree-svelte.md) / [three-pane-screen.md](docs/recipes/three-pane-screen.md) / [image-assets.md](docs/recipes/image-assets.md) |
@@ -247,6 +248,9 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
   TLS 終端・PWA インストールは [docs/recipes/lan-access.md](docs/recipes/lan-access.md)。
 - **認証・RBAC・ユーザー管理**（M10）: argon2id 資格情報 + 初回セットアップ、
   admin/editor/viewer の3ロール、ユーザー管理画面。REST/Tauri 両経路で同一の権限判定。
+  ロールとは別に、ユーザーへ個別に付ける**権限**（`equipment.operate` 型）も持てる。語彙は
+  アプリが登録し、テンプレートは何も登録しない（管理画面に欄は出ない）。足し方は
+  [docs/recipes/add-permission.md](docs/recipes/add-permission.md)。
 - **監査ログ**（M14）+ **設定基盤**（M12、SettingsProvider）+ **自動ログイン/ログイン不要
   モード**（M11）。デスクトップの初回セットアップ画面で「ログインなしで使い始める」を選べば、
   アカウントを作らずログイン無しの小さなアプリとして始められる（育ったらログイン運用へ

@@ -95,6 +95,10 @@
 - 監査: 設定変更（`settings_change`）の detail に、変わったときだけ `authDisabledPermissions: { added, removed }` を足す。
 - クライアント: 型 `UserPermission`・`PermissionEntry` は `authAdmin.ts` に 1 か所で定義し（display プリセットでも残る）、`usersAdmin.ts` は再 export する。
 
+### 追加: ユーザーへ個別に付ける権限の文書（#697 PR-3）
+
+- recipe [add-permission](docs/recipes/add-permission.md)（権限を足す手順。ロールか権限かの判断を add-role と相互に記載）、[ADR-0031](docs/adr/0031-user-permissions-separate-axis.md)、README の入口、[upgrading](docs/upgrading.md) の例 7（migration 0013・応答の `disabledPermissions` / `permissions` の追加）。コードの変更なし。
+
 ## [7.6.0] - 2026-11-18
 
 **v7.6.0 — `@banto/dock-svelte` のドッキングできるフローティングパネル（#663 ①〜③: 表示メニュー用の一覧・表示/非表示の口と元の場所への復帰、ピン、浮動 window と docked 区画の折りたたみ）、`beforePanelChange` の穴埋め（#666・#682 の `reparent`）、`@banto/ui` のメニュー周り（HeaderNav の `kind: 'menu'`、`closeOpenMenus`、Modal 等がメニューを閉じる、popover の横の clamp、ショートカットの `blockOnMenu`・`mod: 'either'`、`MenuItem` の `shortcut`）、`@banto/forms` の `isSamePage`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。Rust・DB（migration）の変更は無い。
