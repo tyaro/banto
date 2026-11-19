@@ -211,3 +211,30 @@ describe('showPanel of an open floating window', () => {
 		expect(docked(dock)).toEqual(['a', 'b']);
 	});
 });
+
+// #739 review (Codex): a whole saved layout put in by `replaceLayout` has shares that do not count
+// the floated panes' places of the layout replaced, so those places are dropped, as by `hydrate`.
+describe('replaceLayout with a saved layout drops the floated panes places (#739 review)', () => {
+	it('row[a .2, b .3, c .5]: float a, hide b, replace with the saved layout, show b -> 3 : 5', async () => {
+		const panel = (id: string) => ({ type: 'panel' as const, id, title: id });
+		const initial: DockLayout = {
+			version: 2,
+			floating: [],
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.2, 0.3, 0.5],
+				children: ['a', 'b', 'c'].map(panel)
+			}
+		};
+		const { dock, host } = mount({}, initial);
+		dock.undockPanel('a');
+		dock.dismiss('b');
+		expect(await host().replaceLayout(JSON.parse(dock.serialize()) as DockLayout)).toBe('applied');
+		expect(dock.homeSlot('a')).toBeUndefined();
+		dock.show('b');
+		const root = dock.layout.docked;
+		expect(root?.type === 'split' && root.sizes[0]).toBeCloseTo(0.375, 9);
+	});
+});
