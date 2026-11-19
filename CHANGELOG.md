@@ -35,6 +35,10 @@
 
 - テンプレート（B. コピーしたテンプレート）: ダッシュボードのレイアウトの保存を `src/lib/banto/dockLayoutStore.svelte.ts` に出し、保存値を利用者とセッションに結び付けた（#663 段階 ④ PR-5、three-pane-dock-plan §4.4）。localStorage の写しは確定した利用者のキー `banto.dock.dashboard:<owner>`（`account:<id>`・`local`・`publicViewer` など）でだけ読み書きし、利用者が確定していなければ使わない。古い固定キー `banto.dock.dashboard` は読まずに消す。設定（`UiSettingsProvider` の `dock.dashboard`）の読み込み結果・debounce 中の書き込み・unmount の flush は、取得した時点のセッション（`currentSessionScope()`）が替わっていれば捨てる。設定が空・エラー・壊れた値のときは写しではなく既定の配置に戻す（以前は写しを残した）。既定の配置・読み込んだ配置は設定へ書き戻さない。scaffold の dock の削除にこのファイルとテストを足した。
 
+### Fixed
+
+- `@banto/dock-svelte`: タブの組・split のパネルを全部外す（隠す・浮かせる）と、戻す順しだいで元の位置に戻れなかった（#721）。最後の 1 枚は先に外したパネルの slot から入れ物を組み立て直して覚え、入れ物とその隣がすべて木に無いときは入れ物自体の場所に戻す。保存形式は `DockSlot` の tab / split に任意の `outer`（split か root の slot）を足しただけで `version` は 2 のまま、`outer` の無い古い JSON は従来どおり読める。
+
 ## [7.8.0] - 2026-11-19
 
 **v7.8.0 — `@banto/admin-core` の UiSettings のプロバイダ（HTTP・Tauri）の書き込みをキーごとに直列化（#707、PR #708）。** 版の種類: minor（後方互換の機能追加）。理由: `TauriUiSettingsOptions` に省略可能な `getSessionRevision` を足した。`crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（`v7.7.0` との差分で確認）。migration なし。
