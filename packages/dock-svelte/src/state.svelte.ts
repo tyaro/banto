@@ -31,7 +31,7 @@ import {
 	setAutoHiddenActive,
 	type AutoHideOptions
 } from './core/autohide';
-import { captureDockSlot, restoreDockSlot } from './core/slot';
+import { captureDockSlot, restoreDockSlot, type HiddenDockSlot } from './core/slot';
 import { withLayoutVersion } from './core/layoutVersion';
 import { validateDockLayout } from './core/validate';
 import {
@@ -105,6 +105,15 @@ export class DockState {
 	 */
 	#seenOrder: string[] = [];
 	#seenIds = new Set<string>();
+	/**
+	 * Where each pane taken out of the tree by `undockPanel` was docked (#663 ④, `homeSlot`), in
+	 * the order they left. The one place for it (#734): `dismiss` and `undockPanel` count these
+	 * with the closed windows' `dockSlot`s (`#pendingSlots`), so panes floated and panes hidden
+	 * out of the same container keep their order. Plain (not reactive) and not saved; an entry
+	 * whose pane is no longer a floating window - docked again by any path, auto-hidden or gone -
+	 * is dropped by the `layout` setter (#735).
+	 */
+	#homeSlots = new Map<string, DockSlot>();
 
 	/** The layout. Assign a new object to change it (every method here does); the setter counts structure changes. */
 	get layout(): DockLayout {
@@ -126,6 +135,12 @@ export class DockState {
 		}
 		this.#noteStructure(next);
 		this.#layout = next;
+		// Whatever put a floated pane back in the tree (#735): its remembered place is spent.
+		if (this.#homeSlots.size > 0) {
+			const floating = untrack(() => new Set(next.floating.map((w) => w.id)));
+			for (const id of [...this.#homeSlots.keys()])
+				if (!floating.has(id)) this.#homeSlots.delete(id);
+		}
 		// The slid-out pane is no longer auto-hidden: it is not slid out any more.
 		const flyout = untrack(() => this.#flyout);
 		if (flyout !== null && findAutoHidden(next, flyout) === null) this.#flyout = null;
@@ -584,10 +599,7 @@ export class DockState {
 			this.close(id);
 			return;
 		}
-		const hidden = this.layout.floating.flatMap((w) =>
-			!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
-		);
-		const slot = captureDockSlot(this.layout.docked, id, hidden);
+		const slot = captureDockSlot(this.layout.docked, id, this.#pendingSlots(id));
 		const index = this.layout.floating.length;
 		const win: FloatingWindow = {
 			id: node.id,
@@ -606,6 +618,30 @@ export class DockState {
 			docked: removePanel(this.layout.docked, id),
 			floating: [...this.layout.floating, win]
 		};
+	}
+
+	/**
+	 * The panes out of the tree that remember a docked place, for `captureDockSlot`'s `hidden`
+	 * (#734): the closed windows' `dockSlot`s in `floating` order, then the floated panes'
+	 * `homeSlot`s in the order they left - the same list for `dismiss` and `undockPanel`.
+	 */
+	#pendingSlots(except: string): HiddenDockSlot[] {
+		const out = this.layout.floating.flatMap((w) =>
+			!w.open && w.dockSlot && w.id !== except ? [{ id: w.id, slot: w.dockSlot }] : []
+		);
+		for (const [id, slot] of this.#homeSlots)
+			if (id !== except && !out.some((h) => h.id === id)) out.push({ id, slot });
+		return out;
+	}
+
+	/**
+	 * Where the floating window `id` was docked before `undockPanel` took it out (#663 ④, the
+	 * panel menu's "back to where it was"); `undefined` = it did not come out of the tree that
+	 * way, or it was docked again since (by any path). Kept for this state's lifetime only (not
+	 * part of `serialize`). The place may be gone by now: `dockAtSlot` tells.
+	 */
+	homeSlot(id: string): DockSlot | undefined {
+		return this.#homeSlots.get(id);
 	}
 
 	#isDocked(id: string): boolean {
@@ -765,7 +801,9 @@ export class DockState {
 	 * index-based cascade (no host bounds are known here, unlike
 	 * `ensureWindow`/`reset`, since this op is host-agnostic - the next
 	 * `move`/`resize` call clamps to the real host as usual). A no-op if
-	 * `panelId` isn't currently docked.
+	 * `panelId` isn't currently docked. Its docked place is remembered as its
+	 * `homeSlot` (#734: counted with the panes already hidden or floated out of
+	 * the same container).
 	 */
 	undockPanel(
 		panelId: string,
@@ -774,6 +812,7 @@ export class DockState {
 		const node = findNode(this.layout.docked, panelId);
 		if (!node || node.type !== 'panel') return;
 
+		const slot = captureDockSlot(this.layout.docked, panelId, this.#pendingSlots(panelId));
 		const docked = removePanel(this.layout.docked, panelId);
 		const index = this.layout.floating.length;
 		const width = geometry?.width ?? DEFAULT_WINDOW_WIDTH;
@@ -789,6 +828,9 @@ export class DockState {
 			open: true
 		};
 		this.layout = { ...this.layout, docked, floating: [...this.layout.floating, win] };
+		// After the assignment: the setter drops entries of panes that are not floating windows.
+		if (slot) this.#homeSlots.set(panelId, slot);
+		else this.#homeSlots.delete(panelId);
 	}
 
 	/** Relocate a panel that's ALREADY docked to a new split/group (spec §5.2: drag a docked tab to a new spot). Removes then re-docks it, so it's equivalent to `undockPanel` + `dockPanel` without the floating round-trip. A no-op if `panelId` isn't currently docked. */
@@ -941,12 +983,17 @@ export class DockState {
 		}
 		const result = validateDockLayout(parsed);
 		if (!result.ok) return false;
+		// Another layout replaces this one: the floated panes' places belong to the old tree, even
+		// for an id that is floating in both (#738 review). A rejected payload keeps them (above).
+		this.#homeSlots.clear();
 		this.layout = result.layout;
 		return true;
 	}
 
 	/** Discard the current layout (docked tree included) and re-place every def at its cascade default, all open, floating. */
 	reset(defs: FloatingWindowDef[], hostW: number, hostH: number): void {
+		// Same as `hydrate`: the remembered places belong to the discarded tree.
+		this.#homeSlots.clear();
 		this.layout = {
 			version: 2,
 			floating: defs.map((def, index) => placeNew(def, index, hostW, hostH)),

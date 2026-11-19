@@ -3,6 +3,8 @@
 // (`slot-main.ts`) side by side. It keeps what decides the tree's shape - the docked tree, the
 // hidden panes with their slots in the order of `layout.floating`, and the panes that went
 // floating (their slot is forgotten) - and nothing else (no window geometry, no lifecycle).
+// #734: also the panes floated out of the tree (`DockState.undockPanel`, remembering their
+// `homeSlot`) and put back (`DockState.dockAtSlot`, the panel menu's "back").
 // `panel-visibility.test.ts` checks it against `createDockState` on the same sequences.
 import type { HiddenDockSlot } from '../../src/core/slot';
 import { collectPanelIds, findNode, removePanel } from '../../src/core/tree';
@@ -16,6 +18,11 @@ export interface SlotImpl {
 		slot: DockSlot,
 		makeId: () => string
 	): DockNode | null;
+	/**
+	 * The wiring before #734: `dismiss` counted the closed windows' slots only, not the floated
+	 * panes' (`DragController.homeSlots`, read by the float alone).
+	 */
+	split?: boolean;
 }
 
 export interface Sim {
@@ -24,6 +31,8 @@ export interface Sim {
 	hidden: HiddenDockSlot[];
 	/** The panes that went floating (the place was gone): never docked again by show / dismiss. */
 	floating: string[];
+	/** The panes floated out of the tree with their `homeSlot`s, in the order they left (#734). */
+	floated?: HiddenDockSlot[];
 }
 
 export const panelOf = (id: string): DockPanelNode => ({
@@ -34,7 +43,7 @@ export const panelOf = (id: string): DockPanelNode => ({
 
 /** A fresh id: one the tree and the slots do not mention (a counter would do the same). */
 function makeIdFor(sim: Sim): () => string {
-	const used = JSON.stringify([sim.docked, sim.hidden]);
+	const used = JSON.stringify([sim.docked, sim.hidden, sim.floated ?? []]);
 	let k = 0;
 	return () => {
 		while (used.includes(`"g${k}"`)) k++;
@@ -46,11 +55,36 @@ export function simDismiss(impl: SlotImpl, sim: Sim, id: string): Sim {
 	const node = findNode(sim.docked, id);
 	// Not docked: `dismiss` only closes a window, the tree does not change.
 	if (!node || node.type !== 'panel') return sim;
-	const slot = impl.capture(sim.docked, id, sim.hidden);
+	const pending = impl.split ? sim.hidden : [...sim.hidden, ...(sim.floated ?? [])];
+	const slot = impl.capture(sim.docked, id, pending);
 	const docked = removePanel(sim.docked, id);
 	return slot
-		? { docked, hidden: [...sim.hidden, { id, slot }], floating: sim.floating }
-		: { docked, hidden: sim.hidden, floating: [...sim.floating, id] };
+		? { ...sim, docked, hidden: [...sim.hidden, { id, slot }] }
+		: { ...sim, docked, floating: [...sim.floating, id] };
+}
+
+/** `undockPanel` (#734): the place is remembered as a `homeSlot`, counting the hidden panes and the floated ones. */
+export function simFloat(impl: SlotImpl, sim: Sim, id: string): Sim {
+	const node = findNode(sim.docked, id);
+	if (!node || node.type !== 'panel') return sim;
+	const floated = sim.floated ?? [];
+	const slot = impl.capture(sim.docked, id, [...sim.hidden, ...floated]);
+	const docked = removePanel(sim.docked, id);
+	return slot
+		? { ...sim, docked, floated: [...floated, { id, slot }] }
+		: { ...sim, docked, floating: [...sim.floating, id] };
+}
+
+/** "Back" (`dockAtSlot` with the `homeSlot`). The place is gone: counted as floating for good, like `show`. */
+export function simBack(impl: SlotImpl, sim: Sim, id: string): Sim {
+	const entry = sim.floated?.find((h) => h.id === id);
+	if (!entry) return sim;
+	// An empty list is left out, so the state's key is the same as before any float.
+	const rest = sim.floated!.filter((h) => h.id !== id);
+	const floated = rest.length > 0 ? rest : undefined;
+	const docked = impl.restore(sim.docked, panelOf(id), entry.slot, makeIdFor(sim));
+	if (docked === null) return { ...sim, floated, floating: [...sim.floating, id] };
+	return { ...sim, docked, floated };
 }
 
 export function simShow(impl: SlotImpl, sim: Sim, id: string): Sim {
@@ -59,16 +93,31 @@ export function simShow(impl: SlotImpl, sim: Sim, id: string): Sim {
 	const hidden = sim.hidden.filter((h) => h.id !== id);
 	const docked = impl.restore(sim.docked, panelOf(id), entry.slot, makeIdFor(sim));
 	// The place is gone: `show` opens it floating and the slot is forgotten.
-	if (docked === null) return { docked: sim.docked, hidden, floating: [...sim.floating, id] };
-	return { docked, hidden, floating: sim.floating };
+	if (docked === null) return { ...sim, hidden, floating: [...sim.floating, id] };
+	return { ...sim, docked, hidden };
 }
 
-/** Runs `-x` (dismiss) / `+x` (show) steps. */
+/** One step: `-x` dismiss, `+x` show, `~x` float (#734), `^x` back. */
+export function simStep(impl: SlotImpl, sim: Sim, step: string): Sim {
+	const id = step.slice(1);
+	switch (step[0]) {
+		case '-':
+			return simDismiss(impl, sim, id);
+		case '+':
+			return simShow(impl, sim, id);
+		case '~':
+			return simFloat(impl, sim, id);
+		case '^':
+			return simBack(impl, sim, id);
+		default:
+			throw new Error(`unknown step ${step}`);
+	}
+}
+
+/** Runs `-x` (dismiss) / `+x` (show) / `~x` (float) / `^x` (back) steps. */
 export function simRun(impl: SlotImpl, docked: DockNode, steps: string[]): Sim {
 	let sim: Sim = { docked, hidden: [], floating: [] };
-	for (const step of steps)
-		sim =
-			step[0] === '-' ? simDismiss(impl, sim, step.slice(1)) : simShow(impl, sim, step.slice(1));
+	for (const step of steps) sim = simStep(impl, sim, step);
 	return sim;
 }
 
@@ -113,7 +162,7 @@ export interface EnumerationResult {
 }
 
 /**
- * Every sequence of `-x` / `+x` up to `maxSteps` steps on `make()`, run with `main` and `now` side
+ * Every sequence of `-x` / `+x` (with `mixed`, `~x` / `^x` too: #734) up to `maxSteps` steps on `make()`, run with `main` and `now` side
  * by side (a breadth-first walk over the pair of states; equal pairs at the same depth are walked
  * once, with the number of sequences reaching them). A step is one the main run allows: hide a
  * docked pane, show a hidden one. A sequence is checked when every pane is shown again in the main
@@ -123,7 +172,8 @@ export function enumerateSequences(
 	make: () => DockNode,
 	main: SlotImpl,
 	now: SlotImpl,
-	maxSteps: number
+	maxSteps: number,
+	{ mixed = false }: { mixed?: boolean } = {}
 ): EnumerationResult {
 	const ids = collectPanelIds(make());
 	const want = JSON.stringify(shapeOf(make()));
@@ -150,20 +200,29 @@ export function enumerateSequences(
 		for (const e of level.values()) {
 			for (const id of ids) {
 				const docked = findNode(e.main.docked, id)?.type === 'panel';
-				const hidden = e.main.hidden.some((h) => h.id === id);
-				if (!docked && !hidden) continue;
-				const step = `${docked ? '-' : '+'}${id}`;
-				const m = docked ? simDismiss(main, e.main, id) : simShow(main, e.main, id);
-				if (m.floating.length > 0) continue;
-				const n = docked ? simDismiss(now, e.now, id) : simShow(now, e.now, id);
-				const key = keyOf(m) + keyOf(n);
-				const seen = next.get(key);
-				if (seen) seen.count += e.count;
-				else next.set(key, { main: m, now: n, count: e.count, steps: [...e.steps, step] });
+				const kinds = docked
+					? mixed
+						? ['-', '~']
+						: ['-']
+					: e.main.hidden.some((h) => h.id === id)
+						? ['+']
+						: e.main.floated?.some((h) => h.id === id)
+							? ['^']
+							: [];
+				for (const kind of kinds) {
+					const step = `${kind}${id}`;
+					const m = simStep(main, e.main, step);
+					if (m.floating.length > 0) continue;
+					const n = simStep(now, e.now, step);
+					const key = keyOf(m) + keyOf(n);
+					const seen = next.get(key);
+					if (seen) seen.count += e.count;
+					else next.set(key, { main: m, now: n, count: e.count, steps: [...e.steps, step] });
+				}
 			}
 		}
 		for (const e of next.values()) {
-			if (e.main.hidden.length > 0) continue;
+			if (e.main.hidden.length > 0 || (e.main.floated?.length ?? 0) > 0) continue;
 			const mainOk = JSON.stringify(shapeOf(e.main.docked)) === want;
 			const nowOk = JSON.stringify(shapeOf(e.now.docked)) === want;
 			result.sequences += e.count;

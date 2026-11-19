@@ -51,7 +51,7 @@
 import { getContext, setContext, tick } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
 import type { DockPanelChange, DockPanelChangeOutcome, PanelLifecycle } from './lifecycle';
-import { captureDockSlot, restoreDockSlot } from './slot';
+import { restoreDockSlot } from './slot';
 import { resolveCapabilities, type DockPolicy } from './policy';
 import {
 	collectPanelIds,
@@ -376,14 +376,6 @@ export class DragController {
 	}
 
 	/**
-	 * Where each pane floated by `floatDocked` was docked (#663 ④, `DockHost.movePanel`'s
-	 * `{ back: true }`): captured right before it leaves the tree, dropped when it docks again
-	 * through this controller. Kept for the host's lifetime only (not part of the saved layout);
-	 * a place that is gone by then is found out by `restoreDockSlot` (`placeBack` = not offered).
-	 */
-	readonly homeSlots = new Map<string, DockSlot>();
-
-	/**
 	 * An outer-edge drop (#694 PR-1). Wrapping the root re-mounts every docked pane whose chain
 	 * changes, so `requestPlacement` asks them first (`reparent`), then the moved pane (`dock` /
 	 * `move-docked`); the preview uses a fixed id for the new split so the re-checks compare the
@@ -412,7 +404,6 @@ export class DragController {
 					? (active.closest<HTMLElement>('[data-dock-drop-id]')?.dataset.dockDropId ?? null)
 					: undefined;
 			apply();
-			this.homeSlots.delete(panelId);
 			// `undefined` = the focus was not in the host: nothing to hand back.
 			if (repair && frameId !== undefined && hostEl)
 				void tick().then(() => refocus(hostEl, frameId, panelId));
@@ -494,10 +485,7 @@ export class DragController {
 					});
 				},
 				target,
-				() => {
-					dock.dockPanel(panelId, targetId, region);
-					this.homeSlots.delete(panelId);
-				},
+				() => dock.dockPanel(panelId, targetId, region),
 				guard
 			);
 		return this.#placement(
@@ -517,8 +505,9 @@ export class DragController {
 	/**
 	 * Float the docked pane `panelId` (a drop on free space): asks the pane a shrinking split /
 	 * tab group leaves first (`reparent`, #682), then `undock`. Its docked place is remembered
-	 * for `placeBack` (`homeSlots`). `null` = its `undock` capability withholds it: nothing
-	 * changes. Also the keyboard path (`DockHost.movePanel`, #663 ④).
+	 * for `placeBack` (`DockState.homeSlot`, set by `undockPanel`: #734). `null` = its `undock`
+	 * capability withholds it: nothing changes. Also the keyboard path (`DockHost.movePanel`,
+	 * #663 ④).
 	 */
 	floatDocked(
 		panelId: string,
@@ -529,19 +518,9 @@ export class DragController {
 		// `undock: false` panes stay docked: a drop on free space is ignored.
 		if (policy && !resolveCapabilities(policy, panelId).undock) return null;
 		const dock = this.#dock;
-		const apply = () => {
-			const hidden = dock.layout.floating.flatMap((w) =>
-				!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
-			);
-			// The panes floated from the dock before remember their places too (#720 review):
-			// counted the same way, so they keep their old order whichever goes back first.
-			for (const [id, slot] of this.homeSlots)
-				if (id !== panelId && !findNode(dock.layout.docked, id)) hidden.push({ id, slot });
-			const slot = captureDockSlot(dock.layout.docked, panelId, hidden);
-			dock.undockPanel(panelId, geometry);
-			if (slot && dock.layout.floating.some((w) => w.id === panelId && w.open))
-				this.homeSlots.set(panelId, slot);
-		};
+		// The panes hidden or floated from the dock before are counted by `undockPanel` (#720
+		// review, #734), so they keep their old order whichever goes back first.
+		const apply = () => dock.undockPanel(panelId, geometry);
 		const lifecycle = this.#getLifecycle();
 		return guarded(
 			guard,
@@ -603,22 +582,23 @@ export class DragController {
 	}
 
 	/**
-	 * Dock the floating window `panelId` back where `floatDocked` took it from (#663 ④): asked
-	 * like any other drop into the tree (the panes it pushes out, then `dock`). `null` = no
+	 * Dock the floating window `panelId` back where it was docked (`DockState.homeSlot`, #663 ④):
+	 * asked like any other drop into the tree (the panes it pushes out, then `dock`). `null` = no
 	 * remembered place, or the place is gone: nothing changes.
 	 */
 	placeBack(panelId: string, guard?: MoveGuard): Promise<DockPanelChangeOutcome> | null {
 		const dock = this.#dock;
-		const slot = this.homeSlots.get(panelId);
+		const slot = dock.homeSlot(panelId);
 		if (!slot || this.#backPreview(panelId, slot) === undefined) return null;
 		return this.#placement(
 			panelId,
 			() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
-			() => this.#backPreview(panelId, slot),
+			// A pane docked and floated again while the answer waits remembers another place (#735):
+			// the approved one is gone, so the request is `stale`.
+			() => (dock.homeSlot(panelId) === slot ? this.#backPreview(panelId, slot) : undefined),
 			{ back: slot },
 			() => {
-				if (dock.dockAtSlot(panelId, slot, () => `${panelId}:restored`))
-					this.homeSlots.delete(panelId);
+				dock.dockAtSlot(panelId, slot, () => `${panelId}:restored`);
 			},
 			guard
 		);
@@ -626,7 +606,7 @@ export class DragController {
 
 	/** Whether `placeBack(panelId)` would do something now (a remembered place that still exists and the drag would drop it there). */
 	canPlaceBack(panelId: string): boolean {
-		return this.#backPreview(panelId, this.homeSlots.get(panelId)) !== undefined;
+		return this.#backPreview(panelId, this.#dock.homeSlot(panelId)) !== undefined;
 	}
 
 	/** Whether an outer-edge drop is offered for `panelId` (some OTHER pane is docked). */
