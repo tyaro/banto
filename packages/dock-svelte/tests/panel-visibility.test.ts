@@ -1213,6 +1213,30 @@ it('column[row[a,column[row[tabs[b,c],x],d]],e]: -a -b -x -d -c +c +d +x +b +a -
 	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 });
 
+// PR #732 review: a layout with a slot more than four deep is saved as `version: 3` (the releases
+// before #727 reject such a slot as a whole), a shallow one stays 2; the v3 JSON reads back.
+describe('the saved version follows the slot depth', () => {
+	it('a shallow layout stays version 2', () => {
+		const dock = runSteps(L['row[a,tabs[b,c],column[d,e]]'], '-b -d -a'.split(' '));
+		expect(dock.layout.version).toBe(2);
+		expect(JSON.parse(dock.serialize()).version).toBe(2);
+	});
+
+	it('column[row[a,column[row[tabs[b,c],x],d]],e]: -a -b -x -d -c is version 3, and reads back', () => {
+		const make = L['column[row[a,column[row[tabs[b,c],x],d]],e]'];
+		const dock = runSteps(make, '-a -b -x -d -c'.split(' '));
+		const json = dock.serialize();
+		expect(JSON.parse(json).version).toBe(3);
+		const back = createDockState(json, counterMakeId());
+		expect(back.layout).toEqual(dock.layout);
+		for (const id of 'c d x b a'.split(' ')) back.show(id);
+		expect(back.layout.floating).toEqual([]);
+		expect(shapeOf(back.layout.docked)).toEqual(shapeOf(make()));
+		// Every pane back: the deep slots are gone, and so is version 3.
+		expect(JSON.parse(back.serialize()).version).toBe(2);
+	});
+});
+
 // Codex P2 on #732 (the second one): g's tab group `t2` is all that is left of the column `c1`, so
 // g's slot remembers `t2` with `outer` = `c1`'s place, and the row `s` is `outer.outer`. The
 // group of d and e (gone too) still counts among the row's children for b and c hidden after it.

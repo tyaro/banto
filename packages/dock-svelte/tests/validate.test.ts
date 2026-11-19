@@ -18,8 +18,8 @@ function win(id: string, over: Record<string, unknown> = {}) {
 	};
 }
 
-function layoutOf(floating: unknown[], docked: unknown = null) {
-	return { version: 2, floating, docked };
+function layoutOf(floating: unknown[], docked: unknown = null, version = 2) {
+	return { version, floating, docked };
 }
 
 const goodDocked = {
@@ -47,10 +47,11 @@ function codes(value: unknown): string[] {
 }
 
 describe('validateDockLayout: accepted inputs', () => {
-	// #727 / Codex P2 on #732: a slot and its `outer` chain at most `MAX_SLOT_DEPTH` (8) deep. A
-	// chain cut there ends at a split slot without `outer` (the place of the gone split is not
-	// kept) - the shape `captureDockSlot` makes eight splits deep. A slot saved when the limit
-	// was 4 (four deep or less) still reads.
+	// #727 / Codex P2 on #732: a slot and its `outer` chain at most `MAX_SLOT_DEPTH` (8) deep - in a
+	// version 3 layout; a version 2 one stays at 4, as the releases before #727 read it (PR #732
+	// review). A chain cut there ends at a split slot without `outer` (the place of the gone split
+	// is not kept) - the shape `captureDockSlot` makes eight splits deep. A slot saved when the
+	// limit was 4 (four deep or less) still reads.
 	const splitSlot = (id: string, outer?: unknown) => ({
 		kind: 'split',
 		splitId: id,
@@ -68,12 +69,12 @@ describe('validateDockLayout: accepted inputs', () => {
 		for (let i = n - 1; i >= 0; i--) s = splitSlot(`s${i}`, s);
 		return s;
 	};
-	it('accepts a dockSlot eight deep that ends at a cut split, not nine deep', () => {
-		expect(validateDockLayout(layoutOf([win('b', { dockSlot: chain(8) })])).ok).toBe(true);
+	it('accepts a v3 dockSlot eight deep that ends at a cut split, not nine deep', () => {
+		expect(validateDockLayout(layoutOf([win('b', { dockSlot: chain(8) })], null, 3)).ok).toBe(true);
 		const withRoot = chain(7, { kind: 'root' });
-		expect(validateDockLayout(layoutOf([win('b', { dockSlot: withRoot })])).ok).toBe(true);
+		expect(validateDockLayout(layoutOf([win('b', { dockSlot: withRoot })], null, 3)).ok).toBe(true);
 		for (const nine of [chain(9), chain(8, { kind: 'root' })]) {
-			const r = validateDockLayout(layoutOf([win('b', { dockSlot: nine })]));
+			const r = validateDockLayout(layoutOf([win('b', { dockSlot: nine })], null, 3));
 			expect(r.ok).toBe(false);
 			if (!r.ok) expect(r.issues).toContainEqual({ code: 'shape', path: 'floating[0].dockSlot' });
 		}
@@ -84,6 +85,53 @@ describe('validateDockLayout: accepted inputs', () => {
 		expect(validateDockLayout(layoutOf([win('b', { dockSlot: four })])).ok).toBe(true);
 		const withRoot = splitSlot('c1', splitSlot('r1', splitSlot('s', { kind: 'root' })));
 		expect(validateDockLayout(layoutOf([win('b', { dockSlot: withRoot })])).ok).toBe(true);
+	});
+
+	describe('the version follows the slot depth (PR #732 review)', () => {
+		const slotLayout = (version: number, slot: unknown, where: 'floating' | 'autoHidden') =>
+			where === 'floating'
+				? layoutOf([win('b', { dockSlot: slot })], null, version)
+				: {
+						version,
+						floating: [],
+						docked: null,
+						autoHidden: [{ node: { type: 'panel', id: 'b', title: 'B' }, edge: 'left', slot }]
+					};
+		const path = (where: 'floating' | 'autoHidden') =>
+			where === 'floating' ? 'floating[0].dockSlot' : 'autoHidden[0].slot';
+
+		for (const where of ['floating', 'autoHidden'] as const) {
+			it(`${where}: v2 takes a slot four deep, not five (as the releases before #727)`, () => {
+				const r4 = validateDockLayout(slotLayout(2, chain(4), where));
+				expect(r4.ok && r4.layout.version).toBe(2);
+				for (const five of [chain(5), chain(4, { kind: 'root' })]) {
+					const r = validateDockLayout(slotLayout(2, five, where));
+					expect(r.ok).toBe(false);
+					if (!r.ok) expect(r.issues).toEqual([{ code: 'shape', path: path(where) }]);
+				}
+			});
+
+			it(`${where}: v3 takes a slot eight deep, not nine; it reads back as v3`, () => {
+				const r8 = validateDockLayout(slotLayout(3, chain(8), where));
+				expect(r8.ok && r8.layout.version).toBe(3);
+				const r5 = validateDockLayout(slotLayout(3, chain(5), where));
+				expect(r5.ok && r5.layout.version).toBe(3);
+				const r = validateDockLayout(slotLayout(3, chain(9), where));
+				expect(r.ok).toBe(false);
+				if (!r.ok) expect(r.issues).toEqual([{ code: 'shape', path: path(where) }]);
+			});
+		}
+
+		it('takes a v3 layout with shallow slots only (or none), as v2', () => {
+			const r = validateDockLayout(layoutOf([win('b', { dockSlot: chain(2) })], goodDocked, 3));
+			expect(r.ok && r.layout.version).toBe(2);
+			const none = validateDockLayout(layoutOf([win('a')], null, 3));
+			expect(none.ok && none.layout.version).toBe(2);
+		});
+
+		it('rejects an unknown version (4)', () => {
+			expect(codes(layoutOf([win('a')], null, 4))).toEqual(['version@version']);
+		});
 	});
 
 	it('accepts a normal v2 layout with a docked tree', () => {
@@ -157,7 +205,7 @@ describe('validateDockLayout: rejected inputs (Issue #434 observations)', () => 
 	});
 
 	it('rejects an unknown version', () => {
-		expect(codes({ version: 3, floating: [], docked: null })).toEqual(['version@version']);
+		expect(codes({ version: 4, floating: [], docked: null })).toEqual(['version@version']);
 		expect(codes({ floating: [] })).toEqual(['version@version']);
 	});
 

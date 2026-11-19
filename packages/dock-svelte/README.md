@@ -441,6 +441,13 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
     約束に従い、pane の中へ移すかはアプリが決める。
 - 戻す場所は閉じた浮動 window の `dockSlot` として layout に入り、`serialize()` / `hydrate()` を通る（layout の
   `version` は 2 のまま。`dockSlot` の無い古い JSON はそのまま読め、その pane は浮動で開く）。
+- 入れ子の入れ物から隠すと、`dockSlot`（と端の帯の `slot`）は外側の入れ物の場所を `outer` で入れ子に覚える
+  （#727。slot 自身を含めて最大 8 段）。**5 段以上の slot を 1 つでも含む layout は `version: 3`** になり、
+  #727 より前の版では読めない（`validateDockLayout` が `version` で拒み、その利用者の layout は既定に戻る）。
+  4 段までなら今までどおり `version: 2` で、前の版でも読める。版は中身から毎回決まる（`dock.layout` に入れるたび・
+  `serialize()`・`layoutSnapshot()`。深い slot が消えれば 2 に戻る）。読むときは `version: 2`（と 1）の slot は
+  4 段まで、`version: 3` だけ 8 段まで受ける。`DockLayout['version']` の型は `2 | 3` なので、`version` で分岐する
+  コードは 3 の分岐も足す（`{ version: 2, ... }` と書いて渡す既存のコードはそのまま通る）。
 - `DockState` だけで扱う口もある（`beforePanelChange` には聞かない）: `dock.dismiss(id)`（隠す。docked なら場所を
   覚える）・`dock.show(id)`（上の `showPanel` の layout の部分。戻り値は `'docked'` / `'floating'` / `null`）・
   `dock.showPlacement(id)`（`show` がどこに出すか）・`dock.showTabSwitch(id)`（`show` が選択中から外す pane）・

@@ -5,8 +5,9 @@
  * One function is shared by `DockState`'s constructor (object / string
  * initial value), `DockState.hydrate`, and any app that wants to inspect a
  * stored payload before adopting it. It never throws and never mutates its
- * input: on success it returns a v2 layout (a v1 payload is migrated with
- * `docked: null`, split `sizes` are repaired via `normalizeSizes`); on
+ * input: on success it returns a v2 / v3 layout (a v1 payload is migrated with
+ * `docked: null`, split `sizes` are repaired via `normalizeSizes`; the version
+ * is decided from the content, `core/layoutVersion.ts`); on
  * failure it returns every issue found so the caller can reject the payload
  * as a whole instead of adopting part of it.
  *
@@ -14,6 +15,7 @@
  * registry. Unknown ids are kept as-is (the host component / consumer decides
  * at render time), which is a separate policy from structural validity.
  */
+import { V2_MAX_SLOT_DEPTH, withLayoutVersion } from './layoutVersion';
 import { MAX_SLOT_DEPTH } from './slot';
 import { normalizeCollapsed, normalizeSizes } from './tree';
 import type { DockAutoHidden, DockLayout, DockNode, FloatingWindow } from '../types';
@@ -48,16 +50,18 @@ const isIdList = (v: unknown): boolean =>
 /**
  * The optional remembered docked place of a closed window (#663, `DockSlot`). Its ids are hints,
  * not checked against the tree. `outer` (#721) is itself a `split` / `root` slot, checked the same
- * way down to `MAX_SLOT_DEPTH` (deeper = invalid, so a value that contains itself ends too).
+ * way down to `maxDepth` (deeper = invalid, so a value that contains itself ends too): `MAX_SLOT_DEPTH`
+ * in a version 3 layout, `V2_MAX_SLOT_DEPTH` in a version 1 / 2 one - as the releases before #727
+ * read it (PR #732 review), so a v2 layout means the same to every release.
  */
-function isDockSlot(v: unknown, depth = 0): boolean {
-	if (!isRecord(v) || depth >= MAX_SLOT_DEPTH) return false;
+function isDockSlot(v: unknown, maxDepth: number, depth = 0): boolean {
+	if (!isRecord(v) || depth >= maxDepth) return false;
 	if (v.kind === 'root') return true;
 	const outerOk =
 		v.outer === undefined ||
 		(isRecord(v.outer) &&
 			(v.outer.kind === 'split' || v.outer.kind === 'root') &&
-			isDockSlot(v.outer, depth + 1));
+			isDockSlot(v.outer, maxDepth, depth + 1));
 	if (!outerOk) return false;
 	if (v.kind === 'tab') {
 		return typeof v.groupId === 'string' && isIndex(v.index) && isIdList(v.anchors);
@@ -95,7 +99,7 @@ function migrateLock(win: FloatingWindow): FloatingWindow {
 
 /**
  * Validate an untrusted value (parsed JSON or a caller-supplied object) as a
- * v1 or v2 `DockLayout`. Pure. A returned layout is safe to adopt wholesale.
+ * v1, v2 or v3 `DockLayout`. Pure. A returned layout is safe to adopt wholesale.
  */
 export function validateDockLayout(value: unknown): DockLayoutValidation {
 	const issues: DockLayoutIssue[] = [];
@@ -107,10 +111,11 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 		add('shape', '');
 		return { ok: false, issues };
 	}
-	if (value.version !== 1 && value.version !== 2) {
+	if (value.version !== 1 && value.version !== 2 && value.version !== 3) {
 		add('version', 'version');
 		return { ok: false, issues };
 	}
+	const maxSlotDepth = value.version === 3 ? MAX_SLOT_DEPTH : V2_MAX_SLOT_DEPTH;
 
 	// Floating windows and docked panels share one id space (types.ts); split
 	// / tabs group ids are tracked in the same set so no two nodes collide.
@@ -156,7 +161,8 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 			if (raw.pinned !== undefined && typeof raw.pinned !== 'boolean') add('shape', `${p}.pinned`);
 			if (raw.collapsed !== undefined && typeof raw.collapsed !== 'boolean')
 				add('shape', `${p}.collapsed`);
-			if (raw.dockSlot !== undefined && !isDockSlot(raw.dockSlot)) add('shape', `${p}.dockSlot`);
+			if (raw.dockSlot !== undefined && !isDockSlot(raw.dockSlot, maxSlotDepth))
+				add('shape', `${p}.dockSlot`);
 			floating.push(migrateLock(raw as unknown as FloatingWindow));
 		});
 	}
@@ -219,7 +225,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 	};
 
 	let docked: DockNode | null = null;
-	if (value.version === 2) {
+	if (value.version !== 1) {
 		const rawDocked = value.docked;
 		if (rawDocked === undefined) add('shape', 'docked');
 		else if (rawDocked !== null) checkNode(rawDocked, 'docked', false);
@@ -228,7 +234,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 
 	// Regions auto-hidden to an edge band (#694 PR-3). Optional: an older layout has none.
 	const autoHidden: DockAutoHidden[] = [];
-	if (value.version === 2 && value.autoHidden !== undefined) {
+	if (value.version !== 1 && value.autoHidden !== undefined) {
 		if (!Array.isArray(value.autoHidden)) add('shape', 'autoHidden');
 		else {
 			eachSlot(value.autoHidden, 'autoHidden', (raw, p) => {
@@ -238,7 +244,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 					add('shape', `${p}.node`);
 				else checkNode(node, `${p}.node`, false);
 				if (!EDGES.has(raw.edge)) add('shape', `${p}.edge`);
-				if (!isDockSlot(raw.slot)) add('shape', `${p}.slot`);
+				if (!isDockSlot(raw.slot, maxSlotDepth)) add('shape', `${p}.slot`);
 				const size = raw.size;
 				if (size !== undefined) {
 					if (typeof size !== 'number') add('shape', `${p}.size`);
@@ -265,7 +271,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 		docked: docked ? normalizeCollapsed(normalizeSizes(docked)) : null
 	};
 	if (autoHidden.length > 0) layout.autoHidden = autoHidden;
-	return { ok: true, layout };
+	return { ok: true, layout: withLayoutVersion(layout) };
 }
 
 const EDGES = new Set<unknown>(['left', 'right', 'top', 'bottom']);
