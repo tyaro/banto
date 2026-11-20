@@ -118,6 +118,8 @@
   "grid.selectAllLoadedRows": "読み込み済みの{loaded}件をすべて選択（全{total}件のうち）",
   "grid.selectionStatus": "{count}件を選択中",
   "grid.selectionNone": "選択なし",
+  "grid.selectAllMatching": "絞り込んだ全{count}件を選択",
+  "grid.allMatchingStatus": "絞り込んだ全{count}件を選択中",
   "grid.selectionClear": "選択を解除",
   "grid.bulkBarLabel": "一括操作",
   "validation.required": "必須項目です",

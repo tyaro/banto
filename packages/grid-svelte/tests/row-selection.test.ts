@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
+import RowSelectionBindHarness from './RowSelectionBindHarness.svelte';
 import { GridState } from '../src/state.svelte';
 import type { GridBulkActionsContext, GridColumn } from '../src/types';
 
@@ -492,5 +493,246 @@ describe('BantoGrid row selection (#713)', () => {
 		gridState.setFilter({ field: 'name', op: 'contains', value: 'ノ' });
 		await tick();
 		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+	});
+});
+
+describe('BantoGrid "all matching" selection in server mode (#713)', () => {
+	function setup(extra: Record<string, unknown> = {}) {
+		const sparse: (Row | undefined)[] = [];
+		sparse[0] = rows[0];
+		sparse[1] = rows[1];
+		const gridState = new GridState<Row>(columns);
+		const onSelectionChange = vi.fn();
+		let ctx: (() => GridBulkActionsContext) | undefined;
+		const bulkActions = createRawSnippet<[GridBulkActionsContext]>((context) => ({
+			render: () => `<button type="button">一括</button>`,
+			setup: () => {
+				ctx = context;
+			}
+		}));
+		// The bound host: `host` reads and writes what an app would bind.
+		const result = render(RowSelectionBindHarness, {
+			rows: sparse,
+			columns,
+			getRowId,
+			state: gridState,
+			mode: 'server',
+			totalRows: 50,
+			selectable: true,
+			onSelectionChange,
+			bulkActions,
+			...extra
+		});
+		return {
+			...result,
+			host: result.component,
+			gridState,
+			onSelectionChange,
+			context: () => ctx!()
+		};
+	}
+
+	const bar = () => screen.getByRole('group', { name: '一括操作' });
+	const offer = () => screen.queryByRole('button', { name: '絞り込んだ全50件を選択' });
+
+	async function enter() {
+		await fireEvent.click(headerBox());
+		await fireEvent.click(offer()!);
+	}
+
+	it('offers it only once every loaded row is selected', async () => {
+		setup();
+		await fireEvent.click(rowBox('ペン'));
+		expect(bar().textContent).toContain('1件を選択中');
+		expect(offer()).toBeNull();
+		await fireEvent.click(rowBox('ノート'));
+		expect(offer()).not.toBeNull();
+	});
+
+	it('does not offer it when every matching row is already loaded', async () => {
+		setup({ totalRows: 2 });
+		await fireEvent.click(headerBox());
+		expect(bar().textContent).toContain('2件を選択中');
+		expect(screen.queryByRole('button', { name: /絞り込んだ全/ })).toBeNull();
+	});
+
+	it('does not offer it in client mode', async () => {
+		render(BantoGrid<Row>, { rows, columns, getRowId, selectable: true, totalRows: 50 });
+		await fireEvent.click(headerBox());
+		expect(bar().textContent).toContain('3件を選択中');
+		expect(screen.queryByRole('button', { name: /絞り込んだ全/ })).toBeNull();
+	});
+
+	it('enters the mode: bar and live region say the total, ids stay the loaded ones', async () => {
+		const { host, onSelectionChange, context } = setup();
+		await fireEvent.click(headerBox());
+		expect(context().allMatching).toBe(false);
+		expect(context().matchingCount).toBe(50);
+		expect(host.getAllMatching()).toBe(false);
+		// The bound flag is already on when the callback fires.
+		let flagInCallback: boolean | undefined;
+		onSelectionChange.mockImplementationOnce(() => {
+			flagInCallback = host.getAllMatching();
+		});
+		await fireEvent.click(offer()!);
+		expect(flagInCallback).toBe(true);
+		expect(host.getAllMatching()).toBe(true);
+		expect(host.getSelected()).toEqual([1, 2]);
+		expect(bar().textContent).toContain('絞り込んだ全50件を選択中');
+		expect(screen.getByRole('status').textContent).toBe('絞り込んだ全50件を選択中');
+		expect(offer()).toBeNull();
+		expect(screen.getByRole('button', { name: '選択を解除' })).toBeTruthy();
+		expect(onSelectionChange).toHaveBeenCalledTimes(2);
+		expect(onSelectionChange).toHaveBeenLastCalledWith([1, 2]);
+		expect(context().allMatching).toBe(true);
+		expect(context().matchingCount).toBe(50);
+		expect(context().ids).toEqual([1, 2]);
+		expect(headerBox().checked).toBe(true);
+	});
+
+	it('draws rows that load later as selected without changing the ids', async () => {
+		const { rerender, onSelectionChange, context } = setup();
+		await enter();
+		const more: (Row | undefined)[] = [rows[0], rows[1], rows[2]];
+		await rerender({ rows: more });
+		await tick();
+		expect(rowBox('消しゴム').checked).toBe(true);
+		expect(headerBox().checked).toBe(true);
+		expect(headerBox().indeterminate).toBe(false);
+		expect(context().ids).toEqual([1, 2]);
+		expect(context().allMatching).toBe(true);
+		expect(onSelectionChange).toHaveBeenCalledTimes(2);
+	});
+
+	it('unchecking one row leaves the mode and empties the selection', async () => {
+		const { container, host, onSelectionChange } = setup();
+		await enter();
+		await fireEvent.click(rowBox('ノート'));
+		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+		expect(rowBox('ペン').checked).toBe(false);
+		expect(rowBox('ノート').checked).toBe(false);
+		expect(host.getAllMatching()).toBe(false);
+		expect(host.getSelected()).toEqual([]);
+		expect(screen.getByRole('status').textContent).toBe('選択なし');
+		// Selecting again starts from a plain selection, not from the mode.
+		await fireEvent.click(rowBox('ペン'));
+		expect(bar().textContent).toContain('1件を選択中');
+	});
+
+	it('unchecking the header box leaves the mode and empties the selection', async () => {
+		const { container, onSelectionChange } = setup();
+		await enter();
+		await fireEvent.click(headerBox());
+		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+		expect(headerBox().checked).toBe(false);
+	});
+
+	it('a filter change leaves the mode; a sort change keeps it', async () => {
+		const { container, gridState, onSelectionChange, context } = setup();
+		await enter();
+		gridState.toggleSort('price', false);
+		await tick();
+		expect(context().allMatching).toBe(true);
+		expect(onSelectionChange).toHaveBeenCalledTimes(2);
+
+		gridState.setFilter({ field: 'name', op: 'contains', value: 'ノ' });
+		await tick();
+		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+		expect(rowBox('ペン').checked).toBe(false);
+	});
+
+	it('clear() leaves the mode', async () => {
+		const { container, onSelectionChange, context } = setup();
+		await enter();
+		context().clear();
+		await tick();
+		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+		await fireEvent.click(headerBox());
+		expect(context().allMatching).toBe(false);
+		expect(offer()).not.toBeNull();
+	});
+
+	it('a write to selectedRowIds from outside leaves the mode and empties the selection', async () => {
+		const { container, host, onSelectionChange } = setup();
+		await enter();
+		host.setSelected([1]);
+		await tick();
+		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+		expect(host.getAllMatching()).toBe(false);
+		expect(host.getSelected()).toEqual([]);
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+		expect(rowBox('ペン').checked).toBe(false);
+	});
+
+	it('the host assigning [] from outside leaves the mode', async () => {
+		const { container, host, onSelectionChange } = setup();
+		await enter();
+		host.setSelected([]);
+		await tick();
+		expect(host.getAllMatching()).toBe(false);
+		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+	});
+
+	it('an equal copy of the ids handed back from outside keeps the mode', async () => {
+		const { host, onSelectionChange, context } = setup();
+		await enter();
+		host.setSelected([1, 2]);
+		await tick();
+		expect(context().allMatching).toBe(true);
+		expect(host.getAllMatching()).toBe(true);
+		expect(onSelectionChange).toHaveBeenCalledTimes(2);
+	});
+
+	it('allMatchingSelected: false from outside leaves the mode; true from outside is turned back off', async () => {
+		const { container, host, onSelectionChange, context } = setup();
+		await fireEvent.click(headerBox());
+		host.setAllMatching(true);
+		await tick();
+		expect(host.getAllMatching()).toBe(false);
+		expect(context().allMatching).toBe(false);
+		expect(bar().textContent).toContain('2件を選択中');
+		expect(host.getSelected()).toEqual([1, 2]);
+		expect(onSelectionChange).toHaveBeenCalledTimes(1);
+
+		await fireEvent.click(offer()!);
+		expect(context().allMatching).toBe(true);
+		host.setAllMatching(false);
+		await tick();
+		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+		expect(host.getSelected()).toEqual([]);
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+	});
+
+	it('keeps focus in the bar when the offer button goes away, and returns it to the grid on clear', async () => {
+		const { container } = setup();
+		await fireEvent.click(headerBox());
+		const button = offer()!;
+		button.focus();
+		await fireEvent.click(button);
+		expect(document.activeElement).toBe(bar());
+
+		const clear = screen.getByRole('button', { name: '選択を解除' });
+		clear.focus();
+		await fireEvent.click(clear);
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+		expect(document.activeElement).toBe(screen.getByRole('grid'));
+	});
+
+	it('returns focus to the grid when a filter change ends the mode while focus is in the bar', async () => {
+		const { container, gridState } = setup();
+		await fireEvent.click(headerBox());
+		const button = offer()!;
+		button.focus();
+		await fireEvent.click(button);
+		expect(document.activeElement).toBe(bar());
+		gridState.setFilter({ field: 'name', op: 'contains', value: 'ノ' });
+		await tick();
+		expect(container.querySelector('.bulk-bar')).toBeNull();
+		expect(document.activeElement).toBe(screen.getByRole('grid'));
 	});
 });

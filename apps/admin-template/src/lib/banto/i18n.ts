@@ -57,6 +57,8 @@ export function gridMessages(): Partial<GridMessages> {
 		selectAllLoadedRows: (loaded, total) => m['grid.selectAllLoadedRows']({ loaded, total }),
 		selectionStatus: (count) =>
 			count === 0 ? m['grid.selectionNone']() : m['grid.selectionStatus']({ count }),
+		selectAllMatching: (count) => m['grid.selectAllMatching']({ count }),
+		allMatchingStatus: (count) => m['grid.allMatchingStatus']({ count }),
 		selectionClear: () => m['grid.selectionClear'](),
 		bulkBarLabel: () => m['grid.bulkBarLabel']()
 	};
