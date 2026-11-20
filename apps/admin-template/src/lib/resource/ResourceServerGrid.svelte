@@ -86,6 +86,8 @@
 		 * by the list's conditions, not by `ids` (grid-svelte README).
 		 */
 		selectAllMatching?: boolean;
+		/** True while "all matching" is selected; bindable so the page sees the mode change. */
+		allMatchingSelected?: boolean;
 		bulkActions?: Snippet<[GridBulkActionsContext]>;
 	}
 
@@ -104,6 +106,7 @@
 		selectedRowIds = $bindable([]),
 		onSelectionChange,
 		selectAllMatching = false,
+		allMatchingSelected = $bindable(false),
 		bulkActions
 	}: Props = $props();
 
@@ -305,6 +308,7 @@
 		bind:selectedRowIds
 		{onSelectionChange}
 		{selectAllMatching}
+		bind:allMatchingSelected
 		{bulkActions}
 	/>
 </div>

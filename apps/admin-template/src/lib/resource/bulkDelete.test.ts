@@ -521,6 +521,29 @@ describe('runBulkDelete', () => {
 			expect(same()).toBe(false);
 		});
 
+		it('a generation counter tells A -> B -> A and a same-selection mode switch apart', () => {
+			let generation = 0;
+			const same = captureViewGuard(() => generation);
+			expect(same()).toBe(true);
+			generation += 1; // A -> B
+			generation += 1; // B -> A: the content is back, the generation is not
+			expect(same()).toBe(false);
+			const sameAgain = captureViewGuard(() => generation);
+			generation += 1; // entering all-matching mode, selectedIds unchanged
+			expect(sameAgain()).toBe(false);
+		});
+
+		it('canSend goes false once the generation moves on', async () => {
+			let generation = 0;
+			const sameView = captureViewGuard(() => generation);
+			const { deps, sent } = setup({ canSend: () => sameView() });
+			generation += 1;
+			expect(await runBulkDelete(selection([1], new Map([[1, 1]])), deps)).toEqual({
+				kind: 'stale'
+			});
+			expect(sent).toEqual([]);
+		});
+
 		it('reads the matching rows first, confirms THEIR count and sends their ids and versions', async () => {
 			const rows = [
 				{ id: 1, version: 4 },

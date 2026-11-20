@@ -502,11 +502,23 @@
 	);
 	// svelte-ignore state_referenced_locally
 	let search = $state(searchInput);
-	// The list and selection a delete was pressed on: changes whenever the
-	// search, mode, sort, filters or selection do (a derived read is current).
-	const viewKey = $derived(
-		JSON.stringify([mode, search, serverGridState.sort, serverGridState.filters, selectedIds])
-	);
+	// The list and selection a delete was pressed on: a counter bumped whenever
+	// the mode, search, sort, filters, selection or "all matching" flag change,
+	// so entering all-matching mode or A -> B -> A is seen too (a value-derived
+	// key could not tell those apart).
+	let allMatchingSelected = $state(false);
+	let viewKey = $state(0);
+	$effect(() => {
+		void mode;
+		void search;
+		void serverGridState.sort;
+		void serverGridState.filters;
+		void selectedIds;
+		void allMatchingSelected;
+		untrack(() => {
+			viewKey += 1;
+		});
+	});
 	// #713: the two modes have different row sets, and a new search term
 	// changes which rows the list (and "all matching") means - the grid cannot
 	// see the term, so the page drops the selection (grid-svelte README).
@@ -1728,6 +1740,7 @@
 			{registerAdjacentRow}
 			selectable={canBulkDelete}
 			selectAllMatching={canBulkDelete}
+			bind:allMatchingSelected
 			bind:selectedRowIds={selectedIds}
 			onSelectionChange={handleSelectionChange}
 			bulkActions={canBulkDelete ? bulkDeleteActions : undefined}
