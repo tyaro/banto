@@ -879,8 +879,10 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
   - `DataProvider` に省略可能な `deleteMany`。自前の provider は何もしなくてよい（実装しなければ一括削除は出ない）。Tauri の provider で使うなら、
     Rust 側に `${resource}_bulk_delete` のコマンドが要る。
   - `visibleWhen` を使う欄がある `BantoForm` は、`onSubmit` に隠れた欄のキーを除いた値（`FormStore.submitValues`）を渡す。使わないなら今までと同じ。
-  - `@banto/dock-svelte` の据え置き（`persistent`）の pane を使うアプリは、更新だけで #763 が直る（コードの変更なし）。blur のハンドラで
-    組み替え由来かを見分けたいなら `isDockRearranging(node)`（その node が、いま組み替え中の据え置き pane の中か）を使う。
+  - `@banto/dock-svelte` の据え置き（`persistent`）の pane を使うアプリは、`Element.moveBefore()` のある環境（Chromium 133 以降など）なら
+    更新だけで #763 が直る（組み替えでフォーカス中の欄に blur が出ない）。`moveBefore` の無い環境（古い WebView2 など）では、今までどおり
+    blur が出てからフォーカスが戻る。blur で値を確定する欄があるアプリは、blur のハンドラで `isDockRearranging(event.target)` が true なら
+    確定しないようにする（どちらの環境でも害は無いので入れておくのが安全）。
 - B（テンプレート）: items の一覧に一括削除（`bulkDelete: true`・`lib/resource/bulkDelete.ts`）、列メニューの「左端に固定」と保存ビューの `pinned`
   （`listViews.ts`）、参照選択の `referenceFrom`（`lib/banto/reference.ts`）、`i18n.ts` のキーが入った。取り込むなら、これらと
   `ResourceListPage` / `ResourceClientGrid` / `ResourceServerGrid` / `ResourceDetail` / `ui-demo`、`messages/ja.json`・`en.json` の変更を写す。
