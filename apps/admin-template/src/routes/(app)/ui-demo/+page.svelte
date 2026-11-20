@@ -29,6 +29,7 @@
 	 * Not in the API on purpose (ADR-0018 §2): `IconButton` has no `disabled`
 	 * prop in phase 1, so no disabled sample.
 	 */
+	import { BantoForm, createFormStore, type FormSchema } from '@banto/forms';
 	import {
 		CommandPalette,
 		DateInput,
@@ -92,6 +93,7 @@
 		dateInputMessages,
 		dateRangeInputMessages,
 		dateTimeInputMessages,
+		formValidationMessages,
 		gridMessages
 	} from '#lib/banto/i18n.js';
 
@@ -325,6 +327,92 @@
 	});
 	let campaignRange = $state<{ from: string | null; to: string | null }>({ from: null, to: null });
 	const dateRangeMessages = dateRangeInputMessages();
+	// BantoForm card (#714): sections, two columns, help text and `visibleWhen`.
+	// Labels are getters so they follow the locale (see resources/items.ts).
+	const formDemoSchema: FormSchema = {
+		columns: 2,
+		sections: [
+			{
+				id: 'basic',
+				get title() {
+					return m['uiDemo.form.sectionBasic']();
+				},
+				get description() {
+					return m['uiDemo.form.sectionBasicDesc']();
+				}
+			},
+			{
+				id: 'ship',
+				get title() {
+					return m['uiDemo.form.sectionShip']();
+				}
+			}
+		],
+		fields: [
+			{
+				name: 'name',
+				get label() {
+					return m['uiDemo.form.fieldName']();
+				},
+				get help() {
+					return m['uiDemo.form.fieldNameHelp']();
+				},
+				type: 'text',
+				required: true,
+				max: 40,
+				section: 'basic'
+			},
+			{
+				name: 'code',
+				get label() {
+					return m['uiDemo.form.fieldCode']();
+				},
+				type: 'text',
+				section: 'basic'
+			},
+			{
+				name: 'qty',
+				get label() {
+					return m['uiDemo.form.fieldQty']();
+				},
+				type: 'number',
+				min: 0,
+				section: 'basic'
+			},
+			{
+				name: 'memo',
+				get label() {
+					return m['uiDemo.form.fieldMemo']();
+				},
+				type: 'textarea',
+				fullWidth: true,
+				section: 'basic'
+			},
+			{
+				name: 'gift',
+				get label() {
+					return m['uiDemo.form.fieldGift']();
+				},
+				type: 'checkbox',
+				section: 'ship'
+			},
+			{
+				name: 'wrap',
+				get label() {
+					return m['uiDemo.form.fieldWrap']();
+				},
+				get help() {
+					return m['uiDemo.form.fieldWrapHelp']();
+				},
+				type: 'text',
+				required: true,
+				section: 'ship',
+				visibleWhen: (values) => values.gift === true
+			}
+		]
+	};
+	const formDemoStore = createFormStore(formDemoSchema, undefined, formValidationMessages());
+	let formDemoKeys = $state<string[] | null>(null);
 	// BantoGrid card (date-time-pickers PR-4): an editable date column gets
 	// the DateInput the root layout injects (`provideCellEditors`); the range
 	// comes from the schema (min / max, like the ship date above). Fixed
@@ -793,6 +881,24 @@
 				</span>
 			</div>
 		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="BantoForm" description={m['uiDemo.form.desc']()}>
+		<div data-testid="ui-demo-form">
+			<BantoForm
+				schema={formDemoSchema}
+				store={formDemoStore}
+				submitLabel={m['uiDemo.form.submit']()}
+				onSubmit={(values) => {
+					formDemoKeys = Object.keys(values);
+				}}
+			/>
+		</div>
+		<span class="caption" data-testid="ui-demo-form-submitted">
+			{m['uiDemo.form.submitted']()}: {formDemoKeys
+				? formDemoKeys.join(', ')
+				: m['uiDemo.form.none']()}
+		</span>
 	</SurfaceCard>
 
 	<SurfaceCard title="CommandPalette" description={m['uiDemo.palette.desc']()}>

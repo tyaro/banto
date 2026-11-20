@@ -85,7 +85,8 @@ export function formValidationMessages(): ValidationMessages {
 		timeStep: (_def, step) => m['validation.timeStep']({ step }),
 		dateTimeInvalid: () => m['validation.dateTimeInvalid'](),
 		dateTimeMin: (_def, min) => m['validation.dateTimeMin']({ min }),
-		dateTimeMax: (_def, max) => m['validation.dateTimeMax']({ max })
+		dateTimeMax: (_def, max) => m['validation.dateTimeMax']({ max }),
+		visibilityUnsettled: () => m['validation.visibilityUnsettled']()
 	};
 }
 

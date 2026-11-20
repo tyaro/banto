@@ -237,3 +237,163 @@ describe('FormDraft discard', () => {
 		expect(draft.revision).toBe(before + 1);
 	});
 });
+
+describe('FormDraft commitAll with hidden fields (#714)', () => {
+	it('ignores an unparsable raw text of a hidden field and keeps it for later', () => {
+		const sc: FormSchema = {
+			fields: [
+				{ name: 'on', label: 'On', type: 'checkbox' },
+				{ name: 'qty', label: 'Qty', type: 'number', visibleWhen: (v) => v.on === true },
+				{ name: 'title', label: 'Title', type: 'text' }
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: sc,
+			initial: { on: true, qty: 3, title: 't' },
+			messages: { notANumber: () => 'NaN!' }
+		});
+		draft.setRaw('qty', '-');
+		draft.setValue('on', false);
+		expect(draft.commitAll()).toBe(true);
+		expect(draft.values.qty).toBe(3);
+		expect(draft.raw.qty).toBe('-');
+	});
+});
+
+describe('draftSourceFrom with hidden fields (#714)', () => {
+	const sc: FormSchema = {
+		fields: [
+			{ name: 'on', label: 'On', type: 'checkbox' },
+			{ name: 'qty', label: 'Qty', type: 'number', visibleWhen: (v) => v.on === true },
+			{ name: 'title', label: 'Title', type: 'text' }
+		]
+	};
+
+	it('leaves the key of a hidden (valid) field out of what apply gets, but keeps values, raw and baseline', async () => {
+		const draft = createFormDraft({
+			key: 'k',
+			schema: sc,
+			initial: { on: true, qty: 3, title: 't' },
+			messages: { notANumber: () => 'NaN!' }
+		});
+		draft.setValue('on', false);
+		draft.setRaw('qty', '7x');
+		let sent: Record<string, unknown> = {};
+		const source = draftSourceFrom(draft, async (values) => {
+			sent = values;
+			return true;
+		});
+		expect(await source.apply()).toBe(true);
+		expect(sent).toEqual({ on: false, title: 't' });
+		expect('qty' in sent).toBe(false);
+		// Shown again: the value is back, the raw text is still there.
+		expect(draft.values.qty).toBe(3);
+		expect(draft.raw.qty).toBe('7x');
+		// The baseline holds the whole values, so only the raw text keeps it dirty.
+		expect(draft.baseline.qty).toBe(3);
+		expect(draft.snapshotForApply().values.qty).toBe(3);
+	});
+
+	it('judges visibility and validation against the values finally kept (hidden field reset first)', () => {
+		const s2: FormSchema = {
+			fields: [
+				{ name: 'show', label: 'Show', type: 'checkbox' },
+				{ name: 'qty', label: 'Qty', type: 'number', visibleWhen: (v) => v.show === true },
+				{
+					name: 'title',
+					label: 'Title',
+					type: 'text',
+					required: true,
+					visibleWhen: (v) => (v.qty as number) < 5
+				}
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: s2,
+			initial: { show: true, qty: 3, title: '' },
+			messages: { notANumber: () => 'NaN!', required: () => 'req' }
+		});
+		draft.setRaw('qty', '10');
+		draft.setValue('show', false);
+		// qty is hidden and goes back to 3, so title is visible again and empty.
+		expect(draft.commitAll()).toBe(false);
+		expect(draft.errors.title).toBeTruthy();
+		expect(draft.values.qty).toBe(3);
+	});
+
+	it('commitAll commits nothing and says so when visibleWhen never settles (#714 review)', () => {
+		// 10 hides qty -> reset to 3 shows it -> 10 hides it ... never settles.
+		const s3: FormSchema = {
+			fields: [
+				{
+					name: 'qty',
+					label: 'Qty',
+					type: 'number',
+					min: 4,
+					visibleWhen: (v) => Number(v.qty) < 5
+				}
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: s3,
+			initial: { qty: 3 },
+			messages: { notANumber: () => 'NaN!', min: () => 'min!', visibilityUnsettled: () => 'loop!' }
+		});
+		draft.setRaw('qty', '10');
+		expect(draft.commitAll()).toBe(false);
+		expect(draft.errors.qty).toBe('loop!');
+		// Nothing moved: the value, the raw text and the baseline (not dirty by value) stay.
+		expect(draft.values.qty).toBe(3);
+		expect(draft.raw.qty).toBe('10');
+		expect(draft.snapshotForApply().submitValues).toEqual({ qty: 3 });
+	});
+
+	it('commitAll also puts the unsettled reason on visible fields with pending text (#714 review)', () => {
+		const s5: FormSchema = {
+			fields: [
+				{ name: 'a', label: 'A', type: 'number' },
+				{
+					name: 'qty',
+					label: 'Qty',
+					type: 'number',
+					visibleWhen: (v) => v.a === 1 && Number(v.qty) < 5
+				}
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: s5,
+			initial: { a: 0, qty: 3 },
+			messages: { notANumber: () => 'NaN!', visibilityUnsettled: () => 'loop!' }
+		});
+		draft.setRaw('a', '1');
+		draft.setRaw('qty', '10');
+		expect(draft.commitAll()).toBe(false);
+		// qty is hidden on screen (a is still 0); a is visible and carries the reason too.
+		expect(draft.errors.a).toBe('loop!');
+		expect(draft.errors.qty).toBe('loop!');
+		expect(draft.values).toEqual({ a: 0, qty: 3 });
+	});
+
+	it('commitAll is not blocked by unparsable text in a field that stays hidden (#714 review)', () => {
+		const s4: FormSchema = {
+			fields: [
+				{ name: 'name', label: 'Name', type: 'text' },
+				{ name: 'qty', label: 'Qty', type: 'number', visibleWhen: () => false }
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: s4,
+			initial: { name: 'a', qty: 3 },
+			messages: { notANumber: () => 'NaN!' }
+		});
+		draft.setRaw('qty', '-');
+		draft.setValue('name', 'b');
+		expect(draft.commitAll()).toBe(true);
+		expect(draft.snapshotForApply().submitValues).toEqual({ name: 'b' });
+	});
+});

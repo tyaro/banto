@@ -34,6 +34,7 @@
  */
 import { untrack } from 'svelte';
 import { parseDateText, parseDateTimeText, parseTimeText } from './date';
+import { isFieldVisible, submitValuesOf } from './layout';
 import { isTemporalType, type FieldDef, type FormSchema } from './types';
 import {
 	dateInvalidMessage,
@@ -41,6 +42,7 @@ import {
 	notANumberMessage,
 	timeInvalidMessage,
 	validateField,
+	visibilityUnsettledMessage,
 	type ValidationMessages
 } from './validate';
 import type { DraftSource } from './draftCoordinator.svelte';
@@ -48,6 +50,8 @@ import type { DraftSource } from './draftCoordinator.svelte';
 /** What `snapshotForApply()` returns and `markApplied()` accepts. */
 export interface FormDraftSnapshot<V = Record<string, unknown>> {
 	readonly values: V;
+	/** `values` without the keys of fields hidden by `visibleWhen`: what an apply sends. `values` stays whole (it becomes the baseline). */
+	readonly submitValues: Record<string, unknown>;
 	readonly revision: number;
 }
 
@@ -90,7 +94,7 @@ export interface FormDraft<V = Record<string, unknown>> {
 	 * Ignored - returns false - for a snapshot older than the current baseline
 	 * (a slower, earlier apply finishing last) or one this draft never issued.
 	 */
-	markApplied(applied: FormDraftSnapshot<V>): boolean;
+	markApplied(applied: Pick<FormDraftSnapshot<V>, 'values' | 'revision'>): boolean;
 	/** Back to the baseline: values = a copy of it, raw text and errors cleared. */
 	discard(): void;
 	/**
@@ -313,13 +317,69 @@ class Draft implements FormDraft<Values> {
 			// Interpret every raw field first, so that a validator that reads
 			// another field sees that field's final value, not a stale one.
 			let values = this.#values;
+			const parseErrors: Record<string, string> = {};
 			for (const field of rawFields) {
 				const parsed = parse(this.#def(field), this.#raw[field]!, this.#messages);
 				if (parsed.ok) values = { ...values, [field]: parsed.value };
-				else errors[field] = parsed.message;
+				else parseErrors[field] = parsed.message;
 			}
+			// A field hidden by `visibleWhen` is not validated and keeps its old
+			// value and its raw text, so showing it again restores what the user
+			// had typed. What is judged (visibility, validation) must be the values
+			// that are finally kept, so: reset the hidden fields to their old
+			// values, judge again, and repeat until the hidden set stops changing
+			// (bounded; resetting a field can show or hide others).
+			const hiddenOf = (vals: Values): Set<string> => {
+				const set = new Set<string>();
+				for (const field of names) {
+					const def = this.#def(field);
+					if (def && !isFieldVisible(def, vals)) set.add(field);
+				}
+				return set;
+			};
+			const resetHidden = (set: Set<string>): Values => {
+				let next = values;
+				for (const field of set) next = { ...next, [field]: this.#values[field] };
+				return next;
+			};
+			let hidden = hiddenOf(values);
+			let unsettled: Set<string> | null = null;
+			for (let i = 0; i <= names.size; i++) {
+				const next = hiddenOf(resetHidden(hidden));
+				const flipped = new Set([...next, ...hidden].filter((f) => next.has(f) !== hidden.has(f)));
+				hidden = next;
+				unsettled = flipped.size > 0 ? flipped : null;
+				if (!unsettled) break;
+			}
+			// `visibleWhen` that never settles (showing a field and hiding it flip
+			// each other, alone or through other fields): no consistent combination
+			// to validate and send, so commit nothing - values, raw text and the
+			// baseline stay - and say so on the fields that keep flipping.
+			if (unsettled) {
+				// The fields that keep flipping may be hidden on screen (judged
+				// against the committed values, which do not change here), so also
+				// mark the fields with pending text that are visible there: the
+				// edits the user can look at and change.
+				const targets = new Set(unsettled);
+				for (const field of rawFields) {
+					const def = this.#def(field);
+					if (def && isFieldVisible(def, this.#values)) targets.add(field);
+				}
+				const unsettledErrors: Record<string, string> = {};
+				for (const field of targets) {
+					const def = this.#def(field);
+					if (def) unsettledErrors[field] = visibilityUnsettledMessage(def, this.#messages);
+				}
+				this.#errors = unsettledErrors;
+				return false;
+			}
+			values = resetHidden(hidden);
 			for (const field of names) {
-				if (field in errors) continue;
+				if (hidden.has(field)) continue;
+				if (field in parseErrors) {
+					errors[field] = parseErrors[field];
+					continue;
+				}
 				const def = this.#def(field);
 				const message = def ? validateField(def, values[field], values, this.#messages) : null;
 				if (message) errors[field] = message;
@@ -331,8 +391,11 @@ class Draft implements FormDraft<Values> {
 			}
 			this.#errors = {};
 			if (rawFields.length > 0) {
+				// Hidden fields keep their old value and their raw text (`values` already has them reset).
+				const kept: Record<string, string> = {};
+				for (const field of rawFields) if (hidden.has(field)) kept[field] = this.#raw[field]!;
 				this.#values = values;
-				this.#raw = {};
+				this.#raw = kept;
 				this.#bump();
 			}
 			return true;
@@ -340,10 +403,14 @@ class Draft implements FormDraft<Values> {
 	}
 
 	snapshotForApply(): FormDraftSnapshot<Values> {
-		return untrack(() => ({ values: copy(this.#values), revision: this.#revision }));
+		return untrack(() => ({
+			values: copy(this.#values),
+			submitValues: copy(submitValuesOf(this.#schema, this.#values)),
+			revision: this.#revision
+		}));
 	}
 
-	markApplied(applied: FormDraftSnapshot<Values>): boolean {
+	markApplied(applied: Pick<FormDraftSnapshot<Values>, 'values' | 'revision'>): boolean {
 		return untrack(() => {
 			if (applied.revision < this.#baselineRevision || applied.revision > this.#revision) {
 				return false;
@@ -389,7 +456,7 @@ export function draftSourceFrom(
 		async apply() {
 			if (!draft.commitAll()) return false;
 			const snapshot = draft.snapshotForApply();
-			if ((await apply(copy(snapshot.values))) !== true) return false;
+			if ((await apply(copy(snapshot.submitValues))) !== true) return false;
 			draft.markApplied(snapshot);
 			return true;
 		},

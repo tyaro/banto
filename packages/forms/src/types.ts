@@ -29,6 +29,9 @@ export function isTemporalType(type: FieldType): type is 'date' | 'time' | 'date
 /** Underline is opt-in and needs matching @banto/theme/css (ADR-0024). */
 export type FormAppearance = 'default' | 'underline';
 
+/** Number of columns a form or section lays its fields out in; narrow widths still fall back to one. */
+export type FormColumns = 1 | 2 | 3;
+
 export interface FieldOption {
 	value: string | number;
 	label: string;
@@ -70,10 +73,41 @@ export interface FieldDef {
 	pattern?: string;
 	/** Custom validation; return an error message, or null when valid. */
 	validate?: (value: unknown, values: Record<string, unknown>) => string | null;
+	/** The `FormSection.id` this field belongs to. Omitted (or an unknown id): the field is not in a section. */
+	section?: string;
+	/** Take the whole row in a multi-column layout (a long textarea, say). */
+	fullWidth?: boolean;
+	/**
+	 * Show the field only while this returns true for the current values.
+	 * A hidden field is not rendered, not validated (`required` included), and
+	 * left out of `FormStore.submitValues`; the value typed into it is kept, so
+	 * showing it again brings the input back.
+	 */
+	visibleWhen?: (values: Record<string, unknown>) => boolean;
+	/** Help text under the control; the control points at it with `aria-describedby`. */
+	help?: string;
+}
+
+/** A titled group of fields. Fields join it with `FieldDef.section`; the DOM order is the section order. */
+export interface FormSection {
+	id: string;
+	title: string;
+	/** Short text under the title. */
+	description?: string;
+	/** Columns of this section; defaults to `FormSchema.columns`, then 1. */
+	columns?: FormColumns;
 }
 
 export interface FormSchema {
 	fields: FieldDef[];
+	/**
+	 * Titled groups, rendered in this order after the fields that have no
+	 * section. Omitted: one plain group, as before. `fields` stays the flat
+	 * list, so the store, validation and the grid columns read it unchanged.
+	 */
+	sections?: FormSection[];
+	/** Default columns of every group (1 when omitted). */
+	columns?: FormColumns;
 }
 
 export interface FieldError {

@@ -4,6 +4,7 @@
  * Japanese; override via the `messages` param for i18n injection.
  */
 import { formatDateTimeText, isIsoDate, isIsoDateTime, isIsoTime, isOnTimeStep } from './date';
+import { isFieldVisible } from './layout';
 import type { FieldDef, FieldError, FormSchema } from './types';
 
 export interface ValidationMessages {
@@ -37,6 +38,8 @@ export interface ValidationMessages {
 	dateTimeMin?: (def: FieldDef, min: string) => string;
 	/** datetime: later than `max`; `max` is shown as `YYYY-MM-DD HH:mm`. */
 	dateTimeMax?: (def: FieldDef, max: string) => string;
+	/** draft: the field's `visibleWhen` never settles (showing and hiding it flip each other), so nothing is committed (#714). */
+	visibilityUnsettled?: (def: FieldDef) => string;
 }
 
 const defaultMessages: Required<ValidationMessages> = {
@@ -57,7 +60,8 @@ const defaultMessages: Required<ValidationMessages> = {
 	timeStep: (_def, step) => `${step}分刻みの時刻を入力してください`,
 	dateTimeInvalid: () => '日時を YYYY-MM-DD HH:mm の形で入力してください',
 	dateTimeMin: (_def, min) => `${min}以降の日時を入力してください`,
-	dateTimeMax: (_def, max) => `${max}以前の日時を入力してください`
+	dateTimeMax: (_def, max) => `${max}以前の日時を入力してください`,
+	visibilityUnsettled: () => '表示の条件が定まらないため保存できません。値を見直してください'
 };
 
 /**
@@ -156,7 +160,11 @@ export function validateField(
 	return null;
 }
 
-/** Validate every field in the schema, returning one FieldError per invalid field, in schema order. */
+/**
+ * Validate every field in the schema, returning one FieldError per invalid
+ * field, in schema order. A field hidden by `visibleWhen` is skipped (a
+ * hidden `required` field is not an error).
+ */
 export function validateAll(
 	schema: FormSchema,
 	values: Record<string, unknown>,
@@ -164,6 +172,7 @@ export function validateAll(
 ): FieldError[] {
 	const errors: FieldError[] = [];
 	for (const def of schema.fields) {
+		if (!isFieldVisible(def, values)) continue;
 		const message = validateField(def, values[def.name], values, messages);
 		if (message) errors.push({ field: def.name, message });
 	}
@@ -183,6 +192,14 @@ export function timeInvalidMessage(def: FieldDef, messages: ValidationMessages =
 /** Message for raw date-and-time text that does not parse (used by `FormDraft.commit`). */
 export function dateTimeInvalidMessage(def: FieldDef, messages: ValidationMessages = {}): string {
 	return (messages.dateTimeInvalid ?? defaultMessages.dateTimeInvalid)(def);
+}
+
+/** Message for a field whose `visibleWhen` never settles (used by `FormDraft.commitAll`, #714). */
+export function visibilityUnsettledMessage(
+	def: FieldDef,
+	messages: ValidationMessages = {}
+): string {
+	return (messages.visibilityUnsettled ?? defaultMessages.visibilityUnsettled)(def);
 }
 
 /** Message for raw number text that does not parse (used by `FormDraft.commit`). */
