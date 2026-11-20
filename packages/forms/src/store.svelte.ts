@@ -12,6 +12,8 @@ function defaultsFrom(schema: FormSchema): Record<string, unknown> {
 	for (const field of schema.fields) {
 		if (field.default !== undefined) values[field.name] = field.default;
 		else if (field.type === 'checkbox') values[field.name] = false;
+		// An empty multiselect is an empty array, not `''`.
+		else if (field.type === 'multiselect') values[field.name] = [];
 		// An empty date / time / datetime is `null`, not `''` (date-time-pickers D6).
 		else if (isTemporalType(field.type)) values[field.name] = null;
 		else values[field.name] = '';

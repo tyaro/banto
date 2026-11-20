@@ -72,6 +72,8 @@ const defaultMessages: Required<ValidationMessages> = {
  */
 function isEmpty(value: unknown): boolean {
 	if (typeof value === 'string') return value.trim() === '';
+	// A multiselect with nothing chosen: `required` means "at least one".
+	if (Array.isArray(value)) return value.length === 0;
 	return value === undefined || value === null;
 }
 

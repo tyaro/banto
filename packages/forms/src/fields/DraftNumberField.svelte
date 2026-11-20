@@ -14,6 +14,8 @@
 	 */
 	import type { FieldDef } from '../types';
 	import { formatDraftValue, type FormDraft } from '../draft.svelte';
+	import AffixBox from './AffixBox.svelte';
+	import { describedByWithAffix } from './affix';
 
 	interface Props {
 		def: FieldDef;
@@ -39,6 +41,9 @@
 	const text = $derived(draft.raw[def.name] ?? formatDraftValue(draft.values[def.name]));
 	const error = $derived(draft.errors[def.name]);
 
+	const inputId = $derived(id ?? def.name);
+	const described = $derived(describedByWithAffix(def, inputId, describedBy));
+
 	function commit() {
 		if (disabled || def.readonly) return;
 		const valid = draft.commit(def.name);
@@ -50,25 +55,27 @@
 	}
 </script>
 
-<input
-	type="text"
-	inputmode="decimal"
-	autocomplete="off"
-	class={className}
-	id={id ?? def.name}
-	value={text}
-	placeholder={def.placeholder}
-	{disabled}
-	readonly={def.readonly}
-	class:muted={def.readonly}
-	aria-invalid={!!error}
-	aria-describedby={describedBy}
-	oninput={(event) => {
-		if (!disabled && !def.readonly) draft.setRaw(def.name, event.currentTarget.value);
-	}}
-	onblur={commit}
-	onkeydown={handleKeydown}
-/>
+<AffixBox {def} id={inputId}>
+	<input
+		type="text"
+		inputmode="decimal"
+		autocomplete="off"
+		class={className}
+		id={inputId}
+		value={text}
+		placeholder={def.placeholder}
+		{disabled}
+		readonly={def.readonly}
+		class:muted={def.readonly}
+		aria-invalid={!!error}
+		aria-describedby={described}
+		oninput={(event) => {
+			if (!disabled && !def.readonly) draft.setRaw(def.name, event.currentTarget.value);
+		}}
+		onblur={commit}
+		onkeydown={handleKeydown}
+	/>
+</AffixBox>
 
 <style>
 	input {

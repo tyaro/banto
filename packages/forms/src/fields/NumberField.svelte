@@ -1,6 +1,8 @@
 <script lang="ts">
 	/** Numeric input field (spec §7.2 `type: 'number'`). */
 	import type { FieldDef } from '../types';
+	import AffixBox from './AffixBox.svelte';
+	import { describedByWithAffix } from './affix';
 
 	interface Props {
 		def: FieldDef;
@@ -26,6 +28,9 @@
 		onBlur
 	}: Props = $props();
 
+	const inputId = $derived(id ?? def.name);
+	const described = $derived(describedByWithAffix(def, inputId, describedBy));
+
 	function handleInput(event: Event & { currentTarget: HTMLInputElement }) {
 		if (disabled || def.readonly) return;
 		const raw = event.currentTarget.value;
@@ -33,24 +38,26 @@
 	}
 </script>
 
-<input
-	type="number"
-	class={className}
-	id={id ?? def.name}
-	value={value === '' || value === undefined || value === null ? '' : (value as number)}
-	placeholder={def.placeholder}
-	min={def.min}
-	max={def.max}
-	{disabled}
-	readonly={def.readonly}
-	class:muted={def.readonly}
-	aria-invalid={!!error}
-	aria-describedby={describedBy}
-	oninput={handleInput}
-	onblur={() => {
-		if (!disabled && !def.readonly) onBlur?.();
-	}}
-/>
+<AffixBox {def} id={inputId}>
+	<input
+		type="number"
+		class={className}
+		id={inputId}
+		value={value === '' || value === undefined || value === null ? '' : (value as number)}
+		placeholder={def.placeholder}
+		min={def.min}
+		max={def.max}
+		{disabled}
+		readonly={def.readonly}
+		class:muted={def.readonly}
+		aria-invalid={!!error}
+		aria-describedby={described}
+		oninput={handleInput}
+		onblur={() => {
+			if (!disabled && !def.readonly) onBlur?.();
+		}}
+	/>
+</AffixBox>
 
 <style>
 	input {

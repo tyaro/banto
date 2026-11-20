@@ -9,6 +9,10 @@
  * `time` is a canonical `HH:mm`, `datetime` a canonical `YYYY-MM-DDTHH:mm`
  * wall-clock time with no time zone (date-time-pickers §5.1, D4); like
  * `date`, an empty one is `null` (D6).
+ *
+ * `radio` is a single choice from `options` shown as a group (empty: `''`, like
+ * `select`); `multiselect` is a group of checkboxes whose value is an array of
+ * option values, in `options` order (empty: `[]`).
  */
 export type FieldType =
 	| 'text'
@@ -18,6 +22,8 @@ export type FieldType =
 	| 'time'
 	| 'datetime'
 	| 'select'
+	| 'radio'
+	| 'multiselect'
 	| 'checkbox'
 	| 'password';
 
@@ -44,10 +50,19 @@ export interface FieldDef {
 	required?: boolean;
 	default?: unknown;
 	placeholder?: string;
-	/** UI-only: native readonly for text-like fields; select/checkbox remain disabled. Values still validate and submit. */
+	/** UI-only: native readonly for text-like fields; select/radio/multiselect/checkbox remain disabled. Values still validate and submit. */
 	readonly?: boolean;
-	/** select */
+	/** select / radio / multiselect */
 	options?: FieldOption[];
+	/** radio: `'segmented'` shows the choices as a row of buttons; the value and keyboard behaviour are the same. */
+	variant?: 'segmented';
+	/**
+	 * number: text shown before / after the input (a currency sign, `kg`). Only
+	 * the display: the value stays a plain number, and a screen reader reads
+	 * the text after the label (through `aria-describedby`, ahead of `help`).
+	 */
+	prefix?: string;
+	suffix?: string;
 	/**
 	 * number: value bounds. text/textarea/password: length bounds. date /
 	 * time / datetime: the earliest / latest value as a canonical string
