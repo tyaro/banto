@@ -28,6 +28,13 @@
 	import { getColumnValue, sortRows } from './core/sort';
 	import { filterRows } from './core/filter';
 	import { computeWindow, parseRowHeightPx } from './core/virtual';
+	import {
+		clampDropIndex,
+		contentXAt,
+		fitPinnedCount,
+		pinnedOffsets,
+		scrollLeftToReveal
+	} from './core/pinning';
 	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
 	import { prepareCommit, isColumnEditable } from './core/edit';
 	import { cellText, resolveCellPresentation, resolveTone } from './core/cellView';
@@ -202,14 +209,20 @@
 	let editorRootEl: HTMLElement | null | undefined = $state();
 
 	let scrollTop = $state(0);
+	// Only pinned columns (#713) read the horizontal side: the boundary shadow
+	// and the drop indicator follow `scrollLeft`, `fitPinnedCount` the width.
+	let scrollLeft = $state(0);
 	let viewportHeight = $state(0);
+	let viewportWidth = $state(0);
 	let headerHeight = $state(40);
 
 	$effect(() => {
 		if (!containerEl) return;
 		viewportHeight = containerEl.clientHeight;
+		viewportWidth = containerEl.clientWidth;
 		const observer = new ResizeObserver(() => {
 			viewportHeight = containerEl!.clientHeight;
+			viewportWidth = containerEl!.clientWidth;
 		});
 		observer.observe(containerEl);
 		return () => observer.disconnect();
@@ -308,7 +321,9 @@
 	});
 
 	function handleScroll(event: Event) {
-		scrollTop = (event.currentTarget as HTMLDivElement).scrollTop;
+		const target = event.currentTarget as HTMLDivElement;
+		scrollTop = target.scrollTop;
+		scrollLeft = target.scrollLeft;
 	}
 
 	// Server mode (spec §4.1, M5): sort/filter already happened in the
@@ -439,6 +454,26 @@
 	);
 	const orderedFieldIds = $derived(gridState.orderedColumns.map((column) => column.id));
 
+	// --- Pinned columns (#713) ---
+	// `gridState.orderedColumns` already leads with the pinned zone; here it is
+	// only decided how many of those columns stick (`position: sticky`) and
+	// where. The decisions are pure (`core/pinning.ts`). `stuckCount === 0`
+	// means no pinning at all: the checkbox column then scrolls as before.
+	const columnWidths = $derived(gridState.orderedColumns.map((column) => widthOf(column)));
+	const stuckCount = $derived(
+		fitPinnedCount({
+			pinnedWidths: columnWidths.slice(0, gridState.pinnedCount),
+			leading: selectColumnWidth,
+			viewportWidth
+		})
+	);
+	const pinActive = $derived(stuckCount > 0);
+	const stuckOffsets = $derived(pinnedOffsets(columnWidths, stuckCount, selectColumnWidth));
+	/** Width of the stuck block, checkbox column included; 0 when nothing sticks. */
+	const pinnedWidth = $derived(
+		pinActive ? stuckOffsets[stuckCount - 1] + columnWidths[stuckCount - 1] : 0
+	);
+
 	/** Keyed `{#each}` block key for a (possibly sparse-hole) visible row. */
 	function rowKeyFor(row: TRow | undefined, rowIndex: number): string | number {
 		return row === undefined ? `__hole_${rowIndex}` : getRowId(row);
@@ -509,7 +544,15 @@
 	function handleDragMove(clientX: number) {
 		if (!headerRowEl) return;
 		const rect = headerRowEl.getBoundingClientRect();
-		const x = clientX - rect.left - selectColumnWidth;
+		// The header row scrolls with the content, so `clientX - rect.left` is a
+		// content coordinate - except over the stuck block (#713), which is
+		// drawn at its unscrolled place whatever `scrollLeft` is.
+		const contentX = contentXAt({
+			viewX: clientX - rect.left - scrollLeft,
+			scrollLeft,
+			pinnedWidth
+		});
+		const x = contentX - selectColumnWidth;
 		let cumulative = 0;
 		const cols = gridState.orderedColumns;
 		let index = cols.length;
@@ -521,7 +564,12 @@
 			}
 			cumulative += w;
 		}
-		dropIndex = index;
+		// A column is only reordered inside its own zone (pinned / unpinned).
+		const fromIndex = dragColumnId === null ? -1 : orderedFieldIds.indexOf(dragColumnId);
+		dropIndex =
+			fromIndex === -1
+				? index
+				: clampDropIndex(fromIndex, index, gridState.pinnedCount, cols.length);
 	}
 
 	function handleDragEnd() {
@@ -539,7 +587,13 @@
 		for (let i = 0; i < dropIndex && i < cols.length; i++) {
 			x += widthOf(cols[i]);
 		}
-		return x;
+		if (!pinActive) return x;
+		// Pinned columns (#713): a slot inside the stuck block is drawn where the
+		// block is (it does not scroll), and a slot of the other zone never under it.
+		const draggingPinned =
+			dragColumnId !== null && orderedFieldIds.indexOf(dragColumnId) < gridState.pinnedCount;
+		if (draggingPinned && dropIndex <= stuckCount) return scrollLeft + x;
+		return Math.max(x, scrollLeft + pinnedWidth);
 	});
 
 	// --- Row selection (#713) ---
@@ -755,11 +809,17 @@
 		let x = selectColumnWidth;
 		for (let i = 0; i < fieldIndex; i++) x += widthOf(gridState.orderedColumns[i]);
 		const w = widthOf(gridState.orderedColumns[fieldIndex]);
-		if (x < containerEl.scrollLeft) {
-			containerEl.scrollLeft = x;
-		} else if (x + w > containerEl.scrollLeft + containerEl.clientWidth) {
-			containerEl.scrollLeft = x + w - containerEl.clientWidth;
-		}
+		// Pinned columns (#713) cover the left of the viewport: a cell behind
+		// them counts as out of view, and a pinned cell is always in view.
+		const next = scrollLeftToReveal({
+			cellLeft: x,
+			cellWidth: w,
+			scrollLeft: containerEl.scrollLeft,
+			viewportWidth: containerEl.clientWidth,
+			pinnedWidth,
+			cellPinned: fieldIndex < stuckCount
+		});
+		if (next !== containerEl.scrollLeft) containerEl.scrollLeft = next;
 	}
 
 	function activeCellHasRendererLink(column: GridColumn<TRow>): boolean {
@@ -1488,6 +1548,7 @@
 	<div class="row-height-probe" aria-hidden="true" bind:this={rowHeightProbeEl}></div>
 	<div
 		class="banto-grid"
+		class:scrolled-x={scrollLeft > 0}
 		bind:this={containerEl}
 		role="grid"
 		tabindex="0"
@@ -1507,7 +1568,7 @@
 			>
 				{#if selectable}
 					<!-- The label and tooltip say which rows the box acts on (#713). -->
-					<div class="select-cell select-header" role="columnheader">
+					<div class="select-cell select-header" class:pinned={pinActive} role="columnheader">
 						<label class="select-hit">
 							<input
 								type="checkbox"
@@ -1522,11 +1583,13 @@
 						</label>
 					</div>
 				{/if}
-				{#each gridState.orderedColumns as column (column.id)}
+				{#each gridState.orderedColumns as column, fieldIndex (column.id)}
 					<HeaderCell
 						{column}
 						state={gridState}
 						width={widthOf(column)}
+						pinnedLeft={fieldIndex < stuckCount ? stuckOffsets[fieldIndex] : undefined}
+						pinnedEdge={fieldIndex === stuckCount - 1}
 						showPriority={showSortPriority}
 						onDragStart={handleDragStart}
 						onDragMove={handleDragMove}
@@ -1568,6 +1631,7 @@
 						<!-- svelte-ignore a11y_interactive_supports_focus -->
 						<div
 							class="select-cell"
+							class:pinned={pinActive}
 							role="gridcell"
 							onpointerdown={(event) => handleSelectPointerDown(event, rowIndex)}
 							onmousedown={(event) => event.preventDefault()}
@@ -1619,6 +1683,9 @@
 							data-cell-field={column.id}
 							data-tone={tone ?? undefined}
 							style:justify-content={justifyFor(column.align)}
+							style:left={fieldIndex < stuckCount ? `${stuckOffsets[fieldIndex]}px` : undefined}
+							class:pinned={fieldIndex < stuckCount}
+							class:pinned-edge={fieldIndex === stuckCount - 1}
 							class:active={isActiveCell}
 							class:in-range={isInRange && !isActiveCell}
 							class:editing={isEditingCell}
@@ -1748,15 +1815,21 @@
 										style:height={`${gridState.rowHeight}px`}
 										onclick={() => handleGroupHeaderClick(rowIndex, entry.key)}
 									>
-										<span class="disclosure" aria-hidden="true">{entry.collapsed ? '▸' : '▾'}</span>
-										<span class="group-label"
-											>{entry.label}{t.groupCountSuffix(entry.count.toLocaleString())}</span
-										>
-										{#each gridState.orderedColumns.filter((c) => c.aggregate) as aggColumn (aggColumn.id)}
-											<span class="agg-chip"
-												>{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}</span
+										<!-- With pinned columns (#713) the heading stays at the left edge
+										     while the rows scroll sideways, like the pinned cells do. -->
+										<span class="group-header-content" class:stuck={pinActive}>
+											<span class="disclosure" aria-hidden="true"
+												>{entry.collapsed ? '▸' : '▾'}</span
 											>
-										{/each}
+											<span class="group-label"
+												>{entry.label}{t.groupCountSuffix(entry.count.toLocaleString())}</span
+											>
+											{#each gridState.orderedColumns.filter((c) => c.aggregate) as aggColumn (aggColumn.id)}
+												<span class="agg-chip"
+													>{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}</span
+												>
+											{/each}
+										</span>
 									</div>
 								{:else}
 									{@render dataRow(entry.row, rowIndex)}
@@ -1784,11 +1857,16 @@
 										style:grid-template-columns={templateColumns}
 										style:height={`${gridState.rowHeight}px`}
 									>
-										{#if selectable}<div class="select-cell"></div>{/if}
+										{#if selectable}<div class="select-cell" class:pinned={pinActive}></div>{/if}
 										{#each gridState.orderedColumns as column, fieldIndex (column.id)}
 											<div
 												class="cell placeholder-cell"
+												class:pinned={fieldIndex < stuckCount}
+												class:pinned-edge={fieldIndex === stuckCount - 1}
 												style:justify-content={justifyFor(column.align)}
+												style:left={fieldIndex < stuckCount
+													? `${stuckOffsets[fieldIndex]}px`
+													: undefined}
 											>
 												{#if fieldIndex === 0}…{/if}
 											</div>
@@ -1903,6 +1981,11 @@
 			outline: var(--banto-border-width-strong, 2px) dashed Highlight;
 			outline-offset: calc(-1 * var(--banto-border-width-strong, 2px));
 		}
+
+		/* Shadows are dropped in forced colours: mark the pinned boundary with a line. */
+		.banto-grid.scrolled-x .cell.pinned-edge {
+			border-right: var(--banto-border-width) solid CanvasText;
+		}
 	}
 
 	.scroll-content {
@@ -1923,6 +2006,8 @@
 	.drop-indicator {
 		position: absolute;
 		top: 0;
+		/* Above the header row and the pinned cells (#713), which are opaque. */
+		z-index: 11;
 		width: 2px;
 		background: var(--banto-primary);
 		pointer-events: none;
@@ -1946,20 +2031,26 @@
 		transition: background var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
+	/* `--row-overlay` repeats the row's state colour for the pinned cells
+	   (#713), which are opaque and would otherwise hide it. */
 	.row:hover {
-		background: var(--banto-surface-hover);
+		--row-overlay: var(--banto-surface-hover);
+		background: var(--row-overlay);
 	}
 
 	.row.selected {
-		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
+		--row-overlay: color-mix(in srgb, var(--banto-primary) 8%, transparent);
+		background: var(--row-overlay);
 	}
 
 	.row.selected:hover {
-		background: color-mix(in srgb, var(--banto-primary) 14%, transparent);
+		--row-overlay: color-mix(in srgb, var(--banto-primary) 14%, transparent);
+		background: var(--row-overlay);
 	}
 
 	/* Server mode (spec §4.1, M5): a not-yet-fetched sparse-array hole. */
 	.placeholder-row:hover {
+		--row-overlay: transparent;
 		background: none;
 	}
 
@@ -2063,7 +2154,6 @@
 	.group-header-row {
 		display: flex;
 		align-items: center;
-		gap: var(--banto-space-2);
 		padding: 0 var(--banto-space-2);
 		background: color-mix(in srgb, var(--banto-primary) 6%, transparent);
 		font-weight: 600;
@@ -2073,6 +2163,20 @@
 
 	.group-header-row:hover {
 		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
+	}
+
+	.group-header-content {
+		display: flex;
+		align-items: center;
+		gap: var(--banto-space-2);
+		min-width: 0;
+	}
+
+	/* Pinned columns (#713): keep the heading in view during a sideways scroll
+	   (the offset is the row's own padding). */
+	.group-header-content.stuck {
+		position: sticky;
+		left: var(--banto-space-2);
 	}
 
 	.disclosure {
@@ -2133,6 +2237,50 @@
 	.cell.editing.error {
 		outline: var(--banto-border-width-strong) solid var(--banto-danger-solid);
 		outline-offset: calc(-1 * var(--banto-border-width-strong));
+	}
+
+	/*
+	 * Pinned columns (#713). A pinned cell sticks to the left edge (`left` is
+	 * set inline, from `pinnedOffsets`) and is opaque, so the cells scrolling
+	 * under it do not show through: the grid surface, plus the row's and the
+	 * cell's own state colours as layers. Stacking inside the rows: unpinned
+	 * cell < active (1) < editing (2) < pinned (3) < pinned + editing (4), so
+	 * an editor or an outline of a scrolled cell never covers the pinned block.
+	 * After the rules above on purpose: same specificity, later wins.
+	 */
+	.cell.pinned,
+	.select-cell.pinned {
+		position: sticky;
+		z-index: 3;
+		background:
+			linear-gradient(var(--cell-overlay, transparent), var(--cell-overlay, transparent)),
+			linear-gradient(var(--row-overlay, transparent), var(--row-overlay, transparent)),
+			var(--banto-surface);
+	}
+
+	.select-cell.pinned {
+		left: 0;
+	}
+
+	/* The header row is its own stacking context (above the rows) and has the
+	   subtle surface; 2 clears the neighbours' resize handles (1). */
+	.select-header.pinned {
+		z-index: 2;
+		background: var(--banto-surface-subtle);
+	}
+
+	.cell.pinned.in-range {
+		--cell-overlay: color-mix(in srgb, var(--banto-primary) 12%, transparent);
+	}
+
+	.cell.pinned.editing {
+		z-index: 4;
+		background: var(--banto-surface);
+	}
+
+	/* The boundary shadow, only while the grid is scrolled sideways. */
+	.banto-grid.scrolled-x .cell.pinned-edge {
+		box-shadow: var(--banto-grid-pinned-shadow);
 	}
 
 	.cell-link {

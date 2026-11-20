@@ -6,6 +6,7 @@
  */
 import { SvelteSet } from 'svelte/reactivity';
 import { isBetweenValue } from './core/dateRange';
+import { moveInOrder, partitionPinned } from './core/pinning';
 import {
 	DEFAULT_COLUMN_WIDTH,
 	DEFAULT_MIN_WIDTH,
@@ -40,7 +41,10 @@ function isSerializedGridState(value: unknown): value is SerializedGridState {
 		// (spec §4.3) has no `groupBy` at all - accept that as "no group".
 		(candidate.groupBy === undefined ||
 			candidate.groupBy === null ||
-			typeof candidate.groupBy === 'string')
+			typeof candidate.groupBy === 'string') &&
+		// Optional/backward-compatible: a payload serialized before column
+		// pinning (#713) has no `pinned` - the definitions' own flags then stand.
+		(candidate.pinned === undefined || Array.isArray(candidate.pinned))
 	);
 }
 
@@ -58,6 +62,16 @@ export class GridState<TRow = unknown> {
 	 * hidden column's slot) so unhiding restores the column where it was.
 	 */
 	hidden: string[] = $state([]);
+	/**
+	 * Ids of the columns pinned to the left edge (#713). Seeded from each
+	 * column's `pinned` flag, then owned here (`setColumnPinned`/
+	 * `toggleColumnPinned`, persisted through `serialize()`), exactly like
+	 * `hidden`. Kept separate from `order`: a pinned column keeps its slot
+	 * there and is only DISPLAYED ahead of the others (`orderedColumns`), so
+	 * unpinning puts it back where it was. A hidden column can stay pinned -
+	 * it takes its place in the pinned zone again when shown.
+	 */
+	pinned: string[] = $state([]);
 	/** Client-mode-only group-by column id, or null for a flat view (spec §4.3). Server mode ignores this (see BantoGrid.svelte). */
 	groupBy: string | null = $state(null);
 	/**
@@ -98,6 +112,7 @@ export class GridState<TRow = unknown> {
 		this.hidden = this.#clampHidden(
 			columns.filter((column) => column.hidden).map((column) => column.id)
 		);
+		this.pinned = columns.filter((column) => column.pinned === 'left').map((column) => column.id);
 		this.widths = Object.fromEntries(
 			columns.map((column) => [column.id, column.width ?? DEFAULT_COLUMN_WIDTH])
 		);
@@ -116,22 +131,42 @@ export class GridState<TRow = unknown> {
 
 	/**
 	 * VISIBLE column definitions in current display order (post drag-reorder,
-	 * minus everything in `hidden`). This is what BantoGrid renders and what
-	 * every field index (cell selection, TSV copy/paste) counts against, so
-	 * hiding a column shifts those indices exactly like removing it would -
-	 * no separate "is this one visible" bookkeeping anywhere downstream.
+	 * minus everything in `hidden`, pinned columns first - #713). This is what
+	 * BantoGrid renders and what every field index (cell selection, TSV
+	 * copy/paste) counts against, so hiding a column shifts those indices
+	 * exactly like removing it would - no separate "is this one visible"
+	 * bookkeeping anywhere downstream. The first `pinnedCount` entries are the
+	 * pinned zone.
 	 */
 	get orderedColumns(): GridColumn<TRow>[] {
-		return this.#inOrder().filter((column) => !this.hidden.includes(column.id));
+		return this.#visiblePartition().ordered;
 	}
 
 	/**
-	 * EVERY column definition in display order, hidden ones included - the
-	 * list a column manager UI offers (spec §4.4). Use `orderedColumns` for
-	 * anything that renders data.
+	 * How many of `orderedColumns` are pinned to the left (#713): they are
+	 * always its leading entries.
+	 */
+	get pinnedCount(): number {
+		return this.#visiblePartition().pinnedCount;
+	}
+
+	/**
+	 * EVERY column definition in display order (pinned first), hidden ones
+	 * included - the list a column manager UI offers (spec §4.4). Use
+	 * `orderedColumns` for anything that renders data.
 	 */
 	get allColumns(): GridColumn<TRow>[] {
-		return this.#inOrder();
+		return this.#partition(this.#inOrder()).ordered;
+	}
+
+	#visiblePartition(): { ordered: GridColumn<TRow>[]; pinnedCount: number } {
+		return this.#partition(this.#inOrder().filter((column) => !this.hidden.includes(column.id)));
+	}
+
+	#partition(columns: GridColumn<TRow>[]): { ordered: GridColumn<TRow>[]; pinnedCount: number } {
+		// The common case - nothing pinned - keeps the array as it is.
+		if (this.pinned.length === 0) return { ordered: columns, pinnedCount: 0 };
+		return partitionPinned(columns, (column) => this.pinned.includes(column.id));
 	}
 
 	/**
@@ -186,6 +221,31 @@ export class GridState<TRow = unknown> {
 	/** Flip one column's visibility (spec §4.4). Subject to `setColumnHidden`'s last-column guard. */
 	toggleColumnHidden(field: string): void {
 		this.setColumnHidden(field, !this.isHidden(field));
+	}
+
+	/** Whether `field` is currently pinned to the left (#713). */
+	isPinned(field: string): boolean {
+		return this.pinned.includes(field);
+	}
+
+	/**
+	 * Pin / unpin one column (#713). Pinned columns are displayed ahead of the
+	 * others, in their `order` among themselves; a newly pinned column
+	 * therefore joins the pinned zone at the place its `order` slot gives it,
+	 * and an unpinned one returns to that slot. Unknown ids are ignored.
+	 * BantoGrid stops sticking the trailing pinned columns when they would
+	 * leave too little room to scroll the others (`fitPinnedCount`), so
+	 * pinning every column cannot lock the grid.
+	 */
+	setColumnPinned(field: string, pinned: boolean): void {
+		if (!this.#columns.some((column) => column.id === field)) return;
+		if (pinned === this.isPinned(field)) return;
+		this.pinned = pinned ? [...this.pinned, field] : this.pinned.filter((id) => id !== field);
+	}
+
+	/** Flip one column's pinned state (#713). */
+	toggleColumnPinned(field: string): void {
+		this.setColumnPinned(field, !this.isPinned(field));
 	}
 
 	/** Cycle a column's sort state: asc -> desc -> removed. */
@@ -271,24 +331,20 @@ export class GridState<TRow = unknown> {
 	 * column lands immediately before the visible column currently at
 	 * `toIndex`, or last when `toIndex` is past the final visible one. Hidden
 	 * columns keep their own slots and may therefore end up on either side of
-	 * the moved column - they have no visible position to preserve. When the
-	 * column moves rightward, removing it first shifts later indices left by
-	 * one, so compensate before splicing.
+	 * the moved column - they have no visible position to preserve.
+	 *
+	 * A column never leaves its zone (#713): a pinned column can only be
+	 * reordered among the pinned ones and an unpinned column among the rest,
+	 * so `toIndex` is clamped to the zone of `field` (`moveInOrder` in
+	 * `core/pinning.ts`, which also does the translation).
 	 */
 	moveColumn(field: string, toIndex: number): void {
-		const current = this.order.slice();
-		const fromIndex = current.indexOf(field);
-		if (fromIndex === -1) return;
-		const targetId = this.orderedColumns[toIndex]?.id;
-		const insertBefore = targetId === undefined ? current.length : current.indexOf(targetId);
-		current.splice(fromIndex, 1);
-		const insertIndex = fromIndex < insertBefore ? insertBefore - 1 : insertBefore;
-		const clampedIndex = Math.max(0, Math.min(insertIndex, current.length));
-		current.splice(clampedIndex, 0, field);
-		this.order = current;
+		const visibleIds = this.orderedColumns.map((column) => column.id);
+		const next = moveInOrder(this.order, visibleIds, this.pinnedCount, field, toIndex);
+		if (next !== this.order) this.order = [...next];
 	}
 
-	/** Serialize sort/filters/order/widths/hidden/groupBy for persistence (spec §4.4, §4.3). `collapsedGroups` is deliberately excluded - it's ephemeral. */
+	/** Serialize sort/filters/order/widths/hidden/pinned/groupBy for persistence (spec §4.4, §4.3). `collapsedGroups` is deliberately excluded - it's ephemeral. */
 	serialize(): string {
 		const payload: SerializedGridState = {
 			sort: this.sort,
@@ -296,6 +352,7 @@ export class GridState<TRow = unknown> {
 			order: this.order,
 			widths: this.widths,
 			hidden: this.hidden,
+			pinned: this.pinned,
 			groupBy: this.groupBy
 		};
 		return JSON.stringify(payload);
@@ -333,6 +390,13 @@ export class GridState<TRow = unknown> {
 		// can carry duplicates, or hide every column the current set still
 		// has).
 		this.hidden = this.#clampHidden(parsed.hidden);
+		// A payload from before pinning (#713) leaves the seed from the column
+		// definitions alone; one that has `pinned` wins, minus unknown ids.
+		if (parsed.pinned !== undefined) {
+			this.pinned = [...new Set(parsed.pinned)].filter(
+				(id): id is string => typeof id === 'string' && knownIds.has(id)
+			);
+		}
 	}
 
 	/** Construct a GridState and immediately hydrate it from a serialized string. */
