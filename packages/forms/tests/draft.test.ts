@@ -322,4 +322,30 @@ describe('draftSourceFrom with hidden fields (#714)', () => {
 		expect(draft.errors.title).toBeTruthy();
 		expect(draft.values.qty).toBe(3);
 	});
+
+	it('commitAll hides nothing when visibleWhen never settles, so what is kept was validated (#714 review)', () => {
+		// 10 hides qty -> reset to 3 shows it -> 10 hides it ... never settles.
+		const s3: FormSchema = {
+			fields: [
+				{
+					name: 'qty',
+					label: 'Qty',
+					type: 'number',
+					min: 4,
+					visibleWhen: (v) => Number(v.qty) < 5
+				}
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: s3,
+			initial: { qty: 3 },
+			messages: { notANumber: () => 'NaN!', min: () => 'min!' }
+		});
+		draft.setRaw('qty', '10');
+		expect(draft.commitAll()).toBe(true);
+		// Not the unvalidated 3 (below min): the parsed 10, which passed min.
+		expect(draft.values.qty).toBe(10);
+		expect(draft.snapshotForApply().submitValues).not.toHaveProperty('qty', 3);
+	});
 });

@@ -342,12 +342,20 @@ class Draft implements FormDraft<Values> {
 				return next;
 			};
 			let hidden = hiddenOf(values);
+			let settled = false;
 			for (let i = 0; i <= names.size; i++) {
 				const next = hiddenOf(resetHidden(hidden));
 				const same = next.size === hidden.size && [...next].every((f) => hidden.has(f));
 				hidden = next;
-				if (same) break;
+				if (same) {
+					settled = true;
+					break;
+				}
 			}
+			// `visibleWhen` that never settles (A's condition flips once A is reset,
+			// alone or through other fields): hide nothing, so every value that is
+			// kept - and so may be sent - is the one that was validated.
+			if (!settled) hidden = new Set();
 			values = resetHidden(hidden);
 			for (const field of names) {
 				if (hidden.has(field)) continue;
