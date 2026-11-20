@@ -182,6 +182,52 @@ describe('createHttpDataProvider', () => {
 		expect(fetchFn.mock.calls[0][0]).toBe('/api/items/1?version=3');
 	});
 
+	it('deleteMany POSTs the target to {base}/api/{resource}/bulk-delete and returns { deleted } (Issue #713)', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { deleted: 2 }));
+		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
+		const target = {
+			kind: 'ids' as const,
+			items: [
+				{ id: 1, version: 3 },
+				{ id: 2, version: 1 }
+			]
+		};
+
+		await expect(provider.deleteMany?.('items', target)).resolves.toEqual({ deleted: 2 });
+		expect(fetchFn).toHaveBeenCalledWith('/api/items/bulk-delete', {
+			method: 'POST',
+			headers: {
+				'X-Banto-Client': 'banto',
+				Authorization: 'Bearer tok',
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify(target),
+			signal: expect.any(AbortSignal)
+		});
+	});
+
+	it('deleteMany keeps a 409 conflict with its current record (Issue #713)', async () => {
+		const body = { kind: 'conflict', message: 'changed', current: { id: 2, version: 5 } };
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(409, body));
+		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
+		const target = {
+			kind: 'ids' as const,
+			items: [
+				{ id: 1, version: 3 },
+				{ id: 2, version: 1 }
+			]
+		};
+
+		try {
+			await provider.deleteMany?.('items', target);
+			expect.unreachable('expected a ProviderError to be thrown');
+		} catch (err) {
+			expect(isProviderError(err)).toBe(true);
+			if (isProviderError(err)) expect(err.body).toEqual(body);
+		}
+		expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual(target);
+	});
+
 	it('maps a 409 conflict ErrorBody with its current record instead of falling to "other" (Issue #638)', async () => {
 		const body = { kind: 'conflict', message: 'changed', current: { id: 1, version: 2 } };
 		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(409, body));

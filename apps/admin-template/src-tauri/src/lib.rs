@@ -907,6 +907,52 @@ async fn items_delete(
     items_delete_body(&state, id, version).await
 }
 
+/// Body of [`items_bulk_delete`], split out (spec M14 pattern, see
+/// [`items_import_body`]) so its authz + attachment-sweep + audit behavior is
+/// testable with a plain `&AppState`.
+///
+/// Issue #713: the Tauri twin of REST's `POST /api/items/bulk-delete`
+/// (conventions section 1) - the same `editor` floor, the same
+/// all-or-nothing [`ItemsService::bulk_delete`], and ONE
+/// `action: "bulk_delete"` audit entry for the whole request (no
+/// `entity_id`). A conflict (stale version, missing id)
+/// deletes nothing and records nothing, like [`items_delete_body`].
+async fn items_bulk_delete_body(
+    state: &AppState,
+    target: admin_template_core::items::BulkDeleteTarget,
+) -> Result<admin_template_core::items::BulkDeleteResult, BantoError> {
+    let actor = require_role(state, Role::Editor, "items").await?;
+    let deleted = state.items.bulk_delete(&target).await?;
+    // Bulk twin of the items_delete sweep (spec docs/design/attachments-plan.md §3.8):
+    // remove the attachments left pointing at the now-deleted records (best-effort).
+    let sweep = admin_template_core::attachment_wiring::sweep_items_attachments(
+        &state.attachments,
+        &deleted,
+    )
+    .await;
+    let detail = admin_template_core::items::item_bulk_delete_detail(&target, &deleted, sweep);
+    record_ok(
+        &state.audit,
+        &actor,
+        "bulk_delete",
+        "items",
+        None,
+        Some(detail),
+    )
+    .await;
+    Ok(admin_template_core::items::BulkDeleteResult {
+        deleted: deleted.len(),
+    })
+}
+
+#[tauri::command]
+async fn items_bulk_delete(
+    state: State<'_, AppState>,
+    target: admin_template_core::items::BulkDeleteTarget,
+) -> Result<admin_template_core::items::BulkDeleteResult, BantoError> {
+    items_bulk_delete_body(&state, target).await
+}
+
 /// Body of [`items_import`], split out the same way [`change_own_password`]
 /// is (spec M14 pattern) so the audit-recording behavior is testable with a
 /// plain `&AppState` in this crate's own `cargo test` - `tauri::State`
@@ -4649,6 +4695,7 @@ pub fn run() {
             items_create,
             items_update,
             items_delete,
+            items_bulk_delete,
             items_import,
             items_export_csv_to_folder,
             // [scaffold:items] end
@@ -5318,6 +5365,182 @@ mod tests {
             ])
         );
         assert!(detail.get("attachmentsRemoved").is_none());
+    }
+
+    // --- Issue #713: bulk delete (+ the viewer denial of a single delete) ---
+
+    /// An `AppState` whose session is a fresh account of `role`.
+    async fn app_state_as(role: Role) -> AppState {
+        let state = app_state().await;
+        let user = state
+            .users
+            .create_user("actor", "password123", "操作者", role)
+            .await
+            .expect("create_user");
+        state.set_session_for_test(Some(DesktopSession::Account(user)));
+        state
+    }
+
+    async fn seed_item(state: &AppState, name: &str) -> Item {
+        state
+            .items
+            .create(ItemInput {
+                name: name.to_string(),
+                price: 1,
+                stock: 1,
+                version: None,
+            })
+            .await
+            .expect("seed item")
+    }
+
+    async fn items_total(state: &AppState) -> u64 {
+        state
+            .items
+            .list(ListParams::default())
+            .await
+            .expect("list")
+            .total_count
+    }
+
+    async fn audit_rows_for(state: &AppState, action: &str) -> Vec<serde_json::Value> {
+        state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list")
+            .rows
+            .iter()
+            .filter(|r| r.action == action && r.resource == "items")
+            .map(|r| serde_json::to_value(r).expect("audit row"))
+            .collect()
+    }
+
+    fn bulk_ids(items: &[(i64, Option<i64>)]) -> admin_template_core::items::BulkDeleteTarget {
+        admin_template_core::items::BulkDeleteTarget::Ids {
+            items: items
+                .iter()
+                .map(|&(id, version)| admin_template_core::items::BulkDeleteItem { id, version })
+                .collect(),
+        }
+    }
+
+    /// `viewer` cannot delete (editor+): `Forbidden`, the row stays, and the
+    /// refusal is one `denied` audit row - REST's `RoleGuard` twin.
+    #[tokio::test]
+    async fn viewer_cannot_delete_items() {
+        let state = app_state_as(Role::Viewer).await;
+        let item = seed_item(&state, "Kept").await;
+
+        let err = items_delete_body(&state, item.id, Some(1))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Forbidden));
+        assert!(state.items.get(item.id).await.is_ok(), "row must remain");
+        let denied = audit_rows_for(&state, "denied").await;
+        assert_eq!(denied.len(), 1, "{denied:?}");
+        assert_eq!(denied[0]["actorUsername"], "actor");
+        assert_eq!(denied[0]["actorRole"], "viewer");
+        assert_eq!(denied[0]["origin"], "tauri");
+        assert_eq!(denied[0]["result"], "denied");
+        assert!(audit_rows_for(&state, "delete").await.is_empty());
+    }
+
+    /// `viewer` cannot bulk-delete either: same refusal, same `denied` row.
+    #[tokio::test]
+    async fn viewer_cannot_bulk_delete_items() {
+        let state = app_state_as(Role::Viewer).await;
+        let item = seed_item(&state, "Kept").await;
+        let before = items_total(&state).await;
+
+        let err = items_bulk_delete_body(&state, bulk_ids(&[(item.id, Some(1))]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Forbidden));
+        assert_eq!(items_total(&state).await, before);
+        let denied = audit_rows_for(&state, "denied").await;
+        assert_eq!(denied.len(), 1, "{denied:?}");
+        assert_eq!(denied[0]["actorUsername"], "actor");
+        assert_eq!(denied[0]["result"], "denied");
+        assert!(audit_rows_for(&state, "bulk_delete").await.is_empty());
+    }
+
+    /// `editor` deletes the named rows; the whole request is ONE
+    /// `bulk_delete` entry with the same detail shape as REST's.
+    #[tokio::test]
+    async fn items_bulk_delete_by_ids_records_one_audit_entry() {
+        let state = app_state_as(Role::Editor).await;
+        let a = seed_item(&state, "A").await;
+        let b = seed_item(&state, "B").await;
+        let before = items_total(&state).await;
+
+        let result = items_bulk_delete_body(&state, bulk_ids(&[(a.id, Some(1)), (b.id, Some(1))]))
+            .await
+            .expect("bulk delete should succeed");
+        assert_eq!(result.deleted, 2);
+        assert_eq!(items_total(&state).await, before - 2);
+
+        let entries = audit_rows_for(&state, "bulk_delete").await;
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        let entry = &entries[0];
+        assert_eq!(entry["actorUsername"], "actor");
+        assert_eq!(entry["actorRole"], "editor");
+        assert_eq!(entry["origin"], "tauri");
+        assert_eq!(entry["result"], "ok");
+        assert!(entry["entityId"].is_null());
+        let detail: serde_json::Value =
+            serde_json::from_str(entry["detail"].as_str().expect("detail")).unwrap();
+        assert_eq!(
+            detail,
+            serde_json::json!({ "mode": "ids", "count": 2, "ids": [a.id, b.id] })
+        );
+        assert!(
+            audit_rows_for(&state, "delete").await.is_empty(),
+            "no per-row delete entries"
+        );
+    }
+
+    /// One stale version (or one missing id) refuses the whole request:
+    /// `Conflict`, nothing deleted, nothing audited.
+    #[tokio::test]
+    async fn items_bulk_delete_with_a_stale_version_deletes_nothing() {
+        let state = app_state_as(Role::Editor).await;
+        let a = seed_item(&state, "A").await;
+        let b = seed_item(&state, "B").await;
+        let before = items_total(&state).await;
+
+        for target in [
+            bulk_ids(&[(a.id, Some(1)), (b.id, Some(7))]),
+            bulk_ids(&[(a.id, Some(1)), (i64::MAX, Some(1))]),
+        ] {
+            let result = items_bulk_delete_body(&state, target).await;
+            assert!(
+                matches!(result, Err(BantoError::Conflict { .. })),
+                "{result:?}"
+            );
+            assert_eq!(items_total(&state).await, before);
+        }
+        assert!(audit_rows_for(&state, "bulk_delete").await.is_empty());
+    }
+
+    /// More than `MAX_BULK_DELETE_ROWS` (or no target at all) is
+    /// `BadRequest`: nothing deleted, nothing audited.
+    #[tokio::test]
+    async fn items_bulk_delete_over_the_limit_or_empty_is_bad_request() {
+        let state = app_state_as(Role::Editor).await;
+        let before = items_total(&state).await;
+        let over = admin_template_core::items::MAX_BULK_DELETE_ROWS as i64 + 1;
+        let too_many: Vec<(i64, Option<i64>)> = (1..=over).map(|id| (id, Some(1))).collect();
+
+        for target in [bulk_ids(&too_many), bulk_ids(&[])] {
+            let result = items_bulk_delete_body(&state, target).await;
+            assert!(
+                matches!(result, Err(BantoError::BadRequest(_))),
+                "{result:?}"
+            );
+        }
+        assert_eq!(items_total(&state).await, before);
+        assert!(audit_rows_for(&state, "bulk_delete").await.is_empty());
     }
     // [scaffold:items] end
 

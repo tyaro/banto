@@ -67,6 +67,44 @@ describe('createTauriDataProvider', () => {
 		expect(invoke).toHaveBeenCalledWith('items_delete', { id: 1, version: 3 });
 	});
 
+	it('deleteMany calls `${resource}_bulk_delete` with { target } and returns { deleted } (Issue #713)', async () => {
+		const invoke = vi.fn().mockResolvedValue({ deleted: 2 });
+		const provider = createTauriDataProvider({ invoke });
+		const target = {
+			kind: 'ids' as const,
+			items: [
+				{ id: 1, version: 3 },
+				{ id: 2, version: 1 }
+			]
+		};
+
+		await expect(provider.deleteMany?.('items', target)).resolves.toEqual({ deleted: 2 });
+
+		expect(invoke).toHaveBeenCalledWith('items_bulk_delete', { target });
+	});
+
+	it('deleteMany keeps a conflict with its current record (Issue #713)', async () => {
+		const body = { kind: 'conflict', message: 'changed', current: { id: 2, version: 5 } };
+		const invoke = vi.fn().mockRejectedValue(body);
+		const provider = createTauriDataProvider({ invoke });
+		const target = {
+			kind: 'ids' as const,
+			items: [
+				{ id: 1, version: 3 },
+				{ id: 2, version: 1 }
+			]
+		};
+
+		try {
+			await provider.deleteMany?.('items', target);
+			expect.unreachable('expected a ProviderError to be thrown');
+		} catch (err) {
+			expect(isProviderError(err)).toBe(true);
+			if (isProviderError(err)) expect(err.body).toEqual(body);
+		}
+		expect(invoke).toHaveBeenCalledWith('items_bulk_delete', { target });
+	});
+
 	it('a rejected invoke() carrying a conflict ErrorBody keeps kind "conflict" (Issue #638)', async () => {
 		const body = { kind: 'conflict', message: 'changed', current: { id: 1, version: 2 } };
 		const invoke = vi.fn().mockRejectedValue(body);

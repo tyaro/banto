@@ -17,6 +17,10 @@ export type {
 
 export type {
 	DataProvider,
+	DeleteManyItem,
+	DeleteManyOptions,
+	DeleteManyResult,
+	DeleteManyTarget,
 	DeleteOneOptions,
 	AuthProvider,
 	AuthOperationResult,
