@@ -83,6 +83,22 @@ pub async fn sweep_item_attachments(attachments: &AttachmentsService, id: i64) -
     (attachments_removed > 0).then(|| json!({ "attachmentsRemoved": attachments_removed }))
 }
 
+/// [`sweep_item_attachments`] for every item of one bulk delete (Issue #713):
+/// the total as one `{ "attachmentsRemoved": n }` (`None` when nothing was
+/// removed). Best-effort per item, like the single sweep.
+pub async fn sweep_items_attachments(
+    attachments: &AttachmentsService,
+    ids: &[i64],
+) -> Option<Value> {
+    let mut attachments_removed: u64 = 0;
+    for id in ids {
+        if let Some(swept) = sweep_item_attachments(attachments, *id).await {
+            attachments_removed += swept["attachmentsRemoved"].as_u64().unwrap_or(0);
+        }
+    }
+    (attachments_removed > 0).then(|| json!({ "attachmentsRemoved": attachments_removed }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +148,34 @@ mod tests {
             Some(json!({ "attachmentsRemoved": 1 }))
         );
         assert_eq!(sweep_item_attachments(&attachments, 7).await, None);
+    }
+
+    #[tokio::test]
+    async fn bulk_sweep_sums_the_attachments_of_every_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::migrate_memory().await.unwrap();
+        let attachments = AttachmentsService::new(db, dir.path().join("attachments"));
+        for (resource_id, file_name) in [("7", "a.txt"), ("7", "b.txt"), ("9", "c.txt")] {
+            attachments
+                .upload(NewAttachment {
+                    resource: "items".to_string(),
+                    resource_id: resource_id.to_string(),
+                    file_name: file_name.to_string(),
+                    created_by: None,
+                    bytes: b"hello attachment".to_vec(),
+                })
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(
+            sweep_items_attachments(&attachments, &[7, 8, 9]).await,
+            Some(json!({ "attachmentsRemoved": 3 }))
+        );
+        assert_eq!(
+            sweep_items_attachments(&attachments, &[7, 8, 9]).await,
+            None
+        );
     }
 
     #[tokio::test]

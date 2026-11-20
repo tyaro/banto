@@ -19,7 +19,9 @@
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
 use admin_template_core::db::init_db_from_target;
-use admin_template_core::items::{ImportResult, ItemImportRow, ItemInput, ItemsService};
+use admin_template_core::items::{
+    BulkDeleteItem, BulkDeleteTarget, ImportResult, ItemImportRow, ItemInput, ItemsService,
+};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::users::{Role, UsersService};
 use banto_core::ListParams;
@@ -178,6 +180,75 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .await
         .expect("items list after delete");
     assert_eq!(after_delete.total_count, 1_000);
+
+    // --- items bulk delete (Issue #713): the Postgres arm of the transaction --
+    // (FOR UPDATE read of the ids, `DELETE ... RETURNING id` with the list's
+    // WHERE). Leaves the table at the 1,000 seeded rows again.
+    let mut bulk = Vec::new();
+    for name in ["一括A", "一括B", "一括C"] {
+        bulk.push(
+            items
+                .create(ItemInput {
+                    name: name.to_string(),
+                    price: 1,
+                    stock: 1,
+                    version: None,
+                })
+                .await
+                .expect("create bulk row"),
+        );
+    }
+    let ids_target = |last_version: i64| BulkDeleteTarget::Ids {
+        items: vec![
+            BulkDeleteItem {
+                id: bulk[0].id,
+                version: Some(1),
+            },
+            BulkDeleteItem {
+                id: bulk[1].id,
+                version: Some(last_version),
+            },
+        ],
+    };
+    let stale_bulk = items.bulk_delete(&ids_target(9)).await;
+    assert!(
+        matches!(stale_bulk, Err(banto_core::BantoError::Conflict { .. })),
+        "a stale version must refuse the whole bulk delete, got {stale_bulk:?}"
+    );
+    assert!(
+        items.get(bulk[0].id).await.is_ok(),
+        "the bulk delete is all-or-nothing"
+    );
+    assert_eq!(
+        items.bulk_delete(&ids_target(1)).await.expect("bulk ids"),
+        vec![bulk[0].id, bulk[1].id]
+    );
+    let filter_target = |expected_count: u64| BulkDeleteTarget::Filter {
+        filters: vec![banto_core::FilterState {
+            field: "name".to_string(),
+            op: banto_core::FilterOp::StartsWith,
+            value: serde_json::json!("一括"),
+        }],
+        search: Some("一括".to_string()),
+        expected_count,
+    };
+    let miscounted = items.bulk_delete(&filter_target(2)).await;
+    assert!(
+        matches!(miscounted, Err(banto_core::BantoError::Conflict { .. })),
+        "a changed count must refuse the bulk delete, got {miscounted:?}"
+    );
+    assert_eq!(
+        items
+            .bulk_delete(&filter_target(1))
+            .await
+            .expect("bulk filter"),
+        vec![bulk[2].id]
+    );
+    let after_bulk = items
+        .list(ListParams::default())
+        .await
+        .expect("items list after bulk delete");
+    assert_eq!(after_bulk.total_count, 1_000);
 
     // --- items import: round-trip + all-or-nothing rollback (spec M15) --------
     // Exercises `import_apply_postgres` - the hand-written Postgres mirror of

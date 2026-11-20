@@ -12,6 +12,8 @@
  * - `update`    -> `PUT {base}/api/{resource}/{id}` with the values body
  * - `deleteOne` -> `DELETE {base}/api/{resource}/{id}`, expects `204`
  *   (`?version=N` when `options.version` is given, Issue #638)
+ * - `deleteMany` -> `POST {base}/api/{resource}/bulk-delete` with the target
+ *   body, answers `{ deleted }` (Issue #713)
  *
  * Every request carries `X-Banto-Client: banto` (spec §11.2's CSRF
  * mitigation, `banto_server::csrf`) and, once logged in,
@@ -24,6 +26,8 @@ import type {
 	AuthProvider,
 	CredentialRevision,
 	DataProvider,
+	DeleteManyResult,
+	DeleteManyTarget,
 	DeleteOneOptions,
 	Identity,
 	ResolvedAuth
@@ -305,6 +309,15 @@ export function createHttpDataProvider(options: HttpDataProviderOptions): DataPr
 			return request<void>(`/api/${resource}/${id}${query}`, {
 				method: 'DELETE',
 				expectNoContent: true
+			});
+		},
+
+		// Issue #713: a POST, not a DELETE with a body (some clients/proxies
+		// drop one). A resource whose server has no such route answers 404/405.
+		deleteMany(resource: string, target: DeleteManyTarget): Promise<DeleteManyResult> {
+			return request<DeleteManyResult>(`/api/${resource}/bulk-delete`, {
+				method: 'POST',
+				body: target
 			});
 		}
 	};

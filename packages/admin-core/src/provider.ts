@@ -2,7 +2,7 @@
  * DataProvider/AuthProvider/Notifier contracts (spec §3.2, §3.3, §3.4).
  * UI-agnostic: no Svelte imports here.
  */
-import type { ListParams, ListResult } from './types';
+import type { FilterState, ListParams, ListResult } from './types';
 
 /**
  * Options of `DataProvider.deleteOne` (Issue #638). `version` is the
@@ -13,6 +13,38 @@ import type { ListParams, ListResult } from './types';
  */
 export interface DeleteOneOptions {
 	version?: number;
+}
+
+/** One record of an id-based `DataProvider.deleteMany` (Issue #713). */
+export interface DeleteManyItem {
+	id: string | number;
+	/**
+	 * The record's `version` as the caller last read it (the optimistic-lock
+	 * check of `DeleteOneOptions.version`). Always send it for a resource that
+	 * has one: left out, that record is deleted without the check.
+	 */
+	version?: number;
+}
+
+/**
+ * What `DataProvider.deleteMany` deletes (Issue #713).
+ *
+ * - `ids`: exactly these records. One stale `version`, or one record that is
+ *   already gone, rejects the whole call.
+ * - `filter`: every record the list's `filters` + `search` match (the same
+ *   conditions as `getList`), but only if that is exactly `expectedCount`
+ *   records - the count the user confirmed. Any other count rejects the call.
+ */
+export type DeleteManyTarget =
+	| { kind: 'ids'; items: DeleteManyItem[] }
+	| { kind: 'filter'; filters: FilterState[]; search?: string; expectedCount: number };
+
+/** Options of `DataProvider.deleteMany`. None yet; the parameter is reserved. */
+export type DeleteManyOptions = Record<string, never>;
+
+/** Result of `DataProvider.deleteMany`: how many records were deleted. */
+export interface DeleteManyResult {
+	deleted: number;
 }
 
 /**
@@ -28,6 +60,22 @@ export interface DataProvider {
 	create<T>(resource: string, values: Record<string, unknown>): Promise<T>;
 	update<T>(resource: string, id: string | number, values: Record<string, unknown>): Promise<T>;
 	deleteOne(resource: string, id: string | number, options?: DeleteOneOptions): Promise<void>;
+	/**
+	 * Delete many records in one all-or-nothing request (Issue #713).
+	 * OPTIONAL: a provider (or a resource's backend) may not support it, so
+	 * check `provider.deleteMany` before offering the operation.
+	 *
+	 * Rejects with a `conflict` `ProviderError` and deletes nothing when the
+	 * target no longer is what the caller saw: for `ids`, `body.current` is
+	 * the first stale record (absent when a record is already gone); for
+	 * `filter`, `body.current` is `{ count }`, the number of records matching
+	 * now. An empty target or one over the server's limit is `bad_request`.
+	 */
+	deleteMany?(
+		resource: string,
+		target: DeleteManyTarget,
+		options?: DeleteManyOptions
+	): Promise<DeleteManyResult>;
 }
 
 export interface Identity {

@@ -1081,6 +1081,252 @@ async fn items_create_and_delete_record_values_via_rest() {
     }
 }
 
+// --- Issue #713: POST /api/items/bulk-delete ---------------------------------
+
+async fn create_item_via_rest(router: &Router, token: &str, name: &str) -> i64 {
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items",
+                token,
+                json!({ "name": name, "price": 1, "stock": 1 }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    created["id"].as_i64().unwrap()
+}
+
+async fn items_total_via_rest(router: &Router, token: &str) -> u64 {
+    body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items/list",
+                token,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["totalCount"]
+        .as_u64()
+        .unwrap()
+}
+
+async fn audit_rows_via_rest(router: &Router, admin: &str) -> Vec<serde_json::Value> {
+    body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["rows"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+fn bulk_delete_entries(rows: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    rows.iter()
+        .filter(|r| r["action"] == "bulk_delete" && r["resource"] == "items")
+        .collect()
+}
+
+/// `viewer` cannot bulk-delete (editor+, same `RoleGuard` as the other
+/// `items` write routes): 403 `forbidden`, nothing deleted, one `denied` row.
+#[tokio::test]
+async fn viewer_cannot_bulk_delete_items_and_it_is_recorded_as_denied() {
+    let (router, _audit, admin, editor, viewer) = router_with_role_tokens_and_audit().await;
+    let id = create_item_via_rest(&router, &editor, "Kept").await;
+
+    let response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items/bulk-delete",
+            &viewer,
+            json!({ "kind": "ids", "items": [{ "id": id, "version": 1 }] }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(response).await["kind"], "forbidden");
+    assert_eq!(items_total_via_rest(&router, &editor).await, 1);
+
+    let rows = audit_rows_via_rest(&router, &admin).await;
+    let denied: Vec<_> = rows
+        .iter()
+        .filter(|r| r["action"] == "denied" && r["resource"] == "items")
+        .collect();
+    assert_eq!(denied.len(), 1, "{rows:?}");
+    assert_eq!(denied[0]["actorUsername"], "viewer");
+    assert_eq!(denied[0]["result"], "denied");
+    assert!(bulk_delete_entries(&rows).is_empty());
+}
+
+/// `editor` deletes the named rows; the whole request is ONE audit entry.
+#[tokio::test]
+async fn editor_can_bulk_delete_items_by_ids_as_one_audit_entry() {
+    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+    let a = create_item_via_rest(&router, &editor, "A").await;
+    let b = create_item_via_rest(&router, &editor, "B").await;
+    create_item_via_rest(&router, &editor, "Keep").await;
+
+    let response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items/bulk-delete",
+            &editor,
+            json!({ "kind": "ids", "items": [
+                { "id": a, "version": 1 },
+                { "id": b, "version": 1 }
+            ] }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await, json!({ "deleted": 2 }));
+    assert_eq!(items_total_via_rest(&router, &editor).await, 1);
+
+    let rows = audit_rows_via_rest(&router, &admin).await;
+    let entries = bulk_delete_entries(&rows);
+    assert_eq!(entries.len(), 1, "{rows:?}");
+    let entry = entries[0];
+    assert_eq!(entry["actorUsername"], "editor");
+    assert_eq!(entry["actorRole"], "editor");
+    assert_eq!(entry["origin"], "rest");
+    assert_eq!(entry["result"], "ok");
+    assert!(entry["entityId"].is_null());
+    let detail: serde_json::Value =
+        serde_json::from_str(entry["detail"].as_str().unwrap()).unwrap();
+    assert_eq!(detail, json!({ "mode": "ids", "count": 2, "ids": [a, b] }));
+    assert!(
+        !rows.iter().any(|r| r["action"] == "delete"),
+        "no per-row delete entries: {rows:?}"
+    );
+}
+
+/// One stale version (or one missing id) refuses the whole request: 409
+/// `conflict`, nothing deleted, nothing audited - like a single delete.
+#[tokio::test]
+async fn bulk_delete_with_a_stale_version_deletes_nothing_and_is_not_audited() {
+    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+    let a = create_item_via_rest(&router, &editor, "A").await;
+    let b = create_item_via_rest(&router, &editor, "B").await;
+
+    for items in [
+        json!([{ "id": a, "version": 1 }, { "id": b, "version": 7 }]),
+        json!([{ "id": a, "version": 1 }, { "id": 9_999, "version": 1 }]),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items/bulk-delete",
+                &editor,
+                json!({ "kind": "ids", "items": items }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(body_json(response).await["kind"], "conflict");
+        assert_eq!(items_total_via_rest(&router, &editor).await, 2);
+    }
+    let rows = audit_rows_via_rest(&router, &admin).await;
+    assert!(bulk_delete_entries(&rows).is_empty(), "{rows:?}");
+}
+
+/// A filter target deletes only when it matches exactly the confirmed count;
+/// the audit entry keeps the conditions.
+#[tokio::test]
+async fn bulk_delete_by_filter_checks_the_confirmed_count() {
+    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+    let a = create_item_via_rest(&router, &editor, "Old A").await;
+    let b = create_item_via_rest(&router, &editor, "Old B").await;
+    create_item_via_rest(&router, &editor, "New").await;
+    let target = |expected_count: u64| {
+        json!({
+            "kind": "filter",
+            "filters": [{ "field": "name", "op": "contains", "value": "Old" }],
+            "search": "old",
+            "expectedCount": expected_count
+        })
+    };
+
+    let mismatch = router
+        .clone()
+        .oneshot(post_json_auth("/api/items/bulk-delete", &editor, target(3)))
+        .await
+        .unwrap();
+    assert_eq!(mismatch.status(), StatusCode::CONFLICT);
+    let body = body_json(mismatch).await;
+    assert_eq!(body["kind"], "conflict");
+    assert_eq!(body["current"], json!({ "count": 2 }));
+    assert_eq!(items_total_via_rest(&router, &editor).await, 3);
+    assert!(bulk_delete_entries(&audit_rows_via_rest(&router, &admin).await).is_empty());
+
+    let ok = router
+        .clone()
+        .oneshot(post_json_auth("/api/items/bulk-delete", &editor, target(2)))
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), StatusCode::OK);
+    assert_eq!(body_json(ok).await, json!({ "deleted": 2 }));
+    assert_eq!(items_total_via_rest(&router, &editor).await, 1);
+
+    let rows = audit_rows_via_rest(&router, &admin).await;
+    let entries = bulk_delete_entries(&rows);
+    assert_eq!(entries.len(), 1, "{rows:?}");
+    let detail: serde_json::Value =
+        serde_json::from_str(entries[0]["detail"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        detail,
+        json!({
+            "mode": "filter",
+            "count": 2,
+            "ids": [a, b],
+            "filters": [{ "field": "name", "op": "contains", "value": "Old" }],
+            "search": "old"
+        })
+    );
+}
+
+/// More than `MAX_BULK_DELETE_ROWS` (or no target at all) is a 400
+/// `bad_request`: nothing deleted, nothing audited.
+#[tokio::test]
+async fn bulk_delete_over_the_limit_or_empty_is_bad_request() {
+    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+    create_item_via_rest(&router, &editor, "Kept").await;
+    let over = crate::items::MAX_BULK_DELETE_ROWS as i64 + 1;
+    let too_many: Vec<serde_json::Value> = (1..=over)
+        .map(|id| json!({ "id": id, "version": 1 }))
+        .collect();
+
+    for target in [
+        json!({ "kind": "ids", "items": too_many }),
+        json!({ "kind": "ids", "items": [] }),
+        json!({ "kind": "filter", "filters": [], "expectedCount": over }),
+        json!({ "kind": "filter", "filters": [], "expectedCount": 0 }),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(post_json_auth("/api/items/bulk-delete", &editor, target))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(body_json(response).await["kind"], "bad_request");
+    }
+    assert_eq!(items_total_via_rest(&router, &editor).await, 1);
+    let rows = audit_rows_via_rest(&router, &admin).await;
+    assert!(bulk_delete_entries(&rows).is_empty(), "{rows:?}");
+}
+
 // [scaffold:items] end
 
 #[tokio::test]

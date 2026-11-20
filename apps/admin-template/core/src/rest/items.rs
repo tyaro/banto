@@ -127,6 +127,42 @@ async fn items_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /api/items/bulk-delete` (Issue #713): delete many items in one
+/// all-or-nothing transaction, `editor`+ (same `ItemsWriteState`/`RoleGuard`
+/// as the other write routes). The body is a
+/// [`crate::items::BulkDeleteTarget`] (`{ kind: "ids", items }` or
+/// `{ kind: "filter", filters, search?, expectedCount }`), the answer
+/// `{ deleted }`. A stale version, a missing id or a changed count is a `409`
+/// `conflict` with nothing deleted and - like a single delete's conflict -
+/// nothing audited. A success writes ONE `action: "bulk_delete"` entry
+/// (no `entity_id`; detail: [`crate::items::item_bulk_delete_detail`]), not
+/// one per row. The Tauri `items_bulk_delete` command takes the same target.
+async fn items_bulk_delete(
+    State(state): State<ItemsWriteState>,
+    headers: HeaderMap,
+    Json(target): Json<crate::items::BulkDeleteTarget>,
+) -> Result<Json<crate::items::BulkDeleteResult>, ApiError> {
+    let deleted = state.items.bulk_delete(&target).await?;
+    // Bulk twin of the items_delete sweep (attachments-plan §3.8): remove the
+    // attachments left pointing at the now-deleted records (best-effort).
+    let sweep =
+        crate::attachment_wiring::sweep_items_attachments(&state.attachments, &deleted).await;
+    let detail = crate::items::item_bulk_delete_detail(&target, &deleted, sweep);
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "bulk_delete",
+        "items",
+        None,
+        Some(detail),
+    )
+    .await;
+    Ok(Json(crate::items::BulkDeleteResult {
+        deleted: deleted.len(),
+    }))
+}
+
 /// `POST /api/items/import` (spec M15): bulk create/update, `editor`+
 /// (same `ItemsWriteState`/`RoleGuard` as `items_create`/`update`/`delete`
 /// above). Unlike those, a single `action: "import"` audit entry is written
@@ -208,6 +244,7 @@ fn items_write_router(
             axum::routing::put(items_update).delete(items_delete),
         )
         .route("/api/items/import", post(items_import))
+        .route("/api/items/bulk-delete", post(items_bulk_delete))
         .with_state(state)
         .layer(axum::extract::DefaultBodyLimit::max(
             crate::items::MAX_IMPORT_ROWS * IMPORT_BODY_LIMIT_BYTES_PER_ROW,

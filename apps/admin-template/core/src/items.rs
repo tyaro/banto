@@ -217,6 +217,120 @@ pub struct ImportResult {
 /// (spec M14-review M-14; see `rest::items::items_write_router`).
 pub(crate) const MAX_IMPORT_ROWS: usize = 10_000;
 
+/// Upper bound on rows removed by a single [`ItemsService::bulk_delete`] call
+/// (Issue #713): the whole request is one transaction, and a destructive
+/// request stays small enough to review in the audit log. Applies to the
+/// number of ids, and to `expectedCount` of a filter target. Smaller than
+/// [`MAX_IMPORT_ROWS`] on purpose: an import can be re-run, a delete cannot.
+pub const MAX_BULK_DELETE_ROWS: usize = 1_000;
+
+/// How many ids one `IN (...)` list of [`ItemsService::bulk_delete`] carries
+/// (well under SQLite's bind-parameter limit).
+const BULK_DELETE_CHUNK: usize = 500;
+
+/// How many deleted ids the audit detail of a bulk delete lists
+/// ([`item_bulk_delete_detail`]); the rest is only counted.
+const BULK_DELETE_AUDIT_IDS: usize = 100;
+
+/// Byte budget of the filter conditions kept in the audit detail of a bulk
+/// delete; larger ones are replaced by their count.
+const BULK_DELETE_AUDIT_FILTER_BYTES: usize = 2_000;
+
+/// Character budget of the search term kept in the same audit detail.
+const BULK_DELETE_AUDIT_SEARCH_CHARS: usize = 200;
+
+/// One row of an id-based bulk delete (Issue #713). `version` is the same
+/// optimistic-lock check as [`ItemsService::delete_returning_previous`]'s:
+/// `None` skips the check for that row.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BulkDeleteItem {
+    pub id: i64,
+    #[serde(default)]
+    pub version: Option<i64>,
+}
+
+/// What [`ItemsService::bulk_delete`] removes (Issue #713). The wire shape
+/// (`kind: "ids" | "filter"`) mirrors `DeleteManyTarget` in
+/// `packages/admin-core/src/provider.ts`.
+///
+/// - `Ids`: exactly these rows, each checked against its `version`.
+/// - `Filter`: every row the list's filters + quick search match (the same
+///   `WHERE` as [`ItemsService::list`]), but only if that is exactly
+///   `expected_count` rows - the count the user confirmed.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum BulkDeleteTarget {
+    Ids {
+        items: Vec<BulkDeleteItem>,
+    },
+    Filter {
+        filters: Vec<banto_core::FilterState>,
+        #[serde(default)]
+        search: Option<String>,
+        #[serde(rename = "expectedCount")]
+        expected_count: u64,
+    },
+}
+
+/// Wire result of a bulk delete (`{ deleted }`), the same on REST and Tauri.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BulkDeleteResult {
+    pub deleted: usize,
+}
+
+/// Audit `detail` of one bulk delete (Issue #713; one entry per request,
+/// `action: "bulk_delete"`, no `entity_id`). `deleted` is what
+/// [`ItemsService::bulk_delete`] returned.
+///
+/// - `mode` (`"ids"` / `"filter"`) and `count` are always there.
+/// - `ids`: the deleted ids, at most [`BULK_DELETE_AUDIT_IDS`] of them;
+///   `idsTruncated: true` when there were more.
+/// - filter mode adds the conditions: `filters` as sent (or, past
+///   [`BULK_DELETE_AUDIT_FILTER_BYTES`], `filterCount` +
+///   `filtersTruncated: true`) and `search` (trimmed, cut at
+///   [`BULK_DELETE_AUDIT_SEARCH_CHARS`] characters with a trailing `…`).
+/// - `attachmentsRemoved` as in [`item_delete_detail`].
+///
+/// The row values are not snapshotted (unlike a single delete's `changes`):
+/// up to [`MAX_BULK_DELETE_ROWS`] rows would not fit one audit row.
+pub fn item_bulk_delete_detail(
+    target: &BulkDeleteTarget,
+    deleted: &[i64],
+    sweep: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let listed = &deleted[..deleted.len().min(BULK_DELETE_AUDIT_IDS)];
+    let mut detail = serde_json::json!({ "count": deleted.len(), "ids": listed });
+    if listed.len() < deleted.len() {
+        detail["idsTruncated"] = serde_json::Value::Bool(true);
+    }
+    match target {
+        BulkDeleteTarget::Ids { .. } => detail["mode"] = "ids".into(),
+        BulkDeleteTarget::Filter {
+            filters, search, ..
+        } => {
+            detail["mode"] = "filter".into();
+            let conditions = serde_json::to_value(filters).unwrap_or_default();
+            if conditions.to_string().len() <= BULK_DELETE_AUDIT_FILTER_BYTES {
+                detail["filters"] = conditions;
+            } else {
+                detail["filterCount"] = filters.len().into();
+                detail["filtersTruncated"] = serde_json::Value::Bool(true);
+            }
+            if let Some(term) = search.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                let mut kept: String = term.chars().take(BULK_DELETE_AUDIT_SEARCH_CHARS).collect();
+                if kept.len() < term.len() {
+                    kept.push('…');
+                }
+                detail["search"] = kept.into();
+            }
+        }
+    }
+    if let Some(count) = sweep.and_then(|s| s.get("attachmentsRemoved").cloned()) {
+        detail["attachmentsRemoved"] = count;
+    }
+    detail
+}
+
 /// Format every field violation on one import row into a single
 /// human-readable string (`ImportRowError::message` is one `String`, not a
 /// `Vec<FieldError>`, since the import preview shows one line per row).
@@ -287,6 +401,142 @@ fn local_today() -> String {
         .date_naive()
         .format("%Y-%m-%d")
         .to_string()
+}
+
+/// The conflict of an id-based bulk delete that names a row which is gone
+/// (Issue #713): somebody else deleted it first, so the selection the user
+/// confirmed no longer exists. No `current` (there is no row to show).
+const BULK_MISSING_MESSAGE: &str = "削除対象の一部が既に削除されています";
+
+/// The conflict of a filter-based bulk delete whose conditions no longer
+/// match the confirmed number of rows. `current` is `{ "count": <now> }`.
+fn bulk_count_conflict(expected: u64, actual: u64) -> BantoError {
+    BantoError::Conflict {
+        message: format!("削除対象の件数が変わりました（確認時 {expected} 件、現在 {actual} 件）"),
+        current: Some(serde_json::json!({ "count": actual })),
+    }
+}
+
+/// Transaction body of [`ItemsService::bulk_delete`], expanded once per
+/// backend (the `QueryBuilder`/`list_query` types are per-backend, like
+/// [`ItemsService::list`]). Every early `return Err(..)` drops the
+/// transaction, which rolls it back: nothing is deleted unless the commit at
+/// the end runs.
+macro_rules! bulk_delete_in_tx {
+    ($pool:expr, $begin:expr, $db:ty, $list_query:ident, $lock:expr, $target:expr) => {{
+        let mut tx = $pool
+            .begin_with($begin)
+            .await
+            .map_err(banto_storage::storage_error)?;
+        let deleted: Vec<i64> = match $target {
+            BulkDeleteTarget::Ids { items } => {
+                // Read (and, on PostgreSQL, lock) every row first, so one
+                // stale or missing row refuses the whole request.
+                for chunk in items.chunks(BULK_DELETE_CHUNK) {
+                    let mut select: QueryBuilder<$db> = QueryBuilder::new(
+                        "SELECT id, name, price, stock, updated_at, version FROM items WHERE id IN (",
+                    );
+                    {
+                        let mut ids = select.separated(", ");
+                        for entry in chunk {
+                            ids.push_bind(entry.id);
+                        }
+                    }
+                    select.push(")").push($lock);
+                    let current: Vec<Item> = select
+                        .build_query_as::<Item>()
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
+                    for entry in chunk {
+                        let Some(row) = current.iter().find(|row| row.id == entry.id) else {
+                            return Err(BantoError::Conflict {
+                                message: BULK_MISSING_MESSAGE.to_string(),
+                                current: None,
+                            });
+                        };
+                        check_version(entry.version, row)?;
+                    }
+                }
+                let mut removed: u64 = 0;
+                for chunk in items.chunks(BULK_DELETE_CHUNK) {
+                    let mut delete: QueryBuilder<$db> =
+                        QueryBuilder::new("DELETE FROM items WHERE id IN (");
+                    {
+                        let mut ids = delete.separated(", ");
+                        for entry in chunk {
+                            ids.push_bind(entry.id);
+                        }
+                    }
+                    delete.push(")");
+                    removed += delete
+                        .build()
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?
+                        .rows_affected();
+                }
+                if removed != items.len() as u64 {
+                    // Unreachable while the rows are locked; never commit a
+                    // delete that is not the one that was checked.
+                    return Err(BantoError::Storage(format!(
+                        "bulk delete removed {removed} of {} rows",
+                        items.len()
+                    )));
+                }
+                items.iter().map(|entry| entry.id).collect()
+            }
+            BulkDeleteTarget::Filter {
+                filters,
+                search,
+                expected_count,
+            } => {
+                let columns = column_map();
+                let params = ListParams {
+                    filters: filters.clone(),
+                    search: search.clone(),
+                    ..ListParams::default()
+                };
+                // Count first: a condition that matches far more rows than
+                // confirmed is refused without deleting (and undoing) them.
+                let mut count: QueryBuilder<$db> = QueryBuilder::new("SELECT COUNT(*) FROM items");
+                banto_storage::list_query::$list_query::append_list_where(
+                    &mut count, &columns, &params,
+                )?;
+                let matched: i64 = count
+                    .build_query_scalar()
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                if matched as u64 != *expected_count {
+                    return Err(bulk_count_conflict(*expected_count, matched as u64));
+                }
+                let mut delete: QueryBuilder<$db> = QueryBuilder::new("DELETE FROM items");
+                banto_storage::list_query::$list_query::append_list_where(
+                    &mut delete,
+                    &columns,
+                    &params,
+                )?;
+                delete.push(" RETURNING id");
+                let mut ids: Vec<i64> = delete
+                    .build_query_scalar()
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                // PostgreSQL READ COMMITTED: a row committed between the
+                // count and the delete changes what the delete matched.
+                // Compare again and roll back rather than delete a different
+                // number of rows than the user confirmed.
+                if ids.len() as u64 != *expected_count {
+                    return Err(bulk_count_conflict(*expected_count, ids.len() as u64));
+                }
+                ids.sort_unstable();
+                ids
+            }
+        };
+        tx.commit().await.map_err(banto_storage::storage_error)?;
+        deleted
+    }};
 }
 
 /// Service layer for the `items` resource (spec §10): the same methods a
@@ -679,6 +929,69 @@ impl ItemsService {
         let item = item.ok_or_else(missing)?;
         self.notify_changed();
         Ok(item)
+    }
+
+    /// Delete many rows in ONE transaction, all or nothing (Issue #713).
+    /// Returns the deleted ids (ascending for a filter target, request order
+    /// for an id target) so the wiring layer can sweep attachments and write
+    /// its single audit entry.
+    ///
+    /// - `Ids`: every row is read first in the transaction (SQLite BEGIN
+    ///   IMMEDIATE / PostgreSQL FOR UPDATE). A row that is gone, or whose
+    ///   stored version differs from a given `version`, is
+    ///   `BantoError::Conflict` (`current`: the stale row, none for a missing
+    ///   one) and nothing is deleted. A row without `version` is not checked,
+    ///   like a single delete.
+    /// - `Filter`: the rows the conditions match are counted with the same
+    ///   `WHERE` as [`ItemsService::list`]; a count other than
+    ///   `expected_count` is `BantoError::Conflict` (`current`:
+    ///   `{ "count": <now> }`) and nothing is deleted. An unknown filter
+    ///   field is `BadRequest`, as in `list`.
+    ///
+    /// `BadRequest` before any SQL: no target rows (an empty id list or
+    /// `expected_count` 0 - a caller bug, and nothing worth an audit entry),
+    /// more than [`MAX_BULK_DELETE_ROWS`], or the same id twice.
+    ///
+    /// Emits one `resource_changed` event for the whole request.
+    pub async fn bulk_delete(&self, target: &BulkDeleteTarget) -> Result<Vec<i64>, BantoError> {
+        let requested = match target {
+            BulkDeleteTarget::Ids { items } => {
+                let mut seen = std::collections::HashSet::with_capacity(items.len());
+                if let Some(duplicate) = items.iter().find(|entry| !seen.insert(entry.id)) {
+                    return Err(BantoError::BadRequest(format!(
+                        "同じ id が2回指定されています: {}",
+                        duplicate.id
+                    )));
+                }
+                items.len() as u64
+            }
+            BulkDeleteTarget::Filter { expected_count, .. } => *expected_count,
+        };
+        if requested == 0 {
+            return Err(BantoError::BadRequest("削除対象がありません".to_string()));
+        }
+        if requested > MAX_BULK_DELETE_ROWS as u64 {
+            return Err(BantoError::BadRequest(format!(
+                "一度に削除できるのは{MAX_BULK_DELETE_ROWS}件までです"
+            )));
+        }
+
+        let deleted = match &self.db {
+            Db::Sqlite(pool) => {
+                bulk_delete_in_tx!(pool, "BEGIN IMMEDIATE", Sqlite, sqlite, "", target)
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => bulk_delete_in_tx!(
+                pool,
+                "BEGIN ISOLATION LEVEL READ COMMITTED",
+                sqlx::Postgres,
+                postgres,
+                " FOR UPDATE",
+                target
+            ),
+        };
+        self.notify_changed();
+        Ok(deleted)
     }
 
     /// Bulk create/update (spec M15, `docs/roadmap.md`): each row carrying
@@ -1940,5 +2253,299 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(some.version, Some(7));
+    }
+
+    // --- Issue #713: bulk delete -------------------------------------------
+
+    fn ids_target(items: &[(i64, Option<i64>)]) -> BulkDeleteTarget {
+        BulkDeleteTarget::Ids {
+            items: items
+                .iter()
+                .map(|&(id, version)| BulkDeleteItem { id, version })
+                .collect(),
+        }
+    }
+
+    fn name_filter(term: &str, expected_count: u64) -> BulkDeleteTarget {
+        BulkDeleteTarget::Filter {
+            filters: vec![FilterState {
+                field: "name".to_string(),
+                op: FilterOp::Contains,
+                value: json!(term),
+            }],
+            search: None,
+            expected_count,
+        }
+    }
+
+    async fn total(svc: &ItemsService) -> u64 {
+        svc.list(ListParams::default()).await.unwrap().total_count
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_by_ids_removes_exactly_those_rows_with_one_event() {
+        let svc = service().await;
+        let a = svc.create(input("A", None)).await.unwrap();
+        let b = svc.create(input("B", None)).await.unwrap();
+        let keep = svc.create(input("Keep", None)).await.unwrap();
+        let (tx, mut rx) = broadcast::channel(8);
+        let svc = svc.with_events(tx);
+
+        // `b` carries no version: not checked, like a single delete.
+        let deleted = svc
+            .bulk_delete(&ids_target(&[(a.id, Some(1)), (b.id, None)]))
+            .await
+            .unwrap();
+        assert_eq!(deleted, vec![a.id, b.id]);
+        assert_eq!(total(&svc).await, 1);
+        assert!(svc.get(keep.id).await.is_ok());
+        rx.try_recv().expect("one event for the whole request");
+        assert!(rx.try_recv().is_err(), "not one event per row");
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_by_ids_is_all_or_nothing() {
+        let svc = service().await;
+        let a = svc.create(input("A", None)).await.unwrap();
+        let b = svc.create(input("B", None)).await.unwrap();
+        let b = svc.update(b.id, input("B2", Some(1))).await.unwrap();
+        assert_eq!(b.version, 2);
+        let (tx, mut rx) = broadcast::channel(8);
+        let svc = svc.with_events(tx);
+
+        // A stale version on the LAST row still refuses the first one.
+        let current = conflict_current(
+            svc.bulk_delete(&ids_target(&[(a.id, Some(1)), (b.id, Some(1))]))
+                .await,
+        );
+        assert_eq!(current["id"], b.id);
+        assert_eq!(current["version"], 2);
+        assert_eq!(total(&svc).await, 2);
+
+        // A row that is already gone is a conflict too (no `current`).
+        let missing = svc
+            .bulk_delete(&ids_target(&[(a.id, Some(1)), (9_999, Some(1))]))
+            .await;
+        assert!(
+            matches!(missing, Err(BantoError::Conflict { current: None, .. })),
+            "{missing:?}"
+        );
+        assert_eq!(total(&svc).await, 2);
+        assert!(rx.try_recv().is_err(), "a conflict must not emit an event");
+
+        svc.bulk_delete(&ids_target(&[(a.id, Some(1)), (b.id, Some(2))]))
+            .await
+            .unwrap();
+        assert_eq!(total(&svc).await, 0);
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_by_ids_spans_more_than_one_chunk() {
+        let svc = service().await;
+        let rows = (0..BULK_DELETE_CHUNK + 100)
+            .map(|n| ItemImportRow {
+                id: None,
+                name: format!("Row {n}"),
+                price: 1,
+                stock: 1,
+            })
+            .collect();
+        assert!(svc.import(rows).await.unwrap().errors.is_empty());
+        let keep = svc.create(input("Keep", None)).await.unwrap();
+        let all = svc.list(ListParams::default()).await.unwrap().rows;
+        let target: Vec<(i64, Option<i64>)> = all
+            .iter()
+            .filter(|row| row.id != keep.id)
+            .map(|row| (row.id, Some(row.version)))
+            .collect();
+
+        let deleted = svc.bulk_delete(&ids_target(&target)).await.unwrap();
+        assert_eq!(deleted.len(), BULK_DELETE_CHUNK + 100);
+        assert_eq!(total(&svc).await, 1);
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_by_filter_requires_the_confirmed_count() {
+        let svc = service().await;
+        let a = svc.create(input("Old A", None)).await.unwrap();
+        let b = svc.create(input("Old B", None)).await.unwrap();
+        svc.create(input("New", None)).await.unwrap();
+        let (tx, mut rx) = broadcast::channel(8);
+        let svc = svc.with_events(tx);
+
+        // Fewer and more than confirmed are both refused.
+        for wrong in [1, 3] {
+            let current = conflict_current(svc.bulk_delete(&name_filter("Old", wrong)).await);
+            assert_eq!(current, json!({ "count": 2 }));
+            assert_eq!(total(&svc).await, 3);
+        }
+        assert!(rx.try_recv().is_err(), "a conflict must not emit an event");
+
+        let deleted = svc.bulk_delete(&name_filter("Old", 2)).await.unwrap();
+        assert_eq!(deleted, vec![a.id, b.id]);
+        assert_eq!(total(&svc).await, 1);
+        rx.try_recv().expect("one event for the whole request");
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// The filter target matches what `list` shows: filters AND quick search,
+    /// and an unknown field is refused rather than ignored.
+    #[tokio::test]
+    async fn bulk_delete_by_filter_uses_the_list_where() {
+        let svc = service().await;
+        for (name, price) in [("Tea red", 5), ("Tea green", 50), ("Coffee", 5)] {
+            svc.create(ItemInput {
+                name: name.to_string(),
+                price,
+                stock: 1,
+                version: None,
+            })
+            .await
+            .unwrap();
+        }
+        let cheap_tea = || ListParams {
+            filters: vec![FilterState {
+                field: "price".to_string(),
+                op: FilterOp::Lt,
+                value: json!(10),
+            }],
+            search: Some("tea".to_string()),
+            ..ListParams::default()
+        };
+        let listed = svc.list(cheap_tea()).await.unwrap();
+        assert_eq!(listed.total_count, 1);
+
+        let params = cheap_tea();
+        let deleted = svc
+            .bulk_delete(&BulkDeleteTarget::Filter {
+                filters: params.filters,
+                search: params.search,
+                expected_count: listed.total_count,
+            })
+            .await
+            .unwrap();
+        assert_eq!(deleted, vec![listed.rows[0].id]);
+        assert_eq!(total(&svc).await, 2);
+
+        let unknown = svc
+            .bulk_delete(&BulkDeleteTarget::Filter {
+                filters: vec![FilterState {
+                    field: "nope".to_string(),
+                    op: FilterOp::Eq,
+                    value: json!(1),
+                }],
+                search: None,
+                expected_count: 2,
+            })
+            .await;
+        assert!(
+            matches!(unknown, Err(BantoError::BadRequest(_))),
+            "{unknown:?}"
+        );
+        assert_eq!(total(&svc).await, 2);
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_rejects_empty_oversized_and_duplicate_targets() {
+        let svc = service().await;
+        let a = svc.create(input("A", None)).await.unwrap();
+        let over = MAX_BULK_DELETE_ROWS as i64 + 1;
+        let too_many: Vec<(i64, Option<i64>)> = (1..=over).map(|id| (id, None)).collect();
+        let no_filter = |expected_count| BulkDeleteTarget::Filter {
+            filters: Vec::new(),
+            search: None,
+            expected_count,
+        };
+        for target in [
+            ids_target(&[]),
+            ids_target(&too_many),
+            ids_target(&[(a.id, Some(1)), (a.id, Some(1))]),
+            no_filter(0),
+            no_filter(over as u64),
+        ] {
+            let result = svc.bulk_delete(&target).await;
+            assert!(
+                matches!(result, Err(BantoError::BadRequest(_))),
+                "{result:?}"
+            );
+        }
+        assert_eq!(total(&svc).await, 1);
+    }
+
+    #[test]
+    fn bulk_delete_target_wire_shape() {
+        let ids: BulkDeleteTarget = serde_json::from_value(json!({
+            "kind": "ids", "items": [{ "id": 1, "version": 3 }, { "id": 2 }]
+        }))
+        .unwrap();
+        assert_eq!(ids, ids_target(&[(1, Some(3)), (2, None)]));
+        let filter: BulkDeleteTarget = serde_json::from_value(json!({
+            "kind": "filter",
+            "filters": [{ "field": "name", "op": "contains", "value": "Old" }],
+            "expectedCount": 2
+        }))
+        .unwrap();
+        assert_eq!(filter, name_filter("Old", 2));
+        // A filter target without `filters` or `expectedCount` is malformed,
+        // never "everything".
+        for bad in [
+            json!({ "kind": "filter", "expectedCount": 2 }),
+            json!({ "kind": "filter", "filters": [] }),
+            json!({ "kind": "all" }),
+        ] {
+            assert!(serde_json::from_value::<BulkDeleteTarget>(bad).is_err());
+        }
+        assert_eq!(
+            serde_json::to_value(BulkDeleteResult { deleted: 2 }).unwrap(),
+            json!({ "deleted": 2 })
+        );
+    }
+
+    #[test]
+    fn bulk_delete_detail_bounds_ids_and_conditions() {
+        assert_eq!(
+            item_bulk_delete_detail(
+                &ids_target(&[(1, Some(1)), (2, None)]),
+                &[1, 2],
+                Some(json!({ "attachmentsRemoved": 3 })),
+            ),
+            json!({ "mode": "ids", "count": 2, "ids": [1, 2], "attachmentsRemoved": 3 })
+        );
+
+        let many: Vec<i64> = (1..=BULK_DELETE_AUDIT_IDS as i64 + 1).collect();
+        let truncated = item_bulk_delete_detail(&ids_target(&[]), &many, None);
+        assert_eq!(truncated["count"], many.len());
+        assert_eq!(
+            truncated["ids"].as_array().unwrap().len(),
+            BULK_DELETE_AUDIT_IDS
+        );
+        assert_eq!(truncated["idsTruncated"], true);
+        assert!(truncated.get("changes").is_none(), "`changes` is reserved");
+
+        let mut target = name_filter("Old", 2);
+        if let BulkDeleteTarget::Filter { search, .. } = &mut target {
+            *search = Some(format!(
+                "  {}  ",
+                "あ".repeat(BULK_DELETE_AUDIT_SEARCH_CHARS + 1)
+            ));
+        }
+        let detail = item_bulk_delete_detail(&target, &[4, 5], None);
+        assert_eq!(detail["mode"], "filter");
+        assert_eq!(
+            detail["filters"],
+            json!([{ "field": "name", "op": "contains", "value": "Old" }])
+        );
+        assert_eq!(
+            detail["search"],
+            format!("{}…", "あ".repeat(BULK_DELETE_AUDIT_SEARCH_CHARS))
+        );
+        assert!(detail.get("idsTruncated").is_none());
+
+        let huge = name_filter(&"x".repeat(BULK_DELETE_AUDIT_FILTER_BYTES), 1);
+        let detail = item_bulk_delete_detail(&huge, &[4], None);
+        assert!(detail.get("filters").is_none());
+        assert_eq!(detail["filterCount"], 1);
+        assert_eq!(detail["filtersTruncated"], true);
+        assert!(detail.get("search").is_none());
     }
 }
