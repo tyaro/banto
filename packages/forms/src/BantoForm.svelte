@@ -8,9 +8,10 @@
 	 * by `provideFieldInputs` (context) or the `fieldInputs` prop (which wins,
 	 * per type), else the native input (date-time-pickers §5.7, D1-a / D3-a).
 	 */
-	import type { Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 	import { isTemporalType, type FieldDef, type FormSchema, type FormAppearance } from './types';
 	import type { FormStore } from './store.svelte';
+	import { focusFallbackName, layoutOf } from './layout';
 	import { getFieldInputs, type FieldInputs } from './fieldInputs';
 	import TextField from './fields/TextField.svelte';
 	import PasswordField from './fields/PasswordField.svelte';
@@ -52,10 +53,50 @@
 	// store keys; indices avoid whitespace and input/error ID collisions.
 	const formId = $props.id();
 
+	const groups = $derived(layoutOf(schema, store.values));
+
+	// A field that `visibleWhen` hides takes its focused control out of the
+	// DOM, which would drop focus to <body>. Remember which field holds focus
+	// and, if it goes away, move focus to a neighbour instead.
+	let formEl: HTMLFormElement | undefined;
+	let focusedName: string | null = null;
+
+	function trackFocus(event: FocusEvent) {
+		const field = (event.target as Element | null)?.closest<HTMLElement>('[data-field]');
+		focusedName = field?.dataset.field ?? null;
+	}
+
+	function releaseFocus(event: FocusEvent) {
+		if (!focusedName) return;
+		// Focus leaving for good: the field is still in the DOM afterwards.
+		// A field removed while it had focus is gone by then; keep its name.
+		const field = (event.target as Element | null)?.closest('[data-field]');
+		queueMicrotask(() => {
+			if (field?.isConnected) focusedName = null;
+		});
+	}
+
+	$effect(() => {
+		const visible = new Set(groups.flatMap((group) => group.fields.map((f) => f.def.name)));
+		untrack(() => {
+			const lost = focusedName;
+			if (!lost || visible.has(lost)) return;
+			focusedName = null;
+			if (document.activeElement && document.activeElement !== document.body) return;
+			const target = focusFallbackName(schema, store.values, lost);
+			void tick().then(() => {
+				const at = schema.fields.findIndex((d) => d.name === target);
+				const el = at >= 0 ? document.getElementById(`${formId}-field-${at}`) : null;
+				(el ?? formEl?.querySelector<HTMLElement>('button[type="submit"]'))?.focus();
+			});
+		});
+	});
+
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
 		if (!store.validateAll()) return;
-		await onSubmit(store.values);
+		// Hidden (`visibleWhen`) fields are not part of what is submitted.
+		await onSubmit(store.submitValues);
 	}
 
 	function fieldComponent(def: FieldDef) {
@@ -76,74 +117,111 @@
 	}
 </script>
 
-<form onsubmit={handleSubmit} novalidate>
-	{#each schema.fields as def, index (def.name)}
-		{@const Field = fieldComponent(def)}
-		{@const inputId = `${formId}-field-${index}`}
-		{@const errorId = `${formId}-error-${index}`}
-		{@const underline = appearance === 'underline' && def.type !== 'checkbox'}
-		{@const temporalInput = isTemporalType(def.type) ? inputs[def.type] : undefined}
-		{@const injected = !!temporalInput}
-		{#snippet control()}
-			{#if isTemporalType(def.type)}
-				<DateField
-					{def}
-					class={underline ? 'banto-field-control' : undefined}
-					id={inputId}
-					aria-describedby={store.errors[def.name] ? errorId : undefined}
-					value={store.values[def.name]}
-					error={store.errors[def.name]}
-					disabled={submitting}
-					onInput={(value: unknown) => store.setValue(def.name, value)}
-					onBlur={() => store.touch(def.name)}
-					input={temporalInput}
-				/>
-			{:else}
-				<Field
-					{def}
-					class={underline ? 'banto-field-control' : undefined}
-					id={inputId}
-					aria-describedby={store.errors[def.name] ? errorId : undefined}
-					value={store.values[def.name]}
-					error={store.errors[def.name]}
-					disabled={submitting}
-					onInput={(value: unknown) => store.setValue(def.name, value)}
-					onBlur={() => store.touch(def.name)}
-				/>
-			{/if}
+<form
+	bind:this={formEl}
+	class="banto-form"
+	onsubmit={handleSubmit}
+	novalidate
+	onfocusin={trackFocus}
+	onfocusout={releaseFocus}
+>
+	{#each groups as group, groupIndex (group.section?.id ?? '')}
+		{#snippet fieldsGrid()}
+			<div class="grid" data-columns={group.columns}>
+				{#each group.fields as { def, index } (def.name)}
+					{@const Field = fieldComponent(def)}
+					{@const inputId = `${formId}-field-${index}`}
+					{@const errorId = `${formId}-error-${index}`}
+					{@const helpId = `${formId}-help-${index}`}
+					{@const describedBy =
+						[def.help ? helpId : '', store.errors[def.name] ? errorId : '']
+							.filter(Boolean)
+							.join(' ') || undefined}
+					{@const underline = appearance === 'underline' && def.type !== 'checkbox'}
+					{@const temporalInput = isTemporalType(def.type) ? inputs[def.type] : undefined}
+					{@const injected = !!temporalInput}
+					{#snippet control()}
+						{#if isTemporalType(def.type)}
+							<DateField
+								{def}
+								class={underline ? 'banto-field-control' : undefined}
+								id={inputId}
+								aria-describedby={describedBy}
+								value={store.values[def.name]}
+								error={store.errors[def.name]}
+								disabled={submitting}
+								onInput={(value: unknown) => store.setValue(def.name, value)}
+								onBlur={() => store.touch(def.name)}
+								input={temporalInput}
+							/>
+						{:else}
+							<Field
+								{def}
+								class={underline ? 'banto-field-control' : undefined}
+								id={inputId}
+								aria-describedby={describedBy}
+								value={store.values[def.name]}
+								error={store.errors[def.name]}
+								disabled={submitting}
+								onInput={(value: unknown) => store.setValue(def.name, value)}
+								onBlur={() => store.touch(def.name)}
+							/>
+						{/if}
+					{/snippet}
+					<div class="field" class:field--full={def.fullWidth} data-field={def.name}>
+						{#if underline && injected}
+							<!-- An injected input is a composite (text box, button, popover):
+							     the stacked look with a sibling <label for>, never a wrapping
+							     <label> - a click inside the calendar would be re-targeted to
+							     the text box and its text would join the accessible name. -->
+							<div class="banto-field banto-field--stacked">
+								{@render control()}
+								<label class="banto-field-label" for={inputId}>
+									{def.label}
+									{#if def.required}<span class="required">*</span>{/if}
+								</label>
+							</div>
+						{:else if underline}
+							<label class="banto-field banto-field--stacked" for={inputId}>
+								{@render control()}
+								<span class="banto-field-label">
+									{def.label}
+									{#if def.required}<span class="required">*</span>{/if}
+								</span>
+							</label>
+						{:else}
+							<label class="label" for={inputId}>
+								{def.label}
+								{#if def.required}<span class="required">*</span>{/if}
+							</label>
+							{@render control()}
+						{/if}
+						{#if def.help}
+							<p id={helpId} class="help">{def.help}</p>
+						{/if}
+						{#if store.errors[def.name]}
+							<p id={errorId} class="error">{store.errors[def.name]}</p>
+						{/if}
+					</div>
+				{/each}
+			</div>
 		{/snippet}
-		<div class="field">
-			{#if underline && injected}
-				<!-- An injected input is a composite (text box, button, popover):
-				     the stacked look with a sibling <label for>, never a wrapping
-				     <label> - a click inside the calendar would be re-targeted to
-				     the text box and its text would join the accessible name. -->
-				<div class="banto-field banto-field--stacked">
-					{@render control()}
-					<label class="banto-field-label" for={inputId}>
-						{def.label}
-						{#if def.required}<span class="required">*</span>{/if}
-					</label>
-				</div>
-			{:else if underline}
-				<label class="banto-field banto-field--stacked" for={inputId}>
-					{@render control()}
-					<span class="banto-field-label">
-						{def.label}
-						{#if def.required}<span class="required">*</span>{/if}
-					</span>
-				</label>
-			{:else}
-				<label class="label" for={inputId}>
-					{def.label}
-					{#if def.required}<span class="required">*</span>{/if}
-				</label>
-				{@render control()}
-			{/if}
-			{#if store.errors[def.name]}
-				<p id={errorId} class="error">{store.errors[def.name]}</p>
-			{/if}
-		</div>
+		{#if group.section}
+			{@const sectionDescId = `${formId}-section-${groupIndex}-desc`}
+			<fieldset
+				class="section"
+				data-section={group.section.id}
+				aria-describedby={group.section.description ? sectionDescId : undefined}
+			>
+				<legend class="section-title">{group.section.title}</legend>
+				{#if group.section.description}
+					<p id={sectionDescId} class="section-desc">{group.section.description}</p>
+				{/if}
+				{@render fieldsGrid()}
+			</fieldset>
+		{:else}
+			{@render fieldsGrid()}
+		{/if}
 	{/each}
 
 	<div class="footer" class:footer--underline={appearance === 'underline'}>
@@ -159,6 +237,61 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--banto-space-4);
+		/* Columns follow the form's own width (a drawer is narrow on a wide screen). */
+		container-type: inline-size;
+	}
+
+	.section {
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--banto-space-3);
+	}
+
+	.section-title {
+		padding: 0;
+		font-size: var(--banto-font-size-lg);
+		font-weight: 600;
+		color: var(--banto-text);
+	}
+
+	.section-desc {
+		margin: 0;
+		font-size: var(--banto-font-size-sm);
+		color: var(--banto-text-muted);
+	}
+
+	/* One column until the form is wide enough; DOM order = reading and tab order. */
+	.grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--banto-space-4);
+	}
+
+	@container (min-width: 36rem) {
+		.grid[data-columns='2'],
+		.grid[data-columns='3'] {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	@container (min-width: 54rem) {
+		.grid[data-columns='3'] {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+	}
+
+	.field--full {
+		grid-column: 1 / -1;
+	}
+
+	.help {
+		margin: 0;
+		font-size: var(--banto-font-size-sm);
+		color: var(--banto-text-muted);
 	}
 
 	.field {

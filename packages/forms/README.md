@@ -248,6 +248,54 @@ pane の外（ページや controller）で `createFormDraft` を作り、pane �
   `FormDraft.commit` は `930` → `09:30`、`2026/11/7 9:30` → `2026-11-07T09:30` に直す。秒付き・`24:00`・日付だけの
   datetime は形式のエラー。datetime の入力欄は空白区切り（`2026-11-07 09:30`）で見せる。
 
+## 配置: セクション・列・表示条件・ヘルプ文（Issue #714）
+
+すべて省略可能で、今の 1 列の定義はそのまま動く。`fields` は平らな配列のままで、
+セクションは欄の `section`（セクションの `id`）で結ぶ。
+
+```ts
+const schema: FormSchema = {
+	columns: 2, // 既定の列数（1〜3）。セクションの `columns` が優先
+	sections: [
+		{ id: 'basic', title: '基本情報', description: '必須の項目を先に置く。' },
+		{ id: 'ship', title: '配送', columns: 1 }
+	],
+	fields: [
+		{
+			name: 'name',
+			label: '名称',
+			type: 'text',
+			required: true,
+			section: 'basic',
+			help: '40 文字まで。'
+		},
+		{ name: 'memo', label: 'メモ', type: 'textarea', section: 'basic', fullWidth: true },
+		{ name: 'gift', label: 'ギフト包装', type: 'checkbox', section: 'ship' },
+		{
+			name: 'wrap',
+			label: '包装メッセージ',
+			type: 'text',
+			required: true,
+			section: 'ship',
+			visibleWhen: (values) => values.gift === true
+		}
+	]
+};
+```
+
+- **見出し**: セクションは `fieldset` + `legend` で、`description` は `aria-describedby` で結ぶ。描画の順は「セクションを持たない欄 →
+  `sections` の順」。`section` が知らない id の欄はセクション無し扱い。表示する欄が無いセクションは見出しごと消える。
+- **列**: フォーム自身の幅に対する container query（ドロワーの中でも効く）。36rem 未満は 1 列、36rem 以上で 2 列、54rem 以上で
+  3 列。`fullWidth: true` の欄は 1 行を使う。DOM の順がそのまま読み上げとタブの順なので、列の都合で欄を並べ替えない。
+- **`visibleWhen(values)`**: false の間、欄は描画されず、検証（`required` を含む）にも送信の値にも入らない。
+  `onSubmit` には `store.submitValues`（隠れた欄のキーだけを除いた値。欄に無いキーは残る）が渡る。
+  入力した値は消さずに `store.values` に残るので、再び表示されれば戻る（`isDirty` は値全体で見るため、隠した後も変更ありのまま）。
+  更新で隠れたキーが「送られなかった」ことをサーバーがどう扱うか（無視か、空にするか）は `DataProvider` 側で確かめる。
+  フォーカスのある欄が隠れたときは、直前の見える欄にフォーカスを移す。
+- **`help`**: 欄の下に出し、入力欄が `aria-describedby` で指す。エラーも出ているときは「ヘルプ → エラー」の順で両方を指す。
+
+純関数（`isFieldVisible`・`submitValuesOf`・`layoutOf` など）は `layout.ts` にあり、Svelte なしで使える。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

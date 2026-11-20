@@ -4,6 +4,7 @@
  * Japanese; override via the `messages` param for i18n injection.
  */
 import { formatDateTimeText, isIsoDate, isIsoDateTime, isIsoTime, isOnTimeStep } from './date';
+import { isFieldVisible } from './layout';
 import type { FieldDef, FieldError, FormSchema } from './types';
 
 export interface ValidationMessages {
@@ -156,7 +157,11 @@ export function validateField(
 	return null;
 }
 
-/** Validate every field in the schema, returning one FieldError per invalid field, in schema order. */
+/**
+ * Validate every field in the schema, returning one FieldError per invalid
+ * field, in schema order. A field hidden by `visibleWhen` is skipped (a
+ * hidden `required` field is not an error).
+ */
 export function validateAll(
 	schema: FormSchema,
 	values: Record<string, unknown>,
@@ -164,6 +169,7 @@ export function validateAll(
 ): FieldError[] {
 	const errors: FieldError[] = [];
 	for (const def of schema.fields) {
+		if (!isFieldVisible(def, values)) continue;
 		const message = validateField(def, values[def.name], values, messages);
 		if (message) errors.push({ field: def.name, message });
 	}

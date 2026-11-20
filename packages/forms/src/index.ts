@@ -5,11 +5,23 @@ export type {
 	FieldType,
 	FieldOption,
 	FieldDef,
+	FormSection,
+	FormColumns,
 	FormSchema,
 	FieldError,
 	FormAppearance
 } from './types';
 
+export {
+	isFieldVisible,
+	hiddenFieldNames,
+	submitValuesOf,
+	resolveColumns,
+	layoutOf,
+	focusFallbackName,
+	type LayoutField,
+	type LayoutGroup
+} from './layout';
 export { validateField, validateAll, type ValidationMessages } from './validate';
 export { FormStore, createFormStore } from './store.svelte';
 

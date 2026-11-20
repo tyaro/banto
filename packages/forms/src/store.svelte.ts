@@ -4,6 +4,7 @@
  * `createFormResource` supplies server-side errors via `setServerErrors`.
  */
 import { isTemporalType, type FieldDef, type FieldError, type FormSchema } from './types';
+import { isFieldVisible, submitValuesOf } from './layout';
 import { validateAll, validateField, type ValidationMessages } from './validate';
 
 function defaultsFrom(schema: FormSchema): Record<string, unknown> {
@@ -46,6 +47,15 @@ export class FormStore {
 		return JSON.stringify(this.values) !== this.#initialSnapshot;
 	}
 
+	/**
+	 * `values` without the fields `visibleWhen` hides: what `BantoForm` hands to
+	 * `onSubmit`. Hidden input stays in `values` (and in `isDirty`), it is just
+	 * not sent.
+	 */
+	get submitValues(): Record<string, unknown> {
+		return submitValuesOf(this.#schema, this.values);
+	}
+
 	#fieldDef(name: string): FieldDef | undefined {
 		return this.#schema.fields.find((field) => field.name === name);
 	}
@@ -57,13 +67,23 @@ export class FormStore {
 			delete next[name];
 			this.errors = next;
 		}
+		// A field this change hid has nothing on screen to show its error.
+		const stale = Object.keys(this.errors).filter((field) => {
+			const def = this.#fieldDef(field);
+			return def && !isFieldVisible(def, this.values);
+		});
+		if (stale.length > 0) {
+			const next = { ...this.errors };
+			for (const field of stale) delete next[field];
+			this.errors = next;
+		}
 	}
 
 	/** Mark a field as touched and validate just that field (e.g. on blur). */
 	touch(name: string): void {
 		this.touched = { ...this.touched, [name]: true };
 		const def = this.#fieldDef(name);
-		if (!def) return;
+		if (!def || !isFieldVisible(def, this.values)) return;
 		const message = validateField(def, this.values[name], this.values, this.#messages);
 		const next = { ...this.errors };
 		if (message) next[name] = message;

@@ -34,6 +34,7 @@
  */
 import { untrack } from 'svelte';
 import { parseDateText, parseDateTimeText, parseTimeText } from './date';
+import { isFieldVisible } from './layout';
 import { isTemporalType, type FieldDef, type FormSchema } from './types';
 import {
 	dateInvalidMessage,
@@ -321,6 +322,7 @@ class Draft implements FormDraft<Values> {
 			for (const field of names) {
 				if (field in errors) continue;
 				const def = this.#def(field);
+				if (def && !isFieldVisible(def, values)) continue;
 				const message = def ? validateField(def, values[field], values, this.#messages) : null;
 				if (message) errors[field] = message;
 			}
