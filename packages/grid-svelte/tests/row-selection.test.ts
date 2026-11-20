@@ -345,15 +345,15 @@ describe('BantoGrid row selection (#713)', () => {
 		});
 
 		it('returns focus to the grid when the host assigns [] to the bound selectedRowIds', async () => {
+			const host: { rerender?: (props: { selectedRowIds: number[] }) => unknown } = {};
 			const bulkActions = createRawSnippet<[GridBulkActionsContext]>(() => ({
 				render: () => `<button type="button">外から消す</button>`,
 				setup: (node) => {
 					node.addEventListener('click', () => {
-						void externalRerender?.({ selectedRowIds: [] });
+						void host.rerender?.({ selectedRowIds: [] });
 					});
 				}
 			}));
-			let externalRerender: ((props: { selectedRowIds: number[] }) => unknown) | undefined;
 			const { container, rerender } = render(BantoGrid<Row>, {
 				rows,
 				columns,
@@ -362,13 +362,27 @@ describe('BantoGrid row selection (#713)', () => {
 				selectedRowIds: [1],
 				bulkActions
 			});
-			externalRerender = rerender;
+			host.rerender = rerender;
 			const button = screen.getByRole('button', { name: '外から消す' });
 			button.focus();
 			await fireEvent.click(button);
 			await tick();
 			expect(container.querySelector('.bulk-bar')).toBeNull();
 			expect(document.activeElement).toBe(screen.getByRole('grid'));
+		});
+
+		it('does not pull focus back after the user left the bar by clicking blank space', async () => {
+			const { container, rerender } = setup();
+			const button = screen.getByRole('button', { name: '一括' });
+			button.focus();
+			// Blank-space click: focusout with a null relatedTarget, focus on <body>.
+			button.blur();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(document.activeElement).toBe(document.body);
+			await rerender({ rows: rows.filter((row) => row.id !== 1) });
+			await tick();
+			expect(container.querySelector('.bulk-bar')).toBeNull();
+			expect(document.activeElement).toBe(document.body);
 		});
 
 		it('does not steal focus that already moved outside the bar', async () => {

@@ -589,9 +589,21 @@
 		bulkBarHadFocus = true;
 	}
 	function handleBulkBarFocusOut(event: FocusEvent) {
-		// A null relatedTarget is also what removal / a click on blank space
-		// reports, so only a move to a real element clears the flag.
-		if (event.relatedTarget) bulkBarHadFocus = false;
+		if (event.relatedTarget) {
+			bulkBarHadFocus = false;
+			return;
+		}
+		// A null relatedTarget is what removal and a click on blank space both
+		// report. Decide one task later: if the bar is still in the document and
+		// focus is not inside it, the user left it (blank-space click), so the
+		// flag drops. If the bar was removed, the effect below has already
+		// restored focus and there is nothing to do.
+		const bar = event.currentTarget as HTMLElement;
+		setTimeout(() => {
+			if (bar.isConnected && !bar.contains(bar.ownerDocument.activeElement)) {
+				bulkBarHadFocus = false;
+			}
+		}, 0);
 	}
 	$effect(() => {
 		const visible = bulkBarVisible;
