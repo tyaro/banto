@@ -3,7 +3,8 @@
  * re-arrangement (#763): `float` / `dockBack` / `move({ tabWith })` / `resetLayout` fire no
  * `blur` / `focusout` on the focused input and `document.activeElement` stays that input
  * (`Element.moveBefore()`, Chromium 133+). Without `moveBefore` the `blur` cannot be avoided, and
- * `isDockRearranging` tells it from the user leaving the field.
+ * `isDockRearranging` tells it from the user leaving the field. An update that re-creates no
+ * receptacle (another window moved / resized, a divider dragged) does not move the pane at all.
  *
  * jsdom fires no `blur` when a focused element leaves the document, so this runs in a real
  * browser. The example is not an app route: on /tree/workspace-dock (a page that already loads
@@ -66,10 +67,12 @@ async function mountHarness(page: Page): Promise<void> {
 			const target = document.createElement('div');
 			target.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#fff';
 			document.body.append(target);
+			const dock = dockMod.createDockState();
+			w.__dock763state = dock;
 			w.__dock763 = svelte.mount(dockMod.ThreePaneDock, {
 				target,
 				props: {
-					dock: dockMod.createDockState(),
+					dock,
 					left: pane('left'),
 					right: pane('right'),
 					children: pane('center'),
@@ -188,6 +191,99 @@ test.describe('a persistent pane keeps the focus through a re-arrangement (#763)
 	test('resetLayout from a tab group', async ({ page }) => {
 		expect(await call(page, 'tabWithLeft')).toBe('applied');
 		expectFocusKept(await measure(page, 'resetLayout'));
+	});
+
+	// Even `moveBefore` re-connects a custom element that has no `connectedMoveCallback`: a pane
+	// being edited must not be moved by an update that keeps its receptacle.
+	test('moving / resizing another window or a divider does not move the pane', async ({ page }) => {
+		expect(
+			await page.evaluate(() =>
+				(
+					(window as unknown as Record<string, unknown>).__dock763 as {
+						float(id: string): Promise<string>;
+					}
+				).float('left')
+			)
+		).toBe('applied');
+		const input = page.getByLabel('right input');
+		await input.fill('12.');
+		await input.focus();
+		await expect(input).toBeFocused();
+		const report = await page.evaluate(async () => {
+			const w = window as unknown as Record<string, unknown>;
+			const dock = w.__dock763state as {
+				layout: { docked: { type: string; id: string } | null; floating: { id: string }[] };
+				move(id: string, dx: number, dy: number, hostW: number, hostH: number): void;
+				resize(
+					id: string,
+					edge: string,
+					dx: number,
+					dy: number,
+					hostW: number,
+					hostH: number
+				): void;
+				resizeSplit(splitId: string, dividerIndex: number, deltaFraction: number): void;
+			};
+			let connects = 0;
+			if (!customElements.get('probe-763'))
+				customElements.define(
+					'probe-763',
+					class extends HTMLElement {
+						connectedCallback() {
+							connects += 1;
+						}
+						disconnectedCallback() {
+							connects += 1;
+						}
+					}
+				);
+			const el = document.querySelector<HTMLInputElement>('input[aria-label="right input"]')!;
+			el.after(document.createElement('probe-763'));
+			connects = 0;
+			const proto = Element.prototype as unknown as {
+				moveBefore(node: Node, child: Node | null): void;
+			};
+			const original = proto.moveBefore;
+			let moves = 0;
+			proto.moveBefore = function (this: Element, node: Node, child: Node | null) {
+				moves += 1;
+				original.call(this, node, child);
+			};
+			const events: string[] = [];
+			const record = (event: Event) => events.push(event.type);
+			const types = ['blur', 'focusout', 'focus', 'focusin'];
+			for (const type of types) el.addEventListener(type, record);
+			const frame = () =>
+				new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+			const before = JSON.stringify(dock.layout);
+			const host = document.querySelector<HTMLElement>('[data-dock-host]')!;
+			const { width, height } = host.getBoundingClientRect();
+			dock.move('left', 24, 16, width, height);
+			await frame();
+			dock.resize('left', 'se', 30, 20, width, height);
+			await frame();
+			const root = dock.layout.docked;
+			if (root?.type === 'split') dock.resizeSplit(root.id, 0, 0.05);
+			await frame();
+			proto.moveBefore = original;
+			for (const type of types) el.removeEventListener(type, record);
+			return {
+				floating: dock.layout.floating.map((f) => f.id),
+				rootType: root?.type,
+				changed: JSON.stringify(dock.layout) !== before,
+				moves,
+				connects,
+				events,
+				activeIsInput: document.activeElement === el
+			};
+		});
+		expect(report.floating).toContain('left');
+		expect(report.rootType).toBe('split');
+		expect(report.changed).toBe(true);
+		expect(report.moves).toBe(0);
+		expect(report.connects).toBe(0);
+		expect(report.events).toEqual([]);
+		expect(report.activeIsInput).toBe(true);
 	});
 });
 

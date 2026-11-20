@@ -38,7 +38,7 @@
 
 ### Fixed
 
-- `@banto/dock-svelte`: 据え置き（`persistent`）の pane を組み替える（`float` / `dockBack` / `move` のタブ化 / `resetLayout` など）と、中でフォーカス中の入力欄に `blur` → `focusout` → `focus` → `focusin` が出て、blur で確定するフォームが誤って確定されていたのを直した（#763）。Svelte が古い受け皿を文書から外すのが、中身を移す teardown より先だったため。`Element.moveBefore()` のある環境（Chromium 133 以降）では、木を更新する直前（`snapshot()`）にフォーカスのある中身を host の中の待避場所へ `moveBefore` で移し、新しい受け皿へも `moveBefore` で移すので、フォーカス・選択が残り blur は出ない（`iframe` も読み直されない）。`moveBefore` の無い環境は今までどおり（`appendChild`、blur のあとフォーカスを戻す）で、その blur を見分ける関数 `isDockRearranging(node)` を公開 API に追加した（組み替えの直前からフォーカスを戻し終えるまで `true`。README「据え置き」）。host の DOM に空の要素 `.persistent-transit` が 1 つ増える（表示は変わらない）。実ブラウザの回帰試験は `e2e/demo/dock-persistent-focus.spec.ts`。
+- `@banto/dock-svelte`: 据え置き（`persistent`）の pane を組み替える（`float` / `dockBack` / `move` のタブ化 / `resetLayout` など）と、中でフォーカス中の入力欄に `blur` → `focusout` → `focus` → `focusin` が出て、blur で確定するフォームが誤って確定されていたのを直した（#763）。Svelte が古い受け皿を文書から外すのが、中身を移す teardown より先だったため。`Element.moveBefore()` のある環境（Chromium 133 以降）では、木を更新する直前（`snapshot()`）にフォーカスのある中身を host の中の待避場所へ `moveBefore` で移し、新しい受け皿へも `moveBefore` で移すので、フォーカス・選択が残り blur は出ない。待避するのは受け皿が作り直されうる更新（木の構造・開閉・畳み・選択中のタブの変化）だけで、別の浮動 window の移動・リサイズや分割の境界のドラッグでは編集中の pane を動かさない。`iframe` が読み直されないのは実際に `moveBefore` で移せた移動（＝フォーカスのある pane）に限る（それ以外の pane は今までどおり `appendChild` で、読み直される）。`moveBefore` の無い環境は今までどおり（`appendChild`、blur のあとフォーカスを戻す）で、その blur を見分ける関数 `isDockRearranging(node)` を公開 API に追加した（組み替えの直前からフォーカスを戻し終えるまで `true`。Shadow DOM の中の node は host をたどる。`null` / `undefined` は `false`。README「据え置き」）。host の DOM に空の要素 `.persistent-transit` が 1 つ増える（表示は変わらない）。実ブラウザの回帰試験は `e2e/demo/dock-persistent-focus.spec.ts`。
 
 ### ドキュメント
 

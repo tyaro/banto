@@ -84,7 +84,7 @@
 		type DockPanelChange,
 		type DockPanelChangeOutcome
 	} from './core/lifecycle';
-	import { PersistentContents } from './core/persistent';
+	import { layoutStructureKey, PersistentContents } from './core/persistent';
 	import { collectPanelIds } from './core/tree';
 	import { autoHiddenPanelIds, mainRegionId, regionOf, regionPanelIds } from './core/autohide';
 	import {
@@ -295,13 +295,15 @@
 	// Before the tree's blocks update for a structure change (`.pre`, and declared before the
 	// template), record the focus inside each persistent content (the move drops it) and, where
 	// `moveBefore` exists, take that content out of the receptacle the update may remove (#763).
+	// Not for an update that keeps every receptacle (a window moved or resized, a divider
+	// dragged: the same structure key), so a pane being edited is not moved by those.
 	$effect.pre(() => {
 		// Read every source first: a short-circuit would leave one untracked (conventions §8).
 		const layout = dock.layout;
 		const flyout = dock.flyoutPanel;
 		const discarded = lifecycle.discarded.size;
-		void [layout, flyout, discarded];
-		untrack(() => persistentContents.snapshot());
+		const structure = `${layoutStructureKey(layout)}\u0001${flyout ?? ''}\u0001${discarded}`;
+		untrack(() => persistentContents.snapshot(structure));
 	});
 
 	/** Edges that hold an auto-hidden band (#694 PR-3): the docked layer is inset by them. */

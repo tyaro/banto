@@ -24,6 +24,11 @@
  *     receptacle Svelte may be about to remove. The receptacle mounted by that
  *     update takes it from there (`moveBefore` again), and `#settle` puts a
  *     content nobody took back where it belongs. No `blur` / `focusout` fires.
+ *     Only for an update that may re-create a receptacle: `DockHost` passes
+ *     `layoutStructureKey` (which pane is where, without positions and sizes),
+ *     and an update with the same key as the last one - another window moved or
+ *     resized, a divider dragged - moves nothing (even `moveBefore` re-connects
+ *     a custom element that has no `connectedMoveCallback`).
  *   - elsewhere the focus is lost (`blur` / `focusout` fire) and, after the
  *     moves of that update (a microtask, the receptacle is in the document by
  *     then), it goes back to the recorded element - only when the focus is
@@ -45,7 +50,11 @@
  *   move: its offset is recorded on its own `scroll` event, per pane, and put
  *   back onto the `.body` around the receptacle the content moved into.
  * - **`iframe`.** An `iframe` moved with `appendChild` loads its document again
- *   (browsers do that on every re-insertion); only `moveBefore` keeps it.
+ *   (browsers do that on every re-insertion); only a move made with
+ *   `moveBefore` keeps it. That is not every move where `moveBefore` exists:
+ *   only the content that holds the focus is taken to the transit element
+ *   beforehand, so another content whose receptacle Svelte removed is out of
+ *   the document when it is placed and falls back to `appendChild`.
  *   README "Persistent panes".
  *
  * Two receptacles of the same pane may exist for a moment (the new one mounted
@@ -53,6 +62,7 @@
  * and when it goes the content moves to the newest one left, else to the stash.
  */
 import type { Attachment } from 'svelte/attachments';
+import type { DockLayout, DockNode } from '../types';
 
 /** On the content that held the focus, from `snapshot()` to the end of `#settle` (module doc). */
 const REARRANGING = 'data-dock-rearranging';
@@ -61,11 +71,55 @@ const REARRANGING = 'data-dock-rearranging';
  * Whether `node` is inside a `persistent` pane the dock is re-arranging right now (#763).
  * Where `Element.moveBefore()` is missing, the focused field of such a pane gets a `blur` /
  * `focusout` (and then `focus` / `focusin`) although the user did not leave it: a handler that
- * commits on blur can skip those with this.
+ * commits on blur can skip those with this. A node inside a shadow tree is looked up through
+ * its hosts (`closest` stops at a shadow root). `null` / `undefined` are `false`, also where
+ * there is no DOM (SSR).
  */
 export function isDockRearranging(node: Node | null | undefined): boolean {
-	const el = node instanceof Element ? node : (node?.parentElement ?? null);
-	return el?.closest(`[${REARRANGING}]`) != null;
+	let current: Node | null = node ?? null;
+	while (current) {
+		// `nodeType`, not `instanceof Element`: no DOM globals needed, and nodes of another realm work.
+		const el = current.nodeType === 1 ? (current as Element) : current.parentElement;
+		if (el?.closest(`[${REARRANGING}]`)) return true;
+		// A shadow root has a `host`; a document (or a detached tree's top) ends the walk.
+		const root: Node = (el ?? current).getRootNode();
+		current = (root as Partial<ShadowRoot>).host ?? null;
+	}
+	return false;
+}
+
+/**
+ * What decides which receptacles the tree draws, as a string: which pane is in which tab group
+ * / split / window / auto-hide band, in which order, and the flags that mount or hide a body
+ * (`open`, `collapsed`, the active tab ...). Positions and sizes (a window's `x` / `y` /
+ * `width` / `height`, a split's `sizes`, an auto-hide `size`) and titles / icons are left out:
+ * an update that changes only those re-creates no receptacle, so `snapshot` moves nothing for
+ * it (module doc, "Focus").
+ */
+export function layoutStructureKey(layout: DockLayout): string {
+	const parts: (string | number)[] = [];
+	const flags = (...on: (boolean | undefined)[]) => on.map((f) => (f ? 1 : 0)).join('');
+	const visit = (node: DockNode): void => {
+		if (node.type === 'panel') {
+			parts.push('p', node.id, flags(node.collapsed));
+		} else if (node.type === 'tabs') {
+			parts.push('t', node.id, node.activeIndex, flags(node.collapsed), node.children.length);
+			node.children.forEach(visit);
+		} else {
+			parts.push('s', node.id, node.direction, node.children.length);
+			node.children.forEach(visit);
+		}
+	};
+	for (const w of layout.floating)
+		parts.push('f', w.id, flags(w.open, w.collapsed, w.locked, w.pinned));
+	parts.push('d');
+	if (layout.docked) visit(layout.docked);
+	for (const entry of layout.autoHidden ?? []) {
+		parts.push('a', entry.edge);
+		visit(entry.node);
+	}
+	// Ids are free text: a separator none of them holds in practice.
+	return parts.join('\u0000');
 }
 
 type MoveBefore = (node: Node, child: Node | null) => void;
@@ -114,6 +168,8 @@ export class PersistentContents {
 	#queued = false;
 	#disposed = false;
 	#transit: HTMLElement | null = null;
+	/** The `structure` of the last `snapshot` (`undefined` = none yet, or one given without). */
+	#structure: string | undefined;
 
 	/** `{@attach}` for the host's transit element (module doc, "Focus"). */
 	transit: Attachment<HTMLElement> = (el) => {
@@ -133,6 +189,8 @@ export class PersistentContents {
 			this.#place(panelId);
 			return () => {
 				el.removeEventListener('scroll', entry.onScroll, { capture: true });
+				// `#settle` no longer reaches it once `entry.content` is cleared below.
+				el.removeAttribute(REARRANGING);
 				// The stash item is gone (the pane closed or left the layout): so is the content,
 				// wherever it was moved to.
 				el.remove();
@@ -175,18 +233,27 @@ export class PersistentContents {
 		};
 	}
 
-	/** Record where the focus is inside each content (before a structure change; module doc). */
-	snapshot(): void {
+	/**
+	 * Record where the focus is inside each content (before the tree updates; module doc).
+	 * `structure` is what decides the receptacles (`layoutStructureKey` plus whatever else the
+	 * caller's tree depends on): with the same value as the last call no receptacle is
+	 * re-created, so the content is left where it is and not marked - only the focus is
+	 * recorded, for a move this update makes after all. Without it every call may re-arrange.
+	 */
+	snapshot(structure?: string): void {
 		if (this.#disposed) return;
+		const kept = structure !== undefined && structure === this.#structure;
+		this.#structure = structure;
 		const active = document.activeElement;
 		let any = false;
 		for (const entry of this.#entries.values()) {
 			const el = entry.content;
 			if (el && active instanceof HTMLElement && active !== el && el.contains(active)) {
 				entry.focus = active;
+				any = true;
+				if (kept) continue;
 				el.setAttribute(REARRANGING, '');
 				this.#toTransit(entry, el);
-				any = true;
 			}
 		}
 		if (any) this.#queue();

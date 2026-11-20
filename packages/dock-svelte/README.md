@@ -359,13 +359,18 @@ arrange?: boolean; // false = 利用者が組み替えられない（キオス�
   それに当たる WebView2。#763）。中にフォーカスがある pane は、木を更新する直前に中身を host の中の待避場所へ
   `moveBefore` で移し、更新でできた受け皿へもう一度移すので、フォーカス中の要素は文書から外れず、`blur` /
   `focusout` は出ない（選択範囲も残る）。blur で値を確定するフォームを置いても、組み替えで確定されない。
+  待避するのは **受け皿が作り直されうる更新だけ**（どの pane がどのタブの組・分割・浮動 window・自動で隠す帯に
+  あるか、開閉・畳み・選択中のタブが変わったとき）。別の浮動 window の移動・リサイズや分割の境界の
+  ドラッグのように位置・大きさだけが変わる更新では、編集中の pane の中身に触れない（`moveBefore` でも、
+  `connectedMoveCallback` を持たないカスタム要素は切断・再接続の処理が走るため）。
 - **`moveBefore` の無い環境**（古い Chromium / WebView2、対応前の Firefox・Safari）では、組み替えのときに
   フォーカス中の要素へ `blur` → `focusout` が出て、移したあと（同じ更新の後の microtask）に dock がフォーカスを
   戻すので `focus` → `focusin` も出る（そのときフォーカスが `<body>` 以外 = host やアプリが別の場所へ移して
   いたら奪わない）。これは避けられないので、**blur で確定する処理は `isDockRearranging(node)` で見分ける**:
   組み替えの直前から、フォーカスを戻し終えるまでの間、その node が組み替え中の据え置き pane の中にあれば
   `true`（その間の `blur` / `focusout` / `focus` / `focusin` のどれの中でも読める。`moveBefore` のある環境でも
-  同じ区間で `true` だが、その blur 自体が出ない）。
+  同じ区間で `true` だが、その blur 自体が出ない）。Shadow DOM の中の node は host をたどって調べる
+  （入れ子・closed でも可）。`null` / `undefined` は `false`（DOM の無い SSR でも例外にならない）。
 
   ```ts
   import { isDockRearranging } from '@banto/dock-svelte';
@@ -380,9 +385,11 @@ arrange?: boolean; // false = 利用者が組み替えられない（キオス�
   預かりへ戻った中身（hide した pane）にはフォーカスを残さない（`<body>` へ外す）。この blur の間も
   `isDockRearranging` は `true` で、フォーカスは戻らない。隠す前に確定・確認したい値は
   `beforePanelChange`（`hide`）で扱う。
-- **`iframe` は `moveBefore` の無い環境では移すたびに読み直される**（ブラウザは `appendChild` で移した
-  `iframe` の文書を読み込み直す）。`iframe` やネイティブの埋め込みを持つ中身は、その環境では据え置きでも
-  状態を守れない。
+- **`iframe` は移すと読み直されることがある**（ブラウザは `appendChild` で移した `iframe` の文書を読み込み
+  直す）。読み直されないのは **実際に `moveBefore` で移せた移動だけ** で、`moveBefore` のある環境でも、
+  事前に待避するのは中にフォーカスがある pane に限られる。それ以外の pane は、古い受け皿が先に文書から
+  外れるので `appendChild` に落ち、`iframe` は読み直される。`moveBefore` の無い環境では移すたびに読み直す。
+  `iframe` やネイティブの埋め込みを持つ中身は、据え置きでも状態が残るとは限らない前提で作る。
 - 位置・大きさ・倍率・ポインタ操作の状態は中身の部品が持つので残るが、`ResizeObserver` 等で受け皿の大きさを
   測る中身は、移した直後に大きさが変わることがある（新しい親の大きさになる）。
 

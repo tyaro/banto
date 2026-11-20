@@ -16,7 +16,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import DockHostPersistentHarness from './DockHostPersistentHarness.svelte';
 import { createDockState } from '../src/state.svelte';
 import type { DockPanelChange } from '../src/core/lifecycle';
-import { isDockRearranging, PersistentContents } from '../src/core/persistent';
+import { isDockRearranging, layoutStructureKey, PersistentContents } from '../src/core/persistent';
 import type { DockCapabilities } from '../src/core/policy';
 import type { DockLayout } from '../src/types';
 
@@ -604,5 +604,212 @@ describe('PersistentContents: the focused content waits in the transit element (
 		await Promise.resolve();
 		expect(document.activeElement).toBe(input);
 		expect(isDockRearranging(input)).toBe(false);
+	});
+});
+
+describe('an update that keeps every receptacle moves nothing (#763 review)', () => {
+	const key = (layout: DockLayout) => layoutStructureKey(layout);
+
+	afterEach(() => {
+		Reflect.deleteProperty(Element.prototype, 'moveBefore');
+		document.body.replaceChildren();
+	});
+
+	it('layoutStructureKey: positions, sizes and titles are not part of it; what mounts a receptacle is', () => {
+		const base = mixed();
+		const moved = mixed();
+		Object.assign(moved.floating[0], { x: 10, y: 20, width: 400, height: 250, title: 'Renamed' });
+		if (moved.docked?.type === 'split') moved.docked.sizes = [0.3, 0.7];
+		expect(key(moved)).toBe(key(base));
+		const withBand: DockLayout = {
+			...base,
+			autoHidden: [
+				{ node: { type: 'panel', id: 'q', title: 'Q' }, edge: 'left', slot: { kind: 'root' } }
+			]
+		};
+		const widerBand: DockLayout = {
+			...withBand,
+			autoHidden: [{ ...withBand.autoHidden![0], size: 320 }]
+		};
+		expect(key(widerBand)).toBe(key(withBand));
+
+		const changed: ((layout: DockLayout) => unknown)[] = [
+			(l) => (l.floating[0].open = false),
+			(l) => (l.floating[0].collapsed = true),
+			(l) => l.floating.push({ ...l.floating[0], id: 'g' }),
+			(l) => (l.docked = null),
+			(l) => l.docked?.type === 'split' && l.docked.children.reverse(),
+			(l) => l.docked?.type === 'split' && (l.docked.direction = 'column'),
+			(l) =>
+				l.docked?.type === 'split' &&
+				l.docked.children[0].type === 'tabs' &&
+				(l.docked.children[0].activeIndex = 1),
+			(l) =>
+				l.docked?.type === 'split' &&
+				l.docked.children[1].type === 'panel' &&
+				(l.docked.children[1].collapsed = true)
+		];
+		for (const change of changed) {
+			const next = mixed();
+			change(next);
+			expect(key(next)).not.toBe(key(base));
+		}
+		expect(key(withBand)).not.toBe(key(base));
+		const otherEdge: DockLayout = {
+			...withBand,
+			autoHidden: [{ ...withBand.autoHidden![0], edge: 'right' }]
+		};
+		expect(key(otherEdge)).not.toBe(key(withBand));
+	});
+
+	it('snapshot with the same structure leaves the focused content in its receptacle, unmarked', async () => {
+		const moves: string[] = [];
+		Object.defineProperty(Element.prototype, 'moveBefore', {
+			configurable: true,
+			writable: true,
+			value(this: Element, node: Node, child: Node | null) {
+				moves.push(this.id);
+				this.insertBefore(node, child);
+			}
+		});
+		const contents = new PersistentContents();
+		const [home, transit, a] = ['home', 'transit', 'a'].map((id) => {
+			const div = document.createElement('div');
+			div.id = id;
+			return div;
+		});
+		const el = document.createElement('div');
+		const input = document.createElement('input');
+		el.append(input);
+		home.append(el);
+		document.body.append(home, transit, a);
+		contents.transit(transit);
+		contents.content('p')(el);
+		contents.slot('p')(a);
+		input.focus();
+		contents.snapshot('one');
+		await Promise.resolve();
+		moves.length = 0;
+
+		contents.snapshot('one');
+		expect(el.parentElement).toBe(a);
+		expect(moves).toEqual([]);
+		expect(isDockRearranging(input)).toBe(false);
+		await Promise.resolve();
+		expect(moves).toEqual([]);
+		expect(document.activeElement).toBe(input);
+
+		// Another structure: it waits in the transit element again.
+		contents.snapshot('two');
+		expect(el.parentElement).toBe(transit);
+		expect(isDockRearranging(input)).toBe(true);
+		await Promise.resolve();
+		expect(el.parentElement).toBe(a);
+	});
+
+	it('DockHost: moving / resizing another window or a divider does not move the pane being edited', async () => {
+		const { dock } = mount(mixed(), { persistent: (id) => id === 'p' });
+		await settle();
+		const input = inputOf('P')!;
+		const content = input.closest<HTMLElement>('.persistent-content')!;
+		const slot = content.parentElement!;
+		expect(slot.classList.contains('persistent-slot')).toBe(true);
+		input.focus();
+		let moves = 0;
+		Object.defineProperty(Element.prototype, 'moveBefore', {
+			configurable: true,
+			writable: true,
+			value(this: Element, node: Node, child: Node | null) {
+				moves += 1;
+				this.insertBefore(node, child);
+			}
+		});
+
+		const before = dock.layout;
+		dock.move('f', 15, 10, 1000, 600);
+		flushSync();
+		expect(isDockRearranging(input)).toBe(false);
+		await settle();
+		dock.resize('f', 'se', 20, 20, 1000, 600);
+		await settle();
+		dock.resizeSplit('s', 0, 0.1);
+		await settle();
+		expect(dock.layout.floating[0]).not.toEqual(before.floating[0]);
+		expect(dock.layout.docked).not.toEqual(before.docked);
+		expect(moves).toBe(0);
+		expect(content.parentElement).toBe(slot);
+		expect(document.activeElement).toBe(input);
+
+		// A change of the structure still takes it out and puts it back (the stub is in use).
+		clickPress(tabOf('y'));
+		await settle();
+		expect(moves).toBeGreaterThan(0);
+		expect(input.isConnected).toBe(true);
+	});
+});
+
+describe('isDockRearranging (#763 review)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		document.body.replaceChildren();
+	});
+
+	it('null / undefined are false, also without DOM globals', () => {
+		expect(isDockRearranging(null)).toBe(false);
+		expect(isDockRearranging(undefined)).toBe(false);
+		vi.stubGlobal('Element', undefined);
+		vi.stubGlobal('ShadowRoot', undefined);
+		expect(isDockRearranging(null)).toBe(false);
+		expect(isDockRearranging(undefined)).toBe(false);
+	});
+
+	it('a node inside a shadow tree (also a nested one, and a text node) is found through its hosts', () => {
+		const pane = document.createElement('div');
+		const outerHost = document.createElement('div');
+		pane.append(outerHost);
+		document.body.append(pane);
+		const outer = outerHost.attachShadow({ mode: 'open' });
+		const innerHost = document.createElement('div');
+		outer.append(innerHost);
+		const inner = innerHost.attachShadow({ mode: 'closed' });
+		const input = document.createElement('input');
+		const text = document.createTextNode('direct child of the shadow root');
+		inner.append(input, text);
+
+		expect(isDockRearranging(input)).toBe(false);
+		expect(isDockRearranging(text)).toBe(false);
+		pane.setAttribute('data-dock-rearranging', '');
+		expect(isDockRearranging(input)).toBe(true);
+		expect(isDockRearranging(text)).toBe(true);
+		expect(isDockRearranging(innerHost)).toBe(true);
+		expect(isDockRearranging(document.body)).toBe(false);
+		expect(isDockRearranging(document)).toBe(false);
+	});
+});
+
+describe('PersistentContents: a content that goes away while marked (#763 review)', () => {
+	afterEach(() => document.body.replaceChildren());
+
+	it('the mark is taken off when its pane is closed before the update settles', async () => {
+		const contents = new PersistentContents();
+		const home = document.createElement('div');
+		const a = document.createElement('div');
+		const el = document.createElement('div');
+		const input = document.createElement('input');
+		el.append(input);
+		home.append(el);
+		document.body.append(home, a);
+		const offContent = contents.content('p')(el) as () => void;
+		const offSlot = contents.slot('p')(a) as () => void;
+		input.focus();
+		contents.snapshot();
+		expect(isDockRearranging(input)).toBe(true);
+		// The pane closed in this update: the stash item (and its content) is torn down.
+		offSlot();
+		offContent();
+		expect(el.isConnected).toBe(false);
+		expect(isDockRearranging(input)).toBe(false);
+		await Promise.resolve();
+		expect(el.hasAttribute('data-dock-rearranging')).toBe(false);
 	});
 });
