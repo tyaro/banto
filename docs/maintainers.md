@@ -50,6 +50,11 @@
   （7 日保持）に記録する。前の全部成功した run の記録の base が今と一致し、差分が基準画像だけなら、
   e2e-visual 以外を飛ばす（#740。Rust は matrix のため中身だけ飛ばしてチェック名を保つ）。
   template-acceptance は範囲外。
+- 差分が docs だけ（`^docs/`・ルート直下の `*.md`・任意の場所の `README*.md`。帳票の DSL
+  `reports/*.md` は含めない）の PR は、記録に頼らず merge commit の base からの差分で判定し、
+  重いジョブ（e2e-visual を含む）を飛ばして `Docs (format / links)` だけ走らせる。
+  中身は format:check・verify:architecture・`pnpm check:doc-links`（相対リンクの実在。許可リストは
+  `scripts/check-doc-links.mjs`）。frontend ジョブも同じリンク検査を回す。
 
 ### 2.2 Template acceptance
 

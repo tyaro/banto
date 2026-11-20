@@ -43,6 +43,12 @@ jobs:
   # 安全側: pull_request 以外・fork・API / git / artifact の失敗・記録なし・
   # base の不一致（旧 base で成功 → main が進む → 基準画像だけ、を含む）・
   # それ以外のパスの差分は、どれも full=true。判定の理由はログに出す。
+  # docs だけの差分: pull_request・fork でなく、merge commit の
+  # `git diff HEAD^1 HEAD`（検証する base からの差分。過去の run の記録は要らない）が
+  # すべて docs（^docs/、ルート直下の *.md、任意の場所の README*.md）なら、
+  # docs=true・full=false（記録も false）にし、重いジョブを飛ばして `docs` ジョブ
+  # （format / リンク / architecture の軽い検査）だけを走らせる。この判定は基準画像の
+  # 判定より前。reports/*.md（帳票の DSL、`?raw` で import される）は docs ではない。
   # 注意: Rust は matrix なので job ごと飛ばすとチェック名が必須チェック
   # 「Rust (…) (ubuntu-latest)」等と合わなくなる。そのため job は起動して
   # ステップだけ飛ばす。ほかのジョブは skipped（= 成功扱い）でよい。
@@ -56,6 +62,7 @@ jobs:
       contents: read
     outputs:
       full: ${{ steps.decide.outputs.full }}
+      docs: ${{ steps.decide.outputs.docs }}
     steps:
       # 既定の ref（pull_request では refs/pull/N/merge）= ほかのジョブが検証する
       # merge commit と同じものを取る。
@@ -85,6 +92,17 @@ jobs:
           VBASE=$(git rev-parse HEAD^1) && VHEAD=$(git rev-parse HEAD^2) || { VBASE=""; VHEAD=""; full "merge commit の親が取れない"; }
           echo "検証する merge commit: base=$VBASE head=$VHEAD"
           [ "$HEAD_REPO" = "$REPO" ] || full "fork からの PR"
+          dfiles=$(git diff --no-renames --name-only HEAD^1 HEAD) || full "docs 判定の git diff に失敗"
+          dother=$(printf '%s\n' "$dfiles" | grep -v -E '^$|^docs/|^[^/]+\.md$|(^|/)README(\.[A-Za-z-]+)?\.md$' || true)
+          if [ -n "$dfiles" ] && [ -z "$dother" ]; then
+            echo "差分のファイル（base からの全部）:"; echo "$dfiles"
+            echo "判定: docs だけの差分。重いジョブを飛ばし、docs ジョブだけ走らせる"
+            record false
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+            echo "full=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "docs 以外の差分あり: $(printf '%s' "$dother" | head -n 3 | tr '\n' ' ')"
           ancestors=$(git rev-list --first-parent --max-count=11 "$VHEAD" | tail -n +2) || full "git rev-list に失敗"
           ref=""
           for c in $ancestors; do
@@ -179,6 +197,10 @@ jobs:
       - name: Format check (Prettier)
         run: pnpm format:check
 
+      # Markdown の相対リンクの実在（docs だけの PR は docs ジョブが同じ検査をする）。
+      - name: Check doc links
+        run: pnpm check:doc-links
+
       - name: Type check (svelte-check + tsc)
         run: pnpm check
 
@@ -187,6 +209,39 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # docs だけの差分のときだけ走る軽い検査（changes の docs=true）。重いジョブは飛ぶ。
+  # verify:architecture は rule 7（docs の中の `@banto/*` の参照）のために回す。
+  docs:
+    name: Docs (format / links)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format check (Prettier)
+        run: pnpm format:check
+
+      - name: Verify architecture invariants
+        run: pnpm verify:architecture
+
+      - name: Check doc links
+        run: pnpm check:doc-links
 
   # i18n サプライチェーン/再現性ガード（テンプレート実用性レビュー §2）。
   # inlang プラグインは以前 jsdelivr の CDN URL で参照されており、毎ビルド
@@ -465,6 +520,9 @@ jobs:
 
   e2e-visual:
     name: E2E (visual + axe-core)
+    needs: changes
+    # 基準画像だけの差分でも走らせる（full ではなく docs だけで判断する）。
+    if: ${{ !cancelled() && needs.changes.outputs.docs != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
