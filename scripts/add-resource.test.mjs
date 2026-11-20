@@ -93,6 +93,7 @@ test('リソース名は snake_case だけを受け付け、使えない名前�
 	assert.throws(() => normalizeSpec('items'), /既に使っています/);
 	assert.throws(() => normalizeSpec('users'), /既に使っています/);
 	assert.throws(() => normalizeSpec('type'), /予約語/);
+	assert.throws(() => normalizeSpec('sqlite_orders'), /sqlite_/);
 	assert.throws(() => normalizeSpec('values'), /予約語|変数名/);
 	assert.throws(() => normalizeSpec('between'), /予約語/);
 	assert.throws(() => normalizeSpec('verbose'), /予約語/);

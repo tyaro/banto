@@ -366,6 +366,10 @@ export function normalizeSpec(name, rawSpec = DEFAULT_SPEC) {
 		throw new AddResourceError(
 			`リソース名は snake_case の英小文字・数字で書いてください（例: orders、purchase_orders。今の値: ${JSON.stringify(name)}）。`
 		);
+	if (name.startsWith('sqlite_'))
+		throw new AddResourceError(
+			`リソース名 "${name}" は "sqlite_" で始まるので使えません（SQLite が内部用に予約していて、テーブルとインデックスの名前に使うと migration が拒まれます）。`
+		);
 	if (RESERVED_RESOURCE_NAMES.has(name))
 		throw new AddResourceError(`リソース名 "${name}" はテンプレートが既に使っています。`);
 	if (RESERVED_CRATES.has(name))
