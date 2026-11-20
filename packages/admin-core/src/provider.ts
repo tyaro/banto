@@ -15,6 +15,39 @@ export interface DeleteOneOptions {
 	version?: number;
 }
 
+/** One record of an id-based `DataProvider.deleteMany` (Issue #713). */
+export interface DeleteManyItem {
+	id: string | number;
+	/**
+	 * The record's `version` as the caller last read it (the optimistic-lock
+	 * check of `DeleteOneOptions.version`). Always send it for a resource that
+	 * has one: left out, that record is deleted without the check.
+	 */
+	version?: number;
+}
+
+/**
+ * What `DataProvider.deleteMany` deletes (Issue #713).
+ *
+ * - `ids`: exactly these records. One stale `version`, or one record that is
+ *   already gone, rejects the whole call.
+ *
+ * There is deliberately no "everything the filter matches" target: a count
+ * confirmed by the user cannot tell that one row left the filter and another
+ * entered it. To delete a whole filtered result, list the rows first (`getList`)
+ * and send their ids and versions here: only the rows that were shown are
+ * deleted, and any change since is a conflict.
+ */
+export type DeleteManyTarget = { kind: 'ids'; items: DeleteManyItem[] };
+
+/** Options of `DataProvider.deleteMany`. None yet; the parameter is reserved. */
+export type DeleteManyOptions = Record<string, never>;
+
+/** Result of `DataProvider.deleteMany`: how many records were deleted. */
+export interface DeleteManyResult {
+	deleted: number;
+}
+
 /**
  * Backend-agnostic CRUD abstraction. Implementations throw `ProviderError`.
  *
@@ -28,6 +61,21 @@ export interface DataProvider {
 	create<T>(resource: string, values: Record<string, unknown>): Promise<T>;
 	update<T>(resource: string, id: string | number, values: Record<string, unknown>): Promise<T>;
 	deleteOne(resource: string, id: string | number, options?: DeleteOneOptions): Promise<void>;
+	/**
+	 * Delete many records in one all-or-nothing request (Issue #713).
+	 * OPTIONAL: a provider (or a resource's backend) may not support it, so
+	 * check `provider.deleteMany` before offering the operation.
+	 *
+	 * Rejects with a `conflict` `ProviderError` and deletes nothing when the
+	 * target no longer is what the caller saw: `body.current` is the first
+	 * stale record (absent when a record is already gone). An empty target, a
+	 * repeated id or one over the server's limit is `bad_request`.
+	 */
+	deleteMany?(
+		resource: string,
+		target: DeleteManyTarget,
+		options?: DeleteManyOptions
+	): Promise<DeleteManyResult>;
 }
 
 export interface Identity {

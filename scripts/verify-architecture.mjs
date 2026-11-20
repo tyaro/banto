@@ -413,6 +413,7 @@ const isAllowedPackageImport = (spec) =>
 		{ tauri: 'items_create', rest: 'POST /api/items', role: 'Editor' },
 		{ tauri: 'items_update', rest: 'PUT /api/items/{id}', role: 'Editor' },
 		{ tauri: 'items_delete', rest: 'DELETE /api/items/{id}', role: 'Editor' },
+		{ tauri: 'items_bulk_delete', rest: 'POST /api/items/bulk-delete', role: 'Editor' },
 		{ tauri: 'items_import', rest: 'POST /api/items/import', role: 'Editor' },
 		{ tauri: 'users_create', rest: 'POST /api/users', role: 'Admin' },
 		{ tauri: 'users_update', rest: 'PUT /api/users/{id}', role: 'Admin' },

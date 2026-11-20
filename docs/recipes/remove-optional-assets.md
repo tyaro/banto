@@ -188,10 +188,12 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とそ�
    `serde::Deserialize`）も外す（残すと unused import 警告で、`-D warnings` の
    ビルドが落ちる）。`mod.rs` の `api_router` からは `attachments_router`
    一式（`attachments_list`/`attachments_upload`/`attachments_delete`等）と
-   `items_delete` からの `sweep_item_attachments` 呼び出し・`ItemsWriteState`
+   `items_delete` からの `sweep_item_attachments` 呼び出し・`items_bulk_delete` からの
+   `sweep_items_attachments` 呼び出し・`ItemsWriteState`
    の `attachments` フィールドを外す（`detail` は `None` にする）。`src-tauri/src/lib.rs` も同様に
    `attachments_*` コマンドと `AppState` の `attachments`/`attachments_dir`
    フィールド、`items_delete` の `sweep_item_attachments` 呼び出し、
+   `items_bulk_delete_body` の `sweep_items_attachments` 呼び出し、
    `attachment_wiring` の `use` を外す。共通部品の
    `apps/admin-template/core/src/attachment_wiring.rs` と `core/src/lib.rs` の
    `pub mod attachment_wiring;` も削除する。

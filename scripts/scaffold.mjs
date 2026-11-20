@@ -907,6 +907,19 @@ function removeAttachments() {
 		`Some(crate::items::item_delete_detail(&item, sweep))`,
 		`Some(crate::items::item_delete_detail(&item, None))`
 	);
+	//   一括削除（#713）の添付の掃除も同じく外す（detail の sweep は None に）。
+	cutRegion(
+		REST_ITEMS,
+		'rest/items: items_bulk_delete の添付 sweep 除去',
+		`    // Bulk twin of the items_delete sweep (attachments-plan §3.8): remove the`,
+		`        crate::attachment_wiring::sweep_items_attachments(&state.attachments, &deleted).await;`
+	);
+	swapText(
+		REST_ITEMS,
+		'rest/items: items_bulk_delete の添付 sweep を None に',
+		`crate::items::item_bulk_delete_detail(&target, &deleted, sweep);`,
+		`crate::items::item_bulk_delete_detail(&target, &deleted, None);`
+	);
 	//   core の共通部品（item 削除の掃除 + 監査 detail。REST/Tauri の両方から使う）
 	drop(CORE_LIB, 'core/lib.rs: pub mod attachment_wiring 除去', `pub mod attachment_wiring;\n`);
 	removeFile(`${APP}/core/src/attachment_wiring.rs`, 'core/src/attachment_wiring.rs 削除');
@@ -1183,6 +1196,22 @@ function removeAttachmentsFromLibRs() {
 			s,
 			`Some(admin_template_core::items::item_delete_detail(&item, sweep))`,
 			`Some(admin_template_core::items::item_delete_detail(&item, None))`
+		);
+	});
+	//   一括削除（#713）の添付の掃除も同じく外す。
+	cutRegion(
+		LIB_RS,
+		'lib.rs: items_bulk_delete の添付 sweep 除去',
+		`    // Bulk twin of the items_delete sweep (spec docs/design/attachments-plan.md §3.8):`,
+		`    let sweep = admin_template_core::attachment_wiring::sweep_items_attachments(\n        &state.attachments,\n        &deleted,\n    )\n    .await;`
+	);
+	editFile(LIB_RS, 'lib.rs: items_bulk_delete の添付 sweep を None に', (s) => {
+		// display の再実行では items コマンド自体が既に消えている。
+		if (!s.includes('async fn items_bulk_delete_body(')) return args.strict ? undefined : null;
+		return swap(
+			s,
+			`admin_template_core::items::item_bulk_delete_detail(&target, &deleted, sweep);`,
+			`admin_template_core::items::item_bulk_delete_detail(&target, &deleted, None);`
 		);
 	});
 	drop(
@@ -1620,10 +1649,11 @@ function removeItemsFromLibRs() {
 function removeItemsFromVerifyArch() {
 	drop(
 		VERIFY_ARCH,
-		'verify: DUAL_PATH の items 4対除去',
+		'verify: DUAL_PATH の items 5対除去',
 		`\t\t{ tauri: 'items_create', rest: 'POST /api/items', role: 'Editor' },\n` +
 			`\t\t{ tauri: 'items_update', rest: 'PUT /api/items/{id}', role: 'Editor' },\n` +
 			`\t\t{ tauri: 'items_delete', rest: 'DELETE /api/items/{id}', role: 'Editor' },\n` +
+			`\t\t{ tauri: 'items_bulk_delete', rest: 'POST /api/items/bulk-delete', role: 'Editor' },\n` +
 			`\t\t{ tauri: 'items_import', rest: 'POST /api/items/import', role: 'Editor' },\n`
 	);
 	// DESKTOP_ONLY の**末尾要素**（カンマ無し）なので、直前の行のカンマごと外して

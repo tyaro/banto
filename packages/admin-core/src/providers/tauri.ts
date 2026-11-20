@@ -2,7 +2,7 @@
  * `TauriDataProvider`/`TauriAuthProvider` (spec §3.2, §3.3, §10): map
  * `DataProvider`/`AuthProvider` calls onto Tauri `invoke()` using the
  * command naming convention `${resource}_list` / `_get` / `_create` /
- * `_update` / `_delete`, and `auth_login` / `auth_logout` / `auth_resolve`
+ * `_update` / `_delete` (plus `_bulk_delete` for `deleteMany`), and `auth_login` / `auth_logout` / `auth_resolve`
  * for auth.
  *
  * No dependency on `@tauri-apps/api` here — the app injects its own
@@ -19,6 +19,8 @@ import type {
 	AuthProvider,
 	CredentialRevision,
 	DataProvider,
+	DeleteManyResult,
+	DeleteManyTarget,
 	DeleteOneOptions,
 	Identity,
 	ResolvedAuth,
@@ -116,6 +118,12 @@ export function createTauriDataProvider(options: TauriInvokeOptions): DataProvid
 		deleteOne(resource: string, id: string | number, options?: DeleteOneOptions): Promise<void> {
 			const version = options?.version;
 			return call<void>(`${resource}_delete`, version === undefined ? { id } : { id, version });
+		},
+
+		// Issue #713: the `${resource}_bulk_delete` command takes the target as
+		// its one `target` argument (the same JSON as REST's request body).
+		deleteMany(resource: string, target: DeleteManyTarget): Promise<DeleteManyResult> {
+			return call<DeleteManyResult>(`${resource}_bulk_delete`, { target });
 		}
 	};
 }
