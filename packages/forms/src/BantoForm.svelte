@@ -74,7 +74,11 @@
 		const name = field?.dataset.field;
 		queueMicrotask(() => {
 			// Moving A -> B runs B's focusin before this: only clear A's own record.
-			if (field?.isConnected && focusedName === name) focusedName = null;
+			// A move inside one field (a date input's text box -> its calendar
+			// button) keeps the record: focus has not left the field.
+			if (!field?.isConnected || focusedName !== name) return;
+			if (field.contains(document.activeElement)) return;
+			focusedName = null;
 		});
 	}
 

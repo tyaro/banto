@@ -120,6 +120,30 @@ describe('BantoForm layout (#714)', () => {
 		expect(document.activeElement).toBe(screen.getByLabelText('A'));
 	});
 
+	it('keeps the focus record when focus moves between controls inside one field', async () => {
+		const schema: FormSchema = {
+			fields: [
+				{ name: 'a', label: 'A', type: 'text' },
+				{ name: 'show', label: 'Show', type: 'checkbox' },
+				{ name: 'b', label: 'B', type: 'text', visibleWhen: (v) => v.show !== true }
+			]
+		};
+		const store = createFormStore(schema);
+		const { container } = render(BantoForm, { schema, store, onSubmit: vi.fn() });
+		// A second control in the same field, like a date input's calendar button.
+		const extra = document.createElement('button');
+		extra.type = 'button';
+		extra.textContent = 'calendar';
+		container.querySelector('[data-field="b"]')!.append(extra);
+		(screen.getByLabelText('B') as HTMLInputElement).focus();
+		extra.focus();
+		await Promise.resolve();
+		store.setValue('show', true);
+		flushSync();
+		await new Promise((r) => setTimeout(r, 10));
+		expect(document.activeElement).toBe(screen.getByLabelText('Show'));
+	});
+
 	it('skips a candidate that cannot take focus (disabled) and goes on to the next', async () => {
 		const schema: FormSchema = {
 			fields: [
