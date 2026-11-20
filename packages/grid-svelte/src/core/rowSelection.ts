@@ -75,3 +75,73 @@ export function retainSelected(
 	const kept = selected.filter((id) => presentIds.has(id));
 	return kept.length === selected.length ? selected : kept;
 }
+
+/** What `canSelectAllMatching` looks at. */
+export interface SelectAllMatchingInput {
+	mode: 'client' | 'server';
+	/** `selectAllState` over the loaded rows. */
+	selectAll: SelectAllState;
+	/** How many rows are loaded (the targets of "select all"). */
+	loadedCount: number;
+	/** Server mode's `totalRows`: how many rows match the current filters. */
+	totalRows: number | undefined;
+	/** Already in "all matching" mode. */
+	allMatching: boolean;
+	/** The host opted in (`selectAllMatching`). Without it the offer never shows. */
+	enabled: boolean;
+}
+
+/**
+ * Whether the bulk bar offers "select all M matching rows" (server mode
+ * only): every loaded row is selected, and the filters match more rows than
+ * are loaded, and the host opted in. Client mode never offers it - its "select all" already covers
+ * every listed row.
+ */
+export function canSelectAllMatching(input: SelectAllMatchingInput): boolean {
+	if (!input.enabled) return false;
+	if (input.mode !== 'server' || input.allMatching) return false;
+	if (input.selectAll !== 'all') return false;
+	return input.totalRows !== undefined && input.totalRows > input.loadedCount;
+}
+
+/** Same ids in the same order (a host may hand back an equal copy of the array the grid wrote). */
+export function sameRowIds(a: readonly RowId[], b: readonly RowId[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) return false;
+	}
+	return true;
+}
+
+/** What `allMatchingVerdict` looks at. */
+export interface AllMatchingInput {
+	/** The (bindable) "all matching" flag as it is now. */
+	flag: boolean;
+	/** The ids the selection held when the grid entered the mode; `null` when the grid did not enter it. */
+	enteredWith: readonly RowId[] | null;
+	/** The selection as it is now. */
+	selected: readonly RowId[];
+	/** `selectable` and server mode both still hold. */
+	usable: boolean;
+}
+
+/**
+ * Checks "all matching" mode against what the host may have changed from
+ * outside:
+ * - `'keep'`: nothing to do (not in the mode, or still intact).
+ * - `'reject'`: the flag is on but the grid never entered the mode (the host
+ *   set it) - the flag goes back off, the selection is left alone.
+ * - `'leave'`: the grid was in the mode and the host turned the flag off or
+ *   made the mode unusable - leave it and empty the selection.
+ * - `'leave-keep'`: the grid was in the mode and the host rewrote the
+ *   selection (flag on, mode still usable) - leave the mode only; the value
+ *   the host wrote stays.
+ */
+export function allMatchingVerdict(
+	input: AllMatchingInput
+): 'keep' | 'reject' | 'leave' | 'leave-keep' {
+	if (input.enteredWith === null) return input.flag ? 'reject' : 'keep';
+	if (!input.flag || !input.usable) return 'leave';
+	return sameRowIds(input.selected, input.enteredWith) ? 'keep' : 'leave-keep';
+}

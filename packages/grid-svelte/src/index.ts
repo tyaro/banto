@@ -48,8 +48,13 @@ export {
 	toggleRowId,
 	toggleAll,
 	retainSelected,
+	canSelectAllMatching,
+	sameRowIds,
+	allMatchingVerdict,
 	type RowId,
-	type SelectAllState
+	type SelectAllState,
+	type SelectAllMatchingInput,
+	type AllMatchingInput
 } from './core/rowSelection';
 export {
 	partitionPinned,
