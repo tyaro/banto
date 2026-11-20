@@ -118,6 +118,8 @@
   "grid.selectAllLoadedRows": "Select all {loaded} loaded rows (of {total})",
   "grid.selectionStatus": "{count} selected",
   "grid.selectionNone": "Nothing selected",
+  "grid.selectAllMatching": "Select all {count} matching rows",
+  "grid.allMatchingStatus": "All {count} matching rows selected",
   "grid.selectionClear": "Clear selection",
   "grid.bulkBarLabel": "Bulk actions",
   "validation.required": "This field is required",

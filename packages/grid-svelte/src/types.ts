@@ -259,6 +259,19 @@ export interface GridBulkActionsContext {
 	ids: (string | number)[];
 	/** Clears the selection (the bar goes away and focus returns to the grid). */
 	clear: () => void;
+	/**
+	 * Server mode's "all matching" selection: every row the current filters
+	 * match is selected, loaded or not. `ids` then still holds only the loaded
+	 * rows that were selected when the mode was entered, so act on the filter
+	 * conditions (`GridState.filters`, plus any search term the host keeps
+	 * outside the grid) instead of `ids`. Always `false` in client mode.
+	 */
+	allMatching: boolean;
+	/**
+	 * How many rows the current filters match: `totalRows` in server mode
+	 * (the loaded count when it is not given), the listed rows in client mode.
+	 */
+	matchingCount: number;
 }
 
 /** Resolved defaults applied on top of a user-supplied GridColumn. */

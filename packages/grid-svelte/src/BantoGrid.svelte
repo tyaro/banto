@@ -39,6 +39,8 @@
 	import { prepareCommit, isColumnEditable } from './core/edit';
 	import { cellText, resolveCellPresentation, resolveTone } from './core/cellView';
 	import {
+		allMatchingVerdict,
+		canSelectAllMatching,
 		retainSelected,
 		selectAllState,
 		toggleAll,
@@ -134,7 +136,33 @@
 		 * out of the loaded window stay selected).
 		 */
 		selectedRowIds?: RowId[];
-		/** Fires with the new ids after every change the grid makes to the selection. */
+		/**
+		 * Server mode only: `true` while "all M matching rows" is selected -
+		 * every row the current filters match, loaded or not (the bulk bar
+		 * offers it once every loaded row is selected and `totalRows` is
+		 * larger). Bindable, for reading: the grid turns it on (the bar's
+		 * button) and off. A host may write `false` to leave the mode (the
+		 * selection is emptied, like `clear()`); a `true` the host writes is
+		 * turned back off. While it is on, `selectedRowIds` stays what it was
+		 * when the mode was entered (loaded rows only), so act on the filter
+		 * conditions, not on the ids.
+		 */
+		allMatchingSelected?: boolean;
+		/**
+		 * Opt in to server mode's "all matching rows" selection (#713). Off by
+		 * default: the bar then never offers "select all M matching rows",
+		 * `allMatchingSelected` stays false and a selection is always the
+		 * ids. Turn it on only when the bulk action can run on the filter
+		 * conditions (`allMatching` / `matchingCount` in `bulkActions`), else
+		 * the bar would say "all 100 selected" while the action only touches
+		 * the loaded rows.
+		 */
+		selectAllMatching?: boolean;
+		/**
+		 * Fires with the new ids after every change the grid makes to the
+		 * selection, entering "all matching" mode included (same ids;
+		 * `allMatchingSelected` is already updated when it fires).
+		 */
 		onSelectionChange?: (ids: RowId[]) => void;
 		/**
 		 * Names a row for its checkbox's accessible name (`selectRowLabel`).
@@ -144,8 +172,9 @@
 		getRowLabel?: (row: TRow) => string;
 		/**
 		 * Extra controls for the bulk bar (#713), e.g. a "delete" button. Gets
-		 * the selected ids and `clear()` (call it once the action is done). The
-		 * grid runs no bulk operation itself.
+		 * the selected ids, `clear()` (call it once the action is done) and, for
+		 * server mode's "all matching" selection, `allMatching` /
+		 * `matchingCount`. The grid runs no bulk operation itself.
 		 */
 		bulkActions?: Snippet<[GridBulkActionsContext]>;
 	}
@@ -171,6 +200,8 @@
 		cellEditors,
 		selectable = false,
 		selectedRowIds = $bindable([]),
+		allMatchingSelected = $bindable(false),
+		selectAllMatching = false,
 		onSelectionChange,
 		getRowLabel,
 		bulkActions
@@ -617,7 +648,32 @@
 		}
 		return (sorted as TRow[]).map(getRowId);
 	});
-	const selectAll = $derived(selectAllState(selectedSet, selectAllTargets));
+	// "All matching" mode (server mode, #713): every row the filters match is
+	// selected, loaded or not. The loaded rows are all drawn selected - rows
+	// that load later too - while `selectedRowIds` stays what it was on entry.
+	// `allMatchingIds` is that entry snapshot (null = the grid is not in the
+	// mode); a plain variable, compared against the prop to notice a write
+	// from outside.
+	let allMatchingIds: readonly RowId[] | null = null;
+	const allMatching = $derived(
+		selectable && selectAllMatching && mode === 'server' && allMatchingSelected
+	);
+	// How many rows the current filters match.
+	const matchingCount = $derived(
+		mode === 'server' ? (totalRows ?? selectAllTargets.length) : selectAllTargets.length
+	);
+	const selectAll = $derived(allMatching ? 'all' : selectAllState(selectedSet, selectAllTargets));
+	const offerAllMatching = $derived(
+		selectable &&
+			canSelectAllMatching({
+				mode,
+				selectAll,
+				loadedCount: selectAllTargets.length,
+				totalRows,
+				allMatching,
+				enabled: selectAllMatching
+			})
+	);
 	const selectAllLabel = $derived(
 		mode === 'server'
 			? t.selectAllLoadedRows(selectAllTargets.length, totalRows ?? selectAllTargets.length)
@@ -671,24 +727,75 @@
 		bulkBarWasVisible = visible;
 	});
 
+	// Every write of the selection goes through here, and every one of them
+	// leaves "all matching" mode (only `enterAllMatching` turns it on).
 	function setSelectedRowIds(next: RowId[]) {
+		allMatchingIds = null;
+		if (allMatchingSelected) allMatchingSelected = false;
 		selectedRowIds = next;
 		selectionAnnouncement = t.selectionStatus(next.length);
 		onSelectionChange?.(next);
 	}
 
+	function isRowSelected(row: TRow): boolean {
+		return allMatching || selectedSet.has(getRowId(row));
+	}
+
+	// In "all matching" mode every row is drawn selected, so a toggle is always
+	// an uncheck; there is no "all but these", so it empties the selection.
 	function toggleRowSelected(row: TRow) {
-		setSelectedRowIds(toggleRowId(selectedRowIds, getRowId(row)));
+		setSelectedRowIds(allMatching ? [] : toggleRowId(selectedRowIds, getRowId(row)));
 	}
 
 	function toggleAllSelected() {
-		setSelectedRowIds(toggleAll(selectedRowIds, selectAllTargets));
+		setSelectedRowIds(allMatching ? [] : toggleAll(selectedRowIds, selectAllTargets));
 	}
 
 	function clearSelectedRows() {
-		if (selectedRowIds.length === 0) return;
+		if (selectedRowIds.length === 0 && !allMatchingSelected) return;
 		setSelectedRowIds([]);
 	}
+
+	let bulkBarEl = $state<HTMLElement | null>(null);
+
+	function enterAllMatching() {
+		if (!offerAllMatching) return;
+		// The button goes away with the click: keep focus in the bar (on the
+		// bar itself, so the next Tab reaches its actions) instead of letting
+		// it drop to <body>.
+		const active = bulkBarEl?.ownerDocument.activeElement;
+		if (bulkBarEl && active && bulkBarEl.contains(active)) {
+			bulkBarEl.focus({ preventScroll: true });
+		}
+		allMatchingIds = [...selectedRowIds];
+		allMatchingSelected = true;
+		selectionAnnouncement = t.allMatchingStatus(matchingCount);
+		onSelectionChange?.(selectedRowIds);
+	}
+
+	// "All matching" mode ends when the host touches it from outside. If it
+	// wrote `selectedRowIds`, only the mode is left and the value the host
+	// wrote stays. If it turned the flag off, or the grid is no longer a
+	// selectable server grid, the selection is emptied, as with every other
+	// way out. A flag the host turned on itself is turned back off. Writes run
+	// in `untrack` (conventions §8).
+	$effect(() => {
+		const verdict = allMatchingVerdict({
+			flag: allMatchingSelected,
+			enteredWith: allMatchingIds,
+			selected: selectedRowIds,
+			usable: selectable && selectAllMatching && mode === 'server'
+		});
+		if (verdict === 'keep') return;
+		untrack(() => {
+			if (verdict === 'reject') allMatchingSelected = false;
+			else if (verdict === 'leave-keep') {
+				allMatchingIds = null;
+				allMatchingSelected = false;
+				selectionAnnouncement = t.selectionStatus(selectedRowIds.length);
+			} else setSelectedRowIds([]);
+		});
+	});
 
 	function rowLabelFor(row: TRow): string {
 		const custom = getRowLabel?.(row);
@@ -1640,7 +1747,7 @@
 			{#snippet dataRow(row: TRow, rowIndex: number)}
 				<div
 					class="row {rowClass?.(row) ?? ''}"
-					class:selected={selectable && selectedSet.has(getRowId(row))}
+					class:selected={selectable && isRowSelected(row)}
 					role="row"
 					aria-rowindex={rowIndex + 2}
 					style:grid-template-columns={templateColumns}
@@ -1668,7 +1775,7 @@
 								<input
 									type="checkbox"
 									class="select-box"
-									checked={selectedSet.has(getRowId(row))}
+									checked={isRowSelected(row)}
 									aria-label={t.selectRowLabel(rowLabelFor(row))}
 									onchange={() => toggleRowSelected(row)}
 								/>
@@ -1935,13 +2042,30 @@
 				class="bulk-bar"
 				role="group"
 				aria-label={t.bulkBarLabel()}
+				tabindex="-1"
+				bind:this={bulkBarEl}
 				onfocusin={handleBulkBarFocusIn}
 				onfocusout={handleBulkBarFocusOut}
 			>
-				<span class="bulk-count">{t.selectionStatus(selectedRowIds.length)}</span>
+				<span class="bulk-count">
+					{allMatching
+						? t.allMatchingStatus(matchingCount)
+						: t.selectionStatus(selectedRowIds.length)}
+				</span>
+				{#if offerAllMatching}
+					<!-- Server mode: widen "every loaded row" to every row the filters match. -->
+					<button type="button" class="bulk-all" onclick={enterAllMatching}>
+						{t.selectAllMatching(matchingCount)}
+					</button>
+				{/if}
 				{#if bulkActions}
 					<span class="bulk-actions">
-						{@render bulkActions({ ids: selectedRowIds, clear: clearSelectedRows })}
+						{@render bulkActions({
+							ids: selectedRowIds,
+							clear: clearSelectedRows,
+							allMatching,
+							matchingCount
+						})}
 					</span>
 				{/if}
 				<button type="button" class="bulk-clear" onclick={clearSelectedRows}>
@@ -2148,23 +2272,33 @@
 		gap: var(--banto-space-2);
 	}
 
+	.bulk-all,
 	.bulk-clear {
 		height: var(--banto-control-height-sm);
-		margin-inline-start: auto;
 		padding: 0 var(--banto-space-2);
 		border: none;
 		border-radius: var(--banto-radius-md);
 		background: transparent;
-		color: var(--banto-text-muted);
 		font-size: var(--banto-font-size-sm);
 		text-decoration: underline;
 		cursor: pointer;
+	}
+
+	.bulk-all {
+		color: var(--banto-primary);
+	}
+
+	.bulk-clear {
+		margin-inline-start: auto;
+		color: var(--banto-text-muted);
 	}
 
 	.bulk-clear:hover {
 		color: var(--banto-text);
 	}
 
+	.bulk-bar:focus-visible,
+	.bulk-all:focus-visible,
 	.bulk-clear:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
