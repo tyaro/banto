@@ -299,6 +299,41 @@ const schema: FormSchema = {
 
 純関数（`isFieldVisible`・`submitValuesOf`・`layoutOf` など）は `layout.ts` にあり、Svelte なしで使える。
 
+## 選択肢の型と単位つきの数値（Issue #714）
+
+```ts
+const options = [
+	{ value: 'normal', label: '通常' },
+	{ value: 'express', label: 'お急ぎ' }
+];
+const schema: FormSchema = {
+	fields: [
+		{ name: 'speed', label: '配送方法', type: 'radio', options, default: 'normal' },
+		{ name: 'size', label: 'サイズ', type: 'radio', variant: 'segmented', options: sizes },
+		{ name: 'extras', label: '同梱物', type: 'multiselect', options: extras, required: true },
+		{ name: 'weight', label: '重量', type: 'number', suffix: 'kg' },
+		{ name: 'price', label: '価格', type: 'number', prefix: '¥' }
+	]
+};
+```
+
+- **`radio`**: `options` から作る単一選択。値は select と同じ（未選択は `''`、`options` に無い値を弾かないのも同じ）。
+  `fieldset`（`role="radiogroup"`）+ `legend`（欄の label）の中にネイティブの radio を並べるので、矢印キーの移動はブラウザに任せる。
+  `required` は未選択をエラーにする。
+- **`variant: 'segmented'`**: 同じ radio をボタンの並びとして描く（型は増やさない）。入力は不可視のまま各ボタンに重なり、
+  フォーカス・矢印キー・読み上げの名前（「L、ラジオボタン」）はそのまま。選んだ区画は塗りに加えて太字とチェックの印でも示す。
+- **`multiselect`**: checkbox の群（`fieldset` + `legend`）。値は `options` の順の配列で、空は `[]`。
+  `required` は「1 つ以上」。combobox 型の複数選択は無い。
+  選択肢の値は型つき（`===`）で比べるので `1` と `'1'` は別の選択肢。文字列だけを受ける経路（draft の raw など）では表記が同じ型違いを区別できず、`options` の最初に一致したものを使う。
+- **単位 `prefix` / `suffix`（number のみ）**: 入力の前後に文字を出すだけで、値は数値のまま。桁区切りなどの書式は付けない。
+  文字は `aria-hidden` にして label の名前に混ぜず、入力欄の `aria-describedby` に「単位 → ヘルプ → エラー」の順で足す。
+  `DraftNumberField` でも同じ。
+- **群の型と `BantoForm`**: 群の型は自分で `fieldset` + `legend` を描くので、`BantoForm` は label を足さない
+  （`appearance="underline"` でも枠型の見た目）。欄の `id`（`visibleWhen` で隠れたときのフォーカスの退避先）は最初の入力に付き、
+  `aria-describedby`（ヘルプ・エラー）と、radio の `aria-invalid` は fieldset に付く。単体の `RadioField` / `MultiselectField` も同じ props。
+- **grid**: `columnsFromSchema` は radio を select と同じに（ラベル表示・select のセルエディタ）、multiselect を表示専用（ラベルを「、」でつなぐ）にする。
+- **消費側の注意**: `FieldType` の union が広がるので、網羅 switch をしている利用側は型エラーになる。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

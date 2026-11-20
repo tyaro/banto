@@ -27,6 +27,8 @@ export type SchemaFieldType =
 	| 'time'
 	| 'datetime'
 	| 'select'
+	| 'radio'
+	| 'multiselect'
 	| 'checkbox'
 	| 'password';
 
@@ -246,6 +248,8 @@ const EDITOR_BY_TYPE: Partial<Record<SchemaFieldType, CellEditorType>> = {
 	time: 'time',
 	datetime: 'datetime',
 	select: 'select',
+	// A radio group is a single choice from the same options: edited like a select.
+	radio: 'select',
 	checkbox: 'checkbox'
 };
 
@@ -272,6 +276,8 @@ const FILTER_BY_TYPE: Partial<Record<SchemaFieldType, FilterType>> = {
  * - Non-`readonly` fields get the matching cell editor + a validator with
  *   the same rules/messages the form applies (see [`fieldValidator`]);
  *   `readonly` fields derive as display-only columns.
+ * - `radio` derives like `select` (same options, label shown, select editor);
+ *   `multiselect` is display-only: its array shows as the labels joined with `、`.
  * - `select` fields render the option LABEL for the stored value (raw value
  *   shown when no option matches), and pass their options to the editor.
  *
@@ -315,12 +321,24 @@ export function columnsFromSchema<TRow>(
 				typeof value === 'string' ? formatDateTimeText(value) : value == null ? '' : String(value);
 		}
 
-		if (field.type === 'select' && field.options) {
+		if ((field.type === 'select' || field.type === 'radio') && field.options) {
 			const labels = new Map(field.options.map((option) => [option.value, option.label]));
 			column.format = (value) => {
 				const label = labels.get(value as string | number);
 				return label ?? (value === null || value === undefined ? '' : String(value));
 			};
+		}
+
+		// multiselect: the value is an array - shown as its labels joined with
+		// 、, display-only (no cell editor takes an array).
+		if (field.type === 'multiselect') {
+			const labels = new Map((field.options ?? []).map((option) => [option.value, option.label]));
+			column.format = (value) =>
+				Array.isArray(value)
+					? value.map((item) => labels.get(item as string | number) ?? String(item)).join('、')
+					: value === null || value === undefined
+						? ''
+						: String(value);
 		}
 
 		const editor = EDITOR_BY_TYPE[field.type];

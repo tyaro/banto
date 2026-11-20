@@ -20,6 +20,8 @@
 	import DateField from './fields/DateField.svelte';
 	import SelectField from './fields/SelectField.svelte';
 	import CheckboxField from './fields/CheckboxField.svelte';
+	import RadioField from './fields/RadioField.svelte';
+	import MultiselectField from './fields/MultiselectField.svelte';
 
 	interface Props {
 		schema: FormSchema;
@@ -111,6 +113,11 @@
 		await onSubmit(store.submitValues);
 	}
 
+	/** A group of inputs: it draws its own `fieldset` + `legend`, so the form adds no label (and no underline look). */
+	function isGroupType(def: FieldDef): boolean {
+		return def.type === 'radio' || def.type === 'multiselect';
+	}
+
 	function fieldComponent(def: FieldDef) {
 		switch (def.type) {
 			case 'password':
@@ -123,6 +130,10 @@
 				return SelectField;
 			case 'checkbox':
 				return CheckboxField;
+			case 'radio':
+				return RadioField;
+			case 'multiselect':
+				return MultiselectField;
 			default:
 				return TextField;
 		}
@@ -149,7 +160,8 @@
 						[def.help ? helpId : '', store.errors[def.name] ? errorId : '']
 							.filter(Boolean)
 							.join(' ') || undefined}
-					{@const underline = appearance === 'underline' && def.type !== 'checkbox'}
+					{@const grouped = isGroupType(def)}
+					{@const underline = appearance === 'underline' && def.type !== 'checkbox' && !grouped}
 					{@const temporalInput = isTemporalType(def.type) ? inputs[def.type] : undefined}
 					{@const injected = !!temporalInput}
 					{#snippet control()}
@@ -201,6 +213,8 @@
 									{#if def.required}<span class="required">*</span>{/if}
 								</span>
 							</label>
+						{:else if grouped}
+							{@render control()}
 						{:else}
 							<label class="label" for={inputId}>
 								{def.label}

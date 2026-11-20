@@ -87,4 +87,6 @@ export { default as NumberField } from './fields/NumberField.svelte';
 export { default as TextareaField } from './fields/TextareaField.svelte';
 export { default as SelectField } from './fields/SelectField.svelte';
 export { default as CheckboxField } from './fields/CheckboxField.svelte';
+export { default as RadioField } from './fields/RadioField.svelte';
+export { default as MultiselectField } from './fields/MultiselectField.svelte';
 export { default as DateField } from './fields/DateField.svelte';

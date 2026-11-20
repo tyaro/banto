@@ -413,6 +413,110 @@
 	};
 	const formDemoStore = createFormStore(formDemoSchema, undefined, formValidationMessages());
 	let formDemoKeys = $state<string[] | null>(null);
+	// BantoForm choice types (#714): radio, segmented, multiselect and a number
+	// with a unit. The values caption below prints what onSubmit received.
+	const choicesDemoSchema: FormSchema = {
+		columns: 2,
+		fields: [
+			{
+				name: 'speed',
+				get label() {
+					return m['uiDemo.choices.fieldSpeed']();
+				},
+				type: 'radio',
+				options: [
+					{
+						value: 'normal',
+						get label() {
+							return m['uiDemo.choices.speedNormal']();
+						}
+					},
+					{
+						value: 'express',
+						get label() {
+							return m['uiDemo.choices.speedExpress']();
+						}
+					},
+					{
+						value: 'pickup',
+						get label() {
+							return m['uiDemo.choices.speedPickup']();
+						}
+					}
+				],
+				default: 'normal'
+			},
+			{
+				name: 'size',
+				get label() {
+					return m['uiDemo.choices.fieldSize']();
+				},
+				type: 'radio',
+				variant: 'segmented',
+				options: [
+					{ value: 's', label: 'S' },
+					{ value: 'm', label: 'M' },
+					{ value: 'l', label: 'L' }
+				],
+				default: 'm'
+			},
+			{
+				name: 'extras',
+				get label() {
+					return m['uiDemo.choices.fieldExtras']();
+				},
+				get help() {
+					return m['uiDemo.choices.fieldExtrasHelp']();
+				},
+				type: 'multiselect',
+				required: true,
+				fullWidth: true,
+				options: [
+					{
+						value: 'card',
+						get label() {
+							return m['uiDemo.choices.extrasCard']();
+						}
+					},
+					{
+						value: 'manual',
+						get label() {
+							return m['uiDemo.choices.extrasManual']();
+						}
+					},
+					{
+						value: 'warranty',
+						get label() {
+							return m['uiDemo.choices.extrasWarranty']();
+						}
+					}
+				]
+			},
+			{
+				name: 'weight',
+				get label() {
+					return m['uiDemo.choices.fieldWeight']();
+				},
+				get help() {
+					return m['uiDemo.choices.fieldWeightHelp']();
+				},
+				type: 'number',
+				suffix: 'kg',
+				min: 0
+			},
+			{
+				name: 'price',
+				get label() {
+					return m['uiDemo.choices.fieldPrice']();
+				},
+				type: 'number',
+				prefix: '¥',
+				min: 0
+			}
+		]
+	};
+	const choicesDemoStore = createFormStore(choicesDemoSchema, undefined, formValidationMessages());
+	let choicesDemoValues = $state<Record<string, unknown> | null>(null);
 	// BantoGrid card (date-time-pickers PR-4): an editable date column gets
 	// the DateInput the root layout injects (`provideCellEditors`); the range
 	// comes from the schema (min / max, like the ship date above). Fixed
@@ -898,6 +1002,25 @@
 			{m['uiDemo.form.submitted']()}: {formDemoKeys
 				? formDemoKeys.join(', ')
 				: m['uiDemo.form.none']()}
+		</span>
+	</SurfaceCard>
+
+	<SurfaceCard title="BantoForm" description={m['uiDemo.choices.desc']()}>
+		<div data-testid="ui-demo-choices">
+			<BantoForm
+				schema={choicesDemoSchema}
+				store={choicesDemoStore}
+				submitLabel={m['uiDemo.form.submit']()}
+				onSubmit={(values) => {
+					choicesDemoValues = values;
+				}}
+			/>
+		</div>
+		<span class="caption">
+			{m['uiDemo.choices.submitted']()}:
+			<code data-testid="ui-demo-choices-values"
+				>{choicesDemoValues ? JSON.stringify(choicesDemoValues) : m['uiDemo.form.none']()}</code
+			>
 		</span>
 	</SurfaceCard>
 

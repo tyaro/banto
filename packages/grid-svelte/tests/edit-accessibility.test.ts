@@ -100,8 +100,9 @@ describe('inline editor accessibility', () => {
 		);
 		if (sample.editor === 'checkbox') await fireEvent.click(editor);
 		else {
+			// The select's DOM value is the option's index (typed options, #714).
 			await fireEvent[sample.editor === 'select' ? 'change' : 'input'](editor, {
-				target: { value: sample.draft }
+				target: { value: sample.editor === 'select' ? '1' : sample.draft }
 			});
 			await fireEvent.keyDown(editor, { key: 'Enter' });
 		}

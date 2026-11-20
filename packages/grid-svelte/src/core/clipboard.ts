@@ -116,6 +116,20 @@ export function parseCellInput(
  * matches, `raw` is returned unchanged (the caller's own validation, if any,
  * is responsible for rejecting an unmatched value).
  */
+/**
+ * The value an interactive select edit commits: a draft that already is one
+ * of the option values (same type - `2` and `'2'` are different options) is
+ * kept as is; anything else (paste text, CSV) goes through
+ * [`resolveSelectValue`]'s first string match.
+ */
+export function resolveSelectDraft(
+	draft: unknown,
+	editorOptions: EditorOption[] | undefined
+): unknown {
+	if (editorOptions?.some((option) => option.value === draft)) return draft;
+	return resolveSelectValue(String(draft ?? ''), editorOptions);
+}
+
 export function resolveSelectValue(
 	raw: string,
 	editorOptions: EditorOption[] | undefined

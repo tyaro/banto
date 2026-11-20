@@ -35,7 +35,13 @@
 		pinnedOffsets,
 		scrollLeftToReveal
 	} from './core/pinning';
-	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
+	import {
+		parseCellInput,
+		parseTsv,
+		rangeToTsv,
+		resolveSelectDraft,
+		resolveSelectValue
+	} from './core/clipboard';
 	import { prepareCommit, isColumnEditable } from './core/edit';
 	import { cellText, resolveCellPresentation, resolveTone } from './core/cellView';
 	import {
@@ -1421,7 +1427,8 @@
 			// function at all), and is what makes `prepareCommit`'s `draft ===
 			// oldValue` no-op check work for select columns with non-string
 			// (e.g. numeric) option values.
-			value = resolveSelectValue(String(editing.draft ?? ''), column.editorOptions);
+			// A draft that already is an option value keeps its type (`2` vs `'2'`).
+			value = resolveSelectDraft(editing.draft, column.editorOptions);
 		} else {
 			// Typed: a year-less date is this year's (the injected date input's
 			// rule); a paste or CSV cell never guesses it (date-time-pickers §5.10).

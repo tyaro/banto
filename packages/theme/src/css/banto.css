@@ -710,7 +710,8 @@ html[data-theme='dark'] {
 	color: var(--banto-text-muted);
 }
 
-.banto-field > .banto-field-control {
+.banto-field > .banto-field-control,
+.banto-field > .banto-affix > .banto-field-control {
 	box-sizing: border-box;
 	width: 100%;
 	min-width: 0;
@@ -727,24 +728,54 @@ html[data-theme='dark'] {
 	transition: border-color var(--banto-duration-fast) var(--banto-ease-out);
 }
 
-.banto-field > .banto-field-control:hover:not(:disabled) {
+.banto-field > .banto-field-control:hover:not(:disabled),
+.banto-field > .banto-affix > .banto-field-control:hover:not(:disabled) {
 	border-bottom-color: var(--banto-primary-hover);
 }
 
-.banto-field > .banto-field-control:focus-visible {
+.banto-field > .banto-field-control:focus-visible,
+.banto-field > .banto-affix > .banto-field-control:focus-visible {
 	border-bottom-color: var(--banto-primary-hover);
 	outline: var(--banto-border-width-strong) solid currentColor;
 	outline-offset: var(--banto-border-width);
 	box-shadow: none;
 }
 
-.banto-field > .banto-field-control:disabled {
+.banto-field > .banto-field-control:disabled,
+.banto-field > .banto-affix > .banto-field-control:disabled {
 	border-bottom-style: dashed;
 	opacity: 0.5;
 	cursor: not-allowed;
 }
 
-.banto-field > .banto-field-control[aria-invalid='true'] {
+.banto-field > .banto-field-control[aria-invalid='true'],
+.banto-field > .banto-affix > .banto-field-control[aria-invalid='true'] {
+	border-bottom-color: var(--banto-danger);
+}
+
+/* A number field with a prefix / suffix wraps its input in `.banto-affix`
+   (AffixBox). The wrapper carries the underline and its states, so the line
+   runs under the unit text too; the input inside keeps no line of its own. */
+.banto-field > .banto-affix {
+	border-bottom: var(--banto-border-width-strong) solid var(--banto-border-strong);
+	border-radius: var(--banto-radius-sm) var(--banto-radius-sm) 0 0;
+	transition: border-color var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.banto-field > .banto-affix > .banto-field-control {
+	border-bottom: none;
+}
+
+.banto-field > .banto-affix:hover:has(> .banto-field-control:not(:disabled)),
+.banto-field > .banto-affix:has(> .banto-field-control:focus-visible) {
+	border-bottom-color: var(--banto-primary-hover);
+}
+
+.banto-field > .banto-affix:has(> .banto-field-control:disabled) {
+	border-bottom-style: dashed;
+}
+
+.banto-field > .banto-affix:has(> .banto-field-control[aria-invalid='true']) {
 	border-bottom-color: var(--banto-danger);
 }
 
@@ -782,7 +813,8 @@ html[data-theme='dark'] {
 	gap: var(--banto-space-1);
 }
 
-.banto-field--stacked > .banto-field-control {
+.banto-field--stacked > .banto-field-control,
+.banto-field--stacked > .banto-affix > .banto-field-control {
 	min-height: var(--banto-control-height-lg);
 	padding: var(--banto-space-2) var(--banto-space-3);
 }

@@ -125,6 +125,8 @@ function defaultsFrom(schema: FormSchema): Values {
 	for (const field of schema.fields) {
 		if (field.default !== undefined) values[field.name] = field.default;
 		else if (field.type === 'checkbox') values[field.name] = false;
+		// An empty multiselect is an empty array, not `''`.
+		else if (field.type === 'multiselect') values[field.name] = [];
 		// An empty date / time / datetime is `null`, not `''` (date-time-pickers D6).
 		else if (isTemporalType(field.type)) values[field.name] = null;
 		else values[field.name] = '';
@@ -187,10 +189,23 @@ function parse(def: FieldDef | undefined, text: string, messages: ValidationMess
 		}
 		case 'checkbox':
 			return { ok: true, value: text === 'true' };
+		case 'radio':
 		case 'select': {
 			const option = def.options?.find((o) => String(o.value) === text);
 			return { ok: true, value: option ? option.value : text };
 		}
+		case 'multiselect':
+			// Never kept as raw text (the group sets its array with `setValue`);
+			// a comma-separated text is read as the option values, for completeness.
+			return {
+				ok: true,
+				value:
+					text === ''
+						? []
+						: text
+								.split(',')
+								.map((part) => def.options?.find((o) => String(o.value) === part)?.value ?? part)
+			};
 		default:
 			return { ok: true, value: text };
 	}
