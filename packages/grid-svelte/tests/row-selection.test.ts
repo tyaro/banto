@@ -344,6 +344,33 @@ describe('BantoGrid row selection (#713)', () => {
 			expect(document.activeElement).toBe(screen.getByRole('grid'));
 		});
 
+		it('returns focus to the grid when the host assigns [] to the bound selectedRowIds', async () => {
+			const bulkActions = createRawSnippet<[GridBulkActionsContext]>(() => ({
+				render: () => `<button type="button">外から消す</button>`,
+				setup: (node) => {
+					node.addEventListener('click', () => {
+						void externalRerender?.({ selectedRowIds: [] });
+					});
+				}
+			}));
+			let externalRerender: ((props: { selectedRowIds: number[] }) => unknown) | undefined;
+			const { container, rerender } = render(BantoGrid<Row>, {
+				rows,
+				columns,
+				getRowId,
+				selectable: true,
+				selectedRowIds: [1],
+				bulkActions
+			});
+			externalRerender = rerender;
+			const button = screen.getByRole('button', { name: '外から消す' });
+			button.focus();
+			await fireEvent.click(button);
+			await tick();
+			expect(container.querySelector('.bulk-bar')).toBeNull();
+			expect(document.activeElement).toBe(screen.getByRole('grid'));
+		});
+
 		it('does not steal focus that already moved outside the bar', async () => {
 			const { container, rerender } = setup();
 			const outside = document.createElement('input');

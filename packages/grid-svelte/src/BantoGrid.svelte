@@ -574,16 +574,38 @@
 	// Text of the polite live region: set only when the grid itself changes
 	// the selection, so nothing is read when the grid mounts.
 	let selectionAnnouncement = $state('');
-	let bulkBarEl: HTMLDivElement | undefined = $state();
+
+	// The bar goes away with the last selected row, however that happens (clear
+	// button, a reload that drops the rows, a server filter change, the host
+	// assigning `[]` to the bound `selectedRowIds`): a control inside it that
+	// has focus would drop focus to <body>. By the time any effect runs the bar
+	// is already out of the DOM, so whether focus was inside it is tracked from
+	// focusin / focusout (a plain variable, not state). Focus that moved to
+	// another element is left alone: only focus that fell to <body> is brought
+	// back to the grid.
+	let bulkBarHadFocus = false;
+	let bulkBarWasVisible = false;
+	function handleBulkBarFocusIn() {
+		bulkBarHadFocus = true;
+	}
+	function handleBulkBarFocusOut(event: FocusEvent) {
+		// A null relatedTarget is also what removal / a click on blank space
+		// reports, so only a move to a real element clears the flag.
+		if (event.relatedTarget) bulkBarHadFocus = false;
+	}
+	$effect(() => {
+		const visible = bulkBarVisible;
+		if (bulkBarWasVisible && !visible && bulkBarHadFocus) {
+			const doc = containerEl?.ownerDocument;
+			if (doc && (!doc.activeElement || doc.activeElement === doc.body)) {
+				containerEl?.focus({ preventScroll: true });
+			}
+		}
+		if (!visible) bulkBarHadFocus = false;
+		bulkBarWasVisible = visible;
+	});
 
 	function setSelectedRowIds(next: RowId[]) {
-		// The bar goes away with the last selected row, however that happens
-		// (clear button, a reload that drops the rows, a server filter change):
-		// a control inside it that has focus would drop focus to <body>. Focus
-		// that already moved elsewhere is left alone.
-		if (next.length === 0 && bulkBarEl?.contains(bulkBarEl.ownerDocument.activeElement)) {
-			containerEl?.focus({ preventScroll: true });
-		}
 		selectedRowIds = next;
 		selectionAnnouncement = t.selectionStatus(next.length);
 		onSelectionChange?.(next);
@@ -1791,7 +1813,13 @@
 		<div class="cell-sr-only" role="status" aria-live="polite">{selectionAnnouncement}</div>
 		{#if bulkBarVisible}
 			<!-- Under the grid, so the rows do not move when it appears (#713). -->
-			<div class="bulk-bar" role="group" aria-label={t.bulkBarLabel()} bind:this={bulkBarEl}>
+			<div
+				class="bulk-bar"
+				role="group"
+				aria-label={t.bulkBarLabel()}
+				onfocusin={handleBulkBarFocusIn}
+				onfocusout={handleBulkBarFocusOut}
+			>
 				<span class="bulk-count">{t.selectionStatus(selectedRowIds.length)}</span>
 				{#if bulkActions}
 					<span class="bulk-actions">
