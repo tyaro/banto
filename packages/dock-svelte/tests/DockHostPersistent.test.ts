@@ -16,7 +16,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import DockHostPersistentHarness from './DockHostPersistentHarness.svelte';
 import { createDockState } from '../src/state.svelte';
 import type { DockPanelChange } from '../src/core/lifecycle';
-import { PersistentContents } from '../src/core/persistent';
+import { isDockRearranging, PersistentContents } from '../src/core/persistent';
 import type { DockCapabilities } from '../src/core/policy';
 import type { DockLayout } from '../src/types';
 
@@ -496,5 +496,113 @@ describe('PersistentContents (two receptacles at once)', () => {
 		expect(el.parentElement).toBe(home);
 		expect(document.activeElement).not.toBe(input);
 		document.body.replaceChildren();
+	});
+});
+
+// jsdom has no `Element.moveBefore()` and fires no `blur` when a focused element leaves the
+// document: these cover the bookkeeping only (where the content is, the mark). That no `blur`
+// fires in a browser is `e2e/demo/dock-persistent-focus.spec.ts`.
+describe('PersistentContents: the focused content waits in the transit element (#763)', () => {
+	function setup(withMoveBefore: boolean) {
+		const moves: string[] = [];
+		if (withMoveBefore) {
+			Object.defineProperty(Element.prototype, 'moveBefore', {
+				configurable: true,
+				writable: true,
+				value(this: Element, node: Node, child: Node | null) {
+					if (!this.isConnected || !node.isConnected) throw new Error('HierarchyRequestError');
+					moves.push(this.id);
+					this.insertBefore(node, child);
+				}
+			});
+		}
+		const contents = new PersistentContents();
+		const [home, transit, a, b] = ['home', 'transit', 'a', 'b'].map((id) => {
+			const div = document.createElement('div');
+			div.id = id;
+			return div;
+		});
+		const el = document.createElement('div');
+		const input = document.createElement('input');
+		el.append(input);
+		home.append(el);
+		home.hidden = true;
+		document.body.append(home, transit, a, b);
+		contents.transit(transit);
+		contents.content('p')(el);
+		const offA = contents.slot('p')(a) as () => void;
+		moves.length = 0;
+		return { contents, home, transit, el, input, a, b, offA, moves };
+	}
+
+	afterEach(() => {
+		Reflect.deleteProperty(Element.prototype, 'moveBefore');
+		document.body.replaceChildren();
+	});
+
+	it('snapshot takes it out of the old receptacle; the new one takes it from the transit element', async () => {
+		const { contents, transit, el, input, a, b, offA, moves } = setup(true);
+		input.focus();
+		expect(isDockRearranging(input)).toBe(false);
+		contents.snapshot();
+		expect(el.parentElement).toBe(transit);
+		expect(isDockRearranging(input)).toBe(true);
+		// Svelte removes the old receptacle first, then mounts the new one: it waits meanwhile.
+		a.remove();
+		offA();
+		expect(el.parentElement).toBe(transit);
+		contents.slot('p')(b);
+		expect(el.parentElement).toBe(b);
+		expect(moves).toEqual(['transit', 'b']);
+		expect(isDockRearranging(input)).toBe(true);
+		await Promise.resolve();
+		expect(el.parentElement).toBe(b);
+		expect(document.activeElement).toBe(input);
+		expect(isDockRearranging(input)).toBe(false);
+	});
+
+	it('an update that kept the receptacle: it goes back into it', async () => {
+		const { contents, transit, el, input, a } = setup(true);
+		input.focus();
+		contents.snapshot();
+		expect(el.parentElement).toBe(transit);
+		await Promise.resolve();
+		expect(el.parentElement).toBe(a);
+		expect(document.activeElement).toBe(input);
+		expect(isDockRearranging(input)).toBe(false);
+	});
+
+	it('the receptacle went and none came: parked in the stash, the focus does not stay', async () => {
+		const { contents, home, el, input, offA } = setup(true);
+		input.focus();
+		contents.snapshot();
+		offA();
+		await Promise.resolve();
+		expect(el.parentElement).toBe(home);
+		expect(document.activeElement).not.toBe(input);
+		expect(isDockRearranging(input)).toBe(false);
+	});
+
+	it('a content without the focus is not moved or marked', () => {
+		const { contents, el, input, a, moves } = setup(true);
+		contents.snapshot();
+		expect(el.parentElement).toBe(a);
+		expect(moves).toEqual([]);
+		expect(isDockRearranging(input)).toBe(false);
+	});
+
+	it('without moveBefore it stays in its receptacle (appendChild path) and is marked until the focus is back', async () => {
+		const { contents, transit, el, input, a, b, offA } = setup(false);
+		input.focus();
+		contents.snapshot();
+		expect(el.parentElement).toBe(a);
+		expect(isDockRearranging(input)).toBe(true);
+		contents.slot('p')(b);
+		offA();
+		expect(el.parentElement).toBe(b);
+		expect(transit.childElementCount).toBe(0);
+		await Promise.resolve();
+		expect(document.activeElement).toBe(input);
+		expect(isDockRearranging(input)).toBe(false);
 	});
 });

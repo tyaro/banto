@@ -10,6 +10,11 @@
  * of this; no new .svelte components ship in Phase A.
  */
 export { default as DockHost } from './DockHost.svelte';
+/**
+ * Whether a node is inside a `persistent` pane the dock is re-arranging right now (#763): tells
+ * the `blur` of a re-arrangement (browsers without `Element.moveBefore()`) from the user leaving.
+ */
+export { isDockRearranging } from './core/persistent';
 /** Gesture hook types of `DockHost` (`canStartGesture` / `onGestureEnd`; #433-b, shared-primitives-upstream-plan §3.3). */
 export type {
 	GestureCancelReason as DockCancelReason,

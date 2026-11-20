@@ -347,7 +347,7 @@ arrange?: boolean; // false = 利用者が組み替えられない（キオス�
 
 - `DockHost` は、その pane の `panel` snippet を木の外（host の中の隠した預かり場所）に **1 回だけ** 描く。
   木の中（docked の pane・タブ・浮動 window・自動で隠した pane の引き出し）には空の受け皿だけを置き、
-  受け皿が mount されたら中身の要素を `appendChild` で移し、外れたら預かりへ戻す。undock / dock・外周への
+  受け皿が mount されたら中身の要素を移し（`Element.moveBefore()` があればそれで、無ければ `appendChild`）、外れたら預かりへ戻す。undock / dock・外周への
   ドッキング・周りの組み替え（`reparent`）・自動で隠す / ピンで戻す・タブの切替のどれでも、同じ DOM 要素・
   同じ Svelte の部品のまま（mount は 1 回）。受け皿と中身の要素は `display: contents` なので、見た目は
   `persistent` でないときと同じ。
@@ -355,12 +355,34 @@ arrange?: boolean; // false = 利用者が組み替えられない（キオス�
   次に開くと新しく mount する。`beforePanelChange` には今までどおり聞くが、その pane の変更は `remount: false`
   で、周りの組み替えで親が変わるだけのときは聞かない（作り直さないので失うものがない）。`persistent` も
   `keepMounted` と同じく適用の直前に読み直し、聞いたときと `remount` が変わったら `stale`。
-- DOM を移すと失われるものは戻す: 移す前に中のフォーカスのある要素を控え、移したあと（同じ更新の後の
-  microtask）にそこへ戻す。ただし、そのときフォーカスが `<body>` 以外（host やアプリが別の場所へ移した）なら
-  奪わない。中の要素の scroll 位置は `scroll` イベントで控えておき、受け皿へ移すたびに戻す。受け皿が無く
-  預かりへ戻った中身にはフォーカスを残さない（`<body>` へ外す）。
-- **`iframe` は移すたびに読み直される**（ブラウザは移した `iframe` の文書を読み込み直す）。`iframe` や
-  ネイティブの埋め込みを持つ中身は、据え置きでも状態を守れない。
+- **フォーカスは組み替えの間も中の要素に残る**（`Element.moveBefore()` のある環境: Chromium 133 以降・
+  それに当たる WebView2。#763）。中にフォーカスがある pane は、木を更新する直前に中身を host の中の待避場所へ
+  `moveBefore` で移し、更新でできた受け皿へもう一度移すので、フォーカス中の要素は文書から外れず、`blur` /
+  `focusout` は出ない（選択範囲も残る）。blur で値を確定するフォームを置いても、組み替えで確定されない。
+- **`moveBefore` の無い環境**（古い Chromium / WebView2、対応前の Firefox・Safari）では、組み替えのときに
+  フォーカス中の要素へ `blur` → `focusout` が出て、移したあと（同じ更新の後の microtask）に dock がフォーカスを
+  戻すので `focus` → `focusin` も出る（そのときフォーカスが `<body>` 以外 = host やアプリが別の場所へ移して
+  いたら奪わない）。これは避けられないので、**blur で確定する処理は `isDockRearranging(node)` で見分ける**:
+  組み替えの直前から、フォーカスを戻し終えるまでの間、その node が組み替え中の据え置き pane の中にあれば
+  `true`（その間の `blur` / `focusout` / `focus` / `focusin` のどれの中でも読める。`moveBefore` のある環境でも
+  同じ区間で `true` だが、その blur 自体が出ない）。
+
+  ```ts
+  import { isDockRearranging } from '@banto/dock-svelte';
+
+  function onBlur(event: FocusEvent) {
+  	if (isDockRearranging(event.currentTarget as Node)) return; // 組み替えによる blur: 確定しない
+  	commit();
+  }
+  ```
+
+- 中の要素の scroll 位置は `scroll` イベントで控えておき、受け皿へ移すたびに戻す。受け皿が無く
+  預かりへ戻った中身（hide した pane）にはフォーカスを残さない（`<body>` へ外す）。この blur の間も
+  `isDockRearranging` は `true` で、フォーカスは戻らない。隠す前に確定・確認したい値は
+  `beforePanelChange`（`hide`）で扱う。
+- **`iframe` は `moveBefore` の無い環境では移すたびに読み直される**（ブラウザは `appendChild` で移した
+  `iframe` の文書を読み込み直す）。`iframe` やネイティブの埋め込みを持つ中身は、その環境では据え置きでも
+  状態を守れない。
 - 位置・大きさ・倍率・ポインタ操作の状態は中身の部品が持つので残るが、`ResizeObserver` 等で受け皿の大きさを
   測る中身は、移した直後に大きさが変わることがある（新しい親の大きさになる）。
 

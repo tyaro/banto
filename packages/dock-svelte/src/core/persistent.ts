@@ -11,15 +11,31 @@
  *
  * What a DOM move loses, and how it is put back:
  *
- * - **Focus.** Moving a node drops the focus inside it. `snapshot()` (called by
- *   `DockHost` in an `$effect.pre`, before the tree's blocks update) records the
- *   focused element inside each content; after the moves of that update (a
- *   microtask, the receptacle is in the document by then) the focus goes back
- *   to it - only when the focus is nowhere (`<body>`) or still on it, so a focus
- *   the host or the app put elsewhere meanwhile (a band tab, a frame after a
- *   drop) is not taken away. A content parked in the stash (its pane was hidden
- *   or closed) does not keep the focus: it is blurred (the focus goes to
- *   `<body>`, as when a pane that is not persistent is unmounted).
+ * - **Focus.** Moving a node with `appendChild` drops the focus inside it, and
+ *   so does Svelte removing the old receptacle (it takes the receptacle's DOM
+ *   out of the document BEFORE the attachment's teardown can move the content
+ *   away; #763). `snapshot()` (called by `DockHost` in an `$effect.pre`, before
+ *   the tree's blocks update) records the focused element inside each content,
+ *   and:
+ *   - where `Element.moveBefore()` exists (Chromium 133+; it moves a node and
+ *     keeps its focus, selection and `iframe` documents), the content that
+ *     holds the focus is moved right there into the TRANSIT element of the host
+ *     (rendered, so the focus stays; empty and invisible otherwise), out of the
+ *     receptacle Svelte may be about to remove. The receptacle mounted by that
+ *     update takes it from there (`moveBefore` again), and `#settle` puts a
+ *     content nobody took back where it belongs. No `blur` / `focusout` fires.
+ *   - elsewhere the focus is lost (`blur` / `focusout` fire) and, after the
+ *     moves of that update (a microtask, the receptacle is in the document by
+ *     then), it goes back to the recorded element - only when the focus is
+ *     nowhere (`<body>`) or still on it, so a focus the host or the app put
+ *     elsewhere meanwhile (a band tab, a frame after a drop) is not taken away.
+ *
+ *   From `snapshot()` to the end of `#settle` the content that held the focus
+ *   carries `data-dock-rearranging` (`isDockRearranging(node)` reads it), so an
+ *   app can tell such a `blur` from the user leaving the field.
+ *   A content parked in the stash (its pane was hidden or closed) does not keep
+ *   the focus: it is blurred (the focus goes to `<body>`, as when a pane that
+ *   is not persistent is unmounted).
  * - **Scroll.** Every element inside a content that scrolls is recorded on its
  *   `scroll` event (capture on the content), and the recorded offsets are put
  *   back after each move into a receptacle (an element that is not rendered -
@@ -28,14 +44,50 @@
  *   flyout; `overflow: auto`) is outside the content and is re-created by a
  *   move: its offset is recorded on its own `scroll` event, per pane, and put
  *   back onto the `.body` around the receptacle the content moved into.
- * - **`iframe`.** A moved `iframe` loads its document again (browsers do that on
- *   every re-insertion); nothing here can keep it. README "Persistent panes".
+ * - **`iframe`.** An `iframe` moved with `appendChild` loads its document again
+ *   (browsers do that on every re-insertion); only `moveBefore` keeps it.
+ *   README "Persistent panes".
  *
  * Two receptacles of the same pane may exist for a moment (the new one mounted
  * before the old one is torn down): the newest mounted one holds the content,
  * and when it goes the content moves to the newest one left, else to the stash.
  */
 import type { Attachment } from 'svelte/attachments';
+
+/** On the content that held the focus, from `snapshot()` to the end of `#settle` (module doc). */
+const REARRANGING = 'data-dock-rearranging';
+
+/**
+ * Whether `node` is inside a `persistent` pane the dock is re-arranging right now (#763).
+ * Where `Element.moveBefore()` is missing, the focused field of such a pane gets a `blur` /
+ * `focusout` (and then `focus` / `focusin`) although the user did not leave it: a handler that
+ * commits on blur can skip those with this.
+ */
+export function isDockRearranging(node: Node | null | undefined): boolean {
+	const el = node instanceof Element ? node : (node?.parentElement ?? null);
+	return el?.closest(`[${REARRANGING}]`) != null;
+}
+
+type MoveBefore = (node: Node, child: Node | null) => void;
+
+function moveBeforeOf(target: HTMLElement): MoveBefore | null {
+	const fn = (target as unknown as { moveBefore?: unknown }).moveBefore;
+	return typeof fn === 'function' ? (fn as MoveBefore) : null;
+}
+
+/** Move `el` to the end of `target`, with `moveBefore` (state kept) when it can be used. */
+function moveInto(target: HTMLElement, el: HTMLElement): void {
+	const moveBefore = moveBeforeOf(target);
+	if (moveBefore && target.isConnected && el.isConnected) {
+		try {
+			moveBefore.call(target, el, null);
+			return;
+		} catch {
+			// Not movable that way (another document / shadow root): the plain move below.
+		}
+	}
+	target.appendChild(el);
+}
 
 interface Entry {
 	/** The element the stash renders the pane's snippet into (`null` until it is mounted). */
@@ -50,6 +102,8 @@ interface Entry {
 	body: { top: number; left: number } | null;
 	/** The focused element inside the content right before a structure change. */
 	focus: HTMLElement | null;
+	/** The content waits in the transit element for the receptacle of this update (module doc). */
+	transit: boolean;
 	onScroll: (event: Event) => void;
 }
 
@@ -59,6 +113,15 @@ export class PersistentContents {
 	#moved = new Set<string>();
 	#queued = false;
 	#disposed = false;
+	#transit: HTMLElement | null = null;
+
+	/** `{@attach}` for the host's transit element (module doc, "Focus"). */
+	transit: Attachment<HTMLElement> = (el) => {
+		this.#transit = el;
+		return () => {
+			if (this.#transit === el) this.#transit = null;
+		};
+	};
 
 	/** `{@attach}` for the element in the stash that holds the pane's rendered snippet. */
 	content(panelId: string): Attachment<HTMLElement> {
@@ -79,6 +142,7 @@ export class PersistentContents {
 					entry.scroll.clear();
 					entry.body = null;
 					entry.focus = null;
+					entry.transit = false;
 				}
 				this.#forgetIfUnused(panelId);
 			};
@@ -120,6 +184,8 @@ export class PersistentContents {
 			const el = entry.content;
 			if (el && active instanceof HTMLElement && active !== el && el.contains(active)) {
 				entry.focus = active;
+				el.setAttribute(REARRANGING, '');
+				this.#toTransit(entry, el);
 				any = true;
 			}
 		}
@@ -142,6 +208,7 @@ export class PersistentContents {
 				scroll,
 				body: null,
 				focus: null,
+				transit: false,
 				onScroll: (event) => {
 					const target = event.target;
 					if (!(target instanceof Element)) return;
@@ -154,6 +221,25 @@ export class PersistentContents {
 		return entry;
 	}
 
+	/**
+	 * Take the content that holds the focus out of its receptacle before Svelte may remove that
+	 * receptacle (module doc, "Focus"). Only where `moveBefore` keeps the focus through the move.
+	 */
+	#toTransit(entry: Entry, el: HTMLElement): void {
+		const transit = this.#transit;
+		const parent = el.parentElement;
+		if (entry.transit || !transit || !parent || parent === entry.home) return;
+		if (!transit.isConnected || !el.isConnected) return;
+		const moveBefore = moveBeforeOf(transit);
+		if (!moveBefore) return;
+		try {
+			moveBefore.call(transit, el, null);
+			entry.transit = true;
+		} catch {
+			// Left where it is: the `appendChild` path (the focus is put back in `#settle`).
+		}
+	}
+
 	#forgetIfUnused(panelId: string): void {
 		const entry = this.#entries.get(panelId);
 		if (entry && !entry.content && entry.slots.length === 0) this.#entries.delete(panelId);
@@ -164,9 +250,12 @@ export class PersistentContents {
 		const entry = this.#entries.get(panelId);
 		const el = entry?.content;
 		if (!entry || !el) return;
-		const target = entry.slots.at(-1) ?? entry.home;
+		// In transit with no receptacle yet: it waits there (rendered, the focus stays) for the one
+		// this update mounts; `#settle` parks it in the stash if none came.
+		const target = entry.slots.at(-1) ?? (entry.transit ? null : entry.home);
 		if (!target || el.parentElement === target) return;
-		target.appendChild(el);
+		entry.transit = false;
+		moveInto(target, el);
 		this.#moved.add(panelId);
 		this.#queue();
 	}
@@ -179,6 +268,12 @@ export class PersistentContents {
 	}
 
 	#settle(): void {
+		// A content still in transit: back into its receptacle (nothing replaced it), else the stash.
+		for (const [panelId, entry] of this.#entries) {
+			if (!entry.transit) continue;
+			entry.transit = false;
+			this.#place(panelId);
+		}
 		this.#queued = false;
 		const moved = new Set(this.#moved);
 		this.#moved.clear();
@@ -212,5 +307,7 @@ export class PersistentContents {
 			if (focus && lost && focus.isConnected && el.contains(focus))
 				focus.focus({ preventScroll: true });
 		}
+		// After the focus is back: its `focus` / `focusin` are still inside the mark.
+		for (const entry of this.#entries.values()) entry.content?.removeAttribute(REARRANGING);
 	}
 }

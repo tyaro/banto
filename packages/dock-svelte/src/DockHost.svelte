@@ -57,7 +57,10 @@
 	 * once, into a hidden stash at the end of the host, and the tree (docked pane,
 	 * tab, floating window, auto-hide slide-out) only draws an empty receptacle for
 	 * it; the content element is moved into the receptacle while one is mounted and
-	 * back to the stash when none is. Focus and scroll are put back after a move.
+	 * back to the stash when none is. Focus and scroll are put back after a move;
+	 * where `Element.moveBefore()` exists the content that holds the focus waits in
+	 * the `persistent-transit` element while the tree updates, so the focused
+	 * element never leaves the document and gets no `blur` (#763).
 	 *
 	 * Which guard applies first (README "Pane lifecycle"): `capabilities` decide
 	 * whether the control exists at all (no ✕, no drag); then a `drag` does not
@@ -290,7 +293,8 @@
 	const persistentContents = new PersistentContents();
 	onDestroy(() => persistentContents.dispose());
 	// Before the tree's blocks update for a structure change (`.pre`, and declared before the
-	// template), record the focus inside each persistent content: the move drops it.
+	// template), record the focus inside each persistent content (the move drops it) and, where
+	// `moveBefore` exists, take that content out of the receptacle the update may remove (#763).
 	$effect.pre(() => {
 		// Read every source first: a short-circuit would leave one untracked (conventions §8).
 		const layout = dock.layout;
@@ -661,6 +665,9 @@
 			</div>
 		{/each}
 	</div>
+	<!-- Where the content that holds the focus waits during an update (`core/persistent.ts`, "Focus"):
+	     rendered (the focus stays in it), never painted (it is empty again before the next frame). -->
+	<div class="persistent-transit" {@attach persistentContents.transit}></div>
 
 	{#if drag.state}
 		<!-- Guide buttons (#694 PR-1/PR-2): the host's outer-edge buttons and the cross on the pane
@@ -766,6 +773,16 @@
 	.persistent-slot,
 	.persistent-content {
 		display: contents;
+	}
+
+	/* Holds a content only inside one update (never across a frame): the size of the host, so
+	   what is inside keeps a layout, and out of the way of the pointer. */
+	.persistent-transit {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.docked-layer:not(:has([aria-modal='true'])) {
