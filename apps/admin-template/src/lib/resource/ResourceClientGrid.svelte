@@ -72,6 +72,8 @@
 		 * displayed (publishSaved-updated) at SEND time. Called with a lookup on
 		 * mount and `undefined` on teardown.
 		 */
+		/** Called each time a load of the rows finishes (the page uses it after a bulk delete conflict). */
+		onLoadSettled?: () => void;
 		registerCurrentRow?: (
 			lookup: ((rowId: string | number) => ResourceRow | undefined) | undefined
 		) => void;
@@ -103,6 +105,7 @@
 		onRangePaste,
 		rowClass,
 		registerCurrentRow,
+		onLoadSettled,
 		registerAdjacentRow,
 		selectable = false,
 		selectedRowIds = $bindable([]),
@@ -134,6 +137,13 @@
 		list.rows = list.rows.map((row) => byId.get(row.id) ?? row);
 		invalidate(name);
 	}
+
+	let wasLoading = false;
+	$effect(() => {
+		const loading = list.loading;
+		if (wasLoading && !loading) onLoadSettled?.();
+		wasLoading = loading;
+	});
 
 	$effect(() => {
 		registerCurrentRow?.((rowId) => list.rows.find((row) => row.id === rowId));

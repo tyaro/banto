@@ -135,6 +135,7 @@
 		captureViewGuard,
 		refreshCapturedVersions,
 		runBulkDelete,
+		refreshVersionsAfterConflict,
 		updateVersionCapture,
 		type VersionCapture
 	} from './bulkDelete';
@@ -267,6 +268,17 @@
 	function clearSelection(): void {
 		selectedIds = [];
 		selectedVersions = new Map();
+		versionsStaleAfterConflict = false;
+	}
+	// Set by a conflict; the next time a list load settles, the captured
+	// versions of the loaded selected rows are replaced by the fresh rows' (once).
+	let versionsStaleAfterConflict = false;
+	function handleListLoadSettled(): void {
+		if (!versionsStaleAfterConflict) return;
+		versionsStaleAfterConflict = false;
+		selectedVersions = refreshVersionsAfterConflict(selectedVersions, (id) =>
+			currentRowLookup?.(id)
+		);
 	}
 	let destroyed = false;
 	onDestroy(() => {
@@ -358,6 +370,7 @@
 				case 'conflict':
 					// Nothing was deleted; the selection stays. Show the latest rows.
 					notify('error', m['resource.bulkDeleteConflict']());
+					if (sameView()) versionsStaleAfterConflict = true;
 					invalidate(name);
 					break;
 				case 'tooMany':
@@ -381,7 +394,7 @@
 					notify('error', m['resource.bulkDeleteChanged']());
 					break;
 				case 'rejected':
-					notify('error', m['resource.bulkDeleteRejected']({ detail: outcome.message }));
+					notify('error', m['resource.bulkDeleteRejected']());
 					break;
 				case 'error':
 					notify('error', outcome.message);
@@ -1719,6 +1732,7 @@
 			onRangePaste={handleRangePaste}
 			{rowClass}
 			{registerCurrentRow}
+			onLoadSettled={handleListLoadSettled}
 			{registerAdjacentRow}
 			selectable={canBulkDelete}
 			bind:selectedRowIds={selectedIds}
@@ -1737,6 +1751,7 @@
 			onRangePaste={handleRangePaste}
 			{rowClass}
 			{registerCurrentRow}
+			onLoadSettled={handleListLoadSettled}
 			{registerAdjacentRow}
 			selectable={canBulkDelete}
 			selectAllMatching={canBulkDelete}

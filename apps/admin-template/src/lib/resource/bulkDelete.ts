@@ -105,6 +105,27 @@ export function refreshCapturedVersions(
 	return next;
 }
 
+/**
+ * The capture after a conflict and the reload that followed it: every
+ * captured row that is loaded now takes the version of the row `rowOf` shows
+ * (so pressing delete again, after the confirmation, no longer meets the same
+ * conflict). A row that is not loaded (server mode, outside the window) keeps
+ * the version it was captured with. Only for the reload after a conflict: a
+ * change by someone else that merely arrives on screen must NOT update the
+ * capture (the delete would then bypass the check it exists for).
+ */
+export function refreshVersionsAfterConflict(
+	previous: VersionCapture,
+	rowOf: (id: RowId) => Record<string, unknown> | null | undefined
+): Map<RowId, number | null> {
+	const next = new Map(previous);
+	for (const id of previous.keys()) {
+		const row = rowOf(id);
+		if (row) next.set(id, lockVersionOf(row) ?? null);
+	}
+	return next;
+}
+
 export type DeleteItemsResult =
 	{ ok: true; items: DeleteManyItem[] } | { ok: false; reason: 'versionMissing' };
 
@@ -237,17 +258,18 @@ export function captureViewGuard(view: () => unknown): () => boolean {
 }
 
 export type BulkDeleteFailure =
-	{ kind: 'conflict' } | { kind: 'rejected'; message: string } | { kind: 'error'; message: string };
+	{ kind: 'conflict' } | { kind: 'rejected' } | { kind: 'error'; message: string };
 
 /**
  * What a failed `deleteMany` means for the user: `conflict` (a record changed
  * or is gone - nothing was deleted), `rejected` (`bad_request`: an empty,
- * repeated or over-limit target) or any other `error` (denied, network ...).
+ * repeated or over-limit target; the server's sentence is not shown - it is
+ * in one language) or any other `error` (denied, network ...).
  */
 export function bulkDeleteFailureOf(err: unknown): BulkDeleteFailure {
 	if (isProviderError(err)) {
 		if (err.body.kind === 'conflict') return { kind: 'conflict' };
-		if (err.body.kind === 'bad_request') return { kind: 'rejected', message: err.message };
+		if (err.body.kind === 'bad_request') return { kind: 'rejected' };
 	}
 	return { kind: 'error', message: errorMessageOf(err) };
 }

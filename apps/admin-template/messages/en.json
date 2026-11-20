@@ -298,7 +298,7 @@
   "resource.bulkDeleteVersionMissing": "Nothing was deleted because the version of some selected rows could not be checked. Select them again",
   "resource.bulkDeleteNoRows": "No rows match the conditions any more",
   "resource.bulkDeleteChanged": "The list was updated. Reload it and select the rows again",
-  "resource.bulkDeleteRejected": "The delete request was not accepted ({detail})",
+  "resource.bulkDeleteRejected": "The delete request was rejected. Select the rows again",
   "items.reportBack": "← Back to products",
   "resource.filterExcludedNotice": "{resource} #{id} does not match the current filter",
   "dashboard.summary": "Aggregated from {count} product records",
