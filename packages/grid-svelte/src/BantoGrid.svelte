@@ -149,6 +149,16 @@
 		 */
 		allMatchingSelected?: boolean;
 		/**
+		 * Opt in to server mode's "all matching rows" selection (#713). Off by
+		 * default: the bar then never offers "select all M matching rows",
+		 * `allMatchingSelected` stays false and a selection is always the
+		 * ids. Turn it on only when the bulk action can run on the filter
+		 * conditions (`allMatching` / `matchingCount` in `bulkActions`), else
+		 * the bar would say "all 100 selected" while the action only touches
+		 * the loaded rows.
+		 */
+		selectAllMatching?: boolean;
+		/**
 		 * Fires with the new ids after every change the grid makes to the
 		 * selection, entering "all matching" mode included (same ids;
 		 * `allMatchingSelected` is already updated when it fires).
@@ -191,6 +201,7 @@
 		selectable = false,
 		selectedRowIds = $bindable([]),
 		allMatchingSelected = $bindable(false),
+		selectAllMatching = false,
 		onSelectionChange,
 		getRowLabel,
 		bulkActions
@@ -644,7 +655,9 @@
 	// mode); a plain variable, compared against the prop to notice a write
 	// from outside.
 	let allMatchingIds: readonly RowId[] | null = null;
-	const allMatching = $derived(selectable && mode === 'server' && allMatchingSelected);
+	const allMatching = $derived(
+		selectable && selectAllMatching && mode === 'server' && allMatchingSelected
+	);
 	// How many rows the current filters match.
 	const matchingCount = $derived(
 		mode === 'server' ? (totalRows ?? selectAllTargets.length) : selectAllTargets.length
@@ -657,7 +670,8 @@
 				selectAll,
 				loadedCount: selectAllTargets.length,
 				totalRows,
-				allMatching
+				allMatching,
+				enabled: selectAllMatching
 			})
 	);
 	const selectAllLabel = $derived(
@@ -770,7 +784,7 @@
 			flag: allMatchingSelected,
 			enteredWith: allMatchingIds,
 			selected: selectedRowIds,
-			usable: selectable && mode === 'server'
+			usable: selectable && selectAllMatching && mode === 'server'
 		});
 		if (verdict === 'keep') return;
 		untrack(() => {

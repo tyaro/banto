@@ -87,15 +87,18 @@ export interface SelectAllMatchingInput {
 	totalRows: number | undefined;
 	/** Already in "all matching" mode. */
 	allMatching: boolean;
+	/** The host opted in (`selectAllMatching`). Without it the offer never shows. */
+	enabled: boolean;
 }
 
 /**
  * Whether the bulk bar offers "select all M matching rows" (server mode
  * only): every loaded row is selected, and the filters match more rows than
- * are loaded. Client mode never offers it - its "select all" already covers
+ * are loaded, and the host opted in. Client mode never offers it - its "select all" already covers
  * every listed row.
  */
 export function canSelectAllMatching(input: SelectAllMatchingInput): boolean {
+	if (!input.enabled) return false;
 	if (input.mode !== 'server' || input.allMatching) return false;
 	if (input.selectAll !== 'all') return false;
 	return input.totalRows !== undefined && input.totalRows > input.loadedCount;

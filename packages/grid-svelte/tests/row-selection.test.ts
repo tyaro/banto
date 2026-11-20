@@ -519,6 +519,7 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 			mode: 'server',
 			totalRows: 50,
 			selectable: true,
+			selectAllMatching: true,
 			onSelectionChange,
 			bulkActions,
 			...extra
@@ -553,6 +554,14 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 		setup({ totalRows: 2 });
 		await fireEvent.click(headerBox());
 		expect(bar().textContent).toContain('2件を選択中');
+		expect(screen.queryByRole('button', { name: /該当する全/ })).toBeNull();
+	});
+
+	it('does not offer it unless selectAllMatching is set (default)', async () => {
+		setup({ selectAllMatching: false });
+		await fireEvent.click(headerBox());
+		expect(bar().textContent).toContain('2件を選択中');
+		expect(offer()).toBeNull();
 		expect(screen.queryByRole('button', { name: /該当する全/ })).toBeNull();
 	});
 

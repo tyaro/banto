@@ -98,7 +98,8 @@ describe('canSelectAllMatching (#713)', () => {
 		selectAll: 'all',
 		loadedCount: 40,
 		totalRows: 1200,
-		allMatching: false
+		allMatching: false,
+		enabled: true
 	} as const;
 
 	it('offers it in server mode when every loaded row is selected and more rows match', () => {
@@ -118,6 +119,10 @@ describe('canSelectAllMatching (#713)', () => {
 		expect(canSelectAllMatching({ ...base, totalRows: 40 })).toBe(false);
 		expect(canSelectAllMatching({ ...base, totalRows: 12 })).toBe(false);
 		expect(canSelectAllMatching({ ...base, totalRows: undefined })).toBe(false);
+	});
+
+	it('does not offer it unless the host opted in', () => {
+		expect(canSelectAllMatching({ ...base, enabled: false })).toBe(false);
 	});
 
 	it('does not offer it again while in the mode', () => {
