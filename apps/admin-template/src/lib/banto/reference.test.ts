@@ -55,17 +55,26 @@ describe('referenceFrom (#714)', () => {
 		});
 	});
 
-	it('applies the fixed filters and sort, and a custom value', async () => {
+	it('applies the fixed filters and sort', async () => {
 		const source = referenceFrom<Staff>(provider(), 'staff', {
 			labelOf: (row) => row.name,
-			idOf: (row) => `s-${row.id}`,
 			filters: [{ field: 'active', op: 'eq', value: true }],
 			sort: [{ field: 'name', direction: 'desc' }]
 		});
 		expect(await source.search('', live())).toEqual([
-			{ value: 's-3', label: 'Inoue' },
-			{ value: 's-1', label: 'Aoki' }
+			{ value: 3, label: 'Inoue' },
+			{ value: 1, label: 'Aoki' }
 		]);
+	});
+
+	it('round trip: search, the picked value, resolve gives the same name back', async () => {
+		const source = referenceFrom<Staff>(provider(), 'staff', {
+			labelOf: (row) => row.name,
+			descriptionOf: (row) => row.site
+		});
+		const [picked] = await source.search('inou', live());
+		expect(picked.label).toBe('Inoue');
+		expect(await source.resolve(picked.value, live())).toEqual(picked);
 	});
 
 	it('resolves a stored value with getOne; a missing record is null', async () => {

@@ -29,7 +29,11 @@ export interface ReferenceFromOptions<TRow> {
 	labelOf: (row: TRow) => string;
 	/**
 	 * The value stored for a row. Default: its `id`. The type is kept (`2` and
-	 * `'2'` differ). Not named `valueOf`: every object already has one
+	 * `'2'` differ). It must be the key `provider.getOne` finds the record by,
+	 * as is: `resolve` hands the stored value to `getOne` unchanged to show the
+	 * name again, so a value made up from the row (`s-${id}`) is never found.
+	 * Set it only to pick another unique key the provider takes in place of
+	 * `id`. Not named `valueOf`: every object already has one
 	 * (`Object.prototype.valueOf`), so an optional `valueOf` neither type-checks
 	 * nor can be told from "not given".
 	 */

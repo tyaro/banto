@@ -315,6 +315,67 @@ describe('ReferenceField: asynchronous search', () => {
 		expect(status()).toBe('1 件の候補');
 	});
 
+	describe('a changed search word retires the options of the old one (#762 review)', () => {
+		/** A's answer is on screen; B is typed and still unanswered. */
+		async function typedBOverA() {
+			vi.useFakeTimers();
+			const answers: Record<string, ReturnType<typeof deferred<ReferenceOption[]>>> = {};
+			const search = (query: string) => {
+				answers[query] = deferred<ReferenceOption[]>();
+				return answers[query].promise;
+			};
+			const view = renderField({ def: { ...owner, search }, debounceMs: 100 });
+			await fireEvent.input(box(), { target: { value: 'A' } });
+			await vi.advanceTimersByTimeAsync(100);
+			answers.A.resolve([people[0], people[1]]);
+			await vi.advanceTimersByTimeAsync(0);
+			flushSync();
+			expect(optionTexts()).toEqual(['青木 営業', '青山']);
+			await fireEvent.input(box(), { target: { value: 'B' } });
+			flushSync();
+			return { ...view, answers };
+		}
+
+		afterEach(() => vi.useRealTimers());
+
+		it('ArrowDown then Enter right after typing picks nothing', async () => {
+			const { onInput } = await typedBOverA();
+			expect(optionTexts()).toEqual([]);
+			await fireEvent.keyDown(box(), { key: 'ArrowDown' });
+			await fireEvent.keyDown(box(), { key: 'Enter' });
+			expect(onInput).not.toHaveBeenCalled();
+		});
+
+		it('the new answer can be picked', async () => {
+			const { onInput, answers } = await typedBOverA();
+			await vi.advanceTimersByTimeAsync(100);
+			answers.B.resolve([people[3]]);
+			await vi.advanceTimersByTimeAsync(0);
+			flushSync();
+			expect(optionTexts()).toEqual(['井上']);
+			await fireEvent.keyDown(box(), { key: 'ArrowDown' });
+			await fireEvent.keyDown(box(), { key: 'Enter' });
+			expect(onInput).toHaveBeenCalledWith(people[3].value);
+		});
+
+		it('the mouse cannot pick an old option either', async () => {
+			const { onInput } = await typedBOverA();
+			expect(screen.queryAllByRole('option')).toHaveLength(0);
+			expect(onInput).not.toHaveBeenCalled();
+		});
+
+		it('a composition in progress outdates the search for the text before it', async () => {
+			const { answers } = await typedBOverA();
+			await vi.advanceTimersByTimeAsync(100);
+			// B is under way; the user keeps composing: its answer must not show.
+			await fireEvent.input(box(), { target: { value: 'Bあ' }, isComposing: true });
+			answers.B.resolve([people[3]]);
+			await vi.advanceTimersByTimeAsync(0);
+			flushSync();
+			expect(optionTexts()).toEqual([]);
+		});
+	});
+
 	it('a late failure of an older search is not shown either', async () => {
 		const answers = [deferred<ReferenceOption[]>(), deferred<ReferenceOption[]>()];
 		let call = 0;

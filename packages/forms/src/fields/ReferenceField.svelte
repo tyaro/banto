@@ -154,10 +154,8 @@
 		try {
 			const found = (await def.search?.(query, request.signal)) ?? [];
 			if (!request.isCurrent()) return;
-			// Keep the active option when it is still in the new list.
-			const kept = active >= 0 ? options[active]?.value : undefined;
 			options = found;
-			active = kept === undefined ? -1 : found.findIndex((option) => option.value === kept);
+			active = -1;
 			answered = query;
 			phase = 'ready';
 		} catch (cause) {
@@ -171,11 +169,22 @@
 		}
 	}
 
-	/** Search for `query` after the debounce (`now`: at once). The search under way is stopped right away. */
-	function scheduleSearch(query: string, now = false): void {
+	/**
+	 * The words changed: the options on screen answer the old ones, so they go
+	 * (nothing to arrow to, press Enter on or click) until the new answer comes.
+	 * The search under way is stopped, and so is the one waiting for the debounce.
+	 */
+	function dropStale(): void {
 		clearTimeout(timer);
 		owner.invalidate(SEARCH);
+		options = [];
+		active = -1;
 		phase = 'loading';
+	}
+
+	/** Search for `query` after the debounce (`now`: at once). */
+	function scheduleSearch(query: string, now = false): void {
+		dropStale();
 		if (now || debounceMs <= 0) void runSearch(query);
 		else timer = setTimeout(() => void runSearch(query), debounceMs);
 	}
@@ -244,6 +253,8 @@
 		openList();
 		// While an IME composes, the text is not final: search when it ends.
 		if (!(event as unknown as InputEvent).isComposing) scheduleSearch(text.trim());
+		// Nor may a search for the text before the composition answer meanwhile.
+		else dropStale();
 	}
 
 	function handleKeydown(event: KeyboardEvent): void {
