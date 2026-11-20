@@ -24,6 +24,8 @@
   同じ worktree に 2 つの担当を同時に入れない。
 - **マージの成否を確かめてからブランチを消す**。ネットワークの失敗でマージが通っていないのに head を消すと
   PR が閉じる（2026-11-19 に通信エラーで失敗したマージの後に head を消して起きた。同じ SHA で push し直して reopen すれば戻るが、CI が全部走り直す）。
+  ブランチを消すのは、オーナーが後片付けを指示したとき、またはマージの承認とあわせて許されたときだけ。
+  **マージの承認とは別の判断**で、担当が終わったことを理由に消さない。
 - 積み上げた PR（base が別の PR のブランチ）は、下を squash でマージすると上が衝突する。
   上の base を main に付け替え、main を取り込んで（CHANGELOG は両方の節を残す）push する。
   base が main でない間は CI の一部が走らない。
@@ -42,7 +44,8 @@
 
 ### 2.2 Template acceptance
 
-- Copy→rename・Scaffold 4 本は、対象パスが変わったときだけ走る。**packages だけの PR で走らないのは正常**。
+- Copy→rename・Scaffold 4 本は、対象パスが変わったときだけ走る。**対象外の packages だけの変更で走らないのは正常**
+  （`packages/theme/**` は対象に入っている）。対象のパスは `.github/workflows/template-acceptance.yml` の `paths` を正とする。
 - フロントのみの変更では scaffold.mjs の陳腐化が検出されない。構造を変えたら、4 プリセットの
   `pnpm scaffold --dry-run` で自分で確かめる。メッセージのキー名は scaffold.mjs が名前で一致させている。
   - `audit.*` は display プリセットが消すので、監査ログ画面の外では `resource.*` を使う。
@@ -54,8 +57,8 @@
 ### 2.3 visual の基準画像
 
 - 基準画像は **Linux でだけ**作る。`visual-baselines.yml` を dispatch して再生成する（ローカルでは作らない）。
-  - 見た目が変わる PR は、**PR を作る前**に基準画像を作る。CI は `pull_request` でだけ走るので、
-    ブランチを push → `gh workflow run visual-baselines.yml --ref <branch> -f commit=true` →
+  - 見た目が変わる PR は、**PR を作る前**に基準画像を作る。CI は `pull_request` と `main` への push でだけ起動し（`.github/workflows/ci.yml` の `on:`）、
+    作業ブランチへの push だけでは走らないので、ブランチを push → `gh workflow run visual-baselines.yml --ref <branch> -f commit=true` →
     bot のコミットを待って PR を作る、とすると CI が 1 回で済む。委譲の指示にも書く。
   - ワークフローが走っている間は、そのブランチへ push しない（non-fast-forward で bot の push が落ちる）。
     修正はコミットまでにして、画像が載ってから取り込む。
@@ -108,10 +111,18 @@
 - 委譲の指示に書くこと: 決まったこと／取りまとめ側が置く既定（PR 本文で「要確認」に列挙させる）／
   検証の範囲／`pnpm format:check`／ファイルは必要な範囲だけ読むこと（grep で位置を探してから行範囲を読む）／
   ビルド・テストの出力は `tail`・`grep` で絞ること／テストは名前で絞り、全体は最後に 1 回。
-- 並行して委譲するときは worktree を分ける。終わったら worktree とブランチを消す。
-  - worktree が locked のときは `git worktree remove -f -f`。`Directory not empty` で止まっても git の登録は外れるので、
-    残ったフォルダは別途消す。「別のプロセスが使用中」なら、掴んでいるプロセス（担当が起こした
-    `vite preview`・`banto-serve`、待機中のコマンド）を止めてから。
+- 並行して委譲するときは worktree を分ける。
+  - ブランチの削除は、マージが済んだことを確かめ（§1）、オーナーが後片付けを指示したとき、またはマージの承認とあわせて
+    許されたときに行う。マージの承認とは別の判断。
+  - worktree は、次をすべて確かめてから通常の `git worktree remove` で消す。
+    - その worktree の変更がマージ済み、または push 済みで不要になっている。
+    - 未保存の変更が無い（`git status --porcelain` が空）。
+    - 固有のファイル（未追跡の成果物）が無い。
+    - それを使っているプロセスが無い。掴んでいるプロセス（担当が起こした
+      `vite preview`・`banto-serve`、待機中のコマンド）は止めてから。
+  - locked のとき、または削除に失敗したときは、理由を確かめる。理由が分からなければ止めて、オーナーに相談する。
+    `git worktree remove -f -f` は、理由が分かっていて上の条件を満たすときだけ。
+    `Directory not empty` で止まっても git の登録は外れるので、残ったフォルダは別途消す。
   - 新しい worktree には `node_modules` が無い。`pnpm install --frozen-lockfile`（`--offline` 可）から始める。
   - 並行の担当はスクラッチ用のディレクトリを共有することがあり、同名のスクリプトが上書きされた。
     一時ファイルの名前は担当ごとに分ける。
