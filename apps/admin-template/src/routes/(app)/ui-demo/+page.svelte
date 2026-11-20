@@ -29,7 +29,7 @@
 	 * Not in the API on purpose (ADR-0018 §2): `IconButton` has no `disabled`
 	 * prop in phase 1, so no disabled sample.
 	 */
-	import { BantoForm, createFormStore, type FormSchema } from '@banto/forms';
+	import { BantoForm, createFormStore, type FormSchema, type ReferenceOption } from '@banto/forms';
 	import {
 		CommandPalette,
 		DateInput,
@@ -94,7 +94,8 @@
 		dateRangeInputMessages,
 		dateTimeInputMessages,
 		formValidationMessages,
-		gridMessages
+		gridMessages,
+		referenceFieldMessages
 	} from '#lib/banto/i18n.js';
 
 	// HeaderNav card (nav-menubar-plan PR-2): one set of entries drawn twice -
@@ -517,6 +518,60 @@
 	};
 	const choicesDemoStore = createFormStore(choicesDemoSchema, undefined, formValidationMessages());
 	let choicesDemoValues = $state<Record<string, unknown> | null>(null);
+	// BantoForm reference type (#714): a combobox that searches as you type.
+	// The rows are a local array, so the card needs no backend in any mode (an
+	// app builds `search` / `resolve` from its DataProvider with
+	// `referenceFrom`, src/lib/banto/reference.ts). Names are fixed sample data.
+	const referenceDemoStaff: ReferenceOption[] = [
+		{ value: 101, label: 'Aoki Sakura', description: 'Tokyo' },
+		{ value: 102, label: 'Aoyama Ken', description: 'Osaka' },
+		{ value: 103, label: 'Inoue Mei', description: 'Tokyo' },
+		{ value: 104, label: 'Ito Haru', description: 'Nagoya' },
+		{ value: 105, label: 'Sato Yui', description: 'Osaka' },
+		{ value: 106, label: 'Suzuki Ren', description: 'Tokyo' }
+	];
+	const referenceDemoSource = {
+		search: async (query: string) => {
+			const term = query.toLowerCase();
+			return referenceDemoStaff.filter((person) =>
+				`${person.label} ${person.description ?? ''}`.toLowerCase().includes(term)
+			);
+		},
+		resolve: async (value: string | number) =>
+			referenceDemoStaff.find((person) => person.value === value) ?? null
+	};
+	const referenceDemoSchema: FormSchema = {
+		columns: 2,
+		fields: [
+			{
+				name: 'owner',
+				get label() {
+					return m['uiDemo.reference.fieldOwner']();
+				},
+				get help() {
+					return m['uiDemo.reference.fieldOwnerHelp']();
+				},
+				type: 'reference',
+				required: true,
+				...referenceDemoSource
+			},
+			{
+				name: 'deputy',
+				get label() {
+					return m['uiDemo.reference.fieldBackup']();
+				},
+				type: 'reference',
+				default: 103,
+				...referenceDemoSource
+			}
+		]
+	};
+	const referenceDemoStore = createFormStore(
+		referenceDemoSchema,
+		undefined,
+		formValidationMessages()
+	);
+	let referenceDemoValues = $state<Record<string, unknown> | null>(null);
 	// BantoGrid card (date-time-pickers PR-4): an editable date column gets
 	// the DateInput the root layout injects (`provideCellEditors`); the range
 	// comes from the schema (min / max, like the ship date above). Fixed
@@ -1020,6 +1075,26 @@
 			{m['uiDemo.choices.submitted']()}:
 			<code data-testid="ui-demo-choices-values"
 				>{choicesDemoValues ? JSON.stringify(choicesDemoValues) : m['uiDemo.form.none']()}</code
+			>
+		</span>
+	</SurfaceCard>
+
+	<SurfaceCard title="BantoForm" description={m['uiDemo.reference.desc']()}>
+		<div data-testid="ui-demo-reference">
+			<BantoForm
+				schema={referenceDemoSchema}
+				store={referenceDemoStore}
+				submitLabel={m['uiDemo.form.submit']()}
+				referenceMessages={referenceFieldMessages()}
+				onSubmit={(values) => {
+					referenceDemoValues = values;
+				}}
+			/>
+		</div>
+		<span class="caption">
+			{m['uiDemo.choices.submitted']()}:
+			<code data-testid="ui-demo-reference-values"
+				>{referenceDemoValues ? JSON.stringify(referenceDemoValues) : m['uiDemo.form.none']()}</code
 			>
 		</span>
 	</SurfaceCard>

@@ -334,6 +334,82 @@ const schema: FormSchema = {
 - **grid**: `columnsFromSchema` は radio を select と同じに（ラベル表示・select のセルエディタ）、multiselect を表示専用（ラベルを「、」でつなぐ）にする。
 - **消費側の注意**: `FieldType` の union が広がるので、網羅 switch をしている利用側は型エラーになる。
 
+## 参照選択（Issue #714）
+
+ほかのリソースのレコードを、検索して選ぶ欄（combobox）。**値は id だけ**で、表示名は欄が持つ。
+forms はデータの契約を持たず、候補と表示名は欄の定義に渡す 2 つの関数から得る。
+
+```ts
+import type { FormSchema, ReferenceOption } from '@banto/forms';
+
+const schema: FormSchema = {
+	fields: [
+		{
+			name: 'ownerId',
+			label: '担当者',
+			type: 'reference',
+			required: true,
+			// 打った文字の候補。query が '' のとき（↓ で開いたとき）は、最初の数件を返す。
+			search: async (query, signal): Promise<ReferenceOption[]> => {
+				const res = await fetch(`/api/users?search=${encodeURIComponent(query)}`, { signal });
+				const users: { id: number; name: string; dept: string }[] = await res.json();
+				return users.map((u) => ({ value: u.id, label: u.name, description: u.dept }));
+			},
+			// 保存された値（id）の表示名。レコードが無ければ null。
+			resolve: async (value, signal) => {
+				const res = await fetch(`/api/users/${value}`, { signal });
+				if (res.status === 404) return null;
+				const u = await res.json();
+				return { value: u.id, label: u.name };
+			}
+		}
+	]
+};
+```
+
+テンプレート（admin-template）には、`DataProvider` からこの 2 つを作る補助 `referenceFrom` がある
+（`src/lib/banto/reference.ts`。`search` は `getList` のクイック検索、`resolve` は `getOne`）。
+
+```ts
+import { getDataProvider } from '@banto/admin-core';
+import { referenceFrom } from '#lib/banto/reference.js';
+
+{ name: 'ownerId', label: '担当者', type: 'reference',
+  ...referenceFrom(getDataProvider, 'users', { labelOf: (u: User) => u.name, descriptionOf: (u) => u.dept }) }
+```
+
+- **値**: `ReferenceOption.value`（`string | number`）がそのまま入る（`2` と `'2'` は別のもの）。未選択は `null`。
+  `referenceFrom` の `idOf`（既定は `id`）は、`provider.getOne` がそのまま引けるキーに限る（`resolve` が保存値をそのまま `getOne` に渡すため。`s-${id}` のように作った値は再表示で引けない）。
+  `required` は「値があること」（`0` は値）。
+- **値が変わるのは 2 つのときだけ**: 候補から選んだとき（Enter・クリック）と、入力を消して欄を出たとき（`null` になる）。
+  打った文字だけでは値は変わらない。選ばずに欄を出ると、入力は今の値の表示名に戻る。
+- **表示名**: 初期値や外から変わった値は `resolve` で引く。引けるまでと、引けないとき（`null`・失敗）は、値をそのまま出す。
+  選んだ直後は候補の `label` を使い、`resolve` は呼ばない。
+- **検索の語が変わったら**: 前の語の候補は消え（「検索中」）、新しい応答が来るまで ↓・Enter・クリックで選べない。IME の変換中も、前の検索の応答は出さない。
+- **キー操作**（WAI-ARIA APG の combobox + listbox、リストの自動補完）: 打つと開く。↓（Alt+↓）で開く、↑↓ で候補を移る（端で止まる）、
+  Enter で決める、Alt+↑ で閉じる。**Esc は開いた一覧を閉じ（打った文字は残る）、もう一度押すと入力を今の値の表示名に戻す**。
+  Tab は決めずに出る。一覧が開いている間の Enter はフォームを送信しない。閉じているときの Enter は、入力を確定（消してあれば `null`）してから送信に進む。
+  打っただけでは候補はアクティブにならない（↑↓ かポインタで移る）。
+- **a11y**: 入力欄が `role="combobox"`（`aria-autocomplete="list"`・`aria-expanded`・`aria-controls`・`aria-activedescendant`）で、
+  フォーカスは入力欄に残る。候補は `role="option"`（アクティブなものが `aria-selected="true"`）。一覧の中は何もフォーカスを取らないので、
+  ポインタで押しても入力欄は blur せず、クリックで選べる。listbox は候補があるときだけ置く（`aria-expanded` もそのときだけ `true`）。
+  検索中・0 件・失敗のときは、同じ枠に文だけを出す。
+- **非同期**: 入力は `REFERENCE_SEARCH_DEBOUNCE_MS`（250ms）だけ待ってから検索する（単体の `ReferenceField` は `debounceMs` で変えられる）。
+  新しい入力・閉じる・欄の破棄で、前の検索の `signal` を abort する。`search` が `signal` を見なくても、古い応答は捨てる（新しい応答を上書きしない）。
+  IME の変換中は検索せず、確定したときに検索する。
+- **状態の表示と読み上げ**: 検索中・0 件・失敗は一覧の中に出し、同じ文を `role="status"`（`aria-live="polite"`）で読み上げる。候補が届くと件数を読み上げる。
+  文言は `BantoForm` の `referenceMessages`（単体では `messages`）で差し替える。型は `ReferenceFieldMessages`
+  （`loading`・`noResults(query)`・`resultCount(count)`・`searchFailed(error)`・`listLabel(def)`）。`searchFailed` は reject の値を受け取るので、原因ごとに文を変えられる。
+- **一覧の位置**: `popover="manual"` で最前面に出すので、ドロワーやスクロールする枠に切られない。入力欄と同じ幅で下に出し、下に入らず上のほうが広ければ上に出す。
+  スクロールやリサイズでは入力欄に付いて動く。高さは `--banto-reference-list-max-height`（既定 `16em`）まで。
+  開いている間は `data-esc-layer` を持ち、Esc を消費するので、外側のドロワーやモーダルは閉じない。
+- **`appearance="underline"`**: 入力欄は下線の見た目になる。label は入力欄を包まず、隣に置く（日付の注入と同じ。一覧の文字が名前に混ざらないようにするため）。
+- **draft**: `FormDraft` は参照の raw の文字を値として解釈しない（空白だけなら `null`、それ以外は値を変えない）。値は `setValue` で入れる。
+  draft 用の欄のコンポーネントは無い。
+- **grid**: `columnsFromSchema` は参照の型を表示専用にし、値（id）をそのまま出す（`resolve` は非同期なので、セルの `format` からは呼べない）。
+  名前を出すときは、行やアプリがすでに持っている名前を `overrides[name].format` で渡す。
+- **消費側の注意**: `FieldType` の union に `'reference'` が増えるので、網羅 switch をしている利用側は型エラーになる。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

@@ -16,6 +16,8 @@ function defaultsFrom(schema: FormSchema): Record<string, unknown> {
 		else if (field.type === 'multiselect') values[field.name] = [];
 		// An empty date / time / datetime is `null`, not `''` (date-time-pickers D6).
 		else if (isTemporalType(field.type)) values[field.name] = null;
+		// A reference with nothing chosen is `null` (the value is an id, never typed text).
+		else if (field.type === 'reference') values[field.name] = null;
 		else values[field.name] = '';
 	}
 	return values;

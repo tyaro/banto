@@ -13,6 +13,11 @@
  * `radio` is a single choice from `options` shown as a group (empty: `''`, like
  * `select`); `multiselect` is a group of checkboxes whose value is an array of
  * option values, in `options` order (empty: `[]`).
+ *
+ * `reference` picks a record of another resource from a searched list (a
+ * combobox): the value is the record's id as the option gave it (a number
+ * stays a number), `null` when nothing is chosen. The candidates and the name
+ * shown for a stored value come from `FieldDef.search` / `FieldDef.resolve`.
  */
 export type FieldType =
 	| 'text'
@@ -24,6 +29,7 @@ export type FieldType =
 	| 'select'
 	| 'radio'
 	| 'multiselect'
+	| 'reference'
 	| 'checkbox'
 	| 'password';
 
@@ -43,6 +49,14 @@ export interface FieldOption {
 	label: string;
 }
 
+/** One candidate of a `reference` field. `value` is what the store keeps; its type is kept (`2` and `'2'` differ). */
+export interface ReferenceOption {
+	value: string | number;
+	label: string;
+	/** Second line under the label (a code, a category). */
+	description?: string;
+}
+
 export interface FieldDef {
 	name: string;
 	label: string;
@@ -54,6 +68,20 @@ export interface FieldDef {
 	readonly?: boolean;
 	/** select / radio / multiselect */
 	options?: FieldOption[];
+	/**
+	 * reference: the candidates for the typed text (`''` when nothing is typed
+	 * yet: return the first few). `signal` is aborted when a newer search
+	 * replaces this one or the field goes away; a result that arrives after
+	 * that is dropped either way. A rejection shows the failure message.
+	 * forms holds no data contract: the app builds this from its own source.
+	 */
+	search?: (query: string, signal: AbortSignal) => Promise<ReferenceOption[]>;
+	/**
+	 * reference: the option of a stored value, for the name shown when the form
+	 * opens on an existing value or the value is set from outside. `null` (no
+	 * such record) or a rejection: the value itself is shown.
+	 */
+	resolve?: (value: string | number, signal: AbortSignal) => Promise<ReferenceOption | null>;
 	/** radio: `'segmented'` shows the choices as a row of buttons; the value and keyboard behaviour are the same. */
 	variant?: 'segmented';
 	/**
