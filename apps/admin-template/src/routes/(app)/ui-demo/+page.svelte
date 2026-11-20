@@ -93,6 +93,7 @@
 		dateInputMessages,
 		dateRangeInputMessages,
 		dateTimeInputMessages,
+		formValidationMessages,
 		gridMessages
 	} from '#lib/banto/i18n.js';
 
@@ -410,7 +411,7 @@
 			}
 		]
 	};
-	const formDemoStore = createFormStore(formDemoSchema);
+	const formDemoStore = createFormStore(formDemoSchema, undefined, formValidationMessages());
 	let formDemoKeys = $state<string[] | null>(null);
 	// BantoGrid card (date-time-pickers PR-4): an editable date column gets
 	// the DateInput the root layout injects (`provideCellEditors`); the range
