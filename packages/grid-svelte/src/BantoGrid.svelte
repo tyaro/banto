@@ -822,6 +822,31 @@
 		if (next !== containerEl.scrollLeft) containerEl.scrollLeft = next;
 	}
 
+	/**
+	 * Tab / Shift+Tab stays native (#713). A link or header button inside a
+	 * column that is not pinned can land under the stuck block; pull it out
+	 * from under it. Cell selection moves have their own path
+	 * (`scrollActiveIntoView`).
+	 */
+	function handleFocusIn(event: FocusEvent) {
+		if (!containerEl || !pinActive) return;
+		const target = event.target;
+		if (!(target instanceof Element)) return;
+		const cell = target.closest('.cell, .header-cell');
+		if (!cell || !containerEl.contains(cell) || cell.classList.contains('pinned')) return;
+		const cellRect = cell.getBoundingClientRect();
+		const containerRect = containerEl.getBoundingClientRect();
+		const next = scrollLeftToReveal({
+			cellLeft: cellRect.left - containerRect.left + containerEl.scrollLeft,
+			cellWidth: cellRect.width,
+			scrollLeft: containerEl.scrollLeft,
+			viewportWidth: containerEl.clientWidth,
+			pinnedWidth,
+			cellPinned: false
+		});
+		if (next !== containerEl.scrollLeft) containerEl.scrollLeft = next;
+	}
+
 	function activeCellHasRendererLink(column: GridColumn<TRow>): boolean {
 		// Only a `renderer: 'link'` cell that really drew its <a> (not the
 		// text fallback, not `cell` / `render`): that link wins over the row action.
@@ -1556,6 +1581,7 @@
 		aria-colcount={gridState.orderedColumns.length + (selectable ? 1 : 0)}
 		onscroll={handleScroll}
 		onkeydown={handleContainerKeydown}
+		onfocusin={handleFocusIn}
 		onpaste={handlePaste}
 	>
 		<div class="scroll-content" role="presentation" style:width={`${totalColumnsWidth}px`}>

@@ -109,3 +109,58 @@ test('a keyboard move does not leave the active cell under the pinned block', as
 	await expect(card.locator('.cell.active')).toHaveAttribute('data-cell-field', 'code');
 	expect(await grid.evaluate((el) => el.scrollLeft)).toBe(before);
 });
+
+test('Tab and Shift+Tab to a header control do not leave it under the pinned block', async ({
+	page
+}) => {
+	await page.goto('/ui-demo');
+	const card = page.getByTestId('ui-demo-grid-date');
+	const grid = card.getByRole('grid');
+	const pinnedCell = card.getByRole('gridcell', { name: 'A-100', exact: true });
+	await expect(pinnedCell).toBeVisible({ timeout: 60_000 });
+	await pinnedCell.scrollIntoViewIfNeeded();
+	// Wait for hydration (the dev server hydrates late) before relying on handlers.
+	await expect(async () => {
+		await pinnedCell.click();
+		await expect(card.locator('.cell.active')).toHaveAttribute('data-cell-field', 'code', {
+			timeout: 2_000
+		});
+	}).toPass({ timeout: 60_000 });
+
+	// Scrolled all the way right, focus the last header control, then walk back.
+	await grid.evaluate((el) => {
+		el.scrollLeft = el.scrollWidth;
+	});
+	await card.locator('.header-cell:not(.pinned) .cell-body').last().focus();
+
+	// Position of the focused header cell against the right edge of the pinned header.
+	const probe = () =>
+		grid.evaluate((el) => {
+			const active = document.activeElement;
+			const cell = active?.closest('.header-cell');
+			const pinned = el.querySelector('.header-cell.pinned');
+			if (!cell || !pinned || cell.classList.contains('pinned')) return null;
+			return cell.getBoundingClientRect().left - pinned.getBoundingClientRect().right;
+		});
+
+	let checked = 0;
+	for (let i = 0; i < 12; i++) {
+		await page.keyboard.press('Shift+Tab');
+		const gap = await probe();
+		if (gap !== null) {
+			expect(gap).toBeGreaterThanOrEqual(-1.5);
+			checked++;
+		}
+	}
+	expect(checked).toBeGreaterThan(2);
+	expect(await grid.evaluate((el) => el.scrollLeft)).toBeLessThan(
+		await grid.evaluate((el) => el.scrollWidth - el.clientWidth)
+	);
+
+	// And forward again.
+	for (let i = 0; i < 12; i++) {
+		await page.keyboard.press('Tab');
+		const gap = await probe();
+		if (gap !== null) expect(gap).toBeGreaterThanOrEqual(-1.5);
+	}
+});

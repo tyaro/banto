@@ -124,6 +124,15 @@ describe('moveInOrder (#713)', () => {
 		expect(moveInOrder(order, order, 0, 'b', 2)).toEqual(order);
 	});
 
+	it('returns the same array for a drop that does not change the visible position', () => {
+		const order = ['a', 'b', 'c'];
+		expect(moveInOrder(order, order, 0, 'b', 1)).toBe(order);
+		expect(moveInOrder(order, order, 0, 'b', 2)).toBe(order);
+		// b pinned: visible = b, a, c. Dropping a before c is a no-op.
+		expect(moveInOrder(order, ['b', 'a', 'c'], 1, 'a', 2)).toBe(order);
+		expect(moveInOrder(order, ['b', 'a', 'c'], 1, 'a', 1)).toBe(order);
+	});
+
 	it('returns the same array for an unknown or hidden column', () => {
 		const order = ['a', 'h', 'b'];
 		expect(moveInOrder(order, ['a', 'b'], 0, 'missing', 0)).toBe(order);

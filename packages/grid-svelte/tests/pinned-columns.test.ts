@@ -166,6 +166,23 @@ describe('GridState.pinned (#713)', () => {
 		expect(state.orderedColumns.map((c) => c.id)).toEqual(['name', 'price', 'id', 'category']);
 	});
 
+	it('resets pinning to the definitions when an old payload without `pinned` is hydrated', () => {
+		const state = new GridState(columns);
+		state.setColumnPinned('name', false);
+		state.setColumnPinned('price', true);
+		state.hydrate(
+			JSON.stringify({
+				sort: [],
+				filters: [],
+				order: ['price', 'id', 'name', 'category'],
+				widths: {},
+				hidden: [],
+				groupBy: null
+			})
+		);
+		expect(state.pinned).toEqual(['name']);
+	});
+
 	it('drops unknown, duplicate and non-string ids from a payload', () => {
 		const state = new GridState(columns);
 		state.hydrate(

@@ -132,6 +132,9 @@ export function moveInOrder(
 	const fromVisible = visibleIds.indexOf(field);
 	if (fromVisible === -1 || !order.includes(field)) return order;
 	const target = clampDropIndex(fromVisible, toIndex, pinnedCount, visibleIds.length);
+	// A drop that leaves the visible position unchanged must not touch the
+	// stored order either (it could reorder hidden / pinned-zone neighbours).
+	if (target === fromVisible || target === fromVisible + 1) return order;
 	const next = order.filter((id) => id !== field);
 
 	let insertAt: number;

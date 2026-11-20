@@ -390,12 +390,15 @@ export class GridState<TRow = unknown> {
 		// can carry duplicates, or hide every column the current set still
 		// has).
 		this.hidden = this.#clampHidden(parsed.hidden);
-		// A payload from before pinning (#713) leaves the seed from the column
-		// definitions alone; one that has `pinned` wins, minus unknown ids.
+		// A payload from before pinning (#713) rebuilds the seed from the column
+		// definitions (not whatever the previous view left behind); one that has
+		// `pinned` wins, minus unknown ids.
 		if (parsed.pinned !== undefined) {
 			this.pinned = [...new Set(parsed.pinned)].filter(
 				(id): id is string => typeof id === 'string' && knownIds.has(id)
 			);
+		} else {
+			this.pinned = this.#columns.filter((c) => c.pinned === 'left').map((c) => c.id);
 		}
 	}
 
