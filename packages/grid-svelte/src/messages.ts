@@ -133,8 +133,8 @@ export const defaultGridMessages: Required<GridMessages> = {
 	selectAllLoadedRows: (loaded, total) =>
 		`読み込み済みの${loaded}件をすべて選択（全${total}件のうち）`,
 	selectionStatus: (count) => (count === 0 ? '選択なし' : `${count}件を選択中`),
-	selectAllMatching: (count) => `絞り込んだ全${count}件を選択`,
-	allMatchingStatus: (count) => `絞り込んだ全${count}件を選択中`,
+	selectAllMatching: (count) => `該当する全${count}件を選択`,
+	allMatchingStatus: (count) => `該当する全${count}件を選択中`,
 	selectionClear: () => '選択を解除',
 	bulkBarLabel: () => '一括操作'
 };

@@ -533,7 +533,7 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 	}
 
 	const bar = () => screen.getByRole('group', { name: '一括操作' });
-	const offer = () => screen.queryByRole('button', { name: '絞り込んだ全50件を選択' });
+	const offer = () => screen.queryByRole('button', { name: '該当する全50件を選択' });
 
 	async function enter() {
 		await fireEvent.click(headerBox());
@@ -553,14 +553,14 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 		setup({ totalRows: 2 });
 		await fireEvent.click(headerBox());
 		expect(bar().textContent).toContain('2件を選択中');
-		expect(screen.queryByRole('button', { name: /絞り込んだ全/ })).toBeNull();
+		expect(screen.queryByRole('button', { name: /該当する全/ })).toBeNull();
 	});
 
 	it('does not offer it in client mode', async () => {
 		render(BantoGrid<Row>, { rows, columns, getRowId, selectable: true, totalRows: 50 });
 		await fireEvent.click(headerBox());
 		expect(bar().textContent).toContain('3件を選択中');
-		expect(screen.queryByRole('button', { name: /絞り込んだ全/ })).toBeNull();
+		expect(screen.queryByRole('button', { name: /該当する全/ })).toBeNull();
 	});
 
 	it('enters the mode: bar and live region say the total, ids stay the loaded ones', async () => {
@@ -578,8 +578,8 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 		expect(flagInCallback).toBe(true);
 		expect(host.getAllMatching()).toBe(true);
 		expect(host.getSelected()).toEqual([1, 2]);
-		expect(bar().textContent).toContain('絞り込んだ全50件を選択中');
-		expect(screen.getByRole('status').textContent).toBe('絞り込んだ全50件を選択中');
+		expect(bar().textContent).toContain('該当する全50件を選択中');
+		expect(screen.getByRole('status').textContent).toBe('該当する全50件を選択中');
 		expect(offer()).toBeNull();
 		expect(screen.getByRole('button', { name: '選択を解除' })).toBeTruthy();
 		expect(onSelectionChange).toHaveBeenCalledTimes(2);
@@ -656,26 +656,31 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 		expect(offer()).not.toBeNull();
 	});
 
-	it('a write to selectedRowIds from outside leaves the mode and empties the selection', async () => {
-		const { container, host, onSelectionChange } = setup();
+	it('a write to selectedRowIds from outside leaves the mode and keeps the written value', async () => {
+		const { host, onSelectionChange, context } = setup();
 		await enter();
 		host.setSelected([1]);
 		await tick();
-		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
 		expect(host.getAllMatching()).toBe(false);
-		expect(host.getSelected()).toEqual([]);
-		expect(container.querySelector('.bulk-bar')).toBeNull();
-		expect(rowBox('ペン').checked).toBe(false);
+		expect(context().allMatching).toBe(false);
+		expect(host.getSelected()).toEqual([1]);
+		expect(bar().textContent).toContain('1件を選択中');
+		expect(screen.getByRole('status').textContent).toBe('1件を選択中');
+		expect(rowBox('ペン').checked).toBe(true);
+		expect(rowBox('ノート').checked).toBe(false);
+		// The host wrote it, so the grid does not call back.
+		expect(onSelectionChange).toHaveBeenCalledTimes(2);
 	});
 
-	it('the host assigning [] from outside leaves the mode', async () => {
-		const { container, host, onSelectionChange } = setup();
+	it('the host assigning [] from outside leaves the mode and stays empty', async () => {
+		const { container, host } = setup();
 		await enter();
 		host.setSelected([]);
 		await tick();
 		expect(host.getAllMatching()).toBe(false);
-		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
+		expect(host.getSelected()).toEqual([]);
 		expect(container.querySelector('.bulk-bar')).toBeNull();
+		expect(screen.getByRole('status').textContent).toBe('選択なし');
 	});
 
 	it('an equal copy of the ids handed back from outside keeps the mode', async () => {

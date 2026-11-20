@@ -759,9 +759,10 @@
 		onSelectionChange?.(selectedRowIds);
 	}
 
-	// "All matching" mode ends when the host touches it from outside: it wrote
-	// `selectedRowIds`, turned the flag off, or the grid is no longer a
-	// selectable server grid. The selection is emptied, as with every other
+	// "All matching" mode ends when the host touches it from outside. If it
+	// wrote `selectedRowIds`, only the mode is left and the value the host
+	// wrote stays. If it turned the flag off, or the grid is no longer a
+	// selectable server grid, the selection is emptied, as with every other
 	// way out. A flag the host turned on itself is turned back off. Writes run
 	// in `untrack` (conventions §8).
 	$effect(() => {
@@ -774,7 +775,11 @@
 		if (verdict === 'keep') return;
 		untrack(() => {
 			if (verdict === 'reject') allMatchingSelected = false;
-			else setSelectedRowIds([]);
+			else if (verdict === 'leave-keep') {
+				allMatchingIds = null;
+				allMatchingSelected = false;
+				selectionAnnouncement = t.selectionStatus(selectedRowIds.length);
+			} else setSelectedRowIds([]);
 		});
 	});
 

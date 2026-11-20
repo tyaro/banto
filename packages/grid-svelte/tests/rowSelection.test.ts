@@ -157,10 +157,10 @@ describe('allMatchingVerdict (#713)', () => {
 		expect(allMatchingVerdict({ ...entered, flag: false })).toBe('leave');
 	});
 
-	it('leaves when the host rewrites the selection', () => {
-		expect(allMatchingVerdict({ ...entered, selected: [] })).toBe('leave');
-		expect(allMatchingVerdict({ ...entered, selected: [1] })).toBe('leave');
-		expect(allMatchingVerdict({ ...entered, selected: [1, 2, 3] })).toBe('leave');
+	it('leaves but keeps the value when the host rewrites the selection', () => {
+		expect(allMatchingVerdict({ ...entered, selected: [] })).toBe('leave-keep');
+		expect(allMatchingVerdict({ ...entered, selected: [1] })).toBe('leave-keep');
+		expect(allMatchingVerdict({ ...entered, selected: [1, 2, 3] })).toBe('leave-keep');
 	});
 
 	it('leaves when the grid stops being a selectable server grid', () => {

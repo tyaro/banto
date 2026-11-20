@@ -129,12 +129,16 @@ export interface AllMatchingInput {
  * - `'keep'`: nothing to do (not in the mode, or still intact).
  * - `'reject'`: the flag is on but the grid never entered the mode (the host
  *   set it) - the flag goes back off, the selection is left alone.
- * - `'leave'`: the grid was in the mode and the host turned the flag off,
- *   rewrote the selection, or made the mode unusable - leave it and empty
- *   the selection.
+ * - `'leave'`: the grid was in the mode and the host turned the flag off or
+ *   made the mode unusable - leave it and empty the selection.
+ * - `'leave-keep'`: the grid was in the mode and the host rewrote the
+ *   selection (flag on, mode still usable) - leave the mode only; the value
+ *   the host wrote stays.
  */
-export function allMatchingVerdict(input: AllMatchingInput): 'keep' | 'reject' | 'leave' {
+export function allMatchingVerdict(
+	input: AllMatchingInput
+): 'keep' | 'reject' | 'leave' | 'leave-keep' {
 	if (input.enteredWith === null) return input.flag ? 'reject' : 'keep';
-	if (input.flag && input.usable && sameRowIds(input.selected, input.enteredWith)) return 'keep';
-	return 'leave';
+	if (!input.flag || !input.usable) return 'leave';
+	return sameRowIds(input.selected, input.enteredWith) ? 'keep' : 'leave-keep';
 }
