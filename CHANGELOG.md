@@ -22,6 +22,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`pnpm banto add resource <name>`: CRUD リソース 1 つ分の定型コードを Rust 側まで生成する（#715 E-2）。** 両方言のマイグレーション（番号は今の最大の次）、サービス、REST、Tauri コマンド、両経路の対称テスト（denied を含む）、監査の detail、ResourcePage の定義とルート 3 本、メッセージのキー（ja・en）、ナビの項目を書く。入力は JSON のフィールド定義（`--fields`。省くと必須の `name` だけ）で、`text`・`textarea`・`number`・`checkbox`・`date` の欄を作れる。版（`version` 列）による楽観ロックは既定で付く。**監査の detail に値が残るのは、定義で `audit: true` を付けた欄だけ**（既定は残さない。`detail.name` は `title: true` を付けた text の欄だけ）で、生成したテストが付けていない欄の値が出ないことを確かめる。フォームと Rust の検証は同じ意味にそろえてある（文字数は UTF-16 の単位、日付は実在日、整数は ±(2^53−1)）。PostgreSQL の識別子の上限（63 バイト）を超える名前、予約語、生成する名前どうしやテンプレートの既存の名前との重なりは、何も書く前に断る。生成物は普通のコードで、再生成・差分の適用はしない。既存のファイルへの追記は `[banto:add-resource:<slot>]` のコメントの位置に行い、1 つでも欠けていれば何も書かずに止まる。`pnpm scaffold` のどのプリセットの後でも使える。使い方は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)「生成器で足す」。依存は足していない（Node の標準モジュールのみ）。
+- **テンプレート: 生成したリソースのサービスを入れる `AppResources`（`core/src/resources.rs`）と `rest::resources_router`。** 新しいリソースが `rest::Services`・`AppState` と、その呼び出し側に欄を足さずに済むようにした。`banto-serve` と `src-tauri` の `start_embedded_server` は `api_router` の隣に `resources_router` を merge し、`AppState` は `resources` を持つ。テンプレートのままでは空で、挙動は変わらない。
+
+### Fixed
+
+- **テンプレート: ルートが増えると `resolveAppPath` が型エラーになるのを直した。** `resolve()` に `Path` の union をそのまま渡していたため、TypeScript が union の引数を照合する上限（25）を、リソースを 1 つ（ルート 3 本）足すと超えていた（テンプレートは 23 個。26 個で `pnpm check` が落ちるのを確かめた）。pathname を取る形に絞ってから呼ぶ。実行時の挙動は同じ。
+
 ## [7.10.0] - 2026-11-21
 
 **v7.10.0 — `@banto/grid-svelte` のセルの描き方・行選択と一括操作・左端の列の固定（#713 C-3）、一覧の一括削除の API とテンプレートの配線（#713）、`@banto/forms` のフォームの配置・欄の型の追加・参照選択の欄（#714 C-2）、`@banto/dock-svelte` の据え置き pane の組み替えでフォーカスを失わない修正（#763）。** 版の種類: minor（docs/publishing.md「バージョニング規約」の運用上の例外、オーナー判断）。`crates/*/src` の `pub` と `packages/*/src/index.ts` の export の削除・改名は無い（`v7.9.0` との差分で確認。`index.ts` は追加のみ）。公開の union に種類を足し、メッセージのキーを足したので、既存のコードが型エラーになりうる（下の「消費側への注意」）。実行時の値が変わるのは新しい機能を使ったときだけ（`radio` / `multiselect` / `reference` の欄、`visibleWhen`、`renderer` / `tone` / `selectable` / `pinned` を付けた列、`deleteMany`）なので、追従の手順を明記して minor とする。migration なし。

@@ -25,6 +25,56 @@ The screens moved into the shared components under `lib/resource/` (`ResourceLis
 `ResourceDetail`), so what you copy and write is **one definition (`resources/<name>.ts`) and
 three routes**.
 
+## Generating it (`pnpm banto add resource`, Issue #715)
+
+The boilerplate of checklist steps 1-8 below is written by a generator.
+
+```bash
+pnpm banto add resource orders                       # a resource with a required `name` only
+pnpm banto add resource orders --fields orders.json  # with a field definition
+pnpm banto add resource orders --dry-run             # print what it would write, write nothing
+```
+
+- `<name>` is snake_case and plural (`orders`, `purchase_orders`). It becomes the table
+  name, the URL (`/api/<name>`), the Tauri commands (`<name>_list`, ...) and the audit
+  `resource`.
+- **The output is ordinary code.** There is no regeneration and no diff application: a
+  second run with the same name finds the existing files and stops. Edit by hand afterwards.
+- Right after generating, `cargo test`, `pnpm check` and `pnpm verify:architecture` pass.
+- It works after `pnpm scaffold` with any preset (including `display`, which removes items).
+- It writes: both migrations, the service, the REST routes, the Tauri commands, the
+  two-path tests (denied included), the audit details, the ResourcePage definition, the
+  three routes, the message keys (ja / en) and the nav entry. Optimistic locking
+  (`version`) is on by default. CSV import and bulk delete are not generated.
+- Insertions into existing files go to `[banto:add-resource:<slot>]` comments. If any is
+  missing it lists every reason and writes nothing.
+- **The audit log records only the fields you mark.** A field's value reaches an audit
+  detail only with `"audit": true` in the field definition (default `false`, conventions
+  §6); `detail.name` is the one `text` field marked `"title": true` (none by default).
+  All three details (create / update / delete) are built from the single
+  `<singular>_audit_fields` list, and a generated test checks that no unmarked value
+  appears in any of them. The default resource (no `--fields`) marks its `name` with both.
+- **The form and the Rust validation agree.** Text length (`max`) is counted in UTF-16
+  code units after trimming, as `@banto/forms` does; a `date` must be a real calendar day
+  (`2031-02-30` is rejected on both sides); a `number` is an integer within ±(2^53−1),
+  and a side without `min` / `max` gets that bound in both the form schema and the Rust
+  constants. `min` / `max` outside that range are refused. Keep larger values in a `text`
+  field.
+- **Names are checked before anything is written.** The resource name and each column
+  name (the snake_case of `fields[].name`) may be at most 63 bytes (PostgreSQL silently
+  truncates longer identifiers). Reserved words, names the template or the generated code
+  already uses, and collisions between generated names (for example `products` with
+  `"singular": "products_service"`, where the row type and the service type would both be
+  `ProductsService`) are refused with the reason. Column names the database uses
+  internally (PostgreSQL system columns such as `xmin` and `ctid`, SQLite's `rowid` and
+  `oid`) cannot be avoided by quoting, so they are refused too. Labels and descriptions
+  (the resource and each field, ja and en) may not contain `{` or `}`: inlang reads them
+  as variables, and the generated calls pass no arguments.
+
+The field definition format (a JSON file close to `FormSchema`'s `fields`), the list of
+generated files and the anchor table are in the Japanese
+[add-resource.md](add-resource.md#生成器で足すpnpm-banto-add-resourceissue-715).
+
 ## Checklist (in order of execution)
 
 Proceed Rust side → frontend side. The shortest path is to copy and rewrite the

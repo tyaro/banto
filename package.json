@@ -23,6 +23,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
     "scaffold": "node scripts/scaffold.mjs",
+    "banto": "node scripts/banto.mjs",
     "verify:architecture": "node scripts/verify-architecture.mjs",
     "verify:migrations": "node scripts/verify-migrations-frozen.mjs",
     "check:versions": "node scripts/check-versions.mjs",

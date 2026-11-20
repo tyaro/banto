@@ -33,7 +33,8 @@ use admin_template_core::first_boot::seed_first_boot_settings;
 // [scaffold:items] begin
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 // [scaffold:items] end
-use admin_template_core::rest::{api_router, user_auth_state, Services};
+use admin_template_core::resources::AppResources;
+use admin_template_core::rest::{api_router, resources_router, user_auth_state, Services};
 use admin_template_core::settings::{
     auth_server_combination_allowed, AuditSettings, AuthSettings, ServerSettings, SettingsService,
 };
@@ -76,6 +77,11 @@ struct AppState {
     // [scaffold:items] begin
     items: ItemsService,
     // [scaffold:items] end
+    /// The services of the resources added by `pnpm banto add resource`
+    /// (`admin_template_core::resources`, empty in the template). The
+    /// generated commands read `state.resources.<name>`; the embedded server
+    /// gets a clone for `resources_router`.
+    resources: AppResources,
     /// The webview window's own session identity, set by `auth_login`/
     /// `auth_setup` and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -1010,6 +1016,11 @@ async fn items_import(
     items_import_body(&state, rows).await
 }
 // [scaffold:items] end
+
+// `pnpm banto add resource` writes each new resource's commands above this
+// line (docs/recipes/add-resource.md): the Tauri twins of its REST routes,
+// with the same role floor and the same audit entries (conventions section 1).
+// [banto:add-resource:tauri-commands]
 
 /// `GET`-ish command: has an account been created yet (spec §3.3/§8.2)? The
 /// login page calls this first to decide between the first-run setup form
@@ -2359,6 +2370,7 @@ async fn start_embedded_server(
     // [scaffold:items] begin
     items: ItemsService,
     // [scaffold:items] end
+    resources: AppResources,
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -2379,6 +2391,8 @@ async fn start_embedded_server(
     // `with_security_headers` (spec improvements §2.4) wraps LAST/outermost,
     // same as `banto-serve.rs`'s equivalent composition, so every response
     // this embedded server produces carries the baseline security headers.
+    // The resources added by `pnpm banto add resource` (none in the template).
+    let added_resources = resources_router(resources, audit.clone(), auth.clone());
     let services = Services {
         // [scaffold:items] begin
         items,
@@ -2400,6 +2414,7 @@ async fn start_embedded_server(
     let port = bound.local_addr().port();
     let router = with_security_headers(
         api_router(services, auth, events, false)
+            .merge(added_resources)
             .merge(reach_check_router(reach_check, generation, port))
             .merge(static_router::<FrontendAssets>()),
     );
@@ -2964,6 +2979,7 @@ async fn server_apply_body(
                 // [scaffold:items] begin
                 state.items.clone(),
                 // [scaffold:items] end
+                state.resources.clone(),
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -4359,6 +4375,7 @@ pub fn run() {
             // [scaffold:items] begin
             let items = ItemsService::new(db.clone()).with_events(events.clone());
             // [scaffold:items] end
+            let resources = AppResources::new(&db, &events);
             // Issue #697: the app's one catalog (`admin_template_core::
             // permission_catalog`, also used by `banto-serve`), so the
             // desktop commands and the embedded REST server judge alike.
@@ -4606,6 +4623,7 @@ pub fn run() {
                     // [scaffold:items] begin
                     items.clone(),
                     // [scaffold:items] end
+                    resources.clone(),
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
@@ -4659,6 +4677,7 @@ pub fn run() {
                 // [scaffold:items] begin
                 items,
                 // [scaffold:items] end
+                resources,
                 auth: Mutex::new(AuthSlot::new(initial_auth)),
                 firewall_change_running: std::sync::atomic::AtomicBool::new(false),
                 auth_io: AuthIo::production(&users, &settings),
@@ -4699,6 +4718,7 @@ pub fn run() {
             items_import,
             items_export_csv_to_folder,
             // [scaffold:items] end
+            // [banto:add-resource:tauri-handlers]
             auth_status,
             auth_setup,
             auth_login,
@@ -4795,6 +4815,7 @@ mod tests {
             // [scaffold:items] begin
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
+            resources: AppResources::new(&pool, &events),
             auth: Mutex::new(AuthSlot::default()),
             firewall_change_running: std::sync::atomic::AtomicBool::new(false),
             auth_config_lock: AsyncMutex::new(()),
@@ -4859,6 +4880,7 @@ mod tests {
             // [scaffold:items] begin
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
+            resources: AppResources::new(&pool, &events),
             auth: Mutex::new(AuthSlot::default()),
             firewall_change_running: std::sync::atomic::AtomicBool::new(false),
             auth_config_lock: AsyncMutex::new(()),
@@ -10477,4 +10499,9 @@ mod tests {
             serde_json::json!(["alarm.ack"])
         );
     }
+
+    // `pnpm banto add resource` writes each new resource's command tests
+    // above this line (denied + audited, the Tauri half of conventions
+    // section 1).
+    // [banto:add-resource:tauri-tests]
 }

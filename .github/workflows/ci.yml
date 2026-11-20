@@ -193,6 +193,14 @@ jobs:
           node --test scripts/verify-migrations-frozen.test.mjs
           pnpm verify:migrations
 
+      # `pnpm banto add resource`（#715）: 名前とフィールド定義の検証、アンカーへの
+      # 差し込み、アンカーが欠けたら何も書かずに止まること、scaffold の各プリセットの
+      # 後でも全部のアンカーが残っていること。生成したコードのビルド（cargo test）は
+      # ここでは見ない。
+      - name: add-resource generator tests
+        if: needs.changes.outputs.docs != 'true'
+        run: node --test scripts/add-resource.test.mjs
+
       # マニフェスト間の version 一致を強制する（CR-7 通常CI。タグ名一致は
       # リリース/タグワークフローで `node scripts/check-versions.mjs --tag <name>`
       # として別途検査する）。ルート package.json は private=0.0.0 で例外。

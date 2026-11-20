@@ -77,7 +77,8 @@ track your task belongs to.**
 
 - **Add a CRUD resource / replace items** →
   [docs/recipes/add-resource.en.md](docs/recipes/add-resource.en.md) (the
-  official checklist-form procedure).
+  official checklist-form procedure). `pnpm banto add resource <name>` generates
+  the boilerplate down to the Rust side (see "Generating it" there).
 - **Add an RBAC role (extend admin/editor/viewer)** →
   [docs/recipes/add-role.en.md](docs/recipes/add-role.en.md).
 - **Integrate a package into your app** (scan-wedge / toast notifications /
