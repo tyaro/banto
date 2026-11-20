@@ -147,6 +147,17 @@ Safari 16.2・Firefox 113）で、spec §13 の「Widely available を優先」�
 `:root, [data-theme]` で宣言し、`data-theme` を付けた要素の上でも段から計算し直す（入れ子のダークで
 ライトの値が残らない）。
 
+#### #557 の取り決め（運用で効くもの）
+
+- 文字スケールは 12/13/14/16/20/28（xs〜xl＋`--banto-font-size-2xl`、root 14px）と、キオスク用の
+  `--banto-font-size-3xl`（48px）。grid・KPI・チャート軸の数字は `tabular-nums`。
+- 状態色の**文字用**トークンは、色域の中で 4.6:1 以上（色域テストが見る）。
+- チャートの SVG 書き出しでは、oklch を canvas で `rgb()` に変換して書く。
+- 密度: compact は `space-3`〜`space-6` を 1 段縮める（文字は縮めない）。touch は操作高 48px・行高 52px・root 16px。
+- オーナー決定: 数字用フォントの同梱は見送り（system-ui のまま）。ブランド色は青系のまま、藍寄りにとどめる。
+- 了承（2026-11-18）: primary カードは影だけの差にする（足りなければ、ダッシュボードを `SurfaceCard` に寄せる Issue を立てる）。
+  キオスクの KPI は 48px から、列幅に応じて約 36px まで縮む（遠目で小さければ `15cqi` を見直す）。
+
 ## 3. Tailwind `@theme` 橋渡し（`app.css`）
 
 Tailwind v4 の `@theme inline`（他変数を参照する値は `inline` が必須）で

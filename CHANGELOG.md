@@ -36,6 +36,7 @@
 ### ドキュメント
 
 - `@banto/grid-svelte` の README に、セルへ小さな折れ線（sparkline）を描く例を追加（#713）。Issue の「sparkline は snippet の見本で済ませるか別に決める」への答え: **組み込みの `renderer` にはせず、列の `render`（snippet）から `@banto/charts` の `Sparkline` を描く見本で示す**（grid-svelte を charts に依存させないため。conventions §4）。コードの変更は無い。
+- 保守者向けの手引き `docs/maintainers.md` を追加（PR・レビュー・CI・リリース・委譲の運用、dock-svelte と楽観ロックで決まっていること、教訓。AGENTS.md から案内）。`docs/publishing.md` に切り出し前の確認（公開 API の削除の見方）を、`docs/design/visual-refresh-design.md` に #557 の運用上の取り決めを足した。見送り項目の追跡は #756、実機で未検証の項目の追跡は #757。コードの変更なし。
 
 ## [7.9.0] - 2026-11-20
 

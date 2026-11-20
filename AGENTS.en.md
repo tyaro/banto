@@ -32,6 +32,8 @@ track your task belongs to.**
     include, and how deletability is judged
   - [docs/publishing.md](docs/publishing.md) — distribution (git tag / `path:`
     dependency)
+  - [docs/maintainers.md](docs/maintainers.md) — maintainer handbook (PR / CI /
+    release operations, standing decisions, lessons; Japanese only)
   - [docs/design/](docs/design/) — implementation plans and design documents
     for individual features (attachments-plan / report-plan /
     visual-refresh-plan and -design / display-preset-plan /

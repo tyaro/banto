@@ -144,6 +144,11 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
   スコープ（仕様 M0〜M9 + roadmap M10〜M24）完了に伴う**安定版宣言**として
   発行した（0.1.2 からの破壊的変更はなし。2026-07-28）
 
+**切り出しの前の確認**: タグを切る前に、`git diff -U0 <前タグ> HEAD -- 'crates/*/src'` の
+`^-\s*pub`（削除・変更された公開 API）と、`packages/*/src/index.ts` で削除された export を見る。
+「削除が無い」だけで「後方互換の機能追加」と断定しない（#746 のクロスレビューで指摘）。
+リリースの手順全体は [maintainers.md §3](maintainers.md#3-リリースの流れ)。
+
 ## Rust クレート: git タグ参照（crates.io へは発行しない）
 
 `banto-core` / `banto-storage` / `banto-server` / `banto-admin-services` /
