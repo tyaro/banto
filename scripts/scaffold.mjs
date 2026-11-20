@@ -60,6 +60,35 @@ import { createEditor, dropBlock, swap, cut, cutToEnd } from './lib/template-edi
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * banto 本体のリリース検証専用で、全プリセットが除去するもの（#271）。
+ * `removeBantoReleaseOnly()` はこの一覧だけを消す。`--list-banto-only` で出すので、
+ * scripts/check-doc-links.mjs は派生先で「消えた先を指す相対リンク」を許せる
+ * （一覧を手書きで複製しない）。dir は末尾の `/` なし。
+ */
+const BANTO_RELEASE_ONLY = [
+	{
+		kind: 'dir',
+		path: 'fixtures/external-consumer',
+		label: '外部利用 fixture 削除（banto 本体専用）'
+	},
+	{
+		kind: 'file',
+		path: '.github/workflows/external-consumer.yml',
+		label: 'external-consumer ワークフロー削除（banto 本体専用）'
+	},
+	{
+		kind: 'file',
+		path: 'scripts/external-fixture-set-ref.mjs',
+		label: 'fixture の ref 書き換えスクリプト削除（banto 本体専用）'
+	},
+	{
+		kind: 'file',
+		path: 'scripts/external-fixture-set-ref.test.mjs',
+		label: 'fixture の ref 書き換えスクリプトのテスト削除（banto 本体専用）'
+	}
+];
+
 // --- 引数 -------------------------------------------------------------------
 
 /** minimal が外すオプション資産（display はこれを全部含む）。 */
@@ -118,6 +147,7 @@ function parseArgs(argv) {
 		else if (arg === '--strict') args.strict = true;
 		else if (arg === '--list-touched') args.listTouched = true;
 		else if (arg === '--list-presets') args.listPresets = true;
+		else if (arg === '--list-banto-only') args.listBantoOnly = true;
 		else if (arg === '--interactive' || arg === '-i') args.interactive = true;
 		else if (arg === '--help' || arg === '-h') usage(0);
 		else fail(`不明な引数: ${arg}`);
@@ -130,6 +160,11 @@ const args = parseArgs(process.argv.slice(2));
 // PRESETS のキーをそのまま出して終了する。
 if (args.listPresets) {
 	for (const name of Object.keys(PRESETS)) console.log(name);
+	process.exit(0);
+}
+// 内部用（scripts/check-doc-links.mjs）。派生先で消える banto 本体専用の path を出して終了する。
+if (args.listBantoOnly) {
+	for (const e of BANTO_RELEASE_ONLY) console.log(e.path);
 	process.exit(0);
 }
 if (args.interactive && args.preset)
@@ -1996,19 +2031,10 @@ function applyDisplayDefaults() {
 // しか使わない。verify-architecture の rule `external-consumer-fixture` は
 // fixture が無ければ対象外としてスキップする。
 function removeBantoReleaseOnly() {
-	removeDir('fixtures/external-consumer', '外部利用 fixture 削除（banto 本体専用）');
-	removeFile(
-		'.github/workflows/external-consumer.yml',
-		'external-consumer ワークフロー削除（banto 本体専用）'
-	);
-	removeFile(
-		'scripts/external-fixture-set-ref.mjs',
-		'fixture の ref 書き換えスクリプト削除（banto 本体専用）'
-	);
-	removeFile(
-		'scripts/external-fixture-set-ref.test.mjs',
-		'fixture の ref 書き換えスクリプトのテスト削除（banto 本体専用）'
-	);
+	for (const e of BANTO_RELEASE_ONLY) {
+		if (e.kind === 'dir') removeDir(e.path, e.label);
+		else removeFile(e.path, e.label);
+	}
 }
 
 const REMOVERS = {

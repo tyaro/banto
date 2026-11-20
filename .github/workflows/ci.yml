@@ -43,6 +43,12 @@ jobs:
   # 安全側: pull_request 以外・fork・API / git / artifact の失敗・記録なし・
   # base の不一致（旧 base で成功 → main が進む → 基準画像だけ、を含む）・
   # それ以外のパスの差分は、どれも full=true。判定の理由はログに出す。
+  # docs だけの差分: pull_request・fork でなく、merge commit の
+  # `git diff HEAD^1 HEAD`（検証する base からの差分。過去の run の記録は要らない）が
+  # すべて docs（^docs/、ルート直下の *.md、任意の場所の README*.md）なら、
+  # docs=true・full=false（記録も false）にし、重いジョブを飛ばして frontend ジョブの
+  # 軽い step（architecture / format / リンクの検査）だけを走らせる。この判定は基準画像の
+  # 判定より前。reports/*.md（帳票の DSL、`?raw` で import される）は docs ではない。
   # 注意: Rust は matrix なので job ごと飛ばすとチェック名が必須チェック
   # 「Rust (…) (ubuntu-latest)」等と合わなくなる。そのため job は起動して
   # ステップだけ飛ばす。ほかのジョブは skipped（= 成功扱い）でよい。
@@ -56,6 +62,7 @@ jobs:
       contents: read
     outputs:
       full: ${{ steps.decide.outputs.full }}
+      docs: ${{ steps.decide.outputs.docs }}
     steps:
       # 既定の ref（pull_request では refs/pull/N/merge）= ほかのジョブが検証する
       # merge commit と同じものを取る。
@@ -85,6 +92,17 @@ jobs:
           VBASE=$(git rev-parse HEAD^1) && VHEAD=$(git rev-parse HEAD^2) || { VBASE=""; VHEAD=""; full "merge commit の親が取れない"; }
           echo "検証する merge commit: base=$VBASE head=$VHEAD"
           [ "$HEAD_REPO" = "$REPO" ] || full "fork からの PR"
+          dfiles=$(git diff --no-renames --name-only HEAD^1 HEAD) || full "docs 判定の git diff に失敗"
+          dother=$(printf '%s\n' "$dfiles" | grep -v -E '^$|^docs/|^[^/]+\.md$|(^|/)README(\.[A-Za-z-]+)?\.md$' || true)
+          if [ -n "$dfiles" ] && [ -z "$dother" ]; then
+            echo "差分のファイル（base からの全部）:"; echo "$dfiles"
+            echo "判定: docs だけの差分。重いジョブを飛ばし、frontend ジョブの軽い step だけ走らせる"
+            record false
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+            echo "full=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "docs 以外の差分あり: $(printf '%s' "$dother" | head -n 3 | tr '\n' ' ')"
           ancestors=$(git rev-list --first-parent --max-count=11 "$VHEAD" | tail -n +2) || full "git rev-list に失敗"
           ref=""
           for c in $ancestors; do
@@ -121,7 +139,10 @@ jobs:
   frontend:
     name: Frontend (check / test / build)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
+    # docs だけの差分（docs=true・full=false）でも走らせ、format / リンク / architecture
+    # の軽い検査だけをここでする（必須チェックの名前を変えず、失敗をマージの条件に残す）。
+    # 重い step は `if: needs.changes.outputs.docs != 'true'` で飛ばす。
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.docs == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -148,6 +169,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint (ESLint)
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm lint
 
       # docs/conventions.md のうち機械検査可能な不変条件（サービス層の
@@ -166,6 +188,7 @@ jobs:
       # migrations*/ のファイルが 1 バイトでも変わると、その版以前に作った DB が
       # VersionMismatch で起動しなくなる。スクリプト自身のテストも同じ場所で回す。
       - name: Verify released migrations are unchanged
+        if: needs.changes.outputs.docs != 'true'
         run: |
           node --test scripts/verify-migrations-frozen.test.mjs
           pnpm verify:migrations
@@ -174,18 +197,26 @@ jobs:
       # リリース/タグワークフローで `node scripts/check-versions.mjs --tag <name>`
       # として別途検査する）。ルート package.json は private=0.0.0 で例外。
       - name: Verify version consistency
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm check:versions
 
       - name: Format check (Prettier)
         run: pnpm format:check
 
+      # Markdown の相対リンクの実在（docs だけの PR でも走る）。
+      - name: Check doc links
+        run: pnpm check:doc-links
+
       - name: Type check (svelte-check + tsc)
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm check
 
       - name: Test
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm --recursive --if-present test
 
       - name: Build
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm build
 
   # i18n サプライチェーン/再現性ガード（テンプレート実用性レビュー §2）。
@@ -465,6 +496,9 @@ jobs:
 
   e2e-visual:
     name: E2E (visual + axe-core)
+    needs: changes
+    # 基準画像だけの差分でも走らせる（full ではなく docs だけで判断する）。
+    if: ${{ !cancelled() && needs.changes.outputs.docs != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
