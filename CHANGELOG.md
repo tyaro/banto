@@ -58,6 +58,26 @@
 - `@banto/grid-svelte` の README に、セルへ小さな折れ線（sparkline）を描く例を追加（#713）。Issue の「sparkline は snippet の見本で済ませるか別に決める」への答え: **組み込みの `renderer` にはせず、列の `render`（snippet）から `@banto/charts` の `Sparkline` を描く見本で示す**（grid-svelte を charts に依存させないため。conventions §4）。コードの変更は無い。
 - 保守者向けの手引き `docs/maintainers.md` を追加（PR・レビュー・CI・リリース・委譲の運用、dock-svelte と楽観ロックで決まっていること、教訓。AGENTS.md から案内）。`docs/publishing.md` に切り出し前の確認（公開 API の削除の見方）を、`docs/design/visual-refresh-design.md` に #557 の運用上の取り決めを足した。見送り項目の追跡は #756、実機で未検証の項目の追跡は #757。コードの変更なし。
 
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `9caa238c`、`workflow_dispatch`）: [run 44817789378](https://github.com/tyaro/banto/actions/runs/44817789378)（success）。
+  - タグの push（`v7.10.0`、main の `9caa238c`）: [run 44818061626](https://github.com/tyaro/banto/actions/runs/44818061626)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 24.22.3                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.57.3                          |
+    | SvelteKit          | 3.2.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
+
+  - 出所: Node.js は `node: v24.22.3`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.3` など）、Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
+
 ## [7.9.0] - 2026-11-20
 
 **v7.9.0 — `@banto/dock-svelte` の dock の拡張（`ThreePaneDock`・据え置き pane・キーボード移動・隠した pane の元の位置の復元。#663 段階 ④、#721・#727・#733・#734・#735・#736・#741）とコマンドパレットの非同期の提供元（#711）、テンプレートの dock 配線。** 版の種類: minor（docs/publishing.md「バージョニング規約」の運用上の例外、オーナー判断）。`crates/*/src` の `pub` と `packages/*/src/index.ts` の export の削除・改名は無いが、既存の型を広げた変更（`DockPanelChange` の `remount` の `true` → `boolean`、`DockLayout['version']` の `2` → `2 | 3`）とキーの追加で、既存のコードが型エラーになりうる。実行時の値が変わるのは新しい機能を使ったときだけ（`remount: false` は `persistent` の pane だけ、`version: 3` は 5 段以上の slot を含むレイアウトを保存したときだけ）なので、下の「消費側への注意」に追従の手順を明記して minor とする。migration なし。
