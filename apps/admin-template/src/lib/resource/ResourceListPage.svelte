@@ -64,7 +64,8 @@
 		searchRows,
 		toCsv,
 		type CellEdit,
-		type GridColumn
+		type GridColumn,
+		type RowId
 	} from '@banto/grid-svelte';
 	import {
 		createSavedSetting,
@@ -125,6 +126,7 @@
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { detailHref, resourceColumns } from './columns';
+	import { runBulkDelete } from './bulkDelete';
 	import { LOCK_VERSION_FIELD, lockVersionOf } from './conflict';
 	import {
 		buildImportPreview,
@@ -228,6 +230,63 @@
 	$effect(() => {
 		saveActiveListMode(scope, name, mode);
 	});
+
+	// #713 C-3: row selection and the bulk delete. Not part of GridState (saved
+	// views): a selection is a moment's work. The two modes have different row
+	// sets, so switching mode drops it.
+	let selectedIds: RowId[] = $state([]);
+	let bulkDeleting = $state(false);
+	$effect(() => {
+		void mode;
+		selectedIds = [];
+	});
+
+	/**
+	 * Delete the selected rows through the SAME one-record delete the detail
+	 * form uses (`DataProvider.deleteOne`, with the row's `version`), one after
+	 * another - there is no bulk endpoint, so every delete keeps its own role
+	 * check, optimistic-lock check and audit entry on both transports
+	 * (conventions §1). A failure does not stop the run; failed rows stay
+	 * selected, deleted ones leave the selection. Offered only with
+	 * `perms.delete` (hidden otherwise, like the detail form's button).
+	 */
+	async function bulkDelete(ids: RowId[]): Promise<void> {
+		if (!perms.delete || bulkDeleting || ids.length === 0) return;
+		// Set before the dialog: the button stays off while it is open too.
+		bulkDeleting = true;
+		try {
+			const confirmed = await confirmAction({
+				title: m['resource.bulkDeleteTitle'](),
+				message: m['resource.bulkDeleteConfirm']({ count: ids.length }),
+				confirmLabel: m['common.delete'](),
+				danger: true
+			});
+			if (!confirmed) return;
+			const result = await runBulkDelete(ids, async (id) => {
+				const version = lockVersionOf(currentRowLookup?.(id));
+				await getDataProvider().deleteOne(
+					name,
+					id,
+					version === undefined ? undefined : { version }
+				);
+			});
+			selectedIds = result.failed;
+			if (result.failed.length === 0) {
+				notify('success', m['resource.bulkDeleteDone']({ count: result.deleted.length }));
+			} else {
+				notify(
+					'error',
+					m['resource.bulkDeletePartial']({
+						deleted: result.deleted.length,
+						failed: result.failed.length
+					})
+				);
+			}
+			invalidate(name);
+		} finally {
+			bulkDeleting = false;
+		}
+	}
 
 	const MODE_LABELS: Record<ListLoadMode, () => string> = {
 		client: () => m['resource.modeClient'](),
@@ -1528,6 +1587,9 @@
 			{rowClass}
 			{registerCurrentRow}
 			{registerAdjacentRow}
+			selectable={perms.delete}
+			bind:selectedRowIds={selectedIds}
+			bulkActions={perms.delete ? bulkDeleteActions : undefined}
 		/>
 	{:else}
 		<ResourceServerGrid
@@ -1542,9 +1604,24 @@
 			{rowClass}
 			{registerCurrentRow}
 			{registerAdjacentRow}
+			selectable={perms.delete}
+			bind:selectedRowIds={selectedIds}
+			bulkActions={perms.delete ? bulkDeleteActions : undefined}
 		/>
 	{/if}
 </div>
+
+<!-- #713: the bulk bar's action. Only rendered when `perms.delete`. -->
+{#snippet bulkDeleteActions({ ids }: { ids: RowId[]; clear: () => void })}
+	<button
+		type="button"
+		class="banto-btn banto-btn--danger"
+		disabled={bulkDeleting}
+		onclick={() => void bulkDelete(ids)}
+	>
+		{m['resource.bulkDelete']({ count: ids.length })}
+	</button>
+{/snippet}
 
 <svelte:window onkeydown={handleDrawerKeydown} />
 

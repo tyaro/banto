@@ -165,6 +165,13 @@ create/update/delete の監査 `detail.changes` は変更表用の予約キー�
   保存は直列で、2 回目は 1 回目が返した `version` で送る。衝突した行は相手の
   最新値に戻して「他の人が変更したため保存しませんでした」と知らせ（貼り付けは
   件数を 1 回）、入力は入れ直してもらう。同じ行の待っていた保存は送らない。
+- **一覧の一括削除**（`ResourceListPage`、#713）: `capabilities.delete` があり、かつ
+  書き込める role の利用者にだけ、先頭のチェックボックスと一括操作バーの「N件を削除」が
+  出る（詳細画面の削除ボタンと同じ `resourcePermissions` の判定）。確認（件数入り）の
+  あと、**1 件の削除（`deleteOne` ＋行の `version`）を選んだ行について順に呼ぶ**
+  （`lib/resource/bulkDelete.ts`）。一括の API は無いので、監査・権限・衝突の扱いは
+  1 件ずつの削除のまま。失敗した行（権限・衝突など）は止めずに続け、最後に件数を
+  まとめて知らせ、失敗した行だけ選択に残す。server モードの選択は読み込み済みの行だけ。
 - 差分の計算・送り直す値の組み立ては純関数（`lib/resource/conflict.ts`）。
   `createFormResource(…, { handlesConflict: true })` にすると、衝突はトーストせず
   `submit()` の結果の `conflict`（`remove()` は `lastError`）で返る。

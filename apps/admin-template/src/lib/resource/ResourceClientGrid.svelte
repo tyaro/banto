@@ -18,8 +18,11 @@
 		GridState,
 		searchRows,
 		type CellEdit,
-		type GridColumn
+		type GridBulkActionsContext,
+		type GridColumn,
+		type RowId
 	} from '@banto/grid-svelte';
+	import type { Snippet } from 'svelte';
 	import { createListResource, invalidate } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
@@ -80,6 +83,10 @@
 		registerAdjacentRow?: (
 			lookup: ((rowId: string | number, delta: number) => ResourceRow | undefined) | undefined
 		) => void;
+		/** #713: BantoGrid's row selection, owned by the page (it runs the bulk action). */
+		selectable?: boolean;
+		selectedRowIds?: RowId[];
+		bulkActions?: Snippet<[GridBulkActionsContext]>;
 	}
 
 	let {
@@ -94,7 +101,10 @@
 		onRangePaste,
 		rowClass,
 		registerCurrentRow,
-		registerAdjacentRow
+		registerAdjacentRow,
+		selectable = false,
+		selectedRowIds = $bindable([]),
+		bulkActions
 	}: Props = $props();
 
 	// The resource name is fixed for this instance (the page remounts per route).
@@ -164,6 +174,9 @@
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
 			{rowClass}
+			{selectable}
+			bind:selectedRowIds
+			{bulkActions}
 		/>
 	</div>
 {/if}
