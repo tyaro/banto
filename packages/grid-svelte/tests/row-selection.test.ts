@@ -310,6 +310,57 @@ describe('BantoGrid row selection (#713)', () => {
 		expect(onSelectionChange).toHaveBeenLastCalledWith([]);
 	});
 
+	describe('focus when the bar disappears without clear()', () => {
+		function setup() {
+			let ctx: GridBulkActionsContext | undefined;
+			const bulkActions = createRawSnippet<[GridBulkActionsContext]>((context) => ({
+				render: () => `<button type="button">一括</button>`,
+				setup: () => {
+					ctx = context();
+				}
+			}));
+			const result = render(BantoGrid<Row>, {
+				rows,
+				columns,
+				getRowId,
+				selectable: true,
+				selectedRowIds: [1],
+				bulkActions
+			});
+			return { ...result, context: () => ctx! };
+		}
+
+		it('returns focus to the grid when a reload drops the selected rows, and clear() stays safe', async () => {
+			const { container, rerender, context } = setup();
+			const button = screen.getByRole('button', { name: '一括' });
+			button.focus();
+			expect(document.activeElement).toBe(button);
+			const ctx = context();
+			await rerender({ rows: rows.filter((row) => row.id !== 1) });
+			await tick();
+			expect(container.querySelector('.bulk-bar')).toBeNull();
+			expect(document.activeElement).toBe(screen.getByRole('grid'));
+			expect(() => ctx.clear()).not.toThrow();
+			expect(document.activeElement).toBe(screen.getByRole('grid'));
+		});
+
+		it('does not steal focus that already moved outside the bar', async () => {
+			const { container, rerender } = setup();
+			const outside = document.createElement('input');
+			document.body.appendChild(outside);
+			try {
+				screen.getByRole('button', { name: '一括' }).focus();
+				outside.focus();
+				await rerender({ rows: rows.filter((row) => row.id !== 1) });
+				await tick();
+				expect(container.querySelector('.bulk-bar')).toBeNull();
+				expect(document.activeElement).toBe(outside);
+			} finally {
+				outside.remove();
+			}
+		});
+	});
+
 	it('client mode: a selected row that a filter removes from the list is deselected', async () => {
 		const gridState = new GridState<Row>(columns);
 		const onSelectionChange = vi.fn();

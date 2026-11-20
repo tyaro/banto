@@ -577,6 +577,13 @@
 	let bulkBarEl: HTMLDivElement | undefined = $state();
 
 	function setSelectedRowIds(next: RowId[]) {
+		// The bar goes away with the last selected row, however that happens
+		// (clear button, a reload that drops the rows, a server filter change):
+		// a control inside it that has focus would drop focus to <body>. Focus
+		// that already moved elsewhere is left alone.
+		if (next.length === 0 && bulkBarEl?.contains(bulkBarEl.ownerDocument.activeElement)) {
+			containerEl?.focus({ preventScroll: true });
+		}
 		selectedRowIds = next;
 		selectionAnnouncement = t.selectionStatus(next.length);
 		onSelectionChange?.(next);
@@ -592,11 +599,6 @@
 
 	function clearSelectedRows() {
 		if (selectedRowIds.length === 0) return;
-		// The bar goes away with the selection; a control inside it that had
-		// focus (the clear button, a bulk action) would drop focus to <body>.
-		if (bulkBarEl?.contains(bulkBarEl.ownerDocument.activeElement)) {
-			containerEl?.focus({ preventScroll: true });
-		}
 		setSelectedRowIds([]);
 	}
 
