@@ -883,7 +883,10 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
     組み替え由来かを見分けたいなら `isDockRearranging(node)`（その node が、いま組み替え中の据え置き pane の中か）を使う。
 - B（テンプレート）: items の一覧に一括削除（`bulkDelete: true`・`lib/resource/bulkDelete.ts`）、列メニューの「左端に固定」と保存ビューの `pinned`
   （`listViews.ts`）、参照選択の `referenceFrom`（`lib/banto/reference.ts`）、`i18n.ts` のキーが入った。取り込むなら、これらと
-  `ResourceListPage` / `ResourceClientGrid` / `ResourceServerGrid` / `ResourceDetail` / `ui-demo` の変更を写す。保存ビューに `pinned` が無い
+  `ResourceListPage` / `ResourceClientGrid` / `ResourceServerGrid` / `ResourceDetail` / `ui-demo`、`messages/ja.json`・`en.json` の変更を写す。
+  一括削除を取り込むなら、バックエンドも写す: `core/src/items.rs`・`core/src/attachment_wiring.rs`・`core/src/rest/items.rs`・`core/src/rest/mod.rs`・
+  `src-tauri/src/lib.rs`（`items_bulk_delete`）。`bulkDelete: true` だけを入れると、HTTP の provider は常に `deleteMany` を持つので操作は出るが、
+  サーバーに `POST /api/items/bulk-delete` が無く 404/405 で失敗する。保存ビューに `pinned` が無い
   これまでの値はそのまま読める。
 - 確認: `pnpm check`・`cargo test`。`FieldType` を switch している画面は型検査で漏れが分かる。行選択・固定を付けたグリッドは、横スクロールで
   固定した列が残ること、一括削除のあと選択が空になることを確かめる。
