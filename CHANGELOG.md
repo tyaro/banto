@@ -22,6 +22,19 @@
 
 ## [Unreleased]
 
+## [7.10.0] - 2026-11-21
+
+**v7.10.0 — `@banto/grid-svelte` のセルの描き方・行選択と一括操作・左端の列の固定（#713 C-3）、一覧の一括削除の API とテンプレートの配線（#713）、`@banto/forms` のフォームの配置・欄の型の追加・参照選択の欄（#714 C-2）、`@banto/dock-svelte` の据え置き pane の組み替えでフォーカスを失わない修正（#763）。** 版の種類: minor（docs/publishing.md「バージョニング規約」の運用上の例外、オーナー判断）。`crates/*/src` の `pub` と `packages/*/src/index.ts` の export の削除・改名は無い（`v7.9.0` との差分で確認。`index.ts` は追加のみ）。公開の union に種類を足し、メッセージのキーを足したので、既存のコードが型エラーになりうる（下の「消費側への注意」）。実行時の値が変わるのは新しい機能を使ったときだけ（`radio` / `multiselect` / `reference` の欄、`visibleWhen`、`renderer` / `tone` / `selectable` / `pinned` を付けた列、`deleteMany`）なので、追従の手順を明記して minor とする。migration なし。
+
+消費側への注意（ソース互換・挙動。いずれも下の各項目に詳細）:
+
+- 型（union が広がった）: `@banto/forms` の `FieldType` に `'radio'` / `'multiselect'` / `'reference'`、`@banto/grid-svelte` の `SchemaFieldType`（`columnsFromSchema` が受ける構造的な写し）に同じ 3 種類。`FieldType` / `SchemaFieldType` を網羅 switch（`never` で締める）している・`Record<FieldType, …>` の形で全種類を持つ利用側は型エラー（3 つの分岐を足す）。値が配列（`multiselect`）や `null`（`reference`）になる欄が生まれるので、`store.values` / `onSubmit` の値を欄の型で決め打ちしている箇所も確かめる。いずれもスキーマにその型を書いたときだけ実行時に現れる。
+- 型（キーが増えた）: `ValidationMessages` に `visibilityUnsettled`、`@banto/grid-svelte` の `GridMessages` に `pinColumn` / `unpinColumn` / `booleanTrue` / `booleanFalse` / `selectRowLabel` / `selectAllRows` / `selectAllLoadedRows` / `selectionStatus` / `selectAllMatching` / `allMatchingStatus` / `selectionClear` / `bulkBarLabel`。どちらも省略可能（既定の文言あり）なので、`Partial` のまま渡す利用側は変更不要。`Required<ValidationMessages>` / `Required<GridMessages>` を使う利用側は、足されたキーを埋める。
+- 型（追加のみ）: `FieldDef` に `variant` / `prefix` / `suffix` / `section` / `fullWidth` / `visibleWhen` / `help` / `search` / `resolve`、`FormSchema` に `sections` / `columns`、`GridColumn` に `renderer` / `progressMax` / `href` / `tone` / `pinned`、`DataProvider` に省略可能な `deleteMany`（Tauri の provider が呼ぶコマンド `${resource}_bulk_delete` は、使う場合だけ Rust 側に要る）。すべて省略可能で、既存の定義はそのまま動く。
+- 挙動: `BantoForm` の `onSubmit` に渡る値は、`visibleWhen` を使う欄があるときだけ `store.values` と異なる（隠れた欄のキーが無い）。グリッドの行選択・列の固定・`renderer` は付けたときだけ有効（既定は off）。
+- `@banto/dock-svelte`: 新しい公開 API `isDockRearranging(node)`。据え置き（`persistent`）の pane を組み替えるとき、`Element.moveBefore()` の無い環境で中のフォーカス中の入力欄に出ていた `blur`（blur で確定するフォームの誤った確定）を直した（#763）。アプリ側の変更は要らない。blur のハンドラで「組み替え由来か、利用者が離れたのか」を見分けたいときだけ `isDockRearranging` を使う。
+- テンプレート（B）: 取り込むなら次のファイルを写す（`apps/admin-template/src/` 以下）。`lib/banto/i18n.ts`（`resource.bulkDelete*` ほかのキー）、`lib/banto/reference.ts`（`referenceFrom`）、`lib/banto/resources/items.ts`（`bulkDelete: true`）、`lib/resource/bulkDelete.ts`、`lib/resource/listViews.ts`（保存ビューの `pinned`）、`lib/resource/types.ts`、`lib/resource/ResourceListPage.svelte`、`lib/resource/ResourceClientGrid.svelte`、`lib/resource/ResourceServerGrid.svelte`、`lib/resource/ResourceDetail.svelte`、`routes/(app)/ui-demo/+page.svelte`（デモ）。ほかにテスト（`reference.test.ts`・`bulkDelete.test.ts`・`listViews.test.ts`）。
+
 ### Added
 
 - `@banto/grid-svelte` の列に組み込みの描き方 `renderer: 'badge' | 'progress' | 'boolean' | 'link'`（`progressMax`・`href` 付き）と、条件つき書式 `tone: (value, row) => 'success' | 'warning' | 'danger' | 'info' | 'neutral' | null`（#713 C-3 の 1 つ目の PR）。解決は `core/cellView.ts` の純関数（`resolveCellView` / `resolveCellPresentation` / `resolveTone` / `safeHref`）、色はテーマの状態色トークンのみ。優先順位は `render` > `cell` > `renderer` > 素の文字。`link` だけ編集不可（他は `editable` に従う）。コピー・CSV は従来どおり生の値。boolean の読み上げは `messages.booleanTrue` / `booleanFalse`（既定は「はい」「いいえ」）。ui-demo のグリッドに状態（badge + tone）・進捗・速達の列を追加（visual の基準画像が変わる）。型: `Required<GridMessages>` を使う利用側は 2 キー分の型エラー。

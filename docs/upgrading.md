@@ -864,3 +864,26 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
   配線された。取り込むなら、これらと `/dashboard`・`/tree/workspace-dock` の変更を写す。
 - 確認: `pnpm check`・`cargo test`。保存したレイアウトを使うアプリは、更新前の保存値が読めること（既定に戻らないこと）、
   利用者を切り替えたときダッシュボードの配置が混ざらないことを確かめる。
+
+### 例 10: v7.9.x → v7.10.0（グリッドの行選択・列の固定、フォームの配置と欄の型。A と B）
+
+`@banto/grid-svelte` にセルの描き方（`renderer` / `tone`）・行選択と一括操作バー・左端の列の固定、`@banto/admin-core` に `DataProvider.deleteMany`（#713）、`@banto/forms` にセクション・列・`visibleWhen`・`help`・`radio` / `multiselect` / `reference` の欄・`prefix` / `suffix`（#714）が入る。`@banto/dock-svelte` は据え置き pane の組み替えで入力欄に `blur` が出る不具合の修正（#763）と、新しい公開 API `isDockRearranging`。API の削除・改名はない。公開の union に種類を足し、メッセージのキーを足したので型エラーになりうるが、実行時の値が変わるのは新しい機能を使ったときだけなので、規約の運用上の例外（オーナー判断）で **minor**。
+
+- A（依存）: タグを `v7.10.0` に上げる（npm と Rust を同じタグに）。
+  - `FieldType`（`@banto/forms`）と `SchemaFieldType`（`@banto/grid-svelte`）に `'radio'` / `'multiselect'` / `'reference'` が増えた。
+    網羅 switch（`never` で締める）や `Record<FieldType, …>` の形で全種類を持っている箇所は型エラーになるので、3 つの分岐を足す。
+    使わないなら、足した分岐は実行時には通らない（スキーマに書いた欄だけが対象）。
+  - `ValidationMessages` に `visibilityUnsettled`、`GridMessages` に行選択・列の固定・真偽表示のキー（`pinColumn` ほか 12 個）が増えた。
+    どちらも省略可能で既定の文言があるので、`Partial` のまま渡している箇所は変更不要。`Required<ValidationMessages>` / `Required<GridMessages>`
+    を使っている箇所は、足されたキーを埋める。
+  - `DataProvider` に省略可能な `deleteMany`。自前の provider は何もしなくてよい（実装しなければ一括削除は出ない）。Tauri の provider で使うなら、
+    Rust 側に `${resource}_bulk_delete` のコマンドが要る。
+  - `visibleWhen` を使う欄がある `BantoForm` は、`onSubmit` に隠れた欄のキーを除いた値（`FormStore.submitValues`）を渡す。使わないなら今までと同じ。
+  - `@banto/dock-svelte` の据え置き（`persistent`）の pane を使うアプリは、更新だけで #763 が直る（コードの変更なし）。blur のハンドラで
+    組み替え由来かを見分けたいなら `isDockRearranging(node)`（その node が、いま組み替え中の据え置き pane の中か）を使う。
+- B（テンプレート）: items の一覧に一括削除（`bulkDelete: true`・`lib/resource/bulkDelete.ts`）、列メニューの「左端に固定」と保存ビューの `pinned`
+  （`listViews.ts`）、参照選択の `referenceFrom`（`lib/banto/reference.ts`）、`i18n.ts` のキーが入った。取り込むなら、これらと
+  `ResourceListPage` / `ResourceClientGrid` / `ResourceServerGrid` / `ResourceDetail` / `ui-demo` の変更を写す。保存ビューに `pinned` が無い
+  これまでの値はそのまま読める。
+- 確認: `pnpm check`・`cargo test`。`FieldType` を switch している画面は型検査で漏れが分かる。行選択・固定を付けたグリッドは、横スクロールで
+  固定した列が残ること、一括削除のあと選択が空になることを確かめる。
