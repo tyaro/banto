@@ -22,6 +22,8 @@
 	import CheckboxField from './fields/CheckboxField.svelte';
 	import RadioField from './fields/RadioField.svelte';
 	import MultiselectField from './fields/MultiselectField.svelte';
+	import ReferenceField from './fields/ReferenceField.svelte';
+	import type { ReferenceFieldMessages } from './fields/reference';
 
 	interface Props {
 		schema: FormSchema;
@@ -35,6 +37,8 @@
 		children?: Snippet;
 		/** Field inputs for this form; each type given here overrides `provideFieldInputs`. */
 		fieldInputs?: FieldInputs;
+		/** Texts of the `reference` fields (loading, nothing found, the search failed); defaults are Japanese. */
+		referenceMessages?: Partial<ReferenceFieldMessages>;
 	}
 
 	let {
@@ -45,7 +49,8 @@
 		submitLabel = '保存',
 		appearance = 'default',
 		children,
-		fieldInputs
+		fieldInputs,
+		referenceMessages
 	}: Props = $props();
 
 	const providedInputs = getFieldInputs();
@@ -163,7 +168,8 @@
 					{@const grouped = isGroupType(def)}
 					{@const underline = appearance === 'underline' && def.type !== 'checkbox' && !grouped}
 					{@const temporalInput = isTemporalType(def.type) ? inputs[def.type] : undefined}
-					{@const injected = !!temporalInput}
+					<!-- A reference is a composite too (text box + list of candidates). -->
+					{@const injected = !!temporalInput || def.type === 'reference'}
 					{#snippet control()}
 						{#if isTemporalType(def.type)}
 							<DateField
@@ -177,6 +183,19 @@
 								onInput={(value: unknown) => store.setValue(def.name, value)}
 								onBlur={() => store.touch(def.name)}
 								input={temporalInput}
+							/>
+						{:else if def.type === 'reference'}
+							<ReferenceField
+								{def}
+								class={underline ? 'banto-field-control' : undefined}
+								id={inputId}
+								aria-describedby={describedBy}
+								value={store.values[def.name]}
+								error={store.errors[def.name]}
+								disabled={submitting}
+								messages={referenceMessages}
+								onInput={(value: unknown) => store.setValue(def.name, value)}
+								onBlur={() => store.touch(def.name)}
 							/>
 						{:else}
 							<Field

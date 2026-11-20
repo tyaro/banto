@@ -29,6 +29,7 @@ export type SchemaFieldType =
 	| 'select'
 	| 'radio'
 	| 'multiselect'
+	| 'reference'
 	| 'checkbox'
 	| 'password';
 
@@ -278,6 +279,10 @@ const FILTER_BY_TYPE: Partial<Record<SchemaFieldType, FilterType>> = {
  *   `readonly` fields derive as display-only columns.
  * - `radio` derives like `select` (same options, label shown, select editor);
  *   `multiselect` is display-only: its array shows as the labels joined with `、`.
+ * - `reference` is display-only and shows the stored value (the id) as it is:
+ *   the name comes from the field's asynchronous `resolve`, which a cell
+ *   format cannot await. Pass `overrides[name].format` to show a name the row
+ *   or the app already has.
  * - `select` fields render the option LABEL for the stored value (raw value
  *   shown when no option matches), and pass their options to the editor.
  *

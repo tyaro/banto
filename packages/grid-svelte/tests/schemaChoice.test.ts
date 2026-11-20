@@ -40,3 +40,30 @@ describe('columnsFromSchema: radio / multiselect (#714)', () => {
 		expect(tags.format?.(null, row)).toBe('');
 	});
 });
+
+describe('columnsFromSchema: reference (#714)', () => {
+	interface Task {
+		owner: number | null;
+	}
+	const task = {} as Task;
+	const fields = [{ name: 'owner', label: '担当者', type: 'reference' as const, required: true }];
+
+	it('is display only and shows the stored id as it is', () => {
+		const [owner] = columnsFromSchema<Task>({ fields });
+		expect(owner.header).toBe('担当者');
+		expect(owner.editable).toBeUndefined();
+		expect(owner.editor).toBeUndefined();
+		expect(owner.validate).toBeUndefined();
+		expect(owner.format).toBeUndefined();
+		expect(owner.filterable).toBeUndefined();
+	});
+
+	it('takes a format from overrides to show a name the app already has', () => {
+		const names = new Map([[2, '青山']]);
+		const [owner] = columnsFromSchema<Task>(
+			{ fields },
+			{ overrides: { owner: { format: (value) => names.get(value as number) ?? String(value) } } }
+		);
+		expect(owner.format?.(2, task)).toBe('青山');
+	});
+});

@@ -4,6 +4,7 @@
 export type {
 	FieldType,
 	FieldOption,
+	ReferenceOption,
 	FieldDef,
 	FormSection,
 	FormColumns,
@@ -89,4 +90,6 @@ export { default as SelectField } from './fields/SelectField.svelte';
 export { default as CheckboxField } from './fields/CheckboxField.svelte';
 export { default as RadioField } from './fields/RadioField.svelte';
 export { default as MultiselectField } from './fields/MultiselectField.svelte';
+export { default as ReferenceField } from './fields/ReferenceField.svelte';
+export { REFERENCE_SEARCH_DEBOUNCE_MS, type ReferenceFieldMessages } from './fields/reference';
 export { default as DateField } from './fields/DateField.svelte';

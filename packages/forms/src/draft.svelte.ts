@@ -129,6 +129,8 @@ function defaultsFrom(schema: FormSchema): Values {
 		else if (field.type === 'multiselect') values[field.name] = [];
 		// An empty date / time / datetime is `null`, not `''` (date-time-pickers D6).
 		else if (isTemporalType(field.type)) values[field.name] = null;
+		// A reference with nothing chosen is `null` (the value is an id, never typed text).
+		else if (field.type === 'reference') values[field.name] = null;
 		else values[field.name] = '';
 	}
 	return values;
@@ -150,7 +152,12 @@ export function formatDraftValue(value: unknown): string {
 
 type Parsed = { ok: true; value: unknown } | { ok: false; message: string };
 
-function parse(def: FieldDef | undefined, text: string, messages: ValidationMessages): Parsed {
+function parse(
+	def: FieldDef | undefined,
+	text: string,
+	messages: ValidationMessages,
+	current: unknown
+): Parsed {
 	if (!def) return { ok: true, value: text };
 	switch (def.type) {
 		case 'number': {
@@ -194,6 +201,11 @@ function parse(def: FieldDef | undefined, text: string, messages: ValidationMess
 			const option = def.options?.find((o) => String(o.value) === text);
 			return { ok: true, value: option ? option.value : text };
 		}
+		case 'reference':
+			// The value is an id picked from the candidates (`setValue`): typed
+			// text is never read as one. Blank text clears it; any other text
+			// leaves the value as it was.
+			return { ok: true, value: text.trim() === '' ? null : current };
 		case 'multiselect':
 			// Never kept as raw text (the group sets its array with `setValue`);
 			// a comma-separated text is read as the option values, for completeness.
@@ -302,7 +314,7 @@ class Draft implements FormDraft<Values> {
 			const text = this.#raw[field];
 			let values = this.#values;
 			if (text !== undefined) {
-				const parsed = parse(def, text, this.#messages);
+				const parsed = parse(def, text, this.#messages, values[field]);
 				if (!parsed.ok) {
 					this.#errors = { ...this.#errors, [field]: parsed.message };
 					return false;
@@ -334,7 +346,7 @@ class Draft implements FormDraft<Values> {
 			let values = this.#values;
 			const parseErrors: Record<string, string> = {};
 			for (const field of rawFields) {
-				const parsed = parse(this.#def(field), this.#raw[field]!, this.#messages);
+				const parsed = parse(this.#def(field), this.#raw[field]!, this.#messages, values[field]);
 				if (parsed.ok) values = { ...values, [field]: parsed.value };
 				else parseErrors[field] = parsed.message;
 			}
