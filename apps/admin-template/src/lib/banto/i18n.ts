@@ -11,7 +11,7 @@
  * validation), keeping it reactive to the active locale.
  */
 import type { GridMessages, ColumnValidationMessages } from '@banto/grid-svelte';
-import type { ValidationMessages } from '@banto/forms';
+import type { ReferenceFieldMessages, ValidationMessages } from '@banto/forms';
 import type { TreeMessages } from '@banto/tree-svelte';
 import type { UiMessages } from '@banto/ui';
 import * as m from '#lib/paraglide/messages.js';
@@ -87,6 +87,18 @@ export function formValidationMessages(): ValidationMessages {
 		dateTimeMin: (_def, min) => m['validation.dateTimeMin']({ min }),
 		dateTimeMax: (_def, max) => m['validation.dateTimeMax']({ max }),
 		visibilityUnsettled: () => m['validation.visibilityUnsettled']()
+	};
+}
+
+/** @banto/forms `ReferenceFieldMessages` (BantoForm `referenceMessages`): the texts of a `reference` field's list. */
+export function referenceFieldMessages(): ReferenceFieldMessages {
+	return {
+		loading: () => m['reference.loading'](),
+		noResults: (query) =>
+			query ? m['reference.noResults']({ query }) : m['reference.noResultsEmpty'](),
+		resultCount: (count) => m['reference.resultCount']({ count }),
+		searchFailed: () => m['reference.searchFailed'](),
+		listLabel: (def) => m['reference.listLabel']({ label: def.label })
 	};
 }
 

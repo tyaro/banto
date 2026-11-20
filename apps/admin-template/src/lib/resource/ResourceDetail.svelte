@@ -50,7 +50,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { saveErrorMessage } from '#lib/banto/connectionRecovery.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
-	import { formValidationMessages } from '#lib/banto/i18n.js';
+	import { formValidationMessages, referenceFieldMessages } from '#lib/banto/i18n.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { resolveAppPath } from '#lib/appPath.js';
@@ -485,6 +485,7 @@
 			onSubmit={handleSubmit}
 			submitting={(formResource?.saving ?? false) || resolving || !canSave}
 			submitLabel={m['common.save']()}
+			referenceMessages={referenceFieldMessages()}
 		>
 			<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
 			{#if !isNew && perms.delete}
