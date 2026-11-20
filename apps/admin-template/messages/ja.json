@@ -130,6 +130,7 @@
   "validation.minLength": "{min}文字以上で入力してください",
   "validation.maxLength": "{max}文字以内で入力してください",
   "validation.pattern": "形式が正しくありません",
+  "validation.visibilityUnsettled": "表示の条件が定まらないため保存できません。値を見直してください",
   "validation.integer": "整数で入力してください",
   "validation.dateInvalid": "日付を YYYY-MM-DD の形で入力してください",
   "validation.dateMin": "{min}以降の日付を入力してください",

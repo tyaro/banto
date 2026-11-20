@@ -130,6 +130,7 @@
   "validation.minLength": "Enter at least {min} characters",
   "validation.maxLength": "Enter at most {max} characters",
   "validation.pattern": "The format is invalid",
+  "validation.visibilityUnsettled": "Cannot save: the conditions for showing this field never settle. Check the values",
   "validation.integer": "Enter an integer",
   "validation.dateInvalid": "Enter a date as YYYY-MM-DD",
   "validation.dateMin": "Enter a date on or after {min}",

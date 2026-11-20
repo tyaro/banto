@@ -42,6 +42,7 @@ import {
 	notANumberMessage,
 	timeInvalidMessage,
 	validateField,
+	visibilityUnsettledMessage,
 	type ValidationMessages
 } from './validate';
 import type { DraftSource } from './draftCoordinator.svelte';
@@ -342,20 +343,27 @@ class Draft implements FormDraft<Values> {
 				return next;
 			};
 			let hidden = hiddenOf(values);
-			let settled = false;
+			let unsettled: Set<string> | null = null;
 			for (let i = 0; i <= names.size; i++) {
 				const next = hiddenOf(resetHidden(hidden));
-				const same = next.size === hidden.size && [...next].every((f) => hidden.has(f));
+				const flipped = new Set([...next, ...hidden].filter((f) => next.has(f) !== hidden.has(f)));
 				hidden = next;
-				if (same) {
-					settled = true;
-					break;
-				}
+				unsettled = flipped.size > 0 ? flipped : null;
+				if (!unsettled) break;
 			}
-			// `visibleWhen` that never settles (A's condition flips once A is reset,
-			// alone or through other fields): hide nothing, so every value that is
-			// kept - and so may be sent - is the one that was validated.
-			if (!settled) hidden = new Set();
+			// `visibleWhen` that never settles (showing a field and hiding it flip
+			// each other, alone or through other fields): no consistent combination
+			// to validate and send, so commit nothing - values, raw text and the
+			// baseline stay - and say so on the fields that keep flipping.
+			if (unsettled) {
+				const unsettledErrors: Record<string, string> = {};
+				for (const field of unsettled) {
+					const def = this.#def(field);
+					if (def) unsettledErrors[field] = visibilityUnsettledMessage(def, this.#messages);
+				}
+				this.#errors = unsettledErrors;
+				return false;
+			}
 			values = resetHidden(hidden);
 			for (const field of names) {
 				if (hidden.has(field)) continue;

@@ -323,7 +323,7 @@ describe('draftSourceFrom with hidden fields (#714)', () => {
 		expect(draft.values.qty).toBe(3);
 	});
 
-	it('commitAll hides nothing when visibleWhen never settles, so what is kept was validated (#714 review)', () => {
+	it('commitAll commits nothing and says so when visibleWhen never settles (#714 review)', () => {
 		// 10 hides qty -> reset to 3 shows it -> 10 hides it ... never settles.
 		const s3: FormSchema = {
 			fields: [
@@ -340,12 +340,33 @@ describe('draftSourceFrom with hidden fields (#714)', () => {
 			key: 'k',
 			schema: s3,
 			initial: { qty: 3 },
-			messages: { notANumber: () => 'NaN!', min: () => 'min!' }
+			messages: { notANumber: () => 'NaN!', min: () => 'min!', visibilityUnsettled: () => 'loop!' }
 		});
 		draft.setRaw('qty', '10');
+		expect(draft.commitAll()).toBe(false);
+		expect(draft.errors.qty).toBe('loop!');
+		// Nothing moved: the value, the raw text and the baseline (not dirty by value) stay.
+		expect(draft.values.qty).toBe(3);
+		expect(draft.raw.qty).toBe('10');
+		expect(draft.snapshotForApply().submitValues).toEqual({ qty: 3 });
+	});
+
+	it('commitAll is not blocked by unparsable text in a field that stays hidden (#714 review)', () => {
+		const s4: FormSchema = {
+			fields: [
+				{ name: 'name', label: 'Name', type: 'text' },
+				{ name: 'qty', label: 'Qty', type: 'number', visibleWhen: () => false }
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: s4,
+			initial: { name: 'a', qty: 3 },
+			messages: { notANumber: () => 'NaN!' }
+		});
+		draft.setRaw('qty', '-');
+		draft.setValue('name', 'b');
 		expect(draft.commitAll()).toBe(true);
-		// Not the unvalidated 3 (below min): the parsed 10, which passed min.
-		expect(draft.values.qty).toBe(10);
-		expect(draft.snapshotForApply().submitValues).not.toHaveProperty('qty', 3);
+		expect(draft.snapshotForApply().submitValues).toEqual({ name: 'b' });
 	});
 });
