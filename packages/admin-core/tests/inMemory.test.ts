@@ -257,3 +257,109 @@ describe('createInMemoryDataProvider optimistic lock (Issue #638, same rules as 
 		).resolves.toBeDefined();
 	});
 });
+
+describe('createInMemoryDataProvider deleteMany (Issue #713, same contract as items.rs bulk_delete)', () => {
+	function versioned() {
+		return createInMemoryDataProvider(
+			{
+				items: {
+					rows: [
+						{ id: 1, name: 'Green Tea', price: 140, version: 1 },
+						{ id: 2, name: 'Coffee', price: 130, version: 1 },
+						{ id: 3, name: 'Black Tea', price: 160, version: 1 }
+					]
+				}
+			},
+			{ latencyMs: 0 }
+		);
+	}
+
+	async function idsOf(provider: ReturnType<typeof versioned>): Promise<number[]> {
+		const result = await provider.getList<Item>('items', { sort: [], filters: [] });
+		return result.rows.map((row) => row.id);
+	}
+
+	async function expectKind(
+		promise: Promise<unknown>,
+		kind: 'conflict' | 'bad_request'
+	): Promise<unknown> {
+		try {
+			await promise;
+		} catch (err) {
+			expect(isProviderError(err)).toBe(true);
+			if (isProviderError(err)) {
+				expect(err.body.kind).toBe(kind);
+				return err.body.kind === 'conflict' ? err.body.current : undefined;
+			}
+			throw err;
+		}
+		return expect.unreachable(`expected ${kind}`);
+	}
+
+	it('deletes exactly the given records and reports the count', async () => {
+		const provider = versioned();
+		const result = await provider.deleteMany!('items', {
+			kind: 'ids',
+			items: [
+				{ id: 1, version: 1 },
+				{ id: 3, version: 1 }
+			]
+		});
+		expect(result).toEqual({ deleted: 2 });
+		expect(await idsOf(provider)).toEqual([2]);
+	});
+
+	it('one stale version is a conflict with the current row, and nothing is deleted', async () => {
+		const provider = versioned();
+		await provider.update('items', 2, { price: 135 });
+		const current = await expectKind(
+			provider.deleteMany!('items', {
+				kind: 'ids',
+				items: [
+					{ id: 1, version: 1 },
+					{ id: 2, version: 1 },
+					{ id: 3, version: 1 }
+				]
+			}),
+			'conflict'
+		);
+		expect(current).toMatchObject({ id: 2, version: 2 });
+		expect(await idsOf(provider)).toEqual([1, 2, 3]);
+	});
+
+	it('a record that is already gone is a conflict without current, and nothing is deleted', async () => {
+		const provider = versioned();
+		const current = await expectKind(
+			provider.deleteMany!('items', {
+				kind: 'ids',
+				items: [
+					{ id: 1, version: 1 },
+					{ id: 999, version: 1 }
+				]
+			}),
+			'conflict'
+		);
+		expect(current).toBeUndefined();
+		expect(await idsOf(provider)).toEqual([1, 2, 3]);
+	});
+
+	it('an empty target, a repeated id and one over the limit are bad_request', async () => {
+		const provider = versioned();
+		await expectKind(provider.deleteMany!('items', { kind: 'ids', items: [] }), 'bad_request');
+		await expectKind(
+			provider.deleteMany!('items', { kind: 'ids', items: [{ id: 1 }, { id: 1 }] }),
+			'bad_request'
+		);
+		const tooMany = Array.from({ length: 1001 }, (_, index) => ({ id: index + 1 }));
+		await expectKind(provider.deleteMany!('items', { kind: 'ids', items: tooMany }), 'bad_request');
+		expect(await idsOf(provider)).toEqual([1, 2, 3]);
+	});
+
+	it('a record sent without version is not checked, like deleteOne', async () => {
+		const provider = versioned();
+		await provider.update('items', 1, { price: 150 });
+		await expect(
+			provider.deleteMany!('items', { kind: 'ids', items: [{ id: 1 }] })
+		).resolves.toEqual({ deleted: 1 });
+	});
+});

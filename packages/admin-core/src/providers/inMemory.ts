@@ -5,7 +5,12 @@
  * admin-core must stay UI-agnostic.
  */
 import { notFound, ProviderError } from '../errors';
-import type { DataProvider, DeleteOneOptions } from '../provider';
+import type {
+	DataProvider,
+	DeleteManyResult,
+	DeleteManyTarget,
+	DeleteOneOptions
+} from '../provider';
 import type { FilterState, ListParams, ListResult, SortState } from '../types';
 
 /** A row of a versioned resource (Issue #638): it holds a numeric `version`. */
@@ -283,6 +288,13 @@ function applySort(
 	return indexed.map((entry) => entry.row);
 }
 
+/** `deleteMany`'s row limit: the template server's `MAX_BULK_DELETE_ROWS`. */
+const IN_MEMORY_MAX_DELETE_MANY = 1000;
+
+function badRequest(message: string): ProviderError {
+	return new ProviderError({ kind: 'bad_request', message });
+}
+
 function todayIso(): string {
 	return new Date().toISOString().slice(0, 10);
 }
@@ -414,6 +426,40 @@ export function createInMemoryDataProvider(
 			if (index === -1) throw notFound(resource, id);
 			checkVersion(entry.rows[index], options?.version);
 			entry.rows.splice(index, 1);
+		},
+
+		// Issue #713, the same contract as the server's `ItemsService::bulk_delete`:
+		// all or nothing. Every record is checked before any is removed.
+		async deleteMany(resource: string, target: DeleteManyTarget): Promise<DeleteManyResult> {
+			await delay();
+			const entry = table(resource);
+			const { items } = target;
+			const seen: (string | number)[] = [];
+			for (const item of items) {
+				if (seen.some((id) => looseEquals(id, item.id))) {
+					throw badRequest(`同じ id が2回指定されています: ${item.id}`);
+				}
+				seen.push(item.id);
+			}
+			if (items.length === 0) throw badRequest('削除対象がありません');
+			if (items.length > IN_MEMORY_MAX_DELETE_MANY) {
+				throw badRequest(`一度に削除できるのは${IN_MEMORY_MAX_DELETE_MANY}件までです`);
+			}
+			const doomed = new Set<Record<string, unknown>>();
+			for (const item of items) {
+				const row = entry.rows.find((candidate) => looseEquals(candidate[entry.idField], item.id));
+				if (!row) {
+					// Already gone: a conflict without `current`, not `not_found`.
+					throw new ProviderError({
+						kind: 'conflict',
+						message: '削除対象のレコードが見つかりません（他の人が先に削除した可能性があります）'
+					});
+				}
+				checkVersion(row, item.version);
+				doomed.add(row);
+			}
+			entry.rows = entry.rows.filter((row) => !doomed.has(row));
+			return { deleted: doomed.size };
 		}
 	};
 }

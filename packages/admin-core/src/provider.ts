@@ -63,8 +63,15 @@ export interface DataProvider {
 	deleteOne(resource: string, id: string | number, options?: DeleteOneOptions): Promise<void>;
 	/**
 	 * Delete many records in one all-or-nothing request (Issue #713).
-	 * OPTIONAL: a provider (or a resource's backend) may not support it, so
-	 * check `provider.deleteMany` before offering the operation.
+	 * OPTIONAL: a provider may not have it, so check `provider.deleteMany`
+	 * before offering the operation.
+	 *
+	 * The method being there does NOT guarantee that the resource supports it:
+	 * the HTTP and Tauri providers return `deleteMany` for every resource (they
+	 * only build the route / command name from the resource name). An app states
+	 * the resources whose backend implements it explicitly - the template's
+	 * resource definition has `bulkDelete: true` - and offers the operation only
+	 * for those.
 	 *
 	 * Rejects with a `conflict` `ProviderError` and deletes nothing when the
 	 * target no longer is what the caller saw: `body.current` is the first
