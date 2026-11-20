@@ -90,6 +90,8 @@ test('リソース名は snake_case だけを受け付け、使えない名前�
 	assert.throws(() => normalizeSpec('users'), /既に使っています/);
 	assert.throws(() => normalizeSpec('type'), /予約語/);
 	assert.throws(() => normalizeSpec('values'), /予約語|変数名/);
+	assert.throws(() => normalizeSpec('between'), /予約語/);
+	assert.throws(() => normalizeSpec('verbose'), /予約語/);
 	// 単数形が予約語・既存の型と重なるときは "singular" を促す。
 	assert.throws(() => normalizeSpec('types'), /"singular"/);
 	assert.throws(() => normalizeSpec('roles'), /"singular"/);
@@ -125,6 +127,9 @@ test('フィールド定義の誤りは、欄の位置つきで断る', () => {
 	assert.throws(withField({ name: 'id', type: 'number' }), /必ず付ける欄/);
 	assert.throws(withField({ name: 'version', type: 'number' }), /必ず付ける欄/);
 	assert.throws(withField({ name: 'order', type: 'text' }), /予約語/);
+	// SQLite・PostgreSQL の予約語は、引用符なしで書く生成物が構文エラーになるので断る。
+	for (const word of ['between', 'escape', 'autoincrement', 'analyse', 'verbose'])
+		assert.throws(withField({ name: word, type: 'text' }), /予約語/, `"${word}" が通った`);
 	assert.throws(withField({ name: 'status', type: 'select' }), /生成できません/);
 	assert.throws(withField({ name: 'note', type: 'text', min: 1 }), /min は number/);
 	assert.throws(withField({ name: 'done', type: 'checkbox', required: true }), /checkbox/);

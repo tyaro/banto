@@ -20,16 +20,27 @@ const RUST_KEYWORDS = new Set(
 	).split(' ')
 );
 
-// 列名・テーブル名にそのまま書けない SQL の予約語（SQLite・PostgreSQL のどちらかで予約）。
+// 列名・テーブル名にそのまま書けない SQL の予約語。SQLite の全キーワード
+// （https://www.sqlite.org/lang_keywords.html）と PostgreSQL の予約語（付録 C の reserved と
+// reserved (can be function or type)）の和集合。生成物は引用符で囲まず書くので、どちらの DB でも通る名前に絞る。
 const SQL_RESERVED = new Set(
 	(
-		'all analyse analyze and any array as asc asymmetric both by case cast check collate column ' +
-		'constraint create current_date current_time current_timestamp current_user default ' +
-		'deferrable delete desc distinct do drop else end except exists false fetch for foreign from ' +
-		'grant group having in index initially insert intersect into is join key leading limit like ' +
-		'not null offset on only or order placing primary references returning select session_user ' +
-		'set some symmetric table then to trailing transaction true union unique update user using ' +
-		'values variadic when where window with'
+		'abort action add after all alter always analyse analyze and any array as asc asymmetric ' +
+		'attach authorization autoincrement before begin between binary both by cascade case ' +
+		'cast check collate collation column commit concurrently conflict constraint create ' +
+		'cross current current_catalog current_date current_role current_schema current_time ' +
+		'current_timestamp current_user database default deferrable deferred delete desc detach ' +
+		'distinct do drop each else end escape except exclude exclusive exists explain fail ' +
+		'false fetch filter first following for foreign freeze from full generated glob grant ' +
+		'group groups having if ignore ilike immediate in index indexed initially inner insert ' +
+		'instead intersect into is isnull join key last lateral leading left like limit ' +
+		'localtime localtimestamp match materialized natural no not nothing notnull null nulls ' +
+		'of offset on only or order others outer over overlaps partition placing plan pragma ' +
+		'preceding primary query raise range recursive references regexp reindex release rename ' +
+		'replace restrict returning right rollback row rows savepoint select session_user set ' +
+		'similar some symmetric system_user table tablesample temp temporary then ties to ' +
+		'trailing transaction trigger true unbounded union unique update user using vacuum ' +
+		'values variadic verbose view virtual when where window with without'
 	).split(' ')
 );
 
