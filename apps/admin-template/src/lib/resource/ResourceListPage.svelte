@@ -161,6 +161,7 @@
 		SAVED_VIEW_LIMIT,
 		VIEW_LABEL_MAX,
 		canSaveListViews,
+		definitionPinned,
 		newSavedViewId,
 		parseSavedViews,
 		presetViewContent,
@@ -461,6 +462,25 @@
 		columnsState.orderedColumns.length === 1 ? columnsState.orderedColumns[0]?.id : undefined
 	);
 
+	/**
+	 * Pin / unpin a column from the column menu (#713). The menu lists pinned
+	 * columns first, so the picked item's node moves - and a moved node loses
+	 * focus, which would leave the open menu without keyboard control. Focus
+	 * goes back to the item once the list has been redrawn.
+	 */
+	async function toggleColumnPinned(id: string): Promise<void> {
+		const focused = document.activeElement;
+		columnsState.toggleColumnPinned(id);
+		await tick();
+		if (
+			focused instanceof HTMLElement &&
+			focused.isConnected &&
+			document.activeElement !== focused
+		) {
+			focused.focus();
+		}
+	}
+
 	// Issue #215: restore whatever sort/filters/groupBy this session last
 	// left each mode with, BEFORE either grid's first render (plain
 	// synchronous assignment, not inside an $effect - `state.svelte.ts`'s
@@ -483,6 +503,12 @@
 	const clientFieldIds = clientColumns.map((column) => column.id);
 	// svelte-ignore state_referenced_locally
 	const serverFieldIds = columns.map((column) => column.id);
+	// What each grid pins when a view says nothing about it (#713): a
+	// definition view, or one saved before pinning.
+	// svelte-ignore state_referenced_locally
+	const clientDefaultPinned = definitionPinned(clientColumns);
+	// svelte-ignore state_referenced_locally
+	const serverDefaultPinned = definitionPinned(columns);
 	const restoredSearch: Partial<Record<ListLoadMode, string>> = {};
 	if (hasClient) {
 		const clientSnapshot = loadListViewState(scope, CLIENT_VIEW_KEY, clientFieldIds);
@@ -558,10 +584,12 @@
 
 	// --- #555 (4): list views -------------------------------------------------
 	//
-	// A view = filters + sort + quick-search term (`listViews.ts`). Applying one
-	// REPLACES what both grids had (each keeps only the entries it has a
-	// column for), so the chips, the search box and - in server mode - the
-	// fetched rows follow. Sources: the definition's `list.views`, then the
+	// A view = filters + sort + quick-search term + pinned columns
+	// (`listViews.ts`). Applying one REPLACES what both grids had (each keeps
+	// only the entries it has a column for), so the chips, the search box and
+	// - in server mode - the fetched rows follow. Pinned columns (#713): a
+	// saved view carries them; a view without them (a definition view, one
+	// saved before pinning) puts each grid back to its column definitions'. Sources: the definition's `list.views`, then the
 	// user's own saved views in the per-user UI settings. `?view=<id>` opens
 	// the list with either; the parameter is then removed from the URL (a
 	// reload must not re-apply it over what the user changed since).
@@ -612,6 +640,8 @@
 	function setGridView(state: GridState<ResourceRow>, content: ListViewContent): void {
 		state.sort = [...content.sort];
 		state.filters = [...content.filters];
+		// Always present here: `viewForFields` was given the grid's defaults.
+		if (content.pinned) state.pinned = [...content.pinned];
 	}
 
 	/** Apply a view to both grids and the search box. `refetch`: the server grid already exists. */
@@ -619,8 +649,12 @@
 		// A newer choice supersedes a `?view=` still waiting for the saved
 		// views to load: it must not land over this one afterwards.
 		pendingViewId = null;
-		if (hasClient) setGridView(clientGridState, viewForFields(content, clientFieldIds));
-		if (hasServer) setGridView(serverGridState, viewForFields(content, serverFieldIds));
+		if (hasClient) {
+			setGridView(clientGridState, viewForFields(content, clientFieldIds, clientDefaultPinned));
+		}
+		if (hasServer) {
+			setGridView(serverGridState, viewForFields(content, serverFieldIds, serverDefaultPinned));
+		}
 		clearTimeout(searchTimer);
 		searchInput = content.search;
 		search = content.search;
@@ -674,13 +708,15 @@
 		return {
 			sort: $state.snapshot(state.sort),
 			filters: $state.snapshot(state.filters),
-			search
+			search,
+			pinned: $state.snapshot(state.pinned)
 		};
 	}
 
 	function isShownView(content: ListViewContent): boolean {
 		const fields = mode === 'client' ? clientFieldIds : serverFieldIds;
-		return sameViewContent(viewForFields(content, fields), currentViewContent());
+		const defaultPinned = mode === 'client' ? clientDefaultPinned : serverDefaultPinned;
+		return sameViewContent(viewForFields(content, fields, defaultPinned), currentViewContent());
 	}
 
 	/**
@@ -1535,7 +1571,9 @@
 			     server grids own separate GridStates (and separate column sets),
 			     so one shared menu would show the wrong list for whichever mode
 			     is not active. A checkbox-kind MenuItem stays open on pick, so
-			     several columns can be toggled in one go. -->
+			     several columns can be toggled in one go. The second group pins
+			     columns to the left (#713, `toggleColumnPinned`): the menu lists
+			     pinned columns first, like the grid (Menu follows the DOM order). -->
 			<Menu label={m['grid.columnsMenuTitle']()} placement="bottom-start">
 				{#snippet trigger(props)}
 					<button {...props} type="button" class="banto-btn banto-btn--ghost columns-trigger">
@@ -1548,17 +1586,34 @@
 						>
 					</button>
 				{/snippet}
-				{#each columnsState.allColumns as column (column.id)}
-					{@const locked = column.id === lockedColumnId}
-					<MenuItem
-						kind="checkbox"
-						label={column.header.trim() === '' ? column.id : column.header}
-						checked={!columnsState.isHidden(column.id)}
-						disabled={locked}
-						title={locked ? m['grid.columnsMenuLastColumn']() : undefined}
-						onSelect={() => columnsState.toggleColumnHidden(column.id)}
-					/>
-				{/each}
+				<MenuGroup label={m['resource.columnsShowGroup']()}>
+					{#each columnsState.allColumns as column (column.id)}
+						{@const locked = column.id === lockedColumnId}
+						<MenuItem
+							kind="checkbox"
+							label={column.header.trim() === '' ? column.id : column.header}
+							checked={!columnsState.isHidden(column.id)}
+							disabled={locked}
+							title={locked ? m['grid.columnsMenuLastColumn']() : undefined}
+							onSelect={() => columnsState.toggleColumnHidden(column.id)}
+						/>
+					{/each}
+				</MenuGroup>
+				<MenuGroup label={m['resource.columnsPinGroup']()}>
+					{#each columnsState.allColumns as column (column.id)}
+						{@const label = column.header.trim() === '' ? column.id : column.header}
+						{@const pinned = columnsState.isPinned(column.id)}
+						<MenuItem
+							kind="checkbox"
+							{label}
+							checked={pinned}
+							title={pinned
+								? m['grid.unpinColumn']({ header: label })
+								: m['grid.pinColumn']({ header: label })}
+							onSelect={() => void toggleColumnPinned(column.id)}
+						/>
+					{/each}
+				</MenuGroup>
 			</Menu>
 			{#if hasMoreMenu}
 				<Menu label={m['resource.moreMenu']()} placement="bottom-end">
