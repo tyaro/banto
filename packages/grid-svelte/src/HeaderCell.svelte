@@ -32,6 +32,14 @@
 		state: GridState<TRow>;
 		width: number;
 		showPriority: boolean;
+		/**
+		 * Pinned column (#713): the `left` offset (px) the cell sticks at, or
+		 * `undefined` for a column that scrolls. BantoGrid computes it
+		 * (`pinnedOffsets`); this component only applies it.
+		 */
+		pinnedLeft?: number;
+		/** Pinned column: this is the last stuck one, which carries the boundary shadow. */
+		pinnedEdge?: boolean;
 		onDragStart: (columnId: string) => void;
 		onDragMove: (clientX: number) => void;
 		onDragEnd: () => void;
@@ -56,6 +64,8 @@
 		state: gridState,
 		width,
 		showPriority,
+		pinnedLeft,
+		pinnedEdge = false,
 		onDragStart,
 		onDragMove,
 		onDragEnd,
@@ -191,9 +201,12 @@
 
 <div
 	class="header-cell"
+	class:pinned={pinnedLeft !== undefined}
+	class:pinned-edge={pinnedEdge}
 	role="columnheader"
 	aria-sort={sortable ? ariaSort : undefined}
 	style:width={`${width}px`}
+	style:left={pinnedLeft !== undefined ? `${pinnedLeft}px` : undefined}
 >
 	<div
 		class="cell-body"
@@ -276,7 +289,29 @@
 	.header-cell[aria-sort='ascending'],
 	.header-cell[aria-sort='descending'],
 	.header-cell:has(.filter-button.active) {
-		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
+		--header-tint: color-mix(in srgb, var(--banto-primary) 8%, transparent);
+		background: var(--header-tint);
+	}
+
+	/* Pinned column (#713): sticks to the left edge (`left` is set inline) and
+	   is opaque - the header surface with the sort / filter tint as a layer -
+	   so the headers scrolling under it do not show through. 2 clears the
+	   neighbours' resize handles (1); the filter popover (20) stays on top.
+	   After the tint rule on purpose (the later rule wins the `background`);
+	   the second selector out-ranks its `:has()` form. */
+	.header-cell.pinned,
+	.header-cell.pinned:has(.filter-button.active) {
+		position: sticky;
+		z-index: 2;
+		background:
+			linear-gradient(var(--header-tint, transparent), var(--header-tint, transparent)),
+			var(--banto-surface-subtle);
+	}
+
+	/* The boundary shadow, only while the grid is scrolled sideways (BantoGrid
+	   sets `scrolled-x` on the scroll container). */
+	:global(.banto-grid.scrolled-x) .header-cell.pinned-edge {
+		box-shadow: var(--banto-grid-pinned-shadow);
 	}
 
 	.cell-body {

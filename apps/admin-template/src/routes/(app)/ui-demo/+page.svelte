@@ -380,8 +380,12 @@
 	);
 	// Built-in cell drawing (#713): a badge coloured by tone, a progress bar and
 	// a boolean mark. Display only (not editable), so the page stays deterministic.
+	// The code column is pinned to the left (#713): on a narrow card it stays
+	// in place, after the checkbox column, while the others scroll sideways.
 	const shipmentColumns: GridColumn<Shipment>[] = [
-		...shipmentSchemaColumns,
+		...shipmentSchemaColumns.map((column): GridColumn<Shipment> =>
+			column.id === 'code' ? { ...column, pinned: 'left' } : column
+		),
 		{
 			id: 'state',
 			header: m['uiDemo.gridDate.state'](),

@@ -51,6 +51,16 @@ export {
 	type RowId,
 	type SelectAllState
 } from './core/rowSelection';
+export {
+	partitionPinned,
+	fitPinnedCount,
+	pinnedOffsets,
+	clampDropIndex,
+	moveInOrder,
+	scrollLeftToReveal,
+	MIN_SCROLLABLE_WIDTH,
+	type ColumnPin
+} from './core/pinning';
 export { buildGroupedView, type GroupEntry, type RowEntry, type FlatEntry } from './core/group';
 export {
 	columnsFromSchema,

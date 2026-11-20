@@ -7,6 +7,7 @@
  * shape change. Keep these two definitions in sync by hand.
  */
 import type { Snippet } from 'svelte';
+import type { ColumnPin } from './core/pinning';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -238,6 +239,18 @@ export interface GridColumn<TRow> {
 	 * `GridState.orderedColumns`, which already excludes hidden columns.
 	 */
 	hidden?: boolean;
+	/**
+	 * `'left'`: the column starts pinned to the left edge (#713) - it is shown
+	 * ahead of every unpinned column and stays in place while the rest scroll
+	 * sideways, with a shadow on the boundary once the grid is scrolled. With
+	 * `selectable`, the checkbox column is pinned too, before the pinned
+	 * columns. Drag-reorder keeps a column inside its zone.
+	 *
+	 * Like `hidden`, this is the INITIAL value only: `GridState` seeds
+	 * `pinned` from it and owns the live state (`setColumnPinned`/
+	 * `toggleColumnPinned`/`isPinned`, persisted through `serialize()`).
+	 */
+	pinned?: ColumnPin;
 }
 
 /** What BantoGrid's `bulkActions` snippet receives (#713). */
@@ -260,6 +273,12 @@ export interface SerializedGridState {
 	widths: Record<string, number>;
 	/** Ids of the columns currently hidden (spec §4.4). Ids absent here are visible. */
 	hidden: string[];
+	/**
+	 * Ids of the columns pinned to the left (#713). Optional so that a payload
+	 * saved before pinning still hydrates (the column definitions' `pinned`
+	 * then apply); `serialize()` always writes it.
+	 */
+	pinned?: string[];
 	/** Client-mode group-by column id, or null (spec §4.3). `collapsedGroups` is deliberately NOT persisted - it's ephemeral UI state. */
 	groupBy: string | null;
 }
