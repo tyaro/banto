@@ -137,6 +137,16 @@
 		event.stopPropagation();
 	}
 
+	// The select's DOM value: the index of the option whose value is the draft
+	// (typed: `2` and `'2'` are different options), else the draft's text
+	// matched like a paste, else '' (no option).
+	const selectIndex = $derived.by(() => {
+		const list = options ?? [];
+		let at = list.findIndex((option) => option.value === draft);
+		if (at < 0) at = list.findIndex((option) => String(option.value) === String(draft ?? ''));
+		return at < 0 ? '' : String(at);
+	});
+
 	const common = $derived({
 		'aria-label': label,
 		'aria-invalid': invalid,
@@ -153,11 +163,15 @@
 		bind:this={editorEl}
 		{...common}
 		class:pending
-		value={String(draft ?? '')}
-		onchange={(event) => onDraftChange(resolveSelectValue(event.currentTarget.value, options))}
+		value={selectIndex}
+		onchange={(event) => {
+			// The DOM value is the option's index, so `2` and `'2'` stay apart.
+			const picked = (options ?? [])[Number(event.currentTarget.value)];
+			onDraftChange(picked ? picked.value : resolveSelectValue(event.currentTarget.value, options));
+		}}
 	>
-		{#each options ?? [] as option (option.value)}
-			<option value={String(option.value)}>{option.label}</option>
+		{#each options ?? [] as option, index (`${typeof option.value}:${option.value}`)}
+			<option value={String(index)}>{option.label}</option>
 		{/each}
 	</select>
 {:else if (editor ?? 'text') === 'checkbox'}
