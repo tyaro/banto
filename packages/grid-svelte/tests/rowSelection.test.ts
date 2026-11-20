@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+	allMatchingVerdict,
+	canSelectAllMatching,
 	retainSelected,
+	sameRowIds,
 	selectAllState,
 	toggleAll,
 	toggleRowId,
@@ -86,5 +89,86 @@ describe('retainSelected (#713)', () => {
 
 	it('empties the selection when no row is present', () => {
 		expect(retainSelected([1, 2], new Set())).toEqual([]);
+	});
+});
+
+describe('canSelectAllMatching (#713)', () => {
+	const base = {
+		mode: 'server',
+		selectAll: 'all',
+		loadedCount: 40,
+		totalRows: 1200,
+		allMatching: false,
+		enabled: true
+	} as const;
+
+	it('offers it in server mode when every loaded row is selected and more rows match', () => {
+		expect(canSelectAllMatching(base)).toBe(true);
+	});
+
+	it('never offers it in client mode', () => {
+		expect(canSelectAllMatching({ ...base, mode: 'client' })).toBe(false);
+	});
+
+	it('does not offer it unless every loaded row is selected', () => {
+		expect(canSelectAllMatching({ ...base, selectAll: 'some' })).toBe(false);
+		expect(canSelectAllMatching({ ...base, selectAll: 'none' })).toBe(false);
+	});
+
+	it('does not offer it when everything that matches is already loaded, or the total is unknown', () => {
+		expect(canSelectAllMatching({ ...base, totalRows: 40 })).toBe(false);
+		expect(canSelectAllMatching({ ...base, totalRows: 12 })).toBe(false);
+		expect(canSelectAllMatching({ ...base, totalRows: undefined })).toBe(false);
+	});
+
+	it('does not offer it unless the host opted in', () => {
+		expect(canSelectAllMatching({ ...base, enabled: false })).toBe(false);
+	});
+
+	it('does not offer it again while in the mode', () => {
+		expect(canSelectAllMatching({ ...base, allMatching: true })).toBe(false);
+	});
+});
+
+describe('sameRowIds (#713)', () => {
+	it('compares content and order, not identity', () => {
+		const ids: RowId[] = [1, 2];
+		expect(sameRowIds(ids, ids)).toBe(true);
+		expect(sameRowIds([1, 2], [1, 2])).toBe(true);
+		expect(sameRowIds([], [])).toBe(true);
+		expect(sameRowIds([1, 2], [2, 1])).toBe(false);
+		expect(sameRowIds([1, 2], [1])).toBe(false);
+		expect(sameRowIds([1], ['1'])).toBe(false);
+	});
+});
+
+describe('allMatchingVerdict (#713)', () => {
+	const entered = { flag: true, enteredWith: [1, 2], selected: [1, 2], usable: true };
+
+	it('keeps: not in the mode, or in it and untouched', () => {
+		expect(
+			allMatchingVerdict({ flag: false, enteredWith: null, selected: [1], usable: true })
+		).toBe('keep');
+		expect(allMatchingVerdict(entered)).toBe('keep');
+	});
+
+	it('rejects a flag the host turned on itself', () => {
+		expect(allMatchingVerdict({ flag: true, enteredWith: null, selected: [1], usable: true })).toBe(
+			'reject'
+		);
+	});
+
+	it('leaves when the host turns the flag off', () => {
+		expect(allMatchingVerdict({ ...entered, flag: false })).toBe('leave');
+	});
+
+	it('leaves but keeps the value when the host rewrites the selection', () => {
+		expect(allMatchingVerdict({ ...entered, selected: [] })).toBe('leave-keep');
+		expect(allMatchingVerdict({ ...entered, selected: [1] })).toBe('leave-keep');
+		expect(allMatchingVerdict({ ...entered, selected: [1, 2, 3] })).toBe('leave-keep');
+	});
+
+	it('leaves when the grid stops being a selectable server grid', () => {
+		expect(allMatchingVerdict({ ...entered, usable: false })).toBe('leave');
 	});
 });

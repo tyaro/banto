@@ -83,6 +83,10 @@ export interface GridMessages {
 	selectAllLoadedRows?: (loaded: number, total: number) => string;
 	/** Row selection: the count shown in the bulk bar and read by the live region (0 = nothing selected). */
 	selectionStatus?: (count: number) => string;
+	/** Row selection, server mode: the bulk bar's button that selects all `count` rows the filters match, loaded or not. */
+	selectAllMatching?: (count: number) => string;
+	/** Row selection, server mode: shown in the bulk bar and read by the live region while all `count` matching rows are selected. */
+	allMatchingStatus?: (count: number) => string;
 	/** Row selection: the bulk bar's "clear the selection" button. */
 	selectionClear?: () => string;
 	/** Row selection: accessible name of the bulk bar. */
@@ -129,6 +133,8 @@ export const defaultGridMessages: Required<GridMessages> = {
 	selectAllLoadedRows: (loaded, total) =>
 		`読み込み済みの${loaded}件をすべて選択（全${total}件のうち）`,
 	selectionStatus: (count) => (count === 0 ? '選択なし' : `${count}件を選択中`),
+	selectAllMatching: (count) => `該当する全${count}件を選択`,
+	allMatchingStatus: (count) => `該当する全${count}件を選択中`,
 	selectionClear: () => '選択を解除',
 	bulkBarLabel: () => '一括操作'
 };
