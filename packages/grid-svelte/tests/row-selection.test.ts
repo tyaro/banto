@@ -565,6 +565,27 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 		expect(screen.queryByRole('button', { name: /該当する全/ })).toBeNull();
 	});
 
+	it('does not offer it when the selectAllMatching prop is left out entirely', async () => {
+		// Not `selectAllMatching: false`: a grid written before the prop existed.
+		const sparse: (Row | undefined)[] = [];
+		sparse[0] = rows[0];
+		sparse[1] = rows[1];
+		const props = {
+			rows: sparse,
+			columns,
+			getRowId,
+			state: new GridState<Row>(columns),
+			mode: 'server' as const,
+			totalRows: 50,
+			selectable: true
+		};
+		expect('selectAllMatching' in props).toBe(false);
+		render(BantoGrid<Row>, props);
+		await fireEvent.click(headerBox());
+		expect(bar().textContent).toContain('2件を選択中');
+		expect(screen.queryByRole('button', { name: /該当する全/ })).toBeNull();
+	});
+
 	it('does not offer it in client mode', async () => {
 		render(BantoGrid<Row>, { rows, columns, getRowId, selectable: true, totalRows: 50 });
 		await fireEvent.click(headerBox());

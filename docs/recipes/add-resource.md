@@ -165,6 +165,23 @@ create/update/delete の監査 `detail.changes` は変更表用の予約キー�
   保存は直列で、2 回目は 1 回目が返した `version` で送る。衝突した行は相手の
   最新値に戻して「他の人が変更したため保存しませんでした」と知らせ（貼り付けは
   件数を 1 回）、入力は入れ直してもらう。同じ行の待っていた保存は送らない。
+- **一覧の一括削除**（`ResourceListPage`、#713）: 次の 3 つがそろう一覧にだけ、先頭の
+  チェックボックスと一括操作バーの「N件を削除」が出る（`bulkDeleteOffered`）。
+  リソース定義の `bulkDelete: true`、provider の `deleteMany`、削除の権限
+  （詳細画面の削除ボタンと同じ `resourcePermissions` の `delete`）。そろわない一覧には
+  チェックボックスもバーも出ない。確認（件数入り）のあと、**`deleteMany` を 1 回だけ**
+  呼ぶ（全件成功か全件失敗か。下の「一括削除」の API）。
+  - 送る `version` は**行を選んだ時点**のもの（`updateVersionCapture`）。server モードでは
+    選んだ行が読み込みの窓から外れるので、削除を押した時点では引けない。自分のセル編集で
+    進んだ版だけは追う。版を控えられなかった行があれば、送らずに知らせる。
+  - server モードの「該当する全件を選択」（`selectAllMatching`）では、確認の前に
+    一覧の条件（グリッドの絞り込み・並び・画面の検索語）で `getList` をページングし、
+    該当する行の id と `version` を集めて、その id で消す（`collectMatchingItems`）。
+    確認に出す件数は集めた件数。1,000 件を超えるときは確認を出さずに知らせる。
+  - 確認の前にセッションを控え、送る直前に比べる（`captureSendGuard`）。ログアウトや
+    別のアカウントのログインで替わっていれば送らない。
+  - 衝突（`conflict`）は何も消えず、選択を残して再読み込みを促す。判断は
+    `lib/resource/bulkDelete.ts` の純関数（流れ全体は `runBulkDelete`）。
 - 差分の計算・送り直す値の組み立ては純関数（`lib/resource/conflict.ts`）。
   `createFormResource(…, { handlesConflict: true })` にすると、衝突はトーストせず
   `submit()` の結果の `conflict`（`remove()` は `lastError`）で返る。
@@ -195,10 +212,17 @@ create/update/delete の監査 `detail.changes` は変更表用の予約キー�
 4. 変更の通知（`resource_changed`）は 1 回だけ出す。添付を持つリソースは、消した
    id の分を掃除する（`attachment_wiring::sweep_items_attachments`）。
 5. フロントは `DataProvider.deleteMany?.(resource, target)`。**省略可能な
-   メソッド**なので、`provider.deleteMany` が無ければ（InMemory のデモなど）
-   一括削除を出さない。http の provider は `POST /api/{resource}/bulk-delete`、
+   メソッド**なので、`provider.deleteMany` が無ければ一括削除を出さない。
+   http の provider は `POST /api/{resource}/bulk-delete`、
    tauri の provider は `${resource}_bulk_delete` を呼ぶので、手順 2 の名前を守れば
    provider の変更は要らない。衝突は `ProviderError` の `body.kind === 'conflict'`。
+   - **HTTP と Tauri の provider は、どのリソースにも `deleteMany` を返す**（リソース名から
+     URL・コマンド名を作るだけ）。メソッドがあっても、そのリソースの対応は保証しない。
+     手順 1〜4 を済ませたリソースだけ、リソース定義（`lib/banto/resources/<name>.ts`）に
+     **`bulkDelete: true`** を書いて明示する（items だけが true）。書かないリソースの一覧には
+     チェックボックスも一括操作バーも出ない。
+   - InMemory の provider（デモ・テスト）も `deleteMany` を持つ（同じ契約: id だけ・
+     全件成功か全件失敗か・`version` の照合・上限 1,000 件）。
 6. テストは両経路に: viewer の denied（403 `forbidden` + `denied` の監査行）、
    成功（監査 1 行）、`version` の衝突で何も消えない、上限の超過。
 7. 絞り込んだ全件を消すときは、利用側が一覧の API（`getList`）で id と `version`
