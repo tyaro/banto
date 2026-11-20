@@ -351,6 +351,33 @@ describe('draftSourceFrom with hidden fields (#714)', () => {
 		expect(draft.snapshotForApply().submitValues).toEqual({ qty: 3 });
 	});
 
+	it('commitAll also puts the unsettled reason on visible fields with pending text (#714 review)', () => {
+		const s5: FormSchema = {
+			fields: [
+				{ name: 'a', label: 'A', type: 'number' },
+				{
+					name: 'qty',
+					label: 'Qty',
+					type: 'number',
+					visibleWhen: (v) => v.a === 1 && Number(v.qty) < 5
+				}
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: s5,
+			initial: { a: 0, qty: 3 },
+			messages: { notANumber: () => 'NaN!', visibilityUnsettled: () => 'loop!' }
+		});
+		draft.setRaw('a', '1');
+		draft.setRaw('qty', '10');
+		expect(draft.commitAll()).toBe(false);
+		// qty is hidden on screen (a is still 0); a is visible and carries the reason too.
+		expect(draft.errors.a).toBe('loop!');
+		expect(draft.errors.qty).toBe('loop!');
+		expect(draft.values).toEqual({ a: 0, qty: 3 });
+	});
+
 	it('commitAll is not blocked by unparsable text in a field that stays hidden (#714 review)', () => {
 		const s4: FormSchema = {
 			fields: [

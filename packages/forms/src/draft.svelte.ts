@@ -356,8 +356,17 @@ class Draft implements FormDraft<Values> {
 			// to validate and send, so commit nothing - values, raw text and the
 			// baseline stay - and say so on the fields that keep flipping.
 			if (unsettled) {
+				// The fields that keep flipping may be hidden on screen (judged
+				// against the committed values, which do not change here), so also
+				// mark the fields with pending text that are visible there: the
+				// edits the user can look at and change.
+				const targets = new Set(unsettled);
+				for (const field of rawFields) {
+					const def = this.#def(field);
+					if (def && isFieldVisible(def, this.#values)) targets.add(field);
+				}
 				const unsettledErrors: Record<string, string> = {};
-				for (const field of unsettled) {
+				for (const field of targets) {
 					const def = this.#def(field);
 					if (def) unsettledErrors[field] = visibilityUnsettledMessage(def, this.#messages);
 				}
