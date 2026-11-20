@@ -51,7 +51,14 @@ export function gridMessages(): Partial<GridMessages> {
 		filterChipIn: () => m['grid.filterChipIn'](),
 		filterChipRangeSeparator: () => m['grid.filterChipRangeSeparator'](),
 		booleanTrue: () => m['grid.booleanTrue'](),
-		booleanFalse: () => m['grid.booleanFalse']()
+		booleanFalse: () => m['grid.booleanFalse'](),
+		selectRowLabel: (rowLabel) => m['grid.selectRowLabel']({ rowLabel }),
+		selectAllRows: (count) => m['grid.selectAllRows']({ count }),
+		selectAllLoadedRows: (loaded, total) => m['grid.selectAllLoadedRows']({ loaded, total }),
+		selectionStatus: (count) =>
+			count === 0 ? m['grid.selectionNone']() : m['grid.selectionStatus']({ count }),
+		selectionClear: () => m['grid.selectionClear'](),
+		bulkBarLabel: () => m['grid.bulkBarLabel']()
 	};
 }
 

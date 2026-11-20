@@ -75,6 +75,18 @@ export interface GridMessages {
 	booleanTrue?: () => string;
 	/** `renderer: 'boolean'`: text read for a false value (nothing is drawn). */
 	booleanFalse?: () => string;
+	/** Row selection (#713): accessible name of a row's checkbox, given the row's label. */
+	selectRowLabel?: (rowLabel: string) => string;
+	/** Row selection, client mode: name / tooltip of the header checkbox - it acts on the `count` listed rows. */
+	selectAllRows?: (count: number) => string;
+	/** Row selection, server mode: name / tooltip of the header checkbox - it acts only on the `loaded` rows of `total`. */
+	selectAllLoadedRows?: (loaded: number, total: number) => string;
+	/** Row selection: the count shown in the bulk bar and read by the live region (0 = nothing selected). */
+	selectionStatus?: (count: number) => string;
+	/** Row selection: the bulk bar's "clear the selection" button. */
+	selectionClear?: () => string;
+	/** Row selection: accessible name of the bulk bar. */
+	bulkBarLabel?: () => string;
 }
 
 export const defaultGridMessages: Required<GridMessages> = {
@@ -111,5 +123,12 @@ export const defaultGridMessages: Required<GridMessages> = {
 	filterChipIn: () => 'いずれか',
 	filterChipRangeSeparator: () => '〜',
 	booleanTrue: () => 'はい',
-	booleanFalse: () => 'いいえ'
+	booleanFalse: () => 'いいえ',
+	selectRowLabel: (rowLabel) => `${rowLabel}を選択`,
+	selectAllRows: (count) => `一覧の${count}件をすべて選択`,
+	selectAllLoadedRows: (loaded, total) =>
+		`読み込み済みの${loaded}件をすべて選択（全${total}件のうち）`,
+	selectionStatus: (count) => (count === 0 ? '選択なし' : `${count}件を選択中`),
+	selectionClear: () => '選択を解除',
+	bulkBarLabel: () => '一括操作'
 };

@@ -413,6 +413,13 @@
 			row.code === edit.rowId ? { ...row, [edit.field]: edit.value } : row
 		);
 	}
+	// Row selection (#713): the bulk bar's sample action only touches these
+	// in-memory rows - a real page calls its own operation with the ids.
+	let selectedShipments = $state<(string | number)[]>([]);
+	function markExpress(ids: (string | number)[], clear: () => void) {
+		shipments = shipments.map((row) => (ids.includes(row.code) ? { ...row, express: true } : row));
+		clear();
+	}
 	const timeMessages: UiMessages = {
 		timePickerOpen: () => m['timePicker.open'](),
 		timePickerList: () => m['timePicker.list'](),
@@ -1064,7 +1071,19 @@
 				getRowId={(row) => row.code}
 				onCellEdit={saveShipment}
 				messages={gridMessages()}
-			/>
+				selectable
+				bind:selectedRowIds={selectedShipments}
+			>
+				{#snippet bulkActions({ ids, clear })}
+					<button
+						type="button"
+						class="banto-btn banto-btn--secondary banto-btn--sm"
+						onclick={() => markExpress(ids, clear)}
+					>
+						{m['uiDemo.gridDate.bulkExpress']()}
+					</button>
+				{/snippet}
+			</BantoGrid>
 		</div>
 	</SurfaceCard>
 </div>
