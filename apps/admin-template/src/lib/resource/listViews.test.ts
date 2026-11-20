@@ -1,7 +1,9 @@
+import { GridState, type GridColumn } from '@banto/grid-svelte';
 import { describe, expect, it } from 'vitest';
 import {
 	SAVED_VIEW_LIMIT,
 	canSaveListViews,
+	definitionPinned,
 	newSavedViewId,
 	parseSavedViews,
 	presetViewContent,
@@ -69,6 +71,145 @@ describe('presetViewContent / viewForFields / sameViewContent', () => {
 		expect(sameViewContent(lowStock, { ...lowStock, search: '  ' })).toBe(true);
 		expect(sameViewContent(lowStock, { ...lowStock, search: 'tea' })).toBe(false);
 		expect(sameViewContent(lowStock, { ...lowStock, sort: [] })).toBe(false);
+	});
+});
+
+describe('pinned columns in a view (#713)', () => {
+	interface Row {
+		id: number;
+		code: string;
+		name: string;
+		stock: number;
+	}
+	// `code` is pinned by the definition.
+	const columns: GridColumn<Row>[] = [
+		{ id: 'id', header: 'ID', accessor: 'id' },
+		{ id: 'code', header: 'Code', accessor: 'code', pinned: 'left' },
+		{ id: 'name', header: 'Name', accessor: 'name' },
+		{ id: 'stock', header: 'Stock', accessor: 'stock' }
+	];
+	const fields = columns.map((column) => column.id);
+	const defaults = definitionPinned(columns);
+
+	/** What `ResourceListPage` reads from the grid to save / compare. */
+	function contentOf(state: GridState<Row>) {
+		return { sort: state.sort, filters: state.filters, search: '', pinned: [...state.pinned] };
+	}
+
+	/** What `ResourceListPage` does to a grid when a view is applied. */
+	function apply(state: GridState<Row>, content: Parameters<typeof viewForFields>[0]): void {
+		const view = viewForFields(content, fields, defaults);
+		state.sort = [...view.sort];
+		state.filters = [...view.filters];
+		if (view.pinned) state.pinned = [...view.pinned];
+	}
+
+	it('reads the pinned ids of the column definitions', () => {
+		expect(defaults).toEqual(['code']);
+		expect(definitionPinned([{ id: 'a' }, { id: 'b' }])).toEqual([]);
+	});
+
+	it('a saved view keeps the pinned columns through save -> store -> load -> apply', () => {
+		const state = new GridState<Row>(columns);
+		state.setColumnPinned('code', false);
+		state.setColumnPinned('stock', true);
+		state.setColumnPinned('name', true);
+
+		const result = upsertSavedView([], 'Stock first', contentOf(state), () => 'my-1');
+		if (result.kind === 'limit') throw new Error('unexpected limit');
+		const stored = parseSavedViews(serializeSavedViews(result.views));
+		expect(stored?.[0]?.pinned).toEqual(['stock', 'name']);
+
+		// A fresh page: the grid starts from the definitions again.
+		const next = new GridState<Row>(columns);
+		expect(next.pinned).toEqual(['code']);
+		apply(next, stored![0]!);
+
+		expect([...next.pinned].sort()).toEqual(['name', 'stock']);
+		// Pinned columns lead, in the grid's own column order.
+		expect(next.orderedColumns.map((column) => column.id)).toEqual(['name', 'stock', 'id', 'code']);
+		expect(next.pinnedCount).toBe(2);
+		// ... and the menu's check mark finds the view again.
+		expect(sameViewContent(viewForFields(stored![0]!, fields, defaults), contentOf(next))).toBe(
+			true
+		);
+	});
+
+	it('a saved view with nothing pinned unpins the definition-pinned column', () => {
+		const state = new GridState<Row>(columns);
+		state.setColumnPinned('code', false);
+		const result = upsertSavedView([], 'Flat', contentOf(state), () => 'my-1');
+		if (result.kind === 'limit') throw new Error('unexpected limit');
+		const stored = parseSavedViews(serializeSavedViews(result.views));
+		expect(stored?.[0]?.pinned).toEqual([]);
+
+		const next = new GridState<Row>(columns);
+		apply(next, stored![0]!);
+		expect(next.pinned).toEqual([]);
+	});
+
+	it('a view saved before pinning (no `pinned`) applies the column definitions', () => {
+		const old = JSON.stringify({
+			version: 1,
+			views: [{ id: 'my-old', label: 'Old', ...lowStock }]
+		});
+		const stored = parseSavedViews(old);
+		expect(stored).toHaveLength(1);
+		expect(stored![0]).not.toHaveProperty('pinned');
+
+		const state = new GridState<Row>(columns);
+		state.setColumnPinned('code', false);
+		state.setColumnPinned('name', true);
+		apply(state, stored![0]!);
+
+		expect(state.pinned).toEqual(['code']);
+		expect(state.sort).toEqual(lowStock.sort);
+		expect(sameViewContent(viewForFields(stored![0]!, fields, defaults), contentOf(state))).toBe(
+			true
+		);
+	});
+
+	it('a definition view has no `pinned`, so it also applies the column definitions', () => {
+		const content = presetViewContent({ id: 'low-stock', label: () => 'Low', ...lowStock });
+		expect(content).not.toHaveProperty('pinned');
+		expect(viewForFields(content, fields, defaults).pinned).toEqual(['code']);
+		// Without the defaults a missing `pinned` stays missing.
+		expect(viewForFields(content, fields)).not.toHaveProperty('pinned');
+	});
+
+	it('drops pinned ids the grid has no column for, and repeats', () => {
+		const content = { ...lowStock, pinned: ['stock', 'gone', 'stock'] };
+		expect(viewForFields(content, fields, defaults).pinned).toEqual(['stock']);
+		expect(viewForFields(content, ['id', 'name'], []).pinned).toEqual([]);
+	});
+
+	it('compares pinned ids as a set', () => {
+		const a = { ...lowStock, pinned: ['name', 'stock'] };
+		expect(sameViewContent(a, { ...lowStock, pinned: ['stock', 'name'] })).toBe(true);
+		expect(sameViewContent(a, { ...lowStock, pinned: ['stock'] })).toBe(false);
+		expect(sameViewContent(a, lowStock)).toBe(false);
+		expect(sameViewContent({ ...lowStock, pinned: [] }, lowStock)).toBe(false);
+	});
+
+	it('drops a stored view whose `pinned` is malformed, keeping the others', () => {
+		const raw = JSON.stringify({
+			version: 1,
+			views: [
+				{ id: 'a', label: 'A', ...lowStock, pinned: 'code' },
+				{ id: 'b', label: 'B', ...lowStock, pinned: ['code', 1] },
+				{ id: 'c', label: 'C', ...lowStock, pinned: ['code', 'code'] }
+			]
+		});
+		expect(parseSavedViews(raw)).toEqual([{ id: 'c', label: 'C', ...lowStock, pinned: ['code'] }]);
+	});
+
+	it('overwriting a view by name replaces its pinned columns', () => {
+		const first = upsertSavedView([], 'V', { ...lowStock, pinned: ['code'] }, () => 'my-1');
+		if (first.kind === 'limit') throw new Error('unexpected limit');
+		const second = upsertSavedView(first.views, 'V', { ...lowStock, pinned: [] }, () => 'my-2');
+		if (second.kind === 'limit') throw new Error('unexpected limit');
+		expect(second.kind).toBe('replaced');
+		expect(second.views).toEqual([{ id: 'my-1', label: 'V', ...lowStock, pinned: [] }]);
 	});
 });
 

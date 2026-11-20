@@ -202,7 +202,8 @@ const columns: GridColumn<Item>[] = [
 ```
 
 - **表示順**: 固定した列は、固定していない列より常に左に出る（定義や `order` の位置に関係なく）。固定した列どうし・固定していない列どうしの順は `order` のまま。`selectable` のチェックボックスの列は、固定した列が 1 つでも表示されていれば一緒に固定され、固定した列はその右に続く。
-- **状態**: `hidden` と同じく、`pinned` は初期値。以後は `GridState` が持つ（`pinned: string[]`、`isPinned(id)`・`setColumnPinned(id, pinned)`・`toggleColumnPinned(id)`・`pinnedCount`）。`serialize()` は `pinned` を書き出し、`hydrate()` は `pinned` の無い古い保存内容を受け付ける（そのときは列の定義の `pinned` のまま）。固定を解くと、列は `order` の元の位置に戻る。**固定を切り替える UI は同梱していない**（`ColumnsMenu` には無い）。利用側のメニューから `toggleColumnPinned` を呼ぶ。
+- **状態**: `hidden` と同じく、`pinned` は初期値。以後は `GridState` が持つ（`pinned: string[]`、`isPinned(id)`・`setColumnPinned(id, pinned)`・`toggleColumnPinned(id)`・`pinnedCount`）。`serialize()` は `pinned` を書き出し、`hydrate()` は `pinned` の無い古い保存内容を受け付ける（そのときは列の定義の `pinned` のまま）。固定を解くと、列は `order` の元の位置に戻る。固定を切り替える UI は `ColumnsMenu` にある（下の「切り替える UI」）。自前のメニューからは `toggleColumnPinned` を呼ぶ。
+- **切り替える UI**: `ColumnsMenu` の各行の右に、ピンのボタンがある（`toggleColumnPinned` を呼ぶ）。状態は `aria-pressed` で伝え、名前は固定中も同じ `messages.pinColumn(header)`（既定「〇〇を左端に固定」）。ツールチップは、固定中だけ `messages.unpinColumn(header)`（既定「〇〇の固定を解除」）。メニューの並びは `allColumns` のとおり固定した列が先頭なので、切り替えると行が動く（フォーカスは押したボタンに残す）。非表示の列も固定できる（再表示したときに固定の区画へ入る）。
 - **境界の影**: 固定した最後の列の右端に、横スクロールが 0 より大きいときだけ影が出る（theme の `--banto-grid-pinned-shadow`。forced-colors では線）。スクロール中はコンテナに `scrolled-x` クラスが付く。
 - **列の並べ替え（ドラッグ）**: 列は自分の区画（固定 / 固定でない）の中でだけ動く。境を越えて落とすと、区画の端に入る（`moveColumn` も同じ制約）。
 - **非表示**: 固定した列も非表示にできる。固定した列がすべて非表示になると、チェックボックスの列の固定も解ける。再表示すると固定のまま戻る。

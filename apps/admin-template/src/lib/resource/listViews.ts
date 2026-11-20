@@ -2,8 +2,9 @@
  * List views (#555 (4)): the pure part of `ResourceListPage`'s "Views" menu,
  * kept out of the component so it can be unit-tested without a DOM.
  *
- * A view is the list's filters, sort and quick-search term - not the columns
- * or the load mode. Two sources:
+ * A view is the list's filters, sort, quick-search term and - for a saved
+ * view - which columns are pinned to the left (#713). Not the columns'
+ * visibility / order / widths, and not the load mode. Two sources:
  *  - views the definition ships (`list.views`, `ResourceListView`), e.g. items'
  *    `low-stock` that the dashboard's KPI card opens with `?view=low-stock`;
  *  - the user's own saved views, stored as ONE value per resource in the
@@ -20,6 +21,13 @@ export interface ListViewContent {
 	sort: SortState[];
 	filters: FilterState[];
 	search: string;
+	/**
+	 * Ids of the columns pinned to the left (#713; the order has no meaning -
+	 * the grid shows pinned columns in its own column order). Missing in a
+	 * definition view and in a view saved before pinning: the column
+	 * definitions' own `pinned` then applies ({@link definitionPinned}).
+	 */
+	pinned?: string[];
 }
 
 /** One of the user's own saved views. */
@@ -75,29 +83,56 @@ export function presetViewContent(view: ResourceListView): ListViewContent {
 	};
 }
 
+/** The ids of the columns a definition pins to the left (`pinned: 'left'`, #713). */
+export function definitionPinned(
+	columns: readonly { id: string; pinned?: string | undefined }[]
+): string[] {
+	return columns.filter((column) => column.pinned === 'left').map((column) => column.id);
+}
+
 /**
  * The part of `content` a grid with these columns can show: sort / filter
  * entries on a field the grid has no column for are dropped (the server
- * rejects an unknown filter field, the client grid would match nothing).
+ * rejects an unknown filter field, the client grid would match nothing), and
+ * so are pinned ids of columns it does not have.
+ *
+ * `defaultPinned` (the grid's {@link definitionPinned}) stands in when the
+ * view has no `pinned` - a definition view, or one saved before pinning
+ * (#713) - so the result always says which columns are pinned. Without it a
+ * missing `pinned` stays missing.
  */
 export function viewForFields(
 	content: ListViewContent,
-	fields: readonly string[]
+	fields: readonly string[],
+	defaultPinned?: readonly string[]
 ): ListViewContent {
 	const known = new Set(fields);
+	const pinned = content.pinned ?? defaultPinned;
 	return {
 		sort: content.sort.filter((entry) => known.has(entry.field)),
 		filters: content.filters.filter((entry) => known.has(entry.field)),
-		search: content.search
+		search: content.search,
+		...(pinned ? { pinned: [...new Set(pinned)].filter((id) => known.has(id)) } : {})
 	};
 }
 
-/** Does the list currently show exactly this view (search compared trimmed)? */
+/** Pinned ids as a comparable value: a set (order and repeats do not matter). */
+function pinnedKey(pinned: readonly string[] | undefined): string {
+	return pinned ? JSON.stringify([...new Set(pinned)].sort()) : 'none';
+}
+
+/**
+ * Does the list currently show exactly this view (search compared trimmed,
+ * pinned ids as a set)? Give both sides a `pinned` first
+ * ({@link viewForFields} with `defaultPinned`): a missing one only equals
+ * another missing one.
+ */
 export function sameViewContent(a: ListViewContent, b: ListViewContent): boolean {
 	return (
 		JSON.stringify(a.sort) === JSON.stringify(b.sort) &&
 		JSON.stringify(a.filters) === JSON.stringify(b.filters) &&
-		a.search.trim() === b.search.trim()
+		a.search.trim() === b.search.trim() &&
+		pinnedKey(a.pinned) === pinnedKey(b.pinned)
 	);
 }
 
@@ -110,6 +145,10 @@ function isSavedView(value: unknown): value is SavedListView {
 		typeof candidate.label === 'string' &&
 		candidate.label.trim() !== '' &&
 		typeof candidate.search === 'string' &&
+		// Missing in a view saved before pinning (#713).
+		(candidate.pinned === undefined ||
+			(Array.isArray(candidate.pinned) &&
+				candidate.pinned.every((id) => typeof id === 'string'))) &&
 		isListViewSnapshot(candidate)
 	);
 }
@@ -140,7 +179,8 @@ export function parseSavedViews(raw: string): SavedListView[] | undefined {
 			label: entry.label,
 			sort: entry.sort,
 			filters: entry.filters,
-			search: entry.search
+			search: entry.search,
+			...(entry.pinned ? { pinned: [...new Set(entry.pinned)] } : {})
 		});
 	}
 	return views;
@@ -181,7 +221,8 @@ export function upsertSavedView(
 	const stored: ListViewContent = {
 		sort: [...content.sort],
 		filters: [...content.filters],
-		search: content.search.trim()
+		search: content.search.trim(),
+		...(content.pinned ? { pinned: [...content.pinned] } : {})
 	};
 	const index = views.findIndex((view) => view.label === name);
 	const existing = views[index];

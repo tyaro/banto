@@ -43,6 +43,8 @@ export function gridMessages(): Partial<GridMessages> {
 		columnsMenuTitle: () => m['grid.columnsMenuTitle'](),
 		columnsMenuCount: (visible, total) => m['grid.columnsMenuCount']({ visible, total }),
 		columnsMenuLastColumn: () => m['grid.columnsMenuLastColumn'](),
+		pinColumn: (header) => m['grid.pinColumn']({ header }),
+		unpinColumn: (header) => m['grid.unpinColumn']({ header }),
 		filterChipsLabel: () => m['grid.filterChipsLabel'](),
 		filterChipRemove: (header) => m['grid.filterChipRemove']({ header }),
 		filterChipsClearAll: () => m['grid.filterChipsClearAll'](),

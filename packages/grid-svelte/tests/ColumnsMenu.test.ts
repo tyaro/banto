@@ -5,15 +5,16 @@
  * Covers the three things the component owns on top of `GridState`: the
  * open/dismiss model (same Escape + outside-pointerdown contract as
  * FilterPopover - see that file's doc on why there is no focus trap), the
- * checkbox <-> `hidden` wiring, and the last-visible-column lock that makes
- * `setColumnHidden`'s refusal visible instead of a dead click.
+ * checkbox <-> `hidden` wiring, the last-visible-column lock that makes
+ * `setColumnHidden`'s refusal visible instead of a dead click, and the pin
+ * toggle <-> `pinned` wiring (#713).
  *
  * Outside/inside pointer-down cases dispatch a plain `Event('pointerdown')`
  * (jsdom provides no `PointerEvent` constructor); the component only reads
  * `event.target`, so a generic bubbling event exercises the same listener.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import ColumnsMenu from '../src/ColumnsMenu.svelte';
 import { GridState } from '../src/state.svelte';
 import type { GridColumn } from '../src/types';
@@ -118,5 +119,92 @@ describe('ColumnsMenu', () => {
 		pointerDown(document.body);
 		await Promise.resolve();
 		expect(screen.queryByRole('dialog')).toBeNull();
+	});
+
+	describe('pin toggle (#713)', () => {
+		function pinButton(header: string): HTMLButtonElement {
+			return screen.getByRole('button', { name: `${header}を左端に固定` }) as HTMLButtonElement;
+		}
+
+		it('offers one unpressed toggle per column', async () => {
+			renderMenu();
+			openMenu();
+			await screen.findByRole('dialog');
+
+			for (const header of ['ID', '商品名', '価格']) {
+				expect(pinButton(header).getAttribute('aria-pressed')).toBe('false');
+				expect(pinButton(header).title).toBe(`${header}を左端に固定`);
+			}
+		});
+
+		it('pinning a column updates `pinned` and moves it to the front of orderedColumns', async () => {
+			const state = renderMenu();
+			openMenu();
+			await screen.findByRole('dialog');
+
+			await fireEvent.click(pinButton('価格'));
+
+			expect(state.pinned).toEqual(['price']);
+			expect(state.orderedColumns.map((column) => column.id)).toEqual(['price', 'id', 'name']);
+			expect(state.pinnedCount).toBe(1);
+			// Same name, pressed; the tooltip says what the next click does.
+			expect(pinButton('価格').getAttribute('aria-pressed')).toBe('true');
+			expect(pinButton('価格').title).toBe('価格の固定を解除');
+			// The list follows `allColumns` (pinned first).
+			const boxes = screen.getAllByRole('checkbox');
+			expect(boxes.map((box) => box.closest('label')?.textContent?.trim())).toEqual([
+				'価格',
+				'ID',
+				'商品名'
+			]);
+		});
+
+		it('keeps focus on the toggle when its row moves', async () => {
+			renderMenu();
+			openMenu();
+			await screen.findByRole('dialog');
+			const button = pinButton('価格');
+			button.focus();
+
+			await fireEvent.click(button);
+
+			await vi.waitFor(() => expect(document.activeElement).toBe(pinButton('価格')));
+		});
+
+		it('unpinning puts the column back in its slot', async () => {
+			const state = renderMenu(
+				new GridState<Row>(
+					columns.map((column) => (column.id === 'price' ? { ...column, pinned: 'left' } : column))
+				)
+			);
+			openMenu();
+			await screen.findByRole('dialog');
+			expect(pinButton('価格').getAttribute('aria-pressed')).toBe('true');
+
+			await fireEvent.click(pinButton('価格'));
+
+			expect(state.pinned).toEqual([]);
+			expect(state.orderedColumns.map((column) => column.id)).toEqual(['id', 'name', 'price']);
+			expect(pinButton('価格').getAttribute('aria-pressed')).toBe('false');
+		});
+
+		it('uses the injected messages', async () => {
+			render(ColumnsMenu<Row>, {
+				state: new GridState<Row>(columns),
+				messages: {
+					pinColumn: (header) => `Pin ${header} to the left`,
+					unpinColumn: (header) => `Unpin ${header}`
+				}
+			});
+			openMenu();
+			await screen.findByRole('dialog');
+
+			const button = screen.getByRole('button', { name: 'Pin ID to the left' });
+			await fireEvent.click(button);
+
+			const pressed = screen.getByRole('button', { name: 'Pin ID to the left' });
+			expect(pressed.getAttribute('aria-pressed')).toBe('true');
+			expect((pressed as HTMLButtonElement).title).toBe('Unpin ID');
+		});
 	});
 });

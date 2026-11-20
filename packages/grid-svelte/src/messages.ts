@@ -57,6 +57,15 @@ export interface GridMessages {
 	columnsMenuCount?: (visible: number, total: number) => string;
 	/** ColumnsMenu's tooltip on the last remaining visible column's (disabled) checkbox. */
 	columnsMenuLastColumn?: () => string;
+	/**
+	 * ColumnsMenu's pin toggle (#713): the button's accessible name, given the
+	 * column's header text. The name stays the same in both states - the state
+	 * is carried by `aria-pressed` - and is the tooltip while the column is not
+	 * pinned.
+	 */
+	pinColumn?: (header: string) => string;
+	/** ColumnsMenu's pin toggle (#713): the tooltip while the column is pinned (what a click does next). */
+	unpinColumn?: (header: string) => string;
 	/** FilterChips: accessible name of the group of applied-filter chips. */
 	filterChipsLabel?: () => string;
 	/** FilterChips: accessible name of a chip's x button, given the column's header text. */
@@ -119,6 +128,8 @@ export const defaultGridMessages: Required<GridMessages> = {
 	columnsMenuTitle: () => '列の表示',
 	columnsMenuCount: (visible, total) => `${visible}/${total}`,
 	columnsMenuLastColumn: () => '最後の1列は非表示にできません',
+	pinColumn: (header) => `${header}を左端に固定`,
+	unpinColumn: (header) => `${header}の固定を解除`,
 	filterChipsLabel: () => '適用中の絞り込み',
 	filterChipRemove: (header) => `${header}の絞り込みを外す`,
 	filterChipsClearAll: () => 'すべて解除',

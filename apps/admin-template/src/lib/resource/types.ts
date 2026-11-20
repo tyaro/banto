@@ -51,8 +51,10 @@ export type ListLoadMode = 'server' | 'client';
  * A named list view the definition ships (#555 (4)): the "Views" menu lists
  * it, and `<path>?view=<id>` opens the list with it (a KPI card links there).
  * A view holds the filters, sort and quick-search term - not the columns or
- * the load mode. Applying it replaces what the list had. Entries on a field
- * the active grid has no column for are dropped when applied.
+ * the load mode. Applying it replaces what the list had, and puts the pinned
+ * columns back to the column definitions' own `pinned` (#713; only the user's
+ * saved views record which columns are pinned). Entries on a field the
+ * active grid has no column for are dropped when applied.
  */
 export interface ResourceListView {
 	/** URL-safe id (`?view=<id>`), unique among the resource's views. */
