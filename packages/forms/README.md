@@ -324,6 +324,7 @@ const schema: FormSchema = {
   フォーカス・矢印キー・読み上げの名前（「L、ラジオボタン」）はそのまま。選んだ区画は塗りに加えて太字とチェックの印でも示す。
 - **`multiselect`**: checkbox の群（`fieldset` + `legend`）。値は `options` の順の配列で、空は `[]`。
   `required` は「1 つ以上」。combobox 型の複数選択は無い。
+  選択肢の値は型つき（`===`）で比べるので `1` と `'1'` は別の選択肢。文字列だけを受ける経路（draft の raw など）では表記が同じ型違いを区別できず、`options` の最初に一致したものを使う。
 - **単位 `prefix` / `suffix`（number のみ）**: 入力の前後に文字を出すだけで、値は数値のまま。桁区切りなどの書式は付けない。
   文字は `aria-hidden` にして label の名前に混ぜず、入力欄の `aria-describedby` に「単位 → ヘルプ → エラー」の順で足す。
   `DraftNumberField` でも同じ。

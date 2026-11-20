@@ -44,9 +44,7 @@
 	const groupName = $derived(`${base}-group`);
 
 	function isChosen(optionValue: string | number): boolean {
-		return value !== '' && value !== undefined && value !== null
-			? String(value) === String(optionValue)
-			: false;
+		return value !== '' && value !== undefined && value !== null ? value === optionValue : false;
 	}
 
 	function handleFocusOut(event: FocusEvent & { currentTarget: HTMLFieldSetElement }) {
@@ -70,7 +68,7 @@
 		{#if def.required}<span class="required">*</span>{/if}
 	</legend>
 	<div class="options" class:segmented>
-		{#each def.options ?? [] as option, index (option.value)}
+		{#each def.options ?? [] as option, index (`${typeof option.value}:${option.value}`)}
 			<label class="option" class:segment={segmented}>
 				<input
 					type="radio"

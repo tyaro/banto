@@ -35,16 +35,16 @@
 
 	const isDisabled = $derived(disabled || !!def.readonly);
 	const base = $derived(id ?? def.name);
-	const chosen = $derived(
-		new Set((Array.isArray(value) ? value : []).map((item) => String(item as string | number)))
+	// Kept in their own type: `1` and `'1'` are different options.
+	const chosen = $derived<Array<string | number>>(
+		Array.isArray(value) ? (value as Array<string | number>) : []
 	);
 
 	function toggle(optionValue: string | number, on: boolean) {
 		if (isDisabled) return;
-		const next = new Set(chosen);
-		if (on) next.add(String(optionValue));
-		else next.delete(String(optionValue));
-		onInput((def.options ?? []).filter((o) => next.has(String(o.value))).map((o) => o.value));
+		const next = chosen.filter((item) => item !== optionValue);
+		if (on) next.push(optionValue);
+		onInput((def.options ?? []).filter((o) => next.includes(o.value)).map((o) => o.value));
 	}
 
 	function handleFocusOut(event: FocusEvent & { currentTarget: HTMLFieldSetElement }) {
@@ -65,13 +65,13 @@
 		{#if def.required}<span class="required">*</span>{/if}
 	</legend>
 	<div class="options">
-		{#each def.options ?? [] as option, index (option.value)}
+		{#each def.options ?? [] as option, index (`${typeof option.value}:${option.value}`)}
 			<label class="option">
 				<input
 					type="checkbox"
 					id={index === 0 ? base : `${base}-opt-${index}`}
 					value={String(option.value)}
-					checked={chosen.has(String(option.value))}
+					checked={chosen.includes(option.value)}
 					aria-invalid={!!error}
 					onchange={(event) => toggle(option.value, event.currentTarget.checked)}
 				/>

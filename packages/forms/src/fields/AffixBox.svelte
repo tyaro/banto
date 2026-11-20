@@ -20,7 +20,7 @@
 </script>
 
 {#if def.prefix || def.suffix}
-	<span class="box">
+	<span class="box banto-affix">
 		{#if def.prefix}<span id="{id}-prefix" class="affix" aria-hidden="true">{def.prefix}</span>{/if}
 		{@render children()}
 		{#if def.suffix}<span id="{id}-suffix" class="affix" aria-hidden="true">{def.suffix}</span>{/if}

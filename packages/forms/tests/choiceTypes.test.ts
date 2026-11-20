@@ -9,6 +9,8 @@ import { flushSync } from 'svelte';
 import BantoForm from '../src/BantoForm.svelte';
 import { createFormStore } from '../src/store.svelte';
 import { createFormDraft } from '../src/draft.svelte';
+import NumberField from '../src/fields/NumberField.svelte';
+import DraftNumberField from '../src/fields/DraftNumberField.svelte';
 import { validateField } from '../src/validate';
 import type { FieldDef, FormSchema } from '../src/types';
 
@@ -133,6 +135,42 @@ describe('BantoForm: multiselect', () => {
 	});
 });
 
+describe('options whose values differ only by type (1 and "1")', () => {
+	const mixed = [
+		{ value: 1, label: '数値の1' },
+		{ value: '1', label: '文字の1' }
+	];
+
+	it('multiselect: picks, outputs and clears each one on its own', async () => {
+		const schema: FormSchema = {
+			fields: [{ name: 'm', label: 'M', type: 'multiselect', options: mixed }]
+		};
+		const store = createFormStore(schema);
+		render(BantoForm, { schema, store, onSubmit: vi.fn() });
+		const num = screen.getByRole('checkbox', { name: '数値の1' }) as HTMLInputElement;
+		const str = screen.getByRole('checkbox', { name: '文字の1' }) as HTMLInputElement;
+		await fireEvent.click(str);
+		expect(store.values.m).toEqual(['1']);
+		expect([num.checked, str.checked]).toEqual([false, true]);
+		await fireEvent.click(num);
+		expect(store.values.m).toEqual([1, '1']);
+		await fireEvent.click(str);
+		expect(store.values.m).toEqual([1]);
+		expect([num.checked, str.checked]).toEqual([true, false]);
+	});
+
+	it('radio: only the option of the same type is checked', () => {
+		const schema: FormSchema = {
+			fields: [{ name: 'r', label: 'R', type: 'radio', options: mixed }]
+		};
+		const store = createFormStore(schema);
+		store.setValue('r', 1);
+		render(BantoForm, { schema, store, onSubmit: vi.fn() });
+		const radios = screen.getAllByRole('radio') as HTMLInputElement[];
+		expect(radios.map((r) => r.checked)).toEqual([true, false]);
+	});
+});
+
 describe('BantoForm: visibleWhen focus with a group', () => {
 	it('moves focus to the first radio of a neighbouring group when the focused field hides', async () => {
 		const schema: FormSchema = {
@@ -184,5 +222,66 @@ describe('number prefix / suffix', () => {
 		});
 		expect(container.querySelector('.affix')).toBeNull();
 		expect(screen.getByLabelText('N').getAttribute('aria-describedby')).toBeNull();
+	});
+});
+
+describe('number prefix / suffix with appearance="underline"', () => {
+	it('keeps the input where the theme underline rules reach it', () => {
+		const schema: FormSchema = {
+			fields: [{ name: 'weight', label: '重量', type: 'number', suffix: 'kg' }]
+		};
+		render(BantoForm, {
+			schema,
+			store: createFormStore(schema),
+			onSubmit: vi.fn(),
+			appearance: 'underline'
+		});
+		const input = screen.getByLabelText(/重量/);
+		expect(input.classList.contains('banto-field-control')).toBe(true);
+		// The wrapper is a `.banto-affix` directly under `.banto-field`, which the
+		// theme's `.banto-field > .banto-affix > .banto-field-control` rules target.
+		expect(input.matches('.banto-field--stacked > .banto-affix > .banto-field-control')).toBe(true);
+	});
+
+	it.each(['NumberField', 'DraftNumberField'])(
+		'%s keeps the underline selector match inside .banto-field',
+		(kind) => {
+			const def: FieldDef = { name: 'w', label: '重量', type: 'number', suffix: 'kg' };
+			const target = document.body.appendChild(document.createElement('div'));
+			target.className = 'banto-field banto-field--stacked';
+			if (kind === 'NumberField') {
+				render(NumberField, {
+					target,
+					props: { def, class: 'banto-field-control', value: 1, onInput: vi.fn() }
+				});
+			} else {
+				const draft = createFormDraft({ key: 'k', schema: { fields: [def] } });
+				render(DraftNumberField, { target, props: { def, class: 'banto-field-control', draft } });
+			}
+			const input = target.querySelector('input')!;
+			expect(input.matches('.banto-field > .banto-affix > .banto-field-control')).toBe(true);
+			expect(input.matches('.banto-field--stacked > .banto-affix > .banto-field-control')).toBe(
+				true
+			);
+		}
+	);
+});
+
+describe('raw text of options that differ only by type', () => {
+	it('draft reads the first option whose text matches', () => {
+		const mixed = [
+			{ value: 2, label: 'n' },
+			{ value: '2', label: 's' }
+		];
+		const schema: FormSchema = {
+			fields: [
+				{ name: 'r', label: 'R', type: 'radio', options: mixed },
+				{ name: 'm', label: 'M', type: 'multiselect', options: mixed }
+			]
+		};
+		const draft = createFormDraft({ key: 'k', schema });
+		draft.setRaw('r', '2');
+		draft.commit('r');
+		expect(draft.values.r).toBe(2);
 	});
 });
