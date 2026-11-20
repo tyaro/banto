@@ -65,7 +65,11 @@ pnpm banto add resource orders --dry-run             # print what it would write
   truncates longer identifiers). Reserved words, names the template or the generated code
   already uses, and collisions between generated names (for example `products` with
   `"singular": "products_service"`, where the row type and the service type would both be
-  `ProductsService`) are refused with the reason.
+  `ProductsService`) are refused with the reason. Column names the database uses
+  internally (PostgreSQL system columns such as `xmin` and `ctid`, SQLite's `rowid` and
+  `oid`) cannot be avoided by quoting, so they are refused too. Labels and descriptions
+  (the resource and each field, ja and en) may not contain `{` or `}`: inlang reads them
+  as variables, and the generated calls pass no arguments.
 
 The field definition format (a JSON file close to `FormSchema`'s `fields`), the list of
 generated files and the anchor table are in the Japanese

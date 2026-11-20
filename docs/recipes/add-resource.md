@@ -136,6 +136,11 @@ pnpm banto add resource orders --dry-run             # 何を書くかだけを�
 - Rust・SQL（SQLite の全キーワードと PostgreSQL の予約語）の予約語、テンプレートが既に
   使っている名前、生成するコードの変数・関数・クレートと重なる名前（`get`・`values`・
   `sqlx` など）。
+- **DB が内部で使う列名**（PostgreSQL のシステム列 `tableoid`・`xmin`・`cmin`・`xmax`・
+  `cmax`・`ctid`・`oid`、SQLite の行 id の別名 `rowid`・`_rowid_`・`oid`）。引用符では
+  避けられないので、予約語とは別に断る。
+- **ラベル・説明（リソースと各欄の ja・en）に `{` `}` を含めない**。inlang のメッセージでは
+  変数の記号になり、生成する呼び出しは引数を渡さない。
 - **生成する名前どうしの重なり**: 行の型・入力の型・サービスの型（`products` に
   `"singular": "products_service"` だと、どちらも `ProductsService`）、生成したコードが
   使う型（`Role`・`Clone` など。単数形から導く名前が当たるときは `singular` を書く）、

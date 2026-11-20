@@ -45,6 +45,20 @@ const SQL_RESERVED = new Set(
 );
 
 // テンプレートが既に使っている名前（モジュール・URL・監査の resource）。
+// 引用符で囲んでも列名にできない、DB が内部で使う列名（PostgreSQL のシステム列と SQLite の行 id の別名）。
+// 予約語とは別の集合（引用では避けられない）。
+const DB_SYSTEM_COLUMNS = new Set([
+	'tableoid',
+	'xmin',
+	'cmin',
+	'xmax',
+	'cmax',
+	'ctid',
+	'oid',
+	'rowid',
+	'_rowid_'
+]);
+
 const RESERVED_RESOURCE_NAMES = new Set([
 	'assets',
 	'attachment_wiring',
@@ -245,7 +259,27 @@ function humanize(snake) {
 		.join(' ');
 }
 
+/**
+ * messages/*.json（inlang message format）に書き出す文字列の検査。`{` `}` は変数として解釈されるが、
+ * 生成する呼び出し（`m['...']()`）は引数なしなので、入っていたら断る。書き出す文字列
+ * （リソースの表示名・説明・各欄のラベル）は全部 localized() を通るので、ここだけで足りる。
+ */
+function assertMessageText(text, where) {
+	if (/[{}]/.test(text))
+		throw new AddResourceError(
+			`${where} に波括弧 { } は使えません（メッセージでは変数の記号で、生成する呼び出しは引数を渡しません）。`
+		);
+	return text;
+}
+
 function localized(value, fallback, where) {
+	const result = localizedRaw(value, fallback, where);
+	assertMessageText(result.ja, `${where}（ja）`);
+	assertMessageText(result.en, `${where}（en）`);
+	return result;
+}
+
+function localizedRaw(value, fallback, where) {
 	if (value === undefined) return { ja: fallback, en: fallback };
 	if (typeof value === 'string' && value.trim() !== '') return { ja: value, en: value };
 	if (
@@ -297,6 +331,10 @@ function normalizeField(raw, index) {
 	if (RUST_KEYWORDS.has(column) || SQL_RESERVED.has(column))
 		throw new AddResourceError(
 			`${at}.name の "${name}" は Rust か SQL の予約語なので列名にできません。別の名前にしてください。`
+		);
+	if (DB_SYSTEM_COLUMNS.has(column))
+		throw new AddResourceError(
+			`${at}.name の "${name}" は DB が内部で使う列名（${column}）なので列名にできません。別の名前にしてください。`
 		);
 	if (byteLength(column) > MAX_IDENTIFIER_BYTES)
 		throw new AddResourceError(

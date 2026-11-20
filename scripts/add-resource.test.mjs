@@ -106,6 +106,38 @@ test('リソース名は snake_case だけを受け付け、使えない名前�
 	);
 });
 
+test('DB のシステム列名と、ラベル・説明の波括弧は断る', () => {
+	for (const bad of ['xmin', 'ctid', 'rowid'])
+		assert.throws(
+			() => normalizeSpec('orders', { fields: [{ name: bad, type: 'text' }] }),
+			/DB が内部で使う列名/,
+			`"${bad}" が通った`
+		);
+	assert.throws(
+		() =>
+			normalizeSpec('orders', {
+				label: { ja: '注文', en: 'Orders {code}' },
+				fields: [{ name: 'code', type: 'text' }]
+			}),
+		/波括弧/
+	);
+	assert.throws(
+		() =>
+			normalizeSpec('orders', {
+				fields: [{ name: 'code', type: 'text', label: { ja: 'コード}', en: 'Code' } }]
+			}),
+		/波括弧/
+	);
+	assert.throws(
+		() =>
+			normalizeSpec('orders', {
+				description: { ja: '説明', en: '{x}' },
+				fields: [{ name: 'code', type: 'text' }]
+			}),
+		/波括弧/
+	);
+});
+
 test('名前から型・パス・キーの名前を導く', () => {
 	const spec = normalizeSpec('purchase_orders', ORDERS);
 	assert.equal(spec.kebab, 'purchase-orders');
