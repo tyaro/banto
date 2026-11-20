@@ -137,7 +137,8 @@
 			const option = (await def.resolve?.(current, request.signal)) ?? null;
 			// A value that changed meanwhile has its own request; a missing record
 			// (`null`) keeps the value itself on show.
-			if (!request.isCurrent() || !option) return;
+			// A pick meanwhile (it adopts its own option) also outdates this name.
+			if (!request.isCurrent() || !option || value !== current) return;
 			known = { ...option, value: current };
 			if (!editing) text = option.label;
 		} catch {
@@ -194,6 +195,9 @@
 	}
 
 	function pick(option: ReferenceOption): void {
+		// The picked option is the name now: a name still being fetched for the
+		// previous value must not land on it.
+		owner.invalidate(RESOLVE);
 		known = option;
 		text = option.label;
 		editing = false;

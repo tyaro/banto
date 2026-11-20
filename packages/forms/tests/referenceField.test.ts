@@ -435,6 +435,31 @@ describe('ReferenceField: the name of a stored value', () => {
 		expect(box().value).toBe('井上');
 	});
 
+	it('a pick wins over the name still being resolved for the previous value (#762 review)', async () => {
+		const pending = deferred<ReferenceOption | null>();
+		let signal: AbortSignal | undefined;
+		const resolve = (_value: string | number, s: AbortSignal) => {
+			signal = s;
+			return pending.promise;
+		};
+		const schema = { fields: [{ ...owner, resolve }] };
+		const store = createFormStore(schema, { owner: 4 });
+		render(BantoForm, { schema, store, onSubmit: vi.fn() });
+		vi.useFakeTimers();
+		await fireEvent.input(box(), { target: { value: '青' } });
+		await vi.advanceTimersByTimeAsync(REFERENCE_SEARCH_DEBOUNCE_MS);
+		flushSync();
+		await fireEvent.keyDown(box(), { key: 'ArrowDown' });
+		await fireEvent.keyDown(box(), { key: 'Enter' });
+		expect(store.values.owner).toBe(1);
+		expect(signal?.aborted).toBe(true);
+		// The old name arrives late: it must not replace the picked one.
+		pending.resolve(people[3]);
+		await vi.advanceTimersByTimeAsync(0);
+		flushSync();
+		expect(box().value).toBe('青木');
+	});
+
 	it('does not resolve what was just picked', async () => {
 		const resolve = vi.fn(resolvePerson);
 		const store = createFormStore({ fields: [{ ...owner, resolve }] });
