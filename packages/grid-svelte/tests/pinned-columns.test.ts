@@ -334,6 +334,42 @@ describe('BantoGrid pinned columns (#713)', () => {
 		expect(grid.scrollLeft).toBe(250);
 	});
 
+	it('Tab judges the focused element, not its wide cell (#713)', async () => {
+		clientWidth = 400;
+		const wide: GridColumn<Row>[] = [
+			{ id: 'name', header: '商品名', accessor: 'name', width: 180, pinned: 'left' },
+			{ id: 'category', header: '分類', accessor: 'category', width: 350 },
+			{ id: 'price', header: '価格', accessor: 'price', width: 300 }
+		];
+		const { container } = render(BantoGrid<Row>, { rows, columns: wide, getRowId });
+		const grid = container.querySelector<HTMLElement>('[role="grid"]')!;
+		const cell = headers(container).find((h) => h.textContent?.includes('分類'))!;
+		const button = document.createElement('button');
+		cell.appendChild(button);
+		// Content: pinned 0-180 | category 180-530. The button sits at `left`
+		// (content coordinates), 40px wide; the container's own rect is at 0.
+		let left = 485;
+		grid.getBoundingClientRect = () => ({ left: 0, width: 400 }) as DOMRect;
+		button.getBoundingClientRect = () => ({ left: left - grid.scrollLeft, width: 40 }) as DOMRect;
+
+		// Already visible (right edge x = 380): nothing moves.
+		grid.scrollLeft = 145;
+		await fireEvent.scroll(grid);
+		await fireEvent.focusIn(button);
+		expect(grid.scrollLeft).toBe(145);
+
+		// Hidden behind the pinned block: its left edge is pulled to x = 180.
+		left = 200;
+		await fireEvent.focusIn(button);
+		expect(grid.scrollLeft).toBe(20);
+
+		// Past the right edge: its right edge is pulled to x = 400.
+		left = 485;
+		grid.scrollLeft = 0;
+		await fireEvent.focusIn(button);
+		expect(grid.scrollLeft).toBe(125);
+	});
+
 	it('pins the placeholder cells of a server-mode hole', () => {
 		const sparse: (Row | undefined)[] = [rows[0], undefined, rows[2]];
 		const { container } = render(BantoGrid<Row>, {

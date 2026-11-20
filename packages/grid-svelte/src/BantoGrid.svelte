@@ -834,11 +834,13 @@
 		if (!(target instanceof Element)) return;
 		const cell = target.closest('.cell, .header-cell');
 		if (!cell || !containerEl.contains(cell) || cell.classList.contains('pinned')) return;
-		const cellRect = cell.getBoundingClientRect();
+		// Judge by the focused element, not its (possibly very wide) cell: the
+		// cell only decides whether this is a pinned column.
+		const rect = target.getBoundingClientRect();
 		const containerRect = containerEl.getBoundingClientRect();
 		const next = scrollLeftToReveal({
-			cellLeft: cellRect.left - containerRect.left + containerEl.scrollLeft,
-			cellWidth: cellRect.width,
+			cellLeft: rect.left - containerRect.left + containerEl.scrollLeft,
+			cellWidth: rect.width,
 			scrollLeft: containerEl.scrollLeft,
 			viewportWidth: containerEl.clientWidth,
 			pinnedWidth,
