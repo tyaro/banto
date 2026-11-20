@@ -13,8 +13,12 @@
 - 「CI が通ったらマージ」と言われたときは、GitHub の自動マージ（スカッシュ）を設定する。
   必須でないチェックは待たない。ただし **External consumer（`external-consumer.yml`）は例外**。
   必須チェックではないが、普通の CI では見られないこと（Git 依存としての導入、dev での描画）を確かめる
-  ゲートなので、packages や crates を変える PR では成功を確かめてからマージを承認する
-  （実行中・失敗のときはマージしない）。自動マージを設定するときも、その成功を待ってから設定する。
+  ゲートなので、このワークフローの対象になる PR では、最新の head での成功を確かめてから、
+  マージする、または自動マージを設定する（実行中・失敗のときはマージしない）。
+  対象は `.github/workflows/external-consumer.yml` の `on.pull_request.paths` を正とする
+  （packages・crates・`Cargo.lock`・`pnpm-lock.yaml`・テンプレートの Vite の設定・
+  `fixtures/external-consumer/` などで、ロックファイルや fixture だけの変更も含む）。
+  fork からの PR でスキップされる扱いは docs/upgrading.md §8.2 を参照する。
   詳しくは [docs/upgrading.md §8.2](upgrading.md) と [AGENTS.md](../AGENTS.md) を正とする。
   手でマージするときは `--match-head-commit` に完全な SHA を渡す。
 - main の必須チェックはリポジトリのルールで掛かっている（管理者権限でも飛ばせない）。
