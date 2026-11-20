@@ -43,6 +43,14 @@ export {
 	type CellView
 } from './core/cellView';
 export { prepareCommit, type PrepareCommitResult } from './core/edit';
+export {
+	selectAllState,
+	toggleRowId,
+	toggleAll,
+	retainSelected,
+	type RowId,
+	type SelectAllState
+} from './core/rowSelection';
 export { buildGroupedView, type GroupEntry, type RowEntry, type FlatEntry } from './core/group';
 export {
 	columnsFromSchema,
@@ -86,6 +94,7 @@ export type {
 	CellRange,
 	AggregateKind,
 	CellRenderer,
-	CellTone
+	CellTone,
+	GridBulkActionsContext
 } from './types';
 export { DEFAULT_COLUMN_WIDTH, DEFAULT_MIN_WIDTH } from './types';

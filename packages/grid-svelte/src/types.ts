@@ -240,6 +240,14 @@ export interface GridColumn<TRow> {
 	hidden?: boolean;
 }
 
+/** What BantoGrid's `bulkActions` snippet receives (#713). */
+export interface GridBulkActionsContext {
+	/** Ids (`getRowId`) of the selected rows, in the order they were selected. */
+	ids: (string | number)[];
+	/** Clears the selection (the bar goes away and focus returns to the grid). */
+	clear: () => void;
+}
+
 /** Resolved defaults applied on top of a user-supplied GridColumn. */
 export const DEFAULT_COLUMN_WIDTH = 150;
 export const DEFAULT_MIN_WIDTH = 60;

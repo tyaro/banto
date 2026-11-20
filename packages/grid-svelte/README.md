@@ -130,6 +130,32 @@ const columns: GridColumn<Job>[] = [
 - コピー・CSV は従来どおり生の値（`format` も `renderer` も通さない）。列メニュー・列の並べ替え・グループ化・仮想スクロール・server モードの挙動は変わらない。
 - `tone: (value, row) => success | warning | danger | info | neutral | null` は素の文字・`cell`・`renderer` のセルに役割の色を付ける（`render` には効かない）。色は theme の `--banto-success` などの状態色トークンのみで、バッジは `-tint` の組。値は `data-tone` にも出る。色だけに意味を持たせず、`format` やバッジの文字でも伝えること。
 
+## 行選択と一括操作バー（#713）
+
+`selectable` を付けると、先頭にチェックボックスの列が出て、1 件以上を選ぶとグリッドの下に一括操作バーが出る（既定は off）。
+判定（全選択の none / some / all、切替、一覧から消えた行の除外）は `core/rowSelection.ts` の純関数で、描画だけが `BantoGrid.svelte`。
+
+```svelte
+<script lang="ts">
+	let selected = $state<(string | number)[]>([]);
+</script>
+
+<BantoGrid {rows} {columns} getRowId={(row) => row.id} selectable bind:selectedRowIds={selected}>
+	{#snippet bulkActions({ ids, clear })}
+		<button type="button" onclick={() => removeMany(ids).then(clear)}>削除</button>
+	{/snippet}
+</BantoGrid>
+```
+
+- props: `selectable`、`selectedRowIds`（bindable。`getRowId` の値を選んだ順に持つ配列）、`onSelectionChange(ids)`、`getRowLabel(row)`（チェックボックスの名前に使う行の呼び名。既定は `render` でない先頭の表示列の文字、無ければ行の id）、`bulkActions`（バーに差し込む snippet。`{ ids, clear }` を受け取る）。グリッドは一括の処理を持たず、選んだ id を渡すだけ。
+- チェックボックスの列は `GridColumn` ではない。列メニュー・列の並べ替え（ドラッグ）・幅の変更・並び替え・絞り込み・セルの範囲選択・コピー / 貼り付け・CSV の対象にならず、`GridState`（保存ビュー）にも入らない。グループ化したときはグループ見出しの行にチェックボックスは出ない（行にだけ出る）。
+- **全選択が対象にする行**はヘッダーのチェックボックスの名前とツールチップに出る。client モードは一覧の全行（絞り込み後。畳んだグループの中の行も含む）、server モードは**読み込み済みの行だけ**（「読み込み済みの 40 件をすべて選択（全 1200 件のうち）」）。server モードで「絞り込んだ全件」を選ぶ手段は無い。
+- **見えなくなった行の選択は外す**。client モードでは、絞り込み・再読み込み・削除で一覧（絞り込み後の `rows`）から消えた行は選択からも外れる（一括操作が見えていない行に届かないようにするため。並び替え・列の非表示・グループの開閉では外れない）。server モードでは、グリッドの絞り込みが変わると選択をすべて外す（読み込んだ窓の外の行が条件に合うか分からないため）。スクロールで窓から出ただけの行と並び替えでは外れない。グリッドの外の検索語などで server の条件を変えるときと、一括操作で行を消したあとは、利用側で `clear()` を呼ぶか `selectedRowIds = []` にする。
+- キーボード: アクティブなセルで Space を押すとその行の選択を切り替える。リンクやボタンを持つセル（`renderer: 'link'`・`cell` のリンク・`render` の操作）ではそのリンク・ボタンが優先、グループ見出しでは開閉。編集可能なセルでも Space は選択（編集の開始は Enter / F2 のまま）。**`selectable` のグリッドでは、読み取り専用でも Space は `onRowClick` を呼ばない**（行を開くのは Enter）。チェックボックス自体も Tab で届き、Space で切り替えられる。マウスでチェックボックスを押すと、フォーカスはグリッドに残り、その行がアクティブになる。
+- 読み上げ: 行のチェックボックスの名前は「〈行の呼び名〉を選択」。件数は `role="status"` の領域が「3件を選択中」「選択なし」と読む。行の選択状態はチェックボックスの checked で伝え、`aria-selected` は使わない（このグリッドの `aria-selected` はセルの範囲選択のもの）。
+- バーは選択解除のボタンを持つ。解除でバーが消えるとき、フォーカスがバーの中にあればグリッドへ戻す（`clear()` も同じ）。バーはグリッドの下に出るので、出たときに行の位置は動かない（グリッドの高さがバーの分だけ縮む）。
+- 文言: `selectRowLabel` / `selectAllRows` / `selectAllLoadedRows` / `selectionStatus` / `selectionClear` / `bulkBarLabel`。
+
 ## 日付のセルと注入（date-time-pickers PR-4）
 
 `editor: 'date'` のセルの値は `YYYY-MM-DD`（実在の日）か、空なら **`null`**（`''` ではない。

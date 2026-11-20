@@ -12,12 +12,13 @@
 	 * pure decision logic it calls into (`prepareCommit`, TSV helpers) is
 	 * factored into `core/*.ts` and unit-tested there.
 	 */
-	import { tick, untrack } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 	import {
 		DEFAULT_COLUMN_WIDTH,
 		type CellEdit,
 		type CellRange,
 		type FilterState,
+		type GridBulkActionsContext,
 		type GridColumn,
 		type SortState
 	} from './types';
@@ -29,7 +30,14 @@
 	import { computeWindow, parseRowHeightPx } from './core/virtual';
 	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
 	import { prepareCommit, isColumnEditable } from './core/edit';
-	import { resolveCellPresentation, resolveTone } from './core/cellView';
+	import { cellText, resolveCellPresentation, resolveTone } from './core/cellView';
+	import {
+		retainSelected,
+		selectAllState,
+		toggleAll,
+		toggleRowId,
+		type RowId
+	} from './core/rowSelection';
 	import { buildGroupedView, type FlatEntry } from './core/group';
 	import HeaderCell from './HeaderCell.svelte';
 	import CellEditError from './CellEditError.svelte';
@@ -97,6 +105,42 @@
 		 * input (D3-a).
 		 */
 		cellEditors?: CellEditors;
+		/**
+		 * Row selection (#713), off by default. Adds a checkbox column at the
+		 * start (not a `GridColumn`: it never appears in the columns menu, cannot
+		 * be dragged, resized, sorted or copied) whose header box selects or
+		 * clears every row it names - the listed rows (after filters) in client
+		 * mode, only the LOADED rows in server mode - and a bar under the grid
+		 * while at least one row is selected. Space on the active cell toggles
+		 * its row, except on a cell whose link or button takes the key (a
+		 * `renderer: 'link'` / `cell` link, a `render` snippet's control) and on
+		 * a group header. With `selectable`, Space no longer calls `onRowClick`
+		 * on a read-only grid; Enter still does.
+		 */
+		selectable?: boolean;
+		/**
+		 * Ids (`getRowId`) of the selected rows, in the order they were selected;
+		 * bindable. Not part of `GridState`, so a saved view never carries it.
+		 * Rows that leave the list are deselected: in client mode whenever a row
+		 * is no longer among the filtered `rows` (filter, reload, delete), in
+		 * server mode when the grid's filters change (rows that merely scrolled
+		 * out of the loaded window stay selected).
+		 */
+		selectedRowIds?: RowId[];
+		/** Fires with the new ids after every change the grid makes to the selection. */
+		onSelectionChange?: (ids: RowId[]) => void;
+		/**
+		 * Names a row for its checkbox's accessible name (`selectRowLabel`).
+		 * Default: the text of the first visible column that is not a `render`
+		 * snippet, else the row id.
+		 */
+		getRowLabel?: (row: TRow) => string;
+		/**
+		 * Extra controls for the bulk bar (#713), e.g. a "delete" button. Gets
+		 * the selected ids and `clear()` (call it once the action is done). The
+		 * grid runs no bulk operation itself.
+		 */
+		bulkActions?: Snippet<[GridBulkActionsContext]>;
 	}
 
 	// Aliased to avoid clashing with the `$state` rune (a local binding named
@@ -117,7 +161,12 @@
 		onVisibleRangeChange,
 		rowClass,
 		messages = {},
-		cellEditors
+		cellEditors,
+		selectable = false,
+		selectedRowIds = $bindable([]),
+		onSelectionChange,
+		getRowLabel,
+		bulkActions
 	}: Props = $props();
 
 	const providedCellEditors = getCellEditors();
@@ -374,11 +423,19 @@
 		return gridState.widths[column.id] ?? column.width ?? DEFAULT_COLUMN_WIDTH;
 	}
 
+	// Row selection (#713): the checkbox column is not a `GridColumn`, so every
+	// horizontal computation over `orderedColumns` (the grid template, the drop
+	// indicator, scrolling the active cell into view) is shifted by its width.
+	// Part of the component's shape, like the column widths themselves.
+	const SELECT_COLUMN_WIDTH = 40;
+	const selectColumnWidth = $derived(selectable ? SELECT_COLUMN_WIDTH : 0);
+
 	const templateColumns = $derived(
-		gridState.orderedColumns.map((column) => `${widthOf(column)}px`).join(' ')
+		(selectable ? `${SELECT_COLUMN_WIDTH}px ` : '') +
+			gridState.orderedColumns.map((column) => `${widthOf(column)}px`).join(' ')
 	);
 	const totalColumnsWidth = $derived(
-		gridState.orderedColumns.reduce((sum, column) => sum + widthOf(column), 0)
+		gridState.orderedColumns.reduce((sum, column) => sum + widthOf(column), selectColumnWidth)
 	);
 	const orderedFieldIds = $derived(gridState.orderedColumns.map((column) => column.id));
 
@@ -452,7 +509,7 @@
 	function handleDragMove(clientX: number) {
 		if (!headerRowEl) return;
 		const rect = headerRowEl.getBoundingClientRect();
-		const x = clientX - rect.left;
+		const x = clientX - rect.left - selectColumnWidth;
 		let cumulative = 0;
 		const cols = gridState.orderedColumns;
 		let index = cols.length;
@@ -477,12 +534,149 @@
 
 	const dropIndicatorX = $derived.by(() => {
 		if (dropIndex === null) return null;
-		let x = 0;
+		let x = selectColumnWidth;
 		const cols = gridState.orderedColumns;
 		for (let i = 0; i < dropIndex && i < cols.length; i++) {
 			x += widthOf(cols[i]);
 		}
 		return x;
+	});
+
+	// --- Row selection (#713) ---
+	// Separate from the cell selection below: that one is a rectangle of cells
+	// by display index (copy / paste), this one a set of row ids for bulk
+	// actions. The decisions are pure (`core/rowSelection.ts`).
+	const selectedSet = $derived(new Set<RowId>(selectable ? selectedRowIds : []));
+
+	// The rows "select all" acts on: the listed (filtered) rows in client mode -
+	// rows inside a collapsed group included - and only the loaded rows in
+	// server mode (`Object.keys`: `rows.length` can span millions of holes).
+	const selectAllTargets = $derived.by((): RowId[] => {
+		if (!selectable) return [];
+		if (mode === 'server') {
+			const ids: RowId[] = [];
+			for (const key of Object.keys(rows)) {
+				const row = rows[Number(key)];
+				if (row !== undefined) ids.push(getRowId(row));
+			}
+			return ids;
+		}
+		return (sorted as TRow[]).map(getRowId);
+	});
+	const selectAll = $derived(selectAllState(selectedSet, selectAllTargets));
+	const selectAllLabel = $derived(
+		mode === 'server'
+			? t.selectAllLoadedRows(selectAllTargets.length, totalRows ?? selectAllTargets.length)
+			: t.selectAllRows(selectAllTargets.length)
+	);
+	const bulkBarVisible = $derived(selectable && selectedRowIds.length > 0);
+
+	// Text of the polite live region: set only when the grid itself changes
+	// the selection, so nothing is read when the grid mounts.
+	let selectionAnnouncement = $state('');
+
+	// The bar goes away with the last selected row, however that happens (clear
+	// button, a reload that drops the rows, a server filter change, the host
+	// assigning `[]` to the bound `selectedRowIds`): a control inside it that
+	// has focus would drop focus to <body>. By the time any effect runs the bar
+	// is already out of the DOM, so whether focus was inside it is tracked from
+	// focusin / focusout (a plain variable, not state). Focus that moved to
+	// another element is left alone: only focus that fell to <body> is brought
+	// back to the grid.
+	let bulkBarHadFocus = false;
+	let bulkBarWasVisible = false;
+	function handleBulkBarFocusIn() {
+		bulkBarHadFocus = true;
+	}
+	function handleBulkBarFocusOut(event: FocusEvent) {
+		if (event.relatedTarget) {
+			bulkBarHadFocus = false;
+			return;
+		}
+		// A null relatedTarget is what removal and a click on blank space both
+		// report. Decide one task later: if the bar is still in the document and
+		// focus is not inside it, the user left it (blank-space click), so the
+		// flag drops. If the bar was removed, the effect below has already
+		// restored focus and there is nothing to do.
+		const bar = event.currentTarget as HTMLElement;
+		setTimeout(() => {
+			if (bar.isConnected && !bar.contains(bar.ownerDocument.activeElement)) {
+				bulkBarHadFocus = false;
+			}
+		}, 0);
+	}
+	$effect(() => {
+		const visible = bulkBarVisible;
+		if (bulkBarWasVisible && !visible && bulkBarHadFocus) {
+			const doc = containerEl?.ownerDocument;
+			if (doc && (!doc.activeElement || doc.activeElement === doc.body)) {
+				containerEl?.focus({ preventScroll: true });
+			}
+		}
+		if (!visible) bulkBarHadFocus = false;
+		bulkBarWasVisible = visible;
+	});
+
+	function setSelectedRowIds(next: RowId[]) {
+		selectedRowIds = next;
+		selectionAnnouncement = t.selectionStatus(next.length);
+		onSelectionChange?.(next);
+	}
+
+	function toggleRowSelected(row: TRow) {
+		setSelectedRowIds(toggleRowId(selectedRowIds, getRowId(row)));
+	}
+
+	function toggleAllSelected() {
+		setSelectedRowIds(toggleAll(selectedRowIds, selectAllTargets));
+	}
+
+	function clearSelectedRows() {
+		if (selectedRowIds.length === 0) return;
+		setSelectedRowIds([]);
+	}
+
+	function rowLabelFor(row: TRow): string {
+		const custom = getRowLabel?.(row);
+		if (custom) return custom;
+		const column = gridState.orderedColumns.find((candidate) => !candidate.render);
+		const text = column ? (column.cell ? column.cell(row).text : cellText(column, row)) : '';
+		return text.trim() || String(getRowId(row));
+	}
+
+	// A press on the checkbox column behaves like one on a cell of that row:
+	// focus stays on the grid (the `mousedown` default that would move it to
+	// the checkbox is prevented in the markup) so the arrow keys keep working,
+	// and the row becomes the active one. The click itself toggles the box.
+	function handleSelectPointerDown(event: PointerEvent, rowIndex: number) {
+		if (event.button !== 0) return;
+		containerEl?.focus({ preventScroll: true });
+		const field = selection.active?.field ?? orderedFieldIds[0];
+		if (field !== undefined) selection.setActive(rowIndex, field, false);
+	}
+
+	// Client mode: a selected row that is no longer listed (filtered out,
+	// deleted, replaced by a reload) is deselected, so a bulk action never
+	// reaches a row the user cannot see in the list. Writes run in `untrack`
+	// (conventions §8); `retainSelected` returns the same array when nothing
+	// was dropped, which ends the loop.
+	$effect(() => {
+		if (!selectable || mode !== 'client') return;
+		const current = selectedRowIds;
+		if (current.length === 0) return;
+		const kept = retainSelected(current, new Set(selectAllTargets));
+		if (kept !== current) untrack(() => setSelectedRowIds([...kept]));
+	});
+
+	// Server mode: the grid cannot tell which selected rows a new filter
+	// still matches (only a window of rows is loaded), so a filter change
+	// clears the selection. A sort change or scrolling keeps it.
+	let lastFilterKey: string | null = null;
+	$effect(() => {
+		const key = JSON.stringify(gridState.filters);
+		const changed = lastFilterKey !== null && lastFilterKey !== key;
+		lastFilterKey = key;
+		if (changed && selectable && mode === 'server') untrack(clearSelectedRows);
 	});
 
 	// --- Cell selection / navigation (spec §4.5) ---
@@ -558,7 +752,7 @@
 
 		const fieldIndex = orderedFieldIds.indexOf(field);
 		if (fieldIndex === -1) return;
-		let x = 0;
+		let x = selectColumnWidth;
 		for (let i = 0; i < fieldIndex; i++) x += widthOf(gridState.orderedColumns[i]);
 		const w = widthOf(gridState.orderedColumns[fieldIndex]);
 		if (x < containerEl.scrollLeft) {
@@ -811,6 +1005,17 @@
 				if (spaceGroupKey !== null) {
 					event.preventDefault();
 					gridState.toggleGroup(spaceGroupKey);
+					break;
+				}
+				if (selectable && activeRow) {
+					// #713: Space selects the row. A cell that owns a link or a
+					// button keeps the key for it (`renderer: 'link'` as in the
+					// branch below, plus `cell` links and `render` controls);
+					// opening the row is Enter's job in a selectable grid.
+					event.preventDefault();
+					const onControl =
+						!!activeColumn && !isEditable(activeColumn, activeRow) && navigateActiveLink();
+					if (!onControl) toggleRowSelected(activeRow);
 					break;
 				}
 				if (
@@ -1279,7 +1484,7 @@
 	}
 </script>
 
-<div class="banto-grid-frame" bind:this={frameEl}>
+<div class="banto-grid-frame" class:with-bulk-bar={bulkBarVisible} bind:this={frameEl}>
 	<div class="row-height-probe" aria-hidden="true" bind:this={rowHeightProbeEl}></div>
 	<div
 		class="banto-grid"
@@ -1287,7 +1492,7 @@
 		role="grid"
 		tabindex="0"
 		aria-rowcount={effectiveRowCount + 1}
-		aria-colcount={gridState.orderedColumns.length}
+		aria-colcount={gridState.orderedColumns.length + (selectable ? 1 : 0)}
 		onscroll={handleScroll}
 		onkeydown={handleContainerKeydown}
 		onpaste={handlePaste}
@@ -1300,6 +1505,23 @@
 				bind:this={headerRowEl}
 				style:grid-template-columns={templateColumns}
 			>
+				{#if selectable}
+					<!-- The label and tooltip say which rows the box acts on (#713). -->
+					<div class="select-cell select-header" role="columnheader">
+						<label class="select-hit">
+							<input
+								type="checkbox"
+								class="select-box"
+								checked={selectAll === 'all'}
+								indeterminate={selectAll === 'some'}
+								disabled={selectAllTargets.length === 0}
+								aria-label={selectAllLabel}
+								title={selectAllLabel}
+								onchange={toggleAllSelected}
+							/>
+						</label>
+					</div>
+				{/if}
 				{#each gridState.orderedColumns as column (column.id)}
 					<HeaderCell
 						{column}
@@ -1327,12 +1549,40 @@
 			{#snippet dataRow(row: TRow, rowIndex: number)}
 				<div
 					class="row {rowClass?.(row) ?? ''}"
+					class:selected={selectable && selectedSet.has(getRowId(row))}
 					role="row"
 					aria-rowindex={rowIndex + 2}
 					style:grid-template-columns={templateColumns}
 					style:height={`${gridState.rowHeight}px`}
 					style:--banto-grid-editor-height={`min(var(--banto-control-height), calc(${gridState.rowHeight}px - var(--banto-border-width)))`}
 				>
+					{#if selectable}
+						<!--
+						Row selection (#713). The row's selected state is the checkbox's
+						checked state, not `aria-selected`: on this grid `aria-selected`
+						belongs to the cells of the copy / paste range, and a second
+						meaning on the row would contradict it. The box is a real tab
+						stop (like a row link), so it works without an active cell;
+						Space on the active cell is the other keyboard path.
+						-->
+						<!-- svelte-ignore a11y_interactive_supports_focus -->
+						<div
+							class="select-cell"
+							role="gridcell"
+							onpointerdown={(event) => handleSelectPointerDown(event, rowIndex)}
+							onmousedown={(event) => event.preventDefault()}
+						>
+							<label class="select-hit">
+								<input
+									type="checkbox"
+									class="select-box"
+									checked={selectedSet.has(getRowId(row))}
+									aria-label={t.selectRowLabel(rowLabelFor(row))}
+									onchange={() => toggleRowSelected(row)}
+								/>
+							</label>
+						</div>
+					{/if}
 					{#each gridState.orderedColumns as column, fieldIndex (column.id)}
 						{@const isActiveCell =
 							selection.active?.rowIndex === rowIndex && selection.active?.field === column.id}
@@ -1534,6 +1784,7 @@
 										style:grid-template-columns={templateColumns}
 										style:height={`${gridState.rowHeight}px`}
 									>
+										{#if selectable}<div class="select-cell"></div>{/if}
 										{#each gridState.orderedColumns as column, fieldIndex (column.id)}
 											<div
 												class="cell placeholder-cell"
@@ -1570,6 +1821,29 @@
 			onReturn={returnFromEditError}
 		/>
 	{/if}
+	{#if selectable}
+		<div class="cell-sr-only" role="status" aria-live="polite">{selectionAnnouncement}</div>
+		{#if bulkBarVisible}
+			<!-- Under the grid, so the rows do not move when it appears (#713). -->
+			<div
+				class="bulk-bar"
+				role="group"
+				aria-label={t.bulkBarLabel()}
+				onfocusin={handleBulkBarFocusIn}
+				onfocusout={handleBulkBarFocusOut}
+			>
+				<span class="bulk-count">{t.selectionStatus(selectedRowIds.length)}</span>
+				{#if bulkActions}
+					<span class="bulk-actions">
+						{@render bulkActions({ ids: selectedRowIds, clear: clearSelectedRows })}
+					</span>
+				{/if}
+				<button type="button" class="bulk-clear" onclick={clearSelectedRows}>
+					{t.selectionClear()}
+				</button>
+			</div>
+		{/if}
+	{/if}
 </div>
 
 <style>
@@ -1578,6 +1852,17 @@
 		width: 100%;
 		height: 100%;
 		min-width: 0;
+		min-height: 0;
+	}
+	/* Row selection (#713): only while the bulk bar is shown does the frame
+	   stack the grid and the bar; without it the layout is untouched. */
+	.banto-grid-frame.with-bulk-bar {
+		display: flex;
+		flex-direction: column;
+	}
+	.banto-grid-frame.with-bulk-bar > .banto-grid {
+		flex: 1 1 auto;
+		height: auto;
 		min-height: 0;
 	}
 	.row-height-probe {
@@ -1665,9 +1950,105 @@
 		background: var(--banto-surface-hover);
 	}
 
+	.row.selected {
+		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
+	}
+
+	.row.selected:hover {
+		background: color-mix(in srgb, var(--banto-primary) 14%, transparent);
+	}
+
 	/* Server mode (spec §4.1, M5): a not-yet-fetched sparse-array hole. */
 	.placeholder-row:hover {
 		background: none;
+	}
+
+	/* Row selection (#713): the checkbox column (header, rows, placeholders). */
+	.select-cell {
+		display: flex;
+		align-items: stretch;
+		justify-content: center;
+		min-width: 0;
+	}
+
+	.select-hit {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		cursor: pointer;
+	}
+
+	/* Native checkbox styling remains local for standalone package consumers. */
+	.select-box {
+		width: var(--banto-checkbox-size, 1.1rem);
+		height: var(--banto-checkbox-size, 1.1rem);
+		margin: 0;
+		flex-shrink: 0;
+		accent-color: var(--banto-primary);
+		cursor: pointer;
+	}
+
+	.select-box:disabled {
+		cursor: default;
+	}
+
+	.select-box:focus-visible {
+		outline: var(--banto-border-width-strong, 2px) solid var(--banto-primary);
+		outline-offset: var(--banto-border-width, 1px);
+		box-shadow: var(--banto-focus-ring);
+		border-radius: var(--banto-radius-sm);
+	}
+
+	.bulk-bar {
+		display: flex;
+		flex: none;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--banto-space-2);
+		box-sizing: border-box;
+		min-height: var(--banto-control-height);
+		margin-top: var(--banto-space-1);
+		padding: var(--banto-space-1) var(--banto-space-2);
+		border: var(--banto-border-width) solid var(--banto-border-strong);
+		border-radius: calc(var(--banto-radius) * 2);
+		background: var(--banto-surface-subtle);
+		color: var(--banto-text);
+		font-size: var(--banto-font-size-sm);
+	}
+
+	.bulk-count {
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.bulk-actions {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--banto-space-2);
+	}
+
+	.bulk-clear {
+		height: var(--banto-control-height-sm);
+		margin-inline-start: auto;
+		padding: 0 var(--banto-space-2);
+		border: none;
+		border-radius: var(--banto-radius-md);
+		background: transparent;
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-sm);
+		text-decoration: underline;
+		cursor: pointer;
+	}
+
+	.bulk-clear:hover {
+		color: var(--banto-text);
+	}
+
+	.bulk-clear:focus-visible {
+		outline: none;
+		box-shadow: var(--banto-focus-ring);
 	}
 
 	.placeholder-cell {
