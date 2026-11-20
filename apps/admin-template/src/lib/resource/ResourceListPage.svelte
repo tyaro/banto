@@ -238,7 +238,7 @@
 	let bulkDeleting = $state(false);
 	$effect(() => {
 		void mode;
-		selectedIds = [];
+		untrack(() => (selectedIds = []));
 	});
 
 	/**
