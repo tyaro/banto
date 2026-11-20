@@ -105,6 +105,63 @@ export function refreshCapturedVersions(
 	return next;
 }
 
+/**
+ * The capture after a conflict and the reload that followed it: every
+ * captured row that is loaded now takes the version of the row `rowOf` shows
+ * (so pressing delete again, after the confirmation, no longer meets the same
+ * conflict). A row that is not loaded (server mode, outside the window) keeps
+ * the version it was captured with. Only for the reload after a conflict: a
+ * change by someone else that merely arrives on screen must NOT update the
+ * capture (the delete would then bypass the check it exists for).
+ */
+export function refreshVersionsAfterConflict(
+	previous: VersionCapture,
+	rowOf: (id: RowId) => Record<string, unknown> | null | undefined
+): Map<RowId, number | null> {
+	const next = new Map(previous);
+	for (const id of previous.keys()) {
+		const row = rowOf(id);
+		if (row) next.set(id, lockVersionOf(row) ?? null);
+	}
+	return next;
+}
+
+/** A conflict whose version refresh is still owed (`settleVersionsAfterConflict`). */
+export type PendingVersionRefresh = {
+	/** The list's view generation (`viewKey`) when the conflict came back. */
+	generation: number;
+	/** The ids the conflicting request sent. */
+	ids: readonly RowId[];
+};
+
+/**
+ * One list load has settled while a conflict's refresh may be owed.
+ * - Another view generation (the selection, search, sort, filter or mode
+ *   changed meanwhile): the pending refresh is dropped, nothing is refreshed.
+ * - A failed load: the pending refresh is carried over (the rows are old, or
+ *   holes in server mode).
+ * - A successful load in the same generation: only the ids the conflicting
+ *   request sent that are still captured (still selected) and loaded now take
+ *   the fresh row's version; every other capture entry stays as it is.
+ */
+export function settleVersionsAfterConflict(
+	pending: PendingVersionRefresh | null,
+	generation: number,
+	loadOk: boolean,
+	capture: VersionCapture,
+	rowOf: (id: RowId) => Record<string, unknown> | null | undefined
+): { pending: PendingVersionRefresh | null; capture: VersionCapture } {
+	if (!pending) return { pending, capture };
+	if (pending.generation !== generation) return { pending: null, capture };
+	if (!loadOk) return { pending, capture };
+	const owed = new Set(pending.ids);
+	const next = refreshVersionsAfterConflict(
+		new Map([...capture].filter(([id]) => owed.has(id))),
+		rowOf
+	);
+	return { pending: null, capture: new Map([...capture, ...next]) };
+}
+
 export type DeleteItemsResult =
 	{ ok: true; items: DeleteManyItem[] } | { ok: false; reason: 'versionMissing' };
 
@@ -237,17 +294,18 @@ export function captureViewGuard(view: () => unknown): () => boolean {
 }
 
 export type BulkDeleteFailure =
-	{ kind: 'conflict' } | { kind: 'rejected'; message: string } | { kind: 'error'; message: string };
+	{ kind: 'conflict' } | { kind: 'rejected' } | { kind: 'error'; message: string };
 
 /**
  * What a failed `deleteMany` means for the user: `conflict` (a record changed
  * or is gone - nothing was deleted), `rejected` (`bad_request`: an empty,
- * repeated or over-limit target) or any other `error` (denied, network ...).
+ * repeated or over-limit target; the server's sentence is not shown - it is
+ * in one language) or any other `error` (denied, network ...).
  */
 export function bulkDeleteFailureOf(err: unknown): BulkDeleteFailure {
 	if (isProviderError(err)) {
 		if (err.body.kind === 'conflict') return { kind: 'conflict' };
-		if (err.body.kind === 'bad_request') return { kind: 'rejected', message: err.message };
+		if (err.body.kind === 'bad_request') return { kind: 'rejected' };
 	}
 	return { kind: 'error', message: errorMessageOf(err) };
 }

@@ -135,6 +135,8 @@
 		captureViewGuard,
 		refreshCapturedVersions,
 		runBulkDelete,
+		settleVersionsAfterConflict,
+		type PendingVersionRefresh,
 		updateVersionCapture,
 		type VersionCapture
 	} from './bulkDelete';
@@ -267,6 +269,23 @@
 	function clearSelection(): void {
 		selectedIds = [];
 		selectedVersions = new Map();
+		pendingVersionRefresh = null;
+	}
+	// Set by a conflict; the next time a list load settles SUCCESSFULLY in the
+	// same view generation, the captured versions of the conflicting request's
+	// ids (still selected, loaded) are replaced by the fresh rows' (once). A
+	// failed load keeps it; a changed view drops it (`bulkDelete.ts`).
+	let pendingVersionRefresh: PendingVersionRefresh | null = null;
+	function handleListLoadSettled(outcome: { ok: boolean }): void {
+		const step = settleVersionsAfterConflict(
+			pendingVersionRefresh,
+			viewKey,
+			outcome.ok,
+			selectedVersions,
+			(id) => currentRowLookup?.(id)
+		);
+		pendingVersionRefresh = step.pending;
+		selectedVersions = step.capture;
 	}
 	let destroyed = false;
 	onDestroy(() => {
@@ -358,6 +377,7 @@
 				case 'conflict':
 					// Nothing was deleted; the selection stays. Show the latest rows.
 					notify('error', m['resource.bulkDeleteConflict']());
+					if (sameView()) pendingVersionRefresh = { generation: viewKey, ids: [...context.ids] };
 					invalidate(name);
 					break;
 				case 'tooMany':
@@ -381,7 +401,7 @@
 					notify('error', m['resource.bulkDeleteChanged']());
 					break;
 				case 'rejected':
-					notify('error', m['resource.bulkDeleteRejected']({ detail: outcome.message }));
+					notify('error', m['resource.bulkDeleteRejected']());
 					break;
 				case 'error':
 					notify('error', outcome.message);
@@ -1719,6 +1739,7 @@
 			onRangePaste={handleRangePaste}
 			{rowClass}
 			{registerCurrentRow}
+			onLoadSettled={handleListLoadSettled}
 			{registerAdjacentRow}
 			selectable={canBulkDelete}
 			bind:selectedRowIds={selectedIds}
@@ -1737,6 +1758,7 @@
 			onRangePaste={handleRangePaste}
 			{rowClass}
 			{registerCurrentRow}
+			onLoadSettled={handleListLoadSettled}
 			{registerAdjacentRow}
 			selectable={canBulkDelete}
 			selectAllMatching={canBulkDelete}

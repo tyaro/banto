@@ -10,6 +10,8 @@ import {
 	collectMatchingItems,
 	deleteItemsFromCapture,
 	refreshCapturedVersions,
+	refreshVersionsAfterConflict,
+	settleVersionsAfterConflict,
 	runBulkDelete,
 	updateVersionCapture,
 	type BulkDeleteDeps,
@@ -102,6 +104,114 @@ describe('refreshCapturedVersions', () => {
 			{ id: 5, version: 9 }
 		]);
 		expect([...next]).toEqual([[1, 2]]);
+	});
+});
+
+describe('refreshVersionsAfterConflict', () => {
+	it('takes the versions of loaded rows and keeps the ones that are not loaded', () => {
+		const capture: VersionCapture = new Map([
+			[1, 1],
+			[2, 4],
+			[3, null]
+		]);
+		const rows = new Map<number, Record<string, unknown>>([
+			[1, { id: 1, version: 5 }],
+			[3, { id: 3 }]
+		]);
+		const next = refreshVersionsAfterConflict(capture, (id) => rows.get(id as number));
+		expect([...next]).toEqual([
+			[1, 5],
+			[2, 4],
+			[3, null]
+		]);
+		expect(capture.get(1)).toBe(1);
+	});
+
+	it('conflict, reload, refresh: the second press sends the new version', async () => {
+		const server = new Map([[1, 2]]);
+		const deleteMany = vi.fn(async (target: DeleteManyTarget) => {
+			for (const item of target.items) {
+				if (server.get(item.id as number) !== item.version) {
+					throw new ProviderError({ kind: 'conflict', message: 'x' });
+				}
+			}
+			return { deleted: target.items.length };
+		});
+		const deps: BulkDeleteDeps = {
+			getList: vi.fn(async () => ({ rows: [], totalCount: 0 })),
+			deleteMany,
+			confirm: async () => true,
+			canSend: () => true
+		};
+		let capture: VersionCapture = new Map([[1, 1]]);
+		const request = () => ({
+			ids: [1],
+			allMatching: false,
+			capture,
+			conditions: { sort: [], filters: [] }
+		});
+		expect((await runBulkDelete(request(), deps)).kind).toBe('conflict');
+		// The reload brought the row at its new version.
+		capture = refreshVersionsAfterConflict(capture, (id) => ({
+			id,
+			version: server.get(id as number)
+		}));
+		expect((await runBulkDelete(request(), deps)).kind).toBe('done');
+		expect(deleteMany).toHaveBeenLastCalledWith({ kind: 'ids', items: [{ id: 1, version: 2 }] });
+	});
+});
+
+describe('settleVersionsAfterConflict', () => {
+	const rowOf = (id: unknown) => ({ id, version: 9 });
+	const pending = { generation: 3, ids: [1] };
+
+	it('refreshes the conflicting ids after a successful load of the same generation', () => {
+		const capture: VersionCapture = new Map([[1, 1]]);
+		const step = settleVersionsAfterConflict(pending, 3, true, capture, rowOf);
+		expect(step.pending).toBeNull();
+		expect([...step.capture]).toEqual([[1, 9]]);
+	});
+
+	it('carries the pending refresh over a failed load, then refreshes on the next success', () => {
+		const capture: VersionCapture = new Map([[1, 1]]);
+		const failed = settleVersionsAfterConflict(pending, 3, false, capture, rowOf);
+		expect(failed).toEqual({ pending, capture });
+		const ok = settleVersionsAfterConflict(failed.pending, 3, true, failed.capture, rowOf);
+		expect(ok.pending).toBeNull();
+		expect([...ok.capture]).toEqual([[1, 9]]);
+	});
+
+	it('A deselected and B selected meanwhile: B keeps its captured version', () => {
+		const capture: VersionCapture = new Map([[2, 4]]);
+		const step = settleVersionsAfterConflict(pending, 4, true, capture, rowOf);
+		expect(step.pending).toBeNull();
+		expect([...step.capture]).toEqual([[2, 4]]);
+	});
+
+	it('same generation: ids not in the conflicting request keep their version', () => {
+		const capture: VersionCapture = new Map([
+			[1, 1],
+			[2, 4]
+		]);
+		const step = settleVersionsAfterConflict(pending, 3, true, capture, rowOf);
+		expect([...step.capture]).toEqual([
+			[1, 9],
+			[2, 4]
+		]);
+	});
+
+	it('a conflicting id that is no longer selected is not added back', () => {
+		const capture: VersionCapture = new Map([[2, 4]]);
+		const step = settleVersionsAfterConflict(pending, 3, true, capture, rowOf);
+		expect([...step.capture]).toEqual([[2, 4]]);
+	});
+
+	it('does nothing when no conflict is pending', () => {
+		const capture: VersionCapture = new Map([[1, 1]]);
+		expect(settleVersionsAfterConflict(null, 3, true, capture, rowOf)).toEqual({
+			pending: null,
+			capture
+		});
 	});
 });
 
@@ -325,9 +435,9 @@ describe('bulkDeleteFailureOf', () => {
 		expect(bulkDeleteFailureOf(err)).toEqual({ kind: 'conflict' });
 	});
 
-	it('maps a bad_request to rejected with the message', () => {
+	it('maps a bad_request to rejected without the server sentence', () => {
 		const err = new ProviderError({ kind: 'bad_request', message: '一度に削除できるのは…' });
-		expect(bulkDeleteFailureOf(err)).toEqual({ kind: 'rejected', message: err.message });
+		expect(bulkDeleteFailureOf(err)).toEqual({ kind: 'rejected' });
 	});
 
 	it('maps everything else to error', () => {
