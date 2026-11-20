@@ -170,6 +170,16 @@ export interface AppResourceDefinition extends ResourceDefinition {
 	list?: ResourceListOptions;
 	csv?: ResourceCsvOptions;
 	/**
+	 * Offer the list's bulk delete (#713): row checkboxes and "delete N" in the
+	 * bulk bar. Set it ONLY when the resource's backend implements the bulk
+	 * delete (`POST /api/<resource>/bulk-delete` and `<resource>_bulk_delete`,
+	 * add-resource recipe). The HTTP and Tauri providers have `deleteMany` for
+	 * every resource name, so the method being there says nothing about this
+	 * resource. Also needs `provider.deleteMany` and the delete permission
+	 * (`bulkDeleteOffered`). Default: not offered.
+	 */
+	bulkDelete?: boolean;
+	/**
 	 * Paragraphs of the demo build's annotation drawer on the list page
 	 * (ADR-0030 §7). Omit for no annotation; production builds never show it.
 	 */

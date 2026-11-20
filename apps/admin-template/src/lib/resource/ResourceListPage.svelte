@@ -54,7 +54,7 @@
 	rule `resource-no-optional`): optional extras come in through the slots.
 -->
 <script lang="ts">
-	import { tick, untrack, type Snippet } from 'svelte';
+	import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 	import {
 		FilterChips,
 		GridState,
@@ -64,12 +64,14 @@
 		searchRows,
 		toCsv,
 		type CellEdit,
+		type GridBulkActionsContext,
 		type GridColumn,
 		type RowId
 	} from '@banto/grid-svelte';
 	import {
 		createSavedSetting,
 		currentSessionScope,
+		isCurrentSessionScope,
 		getDataProvider,
 		conflictOf,
 		getSessionController,
@@ -126,7 +128,15 @@
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { detailHref, resourceColumns } from './columns';
-	import { runBulkDelete } from './bulkDelete';
+	import {
+		BULK_DELETE_MAX_ROWS,
+		bulkDeleteOffered,
+		captureSendGuard,
+		refreshCapturedVersions,
+		runBulkDelete,
+		updateVersionCapture,
+		type VersionCapture
+	} from './bulkDelete';
 	import { LOCK_VERSION_FIELD, lockVersionOf } from './conflict';
 	import {
 		buildImportPreview,
@@ -231,58 +241,137 @@
 		saveActiveListMode(scope, name, mode);
 	});
 
-	// #713 C-3: row selection and the bulk delete. Not part of GridState (saved
-	// views): a selection is a moment's work. The two modes have different row
-	// sets, so switching mode drops it.
+	// #713: row selection and the bulk delete. Not part of GridState (saved
+	// views): a selection is a moment's work.
+	//
+	// Offered only when the resource opts in (`bulkDelete: true`), the provider
+	// has `deleteMany` and the user may delete (`bulkDeleteOffered`); otherwise
+	// neither the checkboxes nor the bar exist on this page.
+	const canBulkDelete = $derived(
+		bulkDeleteOffered({
+			resourceOptIn: def.bulkDelete,
+			provider: getDataProvider(),
+			canDelete: perms.delete
+		})
+	);
 	let selectedIds: RowId[] = $state([]);
 	let bulkDeleting = $state(false);
-	$effect(() => {
-		void mode;
-		untrack(() => (selectedIds = []));
+	// Each selected row's `version` as it was when the row was selected
+	// (`bulkDelete.ts`): by the time delete is pressed, a server-mode row may
+	// have left the loaded window and could no longer be looked up.
+	let selectedVersions: VersionCapture = new Map();
+	function handleSelectionChange(ids: RowId[]): void {
+		selectedVersions = updateVersionCapture(selectedVersions, ids, (id) => currentRowLookup?.(id));
+	}
+	function clearSelection(): void {
+		selectedIds = [];
+		selectedVersions = new Map();
+	}
+	let destroyed = false;
+	onDestroy(() => {
+		destroyed = true;
 	});
 
 	/**
-	 * Delete the selected rows through the SAME one-record delete the detail
-	 * form uses (`DataProvider.deleteOne`, with the row's `version`), one after
-	 * another - there is no bulk endpoint, so every delete keeps its own role
-	 * check, optimistic-lock check and audit entry on both transports
-	 * (conventions §1). A failure does not stop the run; failed rows stay
-	 * selected, deleted ones leave the selection. Offered only with
-	 * `perms.delete` (hidden otherwise, like the detail form's button).
+	 * Delete the selected rows with ONE all-or-nothing `deleteMany` request
+	 * (`bulkDelete.ts` holds the decisions): the role check, every record's
+	 * optimistic-lock check and the audit entry are the backend's, on both
+	 * transports (conventions §1).
+	 *
+	 * - A selection sends the ids with the versions captured at selection.
+	 * - "All matching" (server mode) first reads what the list's conditions
+	 *   match NOW - the grid's sort and filters and the page's search term -
+	 *   and sends those ids and versions: the confirmation shows that count,
+	 *   only rows that were read are deleted, and a later change is a conflict.
+	 * - Nothing is sent when the session changed (or the page went away)
+	 *   between the press and the request.
 	 */
-	async function bulkDelete(ids: RowId[]): Promise<void> {
-		if (!perms.delete || bulkDeleting || ids.length === 0) return;
+	async function bulkDelete(context: GridBulkActionsContext): Promise<void> {
+		if (!canBulkDelete || bulkDeleting || context.ids.length === 0) return;
+		const provider = getDataProvider();
+		const deleteMany = provider.deleteMany;
+		if (!deleteMany) return;
+		// Captured at the press, before the read and the dialog. The page's own
+		// `scope` counts too: an instance left over from an earlier session
+		// (until the layout rebuilds it) never sends.
+		const canSend = captureSendGuard({
+			capture: currentSessionScope,
+			isCurrent: isCurrentSessionScope,
+			isDestroyed: () => destroyed || !isCurrentSessionScope(scope)
+		});
+		if (!canSend()) return;
 		// Set before the dialog: the button stays off while it is open too.
 		bulkDeleting = true;
 		try {
-			const confirmed = await confirmAction({
-				title: m['resource.bulkDeleteTitle'](),
-				message: m['resource.bulkDeleteConfirm']({ count: ids.length }),
-				confirmLabel: m['common.delete'](),
-				danger: true
-			});
-			if (!confirmed) return;
-			const result = await runBulkDelete(ids, async (id) => {
-				const version = lockVersionOf(currentRowLookup?.(id));
-				await getDataProvider().deleteOne(
-					name,
-					id,
-					version === undefined ? undefined : { version }
-				);
-			});
-			selectedIds = result.failed;
-			if (result.failed.length === 0) {
-				notify('success', m['resource.bulkDeleteDone']({ count: result.deleted.length }));
-			} else {
-				notify(
-					'error',
-					m['resource.bulkDeletePartial']({
-						deleted: result.deleted.length,
-						failed: result.failed.length
-					})
-				);
+			const outcome = await runBulkDelete(
+				{
+					ids: context.ids,
+					allMatching: context.allMatching,
+					capture: selectedVersions,
+					// What ResourceServerGrid is sending for the rows on screen.
+					conditions: {
+						sort: serverGridState.sort,
+						filters: serverGridState.filters,
+						search: search.trim() === '' ? undefined : search
+					}
+				},
+				{
+					getList: (params) => provider.getList<ResourceRow>(name, params),
+					deleteMany: (target) => deleteMany.call(provider, name, target),
+					confirm: ({ count, allMatching }) =>
+						confirmAction({
+							title: m['resource.bulkDeleteTitle'](),
+							message: allMatching
+								? m['resource.bulkDeleteConfirmMatching']({ count: count.toLocaleString() })
+								: m['resource.bulkDeleteConfirm']({ count: count.toLocaleString() }),
+							confirmLabel: m['common.delete'](),
+							danger: true
+						}),
+					canSend
+				}
+			);
+			// The session changed or the page is gone: this instance says and
+			// touches nothing more (the layout rebuilds the page for the new one).
+			if (outcome.kind === 'stale' || !canSend()) return;
+			switch (outcome.kind) {
+				case 'cancelled':
+					break;
+				case 'done':
+					notify(
+						'success',
+						m['resource.bulkDeleteDone']({ count: outcome.deleted.toLocaleString() })
+					);
+					context.clear();
+					clearSelection();
+					invalidate(name);
+					break;
+				case 'conflict':
+					// Nothing was deleted; the selection stays. Show the latest rows.
+					notify('error', m['resource.bulkDeleteConflict']());
+					invalidate(name);
+					break;
+				case 'tooMany':
+					notify(
+						'error',
+						m['resource.bulkDeleteTooMany']({ max: BULK_DELETE_MAX_ROWS.toLocaleString() })
+					);
+					break;
+				case 'versionMissing':
+					notify('error', m['resource.bulkDeleteVersionMissing']());
+					break;
+				case 'noRows':
+					notify('info', m['resource.bulkDeleteNoRows']());
+					context.clear();
+					clearSelection();
+					invalidate(name);
+					break;
+				case 'rejected':
+					notify('error', m['resource.bulkDeleteRejected']({ detail: outcome.message }));
+					break;
+				case 'error':
+					notify('error', outcome.message);
+					break;
 			}
-			invalidate(name);
 		} finally {
 			bulkDeleting = false;
 		}
@@ -398,6 +487,14 @@
 	);
 	// svelte-ignore state_referenced_locally
 	let search = $state(searchInput);
+	// #713: the two modes have different row sets, and a new search term
+	// changes which rows the list (and "all matching") means - the grid cannot
+	// see the term, so the page drops the selection (grid-svelte README).
+	$effect(() => {
+		void mode;
+		void search;
+		untrack(clearSelection);
+	});
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
 	function handleSearchInput(): void {
 		clearTimeout(searchTimer);
@@ -994,12 +1091,15 @@
 	// values even while the follow-up list request is still in flight (spec §4.5).
 	async function handleCellEdit(edit: CellEdit<ResourceRow>): Promise<ResourceRow> {
 		try {
-			return await saveQueue.enqueue(
+			const saved = await saveQueue.enqueue(
 				edit.rowId,
 				edit.row,
 				{ [edit.field]: edit.value },
 				edit.baseRow ?? edit.row
 			);
+			// #713: a selected row this user just edited keeps being deletable.
+			selectedVersions = refreshCapturedVersions(selectedVersions, [saved]);
+			return saved;
 		} catch (err) {
 			// Issue #638: resolve with the latest row (the grid shows it and
 			// closes the editor) instead of keeping the refused value in the cell.
@@ -1069,6 +1169,7 @@
 		if (info.skipped > 0) {
 			notify('info', m['resource.skippedCells']({ count: info.skipped }));
 		}
+		selectedVersions = refreshCapturedVersions(selectedVersions, saved);
 		return [...saved, ...latest];
 	}
 
@@ -1587,9 +1688,10 @@
 			{rowClass}
 			{registerCurrentRow}
 			{registerAdjacentRow}
-			selectable={perms.delete}
+			selectable={canBulkDelete}
 			bind:selectedRowIds={selectedIds}
-			bulkActions={perms.delete ? bulkDeleteActions : undefined}
+			onSelectionChange={handleSelectionChange}
+			bulkActions={canBulkDelete ? bulkDeleteActions : undefined}
 		/>
 	{:else}
 		<ResourceServerGrid
@@ -1604,22 +1706,28 @@
 			{rowClass}
 			{registerCurrentRow}
 			{registerAdjacentRow}
-			selectable={perms.delete}
+			selectable={canBulkDelete}
+			selectAllMatching={canBulkDelete}
 			bind:selectedRowIds={selectedIds}
-			bulkActions={perms.delete ? bulkDeleteActions : undefined}
+			onSelectionChange={handleSelectionChange}
+			bulkActions={canBulkDelete ? bulkDeleteActions : undefined}
 		/>
 	{/if}
 </div>
 
-<!-- #713: the bulk bar's action. Only rendered when `perms.delete`. -->
-{#snippet bulkDeleteActions({ ids }: { ids: RowId[]; clear: () => void })}
+<!-- #713: the bulk bar's action. Only rendered when `canBulkDelete`. In "all
+     matching" mode the count is the list's total (`matchingCount`); the
+     confirmation shows the count actually read. -->
+{#snippet bulkDeleteActions(context: GridBulkActionsContext)}
 	<button
 		type="button"
 		class="banto-btn banto-btn--danger"
 		disabled={bulkDeleting}
-		onclick={() => void bulkDelete(ids)}
+		onclick={() => void bulkDelete(context)}
 	>
-		{m['resource.bulkDelete']({ count: ids.length })}
+		{m['resource.bulkDelete']({
+			count: (context.allMatching ? context.matchingCount : context.ids.length).toLocaleString()
+		})}
 	</button>
 {/snippet}
 

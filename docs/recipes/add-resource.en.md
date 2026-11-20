@@ -79,6 +79,43 @@ API (reference: the shared list part `lib/resource/ResourceListPage.svelte` and 
 
 The session design is [session-controller-design.md](../design/session-controller-design.md) §6.1 (Japanese).
 
+## Bulk delete (optional, Issue #713)
+
+Deleting the rows selected in the list with one request, by id and `version`.
+The model is items (`ItemsService::bulk_delete`, `items_bulk_delete` in
+`rest/items.rs`, `items_bulk_delete_body` in `src-tauri/src/lib.rs`).
+
+- **Backend**: one transaction, all or nothing. Read every row first; a
+  missing row or a different `version` is `BantoError::Conflict` and nothing
+  is deleted. An empty target, a repeated id or more than the limit (items:
+  `MAX_BULK_DELETE_ROWS` = 1,000) is `BantoError::BadRequest`. REST is
+  `POST /api/<resource>/bulk-delete` (the body is the target, the answer
+  `{ deleted }`), Tauri is `<resource>_bulk_delete`; both use the role floor of
+  the single delete, write ONE audit row per request
+  (`action: "bulk_delete"`) and are declared as a pair in `DUAL_PATH`
+  (`scripts/verify-architecture.mjs`, conventions §1).
+- **Provider**: `DataProvider.deleteMany?.(resource, { kind: 'ids', items: [{ id, version }] })`.
+  **The HTTP and Tauri providers return `deleteMany` for every resource** (they
+  only build the URL / command name from the resource name), so the method
+  being there does not guarantee that the resource supports it. State it in the
+  resource definition (`lib/banto/resources/<name>.ts`) with
+  **`bulkDelete: true`** - only for a resource whose backend has the steps
+  above (items is the only one).
+- **List page** (`ResourceListPage`): the row checkboxes and "Delete N" in the
+  bulk bar are shown only when all three hold - `bulkDelete: true`,
+  `provider.deleteMany`, and the delete permission (`bulkDeleteOffered`). After
+  the confirmation it calls `deleteMany` once.
+  - The `version` sent is the one the row had **when it was selected**: in
+    server mode a selected row can leave the loaded window.
+  - "Select all matching" (server mode) first pages through `getList` with the
+    list's conditions (the grid's filters and sort, and the page's search
+    term), collects the ids and versions, confirms that count, and deletes
+    those ids. Over 1,000 rows it asks the user to narrow the list instead.
+  - The session is captured before the confirmation and compared right before
+    the request; nothing is sent after a logout or another login.
+  - A conflict deletes nothing and keeps the selection. The decisions are pure
+    functions in `lib/resource/bulkDelete.ts`.
+
 ## Verification
 
 ```bash

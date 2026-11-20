@@ -125,6 +125,9 @@ export const itemsResource = defineResource({
 	name: 'items',
 	path: '/items',
 	description: () => m['items.description'](),
+	// #713: items has the bulk delete on both transports (`rest/items.rs`,
+	// `items_bulk_delete`), so the list offers it.
+	bulkDelete: true,
 	list: {
 		// Both, as the demo of the "View" menu's switch (a new resource gets
 		// `server` only by default, ADR-0030 decision 3).

@@ -79,6 +79,13 @@
 		/** #713: BantoGrid's row selection (loaded rows only), owned by the page (it runs the bulk action). */
 		selectable?: boolean;
 		selectedRowIds?: RowId[];
+		/** Called on every selection change, while the rows are still loaded. */
+		onSelectionChange?: (ids: RowId[]) => void;
+		/**
+		 * Offer "select all matching" (rows not loaded too). The page then deletes
+		 * by the list's conditions, not by `ids` (grid-svelte README).
+		 */
+		selectAllMatching?: boolean;
 		bulkActions?: Snippet<[GridBulkActionsContext]>;
 	}
 
@@ -95,6 +102,8 @@
 		registerAdjacentRow,
 		selectable = false,
 		selectedRowIds = $bindable([]),
+		onSelectionChange,
+		selectAllMatching = false,
 		bulkActions
 	}: Props = $props();
 
@@ -294,6 +303,8 @@
 		{rowClass}
 		{selectable}
 		bind:selectedRowIds
+		{onSelectionChange}
+		{selectAllMatching}
 		{bulkActions}
 	/>
 </div>

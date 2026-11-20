@@ -86,6 +86,8 @@
 		/** #713: BantoGrid's row selection, owned by the page (it runs the bulk action). */
 		selectable?: boolean;
 		selectedRowIds?: RowId[];
+		/** Called on every selection change, while the rows are still loaded. */
+		onSelectionChange?: (ids: RowId[]) => void;
 		bulkActions?: Snippet<[GridBulkActionsContext]>;
 	}
 
@@ -104,6 +106,7 @@
 		registerAdjacentRow,
 		selectable = false,
 		selectedRowIds = $bindable([]),
+		onSelectionChange,
 		bulkActions
 	}: Props = $props();
 
@@ -176,6 +179,7 @@
 			{rowClass}
 			{selectable}
 			bind:selectedRowIds
+			{onSelectionChange}
 			{bulkActions}
 		/>
 	</div>

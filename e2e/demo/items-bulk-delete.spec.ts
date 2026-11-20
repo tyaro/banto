@@ -1,8 +1,10 @@
 /**
- * Bulk delete on the items list (#713 C-3 ④): select two rows, confirm, and
- * they are gone. The list calls the one-record delete once per selected row
- * (no bulk endpoint), so this runs in the demo build (in-memory provider,
- * admin role) - the `demo` project (`vite dev`, VITE_BANTO_DEMO=1).
+ * Bulk delete on the items list (#713): select two rows, confirm, and they
+ * are gone. The list sends ONE `DataProvider.deleteMany` request; in the demo
+ * build that is the in-memory provider's (same all-or-nothing contract as the
+ * server), admin role - the `demo` project (`vite dev`, VITE_BANTO_DEMO=1).
+ * "Select all matching" is server mode only; its flow is covered by
+ * `lib/resource/bulkDelete.test.ts`.
  */
 import { expect, test } from '@playwright/test';
 import { primeThemeAndAuth } from '../visual/theme';
