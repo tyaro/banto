@@ -237,3 +237,26 @@ describe('FormDraft discard', () => {
 		expect(draft.revision).toBe(before + 1);
 	});
 });
+
+describe('FormDraft commitAll with hidden fields (#714)', () => {
+	it('ignores an unparsable raw text of a hidden field and keeps it for later', () => {
+		const sc: FormSchema = {
+			fields: [
+				{ name: 'on', label: 'On', type: 'checkbox' },
+				{ name: 'qty', label: 'Qty', type: 'number', visibleWhen: (v) => v.on === true },
+				{ name: 'title', label: 'Title', type: 'text' }
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: sc,
+			initial: { on: true, qty: 3, title: 't' },
+			messages: { notANumber: () => 'NaN!' }
+		});
+		draft.setRaw('qty', '-');
+		draft.setValue('on', false);
+		expect(draft.commitAll()).toBe(true);
+		expect(draft.values.qty).toBe(3);
+		expect(draft.raw.qty).toBe('-');
+	});
+});

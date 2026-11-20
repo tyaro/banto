@@ -98,4 +98,25 @@ describe('BantoForm layout (#714)', () => {
 		await new Promise((r) => setTimeout(r, 10));
 		expect(document.activeElement).toBe(screen.getByLabelText('A'));
 	});
+
+	it('keeps the focus record of B when the focusout microtask of A runs after the focusin of B', async () => {
+		const schema: FormSchema = {
+			fields: [
+				{ name: 'a', label: 'A', type: 'text' },
+				{ name: 'b', label: 'B', type: 'text', visibleWhen: (v) => v.b !== 'x' },
+				{ name: 'c', label: 'C', type: 'text' }
+			]
+		};
+		render(BantoForm, { schema, store: createFormStore(schema), onSubmit: vi.fn() });
+		const a = screen.getByLabelText('A') as HTMLInputElement;
+		const b = screen.getByLabelText('B') as HTMLInputElement;
+		a.focus();
+		b.focus();
+		await Promise.resolve();
+		await fireEvent.input(b, { target: { value: 'x' } });
+		flushSync();
+		await new Promise((r) => setTimeout(r, 10));
+		expect(document.activeElement).not.toBe(document.body);
+		expect(document.activeElement).toBe(screen.getByLabelText('A'));
+	});
 });

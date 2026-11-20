@@ -314,15 +314,27 @@ class Draft implements FormDraft<Values> {
 			// Interpret every raw field first, so that a validator that reads
 			// another field sees that field's final value, not a stale one.
 			let values = this.#values;
+			const parseErrors: Record<string, string> = {};
 			for (const field of rawFields) {
 				const parsed = parse(this.#def(field), this.#raw[field]!, this.#messages);
 				if (parsed.ok) values = { ...values, [field]: parsed.value };
-				else errors[field] = parsed.message;
+				else parseErrors[field] = parsed.message;
+			}
+			// A field hidden by `visibleWhen` (judged against the final values) is
+			// not validated and its raw text is left as is, so showing it again
+			// restores what the user had typed.
+			const hidden = new Set<string>();
+			for (const field of names) {
+				const def = this.#def(field);
+				if (def && !isFieldVisible(def, values)) hidden.add(field);
 			}
 			for (const field of names) {
-				if (field in errors) continue;
+				if (hidden.has(field)) continue;
+				if (field in parseErrors) {
+					errors[field] = parseErrors[field];
+					continue;
+				}
 				const def = this.#def(field);
-				if (def && !isFieldVisible(def, values)) continue;
 				const message = def ? validateField(def, values[field], values, this.#messages) : null;
 				if (message) errors[field] = message;
 			}
@@ -333,8 +345,12 @@ class Draft implements FormDraft<Values> {
 			}
 			this.#errors = {};
 			if (rawFields.length > 0) {
+				// Hidden fields keep their old value and their raw text.
+				for (const field of hidden) values = { ...values, [field]: this.#values[field] };
+				const kept: Record<string, string> = {};
+				for (const field of rawFields) if (hidden.has(field)) kept[field] = this.#raw[field]!;
 				this.#values = values;
-				this.#raw = {};
+				this.#raw = kept;
 				this.#bump();
 			}
 			return true;

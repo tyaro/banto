@@ -70,9 +70,11 @@
 		if (!focusedName) return;
 		// Focus leaving for good: the field is still in the DOM afterwards.
 		// A field removed while it had focus is gone by then; keep its name.
-		const field = (event.target as Element | null)?.closest('[data-field]');
+		const field = (event.target as Element | null)?.closest<HTMLElement>('[data-field]');
+		const name = field?.dataset.field;
 		queueMicrotask(() => {
-			if (field?.isConnected) focusedName = null;
+			// Moving A -> B runs B's focusin before this: only clear A's own record.
+			if (field?.isConnected && focusedName === name) focusedName = null;
 		});
 	}
 
