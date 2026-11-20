@@ -206,15 +206,16 @@ describe('createHttpDataProvider', () => {
 		});
 	});
 
-	it('deleteMany sends a filter target as is and keeps a 409 conflict with its current count (Issue #713)', async () => {
-		const body = { kind: 'conflict', message: 'changed', current: { count: 3 } };
+	it('deleteMany keeps a 409 conflict with its current record (Issue #713)', async () => {
+		const body = { kind: 'conflict', message: 'changed', current: { id: 2, version: 5 } };
 		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(409, body));
 		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
 		const target = {
-			kind: 'filter' as const,
-			filters: [{ field: 'name', op: 'contains' as const, value: 'Old' }],
-			search: 'old',
-			expectedCount: 2
+			kind: 'ids' as const,
+			items: [
+				{ id: 1, version: 3 },
+				{ id: 2, version: 1 }
+			]
 		};
 
 		try {

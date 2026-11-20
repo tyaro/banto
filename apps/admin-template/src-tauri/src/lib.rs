@@ -915,7 +915,7 @@ async fn items_delete(
 /// (conventions section 1) - the same `editor` floor, the same
 /// all-or-nothing [`ItemsService::bulk_delete`], and ONE
 /// `action: "bulk_delete"` audit entry for the whole request (no
-/// `entity_id`). A conflict (stale version, missing id, changed count)
+/// `entity_id`). A conflict (stale version, missing id)
 /// deletes nothing and records nothing, like [`items_delete_body`].
 async fn items_bulk_delete_body(
     state: &AppState,
@@ -5425,21 +5425,6 @@ mod tests {
         }
     }
 
-    fn bulk_name_filter(
-        term: &str,
-        expected_count: u64,
-    ) -> admin_template_core::items::BulkDeleteTarget {
-        admin_template_core::items::BulkDeleteTarget::Filter {
-            filters: vec![banto_core::FilterState {
-                field: "name".to_string(),
-                op: banto_core::FilterOp::Contains,
-                value: serde_json::json!(term),
-            }],
-            search: None,
-            expected_count,
-        }
-    }
-
     /// `viewer` cannot delete (editor+): `Forbidden`, the row stays, and the
     /// refusal is one `denied` audit row - REST's `RoleGuard` twin.
     #[tokio::test]
@@ -5536,44 +5521,6 @@ mod tests {
             assert_eq!(items_total(&state).await, before);
         }
         assert!(audit_rows_for(&state, "bulk_delete").await.is_empty());
-    }
-
-    /// A filter target deletes only when it matches exactly the confirmed
-    /// count; the audit entry keeps the conditions.
-    #[tokio::test]
-    async fn items_bulk_delete_by_filter_checks_the_confirmed_count() {
-        let state = app_state_as(Role::Editor).await;
-        let a = seed_item(&state, "Bulk713 A").await;
-        let b = seed_item(&state, "Bulk713 B").await;
-        let before = items_total(&state).await;
-
-        let mismatch = items_bulk_delete_body(&state, bulk_name_filter("Bulk713", 3)).await;
-        assert!(
-            matches!(mismatch, Err(BantoError::Conflict { .. })),
-            "{mismatch:?}"
-        );
-        assert_eq!(items_total(&state).await, before);
-        assert!(audit_rows_for(&state, "bulk_delete").await.is_empty());
-
-        let result = items_bulk_delete_body(&state, bulk_name_filter("Bulk713", 2))
-            .await
-            .expect("matching count deletes");
-        assert_eq!(result.deleted, 2);
-        assert_eq!(items_total(&state).await, before - 2);
-
-        let entries = audit_rows_for(&state, "bulk_delete").await;
-        assert_eq!(entries.len(), 1, "{entries:?}");
-        let detail: serde_json::Value =
-            serde_json::from_str(entries[0]["detail"].as_str().expect("detail")).unwrap();
-        assert_eq!(
-            detail,
-            serde_json::json!({
-                "mode": "filter",
-                "count": 2,
-                "ids": [a.id, b.id],
-                "filters": [{ "field": "name", "op": "contains", "value": "Bulk713" }]
-            })
-        );
     }
 
     /// More than `MAX_BULK_DELETE_ROWS` (or no target at all) is

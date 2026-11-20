@@ -27,7 +27,7 @@
 //! | PUT    | `/api/items/{id}`    | `ItemInput`    | `Item` (editor+)        |
 //! | DELETE | `/api/items/{id}`    | -              | 204 (editor+)           |
 //! | POST   | `/api/items/import`  | `ItemImportRow[]` | `ImportResult` (editor+, spec M15) |
-//! | POST   | `/api/items/bulk-delete` | `BulkDeleteTarget` | `{ deleted }` (editor+, Issue #713) |
+//! | POST   | `/api/items/bulk-delete` | `{ kind: "ids", items }` | `{ deleted }` (editor+, Issue #713) |
 // [scaffold:items] end
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityView` (admin) |

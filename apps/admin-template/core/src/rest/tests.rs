@@ -1242,61 +1242,6 @@ async fn bulk_delete_with_a_stale_version_deletes_nothing_and_is_not_audited() {
     assert!(bulk_delete_entries(&rows).is_empty(), "{rows:?}");
 }
 
-/// A filter target deletes only when it matches exactly the confirmed count;
-/// the audit entry keeps the conditions.
-#[tokio::test]
-async fn bulk_delete_by_filter_checks_the_confirmed_count() {
-    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
-    let a = create_item_via_rest(&router, &editor, "Old A").await;
-    let b = create_item_via_rest(&router, &editor, "Old B").await;
-    create_item_via_rest(&router, &editor, "New").await;
-    let target = |expected_count: u64| {
-        json!({
-            "kind": "filter",
-            "filters": [{ "field": "name", "op": "contains", "value": "Old" }],
-            "search": "old",
-            "expectedCount": expected_count
-        })
-    };
-
-    let mismatch = router
-        .clone()
-        .oneshot(post_json_auth("/api/items/bulk-delete", &editor, target(3)))
-        .await
-        .unwrap();
-    assert_eq!(mismatch.status(), StatusCode::CONFLICT);
-    let body = body_json(mismatch).await;
-    assert_eq!(body["kind"], "conflict");
-    assert_eq!(body["current"], json!({ "count": 2 }));
-    assert_eq!(items_total_via_rest(&router, &editor).await, 3);
-    assert!(bulk_delete_entries(&audit_rows_via_rest(&router, &admin).await).is_empty());
-
-    let ok = router
-        .clone()
-        .oneshot(post_json_auth("/api/items/bulk-delete", &editor, target(2)))
-        .await
-        .unwrap();
-    assert_eq!(ok.status(), StatusCode::OK);
-    assert_eq!(body_json(ok).await, json!({ "deleted": 2 }));
-    assert_eq!(items_total_via_rest(&router, &editor).await, 1);
-
-    let rows = audit_rows_via_rest(&router, &admin).await;
-    let entries = bulk_delete_entries(&rows);
-    assert_eq!(entries.len(), 1, "{rows:?}");
-    let detail: serde_json::Value =
-        serde_json::from_str(entries[0]["detail"].as_str().unwrap()).unwrap();
-    assert_eq!(
-        detail,
-        json!({
-            "mode": "filter",
-            "count": 2,
-            "ids": [a, b],
-            "filters": [{ "field": "name", "op": "contains", "value": "Old" }],
-            "search": "old"
-        })
-    );
-}
-
 /// More than `MAX_BULK_DELETE_ROWS` (or no target at all) is a 400
 /// `bad_request`: nothing deleted, nothing audited.
 #[tokio::test]
@@ -1311,8 +1256,6 @@ async fn bulk_delete_over_the_limit_or_empty_is_bad_request() {
     for target in [
         json!({ "kind": "ids", "items": too_many }),
         json!({ "kind": "ids", "items": [] }),
-        json!({ "kind": "filter", "filters": [], "expectedCount": over }),
-        json!({ "kind": "filter", "filters": [], "expectedCount": 0 }),
     ] {
         let response = router
             .clone()

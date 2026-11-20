@@ -2,7 +2,7 @@
  * DataProvider/AuthProvider/Notifier contracts (spec §3.2, §3.3, §3.4).
  * UI-agnostic: no Svelte imports here.
  */
-import type { FilterState, ListParams, ListResult } from './types';
+import type { ListParams, ListResult } from './types';
 
 /**
  * Options of `DataProvider.deleteOne` (Issue #638). `version` is the
@@ -31,13 +31,14 @@ export interface DeleteManyItem {
  *
  * - `ids`: exactly these records. One stale `version`, or one record that is
  *   already gone, rejects the whole call.
- * - `filter`: every record the list's `filters` + `search` match (the same
- *   conditions as `getList`), but only if that is exactly `expectedCount`
- *   records - the count the user confirmed. Any other count rejects the call.
+ *
+ * There is deliberately no "everything the filter matches" target: a count
+ * confirmed by the user cannot tell that one row left the filter and another
+ * entered it. To delete a whole filtered result, list the rows first (`getList`)
+ * and send their ids and versions here: only the rows that were shown are
+ * deleted, and any change since is a conflict.
  */
-export type DeleteManyTarget =
-	| { kind: 'ids'; items: DeleteManyItem[] }
-	| { kind: 'filter'; filters: FilterState[]; search?: string; expectedCount: number };
+export type DeleteManyTarget = { kind: 'ids'; items: DeleteManyItem[] };
 
 /** Options of `DataProvider.deleteMany`. None yet; the parameter is reserved. */
 export type DeleteManyOptions = Record<string, never>;
@@ -66,10 +67,9 @@ export interface DataProvider {
 	 * check `provider.deleteMany` before offering the operation.
 	 *
 	 * Rejects with a `conflict` `ProviderError` and deletes nothing when the
-	 * target no longer is what the caller saw: for `ids`, `body.current` is
-	 * the first stale record (absent when a record is already gone); for
-	 * `filter`, `body.current` is `{ count }`, the number of records matching
-	 * now. An empty target or one over the server's limit is `bad_request`.
+	 * target no longer is what the caller saw: `body.current` is the first
+	 * stale record (absent when a record is already gone). An empty target, a
+	 * repeated id or one over the server's limit is `bad_request`.
 	 */
 	deleteMany?(
 		resource: string,

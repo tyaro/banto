@@ -130,10 +130,9 @@ async fn items_delete(
 /// `POST /api/items/bulk-delete` (Issue #713): delete many items in one
 /// all-or-nothing transaction, `editor`+ (same `ItemsWriteState`/`RoleGuard`
 /// as the other write routes). The body is a
-/// [`crate::items::BulkDeleteTarget`] (`{ kind: "ids", items }` or
-/// `{ kind: "filter", filters, search?, expectedCount }`), the answer
-/// `{ deleted }`. A stale version, a missing id or a changed count is a `409`
-/// `conflict` with nothing deleted and - like a single delete's conflict -
+/// [`crate::items::BulkDeleteTarget`] (`{ kind: "ids", items }`, each item an
+/// `{ id, version? }`), the answer `{ deleted }`. A stale version or a missing
+/// id is a `409` `conflict` with nothing deleted and - like a single delete's conflict -
 /// nothing audited. A success writes ONE `action: "bulk_delete"` entry
 /// (no `entity_id`; detail: [`crate::items::item_bulk_delete_detail`]), not
 /// one per row. The Tauri `items_bulk_delete` command takes the same target.

@@ -83,14 +83,16 @@ describe('createTauriDataProvider', () => {
 		expect(invoke).toHaveBeenCalledWith('items_bulk_delete', { target });
 	});
 
-	it('deleteMany passes a filter target as is and keeps a conflict with its current count (Issue #713)', async () => {
-		const body = { kind: 'conflict', message: 'changed', current: { count: 3 } };
+	it('deleteMany keeps a conflict with its current record (Issue #713)', async () => {
+		const body = { kind: 'conflict', message: 'changed', current: { id: 2, version: 5 } };
 		const invoke = vi.fn().mockRejectedValue(body);
 		const provider = createTauriDataProvider({ invoke });
 		const target = {
-			kind: 'filter' as const,
-			filters: [{ field: 'name', op: 'contains' as const, value: 'Old' }],
-			expectedCount: 2
+			kind: 'ids' as const,
+			items: [
+				{ id: 1, version: 3 },
+				{ id: 2, version: 1 }
+			]
 		};
 
 		try {

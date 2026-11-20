@@ -182,8 +182,8 @@ async fn app_layer_crud_round_trips_on_postgres() {
     assert_eq!(after_delete.total_count, 1_000);
 
     // --- items bulk delete (Issue #713): the Postgres arm of the transaction --
-    // (FOR UPDATE read of the ids, `DELETE ... RETURNING id` with the list's
-    // WHERE). Leaves the table at the 1,000 seeded rows again.
+    // (FOR UPDATE read of the ids, then a chunked `DELETE ... WHERE id IN`).
+    // Leaves the table at the 1,000 seeded rows again.
     let mut bulk = Vec::new();
     for name in ["一括A", "一括B", "一括C"] {
         bulk.push(
@@ -223,25 +223,16 @@ async fn app_layer_crud_round_trips_on_postgres() {
         items.bulk_delete(&ids_target(1)).await.expect("bulk ids"),
         vec![bulk[0].id, bulk[1].id]
     );
-    let filter_target = |expected_count: u64| BulkDeleteTarget::Filter {
-        filters: vec![banto_core::FilterState {
-            field: "name".to_string(),
-            op: banto_core::FilterOp::StartsWith,
-            value: serde_json::json!("一括"),
-        }],
-        search: Some("一括".to_string()),
-        expected_count,
-    };
-    let miscounted = items.bulk_delete(&filter_target(2)).await;
-    assert!(
-        matches!(miscounted, Err(banto_core::BantoError::Conflict { .. })),
-        "a changed count must refuse the bulk delete, got {miscounted:?}"
-    );
     assert_eq!(
         items
-            .bulk_delete(&filter_target(1))
+            .bulk_delete(&BulkDeleteTarget::Ids {
+                items: vec![BulkDeleteItem {
+                    id: bulk[2].id,
+                    version: Some(1),
+                }],
+            })
             .await
-            .expect("bulk filter"),
+            .expect("bulk single id"),
         vec![bulk[2].id]
     );
     let after_bulk = items

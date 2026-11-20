@@ -171,31 +171,26 @@ create/update/delete の監査 `detail.changes` は変更表用の予約キー�
 
 ## 一括削除（任意、Issue #713）
 
-一覧で選んだ行、または絞り込みに合う全行を 1 回で消す API。手本は items
+一覧で選んだ行を、id と `version` で 1 回に消す API。手本は items
 （`ItemsService::bulk_delete`・`rest/items.rs` の `items_bulk_delete`・
 `src-tauri/src/lib.rs` の `items_bulk_delete_body`）。
 
 1. サービス層に `bulk_delete(&BulkDeleteTarget) -> Vec<id>`（消した id）を足す。
    **1 つのトランザクションで全件成功か全件失敗**にする（SQLite は
    `BEGIN IMMEDIATE`、PostgreSQL は `FOR UPDATE`）。
-   - `ids`: 先に全行を読み、1 件でも無い・`version` が違えば
+   - 先に全行を読み、1 件でも無い・`version` が違えば
      `BantoError::Conflict` を返して何も消さない（`version` の無い要素は
      1 件の削除と同じく比べない。フロントは必ず `version` を送る）。
-   - `filter`: 一覧と同じ `append_list_where`（絞り込み + クイック検索）で数え、
-     `expectedCount`（利用者が確かめた件数）と違えば `Conflict`
-     （`current: { count }`）。一致したら同じ条件で `DELETE … RETURNING id`。
-   - 上限は定数にする（items は `MAX_BULK_DELETE_ROWS` = **1,000 件**。`ids` の
-     件数と `expectedCount` の両方に掛かる）。超過・0 件・id の重複は
+   - 上限は定数にする（items は `MAX_BULK_DELETE_ROWS` = **1,000 件**。id の件数に
+     掛かる）。超過・0 件・id の重複は
      `BantoError::BadRequest`（0 件は呼び出し側の不具合として扱い、0 を返さない）。
 2. REST は `POST /api/<resource>/bulk-delete`（本文が target、答えは
    `{ deleted }`）、Tauri は `<resource>_bulk_delete`（引数 `target`）。どちらも
    1 件の削除と同じロール床にし、`scripts/verify-architecture.mjs` の
    `DUAL_PATH` に対を足す（conventions §1）。
 3. 監査は **1 回につき 1 行**（`action: "bulk_delete"`、`entity_id` なし）。
-   detail は `item_bulk_delete_detail` の形にそろえる: `mode`（`ids` / `filter`）・
-   `count`・`ids`（先頭 100 件。超えたら `idsTruncated: true`）、`filter` のときは
-   `filters`（2,000 バイトを超えたら `filterCount` + `filtersTruncated`）と
-   `search`（200 文字まで）。行の値は残さない（`changes` は使わない）。衝突した
+   detail は `item_bulk_delete_detail` の形にそろえる: `mode`（`ids`）・
+   `count`・`ids`（先頭 100 件。超えたら `idsTruncated: true`）。行の値は残さない（`changes` は使わない）。衝突した
    操作は監査しない（1 件の削除と同じ）。denied は `RoleGuard` / `require_role` が残す。
 4. 変更の通知（`resource_changed`）は 1 回だけ出す。添付を持つリソースは、消した
    id の分を掃除する（`attachment_wiring::sweep_items_attachments`）。
@@ -205,8 +200,11 @@ create/update/delete の監査 `detail.changes` は変更表用の予約キー�
    tauri の provider は `${resource}_bulk_delete` を呼ぶので、手順 2 の名前を守れば
    provider の変更は要らない。衝突は `ProviderError` の `body.kind === 'conflict'`。
 6. テストは両経路に: viewer の denied（403 `forbidden` + `denied` の監査行）、
-   `ids` の成功（監査 1 行）、`version` の衝突で何も消えない、`filter` の件数の
-   不一致で何も消えない、`filter` の成功、上限の超過。
+   成功（監査 1 行）、`version` の衝突で何も消えない、上限の超過。
+7. 絞り込んだ全件を消すときは、利用側が一覧の API（`getList`）で id と `version`
+   を取ってから、id で消す（確かめた行だけが消え、変わっていれば衝突）。絞り込みの
+   条件と件数だけで消す方式は、確認の後に行が入れ替わっても件数が同じなら通って
+   しまうので、持たない。
 
 ## 検証
 
