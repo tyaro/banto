@@ -66,7 +66,7 @@
 		 * mount and `undefined` on teardown.
 		 */
 		/** Called each time a load of the rows finishes (the page uses it after a bulk delete conflict). */
-		onLoadSettled?: () => void;
+		onLoadSettled?: (outcome: { ok: boolean }) => void;
 		registerCurrentRow?: (
 			lookup: ((rowId: string | number) => ResourceRow | undefined) | undefined
 		) => void;
@@ -250,7 +250,7 @@
 	let wasLoading = false;
 	$effect(() => {
 		const loading = windowed.loading;
-		if (wasLoading && !loading) onLoadSettled?.();
+		if (wasLoading && !loading) onLoadSettled?.({ ok: windowed.failures.length === 0 });
 		wasLoading = loading;
 	});
 

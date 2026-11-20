@@ -11,6 +11,7 @@ import {
 	deleteItemsFromCapture,
 	refreshCapturedVersions,
 	refreshVersionsAfterConflict,
+	settleVersionsAfterConflict,
 	runBulkDelete,
 	updateVersionCapture,
 	type BulkDeleteDeps,
@@ -157,6 +158,60 @@ describe('refreshVersionsAfterConflict', () => {
 		}));
 		expect((await runBulkDelete(request(), deps)).kind).toBe('done');
 		expect(deleteMany).toHaveBeenLastCalledWith({ kind: 'ids', items: [{ id: 1, version: 2 }] });
+	});
+});
+
+describe('settleVersionsAfterConflict', () => {
+	const rowOf = (id: unknown) => ({ id, version: 9 });
+	const pending = { generation: 3, ids: [1] };
+
+	it('refreshes the conflicting ids after a successful load of the same generation', () => {
+		const capture: VersionCapture = new Map([[1, 1]]);
+		const step = settleVersionsAfterConflict(pending, 3, true, capture, rowOf);
+		expect(step.pending).toBeNull();
+		expect([...step.capture]).toEqual([[1, 9]]);
+	});
+
+	it('carries the pending refresh over a failed load, then refreshes on the next success', () => {
+		const capture: VersionCapture = new Map([[1, 1]]);
+		const failed = settleVersionsAfterConflict(pending, 3, false, capture, rowOf);
+		expect(failed).toEqual({ pending, capture });
+		const ok = settleVersionsAfterConflict(failed.pending, 3, true, failed.capture, rowOf);
+		expect(ok.pending).toBeNull();
+		expect([...ok.capture]).toEqual([[1, 9]]);
+	});
+
+	it('A deselected and B selected meanwhile: B keeps its captured version', () => {
+		const capture: VersionCapture = new Map([[2, 4]]);
+		const step = settleVersionsAfterConflict(pending, 4, true, capture, rowOf);
+		expect(step.pending).toBeNull();
+		expect([...step.capture]).toEqual([[2, 4]]);
+	});
+
+	it('same generation: ids not in the conflicting request keep their version', () => {
+		const capture: VersionCapture = new Map([
+			[1, 1],
+			[2, 4]
+		]);
+		const step = settleVersionsAfterConflict(pending, 3, true, capture, rowOf);
+		expect([...step.capture]).toEqual([
+			[1, 9],
+			[2, 4]
+		]);
+	});
+
+	it('a conflicting id that is no longer selected is not added back', () => {
+		const capture: VersionCapture = new Map([[2, 4]]);
+		const step = settleVersionsAfterConflict(pending, 3, true, capture, rowOf);
+		expect([...step.capture]).toEqual([[2, 4]]);
+	});
+
+	it('does nothing when no conflict is pending', () => {
+		const capture: VersionCapture = new Map([[1, 1]]);
+		expect(settleVersionsAfterConflict(null, 3, true, capture, rowOf)).toEqual({
+			pending: null,
+			capture
+		});
 	});
 });
 

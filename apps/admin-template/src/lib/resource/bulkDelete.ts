@@ -126,6 +126,42 @@ export function refreshVersionsAfterConflict(
 	return next;
 }
 
+/** A conflict whose version refresh is still owed (`settleVersionsAfterConflict`). */
+export type PendingVersionRefresh = {
+	/** The list's view generation (`viewKey`) when the conflict came back. */
+	generation: number;
+	/** The ids the conflicting request sent. */
+	ids: readonly RowId[];
+};
+
+/**
+ * One list load has settled while a conflict's refresh may be owed.
+ * - Another view generation (the selection, search, sort, filter or mode
+ *   changed meanwhile): the pending refresh is dropped, nothing is refreshed.
+ * - A failed load: the pending refresh is carried over (the rows are old, or
+ *   holes in server mode).
+ * - A successful load in the same generation: only the ids the conflicting
+ *   request sent that are still captured (still selected) and loaded now take
+ *   the fresh row's version; every other capture entry stays as it is.
+ */
+export function settleVersionsAfterConflict(
+	pending: PendingVersionRefresh | null,
+	generation: number,
+	loadOk: boolean,
+	capture: VersionCapture,
+	rowOf: (id: RowId) => Record<string, unknown> | null | undefined
+): { pending: PendingVersionRefresh | null; capture: VersionCapture } {
+	if (!pending) return { pending, capture };
+	if (pending.generation !== generation) return { pending: null, capture };
+	if (!loadOk) return { pending, capture };
+	const owed = new Set(pending.ids);
+	const next = refreshVersionsAfterConflict(
+		new Map([...capture].filter(([id]) => owed.has(id))),
+		rowOf
+	);
+	return { pending: null, capture: new Map([...capture, ...next]) };
+}
+
 export type DeleteItemsResult =
 	{ ok: true; items: DeleteManyItem[] } | { ok: false; reason: 'versionMissing' };
 

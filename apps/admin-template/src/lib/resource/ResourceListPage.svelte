@@ -135,7 +135,8 @@
 		captureViewGuard,
 		refreshCapturedVersions,
 		runBulkDelete,
-		refreshVersionsAfterConflict,
+		settleVersionsAfterConflict,
+		type PendingVersionRefresh,
 		updateVersionCapture,
 		type VersionCapture
 	} from './bulkDelete';
@@ -268,17 +269,23 @@
 	function clearSelection(): void {
 		selectedIds = [];
 		selectedVersions = new Map();
-		versionsStaleAfterConflict = false;
+		pendingVersionRefresh = null;
 	}
-	// Set by a conflict; the next time a list load settles, the captured
-	// versions of the loaded selected rows are replaced by the fresh rows' (once).
-	let versionsStaleAfterConflict = false;
-	function handleListLoadSettled(): void {
-		if (!versionsStaleAfterConflict) return;
-		versionsStaleAfterConflict = false;
-		selectedVersions = refreshVersionsAfterConflict(selectedVersions, (id) =>
-			currentRowLookup?.(id)
+	// Set by a conflict; the next time a list load settles SUCCESSFULLY in the
+	// same view generation, the captured versions of the conflicting request's
+	// ids (still selected, loaded) are replaced by the fresh rows' (once). A
+	// failed load keeps it; a changed view drops it (`bulkDelete.ts`).
+	let pendingVersionRefresh: PendingVersionRefresh | null = null;
+	function handleListLoadSettled(outcome: { ok: boolean }): void {
+		const step = settleVersionsAfterConflict(
+			pendingVersionRefresh,
+			viewKey,
+			outcome.ok,
+			selectedVersions,
+			(id) => currentRowLookup?.(id)
 		);
+		pendingVersionRefresh = step.pending;
+		selectedVersions = step.capture;
 	}
 	let destroyed = false;
 	onDestroy(() => {
@@ -370,7 +377,7 @@
 				case 'conflict':
 					// Nothing was deleted; the selection stays. Show the latest rows.
 					notify('error', m['resource.bulkDeleteConflict']());
-					if (sameView()) versionsStaleAfterConflict = true;
+					if (sameView()) pendingVersionRefresh = { generation: viewKey, ids: [...context.ids] };
 					invalidate(name);
 					break;
 				case 'tooMany':
