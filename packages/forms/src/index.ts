@@ -18,7 +18,7 @@ export {
 	submitValuesOf,
 	resolveColumns,
 	layoutOf,
-	focusFallbackName,
+	focusCandidateNames,
 	type LayoutField,
 	type LayoutGroup
 } from './layout';

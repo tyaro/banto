@@ -34,7 +34,7 @@
  */
 import { untrack } from 'svelte';
 import { parseDateText, parseDateTimeText, parseTimeText } from './date';
-import { isFieldVisible } from './layout';
+import { isFieldVisible, submitValuesOf } from './layout';
 import { isTemporalType, type FieldDef, type FormSchema } from './types';
 import {
 	dateInvalidMessage,
@@ -49,6 +49,8 @@ import type { DraftSource } from './draftCoordinator.svelte';
 /** What `snapshotForApply()` returns and `markApplied()` accepts. */
 export interface FormDraftSnapshot<V = Record<string, unknown>> {
 	readonly values: V;
+	/** `values` without the keys of fields hidden by `visibleWhen`: what an apply sends. `values` stays whole (it becomes the baseline). */
+	readonly submitValues: Record<string, unknown>;
 	readonly revision: number;
 }
 
@@ -91,7 +93,7 @@ export interface FormDraft<V = Record<string, unknown>> {
 	 * Ignored - returns false - for a snapshot older than the current baseline
 	 * (a slower, earlier apply finishing last) or one this draft never issued.
 	 */
-	markApplied(applied: FormDraftSnapshot<V>): boolean;
+	markApplied(applied: Pick<FormDraftSnapshot<V>, 'values' | 'revision'>): boolean;
 	/** Back to the baseline: values = a copy of it, raw text and errors cleared. */
 	discard(): void;
 	/**
@@ -320,14 +322,33 @@ class Draft implements FormDraft<Values> {
 				if (parsed.ok) values = { ...values, [field]: parsed.value };
 				else parseErrors[field] = parsed.message;
 			}
-			// A field hidden by `visibleWhen` (judged against the final values) is
-			// not validated and its raw text is left as is, so showing it again
-			// restores what the user had typed.
-			const hidden = new Set<string>();
-			for (const field of names) {
-				const def = this.#def(field);
-				if (def && !isFieldVisible(def, values)) hidden.add(field);
+			// A field hidden by `visibleWhen` is not validated and keeps its old
+			// value and its raw text, so showing it again restores what the user
+			// had typed. What is judged (visibility, validation) must be the values
+			// that are finally kept, so: reset the hidden fields to their old
+			// values, judge again, and repeat until the hidden set stops changing
+			// (bounded; resetting a field can show or hide others).
+			const hiddenOf = (vals: Values): Set<string> => {
+				const set = new Set<string>();
+				for (const field of names) {
+					const def = this.#def(field);
+					if (def && !isFieldVisible(def, vals)) set.add(field);
+				}
+				return set;
+			};
+			const resetHidden = (set: Set<string>): Values => {
+				let next = values;
+				for (const field of set) next = { ...next, [field]: this.#values[field] };
+				return next;
+			};
+			let hidden = hiddenOf(values);
+			for (let i = 0; i <= names.size; i++) {
+				const next = hiddenOf(resetHidden(hidden));
+				const same = next.size === hidden.size && [...next].every((f) => hidden.has(f));
+				hidden = next;
+				if (same) break;
 			}
+			values = resetHidden(hidden);
 			for (const field of names) {
 				if (hidden.has(field)) continue;
 				if (field in parseErrors) {
@@ -345,8 +366,7 @@ class Draft implements FormDraft<Values> {
 			}
 			this.#errors = {};
 			if (rawFields.length > 0) {
-				// Hidden fields keep their old value and their raw text.
-				for (const field of hidden) values = { ...values, [field]: this.#values[field] };
+				// Hidden fields keep their old value and their raw text (`values` already has them reset).
 				const kept: Record<string, string> = {};
 				for (const field of rawFields) if (hidden.has(field)) kept[field] = this.#raw[field]!;
 				this.#values = values;
@@ -358,10 +378,14 @@ class Draft implements FormDraft<Values> {
 	}
 
 	snapshotForApply(): FormDraftSnapshot<Values> {
-		return untrack(() => ({ values: copy(this.#values), revision: this.#revision }));
+		return untrack(() => ({
+			values: copy(this.#values),
+			submitValues: copy(submitValuesOf(this.#schema, this.#values)),
+			revision: this.#revision
+		}));
 	}
 
-	markApplied(applied: FormDraftSnapshot<Values>): boolean {
+	markApplied(applied: Pick<FormDraftSnapshot<Values>, 'values' | 'revision'>): boolean {
 		return untrack(() => {
 			if (applied.revision < this.#baselineRevision || applied.revision > this.#revision) {
 				return false;
@@ -407,7 +431,7 @@ export function draftSourceFrom(
 		async apply() {
 			if (!draft.commitAll()) return false;
 			const snapshot = draft.snapshotForApply();
-			if ((await apply(copy(snapshot.values))) !== true) return false;
+			if ((await apply(copy(snapshot.submitValues))) !== true) return false;
 			draft.markApplied(snapshot);
 			return true;
 		},

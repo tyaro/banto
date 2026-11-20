@@ -260,3 +260,66 @@ describe('FormDraft commitAll with hidden fields (#714)', () => {
 		expect(draft.raw.qty).toBe('-');
 	});
 });
+
+describe('draftSourceFrom with hidden fields (#714)', () => {
+	const sc: FormSchema = {
+		fields: [
+			{ name: 'on', label: 'On', type: 'checkbox' },
+			{ name: 'qty', label: 'Qty', type: 'number', visibleWhen: (v) => v.on === true },
+			{ name: 'title', label: 'Title', type: 'text' }
+		]
+	};
+
+	it('leaves the key of a hidden (valid) field out of what apply gets, but keeps values, raw and baseline', async () => {
+		const draft = createFormDraft({
+			key: 'k',
+			schema: sc,
+			initial: { on: true, qty: 3, title: 't' },
+			messages: { notANumber: () => 'NaN!' }
+		});
+		draft.setValue('on', false);
+		draft.setRaw('qty', '7x');
+		let sent: Record<string, unknown> = {};
+		const source = draftSourceFrom(draft, async (values) => {
+			sent = values;
+			return true;
+		});
+		expect(await source.apply()).toBe(true);
+		expect(sent).toEqual({ on: false, title: 't' });
+		expect('qty' in sent).toBe(false);
+		// Shown again: the value is back, the raw text is still there.
+		expect(draft.values.qty).toBe(3);
+		expect(draft.raw.qty).toBe('7x');
+		// The baseline holds the whole values, so only the raw text keeps it dirty.
+		expect(draft.baseline.qty).toBe(3);
+		expect(draft.snapshotForApply().values.qty).toBe(3);
+	});
+
+	it('judges visibility and validation against the values finally kept (hidden field reset first)', () => {
+		const s2: FormSchema = {
+			fields: [
+				{ name: 'show', label: 'Show', type: 'checkbox' },
+				{ name: 'qty', label: 'Qty', type: 'number', visibleWhen: (v) => v.show === true },
+				{
+					name: 'title',
+					label: 'Title',
+					type: 'text',
+					required: true,
+					visibleWhen: (v) => (v.qty as number) < 5
+				}
+			]
+		};
+		const draft = createFormDraft({
+			key: 'k',
+			schema: s2,
+			initial: { show: true, qty: 3, title: '' },
+			messages: { notANumber: () => 'NaN!', required: () => 'req' }
+		});
+		draft.setRaw('qty', '10');
+		draft.setValue('show', false);
+		// qty is hidden and goes back to 3, so title is visible again and empty.
+		expect(draft.commitAll()).toBe(false);
+		expect(draft.errors.title).toBeTruthy();
+		expect(draft.values.qty).toBe(3);
+	});
+});

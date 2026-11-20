@@ -11,7 +11,7 @@
 	import { tick, untrack, type Snippet } from 'svelte';
 	import { isTemporalType, type FieldDef, type FormSchema, type FormAppearance } from './types';
 	import type { FormStore } from './store.svelte';
-	import { focusFallbackName, layoutOf } from './layout';
+	import { focusCandidateNames, layoutOf } from './layout';
 	import { getFieldInputs, type FieldInputs } from './fieldInputs';
 	import TextField from './fields/TextField.svelte';
 	import PasswordField from './fields/PasswordField.svelte';
@@ -85,11 +85,17 @@
 			if (!lost || visible.has(lost)) return;
 			focusedName = null;
 			if (document.activeElement && document.activeElement !== document.body) return;
-			const target = focusFallbackName(schema, store.values, lost);
+			const candidates = focusCandidateNames(schema, store.values, lost);
 			void tick().then(() => {
-				const at = schema.fields.findIndex((d) => d.name === target);
-				const el = at >= 0 ? document.getElementById(`${formId}-field-${at}`) : null;
-				(el ?? formEl?.querySelector<HTMLElement>('button[type="submit"]'))?.focus();
+				// Try the neighbours in display order until one takes the focus
+				// (a disabled field does not); then the submit button.
+				for (const name of candidates) {
+					const at = schema.fields.findIndex((d) => d.name === name);
+					const el = at >= 0 ? document.getElementById(`${formId}-field-${at}`) : null;
+					el?.focus();
+					if (el && document.activeElement === el) return;
+				}
+				formEl?.querySelector<HTMLElement>('button[type="submit"]')?.focus();
 			});
 		});
 	});

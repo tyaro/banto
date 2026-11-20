@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	focusFallbackName,
+	focusCandidateNames,
 	hiddenFieldNames,
 	isFieldVisible,
 	layoutOf,
@@ -87,17 +87,35 @@ describe('layoutOf', () => {
 	});
 });
 
-describe('focusFallbackName', () => {
-	it('picks the nearest earlier visible field, else the first visible, else null', () => {
-		expect(focusFallbackName(schema, { gift: false }, 'wrap')).toBe('gift');
+describe('focusCandidateNames', () => {
+	it('lists visible fields in display order, nearest earlier first, then later ones', () => {
+		expect(focusCandidateNames(schema, { gift: false }, 'wrap')).toEqual([
+			'gift',
+			'kind',
+			'stray',
+			'name'
+		]);
+		const sections: FormSchema = {
+			sections: [
+				{ id: 'basic', title: 'Basic' },
+				{ id: 'ship', title: 'Ship' }
+			],
+			fields: [
+				{ name: 'a', label: 'A', type: 'text', section: 'ship' },
+				{ name: 'b', label: 'B', type: 'text', section: 'basic', visibleWhen: (v) => v.b !== 'x' },
+				{ name: 'c', label: 'C', type: 'text', section: 'basic' }
+			]
+		};
+		// Display order is B, C, A: with B gone, C comes first (not A).
+		expect(focusCandidateNames(sections, { b: 'x' }, 'b')).toEqual(['c', 'a']);
 		const s: FormSchema = {
 			fields: [
 				{ name: 'a', label: 'A', type: 'text', visibleWhen: () => false },
 				{ name: 'b', label: 'B', type: 'text' }
 			]
 		};
-		expect(focusFallbackName(s, {}, 'a')).toBe('b');
-		expect(focusFallbackName({ fields: [s.fields[0]] }, {}, 'a')).toBeNull();
+		expect(focusCandidateNames(s, {}, 'a')).toEqual(['b']);
+		expect(focusCandidateNames({ fields: [s.fields[0]] }, {}, 'a')).toEqual([]);
 	});
 });
 

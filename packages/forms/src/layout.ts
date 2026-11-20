@@ -60,11 +60,15 @@ export interface LayoutGroup {
  * as no section.
  */
 export function layoutOf(schema: FormSchema, values: Record<string, unknown>): LayoutGroup[] {
+	return layoutWhere(schema, (def) => isFieldVisible(def, values));
+}
+
+function layoutWhere(schema: FormSchema, shown: (def: FieldDef) => boolean): LayoutGroup[] {
 	const known = new Map((schema.sections ?? []).map((section) => [section.id, section]));
 	const loose: LayoutField[] = [];
 	const bySection = new Map<string, LayoutField[]>();
 	schema.fields.forEach((def, index) => {
-		if (!isFieldVisible(def, values)) return;
+		if (!shown(def)) return;
 		const id = def.section !== undefined && known.has(def.section) ? def.section : undefined;
 		if (id === undefined) loose.push({ def, index });
 		else bySection.set(id, [...(bySection.get(id) ?? []), { def, index }]);
@@ -85,17 +89,24 @@ export function layoutOf(schema: FormSchema, values: Record<string, unknown>): L
 }
 
 /**
- * Where focus goes when the field it was on gets hidden: the nearest visible
- * field before it in `fields` order, else the first visible one, else null
- * (nothing is visible; the caller leaves focus alone).
+ * Where focus may go when the field it was on gets hidden: the names of the
+ * visible fields in DISPLAY order (as `layoutOf` renders them, sections
+ * included), nearest first - the ones before the hidden field, going back,
+ * then the ones after it, going forward. The caller tries them in order until
+ * one really takes focus (a disabled field does not), and falls back to the
+ * submit button when none does. Empty when nothing is visible.
  */
-export function focusFallbackName(
+export function focusCandidateNames(
 	schema: FormSchema,
 	values: Record<string, unknown>,
 	hiddenName: string
-): string | null {
-	const at = schema.fields.findIndex((def) => def.name === hiddenName);
-	const visible = schema.fields.filter((def) => isFieldVisible(def, values));
-	const before = visible.filter((def) => schema.fields.indexOf(def) < at);
-	return (before.at(-1) ?? visible[0])?.name ?? null;
+): string[] {
+	// Lay out as if the hidden field were still shown, to know where it sat.
+	const order = layoutWhere(
+		schema,
+		(def) => def.name === hiddenName || isFieldVisible(def, values)
+	).flatMap((group) => group.fields.map((f) => f.def.name));
+	const at = order.indexOf(hiddenName);
+	if (at < 0) return order.filter((name) => name !== hiddenName);
+	return [...order.slice(0, at).reverse(), ...order.slice(at + 1)];
 }

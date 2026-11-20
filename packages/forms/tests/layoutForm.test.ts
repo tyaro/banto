@@ -119,4 +119,22 @@ describe('BantoForm layout (#714)', () => {
 		expect(document.activeElement).not.toBe(document.body);
 		expect(document.activeElement).toBe(screen.getByLabelText('A'));
 	});
+
+	it('skips a candidate that cannot take focus (disabled) and goes on to the next', async () => {
+		const schema: FormSchema = {
+			fields: [
+				{ name: 'a', label: 'A', type: 'text' },
+				{ name: 'lock', label: 'Lock', type: 'checkbox', readonly: true },
+				{ name: 'b', label: 'B', type: 'text', visibleWhen: (v) => v.b !== 'x' }
+			]
+		};
+		render(BantoForm, { schema, store: createFormStore(schema), onSubmit: vi.fn() });
+		expect((screen.getByLabelText('Lock') as HTMLInputElement).disabled).toBe(true);
+		const b = screen.getByLabelText('B') as HTMLInputElement;
+		b.focus();
+		await fireEvent.input(b, { target: { value: 'x' } });
+		flushSync();
+		await new Promise((r) => setTimeout(r, 10));
+		expect(document.activeElement).toBe(screen.getByLabelText('A'));
+	});
 });

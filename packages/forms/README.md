@@ -185,7 +185,7 @@ pane の外（ページや controller）で `createFormDraft` を作り、pane �
 ```
 
 - **適用**: `draftSourceFrom` の `apply` は、全欄を確定 → `snapshotForApply()` → 送信 →
-  成功したときだけ `markApplied(snapshot)`。baseline になるのは**適用を始めた時点の
+  成功したときだけ `markApplied(snapshot)`。送る値は `snapshot.submitValues`（`visibleWhen` で隠れた欄のキーを除く）。baseline になるのは**適用を始めた時点の
   snapshot** で、適用の待機中に打った入力は dirty のまま残る。自前で書くときも同じ順で。
 - **`settle` の結果**: `'applied'` / `'discarded'` は「解決した時点で対象がすべて clean」。
   待機中に入力があれば `'dirty-again'`、適用の失敗は `'failed'`、待機中に対象が
@@ -291,7 +291,10 @@ const schema: FormSchema = {
   `onSubmit` には `store.submitValues`（隠れた欄のキーだけを除いた値。欄に無いキーは残る）が渡る。
   入力した値は消さずに `store.values` に残るので、再び表示されれば戻る（`isDirty` は値全体で見るため、隠した後も変更ありのまま）。
   更新で隠れたキーが「送られなかった」ことをサーバーがどう扱うか（無視か、空にするか）は `DataProvider` 側で確かめる。
-  フォーカスのある欄が隠れたときは、直前の見える欄にフォーカスを移す。
+  draft も同じで、`draftSourceFrom` の `apply` に渡る値（`snapshotForApply().submitValues`）は隠れた欄のキーを除く。
+  `values`・`raw`・baseline（dirty の比較）は全体のまま。
+  フォーカスのある欄が隠れたときは、画面の表示順（セクションを含む）で直前の見える欄、無ければ後ろの欄へ移す。
+  disabled などでフォーカスできない欄は飛ばし、どれも無ければ送信ボタンへ移す（`focusCandidateNames`）。
 - **`help`**: 欄の下に出し、入力欄が `aria-describedby` で指す。エラーも出ているときは「ヘルプ → エラー」の順で両方を指す。
 
 純関数（`isFieldVisible`・`submitValuesOf`・`layoutOf` など）は `layout.ts` にあり、Svelte なしで使える。
