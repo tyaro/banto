@@ -148,13 +148,19 @@ export interface ListConditions {
 }
 
 export type CollectResult =
-	{ kind: 'ok'; items: DeleteManyItem[] } | { kind: 'tooMany' } | { kind: 'versionMissing' };
+	| { kind: 'ok'; items: DeleteManyItem[] }
+	| { kind: 'tooMany' }
+	| { kind: 'versionMissing' }
+	/** The result moved while it was read (a repeated id, a changed count): the set is not trustworthy. */
+	| { kind: 'changed' };
 
 /**
  * Every record the conditions match, with the `version` just read, for
  * "select all matching" - page by page. `tooMany` as soon as the result is
  * known to exceed `max` (the first page's `totalCount`, or the rows actually
- * collected). A row met twice (the result shifted between pages) is kept once.
+ * collected). `changed` when the result moved while it was read: a row met
+ * twice, a `totalCount` that differs from the first page's, or a collected
+ * count that is not the `totalCount` - the set could be missing rows.
  */
 export async function collectMatchingItems(
 	getList: (params: ListParams) => Promise<ListResult<Record<string, unknown>>>,
@@ -165,6 +171,7 @@ export async function collectMatchingItems(
 	const pageSize = options.pageSize ?? BULK_DELETE_COLLECT_PAGE_SIZE;
 	const byId = new Map<RowId, DeleteManyItem>();
 	let offset = 0;
+	let firstTotal: number | undefined;
 	// One page more than `max` rows need: a result that keeps growing ends too.
 	const maxPages = Math.ceil(max / pageSize) + 1;
 	for (let page = 0; page < maxPages; page++) {
@@ -175,13 +182,17 @@ export async function collectMatchingItems(
 			search: conditions.search
 		});
 		if (result.totalCount > max) return { kind: 'tooMany' };
+		if (firstTotal !== undefined && result.totalCount !== firstTotal) return { kind: 'changed' };
+		firstTotal = result.totalCount;
 		for (const row of result.rows) {
 			const id = row.id as RowId;
-			if (!byId.has(id)) byId.set(id, toItem(id, lockVersionOf(row)));
+			if (byId.has(id)) return { kind: 'changed' };
+			byId.set(id, toItem(id, lockVersionOf(row)));
 		}
 		if (byId.size > max) return { kind: 'tooMany' };
 		offset += result.rows.length;
 		if (result.rows.length === 0 || offset >= result.totalCount) {
+			if (byId.size !== result.totalCount) return { kind: 'changed' };
 			const items = [...byId.values()];
 			return allOrNoneVersioned(items) ? { kind: 'ok', items } : { kind: 'versionMissing' };
 		}
@@ -201,9 +212,28 @@ export function captureSendGuard<Scope>(session: {
 	capture: () => Scope;
 	isCurrent: (scope: Scope) => boolean;
 	isDestroyed: () => boolean;
+	/**
+	 * The list's and selection's generation (anything that changes whenever
+	 * the search, mode, sort, filters or selection change), compared with
+	 * `Object.is`. The send is refused once it differs from the press.
+	 */
+	view?: () => unknown;
 }): () => boolean {
 	const scope = session.capture();
-	return () => !session.isDestroyed() && session.isCurrent(scope);
+	const sameView = captureViewGuard(session.view ?? (() => 0));
+	return () => !session.isDestroyed() && session.isCurrent(scope) && sameView();
+}
+
+/**
+ * "Still the list and selection the delete was pressed on?" Captured at the
+ * press; `false` once `view()` returns something else (the user searched,
+ * changed mode or filters, or changed the selection). What was read or asked
+ * for the old list must not be confirmed, sent or used to clear the new
+ * selection.
+ */
+export function captureViewGuard(view: () => unknown): () => boolean {
+	const at = view();
+	return () => Object.is(view(), at);
 }
 
 export type BulkDeleteFailure =
@@ -237,6 +267,8 @@ export type BulkDeleteOutcome =
 	| { kind: 'tooMany' }
 	/** A versioned record without a known version. Nothing sent. */
 	| { kind: 'versionMissing' }
+	/** The matching rows moved while they were read. Nothing sent. */
+	| { kind: 'changed' }
 	/** "All matching" matched nothing by the time it was read. Nothing sent. */
 	| { kind: 'noRows' }
 	| BulkDeleteFailure;
@@ -285,7 +317,8 @@ export async function runBulkDelete(
 			return { kind: 'error', message: errorMessageOf(err) };
 		}
 		if (collected.kind !== 'ok') return collected;
-		// The read took a while: do not open a dialog for a session that is gone.
+		// The read took a while: do not open a dialog for a session that is gone
+		// or a list that is no longer the one delete was pressed on.
 		if (!deps.canSend()) return { kind: 'stale' };
 		items = collected.items;
 	} else {

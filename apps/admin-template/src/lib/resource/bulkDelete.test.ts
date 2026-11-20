@@ -6,6 +6,7 @@ import {
 	bulkDeleteFailureOf,
 	bulkDeleteOffered,
 	captureSendGuard,
+	captureViewGuard,
 	collectMatchingItems,
 	deleteItemsFromCapture,
 	refreshCapturedVersions,
@@ -199,7 +200,7 @@ describe('collectMatchingItems', () => {
 		expect(result).toEqual({ kind: 'tooMany' });
 	});
 
-	it('keeps a row once when the result shifted between pages', async () => {
+	it('is changed when the result shifted between pages (a row met twice)', async () => {
 		const pages: Row[][] = [
 			[
 				{ id: 1, version: 1 },
@@ -216,10 +217,31 @@ describe('collectMatchingItems', () => {
 			conditions,
 			{ max: 10, pageSize: 2 }
 		);
-		expect(result).toEqual({
-			kind: 'ok',
-			items: [1, 2, 3].map((id) => ({ id, version: 1 }))
-		});
+		expect(result).toEqual({ kind: 'changed' });
+	});
+
+	it('is changed when totalCount differs between pages', async () => {
+		const totals = [4, 5];
+		let call = 0;
+		const result = await collectMatchingItems(
+			async (params) => {
+				const offset = params.pagination?.offset ?? 0;
+				return {
+					rows: versionedRows(5).slice(offset, offset + 2),
+					totalCount: totals[call++] ?? 5
+				};
+			},
+			conditions,
+			{ max: 10, pageSize: 2 }
+		);
+		expect(result).toEqual({ kind: 'changed' });
+	});
+
+	it('is changed when the rows collected are not totalCount', async () => {
+		// The last page came back short: 3 rows for a total of 4.
+		const { getList } = pagedList(versionedRows(3), 4);
+		const result = await collectMatchingItems(getList, conditions, { max: 10, pageSize: 2 });
+		expect(result).toEqual({ kind: 'changed' });
 	});
 
 	it('stops on an empty page and returns nothing for an empty result', async () => {
@@ -270,6 +292,21 @@ describe('captureSendGuard (session check)', () => {
 		const canSend = guard();
 		state.destroyed = true;
 		expect(canSend()).toBe(false);
+	});
+
+	it('refuses once the list or selection generation changed since the press', () => {
+		const state = { generation: 1, view: 'a' };
+		const canSend = captureSendGuard({
+			capture: () => state.generation,
+			isCurrent: (scope) => scope === state.generation,
+			isDestroyed: () => false,
+			view: () => state.view
+		});
+		expect(canSend()).toBe(true);
+		state.view = 'b';
+		expect(canSend()).toBe(false);
+		state.view = 'a';
+		expect(canSend()).toBe(true);
 	});
 
 	it('compares against the scope captured at the press, not a later one', () => {
@@ -422,6 +459,67 @@ describe('runBulkDelete', () => {
 			// `ids` are only the loaded rows and the capture is theirs: neither is used.
 			return { ids: [1], allMatching: true, capture: new Map([[1, 1]]), conditions };
 		}
+
+		it('neither confirms nor sends when the list changed while the rows were read', async () => {
+			const state = { view: 'a' };
+			const canSend = captureSendGuard({
+				capture: () => 0,
+				isCurrent: () => true,
+				isDestroyed: () => false,
+				view: () => state.view
+			});
+			let release: (() => void) | undefined;
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			const { deps, sent, confirmed } = setup({
+				canSend,
+				getList: async () => {
+					await gate;
+					return { rows: [{ id: 1, version: 1 }], totalCount: 1 };
+				}
+			});
+			const running = runBulkDelete(allMatching(), deps);
+			state.view = 'b'; // the user searched while the ids were being collected
+			release?.();
+			expect(await running).toEqual({ kind: 'stale' });
+			expect(confirmed).toEqual([]);
+			expect(sent).toEqual([]);
+		});
+
+		it('does not send when the list changed while the confirmation was open', async () => {
+			const state = { view: 'a' };
+			const canSend = captureSendGuard({
+				capture: () => 0,
+				isCurrent: () => true,
+				isDestroyed: () => false,
+				view: () => state.view
+			});
+			const { deps, sent } = setup({
+				canSend,
+				getList: async () => ({ rows: [{ id: 1, version: 1 }], totalCount: 1 }),
+				confirm: async () => {
+					state.view = 'b';
+					return true;
+				}
+			});
+			expect(await runBulkDelete(allMatching(), deps)).toEqual({ kind: 'stale' });
+			expect(sent).toEqual([]);
+		});
+
+		it('is changed (nothing confirmed or sent) when the result shifted while read', async () => {
+			const { getList } = pagedList([{ id: 1, version: 1 }], 2);
+			const { deps, sent, confirmed } = setup({ getList });
+			expect(await runBulkDelete(allMatching(), deps)).toEqual({ kind: 'changed' });
+			expect(confirmed).toEqual([]);
+			expect(sent).toEqual([]);
+		});
+
+		it('captureViewGuard compares with the value at the press', () => {
+			let view = 1;
+			const same = captureViewGuard(() => view);
+			expect(same()).toBe(true);
+			view = 2;
+			expect(same()).toBe(false);
+		});
 
 		it('reads the matching rows first, confirms THEIR count and sends their ids and versions', async () => {
 			const rows = [

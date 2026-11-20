@@ -132,6 +132,7 @@
 		BULK_DELETE_MAX_ROWS,
 		bulkDeleteOffered,
 		captureSendGuard,
+		captureViewGuard,
 		refreshCapturedVersions,
 		runBulkDelete,
 		updateVersionCapture,
@@ -297,8 +298,13 @@
 		const canSend = captureSendGuard({
 			capture: currentSessionScope,
 			isCurrent: isCurrentSessionScope,
-			isDestroyed: () => destroyed || !isCurrentSessionScope(scope)
+			isDestroyed: () => destroyed || !isCurrentSessionScope(scope),
+			// The read of "all matching" and the dialog take a while: a search or
+			// a mode change meanwhile (it empties the selection) makes the count
+			// and the ids stale.
+			view: () => viewKey
 		});
+		const sameView = captureViewGuard(() => viewKey);
 		if (!canSend()) return;
 		// Set before the dialog: the button stays off while it is open too.
 		bulkDeleting = true;
@@ -332,7 +338,9 @@
 			);
 			// The session changed or the page is gone: this instance says and
 			// touches nothing more (the layout rebuilds the page for the new one).
-			if (outcome.kind === 'stale' || !canSend()) return;
+			// A changed list only keeps the new selection: the delete itself (when
+			// it ran) is still reported.
+			if (outcome.kind === 'stale' || destroyed || !isCurrentSessionScope(scope)) return;
 			switch (outcome.kind) {
 				case 'cancelled':
 					break;
@@ -341,8 +349,10 @@
 						'success',
 						m['resource.bulkDeleteDone']({ count: outcome.deleted.toLocaleString() })
 					);
-					context.clear();
-					clearSelection();
+					if (sameView()) {
+						context.clear();
+						clearSelection();
+					}
 					invalidate(name);
 					break;
 				case 'conflict':
@@ -361,9 +371,14 @@
 					break;
 				case 'noRows':
 					notify('info', m['resource.bulkDeleteNoRows']());
-					context.clear();
-					clearSelection();
+					if (sameView()) {
+						context.clear();
+						clearSelection();
+					}
 					invalidate(name);
+					break;
+				case 'changed':
+					notify('error', m['resource.bulkDeleteChanged']());
 					break;
 				case 'rejected':
 					notify('error', m['resource.bulkDeleteRejected']({ detail: outcome.message }));
@@ -487,6 +502,11 @@
 	);
 	// svelte-ignore state_referenced_locally
 	let search = $state(searchInput);
+	// The list and selection a delete was pressed on: changes whenever the
+	// search, mode, sort, filters or selection do (a derived read is current).
+	const viewKey = $derived(
+		JSON.stringify([mode, search, serverGridState.sort, serverGridState.filters, selectedIds])
+	);
 	// #713: the two modes have different row sets, and a new search term
 	// changes which rows the list (and "all matching") means - the grid cannot
 	// see the term, so the page drops the selection (grid-svelte README).
