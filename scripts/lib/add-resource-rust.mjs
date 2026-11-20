@@ -65,8 +65,11 @@ function sampleText(field, base = 'Sample') {
 }
 
 function jsonBody(spec, overrides = {}) {
+	// 自前のキーだけを見る（`constructor`・`toString` という名前の欄で、Object.prototype の
+	// 継承値を上書きの値として拾わない）。
 	const entries = spec.fields.map(
-		(field) => `"${field.name}": ${overrides[field.name] ?? sampleJson(field)}`
+		(field) =>
+			`"${field.name}": ${Object.hasOwn(overrides, field.name) ? overrides[field.name] : sampleJson(field)}`
 	);
 	return `json!({ ${entries.join(', ')} })`;
 }
@@ -128,7 +131,6 @@ function validationChecks(spec, used) {
 	const blocks = [];
 	for (const field of spec.fields) {
 		const col = field.column;
-		const upper = col.toUpperCase();
 		const push = (message) => `errors.push(FieldError {
                 field: "${field.name}".to_string(),
                 message: ${message},
@@ -143,8 +145,10 @@ function validationChecks(spec, used) {
 			}
 			if (field.max !== undefined) {
 				used.add('maxLength');
-				branches.push(`if trimmed.chars().count() > MAX_${upper}_LEN {
-            ${push(`max_length_message(MAX_${upper}_LEN)`)}
+				// フォーム（@banto/forms の validate.ts）は `str.trim().length`、つまり UTF-16 の
+				// 単位で数える。`chars().count()` だと「𠮷」が 1 文字になり、フォームと食い違う。
+				branches.push(`if trimmed.encode_utf16().count() > ${field.constants.maxLength} {
+            ${push(`max_length_message(${field.constants.maxLength})`)}
         }`);
 			}
 			if (branches.length > 0)
@@ -153,19 +157,16 @@ function validationChecks(spec, used) {
         ${branches.join(' else ')}
     }`);
 		} else if (field.type === 'number') {
-			if (field.min !== undefined) {
-				used.add('min');
-				branches.push(`if value < MIN_${upper} {
-            ${push(`min_message(MIN_${upper})`)}
+			// 書かなかった側も、安全な整数の範囲（フォームの min/max と同じ値）で必ず見る。
+			const min = field.constants.min ?? 'MIN_SAFE_INTEGER';
+			const max = field.constants.max ?? 'MAX_SAFE_INTEGER';
+			used.add('min').add('max').add(min).add(max);
+			branches.push(`if value < ${min} {
+            ${push(`min_message(${min})`)}
         }`);
-			}
-			if (field.max !== undefined) {
-				used.add('max');
-				branches.push(`if value > MAX_${upper} {
-            ${push(`max_message(MAX_${upper})`)}
+			branches.push(`if value > ${max} {
+            ${push(`max_message(${max})`)}
         }`);
-			}
-			if (branches.length === 0) continue;
 			blocks.push(
 				field.required
 					? `    {
@@ -185,7 +186,7 @@ function validationChecks(spec, used) {
         }`
 				: 'None => {}';
 			blocks.push(`    match input.${col}.as_deref().filter(|value| !value.is_empty()) {
-        Some(value) if !is_iso_date(value) => {
+        Some(value) if !banto_core::datetime::is_iso_date(value) => {
             ${push('date_message()')}
         }
         Some(_) => {}
@@ -196,16 +197,27 @@ function validationChecks(spec, used) {
 	return blocks;
 }
 
-function constants(spec) {
+function constants(spec, used) {
 	const lines = [];
+	if (used.has('MIN_SAFE_INTEGER') || used.has('MAX_SAFE_INTEGER'))
+		lines.push(
+			'// The range of a number field without its own bound: the integers a\n' +
+				'// JavaScript number holds exactly (+-(2^53 - 1)), the same as the `min` /\n' +
+				'// `max` of the frontend schema. A larger value would already be rounded\n' +
+				'// by the time the form sends it.'
+		);
+	if (used.has('MIN_SAFE_INTEGER'))
+		lines.push('const MIN_SAFE_INTEGER: i64 = -9_007_199_254_740_991;');
+	if (used.has('MAX_SAFE_INTEGER'))
+		lines.push('const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;');
 	for (const field of spec.fields) {
-		const upper = field.column.toUpperCase();
-		if (field.isText && field.max !== undefined)
-			lines.push(`const MAX_${upper}_LEN: usize = ${field.max};`);
-		if (field.type === 'number' && field.min !== undefined)
-			lines.push(`const MIN_${upper}: i64 = ${field.min};`);
-		if (field.type === 'number' && field.max !== undefined)
-			lines.push(`const MAX_${upper}: i64 = ${field.max};`);
+		const names = field.constants;
+		if (names.maxLength)
+			lines.push(
+				`/// In UTF-16 code units, as the form counts (\`String.length\`).\nconst ${names.maxLength}: usize = ${field.max};`
+			);
+		if (names.min) lines.push(`const ${names.min}: i64 = ${field.min};`);
+		if (names.max) lines.push(`const ${names.max}: i64 = ${field.max};`);
 	}
 	return lines.join('\n');
 }
@@ -225,16 +237,6 @@ const MESSAGE_HELPERS = {
 }`,
 	date: `fn date_message() -> String {
     "日付は YYYY-MM-DD の形で入力してください".to_string()
-}
-
-/// \`YYYY-MM-DD\` by shape only (the form's date picker sends this form).
-fn is_iso_date(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 10
-        && bytes.iter().enumerate().all(|(index, byte)| match index {
-            4 | 7 => *byte == b'-',
-            _ => byte.is_ascii_digit(),
-        })
 }`
 };
 
@@ -243,18 +245,15 @@ function invalidInput(spec) {
 	for (const field of spec.fields) {
 		if (field.isText && field.required)
 			return { field, assign: `input.${field.column} = "   ".to_string();` };
-		if (field.type === 'number' && field.min !== undefined && field.min > -(2 ** 52))
-			return {
-				field,
-				assign: `input.${field.column} = ${field.required ? `${field.min - 1}` : `Some(${field.min - 1})`};`
-			};
-		if (field.type === 'number' && field.max !== undefined && field.max < 2 ** 52)
+		// 上限の 1 つ上（既定の上限なら 2^53。JavaScript でも i64 でも正確に書ける）。
+		if (field.type === 'number')
 			return {
 				field,
 				assign: `input.${field.column} = ${field.required ? `${field.max + 1}` : `Some(${field.max + 1})`};`
 			};
+		// 形は合っているが実在しない日（フォームも断る）。
 		if (field.type === 'date')
-			return { field, assign: `input.${field.column} = Some("2031/02/03".to_string());` };
+			return { field, assign: `input.${field.column} = Some("2031-02-30".to_string());` };
 	}
 	return null;
 }
@@ -292,9 +291,17 @@ export function serviceRs(spec) {
 			return `    #[serde(default)]\n    pub ${field.column}: ${type},`;
 		})
 		.join('\n');
-	const auditFields = fields
-		.map((field) => `        "${field.name}": ${singular}.${field.column},`)
-		.join('\n');
+	// 監査に残すのは、定義で `audit: true` を付けた欄だけ（conventions §6: 既定で値を記録しない）。
+	const audited = fields.filter((field) => field.audit);
+	const auditFieldsBody =
+		audited.length > 0
+			? `    serde_json::json!({
+${audited.map((field) => `        "${field.name}": ${singular}.${field.column},`).join('\n')}
+    })`
+			: `    // No field is marked \`audit: true\` yet, so the log records that a row was
+    // written (who, when, which id) and none of its values.
+    let _ = ${singular};
+    serde_json::json!({})`;
 	const columnMap = fields
 		.map(
 			(field) =>
@@ -303,7 +310,7 @@ export function serviceRs(spec) {
 		.join('\n');
 	const title = spec.titleField ? `"name": ${singular}.${spec.titleField.column}, ` : '';
 	const titleAfter = spec.titleField ? `"name": after.${spec.titleField.column}, ` : '';
-	const constantLines = constants(spec);
+	const constantLines = constants(spec, used);
 	const helpers = Object.keys(MESSAGE_HELPERS)
 		.filter((key) => used.has(key))
 		.map((key) => MESSAGE_HELPERS[key])
@@ -346,7 +353,7 @@ where
 `
 		: '';
 	const invalid = invalidInput(spec);
-	const updateTitle = spec.titleField;
+	const updateTitle = spec.editField;
 	const sampleFields = fields
 		.map((field) => `            ${field.column}: ${sampleRust(field)},`)
 		.join('\n');
@@ -382,24 +389,29 @@ ${rowFields}
     pub version: i64,
 }
 
-/// The fields recorded in the audit log. When you add a field, decide here
-/// whether it belongs in the log (never a secret - conventions section 6).
+/// The values the audit log may record: **only** the fields marked
+/// \`audit: true\` in the field definition this file was generated from
+/// (conventions section 6: no value is recorded by default). The three
+/// details below (create, update, delete) are all built from this one list,
+/// so a field that is not here never reaches the log. Add a field only when
+/// everyone who can read the audit log may read its value - never a secret.${
+		spec.titleField
+			? `\n/// \`detail.name\` is the one field marked \`title: true\` (\`${spec.titleField.name}\`).`
+			: ''
+	}
 fn ${singular}_audit_fields(${singular}: &${rowType}) -> serde_json::Value {
-    serde_json::json!({
-${auditFields}
-    })
+${auditFieldsBody}
 }
 
 /// \`detail\` of an \`update\` audit record: \`{ changes: [{ field, before,
-/// after }] }\`. Both wirings call this, so REST and Tauri record the same
-/// shape (conventions section 1). \`id\`, the \`updatedAt\` stamp and the
-/// \`version\` counter are not user edits.
+/// after }] }\`, the audited fields that changed. Both wirings call this, so
+/// REST and Tauri record the same shape (conventions section 1).
 pub fn ${singular}_update_detail(before: &${rowType}, after: &${rowType}) -> serde_json::Value {
     let changes = banto_admin_services::audit::diff::diff_changes(
-        &serde_json::to_value(before).unwrap_or_default(),
-        &serde_json::to_value(after).unwrap_or_default(),
+        &${singular}_audit_fields(before),
+        &${singular}_audit_fields(after),
         &[],
-        &["id", "updatedAt", "version"],
+        &[],
     );
     serde_json::json!({ ${titleAfter}"changes": changes })
 }
@@ -937,14 +949,113 @@ ${
     }
 `
 		: ''
-}}
+}${auditTest(spec)}}
+`;
+}
+
+/**
+ * 生成した Rust のテスト: 作成・更新・削除の監査の detail に、`audit: true` の欄（と `title` の
+ * 欄の `name`）だけが出ること。全部の欄を前後で違う値にした 2 行から 3 つの detail を作る。
+ */
+function auditTest(spec) {
+	const { singular, rowType, fields, titleField } = spec;
+	const value = (field, index, side) => {
+		const after = side === 'after';
+		switch (field.type) {
+			case 'number': {
+				const number = 7_000_000 + index * 2 + (after ? 1 : 0);
+				return { rust: field.required ? `${number}` : `Some(${number})`, text: null };
+			}
+			case 'checkbox':
+				return { rust: `${after}`, text: null };
+			case 'date': {
+				const text = `${1900 + index}-0${after ? 2 : 1}-01`;
+				return {
+					rust: field.required ? `"${text}".to_string()` : `Some("${text}".to_string())`,
+					text
+				};
+			}
+			default: {
+				const text = `audit-${side}-${field.column}`;
+				return { rust: `"${text}".to_string()`, text };
+			}
+		}
+	};
+	const row = (side, updatedAt, version) => `${rowType} {
+            id: 7,
+${fields.map((field, index) => `            ${field.column}: ${value(field, index, side).rust},`).join('\n')}
+            updated_at: "${updatedAt}".to_string(),
+            version: ${version},
+        }`;
+	const audited = fields
+		.filter((field) => field.audit)
+		.map((field) => field.name)
+		.sort();
+	// 監査対象でない欄の値（文字列で探せるもの）。`title` の欄の値は `detail.name` に出るので除く。
+	const hidden = fields.flatMap((field, index) =>
+		field.audit || field === titleField
+			? []
+			: ['before', 'after']
+					.map((side) => value(field, index, side).text)
+					.filter((text) => text !== null)
+	);
+	const titleIndex = titleField ? fields.indexOf(titleField) : -1;
+	const name = (side) =>
+		titleField ? `, Some("${value(titleField, titleIndex, side).text}")` : ', None::<&str>';
+	const hiddenCheck =
+		hidden.length > 0
+			? `
+            // JSON text of the whole detail, searched for the quoted values.
+            let text = detail.to_string();
+            for value in [
+${hidden.map((text) => `                "\\"${text}\\"",`).join('\n')}
+            ] {
+                assert!(!text.contains(value), "{value} leaked into {text}");
+            }`
+			: '';
+	return `
+    /// Conventions section 6: an audit detail holds the fields marked
+    /// \`audit: true\` (plus \`name\`, the field marked \`title: true\`) and no
+    /// other value of the row - on create, on update and on delete.
+    #[test]
+    fn audit_details_hold_only_the_fields_marked_for_audit() {
+        // Every field differs between the two rows, so an unmarked field
+        // that leaked into a detail would show up as a change.
+        let before = ${row('before', '2031-02-03', 1)};
+        let after = ${row('after', '2031-02-04', 2)};
+        let audited: [&str; ${audited.length}] = [${audited.map((field) => `"${field}"`).join(', ')}];
+
+        for (detail, name) in [
+            (${singular}_create_detail(&before)${name('before')}),
+            (${singular}_update_detail(&before, &after)${name('after')}),
+            (${singular}_delete_detail(&before)${name('before')}),
+        ] {
+            let object = detail.as_object().expect("the detail is an object");
+            for key in object.keys() {
+                assert!(key == "changes" || key == "name", "{key} in {detail}");
+            }
+            assert_eq!(
+                object.get("name").and_then(|value| value.as_str()),
+                name,
+                "{detail}"
+            );
+            let mut changed: Vec<&str> = detail["changes"]
+                .as_array()
+                .expect("changes")
+                .iter()
+                .map(|change| change["field"].as_str().expect("field"))
+                .collect();
+            changed.sort_unstable();
+            assert_eq!(changed, audited, "{detail}");${hiddenCheck}
+        }
+    }
 `;
 }
 
 export function restRs(spec) {
 	const { name, singular, rowType, inputType, serviceType } = spec;
-	const changed = spec.titleField
-		? { [spec.titleField.name]: `"${sampleText(spec.titleField, 'Changed')}"` }
+	const changed = spec.editField
+		? { [spec.editField.name]: `"${sampleText(spec.editField, 'Changed')}"` }
 		: {};
 	return `//! REST routes of the \`${name}\` resource (\`/api/${name}/*\`): the LAN-browser
 //! twin of \`src-tauri\`'s \`${name}_*\` commands. Reads need a session (any

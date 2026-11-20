@@ -19,7 +19,9 @@ import {
 	insertAtAnchor,
 	planAddResource
 } from './lib/add-resource.mjs';
-import { normalizeSpec, singularOf } from './lib/add-resource-names.mjs';
+import { MAX_IDENTIFIER_BYTES, normalizeSpec, singularOf } from './lib/add-resource-names.mjs';
+import { restRs, serviceRs } from './lib/add-resource-rust.mjs';
+import { resourceTs } from './lib/add-resource-frontend.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APP = 'apps/admin-template';
@@ -72,13 +74,15 @@ function migrationNumber(dir, offset) {
 const ORDERS = {
 	label: { ja: '注文', en: 'Orders' },
 	fields: [
-		{ name: 'customerName', type: 'text', required: true, max: 80 },
-		{ name: 'quantity', type: 'number', required: true, min: 1 },
+		{ name: 'customerName', type: 'text', required: true, max: 80, audit: true, title: true },
+		{ name: 'quantity', type: 'number', required: true, min: 1, audit: true },
 		{ name: 'weight', type: 'number' },
 		{ name: 'shipped', type: 'checkbox' },
 		{ name: 'dueDate', type: 'date' }
 	]
 };
+
+const withField = (field) => () => normalizeSpec('orders', { fields: [field] });
 
 // --- 名前とフィールド定義の検証 ---
 
@@ -114,6 +118,7 @@ test('名前から型・パス・キーの名前を導く', () => {
 		['customer_name', 'quantity', 'weight', 'shipped', 'due_date']
 	);
 	assert.equal(spec.titleField.name, 'customerName');
+	assert.equal(spec.editField.name, 'customerName');
 	// ラベルを書かなかった欄は列名から作る。
 	assert.deepEqual(spec.fields[0].label, { ja: 'Customer Name', en: 'Customer Name' });
 	assert.equal(singularOf('categories'), 'category');
@@ -122,7 +127,6 @@ test('名前から型・パス・キーの名前を導く', () => {
 });
 
 test('フィールド定義の誤りは、欄の位置つきで断る', () => {
-	const withField = (field) => () => normalizeSpec('orders', { fields: [field] });
 	assert.throws(withField({ name: 'customer_name', type: 'text' }), /fields\[0\]\.name/);
 	assert.throws(withField({ name: 'id', type: 'number' }), /必ず付ける欄/);
 	assert.throws(withField({ name: 'version', type: 'number' }), /必ず付ける欄/);
@@ -150,6 +154,239 @@ test('フィールド定義の誤りは、欄の位置つきで断る', () => {
 		/重なっています/
 	);
 	assert.throws(() => normalizeSpec('orders', { fields: ORDERS.fields, extra: 1 }), /"extra"/);
+});
+
+// --- 監査に残す欄（conventions §6: 既定で値を記録しない） ---
+
+test('監査の detail に出るのは audit: true の欄だけで、name は title: true の欄だけ', () => {
+	const fields = [
+		{ name: 'customerName', type: 'text', audit: true, title: true },
+		{ name: 'apiToken', type: 'text' },
+		{ name: 'memo', type: 'textarea' },
+		{ name: 'pinCode', type: 'number' },
+		{ name: 'quantity', type: 'number', audit: true },
+		{ name: 'flagged', type: 'checkbox' },
+		{ name: 'birthDate', type: 'date' }
+	];
+	const spec = normalizeSpec('orders', { fields });
+	assert.deepEqual(
+		spec.fields.filter((field) => field.audit).map((field) => field.name),
+		['customerName', 'quantity']
+	);
+	assert.equal(spec.titleField.name, 'customerName');
+
+	const service = serviceRs(spec);
+	// 許可リストは 1 か所（`order_audit_fields`）で、書いてあるのは audit: true の欄だけ。
+	const allowList = service.match(
+		/fn order_audit_fields\(order: &Order\)[^{]*\{([\s\S]*?)\n\}\n/
+	)[1];
+	assert.deepEqual(
+		[...allowList.matchAll(/"(\w+)": order\.(\w+),/g)].map((m) => [m[1], m[2]]),
+		[
+			['customerName', 'customer_name'],
+			['quantity', 'quantity']
+		]
+	);
+	// 作成・更新・削除の 3 つとも、その許可リストだけから作る（行の全体を diff に渡さない）。
+	assert.equal(service.match(/order_audit_fields\(/g).length, 1 + 4);
+	assert.doesNotMatch(service, /serde_json::to_value\((before|after)\)/);
+	for (const detail of ['create', 'update', 'delete'])
+		assert.match(
+			service,
+			new RegExp(
+				`pub fn order_${detail}_detail\\([^{]*\\{[\\s\\S]*?order_audit_fields[\\s\\S]*?"name": (order|after)\\.customer_name, "changes": changes`
+			)
+		);
+	// 生成した Rust のテストが、監査対象外の値が 3 つの detail に出ないことを確かめる。
+	assert.match(service, /fn audit_details_hold_only_the_fields_marked_for_audit\(\)/);
+	assert.match(service, /let audited: \[&str; 2\] = \["customerName", "quantity"\];/);
+	for (const hidden of ['api_token', 'memo'])
+		for (const side of ['before', 'after'])
+			assert.ok(service.includes(`"\\"audit-${side}-${hidden}\\"",`), `${side} ${hidden}`);
+	assert.ok(!service.includes('"\\"audit-before-customer_name\\"",'), 'title の値は name に出る');
+
+	// 何も付けなければ、値は 1 つも残らない（name も入れない）。
+	const bare = normalizeSpec('orders', {
+		fields: fields.map(({ name, type }) => ({ name, type }))
+	});
+	assert.equal(bare.titleField, null);
+	const bareService = serviceRs(bare);
+	assert.match(bareService, /let _ = order;\n {4}serde_json::json!\(\{\}\)/);
+	assert.doesNotMatch(bareService, /"name": /);
+	assert.match(bareService, /let audited: \[&str; 0\] = \[\];/);
+	assert.match(bareService, /order_create_detail\(&before\), None::<&str>\)/);
+
+	// title は text の欄に 1 つだけ。audit・title は真偽値。
+	assert.throws(withField({ name: 'memo', type: 'textarea', title: true }), /title は text/);
+	assert.throws(withField({ name: 'count', type: 'number', title: true }), /title は text/);
+	assert.throws(withField({ name: 'note', type: 'text', audit: 'yes' }), /audit は true か false/);
+	assert.throws(
+		() =>
+			normalizeSpec('orders', {
+				fields: [
+					{ name: 'code', type: 'text', title: true },
+					{ name: 'label', type: 'text', title: true }
+				]
+			}),
+		/"title" を付けられる欄は 1 つだけ/
+	);
+	// フィールド定義を渡さないときの既定（name だけ）は、生成器が決めた表示名なので残す。
+	const fallback = normalizeSpec('orders');
+	assert.equal(fallback.titleField.name, 'name');
+	assert.equal(fallback.fields[0].audit, true);
+});
+
+// --- PostgreSQL の識別子の長さ ---
+
+test('変換後のテーブル名・列名が 63 バイトを超えたら断る（PostgreSQL は黙って切り詰める）', () => {
+	const fields = [{ name: 'note', type: 'text' }];
+	assert.equal(MAX_IDENTIFIER_BYTES, 63);
+	assert.equal(normalizeSpec('a'.repeat(63), { fields }).name.length, 63);
+	assert.throws(() => normalizeSpec('a'.repeat(64), { fields }), /64 バイト.*上限（63 バイト）/);
+	// 列名は snake_case にした後の長さで見る（camelCase の 62 文字が 64 バイトになる）。
+	const camel = `${'a'.repeat(20)}B${'c'.repeat(20)}D${'e'.repeat(20)}`;
+	assert.equal(camel.length, 62);
+	assert.throws(withField({ name: camel, type: 'text' }), /64 バイト.*上限（63 バイト）/);
+	const fits = normalizeSpec('orders', { fields: [{ name: camel.slice(0, 61), type: 'text' }] });
+	assert.equal(fits.fields[0].column.length, 63);
+	// 先頭 63 バイトが同じ 2 つの列（再レビューで通っていた定義）。
+	assert.throws(
+		() =>
+			normalizeSpec('orders', {
+				fields: [
+					{ name: `${'a'.repeat(69)}x`, type: 'text' },
+					{ name: `${'a'.repeat(69)}y`, type: 'text' }
+				]
+			}),
+		/fields\[0\]\.name.*70 バイト/
+	);
+});
+
+// --- 生成する名前どうしの衝突 ---
+
+test('コンパイルできない Rust・TypeScript になる名前の重なりは、生成前に断る', () => {
+	const fields = [{ name: 'note', type: 'text' }];
+	// 行の型とサービスの型がどちらも ProductsService。
+	assert.throws(
+		() => normalizeSpec('products', { singular: 'products_service', fields }),
+		/"ProductsService" が重なります（行の型 と サービスの型）/
+	);
+	assert.equal(normalizeSpec('products', { singular: 'product', fields }).rowType, 'Product');
+	// 生成したコードが import・定義する型、prelude のトレイト（隠すと `.clone()` が解決できない）。
+	for (const singular of ['write_state', 'delete_query', 'api_error', 'clone', 'serialize'])
+		assert.throws(
+			() => normalizeSpec('orders', { singular, fields }),
+			/生成したコードが使う型と重なります/,
+			`singular: ${singular}`
+		);
+	// リソース名・単数形が、生成した関数の呼ぶ関数やクレートを隠す。
+	for (const name of ['get', 'post', 'middleware', 'record_write'])
+		assert.throws(() => normalizeSpec(name, { fields }), /変数名と重なります/, name);
+	assert.throws(() => normalizeSpec('logs', { singular: 'record_ok', fields }), /変数名と重なり/);
+	for (const name of ['sqlx', 'serde_json', 'chrono'])
+		assert.throws(() => normalizeSpec(name, { fields }), /クレートの名前と重なります/, name);
+	// 検証の定数: text の code（max つき）と number の codeLen（max つき）は、どちらも MAX_CODE_LEN。
+	assert.throws(
+		() =>
+			normalizeSpec('orders', {
+				fields: [
+					{ name: 'code', type: 'text', max: 8 },
+					{ name: 'codeLen', type: 'number', max: 8 }
+				]
+			}),
+		/"MAX_CODE_LEN" が重なります（欄 "code" と 欄 "codeLen"）/
+	);
+	assert.throws(
+		withField({ name: 'safeInteger', type: 'number', max: 8 }),
+		/"MAX_SAFE_INTEGER" が重なります/
+	);
+	// TypeScript: `define` だと定義の名前が import の defineResource と重なる。
+	assert.throws(() => normalizeSpec('define', { fields }), /"defineResource" が重なります/);
+});
+
+test('Object.prototype の名前の欄（constructor など）でも、テストの値は自前のものを使う', () => {
+	const spec = normalizeSpec('orders', {
+		fields: [
+			{ name: 'constructor', type: 'number', required: true },
+			{ name: 'toString', type: 'text' },
+			{ name: 'valueOf', type: 'checkbox' },
+			{ name: 'hasOwnProperty', type: 'date' }
+		]
+	});
+	const rest = restRs(spec);
+	// 作成の本文と、更新の本文（最初の text の欄 toString だけを書き換える）。
+	assert.ok(
+		rest.includes(
+			'json!({ "constructor": 1, "toString": "Sample", "valueOf": false, "hasOwnProperty": "2031-02-03" })'
+		)
+	);
+	assert.ok(
+		rest.includes(
+			'json!({ "constructor": 1, "toString": "Changed", "valueOf": false, "hasOwnProperty": "2031-02-03" })'
+		)
+	);
+	assert.doesNotMatch(rest, /function |\[native code\]/);
+	assert.doesNotMatch(serviceRs(spec), /function |\[native code\]/);
+});
+
+// --- フォームとサービスの検証をそろえる ---
+
+test('文字数・日付・整数の範囲は、フォーム（@banto/forms）と同じ意味で Rust 側も見る', () => {
+	const spec = normalizeSpec('orders', {
+		fields: [
+			{ name: 'code', type: 'text', max: 1 },
+			{ name: 'quantity', type: 'number', required: true },
+			{ name: 'weight', type: 'number', min: 0 },
+			{ name: 'dueDate', type: 'date' }
+		]
+	});
+	const service = serviceRs(spec);
+	const schema = resourceTs(spec);
+
+	// 文字数: フォームは `str.trim().length`（UTF-16 の単位）。「𠮷」は 2。
+	assert.match(service, /trimmed\.encode_utf16\(\)\.count\(\) > MAX_CODE_LEN/);
+	assert.doesNotMatch(service, /chars\(\)\.count\(\)/);
+	assert.equal('𠮷'.trim().length, 2);
+
+	// 日付: 形だけでなく実在日（フォームの isIsoDate と同じ判定の banto_core::datetime）。
+	assert.match(service, /if !banto_core::datetime::is_iso_date\(value\)/);
+	assert.doesNotMatch(service, /\nfn is_iso_date/);
+	// 生成したテストの「検証で落ちる入力」も、形は合っているが実在しない日。
+	assert.match(
+		serviceRs(normalizeSpec('orders', { fields: [{ name: 'dueDate', type: 'date' }] })),
+		/input\.due_date = Some\("2031-02-30"\.to_string\(\)\);/
+	);
+
+	// 整数: 書かなかった側も ±(2^53−1)。Rust の定数とフォームの min/max が同じ値。
+	assert.equal(spec.fields[1].min, Number.MIN_SAFE_INTEGER);
+	assert.equal(spec.fields[1].max, Number.MAX_SAFE_INTEGER);
+	assert.match(service, /const MIN_SAFE_INTEGER: i64 = -9_007_199_254_740_991;/);
+	assert.match(service, /const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;/);
+	assert.equal(-9_007_199_254_740_991, Number.MIN_SAFE_INTEGER);
+	assert.equal(9_007_199_254_740_991, Number.MAX_SAFE_INTEGER);
+	assert.match(service, /let value = input\.quantity;\s+if value < MIN_SAFE_INTEGER \{/);
+	assert.match(service, /else if value > MAX_SAFE_INTEGER \{/);
+	// 生成したテストは、上限の 1 つ上（2^53）が検証で落ちることを確かめる。
+	assert.match(service, /input\.quantity = 9007199254740992;/);
+	assert.match(service, /const MIN_WEIGHT: i64 = 0;/);
+	assert.match(service, /if value < MIN_WEIGHT \{[\s\S]*?else if value > MAX_SAFE_INTEGER \{/);
+	assert.match(
+		schema,
+		/name: 'quantity',[\s\S]*?min: Number\.MIN_SAFE_INTEGER,\n\t\t\tmax: Number\.MAX_SAFE_INTEGER,/
+	);
+	assert.match(schema, /name: 'weight',[\s\S]*?min: 0,\n\t\t\tmax: Number\.MAX_SAFE_INTEGER,/);
+	// 範囲の外の min・max は断る（丸められた値が定数になるのを防ぐ）。
+	assert.throws(
+		withField({ name: 'count', type: 'number', max: 2 ** 53 }),
+		/9007199254740991 の整数/
+	);
+	assert.throws(withField({ name: 'count', type: 'number', min: -(2 ** 53) }), /の整数で書いて/);
+	assert.throws(withField({ name: 'count', type: 'number', max: 1.5 }), /の整数で書いて/);
+	assert.equal(
+		normalizeSpec('orders', { fields: [{ name: 'count', type: 'number', max: 2 ** 53 - 1 }] })
+			.fields[0].max,
+		Number.MAX_SAFE_INTEGER
+	);
 });
 
 // --- アンカーへの差し込み ---
@@ -298,6 +535,16 @@ test('テンプレートのコピーに生成し、2 つ目のリソースも続
 
 		// 同じ名前でもう一度は、既にあるファイルを見つけて止まる。
 		assert.throws(() => planAddResource(dir, 'orders', ORDERS), /既にあります/);
+		// テンプレートに既にある名前（Tauri 側の関数・モジュール・AppResources の欄・定義）と
+		// 重なるときも、理由を並べて止まる。
+		assert.throws(
+			() => planAddResource(dir, 'orders', ORDERS),
+			(err) =>
+				/生成する関数と同じ名前が既にあります（[^）]*orders_create_body/.test(err.message) &&
+				/core\/src\/lib\.rs: モジュールか import の名前 `orders`/.test(err.message) &&
+				/`AppResources` に `orders` の欄が既にあります/.test(err.message) &&
+				/`ordersResource` が既にあります/.test(err.message)
+		);
 
 		// アンカーは残っているので、次のリソースを続けて足せる（番号は次へ）。
 		const second = planAddResource(dir, 'invoices');

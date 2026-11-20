@@ -11,8 +11,15 @@ function schemaField(spec, field) {
 		`\t\t\ttype: '${field.type}'`
 	];
 	if (field.required) lines.push(`\t\t\trequired: true`);
-	if (field.min !== undefined) lines.push(`\t\t\tmin: ${field.min}`);
-	if (field.max !== undefined) lines.push(`\t\t\tmax: ${field.max}`);
+	// number は必ず範囲を持つ（書かなかった側は安全な整数の端。Rust の検証と同じ値）。
+	const bound = (value) =>
+		value === Number.MIN_SAFE_INTEGER
+			? 'Number.MIN_SAFE_INTEGER'
+			: value === Number.MAX_SAFE_INTEGER
+				? 'Number.MAX_SAFE_INTEGER'
+				: `${value}`;
+	if (field.min !== undefined) lines.push(`\t\t\tmin: ${bound(field.min)}`);
+	if (field.max !== undefined) lines.push(`\t\t\tmax: ${bound(field.max)}`);
 	if (field.type === 'number') lines.push(`\t\t\tvalidate: integerValidate`);
 	// 最後の行以外にカンマを付ける（先頭 2 行は付いている）。
 	const [name, label, ...rest] = lines;
@@ -26,6 +33,9 @@ export function resourceTs(spec) {
 		? `
 // The Rust input takes an \`i64\`, so a fractional value is rejected here too
 // instead of after a round trip. An emptied optional input is not a number yet.
+// Every number field also has a \`min\` and a \`max\` within the safe integers
+// (+-(2^53 - 1)), the same range the Rust validation checks: a larger value
+// is already rounded when it gets here, and the bound rejects it.
 const integerValidate = (value: unknown): string | null =>
 	value === '' || value === null || value === undefined || Number.isInteger(Number(value))
 		? null

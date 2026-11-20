@@ -54,9 +54,18 @@ pnpm banto add resource orders --dry-run             # 何を書くかだけを�
 			"type": "text",
 			"required": true,
 			"max": 80,
+			"audit": true,
+			"title": true,
 			"label": { "ja": "顧客名", "en": "Customer" }
 		},
-		{ "name": "quantity", "type": "number", "required": true, "min": 1, "max": 9999 },
+		{
+			"name": "quantity",
+			"type": "number",
+			"required": true,
+			"min": 1,
+			"max": 9999,
+			"audit": true
+		},
 		{ "name": "note", "type": "textarea", "max": 400 },
 		{ "name": "shipped", "type": "checkbox" },
 		{ "name": "dueDate", "type": "date" }
@@ -73,12 +82,68 @@ pnpm banto add resource orders --dry-run             # 何を書くかだけを�
 | `fields[].name` | camelCase。列名は snake_case にしたもの。`id`・`updatedAt`・`version` は生成器が必ず付けるので書かない                                           |
 | `fields[].type` | `text`・`textarea`（`TEXT NOT NULL`）、`number`（整数。任意なら NULL 可）、`checkbox`（真偽）、`date`（`YYYY-MM-DD` の文字列。任意なら NULL 可） |
 | `required`      | 必須（`checkbox` には付けられない）                                                                                                              |
-| `min`・`max`    | `number` は値の範囲、`text`・`textarea` の `max` は文字数の上限。Rust の検証とフォームの両方に同じ値が入る                                       |
+| `min`・`max`    | `number` は値の範囲、`text`・`textarea` の `max` は文字数の上限。Rust の検証とフォームの両方に同じ値が入る（下の「フォームとサービスの検証」）   |
+| `audit`         | `true` で、その欄の値を監査の detail に残す。**既定は `false`（残さない）**。下の「監査に残す欄」                                                |
+| `title`         | `true` で、その欄の値を監査の `detail.name` に入れる（一覧で行を見分ける名前）。`text` の欄に 1 つだけ。既定は無し                               |
 | `label`         | 文字列か `{ "ja", "en" }`。省くと名前から作る（`customerName` → `Customer Name`）。生成した後に `messages/ja.json`・`en.json` で直す             |
 | `singular`      | 行の型の名前のもと（省くと複数形から導く: `orders` → `Order`）。導いた名前が予約語や既存の型と重なるときに書く                                   |
 
 `select`・`radio`・`reference` などの型は生成しない。生成した後で、手本（items）と
 `@banto/forms` を見て足す。
+
+#### 監査に残す欄（`audit`・`title`）
+
+監査の detail に値が出るのは、**`audit: true` を付けた欄だけ**（conventions §6: 既定で
+値を記録しない。パスワード・トークン・個人情報の欄を、書き忘れで監査ログに流さないため）。
+
+- 作成・削除の detail は `audit: true` の欄の値、更新の detail はそのうち変わった欄の
+  前後の値（`changes`）。`audit` を 1 つも付けなければ、「誰が・いつ・どの id を」だけが
+  残り、値は 1 つも残らない。
+- `detail.name` は `title: true` を付けた欄の値。付けなければ `name` は入らない。
+  `title` を付けた欄は、`audit` を付けなくても値が `detail.name` に出る（明示した欄なので）。
+- 生成したサービスでは、残す欄は `<singular>_audit_fields` の 1 か所にあり、3 つの detail
+  （`_create_detail`・`_update_detail`・`_delete_detail`）はそこだけから作る。生成した後で
+  欄を足すときは、**監査ログを読める全員に見せてよい値か**を決めてからここに足す。
+  生成したテスト `audit_details_hold_only_the_fields_marked_for_audit` が、付けていない
+  欄の値が 3 つの detail のどれにも出ないことを確かめる。
+- フィールド定義を渡さないときの既定（必須の `name` だけ）は、`name` に `audit`・`title`
+  の両方が付く。
+
+#### フォームとサービスの検証
+
+生成したフォームの定義と Rust の検証は、同じ入力を同じように通す・断る。
+
+- **文字数（`text`・`textarea` の `max`）は UTF-16 の単位で数える**（前後の空白を除いた後）。
+  フォーム（`@banto/forms`）が `String.length` で数えるのに合わせ、Rust 側は
+  `encode_utf16().count()`。「𠮷」や絵文字は 2 と数える。
+- **`date` は実在する日だけ**（`0001-01-01`〜`9999-12-31`）。`2031-02-30` は、フォームでも
+  Rust（`banto_core::datetime::is_iso_date`）でも断る。
+- **`number` は ±(2^53−1)（`-9007199254740991`〜`9007199254740991`）の整数**。フォームは値を
+  JavaScript の number で持ち、この外の整数は丸められてから届くため。`min`・`max` を
+  書かなかった側は、この範囲の端がフォームの定義（`Number.MIN_SAFE_INTEGER`・
+  `Number.MAX_SAFE_INTEGER`）と Rust の定数の両方に入る。`min`・`max` にこの外の値は書けない。
+  これより大きい値（金額の最小単位での合計・外部の 64 bit の ID など）が要る欄は、`text` に
+  して文字列で持つ。
+
+#### 名前と長さの制約
+
+次のものは、何も書く前に理由を出して断る。
+
+- **リソース名・列名（`fields[].name` を snake_case にしたもの）は 63 バイトまで**。
+  PostgreSQL は識別子を 63 バイトで黙って切り詰めるので、先頭が同じ長い 2 つの列が
+  ぶつかる。SQLite に上限は無いが、両方言で同じ名前にする。生成器はインデックスや名前
+  つきの制約を作らない（主キーと identity の名前は PostgreSQL が付ける）。
+- Rust・SQL（SQLite の全キーワードと PostgreSQL の予約語）の予約語、テンプレートが既に
+  使っている名前、生成するコードの変数・関数・クレートと重なる名前（`get`・`values`・
+  `sqlx` など）。
+- **生成する名前どうしの重なり**: 行の型・入力の型・サービスの型（`products` に
+  `"singular": "products_service"` だと、どちらも `ProductsService`）、生成したコードが
+  使う型（`Role`・`Clone` など。単数形から導く名前が当たるときは `singular` を書く）、
+  検証の定数（`max` つきの text `code` と number `codeLen` は、どちらも `MAX_CODE_LEN`）、
+  TypeScript の定義の名前（`define` → `defineResource`）。
+- テンプレートに既にある名前: `src-tauri/src/lib.rs` の同じ名前の関数、`core/src/lib.rs`・
+  `core/src/rest/mod.rs` の同じ名前のモジュールや import、`AppResources` の同じ名前の欄、
+  `resources/index.ts` の同じ名前の定義。
 
 ### 生成するもの
 

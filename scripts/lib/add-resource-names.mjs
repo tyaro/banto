@@ -72,8 +72,17 @@ const RESERVED_RESOURCE_NAMES = new Set([
 	'users'
 ]);
 
-// 生成した Rust が import する型と同じ名前の行の型は作れない。
+// 生成した Rust が import する型・その場で定義する型（`WriteState`・`DeleteQuery`）・prelude の
+// 型とトレイト。行の型・入力の型・サービスの型がこれと同じ名前だと、二重定義になるか、
+// prelude のトレイトを隠して `.clone()` などが解決できなくなる。
 const RESERVED_TYPE_NAMES = new Set([
+	...(
+		'ApiError AsMut AsRef AuditLogService AuthState Body Clone Copy Debug Default DeleteQuery ' +
+		'Deserialize DoubleEndedIterator Drop Eq ExactSizeIterator Extend Fn FnMut FnOnce From ' +
+		'FromIterator Future Identity Into IntoFuture IntoIterator Iterator Ord PartialEq ' +
+		'PartialOrd Request RoleGuard Send Serialize ServiceExt SessionValidation Sized Sync ' +
+		'ToOwned ToString TryFrom TryInto Unpin Value WriteState'
+	).split(' '),
 	'AppResources',
 	'AppState',
 	'BantoError',
@@ -105,26 +114,98 @@ const RESERVED_TYPE_NAMES = new Set([
 	'Vec'
 ]);
 
-// 生成した Rust の関数が局所変数に使う名前（リソース名・単数形も局所変数になる）。
+// 生成した Rust の関数が局所変数に使う名前と、その関数が呼ぶ関数の名前（リソース名・単数形も
+// 局所変数になるので、`get`・`record_write` などを隠すと呼び出しが解決できなくなる）。
 const RESERVED_LOCALS = new Set(
 	(
-		'actor body columns current dialect errors events headers id input lock missing not_found ' +
-		'params pool previous query result router rows sql state today tx value values version'
+		'actor after before body columns current dialect errors events get headers id input lock ' +
+		'middleware missing not_found params pool post previous query record_ok record_write ' +
+		'require_auth require_role require_role_at_least result router rows sql state today tx ' +
+		'value values version'
 	).split(' ')
 );
+
+// 生成した Rust がパスの先頭に書くクレートの名前（同じ名前のモジュールを作ると、クレートの
+// ルートでそのパスがモジュールを指すようになる）。
+const RESERVED_CRATES = new Set(
+	(
+		'admin_template_core alloc axum banto_admin_services banto_attachments banto_core ' +
+		'banto_server banto_storage chrono core serde serde_json sqlx std tauri tokio tower'
+	).split(' ')
+);
+
+// 生成したサービスのモジュールが固定の名前で持つ定数（欄から導く定数と重ねない）。
+const FIXED_CONSTANTS = [
+	'RESOURCE',
+	'SELECT_ROWS',
+	'SELECT_COUNT',
+	'RETURNING',
+	'VERSION_BUMP',
+	'CONFLICT_MESSAGE',
+	'MIN_SAFE_INTEGER',
+	'MAX_SAFE_INTEGER'
+];
+
+// 生成したサービスのモジュールが固定の名前で持つ関数（単数形から導く関数と重ねない）。
+const FIXED_FUNCTIONS = [
+	'required_message',
+	'min_message',
+	'max_message',
+	'max_length_message',
+	'date_message',
+	'optional_integer',
+	'validate_input',
+	'column_map',
+	'check_version',
+	'local_today'
+];
+
+// 生成した TypeScript の定義が import・定義する名前（`<camel>Schema`・`<camel>Resource` と重ねない）。
+const FRONTEND_NAMES = ['Table2', 'm', 'defineResource', 'integerValidate'];
+
+/**
+ * PostgreSQL の識別子の上限（NAMEDATALEN - 1）。これより長い名前は黙って切り詰められ、
+ * 先頭 63 バイトが同じ 2 つの列がぶつかる。SQLite に上限は無いが、両方言で同じ名前にする。
+ */
+export const MAX_IDENTIFIER_BYTES = 63;
+
+/**
+ * number の欄が取れる範囲（±(2^53−1)）。フォームは値を JavaScript の number で持つので、
+ * この外の整数は丸められてから届く。Rust の検証とフォームの min/max の両方をこの範囲にする。
+ */
+export const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+export const MIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER;
 
 /** 行の型が持つ固定の欄（フィールド定義には書けない名前）。 */
 const BUILT_IN_FIELDS = new Set(['id', 'updatedAt', 'version']);
 
 export const FIELD_TYPES = ['text', 'textarea', 'number', 'checkbox', 'date'];
 
-const FIELD_KEYS = new Set(['name', 'type', 'required', 'min', 'max', 'label']);
+const FIELD_KEYS = new Set(['name', 'type', 'required', 'min', 'max', 'label', 'audit', 'title']);
 const SPEC_KEYS = new Set(['singular', 'label', 'description', 'fields']);
 
-/** フィールド定義を渡さないときの既定: 必須の `name`（80 文字まで）だけ。 */
+/**
+ * フィールド定義を渡さないときの既定: 必須の `name`（80 文字まで）だけ。生成器が自分で決めた
+ * 表示名の欄なので、監査に残し（`audit`）、監査の `detail.name` にも入れる（`title`）。
+ * フィールド定義を渡したときは、どちらも書いた欄にしか付かない。
+ */
 export const DEFAULT_SPEC = {
-	fields: [{ name: 'name', type: 'text', required: true, max: 80 }]
+	fields: [{ name: 'name', type: 'text', required: true, max: 80, audit: true, title: true }]
 };
+
+const byteLength = (text) => Buffer.byteLength(text, 'utf8');
+
+/** 同じ名前が 2 回出たら、どれとどれが重なったかを添えて断る。 */
+function assertDistinct(entries, what, hint) {
+	const seen = new Map();
+	for (const [identifier, origin] of entries) {
+		if (seen.has(identifier))
+			throw new AddResourceError(
+				`${what} "${identifier}" が重なります（${seen.get(identifier)} と ${origin}）。${hint}`
+			);
+		seen.set(identifier, origin);
+	}
+}
 
 export function snakeToPascal(snake) {
 	return snake
@@ -185,7 +266,7 @@ function checkBound(value, where) {
 	if (value === undefined) return undefined;
 	if (!Number.isSafeInteger(value))
 		throw new AddResourceError(
-			`${where} は整数で書いてください（今の値: ${JSON.stringify(value)}）。`
+			`${where} は ${MIN_SAFE_INTEGER}〜${MAX_SAFE_INTEGER} の整数で書いてください（今の値: ${JSON.stringify(value)}）。`
 		);
 	return value;
 }
@@ -217,6 +298,10 @@ function normalizeField(raw, index) {
 		throw new AddResourceError(
 			`${at}.name の "${name}" は Rust か SQL の予約語なので列名にできません。別の名前にしてください。`
 		);
+	if (byteLength(column) > MAX_IDENTIFIER_BYTES)
+		throw new AddResourceError(
+			`${at}.name の "${name}" は列名（${column}）が ${byteLength(column)} バイトになり、PostgreSQL の識別子の上限（${MAX_IDENTIFIER_BYTES} バイト）を超えます。短い名前にしてください。`
+		);
 	if (!FIELD_TYPES.includes(type))
 		throw new AddResourceError(
 			`${at}.type の ${JSON.stringify(type)} は生成できません。生成できる型: ${FIELD_TYPES.join(', ')}。` +
@@ -225,8 +310,13 @@ function normalizeField(raw, index) {
 	if (raw.required !== undefined && typeof raw.required !== 'boolean')
 		throw new AddResourceError(`${at}.required は true か false で書いてください。`);
 	const required = raw.required === true;
-	const min = checkBound(raw.min, `${at}.min`);
-	const max = checkBound(raw.max, `${at}.max`);
+	for (const key of ['audit', 'title'])
+		if (raw[key] !== undefined && typeof raw[key] !== 'boolean')
+			throw new AddResourceError(`${at}.${key} は true か false で書いてください。`);
+	if (raw.title === true && type !== 'text')
+		throw new AddResourceError(`${at}.title は text の欄にだけ付けられます。`);
+	let min = checkBound(raw.min, `${at}.min`);
+	let max = checkBound(raw.max, `${at}.max`);
 	const isText = type === 'text' || type === 'textarea';
 	if (type !== 'number' && min !== undefined)
 		throw new AddResourceError(`${at}.min は number の欄にだけ書けます。`);
@@ -238,6 +328,12 @@ function normalizeField(raw, index) {
 		throw new AddResourceError(`${at} の min が max より大きくなっています。`);
 	if (type === 'checkbox' && required)
 		throw new AddResourceError(`${at}: checkbox に required は付けられません。`);
+	// number は、書かなくても安全な整数の範囲に収める（フォームと Rust の両方に同じ値が入る）。
+	if (type === 'number') {
+		min ??= MIN_SAFE_INTEGER;
+		max ??= MAX_SAFE_INTEGER;
+	}
+	const upper = column.toUpperCase();
 	return {
 		name,
 		column,
@@ -247,6 +343,16 @@ function normalizeField(raw, index) {
 		required,
 		min,
 		max,
+		/** 監査の detail に値を残すか（既定は残さない。conventions §6）。 */
+		audit: raw.audit === true,
+		/** 監査の `detail.name` に入れる欄か。 */
+		title: raw.title === true,
+		/** 生成する Rust の定数の名前（検証の上限・下限。書かなかった number の範囲は共通の定数）。 */
+		constants: {
+			...(isText && max !== undefined ? { maxLength: `MAX_${upper}_LEN` } : {}),
+			...(type === 'number' && raw.min !== undefined ? { min: `MIN_${upper}` } : {}),
+			...(type === 'number' && raw.max !== undefined ? { max: `MAX_${upper}` } : {})
+		},
 		label: localized(raw.label, humanize(column), `${at}.label`)
 	};
 }
@@ -262,6 +368,10 @@ export function normalizeSpec(name, rawSpec = DEFAULT_SPEC) {
 		);
 	if (RESERVED_RESOURCE_NAMES.has(name))
 		throw new AddResourceError(`リソース名 "${name}" はテンプレートが既に使っています。`);
+	if (RESERVED_CRATES.has(name))
+		throw new AddResourceError(
+			`リソース名 "${name}" は生成するコードが使うクレートの名前と重なります。別の名前にしてください。`
+		);
 	if (RUST_KEYWORDS.has(name) || SQL_RESERVED.has(name))
 		throw new AddResourceError(
 			`リソース名 "${name}" は Rust か SQL の予約語なので使えません（モジュール名とテーブル名になります）。`
@@ -269,6 +379,10 @@ export function normalizeSpec(name, rawSpec = DEFAULT_SPEC) {
 	if (RESERVED_LOCALS.has(name))
 		throw new AddResourceError(
 			`リソース名 "${name}" は生成するコードの変数名と重なります。別の名前にしてください。`
+		);
+	if (byteLength(name) > MAX_IDENTIFIER_BYTES)
+		throw new AddResourceError(
+			`リソース名 "${name}" は ${byteLength(name)} バイトで、PostgreSQL の識別子の上限（${MAX_IDENTIFIER_BYTES} バイト）を超えます（テーブル名になります）。短い名前にしてください。`
 		);
 	if (!rawSpec || typeof rawSpec !== 'object' || Array.isArray(rawSpec))
 		throw new AddResourceError('フィールド定義は JSON のオブジェクトで書いてください。');
@@ -290,11 +404,48 @@ export function normalizeSpec(name, rawSpec = DEFAULT_SPEC) {
 			`単数形 "${singular}" は生成するコードの変数名と重なります。フィールド定義に "singular" を書いて別の名前にしてください。`
 		);
 	const rowType = snakeToPascal(singular);
+	const inputType = `${rowType}Input`;
 	const serviceType = `${snakeToPascal(name)}Service`;
-	if (RESERVED_TYPE_NAMES.has(rowType))
-		throw new AddResourceError(
-			`行の型の名前 "${rowType}" は生成したコードが使う型と重なります。フィールド定義に "singular" を書いて別の名前にしてください。`
-		);
+	const types = [
+		[rowType, '行の型'],
+		[inputType, '入力の型'],
+		[serviceType, 'サービスの型']
+	];
+	for (const [type, role] of types)
+		if (RESERVED_TYPE_NAMES.has(type))
+			throw new AddResourceError(
+				`${role}の名前 "${type}" は生成したコードが使う型と重なります。` +
+					(type === serviceType
+						? 'リソース名を変えてください。'
+						: 'フィールド定義に "singular" を書いて別の名前にしてください。')
+			);
+	// 例: `products` に singular: "products_service" だと、行の型もサービスの型も ProductsService。
+	assertDistinct(
+		types,
+		'生成する Rust の型の名前',
+		'フィールド定義の "singular" を別の名前にしてください。'
+	);
+	assertDistinct(
+		[
+			...FIXED_FUNCTIONS.map((fn) => [fn, '生成するコードの関数']),
+			...['audit_fields', 'create_detail', 'update_detail', 'delete_detail'].map((suffix) => [
+				`${singular}_${suffix}`,
+				'単数形から導く関数'
+			])
+		],
+		'生成する Rust の関数の名前',
+		'フィールド定義の "singular" を別の名前にしてください。'
+	);
+	const camel = snakeToCamel(name);
+	assertDistinct(
+		[
+			...FRONTEND_NAMES.map((imported) => [imported, '生成するコードが使う名前']),
+			[`${camel}Schema`, 'フォームの定義'],
+			[`${camel}Resource`, 'リソースの定義']
+		],
+		'生成する TypeScript の名前',
+		'リソース名を変えてください。'
+	);
 
 	if (!Array.isArray(rawSpec.fields) || rawSpec.fields.length === 0)
 		throw new AddResourceError('"fields" に欄を 1 つ以上書いてください。');
@@ -304,6 +455,22 @@ export function normalizeSpec(name, rawSpec = DEFAULT_SPEC) {
 		if (seen.has(field.column)) throw new AddResourceError(`欄 "${field.name}" が重なっています。`);
 		seen.add(field.column);
 	}
+	// 例: text の `code`（max つき）と number の `codeLen`（max つき）は、どちらも MAX_CODE_LEN を作る。
+	assertDistinct(
+		[
+			...FIXED_CONSTANTS.map((constant) => [constant, '生成するコードの定数']),
+			...fields.flatMap((field) =>
+				Object.values(field.constants).map((constant) => [constant, `欄 "${field.name}"`])
+			)
+		],
+		'生成する Rust の定数の名前',
+		'欄の名前を変えてください。'
+	);
+	const titles = fields.filter((field) => field.title);
+	if (titles.length > 1)
+		throw new AddResourceError(
+			`"title" を付けられる欄は 1 つだけです（今は ${titles.map((field) => field.name).join('・')}）。`
+		);
 
 	const label = localized(rawSpec.label, humanize(name), '"label"');
 	const description =
@@ -312,15 +479,17 @@ export function normalizeSpec(name, rawSpec = DEFAULT_SPEC) {
 	return {
 		name,
 		kebab: name.replace(/_/g, '-'),
-		camel: snakeToCamel(name),
+		camel,
 		singular,
 		rowType,
-		inputType: `${rowType}Input`,
+		inputType,
 		serviceType,
 		label,
 		description,
 		fields,
-		/** 監査の detail の `name` と、テストで書き換える欄（最初の text / textarea）。 */
-		titleField: fields.find((field) => field.isText) ?? null
+		/** 監査の `detail.name` に入れる欄（`title: true` を付けた text。無ければ name を入れない）。 */
+		titleField: titles[0] ?? null,
+		/** 生成したテストが更新で書き換える欄（最初の text / textarea）。監査とは関係しない。 */
+		editField: fields.find((field) => field.isText) ?? null
 	};
 }

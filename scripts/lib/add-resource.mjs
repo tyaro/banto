@@ -233,14 +233,41 @@ export function planAddResource(root, name, rawSpec = DEFAULT_SPEC) {
 		contents.set(file, content);
 		return content;
 	};
-	// 生成するコマンドと同じ名前が既にあれば、手で足した同名のリソースとぶつかる
-	// （差し込む前の内容で調べる）。
+	// テンプレートに既にある名前と重なると、差し込んだ後にコンパイルできない（手で足した同名の
+	// リソースや、テンプレートのヘルパー）。差し込む前の内容で調べる。
 	const tauriLib = load(`${APP}/src-tauri/src/lib.rs`);
-	if (
-		tauriLib !== null &&
-		new RegExp(`\\bfn ${spec.name}_(list|get|create|update|delete)\\b`).test(tauriLib)
-	)
-		problems.push(`${APP}/src-tauri/src/lib.rs: \`${spec.name}_*\` のコマンドが既にあります。`);
+	if (tauriLib !== null) {
+		// 生成する関数の名前は、生成物そのものから拾う（テンプレートを変えても食い違わない）。
+		const functionNames = (text) => new Set([...text.matchAll(/\bfn (\w+)/g)].map((m) => m[1]));
+		const existing = functionNames(tauriLib);
+		const taken = [...functionNames(`${tauriCommands(spec)}\n${tauriTests(spec)}`)].filter((fn) =>
+			existing.has(fn)
+		);
+		if (taken.length > 0)
+			problems.push(
+				`${APP}/src-tauri/src/lib.rs: 生成する関数と同じ名前が既にあります（${taken.join(', ')}）。`
+			);
+	}
+	const alreadyNamed = (file, pattern, what) => {
+		const content = load(file);
+		if (content !== null && pattern.test(content)) problems.push(`${file}: ${what}`);
+	};
+	// `mod <name>` の宣言か、同じ名前の import（`use axum::middleware;` など）。
+	const moduleTaken = new RegExp(
+		`\\bmod ${spec.name}\\b|\\buse [^;]*(?:::|[{,\\s]|\\bas )${spec.name}\\s*[;,}]`
+	);
+	for (const file of [`${CORE}/src/lib.rs`, `${CORE}/src/rest/mod.rs`])
+		alreadyNamed(file, moduleTaken, `モジュールか import の名前 \`${spec.name}\` が既にあります。`);
+	alreadyNamed(
+		`${CORE}/src/resources.rs`,
+		new RegExp(`\\bpub ${spec.name}\\s*:`),
+		`\`AppResources\` に \`${spec.name}\` の欄が既にあります。`
+	);
+	alreadyNamed(
+		`${APP}/src/lib/banto/resources/index.ts`,
+		new RegExp(`\\b${spec.camel}Resource\\b`),
+		`\`${spec.camel}Resource\` が既にあります。`
+	);
 	for (const insert of inserts) {
 		const content = load(insert.file);
 		if (content === null) continue;
