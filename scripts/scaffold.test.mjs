@@ -444,3 +444,10 @@ test('編集対象の一覧（verify-architecture の入力）に既知のファ
 	assert.ok(removed.includes('crates/banto-attachments'), '削除対象が REMOVED に出ていない');
 	assert.notEqual(run(['--preset', 'minimal', '--list-touched'], '').status, 0, '--dry-run 専用');
 });
+
+test('--list-banto-only は removeBantoReleaseOnly の消す path と一致する（check-doc-links が使う一覧）', () => {
+	const listed = run(['--list-banto-only'], '').stdout.split(/\r?\n/).filter(Boolean);
+	assert.ok(listed.includes('fixtures/external-consumer'));
+	const plan = run(['--preset', 'minimal', '--dry-run'], '').stdout;
+	for (const p of listed) assert.ok(plan.includes(p), `計画に ${p} が無い`);
+});

@@ -46,8 +46,8 @@ jobs:
   # docs だけの差分: pull_request・fork でなく、merge commit の
   # `git diff HEAD^1 HEAD`（検証する base からの差分。過去の run の記録は要らない）が
   # すべて docs（^docs/、ルート直下の *.md、任意の場所の README*.md）なら、
-  # docs=true・full=false（記録も false）にし、重いジョブを飛ばして `docs` ジョブ
-  # （format / リンク / architecture の軽い検査）だけを走らせる。この判定は基準画像の
+  # docs=true・full=false（記録も false）にし、重いジョブを飛ばして frontend ジョブの
+  # 軽い step（architecture / format / リンクの検査）だけを走らせる。この判定は基準画像の
   # 判定より前。reports/*.md（帳票の DSL、`?raw` で import される）は docs ではない。
   # 注意: Rust は matrix なので job ごと飛ばすとチェック名が必須チェック
   # 「Rust (…) (ubuntu-latest)」等と合わなくなる。そのため job は起動して
@@ -96,7 +96,7 @@ jobs:
           dother=$(printf '%s\n' "$dfiles" | grep -v -E '^$|^docs/|^[^/]+\.md$|(^|/)README(\.[A-Za-z-]+)?\.md$' || true)
           if [ -n "$dfiles" ] && [ -z "$dother" ]; then
             echo "差分のファイル（base からの全部）:"; echo "$dfiles"
-            echo "判定: docs だけの差分。重いジョブを飛ばし、docs ジョブだけ走らせる"
+            echo "判定: docs だけの差分。重いジョブを飛ばし、frontend ジョブの軽い step だけ走らせる"
             record false
             echo "docs=true" >> "$GITHUB_OUTPUT"
             echo "full=false" >> "$GITHUB_OUTPUT"
@@ -139,7 +139,10 @@ jobs:
   frontend:
     name: Frontend (check / test / build)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' }}
+    # docs だけの差分（docs=true・full=false）でも走らせ、format / リンク / architecture
+    # の軽い検査だけをここでする（必須チェックの名前を変えず、失敗をマージの条件に残す）。
+    # 重い step は `if: needs.changes.outputs.docs != 'true'` で飛ばす。
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.docs == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -166,6 +169,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint (ESLint)
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm lint
 
       # docs/conventions.md のうち機械検査可能な不変条件（サービス層の
@@ -184,6 +188,7 @@ jobs:
       # migrations*/ のファイルが 1 バイトでも変わると、その版以前に作った DB が
       # VersionMismatch で起動しなくなる。スクリプト自身のテストも同じ場所で回す。
       - name: Verify released migrations are unchanged
+        if: needs.changes.outputs.docs != 'true'
         run: |
           node --test scripts/verify-migrations-frozen.test.mjs
           pnpm verify:migrations
@@ -192,56 +197,27 @@ jobs:
       # リリース/タグワークフローで `node scripts/check-versions.mjs --tag <name>`
       # として別途検査する）。ルート package.json は private=0.0.0 で例外。
       - name: Verify version consistency
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm check:versions
 
       - name: Format check (Prettier)
         run: pnpm format:check
 
-      # Markdown の相対リンクの実在（docs だけの PR は docs ジョブが同じ検査をする）。
+      # Markdown の相対リンクの実在（docs だけの PR でも走る）。
       - name: Check doc links
         run: pnpm check:doc-links
 
       - name: Type check (svelte-check + tsc)
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm check
 
       - name: Test
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm --recursive --if-present test
 
       - name: Build
+        if: needs.changes.outputs.docs != 'true'
         run: pnpm build
-
-  # docs だけの差分のときだけ走る軽い検査（changes の docs=true）。重いジョブは飛ぶ。
-  # verify:architecture は rule 7（docs の中の `@banto/*` の参照）のために回す。
-  docs:
-    name: Docs (format / links)
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Format check (Prettier)
-        run: pnpm format:check
-
-      - name: Verify architecture invariants
-        run: pnpm verify:architecture
-
-      - name: Check doc links
-        run: pnpm check:doc-links
 
   # i18n サプライチェーン/再現性ガード（テンプレート実用性レビュー §2）。
   # inlang プラグインは以前 jsdelivr の CDN URL で参照されており、毎ビルド

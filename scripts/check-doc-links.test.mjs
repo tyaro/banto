@@ -4,10 +4,16 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
 	EXCLUDED_MD,
 	extractTargets,
 	findBrokenLinks,
+	listBantoOnly,
+	listMarkdownFiles,
 	normalizeTarget,
 	resolveTarget,
 	stripCode
@@ -76,4 +82,46 @@ test('帳票の DSL（reports/*.md）は対象外で、README の正規表現に
 		[]
 	);
 	assert.deepEqual(broken, []);
+});
+
+test('scaffold が消す banto 本体専用の path を指すリンクは、派生先（全部無い）でだけ許す', () => {
+	const files = {
+		'docs/a.md':
+			'[w](../.github/workflows/external-consumer.yml) [f](../fixtures/external-consumer/)'
+	};
+	const bantoOnly = ['fixtures/external-consumer', '.github/workflows/external-consumer.yml'];
+	const run = (existing) =>
+		findBrokenLinks(Object.keys(files), {
+			exists: (p) => new Set(existing).has(p),
+			read: (f) => files[f],
+			bantoOnly
+		});
+	// 派生先: 一覧が全部無いので、どちらも許す。
+	assert.deepEqual(run(['docs/a.md']), []);
+	// 本体: 一覧のどれかが在る。在るものは通り、消えたもの（workflow）は本当のリンク切れ。
+	const broken = run(['docs/a.md', 'fixtures/external-consumer']);
+	assert.deepEqual(
+		broken.map((b) => b.target),
+		['../.github/workflows/external-consumer.yml']
+	);
+});
+
+test('listBantoOnly は scaffold の一覧を返す', () => {
+	const list = listBantoOnly();
+	assert.ok(list.includes('fixtures/external-consumer'));
+	assert.ok(list.every((p) => !p.endsWith('/')));
+});
+
+test('日本語のファイル名の Markdown も git ls-files から正しく取れる（-z）', () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doclinks-'));
+	try {
+		const git = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'pipe' });
+		git('init', '-q');
+		fs.writeFileSync(path.join(dir, '日本語の文書.md'), '# x\n');
+		fs.writeFileSync(path.join(dir, 'plain.md'), '# y\n');
+		git('add', '-A');
+		assert.deepEqual(listMarkdownFiles(dir).sort(), ['plain.md', '日本語の文書.md'].sort());
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 });

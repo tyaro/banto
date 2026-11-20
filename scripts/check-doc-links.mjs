@@ -10,9 +10,13 @@
  * `#anchor` と末尾の `:行番号` は外してパスだけを見る。先頭が `/` ならリポジトリの
  * ルートから、それ以外はファイルのある場所から辿る。
  *
+ * 派生アプリ（scaffold 後）では、scaffold が全プリセットで消す banto 本体専用の path
+ * （`scaffold.mjs --list-banto-only`。fixtures/external-consumer 等）が全部無い。その
+ * path を指すリンクは壊れている扱いにしない（一覧は scaffold が持つ唯一のもの）。
+ *
  * 実行: `node scripts/check-doc-links.mjs`（壊れていれば exit 1）
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,10 +98,32 @@ export function resolveTarget(fromFile, target) {
 	return path.relative(ROOT, abs).split(path.sep).join('/');
 }
 
+/** scaffold が消す banto 本体専用の path（ルート相対）。 */
+export function listBantoOnly() {
+	const res = spawnSync(
+		process.execPath,
+		[path.join(ROOT, 'scripts/scaffold.mjs'), '--list-banto-only'],
+		{
+			cwd: ROOT,
+			encoding: 'utf8'
+		}
+	);
+	if (res.status !== 0)
+		throw new Error(`scaffold --list-banto-only が失敗しました:\n${res.stderr}`);
+	return res.stdout.split(/\r?\n/).filter(Boolean);
+}
+
+/** resolved が、消えた banto 本体専用の path（またはその下）か。 */
+function isRemovedBantoOnly(resolved, bantoOnly) {
+	return bantoOnly.some((p) => resolved === p || resolved.startsWith(`${p}/`));
+}
+
 export function findBrokenLinks(
 	files,
-	{ exists = (p) => fs.existsSync(path.join(ROOT, p)), read } = {}
+	{ exists = (p) => fs.existsSync(path.join(ROOT, p)), read, bantoOnly = [] } = {}
 ) {
+	// 一覧の path が 1 つでも在れば banto 本体（そこで消えていたら本当のリンク切れ）。
+	const derived = bantoOnly.length > 0 && bantoOnly.every((p) => !exists(p));
 	const broken = [];
 	for (const file of files) {
 		if (EXCLUDED_MD.test(file)) continue;
@@ -112,6 +138,7 @@ export function findBrokenLinks(
 					continue;
 				}
 				if (ALLOWLIST.has(resolved) || exists(resolved)) continue;
+				if (derived && isRemovedBantoOnly(resolved, bantoOnly)) continue;
 				broken.push({ file, line: i + 1, target: raw });
 			}
 		});
@@ -119,11 +146,16 @@ export function findBrokenLinks(
 	return broken;
 }
 
-function main() {
-	const files = execFileSync('git', ['ls-files', '*.md'], { cwd: ROOT, encoding: 'utf8' })
-		.split('\n')
+/** git の追跡している Markdown。-z: 既定では日本語などのファイル名がクォートされるので NUL 区切りで読む。 */
+export function listMarkdownFiles(cwd = ROOT) {
+	return execFileSync('git', ['ls-files', '-z', '*.md'], { cwd, encoding: 'utf8' })
+		.split('\0')
 		.filter(Boolean);
-	const broken = findBrokenLinks(files);
+}
+
+function main() {
+	const files = listMarkdownFiles();
+	const broken = findBrokenLinks(files, { bantoOnly: listBantoOnly() });
 	if (broken.length === 0) {
 		console.log(`[check-doc-links] OK: ${files.length} ファイルのリンクを確かめた。`);
 		return;
