@@ -133,14 +133,16 @@ test('Tab and Shift+Tab to a header control do not leave it under the pinned blo
 	});
 	await card.locator('.header-cell:not(.pinned) .cell-body').last().focus();
 
-	// Position of the focused header cell against the right edge of the pinned header.
+	// Position of the focused control (not its cell: a wide cell may stay
+	// partly under the pinned block while the control itself is shown)
+	// against the right edge of the pinned header.
 	const probe = () =>
 		grid.evaluate((el) => {
 			const active = document.activeElement;
 			const cell = active?.closest('.header-cell');
 			const pinned = el.querySelector('.header-cell.pinned');
-			if (!cell || !pinned || cell.classList.contains('pinned')) return null;
-			return cell.getBoundingClientRect().left - pinned.getBoundingClientRect().right;
+			if (!active || !cell || !pinned || cell.classList.contains('pinned')) return null;
+			return active.getBoundingClientRect().left - pinned.getBoundingClientRect().right;
 		});
 
 	let checked = 0;
