@@ -59,7 +59,8 @@ use admin_template_core::db::{display_target, init_db_from_target, is_postgres_u
 use admin_template_core::events::event_channel;
 use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::ItemsService;
-use admin_template_core::rest::{api_router, user_auth_state, Services};
+use admin_template_core::resources::AppResources;
+use admin_template_core::rest::{api_router, resources_router, user_auth_state, Services};
 use admin_template_core::settings::{ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
@@ -127,6 +128,8 @@ async fn main() {
         .expect("init_db should succeed");
 
     let events = event_channel();
+    // The resources added by `pnpm banto add resource` (none in the template).
+    let resources = AppResources::new(&db, &events);
     let items = ItemsService::new(db.clone()).with_events(events.clone());
     let users = UsersService::new(db.clone())
         .with_permission_catalog(admin_template_core::permission_catalog());
@@ -294,6 +297,7 @@ async fn main() {
     // so every response - static UI, `/api/*` JSON, and SSE alike - gets
     // the baseline security headers, regardless of which inner router
     // produced it.
+    let added_resources = resources_router(resources, audit.clone(), auth.clone());
     let services = Services {
         items,
         users,
@@ -305,7 +309,9 @@ async fn main() {
         metrics,
     };
     let app = with_security_headers(
-        api_router(services, auth, events, allow_setup).merge(static_router::<FrontendAssets>()),
+        api_router(services, auth, events, allow_setup)
+            .merge(added_resources)
+            .merge(static_router::<FrontendAssets>()),
     );
 
     let server = start(

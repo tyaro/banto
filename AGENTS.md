@@ -59,6 +59,7 @@ Banto（番頭）は **PC1台から始めて、必要に応じて LAN 内へ共�
 
 - **CRUD リソースを追加する / items を差し替える** →
   [docs/recipes/add-resource.md](docs/recipes/add-resource.md)（チェックリスト形式の正式手順）。
+  定型コードは `pnpm banto add resource <name>` が Rust 側まで生成する（同レシピ「生成器で足す」）。
 - **RBAC ロールを追加する（admin/editor/viewer に足す）** →
   [docs/recipes/add-role.md](docs/recipes/add-role.md)。
 - **利用パッケージをアプリへ組み込む**（scan-wedge / 通知トースト / tree-svelte / 画像の取込）→

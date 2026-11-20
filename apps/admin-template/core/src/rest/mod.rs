@@ -29,6 +29,7 @@
 //! | POST   | `/api/items/import`  | `ItemImportRow[]` | `ImportResult` (editor+, spec M15) |
 //! | POST   | `/api/items/bulk-delete` | `{ kind: "ids", items }` | `{ deleted }` (editor+, Issue #713) |
 // [scaffold:items] end
+// [banto:add-resource:route-table]
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityView` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role,version?,permissions?}` | `UserSummary` (admin; stale `version` -> 409, #651; unknown permission -> 422, #697) |
@@ -238,6 +239,7 @@ use tokio::sync::broadcast;
 
 use crate::audit::{AuditEntry, AuditLogService};
 use crate::backup::BackupService;
+use crate::resources::AppResources;
 // [scaffold:items] begin
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 // [scaffold:items] end
@@ -250,6 +252,7 @@ mod login_notice;
 // [scaffold:items] begin
 mod items;
 // [scaffold:items] end
+// [banto:add-resource:rest-mod]
 #[cfg(test)]
 mod tests;
 
@@ -410,5 +413,25 @@ pub fn api_router(
             events,
         ))
         .merge(ui_settings_router(settings, auth))
+        .layer(middleware::from_fn(require_banto_client_header))
+}
+
+/// The routes of the resources added by `pnpm banto add resource`
+/// (docs/recipes/add-resource.md, Issue #715), behind the same CSRF header
+/// check as [`api_router`]. Kept apart from `api_router` so a new resource
+/// does not change [`Services`] and its call sites: the two servers
+/// (`bin/banto-serve.rs`, `src-tauri`'s `start_embedded_server`) merge this
+/// next to `api_router`. Each generated `<name>_router` layers its own
+/// `require_auth` / `RoleGuard`, like `items_router`. Empty until the first
+/// resource is added.
+pub fn resources_router(
+    resources: AppResources,
+    audit: AuditLogService,
+    auth: AuthState,
+) -> Router {
+    // Nothing reads these until the first resource is added.
+    let _ = (&resources, &audit, &auth);
+    Router::new()
+        // [banto:add-resource:rest-routers]
         .layer(middleware::from_fn(require_banto_client_header))
 }

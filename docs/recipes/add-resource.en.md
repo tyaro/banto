@@ -25,6 +25,34 @@ The screens moved into the shared components under `lib/resource/` (`ResourceLis
 `ResourceDetail`), so what you copy and write is **one definition (`resources/<name>.ts`) and
 three routes**.
 
+## Generating it (`pnpm banto add resource`, Issue #715)
+
+The boilerplate of checklist steps 1-8 below is written by a generator.
+
+```bash
+pnpm banto add resource orders                       # a resource with a required `name` only
+pnpm banto add resource orders --fields orders.json  # with a field definition
+pnpm banto add resource orders --dry-run             # print what it would write, write nothing
+```
+
+- `<name>` is snake_case and plural (`orders`, `purchase_orders`). It becomes the table
+  name, the URL (`/api/<name>`), the Tauri commands (`<name>_list`, ...) and the audit
+  `resource`.
+- **The output is ordinary code.** There is no regeneration and no diff application: a
+  second run with the same name finds the existing files and stops. Edit by hand afterwards.
+- Right after generating, `cargo test`, `pnpm check` and `pnpm verify:architecture` pass.
+- It works after `pnpm scaffold` with any preset (including `display`, which removes items).
+- It writes: both migrations, the service, the REST routes, the Tauri commands, the
+  two-path tests (denied included), the audit details, the ResourcePage definition, the
+  three routes, the message keys (ja / en) and the nav entry. Optimistic locking
+  (`version`) is on by default. CSV import and bulk delete are not generated.
+- Insertions into existing files go to `[banto:add-resource:<slot>]` comments. If any is
+  missing it lists every reason and writes nothing.
+
+The field definition format (a JSON file close to `FormSchema`'s `fields`), the list of
+generated files and the anchor table are in the Japanese
+[add-resource.md](add-resource.md#生成器で足すpnpm-banto-add-resourceissue-715).
+
 ## Checklist (in order of execution)
 
 Proceed Rust side → frontend side. The shortest path is to copy and rewrite the

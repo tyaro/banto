@@ -22,6 +22,101 @@
 そのまま。画面の中身は `lib/resource/` の共通部品（`ResourceListPage`・`ResourceDetail`）に
 移ったので、コピーして書くのは**定義 1 つ（`resources/<name>.ts`）とルート 3 本**になった。
 
+## 生成器で足す（`pnpm banto add resource`、Issue #715）
+
+下のチェックリストの手順 1〜8 の定型コードは、生成器が書く。
+
+```bash
+pnpm banto add resource orders                       # 必須の name（80 文字まで）だけのリソース
+pnpm banto add resource orders --fields orders.json  # フィールド定義を渡す
+pnpm banto add resource orders --dry-run             # 何を書くかだけを出す（何も書かない）
+```
+
+- `<name>` は snake_case の複数形（`orders`、`purchase_orders`）。テーブル名・URL
+  （`/api/<name>`）・Tauri コマンド（`<name>_list` など）・監査の `resource` になる。
+  画面のパスは `_` を `-` にしたもの（`/purchase-orders`）。
+- **生成物は普通のコード**。再生成・差分の適用はしない（同じ名前でもう一度呼ぶと、既に
+  あるファイルを見つけて止まる）。生成した後は手で直す。
+- 最後に `cargo fmt --all` と prettier を呼んで整形する（`--no-format` で省ける）。
+- 生成した直後に `cargo test`・`pnpm check`・`pnpm verify:architecture` が通る。
+- `pnpm scaffold` の後でも使える（items を消す `display` を含む、どのプリセットでも
+  アンカーは残る）。migration の番号は、両方言の今の最大の次。
+
+### フィールド定義（JSON）
+
+```json
+{
+	"label": { "ja": "注文", "en": "Orders" },
+	"description": { "ja": "注文を管理します", "en": "Manage orders" },
+	"fields": [
+		{
+			"name": "customerName",
+			"type": "text",
+			"required": true,
+			"max": 80,
+			"label": { "ja": "顧客名", "en": "Customer" }
+		},
+		{ "name": "quantity", "type": "number", "required": true, "min": 1, "max": 9999 },
+		{ "name": "note", "type": "textarea", "max": 400 },
+		{ "name": "shipped", "type": "checkbox" },
+		{ "name": "dueDate", "type": "date" }
+	]
+}
+```
+
+フォームの定義（`FormSchema` の `fields`）と同じキー（`name`・`type`・`required`・`min`・
+`max`）を使う。TypeScript の定義をそのまま入力にしないのは、依存を足さずに読めないため
+（conventions §3）と、`label` の getter や `validate` の関数からは列の型を決められないため。
+
+| キー            | 意味                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fields[].name` | camelCase。列名は snake_case にしたもの。`id`・`updatedAt`・`version` は生成器が必ず付けるので書かない                                           |
+| `fields[].type` | `text`・`textarea`（`TEXT NOT NULL`）、`number`（整数。任意なら NULL 可）、`checkbox`（真偽）、`date`（`YYYY-MM-DD` の文字列。任意なら NULL 可） |
+| `required`      | 必須（`checkbox` には付けられない）                                                                                                              |
+| `min`・`max`    | `number` は値の範囲、`text`・`textarea` の `max` は文字数の上限。Rust の検証とフォームの両方に同じ値が入る                                       |
+| `label`         | 文字列か `{ "ja", "en" }`。省くと名前から作る（`customerName` → `Customer Name`）。生成した後に `messages/ja.json`・`en.json` で直す             |
+| `singular`      | 行の型の名前のもと（省くと複数形から導く: `orders` → `Order`）。導いた名前が予約語や既存の型と重なるときに書く                                   |
+
+`select`・`radio`・`reference` などの型は生成しない。生成した後で、手本（items）と
+`@banto/forms` を見て足す。
+
+### 生成するもの
+
+| 層               | ファイル                                                                                      | 内容                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| マイグレーション | `core/migrations-sqlite/NNNN_<name>.sql`・`core/migrations-postgres/NNNN_<name>.sql`          | 同じ名前・同じ列で、型だけ方言に合わせる（conventions §11）                                              |
+| サービス         | `core/src/<name>.rs`                                                                          | 行と入力の型、検証、`column_map()`、list/get/create/update/delete、監査の detail、単体テスト             |
+| REST             | `core/src/rest/<name>.rs`                                                                     | `/api/<name>/*`（読み取りは認証のみ、書き込みは `editor` 以上 + 監査）と、denied を含むテスト            |
+| Tauri コマンド   | `src-tauri/src/lib.rs`（追記）                                                                | `<name>_list`・`_get`・`_create`・`_update`・`_delete`（REST と同じ床・同じ監査）と、denied を含むテスト |
+| 配線             | `core/src/lib.rs`・`core/src/resources.rs`・`core/src/rest/mod.rs`（追記）                    | モジュールの宣言、`AppResources` の欄、Route table の行、`resources_router` への merge                   |
+| 両経路の検査     | `scripts/verify-architecture.mjs`（追記）                                                     | `DUAL_PATH`・`TAURI_READ`・`REST_READ` への分類（conventions §1 の機械検査）                             |
+| フロント         | `src/lib/banto/resources/<name>.ts`・`resources/index.ts`（追記）・`src/routes/(app)/<name>/` | ResourcePage の定義（ナビの項目は定義の `nav`）、登録、ルート 3 本                                       |
+| メッセージ       | `messages/ja.json`・`messages/en.json`（追記）                                                | `nav.<name>`・`<name>.resourceLabel`・`<name>.field*`                                                    |
+
+版（`version` 列）による楽観ロックは既定で付く（下の「楽観ロック」の手順 1〜4 に当たる。
+汎用の画面は行に `version` があれば配線される）。生成しないもの: CSV の取込・一括削除
+（どちらも下の節の手順で足す）、デモ（InMemory）のデータ、ダッシュボードのパネル、E2E。
+
+生成したサービスは `rest::Services`・`AppState` に欄を足さず、`AppResources`
+（`core/src/resources.rs`）に入る。REST は `rest::resources_router`（`api_router` の隣で
+merge される）、Tauri は `state.resources.<name>` から使う。手で書くリソースは、
+items と同じ形（`Services`・`AppState` に欄を足す）でも、`AppResources` に足す形でもよい。
+
+### 生成器の差し込み先（アンカー）
+
+既存のファイルへの追記は、`[banto:add-resource:<slot>]` のコメントの位置に行う。
+**1 つでも見つからなければ、理由を全部出して何も書かずに止まる。** 消してしまったら、
+下の表の場所にコメントを戻す。
+
+| ファイル                           | slot                                              | 場所                                                                                           |
+| ---------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `core/src/lib.rs`                  | `core-mod`                                        | `pub mod resources;` の前                                                                      |
+| `core/src/resources.rs`            | `resource-fields`・`resource-init`                | `AppResources` の欄の末尾・`new` の `Self { … }` の末尾                                        |
+| `core/src/rest/mod.rs`             | `route-table`・`rest-mod`・`rest-routers`         | モジュール doc の Route table の末尾・`mod` の並び・`resources_router` の `Router::new()` の次 |
+| `src-tauri/src/lib.rs`             | `tauri-commands`・`tauri-handlers`・`tauri-tests` | コマンドの並び（トップレベル）・`generate_handler![…]` の中・`mod tests` の末尾                |
+| `scripts/verify-architecture.mjs`  | `dual-path`・`tauri-read`・`rest-read`            | `DUAL_PATH`・`TAURI_READ`・`REST_READ` の先頭                                                  |
+| `src/lib/banto/resources/index.ts` | `resource-imports`・`resource-list`               | import の並び・`resources` の定義の後                                                          |
+
 ## チェックリスト（実施順）
 
 Rust 側 → フロント側の順に進める。各ステップの「手本」列のファイルを

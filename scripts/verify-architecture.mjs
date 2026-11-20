@@ -406,6 +406,9 @@ const isAllowedPackageImport = (spec) =>
 	// 対称も照合する（下記 (e)）。auth 系（公開 / 認証のみで resource ロール床が
 	// 無い）は role を付けず、存在チェックのみ対象にする。
 	const DUAL_PATH = [
+		// `pnpm banto add resource` が新しいリソースの対をこの下に足す（下の TAURI_READ・
+		// REST_READ も同じ。docs/recipes/add-resource.md）。
+		// [banto:add-resource:dual-path]
 		{ tauri: 'auth_setup', rest: 'POST /api/auth/setup' },
 		{ tauri: 'auth_login', rest: 'POST /api/auth/login' },
 		{ tauri: 'auth_logout', rest: 'POST /api/auth/logout' },
@@ -489,6 +492,7 @@ const isAllowedPackageImport = (spec) =>
 
 	// 読み取り系（list/get/status。§1 により両経路とも監査せず、対称強制の対象外）。
 	const TAURI_READ = new Set([
+		// [banto:add-resource:tauri-read]
 		'attachments_list',
 		'attachments_read_body',
 		'attachments_read_thumbnail',
@@ -523,6 +527,7 @@ const isAllowedPackageImport = (spec) =>
 
 	// 読み取り系 REST ルート（GET と、body を使うため POST の *_list）。
 	const REST_READ = new Set([
+		// [banto:add-resource:rest-read]
 		'GET /api/auth/status',
 		'GET /api/login-notice',
 		'GET /api/auth/check',

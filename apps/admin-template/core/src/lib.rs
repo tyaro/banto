@@ -12,6 +12,10 @@ pub mod first_boot;
 // [scaffold:items] begin
 pub mod items;
 // [scaffold:items] end
+// `pnpm banto add resource` declares each new resource's module above this
+// line (docs/recipes/add-resource.md).
+// [banto:add-resource:core-mod]
+pub mod resources;
 pub mod rest;
 
 // Theme C (docs/template-scope.md §7): the domain-agnostic services moved to

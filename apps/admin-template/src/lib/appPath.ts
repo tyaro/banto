@@ -17,13 +17,22 @@ import type { Path, ResolvedPathname } from '$app/types';
 export type AppPath = `/${Path}`;
 
 /**
+ * `resolve` narrowed to its pathname form. Called with the whole `Path`
+ * union, its conditional argument type becomes one tuple per route, and
+ * TypeScript only matches a union argument against a limited number of
+ * those (25). The template has 23 routes, so one more resource (three
+ * routes) made the call a type error.
+ */
+const resolvePathname = resolve as (pathname: Path) => ResolvedPathname;
+
+/**
  * `AppPath` -> the href / `goto()` target with the base path prefixed
  * (SvelteKit 3 `resolve()`, which takes the pathname without its leading
  * `/`). Use this, not string concatenation, wherever an `AppPath` leaves the
  * app as a URL.
  */
 export function resolveAppPath(path: AppPath): ResolvedPathname {
-	return resolve(path.slice(1) as Path);
+	return resolvePathname(path.slice(1) as Path);
 }
 
 /**

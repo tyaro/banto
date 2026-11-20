@@ -9,9 +9,14 @@ import type { AppResourceDefinition } from '#lib/resource/types.js';
 // [scaffold:items] begin
 import { itemsResource } from './items';
 // [scaffold:items] end
+// [banto:add-resource:resource-imports]
 
 // D1-d note (display-preset-plan.md, Issue #190 prep): the future `items`
 // remover needs a `swapText` here, not a `cutRegion` delete - `resources`
 // must still be a valid (possibly empty) array afterwards:
 //   `[itemsResource]` -> `[]`
 export const resources: AppResourceDefinition[] = [itemsResource];
+
+// `pnpm banto add resource` registers each new resource above this line
+// (docs/recipes/add-resource.md). The sidebar follows the order here.
+// [banto:add-resource:resource-list]
