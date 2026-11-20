@@ -130,6 +130,62 @@ const columns: GridColumn<Job>[] = [
 - コピー・CSV は従来どおり生の値（`format` も `renderer` も通さない）。列メニュー・列の並べ替え・グループ化・仮想スクロール・server モードの挙動は変わらない。
 - `tone: (value, row) => success | warning | danger | info | neutral | null` は素の文字・`cell`・`renderer` のセルに役割の色を付ける（`render` には効かない）。色は theme の `--banto-success` などの状態色トークンのみで、バッジは `-tint` の組。値は `data-tone` にも出る。色だけに意味を持たせず、`format` やバッジの文字でも伝えること。
 
+## セルに小さな折れ線（sparkline）を描く例（#713）
+
+sparkline は組み込みの `renderer` にしていない（`@banto/grid-svelte` は `@banto/charts` に依存しない）。
+列の `render`（snippet）で、アプリの側から `@banto/charts` の `Sparkline` を描く。
+
+```svelte
+<script lang="ts">
+	import { Sparkline } from '@banto/charts';
+	import { BantoGrid, GridState, type GridColumn } from '@banto/grid-svelte';
+
+	interface Line {
+		id: number;
+		name: string;
+		/** 直近 7 日の出荷数（古い順）。 */
+		shipped: number[];
+	}
+
+	let { rows }: { rows: Line[] } = $props();
+
+	const columns: GridColumn<Line>[] = [
+		{ id: 'name', header: '品名', accessor: 'name', width: 200 },
+		{
+			id: 'shipped',
+			header: '出荷（7日）',
+			// 並べ替え・コピー・CSV が使う値は、最新の 1 日分。snippet は描き方だけを変える。
+			accessor: (row) => row.shipped.at(-1) ?? null,
+			width: 160,
+			render: trendCell
+		}
+	];
+	const gridState = new GridState<Line>(columns);
+</script>
+
+{#snippet trendCell(row: Line)}
+	<span class="trend">
+		<Sparkline values={row.shipped} width={96} height={20} />
+		<span>{row.shipped.at(-1) ?? '—'}</span>
+	</span>
+{/snippet}
+
+<BantoGrid {rows} {columns} state={gridState} getRowId={(row) => row.id} />
+
+<style>
+	.trend {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--banto-space-2);
+	}
+</style>
+```
+
+- `Sparkline` は飾りの図（`aria-hidden`）なので、意味は文字でも出す（上の例は最新の値を横に置く）。
+- 高さは行の高さ（`--banto-grid-row-height`。密度で 32〜52px）に収まる値にする。色は `--banto-chart-1`。
+- `render` の列は編集できない。`tone` も効かない（上の「組み込みのセル表現」の節）。
+- `@banto/charts` を入れないアプリは、snippet の中に `<svg>` を直接書けば同じことができる。
+
 ## 行選択と一括操作バー（#713）
 
 `selectable` を付けると、先頭にチェックボックスの列が出て、1 件以上を選ぶとグリッドの下に一括操作バーが出る（既定は off）。
