@@ -27,6 +27,7 @@
  */
 import { expect, test, type Dialog, type Locator, type Page, type Route } from '@playwright/test';
 import fs from 'node:fs';
+import { createFirstAdmin } from '../first-run-setup';
 import {
 	chooseItemsMode,
 	chooseItemsMoreAction,
@@ -265,20 +266,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	test('1. first-run setup creates the admin account and reaches the dashboard', async () => {
-		await page.goto('/login');
-
-		// Fresh DB -> AuthProvider.status() reports uninitialized -> the login
-		// page renders the setup form, not the login form (login/+page.svelte).
-		await expect(page.getByRole('heading', { name: 'Banto' })).toBeVisible();
-		await expect(page.getByLabel('表示名')).toBeVisible();
-
-		await page.getByLabel('表示名').fill(ADMIN_DISPLAY_NAME);
-		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-		await page.getByLabel('パスワード（8文字以上）').fill(ADMIN_PASSWORD);
-		await page.getByLabel('パスワード（確認）').fill(ADMIN_PASSWORD);
-		await page.getByRole('button', { name: 'アカウントを作成' }).click();
-
-		await expect(page).toHaveURL(/\/dashboard$/);
+		await createFirstAdmin(page, {
+			displayName: ADMIN_DISPLAY_NAME,
+			username: ADMIN_USERNAME,
+			password: ADMIN_PASSWORD
+		});
 		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 		// With public viewing disabled, reload restores the ordinary account
 		// from the identity endpoint even though its username is "public".

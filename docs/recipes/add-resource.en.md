@@ -78,7 +78,11 @@ generated files and the anchor table are in the Japanese
 CI checks generate-then-build (`Generate resource → check` in `template-acceptance.yml`): it
 generates `orders` from `scripts/fixtures/add-resource/orders.json` (all five types, required and
 optional, `audit`, `title`, min/max) into a clean copy, then runs `pnpm verify:architecture`,
-`pnpm --filter admin-template check`, `cargo test` (core and src-tauri).
+`pnpm --filter admin-template check`, `cargo test` (core and src-tauri). Finally it runs `pnpm build`,
+builds `banto-serve`, and runs `pnpm e2e:add-resource` (`e2e/tests-add-resource/`): first-run
+setup, open the `orders` list from the nav, create one record through the form, see the row in the
+list (Playwright). That spec only works in a generated copy and is not part of the regular
+`pnpm e2e`.
 
 ## Checklist (in order of execution)
 

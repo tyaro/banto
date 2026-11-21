@@ -190,7 +190,10 @@ items と同じ形（`Services`・`AppState` に欄を足す）でも、`AppReso
 生成→ビルドは CI の `Generate resource → check`（`template-acceptance.yml`）が検査する。
 `scripts/fixtures/add-resource/orders.json`（5 つの型すべて・必須と任意・`audit`・`title`・
 min/max を含む）で素のコピーに `orders` を生成し、`pnpm verify:architecture`・
-`pnpm --filter admin-template check`・`cargo test`（core と src-tauri）を通す。
+`pnpm --filter admin-template check`・`cargo test`（core と src-tauri）を通し、最後に
+`pnpm build` → `banto-serve` のビルド → `pnpm e2e:add-resource`（`e2e/tests-add-resource/`）で、
+初回セットアップ → ナビから `orders` の一覧 → フォームで 1 件作成 → 一覧にその行、までを
+Playwright で確かめる（この spec は生成後のコピーでだけ動く。ふだんの `pnpm e2e` には入らない）。
 アンカーを動かしたら、この検査で崩れが見つかる。
 
 ## チェックリスト（実施順）

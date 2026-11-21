@@ -99,10 +99,18 @@ const bantoServeBin = path.join(
  * `pnpm e2e*`) keeps all entries.
  */
 function selectWebServers<T extends { url?: string }>(servers: T[]): T[] {
-	const wanted = process.env.BANTO_E2E_SERVERS;
+	// `--project=add-resource` のときは banto-serve 1 本だけで足りる（2 本目の
+	// banto-serve や vite の dev/preview を立てない）。明示の BANTO_E2E_SERVERS が優先。
+	const wanted =
+		process.env.BANTO_E2E_SERVERS ||
+		(process.argv.includes('--project=add-resource') ? 'add-resource' : undefined);
 	if (wanted === undefined || wanted === '') return servers;
-	// Comma-separated names: `visual` (vite preview) and/or `demo` (vite dev, Issue #553).
-	const urls: Record<string, string> = { visual: VISUAL_BASE_URL, demo: DEMO_BASE_URL };
+	// Comma-separated names: `visual` (vite preview), `demo` (vite dev, Issue #553) and/or `add-resource` (banto-serve, Issue #715).
+	const urls: Record<string, string> = {
+		visual: VISUAL_BASE_URL,
+		demo: DEMO_BASE_URL,
+		'add-resource': BASE_URL
+	};
 	return wanted.split(',').map((name) => {
 		const url = urls[name.trim()];
 		const found = servers.filter((s) => s.url === url);
@@ -168,6 +176,21 @@ export default defineConfig({
 			name: 'public-viewer',
 			testDir: './tests-public-viewer',
 			use: { ...devices['Desktop Chrome'], baseURL: PUBLIC_VIEWER_BASE_URL }
+		},
+		// `pnpm banto add resource` の生成直後の確認（Issue #715）。`tests-add-resource/` の
+		// spec は生成した orders の画面を前提にするので、生成していない状態では動かない。
+		// ふだんの `pnpm e2e`（--project=chromium）には入らず、CI の template-acceptance
+		// `add-resource` ジョブだけが `pnpm e2e:add-resource` で走らせる。サーバーは
+		// `chromium` と同じ banto-serve（BASE_URL、新しい DB）で、`selectWebServers` が
+		// このプロジェクトのときはそれだけを立てる。
+		{
+			name: 'add-resource',
+			testDir: './tests-add-resource',
+			// 再試行しない: spec は空 DB の初回セットアップから始まるが、DB は実行全体で
+			// 1 つ（webServer が共通）。再試行は 2 回目が通常ログイン画面で必ず落ち、
+			// 最初の失敗の場所を隠すだけになる。
+			retries: 0,
+			use: { ...devices['Desktop Chrome'] }
 		},
 		// Demo-build-only UI (Issue #553), against `vite dev` with VITE_BANTO_DEMO=1.
 		{

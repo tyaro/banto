@@ -1737,6 +1737,7 @@ function replaceE2eForDisplay() {
 	);
 	removeDir('e2e/tests-public-viewer', 'e2e: 閲覧公開スイート削除');
 	removeDir('e2e/visual', 'e2e: ビジュアル回帰 + axe-core スイート削除');
+	removeDir('e2e/tests-add-resource', 'e2e: リソース生成の確認スイート削除（#715）');
 	removeFile('.github/workflows/visual-baselines.yml', 'CI: visual-baselines ワークフロー削除');
 
 	// playwright.config.ts: 先頭の doc コメントを display 版に差し替える
@@ -1812,6 +1813,11 @@ function replaceE2eForDisplay() {
 		ROOT_PKG,
 		'root package.json: e2e:visual スクリプト除去',
 		`    "e2e:visual": "playwright test --config=e2e/playwright.config.ts --project=visual",\n`
+	);
+	drop(
+		ROOT_PKG,
+		'root package.json: e2e:add-resource スクリプト除去',
+		`    "e2e:add-resource": "playwright test --config=e2e/playwright.config.ts --project=add-resource",\n`
 	);
 	drop(
 		ROOT_PKG,
