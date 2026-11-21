@@ -17,7 +17,8 @@
   "scripts": {
     "dev": "pnpm --filter admin-template dev",
     "build": "pnpm --filter admin-template build",
-    "check": "pnpm --recursive --if-present check",
+    "check": "pnpm --recursive --if-present check && pnpm check:e2e",
+    "check:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "test": "pnpm --recursive --if-present test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -40,12 +41,15 @@
     "@axe-core/playwright": "^4.14.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.65.0",
+    "@types/node": "^24.0.0",
+    "axe-core": "^4.14.0",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-svelte": "^3.24.1",
     "globals": "^17.14.0",
     "prettier": "^3.10.1",
     "prettier-plugin-svelte": "^4.1.1",
+    "typescript": "^6.0.0",
     "typescript-eslint": "^8.72.2"
   }
 }

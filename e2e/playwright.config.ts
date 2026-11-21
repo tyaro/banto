@@ -41,7 +41,7 @@
  * first-run setup screen, which only appears against a database with zero
  * users - reusing a server/db left over from a previous run would skip it.
  */
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -98,7 +98,11 @@ const bantoServeBin = path.join(
  * needs that, so it can skip building `banto-serve`. Unset (every local
  * `pnpm e2e*`) keeps all entries.
  */
-function selectWebServers<T extends { url?: string }>(servers: T[]): T[] {
+// webServer の 1 件分の型（Playwright は名前では export していない）。配列リテラルから
+// 推論させると、要素ごとに env の形が食い違って webServer に渡せなくなる。
+type WebServer = Extract<NonNullable<PlaywrightTestConfig['webServer']>, unknown[]>[number];
+
+function selectWebServers(servers: WebServer[]): WebServer[] {
 	// `--project=add-resource` のときは banto-serve 1 本だけで足りる（2 本目の
 	// banto-serve や vite の dev/preview を立てない）。明示の BANTO_E2E_SERVERS が優先。
 	const wanted =

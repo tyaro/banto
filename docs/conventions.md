@@ -193,6 +193,9 @@ Windows のファイアウォールの許可（Issue #219 段階 2）で昇格�
 `windows-sys` と `embed-resource` を直接の依存として足す判断は
 [ADR-0021](adr/0021-firewall-elevated-helper.md)（3 件目。既に `Cargo.lock` に推移的に入っている版に
 揃え、ビルドに入る crate は増えない。補助プログラムと起動のモジュールに限る。Proposed）。
+`e2e/` の型検査のためにルートの devDependencies へ `@types/node`・`typescript`・`axe-core` を足す判断は
+[ADR-0032](adr/0032-root-e2e-typecheck-devdeps.md)（4 件目。型だけで実行時の影響なし。`typescript` と `axe-core` は
+lockfile に既にある版に揃え、新しいパッケージは `@types/node` のみ）。
 
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 
