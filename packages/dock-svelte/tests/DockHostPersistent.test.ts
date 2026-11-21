@@ -313,9 +313,10 @@ describe('persistent is read when the change is applied', () => {
  * jsdom has no layout, so `scrollTop` is faked the way a browser treats it (#768): an offset
  * belongs to the element while it stays rendered in the same frame (`.body`). Read after the
  * element was hidden (a background tab, the stash) or moved into another frame, it is gone (0).
- * Returns the restore.
+ * `limit` is how far an element can be scrolled right now (a browser clamps the offset of a
+ * frame whose content got shorter); without it nothing is clamped. Returns the restore.
  */
-function fakeScrollTop(): () => void {
+function fakeScrollTop(limit?: (el: Element) => number): () => void {
 	const tops = new WeakMap<Element, { top: number; frame: Element | null }>();
 	const proto = Element.prototype;
 	const original = Object.getOwnPropertyDescriptor(proto, 'scrollTop');
@@ -328,6 +329,7 @@ function fakeScrollTop(): () => void {
 				tops.delete(this);
 				return 0;
 			}
+			if (limit) record.top = Math.min(record.top, limit(this));
 			return record.top;
 		},
 		set(this: Element, top: number) {
@@ -515,6 +517,78 @@ describe('focus and scroll after a move', () => {
 			expect(frameOf('p')).toBe(frame);
 			expect(frame.scrollTop).toBe(130);
 			expect(scrollerOf('p').scrollTop).toBe(15);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a pane the update left alone, put back at the top before the update settled, stays there (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'p' || id === 'f' });
+			await settle();
+			const frame = frameOf('p');
+			frame.scrollTop = 70;
+			scrollerOf('p').scrollTop = 15;
+			// Another window is collapsed; the app then puts the pane that did not change at the top.
+			dock.setCollapsed('f', true);
+			flushSync();
+			frame.scrollTop = 0;
+			scrollerOf('p').scrollTop = 0;
+			await settle();
+			expect(frameOf('p')).toBe(frame);
+			expect(frame.scrollTop).toBe(0);
+			expect(scrollerOf('p').scrollTop).toBe(0);
+		} finally {
+			restore();
+		}
+	});
+
+	it("a tab switched away and back in one task gets its own offset back, not the other tab's (#768 review)", async () => {
+		const restore = fakeScrollTop();
+		try {
+			mount(mixed(), { persistent: (id) => id === 'x' || id === 'y' });
+			await settle();
+			const frame = frameOf('x');
+			frame.scrollTop = 70;
+			scrollerOf('x').scrollTop = 25;
+			// X -> Y -> X, each applied at once, nothing settled in between.
+			clickPress(tabOf('y'));
+			frame.scrollTop = 142;
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frameOf('x')).toBe(frame);
+			expect(frame.scrollTop).toBe(70);
+			expect(scrollerOf('x').scrollTop).toBe(25);
+			// What Y was scrolled to while it was on top is Y's.
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frame.scrollTop).toBe(142);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a tab shown for the first time starts at the top, also where its frame clamped the offset it took over (#768 review)', async () => {
+		// Y is short: while it is on top the shared frame cannot be scrolled past 30.
+		const yOnTop = () =>
+			document.querySelector('[data-dock-persistent-slot="y"]')?.closest('[hidden]') === null;
+		const restore = fakeScrollTop((el) =>
+			el.classList.contains('body') && el.contains(probe('y')) && yOnTop() ? 30 : Infinity
+		);
+		try {
+			mount(mixed(), { persistent: (id) => id === 'x' || id === 'y' });
+			await settle();
+			const frame = frameOf('x');
+			frame.scrollTop = 150;
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frameOf('y')).toBe(frame);
+			// Not X's 150 clamped to 30.
+			expect(frame.scrollTop).toBe(0);
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frame.scrollTop).toBe(150);
 		} finally {
 			restore();
 		}

@@ -306,6 +306,15 @@
 		const structure = `${layoutStructureKey(layout)}\u0001${flyout ?? ''}\u0001${discarded}`;
 		untrack(() => persistentContents.snapshot(structure));
 	});
+	// After the blocks of that update ran, in the same flush (declared in the script, so it runs
+	// after the effects of the template: the receptacles the update mounted hold their content):
+	// the scroll offsets go back before the code that applied the update goes on (#768).
+	$effect(() => {
+		void dock.layout;
+		void dock.flyoutPanel;
+		void lifecycle.discarded.size;
+		untrack(() => persistentContents.arranged());
+	});
 
 	/** Edges that hold an auto-hidden band (#694 PR-3): the docked layer is inset by them. */
 	const bandEdges = $derived(new Set(dock.autoHidden.map((e) => e.edge)));

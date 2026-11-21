@@ -54,14 +54,22 @@ interface ScrollReport {
 	activeIsInput: boolean;
 }
 
-async function mountHarness(page: Page, persistent: string[] = ['right']): Promise<void> {
+/**
+ * `tabbed`: start with the right and the left pane as the tabs of one group, the right one on
+ * top - so the left pane was never on screen (nothing is recorded for it).
+ */
+async function mountHarness(
+	page: Page,
+	persistent: string[] = ['right'],
+	tabbed = false
+): Promise<void> {
 	await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
 	await page.goto('/tree/workspace-dock');
 	await expect(page.getByTestId('workspace-dock-center')).toBeVisible({ timeout: 60_000 });
 	// The dev server may reload the page once more while it optimises deps: mount until it holds.
 	await expect(async () => {
 		await page.evaluate(
-			async ({ urls, persistent }) => {
+			async ({ urls, persistent, tabbed }) => {
 				const w = window as unknown as Record<string, unknown>;
 				if (w.__dock768) return;
 				const dockMod = await import(/* @vite-ignore */ urls.dock);
@@ -90,7 +98,30 @@ async function mountHarness(page: Page, persistent: string[] = ['right']): Promi
 				target.id = 'dock768';
 				target.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#fff';
 				document.body.append(target);
-				const state = dockMod.createDockState();
+				const panel = (id: string) => ({ type: 'panel', id, title: id });
+				const state = dockMod.createDockState(
+					tabbed
+						? {
+								version: 2,
+								floating: [],
+								docked: {
+									type: 'split',
+									id: 'tabbed-root',
+									direction: 'row',
+									sizes: [0.4, 0.6],
+									children: [
+										{
+											type: 'tabs',
+											id: 'tabbed-group',
+											activeIndex: 0,
+											children: [panel('right'), panel('left')]
+										},
+										panel('center')
+									]
+								}
+							}
+						: undefined
+				);
 				// For a test that applies two updates in one task (no microtask in between).
 				w.__dock768state = state;
 				w.__dock768flush = svelte.flushSync;
@@ -105,7 +136,7 @@ async function mountHarness(page: Page, persistent: string[] = ['right']): Promi
 					}
 				});
 			},
-			{ urls: URLS, persistent }
+			{ urls: URLS, persistent, tabbed }
 		);
 		await expect(page.getByLabel('right field 0')).toBeVisible({ timeout: 5_000 });
 	}).toPass({ timeout: 60_000 });
@@ -372,4 +403,90 @@ test('two updates in one task: a pane the first one left alone keeps what it was
 		inner: 50,
 		left: 90
 	});
+});
+
+/**
+ * The right pane (long, on top, scrolled to 150) and the left pane (never shown; made so short
+ * that their shared frame cannot be scrolled past 30 while it is on top) as the tabs of one
+ * group. `steps` runs in the page, in ONE task, with `show(id)` (the tab switch, applied at
+ * once) and the shared frame.
+ */
+async function withShortTab<T>(
+	page: Page,
+	steps: (tools: {
+		show: (id: 'left' | 'right') => void;
+		frame: HTMLElement;
+		inner: HTMLElement;
+		nextFrame: () => Promise<unknown>;
+	}) => Promise<T>
+): Promise<T> {
+	await mountHarness(page, ['left', 'right'], true);
+	return page.evaluate(async (source) => {
+		const w = window as unknown as Record<string, unknown>;
+		const state = w.__dock768state as {
+			layout: { docked: unknown };
+			setActiveTab(groupId: string, index: number): void;
+		};
+		const flush = w.__dock768flush as () => void;
+		type Node = { type: string; id: string; children?: Node[] };
+		const find = (node: Node): Node | null =>
+			node.type === 'tabs' ? node : (node.children?.map(find).find(Boolean) ?? null);
+		const show = (id: 'left' | 'right') => {
+			const group = find(state.layout.docked as Node)!;
+			state.setActiveTab(
+				group.id,
+				group.children!.findIndex((child) => child.id === id)
+			);
+			flush();
+		};
+		const nextFrame = () =>
+			new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+		const frame = document
+			.querySelector<HTMLElement>('#dock768 [data-dock-persistent-slot="right"]')!
+			.closest<HTMLElement>('.body')!;
+		const inner = document.querySelector<HTMLElement>('#dock768 [data-inner="right"]')!;
+		const left = document.querySelector<HTMLElement>('#dock768 [data-pane="left"]')!;
+		left.style.cssText = `height:${frame.clientHeight + 30}px;overflow:hidden`;
+		frame.scrollTop = 150;
+		inner.scrollTop = 60;
+		await nextFrame();
+		const run = new Function(`return (${source})`)() as typeof steps;
+		return run({ show, frame, inner, nextFrame });
+	}, steps.toString());
+}
+
+test('a short tab shown for the first time starts at the top, not where its frame clamped the offset of the tab before (#768 review)', async ({
+	page
+}) => {
+	const report = await withShortTab(page, async ({ show, frame, nextFrame }) => {
+		show('left');
+		// Right there: before the code that switched the tab goes on.
+		const atOnce = frame.scrollTop;
+		const reach = frame.scrollHeight - frame.clientHeight;
+		await nextFrame();
+		await nextFrame();
+		const settled = frame.scrollTop;
+		show('right');
+		await nextFrame();
+		return { atOnce, reach, settled, right: frame.scrollTop };
+	});
+	expect(report).toEqual({ atOnce: 0, reach: 30, settled: 0, right: 150 });
+});
+
+test('a tab switched away and back in one task gets its own offset back (#768 review)', async ({
+	page
+}) => {
+	const report = await withShortTab(page, async ({ show, frame, inner, nextFrame }) => {
+		// Right -> left -> right, nothing settled in between; the left tab is scrolled meanwhile.
+		show('left');
+		frame.scrollTop = 20;
+		show('right');
+		await nextFrame();
+		await nextFrame();
+		const right = { frame: frame.scrollTop, inner: inner.scrollTop };
+		show('left');
+		await nextFrame();
+		return { right, left: frame.scrollTop };
+	});
+	expect(report).toEqual({ right: { frame: 150, inner: 60 }, left: 20 });
 });
