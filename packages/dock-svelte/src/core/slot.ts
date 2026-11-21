@@ -1144,7 +1144,15 @@ export function slotsWithoutLeft(
 		for (let s: DockSlot | undefined = h.slot; s && s.kind !== 'root'; s = s.outer)
 			if (s.kind === 'split' && s.share !== undefined)
 				splits.set(keyOf(s), { id: s.splitId, direction: s.direction });
-	if (splits.size === 0) return null;
+	// Moved to an outer edge, it is in no split it was in before (#781): a split slot that names it.
+	const edged =
+		moved?.edge === true &&
+		pending.some((h) => {
+			for (let s: DockSlot | undefined = h.slot; s && s.kind !== 'root'; s = s.outer)
+				if (s.kind === 'split' && slotNames(s).includes(moved.id)) return true;
+			return false;
+		});
+	if (splits.size === 0 && !edged) return null;
 	const slotOf = new Map(pending.map((h) => [h.id, h.slot]));
 	const dockedNext = new Set(collectPanelIds(next));
 	/** Out of the tree after, its slot naming no split at any level (`root`, tabs of no split). */
@@ -1183,13 +1191,22 @@ export function slotsWithoutLeft(
 			for (let s: DockSlot | undefined = h.slot; s && s.kind !== 'root'; s = s.outer)
 				if (s.kind === 'split' && lone.has(keyOf(s)) && s.outer?.kind === 'split')
 					around.set(keyOf(s.outer), s.splitId);
+	// And every other split slot stops naming it (#781) - one of a split further out, where it is
+	// named among the panes of the child it was in (say `row[column[row[a,b,c], d], e]`: `e` names
+	// `c` for the column, which `d` is left of), or of a gone split it was a child of. With it, all
+	// the new split at the edge holds may be named, so `besideWhat` climbs to that one and the pane
+	// shown wraps it, the moved pane inside. The other ids the slot names still tell the place.
 	const forget = (slot: DockSlot): DockSlot => {
-		if (lone.size === 0 || moved === null || slot.kind === 'root') return slot;
+		if ((lone.size === 0 && !edged) || moved === null || slot.kind === 'root') return slot;
 		const outer = slot.outer && forget(slot.outer);
 		const out: DockSlot = outer === slot.outer ? slot : { ...slot, outer };
 		if (out.kind !== 'split' || !slotNames(out).includes(moved.id)) return out;
 		const key = keyOf(out);
-		const gone = lone.has(key) ? out.splitId : around.get(key);
+		// At the edge (`edged`), any split: as a neighbour it stood for itself there, so the split's
+		// own id - no child of the split, no docked node while it is gone: the anchors decide.
+		const gone = lone.has(key)
+			? out.splitId
+			: (around.get(key) ?? (edged ? out.splitId : undefined));
 		if (gone === undefined) return out;
 		const others = (ids: string[]) => ids.filter((id) => id !== moved.id);
 		return {
@@ -1202,7 +1219,7 @@ export function slotsWithoutLeft(
 		};
 	};
 	const pendingNext =
-		lone.size > 0 ? pending.map((h) => ({ ...h, slot: forget(h.slot) })) : pending;
+		lone.size > 0 || edged ? pending.map((h) => ({ ...h, slot: forget(h.slot) })) : pending;
 	/** What is left of each split: 1 - the part of the children that left. */
 	const rest = new Map<string, number>();
 	for (const [key, split] of splits) {
@@ -1284,7 +1301,7 @@ export function slotsWithoutLeft(
 		}
 		if (left > 1e-9 && left < 1 - 1e-9) rest.set(key, 1 - left);
 	}
-	if (rest.size === 0 && lone.size === 0) return null;
+	if (rest.size === 0 && lone.size === 0 && !edged) return null;
 	const shares = (slot: DockSlot): DockSlot => {
 		if (slot.kind === 'root') return slot;
 		const outer = slot.outer && shares(slot.outer);
