@@ -36,6 +36,13 @@ on:
       - 'scripts/scaffold.mjs'
       - 'scripts/check-doc-links.mjs'
       - 'scripts/lib/template-edit.mjs'
+      # リソース生成器（#715）と、その受け入れ用フィクスチャ
+      - 'scripts/banto.mjs'
+      - 'scripts/lib/add-resource*'
+      - 'scripts/fixtures/add-resource/**'
+      # 生成器が番号と同名を検査し、生成した migration と一緒に走る（#715）
+      - 'apps/admin-template/core/migrations-sqlite/**'
+      - 'apps/admin-template/core/migrations-postgres/**'
       - 'scripts/lib/templates/**'
       - '.github/workflows/template-acceptance.yml'
       # scaffold のアンカー対象（remover が編集するファイル群）
@@ -69,6 +76,13 @@ on:
       - 'scripts/scaffold.mjs'
       - 'scripts/check-doc-links.mjs'
       - 'scripts/lib/template-edit.mjs'
+      # リソース生成器（#715）と、その受け入れ用フィクスチャ
+      - 'scripts/banto.mjs'
+      - 'scripts/lib/add-resource*'
+      - 'scripts/fixtures/add-resource/**'
+      # 生成器が番号と同名を検査し、生成した migration と一緒に走る（#715）
+      - 'apps/admin-template/core/migrations-sqlite/**'
+      - 'apps/admin-template/core/migrations-postgres/**'
       - 'scripts/lib/templates/**'
       - '.github/workflows/template-acceptance.yml'
       # scaffold のアンカー対象（push 側と同一に保つ）
@@ -277,3 +291,92 @@ jobs:
       - name: Cargo test the scaffolded copy (core crates)
         working-directory: ${{ env.DEST }}
         run: cargo test -p banto-core -p banto-storage -p banto-server -p admin-template-core
+
+  # リソース生成の受け入れ（#715、docs/recipes/add-resource.md の生成器の節）:
+  # `pnpm banto add resource` が吐いたコードが、素のテンプレートに足した状態でビルド緑
+  # であることを機械で保証する。生成器の単体テスト（ci.yml）は出力の文字列を見るだけで、
+  # 「足した後に型検査・cargo test が通る」までは見ない。アンカーが動いた・テンプレートが
+  # 変わって生成物が合わなくなった、を PR の段階で止めるための検査。
+  # フィクスチャ（scripts/fixtures/add-resource/orders.json）は 5 つの型・必須/任意・
+  # audit/title・min/max・記号入りのラベルを一通り含む。
+  # clippy / fmt は回さない: 生成物は「この後は手で直す」足場で、lint の規則は ci.yml が
+  # テンプレート本体に対して見ている。ここは「通る」ことに絞って時間を抑える。
+  # scaffold の display プリセットの後に生成する組み合わせは未検査（今後の課題）。
+  add-resource:
+    name: Generate resource → check
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Copy repo to a scratch dir and generate the fixture resource
+        run: |
+          set -euo pipefail
+          DEST="${RUNNER_TEMP}/add-resource"
+          rsync -a \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude 'target' \
+            --exclude '.svelte-kit' \
+            --exclude 'build' \
+            --exclude 'dist' \
+            ./ "${DEST}/"
+          cd "${DEST}"
+          # 先に --dry-run: フィクスチャを生成器が受け付けることを確かめる（何も書かない）。
+          node scripts/banto.mjs add resource orders --fields scripts/fixtures/add-resource/orders.json --dry-run
+          node scripts/banto.mjs add resource orders --fields scripts/fixtures/add-resource/orders.json
+          echo "DEST=${DEST}" >> "${GITHUB_ENV}"
+
+      - name: Install deps in the generated copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Architecture invariants still hold
+        working-directory: ${{ env.DEST }}
+        run: pnpm verify:architecture
+
+      # check は Paraglide のコンパイルを先に走らせる。生成した messages の
+      # orders.* / nav.orders が壊れていればここで落ちる。
+      - name: Type-check the generated copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm --filter admin-template check
+
+      # src-tauri は生成物（コマンドの登録・テーブルの結線）が入る場所。tauri-check.yml と
+      # 同じ system 依存を入れて、生成した Tauri コマンドのテスト（denied と監査、
+      # conventions §1 の Tauri 側）まで走らせる。
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: ${{ env.DEST }}
+
+      # SQLite のマイグレーションと生成した CRUD（core）を実際に走らせる。
+      - name: Cargo test the generated copy (core crates)
+        working-directory: ${{ env.DEST }}
+        run: cargo test -p banto-core -p banto-storage -p banto-server -p admin-template-core
+
+      - name: Cargo test the generated copy (src-tauri)
+        working-directory: ${{ env.DEST }}
+        run: cargo test -p admin-template

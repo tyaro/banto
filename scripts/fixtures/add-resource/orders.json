@@ -1,0 +1,54 @@
+{
+  "label": { "ja": "注文（受注）", "en": "Orders (received)" },
+  "description": {
+    "ja": "注文を管理します（CI の生成検査用）",
+    "en": "Manage orders (CI generation check)"
+  },
+  "fields": [
+    {
+      "name": "customerName",
+      "type": "text",
+      "required": true,
+      "max": 80,
+      "audit": true,
+      "title": true,
+      "label": { "ja": "顧客名（法人名）", "en": "Customer (company)" }
+    },
+    {
+      "name": "reference",
+      "type": "text",
+      "max": 40,
+      "label": { "ja": "整理番号 / 参照", "en": "Ref. no. / reference" }
+    },
+    {
+      "name": "summary",
+      "type": "textarea",
+      "required": true,
+      "max": 400,
+      "audit": true,
+      "label": { "ja": "概要", "en": "Summary" }
+    },
+    { "name": "note", "type": "textarea", "max": 400 },
+    {
+      "name": "quantity",
+      "type": "number",
+      "required": true,
+      "min": 1,
+      "max": 9999,
+      "audit": true,
+      "label": { "ja": "数量（個）", "en": "Quantity (pcs)" }
+    },
+    { "name": "weight", "type": "number", "min": 0 },
+    { "name": "adjustment", "type": "number", "min": -100, "max": 100, "audit": true },
+    { "name": "shipped", "type": "checkbox", "audit": true },
+    { "name": "gift", "type": "checkbox" },
+    {
+      "name": "orderedOn",
+      "type": "date",
+      "required": true,
+      "audit": true,
+      "label": { "ja": "受注日", "en": "Ordered on" }
+    },
+    { "name": "dueDate", "type": "date" }
+  ]
+}
