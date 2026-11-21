@@ -309,27 +309,164 @@ describe('persistent is read when the change is applied', () => {
 	);
 });
 
+/**
+ * jsdom has no layout, so `scrollTop` is faked the way a browser treats it (#768): an offset
+ * belongs to the element while it stays rendered in the same frame (`.body`). Read after the
+ * element was hidden (a background tab, the stash) or moved into another frame, it is gone (0).
+ * Returns the restore.
+ */
+function fakeScrollTop(): () => void {
+	const tops = new WeakMap<Element, { top: number; frame: Element | null }>();
+	const proto = Element.prototype;
+	const original = Object.getOwnPropertyDescriptor(proto, 'scrollTop');
+	Object.defineProperty(proto, 'scrollTop', {
+		configurable: true,
+		get(this: Element) {
+			const record = tops.get(this);
+			if (!record) return 0;
+			if (this.closest('[hidden]') || this.closest('.body') !== record.frame) {
+				tops.delete(this);
+				return 0;
+			}
+			return record.top;
+		},
+		set(this: Element, top: number) {
+			if (!this.closest('[hidden]')) tops.set(this, { top, frame: this.closest('.body') });
+		}
+	});
+	return () => {
+		if (original) Object.defineProperty(proto, 'scrollTop', original);
+		else Reflect.deleteProperty(proto, 'scrollTop');
+	};
+}
+
+const frameOf = (id: string) =>
+	document.querySelector(`[data-dock-persistent-slot="${id}"]`)!.closest<HTMLElement>('.body')!;
+const scrollerOf = (id: string) => document.querySelector<HTMLElement>(`[data-scroller="${id}"]`)!;
+
 describe('focus and scroll after a move', () => {
 	it('the focused input and the scroll offset come back after an undock', async () => {
-		mount(mixed(), { persistent: (id) => id === 'p' });
-		const scroller = document.querySelector<HTMLElement>('[data-scroller="p"]')!;
-		let top = 0;
-		Object.defineProperty(scroller, 'scrollTop', {
-			configurable: true,
-			get: () => top,
-			set: (v: number) => (top = v)
-		});
-		top = 40;
-		scroller.dispatchEvent(new Event('scroll'));
-		// What a browser does to a moved scroller (no scroll event): the offset is gone.
-		top = 0;
-		const input = inputOf('P')!;
-		input.focus();
-		dragFrom(screen.getByRole('toolbar', { name: 'P' }));
-		await settle();
-		expect(dialogOf('P')!.contains(input)).toBe(true);
-		expect(top).toBe(40);
-		expect(document.activeElement).toBe(input);
+		const restore = fakeScrollTop();
+		try {
+			mount(mixed(), { persistent: (id) => id === 'p' });
+			await settle();
+			const scroller = scrollerOf('p');
+			// No `scroll` event: scrolled in the same task as the move (#768).
+			scroller.scrollTop = 40;
+			const input = inputOf('P')!;
+			input.focus();
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			await settle();
+			expect(dialogOf('P')!.contains(input)).toBe(true);
+			expect(scroller.scrollTop).toBe(40);
+			expect(document.activeElement).toBe(input);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a tab switch away and back: each persistent tab has its own offset in the shared frame (#768)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'x' || id === 'y' });
+			await settle();
+			const frame = frameOf('x');
+			expect(frameOf('y')).toBe(frame);
+			frame.scrollTop = 70;
+			scrollerOf('x').scrollTop = 25;
+			clickPress(tabOf('y'));
+			await settle();
+			// Y was never scrolled: the top, not X's 70.
+			expect(frame.scrollTop).toBe(0);
+			// X's own scroller is not rendered any more: a browser has dropped its offset.
+			expect(scrollerOf('x').scrollTop).toBe(0);
+			frame.scrollTop = 30;
+			frame.dispatchEvent(new Event('scroll'));
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frame.scrollTop).toBe(70);
+			expect(scrollerOf('x').scrollTop).toBe(25);
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frame.scrollTop).toBe(30);
+			// Kept beside the layout, never in it (nothing to save, no version change).
+			expect(JSON.stringify(dock.layout)).not.toContain('scroll');
+		} finally {
+			restore();
+		}
+	});
+
+	it('the offset of a tab that is not persistent is not taken for the persistent one behind it (#768)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			mount(mixed(), { persistent: (id) => id === 'x' });
+			await settle();
+			const frame = frameOf('x');
+			frame.scrollTop = 70;
+			frame.dispatchEvent(new Event('scroll'));
+			clickPress(tabOf('y'));
+			await settle();
+			// Y (re-created) scrolls the shared frame while X is in the background.
+			frame.scrollTop = 400;
+			frame.dispatchEvent(new Event('scroll'));
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frameOf('x')).toBe(frame);
+			expect(frame.scrollTop).toBe(70);
+		} finally {
+			restore();
+		}
+	});
+
+	it('hide and show: the offsets recorded before the pane left the screen come back (#768)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock, host } = mount(mixed(), { persistent: (id) => id === 'p' });
+			await settle();
+			frameOf('p').scrollTop = 55;
+			scrollerOf('p').scrollTop = 15;
+			expect(await host().hidePanel('p')).toBe('applied');
+			await settle();
+			expect(probe('p')!.closest('[hidden]')).not.toBeNull();
+			expect(scrollerOf('p').scrollTop).toBe(0);
+			expect(await host().showPanel('p')).toBe('applied');
+			await settle();
+			expect(dock.panels.find((row) => row.id === 'p')?.visible).toBe(true);
+			expect(frameOf('p').scrollTop).toBe(55);
+			expect(scrollerOf('p').scrollTop).toBe(15);
+			// Two re-arrangements in one task (the second before the first was put back): undock, dock back.
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			hit = () => document.querySelector('[data-dock-drop-id="t"]');
+			dragFrom(dialogOf('P')!.querySelector('.titlebar')!, ...CENTRE);
+			await settle();
+			expect(dock.layout.floating.find((w) => w.id === 'p')).toBeUndefined();
+			expect(frameOf('p').scrollTop).toBe(55);
+			expect(scrollerOf('p').scrollTop).toBe(15);
+		} finally {
+			restore();
+		}
+	});
+
+	it('collapse and expand: the frame is hidden meanwhile, and gets its offset back (#768)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'f' });
+			await settle();
+			const frame = frameOf('f');
+			frame.scrollTop = 65;
+			scrollerOf('f').scrollTop = 20;
+			dock.setCollapsed('f', true);
+			await settle();
+			expect(frame.hidden).toBe(true);
+			expect(frame.scrollTop).toBe(0);
+			dock.setCollapsed('f', false);
+			await settle();
+			expect(frameOf('f')).toBe(frame);
+			expect(frame.scrollTop).toBe(65);
+			expect(scrollerOf('f').scrollTop).toBe(20);
+		} finally {
+			restore();
+		}
 	});
 
 	it('the scroll offset of the standard .body frame comes back after an undock and a dock back', async () => {

@@ -57,7 +57,8 @@
 	 * once, into a hidden stash at the end of the host, and the tree (docked pane,
 	 * tab, floating window, auto-hide slide-out) only draws an empty receptacle for
 	 * it; the content element is moved into the receptacle while one is mounted and
-	 * back to the stash when none is. Focus and scroll are put back after a move;
+	 * back to the stash when none is. Focus is put back after a move, scroll offsets
+	 * after every re-arrangement (a tab switch too: the tabs of a group share one frame, #768);
 	 * where `Element.moveBefore()` exists the content that holds the focus waits in
 	 * the `persistent-transit` element while the tree updates, so the focused
 	 * element never leaves the document and gets no `blur` (#763).
