@@ -375,6 +375,39 @@ function removeCharts() {
 	// /dashboard に残るチャートは最初の chart-grid だけ（積立エリア/ガントなどの見本は
 	// /chart-gallery にある。下の removeDir で丸ごと外す）。
 	cutRegion(DASH, 'チャートグリッド除去', `		<div class="chart-grid">`, `		</div>`);
+	// チャートグリッド（と Sparkline）だけが使っていた集計の import と $derived/ラベル関数。
+	// 残ると生成物の `pnpm lint`（--max-warnings=0）が未使用警告で落ちる（computeStatTiles は
+	// stat タイルが使うので残す）。ドリフト注意: dashboard/+page.svelte のこの並びを
+	// 変えたらここも更新すること。
+	swapText(
+		DASH,
+		'dashboard: チャート専用の集計 import 除去',
+		`		byCategory,
+		computeStatTiles,
+		priceBuckets,
+		scatterSample,
+		stockByCategoryPriceBand,
+		updatesByMonth
+`,
+		`		computeStatTiles
+`
+	);
+	drop(
+		DASH,
+		'dashboard: チャート専用の $derived 除去',
+		`	const categoryStock = $derived(byCategory(list.rows));
+	const categoryPriceBand = $derived(stockByCategoryPriceBand(list.rows));
+	const buckets = $derived(priceBuckets(list.rows));
+	const monthCounts = $derived(updatesByMonth(list.rows));
+	const scatterRows = $derived(scatterSample(list.rows));
+`
+	);
+	drop(
+		DASH,
+		'dashboard: countLabel 除去',
+		`	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
+`
+	);
 	// /chart-gallery（チャート見本。デモ専用ルート）: ルート・ナビ行・union の語・
 	// アイコン・文言キーを外す。`@banto/charts` と dashboard.ts の M24 集計に依存するので
 	// charts と運命を共にする（display は charts も外すので /chart-gallery は常に先に消える）。
@@ -645,6 +678,18 @@ function removeGlass() {
 		`\timport { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '#lib/banto/vibrancy.js';\n`
 	);
 	drop(SETTINGS_APPEARANCE, 'Sparkles アイコン import 除去', `\t\tSparkles,\n`);
+	// ドリフト注意: 下の vibrancy ロジック/カードだけが使っていた import。残ると
+	// `pnpm lint`（--max-warnings=0）が未使用警告で落ちる。import 行を変えたらここも更新。
+	drop(
+		SETTINGS_APPEARANCE,
+		'toastStore import 除去（vibrancy 専用）',
+		`\timport { toastStore } from '#lib/toast.svelte.js';\n`
+	);
+	drop(
+		SETTINGS_APPEARANCE,
+		'errorMessage/tauri import 除去（vibrancy 専用）',
+		`\timport { errorMessage, tauri } from './shared';\n`
+	);
 	cutRegion(
 		SETTINGS_APPEARANCE,
 		'vibrancy 状態/ロジック除去',

@@ -53,6 +53,7 @@ on:
       - 'apps/admin-template/messages/*.json'
       - 'apps/admin-template/package.json'
       - 'apps/admin-template/vite.config.ts'
+      - 'eslint.config.js'
       - 'apps/admin-template/core/src/**'
       - 'apps/admin-template/core/Cargo.toml'
       - 'apps/admin-template/src-tauri/src/lib.rs'
@@ -93,6 +94,7 @@ on:
       - 'apps/admin-template/messages/*.json'
       - 'apps/admin-template/package.json'
       - 'apps/admin-template/vite.config.ts'
+      - 'eslint.config.js'
       - 'apps/admin-template/core/src/**'
       - 'apps/admin-template/core/Cargo.toml'
       - 'apps/admin-template/src-tauri/src/lib.rs'
@@ -267,6 +269,12 @@ jobs:
           git init -q
           git add -A
           pnpm check:doc-links
+
+      # scaffold が消したコードだけが使っていた import / 変数の消し残しを検出する
+      # （--max-warnings=0 なので未使用警告も落ちる）。
+      - name: Lint the scaffolded copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm lint
 
       - name: Type-check the scaffolded copy
         working-directory: ${{ env.DEST }}
