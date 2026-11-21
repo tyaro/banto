@@ -210,6 +210,11 @@ the elevated helper for the Windows firewall allowance (Issue #219 stage 2) is
 [ADR-0021](adr/0021-firewall-elevated-helper.en.md) (the third; pinned to the
 versions already in `Cargo.lock` transitively, so no crate is added to the
 build; limited to the helper and its launcher module; Proposed).
+The decision to add `@types/node`, `typescript` and `axe-core` to the root
+devDependencies so `e2e/` can be type-checked is
+[ADR-0032](adr/0032-root-e2e-typecheck-devdeps.en.md) (the fourth; types only, no
+runtime effect; `typescript` and `axe-core` match versions already in the
+lockfile, so `@types/node` is the only new package).
 
 ## 4. No reverse dependency from core → options [machine-checked]
 

@@ -1783,6 +1783,9 @@ function replaceE2eForDisplay() {
 	removeDir('e2e/tests-public-viewer', 'e2e: 閲覧公開スイート削除');
 	removeDir('e2e/visual', 'e2e: ビジュアル回帰 + axe-core スイート削除');
 	removeDir('e2e/tests-add-resource', 'e2e: リソース生成の確認スイート削除（#715）');
+	// demo スイートは `../visual/theme` を import し、project も webServer も下で外れる。
+	// 残すと生成物の `pnpm check`（e2e の型検査）が落ちる。
+	removeDir('e2e/demo', 'e2e: デモビルドのスイート削除（visual に依存・project は外れる）');
 	removeFile('.github/workflows/visual-baselines.yml', 'CI: visual-baselines ワークフロー削除');
 
 	// playwright.config.ts: 先頭の doc コメントを display 版に差し替える
@@ -1842,6 +1845,24 @@ function replaceE2eForDisplay() {
 	);
 	cutRegion(
 		PLAYWRIGHT_CONFIG,
+		'playwright: demo の webServer エントリ除去',
+		`,\n\t\t{\n\t\t\t// Demo BUILD stand-in for the \`demo\` project`,
+		`\t\t\tenv: { VITE_BANTO_DEMO: '1' }\n\t\t}`
+	);
+	cutRegion(
+		PLAYWRIGHT_CONFIG,
+		'playwright: demo 用の定数除去',
+		`// \`demo\` project (Issue #553)`,
+		`const DEMO_BASE_URL = \`http://127.0.0.1:\${DEMO_PORT}\`;\n\n`
+	);
+	swapText(
+		PLAYWRIGHT_CONFIG,
+		'playwright: selectWebServers の visual / demo の URL 対応を除去',
+		`\t\tvisual: VISUAL_BASE_URL,\n\t\tdemo: DEMO_BASE_URL,\n`,
+		``
+	);
+	cutRegion(
+		PLAYWRIGHT_CONFIG,
 		'playwright: visual 用の定数除去',
 		`// \`visual\` project (browser demo mode, vite preview`,
 		`const VISUAL_BASE_URL = \`http://127.0.0.1:\${VISUAL_PORT}\`;\n\n`
@@ -1875,11 +1896,19 @@ function replaceE2eForDisplay() {
 		`      # Viewer-public mode (Issue #189)`,
 		`        run: pnpm e2e:public-viewer\n\n`
 	);
+	// demo スイート（e2e/demo）も project も上で外すので、スクリプトも外す。
+	drop(
+		ROOT_PKG,
+		'root package.json: e2e:demo スクリプト除去',
+		`    "e2e:demo": "playwright test --config=e2e/playwright.config.ts --project=demo",\n`
+	);
+	// ci.yml の e2e-visual ジョブは visual と demo の 2 スイートだけを走らせるので、
+	// 両方を外す display ではジョブごと外す（手順だけ外すと中身の無いジョブが残る）。
 	cutRegion(
 		CI_WORKFLOW,
-		'ci: ビジュアル回帰 + axe-core ステップ除去',
-		`      # Baselines under e2e/visual/**/*-snapshots`,
-		`        run: pnpm e2e:visual\n\n`
+		'ci: e2e-visual ジョブ（ビジュアル回帰 + axe-core・デモビルド）除去',
+		`  e2e-visual:\n`,
+		`          name: playwright-test-results-visual\n          path: e2e/test-results/\n          retention-days: 3\n\n`
 	);
 }
 
