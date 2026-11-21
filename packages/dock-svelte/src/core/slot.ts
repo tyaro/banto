@@ -1085,6 +1085,142 @@ export function slotWithoutShares(
 }
 
 /**
+ * How the slots of the panes out of the tree change when docked panes leave a split they share
+ * with them (#743), or `null` when none does. A split slot's `share` is of the whole split, the
+ * panes hidden from it counted (#733): a docked child that leaves the split for good - removed
+ * from the layout, docked into another container - takes its part out of
+ * the whole, so the shares of the panes still out are taken without it, as `slotWithoutShares`
+ * does for a pane out of the tree that goes. Say `row[x .2, b .3, c .5]`, `b` hidden, `x` removed:
+ * `b` comes back at `.375` (of `row[b, c]`), not `.3`.
+ *
+ * `root` is the tree before, `next` the one after, `pending` the panes out of the tree after (as
+ * `splitPending` takes them). The part of a child is its size among the docked children times
+ * what the pending shares leave (`1 - pendingShare`), counted on `root`; for a split that is gone
+ * (what is left of it is the docked panes its slots name), the whole of what they leave.
+ *
+ * A child has not left while one of its panes is docked where the split is (in it; anywhere when
+ * the split is gone after), or a pane out of the tree holds its place after: itself (hidden or
+ * floated by the same change), or one that remembers the container it was the last of (counted
+ * for the split on `next` and not on `root`). `moved` is the docked pane the change moves
+ * (`dockExisting` / `dockExistingAtEdge` - the trees alone do not tell which of two panes moved):
+ * it has left unless it is a child of the same split again (or, the split gone with it, of a
+ * split in the same direction with another of its children: a split of two made again around
+ * them); `edge` = to an outer edge of the host, never the same split.
+ *
+ * `banded` are the panes auto-hidden to an edge band after: one of them has not left either. Its
+ * band remembers its place and it comes back by `size` (a region's slot has no `share`, #739
+ * review), so with the others' shares left as they are, hide `a` / auto-hide `b` / `b` back /
+ * show `a` gives the old sizes again.
+ */
+export function slotsWithoutLeft(
+	root: DockNode | null,
+	next: DockNode | null,
+	pending: HiddenDockSlot[],
+	moved: { id: string; edge: boolean } | null = null,
+	banded: ReadonlySet<string> = new Set()
+): ((slot: DockSlot) => DockSlot) | null {
+	if (root === null || pending.length === 0) return null;
+	type SplitSlot = Extract<DockSlot, { kind: 'split' }>;
+	interface Unit {
+		/** The child itself when it is a pane (what `moved` can be). */
+		panel: string | null;
+		ids: string[];
+		panels: string[];
+		part: number;
+	}
+	const keyOf = (s: SplitSlot) => `${s.direction}:${s.splitId}`;
+	const splits = new Map<string, Pick<DockSplitNode, 'id' | 'direction'>>();
+	for (const h of pending)
+		for (let s: DockSlot | undefined = h.slot; s && s.kind !== 'root'; s = s.outer)
+			if (s.kind === 'split' && s.share !== undefined)
+				splits.set(keyOf(s), { id: s.splitId, direction: s.direction });
+	if (splits.size === 0) return null;
+	const slotOf = new Map(pending.map((h) => [h.id, h.slot]));
+	const dockedNext = new Set(collectPanelIds(next));
+	/** What is left of each split: 1 - the part of the children that left. */
+	const rest = new Map<string, number>();
+	for (const [key, split] of splits) {
+		const was = splitPending(root, split, pending);
+		const held = pendingShare(
+			was,
+			was.map((h) => h.id)
+		);
+		// Nothing out of it before, shares not all known, or no room left for a docked child.
+		if (!(held > 1e-9) || held > 1 - 1e-9) continue;
+		const node = findNode(root, split.id);
+		let units: Unit[];
+		if (node?.type === 'split' && node.direction === split.direction) {
+			const total = node.sizes.reduce((a, b) => a + b, 0);
+			units = node.children.map((c, i) => ({
+				panel: c.type === 'panel' ? c.id : null,
+				ids: nodeIds(c),
+				panels: collectPanelIds(c),
+				part: total > 0 ? ((node.sizes[i] ?? 0) / total) * (1 - held) : 0
+			}));
+		} else if (node) {
+			continue;
+		} else {
+			const named = [...new Set(was.flatMap((h) => slotNames(h.slot)))].filter(
+				(id) => findNode(root, id)?.type === 'panel'
+			);
+			if (named.length === 0) continue;
+			units = [{ panel: null, ids: named, panels: named, part: 1 - held }];
+		}
+		const after = findNode(next, split.id);
+		const here =
+			after?.type === 'split' && after.direction === split.direction
+				? new Set(collectPanelIds(after))
+				: dockedNext;
+		// The panes out of the tree that hold a place in the split after and did not before, with
+		// what their slots name below the split's level (the containers they stand for).
+		const counted = new Set(was.map((h) => h.id));
+		const holders = new Set<string>();
+		for (const h of splitPending(next, split, pending)) {
+			if (counted.has(h.id)) continue;
+			holders.add(h.id);
+			for (let s = slotOf.get(h.id); s && s.kind !== 'root'; s = s.outer) {
+				if (s.kind === 'split' && keyOf(s) === key) break;
+				holders.add(s.kind === 'tab' ? s.groupId : s.splitId);
+				for (const id of slotNames(s)) holders.add(id);
+			}
+		}
+		const movedAway = (unit: Unit): boolean => {
+			if (moved === null || unit.panel !== moved.id) return false;
+			if (moved.edge) return true;
+			const parent = findParent(next, moved.id);
+			if (parent?.type !== 'split' || parent.direction !== split.direction) return true;
+			if (parent.id === split.id) return false;
+			if (after) return true;
+			const others = units.filter((u) => u !== unit).flatMap((u) => u.panels);
+			return !parent.children.some(
+				(c) => c.id !== moved.id && collectPanelIds(c).some((id) => others.includes(id))
+			);
+		};
+		let left = 0;
+		for (const unit of units) {
+			if (unit.panels.some((id) => here.has(id)) && !movedAway(unit)) continue;
+			if (unit.panels.some((id) => banded.has(id))) continue;
+			if (unit.ids.some((id) => holders.has(id))) continue;
+			left += unit.part;
+		}
+		if (left > 1e-9 && left < 1 - 1e-9) rest.set(key, 1 - left);
+	}
+	if (rest.size === 0) return null;
+	const without = (slot: DockSlot): DockSlot => {
+		if (slot.kind === 'root') return slot;
+		const outer = slot.outer && without(slot.outer);
+		const out: DockSlot = outer === slot.outer ? slot : { ...slot, outer };
+		if (out.kind !== 'split' || out.share === undefined) return out;
+		const of = rest.get(keyOf(out));
+		if (of === undefined) return out;
+		const share = out.share / of;
+		// Above 1: the shares did not add up (a split changed since) - it comes back by `size`.
+		return withShare(out, share < 1 + 1e-9 ? Math.min(1, share) : NaN);
+	};
+	return without;
+}
+
+/**
  * Put `panel` back into `root` at `slot` (module doc for the order of tries).
  * Returns the new root, or `null` when the place is gone (the caller falls
  * back to a floating window). `panel` must not be in `root` already.

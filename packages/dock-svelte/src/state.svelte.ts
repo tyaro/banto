@@ -35,6 +35,7 @@ import {
 	captureDockSlot,
 	restoreDockSlot,
 	slotWithoutShares,
+	slotsWithoutLeft,
 	type HiddenDockSlot
 } from './core/slot';
 import { withLayoutVersion } from './core/layoutVersion';
@@ -176,7 +177,9 @@ export class DockState {
 				: [];
 		// A pane out of the tree that no longer holds its share of a split: the others' are taken
 		// without it (Codex P2 on #739). Not for `hydrate` / `reset`: they take a layout as a whole.
-		if (!this.#adopting) next = untrack(() => this.#withoutGoneShares(next));
+		// A docked pane that leaves a split it shares with them: the same (#743).
+		if (!this.#adopting)
+			next = untrack(() => this.#withoutLeftShares(this.#withoutGoneShares(next)));
 		this.#noteStructure(next);
 		this.#layout = next;
 		for (const id of spent) this.#homeSlots.delete(id);
@@ -260,6 +263,54 @@ export class DockState {
 		const floating = next.floating.map((w) => {
 			if (w.open || !w.dockSlot || gone.has(w.id)) return w;
 			const dockSlot = slotWithoutShares(root, w.dockSlot, all, kept);
+			if (dockSlot === w.dockSlot) return w;
+			changed = true;
+			return { ...w, dockSlot };
+		});
+		return changed ? { ...next, floating } : next;
+	}
+
+	/** The docked pane `dockExisting` / `dockExistingAtEdge` is moving, while it assigns (`#withoutLeftShares`). */
+	#moved: { id: string; edge: boolean } | null = null;
+
+	/** Assign `next`, made by moving the docked pane `moved.id` (#743: it may leave a split whose hidden panes count it). */
+	#assignMoved(moved: { id: string; edge: boolean }, next: DockLayout): void {
+		this.#moved = moved;
+		try {
+			this.layout = next;
+		} finally {
+			this.#moved = null;
+		}
+	}
+
+	/**
+	 * `next` with the `share`s of the slots pending in it - the closed windows' `dockSlot`s and the
+	 * floated panes' `homeSlot`s - taken without the docked panes that leave a split they share with
+	 * them (#743, `core/slot.ts#slotsWithoutLeft`): removed by an assignment, or docked into
+	 * another container (`dockExisting`, `dockExistingAtEdge`). A pane hidden or floated still
+	 * holds its share (it is pending in `next`), one moved inside its split is still a child of
+	 * it, and one auto-hidden to a band is not counted as gone (it comes back by `size`). Run
+	 * after `#withoutGoneShares`, on what it left.
+	 */
+	#withoutLeftShares(next: DockLayout): DockLayout {
+		const root = this.#layout.docked;
+		if (root === null || root === next.docked) return next;
+		const pending = [...this.#pendingById(next)].map(([id, slot]) => ({ id, slot }));
+		const without = slotsWithoutLeft(
+			root,
+			next.docked,
+			pending,
+			this.#moved,
+			new Set(autoHiddenPanelIds(next))
+		);
+		if (without === null) return next;
+		const floatingNext = new Set(next.floating.map((w) => w.id));
+		for (const [id, slot] of this.#homeSlots)
+			if (floatingNext.has(id)) this.#homeSlots.set(id, without(slot));
+		let changed = false;
+		const floating = next.floating.map((w) => {
+			if (w.open || !w.dockSlot) return w;
+			const dockSlot = without(w.dockSlot);
 			if (dockSlot === w.dockSlot) return w;
 			changed = true;
 			return { ...w, dockSlot };
@@ -960,10 +1011,11 @@ export class DockState {
 			height,
 			open: true
 		};
-		this.layout = { ...this.layout, docked, floating: [...this.layout.floating, win] };
-		// After the assignment: the setter drops entries of panes that are not floating windows.
+		// Before the assignment (#743): the pane holds its share of its split from the start - the
+		// setter takes a docked pane gone from the tree with no place remembered as one that left.
 		if (slot) this.#homeSlots.set(panelId, slot);
 		else this.#homeSlots.delete(panelId);
+		this.layout = { ...this.layout, docked, floating: [...this.layout.floating, win] };
 	}
 
 	/** Relocate a panel that's ALREADY docked to a new split/group (spec §5.2: drag a docked tab to a new spot). Removes then re-docks it, so it's equivalent to `undockPanel` + `dockPanel` without the floating round-trip. A no-op if `panelId` isn't currently docked. */
@@ -972,7 +1024,7 @@ export class DockState {
 		if (!node || node.type !== 'panel') return;
 		const removed = removePanel(this.layout.docked, panelId);
 		const docked = dockPanelIntoTree(removed, node, targetId, region, this.#makeId);
-		this.layout = { ...this.layout, docked };
+		this.#assignMoved({ id: panelId, edge: false }, { ...this.layout, docked });
 	}
 
 	/**
@@ -1006,7 +1058,7 @@ export class DockState {
 		const removed = removePanel(this.layout.docked, panelId);
 		if (!removed) return;
 		const docked = dockPanelAtEdgeTree(removed, node, edge, this.#makeId);
-		this.layout = { ...this.layout, docked };
+		this.#assignMoved({ id: panelId, edge: true }, { ...this.layout, docked });
 	}
 
 	/**

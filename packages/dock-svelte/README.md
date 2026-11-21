@@ -745,7 +745,9 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない。保存した値（`serialize()` /
 `savedLayout()`）を入れるときは `saved: true` を渡す。浮かせたパネルの「元の場所に戻す」の控えを、`hydrate` と同じく入れるのと同時に捨てる。
 `saved` を付けないときは、今の `dock.layout` から作った値として `dock.layout = ...` と同じに入れる（#741）: 控えは残し、木の外にある（浮かせた・隠した）
-パネルを置き換えが無くしたときは、残る隠れたパネルの `share` からその分を除く。保存した値を `saved` なしで渡すと、この調整が保存値にかかって比率がずれる）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
+パネルを置き換えが無くしたときは、残る隠れたパネルの `share` からその分を除く。ドッキング中のパネルが、隠れたパネルと同じ split を離れたときも同じに除く
+（#743。置き換えや `dock.layout = ...` で外す・`dockExisting` で別の split やタブの組へ入れる・`dockExistingAtEdge` で外周へ出す。
+同じ split の中での並べ替え、仕切りの移動、split に新しく入るパネル、隠す・浮かせる、帯へ自動で隠す、`hydrate` / `reset` では変えない）。保存した値を `saved` なしで渡すと、この調整が保存値にかかって比率がずれる）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
 
 ## 保存の約束（serialize / hydrate と書き込みは別）
 

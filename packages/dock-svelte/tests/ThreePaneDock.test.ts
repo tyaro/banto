@@ -625,6 +625,29 @@ describe('ThreePaneDock: a pending pane removed by a replacement releases its sh
 		});
 	}
 
+	// #743: the panel removed is DOCKED (in the row `right` is hidden from): it is no longer counted
+	// either - `right` comes back at .3 / (.3 + .5) of the row, not at .3 of it.
+	it('a docked extra panel removed from panels: right (hidden) comes back at .375', async () => {
+		const { dock, view } = start();
+		dock.dismiss('right');
+		await view.rerender({ extra: [] });
+		await settle();
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['center']);
+		dock.show('right');
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['right', 'center']);
+		expect(sizes(dock)[0]).toBeCloseTo(0.375, 9);
+	});
+
+	it('a docked extra panel replaced by another one: the same', async () => {
+		const { dock, view } = start();
+		dock.undockPanel('right');
+		await view.rerender({ extra: [{ id: 'other', title: 'Other' }] });
+		await settle();
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['center']);
+		expect(dock.dockAtSlot('right', dock.homeSlot('right')!)).toBe(true);
+		expect(sizes(dock)[0]).toBeCloseTo(0.375, 9);
+	});
+
 	it('the same when right is floated (its homeSlot) and put back', async () => {
 		const { dock, view } = start();
 		dock.dismiss('log');
