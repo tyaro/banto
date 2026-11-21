@@ -6,6 +6,7 @@
 // A failure is reported with the tree's shape and the steps as text (`describeCase`), which is
 // what goes into a pinned case.
 import fc from 'fast-check';
+import { autoHiddenPanelIds } from '../../src/core/autohide';
 import { collectPanelIds } from '../../src/core/tree';
 import { createDockState, type DockState } from '../../src/state.svelte';
 import type { DockEdge, DockNode, DropRegion } from '../../src/types';
@@ -122,15 +123,55 @@ export const opRecipe: fc.Arbitrary<OpRecipe> = fc.record({
 	r: fc.nat({ max: 3 })
 });
 
-export const counterMakeId = (): (() => string) => {
-	let n = 0;
+export const counterMakeId = (start = 0): (() => string) => {
+	let n = start;
 	return () => `gen-${n++}`;
 };
 
 export const newDock = (tree: DockNode): DockState =>
 	createDockState({ version: 2, floating: [], docked: tree }, counterMakeId());
 
+/**
+ * A new state made from the saved text alone (what a reload does): nothing but `dock.serialize()`
+ * carries over. Its ids for new splits start apart from the saved state's own.
+ */
+export function loadedFresh(dock: DockState): DockState {
+	// Not the same text back: a load normalizes the sizes (the last digits), so the callers compare
+	// the trees within `EPS`.
+	return createDockState(dock.serialize(), counterMakeId(10_000));
+}
+
 export const dockedIds = (dock: DockState): string[] => collectPanelIds(dock.layout.docked);
+
+/**
+ * The panes of `ids` that are not docked exactly once (floated or hidden - any floating window -,
+ * in a band, missing, or twice in the tree), and the docked panes that are not in `ids`. Empty
+ * when every pane is back in the dock.
+ */
+export function notBackInDock(dock: DockState, ids: string[]): string[] {
+	const docked = dockedIds(dock);
+	const out = new Set([
+		...dock.layout.floating.map((w) => w.id),
+		...autoHiddenPanelIds(dock.layout)
+	]);
+	return [
+		...ids.filter((id) => docked.filter((d) => d === id).length !== 1 || out.has(id)),
+		...docked.filter((d) => !ids.includes(d))
+	];
+}
+
+/** Fail with the case as text when a pane of `ids` is not back in the dock exactly once. */
+export function expectAllDocked(
+	dock: DockState,
+	ids: string[],
+	tree: DockNode,
+	steps: string[]
+): void {
+	const bad = notBackInDock(dock, ids);
+	if (bad.length > 0) {
+		failCase(tree, steps, `not back docked once: ${[...new Set(bad)].join(', ')}`);
+	}
+}
 /** The hidden panes that remember a docked place, in the order they were hidden. */
 export const hiddenIds = (dock: DockState): string[] =>
 	dock.layout.floating.filter((w) => !w.open && w.dockSlot).map((w) => w.id);
