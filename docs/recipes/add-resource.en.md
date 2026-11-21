@@ -75,6 +75,11 @@ The field definition format (a JSON file close to `FormSchema`'s `fields`), the 
 generated files and the anchor table are in the Japanese
 [add-resource.md](add-resource.md#生成器で足すpnpm-banto-add-resourceissue-715).
 
+CI checks generate-then-build (`Generate resource → check` in `template-acceptance.yml`): it
+generates `orders` from `scripts/fixtures/add-resource/orders.json` (all five types, required and
+optional, `audit`, `title`, min/max) into a clean copy, then runs `pnpm verify:architecture`,
+`pnpm --filter admin-template check`, `cargo test` (core) and `cargo check` (src-tauri).
+
 ## Checklist (in order of execution)
 
 Proceed Rust side → frontend side. The shortest path is to copy and rewrite the

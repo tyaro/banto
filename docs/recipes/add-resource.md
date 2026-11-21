@@ -187,6 +187,12 @@ items と同じ形（`Services`・`AppState` に欄を足す）でも、`AppReso
 | `scripts/verify-architecture.mjs`  | `dual-path`・`tauri-read`・`rest-read`            | `DUAL_PATH`・`TAURI_READ`・`REST_READ` の先頭                                                  |
 | `src/lib/banto/resources/index.ts` | `resource-imports`・`resource-list`               | import の並び・`resources` の定義の後                                                          |
 
+生成→ビルドは CI の `Generate resource → check`（`template-acceptance.yml`）が検査する。
+`scripts/fixtures/add-resource/orders.json`（5 つの型すべて・必須と任意・`audit`・`title`・
+min/max を含む）で素のコピーに `orders` を生成し、`pnpm verify:architecture`・
+`pnpm --filter admin-template check`・`cargo test`（core）・`cargo check`（src-tauri）を通す。
+アンカーを動かしたら、この検査で崩れが見つかる。
+
 ## チェックリスト（実施順）
 
 Rust 側 → フロント側の順に進める。各ステップの「手本」列のファイルを
