@@ -1896,23 +1896,19 @@ function replaceE2eForDisplay() {
 		`      # Viewer-public mode (Issue #189)`,
 		`        run: pnpm e2e:public-viewer\n\n`
 	);
-	cutRegion(
-		CI_WORKFLOW,
-		'ci: ビジュアル回帰 + axe-core ステップ除去',
-		`      # Baselines under e2e/visual/**/*-snapshots`,
-		`        run: pnpm e2e:visual\n\n`
-	);
-	// demo スイート（e2e/demo）も project も上で外すので、スクリプトと CI のステップも外す。
+	// demo スイート（e2e/demo）も project も上で外すので、スクリプトも外す。
 	drop(
 		ROOT_PKG,
 		'root package.json: e2e:demo スクリプト除去',
 		`    "e2e:demo": "playwright test --config=e2e/playwright.config.ts --project=demo",\n`
 	);
+	// ci.yml の e2e-visual ジョブは visual と demo の 2 スイートだけを走らせるので、
+	// 両方を外す display ではジョブごと外す（手順だけ外すと中身の無いジョブが残る）。
 	cutRegion(
 		CI_WORKFLOW,
-		'ci: デモビルドの e2e ステップ除去',
-		`      # Demo-build-only UI (Issue #553)`,
-		`        run: pnpm e2e:demo\n\n`
+		'ci: e2e-visual ジョブ（ビジュアル回帰 + axe-core・デモビルド）除去',
+		`  e2e-visual:\n`,
+		`          name: playwright-test-results-visual\n          path: e2e/test-results/\n          retention-days: 3\n\n`
 	);
 }
 

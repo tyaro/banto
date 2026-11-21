@@ -280,6 +280,12 @@ jobs:
         working-directory: ${{ env.DEST }}
         run: pnpm --filter admin-template check
 
+      # e2e/ の型検査（ルートの check:e2e）。scaffold が消したスイートや定数を、
+      # 残った spec や playwright.config.ts が参照していれば落ちる。
+      - name: Type-check the scaffolded e2e
+        working-directory: ${{ env.DEST }}
+        run: pnpm check:e2e
+
       - name: Build the scaffolded copy
         working-directory: ${{ env.DEST }}
         run: pnpm --filter admin-template build
@@ -358,6 +364,10 @@ jobs:
       - name: Type-check the generated copy
         working-directory: ${{ env.DEST }}
         run: pnpm --filter admin-template check
+
+      - name: Type-check the generated e2e
+        working-directory: ${{ env.DEST }}
+        run: pnpm check:e2e
 
       # src-tauri は生成物（コマンドの登録・テーブルの結線）が入る場所。tauri-check.yml と
       # 同じ system 依存を入れて、生成した Tauri コマンドのテスト（denied と監査、
