@@ -899,6 +899,82 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			expect(slotOf(dock, 'c')).toEqual(before);
 		});
 	});
+
+	// Codex P2 on #776: a pane the same change hides or floats has not left, even when its slot
+	// cannot be tied to the split (a `root` slot: nothing docked is left for it to name).
+	describe('a pane out of the tree whose slot does not name the split (#743 review)', () => {
+		const nested = () =>
+			split(
+				'out',
+				'column',
+				[0.5, 0.5],
+				[split('in', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)), panel('d')]
+			);
+		const slots = (dock: DockState, ...ids: string[]) =>
+			ids.map((id) => JSON.stringify(slotOf(dock, id)));
+
+		it('column[row[a .2, b .3, c .5] .5, d .5]: c auto-hidden, d / b / c hidden, a floated (its homeSlot is root): d keeps .5', () => {
+			const dock = runSteps(nested, []);
+			dock.autoHideRegion('c');
+			for (const id of ['d', 'b', 'c']) dock.dismiss(id);
+			expect(shareOf(slotOf(dock, 'd'))).toBeCloseTo(0.5, 9);
+			const before = slots(dock, 'b', 'c', 'd');
+			dock.undockPanel('a');
+			expect(dock.layout.docked).toBeNull();
+			expect(dock.homeSlot('a')?.kind).toBe('root');
+			expect(shareOf(slotOf(dock, 'd'))).toBeCloseTo(0.5, 9);
+			expect(slots(dock, 'b', 'c', 'd')).toEqual(before);
+			expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
+			for (const id of ['b', 'c', 'd']) dock.show(id);
+			expect(around(dock, 'd').d).toBeCloseTo(0.5, 9);
+			expect(badSizes(dock.layout.docked)).toEqual([]);
+		});
+
+		it('the same when the last pane is hidden (dismiss), not floated', () => {
+			const dock = runSteps(nested, []);
+			dock.autoHideRegion('c');
+			for (const id of ['d', 'b', 'c']) dock.dismiss(id);
+			const before = slots(dock, 'b', 'c', 'd');
+			dock.dismiss('a');
+			expect(dock.layout.docked).toBeNull();
+			expect(slots(dock, 'b', 'c', 'd')).toEqual(before);
+			for (const id of ['a', 'b', 'c', 'd']) dock.show(id);
+			expect(around(dock, 'd').d).toBeCloseTo(0.5, 9);
+			expect(badSizes(dock.layout.docked)).toEqual([]);
+		});
+
+		it('row[a .2, b .3, c .5]: c auto-hidden, b / c hidden, a floated: b and c keep their shares', () => {
+			const dock = runSteps(uneven, []);
+			dock.autoHideRegion('c');
+			for (const id of ['b', 'c']) dock.dismiss(id);
+			const before = slots(dock, 'b', 'c');
+			dock.undockPanel('a');
+			expect(slots(dock, 'b', 'c')).toEqual(before);
+		});
+
+		it('a pane closed by an assignment with a root dockSlot: still pending, the shares kept', () => {
+			const dock = runSteps(nested, ['-d', '-b']);
+			const before = slots(dock, 'b', 'd');
+			dock.layout = {
+				...dock.layout,
+				docked: removePanel(dock.layout.docked, 'a'),
+				floating: [
+					...dock.layout.floating,
+					{
+						id: 'a',
+						title: 'A',
+						x: 0,
+						y: 0,
+						width: 200,
+						height: 100,
+						open: false,
+						dockSlot: { kind: 'root' }
+					}
+				]
+			};
+			expect(slots(dock, 'b', 'd')).toEqual(before);
+		});
+	});
 });
 
 // Every sequence: once every pane is back in the old shape, the sizes are the old ones too; on the
