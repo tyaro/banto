@@ -793,6 +793,47 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			}
 		});
 
+		// #777: e hidden from the column too. Its slot named c for the gone row (the one docked pane
+		// of it), so e shown first took c from the edge into the column made again around it.
+		const ORDERS = ['abe', 'aeb', 'bae', 'bea', 'eab', 'eba'];
+		// column[d .2, row[a .2, b .3, c .5] .5, e .3]: c is the old neighbour of e.
+		const loneMid = () =>
+			split(
+				's',
+				'column',
+				[0.2, 0.5, 0.3],
+				[panel('d'), split('r', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)), panel('e')]
+			);
+		for (const [name, make, edge, shape] of [
+			['right', lone, 'right', { row: [{ column: [{ row: ['a', 'b'] }, 'd', 'e'] }, 'c'] }],
+			['bottom', lone, 'bottom', { column: [{ column: [{ row: ['a', 'b'] }, 'd', 'e'] }, 'c'] }],
+			['top', lone, 'top', { column: ['c', { column: [{ row: ['a', 'b'] }, 'd', 'e'] }] }],
+			[
+				'right, the row between d and e',
+				loneMid,
+				'right',
+				{ row: [{ column: ['d', { row: ['a', 'b'] }, 'e'] }, 'c'] }
+			]
+		] as const) {
+			for (const order of ORDERS) {
+				it(`the last docked pane of a gone split moved to the ${name} edge, shown ${order}: c stays at the edge (#777)`, () => {
+					const dock = runSteps(make, ['-a', '-b', '-e']);
+					dock.dockExistingAtEdge('c', edge);
+					for (const id of order) dock.show(id);
+					expect(shapeOf(dock.layout.docked)).toEqual(shape);
+					expect(badSizes(dock.layout.docked)).toEqual([]);
+					// c keeps the room it took at the edge, beside the whole column.
+					expect(around(dock, 'c').c).toBeCloseTo(0.25, 9);
+					const row = around(dock, 'a');
+					expect(row.a).toBeCloseTo(0.4, 9);
+					expect(row.b).toBeCloseTo(0.6, 9);
+					const column = around(dock, 'e');
+					expect(column.d).toBeCloseTo(0.2, 9);
+					expect(column.e).toBeCloseTo(0.3, 9);
+				});
+			}
+		}
+
 		it('a hidden pane holds the place of the container its last pane left: nothing to take out', () => {
 			// row[column[a,b] .4, c .3, d .3]: a hidden, b removed - a stands for the column in the row.
 			const inSplit = () =>
