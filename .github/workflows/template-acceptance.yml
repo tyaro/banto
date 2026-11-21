@@ -297,6 +297,7 @@ jobs:
   # であることを機械で保証する。生成器の単体テスト（ci.yml）は出力の文字列を見るだけで、
   # 「足した後に型検査・cargo test が通る」までは見ない。アンカーが動いた・テンプレートが
   # 変わって生成物が合わなくなった、を PR の段階で止めるための検査。
+  # 最後に Playwright で、生成した orders の一覧表示と 1 件の新規作成まで通す（e2e/tests-add-resource/）。
   # フィクスチャ（scripts/fixtures/add-resource/orders.json）は 5 つの型・必須/任意・
   # audit/title・min/max・記号入りのラベルを一通り含む。
   # clippy / fmt は回さない: 生成物は「この後は手で直す」足場で、lint の規則は ci.yml が
@@ -305,7 +306,7 @@ jobs:
   add-resource:
     name: Generate resource → check
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -380,3 +381,32 @@ jobs:
       - name: Cargo test the generated copy (src-tauri)
         working-directory: ${{ env.DEST }}
         run: cargo test -p admin-template
+
+      # 生成直後に画面が実際に動くこと（#715 の終わりの条件）。orders の一覧・新規作成を
+      # e2e/tests-add-resource/ の spec で確かめる。ci.yml の E2E ジョブと同じ手順:
+      # 静的ビルドを banto-serve（embed-ui）に埋めて、Playwright がそのバイナリを直接起動する。
+      - name: Build frontend of the generated copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm build
+
+      - name: Build banto-serve (embed-ui) of the generated copy
+        working-directory: ${{ env.DEST }}
+        run: cargo build -p admin-template-core --bin banto-serve --features embed-ui
+
+      - name: Install Playwright Chromium
+        working-directory: ${{ env.DEST }}
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E for the generated resource
+        working-directory: ${{ env.DEST }}
+        run: pnpm e2e:add-resource
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: add-resource-playwright-report
+          path: |
+            ${{ env.DEST }}/e2e/playwright-report/
+            ${{ env.DEST }}/e2e/test-results/
+          retention-days: 7

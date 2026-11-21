@@ -32,6 +32,7 @@
     "e2e:visual": "playwright test --config=e2e/playwright.config.ts --project=visual",
     "e2e:demo": "playwright test --config=e2e/playwright.config.ts --project=demo",
     "e2e:public-viewer": "playwright test --config=e2e/playwright.config.ts --project=public-viewer",
+    "e2e:add-resource": "playwright test --config=e2e/playwright.config.ts --project=add-resource",
     "bench": "pnpm --recursive --if-present bench",
     "test:rename": "node --test scripts/rename.test.mjs"
   },
