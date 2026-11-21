@@ -30,6 +30,7 @@
 ### Fixed
 
 - **テンプレート: ルートが増えると `resolveAppPath` が型エラーになるのを直した。** `resolve()` に `Path` の union をそのまま渡していたため、TypeScript が union の引数を照合する上限（25）を、リソースを 1 つ（ルート 3 本）足すと超えていた（テンプレートは 23 個。26 個で `pnpm check` が落ちるのを確かめた）。pathname を取る形に絞ってから呼ぶ。実行時の挙動は同じ。
+- **scaffold: ガラス（vibrancy）を外すプリセット（minimal / display）で、生成後の `pnpm lint` が落ちるのを直した。** 設定の `AppearanceSection.svelte` に、消したロジックだけが使っていた import（`toastStore`・`errorMessage`・`tauri`）が残り、`--max-warnings=0` の未使用警告になっていた。import も一緒に消し、`scaffold.test.mjs` で消し残しを検査する。
 
 ## [7.10.0] - 2026-11-21
 

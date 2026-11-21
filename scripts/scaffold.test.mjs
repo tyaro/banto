@@ -451,3 +451,46 @@ test('--list-banto-only は removeBantoReleaseOnly の消す path と一致す�
 	const plan = run(['--preset', 'minimal', '--dry-run'], '').stdout;
 	for (const p of listed) assert.ok(plan.includes(p), `計画に ${p} が無い`);
 });
+
+test('チャートを外す minimal では dashboard にチャート専用の集計（未使用警告の元）が残らない', () => {
+	const dir = copyRepo();
+	try {
+		const res = runIn(dir, ['--preset', 'minimal', '--strict']);
+		assert.equal(res.status, 0, `minimal が失敗:\n${res.stdout}\n${res.stderr}`);
+		const src = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src/routes/(app)/dashboard/+page.svelte'),
+			'utf8'
+		);
+		for (const unused of [
+			'categoryStock',
+			'monthCounts',
+			'scatterRows',
+			'countLabel',
+			'byCategory'
+		])
+			assert.ok(!src.includes(unused), `dashboard に ${unused} が残っている`);
+		assert.ok(src.includes('computeStatTiles'), 'stat タイルの computeStatTiles は残る');
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('ガラスを外すプリセットでは AppearanceSection に vibrancy 専用の import が残らない', () => {
+	// 残ると生成物の `pnpm lint`（--max-warnings=0）が未使用警告で落ちる。
+	const section = 'apps/admin-template/src/routes/(app)/settings/AppearanceSection.svelte';
+	for (const preset of ['minimal', 'display']) {
+		const dir = copyRepo();
+		try {
+			const res = runIn(dir, ['--preset', preset, '--strict']);
+			assert.equal(res.status, 0, `${preset} が失敗:\n${res.stdout}\n${res.stderr}`);
+			const src = fs.readFileSync(path.join(dir, section), 'utf8');
+			for (const unused of [
+				"import { toastStore } from '#lib/toast.svelte.js';",
+				"import { errorMessage, tauri } from './shared';"
+			])
+				assert.ok(!src.includes(unused), `${preset}: 余る import が残っている: ${unused}`);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	}
+});
