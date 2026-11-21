@@ -40,6 +40,9 @@ on:
       - 'scripts/banto.mjs'
       - 'scripts/lib/add-resource*'
       - 'scripts/fixtures/add-resource/**'
+      # 生成器が番号と同名を検査し、生成した migration と一緒に走る（#715）
+      - 'apps/admin-template/core/migrations-sqlite/**'
+      - 'apps/admin-template/core/migrations-postgres/**'
       - 'scripts/lib/templates/**'
       - '.github/workflows/template-acceptance.yml'
       # scaffold のアンカー対象（remover が編集するファイル群）
@@ -77,6 +80,9 @@ on:
       - 'scripts/banto.mjs'
       - 'scripts/lib/add-resource*'
       - 'scripts/fixtures/add-resource/**'
+      # 生成器が番号と同名を検査し、生成した migration と一緒に走る（#715）
+      - 'apps/admin-template/core/migrations-sqlite/**'
+      - 'apps/admin-template/core/migrations-postgres/**'
       - 'scripts/lib/templates/**'
       - '.github/workflows/template-acceptance.yml'
       # scaffold のアンカー対象（push 側と同一に保つ）
