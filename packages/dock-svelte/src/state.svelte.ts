@@ -179,7 +179,10 @@ export class DockState {
 		// without it (Codex P2 on #739). Not for `hydrate` / `reset`: they take a layout as a whole.
 		// A docked pane that leaves a split it shares with them: the same (#743).
 		if (!this.#adopting)
-			next = untrack(() => this.#withoutLeftShares(this.#withoutGoneShares(next)));
+			next = untrack(() => {
+				const kept = this.#withoutGoneShares(next);
+				return this.#withoutLeftShares(kept.layout, kept.back);
+			});
 		this.#noteStructure(next);
 		this.#layout = next;
 		for (const id of spent) this.#homeSlots.delete(id);
@@ -219,10 +222,13 @@ export class DockState {
 	 * holds its share again: kept. A pane pending before and after keeps its share too, unless its
 	 * slot moved to another place (not in the containers of the old one's innermost). Counted on
 	 * the tree before `next` (`splitPending` counts no docked pane), as `savedLayout`.
+	 *
+	 * `back`: the panes back in their place (no longer pending) with the slots they had, their
+	 * shares taken the same way - `#withoutLeftShares` counts what the docked panes had with them.
 	 */
-	#withoutGoneShares(next: DockLayout): DockLayout {
+	#withoutGoneShares(next: DockLayout): { layout: DockLayout; back: HiddenDockSlot[] } {
 		const before = this.#pendingById(this.#layout);
-		if (before.size === 0) return next;
+		if (before.size === 0) return { layout: next, back: [] };
 		const after = this.#pendingById(next);
 		const containers = (slot: DockSlot): Set<string> => {
 			const out = new Set<string>();
@@ -250,10 +256,15 @@ export class DockState {
 				if (inner !== null && !containers(now).has(inner)) gone.add(id);
 			}
 		}
-		if (gone.size === 0) return next;
 		const all: HiddenDockSlot[] = [...before].map(([id, slot]) => ({ id, slot }));
+		const returned = all.filter((h) => !gone.has(h.id) && !after.has(h.id));
+		if (gone.size === 0) return { layout: next, back: returned };
 		const kept = all.filter((h) => !gone.has(h.id));
 		const root = this.#layout.docked;
+		const back = returned.map((h) => ({
+			id: h.id,
+			slot: slotWithoutShares(root, h.slot, all, kept)
+		}));
 		// The `homeSlot`s of the panes still floating count them too (#733): taken the same way.
 		const floatingNext = new Set(next.floating.map((w) => w.id));
 		for (const [id, slot] of this.#homeSlots)
@@ -267,7 +278,7 @@ export class DockState {
 			changed = true;
 			return { ...w, dockSlot };
 		});
-		return changed ? { ...next, floating } : next;
+		return { layout: changed ? { ...next, floating } : next, back };
 	}
 
 	/** The docked pane `dockExisting` / `dockExistingAtEdge` is moving, while it assigns (`#withoutLeftShares`). */
@@ -290,9 +301,11 @@ export class DockState {
 	 * another container (`dockExisting`, `dockExistingAtEdge`). A pane hidden or floated still
 	 * holds its share (it is pending in `next`), one moved inside its split is still a child of
 	 * it, and one auto-hidden to a band is not counted as gone (it comes back by `size`). Run
-	 * after `#withoutGoneShares`, on what it left.
+	 * after `#withoutGoneShares`, on what it left; `back` are the panes it found back in their
+	 * place by the same change: what the docked panes had before is counted with their shares too
+	 * (cross-review P2 on #743).
 	 */
-	#withoutLeftShares(next: DockLayout): DockLayout {
+	#withoutLeftShares(next: DockLayout, back: HiddenDockSlot[]): DockLayout {
 		const root = this.#layout.docked;
 		if (root === null || root === next.docked) return next;
 		const pending = [...this.#pendingById(next)].map(([id, slot]) => ({ id, slot }));
@@ -301,7 +314,8 @@ export class DockState {
 			next.docked,
 			pending,
 			this.#moved,
-			new Set(autoHiddenPanelIds(next))
+			new Set(autoHiddenPanelIds(next)),
+			back
 		);
 		if (without === null) return next;
 		const floatingNext = new Set(next.floating.map((w) => w.id));

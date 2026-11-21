@@ -1098,6 +1098,13 @@ export function slotWithoutShares(
  * what the pending shares leave (`1 - pendingShare`), counted on `root`; for a split that is gone
  * (what is left of it is the docked panes its slots name), the whole of what they leave.
  *
+ * `back` are the panes out of the tree before that the same change puts back in their place (so
+ * not in `pending`), with the slots they had: the docked children had only the room their shares
+ * left too (cross-review P2 on #743). Say `row[a .1, b .2, c .3, d .4]`, `b` and `c` hidden, `c`
+ * back and `a` removed at once: `a` and `d` had `.5` of the row, so `a` takes `.1` out and `b`
+ * comes back at `.2 / .9`, as when `c` is shown first. Their shares are of the same whole as
+ * those of `pending` (the caller takes both without the panes gone for good first).
+ *
  * A child has not left while one of its panes is docked where the split is (in it; anywhere when
  * the split is gone after), or a pane out of the tree holds its place after: itself (hidden or
  * floated by the same change), or one that remembers the container it was the last of (counted
@@ -1117,7 +1124,8 @@ export function slotsWithoutLeft(
 	next: DockNode | null,
 	pending: HiddenDockSlot[],
 	moved: { id: string; edge: boolean } | null = null,
-	banded: ReadonlySet<string> = new Set()
+	banded: ReadonlySet<string> = new Set(),
+	back: HiddenDockSlot[] = []
 ): ((slot: DockSlot) => DockSlot) | null {
 	if (root === null || pending.length === 0) return null;
 	type SplitSlot = Extract<DockSlot, { kind: 'split' }>;
@@ -1137,10 +1145,44 @@ export function slotsWithoutLeft(
 	if (splits.size === 0) return null;
 	const slotOf = new Map(pending.map((h) => [h.id, h.slot]));
 	const dockedNext = new Set(collectPanelIds(next));
+	// The panes out of the tree before: the ones still out, and the ones the change puts back.
+	const before = [...pending, ...back.filter((h) => !slotOf.has(h.id))];
+	/** The docked panes left of a split that is gone: the ones the slots of its panes name. */
+	const remnant = (was: HiddenDockSlot[]): string[] =>
+		[...new Set(was.flatMap((h) => slotNames(h.slot)))].filter(
+			(id) => findNode(root, id)?.type === 'panel'
+		);
+	// The splits gone before whose one docked pane left is the one moved: it has left them
+	// (cross-review P2 on #743). Their slots stop naming it, so the panes come back to the split's
+	// own place (`outer`), not around the pane where it went.
+	const lone = new Set<string>();
+	if (moved !== null)
+		for (const [key, split] of splits) {
+			if (findNode(root, split.id)) continue;
+			const named = remnant(splitPending(root, split, before));
+			if (named.length === 1 && named[0] === moved.id) lone.add(key);
+		}
+	const forget = (slot: DockSlot): DockSlot => {
+		if (lone.size === 0 || moved === null || slot.kind === 'root') return slot;
+		const outer = slot.outer && forget(slot.outer);
+		const out: DockSlot = outer === slot.outer ? slot : { ...slot, outer };
+		if (out.kind !== 'split' || !lone.has(keyOf(out)) || !slotNames(out).includes(moved.id))
+			return out;
+		const others = (ids: string[]) => ids.filter((id) => id !== moved.id);
+		return {
+			...out,
+			// No docked node: the id of the split itself (gone; found again, the pane goes into it).
+			neighborId: out.neighborId === moved.id ? out.splitId : out.neighborId,
+			anchors: others(out.anchors),
+			...(out.otherAnchors ? { otherAnchors: others(out.otherAnchors) } : {})
+		};
+	};
+	const pendingNext =
+		lone.size > 0 ? pending.map((h) => ({ ...h, slot: forget(h.slot) })) : pending;
 	/** What is left of each split: 1 - the part of the children that left. */
 	const rest = new Map<string, number>();
 	for (const [key, split] of splits) {
-		const was = splitPending(root, split, pending);
+		const was = splitPending(root, split, before);
 		const held = pendingShare(
 			was,
 			was.map((h) => h.id)
@@ -1160,11 +1202,18 @@ export function slotsWithoutLeft(
 		} else if (node) {
 			continue;
 		} else {
-			const named = [...new Set(was.flatMap((h) => slotNames(h.slot)))].filter(
-				(id) => findNode(root, id)?.type === 'panel'
-			);
+			const named = remnant(was);
 			if (named.length === 0) continue;
-			units = [{ panel: null, ids: named, panels: named, part: 1 - held }];
+			// One pane left of it: that pane is the child (`lone`). Moved, it has left - no other
+			// child is docked for it to make the split again with (`movedAway`).
+			units = [
+				{
+					panel: named.length === 1 ? named[0] : null,
+					ids: named,
+					panels: named,
+					part: 1 - held
+				}
+			];
 		}
 		const after = findNode(next, split.id);
 		const here =
@@ -1175,7 +1224,7 @@ export function slotsWithoutLeft(
 		// what their slots name below the split's level (the containers they stand for).
 		const counted = new Set(was.map((h) => h.id));
 		const holders = new Set<string>();
-		for (const h of splitPending(next, split, pending)) {
+		for (const h of splitPending(next, split, pendingNext)) {
 			if (counted.has(h.id)) continue;
 			holders.add(h.id);
 			for (let s = slotOf.get(h.id); s && s.kind !== 'root'; s = s.outer) {
@@ -1205,10 +1254,10 @@ export function slotsWithoutLeft(
 		}
 		if (left > 1e-9 && left < 1 - 1e-9) rest.set(key, 1 - left);
 	}
-	if (rest.size === 0) return null;
-	const without = (slot: DockSlot): DockSlot => {
+	if (rest.size === 0 && lone.size === 0) return null;
+	const shares = (slot: DockSlot): DockSlot => {
 		if (slot.kind === 'root') return slot;
-		const outer = slot.outer && without(slot.outer);
+		const outer = slot.outer && shares(slot.outer);
 		const out: DockSlot = outer === slot.outer ? slot : { ...slot, outer };
 		if (out.kind !== 'split' || out.share === undefined) return out;
 		const of = rest.get(keyOf(out));
@@ -1217,7 +1266,7 @@ export function slotsWithoutLeft(
 		// Above 1: the shares did not add up (a split changed since) - it comes back by `size`.
 		return withShare(out, share < 1 + 1e-9 ? Math.min(1, share) : NaN);
 	};
-	return without;
+	return (slot) => shares(forget(slot));
 }
 
 /**

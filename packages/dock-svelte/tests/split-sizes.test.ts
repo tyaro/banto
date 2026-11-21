@@ -635,6 +635,25 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			dock.show('b');
 			expect(sameSizes(sizesOf(dock.layout.docked), [[1 / 3, 2 / 3]])).toBe(true);
 		});
+
+		it('a pane back in the split and a docked one taken away by the same assignment (#743 review)', () => {
+			// b .2 and c .3 hidden; c goes back and the docked a (.1) goes: as one after the other.
+			const steps = runSteps(four, ['-b', '-c', '+c']);
+			const tree = removePanel(steps.layout.docked, 'a');
+			take(steps, 'a');
+			expect(shareOf(slotOf(steps, 'b')), 'one by one').toBeCloseTo(0.2 / 0.9, 9);
+			const dock = runSteps(four, ['-b', '-c']);
+			dock.layout = {
+				...dock.layout,
+				docked: tree,
+				floating: dock.layout.floating.filter((w) => w.id !== 'c')
+			};
+			expect(shareOf(slotOf(dock, 'b')), 'at once').toBeCloseTo(0.2 / 0.9, 9);
+			steps.show('b');
+			dock.show('b');
+			expect(around(dock, 'b').b).toBeCloseTo(2 / 9, 9);
+			expect(sameSizes(sizesOf(dock.layout.docked), sizesOf(steps.layout.docked))).toBe(true);
+		});
 	});
 
 	describe('nested splits', () => {
@@ -696,6 +715,82 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 					[0.4, 0.6]
 				])
 			).toBe(true);
+		});
+
+		// column[row[a .2, b .3, c .5] .5, d .2, e .3]: a and b hidden, the row is gone and c is all
+		// that is left of it. c moved away has left it as c removed has (cross-review P2 on #743).
+		const lone = () =>
+			split(
+				's',
+				'column',
+				[0.5, 0.2, 0.3],
+				[split('r', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)), panel('d'), panel('e')]
+			);
+		const outerShareOf = (slot: DockSlot | undefined) =>
+			slot && slot.kind !== 'root' ? shareOf(slot.outer) : undefined;
+		for (const [name, leave, shape] of [
+			[
+				'docked into the tabs of d (dockExisting)',
+				(d: DockState) => d.dockExisting('c', 'd', 'center'),
+				{ column: [{ row: ['a', 'b'] }, { tabs: ['d', 'c'] }, 'e'] }
+			],
+			[
+				'docked beside d (dockExisting, another split)',
+				(d: DockState) => d.dockExisting('c', 'd', 'right'),
+				{ column: [{ row: ['a', 'b'] }, { row: ['d', 'c'] }, 'e'] }
+			],
+			[
+				'docked at an outer edge (dockExistingAtEdge)',
+				(d: DockState) => d.dockExistingAtEdge('c', 'bottom'),
+				{ column: [{ column: [{ row: ['a', 'b'] }, 'd', 'e'] }, 'c'] }
+			],
+			[
+				'docked at the outer edge the row ran to',
+				(d: DockState) => d.dockExistingAtEdge('c', 'right'),
+				{ row: [{ column: [{ row: ['a', 'b'] }, 'd', 'e'] }, 'c'] }
+			]
+		] as const) {
+			it(`the last docked pane of a split that is gone, ${name}: a and b at .4 / .6 (#743 review)`, () => {
+				const dock = runSteps(lone, ['-a', '-b']);
+				expect(shapeOf(dock.layout.docked)).toEqual({ column: ['c', 'd', 'e'] });
+				leave(dock);
+				expect(shareOf(slotOf(dock, 'a')), 'the slot of a').toBeCloseTo(0.4, 9);
+				expect(shareOf(slotOf(dock, 'b')), 'the slot of b').toBeCloseTo(0.6, 9);
+				dock.show('a');
+				dock.show('b');
+				// The row is back at its own place in the column, not around c where it went.
+				expect(shapeOf(dock.layout.docked)).toEqual(shape);
+				expect(badSizes(dock.layout.docked)).toEqual([]);
+				const row = around(dock, 'a');
+				expect(row.a).toBeCloseTo(0.4, 9);
+				expect(row.b).toBeCloseTo(0.6, 9);
+				const column = around(dock, 'e');
+				expect(Object.values(column)[0]).toBeCloseTo(0.5, 9);
+				expect(column.e).toBeCloseTo(0.3, 9);
+			});
+		}
+
+		it('the same with a pane out of the split around it: the slots are as when c is removed (#743 review)', () => {
+			const removed = runSteps(lone, ['-a', '-b', '-e']);
+			take(removed, 'c');
+			for (const leave of [
+				(d: DockState) => d.dockExisting('c', 'd', 'center'),
+				(d: DockState) => d.dockExistingAtEdge('c', 'bottom')
+			]) {
+				const dock = runSteps(lone, ['-a', '-b', '-e']);
+				leave(dock);
+				for (const id of ['a', 'b', 'e']) {
+					const [got, want] = [slotOf(dock, id), slotOf(removed, id)];
+					expect(shareOf(got), `the share of ${id}`).toBeCloseTo(shareOf(want)!, 9);
+					if (id !== 'e')
+						expect(outerShareOf(got), `the outer share of ${id}`).toBeCloseTo(
+							outerShareOf(want)!,
+							9
+						);
+				}
+				expect(shareOf(slotOf(dock, 'a'))).toBeCloseTo(0.4, 9);
+				expect(shareOf(slotOf(dock, 'e'))).toBeCloseTo(0.3, 9);
+			}
 		});
 
 		it('a hidden pane holds the place of the container its last pane left: nothing to take out', () => {
