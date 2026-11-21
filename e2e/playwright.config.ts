@@ -186,6 +186,10 @@ export default defineConfig({
 		{
 			name: 'add-resource',
 			testDir: './tests-add-resource',
+			// 再試行しない: spec は空 DB の初回セットアップから始まるが、DB は実行全体で
+			// 1 つ（webServer が共通）。再試行は 2 回目が通常ログイン画面で必ず落ち、
+			// 最初の失敗の場所を隠すだけになる。
+			retries: 0,
 			use: { ...devices['Desktop Chrome'] }
 		},
 		// Demo-build-only UI (Issue #553), against `vite dev` with VITE_BANTO_DEMO=1.
