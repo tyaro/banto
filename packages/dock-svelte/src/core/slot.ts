@@ -1107,9 +1107,10 @@ export function slotWithoutShares(
  *
  * A child has not left while one of its panes is docked where the split is (in it; anywhere when
  * the split is gone after), or a pane out of the tree holds its place after: itself (hidden or
- * floated by the same change - whatever its slot is, also one that does not name the split, as the
- * `root` slot of the last docked pane), or one that remembers the container it was the last of (counted
- * for the split on `next` and not on `root`). `moved` is the docked pane the change moves
+ * floated by the same change, its slot naming the split - or no split at all, as the `root` slot
+ * of the last docked pane; a slot that names another split is where it went: it has left), or
+ * one that remembers the container it was the last of (counted for the split on `next` and not
+ * on `root`). `moved` is the docked pane the change moves
  * (`dockExisting` / `dockExistingAtEdge` - the trees alone do not tell which of two panes moved):
  * it has left unless it is a child of the same split again (or, the split gone with it, of a
  * split in the same direction with another of its children: a split of two made again around
@@ -1146,6 +1147,13 @@ export function slotsWithoutLeft(
 	if (splits.size === 0) return null;
 	const slotOf = new Map(pending.map((h) => [h.id, h.slot]));
 	const dockedNext = new Set(collectPanelIds(next));
+	/** Out of the tree after, its slot naming no split at any level (`root`, tabs of no split). */
+	const placeless = (id: string): boolean => {
+		let s = slotOf.get(id);
+		if (s === undefined) return false;
+		for (; s && s.kind !== 'root'; s = s.outer) if (s.kind === 'split') return false;
+		return true;
+	};
 	// The panes out of the tree before: the ones still out, and the ones the change puts back.
 	const before = [...pending, ...back.filter((h) => !slotOf.has(h.id))];
 	/** The docked panes left of a split that is gone: the ones the slots of its panes name. */
@@ -1250,10 +1258,12 @@ export function slotsWithoutLeft(
 		for (const unit of units) {
 			if (unit.panels.some((id) => here.has(id)) && !movedAway(unit)) continue;
 			if (unit.panels.some((id) => banded.has(id))) continue;
-			// One of its panes is out of the tree after: hidden or floated, it is still in the layout,
-			// whatever its slot says - a `root` slot (the last docked pane: nothing left to name) is
-			// not counted for the split by `splitPending` (Codex P2 on #776).
-			if (unit.panels.some((id) => slotOf.has(id))) continue;
+			// One of its panes is out of the tree after (hidden or floated: still in the layout) with
+			// a slot that names no split - `root`, the last docked pane: nothing left to name, so
+			// `splitPending` does not count it for the split (Codex P2 on #776). A slot that names
+			// this split is a holder (below); one that names another split says where the pane
+			// went: it has left (cross-review P2 on #776).
+			if (unit.panels.some(placeless)) continue;
 			if (unit.ids.some((id) => holders.has(id))) continue;
 			left += unit.part;
 		}

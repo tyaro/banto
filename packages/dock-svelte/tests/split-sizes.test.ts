@@ -974,6 +974,40 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			};
 			expect(slots(dock, 'b', 'd')).toEqual(before);
 		});
+
+		// Cross-review P2 on #776: a pending pane whose slot names ANOTHER split has left - only a
+		// slot that names no split at all (`root`) says nothing about where the pane went.
+		it('column[row[a .2, b .3, c .5], row[x, y, z]]: b hidden, a moved beside y and hidden - by one assignment as step by step: b at .375', () => {
+			const two = () =>
+				split(
+					'out',
+					'column',
+					[0.5, 0.5],
+					[
+						split('in', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)),
+						split('low', 'row', [0.2, 0.3, 0.5], ['x', 'y', 'z'].map(panel))
+					]
+				);
+			const steps = runSteps(two, ['-b']);
+			steps.dockExisting('a', 'y', 'left');
+			steps.dismiss('a');
+			expect(shareOf(slotOf(steps, 'b')), 'one by one').toBeCloseTo(0.375, 9);
+			const slotA = slotOf(steps, 'a');
+			expect(slotA?.kind === 'split' && slotA.splitId).toBe('low');
+			// The same tree and the same slot of a (it names `low`), b's slot as it was (.3).
+			const dock = runSteps(two, ['-b']);
+			expect(shareOf(slotOf(dock, 'b'))).toBeCloseTo(0.3, 9);
+			dock.layout = {
+				...dock.layout,
+				docked: steps.layout.docked,
+				floating: [...dock.layout.floating, steps.layout.floating.find((w) => w.id === 'a')!]
+			};
+			expect(shareOf(slotOf(dock, 'b')), 'at once').toBeCloseTo(0.375, 9);
+			expect(JSON.stringify(slotOf(dock, 'b'))).toBe(JSON.stringify(slotOf(steps, 'b')));
+			for (const d of [steps, dock]) d.show('b');
+			expect(around(dock, 'b').b).toBeCloseTo(0.375, 9);
+			expect(sameSizes(sizesOf(dock.layout.docked), sizesOf(steps.layout.docked))).toBe(true);
+		});
 	});
 });
 
