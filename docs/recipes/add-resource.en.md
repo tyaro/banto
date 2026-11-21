@@ -78,7 +78,7 @@ generated files and the anchor table are in the Japanese
 CI checks generate-then-build (`Generate resource → check` in `template-acceptance.yml`): it
 generates `orders` from `scripts/fixtures/add-resource/orders.json` (all five types, required and
 optional, `audit`, `title`, min/max) into a clean copy, then runs `pnpm verify:architecture`,
-`pnpm --filter admin-template check`, `cargo test` (core) and `cargo check` (src-tauri).
+`pnpm --filter admin-template check`, `cargo test` (core and src-tauri).
 
 ## Checklist (in order of execution)
 

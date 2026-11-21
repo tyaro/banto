@@ -345,7 +345,8 @@ jobs:
         run: pnpm --filter admin-template check
 
       # src-tauri は生成物（コマンドの登録・テーブルの結線）が入る場所。tauri-check.yml と
-      # 同じ system 依存を入れて、コンパイルまで通ることを確かめる。
+      # 同じ system 依存を入れて、生成した Tauri コマンドのテスト（denied と監査、
+      # conventions §1 の Tauri 側）まで走らせる。
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -370,6 +371,6 @@ jobs:
         working-directory: ${{ env.DEST }}
         run: cargo test -p banto-core -p banto-storage -p banto-server -p admin-template-core
 
-      - name: Cargo check the generated copy (src-tauri)
+      - name: Cargo test the generated copy (src-tauri)
         working-directory: ${{ env.DEST }}
-        run: cargo check -p admin-template --all-targets
+        run: cargo test -p admin-template
