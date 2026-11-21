@@ -834,6 +834,141 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			}
 		}
 
+		// #781: the slots of the splits further out named c too - among the panes of the child it was
+		// in (the column c and d are left in), not for a gone split. A pane shown from there went
+		// beside the new split at the edge (all it holds was named), c inside.
+		const perms = (ids: string): string[] =>
+			ids.length < 2
+				? [ids]
+				: [...ids].flatMap((id, i) => perms(ids.slice(0, i) + ids.slice(i + 1)).map((p) => id + p));
+		// row[column[row[a .2, b .3, c .5] .6, d .4] .5, e .2, f .3]
+		const deep = () =>
+			split(
+				'ro',
+				'row',
+				[0.5, 0.2, 0.3],
+				[
+					split(
+						'col',
+						'column',
+						[0.6, 0.4],
+						[split('ri', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)), panel('d')]
+					),
+					panel('e'),
+					panel('f')
+				]
+			);
+		const deepRow = { row: [{ column: [{ row: ['a', 'b'] }, 'd'] }, 'e', 'f'] };
+		/** The sizes of deep()'s splits without c, wherever they are in the tree. */
+		const expectDeep = (dock: DockState, label: string) => {
+			expect(badSizes(dock.layout.docked), label).toEqual([]);
+			const row = around(dock, 'a');
+			expect(row.a, label).toBeCloseTo(0.4, 9);
+			expect(row.b, label).toBeCloseTo(0.6, 9);
+			const column = around(dock, 'd');
+			expect(Object.values(column)[0], label).toBeCloseTo(0.6, 9);
+			expect(column.d, label).toBeCloseTo(0.4, 9);
+			const outer = around(dock, 'e');
+			expect(Object.values(outer)[0], label).toBeCloseTo(0.5, 9);
+			expect(outer.e, label).toBeCloseTo(0.2, 9);
+			expect(outer.f, label).toBeCloseTo(0.3, 9);
+		};
+		for (const [edge, shape] of [
+			['right', { row: [deepRow, 'c'] }],
+			['bottom', { column: [deepRow, 'c'] }],
+			['top', { column: ['c', deepRow] }],
+			['left', { row: ['c', deepRow] }]
+		] as const) {
+			for (const order of perms('abef')) {
+				it(`two splits deep, the split between left with d: c moved to the ${edge} edge, shown ${order}, stays at the edge (#781)`, () => {
+					const dock = runSteps(deep, ['-a', '-b', '-e', '-f']);
+					expect(shapeOf(dock.layout.docked)).toEqual({ column: ['c', 'd'] });
+					dock.dockExistingAtEdge('c', edge);
+					for (const id of order) dock.show(id);
+					expect(shapeOf(dock.layout.docked)).toEqual(shape);
+					// c keeps the room it took at the edge, beside the whole row.
+					expect(around(dock, 'c').c).toBeCloseTo(0.25, 9);
+					expectDeep(dock, order);
+				});
+			}
+		}
+
+		// column[deep() .5, g .2, h .3]: one more split around, every order of the six.
+		const deeper = () => split('co', 'column', [0.5, 0.2, 0.3], [deep(), panel('g'), panel('h')]);
+		for (const [edge, shape] of [
+			['right', { row: [{ column: [deepRow, 'g', 'h'] }, 'c'] }],
+			['bottom', { column: [{ column: [deepRow, 'g', 'h'] }, 'c'] }]
+		] as const) {
+			it(`three splits deep: c moved to the ${edge} edge stays there in any show order (#781)`, () => {
+				for (const order of perms('abefgh')) {
+					const dock = runSteps(deeper, ['-a', '-b', '-e', '-f', '-g', '-h']);
+					dock.dockExistingAtEdge('c', edge);
+					for (const id of order) dock.show(id);
+					expect(shapeOf(dock.layout.docked), order).toEqual(shape);
+					expect(around(dock, 'c').c, order).toBeCloseTo(0.25, 9);
+					expectDeep(dock, order);
+					const column = around(dock, 'g');
+					expect(Object.values(column)[0], order).toBeCloseTo(0.5, 9);
+					expect(column.g, order).toBeCloseTo(0.2, 9);
+					expect(column.h, order).toBeCloseTo(0.3, 9);
+				}
+			});
+		}
+
+		it('the split around still docked, the one around that gone: c stays at the edge (#781)', () => {
+			// e and f docked: the outer row is there, the column around it (g, h hidden) is gone.
+			for (const order of perms('abgh')) {
+				const dock = runSteps(deeper, ['-a', '-b', '-g', '-h']);
+				dock.dockExistingAtEdge('c', 'right');
+				for (const id of order) dock.show(id);
+				expect(shapeOf(dock.layout.docked), order).toEqual({
+					row: [{ column: [deepRow, 'g', 'h'] }, 'c']
+				});
+				expect(around(dock, 'c').c, order).toBeCloseTo(0.25, 9);
+				expectDeep(dock, order);
+			}
+		});
+
+		it('no gone split inside: a pane of a child of a gone split moved to an edge stays there (#781)', () => {
+			// row[column[c .6, d .4] .5, e .2, f .3], e and f hidden: their slots name c and d for the column.
+			const shallow = () =>
+				split(
+					'ro',
+					'row',
+					[0.5, 0.2, 0.3],
+					[split('col', 'column', [0.6, 0.4], ['c', 'd'].map(panel)), panel('e'), panel('f')]
+				);
+			for (const [edge, shape] of [
+				['right', { row: [{ row: ['d', 'e', 'f'] }, 'c'] }],
+				['bottom', { column: [{ row: ['d', 'e', 'f'] }, 'c'] }]
+			] as const)
+				for (const order of ['ef', 'fe']) {
+					const dock = runSteps(shallow, ['-e', '-f']);
+					dock.dockExistingAtEdge('c', edge);
+					for (const id of order) dock.show(id);
+					expect(shapeOf(dock.layout.docked), order).toEqual(shape);
+					expect(badSizes(dock.layout.docked), order).toEqual([]);
+					expect(around(dock, 'c').c, order).toBeCloseTo(0.25, 9);
+					const row = around(dock, 'e');
+					expect(row.d, order).toBeCloseTo(0.5, 9);
+					expect(row.e, order).toBeCloseTo(0.2, 9);
+					expect(row.f, order).toBeCloseTo(0.3, 9);
+				}
+		});
+
+		it('a child of a gone split moved to an edge: the pane hidden beside it comes back to the split, not to the edge (#781)', () => {
+			// row[a .2, b .3, c .5], a hidden (its neighbour is b): b to the bottom edge, c is what is left.
+			const dock = runSteps(L['row[a,b,c] uneven'], ['-a']);
+			dock.dockExistingAtEdge('b', 'bottom');
+			dock.show('a');
+			expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'c'] }, 'b'] });
+			expect(badSizes(dock.layout.docked)).toEqual([]);
+			expect(around(dock, 'b').b).toBeCloseTo(0.25, 9);
+			const row = around(dock, 'a');
+			expect(row.a).toBeCloseTo(0.2 / 0.7, 9);
+			expect(row.c).toBeCloseTo(0.5 / 0.7, 9);
+		});
+
 		it('a hidden pane holds the place of the container its last pane left: nothing to take out', () => {
 			// row[column[a,b] .4, c .3, d .3]: a hidden, b removed - a stands for the column in the row.
 			const inSplit = () =>
