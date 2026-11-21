@@ -1171,17 +1171,32 @@ export function slotsWithoutLeft(
 			const named = remnant(splitPending(root, split, before));
 			if (named.length === 1 && named[0] === moved.id) lone.add(key);
 		}
+	// Moved to an outer edge, it has left the split around such a split too (#777): there it stood
+	// for the gone split (its one docked pane), so the slots of that split - a pane hidden from it,
+	// the `outer` of another - stop naming it as well. Shown first, such a pane would wrap it into
+	// the split made again (`besideWhat` climbs to the node that holds the ones named) and take it
+	// from the edge. The key of the split around -> the id of the gone split it stood for there.
+	// Not for `dockExisting`: there it may be put beside a child of that split on purpose.
+	const around = new Map<string, string>();
+	if (moved?.edge && lone.size > 0)
+		for (const h of pending)
+			for (let s: DockSlot | undefined = h.slot; s && s.kind !== 'root'; s = s.outer)
+				if (s.kind === 'split' && lone.has(keyOf(s)) && s.outer?.kind === 'split')
+					around.set(keyOf(s.outer), s.splitId);
 	const forget = (slot: DockSlot): DockSlot => {
 		if (lone.size === 0 || moved === null || slot.kind === 'root') return slot;
 		const outer = slot.outer && forget(slot.outer);
 		const out: DockSlot = outer === slot.outer ? slot : { ...slot, outer };
-		if (out.kind !== 'split' || !lone.has(keyOf(out)) || !slotNames(out).includes(moved.id))
-			return out;
+		if (out.kind !== 'split' || !slotNames(out).includes(moved.id)) return out;
+		const key = keyOf(out);
+		const gone = lone.has(key) ? out.splitId : around.get(key);
+		if (gone === undefined) return out;
 		const others = (ids: string[]) => ids.filter((id) => id !== moved.id);
 		return {
 			...out,
-			// No docked node: the id of the split itself (gone; found again, the pane goes into it).
-			neighborId: out.neighborId === moved.id ? out.splitId : out.neighborId,
+			// No docked node: the id of the split itself (gone; found again, the pane goes into it) -
+			// or, in the split around it, of the gone split (found again, the pane goes beside it).
+			neighborId: out.neighborId === moved.id ? gone : out.neighborId,
 			anchors: others(out.anchors),
 			...(out.otherAnchors ? { otherAnchors: others(out.otherAnchors) } : {})
 		};
