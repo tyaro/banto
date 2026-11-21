@@ -57,7 +57,8 @@
 	 * once, into a hidden stash at the end of the host, and the tree (docked pane,
 	 * tab, floating window, auto-hide slide-out) only draws an empty receptacle for
 	 * it; the content element is moved into the receptacle while one is mounted and
-	 * back to the stash when none is. Focus and scroll are put back after a move;
+	 * back to the stash when none is. Focus is put back after a move, scroll offsets
+	 * after every re-arrangement (a tab switch too: the tabs of a group share one frame, #768);
 	 * where `Element.moveBefore()` exists the content that holds the focus waits in
 	 * the `persistent-transit` element while the tree updates, so the focused
 	 * element never leaves the document and gets no `blur` (#763).
@@ -304,6 +305,15 @@
 		const discarded = lifecycle.discarded.size;
 		const structure = `${layoutStructureKey(layout)}\u0001${flyout ?? ''}\u0001${discarded}`;
 		untrack(() => persistentContents.snapshot(structure));
+	});
+	// After the blocks of that update ran, in the same flush (declared in the script, so it runs
+	// after the effects of the template: the receptacles the update mounted hold their content):
+	// the scroll offsets go back before the code that applied the update goes on (#768).
+	$effect(() => {
+		void dock.layout;
+		void dock.flyoutPanel;
+		void lifecycle.discarded.size;
+		untrack(() => persistentContents.arranged());
 	});
 
 	/** Edges that hold an auto-hidden band (#694 PR-3): the docked layer is inset by them. */

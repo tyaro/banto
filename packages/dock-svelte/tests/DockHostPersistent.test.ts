@@ -309,27 +309,357 @@ describe('persistent is read when the change is applied', () => {
 	);
 });
 
+/**
+ * jsdom has no layout, so `scrollTop` is faked the way a browser treats it (#768): an offset
+ * belongs to the element while it stays rendered in the same frame (`.body`). Read after the
+ * element was hidden (a background tab, the stash) or moved into another frame, it is gone (0).
+ * `limit` is how far an element can be scrolled right now (a browser clamps the offset of a
+ * frame whose content got shorter); without it nothing is clamped. Returns the restore.
+ */
+function fakeScrollTop(limit?: (el: Element) => number): () => void {
+	const tops = new WeakMap<Element, { top: number; frame: Element | null }>();
+	const proto = Element.prototype;
+	const original = Object.getOwnPropertyDescriptor(proto, 'scrollTop');
+	Object.defineProperty(proto, 'scrollTop', {
+		configurable: true,
+		get(this: Element) {
+			const record = tops.get(this);
+			if (!record) return 0;
+			if (this.closest('[hidden]') || this.closest('.body') !== record.frame) {
+				tops.delete(this);
+				return 0;
+			}
+			if (limit) record.top = Math.min(record.top, limit(this));
+			return record.top;
+		},
+		set(this: Element, top: number) {
+			if (!this.closest('[hidden]')) tops.set(this, { top, frame: this.closest('.body') });
+		}
+	});
+	return () => {
+		if (original) Object.defineProperty(proto, 'scrollTop', original);
+		else Reflect.deleteProperty(proto, 'scrollTop');
+	};
+}
+
+const frameOf = (id: string) =>
+	document.querySelector(`[data-dock-persistent-slot="${id}"]`)!.closest<HTMLElement>('.body')!;
+const scrollerOf = (id: string) => document.querySelector<HTMLElement>(`[data-scroller="${id}"]`)!;
+
 describe('focus and scroll after a move', () => {
 	it('the focused input and the scroll offset come back after an undock', async () => {
-		mount(mixed(), { persistent: (id) => id === 'p' });
-		const scroller = document.querySelector<HTMLElement>('[data-scroller="p"]')!;
-		let top = 0;
-		Object.defineProperty(scroller, 'scrollTop', {
-			configurable: true,
-			get: () => top,
-			set: (v: number) => (top = v)
-		});
-		top = 40;
-		scroller.dispatchEvent(new Event('scroll'));
-		// What a browser does to a moved scroller (no scroll event): the offset is gone.
-		top = 0;
-		const input = inputOf('P')!;
-		input.focus();
-		dragFrom(screen.getByRole('toolbar', { name: 'P' }));
-		await settle();
-		expect(dialogOf('P')!.contains(input)).toBe(true);
-		expect(top).toBe(40);
-		expect(document.activeElement).toBe(input);
+		const restore = fakeScrollTop();
+		try {
+			mount(mixed(), { persistent: (id) => id === 'p' });
+			await settle();
+			const scroller = scrollerOf('p');
+			// No `scroll` event: scrolled in the same task as the move (#768).
+			scroller.scrollTop = 40;
+			const input = inputOf('P')!;
+			input.focus();
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			await settle();
+			expect(dialogOf('P')!.contains(input)).toBe(true);
+			expect(scroller.scrollTop).toBe(40);
+			expect(document.activeElement).toBe(input);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a tab switch away and back: each persistent tab has its own offset in the shared frame (#768)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'x' || id === 'y' });
+			await settle();
+			const frame = frameOf('x');
+			expect(frameOf('y')).toBe(frame);
+			frame.scrollTop = 70;
+			scrollerOf('x').scrollTop = 25;
+			clickPress(tabOf('y'));
+			await settle();
+			// Y was never scrolled: the top, not X's 70.
+			expect(frame.scrollTop).toBe(0);
+			// X's own scroller is not rendered any more: a browser has dropped its offset.
+			expect(scrollerOf('x').scrollTop).toBe(0);
+			frame.scrollTop = 30;
+			frame.dispatchEvent(new Event('scroll'));
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frame.scrollTop).toBe(70);
+			expect(scrollerOf('x').scrollTop).toBe(25);
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frame.scrollTop).toBe(30);
+			// Kept beside the layout, never in it (nothing to save, no version change).
+			expect(JSON.stringify(dock.layout)).not.toContain('scroll');
+		} finally {
+			restore();
+		}
+	});
+
+	it('the offset of a tab that is not persistent is not taken for the persistent one behind it (#768)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			mount(mixed(), { persistent: (id) => id === 'x' });
+			await settle();
+			const frame = frameOf('x');
+			frame.scrollTop = 70;
+			frame.dispatchEvent(new Event('scroll'));
+			clickPress(tabOf('y'));
+			await settle();
+			// Y (re-created) scrolls the shared frame while X is in the background.
+			frame.scrollTop = 400;
+			frame.dispatchEvent(new Event('scroll'));
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frameOf('x')).toBe(frame);
+			expect(frame.scrollTop).toBe(70);
+		} finally {
+			restore();
+		}
+	});
+
+	it('hide and show: the offsets recorded before the pane left the screen come back (#768)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock, host } = mount(mixed(), { persistent: (id) => id === 'p' });
+			await settle();
+			frameOf('p').scrollTop = 55;
+			scrollerOf('p').scrollTop = 15;
+			expect(await host().hidePanel('p')).toBe('applied');
+			await settle();
+			expect(probe('p')!.closest('[hidden]')).not.toBeNull();
+			expect(scrollerOf('p').scrollTop).toBe(0);
+			expect(await host().showPanel('p')).toBe('applied');
+			await settle();
+			expect(dock.panels.find((row) => row.id === 'p')?.visible).toBe(true);
+			expect(frameOf('p').scrollTop).toBe(55);
+			expect(scrollerOf('p').scrollTop).toBe(15);
+			// Two re-arrangements in one task (the second before the first was put back): undock, dock back.
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			hit = () => document.querySelector('[data-dock-drop-id="t"]');
+			dragFrom(dialogOf('P')!.querySelector('.titlebar')!, ...CENTRE);
+			await settle();
+			expect(dock.layout.floating.find((w) => w.id === 'p')).toBeUndefined();
+			expect(frameOf('p').scrollTop).toBe(55);
+			expect(scrollerOf('p').scrollTop).toBe(15);
+		} finally {
+			restore();
+		}
+	});
+
+	it('collapse and expand: the frame is hidden meanwhile, and gets its offset back (#768)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'f' });
+			await settle();
+			const frame = frameOf('f');
+			frame.scrollTop = 65;
+			scrollerOf('f').scrollTop = 20;
+			dock.setCollapsed('f', true);
+			await settle();
+			expect(frame.hidden).toBe(true);
+			expect(frame.scrollTop).toBe(0);
+			dock.setCollapsed('f', false);
+			await settle();
+			expect(frameOf('f')).toBe(frame);
+			expect(frame.scrollTop).toBe(65);
+			expect(scrollerOf('f').scrollTop).toBe(20);
+		} finally {
+			restore();
+		}
+	});
+
+	it('two updates in one task: a pane the first one left alone is read again before the second (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'p' || id === 'f' });
+			await settle();
+			const frame = frameOf('p');
+			frame.scrollTop = 70;
+			frame.dispatchEvent(new Event('scroll'));
+			scrollerOf('p').scrollTop = 15;
+			frameOf('f').scrollTop = 65;
+			// A (f) is re-arranged; B (p) stays shown in its receptacle.
+			dock.setCollapsed('f', true);
+			flushSync();
+			expect(frameOf('p')).toBe(frame);
+			// B is scrolled on (no `scroll` event yet), then re-arranged before the first update settled.
+			frame.scrollTop = 130;
+			scrollerOf('p').scrollTop = 45;
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			// A comes back as well: what the first update hid shows no offset of its own, its record stands.
+			dock.setCollapsed('f', false);
+			await settle();
+			expect(dialogOf('P')).not.toBeNull();
+			expect(frameOf('p')).not.toBe(frame);
+			expect(frameOf('p').scrollTop).toBe(130);
+			expect(scrollerOf('p').scrollTop).toBe(45);
+			expect(frameOf('f').scrollTop).toBe(65);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a pane the update left alone, scrolled before the update settled, keeps that offset (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'p' || id === 'f' });
+			await settle();
+			const frame = frameOf('p');
+			frame.scrollTop = 70;
+			scrollerOf('p').scrollTop = 15;
+			dock.setCollapsed('f', true);
+			flushSync();
+			frame.scrollTop = 130;
+			await settle();
+			expect(frameOf('p')).toBe(frame);
+			expect(frame.scrollTop).toBe(130);
+			expect(scrollerOf('p').scrollTop).toBe(15);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a pane the update left alone, put back at the top before the update settled, stays there (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'p' || id === 'f' });
+			await settle();
+			const frame = frameOf('p');
+			frame.scrollTop = 70;
+			scrollerOf('p').scrollTop = 15;
+			// Another window is collapsed; the app then puts the pane that did not change at the top.
+			dock.setCollapsed('f', true);
+			flushSync();
+			frame.scrollTop = 0;
+			scrollerOf('p').scrollTop = 0;
+			await settle();
+			expect(frameOf('p')).toBe(frame);
+			expect(frame.scrollTop).toBe(0);
+			expect(scrollerOf('p').scrollTop).toBe(0);
+		} finally {
+			restore();
+		}
+	});
+
+	it("a tab switched away and back in one task gets its own offset back, not the other tab's (#768 review)", async () => {
+		const restore = fakeScrollTop();
+		try {
+			mount(mixed(), { persistent: (id) => id === 'x' || id === 'y' });
+			await settle();
+			const frame = frameOf('x');
+			frame.scrollTop = 70;
+			scrollerOf('x').scrollTop = 25;
+			// X -> Y -> X, each applied at once, nothing settled in between.
+			clickPress(tabOf('y'));
+			frame.scrollTop = 142;
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frameOf('x')).toBe(frame);
+			expect(frame.scrollTop).toBe(70);
+			expect(scrollerOf('x').scrollTop).toBe(25);
+			// What Y was scrolled to while it was on top is Y's.
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frame.scrollTop).toBe(142);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a tab shown for the first time starts at the top, also where its frame clamped the offset it took over (#768 review)', async () => {
+		// Y is short: while it is on top the shared frame cannot be scrolled past 30.
+		const yOnTop = () =>
+			document.querySelector('[data-dock-persistent-slot="y"]')?.closest('[hidden]') === null;
+		const restore = fakeScrollTop((el) =>
+			el.classList.contains('body') && el.contains(probe('y')) && yOnTop() ? 30 : Infinity
+		);
+		try {
+			mount(mixed(), { persistent: (id) => id === 'x' || id === 'y' });
+			await settle();
+			const frame = frameOf('x');
+			frame.scrollTop = 150;
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frameOf('y')).toBe(frame);
+			// Not X's 150 clamped to 30.
+			expect(frame.scrollTop).toBe(0);
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frame.scrollTop).toBe(150);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a start offset the app sets right after the pane is first shown is not taken back (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			mount(mixed(), { persistent: (id) => id === 'p' });
+			flushSync();
+			// In its receptacle, nothing recorded yet, the moves of this update not settled.
+			const frame = frameOf('p');
+			frame.scrollTop = 142;
+			scrollerOf('p').scrollTop = 33;
+			await settle();
+			expect(frameOf('p')).toBe(frame);
+			expect(frame.scrollTop).toBe(142);
+			expect(scrollerOf('p').scrollTop).toBe(33);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a tab never shown: the offset of the tab that was on top goes, one set since stays (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			// X is not persistent (its offset is nobody's record), Y is and was never on screen.
+			mount(mixed(), { persistent: (id) => id === 'y' });
+			await settle();
+			const frame = frameOf('y');
+			frame.scrollTop = 70;
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frameOf('y')).toBe(frame);
+			expect(frame.scrollTop).toBe(0);
+		} finally {
+			restore();
+		}
+		cleanup();
+		const again = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'x' || id === 'y' });
+			await settle();
+			const frame = frameOf('y');
+			frame.scrollTop = 70;
+			clickPress(tabOf('y'));
+			// The app puts Y at its start offset as soon as it is shown.
+			frame.scrollTop = 142;
+			// Another update before this one settled does not take the start offset for X's.
+			dock.setCollapsed('f', true);
+			flushSync();
+			await settle();
+			expect(frame.scrollTop).toBe(142);
+			// From here on Y has a record of its own, the origin included.
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frame.scrollTop).toBe(70);
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frame.scrollTop).toBe(142);
+			frame.scrollTop = 0;
+			frame.dispatchEvent(new Event('scroll'));
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frame.scrollTop).toBe(70);
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frame.scrollTop).toBe(0);
+		} finally {
+			again();
+		}
 	});
 
 	it('the scroll offset of the standard .body frame comes back after an undock and a dock back', async () => {
