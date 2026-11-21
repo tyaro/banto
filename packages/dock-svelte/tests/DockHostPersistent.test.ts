@@ -469,6 +469,125 @@ describe('focus and scroll after a move', () => {
 		}
 	});
 
+	it('two updates in one task: a pane the first one left alone is read again before the second (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'p' || id === 'f' });
+			await settle();
+			const frame = frameOf('p');
+			frame.scrollTop = 70;
+			frame.dispatchEvent(new Event('scroll'));
+			scrollerOf('p').scrollTop = 15;
+			frameOf('f').scrollTop = 65;
+			// A (f) is re-arranged; B (p) stays shown in its receptacle.
+			dock.setCollapsed('f', true);
+			flushSync();
+			expect(frameOf('p')).toBe(frame);
+			// B is scrolled on (no `scroll` event yet), then re-arranged before the first update settled.
+			frame.scrollTop = 130;
+			scrollerOf('p').scrollTop = 45;
+			dragFrom(screen.getByRole('toolbar', { name: 'P' }));
+			// A comes back as well: what the first update hid shows no offset of its own, its record stands.
+			dock.setCollapsed('f', false);
+			await settle();
+			expect(dialogOf('P')).not.toBeNull();
+			expect(frameOf('p')).not.toBe(frame);
+			expect(frameOf('p').scrollTop).toBe(130);
+			expect(scrollerOf('p').scrollTop).toBe(45);
+			expect(frameOf('f').scrollTop).toBe(65);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a pane the update left alone, scrolled before the update settled, keeps that offset (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'p' || id === 'f' });
+			await settle();
+			const frame = frameOf('p');
+			frame.scrollTop = 70;
+			scrollerOf('p').scrollTop = 15;
+			dock.setCollapsed('f', true);
+			flushSync();
+			frame.scrollTop = 130;
+			await settle();
+			expect(frameOf('p')).toBe(frame);
+			expect(frame.scrollTop).toBe(130);
+			expect(scrollerOf('p').scrollTop).toBe(15);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a start offset the app sets right after the pane is first shown is not taken back (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			mount(mixed(), { persistent: (id) => id === 'p' });
+			flushSync();
+			// In its receptacle, nothing recorded yet, the moves of this update not settled.
+			const frame = frameOf('p');
+			frame.scrollTop = 142;
+			scrollerOf('p').scrollTop = 33;
+			await settle();
+			expect(frameOf('p')).toBe(frame);
+			expect(frame.scrollTop).toBe(142);
+			expect(scrollerOf('p').scrollTop).toBe(33);
+		} finally {
+			restore();
+		}
+	});
+
+	it('a tab never shown: the offset of the tab that was on top goes, one set since stays (#768 review)', async () => {
+		const restore = fakeScrollTop();
+		try {
+			// X is not persistent (its offset is nobody's record), Y is and was never on screen.
+			mount(mixed(), { persistent: (id) => id === 'y' });
+			await settle();
+			const frame = frameOf('y');
+			frame.scrollTop = 70;
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frameOf('y')).toBe(frame);
+			expect(frame.scrollTop).toBe(0);
+		} finally {
+			restore();
+		}
+		cleanup();
+		const again = fakeScrollTop();
+		try {
+			const { dock } = mount(mixed(), { persistent: (id) => id === 'x' || id === 'y' });
+			await settle();
+			const frame = frameOf('y');
+			frame.scrollTop = 70;
+			clickPress(tabOf('y'));
+			// The app puts Y at its start offset as soon as it is shown.
+			frame.scrollTop = 142;
+			// Another update before this one settled does not take the start offset for X's.
+			dock.setCollapsed('f', true);
+			flushSync();
+			await settle();
+			expect(frame.scrollTop).toBe(142);
+			// From here on Y has a record of its own, the origin included.
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frame.scrollTop).toBe(70);
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frame.scrollTop).toBe(142);
+			frame.scrollTop = 0;
+			frame.dispatchEvent(new Event('scroll'));
+			clickPress(tabOf('x'));
+			await settle();
+			expect(frame.scrollTop).toBe(70);
+			clickPress(tabOf('y'));
+			await settle();
+			expect(frame.scrollTop).toBe(0);
+		} finally {
+			again();
+		}
+	});
+
 	it('the scroll offset of the standard .body frame comes back after an undock and a dock back', async () => {
 		// Offsets live per element (jsdom has no layout): the frame is re-created by each move.
 		const tops = new WeakMap<Element, number>();

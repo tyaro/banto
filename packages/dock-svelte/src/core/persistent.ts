@@ -59,7 +59,23 @@
  *   `#settle` writes them back for every pane on screen after it - moved or not:
  *   a tab brought back to the top moves nothing, yet its frame shows the offset
  *   of the tab that was there. A pane in the background keeps what was recorded
- *   while it was last on screen. Between two snapshots the `scroll` events keep
+ *   while it was last on screen.
+ *   - Two updates in one task (the second `snapshot` before the `#settle` of
+ *     the first): a pane the first update moved, hid or brought on screen shows
+ *     no offset of its own yet, so its record stands; a pane still shown in the
+ *     same receptacle is read again (it may have been scrolled in between).
+ *   - A pane the update left shown in the same receptacle is written only where
+ *     its offset reads the origin now (a lost offset reads 0; Svelte may have
+ *     re-inserted the receptacle): an offset it has by then is its own, set
+ *     after the `snapshot`, and stays.
+ *   - "Nothing recorded" is not "recorded at the origin": a frame is written
+ *     only for a pane that has a record. A pane shown for the first time keeps
+ *     whatever its frame shows by then (the app may have set a start offset
+ *     right after the content got there) - unless that is the offset the frame
+ *     had BEFORE the pane was shown in it (a shared frame taken over from the
+ *     tab that was on top): then it starts at the origin.
+ *
+ *   Between two snapshots the `scroll` events keep
  *   the record current (capture on the content; the shared frame's belong to
  *   the pane on top only), for a move made by an update that `snapshot` took
  *   for one that keeps every receptacle. The offsets live here, per pane id, for as long as
@@ -147,19 +163,23 @@ interface Offset {
 	left: number;
 }
 
-/** The scroll offset of `el`; `null` at the origin (nothing to put back but the origin itself). */
+const ORIGIN: Offset = { top: 0, left: 0 };
+
+/** The scroll offset of `el`, the origin included (a record that says "at the top"). */
+function readOffset(el: Element): Offset {
+	return { top: el.scrollTop, left: el.scrollLeft };
+}
+
+/** The scroll offset of `el`; `null` at the origin (an element inside a content that is not scrolled is not kept). */
 function offsetOf(el: Element): Offset | null {
-	return el.scrollTop === 0 && el.scrollLeft === 0
-		? null
-		: { top: el.scrollTop, left: el.scrollLeft };
+	const offset = readOffset(el);
+	return offset.top === 0 && offset.left === 0 ? null : offset;
 }
 
 /** Writes only what differs: assigning the same offset would still cancel a scroll in progress. */
-function scrollTo(el: Element, offset: Offset | null): void {
-	const top = offset?.top ?? 0;
-	const left = offset?.left ?? 0;
-	if (el.scrollTop !== top) el.scrollTop = top;
-	if (el.scrollLeft !== left) el.scrollLeft = left;
+function scrollTo(el: Element, offset: Offset): void {
+	if (el.scrollTop !== offset.top) el.scrollTop = offset.top;
+	if (el.scrollLeft !== offset.left) el.scrollLeft = offset.left;
 }
 
 type MoveBefore = (node: Node, child: Node | null) => void;
@@ -192,8 +212,17 @@ interface Entry {
 	slots: HTMLElement[];
 	/** Last seen scroll offsets of the scrolled elements inside the content. */
 	scroll: Map<Element, Offset>;
-	/** Scroll offset of the standard `.body` frame while this pane was last on screen (`null` = the origin). */
+	/**
+	 * Scroll offset of the standard `.body` frame while this pane was last on screen, the origin
+	 * included. `null` = nothing recorded yet (never read on screen): nothing to write back.
+	 */
 	body: Offset | null;
+	/**
+	 * The receptacle this pane was shown in (`null` = not on screen) at the first re-arranging
+	 * `snapshot` since the last `#settle`; `undefined` = no such snapshot is waiting. A later
+	 * snapshot of the same task reads the pane again only while it is still shown there.
+	 */
+	shown: HTMLElement | null | undefined;
 	/** The focused element inside the content right before a structure change. */
 	focus: HTMLElement | null;
 	/** The content waits in the transit element for the receptacle of this update (module doc). */
@@ -207,6 +236,11 @@ export class PersistentContents {
 	#moved = new Set<string>();
 	/** A `snapshot` since the last `#settle` was for an update that may re-create or hide a receptacle. */
 	#rearranged = false;
+	/**
+	 * Frames that were scrolled before a pane without a record was shown in them, with that
+	 * offset (until `#settle`): what such a pane must not take over (module doc, "Scroll").
+	 */
+	#foreign = new Map<Element, Offset>();
 	#queued = false;
 	#disposed = false;
 	#transit: HTMLElement | null = null;
@@ -241,6 +275,7 @@ export class PersistentContents {
 					entry.home = null;
 					entry.scroll.clear();
 					entry.body = null;
+					entry.shown = undefined;
 					entry.focus = null;
 					entry.transit = false;
 				}
@@ -259,9 +294,12 @@ export class PersistentContents {
 			// Only while this receptacle shows the content: the tabs of a group share one frame, and
 			// the offset of the tab on top is not the offset of a pane in the background (#768).
 			const onFrameScroll = () => {
-				if (frame && this.#shownIn(entry) === el) entry.body = offsetOf(frame);
+				if (frame && this.#shownIn(entry) === el) entry.body = readOffset(frame);
 			};
 			frame?.addEventListener('scroll', onFrameScroll);
+			// A receptacle mounted into a frame that is scrolled already (a tab added to a group):
+			// that offset is not this pane's. Read before the content gets here.
+			if (frame) this.#noteForeign(frame);
 			this.#place(panelId);
 			return () => {
 				frame?.removeEventListener('scroll', onFrameScroll);
@@ -289,11 +327,24 @@ export class PersistentContents {
 		const active = document.activeElement;
 		let any = false;
 		if (!kept && this.#entries.size > 0) {
-			// Before the content that holds the focus leaves its receptacle (below). Not what a
-			// `#settle` still has to put back (two updates in one task): that pane shows no offset
-			// of its own yet, and its record stands.
-			for (const [panelId, entry] of this.#entries)
-				if (!this.#rearranged && !this.#moved.has(panelId)) this.#recordScroll(entry);
+			// Before the content that holds the focus leaves its receptacle (below).
+			for (const [panelId, entry] of this.#entries) {
+				const shown = this.#shownIn(entry);
+				const first = entry.shown === undefined;
+				if (first) entry.shown = shown;
+				// Not what a `#settle` still has to put back (two updates in one task): a pane the
+				// update before moved, hid or brought on screen shows no offset of its own yet, and
+				// its record stands. A pane still shown in the same receptacle is read (again).
+				if (this.#moved.has(panelId)) continue;
+				if (!first && (shown === null || shown !== entry.shown)) continue;
+				// What its frames show now is not this pane's start offset (it is not waiting to
+				// be put back): the offset of whoever is on top there, a background tab's to shed.
+				for (const slot of entry.slots) {
+					const frame = slot.closest<HTMLElement>('.body');
+					if (frame) this.#noteForeign(frame);
+				}
+				this.#recordScroll(entry);
+			}
 			this.#rearranged = true;
 			any = true;
 		}
@@ -325,6 +376,7 @@ export class PersistentContents {
 				slots: [],
 				scroll,
 				body: null,
+				shown: undefined,
 				focus: null,
 				transit: false,
 				onScroll: (event) => {
@@ -373,7 +425,7 @@ export class PersistentContents {
 		const slot = this.#shownIn(entry);
 		if (!el || !slot) return;
 		const frame = slot.closest<HTMLElement>('.body');
-		if (frame) entry.body = offsetOf(frame);
+		if (frame) entry.body = readOffset(frame);
 		entry.scroll.clear();
 		for (const target of el.querySelectorAll('*')) {
 			const offset = offsetOf(target);
@@ -381,18 +433,38 @@ export class PersistentContents {
 		}
 	}
 
-	/** Put the recorded offsets back onto a pane on screen (module doc, "Scroll"). */
-	#restoreScroll(entry: Entry): void {
+	/**
+	 * Put the recorded offsets back onto a pane on screen (module doc, "Scroll"). `lostOnly`: the
+	 * pane stayed shown in the same receptacle, so only an offset that reads the origin is written.
+	 */
+	#restoreScroll(entry: Entry, lostOnly: boolean): void {
 		const el = entry.content;
 		const slot = this.#shownIn(entry);
 		if (!el || !slot) return;
+		const writable = (target: Element) => !lostOnly || offsetOf(target) === null;
 		const frame = slot.closest<HTMLElement>('.body');
-		// Also back to the origin: a shared frame may show the offset of the tab that was on top.
-		if (frame) scrollTo(frame, entry.body);
-		for (const [target, offset] of entry.scroll) {
-			if (el.contains(target)) scrollTo(target, offset);
-			else entry.scroll.delete(target);
+		if (frame) {
+			const foreign = this.#foreign.get(frame);
+			// A record, the origin included: a shared frame may show the offset of the tab that
+			// was on top.
+			if (entry.body) {
+				if (writable(frame)) scrollTo(frame, entry.body);
+			}
+			// No record (shown for the first time): only the offset the frame had before this pane
+			// was shown in it is taken away - not one set since (the app's start offset).
+			else if (foreign && frame.scrollTop === foreign.top && frame.scrollLeft === foreign.left)
+				scrollTo(frame, ORIGIN);
 		}
+		for (const [target, offset] of entry.scroll) {
+			if (!el.contains(target)) entry.scroll.delete(target);
+			else if (writable(target)) scrollTo(target, offset);
+		}
+	}
+
+	/** Remember the offset of a scrolled frame until `#settle` (module doc, "Scroll"). */
+	#noteForeign(frame: Element): void {
+		const offset = offsetOf(frame);
+		if (offset) this.#foreign.set(frame, offset);
 	}
 
 	#forgetIfUnused(panelId: string): void {
@@ -437,6 +509,10 @@ export class PersistentContents {
 		for (const [panelId, entry] of this.#entries) {
 			const focus = entry.focus;
 			entry.focus = null;
+			// Still shown where the first `snapshot` of this round read it, and not moved meanwhile.
+			const stayed =
+				!moved.has(panelId) && entry.shown != null && this.#shownIn(entry) === entry.shown;
+			entry.shown = undefined;
 			const el = entry.content;
 			if (this.#disposed || !el) continue;
 			const shown = el.parentElement !== entry.home && el.isConnected;
@@ -447,12 +523,13 @@ export class PersistentContents {
 				continue;
 			}
 			// Not only a moved one: a tab brought back to the top stays in its receptacle (#768).
-			if (rearranged || moved.has(panelId)) this.#restoreScroll(entry);
+			if (rearranged || moved.has(panelId)) this.#restoreScroll(entry, stayed);
 			if (!moved.has(panelId)) continue;
 			const lost = active === null || active === document.body || active === focus;
 			if (focus && lost && focus.isConnected && el.contains(focus))
 				focus.focus({ preventScroll: true });
 		}
+		this.#foreign.clear();
 		// After the focus is back: its `focus` / `focusin` are still inside the mark.
 		for (const entry of this.#entries.values()) entry.content?.removeAttribute(REARRANGING);
 	}

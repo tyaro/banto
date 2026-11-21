@@ -54,52 +54,59 @@ interface ScrollReport {
 	activeIsInput: boolean;
 }
 
-async function mountHarness(page: Page): Promise<void> {
+async function mountHarness(page: Page, persistent: string[] = ['right']): Promise<void> {
 	await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
 	await page.goto('/tree/workspace-dock');
 	await expect(page.getByTestId('workspace-dock-center')).toBeVisible({ timeout: 60_000 });
 	// The dev server may reload the page once more while it optimises deps: mount until it holds.
 	await expect(async () => {
-		await page.evaluate(async (urls) => {
-			const w = window as unknown as Record<string, unknown>;
-			if (w.__dock768) return;
-			const dockMod = await import(/* @vite-ignore */ urls.dock);
-			const bundled = performance
-				.getEntriesByType('resource')
-				.map((entry) => entry.name)
-				.find((name) => /\/node_modules\/\.vite\/deps\/svelte\.js(\?|$)/.test(name));
-			const svelte = await import(/* @vite-ignore */ bundled ?? urls.svelte);
-			const rows = (name: string, count: number) =>
-				Array.from(
-					{ length: count },
-					(_, i) =>
-						`<label style="display:block;height:32px">${name} ${i} <input aria-label="${name} field ${i}" /></label>`
-				).join('');
-			// A long form (the pane's frame scrolls) with a list on top that scrolls by itself.
-			const pane = (name: string) =>
-				svelte.createRawSnippet(() => ({
-					render: () =>
-						`<div data-pane="${name}">` +
-						`<div data-inner="${name}" style="height:96px;overflow:auto">` +
-						`<div style="height:1200px">${name} list</div></div>` +
-						rows(name, 60) +
-						`</div>`
-				}));
-			const target = document.createElement('div');
-			target.id = 'dock768';
-			target.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#fff';
-			document.body.append(target);
-			w.__dock768 = svelte.mount(dockMod.ThreePaneDock, {
-				target,
-				props: {
-					dock: dockMod.createDockState(),
-					left: pane('left'),
-					right: pane('right'),
-					children: pane('center'),
-					persistent: (id: string) => id === 'right'
-				}
-			});
-		}, URLS);
+		await page.evaluate(
+			async ({ urls, persistent }) => {
+				const w = window as unknown as Record<string, unknown>;
+				if (w.__dock768) return;
+				const dockMod = await import(/* @vite-ignore */ urls.dock);
+				const bundled = performance
+					.getEntriesByType('resource')
+					.map((entry) => entry.name)
+					.find((name) => /\/node_modules\/\.vite\/deps\/svelte\.js(\?|$)/.test(name));
+				const svelte = await import(/* @vite-ignore */ bundled ?? urls.svelte);
+				const rows = (name: string, count: number) =>
+					Array.from(
+						{ length: count },
+						(_, i) =>
+							`<label style="display:block;height:32px">${name} ${i} <input aria-label="${name} field ${i}" /></label>`
+					).join('');
+				// A long form (the pane's frame scrolls) with a list on top that scrolls by itself.
+				const pane = (name: string) =>
+					svelte.createRawSnippet(() => ({
+						render: () =>
+							`<div data-pane="${name}">` +
+							`<div data-inner="${name}" style="height:96px;overflow:auto">` +
+							`<div style="height:1200px">${name} list</div></div>` +
+							rows(name, 60) +
+							`</div>`
+					}));
+				const target = document.createElement('div');
+				target.id = 'dock768';
+				target.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#fff';
+				document.body.append(target);
+				const state = dockMod.createDockState();
+				// For a test that applies two updates in one task (no microtask in between).
+				w.__dock768state = state;
+				w.__dock768flush = svelte.flushSync;
+				w.__dock768 = svelte.mount(dockMod.ThreePaneDock, {
+					target,
+					props: {
+						dock: state,
+						left: pane('left'),
+						right: pane('right'),
+						children: pane('center'),
+						persistent: (id: string) => persistent.includes(id)
+					}
+				});
+			},
+			{ urls: URLS, persistent }
+		);
 		await expect(page.getByLabel('right field 0')).toBeVisible({ timeout: 5_000 });
 	}).toPass({ timeout: 60_000 });
 }
@@ -307,4 +314,62 @@ test('without moveBefore the scroll position comes back as well (#768)', async (
 	expectScrollKept(floated);
 	expect(floated.activeIsInput).toBe(true);
 	expectScrollKept(await measure(page, 'tabWithLeft', { frame: 210, inner: 80 }), 210, 80);
+});
+
+test('two updates in one task: a pane the first one left alone keeps what it was scrolled to in between (#768 review)', async ({
+	page
+}) => {
+	await mountHarness(page, ['left', 'right']);
+	const report = await page.evaluate(async () => {
+		const w = window as unknown as Record<string, unknown>;
+		const state = w.__dock768state as {
+			setDockedCollapsed(nodeId: string, collapsed: boolean): void;
+			isDockedCollapsed(nodeId: string): boolean;
+		};
+		const flush = w.__dock768flush as () => void;
+		const nextFrame = () =>
+			new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+		const frameOf = (id: string) =>
+			document
+				.querySelector<HTMLElement>(`#dock768 [data-dock-persistent-slot="${id}"]`)!
+				.closest<HTMLElement>('.body')!;
+		const inner = document.querySelector<HTMLElement>('#dock768 [data-inner="right"]')!;
+		const frame = frameOf('right');
+		frameOf('left').scrollTop = 90;
+		frame.scrollTop = 70;
+		inner.scrollTop = 20;
+		await nextFrame();
+		// A (left) is re-arranged; B (right) stays where it is.
+		state.setDockedCollapsed('left', true);
+		flush();
+		const leftCollapsed = state.isDockedCollapsed('left');
+		const stayed = frameOf('right') === frame && frame.scrollTop === 70;
+		// B is scrolled on, and re-arranged before its `scroll` event and the first update's microtask.
+		frame.scrollTop = 130;
+		inner.scrollTop = 50;
+		state.setDockedCollapsed('right', true);
+		flush();
+		const rightCollapsed = state.isDockedCollapsed('right');
+		state.setDockedCollapsed('right', false);
+		state.setDockedCollapsed('left', false);
+		flush();
+		await nextFrame();
+		await nextFrame();
+		return {
+			leftCollapsed,
+			stayed,
+			rightCollapsed,
+			right: frameOf('right').scrollTop,
+			inner: inner.scrollTop,
+			left: frameOf('left').scrollTop
+		};
+	});
+	expect(report).toEqual({
+		leftCollapsed: true,
+		stayed: true,
+		rightCollapsed: true,
+		right: 130,
+		inner: 50,
+		left: 90
+	});
 });
