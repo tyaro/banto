@@ -13,27 +13,11 @@
  * mounts its own `ThreePaneDock` with a `persistent` right pane over the page.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { primeThemeAndAuth } from '../visual/theme';
+import { dockUrls } from './dock-harness';
 
 // Cold dev server: first compile / dep optimisation can reload the page.
 test.setTimeout(120_000);
-
-const dockDir = path.resolve(
-	path.dirname(fileURLToPath(import.meta.url)),
-	'../../packages/dock-svelte'
-);
-const svelteDir = path.dirname(
-	createRequire(path.join(dockDir, 'package.json')).resolve('svelte/package.json')
-);
-const fsUrl = (file: string): string => `/@fs/${file.replaceAll('\\', '/').replace(/^\//, '')}`;
-/** The same module URLs the app's own imports resolve to (one Svelte runtime on the page). */
-const URLS = {
-	dock: fsUrl(path.join(dockDir, 'src/index.ts')),
-	svelte: fsUrl(path.join(svelteDir, 'src/index-client.js'))
-};
 
 type Operation = 'float' | 'dockBack' | 'tabWithLeft' | 'resetLayout';
 
@@ -55,6 +39,7 @@ async function mountHarness(page: Page): Promise<void> {
 	await expect(page.getByTestId('workspace-dock-center')).toBeVisible({ timeout: 60_000 });
 	// The dev server may reload the page once more while it optimises deps: mount until it holds.
 	await expect(async () => {
+		const urls = await dockUrls(page);
 		await page.evaluate(async (urls) => {
 			const w = window as unknown as Record<string, unknown>;
 			if (w.__dock763) return;
@@ -80,7 +65,7 @@ async function mountHarness(page: Page): Promise<void> {
 				}
 			});
 			w.__dock763mod = dockMod;
-		}, URLS);
+		}, urls);
 		await expect(page.getByLabel('right input')).toBeVisible({ timeout: 5_000 });
 	}).toPass({ timeout: 60_000 });
 }
@@ -186,6 +171,22 @@ test.describe('a persistent pane keeps the focus through a re-arrangement (#763)
 	test('resetLayout from a floating window', async ({ page }) => {
 		expect(await call(page, 'float')).toBe('applied');
 		expectFocusKept(await measure(page, 'resetLayout'));
+	});
+
+	// The left pane is not persistent: its content is re-created by a tab switch / `resetLayout`
+	// with the `svelte` the dock runs on (a second runtime instance threw `reading 'nodes'`).
+	test('a non-persistent pane is rendered after a tab switch and a resetLayout', async ({
+		page
+	}) => {
+		expect(await call(page, 'tabWithLeft')).toBe('applied');
+		const tabs = page.getByRole('tab');
+		await expect(tabs).toHaveCount(2);
+		const rightIndex = (await tabs.nth(0).getAttribute('aria-selected')) === 'true' ? 0 : 1;
+		await tabs.nth(1 - rightIndex).click();
+		await expect(page.getByLabel('left input')).toBeVisible();
+		expect(await call(page, 'resetLayout')).toBe('applied');
+		await expect(page.getByLabel('left input')).toBeVisible();
+		await expect(page.getByLabel('right input')).toBeVisible();
 	});
 
 	test('resetLayout from a tab group', async ({ page }) => {

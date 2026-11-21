@@ -10,35 +10,13 @@
  * its own `ThreePaneDock` with a `persistent` right pane over the page.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { primeThemeAndAuth } from '../visual/theme';
+import { dockUrls } from './dock-harness';
 
 // Cold dev server: first compile / dep optimisation can reload the page.
 test.setTimeout(120_000);
 // Short, so the form overflows the pane wherever it is (the issue's reproduction).
 test.use({ viewport: { width: 1280, height: 400 } });
-
-const dockDir = path.resolve(
-	path.dirname(fileURLToPath(import.meta.url)),
-	'../../packages/dock-svelte'
-);
-const svelteDir = path.dirname(
-	createRequire(path.join(dockDir, 'package.json')).resolve('svelte/package.json')
-);
-const fsUrl = (file: string): string => `/@fs/${file.replaceAll('\\', '/').replace(/^\//, '')}`;
-/**
- * The package's entry as the app's own imports resolve it. `svelte` must be the SAME runtime
- * instance the dock's compiled components use, or a raw snippet rendered later (a tab's content
- * re-created by a switch) runs outside that runtime's effects and throws: the dev server
- * pre-bundles `svelte` (`/node_modules/.vite/deps/svelte.js?v=...`), so the page looks that URL
- * up among the modules it loaded, and falls back to the source entry where it is not bundled.
- */
-const URLS = {
-	dock: fsUrl(path.join(dockDir, 'src/index.ts')),
-	svelte: fsUrl(path.join(svelteDir, 'src/index-client.js'))
-};
 
 type Operation = 'float' | 'dockBack' | 'tabWithLeft' | 'resetLayout';
 
@@ -68,16 +46,13 @@ async function mountHarness(
 	await expect(page.getByTestId('workspace-dock-center')).toBeVisible({ timeout: 60_000 });
 	// The dev server may reload the page once more while it optimises deps: mount until it holds.
 	await expect(async () => {
+		const urls = await dockUrls(page);
 		await page.evaluate(
 			async ({ urls, persistent, tabbed }) => {
 				const w = window as unknown as Record<string, unknown>;
 				if (w.__dock768) return;
 				const dockMod = await import(/* @vite-ignore */ urls.dock);
-				const bundled = performance
-					.getEntriesByType('resource')
-					.map((entry) => entry.name)
-					.find((name) => /\/node_modules\/\.vite\/deps\/svelte\.js(\?|$)/.test(name));
-				const svelte = await import(/* @vite-ignore */ bundled ?? urls.svelte);
+				const svelte = await import(/* @vite-ignore */ urls.svelte);
 				const rows = (name: string, count: number) =>
 					Array.from(
 						{ length: count },
@@ -136,7 +111,7 @@ async function mountHarness(
 					}
 				});
 			},
-			{ urls: URLS, persistent, tabbed }
+			{ urls, persistent, tabbed }
 		);
 		await expect(page.getByLabel('right field 0')).toBeVisible({ timeout: 5_000 });
 	}).toPass({ timeout: 60_000 });
