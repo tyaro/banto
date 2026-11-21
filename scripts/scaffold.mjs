@@ -1902,6 +1902,18 @@ function replaceE2eForDisplay() {
 		`      # Baselines under e2e/visual/**/*-snapshots`,
 		`        run: pnpm e2e:visual\n\n`
 	);
+	// demo スイート（e2e/demo）も project も上で外すので、スクリプトと CI のステップも外す。
+	drop(
+		ROOT_PKG,
+		'root package.json: e2e:demo スクリプト除去',
+		`    "e2e:demo": "playwright test --config=e2e/playwright.config.ts --project=demo",\n`
+	);
+	cutRegion(
+		CI_WORKFLOW,
+		'ci: デモビルドの e2e ステップ除去',
+		`      # Demo-build-only UI (Issue #553)`,
+		`        run: pnpm e2e:demo\n\n`
+	);
 }
 
 // --- adminPages（users / audit-log の「画面」だけ外す）----------------------
