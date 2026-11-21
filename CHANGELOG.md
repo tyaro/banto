@@ -31,6 +31,8 @@
 
 - **`e2e/` の TypeScript を `pnpm check` で型検査する。** ルートに `check:e2e`（`tsc -p e2e/tsconfig.json --noEmit`）を足して `check` から呼び、そのためにルートの devDependencies へ `@types/node`（`^24.0.0`）・`typescript`・`axe-core` を足した（[ADR-0032](docs/adr/0032-root-e2e-typecheck-devdeps.md)。型だけで実行時の影響なし）。`e2e/playwright.config.ts` の `selectWebServers` は型を明示した（挙動は同じ）。display プリセットの scaffold は、型検査で見つかった残骸（`e2e/demo` と、消した定数を参照する `selectWebServers` の対応表）を一緒に外すようにした。消費側への注意: 派生アプリのルート `package.json` にも `check:e2e` と上記 3 つの devDependency が入る。
 
+- **`@banto/dock-svelte`: 隠れた・浮かせたパネルの「元の場所」の性質テストを足した（#782 の PR1）。** 生成した木（パネル 3〜7 枚、split 1〜3 段、タブの組）と操作列（隠す・浮かせる・`dockExisting`・`dockExistingAtEdge`・戻す・保存と読み込み）で、戻す順によらないこと・往復で元に戻ること・外周へ移したパネルが根の直下に残ること・比率の保存（#743・#739）・保存の往復を確かめる（`tests/slot-properties.test.ts`。シードと件数は固定）。そのために devDependencies へ `fast-check` を足した（[ADR-0033](docs/adr/0033-dock-svelte-fast-check-devdep.md)。テストだけで使い、公開物にも利用者のバンドルにも入らない）。いまの実装で成り立たない性質（#780 など）は「既知の失敗」として印を付けてある。実装（`src/`）の変更なし、公開 API・保存形式の変更なし。
+
 ### Fixed
 
 - **`@banto/dock-svelte`: 外周へ移したパネルが、隠れたパネルを戻す順によっては内側の split に戻ってしまうのを直した（#777）。** `column[row[a, b, c], d, e]` で `a`・`b`・`e` を隠し、`c` を `dockExistingAtEdge` で外周へ移してから `e → a → b` の順に戻すと、`c` が外周ではなく column の中（`d` の隣）に入っていた。消えた row の最後の 1 つ（`c`）は、外側の split（column）の slot — `e` 自身の slot と、`a`・`b` の slot の `outer` — でも row の代わりの目印になっていて、#743 の修正は row の段の slot からしか名前を外していなかった。外周へ移したときは、外側の split の段からも外す（隣が `c` だった slot は、消えた row の id を隣に持つ）。どの順で戻しても `c` は外周のまま、`a`・`b` は 0.4 / 0.6。`dockExisting` で別の split やタブの組へ入れる場合は変えていない。公開 API の追加・削除なし、保存形式の変更なし、migration なし。

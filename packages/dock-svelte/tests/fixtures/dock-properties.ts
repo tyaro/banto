@@ -1,0 +1,264 @@
+// #782 PR1: the generators and helpers of the property tests (`slot-properties.test.ts`).
+//
+// A case is plain numbers - `TreeRecipe` and `OpRecipe[]` - turned into a tree and into steps
+// against the state as it is when the step runs (the n-th docked pane, the n-th hidden one), so
+// every generated step can run and fast-check shrinks towards a flat even split and few steps.
+// A failure is reported with the tree's shape and the steps as text (`describeCase`), which is
+// what goes into a pinned case.
+import fc from 'fast-check';
+import { collectPanelIds } from '../../src/core/tree';
+import { createDockState, type DockState } from '../../src/state.svelte';
+import type { DockEdge, DockNode, DropRegion } from '../../src/types';
+import { shapeOf } from './visibility-sim';
+
+export const EPS = 1e-6;
+const SUM_EPS = 1e-9;
+const PANEL_IDS = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+export const EDGES: DockEdge[] = ['left', 'right', 'top', 'bottom'];
+/** The deepest split of a generated tree (the root is 1). */
+const MAX_DEPTH = 3;
+
+// ----- trees ---------------------------------------------------------------------------------
+
+export interface TreeRecipe {
+	/** Panes, 3 to 7 (`a`, `b`, ...). */
+	panels: number;
+	/** The root split runs in a column (else a row); the splits inside alternate. */
+	column: boolean;
+	/** Neighbours may be joined into a tab group (else every pane is a split's child). */
+	tabs: boolean;
+	/** Read in order by `buildTree`; 0 everywhere = one flat split with even sizes. */
+	choices: number[];
+}
+
+const recipeOf = (tabs: fc.Arbitrary<boolean>): fc.Arbitrary<TreeRecipe> =>
+	fc.record({
+		panels: fc.integer({ min: 3, max: PANEL_IDS.length }),
+		column: fc.boolean(),
+		tabs,
+		choices: fc.array(fc.nat({ max: 11 }), { minLength: 40, maxLength: 40 })
+	});
+
+/** Any tree: 3 to 7 panes, with or without tab groups. */
+export const treeRecipe = recipeOf(fc.boolean());
+/** A tree of splits and panes only. */
+export const splitTreeRecipe = recipeOf(fc.constant(false));
+
+const panel = (id: string): DockNode => ({ type: 'panel', id, title: id.toUpperCase() });
+
+/**
+ * The tree of a recipe: 3 to 7 panes, splits 1 to 3 deep (row and column alternating, sizes
+ * normalized from weights 2 to 5), neighbours joined into a tab group (2 or 3 tabs) or a split
+ * inside. Split ids are `s1`, `s2`, ... and tab group ids `t1`, ... in the order they are made.
+ */
+export function buildTree(recipe: TreeRecipe): DockNode {
+	let at = 0;
+	const next = (max: number): number => (recipe.choices[at++ % recipe.choices.length] ?? 0) % max;
+	let splits = 0;
+	let groups = 0;
+	const build = (ids: string[], column: boolean, depth: number): DockNode => {
+		if (ids.length === 1) return panel(ids[0]);
+		const id = `s${++splits}`;
+		// 1 of 3 gaps joins its two sides into one child (never all of them: a split has 2 or more).
+		// Without tab groups, the deepest split takes every pane as its own child.
+		const joinable = recipe.tabs || depth < MAX_DEPTH;
+		const joins = ids.slice(1).map(() => next(3) === 1 && joinable);
+		if (joins.every(Boolean)) joins[next(joins.length)] = false;
+		const parts: string[][] = [[ids[0]]];
+		ids.slice(1).forEach((p, i) => {
+			if (joins[i]) parts[parts.length - 1].push(p);
+			else parts.push([p]);
+		});
+		const children = parts.map((part): DockNode => {
+			if (part.length === 1) return panel(part[0]);
+			const asTabs = recipe.tabs && (depth >= MAX_DEPTH || (part.length <= 3 && next(3) === 1));
+			if (!asTabs) return build(part, !column, depth + 1);
+			return {
+				type: 'tabs',
+				id: `t${++groups}`,
+				activeIndex: 0,
+				children: part.map(panel)
+			} as DockNode;
+		});
+		// Weights 2 to 5: the smallest share of 7 children is 2/32, above the 5% a slot's size is
+		// clamped to (`core/slot.ts`'s `MIN_SHARE` - below it the show order shows, pinned in
+		// `slot-properties.test.ts`).
+		const weights = children.map(() => next(4) + 2);
+		const total = weights.reduce((a, b) => a + b, 0);
+		return {
+			type: 'split',
+			id,
+			direction: column ? 'column' : 'row',
+			sizes: weights.map((w) => w / total),
+			children
+		};
+	};
+	return build(PANEL_IDS.slice(0, recipe.panels), recipe.column, 1);
+}
+
+// ----- steps ---------------------------------------------------------------------------------
+
+/**
+ * One step, by number: `kind` picks what to do among `kinds` of `opRecipe`, `i` / `j` pick the
+ * pane and the target among the ones the step can take now, `r` the region or edge.
+ */
+export interface OpRecipe {
+	kind: number;
+	i: number;
+	j: number;
+	r: number;
+}
+
+/**
+ * `move`: `dockExisting` at a side of another docked pane; `tab`: `dockExisting` into its tab
+ * group (`center`); `edge`: `dockExistingAtEdge`; `back`: a floated pane back to its place.
+ */
+export type OpKind = 'hide' | 'show' | 'move' | 'tab' | 'edge' | 'float' | 'back';
+
+export const opRecipe: fc.Arbitrary<OpRecipe> = fc.record({
+	kind: fc.nat({ max: 11 }),
+	i: fc.nat({ max: 6 }),
+	j: fc.nat({ max: 6 }),
+	r: fc.nat({ max: 3 })
+});
+
+export const counterMakeId = (): (() => string) => {
+	let n = 0;
+	return () => `gen-${n++}`;
+};
+
+export const newDock = (tree: DockNode): DockState =>
+	createDockState({ version: 2, floating: [], docked: tree }, counterMakeId());
+
+export const dockedIds = (dock: DockState): string[] => collectPanelIds(dock.layout.docked);
+/** The hidden panes that remember a docked place, in the order they were hidden. */
+export const hiddenIds = (dock: DockState): string[] =>
+	dock.layout.floating.filter((w) => !w.open && w.dockSlot).map((w) => w.id);
+/** The floated panes that remember a docked place (`homeSlot`). */
+export const floatedIds = (dock: DockState): string[] =>
+	dock.layout.floating.filter((w) => w.open && dock.homeSlot(w.id)).map((w) => w.id);
+
+/**
+ * Run one step as text (the notation of `split-sizes.test.ts`'s `runSteps`, with the moves of a
+ * docked pane added): `-x` hide, `+x` show, `~x` float, `^x` back to its place,
+ * `x>y:region` `dockExisting`, `x>>edge` `dockExistingAtEdge`, `@` `serialize` / `hydrate`.
+ */
+export function runStep(dock: DockState, step: string): void {
+	if (step === '@') {
+		if (!dock.hydrate(dock.serialize())) throw new Error('hydrate refused its own serialize');
+		return;
+	}
+	const edge = /^(\w+)>>(\w+)$/.exec(step);
+	if (edge) return dock.dockExistingAtEdge(edge[1], edge[2] as DockEdge);
+	const move = /^(\w+)>(\w+):(\w+)$/.exec(step);
+	if (move) return dock.dockExisting(move[1], move[2], move[3] as DropRegion);
+	const id = step.slice(1);
+	if (step[0] === '-') dock.dismiss(id);
+	else if (step[0] === '+') dock.show(id);
+	else if (step[0] === '~') dock.undockPanel(id);
+	else if (step[0] === '^') {
+		const slot = dock.homeSlot(id);
+		if (slot) dock.dockAtSlot(id, slot);
+	} else throw new Error(`unknown step ${step}`);
+}
+
+export function runSteps(tree: DockNode, steps: string[]): DockState {
+	const dock = newDock(tree);
+	for (const step of steps) runStep(dock, step);
+	return dock;
+}
+
+/**
+ * The step a recipe stands for in the state as it is now, or `null` when none of `kinds` can
+ * run (the step is skipped). At least one pane stays docked; a move needs two docked panes.
+ */
+export function resolveStep(dock: DockState, op: OpRecipe, kinds: OpKind[]): string | null {
+	const docked = dockedIds(dock);
+	const hidden = hiddenIds(dock);
+	const floated = floatedIds(dock);
+	const can = (kind: OpKind): boolean =>
+		kind === 'hide' || kind === 'float'
+			? docked.length > 1
+			: kind === 'move' || kind === 'tab' || kind === 'edge'
+				? docked.length > 1
+				: kind === 'show'
+					? hidden.length > 0
+					: floated.length > 0;
+	const able = kinds.filter(can);
+	if (able.length === 0) return null;
+	const kind = able[op.kind % able.length];
+	const pick = (ids: string[], n: number): string => ids[n % ids.length];
+	if (kind === 'hide') return `-${pick(docked, op.i)}`;
+	if (kind === 'float') return `~${pick(docked, op.i)}`;
+	if (kind === 'show') return `+${pick(hidden, op.i)}`;
+	if (kind === 'back') return `^${pick(floated, op.i)}`;
+	const id = pick(docked, op.i);
+	if (kind === 'edge') return `${id}>>${EDGES[op.r % EDGES.length]}`;
+	const target = pick(
+		docked.filter((d) => d !== id),
+		op.j
+	);
+	return `${id}>${target}:${kind === 'tab' ? 'center' : EDGES[op.r % EDGES.length]}`;
+}
+
+/** Run the recipes against `dock`, each resolved when it runs. Returns the steps as text. */
+export function runOps(dock: DockState, ops: OpRecipe[], kinds: OpKind[]): string[] {
+	const steps: string[] = [];
+	for (const op of ops) {
+		const step = resolveStep(dock, op, kinds);
+		if (step === null) continue;
+		runStep(dock, step);
+		steps.push(step);
+	}
+	return steps;
+}
+
+// ----- comparing -----------------------------------------------------------------------------
+
+/** Every split's sizes, depth first (compared once the shapes are equal). */
+export const sizesOf = (node: DockNode | null): number[][] =>
+	node?.type === 'split' ? [node.sizes, ...node.children.flatMap(sizesOf)] : [];
+
+/** A split's sizes that are not as they should be: one per child, each above 0, adding up to 1. */
+export const badSizes = (node: DockNode | null): string[] =>
+	node?.type !== 'split'
+		? []
+		: [
+				...(node.sizes.length !== node.children.length ||
+				node.sizes.some((s) => !(s > 0)) ||
+				Math.abs(node.sizes.reduce((a, b) => a + b, 0) - 1) > SUM_EPS
+					? [`${node.id}: ${JSON.stringify(node.sizes)}`]
+					: []),
+				...node.children.flatMap(badSizes)
+			];
+
+const round = (sizes: number[][]): string =>
+	JSON.stringify(sizes.map((s) => s.map((x) => Math.round(x * 1e4) / 1e4)));
+
+/** The tree as text: its shape, then every split's sizes depth first (4 places). */
+export const treeText = (node: DockNode | null): string =>
+	`${JSON.stringify(shapeOf(node))} ${round(sizesOf(node))}`;
+
+/** What differs between two trees - shape first, then sizes within `EPS` - or `null`. */
+export function treeDiff(a: DockNode | null, b: DockNode | null): string | null {
+	const sa = JSON.stringify(shapeOf(a));
+	const sb = JSON.stringify(shapeOf(b));
+	if (sa !== sb) return `shape ${sa} != ${sb}`;
+	const za = sizesOf(a);
+	const zb = sizesOf(b);
+	const same = za.every((s, i) => s.every((x, j) => Math.abs(x - zb[i][j]) < EPS));
+	return same ? null : `sizes ${round(za)} != ${round(zb)} of ${sa}`;
+}
+
+/** Every order of `ids`. */
+export function permutations<T>(ids: T[]): T[][] {
+	if (ids.length <= 1) return [ids];
+	return ids.flatMap((id, i) =>
+		permutations([...ids.slice(0, i), ...ids.slice(i + 1)]).map((rest) => [id, ...rest])
+	);
+}
+
+/** Fail a property with the case as text: the tree, the steps, what went wrong. */
+export function failCase(tree: DockNode, steps: string[], why: string): never {
+	throw new Error(`${why}\n  tree:  ${treeText(tree)}\n  steps: ${steps.join(' ')}`);
+}

@@ -196,6 +196,9 @@ Windows のファイアウォールの許可（Issue #219 段階 2）で昇格�
 `e2e/` の型検査のためにルートの devDependencies へ `@types/node`・`typescript`・`axe-core` を足す判断は
 [ADR-0032](adr/0032-root-e2e-typecheck-devdeps.md)（4 件目。型だけで実行時の影響なし。`typescript` と `axe-core` は
 lockfile に既にある版に揃え、新しいパッケージは `@types/node` のみ）。
+`@banto/dock-svelte` の性質テスト（Issue #782）のために、そのパッケージの devDependencies へ `fast-check` を足す判断は
+[ADR-0033](adr/0033-dock-svelte-fast-check-devdep.md)（5 件目。テストだけで使い、`src/` からは import しない。
+lockfile に増えるのは `fast-check` と `pure-rand` の 2 つ）。
 
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 

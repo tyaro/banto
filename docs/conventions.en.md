@@ -215,6 +215,10 @@ devDependencies so `e2e/` can be type-checked is
 [ADR-0032](adr/0032-root-e2e-typecheck-devdeps.en.md) (the fourth; types only, no
 runtime effect; `typescript` and `axe-core` match versions already in the
 lockfile, so `@types/node` is the only new package).
+The decision to add `fast-check` to the devDependencies of `@banto/dock-svelte` for
+its property tests (Issue #782) is
+[ADR-0033](adr/0033-dock-svelte-fast-check-devdep.en.md) (the fifth; tests only,
+nothing under `src/` imports it; the lockfile gains `fast-check` and `pure-rand`).
 
 ## 4. No reverse dependency from core → options [machine-checked]
 
