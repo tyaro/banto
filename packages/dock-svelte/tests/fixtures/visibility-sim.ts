@@ -260,3 +260,66 @@ export function enumerateSequences(
 	}
 	return result;
 }
+
+/**
+ * Every hide order of every set of panes of `make()`, then every show order, with the states
+ * merged on the way (`keyOf`), run with `main` and `now` side by side (#732; moved here from
+ * `panel-visibility-exhaustive-merged.test.ts` so that #782 PR3 runs the same walk with the shadow
+ * tree). A run is checked when every pane is shown again: `now` must be back at the old shape
+ * (`want: 'all'`), or at least whenever `main` is (`want: 'main'`).
+ */
+export function walkHideThenShow(
+	make: () => DockNode,
+	main: SlotImpl,
+	now: SlotImpl,
+	want: 'all' | 'main'
+): { checked: number; failures: string[] } {
+	const ids = collectPanelIds(make());
+	const shape = JSON.stringify(shapeOf(make()));
+	const ok = (sim: Sim) =>
+		sim.floating.length === 0 && JSON.stringify(shapeOf(sim.docked)) === shape;
+	interface Entry {
+		main: Sim;
+		now: Sim;
+		showing: boolean;
+		steps: string[];
+	}
+	const start: Sim = { docked: make(), hidden: [], floating: [] };
+	let level: Entry[] = [{ main: start, now: start, showing: false, steps: [] }];
+	const failures: string[] = [];
+	let checked = 0;
+	while (level.length > 0) {
+		const next = new Map<string, Entry>();
+		const add = (e: Entry) => {
+			const key = `${e.showing}${keyOf(e.main)}${keyOf(e.now)}`;
+			if (!next.has(key)) next.set(key, e);
+		};
+		for (const e of level) {
+			// The panes to show: hidden in the current run (a floating one is not docked again).
+			const hidden = e.now.hidden.map((h) => h.id);
+			if (e.showing && hidden.length === 0) {
+				checked++;
+				if (!ok(e.now) && (want === 'all' || ok(e.main)))
+					failures.push(
+						`${e.steps.join(' ')} -> ${JSON.stringify(shapeOf(e.now.docked))} floating [${e.now.floating}]`
+					);
+				continue;
+			}
+			const step = (id: string, show: boolean): Entry => {
+				const m = show ? simShow(main, e.main, id) : simDismiss(main, e.main, id);
+				// The same slot on both sides (nothing to compare with): one run.
+				const same = main === now && e.main === e.now;
+				const n = same ? m : show ? simShow(now, e.now, id) : simDismiss(now, e.now, id);
+				return { main: m, now: n, showing: show, steps: [...e.steps, `${show ? '+' : '-'}${id}`] };
+			};
+			if (e.showing) {
+				for (const id of hidden) add(step(id, true));
+				continue;
+			}
+			if (hidden.length > 0) add({ ...e, showing: true });
+			for (const id of ids) if (findNode(e.now.docked, id)) add(step(id, false));
+		}
+		level = [...next.values()];
+	}
+	return { checked, failures };
+}
