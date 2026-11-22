@@ -152,7 +152,13 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
   while every place is taken, a write is refused before its body is waited for. Authentication and the role guard
   are inside the router (in the spawned task), so for a body of at most 2 MiB they now come after the body (the
   layer is outermost so that authorization and audit are part of what is detached; the budget above bounds that
-  memory). Keeping the budget full takes sending 64 MiB every 30 seconds, and it comes back when that stops. A body over 2 MiB (declared, or found to be while reading; an uploaded backup) is
+  memory). Keeping the budget full takes sending 64 MiB every 30 seconds, and it comes back when that stops. **This 64 MiB bounds the bytes of bodies the layer holds before they are complete,
+  without authentication; it is not a bound on the process's real memory use** (a note from the review of PR #833).
+  It counts only the bytes the layer has gathered into its `Vec`, and gives them back when the write takes a place and
+  its handler starts. The handler then holds that body, so real memory can exceed 64 MiB (up to 256 places x 2 MiB,
+  about 512 MiB, is held separately by writes that are running). It also does not count the spare capacity a growing
+  `Vec` may have beyond the bytes received, the receive buffers of hyper and the OS, or the head of a body over 2 MiB
+  that is passed on to the handler. A body over 2 MiB (declared, or found to be while reading; an uploaded backup) is
   not held in memory by the layer and is streamed to the handler as before. Such a write takes its place before
   its body, so only **16** of the 256 (`MAX_STREAMED_WRITES`) may be of that kind: a stalled large upload can only
   keep other large uploads out (remaining weakness: those 16 can be held without authentication where a route
