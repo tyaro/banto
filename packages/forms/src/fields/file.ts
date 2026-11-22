@@ -208,6 +208,19 @@ export interface UploadPendingOptions {
 	write: (value: FileFieldValue) => void;
 	/** The entries to send; default: every pending one, in list order. */
 	keys?: readonly string[];
+	/**
+	 * Whether the value behind `read` / `write` is still the one of `parentId`
+	 * (the caller's owner check, conventions §8). Once it says no, the run stops:
+	 * nothing more is sent, and the answer that just came is written nowhere -
+	 * it is a file of ANOTHER record than the one the value now shows.
+	 */
+	isCurrent?: () => boolean;
+	/**
+	 * A file arrived, but its entry is no longer among the chosen ones (the
+	 * value was replaced meanwhile - a reset). Nothing is written; the caller
+	 * that shows the record's files reads them again.
+	 */
+	onDetached?: (meta: FileFieldMeta) => void;
 	messages?: Partial<FileFieldMessages>;
 	onStart?: (key: string) => void;
 	onEnd?: (key: string) => void;
@@ -218,13 +231,20 @@ export interface UploadPendingOptions {
  * moves from `pending` to `existing`; a refused one stays pending with the
  * rejection as its `error` (never dropped silently), and the run goes on with
  * the next. Never rejects.
+ *
+ * An answer is written only into the value it was asked for: not after
+ * `isCurrent` said no (the record changed), and not when the entry is gone
+ * from `pending` (the value was reset). The file is still in `uploaded` - it
+ * did arrive.
  */
 export async function uploadPending(options: UploadPendingOptions): Promise<FileUploadOutcome> {
 	const { config, parentId, read, write } = options;
+	const isCurrent = options.isCurrent ?? (() => true);
 	const t = { ...defaultFileFieldMessages, ...options.messages };
 	const outcome: FileUploadOutcome = { uploaded: [], failed: [] };
 	const keys = options.keys ?? fileValueOf(read()).pending.map((entry) => entry.key);
 	for (const key of keys) {
+		if (!isCurrent()) break;
 		const entry = fileValueOf(read()).pending.find((item) => item.key === key);
 		if (!entry || inFlight.has(entry.file)) continue;
 		const file = entry.file;
@@ -232,20 +252,32 @@ export async function uploadPending(options: UploadPendingOptions): Promise<File
 		options.onStart?.(key);
 		try {
 			const meta = await config.client.upload(config.resource, String(parentId), file);
-			const now = fileValueOf(read());
-			write({
-				existing: mergeById(now.existing ?? [], [meta]),
-				pending: now.pending.filter((item) => item.key !== key)
-			});
 			outcome.uploaded.push(meta);
+			if (isCurrent()) {
+				const now = fileValueOf(read());
+				if (now.pending.some((item) => item.key === key)) {
+					write({
+						existing: mergeById(now.existing ?? [], [meta]),
+						pending: now.pending.filter((item) => item.key !== key)
+					});
+				} else {
+					options.onDetached?.(meta);
+				}
+			}
 		} catch (error) {
 			const message = t.uploadFailed(error);
-			const now = fileValueOf(read());
-			write({
-				existing: now.existing,
-				pending: now.pending.map((item) => (item.key === key ? { ...item, error: message } : item))
-			});
 			outcome.failed.push({ key, file, error: message });
+			if (isCurrent()) {
+				const now = fileValueOf(read());
+				if (now.pending.some((item) => item.key === key)) {
+					write({
+						existing: now.existing,
+						pending: now.pending.map((item) =>
+							item.key === key ? { ...item, error: message } : item
+						)
+					});
+				}
+			}
 		} finally {
 			inFlight.delete(file);
 			options.onEnd?.(key);
@@ -269,6 +301,10 @@ export interface FileUploadStore {
  * is in the edit state (`BantoForm`'s `fileParentId`).
  *
  * A field hidden by `visibleWhen` sends nothing. Never rejects.
+ *
+ * If the store is reset while a file is on its way, that file's answer is not
+ * written into the reset form (its entry is gone); the files not yet sent are
+ * gone with the reset and are not sent.
  */
 export async function uploadPendingFiles(
 	schema: FormSchema,

@@ -530,3 +530,201 @@ describe('BantoForm: an existing record (fileParentId)', () => {
 		);
 	});
 });
+
+/** A promise settled from outside: an upload that is still on its way. */
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (error: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
+describe('an upload that ends after its owner is gone (PR #844 review)', () => {
+	/** Files per record; every upload waits until the test settles it. */
+	function slowClient(initial: Record<string, FileFieldMeta[]> = {}) {
+		const rows: Record<string, FileFieldMeta[]> = { ...initial };
+		const waiting: { resourceId: string; done: ReturnType<typeof deferred<FileFieldMeta>> }[] = [];
+		const client = {
+			list: vi.fn(async (_resource: string, resourceId: string) => [...(rows[resourceId] ?? [])]),
+			upload: vi.fn((_resource: string, resourceId: string, _file: File) => {
+				const done = deferred<FileFieldMeta>();
+				waiting.push({ resourceId, done });
+				return done.promise;
+			}),
+			remove: vi.fn(async () => {})
+		} satisfies FileFieldClient;
+		/** The server took the file: it is in the record's list, and the upload answers. */
+		function arrive(index: number, row: FileFieldMeta) {
+			const { resourceId, done } = waiting[index];
+			rows[resourceId] = [...(rows[resourceId] ?? []), row];
+			done.resolve(row);
+		}
+		return { client, waiting, arrive };
+	}
+
+	it('record A’s upload ending after the switch to B is not written into B’s files', async () => {
+		const { client, waiting, arrive } = slowClient({ '6': [meta(60, 'of-b.txt')] });
+		const schema: FormSchema = { fields: [fileDef(client)] };
+		const store = createFormStore(schema);
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 5 });
+		await screen.findByText('ファイルはありません');
+		await pick(view.container, [file('of-a.txt')]);
+		await waitFor(() => expect(waiting).toHaveLength(1));
+
+		// The app shows record B in the same form.
+		store.reset();
+		await view.rerender({ fileParentId: 6 });
+		await waitFor(() =>
+			expect(fileValueOf(store.values.files).existing).toEqual([meta(60, 'of-b.txt')])
+		);
+
+		arrive(0, meta(50, 'of-a.txt'));
+		await waitFor(() => expect(screen.queryByText('アップロード中…')).toBeNull());
+		await Promise.resolve();
+		expect(fileValueOf(store.values.files)).toEqual({
+			existing: [meta(60, 'of-b.txt')],
+			pending: []
+		});
+		expect(screen.queryByRole('button', { name: 'of-a.txt: 削除' })).toBeNull();
+		expect(client.upload).toHaveBeenCalledTimes(1);
+	});
+
+	it('the same holds when only the record changes and the value is kept', async () => {
+		const { client, waiting, arrive } = slowClient();
+		const schema: FormSchema = { fields: [fileDef(client)] };
+		const store = createFormStore(schema);
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 5 });
+		await screen.findByText('ファイルはありません');
+		await pick(view.container, [file('one.txt'), file('two.txt')]);
+		await waitFor(() => expect(waiting).toHaveLength(1));
+
+		await view.rerender({ fileParentId: 6 });
+		await waitFor(() => expect(client.list).toHaveBeenCalledWith('items', '6'));
+		arrive(0, meta(50, 'one.txt'));
+		await waitFor(() => expect(screen.queryByText('アップロード中…')).toBeNull());
+		await Promise.resolve();
+
+		// Nothing of A is among B's files, and the run did not go on to the next file.
+		const value = fileValueOf(store.values.files);
+		expect(value.existing).toEqual([]);
+		expect(value.pending.map((entry) => [entry.file.name, entry.error])).toEqual([
+			['one.txt', undefined],
+			['two.txt', undefined]
+		]);
+		expect(client.upload).toHaveBeenCalledTimes(1);
+	});
+
+	it('a refusal of A’s upload is not shown on B either', async () => {
+		const { client, waiting } = slowClient();
+		const schema: FormSchema = { fields: [fileDef(client)] };
+		const store = createFormStore(schema);
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 5 });
+		await screen.findByText('ファイルはありません');
+		await pick(view.container, [file('one.txt')]);
+		await waitFor(() => expect(waiting).toHaveLength(1));
+
+		await view.rerender({ fileParentId: 6 });
+		waiting[0].done.reject(new Error('A は閉じられています'));
+		await waitFor(() => expect(screen.queryByText('アップロード中…')).toBeNull());
+		await Promise.resolve();
+		expect(fileValueOf(store.values.files).pending.map((entry) => entry.error)).toEqual([
+			undefined
+		]);
+		expect(screen.queryByText('A は閉じられています')).toBeNull();
+	});
+
+	it('uploadPendingFiles: a reset of the store while a file is on its way leaves the reset form alone', async () => {
+		const { client, waiting, arrive } = slowClient();
+		const schema: FormSchema = { fields: [fileDef(client)] };
+		const store = createFormStore(schema);
+		store.setValue('files', known([file('a.txt'), file('b.txt')]));
+		const run = uploadPendingFiles(schema, store, 9);
+		await waitFor(() => expect(waiting).toHaveLength(1));
+
+		// The app clears the form for the next new record.
+		store.reset();
+		arrive(0, meta(90, 'a.txt'));
+		const outcome = await run;
+		expect(store.values.files).toEqual({ existing: null, pending: [] });
+		// The file did arrive; the one that was reset away was never sent.
+		expect(outcome.uploaded).toEqual([meta(90, 'a.txt')]);
+		expect(client.upload).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('BantoForm: store.reset() (PR #844 review)', () => {
+	it('a new record: required is judged again after the reset', async () => {
+		const schema: FormSchema = { fields: [fileDef(fakeClient(), { required: true })] };
+		const store = createFormStore(schema);
+		const onSubmit = vi.fn();
+		const { container } = render(BantoForm, { schema, store, onSubmit });
+		await pick(container, [file('a.txt')]);
+		expect(store.validateAll()).toBe(true);
+
+		store.reset();
+		// Known again, and empty - not "unknown", which `required` would not judge.
+		await waitFor(() =>
+			expect(fileValueOf(store.values.files)).toEqual({ existing: [], pending: [] })
+		);
+		expect(store.isDirty).toBe(false);
+		await fireEvent.submit(container.querySelector('form')!);
+		expect(onSubmit).not.toHaveBeenCalled();
+		expect(screen.getByText('必須項目です')).toBeTruthy();
+	});
+
+	it('an existing record: the files are read again after the reset', async () => {
+		const client = fakeClient([meta(1, 'spec.pdf')]);
+		const schema: FormSchema = { fields: [fileDef(client, { required: true })] };
+		const store = createFormStore(schema);
+		render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 5 });
+		await screen.findByRole('listitem');
+		expect(client.list).toHaveBeenCalledTimes(1);
+
+		store.reset();
+		await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+		expect(client.list).toHaveBeenLastCalledWith('items', '5');
+		await waitFor(() =>
+			expect(fileValueOf(store.values.files).existing).toEqual([meta(1, 'spec.pdf')])
+		);
+		expect((await screen.findByRole('listitem')).textContent).toContain('spec.pdf');
+		// One read per reset: the answer does not start another.
+		await Promise.resolve();
+		expect(client.list).toHaveBeenCalledTimes(2);
+	});
+
+	it('an existing record: a file on its way during the reset is read back, not lost', async () => {
+		const rows = [meta(1, 'spec.pdf')];
+		const sent = deferred<FileFieldMeta>();
+		const client = {
+			list: vi.fn(async () => [...rows]),
+			upload: vi.fn(() => sent.promise),
+			remove: vi.fn(async () => {})
+		} satisfies FileFieldClient;
+		const schema: FormSchema = { fields: [fileDef(client)] };
+		const store = createFormStore(schema);
+		const { container } = render(BantoForm, {
+			schema,
+			store,
+			onSubmit: vi.fn(),
+			fileParentId: 5
+		});
+		await screen.findByRole('listitem');
+		await pick(container, [file('new.txt')]);
+		await waitFor(() => expect(client.upload).toHaveBeenCalledTimes(1));
+
+		store.reset();
+		await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+		rows.push(meta(2, 'new.txt'));
+		sent.resolve(meta(2, 'new.txt'));
+		await waitFor(() =>
+			expect(fileValueOf(store.values.files).existing?.map((row) => row.fileName)).toEqual([
+				'spec.pdf',
+				'new.txt'
+			])
+		);
+		expect(fileValueOf(store.values.files).pending).toEqual([]);
+	});
+});

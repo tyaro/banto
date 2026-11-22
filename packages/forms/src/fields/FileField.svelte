@@ -112,12 +112,17 @@
 		}
 	}
 
+	// The owner of an upload run: the record and where its files are. A run
+	// started for another owner writes nothing into the value (conventions §8).
+	let ownerToken = 0;
+
 	$effect(() => {
 		// Tracked: the record and where its files are. Everything else is untracked.
 		const target = parentId;
 		void config?.client;
 		void config?.resource;
 		untrack(() => {
+			ownerToken += 1;
 			loadToken += 1;
 			loading = false;
 			loadError = null;
@@ -130,18 +135,56 @@
 			void load();
 		});
 		return () => {
+			ownerToken += 1;
 			loadToken += 1;
 		};
 	});
 
+	// The value went back to "not known" under the same owner: the store was
+	// reset (or replaced). Say again what the record has - nothing for a record
+	// that does not exist (so `required` is judged), the list read again otherwise.
+	const unknown = $derived(current.existing === null);
+
+	$effect(() => {
+		if (!unknown) return;
+		untrack(() => {
+			const now = latest();
+			if (now.existing !== null) return;
+			if (!hasParent) {
+				refused = [];
+				actionError = null;
+				onInput({ existing: [], pending: now.pending });
+				return;
+			}
+			// A load on its way (the first one, or the owner's) answers for this value too;
+			// a failed one keeps its message and its reload button.
+			if (!loading && loadError === null) {
+				refused = [];
+				actionError = null;
+				void load();
+			}
+		});
+	});
+
 	function upload(keys: string[]): void {
 		const target = parentId;
+		const client = config?.client;
+		const resource = config?.resource;
 		if (!config || target === null || target === undefined) return;
+		const token = ownerToken;
 		void uploadPending({
 			config,
 			parentId: target,
 			read: () => value,
 			write: onInput,
+			// Compared directly too: the effect that moves the token runs after the props changed.
+			isCurrent: () =>
+				token === ownerToken &&
+				parentId === target &&
+				config?.client === client &&
+				config?.resource === resource,
+			// The value was reset while the file was on its way: it is the record's, so read the list again.
+			onDetached: () => void load(),
 			keys,
 			messages,
 			onStart: (key) => (uploadingKeys = [...uploadingKeys, key]),
