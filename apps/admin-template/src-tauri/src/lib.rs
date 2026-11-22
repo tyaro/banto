@@ -2176,7 +2176,10 @@ struct ServerListener {
 /// One case is not "nothing was saved" (Issue #793, ADR-0035):
 /// `reason: WritesRemaining` with `previous: LeftClosed` is a NARROWING change
 /// whose settings WERE saved; only the new listener was not started, because
-/// writes of the stopped one are still running.
+/// writes of the stopped one are still running. Any other `reason` with
+/// `previous: LeftClosed` is "closed, NOT saved": the narrowing change failed
+/// (e.g. `SaveFailed`) while writes remained, so the previous listener was
+/// not brought back either.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ServerApplyFailure {
@@ -2217,9 +2220,10 @@ enum PreviousServerOutcome {
     /// although the saved settings still say enabled.
     RestoreFailed,
     /// The previous listener was deliberately NOT brought back: the change
-    /// narrows the exposure (public viewing off, a narrower bind), so the
-    /// settings were saved and the listener stays closed until the remaining
-    /// writes are done and the settings are applied again (Issue #793).
+    /// narrows the exposure (server off, public viewing off, a narrower bind)
+    /// and writes of the stopped listener remain, so the listener stays
+    /// closed until the settings are applied again (Issue #793). Whether the
+    /// settings were saved is told by `reason` (see [`ServerApplyFailure`]).
     LeftClosed,
 }
 
@@ -3020,9 +3024,13 @@ async fn server_apply_body(
     //   configuration that accepted them;
     // - narrowing: the previous listener must NOT come back (it would leave
     //   open what was just closed). Save, stay closed, ask to apply again.
-    let writes_block = if writes_done || !config.enabled {
-        None
-    } else {
+    //
+    // `may_restore` holds for EVERY failure below, not only the refusal: with
+    // writes still running, a narrowing change (turning the server off
+    // included) never brings the previous listener back - also when it is
+    // the SAVE of the narrower settings that fails (review of PR #829).
+    // Without remaining writes a failed apply restores as it always did.
+    let may_restore = writes_done || {
         let previous_exposure = match &previous {
             Some(previous) => ServerExposure {
                 listening: true,
@@ -3031,18 +3039,23 @@ async fn server_apply_body(
             },
             None => ServerExposure::closed(),
         };
-        let requested_exposure = ServerExposure {
-            listening: true,
-            bind: config.bind.clone(),
-            viewer_public: config.viewer_public,
+        let requested_exposure = if config.enabled {
+            ServerExposure {
+                listening: true,
+                bind: config.bind.clone(),
+                viewer_public: config.viewer_public,
+            }
+        } else {
+            ServerExposure::closed()
         };
-        Some(
-            if restoring_previous_stays_within(&previous_exposure, &requested_exposure) {
-                WritesBlock::RefuseAndRestore
-            } else {
-                WritesBlock::SaveAndStayClosed
-            },
-        )
+        restoring_previous_stays_within(&previous_exposure, &requested_exposure)
+    };
+    let writes_block = if writes_done || !config.enabled {
+        None
+    } else if may_restore {
+        Some(WritesBlock::RefuseAndRestore)
+    } else {
+        Some(WritesBlock::SaveAndStayClosed)
     };
 
     // Serving on an already-bound listener cannot fail (the bind is the only
@@ -3182,9 +3195,13 @@ async fn server_apply_body(
         }
         Err((reason, err)) => {
             // Nothing was saved. Bring back the listener that was running, on
-            // the address and port it had.
+            // the address and port it had - unless that would reopen what a
+            // narrowing change was closing while writes remain (`may_restore`
+            // above): then it stays closed, and the result says "closed, not
+            // saved" (`reason` as it is, `previous: LeftClosed`).
             let outcome = match previous {
                 None => PreviousServerOutcome::None,
+                Some(_) if !may_restore => PreviousServerOutcome::LeftClosed,
                 Some(previous) => {
                     let bind = previous.bind.clone();
                     match bind_listener(previous).await {
@@ -3201,7 +3218,19 @@ async fn server_apply_body(
                     }
                 }
             };
-            let restored = outcome != PreviousServerOutcome::RestoreFailed;
+            let left_closed = outcome == PreviousServerOutcome::LeftClosed;
+            let restored = !left_closed && outcome != PreviousServerOutcome::RestoreFailed;
+            let err = if left_closed {
+                // The user sees this text: the settings are NOT the narrower
+                // ones, and nothing is listening.
+                BantoError::Other(format!(
+                    "設定を保存できませんでした（{err}）。処理中の書き込みが残っているため、\
+                     前の設定のサーバーは起動し直していません（停止したままです）。\
+                     少し待ってから、もう一度適用してください。"
+                ))
+            } else {
+                err
+            };
             slot.apply_failure = Some(ServerApplyFailure {
                 enabled: config.enabled,
                 bind: config.bind.clone(),
@@ -3223,6 +3252,9 @@ async fn server_apply_body(
             });
             if let Some(remaining) = &remaining_writes {
                 detail["remainingWrites"] = remaining.clone();
+            }
+            if left_closed {
+                detail["listening"] = serde_json::json!(false);
             }
             state
                 .audit

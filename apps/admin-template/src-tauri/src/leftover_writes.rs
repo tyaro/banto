@@ -9,6 +9,10 @@
 use banto_server::RemainingWrites;
 use std::time::Duration;
 
+/// How many operations [`LeftoverWrites::audit_detail`] lists at most, over
+/// all stopped listeners together (the count stays exact).
+const AUDIT_OPERATIONS_MAX: usize = 8;
+
 /// The unfinished writes of every listener stopped so far.
 #[derive(Default)]
 pub(crate) struct LeftoverWrites(Vec<RemainingWrites>);
@@ -37,13 +41,15 @@ impl LeftoverWrites {
         self.0.iter().map(RemainingWrites::count).sum()
     }
 
-    /// For the audit detail of the apply that left them behind: how many, and
-    /// which (`METHOD path`, a bounded list) as far as known.
+    /// For the audit detail of the apply that left them behind: how many (the
+    /// exact total), and which (`METHOD path`) as far as known - at most
+    /// [`AUDIT_OPERATIONS_MAX`] in all, however many listeners are tracked.
     pub(crate) fn audit_detail(&self) -> serde_json::Value {
         let operations: Vec<String> = self
             .0
             .iter()
             .flat_map(RemainingWrites::operations)
+            .take(AUDIT_OPERATIONS_MAX)
             .collect();
         serde_json::json!({
             "count": self.count(),

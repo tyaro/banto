@@ -25,6 +25,11 @@
 //!   writes are done, and reports the ones that are not
 //!   ([`StopOutcome::WritesRemaining`]). It never reports success with work
 //!   left behind.
+//! - **A bound on how many run at once** ([`MAX_DETACHED_WRITES`]): a
+//!   disconnected client's write no longer occupies a connection, so writes
+//!   could otherwise pile up beyond the number of connections. Only NEW
+//!   writes are refused (503, the handler never starts); one that was
+//!   accepted is never stopped.
 //! - **Panic**: a handler that panics is answered 500 ("read the state again,
 //!   then retry") instead of a dropped connection, and logged with
 //!   `eprintln!` (no `tracing`, conventions §3).
@@ -46,6 +51,22 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::sync::watch;
+
+/// How many detached writes one listener runs at once (ADR-0035 §7). A write
+/// that arrives while this many are running is answered 503 and does not
+/// start. Far above what this kind of app sees - a write is short, and before
+/// the layer the number was bounded by the open connections - so it only cuts
+/// off writes piled up by clients that send and disconnect.
+pub const MAX_DETACHED_WRITES: usize = 256;
+
+/// Why [`DetachedWrites::enter`] refused a write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Refused {
+    /// The server was asked to stop.
+    Stopping,
+    /// [`MAX_DETACHED_WRITES`] writes are running.
+    Busy,
+}
 
 /// How many characters of `METHOD path` are kept for one running write.
 const LABEL_MAX_CHARS: usize = 120;
@@ -97,19 +118,22 @@ impl DetachedWrites {
     }
 
     /// Counts one more running write until the returned guard is dropped, or
-    /// `None` once the gate is closed. The check and the count are one step
-    /// under the lock: a write is either refused, or seen by the stop that
-    /// closed the gate.
-    pub(crate) fn enter(&self, label: String) -> Option<DetachedWriteGuard> {
+    /// refuses: once the gate is closed, or while [`MAX_DETACHED_WRITES`] are
+    /// running. The check and the count are one step under the lock: a write
+    /// is either refused, or seen by the stop that closed the gate.
+    pub(crate) fn enter(&self, label: String) -> Result<DetachedWriteGuard, Refused> {
         let mut state = self.state();
         if state.closed {
-            return None;
+            return Err(Refused::Stopping);
+        }
+        if state.running.len() >= MAX_DETACHED_WRITES {
+            return Err(Refused::Busy);
         }
         let id = state.next_id;
         state.next_id += 1;
         state.running.insert(id, label);
         self.0.running_count.send_replace(state.running.len());
-        Some(DetachedWriteGuard {
+        Ok(DetachedWriteGuard {
             writes: self.clone(),
             id,
         })
@@ -272,13 +296,27 @@ pub(crate) async fn detach_writes(
         return next.run(request).await;
     }
     let label = write_label(request.method(), request.uri().path());
-    let Some(guard) = writes.enter(label.clone()) else {
-        // The server was asked to stop. Nothing ran, nothing changed.
-        return error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "サーバーを停止しているため、この操作は受け付けられませんでした。\
-             少し待ってから、もう一度試してください。",
-        );
+    let guard = match writes.enter(label.clone()) {
+        Ok(guard) => guard,
+        // Either way nothing ran and nothing changed.
+        Err(Refused::Stopping) => {
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "サーバーを停止しているため、この操作は受け付けられませんでした。\
+                 少し待ってから、もう一度試してください。",
+            );
+        }
+        Err(Refused::Busy) => {
+            eprintln!(
+                "banto-server: 処理中の書き込みが上限（{MAX_DETACHED_WRITES}件）に達したため、\
+                 新しい書き込みを断りました（{label}）"
+            );
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "処理中の操作が多いため、この操作は受け付けられませんでした。\
+                 少し待ってから、もう一度試してください。",
+            );
+        }
     };
     let task = tokio::spawn(async move {
         let _guard = guard;
@@ -333,7 +371,10 @@ mod tests {
         assert!(!writes.wait_idle(Duration::from_millis(20)).await);
 
         writes.close();
-        assert!(writes.enter("POST /c".to_string()).is_none());
+        assert_eq!(
+            writes.enter("POST /c".to_string()).err(),
+            Some(Refused::Stopping)
+        );
         // Closing does not touch the ones already running.
         assert_eq!(writes.count(), 2);
 
@@ -346,6 +387,23 @@ mod tests {
         drop(second);
         assert!(waiter.await.unwrap());
         assert_eq!(writes.count(), 0);
+    }
+
+    /// ADR-0035 §7: only NEW writes are refused at the bound; the running
+    /// ones go on, and a finished one makes room again.
+    #[test]
+    fn a_write_beyond_the_bound_is_refused_until_one_finishes() {
+        let writes = DetachedWrites::default();
+        let mut guards: Vec<_> = (0..MAX_DETACHED_WRITES)
+            .map(|i| writes.enter(format!("POST /{i}")).unwrap())
+            .collect();
+        assert_eq!(
+            writes.enter("POST /over".to_string()).err(),
+            Some(Refused::Busy)
+        );
+        assert_eq!(writes.count(), MAX_DETACHED_WRITES);
+        guards.pop();
+        assert!(writes.enter("POST /again".to_string()).is_ok());
     }
 
     #[test]

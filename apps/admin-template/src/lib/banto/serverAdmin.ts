@@ -121,7 +121,10 @@ export interface ServerListener {
  * the requested settings. With `previous: 'restored'` nothing was saved (a
  * widening or equal change). With `previous: 'leftClosed'` the change was a
  * narrowing one: the settings WERE saved and the listener stays closed until
- * the settings are applied again.
+ * the settings are applied again. Any other `reason` with
+ * `previous: 'leftClosed'` (e.g. `'saveFailed'`) is "closed, NOT saved": the
+ * narrowing change failed while writes remained, so the previous listener was
+ * not brought back either.
  */
 export interface ServerApplyFailure {
 	enabled: boolean;

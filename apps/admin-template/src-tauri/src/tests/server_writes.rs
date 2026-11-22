@@ -196,6 +196,70 @@ async fn a_narrowing_change_that_still_needs_a_listener_saves_and_stays_closed()
     stop_running_server(&state).await;
 }
 
+/// Review of PR #829: when it is the SAVE of the narrower settings that
+/// fails while a write remains, the previous listener must not come back
+/// either (it served under public viewing). Result: closed, not saved.
+#[tokio::test]
+async fn a_narrowing_change_whose_save_fails_does_not_bring_the_listener_back() {
+    let state = admin_app_state().await;
+    let port = free_port();
+    // 閲覧公開 ON makes disabling auth below legal while LAN is enabled.
+    apply(&state, true, port, true)
+        .await
+        .expect("apply with public viewing");
+    let held = hold_write(&state).await;
+
+    let applying = apply(&state, true, port, false);
+    tokio::pin!(applying);
+    // Drive the apply until it has stopped the listener (it then waits for
+    // the held write before it gets to the save).
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut applying => panic!("finished before the save could be made to fail: {result:?}"),
+            () = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                if port_is_free(port) {
+                    break;
+                }
+            }
+        }
+    }
+    // The final re-validation refuses LAN without 閲覧公開 once auth is
+    // disabled, so the save of the narrower settings fails.
+    let mut auth = state.settings.auth_config().await.unwrap();
+    auth.disabled = true;
+    state.settings.set_auth_config(&auth).await.expect("auth");
+
+    assert!(applying.await.is_err());
+    let status = server_status_body(&state).await.expect("status");
+    assert!(!status.running, "the public listener is not reopened");
+    assert_eq!(status.live, None);
+    assert!(port_is_free(port));
+    assert!(status.viewer_public, "the narrower setting was not saved");
+    assert_eq!(
+        status.apply_failure,
+        Some(ServerApplyFailure {
+            enabled: true,
+            bind: "127.0.0.1".to_string(),
+            port,
+            reason: ServerApplyFailureReason::SaveFailed,
+            previous: PreviousServerOutcome::LeftClosed,
+        })
+    );
+    let entries = settings_change_entries(&state).await;
+    let failed: Vec<_> = entries
+        .iter()
+        .filter(|(result, _)| result == "failed")
+        .collect();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].1["saved"], false);
+    assert_eq!(failed[0].1["restoredPrevious"], false);
+    assert_eq!(failed[0].1["listening"], false);
+    assert_eq!(remaining_writes_of(&failed[0].1), one_held_write());
+
+    drop(held);
+}
+
 #[test]
 fn the_new_failure_codes_serialize_in_camel_case() {
     assert_eq!(

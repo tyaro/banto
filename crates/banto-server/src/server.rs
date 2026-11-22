@@ -155,7 +155,7 @@ impl RunningServer {
     /// outside this crate). `None` once the listener is stopping.
     #[doc(hidden)]
     pub fn hold_write_for_test(&self, label: &str) -> Option<impl Send + 'static> {
-        self.detached_writes.enter(label.to_string())
+        self.detached_writes.enter(label.to_string()).ok()
     }
 
     async fn stop_within(mut self, limit: Duration, writes_limit: Duration) -> StopOutcome {

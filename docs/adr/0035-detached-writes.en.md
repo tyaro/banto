@@ -4,7 +4,7 @@
 
 - Status: Proposed (drafted 2026-11-22. The direction is settled by the owner's decision 8 of the same day and by
   items 6 and 17 in §10 of the plan. The details this ADR newly fixes - the upper bound of the wait at a stop, the
-  shape of the panic and stopping responses, having no limit on count or duration, and what the desktop does at
+  shape of the panic and stopping responses, the bound on accepting new writes, and what the desktop does at
   exit - are listed under "Points to confirm with the owner")
 - Date: 2026-11-22
 - Related: Issue #793 / tyaro/banto-industrial#600 /
@@ -100,10 +100,18 @@ direction.
   "loopback ⊂ one address ⊂ every address of that family"; what cannot be compared (a host name, two different
   addresses, `0.0.0.0` against `::`) counts as narrowing. **A change that widens one item and narrows another
   counts as narrowing.**
+- **A narrowing change (turning the server off included) never brings the previous listener back, also when it
+  fails part-way** (added by the review of PR #829). With writes remaining, a failure to **save** the narrower
+  settings (a storage error, a refusal by the final re-validation) does not enter the common rollback: the listener
+  stays closed. The result is "closed, not saved": `applyFailure` is the original reason (`saveFailed`, ...) /
+  `leftClosed`, and the audit row is `failed` with `saved: false`, `restoredPrevious: false`, `listening: false`.
+  `leftClosed` means "saved" only with the reason `writesRemaining`. A failure without remaining writes restores
+  the previous listener as before.
 - The remaining writes stay in the `ServerSlot` (`LeftoverWrites`). The next apply waits for them again, with the
   same bound, before it starts a listener, and refuses by the same rule when they are still running. They are
   still tracked after the previous listener was brought back.
-- The audit `detail.remainingWrites` is `{count, operations}` (`operations`: a bounded list of `METHOD path`).
+- The audit `detail.remainingWrites` is `{count, operations}` (`count`: the exact total; `operations`: a list of
+  `METHOD path`, at most 8 in all however many stopped listeners are tracked).
 - A guarantee that "the old generation can no longer write" (fencing every write with a generation number) is not
   adopted: it would reach into the whole service layer.
 
@@ -113,11 +121,14 @@ Tauri runs each async command as its own task (`InvokeResolver::respond_async` i
 `async_runtime::spawn`; verified). A command's future is not dropped when the webview closes. This is a difference
 of transport; the symmetry of authorization and audit (conventions §1) is unchanged.
 
-### 7. Limits that are not set (count, duration of one write)
+### 7. Limits: only on accepting new writes, not on the duration of one
 
-- **No limit on the number of writes running at once.** Without the layer, as many handlers could already run as
-  there were connections; a disconnect no longer stops one, but it does not add work. The only write that arrives
-  before authentication is login, which has its attempt limit (IP and username; the 429 comes before argon2).
+- **At most 256 writes run at once** (`MAX_DETACHED_WRITES`; changed by the cross-review of PR #829). Without the
+  layer, the handlers running at once were bounded by the open connections. Once detached, the work of a client
+  that sends and disconnects stays behind outside that number, so it is not the same. A write that arrives while
+  the bound is reached is answered **503** (`kind: other`) without starting its handler, and logged with
+  `eprintln!`. **A write that was accepted is never stopped.** 256 is set far above the usual concurrency of this
+  kind of app (one write is short).
 - **No limit on the duration of one write.** Cutting it short is exactly what this ADR prevents. A long write (a
   backup) keeps running after a disconnect and finishes. A write that never ends shows up as "remaining" at a stop.
 
@@ -139,6 +150,8 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
 - **Read the whole body in the layer, then detach**: buffers a body before authentication and makes the layer own
   a second size limit (the extractors have one). Rejected; a request cut off mid-body does nothing, which suffices.
 - **Abort the writes that remain at a stop**: leaves them half-done. Rejected.
+- **No limit on the number running at once** (the first draft): work left behind after a disconnect is outside
+  the number of connections, so it was not "the same as before". Rejected (cross-review).
 - **Wait without a bound**: a settings change and an exit become hostages of a write that never ends (the shape of
   Issue #283). Rejected.
 - **Bring the previous listener back for a narrowing change too**: fail-open. Rejected (plan §10 item 17).
@@ -149,7 +162,7 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
 - A write that was read finishes - create, revoke, audit - even when the client disconnects. Derived apps need to
   do nothing.
 - Behaviour changes: (1) a disconnect no longer stops a write; (2) a panicking handler answers 500 instead of
-  dropping the connection; (3) a write during a stop is answered 503; (4) `RunningServer::stop()` returns a
+  dropping the connection; (3) a write during a stop, or while the bound of 256 concurrent writes is reached, is answered 503; (4) `RunningServer::stop()` returns a
   `StopOutcome`; (5) the desktop's "apply LAN settings" can fail while writes remain (`writesRemaining`).
 - The layer does not fix a handler whose internal order is wrong. The per-handler review (commit -> revoke ->
   audit, and that work running on under a revoked session does not write) is **S2** (plan §7).
@@ -165,7 +178,7 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
 1. The **10 second** bound at a stop (alongside the 5 seconds for connections). Changing LAN settings during a long
    write such as a backup makes a widening change fail with "apply again".
 2. Panic and stopping responses use `other` (500 / 503) rather than a new kind.
-3. No limit on the number of concurrent writes or the duration of one (§7).
+3. The bound of 256 concurrent writes (only new ones are refused) and no limit on the duration of one (§7).
 4. A narrowing change that still needs a listener is saved and then returned as an **error** (`leftClosed`; the UI
    shows the error text).
 5. Desktop exit stays as it is (§8).
