@@ -570,3 +570,181 @@ describe('HTTP revision and notifications (I-19, I-23)', () => {
 		expect(listener).not.toHaveBeenCalled();
 	});
 });
+
+/**
+ * Issue #838: the overtaking scenarios that happen inside ONE document, run
+ * for both token stores. Tokens are seeded through `login()` (the only way
+ * into `'memory'`), and read back through `getToken()`.
+ */
+describe.each(['web', 'memory'] as const)(
+	"in-document overtaking with storage: '%s' (#838, #259, I-7)",
+	(storage) => {
+		function setup() {
+			const server = scriptedServer();
+			const auth = createHttpAuthProvider({ fetchFn: server.fetchFn, storage });
+			const changed = vi.fn();
+			auth.onCredentialChanged(changed);
+			return { ...server, auth, changed };
+		}
+
+		/** Log in and return once `token` is stored. */
+		async function loggedIn(token: string) {
+			const s = setup();
+			const login = s.auth.login({ username: 'a', password: 'pw' });
+			s.requests[0].reply.resolve(json(200, { success: true, token }));
+			await login;
+			expect(s.auth.getToken()).toBe(token);
+			s.requests.length = 0;
+			s.changed.mockClear();
+			return s;
+		}
+
+		it('S-20: a grant token minted while a login finished is not stored; the login token stays', async () => {
+			const { requests, auth } = setup();
+
+			const entering = auth.enterGrant?.('publicViewer');
+			const login = auth.login({ username: 'b', password: 'pw' });
+			requests[1].reply.resolve(json(200, { success: true, token: 'tok-b' }));
+			await expect(login).resolves.toEqual({ success: true, error: undefined });
+			requests[0].reply.resolve(json(200, { success: true, token: 'public-token' }));
+
+			await expect(entering).resolves.toEqual({ success: false, superseded: true });
+			expect(auth.getToken()).toBe('tok-b');
+		});
+
+		it('S-52: enterGrant with a stale expectRevision stores nothing and sends nothing', async () => {
+			const s = setup();
+			const ticketRevision = s.auth.credentialRevision();
+			const login = s.auth.login({ username: 'b', password: 'pw' });
+			s.requests[0].reply.resolve(json(200, { success: true, token: 'tok-b' }));
+			await login;
+
+			const entering = s.auth.enterGrant?.('publicViewer', { expectRevision: ticketRevision });
+
+			await expect(entering).resolves.toEqual({ success: false, superseded: true });
+			expect(s.requests).toHaveLength(1);
+			expect(s.auth.getToken()).toBe('tok-b');
+		});
+
+		it('S-42: enterGrant with the current expectRevision stores the token and notifies once', async () => {
+			const { requests, auth, changed } = setup();
+			const ticketRevision = auth.credentialRevision();
+
+			const entering = auth.enterGrant?.('publicViewer', { expectRevision: ticketRevision });
+			requests[0].reply.resolve(json(200, { success: true, token: 'public-token' }));
+
+			await expect(entering).resolves.toEqual({ success: true });
+			expect(auth.getToken()).toBe('public-token');
+			expect(auth.credentialRevision()).not.toBe(ticketRevision);
+			expect(changed).toHaveBeenCalledTimes(1);
+		});
+
+		it('S-21: a logout overtaken by a login sends the old token, keeps the new one and does not notify', async () => {
+			const { requests, auth, changed } = await loggedIn('tok-a');
+
+			const logout = auth.logout();
+			expect(requests[0]).toMatchObject({ path: '/api/auth/logout', token: 'tok-a' });
+			const login = auth.login({ username: 'b', password: 'pw' });
+			requests[1].reply.resolve(json(200, { success: true, token: 'tok-b' }));
+			await login;
+			changed.mockClear();
+			requests[0].reply.resolve(new Response(null, { status: 204 }));
+			await logout;
+
+			expect(auth.getToken()).toBe('tok-b');
+			expect(changed).not.toHaveBeenCalled();
+		});
+
+		it('S-40: of two logins in flight, the one answered second is superseded', async () => {
+			const { requests, auth, changed } = setup();
+
+			const first = auth.login({ username: 'a', password: 'pw' });
+			const second = auth.login({ username: 'b', password: 'pw' });
+			requests[1].reply.resolve(json(200, { success: true, token: 'tok-b' }));
+			await expect(second).resolves.toEqual({ success: true, error: undefined });
+			requests[0].reply.resolve(json(200, { success: true, token: 'tok-a' }));
+
+			await expect(first).resolves.toMatchObject({ success: false, superseded: true });
+			expect(auth.getToken()).toBe('tok-b');
+			expect(changed).toHaveBeenCalledTimes(1);
+		});
+
+		it('a logout clears, advances and notifies once - also when its request failed', async () => {
+			const { requests, auth, changed } = await loggedIn('tok-a');
+			const before = auth.credentialRevision();
+
+			const logout = auth.logout();
+			requests[0].reply.reject(new TypeError('fetch failed'));
+			await logout;
+
+			expect(auth.getToken()).toBeNull();
+			expect(auth.credentialRevision()).not.toBe(before);
+			expect(changed).toHaveBeenCalledTimes(1);
+		});
+
+		for (const [label, response] of [
+			['200 null', () => json(200, null)],
+			['401', () => json(401, { kind: 'unauthorized' })]
+		] as const) {
+			it(`S-9: ${label} resolves none and clears the checked token without notifying (current !== checked)`, async () => {
+				const { requests, auth, changed } = await loggedIn('tok-a');
+				const before = auth.credentialRevision();
+
+				const pending = auth.resolve();
+				expect(requests[0]).toMatchObject({ path: '/api/auth/identity', token: 'tok-a' });
+				requests[0].reply.resolve(response());
+				const answer = await pending;
+
+				expect(answer.status).toBe('none');
+				expect(answer.checked).toBe(before);
+				expect(answer.current).not.toBe(before);
+				expect(answer.current).toBe(auth.credentialRevision());
+				expect(auth.getToken()).toBeNull();
+				expect(changed).not.toHaveBeenCalled();
+			});
+		}
+
+		it('S-9/S-105: a none answer for a token replaced while in flight is stale and keeps the new token', async () => {
+			const { requests, auth } = await loggedIn('tok-a');
+
+			const pending = auth.resolve();
+			const login = auth.login({ username: 'b', password: 'pw' });
+			requests[1].reply.resolve(json(200, { success: true, token: 'tok-b' }));
+			await login;
+			requests[0].reply.resolve(json(401, { kind: 'unauthorized' }));
+
+			await expect(pending).rejects.toSatisfy(isStaleAnswerError);
+			expect(auth.getToken()).toBe('tok-b');
+		});
+
+		it('S-9: a 500 or an unreachable server rejects and changes nothing', async () => {
+			const { requests, auth, changed } = await loggedIn('tok-a');
+			const before = auth.credentialRevision();
+
+			const failing = auth.resolve();
+			requests[0].reply.resolve(json(500, { kind: 'storage', message: 'boom' }));
+			await expect(failing).rejects.toSatisfy(isProviderError);
+			const unreachable = auth.resolve();
+			requests[1].reply.reject(new TypeError('fetch failed'));
+			await expect(unreachable).rejects.toSatisfy(isProviderError);
+
+			expect(auth.getToken()).toBe('tok-a');
+			expect(auth.credentialRevision()).toBe(before);
+			expect(changed).not.toHaveBeenCalled();
+		});
+
+		it('S-106: a changePassword answered 401 clears the token it was sent with and reports it', async () => {
+			const { requests, auth, changed } = await loggedIn('tok-a');
+			const before = auth.credentialRevision();
+
+			const changing = auth.changePassword?.('old', 'new');
+			expect(requests[0]).toMatchObject({ path: '/api/auth/change-password', token: 'tok-a' });
+			requests[0].reply.resolve(json(401, { kind: 'unauthorized', message: 'no' }));
+			await changing;
+
+			expect(auth.getToken()).toBeNull();
+			expect(auth.credentialRevision()).not.toBe(before);
+			expect(changed).toHaveBeenCalledTimes(1);
+		});
+	}
+);
