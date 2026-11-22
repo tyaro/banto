@@ -851,8 +851,24 @@ interface SlotLevel {
 interface SlotRecord {
 	index: number;
 	share?: number;
-	/** A split level: the old neighbour, then the anchors by distance, either side (`slot.ts#restoreSplit`'s candidates). */
+	/**
+	 * What the slot names beside the child, nearest first, and whether the child goes before it: in
+	 * a split the old neighbour, then the anchors of either side (`slot.ts#restoreSplit`'s
+	 * candidates); in a tab group the anchors, each on its old side (`slot.ts#tabIndex`).
+	 */
 	near?: { id: string; before: boolean }[];
+}
+
+/** The anchors of a tab slot with the side each was on: the other tabs by distance, the one after first (`slot.ts#wasBefore`). */
+function nearTabs(slot: Extract<DockSlot, { kind: 'tab' }>): { id: string; before: boolean }[] {
+	const count = slot.anchors.length + 1;
+	const index = Math.min(Math.max(slot.index, 0), count - 1);
+	const out: { id: string; before: boolean }[] = [];
+	for (let d = 1; d < count; d++) {
+		if (index + d < count) out.push({ id: slot.anchors[out.length], before: true });
+		if (index - d >= 0) out.push({ id: slot.anchors[out.length], before: false });
+	}
+	return out;
 }
 
 /** The neighbour and the anchors of a split slot, nearest first (`slot.ts#splitAnchors`). */
@@ -948,7 +964,9 @@ function slotLevels(
 		});
 		records.push({
 			index: s.index,
-			...(s.kind === 'split' ? { share: s.share ?? s.size, near: nearOf(s) } : {})
+			...(s.kind === 'split'
+				? { share: s.share ?? s.size, near: nearOf(s) }
+				: { near: nearTabs(s) })
 		});
 	}
 	return { levels, records };
@@ -1070,14 +1088,14 @@ function finishWork(work: Work, records: Map<string, Map<string, SlotRecord>>): 
 				: free.shift()!;
 		ordered.push(next);
 	}
-	// In a split the index only counts when the slot names nothing that is here: as
-	// `slot.ts#restoreSplit` in a split still there, such a child goes beside the nearest one its
-	// slot names - the old neighbour, then the anchors by distance - among the children that show
+	// The index only counts when the slot names nothing that is here: as `slot.ts#restoreSplit`
+	// in a split still there and `slot.ts#tabIndex` in a tab group, such a child goes beside the
+	// nearest one its slot names (the old neighbour, the anchors by distance) among the ones that show
 	// and the ones placed before it (lower index). For the slots of one S that is the place the
 	// index says. It is another one when the children that show were put in another order since
 	// the slot was taken (`slot.ts` keeps the slot of a hidden pane as it was).
 	const settled = new Set(entries.filter((e) => e.record === undefined));
-	for (const entry of work.tabs ? [] : byIndex) {
+	for (const entry of byIndex) {
 		for (const c of entry.record!.near ?? []) {
 			const beside = ordered.find((e) => settled.has(e) && findWork(e.child, c.id) !== null);
 			if (beside === undefined) continue;
@@ -1167,9 +1185,10 @@ function finishWork(work: Work, records: Map<string, Map<string, SlotRecord>>): 
  * no `anchors`) stands for the panes in it: the pane goes beside that container, left whole.
  *
  * In a container, a child that does not show goes to the `index` its slot says, among the ones
- * that show in their order; in a split, beside the nearest child its slot names (the neighbour,
- * then the anchors) when one is there - the same place for the slots of one S, and the one
- * `slot.ts#restoreSplit` takes when the children were put in another order since. In a split it
+ * that show in their order; beside the nearest child its slot names (a split's neighbour, then
+ * the anchors) when one is there - the same place for the slots of one S, and the one
+ * `slot.ts#restoreSplit` / `restoreTab` take when the children were put in another order since
+ * (`DockState` does not touch the slot of a hidden pane when a tab is moved). In a split it
  * has the `share` its slot says (`size` for a slot without), and the children that show share the
  * rest in the proportion of the docked tree. A child with several panes, none showing, is read
  * from the slot given last among theirs (`slot.ts#splitPending`: the most recent slot of a

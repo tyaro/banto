@@ -40,6 +40,7 @@ import {
 	dockPanelAtEdge,
 	dockPanelIntoTree,
 	findNode,
+	moveTabWithinGroup,
 	removePanel,
 	resizeSplit
 } from '../src/core/tree';
@@ -1358,6 +1359,51 @@ describe('inflateShadow', () => {
 		const withX = restoreDockSlot(swapped, p('x'), slotX, makeId, hidden)!;
 		expect(text(restoreDockSlot(withX, p('y'), slotY, makeId, [hidden[1]]))).toBe(
 			'row[b, x, y, a]'
+		);
+	});
+
+	it('a tab slot of `slot.ts` after the tabs were put in another order: beside the nearest anchor', () => {
+		const group = tabs('g', [p('a'), p('b'), p('c'), p('d')]) as DockNode;
+		// Hide `b` (index 1: `c` after it, `a` before), then move `c` to the front.
+		const slot = captureDockSlot(group, 'b')!;
+		const moved = moveTabWithinGroup(removePanel(group, 'b'), 'g', 1, 0)!;
+		expect(text(moved)).toBe('tabs[c, a, d]');
+		const back = inflateShadow(moved, [{ panel: p('b'), slot }]);
+		expect(back.unplaced).toEqual([]);
+		// Not at the old index 1 (between `c` and `a`): before `c`, its nearest anchor.
+		expect(text(back.shadow)).toBe('tabs[b†, c, a, d]');
+		expect(projectShadow(back.shadow)).toEqual(moved);
+		const old = restoreDockSlot(moved, p('b'), slot, counterMakeId());
+		expect(text(old)).toBe('tabs[b, c, a, d]');
+		expect(text(projectShadow(markPresent(back.shadow, 'b')))).toBe(text(old));
+		// Two tabs hidden, the two left swapped: `x` after `b` (the nearest tab it names that
+		// shows), `y` after `x` - as `restoreDockSlot`, `x` then `y`.
+		const four = tabs('g', [p('a'), p('b'), p('x'), p('y')]) as DockNode;
+		const slotX = captureDockSlot(four, 'x')!;
+		const slotY = captureDockSlot(removePanel(four, 'x'), 'y', [{ id: 'x', slot: slotX }])!;
+		const swapped = tabs('g', [p('b'), p('a')]) as DockNode;
+		const hidden = [
+			{ id: 'x', slot: slotX },
+			{ id: 'y', slot: slotY }
+		];
+		for (const order of permutations(hidden)) {
+			const both = inflateShadow(
+				swapped,
+				order.map((h) => ({ panel: p(h.id), slot: h.slot }))
+			);
+			expect(both.unplaced).toEqual([]);
+			expect(projectShadow(both.shadow)).toEqual(swapped);
+			expect(text(both.shadow)).toBe('tabs[b, x†, y†, a]');
+		}
+		const makeId = counterMakeId();
+		const withX = restoreDockSlot(swapped, p('x'), slotX, makeId, hidden)!;
+		expect(text(restoreDockSlot(withX, p('y'), slotY, makeId, [hidden[1]]))).toBe(
+			'tabs[b, x, y, a]'
+		);
+		// A tab slot without anchors (the form of older releases): the index, as before.
+		const bare: DockSlot = { kind: 'tab', groupId: 'g', index: 1, anchors: [] };
+		expect(text(inflateShadow(moved, [{ panel: p('b'), slot: bare }]).shadow)).toBe(
+			'tabs[c, b†, a, d]'
 		);
 	});
 
