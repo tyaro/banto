@@ -33,6 +33,14 @@
 //!   replaces its listener hands the old listener's budget to the new one
 //!   ([`BoundServer::with_write_budget`](crate::BoundServer::with_write_budget)),
 //!   so the writes a stopped listener left running still count.
+//! - **The body is received first** (PR #829 review): a write takes its place
+//!   only once its body has arrived, so a client that sends the headers and
+//!   then stalls holds no place and starts no handler. The layer reads up to
+//!   [`BUFFERED_BODY_MAX_BYTES`] itself, giving up (408) when nothing arrives
+//!   for [`BODY_IDLE_LIMIT`] - a limit on the body that has not come, never
+//!   on a handler. A larger body is streamed to the handler as before, and
+//!   only [`MAX_STREAMED_WRITES`] of those run at once, so stalled uploads
+//!   cannot use up the room of ordinary writes.
 //! - **Panic**: a handler that panics is answered 500 ("read the state again,
 //!   then retry") instead of a dropped connection, and logged with
 //!   `eprintln!` (no `tracing`, conventions §3).
@@ -44,12 +52,14 @@
 //! (Tauri runs each async command as its own task), so this is a difference
 //! of transport only. Authorization and audit stay symmetric (conventions §1).
 
+use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
-use axum::http::{Method, StatusCode};
+use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use banto_core::{BantoError, ErrorBody};
+use futures_util::StreamExt;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -64,6 +74,24 @@ use tokio::sync::watch;
 /// off writes piled up by clients that send and disconnect.
 pub const MAX_DETACHED_WRITES: usize = 256;
 
+/// How much of a write's body the layer receives itself before the write
+/// takes its place (ADR-0035 §7). The same 2 MiB as axum's default body limit
+/// (`DefaultBodyLimit`), so every body a handler accepts without raising that
+/// limit is received before its handler - and its place - exists.
+pub const BUFFERED_BODY_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// How long the layer waits for the next piece of a body it is receiving
+/// (ADR-0035 §7). Only the wait for bytes that have not arrived is limited,
+/// and only before the handler starts; a handler is never stopped.
+pub const BODY_IDLE_LIMIT: Duration = Duration::from_secs(30);
+
+/// How many of the [`MAX_DETACHED_WRITES`] places writes with a body larger
+/// than [`BUFFERED_BODY_MAX_BYTES`] may hold (ADR-0035 §7). Such a body (an
+/// uploaded backup) is not held in memory by the layer: it is streamed to
+/// the handler, so the write has to take its place before the body is there.
+/// Stalled uploads can then only keep other large uploads out.
+pub const MAX_STREAMED_WRITES: usize = 16;
+
 /// The shared count behind [`MAX_DETACHED_WRITES`] (ADR-0035 §7).
 ///
 /// Each listener has its own gate and its own list of running writes (a stop
@@ -77,39 +105,61 @@ pub const MAX_DETACHED_WRITES: usize = 256;
 /// [`BoundServer::with_write_budget`](crate::BoundServer::with_write_budget).
 /// A listener that is given none has a budget of its own.
 #[derive(Clone, Default)]
-pub struct WriteBudget(Arc<AtomicUsize>);
+pub struct WriteBudget(Arc<Counts>);
+
+#[derive(Default)]
+struct Counts {
+    /// Every running write.
+    running: AtomicUsize,
+    /// The running writes whose body is streamed (a subset of `running`).
+    streamed: AtomicUsize,
+}
+
+/// Adds one to `count` unless it is already `max`.
+fn take_below(count: &AtomicUsize, max: usize) -> bool {
+    // A plain compare-and-swap loop: `fetch_update` is deprecated in favour
+    // of `try_update` on newer toolchains, and `try_update` does not exist on
+    // older ones.
+    let mut current = count.load(Ordering::SeqCst);
+    loop {
+        if current >= max {
+            return false;
+        }
+        match count.compare_exchange_weak(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => return true,
+            Err(now) => current = now,
+        }
+    }
+}
 
 impl WriteBudget {
     /// How many writes are running under this budget now, over all the
     /// listeners that share it.
     pub fn running(&self) -> usize {
-        self.0.load(Ordering::SeqCst)
+        self.0.running.load(Ordering::SeqCst)
     }
 
-    /// Takes one place, unless [`MAX_DETACHED_WRITES`] are taken.
-    fn try_take(&self) -> bool {
-        // A plain compare-and-swap loop: `fetch_update` is deprecated in
-        // favour of `try_update` on newer toolchains, and `try_update` does
-        // not exist on older ones.
-        let mut running = self.0.load(Ordering::SeqCst);
-        loop {
-            if running >= MAX_DETACHED_WRITES {
-                return false;
-            }
-            match self.0.compare_exchange_weak(
-                running,
-                running + 1,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => return true,
-                Err(current) => running = current,
-            }
+    /// Takes one place, unless [`MAX_DETACHED_WRITES`] are taken - or, for a
+    /// write whose body is streamed, [`MAX_STREAMED_WRITES`] of those.
+    fn try_take(&self, streamed: bool) -> bool {
+        if streamed && !take_below(&self.0.streamed, MAX_STREAMED_WRITES) {
+            return false;
         }
+        if take_below(&self.0.running, MAX_DETACHED_WRITES) {
+            return true;
+        }
+        if streamed {
+            self.0.streamed.fetch_sub(1, Ordering::SeqCst);
+        }
+        false
     }
 
-    fn give_back(&self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+    fn give_back(&self, streamed: bool) {
+        self.0.running.fetch_sub(1, Ordering::SeqCst);
+        if streamed {
+            self.0.streamed.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -126,7 +176,8 @@ impl std::fmt::Debug for WriteBudget {
 pub(crate) enum Refused {
     /// The server was asked to stop.
     Stopping,
-    /// [`MAX_DETACHED_WRITES`] writes are running under the budget.
+    /// [`MAX_DETACHED_WRITES`] writes are running under the budget, or -
+    /// for a write whose body is streamed - [`MAX_STREAMED_WRITES`] of those.
     Busy,
 }
 
@@ -199,11 +250,21 @@ impl DetachedWrites {
     /// under the lock: a write is either refused, or seen by the stop that
     /// closed the gate.
     pub(crate) fn enter(&self, label: String) -> Result<DetachedWriteGuard, Refused> {
+        self.enter_as(label, false)
+    }
+
+    /// [`enter`](Self::enter) for a write whose body is streamed to the
+    /// handler: also bounded by [`MAX_STREAMED_WRITES`].
+    fn enter_streamed(&self, label: String) -> Result<DetachedWriteGuard, Refused> {
+        self.enter_as(label, true)
+    }
+
+    fn enter_as(&self, label: String, streamed: bool) -> Result<DetachedWriteGuard, Refused> {
         let mut state = self.state();
         if state.closed {
             return Err(Refused::Stopping);
         }
-        if !self.0.budget.try_take() {
+        if !self.0.budget.try_take(streamed) {
             return Err(Refused::Busy);
         }
         let id = state.next_id;
@@ -213,6 +274,7 @@ impl DetachedWrites {
         Ok(DetachedWriteGuard {
             writes: self.clone(),
             id,
+            streamed,
         })
     }
 
@@ -255,13 +317,15 @@ impl DetachedWrites {
 pub(crate) struct DetachedWriteGuard {
     writes: DetachedWrites,
     id: u64,
+    /// Whether it also holds one of the [`MAX_STREAMED_WRITES`] places.
+    streamed: bool,
 }
 
 impl Drop for DetachedWriteGuard {
     fn drop(&mut self) {
         let mut state = self.writes.state();
         state.running.remove(&self.id);
-        self.writes.0.budget.give_back();
+        self.writes.0.budget.give_back(self.streamed);
         self.writes
             .0
             .running_count
@@ -361,6 +425,67 @@ fn error_response(status: StatusCode, message: &str) -> Response {
     (status, Json(body)).into_response()
 }
 
+/// The length the request declares, if it declares one that can be read.
+fn declared_length(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// A write's body, as the layer hands it to the handler.
+#[derive(Debug)]
+enum Received {
+    /// All of it arrived, and it is at most [`BUFFERED_BODY_MAX_BYTES`].
+    Whole(Bytes),
+    /// It is larger than that: the handler reads the rest from the
+    /// connection.
+    Streamed(Body),
+}
+
+/// Why [`receive_body`] gave up. Nothing ran in either case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyFailure {
+    /// Nothing arrived for the idle limit.
+    Idle,
+    /// The connection failed, or the body is malformed.
+    Broken,
+}
+
+/// Receives a write's body before its handler exists: all of it when it is
+/// at most [`BUFFERED_BODY_MAX_BYTES`]. A body that declares more, or turns
+/// out to be more, is not held in memory - what was read is handed on in
+/// front of the rest. `idle_limit` bounds each wait for the next piece.
+async fn receive_body(
+    declared: Option<u64>,
+    body: Body,
+    idle_limit: Duration,
+) -> Result<Received, BodyFailure> {
+    if declared.is_some_and(|length| length > BUFFERED_BODY_MAX_BYTES as u64) {
+        return Ok(Received::Streamed(body));
+    }
+    let mut pieces = body.into_data_stream();
+    let mut received: Vec<u8> = Vec::new();
+    loop {
+        match tokio::time::timeout(idle_limit, pieces.next()).await {
+            Err(_) => return Err(BodyFailure::Idle),
+            Ok(Some(Err(_))) => return Err(BodyFailure::Broken),
+            Ok(None) => return Ok(Received::Whole(Bytes::from(received))),
+            Ok(Some(Ok(piece))) => {
+                received.extend_from_slice(&piece);
+                if received.len() > BUFFERED_BODY_MAX_BYTES {
+                    let head =
+                        futures_util::stream::once(std::future::ready(Ok(Bytes::from(received))));
+                    return Ok(Received::Streamed(Body::from_stream(head.chain(pieces))));
+                }
+            }
+        }
+    }
+}
+
 /// The layer itself (see the module doc). Installed once, outermost, by
 /// [`BoundServer::serve`](crate::BoundServer::serve): everything inside it -
 /// CSRF check, authentication, role guard, the handler and its audit - runs
@@ -374,7 +499,34 @@ pub(crate) async fn detach_writes(
         return next.run(request).await;
     }
     let label = write_label(request.method(), request.uri().path());
-    let guard = match writes.enter(label.clone()) {
+    // The body comes first: until it is here the write holds no place and
+    // nothing of it runs, so a client that stalls costs what it cost before
+    // this layer - its own connection. If the connection goes away during
+    // this wait, this future is dropped and nothing has happened.
+    let (parts, body) = request.into_parts();
+    let received = match receive_body(declared_length(&parts.headers), body, BODY_IDLE_LIMIT).await
+    {
+        Ok(received) => received,
+        Err(BodyFailure::Idle) => {
+            return error_response(
+                StatusCode::REQUEST_TIMEOUT,
+                "リクエストの本文が届かなかったため、この操作は受け付けられませんでした。\
+                 もう一度試してください。",
+            );
+        }
+        Err(BodyFailure::Broken) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "リクエストの本文を受け取れなかったため、この操作は受け付けられませんでした。\
+                 もう一度試してください。",
+            );
+        }
+    };
+    let (entered, body, streamed) = match received {
+        Received::Whole(bytes) => (writes.enter(label.clone()), Body::from(bytes), false),
+        Received::Streamed(body) => (writes.enter_streamed(label.clone()), body, true),
+    };
+    let guard = match entered {
         Ok(guard) => guard,
         // Either way nothing ran and nothing changed.
         Err(Refused::Stopping) => {
@@ -385,8 +537,13 @@ pub(crate) async fn detach_writes(
             );
         }
         Err(Refused::Busy) => {
+            let bound = if streamed {
+                format!("本文の大きい書き込みの上限（{MAX_STREAMED_WRITES}件）")
+            } else {
+                format!("上限（{MAX_DETACHED_WRITES}件）")
+            };
             eprintln!(
-                "banto-server: 処理中の書き込みが上限（{MAX_DETACHED_WRITES}件）に達したため、\
+                "banto-server: 処理中の書き込みが{bound}に達したため、\
                  新しい書き込みを断りました（{label}）"
             );
             return error_response(
@@ -396,6 +553,7 @@ pub(crate) async fn detach_writes(
             );
         }
     };
+    let request = Request::from_parts(parts, body);
     let task = tokio::spawn(async move {
         let _guard = guard;
         next.run(request).await
@@ -605,5 +763,159 @@ mod tests {
 
         assert_eq!(send(Method::GET).await.status(), StatusCode::OK);
         assert_eq!(ran.load(Ordering::SeqCst), 2);
+    }
+
+    /// PR #829 review: the writes whose body is streamed have a bound of
+    /// their own inside the budget, and a refused one leaves no count behind.
+    #[test]
+    fn streamed_writes_have_their_own_bound_inside_the_budget() {
+        let writes = DetachedWrites::default();
+        let mut streamed: Vec<_> = (0..MAX_STREAMED_WRITES)
+            .map(|n| {
+                writes
+                    .enter_streamed(format!("POST /big/{n}"))
+                    .expect("room")
+            })
+            .collect();
+        assert_eq!(
+            writes.enter_streamed("POST /big/more".to_string()).err(),
+            Some(Refused::Busy)
+        );
+        // Ordinary writes still have the rest of the room.
+        let ordinary: Vec<_> = (0..MAX_DETACHED_WRITES - MAX_STREAMED_WRITES)
+            .map(|n| writes.enter(format!("POST /small/{n}")).expect("room"))
+            .collect();
+        assert_eq!(writes.budget().running(), MAX_DETACHED_WRITES);
+
+        // Full: a streamed write is refused by the outer bound even after a
+        // streamed place came back, and that refusal must not leak one.
+        drop(ordinary);
+        streamed.pop();
+        let ordinary: Vec<_> = (0..MAX_DETACHED_WRITES - MAX_STREAMED_WRITES + 1)
+            .map(|n| writes.enter(format!("POST /small/{n}")).expect("room"))
+            .collect();
+        assert_eq!(
+            writes.enter_streamed("POST /big/full".to_string()).err(),
+            Some(Refused::Busy)
+        );
+        drop(ordinary);
+        assert!(writes.enter_streamed("POST /big/again".to_string()).is_ok());
+        drop(streamed);
+        assert_eq!(writes.budget().running(), 0);
+        let again: Vec<_> = (0..MAX_STREAMED_WRITES)
+            .map(|n| {
+                writes
+                    .enter_streamed(format!("POST /big/{n}"))
+                    .expect("room")
+            })
+            .collect();
+        assert_eq!(again.len(), MAX_STREAMED_WRITES);
+    }
+
+    fn pieces(items: Vec<Result<Bytes, std::io::Error>>, then_stall: bool) -> axum::body::Body {
+        let sent = futures_util::stream::iter(items);
+        if then_stall {
+            axum::body::Body::from_stream(sent.chain(futures_util::stream::pending()))
+        } else {
+            axum::body::Body::from_stream(sent)
+        }
+    }
+
+    const SOON: Duration = Duration::from_millis(50);
+
+    #[tokio::test]
+    async fn a_body_within_the_limit_is_received_whole() {
+        let body = pieces(vec![Ok(Bytes::from("hel")), Ok(Bytes::from("lo"))], false);
+        match receive_body(None, body, SOON).await {
+            Ok(Received::Whole(bytes)) => assert_eq!(&bytes[..], b"hello"),
+            other => panic!("expected the whole body, got {other:?}"),
+        }
+        let empty = receive_body(Some(0), axum::body::Body::empty(), SOON).await;
+        assert!(matches!(empty, Ok(Received::Whole(bytes)) if bytes.is_empty()));
+    }
+
+    /// The case of the review: headers, part of the body, then nothing.
+    #[tokio::test]
+    async fn a_body_that_stops_arriving_is_given_up_after_the_idle_limit() {
+        let body = pieces(vec![Ok(Bytes::from("{\"user"))], true);
+        let outcome = receive_body(Some(40), body, SOON).await;
+        assert_eq!(outcome.err(), Some(BodyFailure::Idle));
+
+        let broken = pieces(vec![Err(std::io::Error::other("reset"))], false);
+        let outcome = receive_body(None, broken, SOON).await;
+        assert_eq!(outcome.err(), Some(BodyFailure::Broken));
+    }
+
+    #[tokio::test]
+    async fn a_larger_body_is_streamed_and_arrives_complete() {
+        // Declared: handed on untouched, without waiting for any of it.
+        let stalled = pieces(vec![], true);
+        let declared = Some(BUFFERED_BODY_MAX_BYTES as u64 + 1);
+        assert!(matches!(
+            receive_body(declared, stalled, SOON).await,
+            Ok(Received::Streamed(_))
+        ));
+        // Exactly the limit is still received whole.
+        let exact = axum::body::Body::from(vec![7u8; BUFFERED_BODY_MAX_BYTES]);
+        let at_limit = Some(BUFFERED_BODY_MAX_BYTES as u64);
+        assert!(matches!(
+            receive_body(at_limit, exact, SOON).await,
+            Ok(Received::Whole(bytes)) if bytes.len() == BUFFERED_BODY_MAX_BYTES
+        ));
+
+        // Not declared (chunked): what was read goes in front of the rest.
+        let piece = Bytes::from(vec![b'x'; 512 * 1024]);
+        let body = pieces((0..5).map(|_| Ok(piece.clone())).collect(), false);
+        let Ok(Received::Streamed(body)) = receive_body(None, body, SOON).await else {
+            panic!("expected a streamed body");
+        };
+        let all = axum::body::to_bytes(body, usize::MAX).await.expect("body");
+        assert_eq!(all.len(), 5 * 512 * 1024);
+        assert!(all.iter().all(|byte| *byte == b'x'));
+    }
+
+    /// The handler gets the body the layer received, and a write whose body
+    /// never comes neither runs nor is counted.
+    #[tokio::test]
+    async fn the_handler_reads_the_received_body_and_a_missing_body_starts_nothing() {
+        use axum::routing::post;
+        use tower::ServiceExt;
+
+        let writes = DetachedWrites::default();
+        let router = axum::Router::new()
+            .route("/echo", post(|body: String| async move { body }))
+            .layer(axum::middleware::from_fn_with_state(
+                writes.clone(),
+                detach_writes,
+            ));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/echo")
+            .body(pieces(
+                vec![Ok(Bytes::from("hel")), Ok(Bytes::from("lo"))],
+                false,
+            ))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"hello");
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/echo")
+            .body(pieces(vec![Ok(Bytes::from("hel"))], true))
+            .unwrap();
+        let mut waiting = std::pin::pin!(router.oneshot(request));
+        let early = tokio::time::timeout(Duration::from_millis(100), &mut waiting).await;
+        assert!(early.is_err(), "still waiting for the body");
+        assert_eq!(
+            writes.count(),
+            0,
+            "no place is held while the body is missing"
+        );
+        assert_eq!(writes.budget().running(), 0);
     }
 }

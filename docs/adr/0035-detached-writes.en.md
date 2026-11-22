@@ -136,6 +136,18 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
   back when an old write finishes. Take it with `RunningServer::write_budget()` and hand it to the next listener
   with `BoundServer::with_write_budget()` (the template keeps one in its `ServerSlot`). A listener that is given
   none has a budget of its own. Tauri commands do not pass the layer, so they are outside this budget (§6).
+- **The body is received before a place is taken** (follow-up to the review of PR #829). The layer first receives
+  a write's body itself (up to `BUFFERED_BODY_MAX_BYTES` = 2 MiB, the same as axum's default `DefaultBodyLimit`),
+  and only then takes a place and starts the handler. A client that sends the headers and stalls holds no place
+  and starts no handler (it costs its own connection, as without the layer). This wait is bounded: when the next
+  piece does not arrive for `BODY_IDLE_LIMIT` (30 seconds) the request is answered **408**. That is a limit on a
+  body that has not arrived, and it applies only before the handler starts (consistent with "no limit on the
+  duration of one write" below). A body over 2 MiB (declared, or found to be while reading; an uploaded backup) is
+  not held in memory by the layer and is streamed to the handler as before. Such a write takes its place before
+  its body, so only **16** of the 256 (`MAX_STREAMED_WRITES`) may be of that kind: a stalled large upload can only
+  keep other large uploads out (remaining weakness: those 16 can be held without authentication where a route
+  reads a large body before authenticating; the template's large-body route is refused by `RoleGuard` before the
+  body). Tauri commands read no HTTP body, so they are outside this (§6).
 - **No limit on the duration of one write.** Cutting it short is exactly what this ADR prevents. A long write (a
   backup) keeps running after a disconnect and finishes. A write that never ends shows up as "remaining" at a stop.
 

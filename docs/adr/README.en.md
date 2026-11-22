@@ -82,7 +82,7 @@ corresponding ADR exists, be traced from there.
 | [0032](0032-root-e2e-typecheck-devdeps.en.md)          | Add `@types/node`, `typescript` and `axe-core` to the root devDependencies to type-check e2e/ (an exception to ADR-0002; no runtime effect)                                                                                          | Accepted                   |
 | [0033](0033-dock-svelte-fast-check-devdep.en.md)       | Add `fast-check` to the devDependencies of `@banto/dock-svelte` for property tests (an exception to ADR-0002; tests only, no runtime effect)                                                                                         | Accepted                   |
 | [0034](0034-owner-identity-builtin-admin.en.md)        | Identify owners by a never-reused `accountId`, attribute login-less operations to the built-in `admin`, and remove first-run setup (v8.0.0; no compatibility, databases are recreated; addendum to ADR-0017)                         | Accepted                   |
-| [0035](0035-detached-writes.en.md)                     | Writes are detached from the connection and run to completion, and a stop never reports success with writes left behind (Issue #793; one layer in `BoundServer::serve`; a reconfiguration is split by the direction of the exposure) | Proposed                   |
+| [0035](0035-detached-writes.en.md)                     | Writes are detached from the connection and run to completion, and a stop never reports success with writes left behind (Issue #793; one layer in `BoundServer::serve`; a reconfiguration is split by the direction of the exposure) | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 
