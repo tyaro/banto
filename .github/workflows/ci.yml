@@ -57,6 +57,8 @@ jobs:
   # （`packages/dock-svelte/tests/fixtures/exhaustive.ts`）。pull_request・fork でなく、merge commit の
   # `git diff HEAD^1 HEAD` に `packages/dock-svelte/` が 1 つも無いときだけ false。push（main）・fork・
   # git の失敗は true（総当たりを全部走らせる）。判定の理由はログに出す。docs / full の判定とは独立。
+  # 浅い既定で通した PR のあとの崩れは、週次の `.github/workflows/dock-exhaustive.yml`（全部の深さ、
+  # 失敗したら追跡 Issue）が拾う。
   # changes が失敗しても下流は `!cancelled()` で動き、出力が空なので全部走る
   # （`dock` が空 = `!= 'false'` なので総当たりも全部走る）。
   changes:
@@ -92,11 +94,11 @@ jobs:
           dock() { echo "dock: $2（$1）"; echo "dock=$2" >> "$GITHUB_OUTPUT"; exit 0; }
           [ "$EVENT" = pull_request ] || dock "pull_request 以外: $EVENT" true
           [ "$HEAD_REPO" = "$REPO" ] || dock "fork からの PR" true
-          dfiles=$(git diff --no-renames --name-only HEAD^1 HEAD) || dock "git diff に失敗" true
-          [ -n "$dfiles" ] || dock "差分が空" true
-          if printf '%s\n' "$dfiles" | grep -q '^packages/dock-svelte/'; then
-            dock "dock-svelte を触る差分: 総当たりを全部走らせる" true
-          fi
+          # 終了コードで判定する（`--name-only` はパス名を引用するので非 ASCII のパスは grep で外れる）。
+          # 0 = 差分なし、1 = あり、それ以外 = エラー（安全側）。
+          rc=0; git diff --quiet HEAD^1 HEAD -- packages/dock-svelte/ || rc=$?
+          [ "$rc" -ne 1 ] || dock "dock-svelte を触る差分: 総当たりを全部走らせる" true
+          [ "$rc" -eq 0 ] || dock "git diff に失敗（終了コード $rc）" true
           dock "dock-svelte を触らない差分: 総当たりは浅い既定" false
 
       - name: Decide
