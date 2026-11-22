@@ -1,5 +1,6 @@
 //! Server lifecycle: bind, run, graceful-stop (spec §11.1, §11.4).
 
+use crate::detach::{detach_writes, DetachedWrites, RemainingWrites, StopOutcome};
 use axum::Router;
 use banto_core::BantoError;
 use std::net::SocketAddr;
@@ -32,6 +33,13 @@ impl Default for ServerConfig {
 /// connection to finish; long-lived ones (SSE, slow downloads) must not be
 /// able to hold a settings change or app exit hostage.
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long [`RunningServer::stop`] waits for the writes the listener
+/// accepted ([`crate::detach`]) to finish, counted from the stop signal
+/// (Issue #793, ADR-0035). Unlike a connection, a detached write is never
+/// aborted: after this the stop reports [`StopOutcome::WritesRemaining`] and
+/// the caller decides. Runs alongside [`STOP_TIMEOUT`], not after it.
+pub const DETACHED_WRITES_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Server-wide stop signal, injected into every request as an `Extension` by
 /// [`start`]. Long-lived handlers (the SSE stream, [`crate::events`]) watch it
@@ -95,6 +103,7 @@ pub struct RunningServer {
     shutdown_tx: watch::Sender<bool>,
     join_handle: JoinHandle<()>,
     sse_connections: SseConnections,
+    detached_writes: DetachedWrites,
 }
 
 impl RunningServer {
@@ -118,23 +127,67 @@ impl RunningServer {
     /// Open SSE streams are told to end ([`ShutdownSignal`]). As a safety net
     /// for any other connection that does not finish, the wait is capped at
     /// [`STOP_TIMEOUT`], after which the server task is aborted (Issue #283).
-    pub async fn stop(self) {
-        self.stop_within(STOP_TIMEOUT).await;
+    ///
+    /// Writes (Issue #793, ADR-0035, [`crate::detach`]): from the first
+    /// moment of the stop, a write that arrives - also on a connection that
+    /// was already open - is answered 503 and does not start. The writes
+    /// accepted before that are waited for, for at most
+    /// [`DETACHED_WRITES_STOP_TIMEOUT`]. They are never aborted, so when some
+    /// are still running the result says so
+    /// ([`StopOutcome::WritesRemaining`]) instead of reporting a clean stop:
+    /// such a write may still change state after this returns. A caller that
+    /// starts another listener afterwards must look at the result.
+    pub async fn stop(self) -> StopOutcome {
+        self.stop_waiting_writes_for(DETACHED_WRITES_STOP_TIMEOUT)
+            .await
     }
 
-    async fn stop_within(mut self, limit: Duration) {
+    /// [`Self::stop`] with another upper bound for the wait on running
+    /// writes (e.g. a shorter one when the process is about to exit anyway).
+    pub async fn stop_waiting_writes_for(self, writes_limit: Duration) -> StopOutcome {
+        self.stop_within(STOP_TIMEOUT, writes_limit).await
+    }
+
+    /// Counts one write as running on this listener until the returned value
+    /// is dropped, exactly as a request held by the layer would be - for
+    /// tests of what a caller does with [`StopOutcome::WritesRemaining`]
+    /// (a real request that reliably outlives a stop is hard to stage from
+    /// outside this crate). `None` once the listener is stopping.
+    #[doc(hidden)]
+    pub fn hold_write_for_test(&self, label: &str) -> Option<impl Send + 'static> {
+        self.detached_writes.enter(label.to_string())
+    }
+
+    async fn stop_within(mut self, limit: Duration, writes_limit: Duration) -> StopOutcome {
+        // Order: refuse new writes first, then tell the connections to end.
+        self.detached_writes.close();
         let _ = self.shutdown_tx.send(true);
-        if tokio::time::timeout(limit, &mut self.join_handle)
-            .await
-            .is_err()
-        {
-            eprintln!(
-                "banto-server: 停止が{}秒以内に完了しなかったためサーバタスクを中断します",
-                limit.as_secs()
-            );
-            self.join_handle.abort();
-            let _ = self.join_handle.await;
+        let writes = self.detached_writes.clone();
+        let connections = async {
+            if tokio::time::timeout(limit, &mut self.join_handle)
+                .await
+                .is_err()
+            {
+                eprintln!(
+                    "banto-server: 停止が{}秒以内に完了しなかったためサーバタスクを中断します",
+                    limit.as_secs()
+                );
+                self.join_handle.abort();
+                let _ = self.join_handle.await;
+            }
+        };
+        let (idle, ()) = tokio::join!(writes.wait_idle(writes_limit), connections);
+        if idle {
+            return StopOutcome::Finished;
         }
+        let remaining = RemainingWrites::new(writes);
+        eprintln!(
+            "banto-server: 停止の後も書き込みが{}件残っています（{}秒待ちました）: {}",
+            remaining.count(),
+            writes_limit.as_secs(),
+            remaining.operations().join(", ")
+        );
+        StopOutcome::WritesRemaining(remaining)
     }
 }
 
@@ -166,9 +219,17 @@ impl BoundServer {
         } = self;
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         let sse_connections = SseConnections::default();
+        let detached_writes = DetachedWrites::default();
         let router = router
             .layer(axum::Extension(ShutdownSignal(shutdown_rx.clone())))
-            .layer(axum::Extension(sse_connections.clone()));
+            .layer(axum::Extension(sse_connections.clone()))
+            // Outermost, and the only place it is installed (Issue #793,
+            // ADR-0035): every write served through here runs to completion
+            // even when its connection goes away.
+            .layer(axum::middleware::from_fn_with_state(
+                detached_writes.clone(),
+                detach_writes,
+            ));
         let join_handle = tokio::spawn(async move {
             // `into_make_service_with_connect_info::<SocketAddr>()` (rather than
             // the plain `into_make_service()`) makes each connection's peer
@@ -195,6 +256,7 @@ impl BoundServer {
             shutdown_tx,
             join_handle,
             sse_connections,
+            detached_writes,
         }
     }
 }
@@ -1162,7 +1224,9 @@ Connection: close
         // No graceful wait at all: the server task is aborted at once. The
         // connection tasks axum spawned outlive it, and their streams end on
         // the stop signal (or the dropped signal sender) - uncounting them.
-        server.stop_within(Duration::ZERO).await;
+        server
+            .stop_within(Duration::ZERO, DETACHED_WRITES_STOP_TIMEOUT)
+            .await;
         wait_for_count(|| counter.count(), 0).await;
         drop(stream);
         drop(tx);
@@ -1201,7 +1265,7 @@ Connection: close
 
         tokio::time::timeout(
             Duration::from_secs(3),
-            server.stop_within(Duration::from_millis(300)),
+            server.stop_within(Duration::from_millis(300), DETACHED_WRITES_STOP_TIMEOUT),
         )
         .await
         .expect("the safety net bounds stop()");
