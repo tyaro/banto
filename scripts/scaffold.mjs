@@ -2025,7 +2025,8 @@ function removeDashboard() {
 
 function applyDisplayDefaults() {
 	// (a) 既定値の反転 -------------------------------------------------------
-	// 初回起動シード（`settings` テーブルが空のときだけ書かれる。D1-a）。
+	// 初回起動シード（新しい DB の最初の起動で 1 回だけ書かれる。seed 済みの印
+	// `first_boot.seeded` が無いときに書く。D1-a、ADR-0034 §5）。
 	// キー文字列は crates/banto-admin-services/src/settings.rs の
 	// KEY_* 定数と一致させること。
 	swapText(
@@ -2044,19 +2045,23 @@ function applyDisplayDefaults() {
 	swapText(
 		FIRST_BOOT,
 		'first_boot: 既定シードのテストを display 版に',
-		`    async fn seed_first_boot_settings_is_a_no_op_with_todays_empty_const() {\n` +
+		`    async fn seed_first_boot_settings_writes_no_setting_with_todays_empty_const() {\n` +
 			`        let settings = service().await;\n` +
 			`        let wrote = seed_first_boot_settings(&settings).await.unwrap();\n` +
-			`        assert!(!wrote);\n` +
+			`        assert!(wrote);\n` +
+			`        assert_eq!(settings.get("server.viewer_public").await.unwrap(), None);\n` +
 			`    }`,
+		// ADR-0034 §10（C1）: 実 migration（0001〜0014）を当てた DB で、display の既定が
+		// 入り、公開閲覧が有効になる（`service()` は `db::migrate_memory`）。
 		`    async fn seed_first_boot_settings_writes_the_display_defaults() {\n` +
 			`        let settings = service().await;\n` +
 			`        let wrote = seed_first_boot_settings(&settings).await.unwrap();\n` +
 			`        assert!(wrote);\n` +
-			`        assert_eq!(\n` +
-			`            settings.get("server.viewer_public").await.unwrap(),\n` +
-			`            Some("true".to_string())\n` +
-			`        );\n` +
+			`        let server = settings.server_config().await.unwrap();\n` +
+			`        assert!(server.enabled);\n` +
+			`        assert!(server.viewer_public);\n` +
+			`        assert_eq!(server.bind, "0.0.0.0");\n` +
+			`        assert!(settings.auth_config().await.unwrap().disabled);\n` +
 			`    }`
 	);
 	// キオスクシェル（D1-b。サイドバー折り畳み既定 + ヘッダのコンパクト化 +

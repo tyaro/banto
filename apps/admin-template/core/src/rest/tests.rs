@@ -82,7 +82,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let audit = AuditLogService::new(pool);
 
     users
-        .setup_first_user("admin", "password123", "管理者")
+        .setup_first_user("manager", "password123", "管理者")
         .await
         .expect("setup_first_user");
     users
@@ -113,7 +113,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     );
 
     let admin_token = auth
-        .login("admin", "password123")
+        .login("manager", "password123")
         .await
         .expect("admin login");
     let editor_token = auth
@@ -2083,7 +2083,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let audit = AuditLogService::new(pool);
 
     users
-        .setup_first_user("admin", "password123", "管理者")
+        .setup_first_user("manager", "password123", "管理者")
         .await
         .expect("setup_first_user");
     users
@@ -2100,7 +2100,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
     );
     let admin_token = auth
-        .login("admin", "password123")
+        .login("manager", "password123")
         .await
         .expect("admin login");
     let editor_token = auth
@@ -2171,13 +2171,14 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let items = ItemsService::new(db.clone()).with_events(tx.clone());
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
-    let backup = BackupService::new(db_path, db.clone());
+    let backup = BackupService::new(db_path, db.clone())
+        .with_migrations(crate::db::sqlite_migration_manifest());
     let attachments = AttachmentsService::new(db.clone(), dir.path().join("attachments"));
     let system_info = SystemInfoService::new(db.clone());
     let audit = AuditLogService::new(db);
 
     users
-        .setup_first_user("admin", "password123", "管理者")
+        .setup_first_user("manager", "password123", "管理者")
         .await
         .expect("setup_first_user");
     users
@@ -2194,7 +2195,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
     );
     let admin_token = auth
-        .login("admin", "password123")
+        .login("manager", "password123")
         .await
         .expect("admin login");
     let editor_token = auth
@@ -2682,7 +2683,7 @@ async fn audit_config_apply_persists_and_is_admin_only() {
         .iter()
         .find(|r| r["action"] == "settings_change" && r["resource"] == "settings")
         .unwrap_or_else(|| panic!("expected a settings_change/settings entry, got {rows:?}"));
-    assert_eq!(entry["actorUsername"], "admin");
+    assert_eq!(entry["actorUsername"], "manager");
     assert_eq!(entry["origin"], "rest");
     assert_eq!(entry["result"], "ok");
 
@@ -2736,7 +2737,7 @@ async fn item_create_is_recorded_in_the_audit_log() {
         .iter()
         .find(|r| r["action"] == "create" && r["resource"] == "items")
         .unwrap_or_else(|| panic!("expected a create/items entry, got {rows:?}"));
-    assert_eq!(entry["actorUsername"], "admin");
+    assert_eq!(entry["actorUsername"], "manager");
     assert_eq!(entry["actorRole"], "admin");
     assert_eq!(entry["entityId"], id.to_string().as_str());
     assert_eq!(entry["origin"], "rest");
@@ -2857,7 +2858,7 @@ async fn users_create_audit_entry_never_contains_the_password() {
         .iter()
         .find(|r| r["action"] == "create" && r["resource"] == "users")
         .expect("expected a create/users entry");
-    assert_eq!(entry["actorUsername"], "admin");
+    assert_eq!(entry["actorUsername"], "manager");
     let detail = entry["detail"].as_str().expect("detail should be set");
     assert!(
         !detail.contains("supersecret1"),
@@ -3095,8 +3096,9 @@ async fn change_password_is_recorded_as_password_change() {
     assert_eq!(entry.actor_username.as_deref(), Some("owner"));
     assert_eq!(entry.actor_role.as_deref(), Some("admin"));
     assert_eq!(entry.resource, "users");
-    // `setup_first_user` creates the very first row -> id 1.
-    assert_eq!(entry.entity_id.as_deref(), Some("1"));
+    // The built-in `admin` row is id 1 (migration 0014); `setup_first_user`
+    // creates the first account after it -> id 2.
+    assert_eq!(entry.entity_id.as_deref(), Some("2"));
     assert_eq!(entry.origin, "rest");
     assert_eq!(entry.result, "ok");
     assert_eq!(entry.detail, None, "detail must never carry the password");

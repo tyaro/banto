@@ -690,3 +690,17 @@ mark set by the wiring layer.
   `actor_id` / `actor_kind`), C2b (removing first-run setup, explicit settings and stopping on broken ones, REST
   while login is off and **serialization by the mode generation**, the lockdown condition, the CLI), C3 (`accountId` on the wire), C4 and C5 (ui-settings). The table in plan §7 was aligned with
   this split (2026-11-22); if they differ, this ADR takes precedence. Implementation can start with C1 (`Accepted` on 2026-11-22).
+
+## Addendum (2026-11-22, from the C1 implementation; confirmed by the owner)
+
+The C1 implementation (PR #830) changed two points of the body. The owner confirmed both as recommended the same day.
+Where the body differs, this addendum takes precedence.
+
+1. **The explicit initial values of `auth.disabled` and `auth.disabled_role` are written in C2b** (changing "written by
+   0014" in §5 and §9). Writing them in C1 would make the current `banto-serve` refuse to start in
+   `auth_server_combination_allowed` and the Tauri first-run setup refuse as well, breaking "after C1 the current
+   first-run setup still creates the first administrator" (plan §5). C2b adds them as an additive migration (`0015`)
+   that does not overwrite existing explicit settings. 0014 holds only the table and the built-in `admin` row.
+2. **The seeded mark `first_boot.seeded` is written even when the seed list is empty** (changing "write nothing when
+   empty" in §10, for that one row only). Without it, an app that later adds seed entries would seed a database in
+   use again (a login-required database could fall back to no login). Nothing else is written.

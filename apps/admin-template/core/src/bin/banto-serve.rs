@@ -55,7 +55,9 @@
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
-use admin_template_core::db::{display_target, init_db_from_target, is_postgres_url};
+use admin_template_core::db::{
+    display_target, init_db_from_target, is_postgres_url, sqlite_migration_manifest,
+};
 use admin_template_core::events::event_channel;
 use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::ItemsService;
@@ -108,7 +110,14 @@ async fn main() {
     let applied_restore = if is_postgres_url(&db_path) {
         None
     } else {
-        match BackupService::apply_pending_restore_at_startup(&db_path_buf).await {
+        // ADR-0034 §9: the candidate's migration history is checked against
+        // this app's migrations before anything is swapped.
+        match BackupService::apply_pending_restore_at_startup(
+            &db_path_buf,
+            &sqlite_migration_manifest(),
+        )
+        .await
+        {
             Ok(applied) => applied,
             Err(err) => {
                 eprintln!("banto-serve: 起動時のリストア適用に失敗しました: {err}");
@@ -140,11 +149,12 @@ async fn main() {
     // takes effect on the very first launch. No-op today: the const ships
     // empty.
     match seed_first_boot_settings(&settings).await {
-        Ok(true) => println!("banto-serve: 初回起動の既定設定を書き込みました"),
+        Ok(true) => println!("banto-serve: 初回起動の既定設定を適用しました"),
         Ok(false) => {}
         Err(err) => eprintln!("banto-serve: 初回起動の既定設定の書き込みに失敗しました: {err}"),
     }
-    let backup = BackupService::new(db_path_buf.clone(), db.clone());
+    let backup = BackupService::new(db_path_buf.clone(), db.clone())
+        .with_migrations(sqlite_migration_manifest());
     // M20 attachments (spec docs/design/attachments-plan.md §3.3): base_dir is the
     // directory `banto_attachments::base_dir_for_target` picks (Issue #208):
     // - SQLite: the DB file's own parent directory + `attachments` (same

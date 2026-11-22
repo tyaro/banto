@@ -366,6 +366,34 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
    「ルール無し」になったのを確かめてから、設定画面で改めて許可する。
 5. スタートメニュー・デスクトップのショートカットは新しいインストール先のもの（全ユーザー共通）に変わる。
 
+### 4.2 v8.0.0: 基準の作り直し（DB を作り直す。データの移行は無い）
+
+v8.0.0 は **v7.11.0 以前の DB を読まない**（[ADR-0034](adr/0034-owner-identity-builtin-admin.md) 決定 §9、
+conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例外で、旧版の DB を新版へ進める道は無い。
+
+- **取り込むもの（B）**: `core/migrations-{sqlite,postgres}/0003_users.sql`・`0005_audit_log.sql` を新しい本文へ差し替え、
+  `0014_ui_settings.sql` を足す（両方言）。自分の migration を 0014 以降の番号で足している派生アプリは番号をずらす。
+- **DB は作り直す**。旧版の DB で起動すると、新しい migration が当たる前に
+  「この DB は v8.0.0 より前の版のものです。読めません。DB を作り直してください」で止まる（DB は変わらない）。
+  残したいデータは、旧版のうちに CSV などへ書き出しておく。
+- **旧版のバックアップは復元できない**。設定画面のリストアの予約で断られ、今の DB は変わらない。
+- **新しい DB には組み込みのユーザー `admin` が 1 行居る**（`users.kind = 'builtin'`）。ログインできず、変更も削除もできない。
+  ユーザー一覧（`UserSummary`）に `kind`（`'account'` / `'builtin'`）が増えた。`admin` という username のアカウントは作れない
+  （試験・fixture で `admin` を作っているなら別の名前にする）。
+- **`users` へ直接 INSERT している派生アプリのコード・試験**は、`account_uid`（一意の文字列）を入れる。入れないと CHECK で失敗する。
+  アカウントの数は `kind = 'account'` で数える。
+- **配線**: `BackupService::new(..)` に `.with_migrations(db::sqlite_migration_manifest())` を付け、
+  `BackupService::apply_pending_restore_at_startup(&db_path, &db::sqlite_migration_manifest())` と呼ぶ
+  （付けないとリストアの予約が断られる）。
+- **初回の seed**: `FIRST_BOOT_SETTINGS` は「`settings` が空のとき」ではなく、新しい DB の最初の起動で 1 回だけ書かれる
+  （印は `settings` の `first_boot.seeded`）。
+
+**起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
+（同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に
+`restore-pending.sqlite3` という名前で置く → 起動する。起動は「予約の適用 → migration → 初回の seed → 設定の読み取り」の
+順で進む。置いたファイルも適用の直前に検査され（整合性・必須の表・migration の履歴）、通らなければ消されて、
+元の DB は変わらない。SQLite 専用（PostgreSQL は運用者の道具で戻す）。
+
 ## 5. 派生アプリの基準版の記録（同期記録）
 
 派生リポジトリに、Banto のどの版を基準にしているかを**依存とコピーで別々に**残す。ツールは作らず、

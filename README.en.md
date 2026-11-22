@@ -85,7 +85,9 @@ Architecture overview (Japanese, Mermaid diagrams):
   On PostgreSQL, `BANTO_ATTACHMENTS_DIR` (where attachment files go, one
   subdirectory per database) is required - `banto-serve` refuses to start
   without it (#208).
-  Backup/restore is SQLite-only (PostgreSQL returns an explicit error).
+  Backup/restore is SQLite-only (PostgreSQL returns an explicit error). A
+  backup restores only into the same version of the app (the migration history
+  is checked; databases and backups from before v8.0.0 are refused).
 - **PostgreSQL backup**: the built-in backup/restore (Settings page backup
   section) is SQLite-only and returns an explicit error on PostgreSQL. Back
   it up with `pg_dump` (e.g. `pg_dump -Fc banto > banto.dump`) and restore

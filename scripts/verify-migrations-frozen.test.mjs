@@ -16,7 +16,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findFrozenMigrationViolations, MIGRATION_PATH } from './verify-migrations-frozen.mjs';
+import {
+	BASELINE_REBUILD,
+	findFrozenMigrationViolations,
+	MIGRATION_PATH
+} from './verify-migrations-frozen.mjs';
 
 const SCRIPT = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -237,6 +241,55 @@ test('CLI: 違反があれば exit 1 でファイル名と VersionMismatch の�
 			assert.match(err.stderr, /VersionMismatch/);
 		}
 		assert.ok(failed, '違反があるのに exit 0 だった');
+	} finally {
+		cleanup(root);
+	}
+});
+
+/** v8.0.0 の基準の作り直し（ADR-0034 §9）の 4 ファイルを commit し、`tag` を打ったリポジトリ。 */
+function baselineRepo(tag) {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), 'banto-mig-frozen-'));
+	git(root, 'init', '-q', '-b', 'main');
+	write(root, '.gitattributes', '* text=auto eol=lf\n');
+	for (const p of BASELINE_REBUILD.paths) write(root, p, '-- old\n');
+	write(root, 'apps/admin-template/core/migrations-sqlite/0001_items.sql', '-- items\n');
+	git(root, 'add', '-A');
+	git(root, 'commit', '-q', '-m', 'init');
+	git(root, 'tag', tag);
+	return root;
+}
+
+test('基準の作り直し: v7.11.0 と比べるときだけ、名指しの 4 ファイルの変更を許す', () => {
+	const root = baselineRepo(BASELINE_REBUILD.tag);
+	try {
+		for (const p of BASELINE_REBUILD.paths) write(root, p, '-- new\n');
+		const r = findFrozenMigrationViolations({ cwd: root });
+		assert.deepEqual(r.violations, []);
+		assert.deepEqual(r.allowed.map((v) => v.path).sort(), [...BASELINE_REBUILD.paths].sort());
+
+		// ほかのファイルの変更と、名指しのファイルの削除は、今までどおり違反。
+		write(root, 'apps/admin-template/core/migrations-sqlite/0001_items.sql', '-- edited\n');
+		fs.rmSync(path.join(root, BASELINE_REBUILD.paths[0]));
+		const r2 = findFrozenMigrationViolations({ cwd: root });
+		assert.deepEqual(
+			r2.violations.sort((a, b) => a.path.localeCompare(b.path)),
+			[
+				{ status: 'M', path: 'apps/admin-template/core/migrations-sqlite/0001_items.sql' },
+				{ status: 'D', path: BASELINE_REBUILD.paths[0] }
+			]
+		);
+	} finally {
+		cleanup(root);
+	}
+});
+
+test('基準の作り直し: ほかのタグ（v8.0.0 以後）では同じ 4 ファイルの変更も違反', () => {
+	const root = baselineRepo('v8.0.0');
+	try {
+		for (const p of BASELINE_REBUILD.paths) write(root, p, '-- new\n');
+		const r = findFrozenMigrationViolations({ cwd: root });
+		assert.equal(r.violations.length, BASELINE_REBUILD.paths.length);
+		assert.deepEqual(r.allowed, []);
 	} finally {
 		cleanup(root);
 	}

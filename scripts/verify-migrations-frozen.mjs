@@ -21,6 +21,12 @@
  *      チェックアウト時の改行変換だけでは違反にならない
  *   変更（M/T）・削除（D）が 1 件でもあれば exit 1。タグ以降に足したファイルは対象外。
  *
+ * 今回かぎりの例外（v8.0.0 の基準の作り直し、ADR-0034 §9・conventions §11）:
+ *   比べる相手のタグが `v7.11.0` のときだけ、`BASELINE_REBUILD.paths` の 4 ファイル
+ *   （2 方言 × `0003_users.sql`・`0005_audit_log.sql`）の「変更」を違反にしない。
+ *   削除・改名と、ほかのファイルの変更は今までどおり違反。タグを名指ししているので、
+ *   v8.0.0 のタグを打った後は自動で効かなくなる（以後はまた追記のみ）。
+ *
  * `v*` タグが 1 つもない（浅い clone でもない）リポジトリでは検査対象がないので
  * 成功扱いで終える。浅い clone（CI の actions/checkout の既定）ではタグが見えず
  * 黙って素通りしうるので失敗にする — CI では `fetch-depth: 0` で checkout する。
@@ -37,6 +43,20 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 /** migration とみなすディレクトリ（パスのどこかに `migrations*` という名前の階層を含む）。 */
 export const MIGRATION_PATH = /(^|\/)migrations[^/]*\//;
+
+/**
+ * v8.0.0 の基準の作り直し（ADR-0034 §9）で、今回かぎり書き換えを許す migration。
+ * 比べる相手が `tag` のときだけ、`paths` の「変更」（M）を違反から外す。
+ */
+export const BASELINE_REBUILD = Object.freeze({
+	tag: 'v7.11.0',
+	paths: Object.freeze([
+		'apps/admin-template/core/migrations-sqlite/0003_users.sql',
+		'apps/admin-template/core/migrations-sqlite/0005_audit_log.sql',
+		'apps/admin-template/core/migrations-postgres/0003_users.sql',
+		'apps/admin-template/core/migrations-postgres/0005_audit_log.sql'
+	])
+});
 
 /**
  * @param {string[]} args
@@ -96,15 +116,21 @@ export function findFrozenMigrationViolations({ cwd = repoRoot } = {}) {
 	);
 	const fields = out.split('\0').filter((s) => s !== '');
 	const violations = [];
+	const allowed = [];
 	for (let i = 0; i + 1 < fields.length; i += 2) {
-		violations.push({ status: fields[i], path: fields[i + 1] });
+		const entry = { status: fields[i], path: fields[i + 1] };
+		const rebuilt =
+			tag === BASELINE_REBUILD.tag &&
+			entry.status === 'M' &&
+			BASELINE_REBUILD.paths.includes(entry.path);
+		(rebuilt ? allowed : violations).push(entry);
 	}
-	return { tag, checked: files.length, violations };
+	return { tag, checked: files.length, violations, allowed };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	try {
-		const { tag, checked, violations } = findFrozenMigrationViolations();
+		const { tag, checked, violations, allowed } = findFrozenMigrationViolations();
 		if (tag === null) {
 			console.log('verify-migrations-frozen: v* タグが無いので検査対象なし（成功扱い）');
 			process.exit(0);
@@ -125,6 +151,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 				].join('\n')
 			);
 			process.exit(1);
+		}
+		if (allowed.length > 0) {
+			console.log(
+				`verify-migrations-frozen: ${tag} の migration ${checked} 件を検査。` +
+					`基準の作り直し（v8.0.0、ADR-0034 §9）で許した書き換え ${allowed.length} 件のほかは不変`
+			);
+			for (const v of allowed) console.log(`  [許可] ${v.path}`);
+			process.exit(0);
 		}
 		console.log(
 			`verify-migrations-frozen: ${tag} のリリース済み migration ${checked} 件はすべて不変`

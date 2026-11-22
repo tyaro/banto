@@ -256,6 +256,9 @@
 	);
 
 	function selectUser(user: UserSummary): void {
+		// The built-in `admin` row is read-only (ADR-0034 §2): no edit, password
+		// or delete form is offered for it.
+		if (user.kind === 'builtin') return;
 		selectionEpoch++;
 		selected = user;
 		editDisplayName = user.displayName;

@@ -4543,7 +4543,12 @@ pub fn run() {
             // at all - the current db (if any) is left untouched on error,
             // per that function's own per-step safety notes.
             let applied_restore = match tauri::async_runtime::block_on(
-                BackupService::apply_pending_restore_at_startup(&db_path),
+                // ADR-0034 §9: the candidate's migration history is checked
+                // against this app's migrations before anything is swapped.
+                BackupService::apply_pending_restore_at_startup(
+                    &db_path,
+                    &admin_template_core::db::sqlite_migration_manifest(),
+                ),
             ) {
                 Ok(applied) => applied,
                 Err(err) => {
@@ -4577,11 +4582,12 @@ pub fn run() {
             // launch rather than one launch late. No-op today: the const
             // ships empty.
             match tauri::async_runtime::block_on(seed_first_boot_settings(&settings)) {
-                Ok(true) => println!("banto: 初回起動の既定設定を書き込みました"),
+                Ok(true) => println!("banto: 初回起動の既定設定を適用しました"),
                 Ok(false) => {}
                 Err(err) => eprintln!("banto: 初回起動の既定設定の書き込みに失敗しました: {err}"),
             }
-            let backup = BackupService::new(db_path.clone(), db.clone());
+            let backup = BackupService::new(db_path.clone(), db.clone())
+                .with_migrations(admin_template_core::db::sqlite_migration_manifest());
             // M20 attachments (spec docs/design/attachments-plan.md §3.3): same
             // sibling-directory convention as `backups/` above, next to the
             // DB file inside the app's own data directory.

@@ -29,6 +29,93 @@ const KEY_AUTOLOGIN_USERNAME: &str = "auth.autologin.username";
 const KEY_AUDIT_RETENTION_DAYS: &str = "audit.retention_days";
 const KEY_AUDIT_RETENTION_ROWS: &str = "audit.retention_rows";
 const KEY_LOGIN_NOTICE: &str = "login.notice";
+/// Marker row of the first-boot seed (ADR-0034 §5): present once the seed has
+/// run on this database. Written in the same transaction as the seeded rows,
+/// and restored with the database (a backup of a seeded database is not
+/// seeded again).
+const KEY_FIRST_BOOT_SEEDED: &str = "first_boot.seeded";
+
+const SEED_UPSERT_SQLITE: &str = "INSERT INTO settings (key, value) VALUES (?, ?) \
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+#[cfg(feature = "postgres")]
+const SEED_UPSERT_POSTGRES: &str = "INSERT INTO settings (key, value) VALUES ($1, $2) \
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+/// Taking the marker: inserts it, or does nothing when it is already there.
+/// One row affected = this transaction is the one that seeds.
+const SEED_TAKE_MARKER_SQLITE: &str =
+    "INSERT INTO settings (key, value) VALUES (?, 'true') ON CONFLICT(key) DO NOTHING";
+#[cfg(feature = "postgres")]
+const SEED_TAKE_MARKER_POSTGRES: &str =
+    "INSERT INTO settings (key, value) VALUES ($1, 'true') ON CONFLICT(key) DO NOTHING";
+
+/// The first-boot seed on a SQLite connection that is inside the caller's
+/// transaction (ADR-0034 §5): take the marker row first, and only the
+/// transaction that got it upserts the pairs (a seeded value wins over a row a
+/// migration inserted). `Ok(true)` when it wrote, `Ok(false)` when the
+/// database was already seeded.
+///
+/// The marker is taken with one conflict-free INSERT at the start, not read
+/// and written at the end: two starts on the same unseeded database cannot
+/// both seed. The second one waits on the first's row; when the first commits
+/// it sees the marker and writes nothing (settings changed in between stay),
+/// and when the first rolls back the marker goes with it and the second seeds.
+///
+/// Takes the connection, not the service, so a caller that must write more in
+/// the same transaction (the headless first-account CLI, ADR-0034 §7) calls
+/// this first and then writes its own rows: a setting can never be written
+/// before the seed on a database that has no marker yet.
+pub async fn seed_first_boot_sqlite(
+    conn: &mut sqlx::SqliteConnection,
+    pairs: &[(&str, &str)],
+) -> Result<bool, BantoError> {
+    let taken = sqlx::query(SEED_TAKE_MARKER_SQLITE)
+        .bind(KEY_FIRST_BOOT_SEEDED)
+        .execute(&mut *conn)
+        .await
+        .map_err(banto_storage::storage_error)?
+        .rows_affected();
+    if taken == 0 {
+        return Ok(false);
+    }
+    for (key, value) in pairs {
+        sqlx::query(SEED_UPSERT_SQLITE)
+            .bind(*key)
+            .bind(*value)
+            .execute(&mut *conn)
+            .await
+            .map_err(banto_storage::storage_error)?;
+    }
+    Ok(true)
+}
+
+/// PostgreSQL twin of [`seed_first_boot_sqlite`] (same contract). Under READ
+/// COMMITTED the `ON CONFLICT DO NOTHING` insert waits for a concurrent
+/// transaction that inserted the same key, then inserts nothing if that one
+/// committed.
+#[cfg(feature = "postgres")]
+pub async fn seed_first_boot_postgres(
+    conn: &mut sqlx::PgConnection,
+    pairs: &[(&str, &str)],
+) -> Result<bool, BantoError> {
+    let taken = sqlx::query(SEED_TAKE_MARKER_POSTGRES)
+        .bind(KEY_FIRST_BOOT_SEEDED)
+        .execute(&mut *conn)
+        .await
+        .map_err(banto_storage::storage_error)?
+        .rows_affected();
+    if taken == 0 {
+        return Ok(false);
+    }
+    for (key, value) in pairs {
+        sqlx::query(SEED_UPSERT_POSTGRES)
+            .bind(*key)
+            .bind(*value)
+            .execute(&mut *conn)
+            .await
+            .map_err(banto_storage::storage_error)?;
+    }
+    Ok(true)
+}
 pub const MAX_LOGIN_NOTICE_CHARS: usize = 200;
 
 fn invalid_login_notice_char(c: char) -> bool {
@@ -392,6 +479,43 @@ impl SettingsService {
             }
         }
         Ok(())
+    }
+
+    /// Run the first-boot seed in its own transaction (ADR-0034 §5): the
+    /// startup path of both wirings. `pairs` are written once, on the first
+    /// start of a new database, together with the marker row; every later
+    /// start writes nothing, so a setting the user changed is never put back.
+    /// An empty `pairs` still writes the marker: a database that has started
+    /// once is never seeded later, even if the app gains a seed list in an
+    /// update. `Ok(true)` when this call wrote the seed.
+    ///
+    /// A pair may not name the login notice (same rule as [`Self::set`]).
+    pub async fn seed_first_boot(&self, pairs: &[(&str, &str)]) -> Result<bool, BantoError> {
+        if pairs.iter().any(|(key, _)| *key == KEY_LOGIN_NOTICE) {
+            return Err(BantoError::BadRequest(
+                "login.notice must be written with set_login_notice".to_string(),
+            ));
+        }
+        match &self.db {
+            Db::Sqlite(pool) => {
+                // BEGIN IMMEDIATE: the seed is a write from its first statement,
+                // so take the write lock up front instead of upgrading later.
+                let mut tx = pool
+                    .begin_with("BEGIN IMMEDIATE")
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                let wrote = seed_first_boot_sqlite(&mut tx, pairs).await?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                Ok(wrote)
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                let wrote = seed_first_boot_postgres(&mut tx, pairs).await?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                Ok(wrote)
+            }
+        }
     }
 
     /// Is the `settings` table completely empty (no rows at all, not even

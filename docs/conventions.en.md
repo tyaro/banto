@@ -608,9 +608,23 @@ ordinary sessions.
   of its own and keeps its in-test `CREATE TABLE` in sync with
   `0006_attachments.sql` ("MUST be kept in sync").
 - Restore validation (`REQUIRED_TABLES`) checks **only table existence** for the
-  Banto-owned `settings`, `users`, and `audit_log` tables, not columns (a coarse
+  Banto-owned `settings`, `users`, `audit_log`, and `ui_settings` tables, not columns (a coarse
   but cheap "is this a Banto DB" judgment). Domain tables such as `items`, which
   derived apps replace or remove, are deliberately not required.
+- **A restore candidate is also checked against the migration history**
+  ([ADR-0034](adr/0034-owner-identity-builtin-admin.en.md) decision §9). The candidate's `_sqlx_migrations` is read
+  read-only: (a) no failed row, (b) every row's version exists in this app's migrations with the same checksum,
+  (c) the whole baseline (`0001`-`0014`, `db::BASELINE_MIGRATION_VERSION`) is applied. Migrations after the baseline
+  may be pending. The check runs twice: when a restore is staged, and right before the startup apply (before the
+  swap). The list of versions and checksums (`MigrationManifest`) is **passed by the wiring layer**
+  (`db::sqlite_migration_manifest()` into `BackupService::with_migrations` and `apply_pending_restore_at_startup`;
+  the service layer owns no migrations). A `BackupService` without it refuses to stage. A derived app's own
+  migrations are in the list as long as they live in the same `migrations-sqlite/`.
+- **The first-boot seed runs once, guarded by a marker row** (ADR-0034 decision §5).
+  `first_boot::seed_first_boot_settings` writes `FIRST_BOOT_SETTINGS` only while `settings` has no
+  `first_boot.seeded` row, and writes the marker in the same transaction (also when the list is empty). It writes
+  even if a migration inserted rows first, and a seeded value wins for the same key. Startup order: apply a staged
+  restore, run migrations, seed, then read settings.
 - Every connection opened for validation is `conn.close()`d on all paths (a
   countermeasure against lingering file locks on Windows).
 

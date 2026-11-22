@@ -227,7 +227,7 @@ flowchart TD
   RUN["src-tauri run() または banto-serve"]
   DB["DB 初期化<br/>migrations"]
   SET["SettingsService 生成"]
-  SEED["seed_first_boot_settings<br/>settings が空のときだけ"]
+  SEED["seed_first_boot_settings<br/>seed 済みの印が無いときだけ"]
   AUTH["Users / Auth 状態を読む"]
   LAN{"server.enabled?"}
   EMB["組み込み HTTP 起動"]
@@ -241,7 +241,7 @@ flowchart TD
 
 ### 読み方
 
-- **`FIRST_BOOT_SETTINGS`**（`admin-template-core` の `first_boot.rs`）はテンプレート出荷では **空**。`settings` に1行でもあればシードしない。
+- **`FIRST_BOOT_SETTINGS`**（`admin-template-core` の `first_boot.rs`）はテンプレート出荷では **空**。新しい DB の最初の起動で 1 回だけシードし、`settings` に seed 済みの印（`first_boot.seeded`）を残す。印があればシードしない（ADR-0034 決定 §5）。
 - `pnpm scaffold --preset display` だけが非空リストへ差し替え（認証無効・閲覧公開・LAN 公開など）。仕組み自体は常在。
 - シードは **auth_config / server_config を読む前**に走るので、初回起動から既定が効く。
 
