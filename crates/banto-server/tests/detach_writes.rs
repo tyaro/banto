@@ -8,7 +8,10 @@
 
 use axum::routing::{get, post};
 use axum::Router;
-use banto_server::{start, RunningServer, ServerConfig, StopOutcome};
+use banto_server::{
+    start, RunningServer, ServerConfig, StopOutcome, BUFFERED_BODY_MAX_BYTES, MAX_DETACHED_WRITES,
+    MAX_STREAMED_WRITES, RECEIVING_BODIES_MAX_BYTES,
+};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -75,6 +78,7 @@ async fn serve(steps: &TwoSteps) -> RunningServer {
                 "unreachable"
             }),
         )
+        .route("/plain", post(|| async { "plain" }))
         .route("/read", get(|| async { "read" }));
     start(
         ServerConfig {
@@ -254,4 +258,157 @@ async fn a_held_test_write_counts_like_a_request() {
     assert_eq!(remaining.operations(), vec!["POST /held".to_string()]);
     drop(held);
     assert!(remaining.is_finished());
+}
+
+/// Sends the headers of a write that declares `declared` bytes of body, then
+/// `sent` of it, and leaves the connection open.
+async fn send_partial(addr: SocketAddr, declared: usize, sent: &str) -> TcpStream {
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+    let request = format!(
+        "POST /work HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
+         Content-Length: {declared}\r\n\r\n{sent}"
+    );
+    stream.write_all(request.as_bytes()).await.expect("write");
+    stream
+}
+
+/// PR #829 review (P2): clients that send the headers and part of the body
+/// and then stall - more of them than there are places - hold no place and
+/// start no handler, so a proper write still goes through.
+#[tokio::test]
+async fn writes_whose_body_never_arrives_do_not_keep_other_writes_out() {
+    let steps = TwoSteps::default();
+    let server = serve(&steps).await;
+    let addr = server.local_addr();
+    let budget = server.write_budget();
+
+    let mut stalled = Vec::new();
+    for _ in 0..MAX_DETACHED_WRITES + 8 {
+        stalled.push(send_partial(addr, 10, "abc").await);
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(steps.created(), 0, "no handler started");
+    assert_eq!(budget.running(), 0, "no place is held");
+
+    steps.release(1);
+    let response = request(addr, "POST", "/work").await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("done"), "{response}");
+    assert_eq!(steps.audited(), 1);
+
+    // A stalled client that sends the rest is served like any other.
+    let mut late = stalled.pop().expect("one");
+    late.write_all(b"defghij").await.expect("write");
+    steps.release(1);
+    let response = read_response(late).await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert_eq!(steps.audited(), 2);
+
+    drop(stalled);
+    assert!(matches!(server.stop().await, StopOutcome::Finished));
+}
+
+/// Bodies too large to receive up front are streamed, so they take their
+/// place before they arrive - but only `MAX_STREAMED_WRITES` of them, and
+/// ordinary writes keep the rest of the room.
+#[tokio::test]
+async fn stalled_large_bodies_only_keep_other_large_bodies_out() {
+    let steps = TwoSteps::default();
+    let server = serve(&steps).await;
+    let addr = server.local_addr();
+    let large = BUFFERED_BODY_MAX_BYTES + 1;
+
+    let mut held = Vec::new();
+    for _ in 0..MAX_STREAMED_WRITES {
+        held.push(send_partial(addr, large, "").await);
+    }
+    until("the large writes to start", || {
+        steps.created() == MAX_STREAMED_WRITES
+    })
+    .await;
+
+    // The answer comes without the body; the connection stays open until
+    // the client gives up, so read the start of the response only.
+    let mut one_more = send_partial(addr, large, "").await;
+    let mut start = [0u8; 12];
+    tokio::time::timeout(Duration::from_secs(5), one_more.read_exact(&mut start))
+        .await
+        .expect("response in time")
+        .expect("read");
+    let refused = String::from_utf8_lossy(&start).into_owned();
+    assert!(refused.starts_with("HTTP/1.1 503"), "{refused}");
+    assert_eq!(
+        steps.created(),
+        MAX_STREAMED_WRITES,
+        "the refused one never ran"
+    );
+
+    // An ordinary write goes through while all of them are still running.
+    let response = request(addr, "POST", "/plain").await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert_eq!(steps.audited(), 0);
+
+    steps.release(MAX_STREAMED_WRITES);
+    until("the large writes to finish", || {
+        steps.audited() == MAX_STREAMED_WRITES
+    })
+    .await;
+    drop(held);
+    assert!(matches!(server.stop().await, StopOutcome::Finished));
+}
+
+/// PR #833 review (P2): clients that send almost a whole body and stall make
+/// the layer hold those bytes before anything checked who they are. Their
+/// sum stays within `RECEIVING_BODIES_MAX_BYTES` however many there are; the
+/// ones beyond it are refused; and the bytes come back when they go away.
+#[tokio::test]
+async fn stalled_bodies_hold_a_bounded_number_of_bytes_together() {
+    let steps = TwoSteps::default();
+    let server = serve(&steps).await;
+    let addr = server.local_addr();
+    let budget = server.write_budget();
+    let fit = RECEIVING_BODIES_MAX_BYTES / BUFFERED_BODY_MAX_BYTES;
+
+    // Each sends all but the last byte of a body of the largest buffered
+    // size, then keeps its connection open.
+    let clients: Vec<_> = (0..fit + 8)
+        .map(|_| {
+            tokio::spawn(async move {
+                let mut stream = send_partial(addr, BUFFERED_BODY_MAX_BYTES, "").await;
+                // A refused client may see its connection closed mid-write.
+                let _ = stream
+                    .write_all(&vec![b'x'; BUFFERED_BODY_MAX_BYTES - 1])
+                    .await;
+                std::future::pending::<()>().await;
+            })
+        })
+        .collect();
+    until("the bodies to fill the room", || {
+        budget.receiving_bytes() > RECEIVING_BODIES_MAX_BYTES - BUFFERED_BODY_MAX_BYTES
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(budget.receiving_bytes() <= RECEIVING_BODIES_MAX_BYTES);
+    assert_eq!(steps.created(), 0, "no handler started");
+    assert_eq!(budget.running(), 0, "no place is held");
+
+    // A write without a body needs no room and goes through.
+    let response = request(addr, "POST", "/plain").await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+    // The stalled clients go away: the bytes come back, and a write with a
+    // body goes through again.
+    for client in &clients {
+        client.abort();
+    }
+    until("the bytes to come back", || budget.receiving_bytes() == 0).await;
+    steps.release(1);
+    let mut stream = send_partial(addr, 5, "hello").await;
+    let mut start = [0u8; 12];
+    tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut start))
+        .await
+        .expect("response in time")
+        .expect("read");
+    assert_eq!(&start, b"HTTP/1.1 200");
+    assert!(matches!(server.stop().await, StopOutcome::Finished));
 }

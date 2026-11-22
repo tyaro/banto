@@ -41,7 +41,10 @@ pub use auth::{
     SessionPermissions, SessionStamp, SessionValidation, TokenPolicy,
 };
 pub use csrf::require_banto_client_header;
-pub use detach::{RemainingWrites, StopOutcome, WriteBudget, MAX_DETACHED_WRITES};
+pub use detach::{
+    RemainingWrites, StopOutcome, WriteBudget, BODY_RECEIVE_LIMIT, BUFFERED_BODY_MAX_BYTES,
+    MAX_DETACHED_WRITES, MAX_STREAMED_WRITES, RECEIVING_BODIES_MAX_BYTES,
+};
 pub use events::{sse_route, ServerEvent};
 pub use exposure::{restoring_previous_stays_within, ServerExposure};
 pub use grant::{
