@@ -2,6 +2,7 @@ import type { FileFieldClient, FileFieldMeta, FormSchema } from '@banto/forms';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	guardUpload,
+	whileLive,
 	sendingWhile,
 	UNGUARDED_CLIENT_MESSAGE,
 	type SessionGuardedUpload,
@@ -235,5 +236,37 @@ describe('guardUpload (the attachments panel of an existing record)', () => {
 		);
 		await expect(send('items', '7', aFile())).rejects.toThrow(UNGUARDED_CLIENT_MESSAGE);
 		expect(upload).not.toHaveBeenCalled();
+	});
+});
+
+describe('whileLive (follow-up calls of a panel whose session ended)', () => {
+	it('calls through while the session is live', async () => {
+		const fn = vi.fn(async (id: number) => id + 1);
+		await expect(
+			whileLive(
+				fn,
+				() => true,
+				() => 'refused'
+			)(1)
+		).resolves.toBe(2);
+	});
+
+	it('does not start the call once the session changed (e.g. the reload after an upload already sent)', async () => {
+		let live = true;
+		const list = vi.fn(async () => []);
+		const send = guardUpload(
+			guardedClient(async () => meta).client,
+			() => live,
+			() => 'refused'
+		);
+		const reload = whileLive(
+			list,
+			() => live,
+			() => 'refused'
+		);
+		await send('items', '7', aFile()); // sent while live
+		live = false; // the switch comes before the panel reloads
+		await expect(reload()).rejects.toThrow('refused');
+		expect(list).not.toHaveBeenCalled();
 	});
 });

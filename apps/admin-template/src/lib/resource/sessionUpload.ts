@@ -78,6 +78,23 @@ export function guardUpload<M>(
 }
 
 /**
+ * `fn` that does nothing once `canSend()` no longer holds: a panel mounted for
+ * a session that has ended must not start the follow-up calls (the reload
+ * after an upload that was already on its way, the delete the user confirmed
+ * after the switch, thumbnails, downloads) with the NEXT session's credentials.
+ */
+export function whileLive<Args extends unknown[], R>(
+	fn: (...args: Args) => Promise<R>,
+	canSend: () => boolean,
+	refusedMessage: () => string
+): (...args: Args) => Promise<R> {
+	return async (...args) => {
+		if (!canSend()) throw new Error(refusedMessage());
+		return fn(...args);
+	};
+}
+
+/**
  * `schema` whose file client only sends while `canSend()` holds.
  * `refusedMessage`: what a refused upload shows on the file's row.
  */

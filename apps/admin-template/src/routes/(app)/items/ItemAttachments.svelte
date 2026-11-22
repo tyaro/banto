@@ -18,7 +18,7 @@
 	import { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';
 	import { attachmentsClient } from '#lib/banto/attachmentsClient.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
-	import { guardUpload } from '#lib/resource/sessionUpload.js';
+	import { guardUpload, whileLive } from '#lib/resource/sessionUpload.js';
 
 	interface Props {
 		id: number;
@@ -31,14 +31,17 @@
 	// for is the live one (logout, or another user logging in, while the
 	// file's bytes are still being read, sends nothing). The same check
 	// `ResourceDetail`'s `file` field uses (`lib/resource/sessionUpload.ts`).
+	// The calls that follow (the reload after an upload that was already on
+	// its way, a confirmed delete, thumbnails, downloads) stop the same way.
 	const scope = currentSessionScope();
+	const live = () => isCurrentSessionScope(scope);
+	const refused = () => m['connection.saveFailed']();
 	const client: AttachmentsClient = {
-		...attachmentsClient,
-		upload: guardUpload(
-			attachmentsClient,
-			() => isCurrentSessionScope(scope),
-			() => m['connection.saveFailed']()
-		)
+		list: whileLive(attachmentsClient.list, live, refused),
+		upload: guardUpload(attachmentsClient, live, refused),
+		remove: whileLive(attachmentsClient.remove, live, refused),
+		thumbnailUrl: whileLive(attachmentsClient.thumbnailUrl, live, refused),
+		downloadUrl: whileLive(attachmentsClient.downloadUrl, live, refused)
 	};
 </script>
 
