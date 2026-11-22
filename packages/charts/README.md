@@ -162,8 +162,8 @@ it('系列を描く', async () => {
 });
 ```
 
-- `installChartDom({ width = 400, height = 240 })`: `HTMLElement` の `clientWidth` / `clientHeight` / `offsetWidth` / `offsetHeight` を固定値にし、何もしない `ResizeObserver` を入れる。幅・高さは 0 より大きい値。`restore()` は元の定義へ戻す（2 回呼んでもよい）。
-- `flushChart()`: 幅の反映と描画が済むまで待つ。
+- `installChartDom({ width = 400, height = 240 })`: `HTMLElement` の `clientWidth` / `clientHeight` / `offsetWidth` / `offsetHeight` を固定値にし、何もしない `ResizeObserver` を入れる。幅・高さは 0 より大きい値。`restore()` は元の定義へ戻す（2 回呼んでもよい）。入れている間にもう一度呼ぶと、重ねると戻す順で差し替えが残るので、明示のエラーで断る（テストごとの setup と共通の setup が重なっていないか確かめ、先に `restore()` する）。
+- `flushChart()`: 幅の反映と描画が済むまで待つ。内部で `setTimeout(0)` を待つので、fake timers（`vi.useFakeTimers()` など）の下では止まる。`flushChart()` の前に本物のタイマーへ戻す（`vi.useRealTimers()`）か、タイマーを進める（`vi.advanceTimersByTime(0)` など）。
 - 画像の書き出し（canvas の `getContext`）や `getComputedStyle` の差し替えは含まない（使うアプリが自前で足す）。
 
 ## 依存

@@ -39,15 +39,26 @@ class StubResizeObserver {
 	disconnect() {}
 }
 
+// True while an install is in effect. Stacking installs would make the restore
+// order matter (A then B, restored A then B, leaves B's stand-ins behind), so a
+// second call is refused instead.
+let active = false;
+
 /**
  * Gives every `HTMLElement` a non-zero size and installs a no-op
  * `ResizeObserver`. Call `restore()` (e.g. in `afterEach`) to undo it.
+ * Throws if an install is still in effect: call `restore()` first.
  */
 export function installChartDom(options: ChartDomOptions = {}): ChartDomHandle {
+	if (active)
+		throw new Error(
+			'installChartDom: already installed. Call restore() on the earlier handle first (check for a per-test setup stacked on a shared one).'
+		);
 	const size = { width: options.width ?? 400, height: options.height ?? 240 };
 	if (!(size.width > 0) || !(size.height > 0))
 		throw new RangeError('installChartDom: width and height must be greater than 0');
 
+	active = true;
 	const proto = HTMLElement.prototype;
 	const saved = new Map<string, PropertyDescriptor | undefined>();
 	for (const [prop, dim] of Object.entries(SIZE_PROPS)) {
@@ -66,6 +77,7 @@ export function installChartDom(options: ChartDomOptions = {}): ChartDomHandle {
 		restore() {
 			if (restored) return;
 			restored = true;
+			active = false;
 			for (const [prop, descriptor] of saved) {
 				if (descriptor) Object.defineProperty(proto, prop, descriptor);
 				else delete (proto as unknown as Record<string, unknown>)[prop];

@@ -10,6 +10,21 @@ import { flushChart, installChartDom } from '../src/testing';
 
 afterEach(cleanup);
 
+const SIZE_PROPS = ['clientWidth', 'offsetWidth', 'clientHeight', 'offsetHeight'] as const;
+function expectSeriesDrawn(container: Element) {
+	// 空の線も `<path d="">` を出すので、本当に線が引かれたこと（M と L）を見る
+	const ds = [...container.querySelectorAll('svg.chart-svg path')].map(
+		(el) => el.getAttribute('d') ?? ''
+	);
+	expect(ds.some((d) => d.includes('M') && d.includes('L'))).toBe(true);
+}
+function snapshot() {
+	return {
+		props: SIZE_PROPS.map((p) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, p)),
+		observer: Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver')
+	};
+}
+
 const props = {
 	data: [
 		{ t: 1, v: 1 },
@@ -23,22 +38,20 @@ const props = {
 
 describe('installChartDom', () => {
 	it('draws the series, and restore() leaves no stand-in behind', async () => {
-		const hadObserver = 'ResizeObserver' in globalThis;
-		const before = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+		const before = snapshot();
 		const dom = installChartDom({ width: 300, height: 200 });
 		try {
 			const { container } = render(LineChart, props);
 			await flushChart();
 			expect(container.querySelector('svg.chart-svg')).not.toBeNull();
-			expect(container.querySelectorAll('path').length).toBeGreaterThan(0);
+			expectSeriesDrawn(container);
 			expect(document.createElement('div').clientWidth).toBe(300);
 			expect(typeof ResizeObserver).toBe('function');
 		} finally {
 			dom.restore();
 		}
-		expect(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')).toEqual(before);
+		expect(snapshot()).toEqual(before);
 		expect(document.createElement('div').clientWidth).toBe(0);
-		expect('ResizeObserver' in globalThis).toBe(hadObserver);
 		dom.restore(); // idempotent
 	});
 
@@ -46,6 +59,21 @@ describe('installChartDom', () => {
 		const { container } = render(LineChart, props);
 		await flushChart();
 		expect(container.querySelector('svg.chart-svg')).toBeNull();
+	});
+
+	it('refuses a second install while one is in effect, and works again after restore()', () => {
+		const before = snapshot();
+		const a = installChartDom();
+		try {
+			expect(() => installChartDom({ width: 100 })).toThrow(/already installed/);
+		} finally {
+			a.restore();
+		}
+		expect(snapshot()).toEqual(before);
+		const b = installChartDom({ width: 100 });
+		expect(document.createElement('div').clientWidth).toBe(100);
+		b.restore();
+		expect(snapshot()).toEqual(before);
 	});
 
 	it('rejects a zero size', () => {
