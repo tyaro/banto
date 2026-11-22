@@ -706,3 +706,23 @@ Where the body differs, this addendum takes precedence.
 2. **The seeded mark `first_boot.seeded` is written even when the seed list is empty** (changing "write nothing when
    empty" in §10, for that one row only). Without it, an app that later adds seed entries would seed a database in
    use again (a login-required database could fall back to no login). Nothing else is written.
+
+## Addendum (2026-11-22, from the C2 implementation; confirmed by the owner)
+
+The C2 implementation (PR #858) split two sentences of §9, "if the migration or the seed on the working copy fails, refuse"
+and "when refusing, do not touch the original DB (delete the reserved file and stop applying)", by the kind of check
+result. The owner confirmed it the same day. Where the body differs, this addendum takes precedence.
+
+1. **When the content is confirmed invalid (`Invalid` / `Rejected`), refuse and delete the reserved file as before.** This
+   covers: SQLite returned NOTADB or CORRUPT, `integrity_check` reported corruption, a required table is missing, the
+   migration history version or checksum does not match, the history table has the wrong shape, or the start-up check
+   (built-in row, reserved-name collision) failed.
+2. **When the check could not be completed (`Err` / `CandidateRefusal::Unchecked`), do not refuse: keep both the reserved
+   file and the original DB, and do not apply.** Examples: cannot open, I/O error, locked, permission, a failed migration
+   on the working copy. The next start-up checks again. At staging it returns a non-`validation` error and leaves the
+   previous reservation unchanged. "Refuse if the migration or seed on the copy fails" in §9 is replaced, where it refers
+   to such failures, by "keep it as unchecked" (implementation: `read_failure` in `banto-admin-services` and
+   `apps/admin-template/core/src/startup.rs`).
+3. **Why**: so that a transient failure (out of disk space, a lock) does not delete a healthy restore candidate. The cost:
+   a candidate to which migrations truly cannot be applied keeps its reservation and reports "could not be checked" at
+   every start-up. The original DB is intact, and the reservation can be cancelled from the settings screen.
