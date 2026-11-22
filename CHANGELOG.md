@@ -56,6 +56,26 @@
 - **テンプレート: ルートが増えると `resolveAppPath` が型エラーになるのを直した。** `resolve()` に `Path` の union をそのまま渡していたため、TypeScript が union の引数を照合する上限（25）を、リソースを 1 つ（ルート 3 本）足すと超えていた（テンプレートは 23 個。26 個で `pnpm check` が落ちるのを確かめた）。pathname を取る形に絞ってから呼ぶ。実行時の挙動は同じ。
 - **scaffold: ガラス（vibrancy）を外すプリセット（minimal / display）で、生成後の `pnpm lint` が落ちるのを直した。** 設定の `AppearanceSection.svelte` に、消したロジックだけが使っていた import（`toastStore`・`errorMessage`・`tauri`）が残り、`--max-warnings=0` の未使用警告になっていた。import も一緒に消し、`scaffold.test.mjs` で消し残しを検査する。
 
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `548de749`、`workflow_dispatch`）: [run 44973227338](https://github.com/tyaro/banto/actions/runs/44973227338)（success）。
+  - タグの push（`v7.11.0`、main の `548de749`）: [run 44973351791](https://github.com/tyaro/banto/actions/runs/44973351791)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 24.22.3                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.57.3                          |
+    | SvelteKit          | 3.2.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
+
+  - 出所: Node.js は `node: v24.22.3`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.3` など）、Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
+
 ## [7.10.0] - 2026-11-21
 
 **v7.10.0 — `@banto/grid-svelte` のセルの描き方・行選択と一括操作・左端の列の固定（#713 C-3）、一覧の一括削除の API とテンプレートの配線（#713）、`@banto/forms` のフォームの配置・欄の型の追加・参照選択の欄（#714 C-2）、`@banto/dock-svelte` の据え置き pane の組み替えでフォーカスを失わない修正（#763）。** 版の種類: minor（docs/publishing.md「バージョニング規約」の運用上の例外、オーナー判断）。`crates/*/src` の `pub` と `packages/*/src/index.ts` の export の削除・改名は無い（`v7.9.0` との差分で確認。`index.ts` は追加のみ）。公開の union に種類を足し、メッセージのキーを足したので、既存のコードが型エラーになりうる（下の「消費側への注意」）。実行時の値が変わるのは新しい機能を使ったときだけ（`radio` / `multiselect` / `reference` の欄、`visibleWhen`、`renderer` / `tone` / `selectable` / `pinned` を付けた列、`deleteMany`）なので、追従の手順を明記して minor とする。migration なし。
