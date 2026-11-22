@@ -101,7 +101,7 @@ BANTO_DB=./app.sqlite3 banto-serve create-admin --username owner --display-name 
   （初回起動の既定設定もこのとき入る。`display` プリセットの閲覧公開は有効のまま残る）。
 - **アプリとサーバーを止めてから**実行する（動いているプロセスのセッションは、コマンドからは切れない）。
 - パスワードは、**端末（TTY）から実行すると非表示で 2 回**（入力と確認）聞かれる。2 回が一致しなければ DB に触れずに終了コード 1 で終わる。パイプ・ファイルのリダイレクトのときは、今までどおり標準入力の 1 行目をそのまま使う（確認なし。CI・スクリプト向け）。
-  - 手動確認の手順（TTY の経路は自動試験に載らない）: 端末で `BANTO_DB=./tmp.sqlite3 banto-serve create-admin --username owner` を実行 → ①入力が画面に出ない ②一致する 2 回で成功する ③一致しない 2 回で「2 回の入力が一致しません」と出て DB が作られない ④終了後の端末でエコーが戻っている（打った文字が見える）。Windows（PowerShell・コマンドプロンプト）と Linux/macOS の端末で行う。入力中に Ctrl-C で止めると Unix の端末はエコーが切れたままのことがある（`stty echo` か `reset` で戻る）。
+  - 手動確認の手順（TTY の経路は自動試験に載らない）: 端末で `BANTO_DB=./tmp.sqlite3 banto-serve create-admin --username owner` を実行 → ①入力が画面に出ない ②一致する 2 回で成功する ③一致しない 2 回で「2 回の入力が一致しません」と出て DB が作られない ④終了後の端末でエコーが戻っている（打った文字が見える）。Windows（PowerShell・コマンドプロンプト）と Linux/macOS の端末で行う。⑤入力中に Ctrl+C で止めても、端末のエコーが戻っている（Windows は Ctrl+C・Ctrl+Break・ウィンドウを閉じる、Unix は SIGINT・SIGTERM・SIGHUP で戻してから終わる。SIGKILL・強制終了では戻せないので、そのときは `stty echo` か `reset`）。Git Bash・MSYS などの疑似端末は Win32 のコンソールではないので、非表示にできずエラーで止まる（PowerShell・cmd を使うか、ファイルで渡す）。
 - 予約されたリストア（`restore-pending.sqlite3`）があるときは、DB に触れずに止まる。
   先にリストアを適用する（一度起動する）か、そのファイルを消してから、もう一度実行する。
 - **起動が止まった DB の復旧**にも同じコマンドを使う: `auth.disabled` の行が無い・読めない、

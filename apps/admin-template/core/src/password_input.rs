@@ -30,57 +30,135 @@ pub fn stdin_is_terminal() -> bool {
     io::stdin().is_terminal()
 }
 
-/// Reads one password line from the terminal with echo off, then prints the
-/// newline the user's Enter key could not show. Call only when
-/// [`stdin_is_terminal`] is true.
-pub fn read_password_hidden() -> io::Result<String> {
+/// Asks for the password twice on the terminal. Echo is turned off BEFORE the
+/// first prompt is shown and restored only after the second line is read, so
+/// nothing typed in between can appear (a type-ahead right after the prompt
+/// included). If echo cannot be turned off this fails without reading: a
+/// plain-text fallback would break the promise the prompt makes.
+///
+/// Ctrl+C (and, on Unix, SIGTERM / SIGHUP) restores the terminal too, then
+/// ends the process the usual way.
+pub fn read_password_twice_hidden(
+    first_prompt: &str,
+    second_prompt: &str,
+) -> io::Result<(String, String)> {
     let guard = EchoOff::new()?;
-    let result = read_password_line(&mut io::stdin().lock());
-    drop(guard);
+    let mut stdin = io::stdin().lock();
+    eprint!("{first_prompt}");
+    let first = read_password_line(&mut stdin);
     eprintln!();
-    result
+    let first = first?;
+    eprint!("{second_prompt}");
+    let second = read_password_line(&mut stdin);
+    eprintln!();
+    drop(guard);
+    Ok((first, second?))
 }
 
-/// Restores the previous console / terminal mode on drop.
+/// Restores the previous console / terminal mode on drop (and from the
+/// interrupt handler, which `Drop` cannot cover: the default Ctrl+C action
+/// ends the process without unwinding).
 struct EchoOff {
-    #[cfg(windows)]
-    handle: windows_sys::Win32::Foundation::HANDLE,
-    #[cfg(windows)]
-    saved: u32,
     #[cfg(unix)]
-    saved: libc::termios,
+    old_handlers: [libc::sighandler_t; UNIX_SIGNALS.len()],
 }
 
 #[cfg(windows)]
-impl EchoOff {
-    fn new() -> io::Result<Self> {
-        use windows_sys::Win32::System::Console::{
-            GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_ECHO_INPUT, STD_INPUT_HANDLE,
-        };
+mod win {
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleCtrlHandler, SetConsoleMode, CTRL_BREAK_EVENT,
+        CTRL_CLOSE_EVENT, CTRL_C_EVENT, ENABLE_ECHO_INPUT, STD_INPUT_HANDLE,
+    };
+
+    static HANDLE_BITS: AtomicUsize = AtomicUsize::new(0);
+    static SAVED_MODE: AtomicU32 = AtomicU32::new(0);
+
+    fn restore() {
+        let handle = HANDLE_BITS.load(Ordering::SeqCst) as HANDLE;
+        // SAFETY: the handle is the process's stdin handle stored by `echo_off`.
+        unsafe {
+            SetConsoleMode(handle, SAVED_MODE.load(Ordering::SeqCst));
+        }
+    }
+
+    /// Runs on a thread the system starts. Returns FALSE (0) so the next handler,
+    /// the default one that ends the process, still runs.
+    unsafe extern "system" fn on_ctrl(ctrl_type: u32) -> i32 {
+        if matches!(
+            ctrl_type,
+            CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT
+        ) {
+            restore();
+        }
+        0
+    }
+
+    pub fn echo_off() -> std::io::Result<()> {
         // SAFETY: plain Win32 calls on the process's own stdin handle; `saved`
         // is a valid out pointer for the duration of the call.
         unsafe {
             let handle = GetStdHandle(STD_INPUT_HANDLE);
             let mut saved = 0u32;
             if GetConsoleMode(handle, &mut saved) == 0 {
-                return Err(io::Error::last_os_error());
+                return Err(std::io::Error::last_os_error());
             }
+            HANDLE_BITS.store(handle as usize, Ordering::SeqCst);
+            SAVED_MODE.store(saved, Ordering::SeqCst);
+            // Registered before the mode changes so an interrupt in between
+            // is covered.
+            SetConsoleCtrlHandler(Some(on_ctrl), 1);
             if SetConsoleMode(handle, saved & !ENABLE_ECHO_INPUT) == 0 {
-                return Err(io::Error::last_os_error());
+                let err = std::io::Error::last_os_error();
+                SetConsoleCtrlHandler(Some(on_ctrl), 0);
+                return Err(err);
             }
-            Ok(Self { handle, saved })
         }
+        Ok(())
+    }
+
+    pub fn echo_restore() {
+        restore();
+        // SAFETY: removes the handler added in `echo_off`.
+        unsafe {
+            SetConsoleCtrlHandler(Some(on_ctrl), 0);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl EchoOff {
+    fn new() -> io::Result<Self> {
+        win::echo_off()?;
+        Ok(Self {})
     }
 }
 
 #[cfg(windows)]
 impl Drop for EchoOff {
     fn drop(&mut self) {
-        use windows_sys::Win32::System::Console::SetConsoleMode;
-        // SAFETY: restores the mode read in `new` on the same handle.
-        unsafe {
-            SetConsoleMode(self.handle, self.saved);
-        }
+        win::echo_restore();
+    }
+}
+
+#[cfg(unix)]
+const UNIX_SIGNALS: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
+
+#[cfg(unix)]
+static mut SAVED_TERMIOS: std::mem::MaybeUninit<libc::termios> = std::mem::MaybeUninit::uninit();
+
+/// Restores the terminal, then re-raises the signal with its default action.
+/// Only async-signal-safe calls (`tcsetattr`, `signal`, `raise`).
+#[cfg(unix)]
+extern "C" fn on_signal(sig: libc::c_int) {
+    // SAFETY: `SAVED_TERMIOS` is written once in `EchoOff::new` before this
+    // handler is installed and not touched again until it is removed.
+    unsafe {
+        let saved = std::ptr::addr_of!(SAVED_TERMIOS);
+        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, (*saved).as_ptr());
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
     }
 }
 
@@ -88,18 +166,27 @@ impl Drop for EchoOff {
 impl EchoOff {
     fn new() -> io::Result<Self> {
         // SAFETY: `termios` is plain data; `tcgetattr`/`tcsetattr` get a valid
-        // pointer for the duration of the call, on fd 0 (stdin).
+        // pointer for the duration of the call, on fd 0 (stdin). The handlers
+        // are installed after the statics they read are set.
         unsafe {
             let mut saved: libc::termios = std::mem::zeroed();
             if libc::tcgetattr(libc::STDIN_FILENO, &mut saved) != 0 {
                 return Err(io::Error::last_os_error());
             }
+            (*std::ptr::addr_of_mut!(SAVED_TERMIOS)).write(saved);
+            let mut old_handlers = [libc::SIG_DFL; UNIX_SIGNALS.len()];
+            let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+            for (slot, sig) in old_handlers.iter_mut().zip(UNIX_SIGNALS) {
+                *slot = libc::signal(sig, handler);
+            }
+            let guard = Self { old_handlers };
             let mut quiet = saved;
             quiet.c_lflag &= !libc::ECHO;
             if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &quiet) != 0 {
+                // `guard` drops here and restores the handlers.
                 return Err(io::Error::last_os_error());
             }
-            Ok(Self { saved })
+            Ok(guard)
         }
     }
 }
@@ -107,9 +194,13 @@ impl EchoOff {
 #[cfg(unix)]
 impl Drop for EchoOff {
     fn drop(&mut self) {
-        // SAFETY: restores the attributes read in `new`.
+        // SAFETY: restores the attributes saved in `new` and the old handlers.
         unsafe {
-            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &self.saved);
+            let saved = std::ptr::addr_of!(SAVED_TERMIOS);
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, (*saved).as_ptr());
+            for (old, sig) in self.old_handlers.iter().zip(UNIX_SIGNALS) {
+                libc::signal(sig, *old);
+            }
         }
     }
 }

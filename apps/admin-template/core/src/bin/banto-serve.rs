@@ -139,12 +139,16 @@ fn read_new_password() -> Result<String, String> {
         return pw::read_password_line(&mut std::io::stdin().lock())
             .map_err(|err| format!("パスワードを読めませんでした: {err}"));
     }
-    eprint!("パスワード（入力は表示されません）: ");
-    let first =
-        pw::read_password_hidden().map_err(|err| format!("パスワードを読めませんでした: {err}"))?;
-    eprint!("パスワード（確認のためもう一度）: ");
-    let second =
-        pw::read_password_hidden().map_err(|err| format!("パスワードを読めませんでした: {err}"))?;
+    let (first, second) = pw::read_password_twice_hidden(
+        "パスワード（入力は表示されません）: ",
+        "パスワード（確認のためもう一度）: ",
+    )
+    .map_err(|err| {
+        format!(
+            "パスワードを非表示で読めませんでした: {err}（Git Bash・MSYS などの疑似端末では使えません。\
+             PowerShell・cmd・通常の端末で実行するか、パスワードをファイルに書いて < password.txt で渡してください）"
+        )
+    })?;
     if !pw::confirmation_matches(&first, &second) {
         return Err("2 回の入力が一致しません".to_string());
     }
