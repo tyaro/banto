@@ -86,16 +86,30 @@ async fn backups_restore_from_upload(
     Query(query): Query<RestoreUploadQuery>,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
+    // Issue #793 S2: the guards decided when the head of the request came
+    // in; the upload itself (up to 256 MB, streamed) may have taken any
+    // length of time since. Decide again before staging - an admin removed
+    // or demoted meanwhile must not get a restore staged by finishing an
+    // upload it had left open.
+    let session = recheck_role_at_least(
+        &state.auth,
+        &state.audit,
+        &headers,
+        Role::Admin,
+        "backups",
+        json!({ "method": "POST", "path": "/api/backups/restore" }),
+    )
+    .await?;
     state.backup.stage_restore_from_bytes(&body).await?;
     // `entity_id` stays `None` here on purpose: the canonical rule is
     // "entity_id = the backup file's real name" (like `backups_create` /
     // restore-from-existing on BOTH paths), and an upload has no real backup
     // file identity - the client-supplied display name is untrusted and only
     // ever recorded inside `detail` (maintenance-review-2026-08 §5.3 M-15).
-    record_write(
+    record_write_as(
         &state.audit,
-        &state.auth,
-        &headers,
+        Some(AuditActor::from(&session.identity)),
+        "rest",
         "restore_staged",
         "backups",
         None,
@@ -153,9 +167,10 @@ async fn backups_cancel_pending(
 /// `/api/backups/*` (spec M17): `admin`-only, guarded the same way
 /// `users_router`/`audit_log_router` are. `DefaultBodyLimit::max` raises the
 /// upload route's body cap from axum's 2MB default to
-/// `MAX_RESTORE_UPLOAD_BYTES` - applied to the whole router (the other
-/// routes here have no meaningful request body, so this is harmless for
-/// them).
+/// `MAX_RESTORE_UPLOAD_BYTES` - on that route alone: a route that accepts a
+/// body over 2 MiB must decide the role again once the body is in (Issue
+/// #793 S2, conventions section 1; `backups_restore_from_upload` does), so
+/// the raised cap is not spread over the router.
 pub fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthState) -> Router {
     let state = BackupsState {
         backup,
@@ -167,7 +182,12 @@ pub fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthS
             "/api/backups",
             post(backups_create_handler).get(backups_list_handler),
         )
-        .route("/api/backups/restore", post(backups_restore_from_upload))
+        .route(
+            "/api/backups/restore",
+            post(backups_restore_from_upload).layer(axum::extract::DefaultBodyLimit::max(
+                MAX_RESTORE_UPLOAD_BYTES,
+            )),
+        )
         .route(
             "/api/backups/pending-restore",
             get(backups_pending_status).delete(backups_cancel_pending),
@@ -178,9 +198,6 @@ pub fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthS
             post(backups_restore_from_existing),
         )
         .with_state(state)
-        .layer(axum::extract::DefaultBodyLimit::max(
-            MAX_RESTORE_UPLOAD_BYTES,
-        ))
         .layer(middleware::from_fn_with_state(
             RoleGuard {
                 auth: auth.clone(),

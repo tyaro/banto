@@ -35,7 +35,7 @@
 //!   after its lookup returns, an abandoned check never changes it later.
 //! - A session re-bound while its check was in flight (its own password
 //!   change) is judged on its current binding, exactly as for a request
-//!   ([`AuthState::authenticate`]'s `settle_stamp_mismatch`).
+//!   ([`AuthState::authenticate`]'s `settle_lookup`).
 //! - Public viewer sessions and `SessionValidation::DisabledNoRevocation`
 //!   never look anything up, so the re-check is an in-memory token check:
 //!   those streams end only when the token itself does.

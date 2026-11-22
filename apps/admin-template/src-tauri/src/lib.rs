@@ -4095,7 +4095,10 @@ async fn backups_stage_restore_body(state: &AppState, file_name: &str) -> Result
         &actor,
         "restore_staged",
         "backups",
-        None,
+        // The backup file's real name, like `backups_create` and REST's
+        // `POST /api/backups/{fileName}/restore` (conventions section 1:
+        // the same audit row on both paths). It used to be `None` here.
+        Some(file_name),
         Some(serde_json::json!({ "source": "existing", "fileName": file_name })),
     )
     .await;

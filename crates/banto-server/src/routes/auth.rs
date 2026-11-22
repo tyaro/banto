@@ -228,16 +228,24 @@ async fn auth_change_password_handler(
     // Spec M14: a self-service password change is a security event (it is
     // also what naturally invalidates an M11 autologin credential), so it IS
     // audited - `entity_id` is the caller's own numeric row id (matching the
-    // other `users` entries), recovered from the username since the bearer
-    // token only carries the latter. `detail` stays `None`: neither the old
-    // nor the new password (nor any hash) may ever be recorded.
-    let entity_id = state
-        .users
-        .get_by_username(&identity.id)
-        .await
-        .ok()
-        .flatten()
-        .map(|user| user.id.to_string());
+    // other `users` entries). `detail` stays `None`: neither the old nor the
+    // new password (nor any hash) may ever be recorded.
+    //
+    // Issue #793 S2: the id is the one the session was validated with for
+    // THIS request (its stamp), taken before the change - not a read made
+    // after the commit, which loses the id when the account is deleted, or
+    // the store does not answer, in between. Only a state without a session
+    // lookup (no stamp) still reads it by username.
+    let entity_id = match session.stamp {
+        Some(stamp) => Some(stamp.account_id.to_string()),
+        None => state
+            .users
+            .get_by_username(&identity.id)
+            .await
+            .ok()
+            .flatten()
+            .map(|user| user.id.to_string()),
+    };
     state
         .audit
         .record(AuditEntry {

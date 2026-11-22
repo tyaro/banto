@@ -126,6 +126,7 @@ pub use state::{ip_rate_limit_key, rate_limit_key, AuthState};
 // `use super::*`.
 use policy::SATURATED_RETRY_AFTER;
 use policy::{
-    FailureRecord, GrantQueue, IdleWindow, InFlight, InFlightGuard, StampedLogin, TokenRecord,
+    FailureRecord, GrantQueue, IdleWindow, InFlight, InFlightGuard, Settled, StampedLogin,
+    TokenRecord,
 };
 use state::Inner;
