@@ -2395,8 +2395,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const name = `E2E二重保存商品-${Date.now()}`;
 		let release: () => void = () => {};
 		const held = new Promise<void>((resolve) => (release = resolve));
+		let uploadHeld: () => void = () => {};
+		const uploadStarted = new Promise<void>((resolve) => (uploadHeld = resolve));
 		await page.route('**/api/attachments?*', async (route) => {
-			if (route.request().method() === 'POST') await held;
+			if (route.request().method() === 'POST') {
+				uploadHeld();
+				await held;
+			}
 			await route.continue();
 		});
 		await page.goto('/items/new');
@@ -2409,6 +2414,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			.setInputFiles({ name: PNG_FILE_NAME, mimeType: 'image/png', buffer: minimalPngBuffer() });
 		await page.getByRole('button', { name: '保存' }).click();
 		// The record exists, the upload is held: Enter in a field must not save again.
+		await uploadStarted;
 		await page.getByLabel('商品名').press('Enter');
 		await page.getByLabel('商品名').press('Enter');
 		release();

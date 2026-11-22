@@ -251,7 +251,10 @@
 		if (!isNew && formResource.initialValues) {
 			base = formResource.initialValues;
 			// Taken only now: the record is the one this session may edit.
-			leftovers ??= takePendingUploads(def.name, parsedId);
+			// ...and only by the session that started this load, who may save.
+			if (isCurrentSessionScope(scope) && canSave) {
+				leftovers ??= takePendingUploads(def.name, parsedId);
+			}
 			filesInForm = leftovers !== null;
 			store = createFormStore(
 				schema,
@@ -408,6 +411,22 @@
 	/** A create (with the upload of its files) is under way: further saves are turned away. */
 	let creating = $state(false);
 
+	/**
+	 * A chosen file whose bytes are only handed out while `scope`'s session is
+	 * live. The client reads them (`arrayBuffer`) right before it reads the
+	 * credentials and sends, so this is the last check before the request.
+	 */
+	class SessionFile extends File {
+		constructor(source: File) {
+			super([source], source.name, { type: source.type, lastModified: source.lastModified });
+		}
+		override async arrayBuffer(): Promise<ArrayBuffer> {
+			const bytes = await super.arrayBuffer();
+			if (!isCurrentSessionScope(scope)) throw new Error(m['connection.saveFailed']());
+			return bytes;
+		}
+	}
+
 	/** `schema` whose file client refuses to upload once `scope`'s session has ended. */
 	function inSession(source: FormSchema): FormSchema {
 		return {
@@ -421,11 +440,11 @@
 						...file,
 						client: {
 							...file.client,
-							upload: (...args: Parameters<typeof file.client.upload>) => {
+							upload: (resource: string, resourceId: string, chosen: File) => {
 								if (!isCurrentSessionScope(scope)) {
 									return Promise.reject(new Error(m['connection.saveFailed']()));
 								}
-								return file.client.upload(...args);
+								return file.client.upload(resource, resourceId, new SessionFile(chosen));
 							}
 						}
 					}
@@ -544,7 +563,11 @@
 			}
 			return;
 		}
-		// The record is gone: unsaved edits to it are moot, don't prompt.
+		// The record is gone: unsaved edits to it are moot, don't prompt - and
+		// files still waiting to upload to it are dropped (they keep it dirty).
+		if (fileField && schema.fields.some((field) => field.type === 'file')) {
+			store.values = { ...store.values, [fileField.name]: emptyFileValue() };
+		}
 		store.markClean();
 		if (onDeleted) {
 			if (!destroyed) onDeleted();
