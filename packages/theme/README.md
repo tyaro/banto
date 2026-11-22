@@ -34,6 +34,30 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 型の解決は exports の条件を読む `moduleResolution: "bundler"`（SvelteKit 3 の
 `$app/tsconfig` の既定）を前提にしている。
 
+## チャートの系列色（9〜16 は次の版から）
+
+`--banto-chart-1`〜`16`（ライト・ダーク。固定の sRGB 値で `--banto-brand-hue` に追従しない）。
+`@banto/charts` が系列の並び順に使う。
+
+- 1〜8: 正常色覚と色覚シミュレーション（1 型・2 型・3 型）のそれぞれで、隣り合うスロットは OKLab 距離
+  0.10 以上、どの 2 つも 0.09 以上。先頭 4 つは状態色（warning・danger・success）からも正常色覚で 0.09 以上。
+- 9〜16（#851）: 1〜16 のどの 2 つも **正常色覚で** 0.06 以上。色覚シミュレーションでの距離と、
+  状態色との距離は**保証しない**。9 本以上の系列を描くグラフは、凡例・線種・マーカーを併用する。
+- どの色も、面（ライトは surface、ダークは surface と raised）に 3:1 以上（ブランドの色相のどれでも）。
+- `--banto-chart-1〜8` を自分のテーマで上書きしているなら、9〜16 も定義する。場合は 2 つある:
+  - この版の banto の CSS を読み、その上から 1〜8 だけを上書きしている: 9〜16 は **banto の既定の色のまま残る**
+    （自前の 1〜8 と、banto の 9〜16 が混ざる）。
+  - 9〜16 のトークンがまったく無い（旧い `@banto/theme`、banto の CSS を読まない自前のテーマ）: `@banto/charts` が
+    9 本目以降を **8 番の色**で描く（`MAX_CHART_SERIES` が 8 だった頃と同じ見た目）。
+
+| スロット | 9         | 10        | 11        | 12        | 13        | 14        | 15        | 16        |
+| -------- | --------- | --------- | --------- | --------- | --------- | --------- | --------- | --------- |
+| Light    | `#a67c00` | `#d81b60` | `#3b82c4` | `#5c940d` | `#b5179e` | `#343a40` | `#c4472a` | `#7d8794` |
+| Dark     | `#d9c23a` | `#ff6fa5` | `#7fb5f0` | `#a6d44a` | `#e87ce0` | `#c9ced4` | `#ff8a65` | `#8a97a6` |
+
+条件は `packages/theme/tests/chart-palette.test.ts` が CSS から読んで確かめる。1〜8 の値と実測は
+[visual-refresh-plan.md](../../docs/design/visual-refresh-plan.md) の付録 A.3a。
+
 ## 入力とページナビの共通スタイル（次リリース）
 
 `@banto/theme/css` だけで使える opt-in の HTML クラス（[ADR-0023](../../docs/adr/0023-shared-control-styles.md)）。
