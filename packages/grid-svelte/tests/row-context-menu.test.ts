@@ -263,6 +263,42 @@ describe('BantoGrid onRowContextMenu (#784)', () => {
 			expect(onRowContextMenu.mock.calls[0][0]).toBe(rows[0]);
 		});
 
+		it('server mode: lands on the first loaded slot, looking only at loaded slots', async () => {
+			const sparse: Row[] = [];
+			sparse[3] = rows[1];
+			sparse[7] = rows[2];
+			const onRowContextMenu = vi.fn();
+			render(BantoGrid<Row>, {
+				mode: 'server',
+				totalRows: 50_000_000,
+				rows: sparse,
+				columns,
+				getRowId,
+				onRowContextMenu
+			});
+			await fireEvent.keyDown(screen.getByRole('grid'), { key: 'ContextMenu' });
+			await tick();
+			expect(onRowContextMenu).toHaveBeenCalledTimes(1);
+			expect(onRowContextMenu.mock.calls[0][0]).toBe(rows[1]);
+		});
+
+		it('server mode: nothing loaded yet does nothing', async () => {
+			const onRowContextMenu = vi.fn();
+			render(BantoGrid<Row>, {
+				mode: 'server',
+				totalRows: 50_000_000,
+				rows: [] as Row[],
+				columns,
+				getRowId,
+				onRowContextMenu
+			});
+			const grid = screen.getByRole('grid');
+			const event = createEvent.keyDown(grid, { key: 'ArrowDown' });
+			grid.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+			expect(onRowContextMenu).not.toHaveBeenCalled();
+		});
+
 		it('does nothing for an empty grid', async () => {
 			const onRowContextMenu = vi.fn();
 			render(BantoGrid<Row>, { rows: [] as Row[], columns, getRowId, onRowContextMenu });

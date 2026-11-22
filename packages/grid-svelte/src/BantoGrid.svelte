@@ -1169,11 +1169,27 @@
 			Math.max(0, Math.floor(effectiveScrollTop / gridState.rowHeight))
 		);
 		let rowIndex = -1;
-		for (let i = firstInView; i < count && rowIndex === -1; i++) {
-			if (rowAtDisplayIndex(i)) rowIndex = i;
-		}
-		for (let i = 0; i < firstInView && rowIndex === -1; i++) {
-			if (rowAtDisplayIndex(i)) rowIndex = i;
+		if (mode === 'server') {
+			// Only enumerate loaded slots (integer keys come in ascending order);
+			// `totalRows` can span millions of holes, as in `adjacentRow`.
+			let first = -1;
+			for (const key of Object.keys(rows)) {
+				const index = Number(key);
+				if (!Number.isInteger(index) || index >= count || rows[index] === undefined) continue;
+				if (first === -1) first = index;
+				if (index >= firstInView) {
+					rowIndex = index;
+					break;
+				}
+			}
+			if (rowIndex === -1) rowIndex = first;
+		} else {
+			for (let i = firstInView; i < count && rowIndex === -1; i++) {
+				if (rowAtDisplayIndex(i)) rowIndex = i;
+			}
+			for (let i = 0; i < firstInView && rowIndex === -1; i++) {
+				if (rowAtDisplayIndex(i)) rowIndex = i;
+			}
 		}
 		if (rowIndex === -1) return;
 		event.preventDefault();
