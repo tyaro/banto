@@ -1,0 +1,89 @@
+# @banto/dock-svelte の総当たりテストを全部の深さで回す週次の実行（#798）。
+#
+# ci.yml は、dock-svelte を触らない PR では総当たりを浅い既定で走らせる
+# （`packages/dock-svelte/tests/fixtures/exhaustive.ts`）。dock-svelte を触る PR と main の
+# push は全部走るが、依存の更新や環境の変化で、触っていない PR のあいだに崩れた場合に
+# 気づけるよう、週に 1 回、`DOCK_EXHAUSTIVE=1` で全部を回す。失敗したら追跡 Issue を立てる
+# （tauri-check.yml と同じ流儀）。`workflow_dispatch` で手動でも回せる。
+#
+# サードパーティのアクションは commit SHA で固定する（ci.yml の冒頭の方針）。
+name: dock-svelte exhaustive
+
+on:
+  schedule:
+    # 毎週日曜 20:00 UTC = 月曜 05:00 JST（tauri-check 18:00・template-acceptance 19:00 と重ねない）。
+    - cron: '0 20 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exhaustive:
+    name: dock-svelte tests (DOCK_EXHAUSTIVE=1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # dock-svelte のテストは paraglide の生成物を使わないので、compile は要らない。
+      - name: Test (every depth)
+        env:
+          DOCK_EXHAUSTIVE: '1'
+        run: pnpm --filter @banto/dock-svelte test
+
+  report-failure:
+    name: File tracking issue on scheduled failure
+    needs: exhaustive
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Create or refresh tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const label = 'dock-exhaustive-failure';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo,
+              state: 'open',
+              labels: label
+            });
+            const body =
+              `週次の dock-svelte 総当たりテスト（\`DOCK_EXHAUSTIVE=1 pnpm --filter @banto/dock-svelte test\`）が失敗しました。\n\n` +
+              `- 失敗した run: ${runUrl}\n` +
+              `- ワークフロー: \`.github/workflows/dock-exhaustive.yml\`（#798）\n\n` +
+              `dock-svelte を触っていない PR のあいだ総当たりは浅い既定で走るため、` +
+              `その間に入った変更（slot / lifecycle、依存の更新）が疑わしい。`;
+            if (open.length > 0) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: open[0].number,
+                body: `再発: ${runUrl}`
+              });
+            } else {
+              await github.rest.issues.create({
+                ...context.repo,
+                title: '週次の dock-svelte 総当たりテストが失敗しています',
+                labels: [label],
+                body
+              });
+            }
