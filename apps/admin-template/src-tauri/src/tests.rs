@@ -1894,6 +1894,7 @@ async fn a_desktop_session_rebound_while_its_check_was_in_flight_stays_valid() {
     match settle_session(&changer, &changer_before, fresh, changer_seq) {
         Settled::Stale {
             valid_now: Some(DesktopSession::Account(user)),
+            ..
         } => assert_eq!(user.auth_epoch, 1),
         other => panic!("the re-bound session must stay valid, got {other:?}"),
     }
@@ -2466,7 +2467,10 @@ async fn s77_a_settle_overtaken_by_a_rebind_writes_nothing() {
 
     assert!(matches!(
         settle_session(&state, &cached, fresh, seq_at_entry),
-        Settled::Stale { valid_now: None }
+        Settled::Stale {
+            valid_now: None,
+            ..
+        }
     ));
     assert_eq!(read_slot(&state), (None, seq_at_entry + 1));
 }
@@ -3060,11 +3064,16 @@ async fn s102_a_stale_settle_reports_the_slot_value_not_the_older_read() {
 
     let Settled::Stale {
         valid_now: Some(DesktopSession::AuthDisabledLocal(local)),
+        seq_now,
     } = settle_session(&state, &cached, fresh, seq_at_entry)
     else {
         panic!("expected Stale with the current Local session")
     };
     assert_eq!(local.role, Role::Viewer);
+    // The session and the `seq` are one snapshot of the slot (Codex review of
+    // PR #862): the `seq` of the write that put THIS session there.
+    assert_eq!(seq_now, read_slot(&state).1);
+    assert!(seq_now > seq_at_entry);
 }
 
 /// Hardening (freshness audit of #266, P2-2): `false -> true` advances
@@ -6471,4 +6480,54 @@ async fn adr0034_a_resolve_overtaken_during_its_permissions_read_is_stale() {
     let again = resolve_body(&state).await.expect("resolve");
     assert!(!again.stale);
     assert_eq!(again.kind, Some("local"));
+}
+
+/// Codex review of PR #862: the `seq` an authorization compares after its
+/// permissions read must be the one its session was settled at - taken under
+/// the settle's lock, not read from the slot afterwards (a re-bind between
+/// the two would pair the old session with the new `seq`). So a slot that is
+/// re-bound right after the settle (before anything else is read) leaves the
+/// returned pair as it was: the settled session with ITS `seq`, which no
+/// longer equals the slot's - and that is what makes the authorization start
+/// over instead of answering for the ended session.
+#[tokio::test]
+async fn adr0034_the_session_and_its_seq_are_one_snapshot_of_the_slot() {
+    let (state, _op) = permission_app_state().await;
+    let (_, seq_before) = read_slot(&state);
+
+    let (session, settled_seq) = current_session_at(&state)
+        .await
+        .expect("session")
+        .expect("the admin's account session");
+    assert!(matches!(session, DesktopSession::Account(_)));
+    assert_eq!(settled_seq, seq_before, "a refresh does not move seq");
+
+    // The window Codex described: another command re-binds the slot after
+    // the settle released its lock.
+    auth_config_apply_body(&state, true, "viewer")
+        .await
+        .expect("apply true");
+    assert_ne!(
+        read_slot(&state).1,
+        settled_seq,
+        "the pair still names the settle's seq, so the comparison fails"
+    );
+
+    // And a check that settles as `Stale` reports the slot's value with the
+    // slot's seq, again as one pair.
+    let (cached, seq_at_entry) = read_slot(&state);
+    let cached = cached.expect("local");
+    let fresh = read_session_source(&state, &cached).await.unwrap();
+    auth_config_apply_body(&state, true, "editor")
+        .await
+        .expect("role change");
+    let Settled::Stale {
+        valid_now: Some(DesktopSession::AuthDisabledLocal(local)),
+        seq_now,
+    } = settle_session(&state, &cached, fresh, seq_at_entry)
+    else {
+        panic!("expected Stale with the current Local session")
+    };
+    assert_eq!(local.role, Role::Editor);
+    assert_eq!(seq_now, read_slot(&state).1);
 }

@@ -498,11 +498,15 @@ async fn read_session_permissions(
 /// (ADR-0034 §6; the Tauri twin of
 /// `banto_server::AuthState::authenticate_with_permissions`).
 ///
-/// [`current_session`] settles the session against the slot; reading the
-/// permissions awaits once more, and an `auth_config_apply` (or a logout,
-/// another login) can complete in that window. So the slot's `seq` is read
-/// right after the settle - no `.await` in between - and compared again
-/// after the permissions were read: every write that changes what the
+/// [`current_session_at`] settles the session against the slot and hands
+/// back the slot's `seq` AS OF THAT SETTLE, read under the settle's own lock
+/// (never read afterwards: commands run on several threads, so an
+/// `auth_config_apply` or a logout can re-bind the slot between the settle's
+/// unlock and any later read, and an old session paired with the new `seq`
+/// would pass the comparison below - Codex review of PR #862). Reading the
+/// permissions awaits once more, and the same writers can complete in that
+/// window. So that `seq` is compared again after the permissions were read:
+/// every write that changes what the
 /// session is authorized as advances `seq` (see [`settle_session`]), so an
 /// unchanged `seq` means the pair still describes the slot. If it moved, the
 /// whole authorization is done once more from the slot as it is now; if it
@@ -516,10 +520,9 @@ async fn authorized_session(
     state: &AppState,
 ) -> Result<Option<(DesktopSession, SessionPermissions)>, BantoError> {
     for _ in 0..2 {
-        let Some(session) = current_session(state).await? else {
+        let Some((session, settled_seq)) = current_session_at(state).await? else {
             return Ok(None);
         };
-        let (_, settled_seq) = read_slot(state);
         let permissions = permissions_of_session(state, &session).await?;
         if read_slot(state).1 == settled_seq {
             return Ok(Some((session, permissions)));
@@ -597,14 +600,25 @@ impl DesktopSession {
 /// same answer the pre-#260 `settle_session` gave in that case, so ordinary
 /// commands keep their behavior; only `auth_resolve` reports the staleness.
 async fn current_session(state: &AppState) -> Result<Option<DesktopSession>, BantoError> {
+    Ok(current_session_at(state).await?.map(|(session, _)| session))
+}
+
+/// [`current_session`] together with the slot's `seq` the answer is about:
+/// both come from [`settle_session`]'s ONE lock, so the pair is a consistent
+/// snapshot of the slot (the session IS what the slot held at that `seq`).
+/// A caller that awaits afterwards compares this `seq` with the slot's to
+/// learn whether its session is still the slot's ([`authorized_session`]).
+async fn current_session_at(state: &AppState) -> Result<Option<(DesktopSession, u64)>, BantoError> {
     let (cached, seq_at_entry) = read_slot(state);
     let Some(cached) = cached else {
         return Ok(None);
     };
     let fresh = read_session_source(state, &cached).await?;
     Ok(match settle_session(state, &cached, fresh, seq_at_entry) {
-        Settled::Settled { session, .. } => session,
-        Settled::Stale { valid_now } => valid_now,
+        Settled::Settled {
+            session, seq_after, ..
+        } => session.map(|session| (session, seq_after)),
+        Settled::Stale { valid_now, seq_now } => valid_now.map(|session| (session, seq_now)),
     })
 }
 
@@ -657,7 +671,13 @@ enum Settled {
     /// already reflects), for the
     /// ordinary commands' [`current_session`]; `auth_resolve` reports
     /// `stale` instead of using it.
-    Stale { valid_now: Option<DesktopSession> },
+    ///
+    /// `seq_now` is the slot's `seq` under the same lock `valid_now` was read
+    /// with (the pair is one snapshot of the slot).
+    Stale {
+        valid_now: Option<DesktopSession>,
+        seq_now: u64,
+    },
     /// The slot was not re-bound meanwhile, and was settled from `fresh`.
     /// `seq_after == seq_before + 1` iff this call cleared the session.
     Settled {
@@ -714,7 +734,10 @@ fn settle_session(
         // matches - e.g. a Local role changed by an apply after this read
         // (freshness audit of #266, P3-2, S-102).
         let valid_now = valid.and(slot.session.clone());
-        return Settled::Stale { valid_now };
+        return Settled::Stale {
+            valid_now,
+            seq_now: slot.seq,
+        };
     }
     debug_assert!(slot
         .session
