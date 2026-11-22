@@ -152,12 +152,15 @@ export function forgetHomeSlots(dock: DockState): void {
 /**
  * How the shadow tree followed one assignment of `layout` (#782 PR4, `watchShadow`). `step` is the
  * `DockState` method that said what it did to the tree (`null`: an assignment that did not).
- *  - `same`: the step alone, done on S, shows the docked tree assigned.
+ *  - `same`: the step alone, done on S, shows the docked tree assigned. Always so for a step
+ *    made on S, whose docked tree is the projection of S (#782 PR6: floating out and back, moves,
+ *    drops, a divider drag, showing and hiding); for an assignment no step described, S shows the
+ *    tree once the docked panes it dropped are taken out.
  *  - `written`: it does once the sizes, active tabs, tab order, `collapsed` flags and titles of
- *    the docked tree are written onto S (what a resize or a tab click changes; after a step that
- *    moves a pane, the two disagreed about one of those).
+ *    the docked tree are written onto S (what a tab click or a cancelled divider drag changes).
  *  - `rebuilt`: S was made again from the docked tree and the slots (`inflateShadow`): a layout
- *    taken as a whole, a change no step described, or a step S does differently.
+ *    taken as a whole, a region moved to or from an edge band (PR8), a pane docked by a slot that
+ *    is not its place in S, or another change no step described.
  *  - `failed`: following threw; S is the docked tree with no pane remembered.
  */
 export interface ShadowFollow {
@@ -181,9 +184,8 @@ let watchShadowImpl: (dock: DockState, watch: ((follow: ShadowFollow) => void) |
 
 /**
  * The shadow tree `dock` keeps beside its layout, and the panes out of the tree whose slot names
- * no place in it (#782 PR4; not exported from the package). For the tests only: nothing reads S
- * yet - `DockState` only keeps it, with `projectShadow(shadow)` the same as `layout.docked` after
- * every assignment.
+ * no place in it (#782 PR4; not exported from the package). For the tests only.
+ * `projectShadow(shadow)` is the same as `layout.docked` after every assignment.
  */
 export function shadowStateOf(dock: DockState): ShadowState {
 	return shadowImpl(dock);
@@ -224,14 +226,24 @@ export class DockState {
 	 * order. A hidden pane remembers no place (#782 PR5). Plain (not reactive) and not saved; an entry
 	 * whose pane is no longer a floating window - docked again by any path, auto-hidden or gone -
 	 * is dropped by the `layout` setter (#735).
+	 *
+	 * Since #782 PR6 the place itself is the pane's tombstone in `#shadow`: the slot is what
+	 * `homeSlot` hands out for "back" (`dockAtSlot` takes it as the name of that place), and what S
+	 * is made again from when a change is not made on it (`#followShadow`: the edge bands, a layout
+	 * taken as a whole). The setter still keeps its `share`s right for that (`#withoutGoneShares`,
+	 * `#withoutLeftShares`); they go with `core/slot.ts` (PR7 / PR8).
 	 */
 	#homeSlots = new Map<string, DockSlot>();
 	/**
 	 * The shadow tree S (#782 PR4, `core/shadow.ts`): the docked tree with every pane that is out
 	 * of it but remembers a docked place - a pane floated by `undockPanel`; a hidden pane remembers
-	 * none (#782 PR5) - as a tombstone. Kept beside the layout and not read by anything yet: docking
-	 * back and moving still go by the slots (`core/slot.ts`). After every assignment its projection
-	 * is `layout.docked` (`#followShadow`). Plain, not saved.
+	 * none (#782 PR5) - as a tombstone. What decides where panes go (#782 PR6): floating a pane out
+	 * and docking it back (`undockPanel`, `dockAtSlot` with its `homeSlot`), moving a docked pane and
+	 * dropping a floating one (`dockExisting*`, `dockPanel*`, `ensurePanel`), a divider drag
+	 * (`resizeSplit`), and showing and hiding (`show` works the default place out on S, `dismiss`)
+	 * are done on S, and the docked tree assigned is its projection. After every assignment its
+	 * projection is `layout.docked` (`#followShadow`, which follows the changes not made on S: the
+	 * edge bands, tabs, flags, an assignment from outside). Plain, not saved.
 	 */
 	#shadow: ShadowNode | null = null;
 	/** The `docked` tree `#shadow` was last made to show. */
@@ -376,14 +388,15 @@ export class DockState {
 				if (win)
 					away.push({ panel: { type: 'panel', id, title: win.title, icon: win.icon }, slot });
 			}
-			const { shadow, unplaced } = inflateShadow(next.docked, away);
+			const { shadow, unplaced } = inflateShadow(next.docked, away, idsOutOfDocked(next));
 			this.#shadow = shadow;
 			this.#shadowUnplaced = new Set(unplaced);
 			this.#shadowSeen = next.docked;
 			this.#shadowWatch?.({ step: label, result: 'rebuilt' });
 		} catch (error) {
-			// S is not read by anything yet: a fault in following it does not undo the layout already
-			// assigned. It is not swallowed either (#782 PR5): reported like an exception nobody caught.
+			// A step made on S threw before anything was assigned (the layout is as it was). Here the
+			// layout is assigned already and S only follows it: a fault does not undo it. It is not
+			// swallowed either (#782 PR5): reported like an exception nobody caught.
 			this.#shadow = next.docked;
 			this.#shadowUnplaced = new Set(pending.keys());
 			this.#shadowSeen = next.docked;
@@ -1115,10 +1128,16 @@ export class DockState {
 	}
 
 	/**
-	 * The docked tree with the floating window `id` (open or closed) put at `slot`
-	 * (`core/slot.ts#restoreDockSlot`), counting the other panes that remember a docked place
-	 * (#733: the share it takes of a split leaves theirs); `null` = no such window, or the place
-	 * is gone. Pure: the layout does not change. For "back" (`dockAtSlot`) and its preview.
+	 * The docked tree with the floating window `id` (open or closed) put at `slot`; `null` = no such
+	 * window, or the place is gone. Pure: the layout does not change. For "back" (`dockAtSlot`) and
+	 * its preview.
+	 *
+	 * Its `homeSlot` names its place in the shadow tree (#782 PR6): the pane is back at its
+	 * tombstone - in the split / tab group it left, at the share it held, whatever was moved, hidden
+	 * or floated since and whatever order the panes come back in. Any other slot (one the caller
+	 * took with `captureDockSlot`), or a `homeSlot` S has no place for, is put back by
+	 * `core/slot.ts#restoreDockSlot` on the docked tree, counting the other panes that remember a
+	 * docked place (#733).
 	 */
 	restoredAt(id: string, slot: DockSlot, makeId: () => string = this.#makeId): DockNode | null {
 		const win = this.layout.floating.find((w) => w.id === id);
@@ -1414,9 +1433,9 @@ export class DockState {
 
 	/**
 	 * Move the OPEN floating window `panelId` back into the docked place `slot` describes (#663 ④,
-	 * `DockHost.movePanel`'s `{ back: true }`): `core/slot.ts#restoreDockSlot`, the same as `show` does
-	 * for a hidden pane. Returns `false` (nothing changes) when it is not an open floating window or
-	 * the place is gone.
+	 * `DockHost.movePanel`'s `{ back: true }`): the tree `restoredAt` gives, with the region the pane
+	 * comes back into expanded. Returns `false` (nothing changes) when it is not an open floating
+	 * window or the place is gone.
 	 */
 	dockAtSlot(panelId: string, slot: DockSlot, makeId: () => string = this.#makeId): boolean {
 		const win = this.layout.floating.find((w) => w.id === panelId);

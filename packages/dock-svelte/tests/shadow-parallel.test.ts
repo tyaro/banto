@@ -38,7 +38,7 @@ import {
 	type DockState,
 	type ShadowFollow
 } from '../src/state.svelte';
-import type { DockNode, DockSplitNode } from '../src/types';
+import type { DockEdge, DockNode, DockSplitNode, DropRegion } from '../src/types';
 import {
 	buildTree,
 	counterMakeId,
@@ -48,6 +48,7 @@ import {
 	opRecipe,
 	resolveStep,
 	runStep,
+	treeDiff,
 	treeRecipe,
 	treeText,
 	type OpKind,
@@ -338,6 +339,63 @@ describe('every step is done on S (#782 PR6)', () => {
 	});
 });
 
+describe('the prediction of a drop is the drop (#782 PR6)', () => {
+	// `droppedTree` / `droppedAtEdgeTree` are what the drag controller asks the panes a drop pushes
+	// out by: made on S like the drop itself, so they cannot say another tree.
+	it('a docked pane moved (side, tab, outer edge), with panes hidden and floated around it', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(1, 12), (recipe: TreeRecipe, recipes) => {
+				const tree = buildTree(recipe);
+				const dock = newDock(tree);
+				const steps: string[] = [];
+				for (const op of recipes) {
+					const step = resolveStep(dock, op, ALL);
+					if (step === null) continue;
+					const edge = /^(\w+)>>(\w+)$/.exec(step);
+					const move = /^(\w+)>(\w+):(\w+)$/.exec(step);
+					const ids = counterMakeId(500);
+					const predicted = edge
+						? dock.droppedAtEdgeTree(edge[1], edge[2] as DockEdge, ids)
+						: move
+							? dock.droppedTree(move[1], move[2], move[3] as DropRegion, ids)
+							: undefined;
+					const before = dock.layout;
+					runStep(dock, step);
+					steps.push(step);
+					if (predicted === undefined) continue;
+					// `null`: nothing to do (the only docked pane to an edge) - and nothing was done.
+					const diff =
+						predicted === null
+							? dock.layout === before
+								? null
+								: 'predicted nothing'
+							: treeDiff(dock.layout.docked, predicted);
+					if (diff) failCase(tree, steps, diff);
+				}
+			}),
+			params(500)
+		);
+	});
+
+	it('a floating window dropped onto a pane / at an edge, and a pane that is neither', () => {
+		const { dock } = watched(
+			split('s', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')])
+		);
+		dock.undockPanel('a');
+		const onto = dock.droppedTree('a', 'c', 'bottom', counterMakeId(500));
+		const atEdge = dock.droppedAtEdgeTree('a', 'top', counterMakeId(500));
+		// Nothing changed by asking.
+		expect(treeText(dock.layout.docked)).toContain('{"row":["b","c"]}');
+		expect(dock.droppedTree('nope', 'c', 'bottom')).toBeNull();
+		expect(dock.droppedAtEdgeTree('nope', 'top')).toBeNull();
+		const other = createDockState(dock.serialize(), counterMakeId());
+		dock.dockPanel('a', 'c', 'bottom');
+		expect(treeDiff(dock.layout.docked, onto)).toBeNull();
+		other.dockPanelAtEdge('a', 'top');
+		expect(treeText(other.layout.docked)).toBe(treeText(atEdge));
+	});
+});
+
 describe('S decides (pinned; the cases PR4 found the slots and S apart in, #782 PR6)', () => {
 	const run = (tree: DockNode, steps: string[]): { dock: DockState; last: ShadowFollow[] } => {
 		const { dock, follows } = watched(tree);
@@ -481,6 +539,14 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		const group = findNode(shadowStateOf(dock).shadow, 't');
 		expect(group?.type === 'tabs' && group.children.map((c) => c.id)).toEqual(['c', 'b', 'a', 'd']);
 		expect(group?.type === 'tabs' && group.children[group.activeIndex].id).toBe('d');
+		// And that is where the tab comes back (#782 PR6; the decision on PR #857's judgment 30): the
+		// second tab, as it was, whatever was moved around its place - and the active one.
+		follows.length = 0;
+		expect(dock.dockAtSlot('b', dock.homeSlot('b')!)).toBe(true);
+		expect(follows).toEqual([{ step: 'dockAtSlot', result: 'same' }]);
+		const back = findNode(dock.layout.docked, 't');
+		expect(back?.type === 'tabs' && back.children.map((c) => c.id)).toEqual(['c', 'b', 'a', 'd']);
+		expect(back?.type === 'tabs' && back.children[back.activeIndex].id).toBe('b');
 	});
 
 	it('a region collapsed to a band and expanded', () => {

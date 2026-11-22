@@ -55,6 +55,20 @@ describe('an id made again by a slot is free of the whole layout (#782 PR6)', ()
 		expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
 	});
 
+	it('the same by "back" (the pane`s `homeSlot`): its place in the shadow tree is made again around the band', () => {
+		const dock = createDockState({ version: 2, floating: [], docked: tree() }, counterMakeId());
+		dock.undockPanel('b');
+		dock.dockExistingAtEdge('c', 'left');
+		expect(dock.autoHideRegion('d')).toBe(true);
+		expect(dock.dockAtSlot('b', dock.homeSlot('b')!)).toBe(true);
+		expect(twice(allIds(dock.layout))).toEqual([]);
+		expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
+		// And the band's region comes back beside it.
+		expect(dock.restoreAutoHidden('d')).toBe(true);
+		expect(twice(allIds(dock.layout))).toEqual([]);
+		expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
+	});
+
 	it('restoreDockSlot: an id in `taken` is not used again', () => {
 		const root: DockNode = {
 			type: 'split',

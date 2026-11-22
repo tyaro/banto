@@ -2,8 +2,9 @@
  * The shadow tree S of the docked layout (Issue #782 PR2; downstream-requests-2026-11-plan §4.11,
  * property tests per ADR-0033). Pure functions only, no Svelte imports, like `tree.ts`: every
  * function returns a NEW tree (or the same object when nothing changes) and never mutates its
- * input. `DockState` keeps an S beside its layout (#782 PR4, `#followShadow`) and reads nothing
- * from it yet: hiding, showing and moving go by S from PR5 / PR6 on.
+ * input. `DockState` keeps an S beside its layout (#782 PR4, `#followShadow`) and, since #782 PR6,
+ * makes its changes on it - floating a pane out and back, moves, drops, divider drags, showing a
+ * hidden pane at its default place: the docked tree it assigns is the projection of S.
  *
  * S is the docked tree with every pane that has a docked place in it: the panes that are docked
  * now, and the panes that are outside (hidden or floated) but go back to a place in the dock.
@@ -1407,8 +1408,17 @@ function finishWork(work: Work, records: Map<string, Map<string, SlotRecord>>): 
  * over other containers, an id in use - is not guessed at ("beside the nearest anchor" in another
  * container, as `slot.ts#restoreDockSlot` does). An entry for a pane that is docked, or a second entry for a
  * pane, is ignored.
+ *
+ * `taken` (#782 PR6): the ids of the layout that are not in `docked` - the regions in the edge
+ * bands with their panes, the floating windows (`core/autohide.ts#idsOutOfDocked`). They are in
+ * use: a tab group that went to a band with its id is not made again in S around a tab left docked
+ * (the pane out of it is `unplaced`), or the layout would hold the id twice once that pane is back.
  */
-export function inflateShadow(docked: DockNode | null, away: Iterable<ShadowAway>): InflatedShadow {
+export function inflateShadow(
+	docked: DockNode | null,
+	away: Iterable<ShadowAway>,
+	taken: Iterable<string> = []
+): InflatedShadow {
 	const dockedIds = new Set(docked ? shadowPanelIds(docked) : []);
 	const entries: { leaf: WorkLeaf; levels: SlotLevel[] }[] = [];
 	const records = new Map<string, Map<string, SlotRecord>>();
@@ -1428,6 +1438,8 @@ export function inflateShadow(docked: DockNode | null, away: Iterable<ShadowAway
 		});
 	}
 	if (entries.length === 0) return { shadow: docked, unplaced: [] };
+	// In use by something else of the layout: a container is not made again with such an id.
+	for (const id of taken) reserved.add(id);
 	const state = { root: docked ? workOf(docked) : null };
 	// A slot may fit only once another pane is in (its chain was cut short, or the panes it names
 	// are away themselves).
