@@ -46,7 +46,7 @@ source; if there is a discrepancy, the code wins.
 
 ## 1. Decision symmetry between REST and Tauri [machine-checked: existence of both paths for mutating operations]
 
-Every mutating operation (create/update/delete/import/login/logout/setup)
+Every mutating operation (create/update/delete/import/login/logout)
 **passes through the same authorization and the same audit on both the REST and
 Tauri paths**. Only the origin (`"rest"` / `"tauri"`) differs.
 
@@ -554,15 +554,51 @@ without a runtime guard are **upheld by reviewing every call site**.
     run with another subject's permissions and audit name). Only
     `auth_identity`, which is for display, may read again
     (`displayed_session`); `auth_resolve` reports the same window as `stale`.
-  - **A wiring that opens `/api/auth/setup` (`allow_setup = true`) must not
-    switch its `AuthState` to no-login** (a condition until first-run setup is
-    removed): the account it creates would be handed a token that was never
-    stored. The stock Tauri app has `allow_setup = false` and `banto-serve`
-    does not copy the mode, so the two do not meet in the stock wiring.
-  - `banto-serve` has no way to switch the mode at run time and does not copy
-    the mode yet (it stays on `AuthState`'s default, login required).
-    Read-only REST in no-login mode and the listen condition come with the
-    removal of first-run setup (C2b in the plan).
+  - **While no login is needed (`auth.disabled` on), REST is read-only**
+    (ADR-0034 §6). This is not a separate rule; it follows from copying the
+    mode: account logins are refused and account tokens are not accepted, so
+    what gets through is public viewing (viewer: reads, and a PUT of its own
+    kind's ui-settings) and the grants a derived app registered explicitly
+    (with the role and permissions of their `GrantSpec`). Therefore **do not
+    add a route that changes business or admin data over REST in no-login
+    mode** (no new unauthenticated route, no route that is open "while there
+    is no account". The first-run setup route was removed in v8.0.0).
+  - **Both wirings copy the stored mode at startup**, before the first
+    request. Tauri calls `apply_mode_to_rest_sessions`; `banto-serve` calls
+    `switch_auth_mode` with the value `startup::check` read. `banto-serve`
+    has no way to switch the mode at run time (only a Tauri command saves the
+    auth mode). If you add a REST route that saves it, call
+    `switch_auth_mode` right after the save, in the same function ("persist,
+    then revoke", above).
+  - **What stops a startup is written in one place,
+    `admin_template_core::startup::check`** (ADR-0034 §2, §4-§6, §9): the
+    built-in row, a reserved-name collision, `auth.disabled` missing or not
+    `true` / `false`, `auth.disabled_role` missing or unknown in no-login
+    mode, login required with no administrator account, and for
+    `banto-serve` (`Wiring::Headless`) also "no login and no public viewing"
+    (it does not listen). **Never fill a missing or unreadable key with a
+    default, and never fall back to no-login silently** (either would let
+    whoever can edit the database turn authentication off). The same
+    function runs on a restore candidate (`sqlite_restore_manifest(wiring)`,
+    on a working copy after the migrations and the first-boot seed; the
+    wiring that will start decides: a candidate with no login and no public
+    viewing is accepted by Tauri and refused by `banto-serve` before the
+    swap).
+  - **Requiring login (lock-down) goes through only while an administrator
+    account that can log in exists.** The save itself decides
+    (`SettingsService::set_auth_config`). A wiring calls the save under
+    `auth_config_lock` and `switch_auth_mode` after it (keep the order). Do
+    not write the auth-mode keys with `settings.set("auth.disabled", ..)`
+    (that skips the check). The last-administrator guard holds in no-login
+    mode too.
+  - **The only way to create the first account without the screen is
+    `banto-serve create-admin`** (`admin_template_core::first_account`,
+    ADR-0034 §7). It does not listen, stops with nothing written when a
+    restore is staged, and writes "the first-boot seed (when the marker is
+    missing; the same function as a start) -> the administrator -> login
+    required -> audit" in one transaction. Do not add an "account only" or a
+    "lock-down only" route, never make it a network route, do not put it in
+    the Tauri executable, and never take the password as an argument.
 - **Sessions are re-checked against the account on every request (Issue
   #204).** A session carries the account's row id + `auth_epoch` from when it
   was established; REST's `require_auth` (`AuthState::authenticate`) and

@@ -61,9 +61,9 @@ function toProviderError(err: unknown): ProviderError {
 }
 
 /**
- * `auth_setup`/`auth_change_password` reject with `BantoError::Validation`
+ * `auth_change_password` rejects with `BantoError::Validation`
  * (spec §8.2) when the backend rejects a field (short password, wrong
- * current password, ...); `setup`/`changePassword` below surface the FIRST
+ * current password, ...); `changePassword` below surfaces the FIRST
  * field error's message as a plain `{ success: false, error }` result
  * (rather than rethrowing) so the login/settings forms can show it without
  * a try/catch of their own - other error kinds still rethrow, since those
@@ -132,7 +132,7 @@ export function createTauriDataProvider(options: TauriInvokeOptions): DataProvid
 export interface TauriAuthProviderOptions extends TauriInvokeOptions {
 	/**
 	 * Issue #260 (design §5.3, S-78): how long a state-changing auth command
-	 * (login/logout/setup/changePassword) may stay unanswered before the
+	 * (login/logout/changePassword) may stay unanswered before the
 	 * provider stops waiting for it - it then treats the outcome as unknown
 	 * (advances the revision and notifies) and no longer reports `resolve()`
 	 * answers as stale because of it. Default 10 000 ms.
@@ -142,7 +142,7 @@ export interface TauriAuthProviderOptions extends TauriInvokeOptions {
 
 const DEFAULT_OP_PENDING_TIMEOUT_MS = 10_000;
 
-/** Wire shape of `auth_login`/`auth_setup` (`LoginResult` in the Rust crate). */
+/** Wire shape of `auth_login` (`LoginResult` in the Rust crate). */
 interface LoginResultWire {
 	success: boolean;
 	error?: string | null;
@@ -169,7 +169,7 @@ function seqOf(value: unknown): number | undefined {
 /**
  * Standard `AuthProvider` for the Tauri webview (spec §3.3), backed by the
  * `auth_login` / `auth_logout` / `auth_resolve` / `auth_status` /
- * `auth_setup` / `auth_change_password` commands (spec §8.2). (The Rust
+ * `auth_change_password` commands (spec §8.2). (The Rust
  * `auth_check` / `auth_identity` commands remain for other callers; the v2
  * `AuthProvider` has no `check()`/`getIdentity()`, design §5.4.)
  *
@@ -351,18 +351,10 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Auth
 			};
 		},
 
-		async status(): Promise<{ initialized: boolean }> {
-			return call<{ initialized: boolean }>('auth_status');
-		},
-
-		async setup(params: Record<string, unknown>): Promise<AuthOperationResult> {
-			let result: LoginResultWire;
-			try {
-				result = await runOp<LoginResultWire>('auth_setup', params, (r) => r.seq);
-			} catch (err) {
-				return { success: false, error: firstValidationMessage(toProviderError(err)) };
-			}
-			return loginOutcome(result);
+		// The desktop window has no grant to enter (its no-login session is
+		// already there when the page asks), so the answer carries no `grants`.
+		async status(): Promise<{ grants?: Record<string, boolean> }> {
+			return call<{ grants?: Record<string, boolean> }>('auth_status');
 		},
 
 		async changePassword(
@@ -385,7 +377,7 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Auth
 
 /**
  * Issue #260 (design I-19): may this rejection of a state-changing auth
- * command (login/logout/setup/change_password) have changed the Rust session
+ * command (login/logout/change_password) have changed the Rust session
  * slot? Decided on the RAW rejection, before `toProviderError`:
  * - not a wire `ErrorBody` (an IPC failure, a string, an `Error`, anything
  *   unrecognizable): no response from the command - unknown, so yes;

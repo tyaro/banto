@@ -109,7 +109,9 @@ export async function installTauriStub(page: Page): Promise<void> {
 			disabledRole: 'admin',
 			autologinEnabled: false,
 			autologinUsername: null,
-			disabledPermissions: [] as string[]
+			disabledPermissions: [] as string[],
+			// An administrator account exists: login can be required again (ADR-0034 §6).
+			hasAdminAccount: true
 		};
 
 		async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
@@ -168,7 +170,7 @@ export async function installTauriStub(page: Page): Promise<void> {
 				case 'permissions_catalog':
 					return mock.permissionCatalog;
 				case 'auth_status':
-					return { initialized: true };
+					return { viewerPublic: false };
 				case 'auth_config_get':
 					if (mock.authConfigFails) throw 'auth settings unavailable (stub)';
 					return authSettings;

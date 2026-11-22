@@ -53,6 +53,13 @@ export interface AuthSettings {
 	 * registers none).
 	 */
 	disabledPermissions: UserPermission[];
+	/**
+	 * Whether an administrator account that can log in exists (ADR-0034 §6).
+	 * Requiring a login (`disabled: false`) is refused without one, so the
+	 * settings screen says why and points at user management instead of
+	 * letting the save fail.
+	 */
+	hasAdminAccount: boolean;
 }
 
 const ERROR_KINDS = new Set([

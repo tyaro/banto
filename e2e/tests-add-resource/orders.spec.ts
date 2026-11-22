@@ -8,12 +8,12 @@
  * 走らせる。手元で試すときも、先に生成して pnpm build と banto-serve のビルドを済ませる
  * （docs/recipes/add-resource.md「生成器で足す」）。
  *
- * 見るのは「生成した画面が実際に動く」ことだけ: 初回セットアップ → ナビから一覧 →
+ * 見るのは「生成した画面が実際に動く」ことだけ: 最初の管理者でログイン → ナビから一覧 →
  * フォームで 1 件作成 → 一覧にその行。ラベルはフィクスチャの `label.ja` と同じ文字列で引く。
  * 待ちは locator の auto-retry のみ（sleep なし）。
  */
 import { expect, test } from '@playwright/test';
-import { createFirstAdmin } from '../first-run-setup';
+import { loginAsFirstAdmin } from '../first-admin';
 
 // フィクスチャ（scripts/fixtures/add-resource/orders.json）の ja ラベル。
 const RESOURCE_LABEL = '注文（受注）';
@@ -25,11 +25,8 @@ const FIELD_ORDERED_ON = '受注日';
 const CUSTOMER = `E2E顧客-${Date.now()}`;
 
 test('生成した orders: ナビから一覧が開き、フォームで作った 1 件が一覧に出る', async ({ page }) => {
-	await createFirstAdmin(page, {
-		displayName: 'E2E管理者',
-		username: 'e2e-admin',
-		password: 'E2eAdminPass1'
-	});
+	// サーバーの起動前に `banto-serve create-admin` で作ったアカウント（first-admin.ts）。
+	await loginAsFirstAdmin(page);
 
 	// ナビに生成した項目が出て、開くと一覧（空）が出る。
 	await page

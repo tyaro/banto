@@ -19,9 +19,11 @@ TLS 終端・PWA の運用手順をまとめる。構成図は
    ヘッダーには「LAN 共有中・接続 n 台」が出る（n はブラウザのタブ・ウィンドウの数。
    同じ端末の複数のタブは別々に数える）。
 2. 表示されたURL/QRコードから、同一LAN内の他端末のブラウザでアクセスし、
-   初回起動時（Tauriウィンドウまたはこのブラウザ自身）に作成した
-   管理者アカウントでログイン。まだアカウントがなければ初回セットアップ
-   画面が表示される。
+   ユーザー管理で作ったアカウントでログイン。**ログインできるのは、ログイン必須に
+   切り替えた後だけ**（新しい DB はログインなしで始まり、その間は LAN の端末は
+   閲覧公開で読むことしかできない。先にデスクトップで管理者のアカウントを作り、
+   設定 → セキュリティでログイン必須に切り替える。
+   [no-login-app.md](no-login-app.md)「育ったらログイン機能を足す」）。
 
 ### 起動時にポートが使用中だったとき
 
@@ -303,7 +305,12 @@ embed-ui`を省略すると組み込みのプレースホルダページを返�
 | `BANTO_DB`              | `./banto-dev.sqlite3`   | DB。`postgres://` URL にすると PostgreSQL 経路（[database-backup.md](database-backup.md)）                                                                                                                              |
 | `BANTO_ATTACHMENTS_DIR` | （SQLite では使わない） | `BANTO_DB` が PostgreSQL のとき**必須**。添付ファイルの保存先の親ディレクトリで、DB ごとに `pg_<ホスト>_<ポート>_<DB名>_<ハッシュ>` のサブディレクトリを作る。SQLite では使わず、添付は DB ファイルの隣の `attachments` |
 | `BANTO_VIEWER_PUBLIC=1` | 未設定                  | 起動時に閲覧公開を ON に seed する。e2e とローカル確認用                                                                                                                                                                |
-| `BANTO_ALLOW_SETUP=1`   | 未設定（403）           | `POST /api/auth/setup`（初回セットアップ）を有効にする。dev/e2e 用（`e2e/playwright.config.ts`）                                                                                                                        |
+
+**最初の管理者**: 新しい DB はアカウントなし・ログインなしで、`banto-serve` はその状態では
+（閲覧公開が off なら）待ち受けずに止まる。先に `banto-serve create-admin --username <名前>`
+（パスワードは標準入力）で管理者を作る。作ると同時にログイン必須になる
+（[no-login-app.md](no-login-app.md)「ヘッドレスの最初の管理者」）。初回セットアップの口
+（`POST /api/auth/setup`・`BANTO_ALLOW_SETUP`）は v8.0.0 で無くなった。
 
 詳細（PostgreSQL は `--features postgres` でのビルドが必要、`BANTO_VIEWER_PUBLIC` は
 設定を永続化するので外しても OFF に戻らない等）は
@@ -337,7 +344,7 @@ embed-ui`を省略すると組み込みのプレースホルダページを返�
   未実装（v2以降で検討、[ADR-0003](../adr/0003-tls-via-reverse-proxy.md)）。
   **信頼できるLAN以外では有効化しないこと。**
   HTTPのみのため、ログイン情報やセッショントークンは平文でLAN内を流れる。
-- 認証はargon2id資格情報ストア + 初回セットアップ実装済み
+- 認証はargon2id資格情報ストア
   （`crates/banto-admin-services/src/users.rs`。固定パスワードのデモ実装
   ではない）。セッショントークンは絶対8時間/アイドル1時間で自動失効し、
   ログインは5回連続失敗で60秒ロックアウトされる（いずれも

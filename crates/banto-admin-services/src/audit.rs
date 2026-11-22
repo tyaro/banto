@@ -198,6 +198,68 @@ pub struct AuditEntry<'a> {
     pub result: &'a str,
 }
 
+// The INSERT of one audit entry, expanded for each executor (a pool, or a
+// connection inside the caller's transaction) without a generic SQL layer.
+//
+// sqlx 0.9: `sqlx::query` requires `impl SqlSafeStr`, which a runtime `String`
+// does not implement directly. AssertSqlSafe is safe here because the only
+// interpolated fragment is `dialect.placeholders(10)`, which is internally
+// generated from the `Dialect` enum (never caller input) - every actual value
+// is bound via `.bind(...)`.
+macro_rules! insert_entry {
+    ($exec:expr, $dialect:expr, $entry:expr) => {{
+        let detail = $entry
+            .detail
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|err| {
+                BantoError::Other(format!("監査ログのdetailシリアライズに失敗しました: {err}"))
+            })?;
+        let sql = format!(
+            "INSERT INTO audit_log (actor_username, actor_id, actor_role, actor_kind, action, resource, entity_id, detail, origin, result) \
+             VALUES ({})",
+            $dialect.placeholders(10),
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind($entry.actor_username)
+            .bind($entry.actor_id)
+            .bind($entry.actor_role)
+            .bind($entry.actor_kind)
+            .bind($entry.action)
+            .bind($entry.resource)
+            .bind($entry.entity_id)
+            .bind(detail)
+            .bind($entry.origin)
+            .bind($entry.result)
+            .execute($exec)
+            .await
+            .map(|_| ())
+            .map_err(banto_storage::storage_error)
+    }};
+}
+
+/// Write one audit entry on a SQLite connection that is inside the caller's
+/// transaction: the row is committed (or rolled back) with the change it
+/// records. For a caller with no running app around it - the headless
+/// first-account CLI (ADR-0034 section 7). Everything else records through
+/// [`AuditLogService::record`], which never fails the audited operation.
+pub async fn record_on_sqlite(
+    conn: &mut sqlx::SqliteConnection,
+    entry: &AuditEntry<'_>,
+) -> Result<(), BantoError> {
+    insert_entry!(&mut *conn, banto_storage::Dialect::Sqlite, entry)
+}
+
+/// PostgreSQL twin of [`record_on_sqlite`].
+#[cfg(feature = "postgres")]
+pub async fn record_on_postgres(
+    conn: &mut sqlx::PgConnection,
+    entry: &AuditEntry<'_>,
+) -> Result<(), BantoError> {
+    insert_entry!(&mut *conn, banto_storage::Dialect::Postgres, entry)
+}
+
 /// `actor_kind` of an account session (ADR-0034 section 3).
 pub const ACTOR_KIND_ACCOUNT: &str = "account";
 /// `actor_kind` of the desktop's no-login session.
@@ -560,59 +622,11 @@ impl AuditLogService {
     /// modes; every REST/Tauri call site should use `record` instead, which
     /// never fails the caller's real operation over an audit-write hiccup.
     pub async fn try_record(&self, entry: AuditEntry<'_>) -> Result<(), BantoError> {
-        let detail = entry
-            .detail
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|err| {
-                BantoError::Other(format!("監査ログのdetailシリアライズに失敗しました: {err}"))
-            })?;
-
-        let dialect = self.db.dialect();
-        // sqlx 0.9: `sqlx::query` requires `impl SqlSafeStr`, which a runtime
-        // `String` does not implement directly. AssertSqlSafe is safe here
-        // because the only interpolated fragment is `dialect.placeholders(10)`,
-        // which is internally generated from the `Dialect` enum (never
-        // caller input) - every actual value is bound below via `.bind(...)`.
-        let sql = format!(
-            "INSERT INTO audit_log (actor_username, actor_id, actor_role, actor_kind, action, resource, entity_id, detail, origin, result) \
-             VALUES ({})",
-            dialect.placeholders(10),
-        );
         match &self.db {
-            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
-                .bind(entry.actor_username)
-                .bind(entry.actor_id)
-                .bind(entry.actor_role)
-                .bind(entry.actor_kind)
-                .bind(entry.action)
-                .bind(entry.resource)
-                .bind(entry.entity_id)
-                .bind(detail)
-                .bind(entry.origin)
-                .bind(entry.result)
-                .execute(pool)
-                .await
-                .map(|_| ()),
+            Db::Sqlite(pool) => insert_entry!(pool, banto_storage::Dialect::Sqlite, entry),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
-                .bind(entry.actor_username)
-                .bind(entry.actor_id)
-                .bind(entry.actor_role)
-                .bind(entry.actor_kind)
-                .bind(entry.action)
-                .bind(entry.resource)
-                .bind(entry.entity_id)
-                .bind(detail)
-                .bind(entry.origin)
-                .bind(entry.result)
-                .execute(pool)
-                .await
-                .map(|_| ()),
+            Db::Postgres(pool) => insert_entry!(pool, banto_storage::Dialect::Postgres, entry),
         }
-        .map_err(banto_storage::storage_error)?;
-        Ok(())
     }
 
     /// Fire-and-forget wrapper around [`AuditLogService::try_record`] (spec

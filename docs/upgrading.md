@@ -449,10 +449,54 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   戻す順によらない（前は順で形や比率が変わることがあった）。「浮かせて戻す」「浮かせたまま隣を動かす」を E2E や
   基準画像で見ているアプリは確かめ直す。
 
+**初回セットアップの撤去（C2b、ADR-0034 §5〜§7・§9）**。C1・C2 の後に作った DB は作り直さなくてよい
+（`0015_auth_mode_defaults.sql` が足されるだけ）。
+
+- **取り込むもの（B）**: `core/migrations-{sqlite,postgres}/0015_auth_mode_defaults.sql`、`core/src/first_account.rs`、
+  `core/src/startup.rs`・`core/src/bin/banto-serve.rs`・`core/src/rest/mod.rs`、`src-tauri/src/lib.rs` の認証まわり、
+  `src/routes/login/+page.svelte`、`src/routes/(app)/settings/SecuritySection.svelte`、`messages/*.json`、`e2e/`。
+  自分の migration を 0015 以降の番号で足している派生アプリは番号をずらす。
+- **新しい DB はアカウントなし・ログインなしで始まる**。`0015` が `auth.disabled = 'true'`・`auth.disabled_role = 'admin'` を
+  入れる（既にある行は変えない。アカウントが居て `auth.disabled` が無い DB には `'false'` を入れる）。初回セットアップの画面・
+  `POST /api/auth/setup`・`BANTO_ALLOW_SETUP`・`auth_setup`・`AuthProvider.setup`・`status().initialized`・
+  `UsersService::setup_first_user` / `is_initialized` は無い。
+- **デスクトップ**はログインなし（`local`）でアプリに入る。**アカウントはユーザー管理で作る**。ログイン必須への切り替えは、
+  ログインできる管理者（`kind = 'account'` かつ `role = 'admin'`）が 1 つ以上あるときだけ通る
+  （`SettingsService::set_auth_config` が `validation` で断る。画面は `hasAdminAccount` を見てスイッチを止める）。
+  認証モードのキーを `settings.set("auth.disabled", ..)` で直接書いている派生アプリは `set_auth_config` に直す。
+- **ヘッドレス（`banto-serve`）の最初の管理者**: サーバーを止めて
+  `banto-serve create-admin --username <名前> [--display-name <表示名>] < パスワードのファイル`。管理者の作成と
+  ログイン必須への切り替えを 1 度に行い、待ち受けずに終わる。**新しい DB の `banto-serve` は、これを実行するまで
+  （閲覧公開が off なら）待ち受けない**。運用の手順書・コンテナの起動スクリプト・e2e で `BANTO_ALLOW_SETUP=1` と
+  初回セットアップに頼っている所は、この 1 手に置き換える。`display` プリセットの生成物は、初回の seed で
+  閲覧公開が on になるので、そのまま（読み取り専用で）起動する。
+- **ログインなしの間の REST は読み取り専用**。`banto-serve` が起動時にモードを写す（`startup::check` の結果で
+  `auth.switch_auth_mode(..)`）。アカウントのログインは `200 {success:false, error}` で断られ、届くのは閲覧公開と、
+  自分で登録した grant だけ。自分の配線で `AuthState` を組み立てている派生アプリは、同じ 1 行を写す。
+- **起動時の検査が増えた**（`startup::check`）: `auth.disabled` が無い・`true` / `false` 以外、ログインなしで
+  `auth.disabled_role` が無い・知らない値、ログイン必須で管理者のアカウントが 0、`banto-serve` ではさらに
+  「ログインなしで閲覧公開も off」。どれも名前と対処を書いたエラーで起動を止める（既定で埋めない）。直すのは
+  `banto-serve create-admin`（SQLite のファイルでも PostgreSQL でも、その DB を `BANTO_DB` で指す）か、下のバックアップの手順。
+  `SettingsService::auth_config()` も、この 2 つのキーを既定で埋めずにエラーを返す（自分の試験で `settings` を空の表から
+  作っている所は、`auth.disabled` の行を入れる）。
+- **配線の呼び方（B）**: `startup::check(&db)` → `startup::check(&db, Wiring::Desktop)`（`banto-serve` は
+  `Wiring::Headless { seed_viewer_public: <BANTO_VIEWER_PUBLIC=1 か> }`。`BANTO_VIEWER_PUBLIC=1` のときは、検査の前に
+  `startup::seed_viewer_public(&settings)` で設定へ書く。検査は保存済みの値だけを見る）。戻り値は `Startup { users, auth }`
+  （組み込みの行の id は `.users.builtin_admin_id`、起動時のモードは `.auth`）。`startup::sqlite_restore_manifest()` →
+  `sqlite_restore_manifest(wiring)`（復元の候補を、その配線が起動できるかで確かめる）。`api_router` と
+  `extra_auth_router` の引数から `allow_setup` が消えた。
+- **`@banto/admin-core`（A）**: `AuthProvider.setup`・`LegacyAuthProvider.setup` を削除。`status()` の型は
+  `{ grants?: Record<string, boolean> }`。自作の provider から `setup` と `initialized` を消し、ログインの画面の
+  「未初期化ならセットアップのフォーム」の分岐を消す。
+- **試験・e2e**: `users.setup_first_user(a, b, c)` は `users.create_user(a, b, c, Role::Admin)` にする。Tauri の試験で
+  アカウントのログインを確かめる所は、DB をログイン必須にしてから始める（テンプレートは `tests.rs` の `started_for_tests!`）。
+  e2e は `webServer` の `command` を `node e2e/serve-with-first-admin.mjs <banto-serve>` にし、最初のシナリオを
+  「`create-admin` で作ったアカウントでログインする」にする（`e2e/first-admin.ts` の `loginAsFirstAdmin`）。
+
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に
 `restore-pending.sqlite3` という名前で置く → 起動する。起動は「予約の適用 → migration → 初回の seed → 設定の読み取り」の
-順で進む。置いたファイルも適用の直前に検査され（整合性・必須の表・migration の履歴・起動時の検査 = 組み込みの行と予約名の当たり）、
+順で進む。置いたファイルも適用の直前に検査され（整合性・必須の表・migration の履歴・起動時の検査 = 組み込みの行・予約名の当たり・認証モードの設定・ログイン必須での管理者・`banto-serve` では待ち受けの可否）、
 内容が不正なら消されて、元の DB は変わらない。ファイルを読めなかった・検査を終えられなかったときは、消されずに残り
 （元の DB も変わらない。標準エラーに理由が出る）、原因を直した次の起動で適用される。SQLite 専用（PostgreSQL は運用者の道具で戻す）。
 

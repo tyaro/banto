@@ -6,7 +6,7 @@ use crate::grant::{grant_router, GrantKind, GrantRegistry};
 
 /// Extension point for app-specific `GET /api/auth/status` fields
 /// (`docs/design/viewer-public-plan.md` §3.1-2). The returned map is flattened into
-/// the status response alongside `initialized`/`grants`, so an adopter
+/// the status response alongside `grants`, so an adopter
 /// that needs to tell its login screen something extra (a tenant name, a
 /// branding flag, ...) can do it without wrapping this router in a
 /// response-rewriting layer of its own.
@@ -19,10 +19,9 @@ use crate::grant::{grant_router, GrantKind, GrantRegistry};
 pub type AuthStatusExtras =
     std::sync::Arc<dyn Fn() -> serde_json::Map<String, serde_json::Value> + Send + Sync>;
 
-/// State shared by `/api/auth/status`, `/api/auth/setup` and
-/// `/api/auth/change-password` (see [`extra_auth_router`]): these need
-/// `UsersService` (the credential store, spec §8.2), `AuthState` (to issue a
-/// token on `setup`'s implicit login and to resolve the calling account on
+/// State shared by `/api/auth/status` and `/api/auth/change-password` (see
+/// [`extra_auth_router`]): these need `UsersService` (the credential store,
+/// spec §8.2), `AuthState` (to resolve the calling account on
 /// `change-password`) and the [`GrantRegistry`] (`status` reports which
 /// grant kinds may be issued to this peer, ADR-0017) - none of which
 /// [`crate::auth`] knows about on its own.
@@ -31,7 +30,6 @@ struct UsersAuthState {
     users: UsersService,
     auth: AuthState,
     audit: AuditLogService,
-    allow_setup: bool,
     registry: Arc<GrantRegistry>,
     status_extras: Option<AuthStatusExtras>,
 }
@@ -39,7 +37,6 @@ struct UsersAuthState {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthStatusResponse {
-    initialized: bool,
     /// Which grant kinds this server would issue to THIS peer right now
     /// (ADR-0017): `{ publicViewer: bool, <appKind>: bool, ... }`, from
     /// [`GrantRegistry::availability`] - the same judgment the issuing route
@@ -53,93 +50,21 @@ struct AuthStatusResponse {
     extras: serde_json::Map<String, serde_json::Value>,
 }
 
-/// `GET /api/auth/status`: `{ initialized, grants, ...extras }`. The DB
-/// failure of `is_initialized` is an error response as before (status is
-/// not "never fails"); only the per-kind grant judgment is fail-closed to
-/// `false`.
+/// `GET /api/auth/status`: `{ grants, ...extras }`. It reads no account
+/// state: there is no "initialized" any more - a new database is usable as
+/// soon as its migrations have run (ADR-0034 §5). The per-kind grant judgment
+/// is fail-closed to `false`.
 async fn auth_status_handler(
     State(state): State<UsersAuthState>,
     MaybePeerAddr(peer): MaybePeerAddr,
 ) -> Result<Json<AuthStatusResponse>, ApiError> {
-    let initialized = state.users.is_initialized().await?;
     let grants = state.registry.availability(peer).await;
     let extras = state
         .status_extras
         .as_ref()
         .map(|hook| hook())
         .unwrap_or_default();
-    Ok(Json(AuthStatusResponse {
-        initialized,
-        grants,
-        extras,
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SetupRequest {
-    username: String,
-    password: String,
-    display_name: String,
-}
-
-#[derive(Debug, Serialize)]
-struct SetupResponse {
-    success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    token: Option<String>,
-}
-
-/// `POST /api/auth/setup`: creates the first account, then behaves like a
-/// successful login (spec §8.2/§3.3). Three distinct outcomes:
-/// - `allow_setup` is `false` -> `403` with a plain `{kind,message}` body
-///   (not the `{success,error?}` shape below - this is a server
-///   configuration rejection, not a "try again" outcome).
-/// - `UsersService::setup_first_user` returns `BantoError::Validation` (bad
-///   username/password) -> `422` with `field_errors`, same convention as
-///   `items_create` (spec: form fields should be able to map these).
-/// - Anything else (already initialized, storage error) -> `200` with
-///   `{success:false,error}`, mirroring `login_handler`'s "expected,
-///   retryable failure" convention.
-async fn auth_setup_handler(
-    State(state): State<UsersAuthState>,
-    Json(body): Json<SetupRequest>,
-) -> Result<Response, ApiError> {
-    if !state.allow_setup {
-        let message = "このサーバーでは初期セットアップが許可されていません".to_string();
-        return Ok((StatusCode::FORBIDDEN, Json(ErrorBody::Other { message })).into_response());
-    }
-
-    match state
-        .users
-        .setup_first_user(&body.username, &body.password, &body.display_name)
-        .await
-    {
-        Ok(user) => {
-            // Issue #204: bound to the new account's stamp, so the session
-            // is accepted by a lookup-enabled `AuthState` (and ends like
-            // any other once the account changes).
-            let account = super::audit::session_account(&user);
-            let actor = AuditActor::account(&user.username, user.id, user.role.as_str());
-            record_write(&state.audit, &actor, "setup", "auth", None, None).await;
-            let token = state.auth.issue_account_token(account, false);
-            Ok(Json(SetupResponse {
-                success: true,
-                error: None,
-                token: Some(token),
-            })
-            .into_response())
-        }
-        Err(err @ BantoError::Validation { .. }) => Err(ApiError(err)),
-        Err(other) => Ok(Json(SetupResponse {
-            success: false,
-            error: Some(other.to_string()),
-            token: None,
-        })
-        .into_response()),
-    }
+    Ok(Json(AuthStatusResponse { grants, extras }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -247,7 +172,7 @@ async fn auth_change_password_handler(
     Ok(Json(ChangePasswordResponse { success: true }))
 }
 
-/// `/api/auth/{status,setup,change-password}` plus the grant issuing route
+/// `/api/auth/{status,change-password}` plus the grant issuing route
 /// `POST /api/auth/grant/{kind}` ([`grant_router`], ADR-0017): the auth
 /// routes that need more than a token - a `UsersService` (the credential
 /// store) and/or the [`GrantRegistry`] - on top of the token-only
@@ -267,7 +192,6 @@ pub fn extra_auth_router(
     users: UsersService,
     auth: AuthState,
     audit: AuditLogService,
-    allow_setup: bool,
     registry: Arc<GrantRegistry>,
     status_extras: Option<AuthStatusExtras>,
 ) -> Router {
@@ -275,13 +199,11 @@ pub fn extra_auth_router(
         users,
         auth: auth.clone(),
         audit,
-        allow_setup,
         registry: registry.clone(),
         status_extras,
     };
     Router::new()
         .route("/api/auth/status", get(auth_status_handler))
-        .route("/api/auth/setup", post(auth_setup_handler))
         .route(
             "/api/auth/change-password",
             post(auth_change_password_handler),

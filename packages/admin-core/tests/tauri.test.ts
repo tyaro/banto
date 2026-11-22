@@ -266,46 +266,12 @@ describe('createTauriAuthProvider', () => {
 		}
 	});
 
-	it('status calls auth_status and returns its initialized flag', async () => {
-		const invoke = vi.fn().mockResolvedValue({ initialized: false });
+	it('status calls auth_status and returns its answer', async () => {
+		const invoke = vi.fn().mockResolvedValue({ viewerPublic: false });
 		const provider = createTauriAuthProvider({ invoke });
 
-		await expect(provider.status?.()).resolves.toEqual({ initialized: false });
+		await expect(provider.status?.()).resolves.toEqual({ viewerPublic: false });
 		expect(invoke).toHaveBeenCalledWith('auth_status', undefined);
-	});
-
-	it('setup calls auth_setup with the given params and returns the result on success', async () => {
-		const invoke = vi.fn().mockResolvedValue({ success: true });
-		const provider = createTauriAuthProvider({ invoke });
-
-		const result = await provider.setup?.({
-			username: 'owner',
-			password: 'password123',
-			displayName: 'オーナー'
-		});
-
-		expect(invoke).toHaveBeenCalledWith('auth_setup', {
-			username: 'owner',
-			password: 'password123',
-			displayName: 'オーナー'
-		});
-		expect(result).toEqual({ success: true });
-	});
-
-	it('setup maps a rejected validation ErrorBody to { success: false, error: <first field message> }', async () => {
-		const invoke = vi.fn().mockRejectedValue({
-			kind: 'validation',
-			field_errors: [{ field: 'password', message: 'パスワードは8文字以上で入力してください' }]
-		});
-		const provider = createTauriAuthProvider({ invoke });
-
-		const result = await provider.setup?.({
-			username: 'owner',
-			password: 'short',
-			displayName: 'オーナー'
-		});
-
-		expect(result).toEqual({ success: false, error: 'パスワードは8文字以上で入力してください' });
 	});
 
 	it('changePassword calls auth_change_password with camelCase args and returns success', async () => {

@@ -87,11 +87,10 @@ export function createDemoAuthProvider(): AuthProvider {
 				listeners.delete(listener);
 			};
 		},
-		// Always "initialized": the demo provider's admin/admin account always
-		// exists, so the login page never shows the first-run setup form here
-		// (spec §8.2's setup flow only applies to Tauri/embedded-server modes).
+		// No backend, so no grant to enter (the login page shows the form and
+		// the demo credentials).
 		async status() {
-			return { initialized: true, grants: {} };
+			return { grants: {} };
 		},
 		// No account store to change a password on in pure-browser demo mode;
 		// the settings page hides the password-change section when this

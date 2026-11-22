@@ -45,6 +45,74 @@ macro_rules! wired_users {
     };
 }
 
+/// The startup check of `run()` on a new database, then the database put in
+/// the LOGIN-REQUIRED mode with no account yet - the baseline most tests
+/// here build on (they are about account sessions: each creates its accounts
+/// and logs them in). The app itself cannot produce that state (requiring
+/// login needs an administrator, ADR-0034 §6), so it is written directly.
+/// [`new_database_state`] is the state a real first launch has: no login.
+///
+/// A macro, like [`wired_users`]: this crate cannot name the pool's type.
+/// Evaluates to the built-in row's id.
+macro_rules! started_for_tests {
+    ($pool:expr) => {{
+        let settings = SettingsService::new($pool.clone());
+        // A second state on the same file (two processes sharing a database)
+        // finds the mode already written by the first.
+        let new = settings
+            .get("auth.disabled")
+            .await
+            .expect("settings")
+            .as_deref()
+            == Some("true");
+        if new {
+            admin_template_core::startup::check(
+                &$pool,
+                admin_template_core::startup::Wiring::Desktop,
+            )
+            .await
+            .expect("the startup check passes on a new database");
+            settings
+                .set("auth.disabled", "false")
+                .await
+                .expect("login required, for the tests");
+        }
+        wired_users!($pool)
+            .check_startup()
+            .await
+            .expect("the built-in row")
+            .builtin_admin_id
+    }};
+}
+
+/// Put `state` where a first launch leaves a new database (ADR-0034 §5), with
+/// the no-login session's role `role`: the mode stored, the embedded server's
+/// `AuthState` in it, and the local session installed with its synthetic
+/// `login` row - what `run()`'s bootstrap does. `seq` advances once.
+async fn start_in_no_login_mode(state: &AppState, role: Role) {
+    let config = AuthSettings {
+        disabled: true,
+        disabled_role: role,
+        ..AuthSettings::default()
+    };
+    state
+        .settings
+        .set_auth_config(&config)
+        .await
+        .expect("no-login mode needs no account");
+    apply_mode_to_rest_sessions(&state.rest_auth, true);
+    let local = local_identity(role);
+    record_local_login(&state.audit, state.builtin_admin_id, &local).await;
+    state.set_session_for_test(Some(DesktopSession::AuthDisabledLocal(local)));
+}
+
+/// [`app_state`] as a real first launch leaves it: no login, as `admin`.
+async fn new_database_state() -> AppState {
+    let state = app_state().await;
+    start_in_no_login_mode(&state, Role::Admin).await;
+    state
+}
+
 /// A minimal [`AppState`] over an in-memory DB, no running server, and a
 /// dummy REST verifier - just enough state to exercise command bodies
 /// (like [`change_own_password`]) that only touch the service handles.
@@ -55,10 +123,7 @@ async fn app_state() -> AppState {
     let events = event_channel();
     // What `run()` reads once at startup (ADR-0034 §3), through the same
     // startup check.
-    let builtin_admin_id = admin_template_core::startup::check(&pool)
-        .await
-        .expect("the startup check passes on a new database")
-        .builtin_admin_id;
+    let builtin_admin_id = started_for_tests!(pool);
     AppState {
         // [scaffold:items] begin
         items: ItemsService::new(pool.clone()).with_events(events.clone()),
@@ -122,10 +187,7 @@ async fn app_state_in(dir: &tempfile::TempDir) -> AppState {
     let events = event_channel();
     // What `run()` reads once at startup (ADR-0034 §3), through the same
     // startup check.
-    let builtin_admin_id = admin_template_core::startup::check(&pool)
-        .await
-        .expect("the startup check passes on a new database")
-        .builtin_admin_id;
+    let builtin_admin_id = started_for_tests!(pool);
     AppState {
         // [scaffold:items] begin
         items: ItemsService::new(pool.clone()).with_events(events.clone()),
@@ -165,9 +227,9 @@ async fn change_own_password_is_recorded_as_password_change() {
     let state = app_state().await;
     let owner = state
         .users
-        .setup_first_user("owner", "password123", "オーナー")
+        .create_user("owner", "password123", "オーナー", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     let owner_id = owner.id;
     state.set_session_for_test(Some(DesktopSession::Account(owner)));
 
@@ -204,9 +266,9 @@ async fn failed_change_own_password_records_nothing() {
     let state = app_state().await;
     let owner = state
         .users
-        .setup_first_user("owner", "password123", "オーナー")
+        .create_user("owner", "password123", "オーナー", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     state.set_session_for_test(Some(DesktopSession::Account(owner)));
 
     change_own_password(&state, "not-the-password", "newpassword1")
@@ -970,9 +1032,9 @@ async fn auth_config_apply_is_recorded_as_settings_change() {
     let state = app_state().await;
     let admin = state
         .users
-        .setup_first_user("manager", "password123", "管理者")
+        .create_user("manager", "password123", "管理者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     state.set_session_for_test(Some(DesktopSession::Account(admin)));
 
     auth_config_apply_body(&state, true, "viewer")
@@ -1000,75 +1062,180 @@ async fn auth_config_apply_is_recorded_as_settings_change() {
     assert_eq!(detail, serde_json::json!({ "authDisabled": true }));
 }
 
-/// [`auth_config_apply_with_permissions_body`]'s bootstrap window (choiapp-feedback-2026-09
-/// §5): with ZERO accounts and no session, enabling no-login mode from
-/// the first-run setup screen succeeds, records the `settings_change`
-/// with no actor, synthesizes the same "local" session `run()`'s
-/// bootstrap would, and records its synthetic `login` entry.
+/// ADR-0034 §5: there is no window without a session any more - with no
+/// account at all, or with accounts, a session-less apply in login-required
+/// mode is `Unauthorized`, and nothing is written.
 #[tokio::test]
-async fn auth_config_apply_bootstrap_window_enables_and_synthesizes_session() {
+async fn auth_config_apply_without_a_session_is_unauthorized() {
     let state = app_state().await;
-
-    let config = auth_config_apply_body(&state, true, "admin")
-        .await
-        .expect("bootstrap-window apply should succeed with zero users");
-    assert!(config.disabled);
-
-    let session = state
-        .auth
-        .lock()
-        .expect("auth mutex poisoned")
-        .session
-        .clone()
-        .expect("a synthetic session should exist without a restart");
-    let DesktopSession::AuthDisabledLocal(session) = session else {
-        panic!("the bootstrap window must install the synthetic kind, got {session:?}");
-    };
-    assert_eq!(session.username, "local");
-    assert_eq!(session.role, Role::Admin);
-
-    let audit = state
-        .audit
-        .list(ListParams::default())
-        .await
-        .expect("audit list");
-    let change = audit
-        .rows
-        .iter()
-        .find(|r| r.action == "settings_change" && r.resource == "settings")
-        .unwrap_or_else(|| panic!("expected a settings_change entry, got {:?}", audit.rows));
-    assert_eq!(change.actor_username, None, "nobody exists yet");
-    let login = audit
-        .rows
-        .iter()
-        .find(|r| r.action == "login" && r.resource == "auth")
-        .unwrap_or_else(|| panic!("expected a synthetic login entry, got {:?}", audit.rows));
-    // ADR-0034 §3: the no-login session is audited as the built-in `admin`.
-    assert_eq!(login.actor_username.as_deref(), Some("admin"));
-    assert_eq!(login.actor_id, Some(state.builtin_admin_id));
-    assert_eq!(login.actor_kind.as_deref(), Some("local"));
-    let detail: serde_json::Value =
-        serde_json::from_str(login.detail.as_deref().expect("detail present"))
-            .expect("detail is json");
-    assert_eq!(detail, serde_json::json!({ "mode": "auth_disabled" }));
+    for round in ["no account", "an administrator exists"] {
+        let err = auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect_err("a session-less apply must be rejected");
+        assert!(matches!(err, BantoError::Unauthorized), "{round}: {err:?}");
+        assert!(
+            !state.settings.auth_config().await.unwrap().disabled,
+            "{round}"
+        );
+        assert!(read_slot(&state).0.is_none(), "{round}");
+        state
+            .users
+            .create_user("manager", "password123", "管理者", Role::Admin)
+            .await
+            .map(|_| ())
+            .or_else(|err| {
+                if round == "no account" {
+                    Err(err)
+                } else {
+                    Ok(())
+                }
+            })
+            .expect("create admin");
+    }
 }
 
-/// The bootstrap window closes the moment the first account exists
-/// (choiapp-feedback-2026-09 §5): once initialized, a session-less call
-/// is `Unauthorized` again, exactly as before the window existed.
+/// ADR-0034 §5/§10: a new database starts with no account and no login. The
+/// local session administers it, and creating an account from user
+/// management is audited as the built-in `admin` (channel `local`).
 #[tokio::test]
-async fn auth_config_apply_bootstrap_window_closes_once_initialized() {
-    let state = app_state().await;
-    state
-        .users
-        .setup_first_user("manager", "password123", "管理者")
-        .await
-        .expect("setup_first_user");
+async fn a_new_database_needs_no_login_and_accounts_come_from_user_management() {
+    let state = new_database_state().await;
+    let answer = resolve_body(&state).await.expect("resolve");
+    assert_eq!(answer.kind, Some("local"));
+    let identity = answer.identity.expect("the local session");
+    assert_eq!(identity.role, "admin");
+    assert!(!state.users.has_admin().await.unwrap(), "no account yet");
 
-    let err = auth_config_apply_body(&state, true, "admin")
+    let created = users_create_body(&state, "owner", "password123", "Owner", Role::Admin)
         .await
-        .expect_err("a session-less apply must be rejected once initialized");
-    assert!(matches!(err, BantoError::Unauthorized));
+        .expect("the local session creates the first administrator");
+    assert_eq!(created.username, "owner");
+    let rows = actor_rows(&state).await;
+    let create = rows
+        .iter()
+        .find(|row| row.4 == "create")
+        .unwrap_or_else(|| panic!("a create row: {rows:?}"));
+    assert_eq!(
+        (
+            create.0.as_deref(),
+            create.1,
+            create.2.as_deref(),
+            create.3.as_deref()
+        ),
+        (
+            Some("admin"),
+            Some(state.builtin_admin_id),
+            Some("admin"),
+            Some("local")
+        )
+    );
+
+    // The account exists, but nobody logs in while the mode is on - on the
+    // desktop or over the LAN.
+    let login = login_body(&state, "owner".to_string(), "password123".to_string())
+        .await
+        .expect("login");
+    assert!(!login.success);
+    assert_eq!(login.error.as_deref(), Some(AUTH_DISABLED_LOGIN_MESSAGE));
+    assert!(matches!(
+        state
+            .rest_auth
+            .login_rate_limited(None, "owner", "password123", false)
+            .await,
+        banto_server::LoginOutcome::LoginDisabled
+    ));
+}
+
+/// ADR-0034 §6/§10: login can be required only once an administrator account
+/// exists. A refusal changes nothing - the settings, the local session and
+/// the embedded server's mode stay; with an administrator the lock-down goes
+/// through, ends the no-login session, and the account logs in.
+#[tokio::test]
+async fn requiring_login_needs_an_administrator_account() {
+    let state = new_database_state().await;
+    let before = read_slot(&state);
+
+    let refuse = |label: &'static str| {
+        let state = &state;
+        let before = before.clone();
+        async move {
+            let err = auth_config_apply_body(state, false, "admin")
+                .await
+                .expect_err(label);
+            match err {
+                BantoError::Validation { field_errors } => {
+                    assert_eq!(field_errors[0].field, "disabled", "{label}");
+                    assert!(field_errors[0].message.contains("管理者"), "{label}");
+                }
+                other => panic!("{label}: expected Validation, got {other:?}"),
+            }
+            assert!(
+                state.settings.auth_config().await.unwrap().disabled,
+                "{label}"
+            );
+            assert_eq!(read_slot(state), before, "{label}: the session stays");
+            assert_eq!(
+                state.rest_auth.auth_mode(),
+                AuthMode::NoLogin,
+                "{label}: the LAN side stays in no-login mode"
+            );
+        }
+    };
+    refuse("no account at all").await;
+    // The screen is told why (it disables the switch); the save decides again.
+    assert!(
+        !auth_settings_view(&state, state.settings.auth_config().await.unwrap())
+            .await
+            .unwrap()
+            .has_admin_account
+    );
+    users_create_body(&state, "editor1", "password123", "Editor", Role::Editor)
+        .await
+        .expect("create editor");
+    refuse("an editor is not an administrator").await;
+    assert_eq!(audit_action_count(&state, "settings_change").await, 0);
+
+    users_create_body(&state, "owner", "password123", "Owner", Role::Admin)
+        .await
+        .expect("create admin");
+    let config = auth_config_apply_body(&state, false, "admin")
+        .await
+        .expect("with an administrator the lock-down goes through");
+    assert!(!config.disabled);
+    assert!(!state.settings.auth_config().await.unwrap().disabled);
+    assert_eq!(
+        read_slot(&state),
+        (None, before.1 + 1),
+        "the no-login session ended"
+    );
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+    assert_unauthorized(
+        require_role(&state, Role::Viewer, "settings").await,
+        "the ended no-login session",
+    );
+    let login = login_body(&state, "owner".to_string(), "password123".to_string())
+        .await
+        .expect("login");
+    assert!(login.success, "{:?}", login.error);
+}
+
+/// ADR-0034 §5: an unknown role for the no-login session is refused - never
+/// turned into `admin` - and nothing is written.
+#[tokio::test]
+async fn auth_config_apply_refuses_an_unknown_role() {
+    let state = app_state().await;
+    start_in_no_login_mode(&state, Role::Viewer).await;
+    let before = read_slot(&state);
+    let err = auth_config_apply_body(&state, true, "root")
+        .await
+        .expect_err("an unknown role");
+    assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+    assert_eq!(
+        state.settings.auth_config().await.unwrap().disabled_role,
+        Role::Viewer
+    );
+    assert_eq!(read_slot(&state), before);
+    assert_eq!(audit_action_count(&state, "settings_change").await, 0);
 }
 
 /// [`autologin_enable_body`] records a `settings_change`/`settings` entry
@@ -1082,9 +1249,9 @@ async fn autologin_enable_is_recorded_as_settings_change() {
     let state = app_state().await;
     let admin = state
         .users
-        .setup_first_user("manager", "password123", "管理者")
+        .create_user("manager", "password123", "管理者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     state.set_session_for_test(Some(DesktopSession::Account(admin)));
 
     autologin_enable_body(&state, "manager", "password123")
@@ -1122,9 +1289,9 @@ async fn autologin_disable_is_recorded_as_settings_change() {
     let state = app_state().await;
     let admin = state
         .users
-        .setup_first_user("manager", "password123", "管理者")
+        .create_user("manager", "password123", "管理者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     state.set_session_for_test(Some(DesktopSession::Account(admin)));
 
     autologin_disable_body(&state)
@@ -1496,9 +1663,9 @@ const ALL_CHANGES: [AccountChange; 4] = [
 async fn seed_revocation_accounts(state: &AppState) -> i64 {
     state
         .users
-        .setup_first_user("operator", REVOCATION_PASSWORD, "操作者")
+        .create_user("operator", REVOCATION_PASSWORD, "操作者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     state
         .users
         .create_user("bystander", REVOCATION_PASSWORD, "無関係", Role::Editor)
@@ -1546,7 +1713,6 @@ async fn serve_account_routes(state: &AppState) -> RunningServer {
         state.users.clone(),
         state.rest_auth.clone(),
         state.audit.clone(),
-        false,
         {
             let mut grants = GrantRegistry::new();
             grants
@@ -1950,12 +2116,14 @@ async fn a_recreated_account_does_not_inherit_the_old_desktop_session() {
 #[tokio::test]
 async fn the_auth_disabled_local_session_lives_only_while_the_mode_is_on() {
     let state = app_state().await;
+    // The stored key itself: this test is about the session following the
+    // mode, with no accounts at all (requiring login through the app needs an
+    // administrator, ADR-0034 §6).
     let enable = |disabled: bool| {
         let settings = state.settings.clone();
         async move {
-            let config = settings.auth_config().await.unwrap();
             settings
-                .set_auth_config(&AuthSettings { disabled, ..config })
+                .set("auth.disabled", if disabled { "true" } else { "false" })
                 .await
                 .unwrap();
         }
@@ -2008,7 +2176,7 @@ async fn an_account_with_id_zero_is_still_revalidated() {
 // --- Issue #260: the session slot's seq and compare-and-set ------------
 //
 // docs/design/session-controller-design.md §4.3/§8.3: the command BODIES are
-// driven with their slow `.await` (verify / first-user setup / auth-mode
+// driven with their slow `.await` (verify / auth-mode
 // read) held at an injected gate, so the completion order is fixed by
 // the test, not by the scheduler.
 
@@ -2058,23 +2226,6 @@ fn hold_verify(state: &mut AppState) -> Hold {
         Box::pin(async move {
             pass_gate(&slot).await;
             users.verify(&username, &password).await
-        })
-    });
-    hold
-}
-
-/// Hold the first `auth_setup` account creation of `state`.
-fn hold_setup(state: &mut AppState) -> Hold {
-    let (slot, hold) = gate();
-    let users = state.users.clone();
-    state.auth_io.setup_first_user = Arc::new(move |username, password, display_name| {
-        let slot = slot.clone();
-        let users = users.clone();
-        Box::pin(async move {
-            pass_gate(&slot).await;
-            users
-                .setup_first_user(&username, &password, &display_name)
-                .await
         })
     });
     hold
@@ -2162,7 +2313,7 @@ async fn s16_a_slow_login_does_not_undo_a_completed_logout() {
     let mut state = app_state().await;
     state
         .users
-        .setup_first_user("b", SLOT_PASSWORD, "B")
+        .create_user("b", SLOT_PASSWORD, "B", Role::Admin)
         .await
         .unwrap();
     let mut hold = hold_verify(&mut state);
@@ -2191,7 +2342,7 @@ async fn s16_login_reads_seq_before_its_first_await() {
     let mut state = app_state().await;
     state
         .users
-        .setup_first_user("b", SLOT_PASSWORD, "B")
+        .create_user("b", SLOT_PASSWORD, "B", Role::Admin)
         .await
         .unwrap();
     let mut hold = hold_verify(&mut state);
@@ -2216,7 +2367,7 @@ async fn s16_an_uncontested_login_installs_and_advances_seq() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("b", SLOT_PASSWORD, "B")
+        .create_user("b", SLOT_PASSWORD, "B", Role::Admin)
         .await
         .unwrap();
 
@@ -2246,7 +2397,7 @@ async fn s17_a_slow_logout_does_not_clear_a_later_login() {
     let mut state = app_state().await;
     state
         .users
-        .setup_first_user("b", SLOT_PASSWORD, "B")
+        .create_user("b", SLOT_PASSWORD, "B", Role::Admin)
         .await
         .unwrap();
     let mut hold = hold_auth_mode(&mut state);
@@ -2280,7 +2431,7 @@ async fn s17_logout_reads_seq_before_its_first_await() {
     let mut state = app_state().await;
     let a = state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     state.set_session_for_test(Some(DesktopSession::Account(a.clone())));
@@ -2307,7 +2458,7 @@ async fn s17_an_uncontested_logout_clears_and_advances_seq() {
     let state = app_state().await;
     let a = state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     state.set_session_for_test(Some(DesktopSession::Account(a)));
@@ -2319,60 +2470,6 @@ async fn s17_an_uncontested_logout_clears_and_advances_seq() {
     assert_eq!(audit_action_count(&state, "logout").await, 1);
 }
 
-/// S-18: `auth_setup` overtaken by a completed logout: the account is
-/// created, the session is not installed.
-#[tokio::test]
-async fn s18_a_slow_setup_does_not_undo_a_completed_logout() {
-    let mut state = app_state().await;
-    let mut hold = hold_setup(&mut state);
-
-    let setup = setup_body(
-        &state,
-        "b".to_string(),
-        SLOT_PASSWORD.to_string(),
-        "B".to_string(),
-    );
-    tokio::pin!(setup);
-    run_until_held!(setup, hold);
-
-    logout_body(&state).await.expect("logout");
-    hold.release.send(()).unwrap();
-    let result = setup.await.expect("setup");
-
-    assert!(!result.success);
-    assert!(result.superseded);
-    assert_eq!(read_slot(&state), (None, 1));
-    assert!(state.users.is_initialized().await.unwrap());
-    assert!(state.users.get_by_username("b").await.unwrap().is_some());
-}
-
-/// S-19: a logout overtaken by a completed `auth_setup` keeps the setup's
-/// session.
-#[tokio::test]
-async fn s19_a_slow_logout_does_not_clear_a_later_setup() {
-    let mut state = app_state().await;
-    let mut hold = hold_auth_mode(&mut state);
-
-    let logout = logout_body(&state);
-    tokio::pin!(logout);
-    run_until_held!(logout, hold);
-
-    let setup = setup_body(
-        &state,
-        "b".to_string(),
-        SLOT_PASSWORD.to_string(),
-        "B".to_string(),
-    )
-    .await
-    .expect("setup");
-    assert!(setup.success);
-    hold.release.send(()).unwrap();
-    let result = logout.await.expect("logout");
-
-    assert_eq!(result.seq, setup.seq);
-    assert!(is_account(&read_slot(&state).0, "b"));
-}
-
 /// S-54: re-resolving the same session - including after a display-name
 /// edit (a refresh of the same binding) - never advances seq.
 #[tokio::test]
@@ -2380,7 +2477,7 @@ async fn s54_resolving_the_same_session_does_not_advance_seq() {
     let state = app_state().await;
     let a = state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
@@ -2415,7 +2512,7 @@ async fn s64_a_role_change_resolves_to_none_and_advances_seq() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("owner", SLOT_PASSWORD, "オーナー")
+        .create_user("owner", SLOT_PASSWORD, "オーナー", Role::Admin)
         .await
         .unwrap();
     let a = state
@@ -2455,7 +2552,7 @@ async fn s77_a_settle_overtaken_by_a_rebind_writes_nothing() {
 
     let a = state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     state.set_session_for_test(Some(DesktopSession::Account(a)));
@@ -2526,7 +2623,7 @@ async fn s68_change_password_rebinds_and_advances_seq() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
@@ -2635,44 +2732,6 @@ fn mode_turned_on_after_first_read_and_reread_held(state: &mut AppState) -> Hold
     hold
 }
 
-/// S-67 / PR #264 review P1 (i): `auth_config_apply` starts (the slot
-/// empty - the first-run 「ログインなしで使い始める」), a logout clears the
-/// empty slot meanwhile (advancing `seq`, `disabled` still false), and
-/// only then does the apply save and reach its final lock. The install
-/// is conditioned on the slot being empty, NOT on `seq` being unchanged
-/// since the apply's entry - so the APPLY installs the synthetic session
-/// (asserted before the logout, waiting on `auth_config_lock` for its
-/// re-read, is polled again; its re-read then installs nothing).
-#[tokio::test]
-async fn s67_config_apply_installs_local_after_a_logout_advanced_seq() {
-    let mut state = app_state().await;
-    // Call 1 = the apply's `currently_disabled` read (held before it,
-    // with `auth_config_lock` held).
-    let mut hold = hold_auth_mode_call(&mut state, 1, false);
-
-    let apply = auth_config_apply_body(&state, true, "admin");
-    tokio::pin!(apply);
-    run_until_held!(apply, hold);
-
-    let logout = logout_body(&state);
-    tokio::pin!(logout);
-    drive_until!(logout, read_slot(&state) == (None, 1));
-    assert_stays_pending!(logout);
-    hold.release.send(()).unwrap();
-    let config = apply.await.expect("apply");
-
-    assert!(config.disabled);
-    assert!(state.settings.auth_config().await.unwrap().disabled);
-    let (session, seq) = read_slot(&state);
-    assert!(is_local(&session), "the apply installed: {session:?}");
-    assert_eq!(seq, 2, "the install advanced seq once");
-
-    let result = logout.await.expect("logout");
-    assert_eq!(result.seq, 2, "the logout's re-read did not install again");
-    assert_eq!(read_slot(&state).1, 2);
-    assert_eq!(audit_action_count(&state, "login").await, 1);
-}
-
 /// S-67 / PR #264 review P1 (ii), updated by the owner review of #266
 /// P1: a logout reads the OLD `disabled = false` and is held;
 /// `auth_config_apply` then switches the mode on while A's session is
@@ -2685,7 +2744,7 @@ async fn s67_a_logout_that_read_the_old_mode_is_overtaken_by_the_apply_rebind() 
     let mut state = app_state().await;
     state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
@@ -2760,7 +2819,7 @@ async fn s94_config_apply_true_rebinds_an_account_session_to_local() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("manager", SLOT_PASSWORD, "Admin")
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
         .await
         .unwrap();
     let login = login_body(&state, "manager".to_string(), SLOT_PASSWORD.to_string())
@@ -2814,9 +2873,7 @@ async fn s94_config_apply_true_rebinds_an_account_session_to_local() {
 #[tokio::test]
 async fn s96_config_apply_true_again_keeps_seq_for_the_same_role_and_advances_it_for_another() {
     let state = app_state().await;
-    auth_config_apply_body(&state, true, "admin")
-        .await
-        .expect("first apply (bootstrap window)");
+    start_in_no_login_mode(&state, Role::Admin).await;
     let (session, seq) = read_slot(&state);
     assert!(is_local(&session));
     let logins = audit_action_count(&state, "login").await;
@@ -2841,7 +2898,8 @@ async fn s96_config_apply_true_again_keeps_seq_for_the_same_role_and_advances_it
     assert_eq!(local.role, Role::Editor);
     assert_eq!(audit_action_count(&state, "login").await, logins);
     assert_eq!(audit_action_count(&state, "logout").await, 0);
-    assert_eq!(audit_action_count(&state, "settings_change").await, 3);
+    // The two applies above (the mode itself came with the first launch).
+    assert_eq!(audit_action_count(&state, "settings_change").await, 2);
 }
 
 /// S-96 (re-review of #266 P1): an `auth_resolve` of Local(admin) reads
@@ -2853,9 +2911,7 @@ async fn s96_config_apply_true_again_keeps_seq_for_the_same_role_and_advances_it
 #[tokio::test]
 async fn s96_a_resolve_that_read_the_old_local_role_does_not_write_it_back() {
     let state = app_state().await;
-    auth_config_apply_body(&state, true, "admin")
-        .await
-        .expect("bootstrap-window apply");
+    start_in_no_login_mode(&state, Role::Admin).await;
 
     // The old resolve: slot and store read (admin), then held.
     let (cached, seq_at_entry) = read_slot(&state);
@@ -2891,7 +2947,7 @@ async fn login_notice_tauri_admin_write_and_viewer_denial() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("manager", SLOT_PASSWORD, "Admin")
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
         .await
         .unwrap();
     state
@@ -2952,7 +3008,7 @@ async fn s103_settings_set_refuses_auth_keys() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("manager", SLOT_PASSWORD, "Admin")
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
         .await
         .unwrap();
     let admin = state
@@ -3014,7 +3070,7 @@ async fn s104_a_save_failing_part_way_still_rebinds_the_session_to_what_is_store
     let mut state = app_state().await;
     state
         .users
-        .setup_first_user("manager", SLOT_PASSWORD, "Admin")
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
         .await
         .unwrap();
     state.set_session_for_test(Some(DesktopSession::Account(
@@ -3051,9 +3107,7 @@ async fn s104_a_save_failing_part_way_still_rebinds_the_session_to_what_is_store
 #[tokio::test]
 async fn s102_a_stale_settle_reports_the_slot_value_not_the_older_read() {
     let state = app_state().await;
-    auth_config_apply_body(&state, true, "admin")
-        .await
-        .expect("enable (bootstrap window)");
+    start_in_no_login_mode(&state, Role::Admin).await;
     let (cached, seq_at_entry) = read_slot(&state);
     let cached = cached.expect("Local(admin)");
     let fresh = read_session_source(&state, &cached).await.unwrap();
@@ -3085,9 +3139,17 @@ async fn s98_turning_the_mode_on_always_advances_seq() {
         Role::Admin,
     ))));
     let (_, seq) = read_slot(&state);
-    auth_config_apply_body(&state, true, "admin")
-        .await
-        .expect("enable");
+    // The step an apply runs right after its save (the command itself needs
+    // an administrator's session in login-required mode, which this slot is
+    // not).
+    let previous = state.settings.auth_config().await.unwrap();
+    assert!(!previous.disabled);
+    let saved = AuthSettings {
+        disabled: true,
+        ..previous.clone()
+    };
+    state.settings.set_auth_config(&saved).await.expect("save");
+    apply_mode_to_session(&state, &previous, &saved, false);
     assert_eq!(read_slot(&state).1, seq + 1);
 }
 
@@ -3161,9 +3223,13 @@ async fn s98_a_role_change_advances_seq_even_if_a_settle_refreshed_the_slot_firs
 #[tokio::test]
 async fn s99_config_apply_false_ends_local_at_once_and_an_old_resolve_is_stale() {
     let state = app_state().await;
-    auth_config_apply_body(&state, true, "admin")
+    start_in_no_login_mode(&state, Role::Admin).await;
+    // Requiring login needs an administrator account (ADR-0034 §6).
+    state
+        .users
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
         .await
-        .expect("enable (bootstrap window)");
+        .unwrap();
     let (cached, seq_n) = read_slot(&state);
     let cached = cached.expect("Local(admin)");
     let fresh = read_session_source(&state, &cached).await.unwrap();
@@ -3198,7 +3264,7 @@ async fn s99_config_apply_false_again_is_a_no_op_for_the_session() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("manager", SLOT_PASSWORD, "Admin")
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
         .await
         .unwrap();
     let login = login_body(&state, "manager".to_string(), SLOT_PASSWORD.to_string())
@@ -3226,7 +3292,7 @@ async fn s95_a_login_whose_check_was_overtaken_by_apply_true_is_refused() {
     let mut state = app_state().await;
     state
         .users
-        .setup_first_user("manager", SLOT_PASSWORD, "Admin")
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
         .await
         .unwrap();
     state.set_session_for_test(Some(DesktopSession::Account(
@@ -3271,7 +3337,7 @@ async fn s95_login_in_auth_disabled_mode_is_refused_before_the_check() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("manager", SLOT_PASSWORD, "Admin")
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
         .await
         .unwrap();
     state.set_session_for_test(Some(DesktopSession::Account(
@@ -3302,71 +3368,6 @@ async fn s95_login_in_auth_disabled_mode_is_refused_before_the_check() {
     assert_eq!(audit_action_count(&state, "login_failed").await, 0);
 }
 
-/// S-95: `auth_setup` while auth-disabled mode is on (the first-run
-/// 「ログインなしで使い始める」 already chosen) is refused on entry and
-/// creates no account.
-#[tokio::test]
-async fn s95_setup_in_auth_disabled_mode_creates_no_account() {
-    let state = app_state().await;
-    auth_config_apply_body(&state, true, "admin")
-        .await
-        .expect("bootstrap-window apply");
-    let before = read_slot(&state);
-    assert!(is_local(&before.0));
-
-    let result = setup_body(
-        &state,
-        "b".to_string(),
-        SLOT_PASSWORD.to_string(),
-        "B".to_string(),
-    )
-    .await
-    .expect("setup");
-
-    assert!(!result.success);
-    assert!(!result.superseded);
-    assert_eq!(result.error.as_deref(), Some(AUTH_DISABLED_LOGIN_MESSAGE));
-    assert_eq!(read_slot(&state), before);
-    assert!(
-        !state.users.is_initialized().await.unwrap(),
-        "no account created"
-    );
-    assert_eq!(audit_action_count(&state, "setup").await, 0);
-}
-
-/// S-95: the mode is switched on (bootstrap window: no account yet, no
-/// session) while `auth_setup` is creating the first account. The account
-/// exists afterwards (created before the switch), but its session is not
-/// installed: the synthetic session stays, as with a superseded setup.
-#[tokio::test]
-async fn s95_a_setup_overtaken_by_apply_true_keeps_the_account_but_installs_nothing() {
-    let mut state = app_state().await;
-    let mut hold = hold_setup(&mut state);
-
-    let setup = setup_body(
-        &state,
-        "b".to_string(),
-        SLOT_PASSWORD.to_string(),
-        "B".to_string(),
-    );
-    tokio::pin!(setup);
-    run_until_held!(setup, hold);
-
-    auth_config_apply_body(&state, true, "admin")
-        .await
-        .expect("bootstrap-window apply");
-    let after_apply = read_slot(&state);
-    assert!(is_local(&after_apply.0));
-    hold.release.send(()).unwrap();
-    let result = setup.await.expect("setup");
-
-    assert!(!result.success);
-    assert_eq!(result.error.as_deref(), Some(AUTH_DISABLED_LOGIN_MESSAGE));
-    assert_eq!(read_slot(&state), after_apply);
-    assert!(state.users.get_by_username("b").await.unwrap().is_some());
-    assert_eq!(audit_action_count(&state, "setup").await, 1);
-}
-
 /// PR #264 review P1 / re-review P2: a logout whose first read saw
 /// `disabled = false` (and after which the mode was switched on) clears
 /// A and re-reads the mode under `auth_config_lock`; an
@@ -3378,7 +3379,7 @@ async fn s67_config_apply_and_logout_install_local_only_once() {
     let mut state = app_state().await;
     state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
@@ -3420,6 +3421,14 @@ async fn s67_config_apply_and_logout_install_local_only_once() {
 #[tokio::test]
 async fn config_apply_true_then_false_are_serialized_by_the_auth_config_lock() {
     let mut state = app_state().await;
+    // The administrator whose session applies (and whose account lets login
+    // be required again, ADR-0034 §6). Its session is slot write 1.
+    let manager = state
+        .users
+        .create_user("manager", SLOT_PASSWORD, "Admin", Role::Admin)
+        .await
+        .unwrap();
+    state.set_session_for_test(Some(DesktopSession::Account(manager)));
     let mut hold = hold_after_save(&mut state);
 
     let apply_on = auth_config_apply_body(&state, true, "admin");
@@ -3433,7 +3442,8 @@ async fn config_apply_true_then_false_are_serialized_by_the_auth_config_lock() {
         state.settings.auth_config().await.unwrap().disabled,
         "apply(false) is waiting: it has not saved"
     );
-    assert_eq!(read_slot(&state), (None, 0));
+    assert!(is_account(&read_slot(&state).0, "manager"));
+    assert_eq!(read_slot(&state).1, 1);
 
     hold.release.send(()).unwrap();
     apply_on.await.expect("apply(true)");
@@ -3445,10 +3455,10 @@ async fn config_apply_true_then_false_are_serialized_by_the_auth_config_lock() {
 
     assert!(!config.disabled);
     assert!(!state.settings.auth_config().await.unwrap().disabled);
-    assert_eq!(read_slot(&state), (None, 2), "apply(false) ended it (S-99)");
+    assert_eq!(read_slot(&state), (None, 3), "apply(false) ended it (S-99)");
     let answer = resolve_body(&state).await.expect("resolve");
     assert!(answer.identity.is_none());
-    assert_eq!((answer.checked, answer.current), (2, 2));
+    assert_eq!((answer.checked, answer.current), (3, 3));
     assert!(current_session(&state).await.unwrap().is_none());
 }
 
@@ -3499,7 +3509,7 @@ async fn s67_a_logout_reread_and_a_later_apply_false_are_serialized() {
     let mut state = app_state().await;
     state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
@@ -3545,7 +3555,7 @@ async fn s67_a_logout_whose_mode_reread_fails_still_succeeds() {
     let mut state = app_state().await;
     let a = state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     state.set_session_for_test(Some(DesktopSession::Account(a)));
@@ -3579,7 +3589,7 @@ async fn concurrent_login_and_logout_end_in_one_of_two_consistent_states() {
         let mut state = app_state().await;
         state
             .users
-            .setup_first_user("b", SLOT_PASSWORD, "B")
+            .create_user("b", SLOT_PASSWORD, "B", Role::Admin)
             .await
             .unwrap();
         let barrier = Arc::new(tokio::sync::Barrier::new(2));
@@ -3631,7 +3641,7 @@ async fn s55_change_password_on_a_revoked_session_advances_seq_then_fails_unauth
     let state = app_state().await;
     state
         .users
-        .setup_first_user("owner", SLOT_PASSWORD, "オーナー")
+        .create_user("owner", SLOT_PASSWORD, "オーナー", Role::Admin)
         .await
         .unwrap();
     let a = state
@@ -3664,7 +3674,7 @@ async fn s55_change_password_with_a_wrong_current_password_leaves_seq() {
     let state = app_state().await;
     state
         .users
-        .setup_first_user("a", SLOT_PASSWORD, "A")
+        .create_user("a", SLOT_PASSWORD, "A", Role::Admin)
         .await
         .unwrap();
     let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
@@ -3734,9 +3744,9 @@ async fn admin_app_state() -> AppState {
     let state = app_state().await;
     let admin = state
         .users
-        .setup_first_user("manager", "password123", "管理者")
+        .create_user("manager", "password123", "管理者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     state.set_session_for_test(Some(DesktopSession::Account(admin)));
     state
 }
@@ -5874,9 +5884,11 @@ async fn auth_disabled_permissions_view_hides_unregistered_leftovers() {
     let wire = serde_json::to_value(AuthSettingsView {
         settings: AuthSettings::default(),
         disabled_permissions: vec!["alarm.ack".to_string()],
+        has_admin_account: true,
     })
     .unwrap();
     assert_eq!(wire["disabled"], false);
+    assert_eq!(wire["hasAdminAccount"], true);
     assert_eq!(wire["disabledRole"], "admin");
     assert_eq!(
         wire["disabledPermissions"],
@@ -5952,9 +5964,7 @@ async fn the_no_login_session_is_audited_as_the_builtin_admin_like_a_marked_gran
 
     // Viewer mode: an admin-only command is refused, and the refusal is the
     // built-in admin's, with the session's real role.
-    auth_config_apply_body(&state, true, "viewer")
-        .await
-        .expect("enable as viewer (bootstrap window)");
+    start_in_no_login_mode(&state, Role::Viewer).await;
     let err = login_notice_set_body(&state, "x").await.unwrap_err();
     assert!(matches!(err, BantoError::Forbidden), "{err:?}");
     let rows = actor_rows(&state).await;

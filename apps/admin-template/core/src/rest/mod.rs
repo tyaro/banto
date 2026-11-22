@@ -8,8 +8,7 @@
 //!
 //! | Method | Path               | Body           | Response              |
 //! |--------|--------------------|----------------|------------------------|
-//! | GET    | `/api/auth/status`   | -              | `{initialized,grants}` (NO auth required) |
-//! | POST   | `/api/auth/setup`     | `{username,password,displayName}` | `{success,error?,token?}` (needs `allow_setup`) |
+//! | GET    | `/api/auth/status`   | -              | `{grants}` (NO auth required) |
 //! | POST   | `/api/auth/grant/{kind}` | -          | `{success,token}` (NO auth required; 404 unless `kind` is registered, 403 unless its condition holds - `publicViewer` = `server.viewer_public`, ADR-0017) |
 //! | POST   | `/api/reach-check`   | `{token}`      | `{result}` (NO auth required, never a session; Tauri embedded server only - `banto_server::reach_check`, Issue #219) |
 //! | POST   | `/api/auth/login`    | `{username,password}` | `{success,error?,token?}` |
@@ -90,17 +89,15 @@
 //! wire - `username` always comes from the caller's own bearer token, never
 //! a request parameter).
 //!
-//! `/api/auth/status`, `/api/auth/setup` and `/api/auth/grant/{kind}` are
-//! deliberately NOT behind `require_auth` - the login page needs `status`
-//! before any session exists, `setup` is how the very first session gets
-//! created, and `grant/{kind}` is how a credential-less session (ADR-0017)
-//! obtains its first token. Each of the latter two carries its own gate
-//! instead of a bearer token: `setup` is gated by an `allow_setup` flag
-//! (spec §8.2) - the Tauri app always passes `false` (desktop first-run goes
-//! through the `auth_setup` Tauri command instead, spec §10), while
-//! `banto-serve` enables it via `BANTO_ALLOW_SETUP=1` so this REST path is
-//! exercisable standalone - and `grant/{kind}` is gated by the registered
-//! `GrantSpec`'s condition: the template registers only the viewer-public
+//! `/api/auth/status` and `/api/auth/grant/{kind}` are deliberately NOT
+//! behind `require_auth` - the login page needs `status` before any session
+//! exists, and `grant/{kind}` is how a credential-less session (ADR-0017)
+//! obtains its first token. There is no route that creates the first account
+//! (ADR-0034 §5/§7): a new database starts in no-login mode, where this
+//! surface is read-only and logs nobody in, and the first administrator of a
+//! headless install is created offline by `banto-serve create-admin`.
+//! `grant/{kind}` carries its own gate instead of a bearer token, the
+//! registered `GrantSpec`'s condition: the template registers only the viewer-public
 //! kind, whose condition is the `server.viewer_public` setting, so
 //! `grant/publicViewer` returns `403 { "kind": "forbidden" }` unless 閲覧公開
 //! is explicitly on (Issue #189, ADR-0012, `docs/design/viewer-public-plan.md`
@@ -157,7 +154,7 @@
 //! [`require_role_at_least`] records `action: "denied"` when an
 //! authenticated caller's role is too low; [`audited_credential_verifier`]
 //! records `login`/`login_failed`; [`audit_logout_middleware`] records
-//! `logout`; and `auth_setup_handler` records `setup`. Read routes
+//! `logout`. Read routes
 //! (`list`/`get`) are never audited. The trail itself is only readable via
 //! `POST /api/audit-log/list`, `admin`-only.
 //!
@@ -341,7 +338,7 @@ pub fn grant_registry(settings: SettingsService) -> GrantRegistry {
 
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
 /// logout/check/identity from `banto_server` - wrapped with an audit-log
-/// hook for `logout`, spec M14 - plus status/setup/change-password here
+/// hook for `logout`, spec M14 - plus status/change-password here
 /// since those need `UsersService`), SSE events, the `items` CRUD routes
 /// (RBAC-split read/write, spec M10), the `admin`-only `users` management
 /// routes (spec M10), the `admin`-only `audit-log` viewer (spec M14), the
@@ -355,7 +352,6 @@ pub fn api_router(
     services: Services,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
-    allow_setup: bool,
 ) -> Router {
     let Services {
         // [scaffold:items] begin
@@ -389,7 +385,6 @@ pub fn api_router(
             users.clone(),
             auth.clone(),
             audit.clone(),
-            allow_setup,
             Arc::new(grants),
             None,
         ))

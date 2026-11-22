@@ -245,34 +245,39 @@ flowchart TD
 - `pnpm scaffold --preset display` だけが非空リストへ差し替え（認証無効・閲覧公開・LAN 公開など）。仕組み自体は常在。
 - シードは **auth_config / server_config を読む前**に走るので、初回起動から既定が効く。
 
-### 5.2 初回画面（フロント）
+### 5.2 新しい DB の最初の入り方
 
 ```mermaid
 flowchart TD
-  LOGIN["/login"]
-  ST["AuthProvider.status()"]
-  INIT{"initialized?"}
-  SETUP["セットアップ UI<br/>初代 admin 作成"]
-  LOGINUI["通常ログイン UI"]
-  SKIP{"Tauri かつ<br/>スキップ選択?"}
-  CREATE["setup() / auth_setup<br/>admin アカウント"]
-  NOLOGIN["auth.disabled=true<br/>ロール admin で合成セッション"]
+  NEW["新しい DB<br/>auth.disabled = true（migration 0015）<br/>アカウント 0"]
+  CHECK["startup::check<br/>（設定・組み込みの行・管理者）"]
+  TAURI["Tauri: 合成セッション local<br/>ロールは auth.disabled_role"]
   APP["(app) へ"]
+  USERS["ユーザー管理で<br/>管理者のアカウントを作る"]
+  LOCK["設定 → セキュリティ<br/>ログイン必須へ（管理者が 1 つ以上）"]
+  LOGINUI["/login（ログインのフォームだけ）"]
+  SERVE{"banto-serve:<br/>閲覧公開が on?"}
+  STOP["待ち受けずに止まる"]
+  CLI["banto-serve create-admin<br/>管理者 + ログイン必須（1 トランザクション）"]
+  RO["待ち受ける（読み取り専用。<br/>閲覧公開の viewer だけ）"]
 
-  LOGIN --> ST --> INIT
-  INIT -->|No| SETUP
-  INIT -->|Yes| LOGINUI
-  SETUP --> SKIP
-  SKIP -->|アカウント作成| CREATE --> APP
-  SKIP -->|ログインなしで始める| NOLOGIN --> APP
-  LOGINUI --> APP
+  NEW --> CHECK
+  CHECK -->|デスクトップ| TAURI --> APP
+  APP --> USERS --> LOCK --> LOGINUI --> APP
+  CHECK -->|ヘッドレス| SERVE
+  SERVE -->|No| STOP --> CLI --> LOGINUI
+  SERVE -->|Yes| RO
 ```
 
 ### 読み方
 
-- **`initialized == false`** のときだけセットアップフォーム。通常は初代 admin を `setup` で作る。
-- **「ログインなしで使い始める」**は **Tauri のみ**（`docs/recipes/no-login-app.md`）。LAN 初回には出ない。
-- スキップはアカウント 0 のまま `auth.disabled` を ON にし、synthetic session（`local`）でダッシュボードへ。
+- **初回セットアップの画面は無い**（v8.0.0、ADR-0034 決定 §5）。`/login` はログインのフォームだけで、
+  `AuthProvider.status()` に `initialized` は無い。
+- 新しい DB は `auth.disabled = true`・`auth.disabled_role = admin`（migration 0015 が明示して入れる）。
+  このキーが無い・読めない DB、ログイン必須なのに管理者のアカウントが 0 の DB は、起動が止まる（既定で埋めない）。
+- **ログイン必須への切り替えは、管理者のアカウントが 1 つ以上あるときだけ**通る。
+- **ヘッドレス**は合成セッション `local` を持たない。ログインなしの間の REST は読み取り専用（アカウントのログインを断る）
+  なので、最初の管理者は `banto-serve create-admin` で作る（`docs/recipes/no-login-app.md`）。
 - demo（`pnpm dev`）は別系。本物の first_boot / LAN シードは使わない。
 
 ### 5.3 LAN オプトインとの関係
@@ -338,7 +343,7 @@ flowchart LR
 ### 読み方
 
 - **A** はバックエンドなし。データはメモリ上のデモ。認証もデモ用。
-- **B** はフルスタック HTTP。既定ポート `8721`、`BANTO_DB` / `BANTO_VIEWER_PUBLIC` / `BANTO_ALLOW_SETUP` などで挙動調整。`embed-ui` 無しだとプレースホルダ UI。
+- **B** はフルスタック HTTP。既定ポート `8721`、`BANTO_DB` / `BANTO_VIEWER_PUBLIC` などで挙動調整。新しい DB では、先に `banto-serve create-admin` で最初の管理者を作る（作るまでは、閲覧公開が off なら待ち受けない）。`embed-ui` 無しだとプレースホルダ UI。
 - **C** の Webview は常に開発中フロントを表示。LAN クライアントに実 UI を出す本番ビルドでは `embed-ui` が別途必要（[docs/recipes/lan-access.md「`embed-ui` フィーチャー」](./recipes/lan-access.md)）。
 - 検証の常用は `pnpm check` / `cargo test` / `pnpm e2e`（e2e は多くの場合 `banto-serve`）。`src-tauri` コンパイルはこのサンドボックスでは不可なことがある。
 

@@ -30,18 +30,34 @@
 //! `BANTO_ATTACHMENTS_DIR` (required when `BANTO_DB` is PostgreSQL: the root
 //! under which each database gets its own attachments subdirectory, Issue
 //! #208; ignored for SQLite, whose attachments stay next to the DB file),
-//! `BANTO_ALLOW_SETUP` (`1` to
-//! enable `POST /api/auth/setup`; unset/anything else keeps it `403`'d, spec
-//! §8.2 - the Tauri app never sets this, since desktop first-run goes
-//! through the `auth_setup` command instead), `BANTO_VIEWER_PUBLIC` (`1` to
+//! `BANTO_VIEWER_PUBLIC` (`1` to
 //! seed `server.viewer_public = true` at startup so LAN clients may mint a
 //! viewer-public grant session through `POST /api/auth/grant/publicViewer`
 //! without logging in - Issue #189, `docs/design/viewer-public-plan.md` §3.1-5,
 //! ADR-0012; grants in general: ADR-0017).
 //!
-//! `BANTO_VIEWER_PUBLIC` is a dev/e2e entry point in the same spirit as
-//! `BANTO_ALLOW_SETUP`: it WRITES the persisted setting (rather than
-//! overriding it per-process) because the flag is read live from
+//! ## The first administrator: `banto-serve create-admin`
+//!
+//! A new database starts in no-login mode with no account (ADR-0034 §5).
+//! This server has no local session, and in no-login mode it is read-only and
+//! logs nobody in (§6) - so on a new database it refuses to start (unless
+//! public viewing is on) and points here:
+//!
+//! ```text
+//! BANTO_DB=./app.sqlite3 banto-serve create-admin --username owner [--display-name NAME] < password.txt
+//! ```
+//!
+//! It creates an administrator account AND requires login, in one transaction,
+//! without listening, and exits (0 = done; 1 = no account, no auth setting and
+//! no audit row written - the migrations may have been applied; 2 = bad
+//! arguments). The password
+//! is the first line of standard input - never an argument (process lists and
+//! shell histories keep those). Run it with the app and the server stopped.
+//! The same command repairs a database the startup refuses for its auth
+//! settings. Details: `admin_template_core::first_account` (ADR-0034 §7).
+//!
+//! `BANTO_VIEWER_PUBLIC` is a dev/e2e entry point: it WRITES the persisted
+//! setting (rather than overriding it per-process) because the flag is read live from
 //! `SettingsService` by `/api/auth/status` and `/api/auth/grant/publicViewer`, so
 //! there is nowhere else for a process-local override to live. Unsetting the
 //! variable therefore does NOT turn 閲覧公開 back off - use the settings
@@ -57,38 +73,160 @@ use admin_template_core::audit::AuditLogService;
 use admin_template_core::backup::BackupService;
 use admin_template_core::db::{display_target, init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
+use admin_template_core::first_account::{create_admin_and_require_login, NewAdmin};
 use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::ItemsService;
 use admin_template_core::resources::AppResources;
 use admin_template_core::rest::{api_router, resources_router, user_auth_state, Services};
-use admin_template_core::settings::{ServerSettings, SettingsService};
-use admin_template_core::startup::{self, sqlite_restore_manifest};
+use admin_template_core::settings::SettingsService;
+use admin_template_core::startup::{self, sqlite_restore_manifest, Wiring};
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
 use admin_template_core::system_metrics::SystemMetricsSampler;
 use admin_template_core::users::UsersService;
 use banto_attachments::AttachmentsService;
-use banto_server::{lan_urls_for_bind, start, static_router, with_security_headers, ServerConfig};
+use banto_server::{
+    lan_urls_for_bind, start, static_router, with_security_headers, AuthMode, ServerConfig,
+};
 use std::path::PathBuf;
 
 const DEFAULT_PORT: u16 = 8721;
 const DEFAULT_BIND: &str = "0.0.0.0";
 const DEFAULT_DB_PATH: &str = "./banto-dev.sqlite3";
 
+const USAGE: &str = "使い方:
+  banto-serve
+      サーバーを起動します（環境変数: BANTO_DB / BANTO_BIND / PORT ほか）。
+  banto-serve create-admin --username <名前> [--display-name <表示名>]
+      BANTO_DB の DB に管理者のアカウントを作り、同時にログイン必須にします。
+      パスワードは標準入力の 1 行目から読みます（引数では受け取りません）。
+      アプリとサーバーを止めてから実行してください。";
+
+/// `create-admin`'s arguments. The password is not among them on purpose.
+struct CreateAdminArgs {
+    username: String,
+    display_name: Option<String>,
+}
+
+fn parse_create_admin_args(args: &[String]) -> Result<CreateAdminArgs, String> {
+    let mut username = None;
+    let mut display_name = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let slot = match arg.as_str() {
+            "--username" => &mut username,
+            "--display-name" => &mut display_name,
+            other => return Err(format!("知らない引数です: {other}")),
+        };
+        match rest.next() {
+            Some(value) => *slot = Some(value.clone()),
+            None => return Err(format!("{arg} に値がありません")),
+        }
+    }
+    Ok(CreateAdminArgs {
+        username: username.ok_or_else(|| "--username が必要です".to_string())?,
+        display_name,
+    })
+}
+
+/// `banto-serve create-admin` (ADR-0034 §7): no socket, no router. Returns
+/// the process exit code.
+async fn create_admin(args: &[String], db_target: &str) -> i32 {
+    let parsed = match parse_create_admin_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("banto-serve: {message}\n\n{USAGE}");
+            return 2;
+        }
+    };
+    eprintln!(
+        "banto-serve: パスワードを標準入力から 1 行で読みます（端末から入力すると画面に表示されます。ファイルやパイプからも渡せます）"
+    );
+    let mut password = String::new();
+    if let Err(err) = std::io::stdin().read_line(&mut password) {
+        eprintln!("banto-serve: パスワードを読めませんでした: {err}。DB には触れていません");
+        return 1;
+    }
+    let password = password.trim_end_matches(['\r', '\n']);
+    let display_name = parsed.display_name.as_deref().unwrap_or(&parsed.username);
+    let created = create_admin_and_require_login(
+        db_target,
+        NewAdmin {
+            username: &parsed.username,
+            password,
+            display_name,
+        },
+    )
+    .await;
+    match created {
+        Ok(created) => {
+            println!(
+                "banto-serve: 管理者のアカウント {} を作り、ログイン必須にしました（DB: {}）",
+                created.user.username,
+                display_target(db_target)
+            );
+            if created.seeded {
+                println!("banto-serve: 初回起動の既定設定を適用しました");
+            }
+            0
+        }
+        Err(err) => {
+            // A validation error's own text is generic; the reason is in its
+            // field errors (the name is reserved, the password is too short...).
+            let reason = match &err {
+                banto_core::BantoError::Validation { field_errors } if !field_errors.is_empty() => {
+                    field_errors
+                        .iter()
+                        .map(|field| field.message.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                }
+                other => other.to_string(),
+            };
+            // What the transaction covers, said exactly: the migrations run
+            // before it and stay applied (a start would apply them too).
+            eprintln!(
+                "banto-serve: 管理者のアカウントを作れませんでした: {reason}\n\
+                 banto-serve: create-admin としては、アカウント・認証の設定・監査ログを変更していません\
+                 （新しい DB の場合、migration は適用済みで、認証の設定の初期値はその migration が入れています）"
+            );
+            1
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    let db_path = std::env::var("BANTO_DB").unwrap_or_else(|_| DEFAULT_DB_PATH.to_string());
+    // The CLI comes before everything a server start does: it must not apply
+    // a staged restore, and it runs before the checks that stop a startup
+    // (it is the way out of them).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => {}
+        Some("create-admin") => std::process::exit(create_admin(&args[1..], &db_path).await),
+        Some("--help" | "-h") => {
+            println!("{USAGE}");
+            return;
+        }
+        Some(other) => {
+            eprintln!("banto-serve: 知らない引数です: {other}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    }
+
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_PORT);
     let bind = std::env::var("BANTO_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
-    let db_path = std::env::var("BANTO_DB").unwrap_or_else(|_| DEFAULT_DB_PATH.to_string());
-    let allow_setup = std::env::var("BANTO_ALLOW_SETUP")
-        .map(|value| value == "1")
-        .unwrap_or(false);
     let seed_viewer_public = std::env::var("BANTO_VIEWER_PUBLIC")
         .map(|value| value == "1")
         .unwrap_or(false);
+
+    // What stops THIS entry point's start - and so what a restore candidate
+    // is held to before it is swapped in (ADR-0034 §9).
+    let wiring = Wiring::Headless { seed_viewer_public };
 
     let db_path_buf = PathBuf::from(&db_path);
 
@@ -111,11 +249,12 @@ async fn main() {
     } else {
         // ADR-0034 §9: before anything is swapped, the candidate's migration
         // history is checked against this app's migrations, and the checks
-        // that stop a startup (`startup::check`) are run on it - a refused
-        // candidate leaves the current database in place.
+        // that stop a startup (`startup::check`, this server's listening
+        // condition included) are run on it - a refused candidate leaves the
+        // current database in place.
         match BackupService::apply_pending_restore_at_startup(
             &db_path_buf,
-            &sqlite_restore_manifest(),
+            &sqlite_restore_manifest(wiring),
         )
         .await
         {
@@ -152,16 +291,46 @@ async fn main() {
     // below, so a display-preset app's seeded `auth.disabled = true` (say)
     // takes effect on the very first launch. No-op today: the const ships
     // empty.
+    //
+    // A seed that could not be written STOPS the start (cross-review of PR
+    // #865). Going on without it would leave the database unseeded and
+    // unmarked: a later start would then seed over whatever was saved in
+    // between - a preset's `auth.disabled = true` over a lock-down. The
+    // restore check treats the same failure as "could not check"
+    // (`startup::prepare_like_a_startup`), so a start and a candidate agree.
     match seed_first_boot_settings(&settings).await {
         Ok(true) => println!("banto-serve: 初回起動の既定設定を適用しました"),
         Ok(false) => {}
-        Err(err) => eprintln!("banto-serve: 初回起動の既定設定の書き込みに失敗しました: {err}"),
+        Err(err) => {
+            eprintln!(
+                "banto-serve: 起動できません: 初回起動の既定設定を書き込めませんでした: {err}"
+            );
+            std::process::exit(1);
+        }
     }
-    // ADR-0034 §2/§4: the checks that stop a startup, after the migrations
-    // and the seed. A database that fails them is not repaired here - the
-    // message names the cause and the remedy. The SAME function is run on a
-    // restore candidate before the swap (`sqlite_restore_manifest`, §9).
-    let startup_users = match startup::check(&db).await {
+    // Issue #189: write 閲覧公開 on when asked - before the check below, which
+    // reads the STORED flag (no login + no public viewing = this server does
+    // not start). The check never takes the variable's word for it: the grant
+    // route judges by the stored flag, so if this write fails on a no-login
+    // database the start stops instead of listening with no way in. The
+    // restore check makes the same write on its working copy
+    // (`startup::seed_viewer_public`, one function for both), and goes on
+    // after a failed write the same way: the stored value decides.
+    if seed_viewer_public {
+        if let Err(err) = startup::seed_viewer_public(&settings).await {
+            eprintln!("banto-serve: 閲覧公開設定の保存に失敗しました: {err}");
+        }
+    }
+    // ADR-0034 §2/§4/§5/§6: the checks that stop a startup, after the
+    // migrations and the seed. A database that fails them is not repaired
+    // here - the message names the cause and the remedy (`create-admin`).
+    // The SAME function is run on a restore candidate before the swap
+    // (`sqlite_restore_manifest`, §9).
+    //
+    // This server always listens, so the check includes "may it listen":
+    // in no-login mode without public viewing it stops here, before any
+    // socket is opened (§6-3).
+    let started = match startup::check(&db, wiring).await {
         Ok(found) => found,
         Err(err) => {
             eprintln!("banto-serve: 起動できません: {err}");
@@ -169,7 +338,7 @@ async fn main() {
         }
     };
     let backup = BackupService::new(db_path_buf.clone(), db.clone())
-        .with_migrations(sqlite_restore_manifest());
+        .with_migrations(sqlite_restore_manifest(wiring));
     // M20 attachments (spec docs/design/attachments-plan.md §3.3): base_dir is the
     // directory `banto_attachments::base_dir_for_target` picks (Issue #208):
     // - SQLite: the DB file's own parent directory + `attachments` (same
@@ -256,7 +425,19 @@ async fn main() {
     // ADR-0034 §3: the built-in row's id, read once above by `kind`, is the
     // `actor_id` of every session marked `audit_as_builtin_admin`.
     let auth = user_auth_state(users.clone(), audit.clone())
-        .with_builtin_admin_id(startup_users.builtin_admin_id);
+        .with_builtin_admin_id(started.users.builtin_admin_id);
+    // ADR-0034 §6: the stored auth mode, mirrored before the first request.
+    // In no-login mode no account logs in and no account token is accepted:
+    // what reaches this server is public viewing (read-only, plus the
+    // viewer's own UI settings) and the grants a derived app registered.
+    // Nothing changes the stored mode while this process runs (the setting
+    // has no REST route), so it is mirrored once.
+    let auth_mode = if started.auth.disabled {
+        AuthMode::NoLogin
+    } else {
+        AuthMode::LoginRequired
+    };
+    auth.switch_auth_mode(auth_mode);
 
     // Spec M17: record `restore_applied` now that a real `AuditLogService`
     // exists - `apply_pending_restore_at_startup` itself cannot do this (it
@@ -298,33 +479,12 @@ async fn main() {
         Err(err) => eprintln!("banto-serve: 監査ログの保持設定の読み取りに失敗しました: {err}"),
     }
 
-    // Issue #189: seed 閲覧公開 when asked. Read-modify-write rather than
-    // constructing a fresh `ServerSettings` so `enabled`/`bind`/`port`
-    // (whatever a previous run or the settings screen persisted) survive - the
-    // LAN listener this binary starts comes from `BANTO_BIND`/`PORT`, not from
-    // these keys, so flipping `enabled` here would silently change what the
-    // Tauri app does with the same DB. Best-effort, like the prune above: a
-    // failure must not stop the server from starting.
-    if seed_viewer_public {
-        match settings.server_config().await {
-            Ok(config) => {
-                let seeded = ServerSettings {
-                    viewer_public: true,
-                    ..config
-                };
-                if let Err(err) = settings.set_server_config(&seeded).await {
-                    eprintln!("banto-serve: 閲覧公開設定の保存に失敗しました: {err}");
-                }
-            }
-            Err(err) => eprintln!("banto-serve: サーバー設定の読み取りに失敗しました: {err}"),
-        }
-    }
-
     // `with_security_headers` (spec improvements §2.4) wraps LAST/outermost
     // so every response - static UI, `/api/*` JSON, and SSE alike - gets
     // the baseline security headers, regardless of which inner router
     // produced it.
     let added_resources = resources_router(resources, audit.clone(), auth.clone());
+    let settings_for_messages = settings.clone();
     let services = Services {
         items,
         users,
@@ -336,7 +496,7 @@ async fn main() {
         metrics,
     };
     let app = with_security_headers(
-        api_router(services, auth, events, allow_setup)
+        api_router(services, auth, events)
             .merge(added_resources)
             .merge(static_router::<FrontendAssets>()),
     );
@@ -360,15 +520,23 @@ async fn main() {
     for url in lan_urls_for_bind(&bind, server.local_addr().port()) {
         println!("  {url}");
     }
-    if allow_setup {
-        println!("banto-serve: first-run setup is ENABLED (BANTO_ALLOW_SETUP=1) - POST /api/auth/setup will create the first account");
-    } else {
+    if started.auth.disabled {
         println!(
-            "banto-serve: first-run setup is DISABLED - set BANTO_ALLOW_SETUP=1 to allow POST /api/auth/setup"
+            "banto-serve: no-login mode - nobody can log in and nothing can be changed over the network. \
+             To manage this server, stop it and run `banto-serve create-admin`"
         );
     }
-    if seed_viewer_public {
-        println!("banto-serve: public viewing is ENABLED (BANTO_VIEWER_PUBLIC=1) - POST /api/auth/grant/publicViewer will hand out anonymous viewer sessions");
+    // What is stored, not what was asked for: the grant route reads the
+    // setting, and the `BANTO_VIEWER_PUBLIC` write above may have failed.
+    match settings_for_messages.server_config().await {
+        Ok(config) if config.viewer_public => println!(
+            "banto-serve: public viewing is ENABLED - POST /api/auth/grant/publicViewer will hand out anonymous viewer sessions"
+        ),
+        Ok(_) if seed_viewer_public => eprintln!(
+            "banto-serve: BANTO_VIEWER_PUBLIC=1 was given, but public viewing is NOT enabled (the setting could not be saved)"
+        ),
+        Ok(_) => {}
+        Err(err) => eprintln!("banto-serve: サーバー設定の読み取りに失敗しました: {err}"),
     }
     println!("banto-serve: press Ctrl-C to stop");
 

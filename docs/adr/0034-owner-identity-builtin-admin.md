@@ -622,3 +622,59 @@ C2（PR #858）の実装で、§9 の「作業用のコピーへの migration �
    （上の「この前提は、次の 4 つで守る」の 2 の前半）。`banto-serve` はまだモードを写さない（既定のログイン必須のまま）。
    ログインなしの間の REST の読み取り専用・listen の条件・CLI は、C2b の残りで入れる（CLI が無いうちに写すと、
    display の生成物のヘッドレスで管理者が入れなくなる）。
+
+## 追記（2026-11-23、初回セットアップの撤去 = C2b の残りの実装で。オーナー確定）
+
+§5〜§7・§9・§10 のうち C2b に残っていた分（既定・設定の検査・ロックダウンの条件・`banto-serve` の読み取り専用と
+listen の条件・CLI・復元前の検査・初回セットアップの削除）を入れた。本文と違う所・本文に無かった細目は次のとおり。
+PR の本文に「オーナーに確かめたい点」として分けて書き、オーナーがすべて推奨どおりで確定した（2026-11-23）。
+
+1. **`0015_auth_mode_defaults.sql` は、アカウントが居る DB には `auth.disabled = 'false'` を入れる**（C1 の追記 1 の
+   「既存の明示の設定を上書きしない追記の migration」に足す）。`auth.disabled` の行が既にあれば何も変えない。行が無く、
+   アカウント（`kind = 'account'`）が 1 つでも居れば `'false'`、居なければ `'true'`。C1〜C2 の間の main で作った DB は、
+   キーが無いことが「ログイン必須」を意味していたので、migration で黙ってログインなしにしない（§5 の「ログインなしの
+   既定は、新しい DB だけ」）。管理者が居ない（editor だけの）DB は `'false'` になり、次の検査で起動が止まる（CLI で直る）。
+   `auth.disabled_role` は、無ければ `'admin'`。基準（`BASELINE_MIGRATION_VERSION`）は 14 のまま（0015 が未適用の候補は、
+   作業用のコピーに当ててから検査する）。
+2. **ロックダウンの判定は、保存そのもの（`SettingsService::set_auth_config`）に置いた**。配線が `auth_config_lock` の下で
+   保存を呼ぶので、§6 の「判定と保存は同じロックの中、失効の手前」のとおりになる。サービス層に置いたのは、Tauri の
+   コマンド・派生アプリの保存の口のどれから呼んでも同じ判定を通すため（conventions §1）。CLI は、同じトランザクションで
+   管理者を作ってから `require_login_on_*` で書く（この判定は通さない。条件は自分で満たしている）。
+3. **`startup::check(db, wiring)`**。`Wiring::Desktop` と `Wiring::Headless { viewer_public_forced }` の 2 つ。
+   `banto-serve` の `BANTO_VIEWER_PUBLIC=1` は、検査の前に設定へ書き、復元の候補の検査には `viewer_public_forced` として
+   渡す（その起動が実際に止まる条件と一致させる。§9 の (e)）。**検査が見るのは保存済みの `server.viewer_public` だけ**で、
+   環境変数は「検査の前に書く」（`startup::seed_viewer_public`。起動と作業用のコピーで同じ関数）。書き込みに失敗した
+   ログインなしの DB では待ち受けない（PR #865 のクロスレビュー）。作業用のコピーの準備は、起動と同じ `db::prepare`
+   （migration とアプリの seed）→ 初回の seed → 上の書き込み、の順。復元の候補は、作業用のコピーに migration と初回の seed
+   （起動と同じ関数）を当ててから検査する。seed が失敗したときは、migration の失敗と同じく「検査できなかった」（C2 の追記 2）。
+4. **ログイン必須のときは `auth.disabled_role` を検査しない**。合成セッションを組まないので、無くても知らない値でも
+   起動を止めない（読み取りは `admin` を返すが、使われない。次の保存が書き直す）。
+5. **CLI の細目**（§7 の「引数の細目は C2b で決める」）: `banto-serve create-admin --username <名前> [--display-name <表示名>]`。
+   パスワードは標準入力の 1 行目（末尾の改行は除く。端末から入力すると表示される）。DB は `BANTO_DB`。終了コードは
+   0 = 成功、1 = アカウント・認証の設定・監査は変更していない（migration は適用済みのことがある）、2 = 引数の誤り。
+   DB は migration だけを当てて開く（`db::open_migrated`。起動のときの業務データの seed は走らせない）。監査は 2 行（`create` / `users` と `settings_change` / `settings`
+   `{authDisabled: false}`）で、`actor_username = 'admin'`・`actor_id` = 組み込みの行・`actor_kind = 'cli'`・`origin = 'cli'`。
+   組み込みの行が無い DB（直接の編集）は CLI では直さない（`actor_id` は NULL で書き、次の起動の検査が止める）。
+   処理は `admin_template_core::first_account::create_admin_and_require_login`。
+6. **`auth_config_apply` は、知らないロールを `admin` に落とさず `Validation` で断る**（§5 の「読めないロールを admin に
+   落とすのをやめる」を、保存の入口にも当てた）。アカウントが 0 の間の「セッションなしで呼べる窓」は消した。
+7. **画面のための欄**: `auth_config_get` / `auth_config_apply` の答えに `hasAdminAccount` を足した（設定の画面が、
+   ロックダウンできない理由とユーザー管理への導線を出す。判定は保存がもう一度する）。`status` の `initialized` は消した。
+8. **受け入れ試験の置き場所**（§10）: ヘッドレスの道筋・起動より先の CLI と seed・設定の異常・CLI と予約された復元は
+   `core/src/first_account.rs` と `core/src/startup.rs`（SQLite）と `core/tests/pg_smoke.rs`（PostgreSQL。display と同じ
+   seed）。待ち受けの可否と復元は `core/src/startup.rs`。ログインなしの間の REST は `core/src/rest/tests.rs`、
+   Tauri のロックダウンは `src-tauri/src/tests.rs`。display の生成物での「CLI → 起動 → ログイン」は template-acceptance。
+   e2e は、閲覧公開の suite を「アカウント 0 件・ログインなし」と「CLI の管理者 + ログイン必須」の 2 本のサーバーに分けた。
+9. **無くなった試験**: 初回セットアップと、その競合（S-18・S-19・S-95 の setup、PostgreSQL の同時セットアップ）、
+   空のスロットからの `auth_config_apply`（S-67 の 1 本。ログイン必須でセッションが無ければ `Unauthorized` になる）。
+10. **「ログインできる管理者」の判定**（PR #865 のクロスレビュー）: `UsersService::has_admin` は、`kind = 'account'` かつ
+    `role = 'admin'` の行のうち、username が照合の対象になり（空でなく、長さの上限以内）、保存済みのハッシュが verifier で
+    確かめられる形（argon2 の PHC 文字列で、出力を持つ）のものが 1 つ以上あるかを返す。パスワードそのものは確かめない。
+    確かめる形は、アルゴリズム・版・パラメータが argon2 の受け付けるもので、塩が復号できて最小長以上、出力も最小長以上であること。
+    起動・復元の候補・ロックダウンの 3 か所が同じ関数を通り、最後の管理者のガード（降格・削除）も、書き込みの
+    トランザクションの中で同じ判定（`can_log_in`）で「ほかにログインできる管理者が居るか」を見る。
+    ハッシュが壊れた行しか無い DB は「管理者が 0」と同じ扱い。
+11. **準備の失敗の扱いは、起動と復元の候補で同じ**（PR #865 のクロスレビュー）: `db::prepare`（migration とアプリの seed）と
+    初回の設定の seed の失敗は、**起動を止める**（両方の配線。今までは初回の seed の失敗を警告して続けていた）。復元の候補では
+    「検査できなかった」（予約を残し、交換しない）。続けると、印の無い DB に後の起動が seed し、その間に保存した設定
+    （ロックダウン）を上書きしうるため。`BANTO_VIEWER_PUBLIC` の書き込みの失敗は、どちらも続けて、保存済みの値で検査が決める。

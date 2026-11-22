@@ -28,7 +28,7 @@
  *     Sidebar・ログイン画面のブランド表示 /
  *     panel ページの <title> 接尾辞 … --title
  *   - static/manifest.webmanifest name / short_name（PWA インストール名）… --title
- *   - e2e のログイン見出しアサーション（first-run-setup / visual / a11y）… --title
+ *   - e2e のログイン見出しアサーション（first-admin / visual / a11y）… --title
  *   - Cargo.toml workspace.package.repository /
  *     packages/星/package.json repository.url … --repo（指定時のみ）
  *
@@ -217,8 +217,8 @@ editFile('apps/admin-template/src/routes/panel/[id]/+page.svelte', '<title> 接�
 // --- 4. e2e のログイン見出しアサーション ------------------------------------
 
 for (const rel of [
-	// smoke の初回セットアップは helper に切り出した（#715）。見出しのアサーションはそちら。
-	'e2e/first-run-setup.ts',
+	// smoke の最初のログインは helper に切り出してある（#715）。見出しのアサーションはそちら。
+	'e2e/first-admin.ts',
 	'e2e/visual/visual.spec.ts',
 	'e2e/visual/a11y.spec.ts'
 ]) {

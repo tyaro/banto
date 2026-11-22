@@ -409,7 +409,6 @@ const isAllowedPackageImport = (spec) =>
 		// `pnpm banto add resource` が新しいリソースの対をこの下に足す（下の TAURI_READ・
 		// REST_READ も同じ。docs/recipes/add-resource.md）。
 		// [banto:add-resource:dual-path]
-		{ tauri: 'auth_setup', rest: 'POST /api/auth/setup' },
 		{ tauri: 'auth_login', rest: 'POST /api/auth/login' },
 		{ tauri: 'auth_logout', rest: 'POST /api/auth/logout' },
 		{ tauri: 'auth_change_password', rest: 'POST /api/auth/change-password' },

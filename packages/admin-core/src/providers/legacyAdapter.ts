@@ -16,7 +16,7 @@
  * - `checked`/`current`/`credentialRevision()` are always the constant
  *   `ADAPTER_REVISION`, and `onCredentialChanged` accepts listeners but
  *   never calls them;
- * - `login`/`logout`/`setup`/`changePassword`/`status` pass through. There
+ * - `login`/`logout`/`changePassword`/`status` pass through. There
  *   is no `enterGrant` (grants are a v3.0.0 contract, ADR-0017, with no
  *   legacy form), so `grantFallback` leaves a `none` as it is. The legacy
  *   `check()`/`getIdentity()` are only used by `resolve()` (they are not
@@ -84,10 +84,6 @@ export function adaptLegacyAuthProvider(legacy: LegacyAuthProvider): AuthProvide
 	if (legacy.status) {
 		const status = legacy.status.bind(legacy);
 		adapted.status = () => status();
-	}
-	if (legacy.setup) {
-		const setup = legacy.setup.bind(legacy);
-		adapted.setup = (params) => setup(params);
 	}
 	if (legacy.changePassword) {
 		const changePassword = legacy.changePassword.bind(legacy);

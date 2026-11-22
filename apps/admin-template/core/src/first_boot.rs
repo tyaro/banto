@@ -52,7 +52,7 @@ pub async fn seed_first_boot_settings(settings: &SettingsService) -> Result<bool
 mod tests {
     use super::*;
 
-    /// A database with the real migrations applied (0001-0014), unseeded.
+    /// A database with the real migrations applied (0001-0015), unseeded.
     async fn service() -> SettingsService {
         SettingsService::new(crate::db::migrate_memory().await.expect("migrate"))
     }
@@ -119,10 +119,13 @@ mod tests {
     async fn an_empty_seed_writes_no_setting_and_closes_the_first_boot() {
         let settings = service().await;
         assert!(settings.seed_first_boot(&[]).await.unwrap());
-        assert_eq!(settings.get("auth.disabled").await.unwrap(), None);
+        // The migration's rows (0015) are as they were; nothing was added.
+        let role = || async { settings.get("auth.disabled_role").await.unwrap() };
+        assert_eq!(role().await.as_deref(), Some("admin"));
         assert_eq!(settings.get("server.enabled").await.unwrap(), None);
         assert!(!settings.seed_first_boot(DISPLAY_SEED).await.unwrap());
-        assert_eq!(settings.get("auth.disabled").await.unwrap(), None);
+        assert_eq!(role().await.as_deref(), Some("admin"));
+        assert_eq!(settings.get("server.enabled").await.unwrap(), None);
     }
 
     /// The marker is taken inside the caller's transaction: when what follows
@@ -147,7 +150,8 @@ mod tests {
                 .unwrap()
         );
         tx.rollback().await.unwrap();
-        assert!(settings.is_empty().await.unwrap());
+        assert_eq!(settings.get("first_boot.seeded").await.unwrap(), None);
+        assert_eq!(settings.get("server.viewer_public").await.unwrap(), None);
 
         assert!(settings.seed_first_boot(DISPLAY_SEED).await.unwrap());
         assert!(settings.server_config().await.unwrap().viewer_public);

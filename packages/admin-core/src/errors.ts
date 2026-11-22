@@ -122,7 +122,7 @@ export function validation(fieldErrors: FieldError[]): ProviderError {
 /**
  * `AuthProvider.resolve()` rejected because its answer is about a credential
  * that changed while it was in flight (Issue #260, design §5.2/§5.3, I-23):
- * a state-changing operation (login/logout/setup/changePassword) was still
+ * a state-changing operation (login/logout/changePassword) was still
  * pending when the answer arrived, or the backend reported the session slot
  * re-bound during the check. Distinct from a `ProviderError` (the backend
  * could not answer): the caller should ask again, not report a failure.

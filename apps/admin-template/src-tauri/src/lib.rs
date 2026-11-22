@@ -87,8 +87,8 @@ struct AppState {
     /// generated commands read `state.resources.<name>`; the embedded server
     /// gets a clone for `resources_router`.
     resources: AppResources,
-    /// The webview window's own session identity, set by `auth_login`/
-    /// `auth_setup` and cleared by `auth_logout` - all called directly via
+    /// The webview window's own session identity, set by `auth_login`
+    /// and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
     /// carrying the full `UserIdentity` (not just a bool) lets
     /// `auth_change_password` recover the current `username` without a
@@ -103,8 +103,8 @@ struct AppState {
     /// meanwhile ([`cas_session`]).
     auth: Mutex<AuthSlot>,
     /// The two slow `.await`s the session-changing commands make before
-    /// they write [`AppState::auth`] (credential verification / first-user
-    /// setup, and the auth-mode read), injected so tests can hold a command
+    /// they write [`AppState::auth`] (credential verification and the
+    /// auth-mode read), injected so tests can hold a command
     /// at that point and fix the completion order (design §8.3). Production
     /// wraps `users`/`settings` below ([`AuthIo::production`]).
     auth_io: AuthIo,
@@ -176,7 +176,7 @@ struct AppState {
     reach_check: ReachCheckState,
     /// Audit trail (spec M14): every mutating command below records a
     /// `create`/`update`/`delete`/`password_reset`/`settings_change`/
-    /// `login`/`login_failed`/`logout`/`setup` entry here (`origin:
+    /// `login`/`login_failed`/`logout` entry here (`origin:
     /// "tauri"`) once it has already succeeded, and [`require_role`] records
     /// `denied` when an active session's role is too low. The successful,
     /// actor-attributed writes go through the [`record_ok`] helper (the
@@ -233,7 +233,7 @@ struct AppState {
     started_at: std::time::Instant,
 }
 
-/// Result of `auth_login`/`auth_setup`. `superseded`/`seq` (Issue #260,
+/// Result of `auth_login`. `superseded`/`seq` (Issue #260,
 /// design §5.3/I-19): `superseded` is `true` when the credentials were
 /// valid but another command re-bound the session slot while this one was
 /// verifying, so the session was NOT installed ([`cas_session`]); `seq` is
@@ -287,7 +287,7 @@ struct AuthResolveResult {
 /// The webview session slot (Issue #260, design §5.3, I-11).
 ///
 /// `seq` advances on every write that is MEANT to change the binding -
-/// login/setup/config-apply installing a session, logout/settle clearing
+/// login/config-apply installing a session, logout/settle clearing
 /// one, `change_own_password` re-binding one - even when the value does not
 /// change (a logout of `None` still advances it, so a login that started
 /// before it can no longer install). It does NOT advance on a refresh of the
@@ -309,10 +309,6 @@ type AuthFuture<T> = futures_util::future::BoxFuture<'static, Result<T, BantoErr
 /// `auth_login`'s credential check (design §8.3 `CredentialVerifier`).
 type CredentialVerifier =
     Arc<dyn Fn(String, String) -> AuthFuture<Option<UserIdentity>> + Send + Sync>;
-/// `auth_setup`'s first-account creation. Not in design §8.3's sketch (which
-/// names only the verifier and the auth-mode read): `auth_setup` awaits
-/// `setup_first_user`, not `verify`, so S-18/S-19 need their own hold point.
-type FirstUserSetup = Arc<dyn Fn(String, String, String) -> AuthFuture<UserIdentity> + Send + Sync>;
 /// `auth_logout`'s auth-mode read (design §8.3 `AuthModeSource`).
 type AuthModeSource = Arc<dyn Fn() -> AuthFuture<AuthSettings> + Send + Sync>;
 /// `auth_config_apply`'s settings save. Not in design §8.3's sketch: injected
@@ -337,7 +333,6 @@ type PermissionsSource = Arc<
 /// See [`AppState::auth_io`].
 struct AuthIo {
     verify: CredentialVerifier,
-    setup_first_user: FirstUserSetup,
     auth_mode: AuthModeSource,
     save_auth_config: AuthConfigSave,
     permissions: PermissionsSource,
@@ -346,7 +341,6 @@ struct AuthIo {
 impl AuthIo {
     fn production(users: &UsersService, settings: &SettingsService) -> Self {
         let verify_users = users.clone();
-        let setup_users = users.clone();
         let save_settings = settings.clone();
         let settings = settings.clone();
         Self {
@@ -356,14 +350,6 @@ impl AuthIo {
             verify: Arc::new(move |username, password| {
                 let users = verify_users.clone();
                 Box::pin(async move { users.verify(&username, &password).await })
-            }),
-            setup_first_user: Arc::new(move |username, password, display_name| {
-                let users = setup_users.clone();
-                Box::pin(async move {
-                    users
-                        .setup_first_user(&username, &password, &display_name)
-                        .await
-                })
             }),
             auth_mode: Arc::new(move || {
                 let settings = settings.clone();
@@ -421,7 +407,6 @@ struct Identity {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthStatusResult {
-    initialized: bool,
     /// Always `false` in the Tauri window (Issue #189,
     /// `docs/design/viewer-public-plan.md` §3.1-4, ADR-0012). 閲覧公開 is a property
     /// of the LAN surface: it lets a BROWSER on the network obtain a
@@ -584,7 +569,7 @@ const LOCAL_SESSION_ID: i64 = 0;
 /// [`current_session`] re-validates it.
 #[derive(Debug, Clone, PartialEq)]
 enum DesktopSession {
-    /// A `users` account (`auth_login`, `auth_setup`, autologin): bound to
+    /// A `users` account (`auth_login`, autologin): bound to
     /// the row's `id` + `auth_epoch` it was established with and
     /// re-validated against that row on every command.
     Account(UserIdentity),
@@ -924,7 +909,7 @@ fn session_actor(builtin_admin_id: i64, session: &DesktopSession) -> AuditActor 
 }
 
 /// [`session_actor`] of an account that is not (yet) the slot's session: a
-/// login or setup that just succeeded, an account session being replaced.
+/// login that just succeeded, an account session being replaced.
 fn account_actor(identity: &UserIdentity) -> AuditActor {
     AuditActor::account(&identity.username, identity.id, identity.role.as_str())
 }
@@ -1208,37 +1193,16 @@ async fn items_import(
 // with the same role floor and the same audit entries (conventions section 1).
 // [banto:add-resource:tauri-commands]
 
-/// `GET`-ish command: has an account been created yet (spec §3.3/§8.2)? The
-/// login page calls this first to decide between the first-run setup form
-/// and the normal login form.
+/// What the login page needs before any session exists. There is no
+/// "initialized" in it (ADR-0034 §5): a new database is usable as soon as its
+/// migrations have run - it starts in no-login mode, and accounts are created
+/// from user management.
 #[tauri::command]
-async fn auth_status(state: State<'_, AppState>) -> Result<AuthStatusResult, BantoError> {
+async fn auth_status(_state: State<'_, AppState>) -> Result<AuthStatusResult, BantoError> {
     Ok(AuthStatusResult {
-        initialized: state.users.is_initialized().await?,
         // See `AuthStatusResult::viewer_public`: never true in this window.
         viewer_public: false,
     })
-}
-
-/// Create the very first account and log the webview session in as it
-/// (spec §8.2). `BantoError::Validation` (bad username/short password)
-/// propagates as `Err` so the frontend form store can field-map it;
-/// "already initialized" (or any other non-validation failure) surfaces as
-/// `Ok(LoginResult { success: false, .. })` instead, since that is an
-/// expected/retryable outcome, not a form error.
-///
-/// Issue #260 (design §5.3, S-18/S-19): the session is installed only if no
-/// other command re-bound the slot while the account was being created
-/// ([`cas_session`] against the `seq` read before the first `.await`);
-/// otherwise the account still exists but the result is `superseded`.
-#[tauri::command]
-async fn auth_setup(
-    state: State<'_, AppState>,
-    username: String,
-    password: String,
-    display_name: String,
-) -> Result<LoginResult, BantoError> {
-    setup_body(&state, username, password, display_name).await
 }
 
 /// Message for a `LoginResult { superseded: true }` (the credentials were
@@ -1246,52 +1210,12 @@ async fn auth_setup(
 const SUPERSEDED_LOGIN_MESSAGE: &str =
     "別のセッションが先に確定したため、このログインは適用されませんでした";
 
-/// Body of [`auth_setup`] (testable with a plain `&AppState`, design §8.3).
-/// Slot-clearing errors: none - every `Err` is returned before the slot is
-/// written (the TS provider's revision relies on this, design I-19).
-async fn setup_body(
-    state: &AppState,
-    username: String,
-    password: String,
-    display_name: String,
-) -> Result<LoginResult, BantoError> {
-    let (_, seq_at_entry) = read_slot(state);
-    // Owner decision on #266 (S-95): in auth-disabled mode no account session
-    // is ever installed. Checked on entry so no account is created for a
-    // setup that could not sign in; checked again at the install below
-    // (the mode can be switched on while the account is being created).
-    if state.settings.auth_config().await?.disabled {
-        return Ok(auth_disabled_login_result(state));
-    }
-    match (state.auth_io.setup_first_user)(username, password, display_name).await {
-        Ok(identity) => {
-            record_ok(
-                &state.audit,
-                &account_actor(&identity),
-                "setup",
-                "auth",
-                None,
-                None,
-            )
-            .await;
-            install_account_unless_auth_disabled(state, seq_at_entry, identity).await
-        }
-        Err(err @ BantoError::Validation { .. }) => Err(err),
-        Err(other) => Ok(LoginResult {
-            success: false,
-            error: Some(other.to_string()),
-            superseded: false,
-            seq: read_slot(state).1,
-        }),
-    }
-}
-
-/// `LoginResult.error` of a login/setup refused because auth-disabled mode is
+/// `LoginResult.error` of a login refused because auth-disabled mode is
 /// on (S-95). The same text the REST login answers with in that mode
 /// (ADR-0034 §6; conventions §1).
 const AUTH_DISABLED_LOGIN_MESSAGE: &str = banto_server::LOGIN_DISABLED_MESSAGE;
 
-/// The refusal of a login/setup in auth-disabled mode (owner decision on
+/// The refusal of a login in auth-disabled mode (owner decision on
 /// #266, S-95): `success: false`, not `superseded` (no other session won a
 /// race - the mode forbids it), nothing written, the current `seq`. An `Ok`
 /// result rather than an `Err`, so the TS provider observes the unchanged
@@ -1332,7 +1256,7 @@ async fn install_account_unless_auth_disabled(
     ))
 }
 
-/// Install a verified login/setup session with [`cas_session`] and build the
+/// Install a verified login session with [`cas_session`] and build the
 /// command result: `superseded` when the slot was re-bound after
 /// `seq_at_entry`.
 fn install_login(state: &AppState, seq_at_entry: u64, session: DesktopSession) -> LoginResult {
@@ -1996,9 +1920,19 @@ async fn record_local_rebind(
 #[tauri::command]
 async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettingsView, BantoError> {
     require_role(&state, Role::Viewer, "settings").await?;
+    auth_settings_view(&state, state.settings.auth_config().await?).await
+}
+
+/// `settings` as the settings screen reads it: with the mode's permissions and
+/// whether login could be required right now.
+async fn auth_settings_view(
+    state: &AppState,
+    settings: AuthSettings,
+) -> Result<AuthSettingsView, BantoError> {
     Ok(AuthSettingsView {
-        settings: state.settings.auth_config().await?,
-        disabled_permissions: auth_disabled_permissions_view(&state).await?,
+        settings,
+        disabled_permissions: auth_disabled_permissions_view(state).await?,
+        has_admin_account: state.users.has_admin().await?,
     })
 }
 
@@ -2018,14 +1952,19 @@ async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettingsView,
 /// behind a role that mode itself may have suppressed is consistent with
 /// that trust model, not a weakening of it.
 ///
-/// BOOTSTRAP WINDOW (choiapp-feedback-2026-09 §5): while NO account exists
-/// yet (`users.is_initialized() == false`), this command is also allowed
-/// with no session at all - the first-run setup screen's
-/// 「ログインなしで使い始める」path. This grants nothing [`auth_setup`] does
-/// not already grant in the same state: with zero accounts, whoever sits at
-/// the device can create the first admin unauthenticated anyway, so letting
-/// that same person pick no-login mode instead is the same trust decision,
-/// not a wider one. The window closes the moment the first account exists.
+/// There is no other way in without a session (ADR-0034 §5): a new database
+/// starts in this mode, so the "no account yet" window this command once had
+/// (for the first-run screen) is gone.
+///
+/// REQUIRING LOGIN (turning the mode off) needs an administrator account
+/// that can log in (ADR-0034 §6): without one the save is refused with a
+/// `Validation` on `disabled` ("create an administrator account first") and
+/// nothing changes - not the settings, not the session, not the embedded
+/// server's mode. The check is the save's own
+/// (`SettingsService::set_auth_config`), so it runs under `auth_config_lock`
+/// before `AuthState::switch_auth_mode`; the last administrator can never be
+/// removed, so one that is there at the check is there at the save.
+///
 /// Enabling the mode re-binds the session to the same synthetic local
 /// identity `run()`'s bootstrap would create on the next launch (and
 /// records the same synthetic `login` entry), so the webview enters the app
@@ -2033,9 +1972,9 @@ async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettingsView,
 /// session is replaced (owner review of #266 P1, [`rebind_local_session`]),
 /// so `auth.disabled == true` always goes with the synthetic session.
 ///
-/// Body of [`auth_config_apply`] (spec M14 pattern) so its escape-hatch /
-/// bootstrap-window authz (the actor may be `None`) + audit behavior is
-/// testable with a plain `&AppState`.
+/// Body of [`auth_config_apply`] (spec M14 pattern) so its escape-hatch
+/// authz (the actor may be `None`) + audit behavior is testable with a
+/// plain `&AppState`.
 ///
 /// Also carries the mode's permissions (Issue #697,
 /// user-permissions-plan §8-4): `permissions` = the keys the synthetic
@@ -2044,7 +1983,7 @@ async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettingsView,
 ///
 /// It rides on this command - not a command of its own - so the write is
 /// under the same `auth_config_lock` and the same authz (admin, or the
-/// escape hatch / bootstrap window) as the role, and the session rebind
+/// escape hatch) as the role, and the session rebind
 /// below sees one decision. Every requested key must be one the catalog
 /// registers: validated BEFORE anything is written (`Validation` on
 /// `permissions`, like a user's). A change is audited next to the role's:
@@ -2065,13 +2004,12 @@ async fn auth_config_apply_with_permissions_body(
     // `SettingsService::auth_config`) so tests can fix this command's order
     // against a concurrent logout (design §8.3).
     let currently_disabled = (state.auth_io.auth_mode)().await?.disabled;
-    // Spec M14: the escape hatch and the bootstrap window (see this
-    // command's doc comment) mean `require_role` may not run at all -
-    // capture whatever actor identity exists directly in those cases, so
-    // the audit entry below still has one when possible, instead of
-    // skipping those paths' write entirely.
-    let actor = if currently_disabled || !state.users.is_initialized().await? {
-        // Audit attribution only (these two paths do not authorize by
+    // Spec M14: the escape hatch (see this command's doc comment) means
+    // `require_role` may not run at all - capture whatever actor identity
+    // exists directly in that case, so the audit entry below still has one
+    // when possible, instead of skipping that path's write entirely.
+    let actor = if currently_disabled {
+        // Audit attribution only (this path does not authorize by
         // session): the actor of whatever session the slot holds.
         state
             .auth
@@ -2084,11 +2022,15 @@ async fn auth_config_apply_with_permissions_body(
         Some(require_role(state, Role::Admin, "settings").await?.actor)
     };
 
-    // An unrecognized role string falls back to `admin` (same convention as
-    // `SettingsService::auth_config`'s own read-time fallback) rather than
-    // failing the whole command - a bad value here must never leave the app
-    // unable to determine ANY role for the synthetic identity.
-    let role = Role::from_str(disabled_role).unwrap_or(Role::Admin);
+    // An unrecognized role is refused, never turned into `admin` (ADR-0034
+    // §5: the same stance as `SettingsService::auth_config`'s read). Nothing
+    // has been written yet.
+    let role = Role::from_str(disabled_role).map_err(|_| BantoError::Validation {
+        field_errors: vec![banto_core::FieldError {
+            field: "disabledRole".to_string(),
+            message: "ロールは admin / editor / viewer のいずれかを指定してください".to_string(),
+        }],
+    })?;
 
     // Issue #697: validated after the authz above (a refused caller learns
     // nothing about the catalog) and before any write, so an unregistered
@@ -2185,16 +2127,10 @@ async fn auth_config_apply_with_permissions_body(
     .await;
 
     // The session change is recorded after the settings change it follows
-    // from. Setup-skip flow (choiapp-feedback-2026-09 §5): from the
-    // first-run screen there is no session, so this is the synthetic
-    // `login` only; from the settings screen, the admin's session end
-    // (`logout`, reason `auth_disabled`) and the synthetic `login`.
+    // from: the admin's session end (`logout`, reason `auth_disabled`) and
+    // the synthetic `login`.
     record_mode_session_change(&state.audit, state.builtin_admin_id, &rebind, ended_local).await;
-    let disabled_permissions = auth_disabled_permissions_view(state).await?;
-    Ok(AuthSettingsView {
-        settings: config,
-        disabled_permissions,
-    })
+    auth_settings_view(state, config).await
 }
 
 /// The `settings_change` audit detail of an auth-mode apply: `{ authDisabled }`,
@@ -2245,6 +2181,11 @@ struct AuthSettingsView {
     #[serde(flatten)]
     settings: AuthSettings,
     disabled_permissions: Vec<String>,
+    /// Whether an administrator account that can log in exists (ADR-0034 §6):
+    /// what requiring login needs. For the screen only - it disables the
+    /// switch and says why; the save decides again
+    /// (`SettingsService::set_auth_config`).
+    has_admin_account: bool,
 }
 
 /// `permissions` (Issue #697) = the keys the auth-disabled session holds;
@@ -2702,10 +2643,6 @@ async fn start_embedded_server(
     generation: u64,
     bound: BoundServer,
 ) -> RunningServer {
-    // `allow_setup: false` - the Tauri app's first-run setup goes through
-    // the `auth_setup` command above (`invoke()`, no network involved), not
-    // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
-    // vehicle) opts into `POST /api/auth/setup` via `BANTO_ALLOW_SETUP=1`.
     // `with_security_headers` (spec improvements §2.4) wraps LAST/outermost,
     // same as `banto-serve.rs`'s equivalent composition, so every response
     // this embedded server produces carries the baseline security headers.
@@ -2731,7 +2668,7 @@ async fn start_embedded_server(
     // (no screen to issue tokens there).
     let port = bound.local_addr().port();
     let router = with_security_headers(
-        api_router(services, auth, events, false)
+        api_router(services, auth, events)
             .merge(added_resources)
             .merge(reach_check_router(reach_check, generation, port))
             .merge(static_router::<FrontendAssets>()),
@@ -4830,7 +4767,9 @@ pub fn run() {
                 // database in place.
                 BackupService::apply_pending_restore_at_startup(
                     &db_path,
-                    &admin_template_core::startup::sqlite_restore_manifest(),
+                    &admin_template_core::startup::sqlite_restore_manifest(
+                        admin_template_core::startup::Wiring::Desktop,
+                    ),
                 ),
             ) {
                 Ok(applied) => applied,
@@ -4870,27 +4809,52 @@ pub fn run() {
             // `auth.disabled = true` (say) takes effect on the very first
             // launch rather than one launch late. No-op today: the const
             // ships empty.
+            //
+            // A seed that could not be written STOPS the start (cross-review
+            // of PR #865), as in `banto-serve`: going on would leave the
+            // database unseeded and unmarked, and a later start would seed
+            // over whatever was saved in between (a preset's
+            // `auth.disabled = true` over a lock-down). The restore check
+            // treats the same failure as "could not check".
             match tauri::async_runtime::block_on(seed_first_boot_settings(&settings)) {
                 Ok(true) => println!("banto: 初回起動の既定設定を適用しました"),
                 Ok(false) => {}
-                Err(err) => eprintln!("banto: 初回起動の既定設定の書き込みに失敗しました: {err}"),
+                Err(err) => {
+                    eprintln!("banto: 起動できません: 初回起動の既定設定を書き込めませんでした: {err}");
+                    return Err(
+                        format!("起動できません: 初回起動の既定設定を書き込めませんでした: {err}").into(),
+                    );
+                }
             }
-            // ADR-0034 §2/§4: the checks that stop a startup, after the
+            // ADR-0034 §2/§4/§5/§6: the checks that stop a startup, after the
             // migrations and the seed - the same function `banto-serve`
             // calls, and the one a restore candidate goes through before the
             // swap (§9). A database that fails them is not repaired here:
-            // the message names the cause and the remedy.
-            let startup_users =
-                match tauri::async_runtime::block_on(admin_template_core::startup::check(&db)) {
-                    Ok(found) => found,
-                    Err(err) => {
-                        eprintln!("banto: 起動できません: {err}");
-                        return Err(format!("起動できません: {err}").into());
-                    }
-                };
-            let builtin_admin_id = startup_users.builtin_admin_id;
-            let backup = BackupService::new(db_path.clone(), db.clone())
-                .with_migrations(admin_template_core::startup::sqlite_restore_manifest());
+            // the message names the cause and the remedy. That includes the
+            // auth mode's keys (missing or unreadable: no local session is
+            // made up from a default) and "login required with no
+            // administrator account" (never put back into no-login mode).
+            // `Wiring::Desktop`: unlike `banto-serve`, this app starts in
+            // no-login mode without public viewing - its LAN server is
+            // optional, and its autostart is decided further down.
+            let started = match tauri::async_runtime::block_on(
+                admin_template_core::startup::check(
+                    &db,
+                    admin_template_core::startup::Wiring::Desktop,
+                ),
+            ) {
+                Ok(found) => found,
+                Err(err) => {
+                    eprintln!("banto: 起動できません: {err}");
+                    return Err(format!("起動できません: {err}").into());
+                }
+            };
+            let builtin_admin_id = started.users.builtin_admin_id;
+            let backup = BackupService::new(db_path.clone(), db.clone()).with_migrations(
+                admin_template_core::startup::sqlite_restore_manifest(
+                    admin_template_core::startup::Wiring::Desktop,
+                ),
+            );
             // M20 attachments (spec docs/design/attachments-plan.md §3.3): same
             // sibling-directory convention as `backups/` above, next to the
             // DB file inside the app's own data directory.
@@ -4996,8 +4960,9 @@ pub fn run() {
             //   2. desktop autologin - verify a keyring-stored credential
             //      against `users`, same as a normal login.
             //   3. neither - the ordinary login screen (`auth: None`).
-            let auth_config = tauri::async_runtime::block_on(settings.auth_config())
-                .expect("auth_config should succeed");
+            // The mode is the one the startup check just read (strictly: a
+            // missing or unreadable key stopped the start above).
+            let auth_config = started.auth;
             // ADR-0034 §6: the embedded server's `AuthState` starts in the
             // stored mode (before any listener exists), and follows every
             // later switch through `apply_mode_to_session`.
@@ -5220,7 +5185,6 @@ pub fn run() {
             // [scaffold:items] end
             // [banto:add-resource:tauri-handlers]
             auth_status,
-            auth_setup,
             auth_login,
             auth_logout,
             auth_check,

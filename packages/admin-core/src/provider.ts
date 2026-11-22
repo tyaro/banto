@@ -158,7 +158,7 @@ export type ResolvedAuth =
 			kind?: SessionKind;
 	  };
 
-/** Result of `login`/`setup`. `superseded` (Issue #260): see `AuthProvider.login`. */
+/** Result of `login`. `superseded` (Issue #260): see `AuthProvider.login`. */
 export interface AuthOperationResult {
 	success: boolean;
 	error?: string;
@@ -191,10 +191,13 @@ export interface AuthProvider {
 	logout(): Promise<void>;
 
 	/**
-	 * Has an account been created yet (spec §3.3/§8.2)? Optional so
+	 * What the login page can know before any session exists. Optional so
 	 * pre-existing `AuthProvider` implementations stay valid: the login page
-	 * only calls this via `authProvider.status?.()` and falls back to the
-	 * normal login form when it is absent (or resolves `{ initialized: true }`).
+	 * only calls this via `authProvider.status?.()`.
+	 *
+	 * There is no `initialized` in it since v8.0.0 (ADR-0034 §5): an app has
+	 * no first-run setup - a new database is usable as it is, without an
+	 * account - so the login page is always the login form.
 	 *
 	 * `grants` (ADR-0017) reports, per grant kind, whether this server would
 	 * issue it to this client right now - i.e. whether `enterGrant(kind)`
@@ -203,14 +206,7 @@ export interface AuthProvider {
 	 * missing kind reads as `false` (fail closed - no entry); the HTTP
 	 * provider fills `{}` when the response has none.
 	 */
-	status?(): Promise<{ initialized: boolean; grants?: Record<string, boolean> }>;
-
-	/**
-	 * Create the first account and log in as it (spec §8.2's first-run
-	 * setup). `params` is whatever shape the concrete provider's backend
-	 * expects (username/password/displayName for the built-in providers).
-	 */
-	setup?(params: Record<string, unknown>): Promise<AuthOperationResult>;
+	status?(): Promise<{ grants?: Record<string, boolean> }>;
 
 	/** Change the current session's password. */
 	changePassword?(current: string, next: string): Promise<{ success: boolean; error?: string }>;
@@ -241,8 +237,8 @@ export interface AuthProvider {
 	 * for this (M11's desktop synthetic session already covers "no login in
 	 * this window"), and the plain-browser demo provider has no backend to
 	 * call. Both leave this undefined = unsupported (`grantFallback` then
-	 * returns the `none` unchanged), same convention as `setup`/
-	 * `changePassword` being absent on a provider that doesn't need them.
+	 * returns the `none` unchanged), same convention as `changePassword`
+	 * being absent on a provider that doesn't need it.
 	 */
 	enterGrant?(
 		kind: SessionKind,
@@ -285,7 +281,7 @@ export interface AuthProvider {
 	/**
 	 * Issue #260 (I-19): subscribe to credential changes. Called - only when
 	 * the revision actually changed - from the continuation that received a
-	 * state-changing operation's response (login/logout/setup/
+	 * state-changing operation's response (login/logout/
 	 * changePassword/enterGrant), on a cross-tab `storage` change of
 	 * the credential, and when a state-changing operation got no response.
 	 * NOT called for `resolve()`'s own clearing or for a `resolve()`
@@ -309,8 +305,7 @@ export interface LegacyAuthProvider {
 	logout(): Promise<void>;
 	check(): Promise<boolean>;
 	getIdentity(): Promise<Identity | null>;
-	status?(): Promise<{ initialized: boolean }>;
-	setup?(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
+	status?(): Promise<{ grants?: Record<string, boolean> }>;
 	changePassword?(current: string, next: string): Promise<{ success: boolean; error?: string }>;
 }
 

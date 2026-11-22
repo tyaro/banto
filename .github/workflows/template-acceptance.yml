@@ -310,14 +310,21 @@ jobs:
         run: cargo test -p banto-core -p banto-storage -p banto-server -p admin-template-core
 
       # ADR-0034 §10（C1 の受け入れ）: display の生成物を、新しい SQLite の DB で実際に起動する。
-      # `BANTO_VIEWER_PUBLIC` は渡さない — 公開閲覧は、実 migration（0001〜0014）の後に走る
+      # `BANTO_VIEWER_PUBLIC` は渡さない — 公開閲覧は、実 migration（0001〜0015）の後に走る
       # 初回の seed（`FIRST_BOOT_SETTINGS`）だけで有効になっていなければならない。
       # 見るもの: (1) ヘッダつきの `POST /api/auth/grant/publicViewer` が 200 でトークンを返し、
       # そのトークンで identity が読める、(2) DB の `settings` に seed の値と seed 済みの印がある、
       # (3) 止めて同じ DB でもう一度起動しても、変えた設定が seed で戻らない。
       # 単体試験（first_boot.rs）は「seed が書かれる」までで、起動したサーバーがそれを読んで
       # 公開閲覧を出すことはここでしか見ない。
-      - name: Launch the display copy on a fresh database (first-boot seed → public viewing)
+      #
+      # ADR-0034 §10（C2b の受け入れ）: 続けて、別の新しい DB で「通常の起動を一度もせずに
+      # `banto-serve create-admin` → 起動 → 作ったアカウントでログイン」を通す。display の seed は
+      # `auth.disabled = true` を書くので、CLI が seed より先にロックダウンを書くと、次の起動が
+      # ログインなしへ戻してしまう。見るもの: (4) CLI の後、ログイン必須・seed 済みの印・seed の
+      # ほかのキー（公開閲覧）・CLI の監査 2 行がある、(5) 起動してログインできる、(6) 起動の後も
+      # ログイン必須のまま、(7) 失敗した CLI（予約名）は、アカウントも印も残さない。
+      - name: Launch the display copy on a fresh database (first-boot seed → public viewing; create-admin → login)
         if: matrix.preset == 'display'
         working-directory: ${{ env.DEST }}
         env:
@@ -373,6 +380,36 @@ jobs:
           stop
           expect 'server.bind after the second start' "$(setting server.bind)" 127.0.0.1
           rm -f grant.json identity.json
+
+          # (4)〜(6) 起動より先の CLI。
+          export BANTO_DB="$RUNNER_TEMP/display-cli-first.sqlite3"
+          rm -f "$BANTO_DB"
+          printf '%s\n' 'DisplayOwnerPass1' | ./target/debug/banto-serve create-admin --username owner --display-name Owner
+          expect 'auth.disabled after create-admin' "$(setting auth.disabled)" false
+          expect 'first_boot.seeded after create-admin' "$(setting first_boot.seeded)" true
+          expect 'server.viewer_public after create-admin' "$(setting server.viewer_public)" true
+          expect 'admin accounts after create-admin' "$(sqlite3 "$BANTO_DB" "SELECT COUNT(*) FROM users WHERE kind = 'account' AND role = 'admin'")" 1
+          expect 'cli audit rows' "$(sqlite3 "$BANTO_DB" "SELECT COUNT(*) FROM audit_log WHERE actor_kind = 'cli' AND actor_username = 'admin' AND origin = 'cli'")" 2
+          start
+          code=$(curl -s -o login.json -w '%{http_code}' -X POST -H "$client" -H 'Content-Type: application/json' \
+            -d '{"username":"owner","password":"DisplayOwnerPass1"}' "$base/api/auth/login")
+          expect 'login status' "$code" 200
+          ok=$(node -e "const b=JSON.parse(require('fs').readFileSync('login.json','utf8')); process.stdout.write(String(b.success === true && typeof b.token === 'string'))")
+          expect 'login succeeded' "$ok" true
+          stop
+          expect 'auth.disabled after the start' "$(setting auth.disabled)" false
+          expect 'server.viewer_public after the start' "$(setting server.viewer_public)" true
+          rm -f login.json
+
+          # (7) 失敗した CLI は何も残さない（`admin` は予約名。seed の後で断られる）。
+          export BANTO_DB="$RUNNER_TEMP/display-cli-failed.sqlite3"
+          rm -f "$BANTO_DB"
+          if printf '%s\n' 'DisplayOwnerPass1' | ./target/debug/banto-serve create-admin --username Admin; then
+            echo 'NG: create-admin accepted a reserved name'; exit 1
+          fi
+          expect 'accounts after a failed create-admin' "$(sqlite3 "$BANTO_DB" "SELECT COUNT(*) FROM users WHERE kind = 'account'")" 0
+          expect 'first_boot.seeded after a failed create-admin' "$(setting first_boot.seeded)" ''
+          expect 'auth.disabled after a failed create-admin' "$(setting auth.disabled)" true
 
       # display は items と attachments を両方外すので、src-tauri の lib.rs / tests.rs
       # から消した名前の消し残しは、アンカー一致だけでは見つからずコンパイルでだけ

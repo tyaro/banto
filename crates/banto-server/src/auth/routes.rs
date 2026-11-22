@@ -279,7 +279,7 @@ async fn identity_handler(
 /// - `GET /api/auth/identity` — `(Identity & { kind: string }) | null`
 ///   (`kind` = the grant kind or `"account"`, ADR-0017).
 ///
-/// First-run account setup (`GET /api/auth/status`, `POST /api/auth/setup`)
+/// `GET /api/auth/status`
 /// and `POST /api/auth/change-password` are NOT here: those need the app
 /// crate's `UsersService` directly, so they are composed alongside this
 /// router in `admin-template-core::rest::api_router` instead (this crate

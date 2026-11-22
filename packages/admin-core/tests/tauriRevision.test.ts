@@ -514,22 +514,6 @@ describe('Tauri resolve(): auth_resolve once (§5.3)', () => {
 		expect(changed).not.toHaveBeenCalled();
 	});
 
-	it('setup: a validation rejection resolves { success: false, error } and, returned before any slot write, changes nothing', async () => {
-		const { auth, changed, last } = setup();
-		const result = auth.setup?.({ username: 'owner', password: 'short', displayName: 'O' });
-		last('auth_setup').reply.reject({
-			kind: 'validation',
-			field_errors: [{ field: 'password', message: 'パスワードは8文字以上で入力してください' }]
-		});
-
-		await expect(result).resolves.toEqual({
-			success: false,
-			error: 'パスワードは8文字以上で入力してください'
-		});
-		expect(auth.credentialRevision()).toBe('0.0');
-		expect(changed).not.toHaveBeenCalled();
-	});
-
 	it('S-55: a wrong current password (a validation error, returned before any slot write) keeps the revision and does not notify', async () => {
 		const { auth, changed, last } = setup();
 		const change = auth.changePassword?.('wrong', 'new-password1');

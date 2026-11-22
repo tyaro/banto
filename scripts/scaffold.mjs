@@ -1543,8 +1543,8 @@ function removeItems() {
 	removeItemsFromRestModImports();
 
 	// rest/tests.rs: 列0が3つ（items テスト本体 / M14 の items ステップ /
-	// 閲覧公開の items シナリオ）、インデント4が1つ（setup テストの
-	// 「ガード済みルート」確認）。共有ヘルパの items 宣言と `Services` リテラルは
+	// 閲覧公開の items シナリオ）、インデント4が1つ（ログインなしの試験の
+	// items の読み書きの確認）。共有ヘルパの items 宣言と `Services` リテラルは
 	// マーカー外なので drop/swap で外す。
 	// `rest/tests.rs` は `use super::*;` で mod.rs の import を借りている。
 	// `removeItemsFromRestModImports()` がそこを絞るので、テストだけが使う
@@ -1557,7 +1557,7 @@ function removeItems() {
 		`use axum::http::{Request as HttpRequest, StatusCode};\nuse banto_core::{BantoError, ListParams};\nuse crate::users::Role;`
 	);
 	cutMarked(REST_TESTS, 'rest/tests: items テストブロック除去', 'items');
-	cutMarked(REST_TESTS, 'rest/tests: setup テストの items ガード確認除去', 'items', '    ');
+	cutMarked(REST_TESTS, 'rest/tests: ログインなしの試験の items 確認除去', 'items', '    ');
 	cutMarked(REST_TESTS, 'rest/tests: M14 の items 監査ステップ除去', 'items');
 	cutMarked(REST_TESTS, 'rest/tests: 閲覧公開の items シナリオ除去', 'items');
 	drop(
@@ -1863,7 +1863,7 @@ function replaceE2eForDisplay() {
 	swapText(
 		PLAYWRIGHT_CONFIG,
 		'playwright: selectWebServers の visual / demo の URL 対応を除去',
-		`\t\tvisual: VISUAL_BASE_URL,\n\t\tdemo: DEMO_BASE_URL,\n\t\t'public-viewer': PUBLIC_VIEWER_BASE_URL,\n`,
+		`\t\tvisual: VISUAL_BASE_URL,\n\t\tdemo: DEMO_BASE_URL,\n\t\t'public-viewer': PUBLIC_VIEWER_BASE_URL,\n\t\t'public-viewer-login': PUBLIC_VIEWER_LOGIN_BASE_URL,\n`,
 		``
 	);
 	cutRegion(
@@ -1877,6 +1877,39 @@ function replaceE2eForDisplay() {
 		'playwright: public-viewer 用 DB パス除去',
 		`// Same temp dir (one teardown removes both), separate file`,
 		`const publicViewerDbPath = path.join(dbDir, 'banto-e2e-public-viewer.sqlite3');\n`
+	);
+
+	// 最初の管理者（ADR-0034 §7）: テンプレートのスモークは、サーバーの起動前に
+	// `banto-serve create-admin` で作ったアカウントでログインする。display のスモークは
+	// 「アカウントが 1 つも無い新しい DB で、初回起動シードの公開閲覧だけで `/monitor` に着く」
+	// ことを見るので、その配線ごと外して `banto-serve` をそのまま起動する。
+	swapText(
+		PLAYWRIGHT_CONFIG,
+		'playwright: スモークのサーバーを banto-serve の直接起動に戻す',
+		`\t\t\t// \`create-admin\` on the fresh database, then the server (see\n\t\t\t// \`serveWithFirstAdmin\`): scenario 1 logs in as that account.\n\t\t\tcommand: serveWithFirstAdmin,\n`,
+		`\t\t\tcommand: bantoServeBin,\n`
+	);
+	swapText(
+		PLAYWRIGHT_CONFIG,
+		'playwright: スモークのサーバーから最初の管理者の環境変数を除去',
+		`\t\t\t\tBANTO_DB: dbPath,\n\t\t\t\t...FIRST_ADMIN_ENV\n`,
+		`\t\t\t\tBANTO_DB: dbPath\n`
+	);
+	cutRegion(
+		PLAYWRIGHT_CONFIG,
+		'playwright: 最初の管理者の配線（定数）除去',
+		`\n// First administrator (see the doc comment above)`,
+		`// End of the first-administrator wiring.\n`
+	);
+	drop(
+		PLAYWRIGHT_CONFIG,
+		'playwright: first-admin の import 除去',
+		`import { E2E_ADMIN } from './first-admin';\n`
+	);
+	removeFile('e2e/first-admin.ts', 'e2e: 最初の管理者の helper 削除（display は使わない）');
+	removeFile(
+		'e2e/serve-with-first-admin.mjs',
+		'e2e: create-admin してから起動するラッパー削除（display は使わない）'
 	);
 
 	// ルート package.json のスクリプトと ci.yml のステップ
@@ -1898,7 +1931,7 @@ function replaceE2eForDisplay() {
 	drop(
 		ROOT_PKG,
 		'root package.json: e2e:public-viewer スクリプト除去',
-		`    "e2e:public-viewer": "playwright test --config=e2e/playwright.config.ts --project=public-viewer",\n`
+		`    "e2e:public-viewer": "playwright test --config=e2e/playwright.config.ts --project=public-viewer --project=public-viewer-login",\n`
 	);
 	cutRegion(
 		CI_WORKFLOW,
@@ -2047,7 +2080,7 @@ function applyDisplayDefaults() {
 			`        assert!(wrote);\n` +
 			`        assert_eq!(settings.get("server.viewer_public").await.unwrap(), None);\n` +
 			`    }`,
-		// ADR-0034 §10（C1）: 実 migration（0001〜0014）を当てた DB で、display の既定が
+		// ADR-0034 §10（C1）: 実 migration（0001〜0015）を当てた DB で、display の既定が
 		// 入り、公開閲覧が有効になる（`service()` は `db::migrate_memory`）。
 		`    async fn seed_first_boot_settings_writes_the_display_defaults() {\n` +
 			`        let settings = service().await;\n` +

@@ -37,15 +37,23 @@
  * on state the previous one created (the admin account, the item, the
  * viewer account, ...), mirroring how a person would actually click through
  * the app once. That is also why `webServer` always starts a fresh server
- * against a fresh temp-directory SQLite file: scenario 1 exercises the
- * first-run setup screen, which only appears against a database with zero
- * users - reusing a server/db left over from a previous run would skip it.
+ * against a fresh temp-directory SQLite file: the scenarios create their own
+ * accounts and records, and a database left over from a previous run would
+ * already hold them.
+ *
+ * The first administrator: a new database has no account and needs no login,
+ * and `banto-serve` logs nobody in while that is so (ADR-0034 §5/§6). The
+ * servers of the suites that log in are therefore started through
+ * `serve-with-first-admin.mjs`, which runs `banto-serve create-admin` on the
+ * fresh database first (ADR-0034 §7) - the account is `E2E_ADMIN`
+ * (first-admin.ts), and the database is login-required from then on.
  */
 import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { E2E_ADMIN } from './first-admin';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(dirname, '..');
@@ -58,7 +66,15 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 // `BANTO_VIEWER_PUBLIC=1`. It has to be a separate server: viewer-public is a
 // settings-DB flag with no REST route to toggle it (server settings are
 // desktop-only), and switching it on the smoke server would change scenario
-// 1's "unauthenticated visit shows the setup screen" premise.
+// 1's "unauthenticated visit shows the login screen" premise.
+//
+// Its database keeps ZERO accounts and stays in no-login mode: the server
+// listens only because public viewing is on, and serves it read-only. The
+// scenarios that log in next to public viewing run in `public-viewer-login`,
+// against a THIRD `banto-serve` whose database got its administrator from
+// `create-admin` (login required, public viewing on).
+const PUBLIC_VIEWER_LOGIN_PORT = 8797;
+const PUBLIC_VIEWER_LOGIN_BASE_URL = `http://127.0.0.1:${PUBLIC_VIEWER_LOGIN_PORT}`;
 const PUBLIC_VIEWER_PORT = 8798;
 const PUBLIC_VIEWER_BASE_URL = `http://127.0.0.1:${PUBLIC_VIEWER_PORT}`;
 
@@ -85,6 +101,7 @@ const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'banto-e2e-'));
 const dbPath = path.join(dbDir, 'banto-e2e.sqlite3');
 // Same temp dir (one teardown removes both), separate file: the two servers
 // must never share a users table.
+const publicViewerLoginDbPath = path.join(dbDir, 'banto-e2e-public-viewer-login.sqlite3');
 const publicViewerDbPath = path.join(dbDir, 'banto-e2e-public-viewer.sqlite3');
 // Read by global-teardown.ts to remove `dbDir` again after the run - see
 // that file's doc comment for why an env var, not a direct import.
@@ -96,6 +113,16 @@ const bantoServeBin = path.join(
 	'debug',
 	process.platform === 'win32' ? 'banto-serve.exe' : 'banto-serve'
 );
+
+// First administrator (see the doc comment above): the `webServer` command of
+// a suite that logs in, and the account it creates before the server starts.
+const serveWithFirstAdmin = `node "${path.join(dirname, 'serve-with-first-admin.mjs')}" "${bantoServeBin}"`;
+const FIRST_ADMIN_ENV = {
+	BANTO_E2E_ADMIN_USERNAME: E2E_ADMIN.username,
+	BANTO_E2E_ADMIN_PASSWORD: E2E_ADMIN.password,
+	BANTO_E2E_ADMIN_DISPLAY_NAME: E2E_ADMIN.displayName
+};
+// End of the first-administrator wiring.
 
 /**
  * `BANTO_E2E_SERVERS=visual` narrows `webServer` to the `vite preview` entry
@@ -114,11 +141,12 @@ function selectWebServers(servers: WebServer[]): WebServer[] {
 		process.env.BANTO_E2E_SERVERS ||
 		(process.argv.includes('--project=add-resource') ? 'add-resource' : undefined);
 	if (wanted === undefined || wanted === '') return servers;
-	// Comma-separated names: `visual` (vite preview), `demo` (vite dev, Issue #553), `public-viewer` (2 本目の banto-serve, :8798), `smoke` (banto-serve, :8799 = chromium project) and/or `add-resource` (smoke と同じ banto-serve, Issue #715).
+	// Comma-separated names: `visual` (vite preview), `demo` (vite dev, Issue #553), `public-viewer` (2 本目の banto-serve, :8798), `public-viewer-login` (3 本目の banto-serve, :8797), `smoke` (banto-serve, :8799 = chromium project) and/or `add-resource` (smoke と同じ banto-serve, Issue #715).
 	const urls: Record<string, string> = {
 		visual: VISUAL_BASE_URL,
 		demo: DEMO_BASE_URL,
 		'public-viewer': PUBLIC_VIEWER_BASE_URL,
+		'public-viewer-login': PUBLIC_VIEWER_LOGIN_BASE_URL,
 		smoke: BASE_URL,
 		'add-resource': BASE_URL
 	};
@@ -199,8 +227,17 @@ export default defineConfig({
 		{
 			name: 'public-viewer',
 			testDir: './tests-public-viewer',
+			testIgnore: ['**/with-login/**'],
 			workers: 1,
 			use: { ...devices['Desktop Chrome'], baseURL: PUBLIC_VIEWER_BASE_URL }
+		},
+		// Viewer-public next to real accounts: login / logout / session races,
+		// against the third banto-serve (login required, public viewing on).
+		{
+			name: 'public-viewer-login',
+			testDir: './tests-public-viewer/with-login',
+			workers: 1,
+			use: { ...devices['Desktop Chrome'], baseURL: PUBLIC_VIEWER_LOGIN_BASE_URL }
 		},
 		// `pnpm banto add resource` の生成直後の確認（Issue #715）。`tests-add-resource/` の
 		// spec は生成した orders の画面を前提にするので、生成していない状態では動かない。
@@ -211,8 +248,8 @@ export default defineConfig({
 		{
 			name: 'add-resource',
 			testDir: './tests-add-resource',
-			// 再試行しない: spec は空 DB の初回セットアップから始まるが、DB は実行全体で
-			// 1 つ（webServer が共通）。再試行は 2 回目が通常ログイン画面で必ず落ち、
+			// 再試行しない: spec は作ったばかりの DB から始まるが、DB は実行全体で
+			// 1 つ（webServer が共通）。再試行の 2 回目は 1 回目の行が残った DB で走り、
 			// 最初の失敗の場所を隠すだけになる。
 			retries: 0,
 			workers: 1,
@@ -296,11 +333,12 @@ export default defineConfig({
 	],
 	webServer: selectWebServers([
 		{
-			command: bantoServeBin,
+			// `create-admin` on the fresh database, then the server (see
+			// `serveWithFirstAdmin`): scenario 1 logs in as that account.
+			command: serveWithFirstAdmin,
 			url: BASE_URL,
 			// Never reuse a leftover server: it would carry over yesterday's
-			// (already-set-up) database, which breaks scenario 1's "database
-			// starts empty" assumption on a second local run.
+			// database, and the suite assumes a brand-new one on every run.
 			reuseExistingServer: false,
 			timeout: 30_000,
 			// Playwright's default swallows webServer stdout, which turns any
@@ -312,17 +350,14 @@ export default defineConfig({
 				PORT: String(PORT),
 				BANTO_BIND: '127.0.0.1',
 				BANTO_DB: dbPath,
-				// spec §8.2 / banto-serve.rs: POST /api/auth/setup is 403'd unless
-				// explicitly opted into - required for scenario 1.
-				BANTO_ALLOW_SETUP: '1'
+				...FIRST_ADMIN_ENV
 			}
 		},
 		{
 			// Second banto-serve for the `public-viewer` project (Issue #189) -
 			// same binary, own port/DB, viewer-public seeded ON at startup.
-			// BANTO_ALLOW_SETUP stays on so the spec can also create the first
-			// admin from the LAN login screen and prove the "ログイン" path back
-			// into the normal UI.
+			// No account is ever created on this database: it stays in no-login
+			// mode, and the server listens because public viewing is on.
 			command: bantoServeBin,
 			url: PUBLIC_VIEWER_BASE_URL,
 			reuseExistingServer: false,
@@ -332,8 +367,24 @@ export default defineConfig({
 				PORT: String(PUBLIC_VIEWER_PORT),
 				BANTO_BIND: '127.0.0.1',
 				BANTO_DB: publicViewerDbPath,
-				BANTO_ALLOW_SETUP: '1',
 				BANTO_VIEWER_PUBLIC: '1'
+			}
+		},
+		{
+			// Third banto-serve, for `public-viewer-login`: an administrator from
+			// `create-admin` (login required) AND viewer-public seeded ON - the
+			// "ログイン" path from the synthetic viewer back into the normal UI.
+			command: serveWithFirstAdmin,
+			url: PUBLIC_VIEWER_LOGIN_BASE_URL,
+			reuseExistingServer: false,
+			timeout: 30_000,
+			stdout: 'pipe',
+			env: {
+				PORT: String(PUBLIC_VIEWER_LOGIN_PORT),
+				BANTO_BIND: '127.0.0.1',
+				BANTO_DB: publicViewerLoginDbPath,
+				BANTO_VIEWER_PUBLIC: '1',
+				...FIRST_ADMIN_ENV
 			}
 		},
 		{

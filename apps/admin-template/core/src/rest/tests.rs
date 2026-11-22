@@ -90,9 +90,9 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let audit = AuditLogService::new(pool);
 
     users
-        .setup_first_user("manager", "password123", "管理者")
+        .create_user("manager", "password123", "管理者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     users
         .create_user("editor", "password123", "編集者", Role::Editor)
         .await
@@ -143,7 +143,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         metrics: None,
     };
     (
-        api_router(services, auth, tx, false),
+        api_router(services, auth, tx),
         admin_token,
         editor_token,
         viewer_token,
@@ -175,7 +175,7 @@ async fn router_with_token() -> (Router, String) {
         system_info,
         metrics: None,
     };
-    (api_router(services, auth, tx, false), token)
+    (api_router(services, auth, tx), token)
 }
 
 async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -390,7 +390,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         system_info,
         metrics: None,
     };
-    let router = api_router(services, auth, tx, false);
+    let router = api_router(services, auth, tx);
 
     let create_response = router
         .clone()
@@ -1486,7 +1486,7 @@ fn error_kind_used_in_tests_matches_banto_core() {
     );
 }
 
-async fn router_with_setup(allow_setup: bool) -> Router {
+async fn router_with_demo_auth() -> Router {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -1507,7 +1507,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         system_info,
         metrics: None,
     };
-    api_router(services, auth, tx, allow_setup)
+    api_router(services, auth, tx)
 }
 
 fn get(path: &str) -> HttpRequest<Body> {
@@ -1526,21 +1526,12 @@ fn post_json(path: &str, body: serde_json::Value) -> HttpRequest<Body> {
 }
 
 #[tokio::test]
-async fn auth_status_reports_uninitialized_before_any_setup() {
-    let router = router_with_setup(true).await;
-    let response = router.oneshot(get("/api/auth/status")).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let json = body_json(response).await;
-    assert_eq!(json["initialized"], false);
-}
-
-#[tokio::test]
 async fn auth_status_needs_no_bearer_token() {
     // Same assertion as above, phrased to make explicit that omitting
     // Authorization entirely (not just an invalid token) still gets a
     // 200, not a 401 - the login page calls this before any session
     // exists.
-    let router = router_with_setup(true).await;
+    let router = router_with_demo_auth().await;
     let request = HttpRequest::get("/api/auth/status")
         .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
         .body(Body::empty())
@@ -1550,116 +1541,8 @@ async fn auth_status_needs_no_bearer_token() {
 }
 
 #[tokio::test]
-async fn auth_setup_is_forbidden_when_allow_setup_is_false() {
-    let router = router_with_setup(false).await;
-    let response = router
-        .oneshot(post_json(
-            "/api/auth/setup",
-            json!({ "username": "owner", "password": "password123", "displayName": "オーナー" }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn auth_setup_creates_account_and_the_token_works_for_guarded_routes() {
-    let router = router_with_setup(true).await;
-
-    let setup_response = router
-        .clone()
-        .oneshot(post_json(
-            "/api/auth/setup",
-            json!({ "username": "owner", "password": "password123", "displayName": "オーナー" }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(setup_response.status(), StatusCode::OK);
-    let setup_json = body_json(setup_response).await;
-    assert_eq!(setup_json["success"], true);
-    assert!(
-        setup_json["token"].as_str().is_some(),
-        "setup should mint a token"
-    );
-
-    // `initialized` should now be true.
-    let status_response = router
-        .clone()
-        .oneshot(get("/api/auth/status"))
-        .await
-        .unwrap();
-    assert_eq!(body_json(status_response).await["initialized"], true);
-
-    // [scaffold:items] begin (the guarded route this step asserts against is
-    // an items route; an app without `items` keeps the setup assertions above)
-    let token = setup_json["token"].as_str().expect("token").to_string();
-    // And the freshly-issued token should work on a guarded route.
-    let list_request = HttpRequest::post("/api/items/list")
-        .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("content-type", "application/json")
-        .body(Body::from(json!(ListParams::default()).to_string()))
-        .unwrap();
-    let list_response = router.oneshot(list_request).await.unwrap();
-    assert_eq!(list_response.status(), StatusCode::OK);
-    // [scaffold:items] end
-}
-
-#[tokio::test]
-async fn auth_setup_rejects_short_password_with_422_validation() {
-    let router = router_with_setup(true).await;
-    let response = router
-        .oneshot(post_json(
-            "/api/auth/setup",
-            json!({ "username": "owner", "password": "short", "displayName": "オーナー" }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let json = body_json(response).await;
-    assert_eq!(json["kind"], "validation");
-    assert_eq!(json["field_errors"][0]["field"], "password");
-}
-
-#[tokio::test]
-async fn auth_setup_second_call_returns_success_false_already_initialized() {
-    let router = router_with_setup(true).await;
-    let first = post_json(
-        "/api/auth/setup",
-        json!({ "username": "owner", "password": "password123", "displayName": "オーナー" }),
-    );
-    router.clone().oneshot(first).await.unwrap();
-
-    let second = post_json(
-        "/api/auth/setup",
-        json!({ "username": "someone-else", "password": "password123", "displayName": "誰か" }),
-    );
-    let response = router.oneshot(second).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let json = body_json(response).await;
-    assert_eq!(json["success"], false);
-    assert!(json["error"].as_str().unwrap().contains("初期化"));
-}
-
-async fn setup_and_get_token(router: &Router) -> String {
-    let response = router
-        .clone()
-        .oneshot(post_json(
-            "/api/auth/setup",
-            json!({ "username": "owner", "password": "password123", "displayName": "オーナー" }),
-        ))
-        .await
-        .unwrap();
-    body_json(response).await["token"]
-        .as_str()
-        .expect("token")
-        .to_string()
-}
-
-#[tokio::test]
 async fn auth_change_password_requires_a_bearer_token() {
-    let router = router_with_setup(true).await;
-    setup_and_get_token(&router).await;
+    let (router, _audit) = router_with_real_login().await;
 
     let response = router
         .oneshot(post_json(
@@ -1673,8 +1556,8 @@ async fn auth_change_password_requires_a_bearer_token() {
 
 #[tokio::test]
 async fn auth_change_password_rejects_wrong_current_password() {
-    let router = router_with_setup(true).await;
-    let token = setup_and_get_token(&router).await;
+    let (router, _audit) = router_with_real_login().await;
+    let token = login_as_owner(&router).await;
 
     let request = HttpRequest::post("/api/auth/change-password")
         .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
@@ -1692,14 +1575,16 @@ async fn auth_change_password_rejects_wrong_current_password() {
 }
 
 /// Builds a router whose `/api/auth/login` verifier is backed by the
-/// SAME `UsersService`/pool as `/api/auth/setup` and
-/// `/api/auth/change-password` - mirrors how `banto-serve`/`src-tauri`
-/// wire things in production (unlike `router_with_setup` above, whose
+/// SAME `UsersService`/pool as `/api/auth/change-password` - mirrors how `banto-serve`/`src-tauri`
+/// wire things in production (unlike `router_with_demo_auth` above, whose
 /// `demo_auth()` login verifier is intentionally independent, matching
 /// the other tests in this module that only care about items/CSRF
 /// behavior). Also returns the `AuditLogService` sharing the router's
 /// pool, so M14 tests can assert on what got recorded.
-async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) {
+///
+/// The database holds one administrator account, `owner` / `password123`
+/// ([`login_as_owner`] logs it in).
+async fn router_with_real_login() -> (Router, AuditLogService) {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -1709,6 +1594,10 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
+    users
+        .create_user("owner", "password123", "オーナー", Role::Admin)
+        .await
+        .expect("create owner");
     let auth = AuthState::new(
         audited_credential_verifier(users.clone(), audit.clone()),
         SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
@@ -1723,13 +1612,29 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
         system_info,
         metrics: None,
     };
-    (api_router(services, auth, tx, allow_setup), audit)
+    (api_router(services, auth, tx), audit)
+}
+
+/// Log the `owner` of [`router_with_real_login`] in over REST.
+async fn login_as_owner(router: &Router) -> String {
+    let response = router
+        .clone()
+        .oneshot(post_json(
+            "/api/auth/login",
+            json!({ "username": "owner", "password": "password123" }),
+        ))
+        .await
+        .unwrap();
+    body_json(response).await["token"]
+        .as_str()
+        .expect("token")
+        .to_string()
 }
 
 #[tokio::test]
 async fn auth_change_password_success_then_relogin_with_new_password() {
-    let (router, _audit) = router_with_real_login(true).await;
-    let token = setup_and_get_token(&router).await;
+    let (router, _audit) = router_with_real_login().await;
+    let token = login_as_owner(&router).await;
 
     let change_request = HttpRequest::post("/api/auth/change-password")
         .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
@@ -2264,9 +2169,9 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let audit = AuditLogService::new(pool);
 
     users
-        .setup_first_user("manager", "password123", "管理者")
+        .create_user("manager", "password123", "管理者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     users
         .create_user("editor", "password123", "編集者", Role::Editor)
         .await
@@ -2303,7 +2208,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         system_info,
         metrics: None,
     };
-    let router = api_router(services, auth, tx, false);
+    let router = api_router(services, auth, tx);
     (router, audit, admin_token, editor_token, viewer_token)
 }
 
@@ -2359,9 +2264,9 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let audit = AuditLogService::new(db);
 
     users
-        .setup_first_user("manager", "password123", "管理者")
+        .create_user("manager", "password123", "管理者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     users
         .create_user("editor", "password123", "編集者", Role::Editor)
         .await
@@ -2398,7 +2303,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         system_info,
         metrics: None,
     };
-    let router = api_router(services, auth, tx, false);
+    let router = api_router(services, auth, tx);
     (router, dir, admin_token, editor_token, viewer_token)
 }
 
@@ -2785,7 +2690,7 @@ async fn system_info_reports_metrics_when_probe_is_present() {
         system_info,
         metrics: Some(metrics),
     };
-    let router = api_router(services, auth, tx, false);
+    let router = api_router(services, auth, tx);
 
     let response = router
         .oneshot(get_auth("/api/system/info", &token))
@@ -3058,8 +2963,7 @@ async fn users_create_audit_entry_never_contains_the_password() {
 /// `audited_credential_verifier` production code path.
 #[tokio::test]
 async fn login_failure_is_recorded_as_login_failed() {
-    let (router, audit) = router_with_real_login(true).await;
-    setup_and_get_token(&router).await; // creates the "owner" admin account
+    let (router, audit) = router_with_real_login().await;
 
     let response = router
         .oneshot(post_json(
@@ -3083,8 +2987,7 @@ async fn login_failure_is_recorded_as_login_failed() {
 
 #[tokio::test]
 async fn login_success_is_recorded_as_login() {
-    let (router, audit) = router_with_real_login(true).await;
-    setup_and_get_token(&router).await;
+    let (router, audit) = router_with_real_login().await;
 
     router
         .clone()
@@ -3108,8 +3011,8 @@ async fn login_success_is_recorded_as_login() {
 
 #[tokio::test]
 async fn logout_is_recorded() {
-    let (router, audit) = router_with_real_login(true).await;
-    let token = setup_and_get_token(&router).await;
+    let (router, audit) = router_with_real_login().await;
+    let token = login_as_owner(&router).await;
 
     router
         .oneshot(
@@ -3138,8 +3041,8 @@ async fn logout_is_recorded() {
 /// A real logout still records exactly one entry, with the right actor.
 #[tokio::test]
 async fn logout_without_a_live_session_is_not_audited() {
-    let (router, audit) = router_with_real_login(true).await;
-    let token = setup_and_get_token(&router).await;
+    let (router, audit) = router_with_real_login().await;
+    let token = login_as_owner(&router).await;
 
     let logout = |auth: Option<String>| {
         let mut req =
@@ -3204,8 +3107,7 @@ async fn logout_without_a_live_session_is_not_audited() {
 /// need exist), so what lands in the audit row is bounded and visibly cut.
 #[tokio::test]
 async fn failed_login_with_oversized_username_is_bounded_in_the_audit_log() {
-    let (router, audit) = router_with_real_login(true).await;
-    setup_and_get_token(&router).await;
+    let (router, audit) = router_with_real_login().await;
 
     let huge = "あ".repeat(64 * 1024 / 3);
     let response = router
@@ -3237,29 +3139,13 @@ async fn failed_login_with_oversized_username_is_bounded_in_the_audit_log() {
     );
 }
 
-#[tokio::test]
-async fn setup_is_recorded() {
-    let (router, audit) = router_with_real_login(true).await;
-    setup_and_get_token(&router).await;
-
-    let result = audit.list(ListParams::default()).await.unwrap();
-    assert!(
-        result
-            .rows
-            .iter()
-            .any(|r| r.action == "setup" && r.actor_username.as_deref() == Some("owner")),
-        "expected a setup entry, got {:?}",
-        result.rows
-    );
-}
-
 /// Spec M14 (coordinator review): a self-service password change is a
 /// security event and must be recorded as `password_change` (actor =
 /// entity = the caller) - and the entry must never carry the password.
 #[tokio::test]
 async fn change_password_is_recorded_as_password_change() {
-    let (router, audit) = router_with_real_login(true).await;
-    let token = setup_and_get_token(&router).await;
+    let (router, audit) = router_with_real_login().await;
+    let token = login_as_owner(&router).await;
 
     let change_request = HttpRequest::post("/api/auth/change-password")
         .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
@@ -3281,8 +3167,8 @@ async fn change_password_is_recorded_as_password_change() {
     assert_eq!(entry.actor_username.as_deref(), Some("owner"));
     assert_eq!(entry.actor_role.as_deref(), Some("admin"));
     assert_eq!(entry.resource, "users");
-    // The built-in `admin` row is id 1 (migration 0014); `setup_first_user`
-    // creates the first account after it -> id 2.
+    // The built-in `admin` row is id 1 (migration 0014); the first account
+    // created after it is id 2.
     assert_eq!(entry.entity_id.as_deref(), Some("2"));
     assert_eq!(entry.origin, "rest");
     assert_eq!(entry.result, "ok");
@@ -4133,7 +4019,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         system_info,
         metrics: None,
     };
-    let router = api_router(services, auth, tx, false);
+    let router = api_router(services, auth, tx);
 
     let upload_response = router
         .clone()
@@ -4202,7 +4088,7 @@ async fn attachment_upload_survives_a_thumbnail_flag_update_failure_with_audit_a
         system_info,
         metrics: None,
     };
-    let router = api_router(services, auth, tx, false);
+    let router = api_router(services, auth, tx);
 
     // 1x1 PNG: decodable, so a thumbnail IS generated before the flag update
     // is attempted.
@@ -4414,12 +4300,7 @@ async fn router_with_viewer_public(
         system_info,
         metrics: None,
     };
-    (
-        api_router(services, auth, tx, false),
-        settings,
-        audit,
-        users,
-    )
+    (api_router(services, auth, tx), settings, audit, users)
 }
 
 fn post_empty(path: &str) -> HttpRequest<Body> {
@@ -4645,8 +4526,8 @@ async fn public_viewer_token_cannot_change_a_password_or_create_an_account() {
     // And the failed attempt must not have conjured an account into existence.
     assert!(users.get_by_username("public").await.unwrap().is_none());
     assert!(
-        !users.is_initialized().await.unwrap(),
-        "a grant session must never count as a provisioned install"
+        !users.has_admin().await.unwrap(),
+        "a grant session must never count as an administrator account"
     );
 }
 
@@ -4658,7 +4539,7 @@ async fn real_public_accounts_keep_identity_and_password_ownership() {
     for role in [Role::Admin, Role::Viewer] {
         let (router, _settings, audit, users) = router_with_viewer_public(true).await;
         users
-            .setup_first_user("owner", "password123", "Owner")
+            .create_user("owner", "password123", "Owner", Role::Admin)
             .await
             .unwrap();
         users
@@ -4843,24 +4724,10 @@ async fn the_builtin_row_and_reserved_names_are_protected_over_rest() {
 }
 
 /// ADR-0034 §4: the built-in `admin` and a grant's fixed id (`public`) are
-/// reserved as account names, ignoring case - at the first-run setup and at
-/// `POST /api/users` alike. The refusal is a field error on `username`.
+/// reserved as account names, ignoring case, at `POST /api/users`. The
+/// refusal is a field error on `username`.
 #[tokio::test]
-async fn reserved_usernames_are_refused_at_setup_and_at_create() {
-    for name in ["public", "Public", "admin", "ADMIN"] {
-        let (router, _audit) = router_with_real_login(true).await;
-        let setup = router
-            .oneshot(post_json(
-                "/api/auth/setup",
-                json!({ "username": name, "password": "password123", "displayName": "x" }),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(setup.status(), StatusCode::UNPROCESSABLE_ENTITY, "{name}");
-        let body = body_json(setup).await;
-        assert!(body.to_string().contains("username"), "{name}: {body}");
-    }
-
+async fn reserved_usernames_are_refused_at_create() {
     let (router, _dir, manager, _editor, _viewer) = router_with_role_tokens_and_backup().await;
     for name in ["public", "PUBLIC", "Admin"] {
         let created = router
@@ -4925,7 +4792,7 @@ async fn auth_status_reports_grants_both_ways_and_agrees_with_issuance() {
         1,
         "only the registered kind"
     );
-    assert_eq!(on["initialized"], false);
+    assert!(on.get("initialized").is_none(), "no first-run state: {on}");
     public_viewer_token(&on_router).await;
 }
 
@@ -4948,7 +4815,7 @@ async fn auth_status_flattens_app_supplied_extras() {
     });
     let mut grants = GrantRegistry::new();
     grants.register(GrantSpec::public_viewer(settings)).unwrap();
-    let router = extra_auth_router(users, auth, audit, false, Arc::new(grants), Some(extras))
+    let router = extra_auth_router(users, auth, audit, Arc::new(grants), Some(extras))
         .layer(middleware::from_fn(require_banto_client_header));
 
     let response = router.oneshot(get("/api/auth/status")).await.unwrap();
@@ -4957,7 +4824,6 @@ async fn auth_status_flattens_app_supplied_extras() {
     // The extra field sits alongside the built-in ones, not nested under a
     // wrapper key.
     assert_eq!(json["tenant"], "factory-a");
-    assert_eq!(json["initialized"], false);
     assert_eq!(json["grants"]["publicViewer"], false);
 }
 
@@ -5010,7 +4876,6 @@ async fn router_with_app_grant() -> (
         users.clone(),
         auth.clone(),
         audit.clone(),
-        false,
         Arc::new(grants),
         None,
     )
@@ -5094,7 +4959,7 @@ async fn a_grant_session_can_delete_users_but_never_the_last_admin() {
     // admin floor and the last-admin guard are unchanged.
     let (router, _open, users, audit, _auth) = router_with_app_grant().await;
     let owner = users
-        .setup_first_user("owner", "password123", "Owner")
+        .create_user("owner", "password123", "Owner", Role::Admin)
         .await
         .unwrap();
     let editor = users
@@ -5233,9 +5098,9 @@ async fn router_with_user_sessions() -> (Router, UsersService) {
     let audit = AuditLogService::new(pool);
 
     users
-        .setup_first_user("operator", REVOCATION_PASSWORD, "操作者")
+        .create_user("operator", REVOCATION_PASSWORD, "操作者", Role::Admin)
         .await
-        .expect("setup_first_user");
+        .expect("create admin");
     users
         .create_user("target", REVOCATION_PASSWORD, "対象", Role::Admin)
         .await
@@ -5256,7 +5121,7 @@ async fn router_with_user_sessions() -> (Router, UsersService) {
         system_info,
         metrics: None,
     };
-    (api_router(services, auth, tx, false), users)
+    (api_router(services, auth, tx), users)
 }
 
 /// `POST /api/auth/login` - one call per "device". `remember` selects the
@@ -5576,7 +5441,7 @@ async fn router_with_permission_catalog() -> (Router, UsersService, AuditLogServ
         .unwrap();
     let users = reserved_users(&pool).with_permission_catalog(catalog);
     users
-        .setup_first_user("owner", REVOCATION_PASSWORD, "Owner")
+        .create_user("owner", REVOCATION_PASSWORD, "Owner", Role::Admin)
         .await
         .unwrap();
     users
@@ -5602,7 +5467,7 @@ async fn router_with_permission_catalog() -> (Router, UsersService, AuditLogServ
         system_info,
         metrics: None,
     };
-    (api_router(services, auth, tx, false), users, audit)
+    (api_router(services, auth, tx), users, audit)
 }
 
 #[tokio::test]
@@ -5832,4 +5697,194 @@ async fn users_create_does_not_grant_permissions() {
     assert!(body.get("permissions").is_none());
     let id = body["id"].as_i64().unwrap();
     assert!(users.permissions_of(id).await.unwrap().is_empty());
+}
+
+// --- No-login mode over REST (ADR-0034 §6 / §10) ---------------------------
+
+/// The app's router with public viewing on and the production login wiring,
+/// plus the `AuthState` so a test can mirror the stored auth mode the way the
+/// two entry points do (`AuthState::switch_auth_mode`).
+async fn router_with_public_viewing_and_auth() -> (Router, AuthState, UsersService) {
+    let pool = migrate_memory().await.expect("migrate_memory");
+    let (tx, _rx) = broadcast::channel(16);
+    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    let users = reserved_users(&pool);
+    let settings = SettingsService::new(pool.clone());
+    let backup = unused_backup_service(pool.clone());
+    let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
+    let audit = AuditLogService::new(pool);
+    settings
+        .set_server_config(&crate::settings::ServerSettings {
+            viewer_public: true,
+            ..crate::settings::ServerSettings::default()
+        })
+        .await
+        .expect("public viewing on");
+    let auth = user_auth_state(users.clone(), audit.clone());
+    let services = Services {
+        items,
+        users: users.clone(),
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+        metrics: None,
+    };
+    (api_router(services, auth.clone(), tx), auth, users)
+}
+
+fn new_account_body(username: &str) -> serde_json::Value {
+    json!({
+        "username": username,
+        "password": "password123",
+        "displayName": username,
+        "role": "viewer"
+    })
+}
+
+/// ADR-0034 §10 "Tauri のログインなしの間", the REST side - and the whole of
+/// what `banto-serve` serves in no-login mode: (a) no account logs in, even
+/// with the right password, and a token issued before the switch is refused
+/// for reads and writes alike; (b) the public viewer reads and may PUT its
+/// own kind's UI settings, and its business / admin writes are refused.
+#[tokio::test]
+async fn in_no_login_mode_rest_logs_nobody_in_and_only_public_viewing_gets_through() {
+    let (router, auth, users) = router_with_public_viewing_and_auth().await;
+    users
+        .create_user("owner", "password123", "Owner", Role::Admin)
+        .await
+        .unwrap();
+    let call = |request: HttpRequest<Body>| {
+        let router = router.clone();
+        async move { router.oneshot(request).await.unwrap() }
+    };
+    let login = || {
+        post_json(
+            "/api/auth/login",
+            json!({ "username": "owner", "password": "password123" }),
+        )
+    };
+
+    // Login required: the administrator logs in and writes.
+    let before = body_json(call(login()).await).await;
+    let owner = before["token"].as_str().expect("token").to_string();
+    let created = call(post_json_auth(
+        "/api/users",
+        &owner,
+        new_account_body("first"),
+    ))
+    .await;
+    assert_eq!(created.status(), StatusCode::OK);
+
+    // The switch to no-login mode (what both entry points mirror).
+    assert_eq!(auth.switch_auth_mode(banto_server::AuthMode::NoLogin), 1);
+
+    // (a) Nobody logs in; the old token is gone for reads and writes.
+    let refused = body_json(call(login()).await).await;
+    assert_eq!(refused["success"], false, "{refused}");
+    assert!(refused.get("token").is_none(), "{refused}");
+    let read = call(get_auth("/api/ui-settings/theme", &owner)).await;
+    assert_eq!(read.status(), StatusCode::UNAUTHORIZED);
+    let write = call(post_json_auth(
+        "/api/users",
+        &owner,
+        new_account_body("second"),
+    ))
+    .await;
+    assert_eq!(write.status(), StatusCode::UNAUTHORIZED);
+    assert!(users.get_by_username("second").await.unwrap().is_none());
+
+    // (b) Public viewing: reads, and its own kind's UI settings.
+    let viewer = public_viewer_token(&router).await;
+    let identity = body_json(call(get_auth("/api/auth/identity", &viewer)).await).await;
+    assert_eq!(identity["kind"], "publicViewer");
+    assert_eq!(identity["role"], "viewer");
+    let put = call(put_ui_setting("theme", &viewer, "dark")).await;
+    assert!(put.status().is_success(), "{}", put.status());
+    let got = body_json(call(get_auth("/api/ui-settings/theme", &viewer)).await).await;
+    assert_eq!(got["value"], "dark");
+    // ...and nothing that changes business or admin data.
+    let admin_write = call(post_json_auth(
+        "/api/users",
+        &viewer,
+        new_account_body("third"),
+    ))
+    .await;
+    assert_eq!(admin_write.status(), StatusCode::FORBIDDEN);
+    assert!(users.get_by_username("third").await.unwrap().is_none());
+    // [scaffold:items] begin
+    let list = call(post_json_auth(
+        "/api/items/list",
+        &viewer,
+        json!(ListParams::default()),
+    ))
+    .await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let item_write = call(post_json_auth(
+        "/api/items",
+        &viewer,
+        json!({ "name": "Widget", "price": 10, "stock": 1 }),
+    ))
+    .await;
+    assert_eq!(item_write.status(), StatusCode::FORBIDDEN);
+    // [scaffold:items] end
+
+    // Back to login required: the account logs in again (with a new token).
+    auth.switch_auth_mode(banto_server::AuthMode::LoginRequired);
+    let again = body_json(call(login()).await).await;
+    assert_eq!(again["success"], true, "{again}");
+    let stale = call(get_auth("/api/ui-settings/theme", &owner)).await;
+    assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// ADR-0034 §6 "禁じない (b)" / §10: a grant a derived app registered works in
+/// no-login mode as its `GrantSpec` says - here an admin-role grant creates an
+/// account - while account logins stay refused.
+#[tokio::test]
+async fn in_no_login_mode_an_app_grant_acts_as_its_spec_says() {
+    let (router, _open, users, _audit, auth) = router_with_app_grant().await;
+    users
+        .create_user("owner", "password123", "Owner", Role::Admin)
+        .await
+        .unwrap();
+    auth.switch_auth_mode(banto_server::AuthMode::NoLogin);
+
+    let login = router
+        .clone()
+        .oneshot(post_json(
+            "/api/auth/login",
+            json!({ "username": "owner", "password": "password123" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(body_json(login).await["success"], false);
+
+    let issued = router
+        .clone()
+        .oneshot(post_empty_from(
+            "/api/auth/grant/commissioning",
+            LOOPBACK_PEER,
+        ))
+        .await
+        .unwrap();
+    let grant = body_json(issued).await["token"]
+        .as_str()
+        .expect("the grant is issued in no-login mode")
+        .to_string();
+    let created = router
+        .oneshot(post_json_auth(
+            "/api/users",
+            &grant,
+            new_account_body("commissioned"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    assert!(users
+        .get_by_username("commissioned")
+        .await
+        .unwrap()
+        .is_some());
 }
