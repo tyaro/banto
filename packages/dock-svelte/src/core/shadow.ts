@@ -2,7 +2,8 @@
  * The shadow tree S of the docked layout (Issue #782 PR2; downstream-requests-2026-11-plan §4.11,
  * property tests per ADR-0033). Pure functions only, no Svelte imports, like `tree.ts`: every
  * function returns a NEW tree (or the same object when nothing changes) and never mutates its
- * input. Nothing uses this module yet - `DockState` is wired to it from #782 PR4 on.
+ * input. `DockState` keeps an S beside its layout (#782 PR4, `#followShadow`) and reads nothing
+ * from it yet: hiding, showing and moving go by S from PR5 / PR6 on.
  *
  * S is the docked tree with every pane that has a docked place in it: the panes that are docked
  * now, and the panes that are outside (hidden or floated) but go back to a place in the dock.
@@ -674,6 +675,178 @@ export function resizeShadowSplit(
 	const after = resizeSplit(before, splitId, dividerIndex, deltaFraction);
 	if (after === before || after?.type !== 'split') return s;
 	return writeShadowSizes(s, splitId, after.sizes);
+}
+
+// ----- following the docked tree (#782 PR4) ----------------------------------------------------
+
+/** Two shares that are the same but for the last digits (a projection scales `sizes` to add up to 1). */
+const SAME_SHARE = 1e-9;
+
+const sameShares = (a: number[], b: number[]): boolean =>
+	a.length === b.length && a.every((size, i) => Math.abs(size - b[i]) <= SAME_SHARE);
+
+/**
+ * Are two docked trees the same: shape, ids, titles and icons, active tabs, `collapsed` flags, and
+ * `sizes` within the last digits? How `DockState` checks that the projection of S is the tree the
+ * user sees.
+ */
+export function sameDocked(a: DockNode | null, b: DockNode | null): boolean {
+	if (a === b) return true;
+	if (a === null || b === null) return false;
+	if (a.type !== b.type || a.id !== b.id) return false;
+	if (a.type === 'panel') {
+		const other = b as DockPanelNode;
+		return (
+			a.title === other.title &&
+			a.icon === other.icon &&
+			(a.collapsed === true) === (other.collapsed === true)
+		);
+	}
+	const kids = (b as DockSplitNode | DockTabGroupNode).children;
+	if (a.children.length !== kids.length) return false;
+	if (a.type === 'tabs') {
+		const other = b as DockTabGroupNode;
+		if (a.activeIndex !== other.activeIndex) return false;
+		if ((a.collapsed === true) !== (other.collapsed === true)) return false;
+	} else {
+		const other = b as DockSplitNode;
+		if (a.direction !== other.direction || !sameShares(a.sizes, other.sizes)) return false;
+	}
+	return a.children.every((child, i) => sameDocked(child, kids[i]));
+}
+
+/** A leaf of S as the docked tree shows it: `title` / `icon` of `seen`, the `collapsed` flag as `collapsed` says. */
+function leafAs(leaf: ShadowPanelNode, seen: DockPanelNode, collapsed: boolean): ShadowPanelNode {
+	if (
+		leaf.title === seen.title &&
+		leaf.icon === seen.icon &&
+		(leaf.collapsed === true) === collapsed
+	) {
+		return leaf;
+	}
+	const next: ShadowPanelNode = { ...leaf, title: seen.title };
+	if (seen.icon === undefined) delete next.icon;
+	else next.icon = seen.icon;
+	if (collapsed) next.collapsed = true;
+	else delete next.collapsed;
+	return next;
+}
+
+/** `node` with what `seen` - the node its projection is to be - shows, or `undefined` when their shapes differ. */
+function viewOnto(node: ShadowNode, seen: DockNode): ShadowNode | undefined {
+	if (node.type === 'panel') {
+		if (node.away === true || seen.type !== 'panel' || seen.id !== node.id) return undefined;
+		return leafAs(node, seen, seen.collapsed === true);
+	}
+	if (node.type === 'tabs') {
+		const shown = node.children.filter((c) => c.away !== true);
+		// With tombstones and one shown tab the group shows as that pane; its flag is the group's.
+		if (shown.length === 1 && node.children.length > 1) {
+			if (seen.type !== 'panel' || seen.id !== shown[0].id) return undefined;
+			const leaf = leafAs(shown[0], seen, false);
+			const children = node.children.map((c) => (c === shown[0] ? leaf : c));
+			const next: ShadowTabGroupNode = { ...node, children, activeIndex: children.indexOf(leaf) };
+			if (seen.collapsed === true) next.collapsed = true;
+			else delete next.collapsed;
+			return next;
+		}
+		if (seen.type !== 'tabs' || seen.id !== node.id) return undefined;
+		if (seen.children.length !== shown.length) return undefined;
+		const byId = new Map(shown.map((c) => [c.id, c]));
+		const order: ShadowPanelNode[] = [];
+		for (const tab of seen.children) {
+			const leaf = byId.get(tab.id);
+			if (!leaf) return undefined;
+			byId.delete(tab.id);
+			order.push(leafAs(leaf, tab, false));
+		}
+		// The tabs that show take the places of the ones that show, in the order seen; a tombstone
+		// keeps its index in S.
+		let k = 0;
+		const children = node.children.map((c) => (c.away === true ? c : order[k++]));
+		const active = order[seen.activeIndex];
+		const activeIndex = active ? children.indexOf(active) : node.activeIndex;
+		if (
+			activeIndex === node.activeIndex &&
+			(node.collapsed === true) === (seen.collapsed === true) &&
+			children.every((c, i) => c === node.children[i])
+		) {
+			return node;
+		}
+		const next: ShadowTabGroupNode = { ...node, children, activeIndex };
+		if (seen.collapsed === true) next.collapsed = true;
+		else delete next.collapsed;
+		return next;
+	}
+	const shown = node.children.map(isShown);
+	const count = shown.filter(Boolean).length;
+	if (count === 0) return undefined;
+	if (count === 1) {
+		// The split shows as its one shown child.
+		const at = shown.indexOf(true);
+		const child = viewOnto(node.children[at], seen);
+		if (child === undefined) return undefined;
+		if (child === node.children[at]) return node;
+		return { ...node, children: node.children.map((c, i) => (i === at ? child : c)) };
+	}
+	if (seen.type !== 'split' || seen.id !== node.id || seen.direction !== node.direction) {
+		return undefined;
+	}
+	if (seen.children.length !== count || seen.sizes.length !== count) return undefined;
+	let k = 0;
+	const children: ShadowNode[] = [];
+	for (let i = 0; i < node.children.length; i++) {
+		if (!shown[i]) {
+			children.push(node.children[i]);
+			continue;
+		}
+		const child = viewOnto(node.children[i], seen.children[k++]);
+		if (child === undefined) return undefined;
+		children.push(child);
+	}
+	let sizes = node.sizes;
+	if (count === node.children.length) {
+		if (!seen.sizes.every((size, i) => size === node.sizes[i])) sizes = seen.sizes.slice();
+	} else {
+		const now = normalized(node.sizes.filter((_, i) => shown[i]));
+		const sum = seen.sizes.reduce((a, b) => a + b, 0);
+		const valid = seen.sizes.every((size) => Number.isFinite(size) && size >= 0) && sum > 0;
+		if (!valid) return undefined;
+		if (!sameShares(now, seen.sizes)) sizes = shownShares(node.children, node.sizes, seen.sizes);
+	}
+	if (sizes === node.sizes && children.every((c, i) => c === node.children[i])) return node;
+	return { ...node, children, sizes };
+}
+
+/**
+ * S made to show the docked tree `docked`, when `docked` is the projection of S but for what a
+ * change that moves no pane in or out sets: a split's `sizes` (a divider dragged, `sizes` put
+ * back), a group's active tab and the order of its tabs, the `collapsed` flags, a pane's `title` /
+ * `icon`. `undefined` when the shapes differ (another pane, split or nesting) - the caller then
+ * has to build S again (`inflateShadow`).
+ *
+ * The tombstones keep what they have: their share of a split (`writeShadowSizes`' rule, the
+ * "Shares of 0" exception included) and their index in a tab group - the tabs that show are put,
+ * in the order seen, in the places of the tabs that show. The same S when nothing differs.
+ *
+ * One thing S cannot hold: the `collapsed` flag of a region that is the only shown child of a
+ * split of S (the others are tombstones). `projectShadow` shows that child without its flag, as
+ * `tree.ts#collapse` drops it when the split folds - but in the docked tree the region may be
+ * collapsed AFTER the fold, beside its new siblings. `undefined` then (and `inflateShadow` makes an
+ * S that shows the tree without that flag); where the flag goes is decided with the write-back of
+ * `setRegionCollapsed` (#782 PR5 / PR6).
+ */
+export function writeShadowView(
+	s: ShadowNode | null,
+	docked: DockNode | null
+): ShadowNode | null | undefined {
+	if (s === null || docked === null) {
+		return docked === null && (s === null || !isShown(s)) ? s : undefined;
+	}
+	const next = viewOnto(s, docked);
+	if (next === undefined) return undefined;
+	const settled = next === s ? s : settleCollapsed(next);
+	return sameDocked(projectShadow(settled), docked) ? settled : undefined;
 }
 
 // ----- the saved form: slots -------------------------------------------------------------------

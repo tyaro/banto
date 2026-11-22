@@ -39,6 +39,20 @@ import {
 	type HiddenDockSlot
 } from './core/slot';
 import { withLayoutVersion } from './core/layoutVersion';
+import {
+	dockAtShadowEdge,
+	dockIntoShadow,
+	inflateShadow,
+	markAway,
+	markPresent,
+	projectShadow,
+	removeFromShadow,
+	sameDocked,
+	shadowPanelIds,
+	writeShadowView,
+	type ShadowAway,
+	type ShadowNode
+} from './core/shadow';
 import { validateDockLayout } from './core/validate';
 import {
 	canCollapseRegion,
@@ -124,6 +138,62 @@ export function forgetHomeSlots(dock: DockState): void {
 	forgetImpl(dock);
 }
 
+/**
+ * How the shadow tree followed one assignment of `layout` (#782 PR4, `watchShadow`). `step` is the
+ * `DockState` method that said what it did to the tree (`null`: an assignment that did not).
+ *  - `same`: the step alone, done on S, shows the docked tree assigned.
+ *  - `written`: it does once the sizes, active tabs, tab order, `collapsed` flags and titles of
+ *    the docked tree are written onto S (what a resize or a tab click changes; after a step that
+ *    moves a pane, the two disagreed about one of those).
+ *  - `rebuilt`: S was made again from the docked tree and the slots (`inflateShadow`): a layout
+ *    taken as a whole, a change no step described, or a step S does differently.
+ *  - `failed`: following threw; S is the docked tree with no pane remembered.
+ */
+export interface ShadowFollow {
+	step: string | null;
+	result: 'same' | 'written' | 'rebuilt' | 'failed';
+}
+
+type ShadowStep = { label: string; run: (s: ShadowNode | null) => ShadowNode | null };
+
+let shadowImpl: (dock: DockState) => { shadow: ShadowNode | null; unplaced: string[] };
+let watchShadowImpl: (dock: DockState, watch: ((follow: ShadowFollow) => void) | null) => void;
+
+/**
+ * The shadow tree `dock` keeps beside its layout, and the panes out of the tree whose slot names
+ * no place in it (#782 PR4; not exported from the package). For the tests only: nothing reads S
+ * yet - `DockState` only keeps it, with `projectShadow(shadow)` the same as `layout.docked` after
+ * every assignment.
+ */
+export function shadowStateOf(dock: DockState): { shadow: ShadowNode | null; unplaced: string[] } {
+	return shadowImpl(dock);
+}
+
+/** Be told how S followed each assignment of `dock.layout` that changed it (tests only; `null` stops). */
+export function watchShadow(dock: DockState, watch: ((follow: ShadowFollow) => void) | null): void {
+	watchShadowImpl(dock, watch);
+}
+
+/**
+ * Ids for new split / tab group nodes, from `makeId`, kept so that the same step done on the
+ * shadow tree gets the same ids in the same order (`again`) without asking `makeId` twice. An id
+ * the first run did not ask for is one of its own, which no docked tree has.
+ */
+function sharedIds(makeId: () => string): { makeId: () => string; again: () => () => string } {
+	const made: string[] = [];
+	return {
+		makeId: () => {
+			const id = makeId();
+			made.push(id);
+			return id;
+		},
+		again: () => {
+			let k = 0;
+			return () => (k < made.length ? made[k++] : `\u0000shadow:${k++}`);
+		}
+	};
+}
+
 export class DockState {
 	#layout: DockLayout = $state(emptyLayout());
 	/** The structure revision (plain, not reactive) - see `structureRevision`. */
@@ -148,6 +218,20 @@ export class DockState {
 	 * is dropped by the `layout` setter (#735).
 	 */
 	#homeSlots = new Map<string, DockSlot>();
+	/**
+	 * The shadow tree S (#782 PR4, `core/shadow.ts`): the docked tree with every pane that is out
+	 * of it but remembers a docked place, as a tombstone. Kept beside the layout and not read by
+	 * anything yet - hiding, showing and moving still go by the slots (`core/slot.ts`). After every
+	 * assignment its projection is `layout.docked` (`#followShadow`). Plain, not saved.
+	 */
+	#shadow: ShadowNode | null = null;
+	/** The `docked` tree `#shadow` was last made to show. */
+	#shadowSeen: DockNode | null = null;
+	/** The panes out of the tree that remember a place S has no room for (`inflateShadow`'s `unplaced`). */
+	#shadowUnplaced = new Set<string>();
+	/** What the method assigning `layout` next does to S (`#mirror`); taken by the setter. */
+	#shadowStep: ShadowStep | null = null;
+	#shadowWatch: ((follow: ShadowFollow) => void) | null = null;
 
 	/** The layout. Assign a new object to change it (every method here does); the setter counts structure changes. */
 	get layout(): DockLayout {
@@ -157,6 +241,8 @@ export class DockState {
 	set layout(next: DockLayout) {
 		// The version follows the content (#727, `core/layoutVersion.ts`): 3 only while a slot is
 		// deeper than a version 2 reader takes, so `layout` / `serialize()` are always safe to save.
+		const step = this.#shadowStep;
+		this.#shadowStep = null;
 		next = withLayoutVersion(next);
 		// Collapsed regions (#663 ③-B) are kept valid on EVERY assignment (a close, a drop,
 		// `hydrate`, a restore ...): a flag that no longer fits the tree is dropped here.
@@ -186,6 +272,7 @@ export class DockState {
 		this.#noteStructure(next);
 		this.#layout = next;
 		for (const id of spent) this.#homeSlots.delete(id);
+		untrack(() => this.#followShadow(next, step));
 		// The slid-out pane is no longer auto-hidden: it is not slid out any more.
 		const flyout = untrack(() => this.#flyout);
 		if (flyout !== null && findAutoHidden(next, flyout) === null) this.#flyout = null;
@@ -193,6 +280,67 @@ export class DockState {
 
 	/** Set while `hydrate` / `reset` / the constructor assign a layout taken as a whole (no `#withoutGoneShares`). */
 	#adopting = false;
+
+	/** Say what the assignment of `layout` that follows does to the shadow tree (#782 PR4). */
+	#mirror(label: string, run: (s: ShadowNode | null) => ShadowNode | null): void {
+		this.#shadowStep = { label, run };
+	}
+
+	/**
+	 * Keep the shadow tree with the layout just assigned (#782 PR4). The step the assigning method
+	 * named is done on S; a tombstone whose pane no longer remembers a docked place leaves S for
+	 * good; what the docked tree shows otherwise (sizes, tabs, flags) is written onto S. When the
+	 * projection of S is then not `next.docked` - or `next` is a layout taken as a whole, or a pane
+	 * remembers a place S does not know - S is made again from `next` (`inflateShadow`, the slots in
+	 * the order the panes left). Never changes the layout, and never throws.
+	 */
+	#followShadow(next: DockLayout, step: ShadowStep | null): void {
+		const pending = this.#pendingById(next);
+		const label = this.#adopting ? 'adopt' : (step?.label ?? null);
+		try {
+			if (!this.#adopting) {
+				let s = step ? step.run(this.#shadow) : this.#shadow;
+				for (const id of shadowPanelIds(s, 'away')) {
+					if (!pending.has(id)) s = removeFromShadow(s, id);
+				}
+				const placed = new Set(shadowPanelIds(s, 'away'));
+				const known = [...pending.keys()].every(
+					(id) => placed.has(id) || this.#shadowUnplaced.has(id)
+				);
+				if (known) {
+					for (const id of this.#shadowUnplaced) {
+						if (!pending.has(id)) this.#shadowUnplaced.delete(id);
+					}
+					if (s === this.#shadow && next.docked === this.#shadowSeen) return;
+					const same = sameDocked(projectShadow(s), next.docked);
+					const written = same ? s : writeShadowView(s, next.docked);
+					if (written !== undefined) {
+						this.#shadow = written;
+						this.#shadowSeen = next.docked;
+						this.#shadowWatch?.({ step: label, result: same ? 'same' : 'written' });
+						return;
+					}
+				}
+			}
+			const away: ShadowAway[] = [];
+			for (const [id, slot] of pending) {
+				const win = next.floating.find((w) => w.id === id);
+				if (win)
+					away.push({ panel: { type: 'panel', id, title: win.title, icon: win.icon }, slot });
+			}
+			const { shadow, unplaced } = inflateShadow(next.docked, away);
+			this.#shadow = shadow;
+			this.#shadowUnplaced = new Set(unplaced);
+			this.#shadowSeen = next.docked;
+			this.#shadowWatch?.({ step: label, result: 'rebuilt' });
+		} catch {
+			// S is not read by anything yet: a fault in following it must not reach the layout.
+			this.#shadow = next.docked;
+			this.#shadowUnplaced = new Set(pending.keys());
+			this.#shadowSeen = next.docked;
+			this.#shadowWatch?.({ step: label, result: 'failed' });
+		}
+	}
 
 	/**
 	 * The panes out of the tree that remember a docked place in `layout`, by id (as
@@ -730,6 +878,8 @@ export class DockState {
 			this.open(id);
 			return 'floating';
 		}
+		const win = this.layout.floating.find((w) => w.id === id);
+		this.#mirror('show', (s) => markPresent(s, id, win));
 		this.layout = {
 			...this.layout,
 			floating: this.layout.floating.filter((w) => w.id !== id),
@@ -819,6 +969,7 @@ export class DockState {
 			open: false,
 			...(slot ? { dockSlot: slot } : {})
 		};
+		this.#mirror('dismiss', (s) => (slot ? markAway(s, id) : removeFromShadow(s, id)));
 		this.layout = {
 			...this.layout,
 			docked: removePanel(this.layout.docked, id),
@@ -980,12 +1131,16 @@ export class DockState {
 				icon: def.icon
 			};
 			const effectiveTarget = targetId ?? this.layout.docked!.id;
+			const ids = sharedIds(this.#makeId);
 			const docked = dockPanelIntoTree(
 				this.layout.docked,
 				panelNode,
 				effectiveTarget,
 				region,
-				this.#makeId
+				ids.makeId
+			);
+			this.#mirror('ensurePanel', (s) =>
+				dockIntoShadow(s, panelNode, effectiveTarget, region, ids.again())
 			);
 			this.layout = { ...this.layout, docked };
 			return;
@@ -1004,8 +1159,10 @@ export class DockState {
 			title: win.title,
 			icon: win.icon
 		};
-		const docked = dockPanelIntoTree(this.layout.docked, panelNode, targetId, region, this.#makeId);
+		const ids = sharedIds(this.#makeId);
+		const docked = dockPanelIntoTree(this.layout.docked, panelNode, targetId, region, ids.makeId);
 		const floating = this.layout.floating.filter((w) => w.id !== panelId);
+		this.#mirror('dockPanel', (s) => dockIntoShadow(s, panelNode, targetId, region, ids.again()));
 		this.layout = { ...this.layout, floating, docked };
 	}
 
@@ -1049,6 +1206,9 @@ export class DockState {
 		// setter takes a docked pane gone from the tree with no place remembered as one that left.
 		if (slot) this.#homeSlots.set(panelId, slot);
 		else this.#homeSlots.delete(panelId);
+		this.#mirror('undockPanel', (s) =>
+			slot ? markAway(s, panelId) : removeFromShadow(s, panelId)
+		);
 		this.layout = { ...this.layout, docked, floating: [...this.layout.floating, win] };
 	}
 
@@ -1057,7 +1217,9 @@ export class DockState {
 		const node = findNode(this.layout.docked, panelId);
 		if (!node || node.type !== 'panel') return;
 		const removed = removePanel(this.layout.docked, panelId);
-		const docked = dockPanelIntoTree(removed, node, targetId, region, this.#makeId);
+		const ids = sharedIds(this.#makeId);
+		const docked = dockPanelIntoTree(removed, node, targetId, region, ids.makeId);
+		this.#mirror('dockExisting', (s) => dockIntoShadow(s, node, targetId, region, ids.again()));
 		this.#assignMoved({ id: panelId, edge: false }, { ...this.layout, docked });
 	}
 
@@ -1076,8 +1238,10 @@ export class DockState {
 			title: win.title,
 			icon: win.icon
 		};
-		const docked = dockPanelAtEdgeTree(this.layout.docked, panelNode, edge, this.#makeId);
+		const ids = sharedIds(this.#makeId);
+		const docked = dockPanelAtEdgeTree(this.layout.docked, panelNode, edge, ids.makeId);
 		const floating = this.layout.floating.filter((w) => w.id !== panelId);
+		this.#mirror('dockPanelAtEdge', (s) => dockAtShadowEdge(s, panelNode, edge, ids.again()));
 		this.layout = { ...this.layout, floating, docked };
 	}
 
@@ -1091,7 +1255,9 @@ export class DockState {
 		if (!node || node.type !== 'panel') return;
 		const removed = removePanel(this.layout.docked, panelId);
 		if (!removed) return;
-		const docked = dockPanelAtEdgeTree(removed, node, edge, this.#makeId);
+		const ids = sharedIds(this.#makeId);
+		const docked = dockPanelAtEdgeTree(removed, node, edge, ids.makeId);
+		this.#mirror('dockExistingAtEdge', (s) => dockAtShadowEdge(s, node, edge, ids.again()));
 		this.#assignMoved({ id: panelId, edge: true }, { ...this.layout, docked });
 	}
 
@@ -1106,6 +1272,10 @@ export class DockState {
 		if (!win || !win.open) return false;
 		const docked = this.restoredAt(panelId, slot, makeId);
 		if (docked === null) return false;
+		// Back to where it was: its tombstone. Any other slot is a place S is not told of.
+		if (slot === this.#homeSlots.get(panelId)) {
+			this.#mirror('dockAtSlot', (s) => markPresent(s, panelId, win));
+		}
 		this.layout = {
 			...this.layout,
 			floating: this.layout.floating.filter((w) => w.id !== panelId),
@@ -1259,6 +1429,10 @@ export class DockState {
 	static {
 		adoptImpl = (dock, layout) => dock.#adopt(layout);
 		forgetImpl = (dock) => dock.#homeSlots.clear();
+		shadowImpl = (dock) => ({ shadow: dock.#shadow, unplaced: [...dock.#shadowUnplaced] });
+		watchShadowImpl = (dock, watch) => {
+			dock.#shadowWatch = watch;
+		};
 	}
 
 	#update(id: string, fn: (win: FloatingWindow) => FloatingWindow): void {
