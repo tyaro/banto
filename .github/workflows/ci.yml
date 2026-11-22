@@ -475,12 +475,17 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      # chromium project が使うのは :8799 の banto-serve だけ（2 本目は立てない）。
       - name: Run E2E smoke suite
+        env:
+          BANTO_E2E_SERVERS: smoke
         run: pnpm e2e
 
       # Viewer-public mode (Issue #189): second banto-serve started with
       # BANTO_VIEWER_PUBLIC=1 by the same playwright config.
       - name: Run E2E viewer-public suite
+        env:
+          BANTO_E2E_SERVERS: public-viewer
         run: pnpm e2e:public-viewer
 
       - name: Upload Playwright report
