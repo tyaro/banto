@@ -18,6 +18,11 @@
  *   lightness moving away from it monotonically and symmetrically on both
  *   sides, and the two sides distinguishable at every step under all four
  *   visions.
+ * - Status colours (#795): the first 4 categorical slots stay at least
+ *   `STATUS_MIN` away from --banto-warning / --banto-danger / --banto-success
+ *   under normal vision, so a limit line or an alarm mark drawn in a status
+ *   colour does not read as one of the first pens. Slots 5..8 are not covered
+ *   (see `STATUS_MIN`).
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -42,6 +47,29 @@ type Rgb = [number, number, number];
 const NEIGHBOUR_MIN = 0.1;
 const ALL_PAIRS_MIN = 0.09;
 const DIVERGING_SIDES_MIN = 0.07;
+/**
+ * Slots 1..4 against the status colours, normal vision (#795, plan §4.10).
+ *
+ * The value is `ALL_PAIRS_MIN`: a status colour on a chart must be as far from
+ * a series as any two series are from each other. It cannot be much higher
+ * without re-ordering the palette: in dark, warning and danger are 0.164 apart
+ * and the orange slot 2 sits between them, so about 0.09 from both is the most
+ * it can get while the pair checks above still hold (0.094 was the best found).
+ *
+ * Measured (smallest of the 12 pairs per theme, before -> after #795):
+ *   light  0.110 (slot 2 / warning) - unchanged
+ *   dark   0.052 (slot 2 / warning) -> 0.092 (slot 2 `#f48815` -> `#ed770e`)
+ *
+ * Not covered, by decision: slots 5..8 (light slot 8 / warning is 0.045, dark
+ * slot 5 / danger 0.095), and simulated colour-vision deficiency - danger and
+ * success themselves collapse towards the green and orange slots there (e.g.
+ * dark slot 2 / danger 0.047 under deuteranopia), which a small move of one
+ * slot cannot repair. Status colours on a chart need a second cue (dash, mark,
+ * label) for those readers.
+ */
+const STATUS_MIN = ALL_PAIRS_MIN;
+const STATUS_SLOTS = 4;
+const STATUS_COLOURS = ['warning', 'danger', 'success'] as const;
 
 /** Every `--{prefix}-N: #rrggbb;` of a rule, in N order (must be 1..count without gaps). */
 function hexSteps(rules: string, prefix: string): string[] {
@@ -142,6 +170,15 @@ function neutral(rules: string, n: number): (hue: number) => Rgb {
 	return (hue) => oklchToLinear(Number(m[1]), Number(m[2]), hue);
 }
 
+/** `--banto-{name}: oklch(L C H)` of a rule (a fixed hue, not the brand hue). */
+function statusColour(rules: string, name: string): Rgb {
+	const m = new RegExp(
+		String.raw`--banto-${name}:\s*oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)`
+	).exec(rules);
+	if (!m) throw new Error(`banto.css: --banto-${name} is not oklch(L C H)`);
+	return oklchToLinear(Number(m[1]), Number(m[2]), Number(m[3]));
+}
+
 /** The surfaces a chart sits on (--banto-surface, and raised where it differs). */
 const SURFACES: Record<keyof typeof THEMES, ((hue: number) => Rgb)[]> = {
 	light: [neutral(THEMES.light, 1)],
@@ -189,6 +226,16 @@ for (const [theme, rules] of Object.entries(THEMES) as [keyof typeof THEMES, str
 						expect(contrast(fg, bg(hue)), `slot ${i + 1} at hue ${hue}`).toBeGreaterThanOrEqual(3);
 			}
 		});
+	});
+
+	describe(`${theme}: --banto-chart-1..${STATUS_SLOTS} against the status colours`, () => {
+		const slots = hexSteps(rules, 'banto-chart').slice(0, STATUS_SLOTS).map(hexToLinear);
+		for (const name of STATUS_COLOURS)
+			it(`${name}: every slot >= ${STATUS_MIN} (OKLab, normal vision)`, () => {
+				const status = statusColour(rules, name);
+				for (const [i, slot] of slots.entries())
+					expect(deltaE(slot, status), `slot ${i + 1}`).toBeGreaterThanOrEqual(STATUS_MIN);
+			});
 	});
 
 	describe(`${theme}: sequential --banto-chart-seq-N`, () => {

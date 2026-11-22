@@ -491,7 +491,10 @@ VSCode/Rider等のエディタに近い、本格的なドッキング・タブ�
    `--banto-brand-hue` に追従しない（#557）。正常色覚と 1 型・2 型・3 型の
    色覚シミュレーション（Machado 2009）のそれぞれで、隣り合うスロット（i と i+1）は
    OKLab 距離 0.10 以上、どの 2 つも 0.09 以上離れ、各色はテーマの面（ダークは
-   raised も）に 3:1 以上。`packages/theme/tests/chart-palette.test.ts` が banto.css の
+   raised も）に 3:1 以上。先頭 4 スロットは状態色（`--banto-warning`・`-danger`・
+   `-success`）からも正常色覚で 0.09 以上離す（#795。5 番目以降と色覚シミュレーションでは
+   保証しないので、状態色をグラフに描くときは破線・印・ラベルを併用する）。
+   `packages/theme/tests/chart-palette.test.ts` が banto.css の
    値から確かめる。色を変えるときはこのテストを通すこと。
 2. **値軸は1本**: 1チャートの値軸は単一（Combo でもバーと線が同一スケールを共有）。
    二軸チャートは v1 スコープ外。
