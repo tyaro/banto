@@ -10,7 +10,8 @@
  * - before the dock is mounted a stored value only becomes `initialLayout` (the dock reconciles it at
  *   mount, so nothing is mounted twice);
  * - after it, a stored value is installed with `restoreLayout` (not when it is already what is shown);
- * - `serialize()` is the text of `layoutSnapshot()` - what the page reports with `changed()`;
+ * - `serialize()` is the text of `layoutSnapshot()` - what the page reports with `changed()` when
+ *   the dock's `onLayoutCommit` says a layout to save is settled (#791);
  *   while a layout is being applied (until `attach`, or until the last `restoreLayout` settles,
  *   resolved or rejected) it keeps answering what it answered right after the assignment, and the
  *   end is reported with `onApplied` so the store re-takes its baseline from what is really shown
@@ -142,9 +143,9 @@ export function createThreePaneLayoutTarget(
 		},
 		serialize(): string {
 			const api = getApi();
-			// Read the snapshot even while a layout is being applied: the page's autosave effect reads
-			// this, and `frozen` is a plain variable, so skipping the read would drop its reactive
-			// dependency on the layout for good. Until `attach` the held value is the answer.
+			// Read the snapshot even while a layout is being applied: a caller reading this from an
+			// effect (the page did, before `onLayoutCommit` - #791) keeps its reactive dependency on
+			// the layout; `frozen` is a plain variable. Until `attach` the held value is the answer.
 			if (!api) return initial ?? '';
 			if (!attached) {
 				snapshot(api);

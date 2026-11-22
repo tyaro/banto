@@ -30,7 +30,8 @@
 		beforePanelChange,
 		keepMounted,
 		isStructureChangeDeferred,
-		messages
+		messages,
+		onLayoutCommit
 	}: {
 		dock: DockState;
 		clamp?: ClampOptions;
@@ -42,6 +43,7 @@
 		keepMounted?: HostProps['keepMounted'];
 		isStructureChangeDeferred?: HostProps['isStructureChangeDeferred'];
 		messages?: HostProps['messages'];
+		onLayoutCommit?: HostProps['onLayoutCommit'];
 	} = $props();
 
 	let hostRef: ReturnType<typeof DockHost> | undefined = $state();
@@ -65,6 +67,7 @@
 	{keepMounted}
 	{isStructureChangeDeferred}
 	{messages}
+	{onLayoutCommit}
 />
 
 {#snippet panel(content: PanelContent)}

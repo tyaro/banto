@@ -725,8 +725,10 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   隠れている（元の場所を覚えた）パネルを知らない id として捨てたときは、残る隠れたパネルの `share` からその分を除く
   （#741。結果は保存値と同じ形なので、`initialLayout` / `hydrate` / `replaceLayout(..., { saved: true })` で入れる。
   元にした `dock.layout` へ `dock.layout = ...` で書き戻すと、setter がもう一度除く）。
-  保存のきっかけは、自分で持った `dock` の `dock.layout` を `$effect` で見る。保存するのは `layoutSnapshot()` で、
-  `dock.serialize()` ではない（狭い表示のあいだ `dock.layout` は一時のレイアウト）。
+  保存のきっかけは `onLayoutCommit(saved, reason)`（#791。下の「保存してよい配置の確定」）。届く `saved` は
+  `layoutSnapshot()` と同じ値で、`dock.serialize()` ではない（狭い表示のあいだ `dock.layout` は一時のレイアウト）。
+  `dock.layout` を `$effect` で見て `layoutSnapshot()` を保存する形も動く（狭い表示の控えは、配置を入れるのと同じ
+  ステップで確定するので、確定前の値は読めない）が、ドラッグの途中の配置も保存することになる。
 - **パネル自身が入力を持つ**（追加パネルのフォームなど）ときは、`beforePanelChange` で下書きを控える（下の「pane の
   lifecycle」）。`resetLayout`・`restoreLayout` は、画面から外す・作り直す pane ごとに `hide` / `dock` / `undock` /
   `move-docked` / `tab-switch` / `auto-hide` として聞く（`DockHost.replaceLayout`）。画面に残る据え置きの pane は聞かない。
@@ -745,7 +747,7 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   `unavailable`）は何も変えない。`viewMenuItems` は空。`restoreLayout` と狭い表示への切り替えは効く（保存済みの配置を見せる
   ための操作で、利用者の組み替えではない）。
 
-`DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent?, saved? })`（レイアウト全体の置き換えを `beforePanelChange` を通して
+`DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent?, saved?, commit?, applied? })`（`commit`・`applied` は下の「保存してよい配置の確定」。レイアウト全体の置き換えを `beforePanelChange` を通して
 行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない。保存した値（`serialize()` /
 `savedLayout()`）を入れるときは `saved: true` を渡す。浮かせたパネルの「元の場所に戻す」の控えを、`hydrate` と同じく入れるのと同時に捨てる。
 `saved` を付けないときは、今の `dock.layout` から作った値として `dock.layout = ...` と同じに入れる（#741）: 控えは残し、木の外にある（浮かせた・隠した）
@@ -758,6 +760,57 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 を含む）は、不正でない値なら `beforePanelChange` に聞く前にこれを呼ぶ（操作中の配置ではなく、元に戻った配置に対して聞く）。拒否・`stale` になっても
 取り消した操作は戻らない。`invalid` のときは取り消さない。
 `replaceLayout` が処理中（`beforePanelChange` の承認待ちを含む）の間は、新しい操作も始まらない（`canStartGesture` を呼ぶ前に止める）。並行して複数あれば、最後の 1 件が返るまで続く。
+
+### 保存してよい配置の確定（`onLayoutCommit`、#791）
+
+`DockHost` と `ThreePaneDock` の prop `onLayoutCommit` は、「保存してよい配置が確定した」ときに呼ばれる。保存の
+きっかけはこれで受ける（`dock.serialize()` / `layoutSnapshot()` を `$effect` で読むと、ドラッグの途中の配置も拾う）。
+
+| 部品            | 形                                                                                                                     | 渡る値                                      |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `DockHost`      | `(layout: DockLayout, reason: DockLayoutCommitReason) => void`（`'user' \| 'reset'`）                                  | `dock.serialize()` と同じ配置（素のコピー） |
+| `ThreePaneDock` | `(saved: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason) => void`（`'user' \| 'reset' \| 'narrow-switch'`） | `layoutSnapshot()` と同じ値                 |
+
+- **呼ばれる時機**: 確定点で、保存する値が**前回の通知（または最後の復元・マウント時の値）から変わっていたら 1 回**。
+  確定点は、ポインターとキーボードの操作の終わり（`onGestureEnd` の直前。ドラッグ 1 回につき 1 回、仕切りのキーボード
+  操作は 1 押しごと）と、操作中でないときの変更の次の tick（部品のメソッド `showPanel`・`setPanelVisible`・`movePanel`
+  など、✕・タブ・ピン・畳む・ロックのボタン、アプリが `DockState` を直接呼んだ変更。`hydrate` も含む）。同じ tick の
+  複数の変更は 1 回にまとまる。部品が外れるときにまだ通知していない変更があれば、そこで通知する。
+- **理由**: `'user'` は「復元でも reset でもない確定」（API 経由の変更も含む）。`'reset'` は
+  `ThreePaneDock.resetLayout()` が適用されたとき（`DockHost` では `replaceLayout(next, { commit: 'reset' })`）で、
+  **値が同じでも毎回 1 回**届く。消費側は既定を保存するか、保存を消すかを選べる（値が同じでも届くのは `'reset'` だけ。
+  `replaceLayout(next, { commit: 'user' })` は、ほかの `'user'` と同じく値が変わっていたときだけ届く）。`'narrow-switch'` は狭い ⇄ 広いの
+  切り替えで保存する値が変わったとき（控えが既定で、戻った幅で測り直したとき。値が同じなら呼ばない）。
+- **呼ばれない場合**: 操作の途中（ドラッグ中の 1 歩ごと）、取り消し・`beforePanelChange` の拒否・`stale`（配置が
+  変わらない）、復元（`initialLayout`・`restoreLayout`、`DockHost` では `commit` なしの `replaceLayout`。その値が次の
+  比較の基準になる）、マウント時の既定の測り直し、`ThreePaneDock` の `panels`・文言の変更への追従、狭い表示への操作
+  （保存しない配置）。
+- `DockHost` を直接使い、マウント後に `dock.hydrate(saved)` で復元すると `'user'` で 1 回届く（`DockState` の直接の
+  変更と見分けられない）。通知なしで入れるなら `replaceLayout(layout, { saved: true })`、またはマウント前に入れる。
+- `replaceLayout` の `applied`（`options.applied?: () => void`）は、配置を入れたのと同じステップで、通知の前に呼ばれる。
+  配置の横に状態を持つ呼び出し側（`ThreePaneDock` の狭い表示の控え）が、新しい配置と古い状態の組を誰にも読ませない
+  ために使う。
+- **同じ配置への `replaceLayout` が重なったとき**: 承認待ちの間に同じ配置をもう一度頼んだ呼び出しが、待っている 1 件を
+  共有するのは、配置を入れる以外にすることも同じ（`commit`・`saved` が同じで、`applied`・`isCurrent` を渡していない）ときだけ。
+  違えば別々に聞き、先に適用されたほうが勝って、もう一方は `stale` になる（自分の `applied`・通知が走っていない
+  呼び出しに `applied` は返らない）。`ThreePaneDock` の `resetLayout`・`restoreLayout` は後から頼んだほうを残す
+  （承認待ちの復元に reset を重ねると、復元が `stale`、reset が適用されて `'reset'` が届く。狭い表示で、同じ表示に写る
+  別々の広い配置を続けて復元したときも、控えに残るのは後のほう）。
+- **`onLayoutCommit`・`applied` が例外を投げたとき**: 配置はもう入っているので、結果は変えない。例外は握りつぶさず、
+  捕まえられなかった例外として報告する（`reportError`。`window` の `error` イベントとコンソールに出る）。
+  `onGestureEnd` は続けて呼ばれ、`replaceLayout` は `applied` で返り、次の操作を始められる。
+
+```svelte
+<ThreePaneDock
+	bind:this={three}
+	onLayoutCommit={(saved, reason) => {
+		if (reason === 'reset')
+			settings.remove(KEY); // 既定を保存してもよい
+		else settings.set(KEY, JSON.stringify(saved)); // まとめ書き（debounce）はアプリ側で
+	}}
+	...
+/>
+```
 
 ## 保存の約束（serialize / hydrate と書き込みは別）
 

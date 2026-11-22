@@ -50,6 +50,7 @@ export {
 	type ThreePaneDockLayoutOptions,
 	type ThreePaneDockMessages,
 	type ThreePaneExtraPanelDef,
+	type ThreePaneLayoutCommitReason,
 	type ThreePanePaneDef,
 	type ThreePanePanels,
 	type ThreePaneRestoreStatus,
@@ -152,6 +153,7 @@ export { type DockCapabilities } from './core/policy';
 export type {
 	DockAutoHidden,
 	DockEdge,
+	DockLayoutCommitReason,
 	DockLayout,
 	DockNode,
 	DockPanelInfo,
