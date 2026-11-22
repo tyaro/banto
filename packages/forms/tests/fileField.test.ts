@@ -728,3 +728,75 @@ describe('BantoForm: store.reset() (PR #844 review)', () => {
 		expect(fileValueOf(store.values.files).pending).toEqual([]);
 	});
 });
+
+describe('a delete and its owner; a field hidden during the run (PR #844 cross-review)', () => {
+	function setup(confirmRemove: () => Promise<boolean>, rows: Record<string, FileFieldMeta[]>) {
+		const client = {
+			list: vi.fn(async (_resource: string, resourceId: string) => [...(rows[resourceId] ?? [])]),
+			upload: vi.fn(async (_resource: string, _resourceId: string, f: File) => meta(900, f.name)),
+			remove: vi.fn(async (_id: number) => {})
+		} satisfies FileFieldClient;
+		const schema: FormSchema = {
+			fields: [fileDef(client, { file: { client, resource: 'items', confirmRemove } })]
+		};
+		const store = createFormStore(schema);
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 5 });
+		return { client, store, view };
+	}
+
+	it('a confirmation answered after the switch to another record deletes nothing', async () => {
+		const asked = deferred<boolean>();
+		const confirmRemove = vi.fn(() => asked.promise);
+		const { client, store, view } = setup(confirmRemove, {
+			'5': [meta(1, 'of-a.txt')],
+			'6': [meta(2, 'of-b.txt')]
+		});
+		await fireEvent.click(await screen.findByRole('button', { name: 'of-a.txt: 削除' }));
+		// A second press while the confirmation is open does not ask again.
+		await fireEvent.click(screen.getByRole('button', { name: 'of-a.txt: 削除' }));
+		expect(confirmRemove).toHaveBeenCalledTimes(1);
+
+		store.reset();
+		await view.rerender({ fileParentId: 6 });
+		await screen.findByRole('button', { name: 'of-b.txt: 削除' });
+		asked.resolve(true);
+		await asked.promise;
+		await Promise.resolve();
+		expect(client.remove).not.toHaveBeenCalled();
+		expect(fileValueOf(store.values.files).existing).toEqual([meta(2, 'of-b.txt')]);
+	});
+
+	it('back to a new record with the same value: the files of the record before are not listed', async () => {
+		const { store, view } = setup(async () => true, { '5': [meta(1, 'of-a.txt')] });
+		await screen.findByRole('button', { name: 'of-a.txt: 削除' });
+		await view.rerender({ fileParentId: null });
+		await waitFor(() => expect(fileValueOf(store.values.files).existing).toEqual([]));
+		expect(screen.queryByRole('button', { name: 'of-a.txt: 削除' })).toBeNull();
+	});
+
+	it('uploadPendingFiles: a field hidden while a file is on its way sends no further file', async () => {
+		const first = deferred<FileFieldMeta>();
+		const client = fakeClient();
+		client.upload.mockImplementationOnce(() => first.promise);
+		const schema: FormSchema = {
+			fields: [
+				{ name: 'attach', label: '添付する', type: 'checkbox' },
+				fileDef(client, { visibleWhen: (values) => values.attach === true })
+			]
+		};
+		const store = createFormStore(schema, { attach: true });
+		store.setValue('files', known([file('a.txt'), file('b.txt')]));
+		const run = uploadPendingFiles(schema, store, 9);
+		await waitFor(() => expect(client.upload).toHaveBeenCalledTimes(1));
+
+		store.setValue('attach', false);
+		first.resolve(meta(90, 'a.txt'));
+		const outcome = await run;
+		// What was sent is written; the rest stays chosen and is not sent.
+		expect(outcome).toEqual({ uploaded: [meta(90, 'a.txt')], failed: [] });
+		expect(client.upload).toHaveBeenCalledTimes(1);
+		const value = fileValueOf(store.values.files);
+		expect(value.existing).toEqual([meta(90, 'a.txt')]);
+		expect(value.pending.map((entry) => entry.file.name)).toEqual(['b.txt']);
+	});
+});

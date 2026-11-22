@@ -216,6 +216,12 @@ export interface UploadPendingOptions {
 	 */
 	isCurrent?: () => boolean;
 	/**
+	 * Asked before EACH file is sent: `false` ends the run there (the field got
+	 * hidden meanwhile). The files not yet sent stay chosen; an answer already
+	 * on its way is still written.
+	 */
+	canSend?: () => boolean;
+	/**
 	 * A file arrived, but its entry is no longer among the chosen ones (the
 	 * value was replaced meanwhile - a reset). Nothing is written; the caller
 	 * that shows the record's files reads them again.
@@ -244,7 +250,7 @@ export async function uploadPending(options: UploadPendingOptions): Promise<File
 	const outcome: FileUploadOutcome = { uploaded: [], failed: [] };
 	const keys = options.keys ?? fileValueOf(read()).pending.map((entry) => entry.key);
 	for (const key of keys) {
-		if (!isCurrent()) break;
+		if (!isCurrent() || options.canSend?.() === false) break;
 		const entry = fileValueOf(read()).pending.find((item) => item.key === key);
 		if (!entry || inFlight.has(entry.file)) continue;
 		const file = entry.file;
@@ -300,7 +306,9 @@ export interface FileUploadStore {
  * files stay in the field with their error, to be tried again once the form
  * is in the edit state (`BantoForm`'s `fileParentId`).
  *
- * A field hidden by `visibleWhen` sends nothing. Never rejects.
+ * A field hidden by `visibleWhen` sends nothing - also one that gets hidden
+ * while the run waits for an earlier file: the files not yet sent stay chosen
+ * (what was sent stays sent). Never rejects.
  *
  * If the store is reset while a file is on its way, that file's answer is not
  * written into the reset form (its entry is gone); the files not yet sent are
@@ -319,6 +327,7 @@ export async function uploadPendingFiles(
 		parentId,
 		read: () => store.values[def.name],
 		write: (value) => store.setValue(def.name, value),
+		canSend: () => isFieldVisible(def, store.values),
 		messages
 	});
 }

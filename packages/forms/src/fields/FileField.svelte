@@ -74,6 +74,8 @@
 	let loadError = $state<string | null>(null);
 	let uploadingKeys = $state<string[]>([]);
 	let removingIds = $state<number[]>([]);
+	/** Deletes whose confirmation is open (not reactive: only stops a second start). */
+	const confirmingIds = new Set<number>();
 	/** The files the last pick refused, each with its reason. */
 	let refused = $state<string[]>([]);
 	let actionError = $state<string | null>(null);
@@ -112,8 +114,9 @@
 		}
 	}
 
-	// The owner of an upload run: the record and where its files are. A run
-	// started for another owner writes nothing into the value (conventions §8).
+	// The owner of an upload run or a delete: the record and where its files are.
+	// What was started for another owner sends nothing more and writes nothing
+	// into the value (conventions §8).
 	let ownerToken = 0;
 
 	$effect(() => {
@@ -127,9 +130,13 @@
 			loading = false;
 			loadError = null;
 			if (target === null || target === undefined) {
-				// A record that does not exist has no files: known, and empty.
+				// A record that does not exist has no files: known, and empty - also
+				// when the value still lists the files of the record shown before.
 				const now = latest();
-				if (now.existing === null) onInput({ existing: [], pending: now.pending });
+				if (now.existing === null || now.existing.length > 0) {
+					onInput({ existing: [], pending: now.pending });
+				}
+				removingIds = [];
 				return;
 			}
 			void load();
@@ -222,13 +229,32 @@
 	}
 
 	async function removeExisting(meta: FileFieldMeta): Promise<void> {
-		if (!config) return;
+		// The file is of THIS record, through THIS client: both are taken now, and
+		// checked again after the confirmation and after the answer.
+		const client = config?.client;
+		if (!config || !client || !hasParent || !ready || confirmingIds.has(meta.id)) return;
+		const token = ownerToken;
+		const target = parentId;
+		const resource = config.resource;
+		const same = () =>
+			token === ownerToken &&
+			parentId === target &&
+			config?.client === client &&
+			config?.resource === resource;
 		const confirm = config.confirmRemove ?? ((message: string) => window.confirm(message));
-		if (!(await confirm(t.removeConfirm(meta.fileName), meta))) return;
+		confirmingIds.add(meta.id);
+		try {
+			if (!(await confirm(t.removeConfirm(meta.fileName), meta))) return;
+		} finally {
+			confirmingIds.delete(meta.id);
+		}
+		// Another record is shown now: nothing is deleted.
+		if (!same()) return;
 		removingIds = [...removingIds, meta.id];
 		actionError = null;
 		try {
-			await config.client.remove(meta.id);
+			await client.remove(meta.id);
+			if (!same()) return;
 			const now = latest();
 			onInput({
 				existing: now.existing?.filter((item) => item.id !== meta.id) ?? null,
@@ -236,7 +262,7 @@
 			});
 			focusChoose();
 		} catch (err) {
-			actionError = t.removeFailed(err);
+			if (same()) actionError = t.removeFailed(err);
 		} finally {
 			removingIds = removingIds.filter((item) => item !== meta.id);
 		}
@@ -303,7 +329,7 @@
 						type="button"
 						class="action"
 						aria-label={t.actionLabel(t.remove(), meta.fileName)}
-						disabled={!ready || removingIds.includes(meta.id)}
+						disabled={!hasParent || !ready || removingIds.includes(meta.id)}
 						onclick={() => void removeExisting(meta)}
 					>
 						{t.remove()}
