@@ -25,6 +25,7 @@
 ### Changed
 
 - **ci:** `visual-baselines.yml` を `visual.spec.ts` だけの再生成・確認にし、Rust のビルドをやめ、`commit` の既定を true にした。1 回の dispatch で済む（#798）。
+- **ci:** e2e の visual を、画像を撮る spec だけの project `visual`（workers 2）と、残りの機能・axe の project `visual-ui`（並列 workers 4、`pnpm e2e:visual-ui`）に分け、CI の E2E (visual + axe-core) を速くした。撮る spec は `playwright.config.ts` の `SNAPSHOT_SPECS` に足す（#798）。
 
 ## [7.11.0] - 2026-11-22
 

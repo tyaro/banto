@@ -537,10 +537,17 @@ jobs:
       # no --update-snapshots step needed here. Only the `vite preview`
       # webServer is needed (BANTO_E2E_SERVERS=visual, playwright.config.ts),
       # so this job builds no Rust and runs parallel to `e2e`.
-      - name: Run visual regression + axe-core suite
+      - name: Run visual regression suite (screenshots)
         env:
           BANTO_E2E_SERVERS: visual
         run: pnpm e2e:visual
+
+      # The rest of e2e/visual (no screenshots) runs in parallel (Issue #798).
+      # Same `vite preview` server; `visual` (above) = SNAPSHOT_SPECS only.
+      - name: Run visual UI + axe-core suite (parallel)
+        env:
+          BANTO_E2E_SERVERS: visual
+        run: pnpm e2e:visual-ui
 
       # Demo-build-only UI (Issue #553): `vite dev` with VITE_BANTO_DEMO=1.
       - name: Run demo-build suite

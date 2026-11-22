@@ -88,6 +88,8 @@
     command-palette は背景に dashboard が写るので、dashboard を変えた PR では本当の差分
     （戻さず、再生成の版を採る）。
   - ui-demo の見本を足すと、date/time/datetime picker の画像も変わる（同じページを撮るため）。
+- visual は 2 つの project に分かれている（#798）。`visual` = 画像を撮る spec だけ（`e2e/playwright.config.ts` の `SNAPSHOT_SPECS`、今は `visual.spec.ts`、workers 2）、`visual-ui` = それ以外の機能・axe の spec（並列、workers 4）。
+  再生成（`visual-baselines.yml`）と CI は `pnpm e2e:visual`（= `--project=visual`）で同じ対象を選ぶ。**画像を撮る spec を足すときは `SNAPSHOT_SPECS` に入れる**（入れ忘れると `visual-ui` 側で基準画像なしに落ちる）。
 - ローカルの visual の e2e は既存のビルドを preview で配信するので、確かめる前に
   `pnpm --filter admin-template build` を回す（`BANTO_E2E_SERVERS=visual` でその spec だけ流せる）。
   `pnpm e2e` は webServer が起動しないことがある。その場合は CI の E2E で確認する。

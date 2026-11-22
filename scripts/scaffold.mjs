@@ -1827,9 +1827,9 @@ function replaceE2eForDisplay() {
 	// を保つ）。どちらも「残す要素の直後 … 配列の最後の要素の終わり」の1領域。
 	cutRegion(
 		PLAYWRIGHT_CONFIG,
-		'playwright: public-viewer / visual project 除去',
+		'playwright: public-viewer / visual / visual-ui project 除去',
 		`,\n\t\t// Viewer-public mode (Issue #189)`,
-		`toHaveScreenshot: { animations: 'disabled', maxDiffPixels: 250 }\n\t\t\t}\n\t\t}`
+		`baseURL: VISUAL_BASE_URL\n\t\t\t}\n\t\t}`
 	);
 	cutRegion(
 		PLAYWRIGHT_CONFIG,
@@ -1879,6 +1879,11 @@ function replaceE2eForDisplay() {
 		ROOT_PKG,
 		'root package.json: e2e:visual スクリプト除去',
 		`    "e2e:visual": "playwright test --config=e2e/playwright.config.ts --project=visual",\n`
+	);
+	drop(
+		ROOT_PKG,
+		'root package.json: e2e:visual-ui スクリプト除去',
+		`    "e2e:visual-ui": "playwright test --config=e2e/playwright.config.ts --project=visual-ui",\n`
 	);
 	drop(
 		ROOT_PKG,
