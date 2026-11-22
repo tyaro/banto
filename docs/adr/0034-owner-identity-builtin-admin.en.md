@@ -8,7 +8,10 @@
   recovery path in §7) and every point in "Points to confirm with the owner" of PR #804. Also on the same
   day the four cross-review findings on PR #804 were incorporated: the timing of the protection and the display
   contract in §2, the authorization-time snapshot and `actor_kind` in §3, the LAN write condition and the headless
-  CLI contract in §5-§7, the restore check in §9, and the acceptance tests in §10)
+  CLI contract in §5-§7, the restore check in §9, and the acceptance tests in §10. Also on the same day two
+  rounds of re-review were incorporated: the seed fix moves to C1 in §5, serialization by the mode generation in
+  §6, the CLI when a restore is pending in §7, the pre-restore check of start-up conditions in §9, and the tests
+  in §10)
 - Date: 2026-11-22
 - Related: Issues #790, #778, #786 /
   [design/downstream-requests-2026-11-plan](../design/downstream-requests-2026-11-plan.md) §2, §4.1-§4.4, §7 (C0), §10 (Japanese only) /
@@ -197,9 +200,26 @@ mark set by the wiring layer.
     login-required) or the restore of §9.
   - Plan §4.3's "change the default of `auth.disabled` to on (when the key is absent)" is not adopted. With a code
     default of on, merely losing the key in a v8 database would make anyone at the terminal an admin.
-- `seed_first_boot_settings` writes only "when `settings` is empty"
-  (`apps/admin-template/core/src/first_boot.rs:40-53`). Once 0014 inserts rows that condition no longer holds, so
-  C2b revises it (details in C2b).
+- **The first-boot seed condition is fixed in the same PR as 0014 (C1)** (re-review finding 1).
+  `seed_first_boot_settings` writes only "when `settings` is empty"
+  (`apps/admin-template/core/src/first_boot.rs:40-53`). Once 0014 inserts rows into `settings`, that condition no
+  longer holds even on a new database. The display scaffold puts `server.viewer_public`, `server.enabled` and
+  `server.bind` in through this path (`scripts/scaffold.mjs:2026-2032`), so if 0014 lands without the seed fix, a
+  generated display app starts without public viewing. Today's unit tests, which create `settings` empty, do not
+  see this. Moving the INSERT of the auth keys to a later PR is not adopted (it would rewrite the baseline
+  migration twice).
+  - **Contract**: the seed writes **exactly once, on the first start-up of a new database**. It writes even when
+    rows inserted by a migration already exist, and overwrites the same keys with the seed values (a preset's
+    default wins over the migration's default). From the second start-up on it writes nothing (it does not revert
+    settings the user changed).
+  - **Shape**: the test changes from "the table is empty" to "the seeded marker is absent". The marker is one row
+    in `settings`, written in the same transaction as the seed rows (no half-seeded state after a failure). The
+    marker's key name is decided in C1. The marker lives in the database, so a restore brings it back too (a
+    backup of a seeded database is not re-seeded after restore).
+  - The order stays "apply the pending restore → migrations → seed → read settings" (`banto-serve.rs:111-142`,
+    `src-tauri/src/lib.rs:4358-4391`). The settings check that C2b adds (above) runs after the seed.
+  - Completion criterion of C1: start a generated display app on **a database built by C1's real migrations
+    (0001-0014)** and confirm that public viewing is enabled (§10).
 - Only users who need user management create accounts, from the user management screen. The audit actor of that
   operation is `admin` (§3).
 - Removed: `setup_first_user` and `is_initialized` (`users.rs:738`, `:706`), REST `POST /api/auth/setup`,
@@ -229,6 +249,37 @@ mark set by the wiring layer.
      too, it **stops with an explicit error without listening** and points to the CLI of §7.
   4. **Users who want to operate from the LAN first create an admin account and lock down.** This rule is never
      relaxed.
+- **Login admission, token issuance and token authorization are serialized with the mode switch** (re-review
+  finding 3; an implementation condition of C2b). "Refuse login at the entry + revoke everything right after the
+  switch" (item 2 above) alone leaves this hole: pass the entry check → while the credential verification is
+  awaited, the mode switches to login-less and every token is revoked → the old verification completes and issues
+  a token. Today's `login_rate_limited` issues after awaiting the verification
+  (`crates/banto-server/src/auth/state.rs:348-390`).
+  - **Mode generation**: `AuthState` holds the current mode (login required / login-less) and a generation that
+    advances on every switch. A switch does "advance the generation + revoke every account token" at once, under
+    the same lock as the token table. The shape is the same as the grant generation guard (`grant_generation` /
+    `issue_grant_token`, `auth/state.rs:438-515`, ADR-0017 §2).
+  - **Issuance**: login reads the generation at the entry. After the verification, right before issuing and under
+    the same lock, it confirms "the generation equals the one read at the entry" and "the current mode is login
+    required". Otherwise it refuses without issuing (even with correct credentials). A token carries the
+    generation it was issued under.
+  - **Authorization**: authorizing with an account token confirms the same generation **at the moment
+    authorization completes** as well. Today's path returns, after awaiting the database lookup, the session it
+    read before the lookup (`auth/state.rs:690-714`); `refresh_identity` (`:817-824`) writes the identity back when
+    the stamp matches. A token revoked by a switch during the lookup could pass this one time. After the lookup,
+    confirm "the token is still in the table and its generation equals the current one"; otherwise treat the
+    request as unauthenticated.
+  - **Contract**: once a switch has completed, nothing can be issued from or used under the old generation.
+    Lockdown (login-less → login required) advances the same generation (revoking the synthetic session and the
+    grants that lockdown closes is as described below).
+  - **In-flight writes**: the point at which a write counts as "admitted" is **the completion of authorization
+    with the generation check** (when the guard builds the principal snapshot of §3). A write past that point is
+    not interrupted by the switch and runs to the end under the principal as of authorization (the same handling
+    as work detached by the #793 layer; plan §4.5). A request whose authorization completes after the switch is
+    refused. Whether a switch waits for the remaining work, and how it is audited, follows what #793 (S1, S2,
+    ADR-0035) decides for "the order of revocation and audit", and is fixed in C2b.
+  - **Regression tests**: complete a switch while the verifier is deliberately held, then resume it: no token is
+    issued. Complete a switch while the authorization's database lookup is held: that request does not pass (§10).
 - **What "read-only" forbids and does not forbid**:
   - Forbidden: changes to business data and administration (resources, attachments, users, settings, backups and
     so on: every operation that needs a role above viewer or a permission).
@@ -282,6 +333,11 @@ mark set by the wiring layer.
   - It runs migrations first, so it works on a new database as is (an old database is refused as in §9). It runs
     **before** the start-up checks of §5 and §6 (missing or corrupt settings keys; login required with zero
     admins), because it is the entry that repairs those states.
+  - **When a restore is pending (`restore-pending.sqlite3`), it writes nothing and stops with an explicit error**
+    (re-review finding 2). The CLI neither applies the pending restore implicitly nor ignores it. Ignoring it would
+    let the next start-up apply the restore after the CLI succeeded, erasing the account and the lockdown. The
+    error says "first apply the restore (start the app) or delete the pending file, then run again". Which comes
+    first is the operator's decision.
   - **Run it with the app and the server stopped.** The CLI cannot revoke sessions held in the memory of a running
     process. Used on the SQLite file a Tauri app shares, it makes that app login-required too (as intended).
   - The audit row is recorded as an operation of the built-in `admin` (`actor_kind = 'cli'`, `origin = 'cli'`).
@@ -348,6 +404,30 @@ mark set by the wiring layer.
     refused at staging; (2) placed directly as the pending file, is not applied at start-up and the original
     database's bytes do not change; (3) the next start-up succeeds. The same for a candidate with a version the
     migrator lacks and one with a missing baseline entry.
+- **A restore candidate is also checked against the start-up conditions within v8** (re-review finding 2). The
+  history check stops v7 and unknown versions, but it does not prevent a v8 candidate with a sound history and
+  `integrity_check` from stopping at the start-up checks (the built-in row of §2, the settings of §5, login
+  required with zero admins of §6). Swapping such a candidate in stops start-up **after the sound original
+  database has been replaced**.
+  - **What is checked** (before the swap, read-only): every check that stops start-up. (a) the built-in row exists
+    (exactly one `admin` with `kind = 'builtin'`), (b) the required settings are readable (`auth.disabled` is
+    `true` / `false`; when on, `auth.disabled_role` is a known value), (c) when login is required, at least one
+    admin that can log in (`kind = 'account' AND role = 'admin'`), (d) collisions between reserved names and grant
+    fixed ids (§4).
+  - **Use the same function as the start-up check.** The conditions are not written in two places. **A PR that
+    adds a check that stops start-up applies it to the pre-restore check in the same PR** (the built-in row and
+    the §4 collision in C2, settings and admins in C2b). This is a completion criterion of each PR (plan §7). The
+    wiring layer passes the check function together with the migrator (the app is what knows a derived app's
+    grants).
+  - **A candidate with unapplied migrations after the baseline** cannot be read in its start-up state as is. Copy
+    the candidate to a working copy, run the migrations on the copy, and pass the same checks before swapping. What
+    is swapped in is the original candidate; the working copy is discarded (the start-up after the swap runs the
+    migrations as usual). If the migrations fail on the copy, refuse.
+  - **On refusal the original database is not touched** (as with the history check: the pending file is deleted
+    and the apply is abandoned). It is checked at the same two times (at staging and right before applying).
+  - **Regression tests**: v8 candidates with a sound history and `integrity_check` that lack the `auth.disabled`
+    row, require login with zero admins, or lack the built-in row are refused both at staging and right before
+    applying; the original database's bytes do not change and the next start-up succeeds.
 - **The offline recovery procedure** (the way to "go back to a backup" after start-up stopped). Today a restore
   can only be staged from the running administration screen. A stopped start-up cannot reach it, so a procedure
   that bypasses the screen is fixed here.
@@ -355,8 +435,10 @@ mark set by the wiring layer.
     (`restore-pending.sqlite3`) → start.
   - **The start-up order is "apply the pending restore → migrations → settings and admin checks"** (the apply
     already comes first: `banto-serve.rs:111`, `apps/admin-template/src-tauri/src/lib.rs:4358`). This order is
-    fixed as a rule. A hand-placed file also goes through the check right before applying (above). If it fails it
-    is deleted and the original database does not change.
+    fixed as a rule. A hand-placed file also goes through the checks right before applying (the two above:
+    history and start-up conditions). If it fails it is deleted and the original database does not change. The
+    seed (§5) comes after the migrations and before the settings check. The CLI of §7 stops when a pending file
+    exists (it neither applies nor ignores it).
   - It works in desktop-only derived apps that do not ship `banto-serve`. The procedure is written in upgrading
     and README (C1).
   - PostgreSQL has no banto restore entry (`backup.rs:206-215`). Operators restore with their own tools. An old
@@ -372,6 +454,13 @@ mark set by the wiring layer.
   the switch can neither read nor write over REST. A viewer-public session can only read and PUT the ui-settings
   of its own kind; business and administrative changes are refused. An explicit app grant behaves as its
   `GrantSpec` says.
+- **Racing the switch** (C2b): switching to login-less while the verification is held issues no token when the
+  verification resumes. Switching while the authorization's database lookup is held does not let that request
+  pass. A write whose authorization completed before the switch runs to the end, and its audit row keeps the
+  principal as of authorization (§6).
+- **The first-boot seed** (C1): on a new database built by C1's real migrations, a generated display app seeds
+  `server.viewer_public`, `server.enabled` and the bind, and public viewing is enabled. The second start-up does
+  not overwrite settings the user changed. An app with an empty seed writes nothing, as today (§5).
 - **Broken settings** (C2b): a database where `auth.disabled` is missing or unreadable, one that is login-less
   with `auth.disabled_role` missing or unreadable, and one that requires login with zero admins all stop at
   start-up in both Tauri and `banto-serve` and create no synthetic session. The CLI repairs them.
@@ -382,7 +471,11 @@ mark set by the wiring layer.
   and `actor_kind` on REST and Tauri. Revoking the token after authorization and before the audit write still
   leaves the audit row with the principal as of authorization. `actor_kind` tells apart `local`, two marked grants
   of different kinds, and `cli`. No token value appears in the audit log.
-- **Restore** (C1): the regression tests of §9.
+- **Restore** (C1): the history regression tests of §9. The regression tests for the start-up conditions are
+  added in the PR that introduces each condition (the built-in row and the §4 collision in C2, settings and
+  admins in C2b).
+- **The CLI and a pending restore** (C2b): running the CLI on a database with a pending file ends with an explicit
+  error without writing anything; neither the pending file nor the database changes.
 
 ## Alternatives considered
 
@@ -453,6 +546,20 @@ mark set by the wiring layer.
     applying.**
   - Rejected: look only at required table names. A candidate with v7 checksums passes and the app cannot start
     after the swap (§9).
+  - **Adopted: also pass the checks that stop start-up, through the same function, before the swap.** Even a v8
+    candidate with a sound history can stop start-up through a missing setting or zero admins.
+  - Rejected: leave it to the start-up check after the swap. Start-up stops after the sound original database has
+    been replaced.
+- **The first-boot seed condition**
+  - **Adopted: test "the seeded marker is absent", and fix it in C1 together with 0014.**
+  - Rejected: keep "the table is empty" and move the INSERT of the auth keys to a later PR. The baseline migration
+    would be rewritten twice.
+  - Rejected: move the seed fix to C2b. On main in between, a generated display app starts without public viewing.
+- **Login racing the mode switch**
+  - **Adopted: confirm the mode generation right before issuing and when authorization completes** (the same
+    shape as the grant generation guard).
+  - Rejected: only the entry check and the bulk revocation right after the switch. If the mode switches during
+    the awaited verification, the old verification issues a token.
 - **When the built-in row is protected**
   - **Adopted: C1, which inserts the row, also brings the minimum protection that takes it out of matching and
     modification.**
@@ -500,9 +607,14 @@ mark set by the wiring layer.
   fixed id does not collide with an existing account's name (start-up stops if it does).
 - [ADR-0017](0017-credential-less-grant.en.md) gets an addendum (the acting id of §3, the audit and ui-settings
   item, and the lockdown condition).
+- Restore also refuses, before the swap, a candidate that hits a condition that stops start-up (the built-in row,
+  required settings, admins when login is required). A derived app that adds a check that stops start-up applies
+  the same check before restore (§9).
+- The first-boot seed runs on "the seeded marker is absent" instead of "the table is empty". A derived app that
+  carries a copy of `first_boot.rs` has to replace it (otherwise, after 0014, the seed is never written).
 - Implementation is split into the PRs of plan §7: C1 (rebuilding the baseline, generating `account_uid`, counting
-  by `kind`, **the minimum protection of the built-in row**, the restore check), C2 (reserved names, the start-up
-  check, the attribution mark and the authorization-time snapshot, `actor_id` / `actor_kind`), C2b (removing
-  first-run setup, explicit settings and stopping on broken ones, REST while login is off, the lockdown condition,
-  the CLI), C3 (`accountId` on the wire), C4 and C5 (ui-settings). The table in plan §7 was aligned with
+  by `kind`, **the minimum protection of the built-in row**, the restore check, **the fix of the first-boot seed
+  condition**), C2 (reserved names, the start-up check, the attribution mark and the authorization-time snapshot,
+  `actor_id` / `actor_kind`), C2b (removing first-run setup, explicit settings and stopping on broken ones, REST
+  while login is off and **serialization by the mode generation**, the lockdown condition, the CLI), C3 (`accountId` on the wire), C4 and C5 (ui-settings). The table in plan §7 was aligned with
   this split (2026-11-22); if they differ, this ADR takes precedence. Implementation can start with C1 (`Accepted` on 2026-11-22).
