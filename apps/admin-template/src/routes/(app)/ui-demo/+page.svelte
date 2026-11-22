@@ -1211,9 +1211,9 @@
 		</span>
 		<span class="caption">
 			{m['uiDemo.choices.submitted']()}:
-			<code data-testid="ui-demo-file-values"
-				>{fileDemoValues ? JSON.stringify(fileDemoValues) : m['uiDemo.form.none']()}</code
-			>
+			<code data-testid="ui-demo-file-values">
+				{fileDemoValues ? JSON.stringify(fileDemoValues) : m['uiDemo.form.none']()}
+			</code>
 		</span>
 	</SurfaceCard>
 
