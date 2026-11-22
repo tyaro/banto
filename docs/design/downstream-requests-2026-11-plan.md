@@ -740,13 +740,16 @@ W1 ウィジェットの登録の型と、固定部のカードの載せ替え �
   書き込みの compare-and-set（#260）は「始めたときの revision」と「始めたときに保存先から読んだトークン」の両方を比べる。
 - 推奨の形（B1）: `HttpAuthProviderOptions` に `storage?: 'web' | 'memory'` を足す（既定は `'web'` = 今のまま）。`'memory'` では
   トークンを provider の中の変数だけに持ち、web storage を読まず・書かず、`storage` イベントも購読しない。`storageKey` は使わない。
-  `login({ remember: true })` は覚えない（再読み込みでセッションが消える）。`credentialRevision`・compare-and-set・
-  `onCredentialChanged` は同じ文書の中で今のまま働く（タブ間の同期は無い）。
+  `credentialRevision`・compare-and-set・`onCredentialChanged` は同じ文書の中で今のまま働く（タブ間の同期は無い）。
+- `remember` の扱い: いまの `login(params)` は `params` をそのまま `POST /api/auth/login` に送るので、`remember: true` は
+  保存先だけでなく、**サーバーのセッションの有効期間の方針も変える**。`'memory'` では、provider が送る本文の `remember` を
+  `false` にして、通常の期限を使う（推奨。再読み込みで消えるトークンに、長い期限のセッションを残さない）。エラーにはしない。
 - Tauri の provider（`providers/tauri.ts`）は web storage にトークンを持たないので、対の口は足さない（README に 1 文）。
 - 範囲の外: 同じオリジンのほかのキー（`createLocalUiSettings` の `banto.ui.*`、テーマ、dock の配置の写し）。
   `createLocalUiSettings` は今でも `storage`（`Storage`）を渡せる。ほかは下流のデモの側で分け、足りない口は D1 で洗う。
 - 試験: `'memory'` で `localStorage`・`sessionStorage` に一度も触れない、`storage` の購読が無い、ログイン → `resolve()` → ログアウトと
-  追い越しの試験（`sessionRaces`・`httpRevision`）が `'memory'` でも通る、既定の挙動が変わらない。
+  追い越しの試験（`sessionRaces`・`httpRevision`）が `'memory'` でも通る、`'memory'` で `remember: true` を渡しても送る本文は
+  `remember: false`、既定（`'web'`）の挙動と送る本文が変わらない。
 
 **#850（U1）**
 
@@ -754,11 +757,20 @@ W1 ウィジェットの登録の型と、固定部のカードの載せ替え �
   `src/routes/(app)/+layout.svelte` が持つ（`overlayOpen`、遷移と Escape で閉じる、メニューバーが入りきらないときの
   `menubarInsufficient` → `menubarWideDrawer`・`showSidebar`）。`Header.svelte`・`Sidebar.svelte` は `narrowViewport` を読んで、
   ☰ と折り畳みのボタンのどちらを出すかを決める。`@banto/ui` の `LauncherBar` は同じ 900px を自前の `matchMedia` で見ている。
-- 推奨の形（B2）: `@banto/ui` に `NARROW_QUERY`・`narrowViewport` を移し、ドロワーの状態を
-  `createShellDrawer({ navPlacement, menubarFits })`（どちらも getter）として出す。返すのは `open`・`isDrawer`
-  （狭い幅、またはメニューバーが入りきらない）・`toggleTarget`（`'drawer' | 'fold'`）・`toggle()`・`close()`。
-  `isDrawer` が偽に戻ったら閉じる。DOM（backdrop・フォーカスの移し替え・Escape の購読）はテンプレートに残す。
-  テンプレートと `LauncherBar` は新しい口に載せ替える。境の値は 900px の固定（CSS の `@media` と対なので、引数にしない）。
+- 下流の 2 つのアプリは、幅の境は同じでも「ドロワーにする条件」が違う（両アプリの `mobileNav.ts` の `resolveShellNav`）。
+  banto-hub は、狭い幅のサイドバーをドロワーにする（テンプレートと同じ）。chronogazer は、狭い幅でもサイドバーは列のままで、
+  ドロワーになるのはメニューバーの代わりのとき（狭い幅、または入りきらない）だけ。ナビの置き場所と「入りきるか」だけでは
+  この 2 つを区別できない。置き場所が launcher のときは、どちらもサイドバーもトグルも出さない。
+- 推奨の形（B2）: `@banto/ui` に次の 3 つを出す。境の値は 900px の固定（CSS の `@media` と対なので、引数にしない）。
+  - `NARROW_QUERY`・`narrowViewport`（テンプレートから移す）。
+  - 純関数 `resolveShellNav(layout, isNarrow, menubarInsufficient, { narrowSidebar })`。`layout` は
+    `'sidebar' | 'launcher' | 'menubar'`、`narrowSidebar` は `'drawer'`（既定。テンプレート・banto-hub）か `'column'`（chronogazer）。
+    返すのは `showBar`・`showSidebar`・`drawerMode`・`showDrawerButton`（下流の 2 つの写しと同じ形）。launcher ではトグルを出さない。
+  - 状態 `createShellDrawer({ isDrawer })`。**ドロワーにするかの判断は呼び出し側が getter で渡す**（上の純関数の結果でも、
+    自前の条件でもよい）。返すのは `open`・`toggle()`・`close()`。`isDrawer` が偽に戻ったら閉じる。
+- メニューバーが入りきらない間も、幅が戻ったら測り直してバーへ戻れること（入りきらないという報告を、ドロワーの状態が
+  握りつぶさない）を保つ。DOM（backdrop・フォーカスの移し替え・Escape の購読）はテンプレートに残す。
+  テンプレートと `LauncherBar` は新しい口に載せ替える。
 - `.svelte.ts` を足すので conventions §14（dev optimizer の除外）を確かめる（`@banto/ui` は既に `.svelte.ts` を持つ）。
 
 **#851（T3）**
@@ -767,11 +779,18 @@ W1 ウィジェットの登録の型と、固定部のカードの載せ替え �
   （`MAX_CHART_SERIES = 8`、`core/color.ts`）。`packages/theme/tests/chart-palette.test.ts` は「ちょうど 8 枠」、隣どうし 0.10・
   どの 2 つも 0.09（OKLab。色覚特性の模擬ごと）、面との比 3:1（全ブランド色相）、先頭 4 系列と状態色 0.09（T2）を確かめている。
 - 推奨の形（B3）: `--banto-chart-9〜16` を足し、`MAX_CHART_SERIES` を 16 にする（17 本目以降は 16 番に固定。折り返さない）。
+  **charts と theme の版がそろわない場合**: `seriesColorVar` が返す `var(--banto-chart-N)` には fallback が無いので、そのまま 16 にすると、
+  charts だけを先に上げたアプリや、1〜8 しか持たない自前のテーマでは、9 本目以降の色が「8 番に固定」から「未定義」に変わる。
+  9〜16 番は `var(--banto-chart-N, var(--banto-chart-8))` として **8 番の色へ fallback させる**（旧いテーマでは今と同じ見た目になる）。
+  画像の書き出し（`core/export.ts` が CSS 変数を解決する所）でも fallback が効くことを確かめる。
   **1〜8 の値と検査は変えない**。9〜16 は「1〜16 のどの 2 つも 0.06 以上（正常色覚）・面との比 3:1 以上」を検査に足す。
   色覚特性の模擬での距離と、状態色との距離は 9〜16 では保証しない（決定 7 と同じ考え。16 色で 0.09 を保てるかは未確認で、
   保てない見込み）。README に「9 本目以降は色だけで見分けさせない（凡例・線種・マーカーを併用）」と書く。
-- 色の出発点は banto-industrial の `--bi-chart-9〜16`（`apps/chronogazer/src/app.css`）。検査に落ちるもの（Issue が挙げる
-  ダークの 15 `#ff8a65` と 2 `#ed770e` など）だけを直す。
+- 色は banto-industrial の `--bi-chart-9〜16`（`apps/chronogazer/src/app.css`）を**そのまま使うことを出発点**にする。
+  クロスレビュー（PR #853）の実測では、Issue が近いと挙げるダークの 15 `#ff8a65` と 2 `#ed770e` は約 0.0765 で 0.06 を満たし、
+  追加の 8 色が絡む組の最小はライト約 0.0924・ダーク約 0.0758。T3 で測り直し、面との比（全ブランド色相）で落ちるものがあれば、それだけ直す。
+- banto-industrial が `--bi-chart-9〜16` を置き換えるときは、そのアプリの背景とのコントラストの条件（下流の設計書の
+  ライト 3.5:1・ダーク 5:1）を下流の側で別に確かめる（banto が保証するのは banto の面との 3:1）。
 - 1〜8 を変えないので、8 系列以下のグラフの見た目と基準画像は変わらない見込み（PR で確かめる）。
 
 **#852（X1）**
@@ -784,6 +803,8 @@ W1 ウィジェットの登録の型と、固定部のカードの載せ替え �
   出すのは「charts の部品をマウントするのに要る差し替えを入れ、戻す関数を返す」1 つの口（大きさを引数で渡す）と、
   要れば描画の待ち合わせ。**vitest を import しない**（conventions §5 の `package-bare-imports`。`src` の素の import は `svelte` だけ）。
   charts 自身の DOM の試験もこの口を使う（口が実装とずれないようにする）。README に vitest の設定と 1 本の例を載せる。
+  「マウントできた」だけでは保証にならないので、外部の Git 依存として入れた所からサブパスを読めること、幅が 0 でない所で
+  SVG に系列が実際に描かれること、戻した後に差し替えが残らないことまでを完了条件にする（§7）。
   `jsdom`・`@testing-library/svelte` は使う側の devDependencies（banto の依存は増えない）。
 - dock-svelte・grid-svelte などの同じ口は、求めが出てから足す（D1 で確かめる）。パッケージ間の import はできない
   （conventions §4）ので、共通の下準備を 1 つのパッケージにまとめる形は採らない。
@@ -867,10 +888,10 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | F2 | #714 テンプレートの配線（items の新規・編集、作成後のアップロード、失敗の再試行）・README・片付け | テンプレート・scaffold | 足すだけ | sonnet | e2e。添付を外すプリセットの dry-run。#714 を閉じる |
 | W0 | #716 の判断（§4.13 の 1〜4）と template-scope §4.2 の 1 文 | `docs` | — | fable | **オーナーの判断** |
 | W1〜W3 | #716（判断の後に §4.13 を設計へ書き直してから。W2 は K4・C5 の後） | テンプレート（＋判断による） | 見た目・保存 | fable | 判断の後に決める。基準画像の再生成、scaffold の dry-run |
-| C7 | #838 `createHttpAuthProvider` に `storage: 'web' \| 'memory'`（既定は `'web'`）。`'memory'` はトークンを provider の中だけに持ち、web storage を読まず・書かず、`storage` イベントを購読しない。`remember` は覚えない。README（Tauri には対の口が無いことを含む）。**口の形は §10 の B1（判断待ち）**。§4.14 | `admin-core`（`providers/http.ts`・README） | 足すだけ | fable | `'memory'` で web storage に一度も触れず、`storage` の購読も無い試験。追い越しの試験（`sessionRaces`・`httpRevision`）が両方の保存先で通る。既定の挙動が変わらない。#838 を閉じる |
-| U1 | #850 `NARROW_QUERY`・`narrowViewport` を `@banto/ui` へ移し、ドロワーの状態を `createShellDrawer` として出す（開く・閉じる・広い幅に戻ったら閉じる・☰ の振り分け・メニューバーが入りきらないときのドロワー）。テンプレート（`(app)/+layout.svelte`・`Header`・`Sidebar`）と `LauncherBar` を載せ替える。DOM とフォーカスの移し替えはテンプレートに残す。**口の形は §10 の B2（判断待ち）**。§4.14 | `ui`・テンプレート | 足すだけ（テンプレートの `src/lib/narrowViewport.svelte.ts` はパッケージへ移る） | sonnet | 状態の単体テスト（下流の `mobileNav.test.ts`・`viewportWatch.test.ts` が見ている場合分けを含む）。テンプレートの挙動と基準画像が変わらない（e2e のメニューバー・ドロワー）。scaffold の 4 プリセットの dry-run。conventions §14 の除外の確認。#850 を閉じる |
-| T3 | #851 `--banto-chart-9〜16`（ライト・ダーク）と、`MAX_CHART_SERIES` を 16 に（折り返さず、17 本目以降は 16 番に固定）。1〜8 の値と検査は変えない。9〜16 の検査（1〜16 のどの 2 つも 0.06 以上・面との比 3:1 以上）を足す。README と [visual-refresh-plan.md](visual-refresh-plan.md) の付録に値と保証しない範囲。**色の決め方と下限は §10 の B3（判断待ち）**。§4.14 | `theme`・`charts` | 見た目（9 本目以降の色が変わる。`MAX_CHART_SERIES` の値が変わる） | fable | `chart-palette.test.ts` が 16 枠で両テーマとも通る。1〜8 の既存の検査がそのまま通る。charts の色の試験（9〜16 番・17 本目以降）。基準画像が変わらないことの確認。#851 を閉じる |
-| X1 | #852 `@banto/charts/testing`（jsdom に無いものの差し替えを入れて戻す口・要れば描画の待ち合わせ）。vitest を import しない。charts 自身の DOM の試験を載せ替える。README に vitest の設定と 1 本の例。**置き場所は §10 の B4（判断待ち）**。§4.14 | `charts`（`src/testing/`・`package.json` の `exports`・README） | 足すだけ | sonnet | charts の DOM の試験が新しい口で通る。`pnpm verify:architecture`（`package-bare-imports`）。パッケージの外から `@banto/charts/testing` を解決して 1 つの部品をマウントする試験（fixture か template-acceptance）。#852 を閉じる |
+| C7 | #838 `createHttpAuthProvider` に `storage: 'web' \| 'memory'`（既定は `'web'`）。`'memory'` はトークンを provider の中だけに持ち、web storage を読まず・書かず、`storage` イベントを購読しない。`remember` は覚えず、送る本文でも `false` にして通常の期限を使う。README（Tauri には対の口が無いことを含む）。**口の形は §10 の B1（判断待ち）**。§4.14 | `admin-core`（`providers/http.ts`・README） | 足すだけ | fable | `'memory'` で web storage に一度も触れず、`storage` の購読も無い試験。追い越しの試験（`sessionRaces`・`httpRevision`）が両方の保存先で通る。`'memory'` で `remember: true` を渡しても、送る本文は `remember: false`。既定の挙動と送る本文が変わらない。#838 を閉じる |
+| U1 | #850 `NARROW_QUERY`・`narrowViewport` を `@banto/ui` へ移し、ドロワーにするかを決める純関数 `resolveShellNav`（狭い幅のサイドバーの方針 `narrowSidebar: 'drawer' \| 'column'` を受ける）と、状態 `createShellDrawer({ isDrawer })`（判断は呼び出し側が渡す。開く・閉じる・ドロワーでなくなったら閉じる）を出す。テンプレート（`(app)/+layout.svelte`・`Header`・`Sidebar`）と `LauncherBar` を載せ替える。DOM とフォーカスの移し替えはテンプレートに残す。**口の形は §10 の B2（判断待ち）**。§4.14 | `ui`・テンプレート | 足すだけ（テンプレートの `src/lib/narrowViewport.svelte.ts` はパッケージへ移る） | sonnet | 状態の単体テスト（下流の `mobileNav.test.ts`・`viewportWatch.test.ts` が見ている場合分けを含む）。**banto-hub の形（狭い幅のサイドバーがドロワー）と chronogazer の形（狭い幅でもサイドバーは列、ドロワーはメニューバーの代わりのときだけ）の両方を、同じ口で表せる試験**。launcher ではトグルを出さない。メニューバーが入りきらない状態から幅が戻ったら、測り直してバーへ戻る。テンプレートの挙動と基準画像が変わらない（e2e のメニューバー・ドロワー）。scaffold の 4 プリセットの dry-run。conventions §14 の除外の確認。#850 を閉じる |
+| T3 | #851 `--banto-chart-9〜16`（ライト・ダーク）と、`MAX_CHART_SERIES` を 16 に（折り返さず、17 本目以降は 16 番に固定）。9〜16 番の `seriesColorVar` は 8 番の色へ fallback させる（旧いテーマ・1〜8 だけの自前のテーマでは今と同じ見た目）。1〜8 の値と検査は変えない。9〜16 の検査（1〜16 のどの 2 つも 0.06 以上・面との比 3:1 以上）を足す。README と [visual-refresh-plan.md](visual-refresh-plan.md) の付録に値と保証しない範囲。**色の決め方と下限は §10 の B3（判断待ち）**。§4.14 | `theme`・`charts` | 見た目（9 本目以降の色が変わる。`MAX_CHART_SERIES` の値が変わる） | fable | `chart-palette.test.ts` が 16 枠で両テーマとも通る。1〜8 の既存の検査がそのまま通る。charts の色の試験（9〜16 番・17 本目以降）。**9〜16 を持たないテーマとの組み合わせで、9 本目以降が 8 番の色になる試験**（画像の書き出しを含む）。基準画像が変わらないことの確認。#851 を閉じる |
+| X1 | #852 `@banto/charts/testing`（jsdom に無いものの差し替えを入れて戻す口・要れば描画の待ち合わせ）。vitest を import しない。charts 自身の DOM の試験を載せ替える。README に vitest の設定と 1 本の例。**置き場所は §10 の B4（判断待ち）**。§4.14 | `charts`（`src/testing/`・`package.json` の `exports`・README） | 足すだけ | sonnet | charts の DOM の試験が新しい口で通る。`pnpm verify:architecture`（`package-bare-imports`）。**外部の Git 依存として入れた fixture から `@banto/charts/testing` のサブパスを読み**、幅が 0 でない所で 1 つの部品をマウントして、**SVG に系列が実際に描かれる**ことと、**戻した後に差し替えが残らない**ことを確かめる試験。#852 を閉じる |
 | D1 | 下流の使い勝手の精査（回り道・写し・自前の包みを読み、置き換えられるか・足りない口を洗う）。**#821 `BantoTree` の不足（行末のアクション・ドロップの可否の口・外からの絞り込み）が不足かどうかを確かめる（調査だけ。不足が確かめられたら別 Issue・別 PR）** | 読み取りのみ | — | fable | 所見の一覧（Issue か文書） |
 | D2 | D1 の結果のリファクタ（PR に分ける）。**v8 で入れる（確定）: #811 日付・時刻の解析と形式の複製の解消（#813・#815 を統合。D13 の前提）・#816 ピッカーの `ownText`・`mirroredValue` の統合・#818 テスト差し替え用の抽象の削除・#822 BantoGrid の編集の状態遷移の分離（D1 の後に独立 PR。#713 で入った既存の行選択・一括操作（#749・#752・#751・#753・#754）の挙動は維持）。各々 D1 の所見の後に着手する（必ずやる）** | D1 による | D1 による | D1 による | D1 の所見が閉じる |
 | D3 | upgrading・CHANGELOG の「消費側への注意」・実機確認（#757 に #793 の切断と #794 のダークを足す）・版の判定 | `docs` | — | sonnet | リリースの準備の PR |
@@ -920,12 +941,14 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
 - **ダッシュボード**（#716 の判断による）: 配置の保存が既定へ戻る、ウィジェットの登録の口。
 - **theme**: ダークの Toast の背景、`--banto-chart-2`（ほか先頭 4 系列）の色。
   `--banto-chart-9`〜`16` が増える（#851）。`--banto-chart-1〜8` を自分のテーマで上書きしているアプリは、9〜16 も定義する
-  （しないと 9 本目以降だけ banto の既定の色になる）。9〜16 は 1〜8 より保証が弱い（色覚特性の模擬での距離・状態色との距離は保証しない）。
+  （banto の CSS も読んでいれば、9 本目以降だけ banto の既定の色になる）。9〜16 は 1〜8 より保証が弱い
+  （色覚特性の模擬での距離・状態色との距離は保証しない）。
 - **charts**: `MAX_CHART_SERIES` が 8 から 16 になる。9 本目以降の系列は、8 番の色の固定から 9〜16 番の色に変わる（#851）。
+  9〜16 を持たないテーマ（旧い `@banto/theme`・1〜8 だけの自前のテーマ）では 8 番の色へ fallback するので、今と同じ見た目になる。
   `@banto/charts/testing` が増える（#852。使う側の DOM の試験の下準備。`jsdom`・`@testing-library/svelte` は使う側で入れる）。
 - **admin-core（認証）**: `createHttpAuthProvider` に `storage: 'memory'`（#838。既定は今のまま）。`'memory'` では再読み込みで
-  セッションが消え、`remember` は効かず、タブ間の同期も無い。同じオリジンのほかの保存（ui-settings の localStorage の実装・テーマなど）は別に分ける。
-- **ui**: `narrowViewport`・`NARROW_QUERY`・`createShellDrawer` が増える（#850）。テンプレートの `src/lib/narrowViewport.svelte.ts` は
+  セッションが消え、`remember` は効かず（サーバーにも `false` で送り、通常の期限になる）、タブ間の同期も無い。同じオリジンのほかの保存（ui-settings の localStorage の実装・テーマなど）は別に分ける。
+- **ui**: `narrowViewport`・`NARROW_QUERY`・`resolveShellNav`・`createShellDrawer` が増える（#850）。テンプレートの `src/lib/narrowViewport.svelte.ts` は
   無くなるので、テンプレートを写した派生アプリは import を `@banto/ui` に替える。
 
 ## 9. 未確認・各 PR で検討
@@ -1069,16 +1092,28 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
   provider の compare-and-set は「保存先を今読んだ値」と他タブの変更の通知に頼っている。保存先を外から渡せるようにすると、
   通知の口まで契約に入り、認証情報の持ち方の正しさが消費側の実装しだいになる（conventions §6）。求められているのは
   「web storage に書かない」だけなので、閉じた 2 択にする。あわせて: (a) `'memory'` では `storage` イベントを購読しない。
-  (b) `remember: true` はエラーにせず、覚えないだけにする（ログインの画面からチェックを外すのは消費側）。
+  (b) `remember: true` はエラーにせず、覚えない。いまは `remember` が REST に送られ、セッションの有効期間の方針も変えるので、
+  `'memory'` では**送る本文でも `false` にして通常の期限を使う**（推奨）。別案は保存先だけを変え、送る値はそのままにする
+  （再読み込みで手元から消えるトークンに、長い期限のセッションがサーバーに残る）。ログインの画面からチェックを外すのは消費側。
   (c) Tauri の provider には対の口を足さない（web storage にトークンを持たない）。
   (d) 同じオリジンのほかのキー（ui-settings の localStorage の実装・テーマ・dock の写し）は #838 の範囲に入れない。
 - **B2. #850 の置き場所と範囲（判断待ち）**: 推奨は `@banto/ui`（900px の境は theme の CSS と `LauncherBar` が既に持つ。admin-core は
-  画面の幅を知らない層）。出すのは**状態だけ**（`narrowViewport` と `createShellDrawer`）で、ドロワーの部品（DOM・backdrop・
-  フォーカス）は出さない。別案はシェルの部品ごと `@banto/ui` に出す（テンプレートの `Sidebar`・`Header` はアプリが書き換える層なので、
-  部品にすると書き換えの口が要り、大きくなる）。境の値は 900px の固定。
+  画面の幅を知らない層）。出すのは**状態と判定だけ**（`narrowViewport`・`resolveShellNav`・`createShellDrawer`）で、ドロワーの部品
+  （DOM・backdrop・フォーカス）は出さない。**幅の境は共通（900px の固定）だが、「ドロワーにするか」は呼び出し側が選ぶ**:
+  `createShellDrawer` は `isDrawer` を getter で受け、同梱の `resolveShellNav` は狭い幅のサイドバーの方針
+  （`narrowSidebar: 'drawer' | 'column'`）を受ける。banto-hub（狭い幅のサイドバーがドロワー）と chronogazer（狭い幅でも列のまま、
+  ドロワーはメニューバーの代わりのときだけ）の両方を表すため（クロスレビュー、PR #853）。launcher ではトグルを出さず、
+  メニューバーの幅が戻ったら測り直せることを完了条件に入れる。別案 A はナビの置き場所と「入りきるか」だけを受ける形
+  （chronogazer の形を表せない）。別案 B はシェルの部品ごと `@banto/ui` に出す（テンプレートの `Sidebar`・`Header` はアプリが
+  書き換える層なので、部品にすると書き換えの口が要り、大きくなる）。
 - **B3. #851 の色の決め方と検査の下限（判断待ち）**: 推奨は「1〜8 の値と検査（隣 0.10・どの 2 つも 0.09・色覚特性の模擬ごと・
   先頭 4 系列と状態色 0.09）は変えない。9〜16 は 1〜16 のどの 2 つも 0.06 以上（正常色覚）と面との比 3:1 以上だけを保証し、
-  色覚特性の模擬と状態色は保証しない」。色は banto-industrial の値を出発点に、検査に落ちるものだけ直す。
+  色覚特性の模擬と状態色は保証しない」。色は banto-industrial の値を**そのまま使うことを出発点**にする（クロスレビューの実測:
+  ダークの 15 と 2 は約 0.0765、追加の 8 色が絡む組の最小はライト約 0.0924・ダーク約 0.0758 で、どれも 0.06 を満たす。T3 で測り直す）。
+  **charts と theme の版がそろわない場合**は、9〜16 番を 8 番の色へ fallback させる（推奨。`seriesColorVar` に今は fallback が無く、
+  charts だけ先に上げたアプリや 1〜8 だけの自前のテーマで 9 本目以降が未定義になるのを防ぐ。旧いテーマとの組み合わせを試験に入れる）。
+  fallback の別案は「charts と theme を同時に上げることを必須と書く」だけにする（自前のテーマを持つアプリが黙って壊れる）。
+  下流が自分の色を置き換えるときの、そのアプリの背景とのコントラストの条件は、下流の側で別に確かめる。
   別案 A は 16 枠の全部に今の 1〜8 と同じ下限を掛ける（保てない見込み。保つには 1〜8 も動かすことになり、T2 の結果と
   基準画像が変わる）。別案 B は面との比を下流と同じ値（ライト 3.5:1・ダーク 5:1）にする（1〜8 が 3:1 なので、9〜16 だけ
   厳しくする理由が弱い）。charts の割り当ては、`MAX_CHART_SERIES` を 16 にし、今と同じく折り返さない（17 本目以降は 16 番）。
