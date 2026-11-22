@@ -622,8 +622,8 @@ function removeDock() {
 		TREE_PAGE,
 		'tree デモ: dock 版へのリンクカード除去',
 		`\t<SurfaceCard\n\t\ttitle={m['tree.workspaceDock.linkTitle']()}\n\t\tdescription={m['tree.workspaceDock.linkHint']()}\n\t>\n` +
-			`\t\t<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace-dock')}\n` +
-			`\t\t\t>{m['tree.workspaceDock.linkOpen']()}</a\n\t\t>\n\t</SurfaceCard>\n\n`
+			`\t\t<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace-dock')}>\n` +
+			`\t\t\t{m['tree.workspaceDock.linkOpen']()}\n\t\t</a>\n\t</SurfaceCard>\n\n`
 	);
 	for (const [file, label] of [
 		[MSG_JA, 'messages/ja'],
