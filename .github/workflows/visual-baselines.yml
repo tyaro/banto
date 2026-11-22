@@ -19,7 +19,7 @@
 #
 # Only the `visual` project runs (SNAPSHOT_SPECS in playwright.config.ts, now
 # visual.spec.ts): it is the only spec that calls
-# `toHaveScreenshot` (the 64 baselines all live under
+# `toHaveScreenshot` (every baseline lives under
 # visual.spec.ts-snapshots/), and only the `vite preview` server is started
 # (BANTO_E2E_SERVERS=visual), so no Rust build is needed.
 #
