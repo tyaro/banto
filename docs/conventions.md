@@ -565,9 +565,21 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
   持たず、テスト内の `CREATE TABLE` を `0006_attachments.sql` と同期させる
   （「MUST be kept in sync」）。
 - リストア検証（`REQUIRED_TABLES`）は Banto 基盤が所有する `settings` / `users` /
-  `audit_log` の**テーブル存在のみ**確認し、列は見ない（粗いが安価な「Banto の
+  `audit_log` / `ui_settings` の**テーブル存在のみ**確認し、列は見ない（粗いが安価な「Banto の
   DB か」判定）。派生アプリが差し替え・削除する `items` 等のドメインテーブルは
   必須にしない。
+- **リストアの候補は migration の履歴でも確かめる**（[ADR-0034](adr/0034-owner-identity-builtin-admin.md) 決定 §9）。
+  候補の `_sqlx_migrations` を読み取り専用で読み、(a) 失敗した行が無い、(b) 各行の版がこのアプリの migration にあり
+  checksum が一致する、(c) 基準（`0001`〜`0014`、`db::BASELINE_MIGRATION_VERSION`）が全部適用済み、を見る。
+  基準より後の未適用は許す。見るのは予約のときと、起動時の適用の直前（入れ替えの前）の 2 回。
+  版と checksum の一覧（`MigrationManifest`）は**配線の層が渡す**（`db::sqlite_migration_manifest()` を
+  `BackupService::with_migrations` と `apply_pending_restore_at_startup` へ。サービス層は migration を持たない）。
+  渡していない `BackupService` は予約を断る。派生アプリが自分の migration を足すときは、同じ `migrations-sqlite/` に
+  置けば一覧に入る。
+- **初回の seed は「seed 済みの印」で 1 回だけ**（ADR-0034 決定 §5）。`first_boot::seed_first_boot_settings` は
+  `settings` の `first_boot.seeded` が無いときだけ `FIRST_BOOT_SETTINGS` を書き、同じトランザクションで印を書く
+  （一覧が空でも印は書く）。migration が先に入れた行があっても書き、同じキーは seed の値が勝つ。
+  起動の順序は「予約されたリストアの適用 → migration → seed → 設定の読み取り」。
 - 検証で開いた接続は全パスで `conn.close()`（Windows のファイルロック残り対策）。
 
 ## 12. doc コメントは仕様節を参照する

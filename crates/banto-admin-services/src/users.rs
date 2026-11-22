@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::OnceLock;
 
-use argon2::password_hash::rand_core::OsRng;
+use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use banto_core::{BantoError, FieldError};
@@ -60,6 +60,16 @@ pub use crate::rbac::Role;
 
 fn password_too_short_message() -> String {
     "パスワードは8文字以上で入力してください".to_string()
+}
+
+/// A new `users.account_uid` (ADR-0034 §1): 128 bits from the OS random
+/// source, as 32 lowercase hex characters. Generated once when an account is
+/// created and never changed or reused. Not a secret - it names whose UI
+/// memory is whose, and is used for neither authentication nor authorization.
+fn new_account_uid() -> String {
+    let mut bytes = [0u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn hash_password(password: &str) -> Result<String, BantoError> {
@@ -175,6 +185,49 @@ pub struct UserIdentity {
     pub auth_epoch: i64,
 }
 
+/// What a `users` row is (ADR-0034 §2, column `users.kind`). Whether a row is
+/// the built-in one is decided by this, never by its name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UserKind {
+    /// A person's account: has a password, logs in, is counted.
+    Account,
+    /// The built-in `admin` the baseline migration inserts: no password, never
+    /// logs in, cannot be changed or deleted. Shown in the management list as
+    /// one read-only row, counted nowhere.
+    Builtin,
+}
+
+impl UserKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UserKind::Account => "account",
+            UserKind::Builtin => "builtin",
+        }
+    }
+}
+
+impl FromStr for UserKind {
+    type Err = BantoError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "account" => Ok(UserKind::Account),
+            "builtin" => Ok(UserKind::Builtin),
+            other => Err(BantoError::Other(format!(
+                "不明なユーザー種別です: {other}"
+            ))),
+        }
+    }
+}
+
+/// Refusal of every write aimed at the built-in row (ADR-0034 §2).
+const BUILTIN_USER_MESSAGE: &str = "組み込みのユーザーは変更・削除できません";
+
+fn builtin_user_error() -> BantoError {
+    BantoError::Other(BUILTIN_USER_MESSAGE.to_string())
+}
+
 /// Public listing of an account (spec M10's user-management screen):
 /// everything the admin grid needs, deliberately NOT `password_hash`. Unlike
 /// [`UserIdentity`] this derives `Serialize` since it is returned directly
@@ -187,6 +240,10 @@ pub struct UserSummary {
     pub username: String,
     pub display_name: String,
     pub role: Role,
+    /// `account`, or `builtin` for the one read-only built-in row
+    /// (ADR-0034 §2). The screen offers no edit/delete/password action on a
+    /// built-in row; the service refuses them either way.
+    pub kind: UserKind,
     pub created_at: String,
     /// Row version for optimistic locking (Issue #651, migration 0012): bumped
     /// by every display-name/role update, untouched by password changes. A
@@ -338,8 +395,24 @@ const VERSION_BUMP: &str = "CASE WHEN version < 9223372036854775807 THEN version
 const CONFLICT_MESSAGE: &str = "他の人が先にこのアカウントを変更しました";
 
 /// Guard row of an update/delete: `(role, admin count, id, username,
-/// display_name, created_at, version)`, read inside the write transaction.
-type GuardRow = (String, i64, i64, String, String, String, i64);
+/// display_name, created_at, version, kind)`, read inside the write
+/// transaction. The admin count is of accounts only: the built-in row is not
+/// a way in, so it must not let the last human admin be removed.
+type GuardRow = (String, i64, i64, String, String, String, i64, String);
+
+/// Columns of [`GuardRow`], with the account-admin count.
+const GUARD_COLUMNS: &str =
+    "role, (SELECT COUNT(*) FROM users WHERE role = 'admin' AND kind = 'account'), \
+     id, username, display_name, created_at, version, kind";
+
+/// Refuse a write whose target is the built-in row (ADR-0034 §2). The SQL of
+/// each write also carries `kind = 'account'`; this is the explicit answer.
+fn ensure_account_row(guard: &GuardRow) -> Result<(), BantoError> {
+    match UserKind::from_str(&guard.7)? {
+        UserKind::Account => Ok(()),
+        UserKind::Builtin => Err(builtin_user_error()),
+    }
+}
 
 /// The guard row as the public row it was before the write.
 fn guard_summary(g: &GuardRow) -> Result<UserSummary, BantoError> {
@@ -348,6 +421,7 @@ fn guard_summary(g: &GuardRow) -> Result<UserSummary, BantoError> {
         username: g.3.clone(),
         display_name: g.4.clone(),
         role: Role::from_str(&g.0)?,
+        kind: UserKind::from_str(&g.7)?,
         created_at: g.5.clone(),
         version: g.6,
     })
@@ -622,7 +696,7 @@ impl UsersService {
         // BIGINT)` because a bare `0` is INT4 on PostgreSQL and the row decodes
         // it as `i64` (the other guards put a `COUNT(*)`, already BIGINT).
         let guard_sql = format!(
-            "SELECT role, CAST(0 AS BIGINT), id, username, display_name, created_at, version \
+            "SELECT role, CAST(0 AS BIGINT), id, username, display_name, created_at, version, kind \
              FROM users WHERE id = {}",
             dialect.placeholder(1),
         );
@@ -630,7 +704,8 @@ impl UsersService {
         let delete_sql = self.permission_delete_sql();
         let insert_sql = self.permission_insert_sql();
         let bump_sql = format!(
-            "UPDATE users SET version = {VERSION_BUMP}, updated_at = {} WHERE id = {}",
+            "UPDATE users SET version = {VERSION_BUMP}, updated_at = {} \
+             WHERE id = {} AND kind = 'account'",
             dialect.now_expr(),
             dialect.placeholder(1),
         );
@@ -653,6 +728,7 @@ impl UsersService {
                 .await
                 .map_err(banto_storage::storage_error)?;
             let before = stored_keys(stored);
+            ensure_account_row(&guard)?;
             check_version(expected_version, &guard_summary(&guard)?)?;
             let diff = permission_write_plan(catalog, &before, &desired)?;
             for key in &diff.removed {
@@ -704,7 +780,8 @@ impl UsersService {
     /// §3.3/§8.2) to decide between the first-run setup form and the normal
     /// login form.
     pub async fn is_initialized(&self) -> Result<bool, BantoError> {
-        const SQL: &str = "SELECT COUNT(*) FROM users";
+        // Accounts only: the built-in row is always there (ADR-0034 §2).
+        const SQL: &str = "SELECT COUNT(*) FROM users WHERE kind = 'account'";
         let count: i64 = match &self.db {
             Db::Sqlite(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
             #[cfg(feature = "postgres")]
@@ -721,7 +798,8 @@ impl UsersService {
     /// install with no administrator at all. [`UsersService::is_initialized`]
     /// is not enough for that (an install may hold only editors/viewers).
     pub async fn has_admin(&self) -> Result<bool, BantoError> {
-        const SQL: &str = "SELECT COUNT(*) FROM users WHERE role = 'admin'";
+        // Accounts only: the built-in `admin` row cannot log in.
+        const SQL: &str = "SELECT COUNT(*) FROM users WHERE role = 'admin' AND kind = 'account'";
         let count: i64 = match &self.db {
             Db::Sqlite(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
             #[cfg(feature = "postgres")]
@@ -766,20 +844,24 @@ impl UsersService {
         // step, otherwise two concurrent setups both see an empty table and
         // create two admins (distinct usernames do not collide on UNIQUE).
         // The insert is a single conditional statement
-        // (`INSERT ... SELECT ... WHERE NOT EXISTS (SELECT 1 FROM users)`);
+        // (`INSERT ... SELECT ... WHERE NOT EXISTS (SELECT 1 FROM users WHERE
+        // kind = 'account')` - the built-in row does not count, ADR-0034 §2);
         // zero rows returned means someone else initialised first.
         // CAST: PostgreSQL cannot infer the type of a bare `$n` in a SELECT
         // list; SQLite accepts the same syntax.
         let sql = format!(
-            "INSERT INTO users (username, password_hash, display_name, role) \
-             SELECT CAST({} AS TEXT), CAST({} AS TEXT), CAST({} AS TEXT), CAST({} AS TEXT) \
-             WHERE NOT EXISTS (SELECT 1 FROM users) \
+            "INSERT INTO users (username, password_hash, display_name, role, account_uid) \
+             SELECT CAST({} AS TEXT), CAST({} AS TEXT), CAST({} AS TEXT), CAST({} AS TEXT), \
+             CAST({} AS TEXT) \
+             WHERE NOT EXISTS (SELECT 1 FROM users WHERE kind = 'account') \
              RETURNING id, auth_epoch",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
             dialect.placeholder(4),
+            dialect.placeholder(5),
         );
+        let account_uid = new_account_uid();
         let inserted: Option<(i64, i64)> = match &self.db {
             // SQLite: one statement takes the database write lock before it
             // evaluates the NOT EXISTS subquery, so across tasks *and*
@@ -790,6 +872,7 @@ impl UsersService {
                     .bind(&hash)
                     .bind(display_name)
                     .bind(Role::Admin.as_str())
+                    .bind(&account_uid)
                     .fetch_optional(pool)
                     .await
             }
@@ -811,6 +894,7 @@ impl UsersService {
                         .bind(&hash)
                         .bind(display_name)
                         .bind(Role::Admin.as_str())
+                        .bind(&account_uid)
                         .fetch_optional(&mut *tx)
                         .await?;
                     tx.commit().await?;
@@ -856,9 +940,14 @@ impl UsersService {
             let _ = verify_password_blocking(password, dummy_hash()).await;
             return Ok(None);
         }
+        // Accounts only (ADR-0034 §2): the built-in `admin` has no password
+        // and is not a row to verify against. It falls into the `None` arm
+        // below - the same dummy hash verification as an unknown username, so
+        // the response time does not tell the two apart.
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "SELECT id, password_hash, display_name, role, auth_epoch FROM users WHERE username = {}",
+            "SELECT id, password_hash, display_name, role, auth_epoch FROM users \
+             WHERE username = {} AND kind = 'account'",
             self.db.dialect().placeholder(1)
         );
         let row: Option<(i64, String, String, String, i64)> = match &self.db {
@@ -918,8 +1007,10 @@ impl UsersService {
         new: &str,
     ) -> Result<i64, BantoError> {
         // AssertSqlSafe: see the note in `setup_first_user` above.
+        // Accounts only (ADR-0034 §2): the built-in row has no password to
+        // change, and answers like an unknown username.
         let select_sql = format!(
-            "SELECT id, password_hash FROM users WHERE username = {}",
+            "SELECT id, password_hash FROM users WHERE username = {} AND kind = 'account'",
             self.db.dialect().placeholder(1)
         );
         let row: Option<(i64, String)> = match &self.db {
@@ -963,7 +1054,7 @@ impl UsersService {
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let update_sql = format!(
             "UPDATE users SET password_hash = {}, auth_epoch = auth_epoch + 1, updated_at = {} \
-             WHERE id = {} AND password_hash = {} RETURNING auth_epoch",
+             WHERE id = {} AND password_hash = {} AND kind = 'account' RETURNING auth_epoch",
             dialect.placeholder(1),
             dialect.now_expr(),
             dialect.placeholder(2),
@@ -1001,10 +1092,36 @@ impl UsersService {
     /// All accounts, for the admin user-management grid (spec M10).
     /// `password_hash` deliberately never leaves this module - see
     /// [`UserSummary`].
+    /// The kind of the row `id`, or `None` when there is no such row.
+    async fn kind_of(&self, id: i64) -> Result<Option<UserKind>, BantoError> {
+        // AssertSqlSafe: see the note in `setup_first_user` above.
+        let sql = format!(
+            "SELECT kind FROM users WHERE id = {}",
+            self.db.dialect().placeholder(1)
+        );
+        let kind: Option<String> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+            }
+        }
+        .map_err(banto_storage::storage_error)?;
+        kind.as_deref().map(UserKind::from_str).transpose()
+    }
+
     pub async fn list_users(&self) -> Result<Vec<UserSummary>, BantoError> {
-        const SQL: &str =
-            "SELECT id, username, display_name, role, created_at, version FROM users ORDER BY id";
-        let rows: Vec<(i64, String, String, String, String, i64)> = match &self.db {
+        const SQL: &str = "SELECT id, username, display_name, role, created_at, version, kind \
+             FROM users ORDER BY id";
+        let rows: Vec<(i64, String, String, String, String, i64, String)> = match &self.db {
             Db::Sqlite(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
@@ -1012,16 +1129,19 @@ impl UsersService {
         .map_err(banto_storage::storage_error)?;
 
         rows.into_iter()
-            .map(|(id, username, display_name, role, created_at, version)| {
-                Ok(UserSummary {
-                    id,
-                    username,
-                    display_name,
-                    role: Role::from_str(&role)?,
-                    created_at,
-                    version,
-                })
-            })
+            .map(
+                |(id, username, display_name, role, created_at, version, kind)| {
+                    Ok(UserSummary {
+                        id,
+                        username,
+                        display_name,
+                        role: Role::from_str(&role)?,
+                        kind: UserKind::from_str(&kind)?,
+                        created_at,
+                        version,
+                    })
+                },
+            )
             .collect()
     }
 
@@ -1043,7 +1163,8 @@ impl UsersService {
     ) -> Result<Option<UserIdentity>, BantoError> {
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "SELECT id, display_name, role, auth_epoch FROM users WHERE username = {}",
+            "SELECT id, display_name, role, auth_epoch FROM users \
+             WHERE username = {} AND kind = 'account'",
             self.db.dialect().placeholder(1)
         );
         let row: Option<(i64, String, String, i64)> = match &self.db {
@@ -1126,13 +1247,16 @@ impl UsersService {
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let insert_sql = format!(
-            "INSERT INTO users (username, password_hash, display_name, role) VALUES ({}, {}, {}, {}) \
+            "INSERT INTO users (username, password_hash, display_name, role, account_uid) \
+             VALUES ({}, {}, {}, {}, {}) \
              RETURNING id, auth_epoch",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
             dialect.placeholder(4),
+            dialect.placeholder(5),
         );
+        let account_uid = new_account_uid();
         let (id, auth_epoch): (i64, i64) = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as(sqlx::AssertSqlSafe(insert_sql))
@@ -1140,6 +1264,7 @@ impl UsersService {
                     .bind(&hash)
                     .bind(display_name)
                     .bind(role.as_str())
+                    .bind(&account_uid)
                     .fetch_one(pool)
                     .await
             }
@@ -1150,6 +1275,7 @@ impl UsersService {
                     .bind(&hash)
                     .bind(display_name)
                     .bind(role.as_str())
+                    .bind(&account_uid)
                     .fetch_one(pool)
                     .await
             }
@@ -1264,7 +1390,8 @@ impl UsersService {
         let sql = format!(
             "UPDATE users SET display_name = {}, \
              auth_epoch = auth_epoch + CASE WHEN role = {} THEN 0 ELSE 1 END, \
-             role = {}, updated_at = {}, version = {VERSION_BUMP} WHERE id = {} \
+             role = {}, updated_at = {}, version = {VERSION_BUMP} \
+             WHERE id = {} AND kind = 'account' \
              RETURNING id, username, display_name, role, created_at, version",
             dialect.placeholder(1),
             dialect.placeholder(2),
@@ -1273,9 +1400,7 @@ impl UsersService {
             dialect.placeholder(4),
         );
         let guard_sql = format!(
-            "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin'), \
-             id, username, display_name, created_at, version \
-             FROM users WHERE id = {}",
+            "SELECT {GUARD_COLUMNS} FROM users WHERE id = {}",
             dialect.placeholder(1),
         );
         type Guard = GuardRow;
@@ -1307,6 +1432,7 @@ impl UsersService {
             };
             // A missing row stays NotFound (below) even with a version.
             if let Some(g) = guard.as_ref() {
+                ensure_account_row(g)?;
                 check_version(expected_version, &guard_summary(g)?)?;
             }
             ensure_admin_removal_allowed(
@@ -1366,6 +1492,7 @@ impl UsersService {
             username,
             display_name,
             role: Role::from_str(&role_str)?,
+            kind: UserKind::Account,
             created_at,
             version,
         };
@@ -1391,13 +1518,18 @@ impl UsersService {
     /// resets their own password through this administrative path).
     pub async fn reset_password(&self, id: i64, new_password: &str) -> Result<(), BantoError> {
         validate_password_len(new_password, "newPassword")?;
+        // The built-in row never gets a password (ADR-0034 §2): refused here
+        // by name of its kind, and the UPDATE below cannot touch it either.
+        if self.kind_of(id).await? == Some(UserKind::Builtin) {
+            return Err(builtin_user_error());
+        }
         let hash = hash_password(new_password)?;
 
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "UPDATE users SET password_hash = {}, auth_epoch = auth_epoch + 1, updated_at = {} \
-             WHERE id = {}",
+             WHERE id = {} AND kind = 'account'",
             dialect.placeholder(1),
             dialect.now_expr(),
             dialect.placeholder(2),
@@ -1482,13 +1614,12 @@ impl UsersService {
 
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "DELETE FROM users WHERE id = {} RETURNING id, username, display_name, role, created_at, version",
+            "DELETE FROM users WHERE id = {} AND kind = 'account' \
+             RETURNING id, username, display_name, role, created_at, version",
             self.db.dialect().placeholder(1)
         );
         let guard_sql = format!(
-            "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin'), \
-             id, username, display_name, created_at, version \
-             FROM users WHERE id = {}",
+            "SELECT {GUARD_COLUMNS} FROM users WHERE id = {}",
             self.db.dialect().placeholder(1),
         );
         type Deleted = (i64, String, String, String, String, i64);
@@ -1500,6 +1631,7 @@ impl UsersService {
                 .map_err(banto_storage::storage_error)?;
             // A missing row stays NotFound (below) even with a version.
             if let Some(g) = guard.as_ref() {
+                ensure_account_row(g)?;
                 check_version(expected_version, &guard_summary(g)?)?;
             }
             ensure_admin_removal_allowed(id, guard.map(|g| (g.0, g.1)), true)?;
@@ -1516,6 +1648,7 @@ impl UsersService {
                     username,
                     display_name,
                     role: Role::from_str(&role)?,
+                    kind: UserKind::Account,
                     created_at,
                     version,
                 })
@@ -1549,13 +1682,17 @@ mod tests {
             "CREATE TABLE users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
+                password_hash TEXT,
                 display_name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
                 auth_epoch INTEGER NOT NULL DEFAULT 0,
-                version INTEGER NOT NULL DEFAULT 1
+                version INTEGER NOT NULL DEFAULT 1,
+                kind TEXT NOT NULL DEFAULT 'account' CHECK (kind IN ('account', 'builtin')),
+                account_uid TEXT UNIQUE,
+                CHECK ((kind = 'builtin') = (password_hash IS NULL)),
+                CHECK ((kind = 'builtin') = (account_uid IS NULL))
             )",
         )
         .execute(
@@ -1564,12 +1701,45 @@ mod tests {
         )
         .await
         .expect("create users table");
+        for sql in [BUILTIN_INDEX_SQL, BUILTIN_ROW_SQL] {
+            sqlx::query(sql)
+                .execute(db.as_sqlite().unwrap())
+                .await
+                .expect("built-in row");
+        }
         sqlx::query(PERMISSIONS_DDL)
             .execute(db.as_sqlite().unwrap())
             .await
             .expect("create user_permissions table");
         UsersService::new(db)
     }
+
+    /// The accounts of the management list (the built-in row left out).
+    async fn list_accounts(svc: &UsersService) -> Vec<UserSummary> {
+        svc.list_users()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|user| user.kind == UserKind::Account)
+            .collect()
+    }
+
+    /// The built-in row of [`service`]'s database.
+    async fn builtin_row(svc: &UsersService) -> UserSummary {
+        svc.list_users()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|user| user.kind == UserKind::Builtin)
+            .expect("the built-in row")
+    }
+
+    /// What the app's `0003_users.sql` / `0014_ui_settings.sql` add around the
+    /// built-in `admin` (ADR-0034 §2). MUST be kept in sync with them.
+    const BUILTIN_INDEX_SQL: &str =
+        "CREATE UNIQUE INDEX idx_users_single_builtin ON users(kind) WHERE kind = 'builtin'";
+    const BUILTIN_ROW_SQL: &str = "INSERT INTO users (username, display_name, role, kind) \
+         VALUES ('admin', 'admin', 'admin', 'builtin')";
 
     /// `user_permissions` (Issue #697). MUST be kept in sync with the app's
     /// `migrations-sqlite/0013_user_permissions.sql`.
@@ -1683,7 +1853,7 @@ mod tests {
         let err = svc.delete_user(owner.id, None).await.unwrap_err();
         assert!(matches!(err, BantoError::Other(_)), "{err:?}");
         svc.delete_user(editor.id, None).await.unwrap();
-        assert_eq!(svc.list_users().await.unwrap().len(), 1);
+        assert_eq!(list_accounts(&svc).await.len(), 1);
     }
 
     #[tokio::test]
@@ -1728,13 +1898,17 @@ mod tests {
     const USERS_DDL: &str = "CREATE TABLE users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
+                password_hash TEXT,
                 display_name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
                 auth_epoch INTEGER NOT NULL DEFAULT 0,
-                version INTEGER NOT NULL DEFAULT 1
+                version INTEGER NOT NULL DEFAULT 1,
+                kind TEXT NOT NULL DEFAULT 'account' CHECK (kind IN ('account', 'builtin')),
+                account_uid TEXT UNIQUE,
+                CHECK ((kind = 'builtin') = (password_hash IS NULL)),
+                CHECK ((kind = 'builtin') = (account_uid IS NULL))
             )";
 
     /// Issue #277: concurrent first-run setups with different usernames must
@@ -1812,18 +1986,27 @@ mod tests {
             "CREATE TABLE users (
                 id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
+                password_hash TEXT,
                 display_name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT now()::text,
                 updated_at TEXT NOT NULL DEFAULT now()::text,
                 role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
                 auth_epoch BIGINT NOT NULL DEFAULT 0,
-                version BIGINT NOT NULL DEFAULT 1
+                version BIGINT NOT NULL DEFAULT 1,
+                kind TEXT NOT NULL DEFAULT 'account' CHECK (kind IN ('account', 'builtin')),
+                account_uid TEXT UNIQUE,
+                CHECK ((kind = 'builtin') = (password_hash IS NULL)),
+                CHECK ((kind = 'builtin') = (account_uid IS NULL))
             )",
         )
         .execute(db.as_postgres().unwrap())
         .await
         .unwrap();
+        // The built-in row is there before the first setup (ADR-0034 §2).
+        sqlx::query(BUILTIN_ROW_SQL)
+            .execute(db.as_postgres().unwrap())
+            .await
+            .unwrap();
 
         let n = 6;
         let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(n));
@@ -1962,13 +2145,16 @@ mod tests {
     async fn verify_succeeds_for_a_preexisting_username_with_dot() {
         let svc = service().await;
         let hash = hash_password("password123").unwrap();
-        sqlx::query("INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)")
-            .bind("old.user")
-            .bind(hash)
-            .bind("旧アカウント")
-            .execute(svc.db.as_sqlite().expect("sqlite"))
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO users (username, password_hash, display_name, account_uid) \
+             VALUES (?, ?, ?, 'fixture-uid')",
+        )
+        .bind("old.user")
+        .bind(hash)
+        .bind("旧アカウント")
+        .execute(svc.db.as_sqlite().expect("sqlite"))
+        .await
+        .unwrap();
         let id = svc.verify("old.user", "password123").await.unwrap();
         assert_eq!(id.expect("login works").username, "old.user");
     }
@@ -1989,7 +2175,8 @@ mod tests {
             .as_sqlite()
             .expect("service tests run on a SQLite handle");
         let err = sqlx::query(
-            "INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)",
+            "INSERT INTO users (username, password_hash, display_name, account_uid) \
+             VALUES (?, ?, ?, 'fixture-uid')",
         )
         .bind("owner")
         .bind(&hash)
@@ -2094,7 +2281,7 @@ mod tests {
             .expect("create_user should succeed");
         assert_eq!(created.role, Role::Editor);
 
-        let listed = svc.list_users().await.unwrap();
+        let listed = list_accounts(&svc).await;
         assert_eq!(listed.len(), 2);
         let listed_editor = listed
             .iter()
@@ -2127,7 +2314,7 @@ mod tests {
         svc.delete_user(created.id, Some(owner.id))
             .await
             .expect("delete_user should succeed");
-        assert_eq!(svc.list_users().await.unwrap().len(), 1);
+        assert_eq!(list_accounts(&svc).await.len(), 1);
     }
 
     #[tokio::test]
@@ -2335,14 +2522,14 @@ mod tests {
             panic!("expected Conflict, got {err:?}");
         };
         assert_eq!(current.unwrap()["version"], 2);
-        assert_eq!(svc.list_users().await.unwrap().len(), 2);
+        assert_eq!(list_accounts(&svc).await.len(), 2);
 
         let removed = svc
             .delete_user_checked_returning_previous(editor.id, Some(owner.id), Some(2))
             .await
             .unwrap();
         assert_eq!(removed.version, 2);
-        assert_eq!(svc.list_users().await.unwrap().len(), 1);
+        assert_eq!(list_accounts(&svc).await.len(), 1);
         // A missing row is NotFound, not a conflict, even with a version.
         assert!(matches!(
             svc.delete_user_checked_returning_previous(editor.id, Some(owner.id), Some(2))
@@ -2449,7 +2636,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, BantoError::Other(_)));
-        assert_eq!(svc.list_users().await.unwrap().len(), 2);
+        assert_eq!(list_accounts(&svc).await.len(), 2);
     }
 
     #[tokio::test]
@@ -2466,7 +2653,7 @@ mod tests {
         // Even though a second admin exists, `owner` may not delete itself.
         let err = svc.delete_user(owner.id, Some(owner.id)).await.unwrap_err();
         assert!(matches!(err, BantoError::Other(_)));
-        assert_eq!(svc.list_users().await.unwrap().len(), 2);
+        assert_eq!(list_accounts(&svc).await.len(), 2);
     }
 
     #[tokio::test]
@@ -2638,13 +2825,17 @@ mod tests {
             "CREATE TABLE users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
+                password_hash TEXT,
                 display_name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
                 auth_epoch INTEGER NOT NULL DEFAULT 0,
-                version INTEGER NOT NULL DEFAULT 1
+                version INTEGER NOT NULL DEFAULT 1,
+                kind TEXT NOT NULL DEFAULT 'account' CHECK (kind IN ('account', 'builtin')),
+                account_uid TEXT UNIQUE,
+                CHECK ((kind = 'builtin') = (password_hash IS NULL)),
+                CHECK ((kind = 'builtin') = (account_uid IS NULL))
             )",
         )
         .execute(&first_pool)
@@ -2663,9 +2854,9 @@ mod tests {
                 .await
                 .unwrap();
             sqlx::query(
-                "INSERT INTO users (id, username, password_hash, display_name, role) VALUES
-                 (1, 'owner1', 'unused', 'Original 1', 'admin'),
-                 (2, 'owner2', 'unused', 'Original 2', 'admin')",
+                "INSERT INTO users (id, username, password_hash, display_name, role, account_uid) VALUES
+                 (1, 'owner1', 'unused', 'Original 1', 'admin', 'uid-1'),
+                 (2, 'owner2', 'unused', 'Original 2', 'admin', 'uid-2')",
             )
             .execute(&first_pool)
             .await
@@ -3011,5 +3202,183 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(left, 0, "ON DELETE CASCADE removes the rows");
+    }
+
+    // --- ADR-0034 §2: the built-in `admin` row -------------------------------
+
+    /// ADR-0034 §10 (C1): the management list returns the built-in row as one
+    /// read-only row; the counts and `has_admin` leave it out, and the first
+    /// setup and ordinary creation work on a database that has only that row.
+    #[tokio::test]
+    async fn the_builtin_row_is_listed_but_never_counted() {
+        let svc = service().await;
+        let builtin = builtin_row(&svc).await;
+        assert_eq!(builtin.username, "admin");
+        assert_eq!(builtin.role, Role::Admin);
+        assert_eq!(
+            serde_json::to_value(&builtin).unwrap()["kind"],
+            serde_json::json!("builtin")
+        );
+        assert!(!svc.is_initialized().await.unwrap());
+        assert!(!svc.has_admin().await.unwrap());
+        assert!(svc.get_by_username("admin").await.unwrap().is_none());
+
+        let first = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .expect("the first setup works beside the built-in row");
+        assert_ne!(first.id, builtin.id);
+        assert!(svc.is_initialized().await.unwrap());
+        assert!(svc.has_admin().await.unwrap());
+        svc.create_user("viewer1", "password123", "閲覧者", Role::Viewer)
+            .await
+            .expect("ordinary creation works");
+        let listed = svc.list_users().await.unwrap();
+        assert_eq!(listed.len(), 3);
+        assert_eq!(list_accounts(&svc).await.len(), 2);
+        assert_eq!(
+            serde_json::to_value(&list_accounts(&svc).await[0]).unwrap()["kind"],
+            serde_json::json!("account")
+        );
+    }
+
+    /// ADR-0034 §2: the built-in row cannot log in - not with any password,
+    /// and not even if a password hash were somehow asked for by name.
+    #[tokio::test]
+    async fn the_builtin_row_cannot_log_in_or_change_its_password() {
+        let svc = service().await;
+        for password in ["", "admin", "password123"] {
+            assert!(svc.verify("admin", password).await.unwrap().is_none());
+        }
+        let err = svc
+            .change_password("admin", "admin", "new-password-1")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+    }
+
+    /// ADR-0034 §2: update (rename/role), password reset, permission grants
+    /// and delete all refuse the built-in row, and leave it as it was.
+    #[tokio::test]
+    async fn every_write_aimed_at_the_builtin_row_is_refused() {
+        let catalog = PermissionCatalog::empty()
+            .register("alarm.ack", "a", "b")
+            .unwrap();
+        let svc = service().await.with_permission_catalog(catalog);
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let before = builtin_row(&svc).await;
+        let refused = |err: BantoError| match err {
+            BantoError::Other(message) => assert_eq!(message, BUILTIN_USER_MESSAGE),
+            other => panic!("expected the built-in refusal, got {other:?}"),
+        };
+
+        refused(
+            svc.update_user(before.id, "改名", Role::Viewer)
+                .await
+                .unwrap_err(),
+        );
+        refused(
+            svc.reset_password(before.id, "password123")
+                .await
+                .unwrap_err(),
+        );
+        let key = PermissionKey::parse("alarm.ack").unwrap();
+        refused(
+            svc.set_permissions(before.id, std::slice::from_ref(&key), None, "owner")
+                .await
+                .unwrap_err(),
+        );
+        refused(
+            svc.update_user_with_permissions(
+                before.id,
+                "admin",
+                Role::Admin,
+                Some(std::slice::from_ref(&key)),
+                None,
+                "owner",
+            )
+            .await
+            .unwrap_err(),
+        );
+        refused(
+            svc.delete_user(before.id, Some(owner.id))
+                .await
+                .unwrap_err(),
+        );
+        refused(svc.delete_user(before.id, None).await.unwrap_err());
+
+        assert_eq!(builtin_row(&svc).await, before);
+        assert!(svc.permissions_of(before.id).await.unwrap().is_empty());
+        assert!(svc.verify("admin", "password123").await.unwrap().is_none());
+    }
+
+    /// The last-admin guard counts accounts only (ADR-0034 §2): with the
+    /// built-in row present, the one human admin still cannot be removed.
+    #[tokio::test]
+    async fn the_builtin_row_does_not_count_as_the_last_admin() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        assert!(svc.delete_user(owner.id, None).await.is_err());
+        assert!(svc
+            .update_user(owner.id, "オーナー", Role::Viewer)
+            .await
+            .is_err());
+        assert_eq!(list_accounts(&svc).await.len(), 1);
+    }
+
+    /// ADR-0034 §1: every created account gets its own `account_uid` (128
+    /// bits, hex); neither a rename nor a role change touches it, and a name
+    /// used again gets a new one.
+    #[tokio::test]
+    async fn an_account_uid_is_assigned_at_creation_and_never_reused() {
+        let svc = service().await;
+        let pool = svc.db.as_sqlite().unwrap().clone();
+        let uid_of = |id: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT account_uid FROM users WHERE id = ?",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .expect("an account has an account_uid")
+            }
+        };
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let first = svc
+            .create_user("op", "password123", "Op", Role::Editor)
+            .await
+            .unwrap();
+        let owner_uid = uid_of(owner.id).await;
+        let first_uid = uid_of(first.id).await;
+        assert_ne!(owner_uid, first_uid);
+        for uid in [&owner_uid, &first_uid] {
+            assert_eq!(uid.len(), 32, "{uid}");
+            assert!(uid.chars().all(|c| c.is_ascii_hexdigit()), "{uid}");
+        }
+
+        svc.update_user(first.id, "Op 2", Role::Viewer)
+            .await
+            .unwrap();
+        svc.reset_password(first.id, "password456").await.unwrap();
+        assert_eq!(uid_of(first.id).await, first_uid);
+
+        svc.delete_user(first.id, Some(owner.id)).await.unwrap();
+        let again = svc
+            .create_user("op", "password123", "Op", Role::Editor)
+            .await
+            .unwrap();
+        assert_ne!(uid_of(again.id).await, first_uid);
     }
 }

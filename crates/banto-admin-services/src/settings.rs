@@ -29,6 +29,82 @@ const KEY_AUTOLOGIN_USERNAME: &str = "auth.autologin.username";
 const KEY_AUDIT_RETENTION_DAYS: &str = "audit.retention_days";
 const KEY_AUDIT_RETENTION_ROWS: &str = "audit.retention_rows";
 const KEY_LOGIN_NOTICE: &str = "login.notice";
+/// Marker row of the first-boot seed (ADR-0034 §5): present once the seed has
+/// run on this database. Written in the same transaction as the seeded rows,
+/// and restored with the database (a backup of a seeded database is not
+/// seeded again).
+const KEY_FIRST_BOOT_SEEDED: &str = "first_boot.seeded";
+
+const SEED_UPSERT_SQLITE: &str = "INSERT INTO settings (key, value) VALUES (?, ?) \
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+#[cfg(feature = "postgres")]
+const SEED_UPSERT_POSTGRES: &str = "INSERT INTO settings (key, value) VALUES ($1, $2) \
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+
+/// The first-boot seed on a SQLite connection that is inside the caller's
+/// transaction (ADR-0034 §5): if the marker row is absent, upsert every pair
+/// (a seeded value wins over a row a migration inserted) and the marker;
+/// otherwise write nothing. `Ok(true)` when it wrote.
+///
+/// Takes the connection, not the service, so a caller that must write more in
+/// the same transaction (the headless first-account CLI, ADR-0034 §7) calls
+/// this first and then writes its own rows: a setting can never be written
+/// before the seed on a database that has no marker yet.
+pub async fn seed_first_boot_sqlite(
+    conn: &mut sqlx::SqliteConnection,
+    pairs: &[(&str, &str)],
+) -> Result<bool, BantoError> {
+    let seeded: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+        .bind(KEY_FIRST_BOOT_SEEDED)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(banto_storage::storage_error)?;
+    if seeded.is_some() {
+        return Ok(false);
+    }
+    for (key, value) in pairs
+        .iter()
+        .copied()
+        .chain([(KEY_FIRST_BOOT_SEEDED, "true")])
+    {
+        sqlx::query(SEED_UPSERT_SQLITE)
+            .bind(key)
+            .bind(value)
+            .execute(&mut *conn)
+            .await
+            .map_err(banto_storage::storage_error)?;
+    }
+    Ok(true)
+}
+
+/// PostgreSQL twin of [`seed_first_boot_sqlite`] (same contract).
+#[cfg(feature = "postgres")]
+pub async fn seed_first_boot_postgres(
+    conn: &mut sqlx::PgConnection,
+    pairs: &[(&str, &str)],
+) -> Result<bool, BantoError> {
+    let seeded: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = $1")
+        .bind(KEY_FIRST_BOOT_SEEDED)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(banto_storage::storage_error)?;
+    if seeded.is_some() {
+        return Ok(false);
+    }
+    for (key, value) in pairs
+        .iter()
+        .copied()
+        .chain([(KEY_FIRST_BOOT_SEEDED, "true")])
+    {
+        sqlx::query(SEED_UPSERT_POSTGRES)
+            .bind(key)
+            .bind(value)
+            .execute(&mut *conn)
+            .await
+            .map_err(banto_storage::storage_error)?;
+    }
+    Ok(true)
+}
 pub const MAX_LOGIN_NOTICE_CHARS: usize = 200;
 
 fn invalid_login_notice_char(c: char) -> bool {
@@ -392,6 +468,38 @@ impl SettingsService {
             }
         }
         Ok(())
+    }
+
+    /// Run the first-boot seed in its own transaction (ADR-0034 §5): the
+    /// startup path of both wirings. `pairs` are written once, on the first
+    /// start of a new database, together with the marker row; every later
+    /// start writes nothing, so a setting the user changed is never put back.
+    /// An empty `pairs` still writes the marker: a database that has started
+    /// once is never seeded later, even if the app gains a seed list in an
+    /// update. `Ok(true)` when this call wrote the seed.
+    ///
+    /// A pair may not name the login notice (same rule as [`Self::set`]).
+    pub async fn seed_first_boot(&self, pairs: &[(&str, &str)]) -> Result<bool, BantoError> {
+        if pairs.iter().any(|(key, _)| *key == KEY_LOGIN_NOTICE) {
+            return Err(BantoError::BadRequest(
+                "login.notice must be written with set_login_notice".to_string(),
+            ));
+        }
+        match &self.db {
+            Db::Sqlite(pool) => {
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                let wrote = seed_first_boot_sqlite(&mut tx, pairs).await?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                Ok(wrote)
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                let wrote = seed_first_boot_postgres(&mut tx, pairs).await?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                Ok(wrote)
+            }
+        }
     }
 
     /// Is the `settings` table completely empty (no rows at all, not even

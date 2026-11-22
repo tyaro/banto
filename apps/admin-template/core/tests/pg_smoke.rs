@@ -23,7 +23,7 @@ use admin_template_core::items::{
     BulkDeleteItem, BulkDeleteTarget, ImportResult, ItemImportRow, ItemInput, ItemsService,
 };
 use admin_template_core::settings::SettingsService;
-use admin_template_core::users::{Role, UsersService};
+use admin_template_core::users::{Role, UserKind, UsersService};
 use banto_core::ListParams;
 use std::path::PathBuf;
 
@@ -36,7 +36,7 @@ async fn reset_schema(url: &str) {
         .await
         .expect("connect for schema reset");
     for stmt in [
-        "DROP TABLE IF EXISTS attachments, audit_log, user_permissions, users, settings, items CASCADE",
+        "DROP TABLE IF EXISTS attachments, audit_log, ui_settings, user_permissions, users, settings, items CASCADE",
         "DROP FUNCTION IF EXISTS banto_audit_parent_detail(TEXT, TEXT)",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
@@ -57,35 +57,21 @@ async fn app_layer_crud_round_trips_on_postgres() {
 
     reset_schema(&url).await;
 
-    // Issue #204: start from the pre-0007 schema with an existing account, so
-    // `init_db_from_target` below exercises the in-place upgrade.
-    {
-        let pool = banto_storage::connect_postgres(&url)
-            .await
-            .expect("connect for the pre-#204 schema");
-        sqlx::migrate!("./migrations-postgres")
-            .run_to(6, &pool)
-            .await
-            .expect("pre-#204 schema");
-        sqlx::query(
-            "INSERT INTO users (username, password_hash, display_name, role) \
-             VALUES ('existing', 'unused', 'Existing', 'admin')",
-        )
-        .execute(&pool)
-        .await
-        .expect("pre-#204 account");
-        pool.close().await;
-    }
+    // v8.0.0 baseline rebuild (ADR-0034 §9, plan §4.1): a v7.11.0 database is
+    // refused with the explicit message before any new migration touches it.
+    a_v7_database_is_refused_on_postgres(&url).await;
+    reset_schema(&url).await;
 
     // migrations-postgres + deterministic 1,000-row seed.
     let db = init_db_from_target(&url)
         .await
         .expect("init_db_from_target should run migrations-postgres and seed");
+    the_baseline_schema_holds_on_postgres(&db).await;
+    // ADR-0034 §2: with only the built-in row there, the first setup works.
     let existing = UsersService::new(db.clone())
-        .get_by_username("existing")
+        .setup_first_user("existing", "password123", "Existing")
         .await
-        .expect("users get_by_username after the upgrade")
-        .expect("the pre-#204 account survives the upgrade");
+        .expect("the first setup works beside the built-in row");
     assert_eq!(existing.auth_epoch, 0);
     period_filter_uses_the_collate_c_index(&url).await;
 
@@ -901,6 +887,184 @@ async fn audit_snapshot_boundary_on_postgres(audit: &AuditLogService, db: &banto
     );
 }
 
+const V7_USERS: &str = include_str!("fixtures/v7.11.0/postgres-0003_users.sql");
+const V7_AUDIT_LOG: &str = include_str!("fixtures/v7.11.0/postgres-0005_audit_log.sql");
+
+/// Plan §4.1 / §9.1 on PostgreSQL: a database built by the v7.11.0 migrations
+/// (0001-0013, with the original `0003`/`0005`) stops at startup with the
+/// explicit message, and `0014` has not been applied to it.
+async fn a_v7_database_is_refused_on_postgres(url: &str) {
+    use sqlx::migrate::Migration;
+    use sqlx::SqlSafeStr;
+
+    let pool = banto_storage::connect_postgres(url)
+        .await
+        .expect("connect for the v7 schema");
+    let mut v7 = sqlx::migrate!("./migrations-postgres");
+    v7.migrations = v7
+        .migrations
+        .iter()
+        .filter(|m| m.version < 14)
+        .map(|m| {
+            let old = match m.version {
+                3 => V7_USERS,
+                5 => V7_AUDIT_LOG,
+                _ => return m.clone(),
+            };
+            Migration::new(
+                m.version,
+                m.description.clone(),
+                m.migration_type,
+                sqlx::AssertSqlSafe(old).into_sql_str(),
+                m.no_tx,
+            )
+        })
+        .collect::<Vec<_>>()
+        .into();
+    v7.run(&pool).await.expect("the v7.11.0 schema");
+    sqlx::query(
+        "INSERT INTO users (username, password_hash, display_name, role) \
+         VALUES ('existing', 'unused', 'Existing', 'admin')",
+    )
+    .execute(&pool)
+    .await
+    .expect("a v7 account");
+
+    let err = init_db_from_target(url)
+        .await
+        .expect_err("a v7 database is refused");
+    let message = err.to_string();
+    assert!(message.contains("v8.0.0 より前の版"), "{message}");
+    assert!(message.contains("DB を作り直してください"), "{message}");
+
+    let ui_settings: Option<String> = sqlx::query_scalar("SELECT to_regclass('ui_settings')::text")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ui_settings, None, "0014 was not applied");
+    let kind_columns: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM information_schema.columns \
+         WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'kind'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kind_columns, 0, "the users table is unchanged");
+    let applied: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(applied, 13);
+    pool.close().await;
+}
+
+/// Plan §4.1 on PostgreSQL: a new database has exactly one built-in `admin`,
+/// the CHECKs refuse a malformed row, a second built-in row cannot exist, and
+/// `ui_settings` rows are tied to their owner. Leaves the tables as it found
+/// them (only the built-in row).
+async fn the_baseline_schema_holds_on_postgres(db: &banto_storage::Db) {
+    let pool = db.as_postgres().expect("postgres handle");
+    type Row = (String, String, String, Option<String>, Option<String>);
+    let rows: Vec<Row> =
+        sqlx::query_as("SELECT username, kind, role, password_hash, account_uid FROM users")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(
+            "admin".to_string(),
+            "builtin".to_string(),
+            "admin".to_string(),
+            None,
+            None
+        )]
+    );
+    for (what, sql) in [
+        (
+            "a second built-in row",
+            "INSERT INTO users (username, display_name, kind) VALUES ('admin2', 'x', 'builtin')",
+        ),
+        (
+            "an account without account_uid",
+            "INSERT INTO users (username, password_hash, display_name) VALUES ('a', 'h', 'x')",
+        ),
+        (
+            "an account without a password hash",
+            "INSERT INTO users (username, display_name, account_uid) VALUES ('a', 'x', 'u1')",
+        ),
+        (
+            "a built-in row with a password hash",
+            "INSERT INTO users (username, password_hash, display_name, kind) \
+             VALUES ('b', 'h', 'x', 'builtin')",
+        ),
+        (
+            "a built-in row with an account_uid",
+            "INSERT INTO users (username, display_name, kind, account_uid) \
+             VALUES ('b', 'x', 'builtin', 'u1')",
+        ),
+    ] {
+        assert!(sqlx::query(sql).execute(pool).await.is_err(), "{what}");
+    }
+
+    let users = UsersService::new(db.clone());
+    assert!(!users.is_initialized().await.unwrap());
+    assert!(!users.has_admin().await.unwrap());
+    assert!(users.verify("admin", "admin").await.unwrap().is_none());
+    let listed = users.list_users().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].kind, UserKind::Builtin);
+    let builtin_id = listed[0].id;
+    assert!(users
+        .update_user(builtin_id, "x", Role::Viewer)
+        .await
+        .is_err());
+    assert!(users
+        .reset_password(builtin_id, "password123")
+        .await
+        .is_err());
+    assert!(users.delete_user(builtin_id, None).await.is_err());
+    assert_eq!(users.list_users().await.unwrap(), listed);
+
+    // ui_settings: an account's row needs the matching user_id and goes away
+    // with the account; a synthetic owner has none.
+    let op = users
+        .create_user("uiowner", "password123", "UI", Role::Viewer)
+        .await
+        .unwrap();
+    let insert = "INSERT INTO ui_settings (owner, key, value, revision, user_id) \
+                  VALUES ($1, 'k', 'v', 'r', $2)";
+    for (owner, user_id, ok) in [
+        (format!("acct:{}", op.id), Some(op.id), true),
+        ("local".to_string(), None, true),
+        (format!("acct:{}", op.id), None, false),
+        ("local".to_string(), Some(op.id), false),
+        ("acct:999999".to_string(), Some(999_999), false),
+    ] {
+        let result = sqlx::query(insert)
+            .bind(&owner)
+            .bind(user_id)
+            .execute(pool)
+            .await;
+        assert_eq!(result.is_ok(), ok, "owner {owner:?} user_id {user_id:?}");
+    }
+    // Deleted with plain SQL so this fixture leaves only the built-in row.
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(op.id)
+        .execute(pool)
+        .await
+        .unwrap();
+    let owners: Vec<String> = sqlx::query_scalar("SELECT owner FROM ui_settings ORDER BY owner")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    assert_eq!(owners, ["local"]);
+    sqlx::query("DELETE FROM ui_settings")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 // Issue #207 / roadmap M10: keep this in the existing smoke test so no other
 // test resets the shared schema while these concurrent transactions are live.
 async fn concurrent_admin_removals_on_postgres(url: &str) {
@@ -929,14 +1093,14 @@ async fn concurrent_admin_removals_on_postgres(url: &str) {
     let second = UsersService::new(Db::Postgres(second_pool.clone()));
 
     for (delete_first, delete_second) in [(false, false), (true, true), (false, true)] {
-        sqlx::query("DELETE FROM users")
+        sqlx::query("DELETE FROM users WHERE kind = 'account'")
             .execute(&control)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO users (username, password_hash, display_name, role) VALUES
-             ('owner1', 'unused', 'Original 1', 'admin'),
-             ('owner2', 'unused', 'Original 2', 'admin')",
+            "INSERT INTO users (username, password_hash, display_name, role, account_uid) VALUES
+             ('owner1', 'unused', 'Original 1', 'admin', 'uid-owner1'),
+             ('owner2', 'unused', 'Original 2', 'admin', 'uid-owner2')",
         )
         .execute(&control)
         .await
@@ -1016,7 +1180,13 @@ async fn concurrent_admin_removals_on_postgres(url: &str) {
             other => panic!("expected last-admin refusal, got {other:?}"),
         }
         let after = first.list_users().await.unwrap();
-        assert_eq!(after.iter().filter(|user| user.role.is_admin()).count(), 1);
+        assert_eq!(
+            after
+                .iter()
+                .filter(|user| user.role.is_admin() && user.kind == UserKind::Account)
+                .count(),
+            1
+        );
         assert_eq!(
             after.iter().find(|user| user.id == refused_id),
             before.iter().find(|user| user.id == refused_id),

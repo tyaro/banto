@@ -22,8 +22,17 @@
 
 ## [Unreleased]
 
+消費側への注意（破壊的。次のメジャー v8.0.0 に入る。詳細は下の各項目と [docs/upgrading.md](docs/upgrading.md) 4.2 節）:
+
+- **基準の作り直し: DB を作り直す（#790・#778・#786 の C1、[ADR-0034](docs/adr/0034-owner-identity-builtin-admin.md) 決定 §9）。** `core/migrations-{sqlite,postgres}/0003_users.sql`・`0005_audit_log.sql` を差し替え、`0014_ui_settings.sql` を足す（自分の migration を 0014 以降で足しているなら番号をずらす）。v7.11.0 以前の DB は起動時に「この DB は v8.0.0 より前の版のものです。読めません。DB を作り直してください」で止まり、旧版のバックアップはリストアの予約で断られる。データの移行は無い。
+  - 新しい DB には組み込みのユーザー `admin`（`users.kind = 'builtin'`）が 1 行居る。ログイン・変更・削除はできない。`admin` という username のアカウントは作れないので、試験・fixture で作っているなら別の名前にする。`UserSummary` に `kind`（`'account'` / `'builtin'`）が増えた（Rust の構造体と wire の両方）。
+  - `users` へ直接 INSERT しているコード・試験は `account_uid`（一意の文字列）を入れる（無いと CHECK で失敗）。アカウントは `kind = 'account'` で数える。
+  - 配線: `BackupService::new(..).with_migrations(db::sqlite_migration_manifest())` と、`BackupService::apply_pending_restore_at_startup(&db_path, &db::sqlite_migration_manifest())`（引数が増えた）。渡さない `BackupService` はリストアの予約を断る。
+  - 初回の seed（`FIRST_BOOT_SETTINGS`）は「`settings` が空のとき」ではなく、新しい DB の最初の起動で 1 回だけ書かれる（印は `settings` の `first_boot.seeded`）。`settings` に行があることを「seed 済み」の代わりに使っていたコードは直す。
+
 ### Changed
 
+- **基準の作り直し（破壊的。#790・#778・#786 の C1、ADR-0034）。** `users` に `kind`・`account_uid`（アカウントの作成時にサービス層が採番する 128 bit の乱数）を足し `password_hash` を NULL 可に、`audit_log` に `actor_id` を足した（`0003`・`0005` の書き換え、2 方言）。`0014_ui_settings.sql` が表 `ui_settings` と組み込みのユーザー `admin` の行を入れる。組み込みの行はログインの照合・件数・`has_admin`・最後の管理者のガードから外れ、更新・パスワードの設定・権限の付与・削除はサービス層が断る（ユーザー一覧だけが読み取り専用の 1 行として返す）。旧版の DB は起動時に明示のエラーで断り、リストアの候補は必須の表（`ui_settings` を追加）に加えて migration の履歴（版と checksum）を予約と適用の直前に確かめる。初回の seed の条件を「`settings` が空」から「seed 済みの印（`first_boot.seeded`）が無い」に直した。`pnpm verify:migrations` は、タグ `v7.11.0` と比べるときだけこの 4 ファイルの変更を許す。
 - **ci:** `visual-baselines.yml` を `visual.spec.ts` だけの再生成・確認にし、Rust のビルドをやめ、`commit` の既定を true にした。1 回の dispatch で済む（#798）。
 - **ci:** e2e の visual を、画像を撮る spec だけの project `visual`（workers 2）と、残りの機能・axe の project `visual-ui`（並列 workers 4、`pnpm e2e:visual-ui`）に分け、CI の E2E (visual + axe-core) を速くした。撮る spec は `playwright.config.ts` の `SNAPSHOT_SPECS` に足す（#798）。
 - E2E（#798）: `BANTO_E2E_SERVERS` に `smoke`（:8799）と `public-viewer`（:8798）を足し、CI の E2E ジョブの smoke・viewer-public の各 step で必要な banto-serve だけを立てる（使わない 2 本目を立てない）。smoke の固定 wait は、時間経過そのものを見る scenario 13b の 7 秒（「その後は何も起きない」の確認）と、同じ性質の 500ms・300ms を例外として残した。

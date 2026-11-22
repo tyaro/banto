@@ -280,6 +280,10 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
 - **SQLite バックアップ/リストア**（M17）: 設定画面から。保存先は DB ファイルごとの
   `<DBの親フォルダ>/backups/<DBファイル名>/`（#280）。PostgreSQL では `pg_dump` を使う。
   旧配置からの移行を含む運用は [docs/recipes/database-backup.md](docs/recipes/database-backup.md)。
+  リストアできるのは同じ版のアプリで取ったバックアップだけ（migration の履歴を照らす。v8.0.0 より前の版の
+  バックアップ・DB は読まない）。起動が止まったときは、アプリを止めてバックアップを
+  `<DBの親フォルダ>/backups/<DBファイル名>/restore-pending.sqlite3` に置いて起動すると、検査のうえ適用される
+  （[docs/upgrading.md](docs/upgrading.md) 4.2 節）。
 - **システム情報カード**（v1.2.0、CPU/メモリは Issue #185 で追加）: 設定画面に admin 専用で
   アプリバージョン・DB 種別・稼働形態・ホスト/プロセスの CPU・メモリ使用率などを表示
   （`GET /api/system/info` / Tauri `system_info`）。

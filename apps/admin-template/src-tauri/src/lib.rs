@@ -4355,7 +4355,12 @@ pub fn run() {
             // at all - the current db (if any) is left untouched on error,
             // per that function's own per-step safety notes.
             let applied_restore = match tauri::async_runtime::block_on(
-                BackupService::apply_pending_restore_at_startup(&db_path),
+                // ADR-0034 §9: the candidate's migration history is checked
+                // against this app's migrations before anything is swapped.
+                BackupService::apply_pending_restore_at_startup(
+                    &db_path,
+                    &admin_template_core::db::sqlite_migration_manifest(),
+                ),
             ) {
                 Ok(applied) => applied,
                 Err(err) => {
@@ -4389,11 +4394,12 @@ pub fn run() {
             // launch rather than one launch late. No-op today: the const
             // ships empty.
             match tauri::async_runtime::block_on(seed_first_boot_settings(&settings)) {
-                Ok(true) => println!("banto: 初回起動の既定設定を書き込みました"),
+                Ok(true) => println!("banto: 初回起動の既定設定を適用しました"),
                 Ok(false) => {}
                 Err(err) => eprintln!("banto: 初回起動の既定設定の書き込みに失敗しました: {err}"),
             }
-            let backup = BackupService::new(db_path.clone(), db.clone());
+            let backup = BackupService::new(db_path.clone(), db.clone())
+                .with_migrations(admin_template_core::db::sqlite_migration_manifest());
             // M20 attachments (spec docs/design/attachments-plan.md §3.3): same
             // sibling-directory convention as `backups/` above, next to the
             // DB file inside the app's own data directory.
@@ -4900,7 +4906,8 @@ mod tests {
             server: AsyncMutex::new(ServerSlot::new(None, None)),
             reach_check: ReachCheckState::new(),
             audit: AuditLogService::new(pool.clone()),
-            backup: BackupService::new(db_path, pool.clone()),
+            backup: BackupService::new(db_path, pool.clone())
+                .with_migrations(admin_template_core::db::sqlite_migration_manifest()),
             system_info: SystemInfoService::new(pool.clone()),
             metrics: None,
             attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
@@ -7541,7 +7548,12 @@ mod tests {
         ));
         assert_eq!(state.settings.login_notice().await.unwrap(), "");
 
-        let admin = state.users.get_by_username("manager").await.unwrap().unwrap();
+        let admin = state
+            .users
+            .get_by_username("manager")
+            .await
+            .unwrap()
+            .unwrap();
         state.set_session_for_test(Some(DesktopSession::Account(admin.clone())));
         assert_eq!(
             login_notice_set_body(&state, "  Service tonight  ")
@@ -7579,7 +7591,12 @@ mod tests {
             .setup_first_user("manager", SLOT_PASSWORD, "Admin")
             .await
             .unwrap();
-        let admin = state.users.get_by_username("manager").await.unwrap().unwrap();
+        let admin = state
+            .users
+            .get_by_username("manager")
+            .await
+            .unwrap()
+            .unwrap();
         state.set_session_for_test(Some(DesktopSession::Account(admin.clone())));
         let before = read_slot(&state);
         for key in [
@@ -7637,7 +7654,12 @@ mod tests {
             .await
             .unwrap();
         state.set_session_for_test(Some(DesktopSession::Account(
-            state.users.get_by_username("manager").await.unwrap().unwrap(),
+            state
+                .users
+                .get_by_username("manager")
+                .await
+                .unwrap()
+                .unwrap(),
         )));
         save_fails_after_the_mode(&mut state);
         let (_, seq) = read_slot(&state);
@@ -7839,7 +7861,12 @@ mod tests {
             .await
             .unwrap();
         state.set_session_for_test(Some(DesktopSession::Account(
-            state.users.get_by_username("manager").await.unwrap().unwrap(),
+            state
+                .users
+                .get_by_username("manager")
+                .await
+                .unwrap()
+                .unwrap(),
         )));
         let (_, seq_before) = read_slot(&state);
         let mut hold = hold_verify(&mut state);
@@ -7879,7 +7906,12 @@ mod tests {
             .await
             .unwrap();
         state.set_session_for_test(Some(DesktopSession::Account(
-            state.users.get_by_username("manager").await.unwrap().unwrap(),
+            state
+                .users
+                .get_by_username("manager")
+                .await
+                .unwrap()
+                .unwrap(),
         )));
         auth_config_apply_body(&state, true, "editor")
             .await

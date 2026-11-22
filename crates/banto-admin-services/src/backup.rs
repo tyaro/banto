@@ -147,8 +147,60 @@ fn warn_legacy_shared_area(db_path: &Path) {
 /// `items` demo are deliberately excluded: derived apps are expected to replace
 /// or remove them. This checks only table presence, not columns - a coarse but
 /// cheap sanity check that this is a Banto DB at all (not, say, a random
-/// unrelated `.sqlite3` file), not a full schema migration compatibility check.
-const REQUIRED_TABLES: [&str; 3] = ["settings", "users", "audit_log"];
+/// unrelated `.sqlite3` file). Compatibility with this app's schema is the
+/// migration-history check's job ([`MigrationManifest`]). `ui_settings` is
+/// part of the v8.0.0 baseline (ADR-0034 §9): a backup from an earlier version
+/// lacks it and is refused here already.
+const REQUIRED_TABLES: [&str; 4] = ["settings", "users", "audit_log", "ui_settings"];
+
+/// The migrations this app embeds, as the wiring layer hands them to the
+/// restore validation (ADR-0034 §9). Table definitions and the migrator belong
+/// to the app (conventions §11), so the service layer only sees the list:
+/// each migration's version with the checksum sqlx records for it, and the
+/// last version of the baseline every restorable database must already have.
+///
+/// A restore candidate is accepted only when its `_sqlx_migrations` history
+/// (a) holds no failed row, (b) lists only versions this manifest has, each
+/// with the same checksum, and (c) has every version up to the baseline
+/// applied. Versions after the baseline may be missing: the next startup's
+/// migration run adds them. Anything else would swap in a file the startup
+/// migration check then refuses, leaving a database that cannot boot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationManifest {
+    migrations: Vec<(i64, Vec<u8>)>,
+    baseline_version: i64,
+}
+
+impl MigrationManifest {
+    /// `migrations`: `(version, checksum)` of every embedded migration (for a
+    /// `sqlx::migrate::Migrator`, each non-down `Migration`'s `version` and
+    /// `checksum`). `baseline_version`: the last migration of the baseline.
+    pub fn new(
+        migrations: impl IntoIterator<Item = (i64, Vec<u8>)>,
+        baseline_version: i64,
+    ) -> Self {
+        Self {
+            migrations: migrations.into_iter().collect(),
+            baseline_version,
+        }
+    }
+
+    fn checksum_of(&self, version: i64) -> Option<&[u8]> {
+        self.migrations
+            .iter()
+            .find(|(v, _)| *v == version)
+            .map(|(_, checksum)| checksum.as_slice())
+    }
+}
+
+/// Error of a candidate whose migration history does not match this app
+/// (ADR-0034 §9). One wording for every mismatch: the operator's remedy is the
+/// same (use a backup taken by this version of the app).
+fn migration_history_err(reason: impl std::fmt::Display) -> BantoError {
+    validation_err(format!(
+        "このファイルは、このアプリの版のデータベースではありません（{reason}）。v8.0.0 より前の版や、より新しい版のバックアップは復元できません"
+    ))
+}
 
 /// One backup file, as listed/created by [`BackupService::list`]/
 /// [`BackupService::create`]. `created_at` for [`BackupService::create`]
@@ -266,7 +318,10 @@ fn unique_path(dir: &Path, base_stem: &str, ext: &str) -> PathBuf {
 /// `stage_restore_from_bytes`/`apply_pending_restore_at_startup`) all rely on
 /// this to keep a bad file from ever reaching `restore-pending.sqlite3` (or,
 /// for the startup path, from ever being applied over a good running DB).
-async fn validate_sqlite_file(path: &Path) -> Result<(), BantoError> {
+///
+/// `manifest` is the app's migration list (ADR-0034 §9): the candidate's
+/// `_sqlx_migrations` history must match it (see [`MigrationManifest`]).
+async fn validate_sqlite_file(path: &Path, manifest: &MigrationManifest) -> Result<(), BantoError> {
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(false)
@@ -284,12 +339,15 @@ async fn validate_sqlite_file(path: &Path) -> Result<(), BantoError> {
     // file locked, and every caller of this function immediately tries to
     // delete/rename the very file just validated (a temp upload, or a
     // rejected pending-restore file) once this returns.
-    let result = run_validation_checks(&mut conn).await;
+    let result = run_validation_checks(&mut conn, manifest).await;
     let _ = conn.close().await;
     result
 }
 
-async fn run_validation_checks(conn: &mut SqliteConnection) -> Result<(), BantoError> {
+async fn run_validation_checks(
+    conn: &mut SqliteConnection,
+    manifest: &MigrationManifest,
+) -> Result<(), BantoError> {
     let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&mut *conn)
         .await
@@ -314,6 +372,58 @@ async fn run_validation_checks(conn: &mut SqliteConnection) -> Result<(), BantoE
         }
     }
 
+    check_migration_history(conn, manifest).await
+}
+
+/// The migration-history part of the restore validation (ADR-0034 §9); see
+/// [`MigrationManifest`] for the rule. Read-only.
+async fn check_migration_history(
+    conn: &mut SqliteConnection,
+    manifest: &MigrationManifest,
+) -> Result<(), BantoError> {
+    let has_history: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(banto_storage::storage_error)?;
+    if has_history.is_none() {
+        return Err(migration_history_err("migration の履歴がありません"));
+    }
+    // A history table of an unexpected shape is a refusal, not a storage
+    // failure: the candidate is arbitrary operator-supplied input.
+    let applied: Vec<(i64, bool, Vec<u8>)> =
+        sqlx::query_as("SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|err| migration_history_err(format!("migration の履歴を読めません: {err}")))?;
+    for (version, success, checksum) in &applied {
+        if !success {
+            return Err(migration_history_err(format!(
+                "migration {version} が失敗したままです"
+            )));
+        }
+        match manifest.checksum_of(*version) {
+            None => {
+                return Err(migration_history_err(format!(
+                    "このアプリに無い migration {version} が適用されています"
+                )))
+            }
+            Some(expected) if expected != checksum.as_slice() => {
+                return Err(migration_history_err(format!(
+                    "migration {version} の内容がこのアプリのものと違います"
+                )))
+            }
+            Some(_) => {}
+        }
+    }
+    for (version, _) in &manifest.migrations {
+        if *version <= manifest.baseline_version && !applied.iter().any(|(v, _, _)| v == version) {
+            return Err(migration_history_err(format!(
+                "基準の migration {version} が適用されていません"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -336,11 +446,37 @@ async fn run_validation_checks(conn: &mut SqliteConnection) -> Result<(), BantoE
 pub struct BackupService {
     db_path: PathBuf,
     db: Db,
+    /// The app's migration list for the restore validation (ADR-0034 §9).
+    /// `None` until the wiring passes it: staging a restore is then refused.
+    migrations: Option<MigrationManifest>,
 }
 
 impl BackupService {
     pub fn new(db_path: PathBuf, db: Db) -> Self {
-        Self { db_path, db }
+        Self {
+            db_path,
+            db,
+            migrations: None,
+        }
+    }
+
+    /// Hand over the app's migration list (ADR-0034 §9). The wiring layer
+    /// calls this once at construction, like `UsersService`'s
+    /// `with_permission_catalog`. Without it every restore staging is refused
+    /// (fail closed): the service cannot tell a database of this app's version
+    /// from one the startup migration check will refuse after the swap.
+    pub fn with_migrations(mut self, manifest: MigrationManifest) -> Self {
+        self.migrations = Some(manifest);
+        self
+    }
+
+    fn migrations(&self) -> Result<&MigrationManifest, BantoError> {
+        self.migrations.as_ref().ok_or_else(|| {
+            BantoError::Other(
+                "リストアの検査に必要な migration の一覧が渡されていません（配線の不備）。リストアは予約できません"
+                    .to_string(),
+            )
+        })
     }
 
     /// The underlying SQLite pool, or a clear [`BantoError`] when this handle
@@ -553,6 +689,7 @@ impl BackupService {
     /// file behind.
     pub async fn stage_restore_from_file(&self, file_name: &str) -> Result<(), BantoError> {
         self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
+        let manifest = self.migrations()?;
         let source_path = self.safe_backup_path(file_name)?;
         if !tokio::fs::try_exists(&source_path).await.unwrap_or(false) {
             return Err(BantoError::NotFound {
@@ -561,7 +698,7 @@ impl BackupService {
             });
         }
 
-        validate_sqlite_file(&source_path).await?;
+        validate_sqlite_file(&source_path, manifest).await?;
 
         let dir = self.scope_dir()?;
         tokio::fs::create_dir_all(&dir)
@@ -580,6 +717,7 @@ impl BackupService {
     /// pending restore untouched.
     pub async fn stage_restore_from_bytes(&self, bytes: &[u8]) -> Result<(), BantoError> {
         self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
+        let manifest = self.migrations()?;
         let dir = self.scope_dir()?;
         tokio::fs::create_dir_all(&dir)
             .await
@@ -602,7 +740,7 @@ impl BackupService {
             .await
             .map_err(|err| io_err("アップロードされたファイルの書き込みに失敗しました", err))?;
 
-        if let Err(err) = validate_sqlite_file(&temp_path).await {
+        if let Err(err) = validate_sqlite_file(&temp_path, manifest).await {
             let _ = tokio::fs::remove_file(&temp_path).await;
             return Err(err);
         }
@@ -710,6 +848,7 @@ impl BackupService {
     ///    log - no pool exists yet to write one with).
     pub async fn apply_pending_restore_at_startup(
         db_path: &Path,
+        manifest: &MigrationManifest,
     ) -> Result<Option<AppliedRestoreInfo>, BantoError> {
         warn_legacy_shared_area(db_path);
         // Same resolution as every service method (issue #280). An unusable
@@ -728,7 +867,7 @@ impl BackupService {
             return Ok(None);
         }
 
-        if let Err(err) = validate_sqlite_file(&pending_path).await {
+        if let Err(err) = validate_sqlite_file(&pending_path, manifest).await {
             eprintln!(
                 "banto: 起動時に検出したリストア予約ファイルが不正なため、適用をスキップして削除します: {err}"
             );
@@ -822,12 +961,28 @@ mod tests {
              actor_role TEXT, action TEXT NOT NULL, resource TEXT NOT NULL, \
              entity_id TEXT, detail TEXT, origin TEXT NOT NULL, \
              result TEXT NOT NULL DEFAULT 'ok')",
+            "CREATE TABLE ui_settings (owner TEXT NOT NULL, key TEXT NOT NULL, \
+             value TEXT NOT NULL, revision TEXT NOT NULL, user_id INTEGER, \
+             PRIMARY KEY (owner, key))",
+            // The history sqlx keeps (same columns), with the fixture app's two
+            // migrations applied - see `test_manifest`.
+            "CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY, \
+             description TEXT NOT NULL, installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \
+             success BOOLEAN NOT NULL, checksum BLOB NOT NULL, execution_time BIGINT NOT NULL)",
+            "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+             VALUES (1, 'one', 1, x'0a', 0), (2, 'two', 1, x'0b', 0)",
         ] {
             sqlx::query(ddl)
                 .execute(pool)
                 .await
                 .expect("create required table");
         }
+    }
+
+    /// The fixture app's migration list: two migrations, both in the baseline.
+    /// `create_required_tables` records exactly these as applied.
+    fn test_manifest() -> MigrationManifest {
+        MigrationManifest::new([(1, vec![0x0a]), (2, vec![0x0b])], 2)
     }
 
     /// An on-disk (NOT `:memory:`) SQLite pool at `path` with the required
@@ -865,7 +1020,10 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("admin-template.sqlite3");
         let pool = migrated_file_db(&db_path).await;
-        (BackupService::new(db_path, Db::Sqlite(pool)), dir)
+        (
+            BackupService::new(db_path, Db::Sqlite(pool)).with_migrations(test_manifest()),
+            dir,
+        )
     }
 
     #[tokio::test]
@@ -1092,7 +1250,7 @@ mod tests {
     async fn apply_pending_restore_is_a_no_op_when_nothing_is_staged() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("admin-template.sqlite3");
-        let applied = BackupService::apply_pending_restore_at_startup(&db_path)
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &test_manifest())
             .await
             .expect("should succeed");
         assert!(applied.is_none());
@@ -1122,7 +1280,8 @@ mod tests {
         let svc = BackupService::new(
             db_path.clone(),
             Db::Sqlite(banto_storage::connect_sqlite_memory().await.unwrap()),
-        );
+        )
+        .with_migrations(test_manifest());
         let staged_path = dir.path().join("staged-source.sqlite3");
         let restore_pool = migrated_file_db(&staged_path).await;
         sqlx::query("INSERT INTO settings (key, value) VALUES ('restore-marker', 'NEW')")
@@ -1137,7 +1296,7 @@ mod tests {
         let bytes = tokio::fs::read(&staged_path).await.unwrap();
         svc.stage_restore_from_bytes(&bytes).await.unwrap();
 
-        let applied = BackupService::apply_pending_restore_at_startup(&db_path)
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &test_manifest())
             .await
             .expect("apply should succeed")
             .expect("a restore was staged, so this must be Some");
@@ -1183,14 +1342,15 @@ mod tests {
         let svc = BackupService::new(
             db_path.clone(),
             Db::Sqlite(banto_storage::connect_sqlite_memory().await.unwrap()),
-        );
+        )
+        .with_migrations(test_manifest());
         let staged_path = dir.path().join("staged-source.sqlite3");
         let source_pool = migrated_file_db(&staged_path).await;
         source_pool.close().await;
         let bytes = tokio::fs::read(&staged_path).await.unwrap();
         svc.stage_restore_from_bytes(&bytes).await.unwrap();
 
-        let applied = BackupService::apply_pending_restore_at_startup(&db_path)
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &test_manifest())
             .await
             .expect("apply should succeed")
             .expect("a restore was staged");
@@ -1214,7 +1374,7 @@ mod tests {
             .await
             .unwrap();
 
-        let applied = BackupService::apply_pending_restore_at_startup(&db_path)
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &test_manifest())
             .await
             .expect("a corrupt pending file must not fail startup");
         assert!(applied.is_none());
@@ -1238,8 +1398,10 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let a_path = dir.path().join("a.sqlite3");
         let b_path = dir.path().join("b.sqlite3");
-        let a = BackupService::new(a_path.clone(), Db::Sqlite(migrated_file_db(&a_path).await));
-        let b = BackupService::new(b_path.clone(), Db::Sqlite(migrated_file_db(&b_path).await));
+        let a = BackupService::new(a_path.clone(), Db::Sqlite(migrated_file_db(&a_path).await))
+            .with_migrations(test_manifest());
+        let b = BackupService::new(b_path.clone(), Db::Sqlite(migrated_file_db(&b_path).await))
+            .with_migrations(test_manifest());
         (a, b, dir)
     }
 
@@ -1281,7 +1443,7 @@ mod tests {
         // B's startup apply must not touch B's DB nor consume A's reservation.
         let b_path = dir.path().join("b.sqlite3");
         let before = tokio::fs::read(&b_path).await.unwrap();
-        let applied = BackupService::apply_pending_restore_at_startup(&b_path)
+        let applied = BackupService::apply_pending_restore_at_startup(&b_path, &test_manifest())
             .await
             .unwrap();
         assert!(applied.is_none());
@@ -1294,7 +1456,7 @@ mod tests {
         // Startup apply runs before any pool exists; release A's file (Windows
         // refuses to replace an open file).
         a.sqlite_pool().unwrap().close().await;
-        let applied = BackupService::apply_pending_restore_at_startup(&a_path)
+        let applied = BackupService::apply_pending_restore_at_startup(&a_path, &test_manifest())
             .await
             .unwrap()
             .expect("A's reservation applies to A");
@@ -1332,7 +1494,7 @@ mod tests {
         ));
         assert!(a.pending_restore().await.is_none());
 
-        let applied = BackupService::apply_pending_restore_at_startup(&a_path)
+        let applied = BackupService::apply_pending_restore_at_startup(&a_path, &test_manifest())
             .await
             .unwrap();
         assert!(applied.is_none());
@@ -1361,5 +1523,122 @@ mod tests {
         assert!(scope_name(Path::new("")).is_err());
         assert!(scope_name(Path::new("data/a:b.sqlite3")).is_err());
         assert!(scope_name(Path::new("data/a.")).is_err());
+    }
+
+    // --- ADR-0034 §9: the migration-history check ---------------------------
+
+    /// A valid fixture database whose history was then edited by `edit`.
+    async fn candidate_bytes(dir: &Path, name: &str, edit: &str) -> Vec<u8> {
+        let path = dir.join(name);
+        let pool = migrated_file_db(&path).await;
+        sqlx::query(sqlx::AssertSqlSafe(edit.to_string()))
+            .execute(&pool)
+            .await
+            .expect("edit the history");
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&pool)
+            .await
+            .expect("checkpoint");
+        pool.close().await;
+        tokio::fs::read(&path).await.expect("read candidate")
+    }
+
+    #[tokio::test]
+    async fn staging_refuses_every_history_that_is_not_this_apps() {
+        let (svc, dir) = service().await;
+        for (name, edit, expected) in [
+            (
+                "old-checksum.sqlite3",
+                "UPDATE _sqlx_migrations SET checksum = x'ff' WHERE version = 1",
+                "migration 1 の内容がこのアプリのものと違います",
+            ),
+            (
+                "unknown-version.sqlite3",
+                "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+                 VALUES (3, 'three', 1, x'0c', 0)",
+                "このアプリに無い migration 3",
+            ),
+            (
+                "baseline-missing.sqlite3",
+                "DELETE FROM _sqlx_migrations WHERE version = 2",
+                "基準の migration 2 が適用されていません",
+            ),
+            (
+                "failed-row.sqlite3",
+                "UPDATE _sqlx_migrations SET success = 0 WHERE version = 2",
+                "migration 2 が失敗したままです",
+            ),
+            (
+                "no-history.sqlite3",
+                "DROP TABLE _sqlx_migrations",
+                "migration の履歴がありません",
+            ),
+        ] {
+            let bytes = candidate_bytes(dir.path(), name, edit).await;
+            let err = svc.stage_restore_from_bytes(&bytes).await.unwrap_err();
+            match err {
+                BantoError::Validation { field_errors } => {
+                    assert!(field_errors[0].message.contains(expected), "{name}: {field_errors:?}")
+                }
+                other => panic!("{name}: expected Validation, got {other:?}"),
+            }
+            assert!(svc.pending_restore().await.is_none(), "{name}");
+        }
+    }
+
+    /// A migration the app added after the baseline may still be pending in
+    /// the candidate: the next startup's migration run applies it.
+    #[tokio::test]
+    async fn a_candidate_may_lack_migrations_after_the_baseline() {
+        let (svc, dir) = service().await;
+        let bytes = candidate_bytes(dir.path(), "plain.sqlite3", "SELECT 1").await;
+        let svc = svc.with_migrations(MigrationManifest::new(
+            [(1, vec![0x0a]), (2, vec![0x0b]), (3, vec![0x0c])],
+            2,
+        ));
+        svc.stage_restore_from_bytes(&bytes).await.unwrap();
+        assert!(svc.pending_restore().await.is_some());
+    }
+
+    /// Fail closed: a service the wiring gave no migration list stages nothing.
+    #[tokio::test]
+    async fn staging_without_a_migration_list_is_refused() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let pool = migrated_file_db(&db_path).await;
+        let svc = BackupService::new(db_path, Db::Sqlite(pool));
+        let made = svc.create().await.unwrap();
+        assert!(svc.stage_restore_from_file(&made.file_name).await.is_err());
+        let bytes = svc.read(&made.file_name).await.unwrap();
+        assert!(svc.stage_restore_from_bytes(&bytes).await.is_err());
+        assert!(svc.pending_restore().await.is_none());
+    }
+
+    /// The same check runs right before the swap: a pending file placed by
+    /// hand with a foreign history is removed and the database is untouched.
+    #[tokio::test]
+    async fn a_hand_placed_pending_file_with_a_foreign_history_is_not_applied() {
+        let (svc, dir) = service().await;
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let bytes = candidate_bytes(
+            dir.path(),
+            "old.sqlite3",
+            "UPDATE _sqlx_migrations SET checksum = x'ff' WHERE version = 1",
+        )
+        .await;
+        let pending = svc.pending_restore_path().unwrap();
+        svc.sqlite_pool().unwrap().close().await;
+        let before = tokio::fs::read(&db_path).await.unwrap();
+        tokio::fs::create_dir_all(pending.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&pending, &bytes).await.unwrap();
+
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &test_manifest())
+            .await
+            .unwrap();
+        assert!(applied.is_none());
+        assert!(!pending.exists());
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
     }
 }

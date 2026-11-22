@@ -4,6 +4,8 @@
 use banto_core::BantoError;
 use banto_storage::Db;
 
+use crate::backup::MigrationManifest;
+
 // [scaffold:items] begin
 const SEED_ROW_COUNT: usize = 1_000;
 // [scaffold:items] end
@@ -174,21 +176,60 @@ pub(crate) async fn migrate_memory() -> Result<Db, BantoError> {
     Ok(db)
 }
 
+/// Last migration of the v8.0.0 baseline (ADR-0034 §9): `0014_ui_settings`.
+/// A restore candidate must have every migration up to this one applied; a
+/// derived app's own later migrations may still be pending in it.
+pub const BASELINE_MIGRATION_VERSION: i64 = 14;
+
+/// The embedded SQLite migrations as the restore validation wants them
+/// (ADR-0034 §9): the wiring passes this to
+/// [`BackupService::with_migrations`](crate::backup::BackupService::with_migrations)
+/// and `apply_pending_restore_at_startup`. SQLite only - backup/restore has no
+/// PostgreSQL side.
+pub fn sqlite_migration_manifest() -> MigrationManifest {
+    MigrationManifest::new(
+        sqlx::migrate!("./migrations-sqlite")
+            .iter()
+            .filter(|migration| !migration.migration_type.is_down_migration())
+            .map(|migration| (migration.version, migration.checksum.to_vec())),
+        BASELINE_MIGRATION_VERSION,
+    )
+}
+
+/// What the operator reads when the database was created by a version before
+/// the v8.0.0 baseline rebuild (ADR-0034 §9). There is no data migration.
+const PRE_V8_DATABASE_MESSAGE: &str =
+    "この DB は v8.0.0 より前の版のものです。読めません。DB を作り直してください";
+
+/// sqlx compares the checksum of every applied migration with the embedded
+/// one, in version order, before it applies anything newer. v8.0.0 rewrote
+/// `0003`/`0005`, so a database from an earlier version stops there - before
+/// `0014` could touch it - with `VersionMismatch`, which this turns into the
+/// explicit refusal.
+fn migration_error(err: sqlx::migrate::MigrateError) -> BantoError {
+    match err {
+        sqlx::migrate::MigrateError::VersionMismatch(version) => BantoError::Storage(format!(
+            "{PRE_V8_DATABASE_MESSAGE}（migration {version} の内容が、このアプリのものと違います）"
+        )),
+        other => BantoError::Storage(other.to_string()),
+    }
+}
+
 /// Run the embedded migrations matching the handle's backend. The two migration
-/// sets are byte-distinct SQL (`migrations-sqlite/` is the historical DDL kept
-/// unchanged for backward compatibility; `migrations-postgres/` is the
-/// strict-typed Postgres port), so each backend embeds and runs its own.
+/// sets are byte-distinct SQL (`migrations-sqlite/` is the SQLite DDL;
+/// `migrations-postgres/` is the strict-typed Postgres port), so each backend
+/// embeds and runs its own.
 async fn run_migrations(db: &Db) -> Result<(), BantoError> {
     match db {
         Db::Sqlite(pool) => sqlx::migrate!("./migrations-sqlite")
             .run(pool)
             .await
-            .map_err(|err| BantoError::Storage(err.to_string())),
+            .map_err(migration_error),
         #[cfg(feature = "postgres")]
         Db::Postgres(pool) => sqlx::migrate!("./migrations-postgres")
             .run(pool)
             .await
-            .map_err(|err| BantoError::Storage(err.to_string())),
+            .map_err(migration_error),
     }
 }
 
@@ -608,18 +649,45 @@ mod tests {
         }
     }
 
-    /// Issue #204: a database created before migration 0007 upgrades in
-    /// place - accounts that already exist get `auth_epoch = 0` and keep
-    /// working (the SQLite half; `tests/pg_smoke.rs` covers the PostgreSQL
-    /// DDL on CI).
-    #[tokio::test]
-    async fn a_database_from_before_0007_upgrades_with_existing_accounts_at_epoch_zero() {
-        let db = Db::connect_sqlite_memory().await.unwrap();
-        let pool = db.as_sqlite().expect("sqlite handle");
-        sqlx::migrate!("./migrations-sqlite")
-            .run_to(6, pool)
-            .await
-            .expect("pre-#204 schema");
+    // --- v8.0.0 baseline rebuild (ADR-0034 §2/§9, plan §4.1) ---------------
+
+    const V7_USERS: &str = include_str!("../tests/fixtures/v7.11.0/sqlite-0003_users.sql");
+    const V7_AUDIT_LOG: &str = include_str!("../tests/fixtures/v7.11.0/sqlite-0005_audit_log.sql");
+
+    /// The migrator v7.11.0 shipped: 0001-0013 with the original text of
+    /// `0003_users.sql` / `0005_audit_log.sql` (the two files v8.0.0 rewrote).
+    fn v7_migrator() -> sqlx::migrate::Migrator {
+        use sqlx::migrate::Migration;
+        use sqlx::SqlSafeStr;
+        let mut migrator = sqlx::migrate!("./migrations-sqlite");
+        migrator.migrations = migrator
+            .migrations
+            .iter()
+            .filter(|m| m.version < BASELINE_MIGRATION_VERSION)
+            .map(|m| {
+                let old = match m.version {
+                    3 => V7_USERS,
+                    5 => V7_AUDIT_LOG,
+                    _ => return m.clone(),
+                };
+                Migration::new(
+                    m.version,
+                    m.description.clone(),
+                    m.migration_type,
+                    sqlx::AssertSqlSafe(old).into_sql_str(),
+                    m.no_tx,
+                )
+            })
+            .collect::<Vec<_>>()
+            .into();
+        migrator
+    }
+
+    /// A v7.11.0 database file at `path`, with one account, closed.
+    async fn v7_database_file(path: &std::path::Path) {
+        let db = Db::connect_sqlite(path).await.unwrap();
+        let pool = db.as_sqlite().unwrap();
+        v7_migrator().run(pool).await.expect("the v7.11.0 schema");
         sqlx::query(
             "INSERT INTO users (username, password_hash, display_name, role) \
              VALUES ('existing', 'unused', '既存', 'admin')",
@@ -627,102 +695,426 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-
-        run_migrations(&db)
-            .await
-            .expect("upgrade to the current schema");
-
-        let users = crate::users::UsersService::new(db.clone());
-        let existing = users
-            .get_by_username("existing")
-            .await
-            .unwrap()
-            .expect("the existing account survives the upgrade");
-        assert_eq!(existing.auth_epoch, 0);
-        users
-            .reset_password(existing.id, "password123")
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(pool)
             .await
             .unwrap();
-        let verified = users
-            .verify("existing", "password123")
-            .await
-            .unwrap()
-            .expect("the upgraded account can log in");
-        assert_eq!(verified.auth_epoch, 1);
+        pool.close().await;
     }
 
-    /// Issue #697 (user-permissions-plan, review item for PR-1): restoring a
-    /// backup taken before migration 0013 works. `BackupService` only checks
-    /// for `settings`/`users`/`audit_log` (`REQUIRED_TABLES`), so such a file
-    /// is accepted; the startup after the swap runs the migrations, which
-    /// create `user_permissions`, and the permissions can be read and
-    /// written on the restored accounts.
-    #[tokio::test]
-    async fn a_backup_from_before_0013_restores_and_gains_user_permissions() {
-        use crate::backup::BackupService;
-        use crate::users::{PermissionCatalog, PermissionKey, Role, UsersService};
+    async fn column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String> {
+        // `table` is a literal of this test module.
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT name FROM pragma_table_xinfo('{table}') ORDER BY cid"
+        )))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
 
-        let dir = tempfile::tempdir().unwrap();
-        // The pre-0013 database the backup was taken from.
-        let old_path = dir.path().join("old.sqlite3");
-        let old = Db::connect_sqlite(&old_path).await.unwrap();
-        let mut before_0013 = sqlx::migrate!("./migrations-sqlite");
-        before_0013.migrations = before_0013
-            .migrations
-            .iter()
-            .filter(|m| m.version < 13)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        let old_pool = old.as_sqlite().unwrap();
-        before_0013.run(old_pool).await.unwrap();
-        let has_table: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'user_permissions'",
+    async fn index_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? \
+             AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name",
         )
-        .fetch_one(old_pool)
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// Plan §4.1: a new database has exactly one built-in `admin`, the CHECKs
+    /// refuse a malformed row, and a second built-in row cannot be inserted.
+    #[tokio::test]
+    async fn a_new_database_has_one_builtin_admin_and_the_row_shapes_are_enforced() {
+        let db = migrate_memory().await.unwrap();
+        let pool = db.as_sqlite().unwrap();
+        type Row = (String, String, String, Option<String>, Option<String>);
+        let rows: Vec<Row> =
+            sqlx::query_as("SELECT username, kind, role, password_hash, account_uid FROM users")
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec![(
+                "admin".to_string(),
+                "builtin".to_string(),
+                "admin".to_string(),
+                None,
+                None
+            )]
+        );
+
+        for (what, sql) in [
+            (
+                "a second built-in row",
+                "INSERT INTO users (username, display_name, kind) VALUES ('admin2', 'x', 'builtin')",
+            ),
+            (
+                "an account without account_uid",
+                "INSERT INTO users (username, password_hash, display_name) VALUES ('a', 'h', 'x')",
+            ),
+            (
+                "an account without a password hash",
+                "INSERT INTO users (username, display_name, account_uid) VALUES ('a', 'x', 'u1')",
+            ),
+            (
+                "a built-in row with a password hash",
+                "INSERT INTO users (username, password_hash, display_name, kind) \
+                 VALUES ('b', 'h', 'x', 'builtin')",
+            ),
+            (
+                "a built-in row with an account_uid",
+                "INSERT INTO users (username, display_name, kind, account_uid) \
+                 VALUES ('b', 'x', 'builtin', 'u1')",
+            ),
+            (
+                "an unknown kind",
+                "INSERT INTO users (username, password_hash, display_name, kind, account_uid) \
+                 VALUES ('c', 'h', 'x', 'other', 'u1')",
+            ),
+        ] {
+            assert!(sqlx::query(sql).execute(pool).await.is_err(), "{what}");
+        }
+        sqlx::query(
+            "INSERT INTO users (username, password_hash, display_name, account_uid) \
+             VALUES ('ok', 'h', 'x', 'u1')",
+        )
+        .execute(pool)
+        .await
+        .expect("a well-formed account row");
+        assert!(
+            sqlx::query(
+                "INSERT INTO users (username, password_hash, display_name, account_uid) \
+                 VALUES ('dup', 'h', 'x', 'u1')",
+            )
+            .execute(pool)
+            .await
+            .is_err(),
+            "account_uid is unique"
+        );
+    }
+
+    /// Plan §4.1 (ui_settings): an account's rows need the matching `user_id`
+    /// and go away with the account (the foreign key is enforced on this
+    /// connection); a synthetic owner has no `user_id`.
+    #[tokio::test]
+    async fn ui_settings_rows_are_tied_to_their_owner() {
+        let db = migrate_memory().await.unwrap();
+        let pool = db.as_sqlite().unwrap();
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO users (username, password_hash, display_name, account_uid) \
+             VALUES ('op', 'h', 'x', 'u1') RETURNING id",
+        )
+        .fetch_one(pool)
         .await
         .unwrap();
-        assert_eq!(has_table, 0, "the fixture is a pre-0013 schema");
-        UsersService::new(old.clone())
+        let insert = "INSERT INTO ui_settings (owner, key, value, revision, user_id) \
+                      VALUES (?, 'k', 'v', 'r', ?)";
+        for (owner, user_id, ok) in [
+            (format!("acct:{id}"), Some(id), true),
+            ("local".to_string(), None, true),
+            ("grant:public".to_string(), None, true),
+            (format!("acct:{id}x"), Some(id), false),
+            (format!("acct:{id}"), None, false),
+            ("local".to_string(), Some(id), false),
+            ("acct:999".to_string(), Some(999), false),
+        ] {
+            let result = sqlx::query(insert)
+                .bind(&owner)
+                .bind(user_id)
+                .execute(pool)
+                .await;
+            // The first three rows are also the fixture of the delete below.
+            assert_eq!(result.is_ok(), ok, "owner {owner:?} user_id {user_id:?}");
+        }
+        sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        let owners: Vec<String> =
+            sqlx::query_scalar("SELECT owner FROM ui_settings ORDER BY owner")
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        assert_eq!(owners, ["grant:public", "local"]);
+    }
+
+    /// Plan §4.1 "リスク" (one-off): the rewrite of 0003/0005 dropped nothing.
+    /// Against the v7.11.0 schema, the only differences are the new columns
+    /// and the built-in row's index.
+    #[tokio::test]
+    async fn the_baseline_rewrite_only_adds_the_intended_columns_and_index() {
+        let old = Db::connect_sqlite_memory().await.unwrap();
+        let old_pool = old.as_sqlite().unwrap();
+        v7_migrator().run(old_pool).await.unwrap();
+        let new = Db::connect_sqlite_memory().await.unwrap();
+        let new_pool = new.as_sqlite().unwrap();
+        sqlx::migrate!("./migrations-sqlite")
+            .run_to(BASELINE_MIGRATION_VERSION - 1, new_pool)
+            .await
+            .unwrap();
+
+        for (table, added_columns, added_indexes) in [
+            (
+                "users",
+                vec!["kind", "account_uid"],
+                vec!["idx_users_single_builtin"],
+            ),
+            ("audit_log", vec!["actor_id"], vec![]),
+        ] {
+            let old_columns = column_names(old_pool, table).await;
+            let new_columns = column_names(new_pool, table).await;
+            let kept: Vec<&String> = new_columns
+                .iter()
+                .filter(|c| !added_columns.contains(&c.as_str()))
+                .collect();
+            let mut old_sorted: Vec<&String> = old_columns.iter().collect();
+            let mut kept_sorted = kept.clone();
+            old_sorted.sort();
+            kept_sorted.sort();
+            assert_eq!(kept_sorted, old_sorted, "{table}: no column lost");
+            assert_eq!(
+                new_columns.len(),
+                old_columns.len() + added_columns.len(),
+                "{table}: exactly the intended columns were added"
+            );
+            let old_indexes = index_names(old_pool, table).await;
+            let mut expected = old_indexes.clone();
+            expected.extend(added_indexes.iter().map(|s| s.to_string()));
+            expected.sort();
+            assert_eq!(index_names(new_pool, table).await, expected, "{table}");
+        }
+        // Every other table is byte-for-byte the same definition.
+        let other_tables = "SELECT name, sql FROM sqlite_master \
+             WHERE tbl_name NOT IN ('users', 'audit_log', '_sqlx_migrations') ORDER BY name";
+        let old_rest: Vec<(String, Option<String>)> = sqlx::query_as(other_tables)
+            .fetch_all(old_pool)
+            .await
+            .unwrap();
+        let new_rest: Vec<(String, Option<String>)> = sqlx::query_as(other_tables)
+            .fetch_all(new_pool)
+            .await
+            .unwrap();
+        assert_eq!(new_rest, old_rest);
+    }
+
+    /// Plan §4.1 / §9.1: opening a v7.11.0 database stops with the explicit
+    /// message BEFORE `0014` is applied - the schema is unchanged.
+    #[tokio::test]
+    async fn a_v7_database_is_refused_before_any_new_migration_touches_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("admin-template.sqlite3");
+        v7_database_file(&path).await;
+        let err = init_db(&path).await.expect_err("a v7 database is refused");
+        let message = err.to_string();
+        assert!(message.contains("v8.0.0 より前の版"), "{message}");
+        assert!(message.contains("DB を作り直してください"), "{message}");
+
+        let db = Db::connect_sqlite(&path).await.unwrap();
+        let pool = db.as_sqlite().unwrap();
+        let ui_settings: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ui_settings'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(ui_settings, 0, "0014 was not applied");
+        assert!(!column_names(pool, "users")
+            .await
+            .contains(&"kind".to_string()));
+        let applied: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(applied, 13);
+        let users: Vec<String> = sqlx::query_scalar("SELECT username FROM users")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        assert_eq!(users, ["existing"]);
+        pool.close().await;
+    }
+
+    /// ADR-0034 §9 (regression): a candidate that has every required table and
+    /// a clean `integrity_check` but v7 checksums is (1) refused at staging,
+    /// (2) not applied when placed as the pending file by hand - the current
+    /// database's bytes are unchanged - and (3) the next startup succeeds.
+    /// The same holds for a candidate with a migration this app does not have,
+    /// and for one that lacks part of the baseline.
+    #[tokio::test]
+    async fn a_restore_candidate_with_a_foreign_migration_history_never_replaces_the_database() {
+        use crate::backup::BackupService;
+
+        let dir = tempfile::tempdir().unwrap();
+
+        // v7 checksums, plus the table a v7 file lacks: only the history
+        // check can refuse it.
+        let v7_path = dir.path().join("v7.sqlite3");
+        v7_database_file(&v7_path).await;
+        {
+            let db = Db::connect_sqlite(&v7_path).await.unwrap();
+            let pool = db.as_sqlite().unwrap();
+            sqlx::query("CREATE TABLE ui_settings (owner TEXT)")
+                .execute(pool)
+                .await
+                .unwrap();
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                .execute(pool)
+                .await
+                .unwrap();
+            pool.close().await;
+        }
+        // A newer version's file: one migration this app does not know.
+        let newer_path = dir.path().join("newer.sqlite3");
+        {
+            let db = init_db(&newer_path).await.unwrap();
+            let pool = db.as_sqlite().unwrap();
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+                 VALUES (9999, 'from the future', 1, x'00', 0)",
+            )
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                .execute(pool)
+                .await
+                .unwrap();
+            pool.close().await;
+        }
+        // Part of the baseline missing (0014 not applied), `ui_settings` made
+        // by hand.
+        let partial_path = dir.path().join("partial.sqlite3");
+        {
+            let db = Db::connect_sqlite(&partial_path).await.unwrap();
+            let pool = db.as_sqlite().unwrap();
+            sqlx::migrate!("./migrations-sqlite")
+                .run_to(BASELINE_MIGRATION_VERSION - 1, pool)
+                .await
+                .unwrap();
+            sqlx::query("CREATE TABLE ui_settings (owner TEXT)")
+                .execute(pool)
+                .await
+                .unwrap();
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                .execute(pool)
+                .await
+                .unwrap();
+            pool.close().await;
+        }
+
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let pending = dir
+            .path()
+            .join("backups")
+            .join("admin-template.sqlite3")
+            .join("restore-pending.sqlite3");
+        for candidate in [&v7_path, &newer_path, &partial_path] {
+            let bytes = tokio::fs::read(candidate).await.unwrap();
+            let current = init_db(&db_path).await.unwrap();
+            let pool = current.as_sqlite().unwrap().clone();
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                .execute(&pool)
+                .await
+                .unwrap();
+
+            // (1) Staging refuses it.
+            let err = BackupService::new(db_path.clone(), current.clone())
+                .with_migrations(sqlite_migration_manifest())
+                .stage_restore_from_bytes(&bytes)
+                .await
+                .expect_err("staging refuses a foreign history");
+            match err {
+                BantoError::Validation { field_errors } => assert!(
+                    field_errors[0]
+                        .message
+                        .contains("このアプリの版のデータベースではありません"),
+                    "{candidate:?}: {field_errors:?}"
+                ),
+                other => panic!("{candidate:?}: expected Validation, got {other:?}"),
+            }
+            assert!(!pending.exists());
+            pool.close().await;
+            drop(current);
+
+            // (2) Placed by hand: not applied, removed, the database untouched.
+            let before = tokio::fs::read(&db_path).await.unwrap();
+            tokio::fs::create_dir_all(pending.parent().unwrap())
+                .await
+                .unwrap();
+            tokio::fs::write(&pending, &bytes).await.unwrap();
+            let applied = BackupService::apply_pending_restore_at_startup(
+                &db_path,
+                &sqlite_migration_manifest(),
+            )
+            .await
+            .unwrap();
+            assert!(applied.is_none(), "{candidate:?}");
+            assert!(!pending.exists(), "the refused pending file is removed");
+            assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+
+            // (3) The next startup succeeds.
+            let again = init_db(&db_path).await.expect("the database still starts");
+            again.as_sqlite().unwrap().close().await;
+        }
+    }
+
+    /// ADR-0034 §9: without the migration list, staging is refused (fail
+    /// closed); with it, a backup of this version restores, and so does one
+    /// taken before a migration the app added AFTER the baseline (the startup
+    /// migration run brings it forward).
+    #[tokio::test]
+    async fn a_backup_of_this_version_restores_and_later_migrations_may_be_pending() {
+        use crate::backup::BackupService;
+        use crate::users::{Role, UsersService};
+
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("source.sqlite3");
+        let source = init_db(&source_path).await.unwrap();
+        UsersService::new(source.clone())
             .create_user("op", "operator-password", "Op", Role::Viewer)
             .await
             .unwrap();
+        let source_pool = source.as_sqlite().unwrap();
         sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-            .execute(old_pool)
+            .execute(source_pool)
             .await
             .unwrap();
-        old_pool.close().await;
-        let bytes = tokio::fs::read(&old_path).await.unwrap();
+        source_pool.close().await;
+        let bytes = tokio::fs::read(&source_path).await.unwrap();
 
-        // The current database: stage the old file and restart.
         let db_path = dir.path().join("admin-template.sqlite3");
         let current = init_db(&db_path).await.unwrap();
+        let unwired = BackupService::new(db_path.clone(), current.clone());
+        assert!(unwired.stage_restore_from_bytes(&bytes).await.is_err());
+        assert!(unwired.pending_restore().await.is_none());
+
+        // The app's list has one migration after the baseline that the
+        // backup has not applied yet.
+        let mut with_a_later_migration: Vec<(i64, Vec<u8>)> = sqlx::migrate!("./migrations-sqlite")
+            .iter()
+            .map(|m| (m.version, m.checksum.to_vec()))
+            .collect();
+        with_a_later_migration.push((BASELINE_MIGRATION_VERSION + 1, vec![1, 2, 3]));
+        let manifest = MigrationManifest::new(with_a_later_migration, BASELINE_MIGRATION_VERSION);
         BackupService::new(db_path.clone(), current.clone())
+            .with_migrations(manifest.clone())
             .stage_restore_from_bytes(&bytes)
             .await
-            .expect("a pre-0013 backup passes the restore validation");
+            .expect("a backup of this version is accepted");
         current.as_sqlite().unwrap().close().await;
-        BackupService::apply_pending_restore_at_startup(&db_path)
+        BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
             .await
             .unwrap()
             .expect("the staged restore is applied");
         let restored = init_db(&db_path).await.unwrap();
-
-        let catalog = PermissionCatalog::empty()
-            .register("equipment.operate", "a", "b")
-            .unwrap();
-        let users = UsersService::new(restored).with_permission_catalog(catalog);
-        let op = users.get_by_username("op").await.unwrap().unwrap();
-        assert!(users.permissions_of(op.id).await.unwrap().is_empty());
-        let operate = PermissionKey::parse("equipment.operate").unwrap();
-        users
-            .set_permissions(op.id, std::slice::from_ref(&operate), None, "owner")
+        let op = UsersService::new(restored)
+            .get_by_username("op")
             .await
             .unwrap();
-        assert!(users
-            .session_permissions(op.id)
-            .await
-            .unwrap()
-            .has(&operate));
+        assert!(op.is_some(), "the restored account is there");
     }
 }

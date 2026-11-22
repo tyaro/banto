@@ -37,12 +37,21 @@ export type Role = 'admin' | 'editor' | 'viewer';
 import type { PermissionEntry, UserPermission } from './authAdmin';
 export type { PermissionEntry, UserPermission } from './authAdmin';
 
+/** Mirrors `admin_template_core::users::UserKind` (`users.kind`). */
+export type UserKind = 'account' | 'builtin';
+
 /** Mirrors `admin_template_core::users::UserSummary` (camelCase on the wire). */
 export interface UserSummary {
 	id: number;
 	username: string;
 	displayName: string;
 	role: Role;
+	/**
+	 * `'builtin'` for the one built-in `admin` row (ADR-0034 §2): read-only, it
+	 * cannot log in, be edited or be deleted (the server refuses either way).
+	 * Decide by this, never by the username.
+	 */
+	kind: UserKind;
 	createdAt: string;
 	/** Optimistic-lock version (Issue #651); send back the one read when the form opened. */
 	version: number;
