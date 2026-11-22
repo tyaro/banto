@@ -266,3 +266,6 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
 
 見送り・保留の項目は [#756](https://github.com/tyaro/banto/issues/756)、実機で未確認の項目は
 [#757](https://github.com/tyaro/banto/issues/757) に集約している。
+
+次のメジャーに入れる下流の要望（#778・#786・#790〜#796・#782・#714・#716）の計画は
+[design/downstream-requests-2026-11-plan.md](design/downstream-requests-2026-11-plan.md) が正。
