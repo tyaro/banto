@@ -52,7 +52,13 @@ jobs:
   # 注意: Rust は matrix なので job ごと飛ばすとチェック名が必須チェック
   # 「Rust (…) (ubuntu-latest)」等と合わなくなる。そのため job は起動して
   # ステップだけ飛ばす。ほかのジョブは skipped（= 成功扱い）でよい。
-  # changes が失敗しても下流は `!cancelled()` で動き、出力が空なので全部走る。
+  # dock-svelte の総当たりテスト（#798）: 出力 `dock` が `false` のときだけ、frontend ジョブの
+  # Test step に `DOCK_EXHAUSTIVE` を渡さず、`packages/dock-svelte` のテストを浅い既定で走らせる
+  # （`packages/dock-svelte/tests/fixtures/exhaustive.ts`）。pull_request・fork でなく、merge commit の
+  # `git diff HEAD^1 HEAD` に `packages/dock-svelte/` が 1 つも無いときだけ false。push（main）・fork・
+  # git の失敗は true（総当たりを全部走らせる）。判定の理由はログに出す。docs / full の判定とは独立。
+  # changes が失敗しても下流は `!cancelled()` で動き、出力が空なので全部走る
+  # （`dock` が空 = `!= 'false'` なので総当たりも全部走る）。
   changes:
     name: Changes (visual baselines only?)
     runs-on: ubuntu-latest
@@ -63,6 +69,7 @@ jobs:
     outputs:
       full: ${{ steps.decide.outputs.full }}
       docs: ${{ steps.decide.outputs.docs }}
+      dock: ${{ steps.dock.outputs.dock }}
     steps:
       # 既定の ref（pull_request では refs/pull/N/merge）= ほかのジョブが検証する
       # merge commit と同じものを取る。
@@ -72,6 +79,25 @@ jobs:
         with:
           fetch-depth: 12
           persist-credentials: false
+
+      # dock-svelte を触る差分か（上のコメントの「総当たりテスト」）。`dock=false` は、同じリポジトリの
+      # pull_request で、merge commit の base からの差分に `packages/dock-svelte/` が無いときだけ。
+      - name: Decide dock-svelte exhaustive tests
+        id: dock
+        env:
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          dock() { echo "dock: $2（$1）"; echo "dock=$2" >> "$GITHUB_OUTPUT"; exit 0; }
+          [ "$EVENT" = pull_request ] || dock "pull_request 以外: $EVENT" true
+          [ "$HEAD_REPO" = "$REPO" ] || dock "fork からの PR" true
+          dfiles=$(git diff --no-renames --name-only HEAD^1 HEAD) || dock "git diff に失敗" true
+          [ -n "$dfiles" ] || dock "差分が空" true
+          if printf '%s\n' "$dfiles" | grep -q '^packages/dock-svelte/'; then
+            dock "dock-svelte を触る差分: 総当たりを全部走らせる" true
+          fi
+          dock "dock-svelte を触らない差分: 総当たりは浅い既定" false
 
       - name: Decide
         id: decide
@@ -221,6 +247,10 @@ jobs:
 
       - name: Test
         if: needs.changes.outputs.docs != 'true'
+        # dock-svelte の総当たり（#798）: dock-svelte を触らない PR だけ浅い既定。changes の
+        # 出力が空（失敗）・push（main）・fork は '1'（全部）。
+        env:
+          DOCK_EXHAUSTIVE: ${{ needs.changes.outputs.dock != 'false' && '1' || '' }}
         run: pnpm --recursive --if-present test
 
       - name: Build
