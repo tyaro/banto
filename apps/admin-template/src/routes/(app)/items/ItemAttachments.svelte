@@ -41,7 +41,16 @@
 		upload: guardUpload(attachmentsClient, live, refused),
 		remove: whileLive(attachmentsClient.remove, live, refused),
 		thumbnailUrl: whileLive(attachmentsClient.thumbnailUrl, live, refused),
-		downloadUrl: whileLive(attachmentsClient.downloadUrl, live, refused)
+		// The fetch can finish after the session changed (and after this panel
+		// went away): the file is not saved then, the object URL is freed.
+		downloadUrl: async (item) => {
+			const url = await whileLive(attachmentsClient.downloadUrl, live, refused)(item);
+			if (!live()) {
+				URL.revokeObjectURL(url);
+				throw new Error(refused());
+			}
+			return url;
+		}
 	};
 </script>
 
