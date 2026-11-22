@@ -25,6 +25,7 @@
 ### Changed
 
 - **ci:** `visual-baselines.yml` を `visual.spec.ts` だけの再生成・確認にし、Rust のビルドをやめ、`commit` の既定を true にした。1 回の dispatch で済む（#798）。
+- **ci:** `visual.spec.ts` のログインとダッシュボードの基準画像を、ほかの画面と同じ対角の 2 組（light-standard と dark-glass）にした。24 枚から 12 枚になり、visual の実行が短くなる（#798）。
 
 ## [7.11.0] - 2026-11-22
 
