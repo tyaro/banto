@@ -80,6 +80,10 @@ export function hasDefaultPlace(defaults: DockNode | null, panelId: string): boo
 	return defaults !== null && pathTo(defaults, panelId) !== null;
 }
 
+/** May a split / tab group made now take the default id `id`: no node of the docked tree has it, and nothing else of the layout (`taken`). */
+const isFree = (docked: DockNode, taken: ReadonlySet<string>, id: string): boolean =>
+	!taken.has(id) && findNode(docked, id) === null;
+
 /** The nearest child of `container` other than `index` that holds a docked pane, with those panes in default order. */
 function nearestDocked(
 	container: Container,
@@ -104,10 +108,11 @@ function joinTabs(
 	index: number,
 	besideId: string,
 	panel: DockPanelNode,
-	makeId: () => string
+	makeId: () => string,
+	taken: ReadonlySet<string>
 ): DockNode {
 	const tree = dockPanelIntoTree(docked, panel, besideId, 'center', () =>
-		findNode(docked, group.id) === null ? group.id : makeId()
+		isFree(docked, taken, group.id) ? group.id : makeId()
 	);
 	const joined = findParent(tree, panel.id);
 	if (joined?.type !== 'tabs') return tree;
@@ -131,7 +136,8 @@ function joinSplit(
 	beside: { index: number; ids: string[] },
 	panel: DockPanelNode,
 	share: number | undefined,
-	makeId: () => string
+	makeId: () => string,
+	taken: ReadonlySet<string>
 ): DockNode {
 	const before = beside.index > index;
 	const anchorId = before ? beside.ids[0] : beside.ids[beside.ids.length - 1];
@@ -149,21 +155,19 @@ function joinSplit(
 		parent?.type === 'split' &&
 		parent.direction === split.direction &&
 		(parent.id === split.id || findNode(defaults, parent.id)?.type !== 'split');
-	const splitId = flatten ? parent.id : findNode(docked, split.id) === null ? split.id : makeId();
+	const splitId = flatten ? parent.id : isFree(docked, taken, split.id) ? split.id : makeId();
 	const region =
 		split.direction === 'row' ? (before ? 'left' : 'right') : before ? 'top' : 'bottom';
 	const tree = splitInsert(docked, target, panel, region, () => splitId, flatten);
-	const taken = usable(share)
-		? share
-		: defaultShare(split, index, new Set(collectPanelIds(docked)));
+	const held = usable(share) ? share : defaultShare(split, index, new Set(collectPanelIds(docked)));
 	const old = flatten && parent?.type === 'split' ? parent.sizes : [1];
 	return replaceNodeById(tree, splitId, (node) => {
 		if (node.type !== 'split') return node;
 		const at = node.children.findIndex((c) => c.id === panel.id);
 		if (at === -1 || node.children.length !== old.length + 1) return node;
 		const total = old.reduce((a, b) => a + b, 0);
-		const rest = old.map((s) => (total > 0 ? s / total : 1 / old.length) * (1 - taken));
-		return { ...node, sizes: [...rest.slice(0, at), taken, ...rest.slice(at)] };
+		const rest = old.map((s) => (total > 0 ? s / total : 1 / old.length) * (1 - held));
+		return { ...node, sizes: [...rest.slice(0, at), held, ...rest.slice(at)] };
 	});
 }
 
@@ -194,14 +198,18 @@ function defaultEdge(path: Step[]): DockEdge | null {
 /**
  * The docked tree with `panel` (not docked now) at its default place (see the top of this file),
  * or `null`: it has none, the caller opens it floating. `docked` is not changed. `makeId` is asked
- * only for a split / tab group whose default id is taken.
+ * only for a split / tab group whose default id is taken: by a node of `docked`, or by anything
+ * else of the layout the tree is part of - `taken`, the ids out of the docked tree (the regions in
+ * the edge bands with their panes, the floating windows). A layout holds an id once
+ * (`validateDockLayout`), so the caller that has a layout gives them (`DockState.shownTree` does).
  */
 export function placeAtDefault(
 	docked: DockNode | null,
 	defaults: DockNode | null,
 	panel: DockPanelNode,
 	share?: number,
-	makeId: () => string = defaultMakeId
+	makeId: () => string = defaultMakeId,
+	taken: ReadonlySet<string> = new Set()
 ): DockNode | null {
 	if (defaults === null) return null;
 	const path = pathTo(defaults, panel.id);
@@ -213,8 +221,8 @@ export function placeAtDefault(
 		const beside = nearestDocked(container, index, present);
 		if (beside === null) continue;
 		return container.type === 'tabs'
-			? joinTabs(docked, container, index, beside.ids[0], panel, makeId)
-			: joinSplit(docked, defaults, container, index, beside, panel, share, makeId);
+			? joinTabs(docked, container, index, beside.ids[0], panel, makeId, taken)
+			: joinSplit(docked, defaults, container, index, beside, panel, share, makeId, taken);
 	}
 	const edge = defaultEdge(path);
 	if (edge === null) return null;

@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { dockShareOf, hasDefaultPlace, placeAtDefault } from '../src/core/defaultPlace';
 import { dockPanelAtEdge, removePanel } from '../src/core/tree';
+import { validateDockLayout } from '../src/core/validate';
 import { createDockState } from '../src/state.svelte';
 import { threePaneDefaultPlaces, threePaneDockLayout } from '../src/threePane';
 import type { DockNode, DockPanelNode, DockSplitNode } from '../src/types';
@@ -324,6 +325,47 @@ describe('DockState: hide and show by the default layout', () => {
 		dock.defaultLayout = null;
 		expect(placement()).toBe('floating');
 		expect(dock.show('left')).toBe('floating');
+	});
+});
+
+// Codex P2 on #863: a tab group in an edge band keeps the default group's id. A group made again
+// in the docked tree must not take it, or the layout holds the id twice and cannot be loaded.
+describe('a default id in use out of the docked tree', () => {
+	it('row[tabs[a, b, c, d], p], the group to its band, a and b hidden and shown: no id twice, the layout loads', () => {
+		const tree = split('s', 'row', [0.6, 0.4], [tabs('t', ['a', 'b', 'c', 'd']), panel('p')]);
+		let n = 0;
+		const dock = createDockState({ version: 2, floating: [], docked: tree }, () => `new-${n++}`);
+		dock.defaultLayout = { version: 2, floating: [], docked: tree };
+		expect(dock.autoHideRegion('t')).toBe(true);
+		dock.dismiss('a');
+		expect(dock.show('a')).toBe('docked');
+		dock.dismiss('b');
+		expect(dock.show('b')).toBe('docked');
+		// c and d are still in the band, in the group `t`; a and b are a group of another id.
+		expect(dock.autoHidden.map((e) => e.node.id)).toEqual(['t']);
+		const made = dock.layout.docked?.type === 'split' ? dock.layout.docked.children[0] : null;
+		expect(made).toMatchObject({ type: 'tabs', children: [{ id: 'a' }, { id: 'b' }] });
+		expect(made?.id).not.toBe('t');
+		const checked = validateDockLayout(JSON.parse(dock.serialize()));
+		expect(checked.ok ? [] : checked.issues).toEqual([]);
+		expect(createDockState().hydrate(dock.serialize())).toBe(true);
+	});
+
+	it('`placeAtDefault` takes the ids given as in use: a default split id that is a floating window`s', () => {
+		const made = placeAtDefault(
+			panel('center'),
+			three(),
+			panel('left'),
+			0.2,
+			() => 'new',
+			new Set(['root'])
+		);
+		expect(made).toMatchObject({ type: 'split', id: 'new' });
+		expect(
+			placeAtDefault(panel('center'), three(), panel('left'), 0.2, never, new Set(['x']))
+		).toMatchObject({
+			id: 'root'
+		});
 	});
 });
 

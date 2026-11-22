@@ -1066,12 +1066,20 @@ export class DockState {
 		const win = this.layout.floating.find((w) => w.id === id);
 		if (!win || win.open || win.dockShare === undefined) return null;
 		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
+		// The ids out of the docked tree: a split / tab group made again does not take one of them
+		// (a group in an edge band keeps the default group's id; Codex P2 on #863).
+		const taken = new Set<string>(this.layout.floating.map((w) => w.id));
+		for (const entry of this.layout.autoHidden ?? []) {
+			taken.add(entry.node.id);
+			if (entry.node.type === 'tabs') for (const tab of entry.node.children) taken.add(tab.id);
+		}
 		return placeAtDefault(
 			this.layout.docked,
 			this.defaultLayout?.docked ?? null,
 			panel,
 			win.dockShare,
-			makeId
+			makeId,
+			taken
 		);
 	}
 
