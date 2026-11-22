@@ -229,6 +229,18 @@ describe('showing a pane changes nothing else (#782 PR5 property 2)', () => {
 		});
 	});
 
+	// Nor that a pane moved to an outer edge stays the outermost (PR1's property 3, kept for floats
+	// below): a pane whose default place is outside of it comes back outside of it.
+	it('pinned: row[a, column[b, c]], a hidden, b moved to the left edge: a is shown to the left of b and c', () => {
+		const tree = split('s1', 'row', even(2), [
+			panel('a'),
+			split('s2', 'column', even(2), [panel('b'), panel('c')])
+		]);
+		expect(shapeOf(treeAfter(tree, ['-a', 'b>>left', '+a']))).toEqual({
+			row: ['a', { row: ['b', 'c'] }]
+		});
+	});
+
 	// Was the case of #780 for hide / show: c, moved beside d, stays there - in every order.
 	it('pinned (#780 as hide / show): column[row[a, b, c], d, e], a, b and e hidden, c moved to the right of d', () => {
 		const tree = split('s1', 'column', even(3), [
@@ -279,6 +291,66 @@ describe('a docked pane that leaves the layout (#743, #782 PR5 property 3)', () 
 			params(300)
 		);
 	});
+});
+
+describe('a region in an edge band and hidden panes (#739, #782 PR5 property 4)', () => {
+	const bandRoundTrip = (restoreLast: boolean) =>
+		fc.property(treeRecipe, ops(1, 3), fc.nat({ max: 6 }), (recipe, out, pick) => {
+			const tree = buildTree(recipe);
+			const dock = newDock(tree);
+			const steps = runOps(dock, out, ['hide']);
+			const docked = dockedIds(dock);
+			fc.pre(docked.length >= 2);
+			const id = docked[pick % docked.length];
+			fc.pre(dock.autoHideRegion(id));
+			steps.push(`(${id} to its band)`);
+			const restore = () => {
+				expect(dock.restoreAutoHidden(id), 'restoreAutoHidden').toBe(true);
+				steps.push(`(${id} back from its band)`);
+			};
+			if (!restoreLast) restore();
+			// In the reverse of the order hidden: the sizes come back too.
+			for (const h of hiddenIds(dock).reverse()) {
+				runStep(dock, `+${h}`);
+				steps.push(`+${h}`);
+			}
+			if (restoreLast) restore();
+			expectAllDocked(dock, collectPanelIds(tree), tree, steps);
+			const bad = badSizes(dock.layout.docked);
+			if (bad.length > 0) failCase(tree, steps, `bad sizes ${bad.join(', ')}`);
+			const diff = treeDiff(dock.layout.docked, tree);
+			if (diff) failCase(tree, steps, diff);
+		});
+
+	it('a region auto-hidden to a band and put back, then the hidden panes shown: the tree is as it was', () => {
+		fc.assert(bandRoundTrip(false), params(300));
+	});
+
+	// KNOWN FAILURE (for PR8, the bands on the shadow tree): the hidden panes shown while the region
+	// is in its band. The band's slot is the place the region had when it went there - beside the
+	// panes docked then -, not its default place: the region comes back there, whatever was shown
+	// at its default place meanwhile. Smallest case: the pinned one below.
+	it.fails(
+		'KNOWN FAILURE: the hidden panes shown first, then the region put back from its band',
+		() => {
+			fc.assert(bandRoundTrip(true), params(300));
+		}
+	);
+	it.fails(
+		'KNOWN FAILURE (pinned): row[column[a, b], c], a hidden, b to its band, a shown, b put back',
+		() => {
+			const tree = split('s1', 'row', even(2), [
+				split('s2', 'column', even(2), [panel('a'), panel('b')]),
+				panel('c')
+			]);
+			const dock = runSteps(tree, ['-a']);
+			expect(dock.autoHideRegion('b')).toBe(true);
+			runStep(dock, '+a');
+			expect(dock.restoreAutoHidden('b')).toBe(true);
+			// row[a, b, c]: b goes back beside c (where it was when a was hidden), not below a.
+			expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(tree));
+		}
+	);
 });
 
 describe('saving and loading changes nothing (#782 property 5)', () => {
