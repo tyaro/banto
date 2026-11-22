@@ -391,11 +391,11 @@
 	);
 	setPanelMover(mover);
 
-	// svelte-ignore state_referenced_locally
 	// Number of `replaceLayout` calls in flight (#796): while > 0 no gesture starts, or its late
 	// commit / restore could overwrite the replacement. A count, so one finishing early does not
 	// release the others.
 	let replacing = 0;
+	// svelte-ignore state_referenced_locally
 	const gesture = new GestureOwner(
 		dock,
 		() => hostEl,
