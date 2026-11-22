@@ -12,7 +12,7 @@
     ]
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "pnpm --filter admin-template dev",
@@ -42,7 +42,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.65.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "axe-core": "^4.14.0",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",

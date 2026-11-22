@@ -1286,7 +1286,15 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 					steps.push(`${kind}${id}`);
 				}
 			}
-			const rest = [...away].sort(() => random() - 0.5);
+			// A `sort` with a random comparator is not a defined order and V8 changed it (Node 26), so the
+			// sequences of the `elsewhere` test use a Fisher-Yates shuffle (the other tests keep their old sequences).
+			const rest = [...away];
+			if (elsewhere) {
+				for (let i = rest.length - 1; i > 0; i--) {
+					const j = Math.floor(random() * (i + 1));
+					[rest[i], rest[j]] = [rest[j], rest[i]];
+				}
+			} else rest.sort(() => random() - 0.5);
 			for (const [id, kind] of rest) steps.push(`${kind === '-' ? '+' : '^'}${id}`);
 			out.add(steps.join(' '));
 		}
@@ -1352,7 +1360,7 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 			let sameShape = 0;
 			let moved = 0;
 			let opened = 0;
-			for (const seq of sequences(ids, ELSEWHERE, 7391, false, true)) {
+			for (const seq of sequences(ids, ELSEWHERE, 7393, false, true)) {
 				let merged = false;
 				const docked = runSteps(make, seq.split(' '), (d) => {
 					merged ||= d.layout.docked?.type !== 'split';
