@@ -31,10 +31,18 @@
 	import { usePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
-	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 	import { appShortcuts, COMMAND_PALETTE_SHORTCUT } from '#lib/shortcuts.js';
-	import { IconButton, Menu, MenuGroup, MenuItem, MenuSeparator, StatusBadge } from '@banto/ui';
+	import {
+		IconButton,
+		Menu,
+		MenuGroup,
+		MenuItem,
+		MenuSeparator,
+		narrowViewport,
+		resolveShellNav,
+		StatusBadge
+	} from '@banto/ui';
 	import ShellMenubar from './ShellMenubar.svelte';
 	import {
 		Menu as MenuIcon,
@@ -69,12 +77,11 @@
 	// layout) and while the bar is insufficient. The brand stays while
 	// insufficient - swapping it for the narrower button would hand the nav
 	// the width back and flip the state again.
-	const menubar = $derived(settings.navLayout === 'menubar');
-	const showBar = $derived(menubar && !narrowViewport.current);
-	const showDrawerButton = $derived(
-		settings.navLayout !== 'launcher' &&
-			(narrowViewport.current || (showBar && menubarInsufficient))
+	const shellNav = $derived(
+		resolveShellNav(settings.navLayout, narrowViewport.current, menubarInsufficient)
 	);
+	const showBar = $derived(shellNav.showBar);
+	const showDrawerButton = $derived(shellNav.showDrawerButton);
 
 	let barHost: HTMLElement | undefined = $state();
 	const pageMenuHost = usePageViewMenuHost();

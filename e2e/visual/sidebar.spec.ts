@@ -88,6 +88,37 @@ test.describe('sidebar toggle', () => {
 		await expect(aside).not.toHaveClass(/overlay-open/);
 	});
 
+	test('<=900px: a closed drawer is inert, and focus inside it moves to the header button', async ({
+		page
+	}) => {
+		await page.setViewportSize({ width: 768, height: 900 });
+		await gotoDashboard(page);
+		const aside = page.locator('#app-sidebar');
+		const header = page.locator('header');
+		// Closed: its links are off screen and out of the tab order.
+		await expect(aside).toHaveJSProperty('inert', true);
+
+		// Open, focus a link, widen (the drawer closes), narrow again: the same
+		// <aside> stays mounted off screen and must not keep a focusable link.
+		await header.getByRole('button', { name: 'サイドバーを開く' }).click();
+		await expect(aside).toHaveJSProperty('inert', false);
+		await aside.getByRole('link').first().focus();
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await expect(aside).toHaveJSProperty('inert', false);
+		await page.setViewportSize({ width: 768, height: 900 });
+		await expect(aside).toHaveJSProperty('inert', true);
+		await expect(aside).not.toHaveClass(/overlay-open/);
+		await expect(page.locator('#app-sidebar a:focus')).toHaveCount(0);
+
+		// Esc with focus on a link: focus goes to the header's button, not <body>.
+		const open = header.getByRole('button', { name: 'サイドバーを開く' });
+		await open.click();
+		await aside.getByRole('link').first().focus();
+		await page.keyboard.press('Escape');
+		await expect(aside).toHaveJSProperty('inert', true);
+		await expect(header.getByRole('button', { name: 'サイドバーを開く' })).toBeFocused();
+	});
+
 	test('keyboard: the fold button is the first focusable control of the sidebar', async ({
 		page
 	}) => {

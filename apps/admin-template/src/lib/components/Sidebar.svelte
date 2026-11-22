@@ -10,6 +10,7 @@
 	 * new global store) and only matters at <=900px, where this component
 	 * renders as a fixed slide-in drawer instead of the flex column.
 	 */
+	import { tick } from 'svelte';
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
 	import {
@@ -25,8 +26,7 @@
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
-	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
-	import { IconButton } from '@banto/ui';
+	import { IconButton, narrowViewport } from '@banto/ui';
 	import { PanelLeftClose, PanelLeftOpen } from '@lucide/svelte';
 
 	interface Props {
@@ -44,6 +44,26 @@
 
 	const folded = $derived(settings.sidebarCollapsed && !drawer);
 	const showFold = $derived(!narrowViewport.current && !drawer);
+
+	// A drawer that is closed (<=900px, or the menu bar layout's stand-in) only
+	// slides off screen: its links must leave the tab order and the a11y tree.
+	// Focus inside it when it closes (Escape, a resize, a link) moves to the
+	// header's drawer button instead of falling to <body>.
+	const drawerClosed = $derived((drawer || narrowViewport.current) && !overlayOpen);
+	let asideEl: HTMLElement | undefined = $state();
+	let wasClosed: boolean | undefined;
+	$effect.pre(() => {
+		const closed = drawerClosed;
+		const previous = wasClosed;
+		wasClosed = closed;
+		if (previous === undefined || previous || !closed) return;
+		if (asideEl?.contains(document.activeElement) !== true) return;
+		void tick().then(() => {
+			const active = document.activeElement;
+			if (active !== null && active !== document.body && !asideEl?.contains(active)) return;
+			document.querySelector<HTMLElement>('header .drawer-button button')?.focus();
+		});
+	});
 
 	function isActive(path: AppPath): boolean {
 		return isPathActive(path, page.url.pathname);
@@ -89,6 +109,8 @@
 
 <aside
 	id="app-sidebar"
+	bind:this={asideEl}
+	inert={drawerClosed}
 	class:collapsed={folded}
 	class:overlay-open={overlayOpen}
 	class:compact={settings.kiosk}

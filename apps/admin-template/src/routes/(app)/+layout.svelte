@@ -15,7 +15,7 @@
 	import Sidebar from '#lib/components/Sidebar.svelte';
 	import ShellLauncher from '#lib/components/ShellLauncher.svelte';
 	import { settings } from '#lib/settings.svelte.js';
-	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
+	import { createShellDrawer, narrowViewport, resolveShellNav } from '@banto/ui';
 	import { providePageViewMenuHost } from '#lib/pageViewMenu.svelte.js';
 	import CommandPalette from '#lib/components/CommandPalette.svelte';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
@@ -197,15 +197,39 @@
 	// <=900px sidebar overlay (visual-refresh-design.md §8.1). Local state
 	// here (not a new global store, per the design doc) - passed down to
 	// Sidebar/Header as props. Distinct from `settings.sidebarCollapsed`
-	// (the >900px fold), which is a persisted, unrelated setting.
-	let overlayOpen = $state(false);
+	// (the >900px fold), which is a persisted, unrelated setting. The state
+	// (@banto/ui, #850) closes itself when the drawer is gone: the dock
+	// layout (no hamburger), the menu bar back (wider than 900px, or the
+	// room came back), a resize.
+	const launcher = $derived(settings.navLayout === 'launcher');
+	const menubar = $derived(settings.navLayout === 'menubar');
+	// Menu bar layout (nav-menubar-plan.md §4.9, D10-a): above 900px the
+	// header carries the nav and there is no sidebar; at <=900px the sidebar
+	// is the drawer, as in the sidebar layout. Above 900px the drawer also
+	// stands in while the header's main nav is too narrow even for "more"
+	// (200% text, long translations): `menubarInsufficient`, reported by
+	// HeaderNav through Header.svelte. The header leaves the bar at <=900px
+	// (and on a layout switch), so the flag is dropped there - a fresh bar
+	// measures from scratch and reports again.
+	let menubarInsufficient = $state(false);
+	$effect(() => {
+		if (!menubar || narrowViewport.current) menubarInsufficient = false;
+	});
+	const shellNav = $derived(
+		resolveShellNav(settings.navLayout, narrowViewport.current, menubarInsufficient)
+	);
+	// Above 900px Sidebar.svelte is a column, not a drawer: this is the menu
+	// bar layout's fallback while the bar does not fit.
+	const menubarWideDrawer = $derived(shellNav.drawerMode && !narrowViewport.current);
+	const drawer = createShellDrawer({ isDrawer: () => shellNav.drawerMode });
+	const overlayOpen = $derived(drawer.open);
 
 	function closeOverlay(): void {
-		overlayOpen = false;
+		drawer.close();
 	}
 
 	function toggleOverlay(): void {
-		overlayOpen = !overlayOpen;
+		drawer.toggle();
 	}
 
 	// Close on navigation success (design.md §8.1). `page.url.pathname` is
@@ -218,39 +242,11 @@
 		closeOverlay();
 	});
 
-	// Dock layout (nav-launcher-plan.md §4.1): the launcher replaces the
-	// sidebar, so there is no <=900px drawer to keep open (the header hides
-	// its hamburger) - close one left open when the layout is switched.
-	const launcher = $derived(settings.navLayout === 'launcher');
-	$effect(() => {
-		if (launcher) closeOverlay();
-	});
-
 	const launcherPosition = $derived(settings.launcherPosition);
 
-	// Menu bar layout (nav-menubar-plan.md §4.9, D10-a): above 900px the
-	// header carries the nav and there is no sidebar; at <=900px the sidebar
-	// is the drawer, as in the sidebar layout. Above 900px the drawer also
-	// stands in while the header's main nav is too narrow even for "more"
-	// (200% text, long translations): `menubarInsufficient`, reported by
-	// HeaderNav through Header.svelte. The header leaves the bar at <=900px
-	// (and on a layout switch), so the flag is dropped there - a fresh bar
-	// measures from scratch and reports again.
-	const menubar = $derived(settings.navLayout === 'menubar');
-	let menubarInsufficient = $state(false);
-	$effect(() => {
-		if (!menubar || narrowViewport.current) menubarInsufficient = false;
-	});
-	const menubarWideDrawer = $derived(menubar && !narrowViewport.current && menubarInsufficient);
-	const showSidebar = $derived(!menubar || narrowViewport.current || menubarInsufficient);
 	// #663 ①-C: a page's View menu goes into the bar exactly while the bar is
 	// on screen (no sidebar/drawer); otherwise the page shows its own button.
-	providePageViewMenuHost(() => !showSidebar);
-	// The drawer is gone once the bar is back (wider than 900px, or the room
-	// came back): close one left open, like the sidebar layout's resize.
-	$effect(() => {
-		if (menubar && !showSidebar) closeOverlay();
-	});
+	providePageViewMenuHost(() => shellNav.showBar && !shellNav.showSidebar);
 
 	// The toast stack is a sibling of this shell (routes/+layout.svelte), so a
 	// variable set here would not reach it: while the dock is shown, root
@@ -314,7 +310,7 @@
 >
 	{#if launcher}
 		<ShellLauncher />
-	{:else if showSidebar}
+	{:else if shellNav.showSidebar}
 		{#if menubarWideDrawer}
 			<!-- Above 900px Sidebar.svelte is a column, not a drawer: this
 			     wrapper slides it in like its <=900px drawer (§4.9). Hidden
