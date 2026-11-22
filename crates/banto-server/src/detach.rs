@@ -88,11 +88,24 @@ impl WriteBudget {
 
     /// Takes one place, unless [`MAX_DETACHED_WRITES`] are taken.
     fn try_take(&self) -> bool {
-        self.0
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |running| {
-                (running < MAX_DETACHED_WRITES).then_some(running + 1)
-            })
-            .is_ok()
+        // A plain compare-and-swap loop: `fetch_update` is deprecated in
+        // favour of `try_update` on newer toolchains, and `try_update` does
+        // not exist on older ones.
+        let mut running = self.0.load(Ordering::SeqCst);
+        loop {
+            if running >= MAX_DETACHED_WRITES {
+                return false;
+            }
+            match self.0.compare_exchange_weak(
+                running,
+                running + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return true,
+                Err(current) => running = current,
+            }
+        }
     }
 
     fn give_back(&self) {
