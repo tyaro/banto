@@ -6496,7 +6496,7 @@ async fn adr0034_the_session_and_its_seq_are_one_snapshot_of_the_slot() {
     let (state, _op) = permission_app_state().await;
     let (_, seq_before) = read_slot(&state);
 
-    let (session, settled_seq) = current_session_at(&state)
+    let (session, settled_seq) = current_session_at(&state, OnStale::Adopt)
         .await
         .expect("session")
         .expect("the admin's account session");
@@ -6636,4 +6636,70 @@ async fn desktop_login_as(state: &AppState, username: &str) {
         .unwrap()
         .expect("account");
     state.set_session_for_test(Some(DesktopSession::Account(user)));
+}
+
+/// Cross-review of PR #862 (third round): a slot re-bound during a guard's
+/// FIRST store read is "no session" for the guard even when the slot holds
+/// the same binding again - the mode turned off and on (`local` anew), or
+/// the same account signed in again. The ordinary commands and the screen
+/// keep adopting the slot's session ([`OnStale::Adopt`]).
+#[tokio::test]
+async fn adr0034_a_guard_refuses_a_session_established_during_its_first_read() {
+    // `local`, then the mode off and on again while the read is in flight.
+    let state = admin_app_state().await;
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+    let (cached, seq_at_entry) = read_slot(&state);
+    let cached = cached.expect("local");
+    let fresh = read_session_source(&state, &cached).await.unwrap();
+    auth_config_apply_body(&state, false, "admin")
+        .await
+        .expect("apply false");
+    desktop_login_as(&state, "manager").await;
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true again");
+    let settled = settle_session(&state, &cached, fresh.clone(), seq_at_entry);
+    assert!(
+        matches!(
+            settled,
+            Settled::Stale {
+                valid_now: Some(DesktopSession::AuthDisabledLocal(_)),
+                ..
+            }
+        ),
+        "the same binding again: {settled:?}"
+    );
+    assert!(settled_pair(settled, OnStale::Refuse).is_none());
+    let adopted = settle_session(&state, &cached, fresh, seq_at_entry);
+    assert!(settled_pair(adopted, OnStale::Adopt).is_some());
+
+    // The same account, signed in again while the read is in flight.
+    let state = admin_app_state().await;
+    let (cached, seq_at_entry) = read_slot(&state);
+    let cached = cached.expect("the admin's account session");
+    let fresh = read_session_source(&state, &cached).await.unwrap();
+    state.set_session_for_test(None);
+    desktop_login_as(&state, "manager").await;
+    let settled = settle_session(&state, &cached, fresh.clone(), seq_at_entry);
+    assert!(
+        matches!(
+            settled,
+            Settled::Stale {
+                valid_now: Some(DesktopSession::Account(_)),
+                ..
+            }
+        ),
+        "the same binding again: {settled:?}"
+    );
+    assert!(settled_pair(settled, OnStale::Refuse).is_none());
+    let adopted = settle_session(&state, &cached, fresh, seq_at_entry);
+    assert!(settled_pair(adopted, OnStale::Adopt).is_some());
+
+    // Undisturbed, the guard's settle is the ordinary one.
+    assert!(current_session_at(&state, OnStale::Refuse)
+        .await
+        .unwrap()
+        .is_some());
 }

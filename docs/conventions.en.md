@@ -548,7 +548,8 @@ without a runtime guard are **upheld by reviewing every call site**.
     (`require_permission`, `session_permissions`). It takes the settled
     session together with the `seq` from the settle's own lock (never a later
     `read_slot`) and compares that `seq` after the permissions read. If it
-    moved, the guard **ends as unauthenticated** (it does not authorize again
+    moved - during its first store read as well - the guard **ends as
+    unauthenticated** (it does not authorize again
     from the slot as it is now: a request that had not passed its guard would
     run with another subject's permissions and audit name). Only
     `auth_identity`, which is for display, may read again

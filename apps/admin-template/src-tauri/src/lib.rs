@@ -515,9 +515,11 @@ async fn read_session_permissions(
 /// the slot as it is now (cross-review of PR #862): the slot may hold a
 /// different subject by then, and a command that had not passed its guard
 /// yet would run - and be audited - as a subject it was never sent by. The
-/// client sends a new request. (The first settle cannot adopt another
-/// subject either: [`Settled::Stale`]'s `valid_now` is the slot's session
-/// only when it has the binding this command started from.)
+/// client sends a new request. The first settle is held to the same rule
+/// ([`OnStale::Refuse`]): a slot re-bound during the store read is "no
+/// session" for a guard even when the slot's session has the same binding
+/// again (the same account signed in anew, the mode turned off and on) - it
+/// is a new session, not the one this command was sent in.
 ///
 /// The guards go through here: [`require_permission`] and
 /// [`session_permissions`]. What the screen shows is
@@ -526,7 +528,7 @@ async fn read_session_permissions(
 async fn authorized_session(
     state: &AppState,
 ) -> Result<Option<(DesktopSession, SessionPermissions)>, BantoError> {
-    let Some((session, settled_seq)) = current_session_at(state).await? else {
+    let Some((session, settled_seq)) = current_session_at(state, OnStale::Refuse).await? else {
         return Ok(None);
     };
     let permissions = permissions_of_session(state, &session).await?;
@@ -545,7 +547,7 @@ async fn displayed_session(
     state: &AppState,
 ) -> Result<Option<(DesktopSession, SessionPermissions)>, BantoError> {
     for _ in 0..2 {
-        let Some((session, settled_seq)) = current_session_at(state).await? else {
+        let Some((session, settled_seq)) = current_session_at(state, OnStale::Adopt).await? else {
             return Ok(None);
         };
         let permissions = permissions_of_session(state, &session).await?;
@@ -625,7 +627,37 @@ impl DesktopSession {
 /// same answer the pre-#260 `settle_session` gave in that case, so ordinary
 /// commands keep their behavior; only `auth_resolve` reports the staleness.
 async fn current_session(state: &AppState) -> Result<Option<DesktopSession>, BantoError> {
-    Ok(current_session_at(state).await?.map(|(session, _)| session))
+    Ok(current_session_at(state, OnStale::Adopt)
+        .await?
+        .map(|(session, _)| session))
+}
+
+/// What a check does when the slot was re-bound while its store read was in
+/// flight ([`Settled::Stale`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OnStale {
+    /// Take the slot's CURRENT session when its binding is what the read
+    /// reports (the pre-#260 answer the ordinary commands keep, and what the
+    /// screen is shown).
+    Adopt,
+    /// "No session": the permission guards ([`authorized_session`]). The
+    /// slot's session was established after this command started, so the
+    /// command is not authorized as it (cross-review of PR #862).
+    Refuse,
+}
+
+/// [`settle_session`]'s outcome as the session a check goes on with and the
+/// slot's `seq` that session was read at (one lock, one snapshot).
+fn settled_pair(settled: Settled, on_stale: OnStale) -> Option<(DesktopSession, u64)> {
+    match settled {
+        Settled::Settled {
+            session, seq_after, ..
+        } => session.map(|session| (session, seq_after)),
+        Settled::Stale { valid_now, seq_now } => match on_stale {
+            OnStale::Adopt => valid_now.map(|session| (session, seq_now)),
+            OnStale::Refuse => None,
+        },
+    }
 }
 
 /// [`current_session`] together with the slot's `seq` the answer is about:
@@ -633,18 +665,19 @@ async fn current_session(state: &AppState) -> Result<Option<DesktopSession>, Ban
 /// snapshot of the slot (the session IS what the slot held at that `seq`).
 /// A caller that awaits afterwards compares this `seq` with the slot's to
 /// learn whether its session is still the slot's ([`authorized_session`]).
-async fn current_session_at(state: &AppState) -> Result<Option<(DesktopSession, u64)>, BantoError> {
+async fn current_session_at(
+    state: &AppState,
+    on_stale: OnStale,
+) -> Result<Option<(DesktopSession, u64)>, BantoError> {
     let (cached, seq_at_entry) = read_slot(state);
     let Some(cached) = cached else {
         return Ok(None);
     };
     let fresh = read_session_source(state, &cached).await?;
-    Ok(match settle_session(state, &cached, fresh, seq_at_entry) {
-        Settled::Settled {
-            session, seq_after, ..
-        } => session.map(|session| (session, seq_after)),
-        Settled::Stale { valid_now, seq_now } => valid_now.map(|session| (session, seq_now)),
-    })
+    Ok(settled_pair(
+        settle_session(state, &cached, fresh, seq_at_entry),
+        on_stale,
+    ))
 }
 
 /// What the store says NOW about the session `cached` stands for: the

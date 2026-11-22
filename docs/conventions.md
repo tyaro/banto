@@ -467,7 +467,7 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
     （`install_account_unless_auth_disabled`・`settle_session`。S-94・S-95・S-99）。セッションと権限を両方読む所は
     `authorized_session` を通す（`require_permission`・`session_permissions`）。確定したセッションと、その確定の
     ロックの中の `seq` を組で受け取り（後から `read_slot` で読まない）、権限の読み取りの後にその `seq` を比べる。
-    動いていたら**未認証で終える**（今のスロットから認可し直さない。まだガードを通っていない要求が、別の主体の
+    動いていたら**未認証で終える**（最初の照合の間に付け替わった場合も同じ。今のスロットから認可し直さない。まだガードを通っていない要求が、別の主体の
     権限と監査の名義で通ってしまう）。画面に出すための `auth_identity` だけは読み直してよく（`displayed_session`）、
     `auth_resolve` は同じ窓を `stale` で返す。
   - **`/api/auth/setup` を開けた配線（`allow_setup = true`）で、`AuthState` をログインなしに切り替えない**
