@@ -8,11 +8,16 @@
 // WAI-ARIA menu button (keys, Esc back to the button) and is closed before any confirm; a locked
 // window does not move; the focus lands on the moved pane's title bar.
 //
+// 浅い既定と DOCK_EXHAUSTIVE=1（#798）: 「float × back の総当たり」は、未設定（手元の既定と、dock-svelte を
+// 触らない PR の CI）では 3 枚の件だけ。4 枚の件は `DOCK_EXHAUSTIVE=1`（dock-svelte を触る PR の CI と
+// main の push）のときだけ（`fixtures/exhaustive.ts`）。
+//
 // jsdom: no layout and no Popover API (the menu is drawn in place); host size stubbed.
 import { cleanup, render } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import DockHostHarness from './DockHostHarness.svelte';
+import { EXHAUSTIVE } from './fixtures/exhaustive';
 import type { DockPanelChange } from '../src/core/lifecycle';
 import type { DockCapabilities } from '../src/core/policy';
 import { collectPanelIds, findParent } from '../src/core/tree';
@@ -801,10 +806,16 @@ describe('"back" for every float order x every back order (up to every pane of t
 	// 3 panes: every layout, 2 and all 3 floated. 4 panes: the layouts of #720, 2-3 floated.
 	const cases: [string[], string[]][] = [
 		[['a', 'b', 'c'], Object.keys(layouts)],
-		[
-			['a', 'b', 'c', 'd'],
-			['tabs beside p', 'row alone', 'column alone']
-		]
+		// 浅い既定（#798）: 4 枚の件は DOCK_EXHAUSTIVE=1 のときだけ（同じ性質は state の側
+		// `panel-visibility-exhaustive-*.test.ts` が 4 枚以上も見ている）。
+		...(EXHAUSTIVE
+			? [
+					[
+						['a', 'b', 'c', 'd'],
+						['tabs beside p', 'row alone', 'column alone']
+					] as [string[], string[]]
+				]
+			: [])
 	];
 	for (const [ids, kinds] of cases) {
 		for (const kind of kinds) {

@@ -13,6 +13,9 @@ import { defineConfig } from 'vite';
 export default defineConfig({
 	plugins: [svelte(), svelteTesting()],
 	test: {
-		environment: 'node'
+		environment: 'node',
+		// 総当たりのファイルが何本も並列に走る（`DOCK_EXHAUSTIVE=1`, #798）と、性質テストの 1 件が
+		// 既定の 5 秒に近づく（手元で 3.9 秒を測った）。遅い CI で落ちないよう余裕を持たせる。
+		testTimeout: 20_000
 	}
 });

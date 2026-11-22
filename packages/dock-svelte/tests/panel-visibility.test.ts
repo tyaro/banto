@@ -1,3 +1,5 @@
+// 総当たりの部分（隠す順 × 戻す順のすべて、手順の全列挙など）は `panel-visibility-exhaustive-*.test.ts`
+// に分けた（#798）。道具は `fixtures/visibility-layouts.ts`。ここには事例と短い性質を残す。
 // The remembered docked place and the View-menu API (#663 ①-A): a docked pane
 // that is hidden / closed remembers where it was (`DockState.dismiss`,
 // `core/slot.ts`) and `show` puts it back there (tab group / split, with its
@@ -6,31 +8,25 @@
 // `panels` lists every pane in a stable order with visible flags.
 import { describe, expect, it, vi } from 'vitest';
 import { PanelLifecycle, type DockPanelChange } from '../src/core/lifecycle';
-import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
 import { collectPanelIds, findNode } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import { createDockState, type DockState } from '../src/state.svelte';
 import type { DockLayout, DockNode, DockSplitNode, DockTabGroupNode } from '../src/types';
+import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
+import { enumerateSequences, simRun } from './fixtures/visibility-sim';
 import {
-	captureDockSlot as mainCapture,
-	restoreDockSlot as mainRestore
-} from './fixtures/slot-main';
-import {
-	enumerateSequences,
-	keyOf,
-	simDismiss,
-	simRun,
-	simShow,
-	type Sim,
-	type SlotImpl
-} from './fixtures/visibility-sim';
+	L,
+	counterMakeId,
+	mainSlot,
+	mainSplit,
+	nested,
+	nowSlot,
+	panel,
+	runSteps,
+	shapeOf,
+	splitNode
+} from './fixtures/visibility-layouts';
 
-function counterMakeId(): () => string {
-	let n = 0;
-	return () => `gen-${n++}`;
-}
-
-const panel = (id: string) => ({ type: 'panel' as const, id, title: id.toUpperCase() });
 const winOf = (dock: DockState, id: string) => dock.layout.floating.find((w) => w.id === id);
 
 /** split s (row): [tabs t [x, y, z] (0.6), p (0.4)] + floating f */
@@ -701,124 +697,9 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 	});
 });
 
-// #720 review (3 回目の同種の指摘): 同じタブの組・同じ split から何枚隠しても、どの順で
-// 戻しても、全部戻せば元の並びになる。途中の並びは問わない。3〜5 枚から 2〜3 枚を選び、
-// 隠す順 × 戻す順のすべてを総当たりで確かめる（タブの組と、split の向き両方）。
-// 1 枚は残す: 全部を隠すと最後の 1 枚は `root` の slot になり、先に戻すものの手がかりが無い。
-/**
- * The tree's shape (#721): kind, direction and child ids - not generated ids of splits / groups,
- * sizes or the active tab. A tab put back as a split's sibling does not match a tab group.
- */
-const shapeOf = (node: DockNode | null): unknown =>
-	node === null
-		? null
-		: node.type === 'panel'
-			? node.id
-			: node.type === 'tabs'
-				? { tabs: node.children.map((c) => c.id) }
-				: { [node.direction]: node.children.map(shapeOf) };
-
-// #721: up to "every pane of the container" (k = n), with and without a neighbour `p` next to the
-// container, and the whole tree's shape compared (not only the order of the panel ids).
-describe('slot memory: every hide order x every show order comes back to the old shape', () => {
-	const permutations = (ids: string[]): string[][] =>
-		ids.length <= 1
-			? [ids]
-			: ids.flatMap((id, i) =>
-					permutations([...ids.slice(0, i), ...ids.slice(i + 1)]).map((rest) => [id, ...rest])
-				);
-	const subsets = (ids: string[], k: number): string[][] =>
-		k === 0
-			? [[]]
-			: ids.flatMap((id, i) => subsets(ids.slice(i + 1), k - 1).map((rest) => [id, ...rest]));
-	const names = ['a', 'b', 'c', 'd', 'e'];
-	const even = (ids: string[]) => ids.map(() => 1 / ids.length);
-	const split = (direction: 'row' | 'column', ids: string[]): DockNode => ({
-		type: 'split',
-		id: 's',
-		direction,
-		sizes: even(ids),
-		children: ids.map(panel)
-	});
-	const tabs = (ids: string[]): DockNode => ({
-		type: 'tabs',
-		id: 't',
-		activeIndex: 0,
-		children: ids.map(panel)
-	});
-	// The container next to `p` in an outer split of the other direction (a split's child never has its direction).
-	const besideP = (inner: DockNode, direction: 'row' | 'column'): DockNode => ({
-		type: 'split',
-		id: 'o',
-		direction,
-		sizes: [0.6, 0.4],
-		children: [inner, panel('p')]
-	});
-	const layouts: Record<string, (ids: string[]) => DockNode> = {
-		'tabs beside p': (ids) => besideP(tabs(ids), 'row'),
-		'tabs alone': (ids) => tabs(ids),
-		'row beside p': (ids) => besideP(split('row', ids), 'column'),
-		'row alone': (ids) => split('row', ids),
-		'column beside p': (ids) => besideP(split('column', ids), 'row'),
-		'column alone': (ids) => split('column', ids)
-	};
-	for (const [kind, make] of Object.entries(layouts)) {
-		for (const n of [2, 3, 4, 5]) {
-			const ids = names.slice(0, n);
-			// Every pane (k = n) up to 4 panes: 5! x 5! runs per case would be too slow.
-			const ks = [2, 3, 4].filter((k) => k <= n && (n <= 4 || k <= 3));
-			for (const k of ks) {
-				for (const hidden of subsets(ids, k)) {
-					// Up to 4! x 4! runs: an explicit timeout for a slow CI runner (2-3 times slower).
-					it(
-						`${kind} [${ids.join(',')}] hide ${hidden.join(',')} (every order x every order)`,
-						{ timeout: 60_000 },
-						() => {
-							const want = JSON.stringify(shapeOf(make(ids)));
-							const failures: string[] = [];
-							for (const hideOrder of permutations(hidden)) {
-								for (const showOrder of permutations(hidden)) {
-									const dock = createDockState(
-										{ version: 2, floating: [], docked: make(ids) },
-										counterMakeId()
-									);
-									for (const id of hideOrder) dock.dismiss(id);
-									for (const id of showOrder) dock.show(id);
-									const got = JSON.stringify(shapeOf(dock.layout.docked));
-									if (got !== want) failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
-								}
-							}
-							expect(failures).toEqual([]);
-						}
-					);
-				}
-			}
-		}
-	}
-});
-
 // Codex P2 on #725: the surviving child of a split that is gone is itself a split. One pane of
 // that child is not "the whole child", so it keeps its slot in the child (not the gone split's).
 describe('slot memory: the surviving child of a gone split is a split', () => {
-	const even = (n: number) => Array.from({ length: n }, () => 1 / n);
-	const nested = (
-		outer: 'row' | 'column',
-		inner: string[],
-		rest: string[],
-		innerFirst = true,
-		sameDirection = false
-	): DockNode => {
-		const innerNode: DockNode = {
-			type: 'split',
-			id: 'in',
-			direction: sameDirection ? outer : outer === 'row' ? 'column' : 'row',
-			sizes: even(inner.length),
-			children: inner.map(panel)
-		};
-		const children = innerFirst ? [innerNode, ...rest.map(panel)] : [...rest.map(panel), innerNode];
-		return { type: 'split', id: 'out', direction: outer, sizes: even(children.length), children };
-	};
-
 	it('row[row[a,b], p]: hide a and b, show a then b -> the inner row again (not row[a,b,p])', () => {
 		const make = () => nested('row', ['a', 'b'], ['p'], true, true);
 		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
@@ -838,66 +719,6 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 		dock.show('a');
 		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 	});
-
-	const permutations = (ids: string[]): string[][] =>
-		ids.length <= 1
-			? [ids]
-			: ids.flatMap((id, i) =>
-					permutations([...ids.slice(0, i), ...ids.slice(i + 1)]).map((rest) => [id, ...rest])
-				);
-	const subsets = (ids: string[], k: number): string[][] =>
-		k === 0
-			? [[]]
-			: ids.flatMap((id, i) => subsets(ids.slice(i + 1), k - 1).map((rest) => [id, ...rest]));
-	const layouts: Record<string, () => DockNode> = {
-		'row[column[a,b,c], d]': () => nested('row', ['a', 'b', 'c'], ['d']),
-		'row[d, column[a,b,c]]': () => nested('row', ['a', 'b', 'c'], ['d'], false),
-		'column[row[a,b], c]': () => nested('column', ['a', 'b'], ['c']),
-		'column[c, row[a,b]]': () => nested('column', ['a', 'b'], ['c'], false),
-		// The same direction inside (an edge dock wraps the root even then; cross-review P2 on #725).
-		'row[row[a,b], p]': () => nested('row', ['a', 'b'], ['p'], true, true),
-		'row[p, row[a,b,c]]': () => nested('row', ['a', 'b', 'c'], ['p'], false, true),
-		'column[column[a,b,c], p]': () => nested('column', ['a', 'b', 'c'], ['p'], true, true),
-		// #727: two outer siblings (`c` came back around the anchor `b`, not around `row[a,b]`).
-		'column[row[a,b], c, d]': () => nested('column', ['a', 'b'], ['c', 'd']),
-		'column[c, d, row[a,b]]': () => nested('column', ['a', 'b'], ['c', 'd'], false),
-		// Codex P2 on #732: four splits deep (`L` below; the describe body runs after the module).
-		'column[row[a,column[row[b,c],d]],e]': () => L['column[row[a,column[row[b,c],d]],e]'](),
-		// Codex P2 on #732 (the second one): tab groups inside a split inside a split, five panes
-		// (every pane too). Six and seven: the walk with merged states below.
-		'column[tabs[a,b],row[c,tabs[d,e]]]': () => L['column[tabs[a,b],row[c,tabs[d,e]]]'](),
-		'row[a,column[tabs[b,c],tabs[d,e]]]': () => L['row[a,column[tabs[b,c],tabs[d,e]]]']()
-	};
-	for (const [name, make] of Object.entries(layouts)) {
-		const ids = collectPanelIds(make());
-		// #727: every pane too (k = n), and every hide order (an inner pane before the outer sibling).
-		for (let k = 2; k <= ids.length; k++) {
-			for (const hidden of subsets(ids, k)) {
-				// Up to 5! x 5! runs (7-9 s on CI): an explicit timeout, as for the walks below.
-				it(
-					`${name} hide ${hidden.join(',')} (every order x every order)`,
-					{ timeout: 60_000 },
-					() => {
-						const want = JSON.stringify(shapeOf(make()));
-						const failures: string[] = [];
-						for (const hideOrder of permutations(hidden)) {
-							for (const showOrder of permutations(hidden)) {
-								const dock = createDockState(
-									{ version: 2, floating: [], docked: make() },
-									counterMakeId()
-								);
-								for (const id of hideOrder) dock.dismiss(id);
-								for (const id of showOrder) dock.show(id);
-								const got = JSON.stringify(shapeOf(dock.layout.docked));
-								if (got !== want) failures.push(`hide ${hideOrder} show ${showOrder} -> ${got}`);
-							}
-						}
-						expect(failures).toEqual([]);
-					}
-				);
-			}
-		}
-	}
 });
 
 // Codex P2 on #725 (the last tab recorded as a `tab` slot): the tab group's place in the outer
@@ -951,188 +772,6 @@ describe('slot memory: a hidden container still holds its place in the outer spl
 		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 	});
 });
-
-// The layouts of the checks below: split / tab group ids fixed, sizes even.
-const evenSizes = (n: number) => Array.from({ length: n }, () => 1 / n);
-const splitNode = (id: string, direction: 'row' | 'column', children: DockNode[]): DockNode => ({
-	type: 'split',
-	id,
-	direction,
-	sizes: evenSizes(children.length),
-	children
-});
-const tabsNode = (id: string, ids: string[]): DockNode => ({
-	type: 'tabs',
-	id,
-	activeIndex: 0,
-	children: ids.map(panel)
-});
-/**
- * `-x` hides x, `+x` shows it, `~x` floats it (`undockPanel`, #734), `^x` puts it back where it
- * was (`dockAtSlot` with its `homeSlot`, the panel menu's "back"), with `createDockState`.
- */
-const runSteps = (make: () => DockNode, steps: string[]): DockState => {
-	const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
-	for (const step of steps) {
-		const id = step.slice(1);
-		if (step[0] === '-') dock.dismiss(id);
-		else if (step[0] === '+') dock.show(id);
-		else if (step[0] === '~') dock.undockPanel(id);
-		else {
-			const slot = dock.homeSlot(id);
-			if (slot) dock.dockAtSlot(id, slot);
-		}
-	}
-	return dock;
-};
-const mainSlot: SlotImpl = { capture: mainCapture, restore: mainRestore };
-const nowSlot: SlotImpl = { capture: captureDockSlot, restore: restoreDockSlot };
-
-const L = {
-	'row[a,tabs[b,c],column[d,e]]': () =>
-		splitNode('s', 'row', [
-			panel('a'),
-			tabsNode('t', ['b', 'c']),
-			splitNode('in', 'column', [panel('d'), panel('e')])
-		]),
-	'row[a,column[b,c],d]': () =>
-		splitNode('s', 'row', [
-			panel('a'),
-			splitNode('in', 'column', [panel('b'), panel('c')]),
-			panel('d')
-		]),
-	'row[tabs[a,b],c,d]': () =>
-		splitNode('s', 'row', [tabsNode('t', ['a', 'b']), panel('c'), panel('d')]),
-	'row[row[a,b],p]': () =>
-		splitNode('s', 'row', [splitNode('in', 'row', [panel('a'), panel('b')]), panel('p')]),
-	'column[a,row[b,c],d]': () =>
-		splitNode('s', 'column', [
-			panel('a'),
-			splitNode('in', 'row', [panel('b'), panel('c')]),
-			panel('d')
-		]),
-	'row[a,b,c,d]': () => splitNode('s', 'row', ['a', 'b', 'c', 'd'].map(panel)),
-	'row[column[a,b],c,d]': () =>
-		splitNode('s', 'row', [
-			splitNode('in', 'column', [panel('a'), panel('b')]),
-			panel('c'),
-			panel('d')
-		]),
-	'row[column[a,b,c],d]': () =>
-		splitNode('s', 'row', [
-			splitNode('in', 'column', [panel('a'), panel('b'), panel('c')]),
-			panel('d')
-		]),
-	'row[a,column[b,row[c,d]]]': () =>
-		splitNode('s', 'row', [
-			panel('a'),
-			splitNode('in', 'column', [panel('b'), splitNode('in2', 'row', [panel('c'), panel('d')])])
-		]),
-	'row[column[tabs[a,b],c],d]': () =>
-		splitNode('s', 'row', [
-			splitNode('in', 'column', [tabsNode('t', ['a', 'b']), panel('c')]),
-			panel('d')
-		]),
-	'row[row[a,b],column[c,d]]': () =>
-		splitNode('s', 'row', [
-			splitNode('in', 'row', [panel('a'), panel('b')]),
-			splitNode('in2', 'column', [panel('c'), panel('d')])
-		]),
-	'column[tabs[a,b,c],row[d,e]]': () =>
-		splitNode('s', 'column', [
-			tabsNode('t', ['a', 'b', 'c']),
-			splitNode('in', 'row', [panel('d'), panel('e')])
-		]),
-	'row[tabs[a,b],column[c,d],e]': () =>
-		splitNode('s', 'row', [
-			tabsNode('t', ['a', 'b']),
-			splitNode('in', 'column', [panel('c'), panel('d')]),
-			panel('e')
-		]),
-	'column[row[a,tabs[b,c]],row[d,e]]': () =>
-		splitNode('s', 'column', [
-			splitNode('r1', 'row', [panel('a'), tabsNode('t', ['b', 'c'])]),
-			splitNode('r2', 'row', [panel('d'), panel('e')])
-		]),
-	// #727: two outer siblings of an inner split.
-	'column[row[a,b],c,d]': () =>
-		splitNode('s', 'column', [
-			splitNode('in', 'row', [panel('a'), panel('b')]),
-			panel('c'),
-			panel('d')
-		]),
-	// Codex P2 on #732: four splits deep (a slot's `outer` chain was cut here when `MAX_SLOT_DEPTH`
-	// was 4).
-	'column[row[a,column[row[b,c],d]],e]': () =>
-		splitNode('s', 'column', [
-			splitNode('r1', 'row', [
-				panel('a'),
-				splitNode('c1', 'column', [splitNode('r2', 'row', [panel('b'), panel('c')]), panel('d')])
-			]),
-			panel('e')
-		]),
-	// Codex P2 on #732 (the second one): tab groups inside a split inside a split.
-	'row[b,c,column[tabs[d,e],tabs[f,g]]]': () =>
-		splitNode('s', 'row', [
-			panel('b'),
-			panel('c'),
-			splitNode('c1', 'column', [tabsNode('t1', ['d', 'e']), tabsNode('t2', ['f', 'g'])])
-		]),
-	'column[tabs[a,b],row[c,tabs[d,e]]]': () =>
-		splitNode('s', 'column', [
-			tabsNode('t1', ['a', 'b']),
-			splitNode('r', 'row', [panel('c'), tabsNode('t2', ['d', 'e'])])
-		]),
-	'row[a,column[tabs[b,c],tabs[d,e]]]': () =>
-		splitNode('s', 'row', [
-			panel('a'),
-			splitNode('c1', 'column', [tabsNode('t1', ['b', 'c']), tabsNode('t2', ['d', 'e'])])
-		]),
-	'row[a,column[b,row[tabs[c,d],e]]]': () =>
-		splitNode('s', 'row', [
-			panel('a'),
-			splitNode('c1', 'column', [
-				panel('b'),
-				splitNode('r', 'row', [tabsNode('t1', ['c', 'd']), panel('e')])
-			])
-		]),
-	'column[row[a,tabs[b,c]],tabs[d,e],f]': () =>
-		splitNode('s', 'column', [
-			splitNode('r', 'row', [panel('a'), tabsNode('t1', ['b', 'c'])]),
-			tabsNode('t2', ['d', 'e']),
-			panel('f')
-		]),
-	'row[column[tabs[a,b],c],column[d,tabs[e,f]]]': () =>
-		splitNode('s', 'row', [
-			splitNode('c1', 'column', [tabsNode('t1', ['a', 'b']), panel('c')]),
-			splitNode('c2', 'column', [panel('d'), tabsNode('t2', ['e', 'f'])])
-		]),
-	// A tab group five containers deep (its last tab's `outer` chain was cut when `MAX_SLOT_DEPTH`
-	// was 4, and the tab opened floating).
-	'column[row[a,column[row[tabs[b,c],x],d]],e]': () =>
-		splitNode('s', 'column', [
-			splitNode('r1', 'row', [
-				panel('a'),
-				splitNode('c1', 'column', [
-					splitNode('r2', 'row', [tabsNode('t', ['b', 'c']), panel('x')]),
-					panel('d')
-				])
-			]),
-			panel('e')
-		]),
-	// A tab group five containers deep the other way round (cut, too, when the limit was 4).
-	'row[a,column[b,row[c,column[tabs[d,e],f]]]]': () =>
-		splitNode('s', 'row', [
-			panel('a'),
-			splitNode('c1', 'column', [
-				panel('b'),
-				splitNode('r', 'row', [
-					panel('c'),
-					splitNode('c2', 'column', [tabsNode('t', ['d', 'e']), panel('f')])
-				])
-			])
-		])
-} satisfies Record<string, () => DockNode>;
 
 // Codex P2 on #725 (the fifth on the same place) and what walking every sequence (below) found
 // next to it: each comes back to the old shape on main (82b82246), not with the slot of 0f354140.
@@ -1256,165 +895,11 @@ it('row[b,c,column[tabs[d,e],tabs[f,g]]]: -g -d -e -f -b -c +f +b +c +d +g +e ->
 	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 });
 
-// Codex P2 on #732 (the second one): every hide order of every set of panes, then every show order,
-// with the states merged on the way (`keyOf`), so six and seven panes fit - not every order x
-// every order run one by one (7! x 7! of them). Run with main's slot (82b82246) beside the current
-// one: every one comes back to the old shape (`all`), or at least every one that does on main.
-describe('slot memory: every hide order then every show order (merged states)', () => {
-	const cases: [keyof typeof L, 'all' | 'main'][] = [
-		['row[b,c,column[tabs[d,e],tabs[f,g]]]', 'all'],
-		['row[a,column[b,row[tabs[c,d],e]]]', 'all'],
-		['column[row[a,tabs[b,c]],tabs[d,e],f]', 'all'],
-		['row[column[tabs[a,b],c],column[d,tabs[e,f]]]', 'all'],
-		// A tab group five containers deep. With `MAX_SLOT_DEPTH` at 4, the last tab's chain
-		// (t, r2, c1, r1) was cut at a split that is gone, and `restoreDockSlot` had nothing to go
-		// on with: the tab opened floating (`-a -b -x -d -c +c ...`), where main puts it beside e.
-		// The limit is 8 now (#727).
-		['column[row[a,column[row[tabs[b,c],x],d]],e]', 'all'],
-		['row[a,column[b,row[c,column[tabs[d,e],f]]]]', 'all']
-	];
-	for (const [name, want] of cases) {
-		it(
-			`${name} (${want === 'all' ? 'every one' : 'every one main brings back'})`,
-			{ timeout: 60_000 },
-			() => {
-				const make = L[name];
-				const ids = collectPanelIds(make());
-				const shape = JSON.stringify(shapeOf(make()));
-				const ok = (sim: Sim) =>
-					sim.floating.length === 0 && JSON.stringify(shapeOf(sim.docked)) === shape;
-				interface Entry {
-					main: Sim;
-					now: Sim;
-					showing: boolean;
-					steps: string[];
-				}
-				const start: Sim = { docked: make(), hidden: [], floating: [] };
-				let level: Entry[] = [{ main: start, now: start, showing: false, steps: [] }];
-				const failures: string[] = [];
-				let checked = 0;
-				while (level.length > 0) {
-					const next = new Map<string, Entry>();
-					const add = (e: Entry) => {
-						const key = `${e.showing}${keyOf(e.main)}${keyOf(e.now)}`;
-						if (!next.has(key)) next.set(key, e);
-					};
-					for (const e of level) {
-						// The panes to show: hidden in the current run (a floating one is not docked again).
-						const hidden = e.now.hidden.map((h) => h.id);
-						if (e.showing && hidden.length === 0) {
-							checked++;
-							if (!ok(e.now) && (want === 'all' || ok(e.main)))
-								failures.push(
-									`${e.steps.join(' ')} -> ${JSON.stringify(shapeOf(e.now.docked))} floating [${e.now.floating}]`
-								);
-							continue;
-						}
-						const step = (id: string, show: boolean): Entry => ({
-							main: show ? simShow(mainSlot, e.main, id) : simDismiss(mainSlot, e.main, id),
-							now: show ? simShow(nowSlot, e.now, id) : simDismiss(nowSlot, e.now, id),
-							showing: show,
-							steps: [...e.steps, `${show ? '+' : '-'}${id}`]
-						});
-						if (e.showing) {
-							for (const id of hidden) add(step(id, true));
-							continue;
-						}
-						if (hidden.length > 0) add({ ...e, showing: true });
-						for (const id of ids) if (findNode(e.now.docked, id)) add(step(id, false));
-					}
-					level = [...next.values()];
-				}
-				expect(checked).toBeGreaterThan(0);
-				expect(failures.slice(0, 5)).toEqual([]);
-			}
-		);
-	}
-});
-
-// Codex kept finding regressions in orders that interleave hiding and showing (#725). Every
-// sequence of hide / show steps up to `steps` long on these layouts, run with main's slot
-// (`fixtures/slot-main.ts`, 82b82246) and the current one side by side (`fixtures/visibility-sim.ts`):
-// every sequence that comes back to the old shape on main must still do so. The steps are as
-// many as fit in a second or two per layout (12 for 4 panes, 10 for 5; 14 for all of them was
-// run once by hand, with no regression). A sequence of odd length never shows every pane again.
-describe('slot memory: no hide / show sequence regresses from main (every sequence)', () => {
-	for (const [name, make] of Object.entries(L)) {
-		// Six panes and more: 8 steps (10 takes 20 s for seven; the merged walk below covers every
-		// pane hidden then shown).
-		const n = collectPanelIds(make()).length;
-		const steps = n <= 4 ? 12 : n === 5 ? 10 : 8;
-		it(`${name}: every sequence up to ${steps} steps`, { timeout: 60_000 }, () => {
-			const result = enumerateSequences(make, mainSlot, nowSlot, steps);
-			expect(result.mainRestores).toBeGreaterThan(0);
-			expect(result.regressions.slice(0, 5)).toEqual([]);
-		});
-	}
-});
-
-// Longer sequences than the walk above, at random (fixed seed), run with `createDockState`: every
-// one that comes back to the old shape with main's slot must still do so. The model the walk uses
-// is checked against `createDockState` on the way.
-describe('slot memory: interleaved hide / show orders do not regress', () => {
-	// mulberry32: a small seeded generator, so the sequences are the same on every run.
-	const rng = (seed: number) => () => {
-		seed = (seed + 0x6d2b79f5) | 0;
-		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	};
-	/**
-	 * `-x` hides x, `+x` shows it; 10 to 16 steps (the count random too) with at least one show
-	 * between hides, then the rest shown.
-	 */
-	const sequences = (ids: string[], count: number, seed: number): string[] => {
-		const random = rng(seed);
-		const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
-		const out = new Set<string>();
-		for (let tries = 0; out.size < count && tries < count * 20; tries++) {
-			const hidden: string[] = [];
-			const steps: string[] = [];
-			const length = 10 + Math.floor(random() * 7);
-			for (let i = 0; i < length; i++) {
-				const docked = ids.filter((id) => !hidden.includes(id));
-				const show = hidden.length > 0 && (docked.length === 0 || random() < 0.4);
-				const id = pick(show ? hidden : docked);
-				if (show) hidden.splice(hidden.indexOf(id), 1);
-				else hidden.push(id);
-				steps.push(`${show ? '+' : '-'}${id}`);
-			}
-			while (hidden.length > 0)
-				steps.push(`+${hidden.splice(Math.floor(random() * hidden.length), 1)[0]}`);
-			// Interleaved only: a show before the last hide.
-			const lastHide = steps.map((s) => s[0]).lastIndexOf('-');
-			if (steps.slice(0, lastHide).some((s) => s[0] === '+')) out.add(steps.join(' '));
-		}
-		return [...out];
-	};
-	const COUNT = 600;
-	for (const [name, make] of Object.entries(L)) {
-		it(`${name}: ${COUNT} interleaved sequences`, () => {
-			const want = JSON.stringify(shapeOf(make()));
-			const failures: string[] = [];
-			for (const seq of sequences(collectPanelIds(make()), COUNT, 721)) {
-				const steps = seq.split(' ');
-				const got = JSON.stringify(shapeOf(runSteps(make, steps).layout.docked));
-				// The model of the walk above gives the same tree as `createDockState`.
-				expect(JSON.stringify(shapeOf(simRun(nowSlot, make(), steps).docked)), seq).toBe(got);
-				const onMain = JSON.stringify(shapeOf(simRun(mainSlot, make(), steps).docked));
-				if (onMain === want && got !== want) failures.push(seq);
-			}
-			expect(failures).toEqual([]);
-		});
-	}
-});
-
 // #734: a pane floated out of the tree (`undockPanel`, its `homeSlot`) and a pane hidden from it
 // (`dismiss`, its closed window's `dockSlot`) count each other, whichever is put back first.
 // Before, `dismiss` counted the closed windows only (the floated panes' places were kept by the
 // `DragController`), so `~b -a ^b +a` on row[a,b,c] came back as row[b,a,c].
 describe('slot memory: floated and hidden panes out of the same container (#734)', () => {
-	const mainSplit: SlotImpl = { ...mainSlot, split: true };
 	const row3 = () => splitNode('s', 'row', ['a', 'b', 'c'].map(panel));
 
 	it('row[a,b,c]: ~b -a ^b +a -> the old shape (row[b,a,c] before #734)', () => {
@@ -1436,21 +921,6 @@ describe('slot memory: floated and hidden panes out of the same container (#734)
 		expect(result.improvements).toBeGreaterThan(0);
 		expect(result.nowRestores).toBe(result.sequences);
 	});
-
-	// Every sequence of hide / show / float / back steps, run with main's slot and main's wiring
-	// (`split`: `dismiss` did not count the floated panes) beside the current ones: every sequence
-	// that comes back to the old shape on main still does. Up to five panes, the steps as many as
-	// fit in a few seconds (a docked pane can be hidden or floated: twice the branches).
-	for (const [name, make] of Object.entries(L)) {
-		const n = collectPanelIds(make()).length;
-		if (n > 5) continue;
-		const steps = n <= 3 ? 8 : 6;
-		it(`${name}: every mixed sequence up to ${steps} steps`, { timeout: 60_000 }, () => {
-			const result = enumerateSequences(make, mainSplit, nowSlot, steps, { mixed: true });
-			expect(result.mainRestores).toBeGreaterThan(0);
-			expect(result.regressions.slice(0, 5)).toEqual([]);
-		});
-	}
 
 	// Longer mixed sequences at random (fixed seed) with `createDockState`, checked against the
 	// model of the walk above and against main.

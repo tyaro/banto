@@ -190,6 +190,11 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   clamp は効く。
 - pane が組み替わると再マウントされる（Svelte は親を移せない）。確認（`beforePanelChange`。押し出される側 → 動かす pane の順）で守る。
   `persistent` の pane は木の外で 1 回だけ描き、DOM ごと移すので作り直さない。
+- 総当たりのテスト（`panel-visibility-exhaustive-*.test.ts` と `DockHostKeyboardMove.test.ts` の float × back）は、
+  環境変数 `DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走り、未設定（手元の既定）は浅い（#798）。
+  CI は dock-svelte を触る PR と main の push で `1` にし、触らない PR は浅い既定（ci.yml の `changes` の出力 `dock`）。
+  切り替えは `packages/dock-svelte/tests/fixtures/exhaustive.ts` の 1 か所。slot / lifecycle の変更は、手元でも
+  `DOCK_EXHAUSTIVE=1 pnpm --filter @banto/dock-svelte test` を 1 回通す。
 - #694（オーナー決定、Visual Studio・GX Works3 に寄せる）:
   - ドッキングは、ボタンの上で離したときだけ（十字 32px・外周ボタン）。ボタンの外で離すと、区画の上でも浮動。
     端 25% の帯の判定は廃止。
