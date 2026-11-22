@@ -33,8 +33,6 @@
 </script>
 
 <DraftNumberField {def} {draft} />
-<output data-testid="state"
-	>{coordinator.pending ? 'pending' : 'clean'}:{draft.dirty
-		? 'dirty'
-		: 'clean'}:{draft.revision}</output
->
+<output data-testid="state">
+	{coordinator.pending ? 'pending' : 'clean'}:{draft.dirty ? 'dirty' : 'clean'}:{draft.revision}
+</output>

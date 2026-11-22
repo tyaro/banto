@@ -56,9 +56,9 @@
 		if (!isDisabled) onBlur?.();
 	}}
 >
-	<option value="" disabled hidden
-		>{def.placeholder ?? messages.selectPlaceholder ?? '選択してください'}</option
-	>
+	<option value="" disabled hidden>
+		{def.placeholder ?? messages.selectPlaceholder ?? '選択してください'}
+	</option>
 	{#each def.options ?? [] as option (option.value)}
 		<option value={String(option.value)}>{option.label}</option>
 	{/each}

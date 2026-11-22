@@ -55,8 +55,10 @@
 								type="button"
 								class="pick"
 								aria-pressed={row.id === selectedRowId}
-								onclick={() => onSelectRow(row.id)}>{row.at}</button
+								onclick={() => onSelectRow(row.id)}
 							>
+								{row.at}
+							</button>
 						</td>
 						<td>{row.equipmentLabel}</td>
 						<td>{row.item}</td>

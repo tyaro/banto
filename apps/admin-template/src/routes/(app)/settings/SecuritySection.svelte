@@ -304,11 +304,11 @@
 			{#if authSettingsStore.value}
 				<p class="status">
 					{m['settings.statusLabel']()}
-					<strong
-						>{authSettingsStore.value.disabled
+					<strong>
+						{authSettingsStore.value.disabled
 							? m['settings.authDisabledOn']()
-							: m['settings.authDisabledOff']()}</strong
-					>
+							: m['settings.authDisabledOff']()}
+					</strong>
 				</p>
 			{/if}
 
