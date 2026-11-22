@@ -77,7 +77,7 @@ describe('placeAtDefault: beside the nearest default sibling', () => {
 	});
 
 	it('without a share to speak of (1, or out of range): the default share against the default siblings docked', () => {
-		for (const share of [1, undefined, 0, -1, Number.NaN, 2]) {
+		for (const share of [1, undefined, -1, Number.NaN, 2]) {
 			const left = placeAtDefault(panel('center'), three(), panel('left'), share, never);
 			// left .2 against center .5.
 			close(sizesOf(left), [0.2 / 0.7, 0.5 / 0.7]);
@@ -257,10 +257,14 @@ describe('dockShareOf', () => {
 		expect(dockShareOf(tabs('t', ['a', 'b']), 'a')).toBe(1);
 		expect(dockShareOf(tree, 'nope')).toBe(1);
 		expect(dockShareOf(null, 'a')).toBe(1);
-		// Sizes that do not add up to 1 are read as ratios; a share of 0 says nothing.
+		// Sizes that do not add up to 1 are read as ratios; a share of 0 is a share.
 		const loose = split('s', 'row', [2, 6], [panel('a'), panel('b')]);
 		expect(dockShareOf(loose, 'a')).toBeCloseTo(0.25, 9);
-		expect(dockShareOf(split('s', 'row', [0, 1], [panel('a'), panel('b')]), 'a')).toBe(1);
+		const zero = split('s', 'row', [0, 1], [panel('a'), panel('b')]);
+		expect(dockShareOf(zero, 'a')).toBe(0);
+		expect(dockShareOf(zero, 'b')).toBe(1);
+		// Sizes that say nothing.
+		expect(dockShareOf(split('s', 'row', [0, 0], [panel('a'), panel('b')]), 'a')).toBe(1);
 	});
 });
 
@@ -317,6 +321,49 @@ describe('DockState: hide and show by the default layout', () => {
 		expect(dock.shownTree('nope')).toBeNull();
 	});
 
+	// Cross-review of PR #863: a share of 0 is kept, not read as "none".
+	it('row[a 0, b 1]: either pane hidden and shown again, and both in the reverse order: [0, 1] again', () => {
+		const tree = split('root', 'row', [0, 1], [panel('a'), panel('b')]);
+		for (const steps of [['a'], ['b'], ['a', 'b'], ['b', 'a']]) {
+			const dock = createDockState({ version: 2, floating: [], docked: tree }, never);
+			dock.defaultLayout = { version: 2, floating: [], docked: tree };
+			for (const id of steps) dock.dismiss(id);
+			for (const id of [...steps].reverse()) expect(dock.show(id)).toBe('docked');
+			expect(dock.layout.docked, steps.join()).toEqual(tree);
+		}
+	});
+
+	// Cross-review of PR #863: `placement` is where `show` puts the pane, not whether the default
+	// tree holds it; and asking does not take an id from `makeId`.
+	it('`panels[].placement` and `showPlacement` are what `show` does, and ask `makeId` for nothing', () => {
+		let asked = 0;
+		const dock = createDockState(
+			{
+				version: 2,
+				floating: [{ id: 'x', title: 'X', x: 0, y: 0, width: 300, height: 200, open: true }],
+				docked: three()
+			},
+			() => `new-${asked++}`
+		);
+		dock.defaultLayout = { version: 2, floating: [], docked: three() };
+		const placement = (id: string) => dock.panels.find((p) => p.id === id)?.placement;
+		for (const id of ['left', 'center', 'right']) dock.dismiss(id);
+		dock.dockPanel('x', 'x', 'center');
+		expect(asked).toBe(0);
+		// Only x (not of the default layout) is docked: the sides have their edge, the centre nothing.
+		expect([placement('left'), placement('center'), placement('right')]).toEqual([
+			'docked',
+			'floating',
+			'docked'
+		]);
+		expect(dock.showPlacement('center')).toBe('floating');
+		expect(dock.showPlacement('left')).toBe('docked');
+		expect(asked).toBe(0);
+		expect(dock.show('center')).toBe('floating');
+		expect(dock.show('left')).toBe('docked');
+		expect(asked).toBe(1);
+	});
+
 	it('`panels` says `docked` for a hidden pane only while it has a default place', () => {
 		const dock = state();
 		dock.dismiss('left');
@@ -349,6 +396,11 @@ describe('a default id in use out of the docked tree', () => {
 		const checked = validateDockLayout(JSON.parse(dock.serialize()));
 		expect(checked.ok ? [] : checked.issues).toEqual([]);
 		expect(createDockState().hydrate(dock.serialize())).toBe(true);
+		// And the group in the band goes back into the tree (cross-review of PR #863).
+		expect(dock.restoreAutoHidden('c')).toBe(true);
+		expect(dock.autoHidden).toEqual([]);
+		const after = validateDockLayout(JSON.parse(dock.serialize()));
+		expect(after.ok ? [] : after.issues).toEqual([]);
 	});
 
 	it('`placeAtDefault` takes the ids given as in use: a default split id that is a floating window`s', () => {

@@ -466,8 +466,9 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
     帯の pane・タイトルバーへ畳んだ浮動・閉じた浮動は `false`（そのとき `visible` は `true` のことがある）。
     表のタブ、畳んでいない開いた浮動、今引き出している帯の pane（`flyoutPanel`）が `true`。ホストの大きさや
     ブラウザのタブが隠れているかは見ない。「見えている間だけ購読する・読む」にはこちらを使う。
-  - `placement` — `'docked'` は docked の木にあるか、ドックから隠した pane で既定の位置があるもの（`showPanel` で
-    ドックへ出る）。`'floating'` はそれ以外の浮動 window（開閉どちらも。既定の位置が無い隠した pane も）。
+  - `placement` — `'docked'` は docked の木にあるか、ドックから隠した pane で、今 `showPanel` するとドックへ出るもの
+    （`dock.showPlacement(id)` と同じ答え）。`'floating'` はそれ以外の浮動 window（開閉どちらも。今は浮動で開く
+    隠した pane も: 既定の位置が無い、既定の兄弟も外周の側も無い）。
   - 並び順は、その `DockState` が id を初めて見た順（最初の layout の docked の木を木の順に、続けて浮動 window を
     配列の順に。あとから増えた id は末尾）。前面化・ドック・隠す操作では並び替わらない。`hydrate` / `layout = ...`
     でも既知の id は位置を保ち、新しい id は末尾に付く。アプリ独自の順にしたいときは行をアプリで並べ替える。
@@ -516,7 +517,7 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   const dock = createDockState();
   dock.defaultLayout = myDefaultLayout(); // reset / 初回に入れるのと同じ DockLayout
   ```
-- ドックから隠した pane は、閉じた浮動 window に `dockShare`（隠す直前の比率。`0 < n <= 1`、`1` は「覚えた比率
+- ドックから隠した pane は、閉じた浮動 window に `dockShare`（隠す直前の比率。`0 <= n <= 1`、`1` は「覚えた比率
   なし」）を持つ。これが「ドックから隠した」印で、`serialize()` / `hydrate()` を通る。`dockShare` の無い閉じた
   window は浮動で開く。**前の版の `dockSlot`（戻す場所）は廃止**（破壊的変更）: 型から消え、古い JSON にあっても
   読まずに捨てる（その pane は浮動で開く。layout 全体は読める）。

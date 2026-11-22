@@ -92,11 +92,11 @@ describe('validateDockLayout: accepted inputs', () => {
 	});
 
 	it('takes a dockShare in (0, 1] or none, and rejects any other', () => {
-		for (const dockShare of [undefined, 0.25, 1]) {
+		for (const dockShare of [undefined, 0, 0.25, 1]) {
 			const r = validateDockLayout(layoutOf([win('b', { open: false, dockShare })]));
 			expect(r.ok && r.layout.floating[0].dockShare, String(dockShare)).toBe(dockShare);
 		}
-		for (const dockShare of [0, -0.1, 1.5, Number.NaN, '0.5', null]) {
+		for (const dockShare of [-0.1, 1.5, Number.NaN, '0.5', null]) {
 			const r = validateDockLayout(layoutOf([win('b', { open: false, dockShare })]));
 			expect(r.ok, String(dockShare)).toBe(false);
 			if (!r.ok) expect(r.issues).toContainEqual({ code: 'shape', path: 'floating[0].dockShare' });

@@ -24,7 +24,7 @@
  * moved by hand the result is a place beside the nearest default sibling, nothing more.
  *
  * The size: `share` (what the pane held of its split when it was hidden, `dockShareOf`) of the
- * split it lands in, the others keeping their ratio; without one (`1`, not finite, out of `(0, 1)`)
+ * split it lands in, the others keeping their ratio; without one (`1`, not finite, out of `[0, 1)`)
  * its default share against the default siblings docked now.
  */
 import type { DockEdge, DockNode, DockPanelNode, DockSplitNode, DockTabGroupNode } from '../types';
@@ -56,13 +56,16 @@ function pathTo(node: DockNode, id: string): Step[] | null {
 	return null;
 }
 
+/** A share to take as it is: `0` too (a split may hold one, #782 PR2), not `1` ("none to speak of"). */
 const usable = (share: number | undefined): share is number =>
-	share !== undefined && Number.isFinite(share) && share > 0 && share < 1;
+	share !== undefined && Number.isFinite(share) && share >= 0 && share < 1;
 
 /**
- * The share the docked pane `panelId` holds of its split (its tab group's, for a tab), `0 < n <= 1`:
- * what a closed window keeps as `FloatingWindow.dockShare` when the pane is hidden. `1` = no split
- * around it (the root, an unknown id) or a share that says nothing (`0`).
+ * The share the docked pane `panelId` holds of its split (its tab group's, for a tab), `0 <= n <= 1`:
+ * what a closed window keeps as `FloatingWindow.dockShare` when the pane is hidden. `0` is a share
+ * like any other (cross-review of PR #863: hidden and shown again, the pane is at `0` again). `1` =
+ * no split around it (the root, an unknown id), sizes that say nothing (all `0`, not finite) - or
+ * the whole of its split, which comes back the same way: by its default share.
  */
 export function dockShareOf(docked: DockNode | null, panelId: string): number {
 	const group = findParent(docked, panelId);
@@ -180,7 +183,8 @@ function defaultShare(split: DockSplitNode, index: number, docked: ReadonlySet<s
 			others += split.sizes[i] ?? 0;
 	});
 	const share = own / (own + others);
-	return usable(share) ? share : 0.5;
+	// `1` too: its default siblings docked now hold `0` of the default split.
+	return Number.isFinite(share) && share >= 0 && share <= 1 ? share : 0.5;
 }
 
 /** The outer edge the default place is at: the first / last child of a split around it, innermost first. */

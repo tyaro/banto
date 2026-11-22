@@ -38,7 +38,7 @@ import {
 	slotsWithoutLeft,
 	type HiddenDockSlot
 } from './core/slot';
-import { dockShareOf, hasDefaultPlace, placeAtDefault } from './core/defaultPlace';
+import { dockShareOf, placeAtDefault } from './core/defaultPlace';
 import { withLayoutVersion } from './core/layoutVersion';
 import { notify } from './core/report';
 import {
@@ -87,9 +87,12 @@ import type {
 	ResizeEdge
 } from './types';
 
+/** For a prediction that only asks whether a pane docks: the ids of the tree it makes are not used. */
+const NO_ID = (): string => '';
+
 /** A share to keep as `dockShare` (`1` when it says nothing). */
 function shareOr1(share: number): number {
-	return Number.isFinite(share) && share > 0 && share < 1 ? share : 1;
+	return Number.isFinite(share) && share >= 0 && share < 1 ? share : 1;
 }
 
 function emptyLayout(): DockLayout {
@@ -588,7 +591,6 @@ export class DockState {
 
 	#listPanels(layout: DockLayout, flyout: string | null): DockPanelInfo[] {
 		const onScreen = onScreenPanelIds(layout, flyout);
-		const defaults = this.defaultLayout?.docked ?? null;
 		const byId = new Map<string, DockPanelInfo>();
 		const visit = (node: DockNode): void => {
 			if (node.type === 'panel') {
@@ -622,10 +624,8 @@ export class DockState {
 				id: w.id,
 				title: w.title,
 				icon: w.icon,
-				placement:
-					!w.open && w.dockShare !== undefined && hasDefaultPlace(defaults, w.id)
-						? 'docked'
-						: 'floating',
+				// What `show` would do (cross-review of PR #863): the same question, asked of `layout`.
+				placement: this.#shownIn(layout, w.id, NO_ID) !== null ? 'docked' : 'floating',
 				visible: w.open,
 				onScreen: onScreen.has(w.id)
 			});
@@ -946,7 +946,8 @@ export class DockState {
 	showPlacement(id: string): 'docked' | 'floating' | null {
 		if (this.#isDocked(id) || this.isAutoHidden(id)) return 'docked';
 		if (!this.layout.floating.some((w) => w.id === id)) return null;
-		return this.shownTree(id) === null ? 'floating' : 'docked';
+		// Only whether it docks is asked: no id is taken from `makeId` for it.
+		return this.shownTree(id, NO_ID) === null ? 'floating' : 'docked';
 	}
 
 	/**
@@ -1063,18 +1064,23 @@ export class DockState {
 	 * `showPlacement`, `showTabSwitch` and `DockHost`'s `showPanel` ask it too.
 	 */
 	shownTree(id: string, makeId: () => string = this.#makeId): DockNode | null {
-		const win = this.layout.floating.find((w) => w.id === id);
+		return this.#shownIn(this.layout, id, makeId);
+	}
+
+	/** `shownTree` for the hidden pane `id` of `layout` (`panels` asks it of the layout it lists). */
+	#shownIn(layout: DockLayout, id: string, makeId: () => string): DockNode | null {
+		const win = layout.floating.find((w) => w.id === id);
 		if (!win || win.open || win.dockShare === undefined) return null;
 		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
 		// The ids out of the docked tree: a split / tab group made again does not take one of them
 		// (a group in an edge band keeps the default group's id; Codex P2 on #863).
-		const taken = new Set<string>(this.layout.floating.map((w) => w.id));
-		for (const entry of this.layout.autoHidden ?? []) {
+		const taken = new Set<string>(layout.floating.map((w) => w.id));
+		for (const entry of layout.autoHidden ?? []) {
 			taken.add(entry.node.id);
 			if (entry.node.type === 'tabs') for (const tab of entry.node.children) taken.add(tab.id);
 		}
 		return placeAtDefault(
-			this.layout.docked,
+			layout.docked,
 			this.defaultLayout?.docked ?? null,
 			panel,
 			win.dockShare,

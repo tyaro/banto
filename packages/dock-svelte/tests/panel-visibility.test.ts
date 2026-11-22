@@ -397,7 +397,7 @@ describe('serialize / hydrate', () => {
 		expect(dock.hydrate(JSON.stringify(bad))).toBe(true);
 		expect(dock.show('q')).toBe('floating');
 
-		for (const dockShare of [0, -0.5, 1.5, '0.5', null]) {
+		for (const dockShare of [-0.5, 1.5, '0.5', null]) {
 			const floating = [{ ...bad.floating[0], dockSlot: undefined, dockShare }];
 			const result = validateDockLayout({ ...bad, floating });
 			expect(result.ok, String(dockShare)).toBe(false);

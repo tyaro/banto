@@ -31,7 +31,7 @@ export interface FloatingWindow {
 	 * Set on a CLOSED window whose pane was hidden from the docked tree or an edge band (#663,
 	 * #782): `DockState.show` docks the pane at its default place (`DockState.defaultLayout`,
 	 * `core/defaultPlace.ts`) - not where it was hidden from - and `DockState.open` opens it
-	 * floating and drops this. The value is the share (`0 < n <= 1`) it held of its split when it
+	 * floating and drops this. The value is the share (`0 <= n <= 1`) it held of its split when it
 	 * was hidden, which it takes again (`1` = none to speak of: its default share). A closed
 	 * window without it opens floating.
 	 */

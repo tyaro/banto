@@ -193,7 +193,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 				add('shape', `${p}.collapsed`);
 			if (
 				raw.dockShare !== undefined &&
-				!(typeof raw.dockShare === 'number' && raw.dockShare > 0 && raw.dockShare <= 1)
+				!(typeof raw.dockShare === 'number' && raw.dockShare >= 0 && raw.dockShare <= 1)
 			)
 				add('shape', `${p}.dockShare`);
 			let win = migrateLock(raw as unknown as FloatingWindow);
