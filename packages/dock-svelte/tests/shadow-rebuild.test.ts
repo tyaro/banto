@@ -137,6 +137,40 @@ describe('S made again keeps what S knew (#782 PR7)', () => {
 		}
 	});
 
+	it('a layout put back as it was: a pane floating then, docked again meanwhile, remembers its place again', () => {
+		const dock = moved780();
+		const home = dock.homeSlot('a');
+		const snapshot = JSON.parse(JSON.stringify(dock.layout)) as typeof dock.layout;
+		rememberShadow(dock, snapshot);
+		// Meanwhile a is docked somewhere else (its place is spent) and d is floated.
+		dock.dockPanel('a', 'd', 'bottom');
+		dock.undockPanel('d');
+		expect(dock.homeSlot('a')).toBeUndefined();
+		adoptLayout(dock, snapshot);
+		expect(dock.homeSlot('a')).toBe(home);
+		expect(dock.homeSlot('d')).toBeUndefined();
+		expect(shadowStateOf(dock).unplaced).toEqual([]);
+		for (const id of ['e', 'a', 'b']) expect(back(dock, id), id).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual(shape780);
+	});
+
+	it('a layout put back as it was with nothing docked: the floated panes still go back', () => {
+		const dock = dockOf(split('s', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)));
+		for (const id of ['a', 'b', 'c']) dock.undockPanel(id);
+		expect(dock.layout.docked).toBeNull();
+		const snapshot = JSON.parse(JSON.stringify(dock.layout)) as typeof dock.layout;
+		rememberShadow(dock, snapshot);
+		// Meanwhile b is docked (alone: the root) and c beside it.
+		dock.dockPanelAtEdge('b', 'left');
+		dock.dockPanel('c', 'b', 'bottom');
+		adoptLayout(dock, snapshot);
+		expect(dock.layout.docked).toBeNull();
+		expect(shadowStateOf(dock).unplaced).toEqual([]);
+		for (const id of ['c', 'a', 'b']) expect(back(dock, id), id).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c'] });
+		close(sizesOf(dock.layout.docked), [0.2, 0.3, 0.5]);
+	});
+
 	it('a floated pane docked back at its place from outside holds its share again', () => {
 		// row[a .1, b .2, c .3, d .4], b and c floated; an assignment docks c back between a and d.
 		const dock = dockOf(split('s', 'row', [0.1, 0.2, 0.3, 0.4], ['a', 'b', 'c', 'd'].map(panel)));

@@ -161,7 +161,9 @@ let rememberImpl: (dock: DockState, snapshot: DockLayout) => void;
 /**
  * Tell `dock` that `snapshot` is a copy of its layout as it is now (not exported from the
  * package): the shadow tree of now is kept for it, so `restoreSplitSizes(id, snapshot)` puts the
- * shares of the panes out of the tree back too (#782 PR6, Codex P2 on #864). The gesture
+ * shares of the panes out of the tree back too (#782 PR6, Codex P2 on #864), and
+ * `adoptLayout(dock, snapshot)` puts back the whole of it with the floated panes' `homeSlot`s of
+ * now (#782 PR7: also for a pane docked again meanwhile, and when nothing is docked). The gesture
  * controller's snapshot is a clone (`$state.snapshot`), which `DockState` cannot know by identity
  * as it knows the layouts it was assigned. Held weakly: gone with the snapshot.
  */
@@ -294,6 +296,15 @@ export class DockState {
 	 * drag puts back of S, from the layout it was started in (`restoreSplitSizes`).
 	 */
 	#shadowAt = new WeakMap<DockNode, ShadowNode>();
+	/**
+	 * What this state held beside a layout it was told a copy of (`rememberShadow`: a gesture's
+	 * snapshot), by that copy: S (also `null`, nothing docked) and the floated panes' `homeSlot`s.
+	 * `adoptLayout` of the copy puts both back (#782 PR7): a pane that was floating then remembers
+	 * its place again, also when it was docked meanwhile. Weak: gone with the copy.
+	 */
+	#heldAt = new WeakMap<DockLayout, { shadow: ShadowNode | null; homes: Map<string, DockSlot> }>();
+	/** S as it was with the layout `#adopt` is putting back (`#heldAt`); `undefined` = not such a layout. */
+	#adoptFrom: ShadowNode | null | undefined = undefined;
 	/** The panes out of the tree that remember a place S has no room for (`inflateShadow`'s `unplaced`). */
 	#shadowUnplaced = new Set<string>();
 	/** What the method assigning `layout` next does to S (`#mirror`); taken by the setter. */
@@ -398,7 +409,9 @@ export class DockState {
 			// What S is made again from, when it has to be: the S before this assignment (for a layout
 			// put back as it was - a cancelled gesture's snapshot -, the S that showed it then).
 			let from = this.#adopting
-				? ((next.docked && this.#shadowAt.get(next.docked)) ?? this.#shadow)
+				? this.#adoptFrom !== undefined
+					? this.#adoptFrom
+					: this.#shadow
 				: step
 					? step.run(this.#shadow)
 					: this.#shadow;
@@ -1714,11 +1727,20 @@ export class DockState {
 	 * its slots are as given - the panes pending before belong to the layout replaced.
 	 */
 	#adopt(layout: DockLayout): void {
+		// A copy of an earlier layout of this state (a cancelled gesture's snapshot): the places the
+		// floated panes remembered then are theirs again, with the S that held them.
+		const held = this.#heldAt.get(layout);
+		if (held) {
+			const floating = new Set(layout.floating.map((w) => w.id));
+			this.#homeSlots = new Map([...held.homes].filter(([id]) => floating.has(id)));
+		}
 		this.#adopting = true;
+		this.#adoptFrom = held?.shadow;
 		try {
 			this.layout = layout;
 		} finally {
 			this.#adopting = false;
+			this.#adoptFrom = undefined;
 		}
 	}
 
@@ -1726,6 +1748,7 @@ export class DockState {
 		adoptImpl = (dock, layout) => dock.#adopt(layout);
 		forgetImpl = (dock) => dock.#homeSlots.clear();
 		rememberImpl = (dock, snapshot) => {
+			dock.#heldAt.set(snapshot, { shadow: dock.#shadow, homes: new Map(dock.#homeSlots) });
 			if (snapshot.docked !== null && dock.#shadow !== null)
 				dock.#shadowAt.set(snapshot.docked, dock.#shadow);
 		};
