@@ -438,6 +438,33 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   - 「認証無効 + LAN 有効」は**閲覧公開 ON のときだけ**許可する
     （`SettingsService` の両方向ガード、viewer-public-plan §2.3）。OFF のときの
     排他は 2026-07-08 決定のまま。
+- **ログインの許可・トークンの発行・トークンでの認可は、認証モードの世代でモードの切り替えと直列にする**
+  （[ADR-0034](adr/0034-owner-identity-builtin-admin.md) 決定 §6）。`AuthState` が、今のモード
+  （`AuthMode::LoginRequired` / `AuthMode::NoLogin`）と、切り替えのたびに進む世代を、トークンの表と同じロックの
+  中に持つ。契約は「切り替えが終わった後は、旧い世代から発行も利用もできない」。以下はレビューで担保する
+  （試験は `auth/tests.rs` の「ADR-0034 section 6」の節と、`src-tauri` の `adr0034_*`）:
+  - **切り替えの口は `AuthState::switch_auth_mode` だけ。** 1 つのロックの中で、世代を進め、アカウントの
+    トークンを全部失効させる（ログイン必須 → ログインなしも、その逆のロックダウンも同じ）。grant のトークンは
+    対象外で、種類ごとの世代と `revoke_grant_tokens` が守る。
+  - **設定を変える側は「保存 → 同じ関数の中で、`.await` を挟まずに `switch_auth_mode`」の順**（grant の
+    「永続化 → 失効」と同じ形）。Tauri は `auth_config_apply` が `auth_config_lock` の下で行う
+    （`apply_mode_to_session`。画面のセッションの付け替えと同じ 1 歩）。起動時は、待ち受けを始める前に保存済みの
+    モードを写す。失効した数は監査の detail に `revokedSessions: n` で載せてよい。
+  - **発行**: ログインは入口で世代を読み、照合を await した後、表のロックの中で「世代が入口と同じ」かつ
+    「モードがログイン必須」のときだけトークンを入れる。違えば、資格情報が正しくても発行しない
+    （`LoginOutcome::LoginDisabled`。往復してログイン必須に戻っていたら `Unavailable`）。ログインなしの間は
+    入口で断り、照合を走らせない（失敗の回数にも、監査にも残らない。Tauri の `auth_login` と同じ扱い・同じ文言
+    `LOGIN_DISABLED_MESSAGE`）。await を挟んで発行する口を足すときは、同じく入口の世代を渡す。
+  - **認可**: アカウントのトークンは発行時の世代を持ち、今の世代と同じ間だけ通る。`AuthState::authenticate` は
+    アカウントの照合の**後**に確かめ、`require_auth` は権限の読み取りの後（監査の主体のスナップショットを作る
+    直前）にもう一度確かめる。認可の途中に切り替えが終わった要求は 401。
+  - **進行中の書き込み**: ガードを通った（主体のスナップショットを持った）書き込みは、切り替えで中断せず、
+    認可したときの主体で最後まで走る（§1 の「認可はガードを通った時点で決まる」と同じ。切り替えは待たない）。
+  - **Tauri の画面のセッション**は、スロットの `seq` と `auth_config_lock` が同じ直列を保つ
+    （`install_account_unless_auth_disabled`・`settle_session`。S-94・S-95・S-99）。
+  - `banto-serve` は実行中にモードを切り替える口を持たず、まだモードを写さない（`AuthState` の既定の
+    ログイン必須のまま）。ログインなしの間の REST の読み取り専用と listen の条件は、初回セットアップの撤去
+    （計画書の C2b）で入れる。
 - **到達確認の口（Issue #219 段階 1、[lan-reach-check-design](design/lan-reach-check-design.md)）。**
   管理者の画面が発行した使い捨てのトークンで「別の端末からこの待受に届いた」ことを記録する、
   grant と並ぶ**もう 1 つの未認証の口 `POST /api/reach-check`** の規約（`banto_server::reach_check`）。

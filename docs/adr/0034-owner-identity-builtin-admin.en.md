@@ -726,3 +726,32 @@ result. The owner confirmed it the same day. Where the body differs, this addend
 3. **Why**: so that a transient failure (out of disk space, a lock) does not delete a healthy restore candidate. The cost:
    a candidate to which migrations truly cannot be applied keeps its reservation and reports "could not be checked" at
    every start-up. The original DB is intact, and the reservation can be cancelled from the settings screen.
+
+## Addendum (2026-11-22, from the mode-switch serialization = C2b-b; awaiting the owner's confirmation)
+
+Only §6's "allowing a login, issuing a token and authorizing with a token are serialized with the mode switch" was cut out
+of C2b and landed first (PR #**PR**). Where it differs from the body, and the details the body did not have, are below. The
+points that need confirmation are listed separately in the PR description.
+
+1. **The generation check landed in this PR, not in C2** (this replaces "the generation check is added here in C2" in §6's
+   2026-11-22 note). The implementation is `AuthState` in `banto-server` (`AuthMode`, `switch_auth_mode`). The mode and its
+   generation live under the same lock as the token table.
+2. **Two refusals**: `LoginOutcome::LoginDisabled` while the mode is no-login now (`200 {success:false, error}`, the same
+   text as Tauri's `auth_login`); `Unavailable` (503, a retry gets in) when the mode went there and back during the
+   credential check and is login-required again. In no-login mode the login is refused on entry and the verifier does not
+   run (nothing counted, nothing audited - as on the Tauri side).
+3. **When authorization is complete**: `authenticate` checks against the table after the account lookup, and `require_auth`
+   compares with the generation it read on entry once more after reading the permissions (right before the audit-actor
+   snapshot).
+4. **Writes in progress**: a write that passed the guard is not interrupted, and the switch does not wait for the remaining
+   work (the same as #793's "revocation takes effect from the next request"). The switch's `settings_change` audit detail
+   carries the number of account tokens it revoked as `revokedSessions: n` (omitted when 0). The audit of a write in
+   progress stays with the actor it was authorized as.
+5. **`issue_token` / `issue_token_remembered` / `issue_account_token` keep their return type.** In no-login mode they return
+   a token that was not stored (401 on first use). They do not await, so they need no entry generation.
+6. **Only the Tauri app is wired**: `auth_config_apply` switches right after its save, and start-up copies the stored mode.
+   So while the Tauri app is in no-login mode, the embedded server refuses account logins, and account tokens are revoked at
+   the switch (the first half of item 2 of "this premise is protected by the following four"). `banto-serve` does not copy
+   the mode yet (it stays on the default, login required). Read-only REST in no-login mode, the listen condition and the CLI
+   come with the rest of C2b (copying the mode before the CLI exists would lock the administrators of a headless display
+   app out).

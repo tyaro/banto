@@ -497,6 +497,52 @@ without a runtime guard are **upheld by reviewing every call site**.
     ON** (guarded from both directions in `SettingsService`, viewer-public-plan
     §2.3). With it OFF the exclusivity is unchanged from the 2026-07-08
     decision.
+- **Allowing a login, issuing a token and authorizing with one are serialized
+  with the auth-mode switch by the mode's generation**
+  ([ADR-0034](adr/0034-owner-identity-builtin-admin.en.md) decision §6).
+  `AuthState` holds the current mode (`AuthMode::LoginRequired` /
+  `AuthMode::NoLogin`) and a generation that advances on every switch, under
+  the same lock as the token table. The contract: once a switch has finished,
+  nothing of an earlier generation is issued or used. Enforced by review
+  (tests: the "ADR-0034 section 6" part of `auth/tests.rs`, and `adr0034_*` in
+  `src-tauri`):
+  - **`AuthState::switch_auth_mode` is the only way to switch.** Under one
+    lock it advances the generation and revokes every account token (login
+    required -> no-login, and the lock-down back, alike). Grant tokens are not
+    touched; their per-kind generation and `revoke_grant_tokens` guard them.
+  - **The side that changes the setting does "persist, THEN
+    `switch_auth_mode` in the same function, with no `.await` in between"**
+    (the same shape as a grant's "persist, then revoke"). The Tauri app does it
+    in `auth_config_apply` under `auth_config_lock` (`apply_mode_to_session`,
+    the same step that re-binds the webview session) and copies the stored
+    mode at start-up before any listener exists. The number revoked may go
+    into the audit detail as `revokedSessions: n`.
+  - **Issuance**: a login reads the generation on entry and, after awaiting
+    the credential check, inserts the token only if - under the table's lock -
+    the generation is unchanged AND the mode is login-required. Otherwise
+    nothing is issued even for right credentials (`LoginOutcome::LoginDisabled`;
+    `Unavailable` when the mode went there and back). In no-login mode the
+    login is refused on entry and the verifier does not run (nothing counted,
+    nothing audited - the same treatment and the same text,
+    `LOGIN_DISABLED_MESSAGE`, as Tauri's `auth_login`). A new issuing path
+    that awaits must pass its entry generation the same way.
+  - **Authorization**: an account token carries the generation it was issued
+    in and is valid only while that is the current one.
+    `AuthState::authenticate` checks AFTER the account lookup, and
+    `require_auth` once more after reading the permissions (right before the
+    audit-actor snapshot). A request still being authorized when a switch
+    finishes gets 401.
+  - **Writes in progress**: a write that passed the guard (it holds its actor
+    snapshot) is not interrupted by a switch and runs to the end as the actor
+    it was authorized as (the same as §1's "authorization is decided when the
+    guard is passed"; the switch does not wait).
+  - **The Tauri webview session** keeps the same serialization with the slot's
+    `seq` and `auth_config_lock` (`install_account_unless_auth_disabled`,
+    `settle_session`; S-94, S-95, S-99).
+  - `banto-serve` has no way to switch the mode at run time and does not copy
+    the mode yet (it stays on `AuthState`'s default, login required).
+    Read-only REST in no-login mode and the listen condition come with the
+    removal of first-run setup (C2b in the plan).
 - **Sessions are re-checked against the account on every request (Issue
   #204).** A session carries the account's row id + `auth_epoch` from when it
   was established; REST's `require_auth` (`AuthState::authenticate`) and

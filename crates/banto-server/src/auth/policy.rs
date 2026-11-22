@@ -108,9 +108,56 @@ pub const MAX_IN_FLIGHT_PER_IP: usize = 4;
 /// well under a second, so ask the client to retry shortly.
 pub(super) const SATURATED_RETRY_AFTER: Duration = Duration::from_secs(1);
 
+/// Whether accounts may log in right now (ADR-0034 section 6). The embedding
+/// application tells the state with [`AuthState::switch_auth_mode`]; a state
+/// nobody told is [`AuthMode::LoginRequired`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuthMode {
+    /// The ordinary mode: accounts log in and their tokens authorize.
+    #[default]
+    LoginRequired,
+    /// No-login mode (`auth.disabled` on): no account token is issued and
+    /// none authorizes. Grant sessions (ADR-0017) are not affected.
+    NoLogin,
+}
+
+/// Why an account token was not issued ([`AuthState::issue_token_with`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum IssueRefusal {
+    /// The mode is [`AuthMode::NoLogin`] right now.
+    NoLogin,
+    /// The mode is [`AuthMode::LoginRequired`] again, but it was switched
+    /// since the generation the issuer observed.
+    Switched,
+}
+
+/// The token table and the auth mode, under ONE lock (ADR-0034 section 6):
+/// issuing an account token, settling an authorization and switching the
+/// mode all decide under it, so none of them can interleave with a switch.
+#[derive(Default)]
+pub(super) struct TokenTable {
+    pub(super) records: HashMap<String, TokenRecord>,
+    pub(super) mode: AuthMode,
+    /// Advances by one on every switch of `mode`. An account token carries
+    /// the generation it was issued in ([`TokenRecord::mode_generation`]).
+    pub(super) mode_generation: u64,
+}
+
+impl TokenTable {
+    /// May `record` authorize under the mode as it is now? A grant session
+    /// always may (its own generation guards it, ADR-0017 section 2); an
+    /// account session only in [`AuthMode::LoginRequired`] and only when it
+    /// was issued in the current generation.
+    pub(super) fn mode_admits(&self, record: &TokenRecord) -> bool {
+        record.grant.is_some()
+            || (self.mode == AuthMode::LoginRequired
+                && record.mode_generation == self.mode_generation)
+    }
+}
+
 /// Result of a rate-limited login attempt ([`AuthState::login_rate_limited`]).
-/// The three variants map onto the three login-handler responses: a bearer
-/// token, a plain "wrong credentials" 200, or a 429 lockout.
+/// The variants map onto the login-handler responses: a bearer token, a plain
+/// "wrong credentials" 200, a 429 lockout, a 503, or the no-login refusal.
 #[derive(Debug)]
 pub enum LoginOutcome {
     /// Credentials verified; carries a freshly-issued bearer token.
@@ -127,7 +174,18 @@ pub enum LoginOutcome {
     /// created, deleted or replaced while the login was in flight). No token
     /// was issued and the failure streak was NOT extended; the client may
     /// simply retry. Only produced while a lookup is installed.
+    ///
+    /// ADR-0034 section 6: also the answer when the auth mode was switched
+    /// while the credentials were being verified and is
+    /// [`AuthMode::LoginRequired`] again now - the login belongs to a
+    /// generation that ended, so nothing is issued and the client retries.
     Unavailable,
+    /// ADR-0034 section 6: the state is in [`AuthMode::NoLogin`] - on entry
+    /// (the credential check was NOT run and nothing was counted) or by the
+    /// time the check finished (no token was issued, whether or not the
+    /// credentials were right). Accounts cannot log in until the mode is
+    /// switched back.
+    LoginDisabled,
 }
 
 /// Result of [`AuthState::verify_and_stamp`] (Issue #204).
@@ -196,6 +254,11 @@ pub(super) struct TokenRecord {
     /// (ADR-0034 section 3); `false` for an account session. Kept HERE
     /// because the session is rebuilt from this record on every request.
     pub(super) audit_as_builtin_admin: bool,
+    /// The auth-mode generation this token was issued in
+    /// ([`TokenTable::mode_generation`], ADR-0034 section 6). An account
+    /// token authorizes only while it is still the current one; not looked at
+    /// for a grant token.
+    pub(super) mode_generation: u64,
 }
 
 impl TokenRecord {

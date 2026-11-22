@@ -62,7 +62,10 @@ impl Clock {
 }
 
 pub(super) struct Inner {
-    pub(super) tokens: RwLock<HashMap<String, TokenRecord>>,
+    /// The token table AND the auth mode with its generation (ADR-0034
+    /// section 6): one lock, so a mode switch is serialized with every
+    /// issuance and every settled authorization.
+    pub(super) tokens: RwLock<TokenTable>,
     /// Per grant kind: the FIFO of its tokens (the cap needs the *oldest*
     /// one and `HashMap` has no order) and its revocation generation
     /// (ADR-0017 §2). This is THE internal lock issuance and revocation
@@ -105,8 +108,10 @@ impl Inner {
     }
 
     /// Drop every expired record (the opportunistic sweep on each write).
-    fn sweep_expired(&self, tokens: &mut HashMap<String, TokenRecord>, now: Duration) {
-        tokens.retain(|_, record| !record.is_expired(now, &self.policy_for(record)));
+    fn sweep_expired(&self, tokens: &mut TokenTable, now: Duration) {
+        tokens
+            .records
+            .retain(|_, record| !record.is_expired(now, &self.policy_for(record)));
     }
 }
 
@@ -216,7 +221,7 @@ impl AuthState {
         };
         Self {
             inner: Arc::new(Inner {
-                tokens: RwLock::new(HashMap::new()),
+                tokens: RwLock::new(TokenTable::default()),
                 grants: Mutex::new(HashMap::new()),
                 failures: RwLock::new(HashMap::new()),
                 in_flight: Mutex::new(InFlight::default()),
@@ -378,11 +383,19 @@ impl AuthState {
     /// network-exposed `POST /api/auth/login` handler goes through
     /// [`AuthState::login_rate_limited`] instead, since that is the surface an
     /// attacker can flood.
+    ///
+    /// ADR-0034 section 6: like [`AuthState::login_rate_limited`], it issues
+    /// nothing in [`AuthMode::NoLogin`] or when the mode was switched while
+    /// the credentials were being verified (`None`).
     pub async fn login(&self, username: &str, password: &str) -> Option<String> {
+        let (mode, entered) = self.mode_now();
+        if mode == AuthMode::NoLogin {
+            return None;
+        }
         match self.verify_and_stamp(username, password).await {
-            StampedLogin::Accepted(identity, stamp) => {
-                Some(self.issue_token_with(identity, false, stamp))
-            }
+            StampedLogin::Accepted(identity, stamp) => self
+                .issue_token_with(identity, false, stamp, Some(entered))
+                .ok(),
             StampedLogin::Rejected | StampedLogin::Unavailable => None,
         }
     }
@@ -400,6 +413,15 @@ impl AuthState {
     /// is evaluated against `remembered_policy` (long-lived) instead of the
     /// regular `token_policy` for the rest of its life - see
     /// [`TokenRecord::remembered`].
+    ///
+    /// Serialized with the auth mode (ADR-0034 section 6): the mode's
+    /// generation is read on entry, and the token is inserted only if - under
+    /// the token table's lock - the generation is still that one and the mode
+    /// is [`AuthMode::LoginRequired`]. A [`AuthState::switch_auth_mode`] that
+    /// completed while the verifier was awaited therefore wins: nothing is
+    /// issued, right credentials or not ([`LoginOutcome::LoginDisabled`], or
+    /// [`LoginOutcome::Unavailable`] when the mode is back to login-required).
+    /// In [`AuthMode::NoLogin`] on entry the verifier does not run at all.
     pub async fn login_rate_limited(
         &self,
         ip: Option<IpAddr>,
@@ -413,6 +435,14 @@ impl AuthState {
         // no-connect-info fallback, where an IP-wide limit is meaningless).
         let ip_key = ip.map(ip_rate_limit_key);
         let policy = self.inner.rate_limit;
+
+        // ADR-0034 section 6: the generation this login belongs to, read
+        // before anything is awaited. No-login mode refuses here, before the
+        // verifier (nothing is verified, counted or reserved).
+        let (mode, entered) = self.mode_now();
+        if mode == AuthMode::NoLogin {
+            return LoginOutcome::LoginDisabled;
+        }
 
         // BOTH dimensions are checked before the expensive verifier runs, so
         // a lockout on either one short-circuits argon2 (this is the property
@@ -435,7 +465,13 @@ impl AuthState {
                 if let Some(ip_key) = &ip_key {
                     self.reset_failures(ip_key);
                 }
-                LoginOutcome::Success(self.issue_token_with(identity, remember, stamp))
+                // The password was right either way, so the streak is cleared
+                // above even when the mode switch below refuses the token.
+                match self.issue_token_with(identity, remember, stamp, Some(entered)) {
+                    Ok(token) => LoginOutcome::Success(token),
+                    Err(IssueRefusal::NoLogin) => LoginOutcome::LoginDisabled,
+                    Err(IssueRefusal::Switched) => LoginOutcome::Unavailable,
+                }
             }
             // The password was right; only the account binding could not be
             // established. Clear the streak like a success, issue nothing.
@@ -463,8 +499,13 @@ impl AuthState {
     /// [`SessionLookup`] is installed (e.g. `POST /api/auth/setup` logging
     /// the first account in). `remember` selects the "Remember me" policy
     /// (spec M11).
+    ///
+    /// ADR-0034 section 6: in [`AuthMode::NoLogin`] no account token exists,
+    /// so the returned token is NOT stored - it is rejected on first use,
+    /// like any unknown token. (The signature stays infallible; the mode is
+    /// decided under the same lock as a switch, so there is no window.)
     pub fn issue_account_token(&self, account: SessionAccount, remember: bool) -> String {
-        self.issue_token_with(account.identity, remember, Some(account.stamp))
+        self.issue_unobserved(account.identity, remember, Some(account.stamp))
     }
 
     /// Mint and store a new bearer token for an already-verified `identity`,
@@ -477,9 +518,10 @@ impl AuthState {
     ///
     /// The token carries no [`SessionStamp`] (Issue #204): while a
     /// [`SessionLookup`] is installed it is rejected on first use - use
-    /// [`AuthState::issue_account_token`] there instead.
+    /// [`AuthState::issue_account_token`] there instead. Not stored in
+    /// [`AuthMode::NoLogin`] either (see [`AuthState::issue_account_token`]).
     pub fn issue_token(&self, identity: Identity) -> String {
-        self.issue_token_with(identity, false, None)
+        self.issue_unobserved(identity, false, None)
     }
 
     /// Like [`AuthState::issue_token`], but the token is issued as
@@ -487,7 +529,77 @@ impl AuthState {
     /// `remembered_policy` instead of `token_policy` for the rest of its
     /// life. Unstamped, like [`AuthState::issue_token`].
     pub fn issue_token_remembered(&self, identity: Identity) -> String {
-        self.issue_token_with(identity, true, None)
+        self.issue_unobserved(identity, true, None)
+    }
+
+    /// The `issue_*` family: the caller did not await anything between its
+    /// own decision and this call, so there is no earlier generation to hold
+    /// it to - only the mode as it is now decides. A refused issuance hands
+    /// back a token that was never stored.
+    fn issue_unobserved(
+        &self,
+        identity: Identity,
+        remembered: bool,
+        stamp: Option<SessionStamp>,
+    ) -> String {
+        self.issue_token_with(identity, remembered, stamp, None)
+            .unwrap_or_else(|_| Uuid::new_v4().to_string())
+    }
+
+    /// The auth mode right now ([`AuthMode::LoginRequired`] until
+    /// [`AuthState::switch_auth_mode`] says otherwise).
+    pub fn auth_mode(&self) -> AuthMode {
+        self.mode_now().0
+    }
+
+    /// The mode and its generation, read together.
+    fn mode_now(&self) -> (AuthMode, u64) {
+        let tokens = self.inner.tokens.read().expect("auth token lock poisoned");
+        (tokens.mode, tokens.mode_generation)
+    }
+
+    /// The auth-mode generation right now. [`require_auth`] reads it on entry
+    /// and compares it once more when the authorization is complete.
+    pub(super) fn mode_generation(&self) -> u64 {
+        self.mode_now().1
+    }
+
+    /// Switch the auth mode (ADR-0034 section 6): under the token table's one
+    /// lock, advance the mode's generation AND revoke every account token.
+    /// Returns how many were revoked (the caller may record it in its audit
+    /// detail). Grant tokens are untouched - a kind whose condition the
+    /// switch closes is revoked by its own
+    /// [`AuthState::revoke_grant_tokens`] (ADR-0017 section 2).
+    ///
+    /// The contract once this returns: nothing of an earlier generation can
+    /// be issued or used.
+    ///
+    /// - a login that passed its entry check and is still verifying
+    ///   credentials issues nothing ([`AuthState::login_rate_limited`]);
+    /// - a request whose account lookup is still in flight is not authorized
+    ///   ([`AuthState::authenticate`] settles against the table after the
+    ///   lookup; [`require_auth`] compares the generation once more after the
+    ///   permissions were read);
+    /// - a request that was ALREADY authorized (it is past the guard, holding
+    ///   its `AuditActor` snapshot) is not interrupted: it runs to the end as
+    ///   the actor it was authorized as, the same rule as for any other
+    ///   session end (conventions section 1, Issue #793). The switch does not
+    ///   wait for it.
+    ///
+    /// The side that changes the stored setting must call this right after
+    /// persisting it, in the same function, with no `.await` in between (the
+    /// order ADR-0017 section 2 uses for grants). Switching to the mode the
+    /// state is already in changes nothing and returns 0.
+    pub fn switch_auth_mode(&self, mode: AuthMode) -> usize {
+        let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
+        if tokens.mode == mode {
+            return 0;
+        }
+        tokens.mode = mode;
+        tokens.mode_generation += 1;
+        let before = tokens.records.len();
+        tokens.records.retain(|_, record| record.grant.is_some());
+        before - tokens.records.len()
     }
 
     /// The revocation generation of `kind` RIGHT NOW (ADR-0017 §2). An issuer
@@ -533,7 +645,8 @@ impl AuthState {
         }
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
         self.inner.sweep_expired(&mut tokens, now);
-        tokens.insert(
+        let mode_generation = tokens.mode_generation;
+        tokens.records.insert(
             token.clone(),
             TokenRecord {
                 identity: spec.identity.clone(),
@@ -544,12 +657,13 @@ impl AuthState {
                 policy: spec.policy,
                 stamp: None,
                 audit_as_builtin_admin: spec.audit_as_builtin_admin,
+                mode_generation,
             },
         );
         queue.tokens.push_back(token.clone());
         while queue.tokens.len() > spec.max_sessions.max(1) {
             if let Some(oldest) = queue.tokens.pop_front() {
-                tokens.remove(&oldest);
+                tokens.records.remove(&oldest);
             }
         }
         Some(token)
@@ -571,13 +685,15 @@ impl AuthState {
         queue.generation += 1;
         let queued: Vec<String> = queue.tokens.drain(..).collect();
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-        let before = tokens.len();
+        let before = tokens.records.len();
         for t in queued {
-            tokens.remove(&t);
+            tokens.records.remove(&t);
         }
         // Defensive: also drop any record of the kind the FIFO lost track of.
-        tokens.retain(|_, record| record.grant.as_ref() != Some(kind));
-        before - tokens.len()
+        tokens
+            .records
+            .retain(|_, record| record.grant.as_ref() != Some(kind));
+        before - tokens.records.len()
     }
 
     /// Shared implementation of [`AuthState::issue_token`]/
@@ -589,17 +705,32 @@ impl AuthState {
     /// existing record is checked against whichever policy applies to IT
     /// (its own `remembered` flag / grant policy), not the policy of the
     /// token being inserted.
+    ///
+    /// ADR-0034 section 6: the insert happens only while the mode is
+    /// [`AuthMode::LoginRequired`] and - when the issuer awaited something
+    /// since it read the generation (`observed`) - the generation is still
+    /// that one. Decided under the lock [`AuthState::switch_auth_mode`]
+    /// switches under, so an issuance can never land after a switch it
+    /// started before.
     fn issue_token_with(
         &self,
         identity: Identity,
         remembered: bool,
         stamp: Option<SessionStamp>,
-    ) -> String {
+        observed: Option<u64>,
+    ) -> Result<String, IssueRefusal> {
         let token = Uuid::new_v4().to_string();
         let now = self.inner.clock.now();
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
+        if tokens.mode == AuthMode::NoLogin {
+            return Err(IssueRefusal::NoLogin);
+        }
+        let mode_generation = tokens.mode_generation;
+        if observed.is_some_and(|observed| observed != mode_generation) {
+            return Err(IssueRefusal::Switched);
+        }
         self.inner.sweep_expired(&mut tokens, now);
-        tokens.insert(
+        tokens.records.insert(
             token.clone(),
             TokenRecord {
                 identity,
@@ -610,9 +741,10 @@ impl AuthState {
                 policy: None,
                 stamp,
                 audit_as_builtin_admin: false,
+                mode_generation,
             },
         );
-        token
+        Ok(token)
     }
 
     /// Is `token` a currently-valid, unexpired bearer token? A successful
@@ -632,6 +764,7 @@ impl AuthState {
             .tokens
             .write()
             .expect("auth token lock poisoned")
+            .records
             .remove(token);
     }
 
@@ -651,6 +784,7 @@ impl AuthState {
             .tokens
             .read()
             .expect("auth token lock poisoned")
+            .records
             .len()
     }
 
@@ -788,8 +922,9 @@ impl AuthState {
     /// present, not expired, and bound to exactly the stamp the store
     /// reported. `validated` is the stamp the lookup started from.
     ///
-    /// - the token is gone or has expired -> `Invalid` (an expired one is
-    ///   evicted);
+    /// - the token is gone, has expired, or belongs to an auth-mode
+    ///   generation that ended ([`AuthState::switch_auth_mode`], ADR-0034
+    ///   section 6) -> `Invalid` (it is evicted);
     /// - the token is bound to the stamp the store reports -> `Valid`, with
     ///   its identity refreshed (for the synchronous
     ///   [`AuthState::identity_for`] readers behind [`require_auth`]). This
@@ -813,17 +948,22 @@ impl AuthState {
     ) -> Settled {
         let now = self.inner.clock.now();
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-        let Some(record) = tokens.get(token) else {
+        let Some(record) = tokens.records.get(token) else {
             return Settled::Invalid;
         };
-        if record.is_expired(now, &self.inner.policy_for(record)) {
-            tokens.remove(token);
+        // ADR-0034 section 6: a token of an earlier mode generation (or any
+        // account token in no-login mode) is gone already - the switch
+        // removed it under this lock - so this is the same verdict stated
+        // outright rather than left to the removal.
+        if record.is_expired(now, &self.inner.policy_for(record)) || !tokens.mode_admits(record) {
+            tokens.records.remove(token);
             return Settled::Invalid;
         }
         let current = record.stamp;
         match account {
             Some(account) if current == Some(account.stamp) => {
                 let record = tokens
+                    .records
                     .get_mut(token)
                     .expect("token was just confirmed present");
                 record.identity = account.identity.clone();
@@ -835,7 +975,7 @@ impl AuthState {
                 })
             }
             _ if current == Some(validated) => {
-                tokens.remove(token);
+                tokens.records.remove(token);
                 Settled::Invalid
             }
             _ => Settled::Rebound,
@@ -859,7 +999,7 @@ impl AuthState {
         new_epoch: i64,
     ) -> bool {
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-        match tokens.get_mut(token) {
+        match tokens.records.get_mut(token) {
             Some(record) if record.stamp == Some(previous) => {
                 record.stamp = Some(SessionStamp {
                     account_id: previous.account_id,
@@ -878,10 +1018,11 @@ impl AuthState {
     fn revoke_if_stamp(&self, token: &str, stamp: Option<SessionStamp>) {
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
         if tokens
+            .records
             .get(token)
             .is_some_and(|record| record.stamp == stamp)
         {
-            tokens.remove(token);
+            tokens.records.remove(token);
         }
     }
 
@@ -903,16 +1044,19 @@ impl AuthState {
         let now = self.inner.clock.now();
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
 
+        // Expired, or not admitted by the auth mode as it is now (ADR-0034
+        // section 6; see `settle_lookup`).
         let expired = {
-            let record = tokens.get(token)?;
-            record.is_expired(now, &self.inner.policy_for(record))
+            let record = tokens.records.get(token)?;
+            record.is_expired(now, &self.inner.policy_for(record)) || !tokens.mode_admits(record)
         };
 
         if expired {
-            tokens.remove(token);
+            tokens.records.remove(token);
             None
         } else {
             let record = tokens
+                .records
                 .get_mut(token)
                 .expect("token was just confirmed present");
             if idle == IdleWindow::Slide {

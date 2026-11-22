@@ -36,9 +36,9 @@ pub mod server;
 pub mod static_files;
 
 pub use auth::{
-    auth_routes, rate_limit_key, require_auth, AuthState, AuthenticatedSession, Identity,
+    auth_routes, rate_limit_key, require_auth, AuthMode, AuthState, AuthenticatedSession, Identity,
     LoginOutcome, PermissionReader, RateLimitPolicy, SessionAccount, SessionLookup,
-    SessionPermissions, SessionStamp, SessionValidation, TokenPolicy,
+    SessionPermissions, SessionStamp, SessionValidation, TokenPolicy, LOGIN_DISABLED_MESSAGE,
 };
 pub use csrf::require_banto_client_header;
 pub use detach::{

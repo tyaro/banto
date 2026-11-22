@@ -221,11 +221,17 @@ async fn issue_token_sweeps_expired_tokens() {
     });
     assert!(auth.verify(&fresh));
     assert_eq!(
-        auth.inner.tokens.read().unwrap().len(),
+        auth.inner.tokens.read().unwrap().records.len(),
         1,
         "the expired token should have been swept on write"
     );
-    assert!(!auth.inner.tokens.read().unwrap().contains_key(&stale));
+    assert!(!auth
+        .inner
+        .tokens
+        .read()
+        .unwrap()
+        .records
+        .contains_key(&stale));
 }
 
 // --- Login rate limiting (spec §11.2) --------------------------------
@@ -1126,6 +1132,7 @@ async fn an_issuance_parked_before_the_insert_loses_to_a_revocation_that_complet
                 .tokens
                 .read()
                 .unwrap()
+                .records
                 .values()
                 .any(|record| record.grant.is_some()),
             "{kind}: no grant record at all"
@@ -1878,4 +1885,304 @@ async fn require_auth_fails_the_request_when_the_permissions_cannot_be_read() {
         .unwrap()
         .status();
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+// --- ADR-0034 section 6: the auth mode and its generation ----------------
+//
+// Logging in, issuing a token and authorizing with one are serialized with
+// `switch_auth_mode`: once a switch has returned, nothing that started in an
+// earlier generation is issued or used.
+
+/// Switch to no-login mode and straight back: the mode is login-required
+/// again, but the generation moved twice (the harder case for a check that
+/// only looked at the mode).
+fn switch_away_and_back(auth: &AuthState) {
+    auth.switch_auth_mode(AuthMode::NoLogin);
+    auth.switch_auth_mode(AuthMode::LoginRequired);
+}
+
+async fn login_post(router: &Router, username: &str, password: &str) -> Response {
+    router
+        .clone()
+        .oneshot(
+            HttpRequest::post("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "username": username, "password": password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_new_state_is_login_required_and_switching_to_the_same_mode_changes_nothing() {
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+    assert_eq!(auth.auth_mode(), AuthMode::LoginRequired);
+    let token = login_token(&auth, "alice", false).await;
+
+    assert_eq!(auth.switch_auth_mode(AuthMode::LoginRequired), 0);
+    assert_eq!(auth.mode_generation(), 0, "not a switch: no new generation");
+    assert!(is_live(&auth, &token).await);
+}
+
+#[tokio::test]
+async fn no_login_mode_refuses_a_login_before_the_verifier_runs() {
+    let (auth, calls) = counting_auth(RateLimitPolicy::default());
+    auth.switch_auth_mode(AuthMode::NoLogin);
+    assert_eq!(auth.auth_mode(), AuthMode::NoLogin);
+
+    // Right or wrong credentials: the same refusal, and nothing was verified
+    // or counted toward a lockout.
+    for _ in 0..(RateLimitPolicy::default().max_failures + 2) {
+        assert!(matches!(
+            auth.login_rate_limited(None, "admin", "wrong", false).await,
+            LoginOutcome::LoginDisabled
+        ));
+    }
+    assert!(auth.login("admin", "admin").await.is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "the verifier never ran");
+    assert_eq!(auth.session_count(), 0);
+
+    // The route answers like a failed login, with the mode's own message.
+    let response = login_post(&auth_routes(auth.clone()), "admin", "admin").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], LOGIN_DISABLED_MESSAGE);
+    assert!(body.get("token").is_none());
+}
+
+#[tokio::test]
+async fn a_switch_that_completes_while_credentials_are_verified_issues_no_token() {
+    // The login passed its entry check (login-required), then the mode was
+    // switched while the verifier was awaited. The credentials are right.
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+    let before = login_token(&auth, "alice", false).await;
+
+    let switcher = auth.clone();
+    *store.during_verify.lock().unwrap() = Some(Box::new(move || {
+        assert_eq!(switcher.switch_auth_mode(AuthMode::NoLogin), 1);
+    }));
+    assert!(matches!(
+        auth.login_rate_limited(None, "alice", "pw", false).await,
+        LoginOutcome::LoginDisabled
+    ));
+    assert_eq!(auth.session_count(), 0, "neither the old nor a new token");
+    assert!(!is_live(&auth, &before).await);
+
+    // The un-throttled path is held to the same rule.
+    auth.switch_auth_mode(AuthMode::LoginRequired);
+    let switcher = auth.clone();
+    *store.during_verify.lock().unwrap() = Some(Box::new(move || {
+        switcher.switch_auth_mode(AuthMode::NoLogin);
+    }));
+    assert!(auth.login("alice", "pw").await.is_none());
+    assert_eq!(auth.session_count(), 0);
+}
+
+#[tokio::test]
+async fn a_login_from_an_ended_generation_issues_nothing_even_when_login_is_required_again() {
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+
+    let switcher = auth.clone();
+    *store.during_verify.lock().unwrap() = Some(Box::new(move || {
+        switch_away_and_back(&switcher);
+    }));
+    assert!(matches!(
+        auth.login_rate_limited(None, "alice", "pw", false).await,
+        LoginOutcome::Unavailable
+    ));
+    assert_eq!(auth.session_count(), 0);
+
+    // The retry belongs to the current generation and logs in.
+    let token = login_token(&auth, "alice", false).await;
+    assert!(is_live(&auth, &token).await);
+}
+
+#[tokio::test]
+async fn a_switch_revokes_every_account_token_and_no_grant_token() {
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    store.put("bob", "viewer", 2, 0);
+    let auth = store.auth();
+    let alice = login_token(&auth, "alice", false).await;
+    let bob = login_token(&auth, "bob", true).await;
+    let grant = issue(&auth, &public_viewer_spec());
+
+    assert_eq!(auth.switch_auth_mode(AuthMode::NoLogin), 2);
+    assert!(!is_live(&auth, &alice).await);
+    assert!(!is_live(&auth, &bob).await);
+    assert!(!auth.verify(&alice), "the synchronous readers agree");
+    assert!(is_live(&auth, &grant).await, "a grant is outside the mode");
+
+    // Nothing an `issue_*` call hands out in no-login mode is a session.
+    let account = store.get("alice").unwrap();
+    let dead = auth.issue_account_token(account.clone(), false);
+    assert!(!is_live(&auth, &dead).await);
+    assert!(!auth.verify(&auth.issue_token(account.identity.clone())));
+    assert!(!auth.verify(&auth.issue_token_remembered(account.identity)));
+    assert_eq!(auth.session_count(), 1, "only the grant token is stored");
+
+    // Locking down again advances the generation too; the grant stays, the
+    // old account tokens stay dead, a new login works.
+    assert_eq!(auth.switch_auth_mode(AuthMode::LoginRequired), 0);
+    assert!(!is_live(&auth, &alice).await);
+    assert!(is_live(&auth, &grant).await);
+    let again = login_token(&auth, "alice", false).await;
+    assert!(is_live(&auth, &again).await);
+}
+
+#[tokio::test]
+async fn a_request_whose_lookup_was_in_flight_during_a_switch_is_not_authorized() {
+    for back_to_login_required in [false, true] {
+        let store = FakeStore::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth();
+        let token = login_token(&auth, "alice", false).await;
+
+        let (check, release) = check_held_in_lookup(&store, &auth, &token).await;
+        auth.switch_auth_mode(AuthMode::NoLogin);
+        if back_to_login_required {
+            auth.switch_auth_mode(AuthMode::LoginRequired);
+        }
+        release.send(()).unwrap();
+        assert!(
+            check.await.unwrap().unwrap().is_none(),
+            "the account still matches, but the token's generation ended"
+        );
+        assert!(!auth.verify(&token));
+    }
+}
+
+#[tokio::test]
+async fn require_auth_answers_401_when_the_switch_completes_during_the_lookup() {
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+    let token = login_token(&auth, "alice", false).await;
+    let router = protected_router(&auth);
+
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    *store.lookup_gate.lock().unwrap() = Some((entered_tx, release_rx));
+    let request = tokio::spawn(router.clone().oneshot(bearer_get("/protected", &token)));
+    entered_rx.await.expect("the lookup started");
+    switch_away_and_back(&auth);
+    release_tx.send(()).unwrap();
+    assert_eq!(
+        request.await.unwrap().unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn require_auth_answers_401_when_the_switch_completes_while_permissions_are_read() {
+    // The account lookup already settled; the permissions read is the second
+    // await of the authorization, and the generation is compared after it.
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let slot: Arc<std::sync::Mutex<Option<AuthState>>> = Arc::default();
+    let reader_slot = slot.clone();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let reader_reads = reads.clone();
+    let auth = store
+        .auth()
+        .with_permission_reader(move |_account_id: i64| {
+            let auth = reader_slot.lock().unwrap().clone();
+            reader_reads.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if let Some(auth) = auth {
+                    switch_away_and_back(&auth);
+                }
+                Ok(SessionPermissions::none())
+            })
+        });
+    let token = login_token(&auth, "alice", false).await;
+    *slot.lock().unwrap() = Some(auth.clone());
+
+    let status = protected_router(&auth)
+        .oneshot(bearer_get("/protected", &token))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "the reader did run");
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_request_authorized_before_the_switch_runs_to_the_end_as_its_actor() {
+    // "Authorized" = past the guard, holding the audit-actor snapshot. The
+    // switch neither interrupts that request nor waits for it; the token is
+    // of no use to the next one (conventions section 1, Issue #793).
+    use banto_admin_services::audit::AuditActor;
+
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+    let token = login_token(&auth, "alice", false).await;
+
+    let (in_handler_tx, in_handler_rx) = tokio::sync::oneshot::channel::<()>();
+    let (finish_tx, finish_rx) = tokio::sync::oneshot::channel::<()>();
+    let gates = Arc::new(std::sync::Mutex::new(Some((in_handler_tx, finish_rx))));
+    let router = Router::new()
+        .route(
+            "/write",
+            axum::routing::post(move |axum::Extension(actor): axum::Extension<AuditActor>| {
+                let gates = gates.clone();
+                async move {
+                    let (entered, finish) = gates.lock().unwrap().take().unwrap();
+                    let _ = entered.send(());
+                    let _ = finish.await;
+                    format!("{}:{}", actor.username, actor.kind)
+                }
+            }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            auth.clone(),
+            require_auth,
+        ));
+    let post = |token: &str| {
+        HttpRequest::post("/write")
+            .header("Authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let request = tokio::spawn(router.clone().oneshot(post(&token)));
+    in_handler_rx.await.expect("the handler started");
+    assert_eq!(auth.switch_auth_mode(AuthMode::NoLogin), 1);
+    finish_tx.send(()).unwrap();
+
+    let response = request.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(&body[..], b"alice:account");
+
+    let next = router.oneshot(post(&token)).await.unwrap();
+    assert_eq!(next.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_mode_serializes_without_a_session_lookup_too() {
+    // `DisabledNoRevocation`: no lookup to settle after, so the synchronous
+    // read under the table's lock is the whole authorization.
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth_without_revocation();
+    let token = auth.login("alice", "pw").await.unwrap();
+    assert!(is_live(&auth, &token).await);
+
+    switch_away_and_back(&auth);
+    assert!(!is_live(&auth, &token).await);
+    assert!(auth.identity_for(&token).is_none());
 }

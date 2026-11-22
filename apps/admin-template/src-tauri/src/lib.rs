@@ -57,9 +57,9 @@ use banto_server::routes::{
 use banto_server::{
     bind as bind_listener, bind_with_port_fallback, bind_without_fallback, lan_addrs_for_bind,
     lan_urls_for_bind, reach_check_router, restoring_previous_stays_within, static_router,
-    with_security_headers, AuthState, BoundServer, GrantKind, PortFallbackError, ReachCheckState,
-    ReachCheckStatus, ReachIssue, ReachIssueError, ReachTarget, RunningServer, ServerConfig,
-    ServerEvent, ServerExposure, WriteBudget,
+    with_security_headers, AuthMode, AuthState, BoundServer, GrantKind, PortFallbackError,
+    ReachCheckState, ReachCheckStatus, ReachIssue, ReachIssueError, ReachTarget, RunningServer,
+    ServerConfig, ServerEvent, ServerExposure, WriteBudget,
 };
 use leftover_writes::LeftoverWrites;
 use qrcode::render::svg;
@@ -1153,9 +1153,9 @@ async fn setup_body(
 }
 
 /// `LoginResult.error` of a login/setup refused because auth-disabled mode is
-/// on (S-95).
-const AUTH_DISABLED_LOGIN_MESSAGE: &str =
-    "ログイン不要モード中はアカウントでログインできません。設定で通常のログインに戻してください";
+/// on (S-95). The same text the REST login answers with in that mode
+/// (ADR-0034 §6; conventions §1).
+const AUTH_DISABLED_LOGIN_MESSAGE: &str = banto_server::LOGIN_DISABLED_MESSAGE;
 
 /// The refusal of a login/setup in auth-disabled mode (owner decision on
 /// #266, S-95): `success: false`, not `superseded` (no other session won a
@@ -1703,7 +1703,50 @@ fn rebind_local_session(
 ///   Local);
 /// - mode turned off (`true -> false`): [`end_local_session`] (S-99);
 /// - mode off before and after: nothing.
+///
+/// The embedded server's account sessions follow the same saved mode in the
+/// same step ([`apply_mode_to_rest_sessions`], ADR-0034 §6); the third value
+/// is how many LAN account tokens that revoked.
 fn apply_mode_to_session(
+    state: &AppState,
+    previous: &AuthSettings,
+    saved: &AuthSettings,
+    permissions_changed: bool,
+) -> (LocalRebind, Option<UserIdentity>, usize) {
+    let revoked = apply_mode_to_rest_sessions(&state.rest_auth, saved.disabled);
+    let (rebind, ended_local) =
+        apply_mode_to_webview_session(state, previous, saved, permissions_changed);
+    (rebind, ended_local, revoked)
+}
+
+/// The [`AuthMode`] of the embedded server's `AuthState` for a stored
+/// `auth.disabled`.
+fn rest_auth_mode(disabled: bool) -> AuthMode {
+    if disabled {
+        AuthMode::NoLogin
+    } else {
+        AuthMode::LoginRequired
+    }
+}
+
+/// Make the embedded server's account sessions follow a saved (or, at
+/// startup, stored) auth mode (ADR-0034 §6): `AuthState::switch_auth_mode`
+/// advances the mode's generation and revokes every LAN account token under
+/// one lock, so a LAN login still verifying its password, or a LAN request
+/// whose account lookup is still in flight, cannot issue or use a token of
+/// the mode that just ended. While the mode is on, the embedded server
+/// refuses account logins - the REST twin of
+/// [`install_account_unless_auth_disabled`]. Synchronous; the caller holds
+/// `auth_config_lock` and calls this right after the save, with no `.await`
+/// in between ("persist, then revoke", ADR-0017 §2). Idempotent for an
+/// unchanged mode. Grant sessions (閲覧公開) are not touched. Returns how many
+/// account tokens were revoked.
+fn apply_mode_to_rest_sessions(rest_auth: &AuthState, disabled: bool) -> usize {
+    rest_auth.switch_auth_mode(rest_auth_mode(disabled))
+}
+
+/// The webview half of [`apply_mode_to_session`].
+fn apply_mode_to_webview_session(
     state: &AppState,
     previous: &AuthSettings,
     saved: &AuthSettings,
@@ -1940,7 +1983,7 @@ async fn auth_config_apply_with_permissions_body(
         // part-way, the session must still follow what IS stored: re-read
         // it and re-bind/end from that, then report the error.
         if let Ok(stored) = state.settings.auth_config().await {
-            let (rebind, ended_local) = apply_mode_to_session(state, &previous, &stored, false);
+            let (rebind, ended_local, _) = apply_mode_to_session(state, &previous, &stored, false);
             record_mode_session_change(&state.audit, state.builtin_admin_id, &rebind, ended_local)
                 .await;
         }
@@ -1970,7 +2013,12 @@ async fn auth_config_apply_with_permissions_body(
     // no `seq`; the frontend provider absorbs an unobserved `seq` advance
     // anyway - the catch-up of S-84.) Only on a `true -> false` change: a
     // re-save of `false` touches nothing.
-    let (rebind, ended_local) =
+    //
+    // ADR-0034 §6: the same call switches the embedded server's auth mode
+    // (generation + 1, every LAN account token revoked), so the LAN side
+    // cannot observe the new stored mode together with a session of the old
+    // one either.
+    let (rebind, ended_local, revoked_sessions) =
         apply_mode_to_session(state, &previous, &config, !permission_diff.is_empty());
     record_write_as(
         &state.audit,
@@ -1979,7 +2027,11 @@ async fn auth_config_apply_with_permissions_body(
         "settings_change",
         "settings",
         None,
-        Some(settings_change_detail(disabled, &permission_diff)),
+        Some(settings_change_detail(
+            disabled,
+            &permission_diff,
+            revoked_sessions,
+        )),
     )
     .await;
 
@@ -1999,9 +2051,18 @@ async fn auth_config_apply_with_permissions_body(
 /// The `settings_change` audit detail of an auth-mode apply: `{ authDisabled }`,
 /// plus `authDisabledPermissions: { added, removed }` when the mode's
 /// permissions changed (Issue #697; the same `{ added, removed }` as a user's
-/// `permissions` change). Keys only - never a secret.
-fn settings_change_detail(disabled: bool, diff: &PermissionDiff) -> serde_json::Value {
+/// `permissions` change), plus `revokedSessions: n` when the switch revoked
+/// LAN account sessions (ADR-0034 §6; a count, like ADR-0017's
+/// `revokedGrants`). Keys and counts only - never a secret.
+fn settings_change_detail(
+    disabled: bool,
+    diff: &PermissionDiff,
+    revoked_sessions: usize,
+) -> serde_json::Value {
     let mut detail = serde_json::json!({ "authDisabled": disabled });
+    if revoked_sessions > 0 {
+        detail["revokedSessions"] = serde_json::json!(revoked_sessions);
+    }
     if !diff.is_empty() {
         detail["authDisabledPermissions"] =
             serde_json::to_value(diff).unwrap_or(serde_json::Value::Null);
@@ -4788,6 +4849,10 @@ pub fn run() {
             //   3. neither - the ordinary login screen (`auth: None`).
             let auth_config = tauri::async_runtime::block_on(settings.auth_config())
                 .expect("auth_config should succeed");
+            // ADR-0034 §6: the embedded server's `AuthState` starts in the
+            // stored mode (before any listener exists), and follows every
+            // later switch through `apply_mode_to_session`.
+            apply_mode_to_rest_sessions(&rest_auth, auth_config.disabled);
             let initial_auth: Option<DesktopSession> = if auth_config.disabled {
                 // The same synthetic identity and `login` entry as the
                 // runtime install paths (`auth_config_apply_body` /

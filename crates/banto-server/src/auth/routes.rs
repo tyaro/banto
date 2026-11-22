@@ -67,16 +67,33 @@ pub(crate) fn bearer_token(req: &Request) -> Option<&str> {
 /// account session through the installed reader, none for a grant session
 /// or without a reader). A handler takes them with
 /// `Extension<SessionPermissions>`; a store failure fails the request.
+///
+/// ADR-0034 section 6: the authorization is serialized with the auth mode.
+/// The mode's generation is read on entry and compared once more when the
+/// authorization is COMPLETE - after the account lookup and after the
+/// permissions were read, right before the audit-actor snapshot is made. An
+/// account session whose request was still being authorized when
+/// [`AuthState::switch_auth_mode`] completed gets `401`; a request that
+/// already passed this point is not interrupted and runs to the end as the
+/// actor of its snapshot (conventions section 1).
 pub async fn require_auth(State(auth): State<AuthState>, mut req: Request, next: Next) -> Response {
     let Some(token) = bearer_token(&req).map(str::to_owned) else {
         return unauthorized_response();
     };
+    let entered = auth.mode_generation();
     match auth.authenticate(&token).await {
         Ok(Some(session)) => {
             let permissions = match auth.session_permissions(&session).await {
                 Ok(permissions) => permissions,
                 Err(err) => return crate::ApiError(err).into_response(),
             };
+            // `authenticate` settled the token against the mode as it was
+            // when the lookup returned; the permissions read awaited again.
+            // Generations only grow, so "still the one read on entry" covers
+            // both awaits. A grant session is outside the mode (ADR-0017).
+            if session.grant.is_none() && auth.mode_generation() != entered {
+                return unauthorized_response();
+            }
             // ADR-0034 section 3: the audit actor is decided HERE, once, from
             // the session that was just authorized. Handlers and guards hand
             // this snapshot to the audit log; nothing looks the token up
@@ -90,6 +107,12 @@ pub async fn require_auth(State(auth): State<AuthState>, mut req: Request, next:
         Err(err) => crate::ApiError(err).into_response(),
     }
 }
+
+/// `LoginResponse.error` of a login refused because the state is in
+/// [`AuthMode::NoLogin`] (ADR-0034 section 6). Public so the desktop command
+/// path answers with the very same text.
+pub const LOGIN_DISABLED_MESSAGE: &str =
+    "ログイン不要モード中はアカウントでログインできません。設定で通常のログインに戻してください";
 
 #[derive(Debug, Deserialize)]
 struct LoginRequest {
@@ -149,6 +172,15 @@ async fn login_handler(
         LoginOutcome::InvalidCredentials => Json(LoginResponse {
             success: false,
             error: Some("ユーザー名またはパスワードが違います".to_string()),
+            token: None,
+        })
+        .into_response(),
+        // ADR-0034 section 6: the same `200 {success:false, error}` shape as
+        // wrong credentials (the login screen shows `error`), and the same
+        // wording as the desktop command's refusal in no-login mode.
+        LoginOutcome::LoginDisabled => Json(LoginResponse {
+            success: false,
+            error: Some(LOGIN_DISABLED_MESSAGE.to_string()),
             token: None,
         })
         .into_response(),

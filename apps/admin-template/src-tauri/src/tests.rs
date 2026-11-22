@@ -6102,3 +6102,278 @@ async fn the_builtin_row_and_reserved_names_are_protected_on_the_desktop() {
     let rows = actor_rows(&state).await;
     assert!(rows.is_empty(), "a refused write records nothing: {rows:?}");
 }
+
+// --- ADR-0034 §6: the embedded server's account sessions follow the auth
+// mode, serialized with the switch ------------------------------------------
+//
+// The webview path was already serialized by the slot's `seq` and
+// `auth_config_lock` (S-94/S-95/S-99 above). These are the same promises for
+// the LAN path: `auth_config_apply` switches `rest_auth`'s mode in the step
+// that follows its save, so a LAN login or a LAN request that started in the
+// old mode cannot issue or use a token after the apply has returned.
+
+/// A `rest_auth` over `state`'s accounts (the production verifier and
+/// lookup) whose credential check and account lookup each pass through a
+/// gate. A gate holds its first caller once armed; unarmed, it lets
+/// everything through.
+fn gated_rest_auth(state: &AppState) -> (AuthState, GateSlot, GateSlot) {
+    use banto_server::routes::{audited_credential_verifier, user_session_lookup};
+    use banto_server::SessionValidation;
+
+    let verify_gate: GateSlot = Arc::new(Mutex::new(None));
+    let lookup_gate: GateSlot = Arc::new(Mutex::new(None));
+    let verify = Arc::new(audited_credential_verifier(
+        state.users.clone(),
+        state.audit.clone(),
+    ));
+    let lookup = Arc::new(user_session_lookup(state.users.clone()));
+    let (held_verify, held_lookup) = (verify_gate.clone(), lookup_gate.clone());
+    let auth = AuthState::new(
+        move |username: String, password: String| {
+            let (gate, verify) = (held_verify.clone(), verify.clone());
+            Box::pin(async move {
+                pass_gate(&gate).await;
+                verify(username, password).await
+            })
+        },
+        SessionValidation::lookup(move |username: String| {
+            let (gate, lookup) = (held_lookup.clone(), lookup.clone());
+            Box::pin(async move {
+                pass_gate(&gate).await;
+                lookup(username).await
+            })
+        }),
+    )
+    .with_builtin_admin_id(state.builtin_admin_id);
+    (auth, verify_gate, lookup_gate)
+}
+
+/// Arm `slot`: its next caller is held until the returned [`Hold`] releases.
+fn arm(slot: &GateSlot) -> Hold {
+    let (armed, hold) = gate();
+    *slot.lock().unwrap() = armed.lock().unwrap().take();
+    hold
+}
+
+/// Turning the mode on revokes every LAN account session in the same apply
+/// and the embedded server refuses account logins while it is on (the REST
+/// twin of S-95); turning it off advances the generation again, so the old
+/// tokens stay dead and a new login works. The 閲覧公開 grant is untouched.
+/// The count is in the `settings_change` detail.
+#[tokio::test]
+async fn adr0034_apply_switches_the_lan_auth_mode_and_revokes_lan_account_sessions() {
+    let state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let operator = rest_token(&state, "operator", false).await;
+    let bystander = rest_token(&state, "bystander", true).await;
+    let spec = GrantSpec::public_viewer(state.settings.clone());
+    let grant = state
+        .rest_auth
+        .issue_grant_token(&spec, state.rest_auth.grant_generation(&spec.kind))
+        .expect("issued");
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::NoLogin);
+    for token in [&operator, &bystander] {
+        assert!(state.rest_auth.authenticate(token).await.unwrap().is_none());
+    }
+    assert!(state
+        .rest_auth
+        .authenticate(&grant)
+        .await
+        .unwrap()
+        .is_some());
+    let logins = audit_action_count(&state, "login").await;
+    assert!(matches!(
+        state
+            .rest_auth
+            .login_rate_limited(None, "operator", REVOCATION_PASSWORD, false)
+            .await,
+        LoginOutcome::LoginDisabled
+    ));
+    assert_eq!(
+        audit_action_count(&state, "login").await,
+        logins,
+        "no credential was checked, so nothing is recorded (as on the desktop)"
+    );
+    assert_eq!(
+        settings_change_details(&state).await.last().unwrap(),
+        &serde_json::json!({ "authDisabled": true, "revokedSessions": 2 })
+    );
+
+    // Lock down again (the mode's own escape hatch authorizes it).
+    auth_config_apply_body(&state, false, "admin")
+        .await
+        .expect("apply false");
+
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+    for token in [&operator, &bystander] {
+        assert!(state.rest_auth.authenticate(token).await.unwrap().is_none());
+    }
+    assert!(state
+        .rest_auth
+        .authenticate(&grant)
+        .await
+        .unwrap()
+        .is_some());
+    let again = rest_token(&state, "operator", false).await;
+    assert!(state
+        .rest_auth
+        .authenticate(&again)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        settings_change_details(&state).await.last().unwrap(),
+        &serde_json::json!({ "authDisabled": false }),
+        "nothing was revoked: no count"
+    );
+}
+
+/// A LAN login passed its entry check and is verifying the password; an
+/// apply(true) completes meanwhile. The resumed check is right about the
+/// credentials and still issues nothing.
+#[tokio::test]
+async fn adr0034_a_lan_login_overtaken_by_apply_true_issues_no_token() {
+    let mut state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let (rest_auth, verify_gate, _) = gated_rest_auth(&state);
+    state.rest_auth = rest_auth;
+    let mut hold = arm(&verify_gate);
+
+    let login = state
+        .rest_auth
+        .login_rate_limited(None, "target", REVOCATION_PASSWORD, false);
+    tokio::pin!(login);
+    run_until_held!(login, hold);
+
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+    hold.release.send(()).unwrap();
+
+    assert!(matches!(login.await, LoginOutcome::LoginDisabled));
+    assert_eq!(state.rest_auth.session_count(), 0);
+}
+
+/// The same login overtaken by a full round trip (on, then off again): the
+/// mode is login-required when the check resumes, but the login belongs to a
+/// generation that ended.
+#[tokio::test]
+async fn adr0034_a_lan_login_overtaken_by_apply_true_then_false_issues_no_token() {
+    let mut state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let (rest_auth, verify_gate, _) = gated_rest_auth(&state);
+    state.rest_auth = rest_auth;
+    let mut hold = arm(&verify_gate);
+
+    let login = state
+        .rest_auth
+        .login_rate_limited(None, "target", REVOCATION_PASSWORD, false);
+    tokio::pin!(login);
+    run_until_held!(login, hold);
+
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+    auth_config_apply_body(&state, false, "admin")
+        .await
+        .expect("apply false");
+    hold.release.send(()).unwrap();
+
+    assert!(matches!(login.await, LoginOutcome::Unavailable));
+    assert_eq!(state.rest_auth.session_count(), 0);
+}
+
+/// A LAN request is being authorized (its account lookup is in flight) when
+/// an apply completes; the account is unchanged, and the request is still
+/// not authorized - with the mode on, and after a full round trip.
+#[tokio::test]
+async fn adr0034_a_lan_request_whose_lookup_is_overtaken_by_an_apply_is_not_authorized() {
+    for round_trip in [false, true] {
+        let mut state = app_state().await;
+        seed_revocation_accounts(&state).await;
+        desktop_login(&state, "operator").await;
+        let (rest_auth, _, lookup_gate) = gated_rest_auth(&state);
+        state.rest_auth = rest_auth;
+        let token = rest_token(&state, "target", false).await;
+        let mut hold = arm(&lookup_gate);
+
+        let check = state.rest_auth.authenticate(&token);
+        tokio::pin!(check);
+        run_until_held!(check, hold);
+
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("apply true");
+        if round_trip {
+            auth_config_apply_body(&state, false, "admin")
+                .await
+                .expect("apply false");
+        }
+        hold.release.send(()).unwrap();
+
+        assert!(
+            check.await.unwrap().is_none(),
+            "round_trip={round_trip}: authorized with a token of the ended generation"
+        );
+        assert!(!state.rest_auth.verify(&token));
+    }
+}
+
+/// The switch follows the save with no `.await` in between: while the apply
+/// is held right after its save, the LAN side is still in the old mode (the
+/// stored mode is not yet observable together with a switched state), and
+/// once it returns both moved.
+#[tokio::test]
+async fn adr0034_the_lan_auth_mode_switches_in_the_step_after_the_save() {
+    let mut state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let token = rest_token(&state, "operator", false).await;
+    let mut hold = hold_after_save(&mut state);
+
+    let apply = auth_config_apply_body(&state, true, "admin");
+    tokio::pin!(apply);
+    run_until_held!(apply, hold);
+    assert!(state.settings.auth_config().await.unwrap().disabled);
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+
+    hold.release.send(()).unwrap();
+    apply.await.expect("apply");
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::NoLogin);
+    assert!(!state.rest_auth.verify(&token));
+}
+
+/// A failed save changed nothing, so the LAN side keeps its mode and its
+/// sessions (the session follows what IS stored, S-104).
+#[tokio::test]
+async fn adr0034_a_failed_save_leaves_the_lan_auth_mode_and_sessions() {
+    let mut state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let token = rest_token(&state, "operator", false).await;
+    state.auth_io.save_auth_config = Arc::new(|_, _| {
+        Box::pin(async { Err(BantoError::Storage("disk full (test)".to_string())) })
+    });
+
+    let err = auth_config_apply_body(&state, true, "admin")
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, BantoError::Storage(_)), "{err:?}");
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+    assert!(state
+        .rest_auth
+        .authenticate(&token)
+        .await
+        .unwrap()
+        .is_some());
+}
