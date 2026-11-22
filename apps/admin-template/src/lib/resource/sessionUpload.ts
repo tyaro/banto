@@ -46,10 +46,52 @@ export interface SessionGuardedUpload {
 export const UNGUARDED_CLIENT_MESSAGE =
 	'This file client has no `uploadWhile` (see lib/resource/sessionUpload.ts): nothing was sent.';
 
-function isSessionGuarded(
-	client: FileFieldClient
-): client is FileFieldClient & SessionGuardedUpload {
-	return typeof (client as Partial<SessionGuardedUpload>).uploadWhile === 'function';
+/**
+ * `client.upload` made to send only while `canSend()` holds (see the module
+ * comment). Used for every upload a form starts (`sendingWhile`) and for the
+ * attachments panel of an existing record (`ItemAttachments.svelte`).
+ * `refusedMessage`: what a refused upload shows.
+ */
+export function guardUpload<M>(
+	client: {
+		upload(resource: string, resourceId: string, file: File): Promise<M>;
+	},
+	canSend: () => boolean,
+	refusedMessage: () => string
+): (resource: string, resourceId: string, file: File) => Promise<M> {
+	return async (resource, resourceId, chosen) => {
+		const target = client as unknown as Partial<SessionGuardedUpload>;
+		if (typeof target.uploadWhile !== 'function') throw new Error(UNGUARDED_CLIENT_MESSAGE);
+		// Early out only (no bytes read for nothing): the client's own check,
+		// right before the request, is the real one.
+		if (!canSend()) throw new Error(refusedMessage());
+		try {
+			return (await target.uploadWhile.call(client, resource, resourceId, chosen, {
+				canSend
+			})) as M;
+		} catch (err) {
+			// The client's refusal, in the app's own words.
+			if (!canSend()) throw new Error(refusedMessage(), { cause: err });
+			throw err;
+		}
+	};
+}
+
+/**
+ * `fn` that does nothing once `canSend()` no longer holds: a panel mounted for
+ * a session that has ended must not start the follow-up calls (the reload
+ * after an upload that was already on its way, the delete the user confirmed
+ * after the switch, thumbnails, downloads) with the NEXT session's credentials.
+ */
+export function whileLive<Args extends unknown[], R>(
+	fn: (...args: Args) => Promise<R>,
+	canSend: () => boolean,
+	refusedMessage: () => string
+): (...args: Args) => Promise<R> {
+	return async (...args) => {
+		if (!canSend()) throw new Error(refusedMessage());
+		return fn(...args);
+	};
 }
 
 /**
@@ -72,19 +114,7 @@ export function sendingWhile(
 			const guarded: FileFieldClient = {
 				list: (resource, resourceId) => client.list(resource, resourceId),
 				remove: (id) => client.remove(id),
-				upload: async (resource, resourceId, chosen) => {
-					if (!isSessionGuarded(client)) throw new Error(UNGUARDED_CLIENT_MESSAGE);
-					// Early out only (no bytes read for nothing): the client's
-					// own check, right before the request, is the real one.
-					if (!canSend()) throw new Error(refusedMessage());
-					try {
-						return await client.uploadWhile(resource, resourceId, chosen, { canSend });
-					} catch (err) {
-						// The client's refusal, in the app's own words.
-						if (!canSend()) throw new Error(refusedMessage(), { cause: err });
-						throw err;
-					}
-				}
+				upload: guardUpload(client, canSend, refusedMessage)
 			};
 			return { ...field, file: { ...file, client: guarded } };
 		})

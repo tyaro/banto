@@ -438,6 +438,12 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   持つ派生アプリは同じ 2 か所を写す（写さなければ `AuthState` は既定のログイン必須のままで、今までと同じに動く）。
   写した後は、ログインなしの間、組み込みサーバーがアカウントのログインを断り、切り替えた時点で LAN のアカウントの
   セッションが切れる。
+- **`@banto/dock-svelte`: 消したパネルは既定の位置に出る（#782 PR5）**。ドックから隠した・閉じた pane を出し直すと、
+  隠した場所ではなく既定のレイアウトでの位置に出る。`DockHost` を直に使う派生アプリは、`createDockState()` の直後に
+  `dock.defaultLayout = <既定の DockLayout>` を入れる（入れないと浮動で開く。テンプレートの `/dashboard` を参照）。
+  `ThreePaneDock` は自分で入れる。型 `FloatingWindow` の `dockSlot` は無くなり（`dockShare` に置き換え）、保存済みの
+  layout の `dockSlot` は読まずに捨てる（layout は読める。データの移行は無い）。詳細は CHANGELOG と
+  `packages/dock-svelte/README.md` の「表示メニュー」。
 
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に

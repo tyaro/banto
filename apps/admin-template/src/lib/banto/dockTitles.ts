@@ -9,7 +9,7 @@
  * stale entry) keeps what was stored. A value that is not JSON is returned unchanged for the
  * dock's own `hydrate` validation to reject.
  *
- * Titles live in: `floating[]` (also a closed window holding a `dockSlot`), the docked tree's
+ * Titles live in: `floating[]` (also a closed window hidden from the dock, `dockShare`), the docked tree's
  * panel nodes and tab-group children, and `autoHidden[].node` (a panel or a tab group). Slots
  * hold ids only.
  *

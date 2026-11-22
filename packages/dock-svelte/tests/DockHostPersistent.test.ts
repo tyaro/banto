@@ -14,7 +14,7 @@ import { cleanup, render, screen } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import DockHostPersistentHarness from './DockHostPersistentHarness.svelte';
-import { createDockState } from '../src/state.svelte';
+import { dockWithDefault } from './fixtures/visibility-layouts';
 import type { DockPanelChange } from '../src/core/lifecycle';
 import { isDockRearranging, layoutStructureKey, PersistentContents } from '../src/core/persistent';
 import type { DockCapabilities } from '../src/core/policy';
@@ -133,7 +133,8 @@ type Props = {
 };
 
 function mount(layout: DockLayout, props: Props = {}) {
-	const dock = createDockState(layout);
+	// The layout it starts with is its default layout: where a hidden pane is shown again (#782 PR5).
+	const dock = dockWithDefault(layout);
 	const mounts = new Map<string, number>();
 	const onMounted = (id: string) => mounts.set(id, (mounts.get(id) ?? 0) + 1);
 	const view = render(DockHostPersistentHarness, { dock, onMounted, ...props });

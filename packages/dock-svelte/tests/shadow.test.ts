@@ -900,7 +900,11 @@ const roundTrip = (s: ShadowNode | null, order?: string[]) => {
 	return inflateShadow(docked, sorted);
 };
 
-/** The layout a `DockState` would save for S: the panes away as closed windows with their slot. */
+/**
+ * A layout for S: the panes away as closed windows with their slot as `dockSlot` - what a
+ * `DockState` saved before #782 PR5. `validateDockLayout` drops a `dockSlot` unread since, so the
+ * cases below take the slots from here and only the docked tree from the validated layout.
+ */
 const layoutOf = (s: ShadowNode | null) => {
 	const { docked, away: list } = deflateShadow(s);
 	return {
@@ -1137,7 +1141,7 @@ describe('inflateShadow', () => {
 		if (!checked.ok) throw new Error('the saved layout does not validate');
 		const loaded = inflateShadow(
 			checked.layout.docked,
-			checked.layout.floating.map((w) => ({ panel: p(w.id), slot: w.dockSlot! }))
+			layout.floating.map((w) => ({ panel: p(w.id), slot: w.dockSlot }))
 		);
 		expect(loaded.unplaced).toEqual([]);
 		expect(canon(loaded.shadow)).toBe(canon(s));
@@ -1412,13 +1416,14 @@ describe('inflateShadow', () => {
 		const s = row('r', [tabs('g', [p('a')]), p('b'), gone('c')]);
 		const checked = validateDockLayout(layoutOf(s));
 		if (!checked.ok) throw new Error('the layout is not valid');
-		const { docked, floating } = checked.layout;
+		const { docked } = checked.layout;
+		const { floating } = layoutOf(s);
 		expect(text(docked)).toBe('row[tabs[a], b]');
 		// Nothing away: the tree itself, and it projects to itself.
 		expect(inflateShadow(docked, []).shadow).toBe(docked);
 		expect(projectShadow(shadowOf(docked))).toBe(docked);
 		// A tombstone elsewhere: the group and its id are in the projection.
-		const back = inflateShadow(docked, [{ panel: p('c'), slot: floating[0].dockSlot! }]);
+		const back = inflateShadow(docked, [{ panel: p('c'), slot: floating[0].dockSlot }]);
 		expect(back.unplaced).toEqual([]);
 		expect(canon(back.shadow)).toBe(canon(s));
 		expect(projectShadow(back.shadow)).toEqual(docked);
@@ -1494,7 +1499,7 @@ describe('properties of deflate / inflate (#782 PR3)', () => {
 		);
 	});
 
-	it('the saved layout validates and keeps every slot', () => {
+	it('a layout with the slots as `dockSlot`s (as saved before #782 PR5) validates; they are dropped unread', () => {
 		fc.assert(
 			fc.property(treeRecipe, ops(12), (recipe, list) => {
 				const { s } = run(buildTree(recipe), list, ALL, false);
@@ -1502,9 +1507,8 @@ describe('properties of deflate / inflate (#782 PR3)', () => {
 				const checked = validateDockLayout(JSON.parse(JSON.stringify(layout)));
 				if (!checked.ok)
 					throw new Error(`not valid: ${JSON.stringify(checked.issues)}\n  ${text(s)}`);
-				expect(checked.layout.floating.map((w) => w.dockSlot)).toEqual(
-					layout.floating.map((w) => w.dockSlot)
-				);
+				expect(checked.layout.floating.map((w) => w.id)).toEqual(layout.floating.map((w) => w.id));
+				expect(checked.layout.floating.some((w) => 'dockSlot' in w)).toBe(false);
 			}),
 			params(300)
 		);

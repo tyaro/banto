@@ -154,6 +154,10 @@
 	const DOCK_SETTING_KEY = 'dock.dashboard';
 
 	const dock = createDockState();
+	// Where a docked pane closed with its ✕ / unchecked in the View menu is shown again: its place
+	// in the default layout (dock-svelte reads only `docked`, so the host size does not matter).
+	// Not saved with the layout: given at every mount. Without it such a pane opens floating.
+	dock.defaultLayout = defaultLayout(1280, 800);
 	const dockLayout = createDockLayoutStore({
 		dock,
 		storageKey: DOCK_STORAGE_KEY,
@@ -364,9 +368,9 @@
 	// panel's id (see popout.ts's listenPanelClosed) - `dock.open` brings it
 	// back as a floating pseudo-window at its preserved geometry. (If the
 	// panel had been docked, `onPopOut`'s `closePanel` above took it out of
-	// the docked tree as a closed floating window that remembers its docked
-	// slot - the same path as the pane's ✕. `dock.open` opens it floating,
-	// not back in that slot; the View menu's `showPanel` would.) No-op in
+	// the docked tree as a closed floating window hidden from the dock - the
+	// same path as the pane's ✕. `dock.open` opens it floating; the View
+	// menu's `showPanel` would dock it at its default place.) No-op in
 	// browser mode.
 	$effect(() => {
 		if (!isTauri()) return;

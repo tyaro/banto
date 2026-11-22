@@ -28,7 +28,7 @@ function savedInJa(): DockLayout {
 			win('memo', '\u30e1\u30e2', { x: 77 }),
 			win('spc', '\u5de5\u7a0b\u7ba1\u7406', {
 				open: false,
-				dockSlot: { kind: 'root' }
+				dockShare: 1
 			}),
 			win('custom', '\u81ea\u4f5c')
 		],
@@ -86,7 +86,7 @@ describe('refreshPanelTitles (#729 review)', () => {
 		expect(memo.x).toBe(77); // geometry kept
 		const closed = layout.floating.find((w) => w.id === 'spc')!;
 		expect(closed.open).toBe(false);
-		expect(closed.dockSlot).toEqual({ kind: 'root' });
+		expect(closed.dockShare).toBe(1);
 		expect(closed.title).not.toMatch(JA);
 
 		const root = layout.docked as {

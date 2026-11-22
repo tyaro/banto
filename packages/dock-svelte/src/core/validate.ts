@@ -48,7 +48,7 @@ const isIdList = (v: unknown): boolean =>
 	Array.isArray(v) && v.length === Object.keys(v).length && v.every((s) => typeof s === 'string');
 
 /**
- * The optional remembered docked place of a closed window (#663, `DockSlot`). Its ids are hints,
+ * The remembered docked place of a region in an edge band (#663, `DockSlot`; a closed window's until #782 PR5). Its ids are hints,
  * not checked against the tree. `outer` (#721) is itself a `split` / `root` slot, checked the same
  * way down to `maxDepth` (deeper = invalid, so a value that contains itself ends too): `MAX_SLOT_DEPTH`
  * in a version 3 layout, `V2_MAX_SLOT_DEPTH` in a version 1 / 2 one - as the releases before #727
@@ -191,13 +191,17 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 			if (raw.pinned !== undefined && typeof raw.pinned !== 'boolean') add('shape', `${p}.pinned`);
 			if (raw.collapsed !== undefined && typeof raw.collapsed !== 'boolean')
 				add('shape', `${p}.collapsed`);
-			if (raw.dockSlot !== undefined && !isDockSlot(raw.dockSlot, maxSlotDepth))
-				add('shape', `${p}.dockSlot`);
+			if (
+				raw.dockShare !== undefined &&
+				!(typeof raw.dockShare === 'number' && raw.dockShare >= 0 && raw.dockShare <= 1)
+			)
+				add('shape', `${p}.dockShare`);
 			let win = migrateLock(raw as unknown as FloatingWindow);
-			// A slot that contradicts itself is dropped, not the layout (#736): the window opens floating.
-			if (win.dockSlot !== undefined && !isDockSlotConsistent(win.dockSlot, win.id)) {
+			// A `dockSlot` (the remembered place of the releases before #782 PR5) is not read: dropped,
+			// whatever it holds - the window opens floating.
+			if ('dockSlot' in win) {
 				win = { ...win };
-				delete win.dockSlot;
+				delete (win as { dockSlot?: unknown }).dockSlot;
 			}
 			floating.push(win);
 		});
@@ -290,7 +294,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 				// Normalized only after the whole payload validated (below), like the docked tree: a
 				// malformed node (e.g. tabs without `children`) must reject, not throw.
 				const band = raw as unknown as DockAutoHidden;
-				// Same as a window's `dockSlot` (#736); the band's `slot` is required, so it becomes the root.
+				// A slot that contradicts itself (#736): the band's `slot` is required, so it becomes the root.
 				const id = isRecord(node) && typeof node.id === 'string' ? node.id : '';
 				autoHidden.push(
 					isDockSlotConsistent(band.slot, id) ? band : { ...band, slot: { kind: 'root' } }

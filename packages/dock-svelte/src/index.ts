@@ -129,7 +129,10 @@ export {
 /** Outer-edge drop targets of the whole host (#694 PR-1, buttons since PR-2). */
 export { computeEdgeDrop, edgeButtons } from './core/edges';
 
-/** The remembered docked place of a hidden pane (#663; `DockState.dismiss` / `show` use these), and of a whole region (#694 PR-3, auto-hide). */
+/** The default place of a pane hidden from the dock (#782 PR5; `DockState.dismiss` / `show` use these). */
+export { dockShareOf, hasDefaultPlace, placeAtDefault } from './core/defaultPlace';
+
+/** The remembered docked place of a pane floated out of the tree (#663 ④; `DockState.undockPanel` / `dockAtSlot` use these), and of a whole region (#694 PR-3, auto-hide). */
 export {
 	captureDockSlot,
 	captureRegionSlot,

@@ -128,7 +128,7 @@ describe('threePaneNarrowLayout', () => {
 			['right', 'right']
 		]);
 		expect(narrow.floating).toMatchObject([{ id: 'log', open: false }]);
-		expect(narrow.floating[0].dockSlot).toBeUndefined();
+		expect(narrow.floating[0].dockShare).toBeUndefined();
 		// `wide` is left as it was.
 		expect(collectPanelIds(wide.docked)).toEqual(['left', 'center', 'right', 'log']);
 	});
@@ -175,18 +175,17 @@ describe('ThreePaneDock: the narrow display', () => {
 		expect(mounts).toEqual(['center']);
 	});
 
-	// #739 review (Codex): a floated pane's place is not saved, so the kept wide layout is saved -
-	// and shown again - with the hidden panes' shares taken without it, as before the switch.
-	it('keeps the wide layout as saved: a floated pane is not counted in the hidden ones', async () => {
+	// #739 review (Codex): the kept wide layout is saved - and shown again - as it was before the
+	// switch. Since #782 PR5 a hidden pane holds one number (the share it held), which a floated
+	// pane does not change: saved as it is.
+	it('keeps the wide layout as saved: a hidden pane keeps the share it held, a floated pane or not', async () => {
 		const { api, dock } = mount();
 		dock.undockPanel('left');
 		dock.dismiss('right');
 		const wide = api().layoutSnapshot();
-		const share = (layout: DockLayout) => {
-			const slot = layout.floating.find((w) => w.id === 'right')?.dockSlot;
-			return slot?.kind === 'split' ? slot.share : undefined;
-		};
-		expect(share(wide.layout)).not.toBe(share(dock.layout));
+		const share = (layout: DockLayout) => layout.floating.find((w) => w.id === 'right')?.dockShare;
+		expect(share(wide.layout)).toBeGreaterThan(0);
+		expect(share(wide.layout)).toBe(share(dock.layout));
 		await resize(700);
 		expect(api().layoutSnapshot()).toEqual(wide);
 		await resize(1000);
@@ -194,22 +193,23 @@ describe('ThreePaneDock: the narrow display', () => {
 	});
 
 	// #739 review (Codex): a closed floated pane stays floating in the narrow display; its place is
-	// forgotten, so `right` comes back by the kept share (not scaled by `left` again).
+	// forgotten, and `right` comes back at its default place with the share it held.
 	it('a closed floated pane: its place is forgotten across the narrow display', async () => {
 		const { api, dock } = mount();
 		dock.undockPanel('left');
 		dock.close('left');
 		dock.dismiss('right');
 		const kept = api().layoutSnapshot();
-		const slot = kept.layout.floating.find((w) => w.id === 'right')?.dockSlot;
+		const share = kept.layout.floating.find((w) => w.id === 'right')?.dockShare;
 		await resize(700);
 		expect(dock.homeSlot('left')).toBeUndefined();
 		await resize(1000);
 		dock.show('right');
 		const root = dock.layout.docked as DockSplitNode;
 		const at = root.children.findIndex((c) => c.id === 'right');
-		expect(slot?.kind === 'split' && slot.share).toBeTruthy();
-		expect(root.sizes[at]).toBeCloseTo(slot?.kind === 'split' ? slot.share! : NaN, 9);
+		expect(share).toBeGreaterThan(0);
+		expect(share).toBeLessThan(1);
+		expect(root.sizes[at]).toBeCloseTo(share ?? NaN, 9);
 	});
 
 	it('does not save what is changed while narrow, and goes back to the kept layout', async () => {
@@ -454,7 +454,7 @@ describe('ThreePaneDock: the kept wide layout and the shares (#741)', () => {
 		}
 	});
 
-	it('a hidden panel removed from panels while narrow: right comes back at .375 when wide again', async () => {
+	it('a hidden panel removed from panels while narrow: right comes back with the share it held (.375) when wide again', async () => {
 		const { dock, view, api } = mount({ withLeft: false, extra: [LOG], initialLayout: row() });
 		dock.dismiss('log');
 		dock.dismiss('right');
@@ -463,13 +463,15 @@ describe('ThreePaneDock: the kept wide layout and the shares (#741)', () => {
 		await view.rerender({ extra: [] });
 		await settle();
 		const kept = api().layoutSnapshot().layout as DockLayout;
-		const slot = kept.floating.find((w) => w.id === 'right')?.dockSlot;
 		expect(kept.floating.map((w) => w.id)).toEqual(['right']);
-		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.375, 9);
+		// What it held of row[right, center] when it was hidden (`log` was hidden before it).
+		expect(kept.floating.find((w) => w.id === 'right')?.dockShare).toBeCloseTo(0.375, 9);
 		await resize(1000);
 		expect(view.component.isNarrow()).toBe(false);
 		dock.show('right');
-		expect((dock.layout.docked as DockSplitNode).sizes[0]).toBeCloseTo(0.375, 9);
+		// At its default place (the right of the centre), not where the saved layout had it.
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['center', 'right']);
+		expect((dock.layout.docked as DockSplitNode).sizes[1]).toBeCloseTo(0.375, 9);
 	});
 
 	it('a pane floated while narrow: its place is forgotten when the wide layout comes back', async () => {

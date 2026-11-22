@@ -40,6 +40,13 @@
 		 * `messages.deleteConfirm(item.fileName)`. Default: `window.confirm(message)`.
 		 */
 		confirmDelete?: (message: string, item: AttachmentMeta) => boolean | Promise<boolean>;
+		/**
+		 * Asked right before a download is saved (after `client.downloadUrl`
+		 * resolved). Return `false` (for example, the session the panel was
+		 * mounted for has ended) and nothing is saved; the object URL is freed.
+		 * Default: always saves.
+		 */
+		canSave?: () => boolean;
 	}
 
 	let {
@@ -49,7 +56,8 @@
 		canWrite,
 		title = '添付ファイル',
 		messages = {},
-		confirmDelete = (message: string) => window.confirm(message)
+		confirmDelete = (message: string) => window.confirm(message),
+		canSave = () => true
 	}: Props = $props();
 
 	// i18n layer 1: `messages` is an override bundle, but a parent may swap it
@@ -197,6 +205,7 @@
 		try {
 			const url = await client.downloadUrl(item);
 			try {
+				if (!canSave()) return;
 				const a = document.createElement('a');
 				a.href = url;
 				a.download = item.fileName;

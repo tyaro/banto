@@ -1,10 +1,11 @@
-// `panel-visibility.test.ts` と `panel-visibility-exhaustive-*.test.ts` が共有する道具（#798 で
+// `panel-visibility.test.ts` と `panel-visibility-exhaustive-shadow.test.ts` などが共有する道具（#798 で
 // 総当たりを別ファイルに分けたときに寄せた）: 木の形（`shapeOf`）、レイアウトの集合 `L`、
-// 手順の実行（`runSteps`）、main の slot と今の slot（`mainSlot` / `nowSlot`）。
+// 手順の実行（`runSteps`）、既定の配置つきの `DockState`（`dockWithDefault`、#782 PR5）、
+// main の slot と今の slot（`mainSlot` / `nowSlot`。PR7 で `slot-main.ts` と一緒に消す）。
 import { captureDockSlot, restoreDockSlot } from '../../src/core/slot';
 import type { DockState } from '../../src/state.svelte';
 import { createDockState } from '../../src/state.svelte';
-import type { DockNode } from '../../src/types';
+import type { DockLayout, DockNode } from '../../src/types';
 import { captureDockSlot as mainCapture, restoreDockSlot as mainRestore } from './slot-main';
 import type { SlotImpl } from './visibility-sim';
 
@@ -67,11 +68,20 @@ export const tabsNode = (id: string, ids: string[]): DockNode => ({
 	children: ids.map(panel)
 });
 /**
+ * A state whose default layout (#782 PR5: where `show` docks a pane hidden from the dock) is the
+ * layout it starts with.
+ */
+export const dockWithDefault = (initial: DockLayout | string, makeId?: () => string): DockState => {
+	const dock = createDockState(initial, makeId);
+	dock.defaultLayout = JSON.parse(JSON.stringify(dock.layout)) as DockLayout;
+	return dock;
+};
+/**
  * `-x` hides x, `+x` shows it, `~x` floats it (`undockPanel`, #734), `^x` puts it back where it
  * was (`dockAtSlot` with its `homeSlot`, the panel menu's "back"), with `createDockState`.
  */
 export const runSteps = (make: () => DockNode, steps: string[]): DockState => {
-	const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+	const dock = dockWithDefault({ version: 2, floating: [], docked: make() }, counterMakeId());
 	for (const step of steps) {
 		const id = step.slice(1);
 		if (step[0] === '-') dock.dismiss(id);

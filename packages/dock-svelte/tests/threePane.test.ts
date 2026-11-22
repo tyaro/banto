@@ -57,12 +57,18 @@ describe('threePaneDockLayout', () => {
 		expect(alone.docked).toEqual({ type: 'panel', id: 'center', title: 'Work' });
 	});
 
-	it('hides a side with *Open false, remembering its docked place', () => {
+	it('hides a side with *Open false, as a pane hidden from the dock (with the share it has by default)', () => {
 		const layout = threePaneDockLayout({ ...base, leftOpen: false });
 		expect(collectPanelIds(layout.docked)).toEqual(['center', 'right']);
 		expect(layout.floating).toHaveLength(1);
 		expect(layout.floating[0]).toMatchObject({ id: 'left', open: false });
-		expect(layout.floating[0].dockSlot?.kind).toBe('split');
+		const full = threePaneDockLayout(base);
+		expect(layout.floating[0].dockShare).toBeCloseTo((full.docked as DockSplitNode).sizes[0], 9);
+		// Shown, it docks at its default place: the default layout with both sides open.
+		const dock = createDockState(layout);
+		dock.defaultLayout = full;
+		expect(dock.show('left')).toBe('docked');
+		expect(dock.layout.docked).toEqual(full.docked);
 	});
 
 	it('places extra panels by `initial`', () => {
@@ -406,10 +412,10 @@ describe('layoutChanges (DockHost.replaceLayout)', () => {
 	});
 });
 
-// #741: a hidden pane dropped from a saved layout no longer holds its share of the split it was
-// hidden from; `fitThreePaneLayout` (today's layout, assigned back with `dock.layout = ...`) leaves
-// the slots to the setter.
-describe('reconcileThreePaneLayout: the share of a hidden pane it drops (#741)', () => {
+// #741 took a hidden pane dropped from a saved layout out of the shares of the hidden panes kept.
+// #782 PR5: a hidden pane holds no slot - dropping one changes nothing for the others, and
+// `fitThreePaneLayout` (today's layout, assigned back with `dock.layout = ...`) does the same.
+describe('reconcileThreePaneLayout: a hidden pane it drops (#741, #782 PR5)', () => {
 	const LOG = { id: 'log', title: 'Log' };
 	const withLog: ThreePanePanels = { center: PANES.center, right: PANES.right, extra: [LOG] };
 	const without: ThreePanePanels = { center: PANES.center, right: PANES.right };
@@ -429,33 +435,20 @@ describe('reconcileThreePaneLayout: the share of a hidden pane it drops (#741)',
 		dock.dismiss('right');
 		return dock.savedLayout();
 	};
-	const share = (layout: DockLayout): number | undefined => {
-		const slot = layout.floating.find((w) => w.id === 'right')?.dockSlot;
-		return slot?.kind === 'split' ? slot.share : undefined;
-	};
+	const share = (layout: DockLayout): number | undefined =>
+		layout.floating.find((w) => w.id === 'right')?.dockShare;
 
-	it('takes the dropped pane out of the shares of the ones kept; a known pane changes nothing', () => {
-		expect(share(saved())).toBeCloseTo(0.3, 9);
-		const dropped = reconcileThreePaneLayout(saved(), { hostWidth: 1000, panels: without });
-		expect(dropped.status).toBe('repaired');
-		expect(dropped.layout.floating.map((w) => w.id)).toEqual(['right']);
-		expect(share(dropped.layout)).toBeCloseTo(0.375, 9);
-		expect(validateDockLayout(dropped.layout).ok).toBe(true);
-		// Shown from the result: 3 : 5 beside the centre.
-		const dock = createDockState(dropped.layout);
-		dock.show('right');
-		expect((dock.layout.docked as DockSplitNode).sizes[0]).toBeCloseTo(0.375, 9);
-
-		const kept = reconcileThreePaneLayout(saved(), { hostWidth: 1000, panels: withLog });
-		expect(share(kept.layout)).toBeCloseTo(0.3, 9);
-	});
-
-	it('fitThreePaneLayout drops the pane and leaves the shares (the setter takes them once)', () => {
-		const dock = createDockState(saved());
-		const fitted = fitThreePaneLayout(dock.layout, { hostWidth: 1000, panels: without });
-		expect(fitted.layout.floating.map((w) => w.id)).toEqual(['right']);
-		expect(share(fitted.layout)).toBeCloseTo(0.3, 9);
-		dock.layout = fitted.layout;
-		expect(share(dock.layout)).toBeCloseTo(0.375, 9);
+	it('the pane kept holds the share it held when it was hidden, the other dropped or not', () => {
+		// Hidden after `log`: .3 of the .8 left.
+		expect(share(saved())).toBeCloseTo(0.375, 9);
+		for (const fit of [reconcileThreePaneLayout, fitThreePaneLayout]) {
+			const dropped = fit(saved(), { hostWidth: 1000, panels: without });
+			expect(dropped.status).toBe('repaired');
+			expect(dropped.layout.floating.map((w) => w.id)).toEqual(['right']);
+			expect(share(dropped.layout)).toBeCloseTo(0.375, 9);
+			expect(validateDockLayout(dropped.layout).ok).toBe(true);
+			const kept = fit(saved(), { hostWidth: 1000, panels: withLog });
+			expect(share(kept.layout)).toBeCloseTo(0.375, 9);
+		}
 	});
 });

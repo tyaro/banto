@@ -71,6 +71,7 @@
 		THREE_PANE_IDS,
 		THREE_PANE_NARROW_BREAKPOINT,
 		threePaneDockLayout,
+		threePaneDefaultPlaces,
 		threePaneNarrowLayout,
 		threePaneSavedLayout,
 		type ThreePaneDockLayoutOptions,
@@ -295,6 +296,8 @@
 	let installedDefault: DockLayout | null = null;
 	untrack(() => {
 		const options = layoutOptions(0);
+		// Where a pane hidden from the dock comes back (#782 PR5): kept with today's panes below.
+		dock.defaultLayout = threePaneDefaultPlaces(options);
 		let status: ThreePaneRestoreStatus | 'fresh';
 		if (initialLayout === undefined && isEmpty(dock.layout)) {
 			adoptLayout(dock, threePaneDockLayout(options));
@@ -462,7 +465,10 @@
 	// Today's panes and titles (a locale change renames them; an extra panel added / removed).
 	$effect(() => {
 		const options = layoutOptions(0);
-		untrack(() => void syncPanels(options));
+		untrack(() => {
+			dock.defaultLayout = threePaneDefaultPlaces(options);
+			void syncPanels(options);
+		});
 	});
 
 	/** The newest `syncPanels` (an older one's outcome is not acted on). */

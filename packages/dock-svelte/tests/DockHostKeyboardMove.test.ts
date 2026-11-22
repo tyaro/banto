@@ -22,6 +22,7 @@ import type { DockPanelChange } from '../src/core/lifecycle';
 import type { DockCapabilities } from '../src/core/policy';
 import { collectPanelIds, findParent } from '../src/core/tree';
 import { createDockState, type DockState } from '../src/state.svelte';
+import { dockWithDefault } from './fixtures/visibility-layouts';
 import type { DockLayout, DockNode, DockPanelNode } from '../src/types';
 
 const saved: [object, string, PropertyDescriptor | undefined][] = [];
@@ -807,7 +808,7 @@ describe('"back" for every float order x every back order (up to every pane of t
 	const cases: [string[], string[]][] = [
 		[['a', 'b', 'c'], Object.keys(layouts)],
 		// 浅い既定（#798）: 4 枚の件は DOCK_EXHAUSTIVE=1 のときだけ（同じ性質は state の側
-		// `panel-visibility-exhaustive-*.test.ts` が 4 枚以上も見ている）。
+		// `slot-properties.test.ts` の「floated panes」が 7 枚まで見ている）。
 		...(EXHAUSTIVE
 			? [
 					[
@@ -845,11 +846,12 @@ describe('"back" for every float order x every back order (up to every pane of t
 	}
 });
 
-// #734: the place a floated pane remembers (`DockState.homeSlot`) and the place a hidden pane
-// remembers (its closed window's `dockSlot`) count each other: one list for both.
-describe('"back" and "show" for panes floated and hidden out of the same container (#734)', () => {
+// #734 made the place a floated pane remembers (`DockState.homeSlot`) and the place of a hidden
+// pane count each other. Since #782 PR5 a hidden pane remembers none: it is shown at its default
+// place (the layout the state starts with, here), and "back" goes by the tree as it is then.
+describe('"back" and "show" for panes floated and hidden out of the same container (#734, #782 PR5)', () => {
 	const row = () =>
-		createDockState({
+		dockWithDefault({
 			version: 2,
 			docked: {
 				type: 'split',
@@ -872,14 +874,15 @@ describe('"back" and "show" for panes floated and hidden out of the same contain
 		expect(order(dock)).toEqual(['a', 'b', 'c']);
 	});
 
-	it('hide b, float a, show b, back a = the old order', async () => {
+	// a was floated from the left of c, with b hidden: it goes back there (`panel-visibility.test.ts`).
+	it('hide b, float a, show b, back a = [b, a, c] (a goes back to the left of c; b holds no place)', async () => {
 		const dock = row();
 		const { host } = mount({ dock });
 		expect(await host().hidePanel('b')).toBe('applied');
 		expect(await host().movePanel('a', { float: true })).toBe('applied');
 		expect(await host().showPanel('b')).toBe('applied');
 		expect(await host().movePanel('a', { back: true })).toBe('applied');
-		expect(order(dock)).toEqual(['a', 'b', 'c']);
+		expect(order(dock)).toEqual(['b', 'a', 'c']);
 	});
 });
 

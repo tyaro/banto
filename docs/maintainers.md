@@ -192,7 +192,8 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   clamp は効く。
 - pane が組み替わると再マウントされる（Svelte は親を移せない）。確認（`beforePanelChange`。押し出される側 → 動かす pane の順）で守る。
   `persistent` の pane は木の外で 1 回だけ描き、DOM ごと移すので作り直さない。
-- 総当たりのテスト（`panel-visibility-exhaustive-*.test.ts` と `DockHostKeyboardMove.test.ts` の float × back）は、
+- 総当たりのテスト（`panel-visibility-exhaustive-shadow.test.ts` と `DockHostKeyboardMove.test.ts` の float × back。
+  hide × show の総当たりと旧実装との比較の 6 本は #782 PR5 で削った。性質は `slot-properties.test.ts`）は、
   環境変数 `DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走り、未設定（手元の既定）は浅い（#798）。
   CI は dock-svelte を触る PR と main の push で `1` にし、触らない PR は浅い既定（ci.yml の `changes` の出力 `dock`）。
   切り替えは `packages/dock-svelte/tests/fixtures/exhaustive.ts` の 1 か所。slot / lifecycle の変更は、手元でも
@@ -208,10 +209,13 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
     木⇔帯の移動は kind `auto-hide`。引き出しの開閉で `structureRevision` が進む（待っている承認は stale）。
   - 引き出しの中で開いたモーダル（`aria-modal`）と背景では引っ込めない。ドッキングの層と引き出しの層は
     `isolation: isolate` で分けるが、モーダルが開いている間は外す（OverlayPanel はその場に fixed で描くため）。
+- 隠した pane の出し直し（#782 PR5）: 既定のレイアウトでの位置（`core/defaultPlace.ts`。`DockState.defaultLayout` は保存しない）。
+  閉じた窓は `dockShare`（隠す直前の比率）だけを持ち、slot は持たない。下の slot の話は、浮かせた pane（`homeSlot`）と
+  端の帯（`autoHidden[].slot`）にだけ残る（#782 PR6〜PR8 で影の木へ）。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:
   - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。5 段以上の slot を含むレイアウトだけ `version: 3` で保存する
     （`core/layoutVersion.ts`。`DockLayout['version']` は `2 | 3`）。回帰比較の fixture は `tests/fixtures/slot-main.ts`。
-  - validate は、矛盾した slot だけ捨てて読む（浮動は dockSlot なし、帯は root）。
+  - validate は、帯の矛盾した slot だけ root にして読む。浮動 window の `dockSlot`（#782 PR5 より前の保存値）は読まずに捨てる。
   - 外したパネルの元の場所は `DockState` の非公開 Map（公開は `homeSlot(id)`、README 未記載）。足すのは `undockPanel` だけ。
     消すのは、setter（浮動でなくなった id）・`hydrate`・`reset`・`forgetHomeSlots`。
   - slot の `share` は「外したパネルも数えた split 全体の割合」（`size` は旧来の意味、`version` 不変）。
