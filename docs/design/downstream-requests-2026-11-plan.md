@@ -604,6 +604,11 @@ body の読みが失敗して handler が自分で終わる（切り離しの対
 - 調整は系列の側を最小に（`--banto-chart-2` の色相を warning から離す）。並べ替えはしない。
   色覚特性（CVD）の既存の検査を通し直す。下限の数値は T2 で、今の値を測ってから決める。
 - 既存のグラフの 2 本目の色が変わる（基準画像の再生成、CHANGELOG の注意）。
+- **T2 の結果**: 下限は 0.09（系列どうしの「どの 2 つも」と同じ値、正常色覚）。実測の最小はライト 0.110
+  （2 と warning）、ダーク 0.052（同）。ライトは通るので変えず、ダークの `--banto-chart-2` だけ
+  `#f48815` → `#ed770e`（warning・danger の両方から 0.092）。ダークは warning と danger が 0.164 しか
+  離れておらず、間に居る橙は 0.09 前後が上限。値と保証しない範囲は
+  [visual-refresh-plan.md](visual-refresh-plan.md) の付録 A.3a。
 
 ### 4.11 #782・#780 影の木
 
@@ -770,7 +775,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | C6 | `createSavedSetting` の再送・`merge`・`onSettled`・README | `admin-core` | 足すだけ | sonnet | 再送・停止・競合の単体テスト |
 | T1（実装済み: fix/794-toast-dark-tint の PR）| #794 Toast と浮かぶ面の tint（Grid の固定列の透けを含む）。**#808 のうち ToastHost の色だけを T1 に合わせる**（Dock/Grid の primary の文字と Tree の `--banto-surface-muted` は T1b） | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。ダークで、着色された BantoGrid の固定列の後ろにスクロールする文字が透けない。実ブラウザーで success・error・warning の Toast の背景の最下層が不透明（`e2e/demo/toast-opaque.spec.ts`。基準画像は使わない） |
 | T1b | #808 primary の文字を `--banto-primary-text` へ（dock の DockedTree・DockWindow、grid の BantoGrid・HeaderCell）と、`--banto-surface-muted` の定義（Tree の 2 か所）。T1 とは別の小さな PR（見た目の差分の原因を追いやすくする） | `dock-svelte`・`grid-svelte`・`theme`・テンプレート | 見た目 | sonnet | axe が通る。基準画像の再生成。差分が T1 と混ざらない（実装済み: fix/808-primary-text-tokens の PR。#808 の残りはこれで全部） |
-| T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査 |
+| T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査（実装済み: fix/795-series-color-distance の PR。下限 0.09、ダークの `--banto-chart-2` だけ変えた。§4.10） |
 | K1 | #792 `isOnScreen`（`docked`・`floating`・`autoHidden`・`flyoutPanel` から） | `dock-svelte` | 足すだけ | sonnet | 偽の 5 つと真の 3 つの単体テスト。README。**実装済み**（`tests/on-screen.test.ts`。`isVisible` は改名せず doc を直した。PR は #825（#792 を Closes）） |
 | K2 | #796 `cancelGesture` と自動の取り消し | `dock-svelte` | 挙動 | sonnet | 操作中の `replaceLayout` の単体テスト 状態: **PR 提出済み**（2026-11-22、`feat/796-dock-cancel-gesture`。`replaceLayout` は `invalid` なら取り消さず、拒否・`stale` でも取り消したままにする。`lifecycle.requestReplace` は変更なし） |
 | K3 | #791 前半（`DockHost` と `ThreePaneDock` の両方に `onLayoutCommit`） | `dock-svelte`・テンプレート | 足すだけ | fable | §4.6 の試験。e2e（workspace-dock の保存） |

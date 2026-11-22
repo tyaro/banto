@@ -511,9 +511,12 @@
 
 	/* Same slot order and hue families as light, re-tuned for the dark
      surface (and raised); same checks (chart-palette.test.ts). Sequential
-     runs dark -> bright here so "more" still means "more contrast". */
+     runs dark -> bright here so "more" still means "more contrast".
+     Slot 2 sits halfway between --banto-warning and --banto-danger (0.092
+     from each in OKLab; slots 1..4 keep >= 0.09 from the status colours,
+     #795) - moving it towards either one fails that test. */
 	--banto-chart-1: #407aea;
-	--banto-chart-2: #f48815;
+	--banto-chart-2: #ed770e;
 	--banto-chart-3: #a7719d;
 	--banto-chart-4: #75b992;
 	--banto-chart-5: #de401b;

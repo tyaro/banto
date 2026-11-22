@@ -38,6 +38,7 @@
 
 ### Changed
 
+- **theme（見た目の変化）:** 先頭 4 系列（`--banto-chart-1`〜`-4`）と状態色（`--banto-warning`・`-danger`・`-success`）の色差の下限（OKLab 0.09、正常色覚）を試験にし、ダークの `--banto-chart-2` を `#f48815` → `#ed770e` に変えた（#795）。warning との距離が 0.052 → 0.092。ライトは通っていたので変えていない（最小 0.110）。消費側への注意: ダークのグラフの 2 本目の橙が少し暗く赤寄りになる。見た目の基準画像を持つアプリは撮り直す。5 番目以降の系列と、色覚シミュレーションでの状態色との距離は保証しない（状態色をグラフに描くときは破線・印・ラベルを併用する）。
 - **Node の基準を 24 から 26 に上げた（#837 を置き換える）。** `.nvmrc`・ルートの `engines.node`（`>=26`）・`@types/node`（`^26.0.0`。ルートと `fixtures/external-consumer`）・全 workflow の `node-version`・README / `docs/upgrading.md` / `docs/recipes/windows-setup.md` の前提表記を 26 にした。
 - **dock-svelte・grid-svelte・theme:** primary の文字（DockedTree・DockWindow の選択・開閉、BantoGrid の一括選択・開閉記号、HeaderCell の並べ替え・絞り込み表示）を `--banto-primary-text` に移した。ダークでコントラストが上がる（#808）。`--banto-surface-muted`（`--banto-surface-subtle` と同値）を theme に足し、Tree の件数バッジが未定義の変数でなく定義済みの面を参照するようにした。消費側が `.disclosure`・`.sort-arrow` などの色を自前の CSS で上書きしていれば、そちらが優先される
 - **基準の作り直し（破壊的。#790・#778・#786 の C1、ADR-0034）。** `users` に `kind`・`account_uid`（アカウントの作成時にサービス層が採番する 128 bit の乱数）を足し `password_hash` を NULL 可に、`audit_log` に `actor_id` を足した（`0003`・`0005` の書き換え、2 方言）。`0014_ui_settings.sql` が表 `ui_settings` と組み込みのユーザー `admin` の行を入れる。組み込みの行はログインの照合・件数・`has_admin`・最後の管理者のガードから外れ、更新・パスワードの設定・権限の付与・削除はサービス層が断る（ユーザー一覧だけが読み取り専用の 1 行として返す）。旧版の DB は起動時に明示のエラーで断り、リストアの候補は必須の表（`ui_settings` を追加）に加えて migration の履歴（版と checksum）を予約と適用の直前に確かめる。初回の seed の条件を「`settings` が空」から「seed 済みの印（`first_boot.seeded`）が無い」に直した。`pnpm verify:migrations` は、タグ `v7.11.0` と比べるときだけこの 4 ファイルの変更を許す。
