@@ -727,11 +727,11 @@ result. The owner confirmed it the same day. Where the body differs, this addend
    a candidate to which migrations truly cannot be applied keeps its reservation and reports "could not be checked" at
    every start-up. The original DB is intact, and the reservation can be cancelled from the settings screen.
 
-## Addendum (2026-11-22, from the mode-switch serialization = C2b-b; awaiting the owner's confirmation)
+## Addendum (2026-11-22, from the mode-switch serialization = C2b-b; confirmed by the owner)
 
 Only §6's "allowing a login, issuing a token and authorizing with a token are serialized with the mode switch" was cut out
 of C2b and landed first (PR #**PR**). Where it differs from the body, and the details the body did not have, are below. The
-points that need confirmation are listed separately in the PR description.
+points that were to be confirmed are listed separately in the PR description; the owner confirmed all of them as recommended.
 
 1. **The generation check landed in this PR, not in C2** (this replaces "the generation check is added here in C2" in §6's
    2026-11-22 note). The implementation is `AuthState` in `banto-server` (`AuthMode`, `switch_auth_mode`). The mode and its
