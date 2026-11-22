@@ -212,10 +212,10 @@ async function guardedFetch<T>(
 }
 
 /**
- * `POST /api/auth/setup`/`/api/auth/change-password` respond `422` with
+ * `POST /api/auth/change-password` responds `422` with
  * `{kind:'validation',field_errors}` for bad input (spec §8.2, same
- * convention as `items_create`'s validation errors). `setup`/
- * `changePassword` below surface the FIRST field error's message as a plain
+ * convention as `items_create`'s validation errors).
+ * `changePassword` below surfaces the FIRST field error's message as a plain
  * `{success:false,error}` result instead of throwing, matching
  * `createTauriAuthProvider`'s equivalent mapping.
  */
@@ -348,7 +348,7 @@ export interface HttpAuthProviderOptions {
 
 const DEFAULT_STORAGE_KEY = 'banto.auth.token';
 
-/** `LoginResult.error` when a login/setup was superseded (Issue #260). */
+/** `LoginResult.error` when a login was superseded (Issue #260). */
 const SUPERSEDED_MESSAGE = '別のセッションが先に確定したため、このログインは適用されませんでした';
 
 /** Does `value` look like a wire `Identity` (`GET /api/auth/identity`'s 200 body)? */
@@ -379,7 +379,7 @@ function isIdentity(value: unknown): value is Identity {
  * event for `storageKey` - and:
  * - `resolve()` answers the session with ONE `GET /api/auth/identity`;
  * - every token write is compare-and-set against the revision the
- *   operation started from (`login`/`setup`/`logout`, and
+ *   operation started from (`login`/`logout`, and
  *   `enterGrant`'s `expectRevision`, #259) AND the stored token read
  *   when it started (PR #264 review P2: another tab's write is visible in
  *   `localStorage` before its `storage` event advances the revision here) -
@@ -627,7 +627,7 @@ export function createHttpAuthProvider(
 			};
 		},
 
-		async status(): Promise<{ initialized: boolean; grants: Record<string, boolean> }> {
+		async status(): Promise<{ grants: Record<string, boolean> }> {
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/status`, {
@@ -635,46 +635,17 @@ export function createHttpAuthProvider(
 					headers: headers(false)
 				});
 			} catch {
-				// No server reachable: treat as "already initialized" so the
-				// caller falls back to the normal login form (which will then
-				// fail with a clear network error) rather than the setup form.
-				// No grants - an unreachable server cannot issue one either.
-				return { initialized: true, grants: {} };
+				// No server reachable: no grants - an unreachable server cannot
+				// issue one. (The login form then fails with a clear network
+				// error of its own.)
+				return { grants: {} };
 			}
-			if (!response.ok) return { initialized: true, grants: {} };
-			const body = (await response.json()) as {
-				initialized: boolean;
-				grants?: Record<string, boolean>;
-			};
+			if (!response.ok) return { grants: {} };
+			const body = (await response.json()) as { grants?: Record<string, boolean> };
 			// A response without `grants` (ADR-0017) means no kind is available:
 			// `{}` here so every caller reads `status().grants[kind] === true`
 			// without re-deriving the "absent means off" rule itself.
-			return { initialized: body.initialized, grants: body.grants ?? {} };
-		},
-
-		async setup(params: Record<string, unknown>): Promise<AuthOperationResult> {
-			const start = startOperation();
-			let response: Response;
-			try {
-				response = await fetchFn(`${baseUrl}/api/auth/setup`, {
-					method: 'POST',
-					headers: headers(true),
-					body: JSON.stringify(params)
-				});
-			} catch {
-				return { success: false, error: NETWORK_ERROR_MESSAGE };
-			}
-			if (!response.ok) {
-				const err = await errorFromResponse(response);
-				return { success: false, error: firstValidationMessage(err) };
-			}
-			const body = (await response.json()) as { success: boolean; error?: string; token?: string };
-			if (body.success && body.token) {
-				if (!writeTokenIfUnchanged(start, body.token)) {
-					return { success: false, error: SUPERSEDED_MESSAGE, superseded: true };
-				}
-			}
-			return { success: body.success, error: body.error };
+			return { grants: body.grants ?? {} };
 		},
 
 		async changePassword(

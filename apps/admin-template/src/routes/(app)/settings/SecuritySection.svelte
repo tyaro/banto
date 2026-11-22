@@ -31,6 +31,7 @@
 		type UserPermission
 	} from '#lib/banto/authAdmin.js';
 	import { isAdmin, type Role } from '#lib/permissions.js';
+	import { navItems, resolveAppPath } from '#lib/navigation.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
@@ -122,6 +123,16 @@
 		);
 	});
 	const guard = guardUnsavedChanges({ isDirty: () => dirty, isSaving: () => applyingAuth });
+	// ADR-0034 §6: a login can be required only once an administrator account
+	// that can log in exists (the server refuses the save otherwise). While
+	// the mode is on and there is none, the switch cannot be turned off; the
+	// note below says why and points at user management - where this app has
+	// that screen (a derived app without it creates the account with
+	// `banto-serve create-admin`).
+	const needsAdminAccount = $derived(
+		authSettingsStore.value?.disabled === true && authSettingsStore.value.hasAdminAccount === false
+	);
+	const usersNav = navItems.find((item) => (item.path as string) === '/users');
 	// Owner review on PR #232: without the saved AuthSettings the drafts are
 	// placeholders with nothing to compare against - an edit could never be
 	// detected as unsaved - so they stay disabled until it loads (retry below).
@@ -220,10 +231,19 @@
 					role="switch"
 					class="banto-switch"
 					bind:checked={disabledDraft}
-					disabled={!editable}
+					disabled={!editable || needsAdminAccount}
+					aria-describedby={needsAdminAccount ? 'auth-needs-admin-account' : undefined}
 				/>
 				{m['settings.authDisableToggle']()}
 			</label>
+			{#if needsAdminAccount}
+				<p id="auth-needs-admin-account" class="note">
+					{m['settings.authRequireLoginNeedsAdmin']()}
+					{#if usersNav}
+						<a href={resolveAppPath(usersNav.path)}>{m['settings.authRequireLoginOpenUsers']()}</a>
+					{/if}
+				</p>
+			{/if}
 
 			<div class="server-fields">
 				<label class="banto-field banto-field--stacked">

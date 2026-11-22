@@ -1185,6 +1185,16 @@ async fn the_first_boot_seed_runs_once_on_postgres(db: &banto_storage::Db) {
         .unwrap();
 }
 
+/// `action, resource, actor_id, actor_username, actor_kind, origin` of an audit row.
+type CliAuditRow = (
+    String,
+    String,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    String,
+);
+
 /// ADR-0034 §5/§7/§10 on PostgreSQL (the display preset's seed): a database
 /// that has never started does not start headless; the CLI seeds, creates the
 /// administrator, requires login and writes the audit rows in ONE transaction;
@@ -1274,14 +1284,7 @@ async fn the_first_admin_cli_on_postgres(
         .await
         .unwrap()
         .is_some());
-    let rows: Vec<(
-        String,
-        String,
-        Option<i64>,
-        Option<String>,
-        Option<String>,
-        String,
-    )> = sqlx::query_as(
+    let rows: Vec<CliAuditRow> = sqlx::query_as(
         "SELECT action, resource, actor_id, actor_username, actor_kind, origin \
              FROM audit_log WHERE origin = 'cli' ORDER BY id",
     )

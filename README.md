@@ -72,7 +72,7 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 ```
 
 DB（SQLite）に保存される本来の形で動かすには、Rust を入れてデスクトップアプリとして起動する
-（`pnpm --filter admin-template tauri dev`。初回起動で管理者アカウントを作る。手順は
+（`pnpm --filter admin-template tauri dev`。新しい DB はアカウントなし・ログインなしで開く。手順は
 [開発](#開発) / [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)）。
 
 動いたら、まず見るべき中心の3ファイルはこれ（スキーマ定義・テーブル・サービス層）:
@@ -247,15 +247,17 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
 - **組み込み Web サーバ**（`banto-server`）: 設定でオプトイン有効化すると、同一 LAN 内の
   他端末のブラウザから REST + SSE で同じ画面を利用可能。ログイン無しの**閲覧公開**・
   TLS 終端・PWA インストールは [docs/recipes/lan-access.md](docs/recipes/lan-access.md)。
-- **認証・RBAC・ユーザー管理**（M10）: argon2id 資格情報 + 初回セットアップ、
+- **認証・RBAC・ユーザー管理**（M10）: argon2id 資格情報、
   admin/editor/viewer の3ロール、ユーザー管理画面。REST/Tauri 両経路で同一の権限判定。
   ロールとは別に、ユーザーへ個別に付ける**権限**（`equipment.operate` 型）も持てる。語彙は
   アプリが登録し、テンプレートは何も登録しない（管理画面に欄は出ない）。足し方は
   [docs/recipes/add-permission.md](docs/recipes/add-permission.md)。
 - **監査ログ**（M14）+ **設定基盤**（M12、SettingsProvider）+ **自動ログイン/ログイン不要
-  モード**（M11）。デスクトップの初回セットアップ画面で「ログインなしで使い始める」を選べば、
-  アカウントを作らずログイン無しの小さなアプリとして始められる（育ったらログイン運用へ
-  切り替え可能）。手順は [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)。
+  モード**（M11）。**新しい DB は、アカウントを作らずログイン無しで起動する**（初回セットアップは
+  無い。デスクトップはそのままアプリに入る）。複数人で使うようになったら、ユーザー管理で管理者の
+  アカウントを作り、設定 → セキュリティでログイン必須に切り替える。ヘッドレス（`banto-serve`）の
+  最初の管理者は `banto-serve create-admin` で作る。手順は
+  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)。
 - **固定ヘッダ/サイドバー + 通知バッジ + ステータス表示**（2026-09）: 本文スクロール中も
   ヘッダと左ペインは画面に固定。サイドバーのナビ項目には「他クライアントの変更」を知らせる
   未確認更新バッジ（`NavItem.badgeResource` を宣言するだけで自リソースにも付く）、ヘッダには
@@ -427,7 +429,7 @@ SQLite（WAL）の同時アクセス、Caddy による TLS 終端とプロキシ
 
 Node.js 26+ / pnpm 10+ / Rust（MSVC ツールチェーン + Visual Studio Build Tools）/
 WebView2 Runtime を入れて `pnpm install` → `pnpm --filter admin-template tauri dev`。
-初回起動で管理者アカウントを作成する。前提ツールの入手先・SQLite ファイルの置き場
+初回起動はアカウントなし・ログインなしでアプリに入る（アカウントはユーザー管理で作る）。前提ツールの入手先・SQLite ファイルの置き場
 （`%APPDATA%\dev.banto.admin\admin-template.sqlite3`）・アイコン差し替え等の補足は
 [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)。
 

@@ -3,8 +3,9 @@
  *
  * Runs against a real `banto-serve --features embed-ui` (LAN/REST mode, no
  * mocked DataProvider - see playwright.config.ts's doc comment) with a
- * brand-new SQLite database, so scenario 1 legitimately hits the first-run
- * setup screen. All scenarios share ONE browser page/session and run in
+ * brand-new SQLite database whose only account is the administrator
+ * `banto-serve create-admin` made before the server started (first-admin.ts;
+ * there is no first-run setup screen). All scenarios share ONE browser page/session and run in
  * file order (`describe.serial` + `workers: 1`, config-wide): later
  * scenarios rely on state earlier ones created (the admin account, the
  * item, the viewer account, the audit trail, ...), the same way a person
@@ -27,7 +28,7 @@
  */
 import { expect, test, type Dialog, type Locator, type Page, type Route } from '@playwright/test';
 import fs from 'node:fs';
-import { createFirstAdmin } from '../first-run-setup';
+import { E2E_ADMIN, loginAsFirstAdmin } from '../first-admin';
 import {
 	chooseItemsMode,
 	chooseItemsMoreAction,
@@ -52,9 +53,10 @@ const SERVER_MODE: ItemsViewLabels = {
 // synthetic session - #209. That name is reserved now, ADR-0034 §4: the
 // account cannot be created. The rule itself - a session is judged by how it
 // was issued, never by its name - is covered by the Rust tests.)
-const ADMIN_USERNAME = 'e2e-admin';
-const ADMIN_PASSWORD = 'E2eAdminPass1';
-const ADMIN_DISPLAY_NAME = 'E2E管理者';
+// The account `create-admin` made before the server started (first-admin.ts).
+const ADMIN_USERNAME = E2E_ADMIN.username;
+const ADMIN_PASSWORD = E2E_ADMIN.password;
+const ADMIN_DISPLAY_NAME = E2E_ADMIN.displayName;
 
 const VIEWER_USERNAME = 'e2e-viewer';
 const VIEWER_PASSWORD = 'E2eViewerPass1';
@@ -269,12 +271,22 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page?.close();
 	});
 
-	test('1. first-run setup creates the admin account and reaches the dashboard', async () => {
-		await createFirstAdmin(page, {
-			displayName: ADMIN_DISPLAY_NAME,
-			username: ADMIN_USERNAME,
-			password: ADMIN_PASSWORD
+	test('1. the first visit shows the login form; the create-admin account reaches the dashboard', async () => {
+		// Not logged in: a gated route leads to the login form (no setup form).
+		await page.goto('/dashboard');
+		await expect(page).toHaveURL(/\/login$/);
+		// The route that used to create the first account is gone.
+		const setup = await page.request.post('/api/auth/setup', {
+			headers: { 'X-Banto-Client': 'banto' },
+			data: { username: 'intruder', password: 'IntruderPass1', displayName: 'x' }
 		});
+		expect(setup.ok()).toBe(false);
+		const status = await page.request.get('/api/auth/status', {
+			headers: { 'X-Banto-Client': 'banto' }
+		});
+		expect(await status.json()).not.toHaveProperty('initialized');
+
+		await loginAsFirstAdmin(page);
 		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 		// With public viewing disabled, reload restores the ordinary account
 		// from the identity endpoint.

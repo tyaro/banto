@@ -62,7 +62,6 @@
 		login: m['audit.actionLogin'](),
 		login_failed: m['audit.actionLoginFailed'](),
 		logout: m['audit.actionLogout'](),
-		setup: m['audit.actionSetup'](),
 		password_reset: m['audit.actionPasswordReset'](),
 		settings_change: m['audit.actionSettingsChange'](),
 		firewall_change: m['audit.actionFirewallChange'](),

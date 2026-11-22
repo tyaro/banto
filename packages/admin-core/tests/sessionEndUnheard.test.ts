@@ -74,7 +74,7 @@ function wire(revoked: Set<string>) {
 			identitiesFor.push(token);
 			return jsonResponse(200, revoked.has(token) ? null : { id: token, name: token });
 		}
-		if (path.endsWith('/api/auth/status')) return jsonResponse(200, { initialized: true });
+		if (path.endsWith('/api/auth/status')) return jsonResponse(200, {});
 		throw new Error(`unexpected ${path}`);
 	}) as unknown as typeof fetch;
 	const auth = createHttpAuthProvider({ fetchFn });

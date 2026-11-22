@@ -1920,9 +1920,19 @@ async fn record_local_rebind(
 #[tauri::command]
 async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettingsView, BantoError> {
     require_role(&state, Role::Viewer, "settings").await?;
+    auth_settings_view(&state, state.settings.auth_config().await?).await
+}
+
+/// `settings` as the settings screen reads it: with the mode's permissions and
+/// whether login could be required right now.
+async fn auth_settings_view(
+    state: &AppState,
+    settings: AuthSettings,
+) -> Result<AuthSettingsView, BantoError> {
     Ok(AuthSettingsView {
-        settings: state.settings.auth_config().await?,
-        disabled_permissions: auth_disabled_permissions_view(&state).await?,
+        settings,
+        disabled_permissions: auth_disabled_permissions_view(state).await?,
+        has_admin_account: state.users.has_admin().await?,
     })
 }
 
@@ -2120,11 +2130,7 @@ async fn auth_config_apply_with_permissions_body(
     // from: the admin's session end (`logout`, reason `auth_disabled`) and
     // the synthetic `login`.
     record_mode_session_change(&state.audit, state.builtin_admin_id, &rebind, ended_local).await;
-    let disabled_permissions = auth_disabled_permissions_view(state).await?;
-    Ok(AuthSettingsView {
-        settings: config,
-        disabled_permissions,
-    })
+    auth_settings_view(state, config).await
 }
 
 /// The `settings_change` audit detail of an auth-mode apply: `{ authDisabled }`,
@@ -2175,6 +2181,11 @@ struct AuthSettingsView {
     #[serde(flatten)]
     settings: AuthSettings,
     disabled_permissions: Vec<String>,
+    /// Whether an administrator account that can log in exists (ADR-0034 §6):
+    /// what requiring login needs. For the screen only - it disables the
+    /// switch and says why; the save decides again
+    /// (`SettingsService::set_auth_config`).
+    has_admin_account: bool,
 }
 
 /// `permissions` (Issue #697) = the keys the auth-disabled session holds;

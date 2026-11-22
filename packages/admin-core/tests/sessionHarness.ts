@@ -108,9 +108,7 @@ export function makeProbeProvider(options: { revision?: number } = {}) {
 	let revision = options.revision ?? 1;
 	const listeners = new Set<() => void>();
 	const probes: ProbeRecord[] = [];
-	const statuses: ReturnType<
-		typeof deferred<{ initialized: boolean; grants?: Record<string, boolean> }>
-	>[] = [];
+	const statuses: ReturnType<typeof deferred<{ grants?: Record<string, boolean> }>>[] = [];
 	const entries: {
 		kind: SessionKind;
 		expectRevision: CredentialRevision | undefined;
@@ -122,7 +120,7 @@ export function makeProbeProvider(options: { revision?: number } = {}) {
 		login: vi.fn(async () => ({ success: true })),
 		logout: vi.fn(async () => {}),
 		status: vi.fn(() => {
-			const answer = deferred<{ initialized: boolean; grants?: Record<string, boolean> }>();
+			const answer = deferred<{ grants?: Record<string, boolean> }>();
 			statuses.push(answer);
 			return answer.promise;
 		}),

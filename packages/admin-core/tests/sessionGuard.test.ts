@@ -95,7 +95,7 @@ function fakeServer(options: { viewerPublic: boolean }) {
 				if (token === 'public-token' && state.viewerPublic) return json(200, PUBLIC_VIEWER);
 				return json(200, token !== null && state.validTokens.has(token) ? ALICE : null);
 			case '/api/auth/status':
-				return json(200, { initialized: true, grants: { publicViewer: state.viewerPublic } });
+				return json(200, { grants: { publicViewer: state.viewerPublic } });
 			case '/api/auth/grant/publicViewer':
 				return state.viewerPublic
 					? json(200, { success: true, token: 'public-token' })
@@ -207,7 +207,7 @@ describe('the guard over the Tauri provider', () => {
 				if (checkFails) throw { kind: 'storage', message: 'database is locked' };
 				return resolved(ALICE);
 			}
-			if (command === 'auth_status') return { initialized: true };
+			if (command === 'auth_status') return {};
 			throw new Error(`unexpected command ${command}`);
 		});
 		const auth = createTauriAuthProvider({ invoke });
@@ -223,7 +223,7 @@ describe('the guard over the Tauri provider', () => {
 
 	it('a confirmed-invalid desktop session goes to login', async () => {
 		const invoke = vi.fn(async (command: string) =>
-			command === 'auth_resolve' ? resolved(null) : { initialized: true }
+			command === 'auth_resolve' ? resolved(null) : {}
 		);
 		await expect(route(createTauriAuthProvider({ invoke }))).resolves.toBe('login');
 	});
@@ -395,7 +395,7 @@ describe('the public-viewer policy with the HTTP provider (S-20)', () => {
 			})),
 			credentialRevision: () => revision,
 			onCredentialChanged: () => () => {},
-			status: vi.fn(async () => ({ initialized: true, grants: { publicViewer: true } })),
+			status: vi.fn(async () => ({ grants: { publicViewer: true } })),
 			enterGrant: vi.fn(async () => ({ success: false }))
 		};
 

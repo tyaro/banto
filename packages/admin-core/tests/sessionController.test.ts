@@ -549,7 +549,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 		const fallback = grantFallback(controller, p.provider, confirmed.ticket, {
 			kind: 'publicViewer'
 		});
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		await flush();
 		expect(p.entries[0].expectRevision).toBe(r0);
 		p.change(); // the provider stored the public token and reports it
@@ -576,7 +576,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 		const fallback = grantFallback(controller, p.provider, confirmed.ticket, {
 			kind: 'publicViewer'
 		});
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		await flush();
 		p.change(); // B logged in
 		p.entries[0].answer.resolve({ success: false, superseded: true });
@@ -605,7 +605,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 		const fallback = grantFallback(controller, p.provider, confirmed.ticket, {
 			kind: 'publicViewer'
 		});
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		await flush();
 		p.change();
 		p.entries[0].answer.resolve({ success: true });
@@ -631,7 +631,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 		const ticket = await confirmedNoneTicket(ctx);
 		const generation = controller.snapshot.generation;
 		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'commissioning' });
-		p.statuses[0].resolve({ initialized: true, grants: { commissioning: true } });
+		p.statuses[0].resolve({ grants: { commissioning: true } });
 		await flush();
 		expect(p.entries).toHaveLength(1);
 		expect(p.entries[0].kind).toBe('commissioning');
@@ -661,7 +661,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 			const ticket = await confirmedNoneTicket(ctx);
 			const generation = controller.snapshot.generation;
 			const fallback = grantFallback(controller, p.provider, ticket, { kind: 'commissioning' });
-			p.statuses[0].resolve({ initialized: true, ...(grants ? { grants } : {}) });
+			p.statuses[0].resolve({ ...(grants ? { grants } : {}) });
 			const result = await fallback;
 			expect(p.provider.enterGrant).not.toHaveBeenCalled();
 			expect(result).toMatchObject({ outcome: 'confirmed', ticket });
@@ -678,7 +678,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 		const fallback = grantFallback(controller, { status: p.provider.status }, ticket, {
 			kind: 'publicViewer'
 		});
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		const result = await fallback;
 		expect(p.provider.enterGrant).not.toHaveBeenCalled();
 		expect(result).toMatchObject({ outcome: 'confirmed', ticket });
@@ -698,7 +698,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 			available
 		});
 		// grants.commissioning is true but the predicate reads `anything`: no entry.
-		p.statuses[0].resolve({ initialized: true, grants: { commissioning: true } });
+		p.statuses[0].resolve({ grants: { commissioning: true } });
 		const refused = await fallback;
 		expect(available).toHaveBeenCalledTimes(1);
 		expect(p.provider.enterGrant).not.toHaveBeenCalled();
@@ -708,7 +708,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 			kind: 'commissioning',
 			available
 		});
-		p.statuses[1].resolve({ initialized: true, grants: { anything: true } });
+		p.statuses[1].resolve({ grants: { anything: true } });
 		await flush();
 		expect(p.entries).toHaveLength(1);
 		expect(p.entries[0].kind).toBe('commissioning');
@@ -733,7 +733,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 		const generation = controller.snapshot.generation;
 
 		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'commissioning' });
-		p.statuses[0].resolve({ initialized: true, grants: { commissioning: true } });
+		p.statuses[0].resolve({ grants: { commissioning: true } });
 		await flush();
 		expect(p.entries).toHaveLength(1);
 		expect(p.entries[0].expectRevision).toBe(ticket.revision);
@@ -762,7 +762,7 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 		const generation = controller.snapshot.generation;
 
 		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'commissioning' });
-		p.statuses[0].resolve({ initialized: true, grants: { commissioning: false } });
+		p.statuses[0].resolve({ grants: { commissioning: false } });
 		const result = await fallback;
 		expect(p.provider.enterGrant).not.toHaveBeenCalled();
 		expect(result).toMatchObject({ outcome: 'confirmed', ticket });
@@ -791,7 +791,7 @@ describe('§6.1 grantFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-5
 		p.active(ctx.last(), BOB);
 		await flush();
 		expect(controller.snapshot.owner).toBe('account:bob');
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		await flush();
 		p.active(ctx.last(), BOB); // the policy confirms what is stored now
 
@@ -806,7 +806,7 @@ describe('§6.1 grantFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-5
 		const ticket = await confirmedNone(ctx);
 		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'publicViewer' });
 
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		await flush();
 		expect(p.entries[0].expectRevision).toBe(ticket.revision);
 		p.entries[0].answer.resolve({ success: false, superseded: true }); // a token is stored
@@ -815,7 +815,7 @@ describe('§6.1 grantFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-5
 		await flush();
 
 		// The re-run, with the ticket of that confirmation.
-		p.statuses[1].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[1].resolve({ grants: { publicViewer: true } });
 		await flush();
 		expect(p.entries[1].expectRevision).toBe(p.revision);
 		p.change(); // the publicViewer grant token was stored and reported
@@ -837,13 +837,13 @@ describe('§6.1 grantFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-5
 		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'publicViewer' });
 
 		p.change(); // the storage event arrived: a background probe starts
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		await flush();
 		expect(p.entries).toHaveLength(0); // no mint on a stale ticket
 		p.none(ctx.last(), { clear: true });
 		await flush();
 
-		p.statuses[1].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[1].resolve({ grants: { publicViewer: true } });
 		await flush();
 		p.change();
 		p.entries[0].answer.resolve({ success: true });
@@ -872,7 +872,7 @@ describe('§6.1 grantFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-5
 
 			for (let round = 0; round < rounds; round++) {
 				await flush();
-				p.statuses[round].resolve({ initialized: true, grants: { publicViewer: true } });
+				p.statuses[round].resolve({ grants: { publicViewer: true } });
 				await flush();
 				p.entries[round].answer.resolve({ success: false, superseded: true });
 				await flush();
@@ -895,7 +895,7 @@ describe('§6.1 grantFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-5
 		const ticket = await confirmedNone(ctx);
 		const probes = p.probes.length;
 		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'publicViewer' });
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		await flush();
 		p.entries[0].answer.resolve({ success: false });
 
@@ -1073,7 +1073,7 @@ describe('re-confirmations and tickets (I-18)', () => {
 		const other = controller.resolve();
 		p.none(2);
 		await other;
-		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: false } });
+		p.statuses[0].resolve({ grants: { publicViewer: false } });
 		await expect(fallback).resolves.toMatchObject({ outcome: 'confirmed' });
 		expect(p.probes).toHaveLength(3);
 	});

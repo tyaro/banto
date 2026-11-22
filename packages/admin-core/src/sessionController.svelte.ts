@@ -1102,7 +1102,7 @@ function normalizeEntered(value: unknown): EnterResult {
 }
 
 /** What `grantFallback` reads from `AuthProvider.status()`. */
-export type GrantStatus = { initialized: boolean; grants?: Record<string, boolean> };
+export type GrantStatus = { grants?: Record<string, boolean> };
 
 export interface GrantFallbackOptions {
 	/** The grant kind to obtain - the server's registered identifier (`'publicViewer'`, an app's `'commissioning'`, ...). */

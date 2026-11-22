@@ -1,25 +1,23 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { getAuthProvider, isProviderError, notify } from '@banto/admin-core';
+	import { getAuthProvider, notify } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
-	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { bantoReady, getBantoMode } from '#lib/banto/setup.js';
-	import { applyAuthSettings } from '#lib/banto/authAdmin.js';
 	import { Button, SurfaceCard } from '@banto/ui';
 	import { version as appVersion } from '../../../package.json';
 	import { loginBrand } from '#lib/banto/loginBrand.js';
 	import { getLoginNotice, loginConnection } from '#lib/banto/loginNotice.js';
 
-	// Undecided until `status()` resolves (or is absent, treated as
-	// "already initialized" - see below): render nothing rather than
-	// flashing one form then the other.
-	let mode: 'loading' | 'setup' | 'login' = $state('loading');
+	// There is one form: the login form. An app has no first-run setup
+	// (ADR-0034 §5) - a new database is entered without a login (the desktop
+	// window never shows this page then), and accounts are created from user
+	// management. Nothing is rendered until `status()` has answered, so the
+	// form does not appear and then grow a "continue as viewer" button.
+	let ready = $state(false);
 
 	let username = $state('');
 	let password = $state('');
-	let displayName = $state('');
-	let passwordConfirm = $state('');
 	let error: string | null = $state(null);
 	let submitting = $state(false);
 
@@ -40,13 +38,6 @@
 	// would be misleading noise.
 	let showDemoNote = $state(false);
 
-	// Setup-skip / no-login start (choiapp-feedback-2026-09 §5): Tauri only,
-	// like the rest of M11 - a LAN browser's first run is already a
-	// multi-device context where no-login mode is prohibited, and the
-	// plain-browser demo has no real backend to configure.
-	let showSkipLogin = $state(false);
-	let skippingLogin = $state(false);
-
 	// "閲覧のみで続ける" (viewer-public-plan §3.1-6, ADR-0012): LAN browser
 	// only (`server` mode, same gate as `showRemember`) - a Tauri window has
 	// no LAN-facing viewer-public surface (M11 already covers "no login in
@@ -65,14 +56,11 @@
 				.catch(() => {});
 			showRemember = getBantoMode() === 'server';
 			showDemoNote = getBantoMode() === 'demo';
-			showSkipLogin = getBantoMode() === 'tauri';
+			// `status()` is optional on an `AuthProvider` (spec §3.3); without
+			// it there is no grant to offer.
 			const status = await getAuthProvider().status?.();
-			// No `status()` on this provider (an older/custom AuthProvider,
-			// spec §3.3's members are optional for backward compatibility):
-			// behave as if an account already exists, i.e. the normal login
-			// form.
-			mode = status && !status.initialized ? 'setup' : 'login';
 			showContinueAsViewer = getBantoMode() === 'server' && status?.grants?.publicViewer === true;
+			ready = true;
 		})();
 	});
 
@@ -107,67 +95,6 @@
 			}
 		} finally {
 			submitting = false;
-		}
-	}
-
-	async function submitSetup(event: SubmitEvent) {
-		event.preventDefault();
-		error = null;
-
-		if (password.length < 8) {
-			error = m['auth.passwordTooShort']();
-			return;
-		}
-		if (password !== passwordConfirm) {
-			error = m['auth.passwordMismatch']();
-			return;
-		}
-
-		submitting = true;
-		try {
-			const setup = getAuthProvider().setup;
-			if (!setup) {
-				error = m['auth.setupUnsupported']();
-				return;
-			}
-			const result = await setup({ username, password, displayName });
-			if (result.success) {
-				goto(resolve(`dashboard`));
-			} else if (result.superseded) {
-				notify('info', m['auth.loginSuperseded']());
-				goto(resolve(`dashboard`));
-			} else {
-				error = result.error ?? m['auth.setupFailed']();
-			}
-		} finally {
-			submitting = false;
-		}
-	}
-
-	// Choi-app default path (choiapp-feedback-2026-09 §5): enable no-login
-	// mode straight from the first-run screen instead of creating an
-	// account. `auth_config_apply`'s zero-users bootstrap window authorizes
-	// this exact call and synthesizes the session, so the goto lands on a
-	// live dashboard with no restart. Role is `admin` - a choi-app's single
-	// operator needs everything; it stays changeable later under
-	// 設定 → セキュリティ.
-	async function skipLogin(): Promise<void> {
-		const confirmed = await confirmAction({
-			title: m['settings.authDisableConfirmTitle'](),
-			message: m['settings.authDisableConfirm'](),
-			confirmLabel: m['settings.authDisableConfirmSubmit'](),
-			danger: true
-		});
-		if (!confirmed) return;
-		error = null;
-		skippingLogin = true;
-		try {
-			await applyAuthSettings(true, 'admin');
-			goto(resolve(`dashboard`));
-		} catch (err) {
-			error = isProviderError(err) ? err.message : m['auth.skipLoginFailed']();
-		} finally {
-			skippingLogin = false;
 		}
 	}
 </script>
@@ -214,80 +141,7 @@
 		</aside>
 
 		<div class="form-pane">
-			{#if mode === 'setup'}
-				<form onsubmit={submitSetup}>
-					<h1>{loginBrand.name}</h1>
-					<p class="note">{m['auth.setupNote']()}</p>
-
-					<label class="banto-field banto-field--stacked">
-						<input
-							class="banto-field-control"
-							type="text"
-							placeholder=" "
-							bind:value={displayName}
-							autocomplete="name"
-						/>
-						<span class="banto-field-label">{m['common.displayName']()}</span>
-					</label>
-
-					<label class="banto-field">
-						<input
-							class="banto-field-control"
-							type="text"
-							placeholder=" "
-							bind:value={username}
-							autocomplete="username"
-						/>
-						<span class="banto-field-label">{m['common.username']()}</span>
-					</label>
-
-					<label class="banto-field banto-field--stacked">
-						<input
-							class="banto-field-control"
-							type="password"
-							bind:value={password}
-							autocomplete="new-password"
-						/>
-						<span class="banto-field-label">{m['common.passwordMinLabel']()}</span>
-					</label>
-
-					<label class="banto-field banto-field--stacked">
-						<input
-							class="banto-field-control"
-							type="password"
-							bind:value={passwordConfirm}
-							autocomplete="new-password"
-						/>
-						<span class="banto-field-label">{m['auth.passwordConfirmLabel']()}</span>
-					</label>
-
-					{#if error}
-						<p class="error" role="alert">{error}</p>
-					{/if}
-
-					<!-- Also locked while the skip path runs (Copilot review on PR
-					     #182): the two paths mutate the same auth state, so
-					     neither may start while the other is in flight - mirrors
-					     the skip button's own `submitting || skippingLogin`. -->
-					<Button type="submit" variant="primary" loading={submitting} disabled={skippingLogin}>
-						{m['auth.createAccount']()}
-					</Button>
-
-					{#if showSkipLogin}
-						<div class="skip-login">
-							<Button
-								variant="secondary"
-								onclick={skipLogin}
-								loading={skippingLogin}
-								disabled={submitting}
-							>
-								{m['auth.skipLoginButton']()}
-							</Button>
-							<p class="note">{m['auth.skipLoginNote']()}</p>
-						</div>
-					{/if}
-				</form>
-			{:else if mode === 'login'}
+			{#if ready}
 				<form onsubmit={submitLogin}>
 					<h1>{loginBrand.name}</h1>
 					<p class="note">
@@ -480,19 +334,6 @@
 		text-align: center;
 		color: var(--banto-danger);
 		font-size: var(--banto-font-size-sm);
-	}
-
-	.skip-login {
-		display: flex;
-		flex-direction: column;
-		gap: var(--banto-space-2);
-		margin-top: var(--banto-space-1);
-		padding-top: var(--banto-space-4);
-		border-top: var(--banto-border-width) solid var(--banto-border);
-	}
-
-	.skip-login :global(.banto-btn--secondary) {
-		justify-content: center;
 	}
 
 	.login-page :global(.banto-btn--primary) {

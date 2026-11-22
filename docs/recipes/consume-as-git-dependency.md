@@ -56,7 +56,7 @@
 - **e2e スイート（`e2e/`）も移植できる**: `e2e/playwright.config.ts`・
   `global-teardown.ts`・`tsconfig.json` は、ポート番号・クレート名
   （`--filter` / `-p <core-crate>`）・一時DBのプレフィックス程度の差し替えで、
-  `PORT`/`BANTO_DB`/`BANTO_ALLOW_SETUP` の環境変数契約（`banto-serve` 由来）
+  `PORT`/`BANTO_DB` の環境変数契約と `create-admin` の引数（`banto-serve` 由来）
   のまま持っていける。spec 側の落とし穴として、
   `getByRole('heading', { name: '...' })` を `level` 指定なしで使うと、
   ページ本体に同名の見出しを足した画面で Header 側の `<h1>` と二重マッチして

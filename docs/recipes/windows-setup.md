@@ -40,7 +40,7 @@ pnpm --filter admin-template tauri dev
 - Windowsでは`tauri dev`/`tauri build`に`icons/icon.ico`が必須（同梱済み）。
   独自アイコンに差し替える場合は`pnpm --filter admin-template tauri icon
 <画像>`で全形式を再生成できる（[rename.md](rename.md) の「やらないこと」）。
-- 認証はargon2id資格情報ストア + 初回セットアップ実装済み（`users`テーブル、
+- 認証はargon2id資格情報ストア（`users`テーブル、
   `crates/banto-admin-services/src/users.rs`）。`pnpm dev`のブラウザ単体
   デモモード（Tauri/バックエンドなし、InMemoryデータ）のみ、Rustバック
   エンドを持たないため`admin` / `admin`固定の簡易セッション認証のまま。

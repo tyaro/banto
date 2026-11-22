@@ -337,20 +337,6 @@ describe('HTTP compare-and-set token writes (#259, I-7)', () => {
 		await expect(login).resolves.toMatchObject({ success: false, superseded: true });
 		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
 	});
-
-	it('S-18 (HTTP twin): setup overtaken by a login stores nothing and reports superseded', async () => {
-		const { requests, fetchFn } = scriptedServer();
-		const { auth } = provider(fetchFn);
-
-		const setup = auth.setup?.({ username: 'owner', password: 'pw', displayName: 'O' });
-		const login = auth.login({ username: 'b', password: 'pw' });
-		requests[1].reply.resolve(json(200, { success: true, token: 'tok-b' }));
-		await login;
-		requests[0].reply.resolve(json(200, { success: true, token: 'tok-owner' }));
-
-		await expect(setup).resolves.toMatchObject({ success: false, superseded: true });
-		expect(auth.getToken()).toBe('tok-b');
-	});
 });
 
 describe('HTTP compare-and-set: storage changed, event not yet delivered (PR #264 review P2)', () => {
@@ -372,19 +358,6 @@ describe('HTTP compare-and-set: storage changed, event not yet delivered (PR #26
 		expect(sessionStorage.getItem(KEY)).toBeNull();
 		expect(auth.credentialRevision()).toBe(before);
 		expect(changed).not.toHaveBeenCalled();
-	});
-
-	it('S-40: a setup does not overwrite a token another tab wrote before its event arrived', async () => {
-		const { requests, fetchFn } = scriptedServer();
-		const { auth } = provider(fetchFn);
-
-		const setup = auth.setup?.({ username: 'owner', password: 'pw', displayName: 'O' });
-		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
-		requests[0].reply.resolve(json(200, { success: true, token: 'tok-owner' }));
-
-		await expect(setup).resolves.toMatchObject({ success: false, superseded: true });
-		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
-		expect(sessionStorage.getItem(KEY)).toBeNull();
 	});
 
 	it('S-21: a logout does not delete a Remember me token another tab wrote before its event arrived', async () => {

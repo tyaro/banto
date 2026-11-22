@@ -169,7 +169,21 @@ async fn create_admin(args: &[String], db_target: &str) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!("banto-serve: 管理者のアカウントを作れませんでした: {err}");
+            // A validation error's own text is generic; the reason is in its
+            // field errors (the name is reserved, the password is too short...).
+            let reason = match &err {
+                banto_core::BantoError::Validation { field_errors } if !field_errors.is_empty() => {
+                    field_errors
+                        .iter()
+                        .map(|field| field.message.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                }
+                other => other.to_string(),
+            };
+            eprintln!(
+                "banto-serve: 管理者のアカウントを作れませんでした（何も変更していません）: {reason}"
+            );
             1
         }
     }

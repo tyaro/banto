@@ -762,3 +762,78 @@ points that were to be confirmed are listed separately in the PR description; th
    the mode yet (it stays on the default, login required). Read-only REST in no-login mode, the listen condition and the CLI
    come with the rest of C2b (copying the mode before the CLI exists would lock the administrators of a headless display
    app out).
+
+## Addendum (2026-11-23, from removing first-run setup = the rest of C2b; awaiting the owner's confirmation)
+
+What was left of C2b in sections 5-7, 9 and 10 is in: the default, the
+settings check, the lock-down condition, `banto-serve`'s read-only mode and
+listening condition, the CLI, the pre-restore check, and the removal of
+first-run setup. Where the implementation differs from the text above, or
+settles a detail it left open, is listed here (and in the PR as questions for
+the owner; once confirmed, this heading becomes "confirmed by the owner").
+
+1. **`0015_auth_mode_defaults.sql` writes `auth.disabled = 'false'` on a
+   database that already holds accounts** (an addition to item 1 of the C1
+   addendum, "an appended migration that does not override an explicit
+   setting"). An existing `auth.disabled` row is never changed. Without one,
+   the value is `'false'` when any account (`kind = 'account'`) exists and
+   `'true'` otherwise: on databases created on main between C1 and C2 a
+   missing key meant "login required", and a migration must not turn that
+   into no-login silently (section 5: "no-login is the default of a new
+   database only"). A database with no administrator (editors only) becomes
+   `'false'` and is then stopped by the check (the CLI repairs it).
+   `auth.disabled_role` becomes `'admin'` when missing. The baseline
+   (`BASELINE_MIGRATION_VERSION`) stays 14.
+2. **The lock-down condition lives in the save itself
+   (`SettingsService::set_auth_config`).** A wiring calls the save under
+   `auth_config_lock`, so "judge and save under one lock, before the
+   revocation" (section 6) holds, and every caller - the Tauri command, a
+   derived app's own route - goes through the same judgment (conventions
+   section 1). The CLI creates the administrator in the same transaction and
+   then writes the mode with `require_login_on_*` (it does not go through
+   this judgment; it satisfies the condition itself).
+3. **`startup::check(db, wiring)`**, with `Wiring::Desktop` and
+   `Wiring::Headless { viewer_public_forced }`. `banto-serve` writes
+   `BANTO_VIEWER_PUBLIC=1` to the settings before it checks and passes it to
+   the restore-candidate check as `viewer_public_forced`, so the check equals
+   what actually stops that start (section 9, (e)). A candidate is checked on
+   a working copy after the migrations AND the first-boot seed (the same
+   function as a start); a failing seed is "could not check", like a failing
+   migration (C2 addendum, item 2).
+4. **While login is required, `auth.disabled_role` is not checked.** No
+   session is built from it, so a missing or unknown value does not stop the
+   start (the read answers `admin`, which nothing uses; the next save writes
+   it again).
+5. **CLI details** (section 7 left the arguments to C2b):
+   `banto-serve create-admin --username <name> [--display-name <name>]`. The
+   password is the first line of standard input (the trailing newline is
+   dropped; typed at a terminal it is echoed). The database is `BANTO_DB`.
+   Exit codes: 0 = done, 1 = nothing written, 2 = bad arguments. Two audit
+   rows (`create` / `users`, and `settings_change` / `settings`
+   `{authDisabled: false}`) with `actor_username = 'admin'`, `actor_id` = the
+   built-in row, `actor_kind = 'cli'`, `origin = 'cli'`. A database without
+   the built-in row (edited directly) is not repaired by the CLI (`actor_id`
+   is NULL and the next start's check stops it). The code is
+   `admin_template_core::first_account::create_admin_and_require_login`.
+6. **`auth_config_apply` refuses an unknown role with `Validation`** instead
+   of turning it into `admin` (section 5's "stop degrading an unreadable role
+   to admin", applied to the save's entry too). The session-less window it
+   had while no account existed is gone.
+7. **A field for the screen**: the answers of `auth_config_get` /
+   `auth_config_apply` carry `hasAdminAccount` (the settings screen says why
+   login cannot be required and points at user management; the save judges
+   again). `initialized` is gone from `status`.
+8. **Where the acceptance tests live** (section 10): the headless path, the
+   CLI before the first start with a seed, broken settings, and the CLI with
+   a staged restore are in `core/src/first_account.rs` and
+   `core/src/startup.rs` (SQLite) and `core/tests/pg_smoke.rs` (PostgreSQL,
+   with the display preset's seed). Listening and restore are in
+   `core/src/startup.rs`; REST in no-login mode in `core/src/rest/tests.rs`;
+   the desktop lock-down in `src-tauri/src/tests.rs`. "CLI -> start -> login"
+   on the generated display app runs in template-acceptance. The e2e
+   viewer-public suite is split over two servers: "no account, no login" and
+   "an administrator from the CLI, login required".
+9. **Tests that went away with their premise**: first-run setup and its races
+   (S-18, S-19, S-95's setup, PostgreSQL's concurrent setup), and
+   `auth_config_apply` from an empty slot (one S-67 test; with login required
+   and no session it is `Unauthorized`).

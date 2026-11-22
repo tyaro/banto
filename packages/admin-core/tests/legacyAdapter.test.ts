@@ -64,19 +64,17 @@ describe('adaptLegacyAuthProvider: guaranteed', () => {
 		).rejects.toBe(failure);
 	});
 
-	it('login/logout/setup/changePassword/status pass through', async () => {
+	it('login/logout/changePassword/status pass through', async () => {
 		const old = legacy({
-			status: vi.fn(async () => ({ initialized: true })),
-			setup: vi.fn(async () => ({ success: false, error: 'x' })),
+			status: vi.fn(async () => ({ grants: { publicViewer: false } })),
 			changePassword: vi.fn(async () => ({ success: true }))
 		});
 		const auth = adaptLegacyAuthProvider(old);
 
 		await expect(auth.login({ username: 'a' })).resolves.toEqual({ success: true });
 		await auth.logout();
-		await expect(auth.setup?.({ username: 'o' })).resolves.toEqual({ success: false, error: 'x' });
 		await expect(auth.changePassword?.('a', 'b')).resolves.toEqual({ success: true });
-		await expect(auth.status?.()).resolves.toEqual({ initialized: true });
+		await expect(auth.status?.()).resolves.toEqual({ grants: { publicViewer: false } });
 		expect(auth.enterGrant).toBeUndefined();
 		expect(old.login).toHaveBeenCalledWith({ username: 'a' });
 		expect(old.logout).toHaveBeenCalledTimes(1);
@@ -87,7 +85,6 @@ describe('adaptLegacyAuthProvider: guaranteed', () => {
 		const auth = adaptLegacyAuthProvider(legacy());
 
 		expect(auth.status).toBeUndefined();
-		expect(auth.setup).toBeUndefined();
 		expect(auth.changePassword).toBeUndefined();
 		expect(auth.enterGrant).toBeUndefined();
 	});

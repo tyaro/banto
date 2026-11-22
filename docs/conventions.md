@@ -40,7 +40,7 @@ CI の frontend ジョブで強制）が検査する。対象は各節に **[機
 
 ## 1. REST と Tauri の判定対称性 [機械検査済み: mutating 操作の両経路存在]
 
-すべての mutating 操作（create/update/delete/import/login/logout/setup）は、
+すべての mutating 操作（create/update/delete/import/login/logout）は、
 **REST 経路と Tauri 経路の両方で同一の認可と同一の監査を通す**。origin
 （`"rest"` / `"tauri"`）だけが異なる。
 
@@ -470,12 +470,31 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
     動いていたら**未認証で終える**（最初の照合の間に付け替わった場合も同じ。今のスロットから認可し直さない。まだガードを通っていない要求が、別の主体の
     権限と監査の名義で通ってしまう）。画面に出すための `auth_identity` だけは読み直してよく（`displayed_session`）、
     `auth_resolve` は同じ窓を `stale` で返す。
-  - **`/api/auth/setup` を開けた配線（`allow_setup = true`）で、`AuthState` をログインなしに切り替えない**
-    （初回セットアップを消すまでの間の条件）。作ったアカウントに、表に入っていないトークンを返すことになる。
-    標準の Tauri は `allow_setup = false`、`banto-serve` はモードを写さないので、標準の配線では重ならない。
-  - `banto-serve` は実行中にモードを切り替える口を持たず、まだモードを写さない（`AuthState` の既定の
-    ログイン必須のまま）。ログインなしの間の REST の読み取り専用と listen の条件は、初回セットアップの撤去
-    （計画書の C2b）で入れる。
+  - **ログインなしの間（`auth.disabled` = on）の REST は読み取り専用**（ADR-0034 §6）。規則を別に足すのではなく、
+    モードを写した結果として成り立つ: アカウントのログインは断られ、アカウントのトークンは通らないので、届くのは
+    閲覧公開（viewer。読み取りと、自分の kind の ui-settings の PUT）と、派生アプリが明示して登録した grant
+    （その `GrantSpec` のロールと権限どおり）だけになる。だから、**ログインなしの間に REST から業務・管理のデータを
+    変えられる口を足さない**（新しい未認証の口・「アカウントが 0 の間だけ」開く口を作らない。初回セットアップの口は
+    v8.0.0 で消した）。
+  - **両方の配線が、起動時に保存済みのモードを写す**（最初の要求より前）。Tauri は `apply_mode_to_rest_sessions`、
+    `banto-serve` は `startup::check` が読んだ値で `switch_auth_mode` を呼ぶ。`banto-serve` は実行中にモードを
+    切り替える口を持たない（認証モードの保存は Tauri のコマンドだけ）。REST に保存の口を足すなら、保存の直後に
+    同じ関数の中で `switch_auth_mode` を呼ぶ（上の「永続化 → 失効」）。
+  - **起動を止める条件は `admin_template_core::startup::check` の 1 か所に書く**（ADR-0034 §2・§4〜§6・§9）:
+    組み込みの行、予約名の当たり、`auth.disabled` の欠落・`true` / `false` 以外、ログインなしでの `auth.disabled_role` の
+    欠落・知らない値、ログイン必須で管理者のアカウントが 0、`banto-serve`（`Wiring::Headless`）ではさらに
+    「ログインなしで閲覧公開も off」（listen しない）。**欠けた・読めないキーを既定で埋めない。黙ってログインなしへ
+    戻さない**（どちらも、DB を書き換えられる人が認証を外せる形になる）。同じ関数を復元の候補にも掛ける
+    （`sqlite_restore_manifest(wiring)`。作業用のコピーに migration と初回の seed を当ててから。復元先の配線で条件が変わる:
+    ログインなしで閲覧公開も off の候補を、Tauri は受け入れ、`banto-serve` は交換の前に断る）。
+  - **ログイン必須への切り替え（ロックダウン）は、ログインできる管理者のアカウントが 1 つ以上あるときだけ通る**。
+    判定は保存そのもの（`SettingsService::set_auth_config`）が持つ。配線は `auth_config_lock` の下で保存を呼び、
+    その後に `switch_auth_mode` を呼ぶ（順序を変えない）。認証モードのキーを `settings.set("auth.disabled", ..)` で
+    直接書かない（判定を通らない）。最後の管理者のガードは、ログインなしの間も掛ける。
+  - **画面を通らずに最初のアカウントを作る口は `banto-serve create-admin` だけ**（`admin_template_core::first_account`、
+    ADR-0034 §7）。待ち受けず、予約された復元があれば何も書かずに止まり、「初回の seed（印が無ければ。起動と同じ関数）→
+    管理者の作成 → ログイン必須 → 監査」を 1 つのトランザクションで書く。「アカウントだけ」「ロックダウンだけ」の口を
+    足さない。ネットワーク越しの口にしない。Tauri の実行ファイルには持たせない。パスワードを引数で受けない。
 - **到達確認の口（Issue #219 段階 1、[lan-reach-check-design](design/lan-reach-check-design.md)）。**
   管理者の画面が発行した使い捨てのトークンで「別の端末からこの待受に届いた」ことを記録する、
   grant と並ぶ**もう 1 つの未認証の口 `POST /api/reach-check`** の規約（`banto_server::reach_check`）。

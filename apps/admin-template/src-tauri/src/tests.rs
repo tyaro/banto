@@ -1182,6 +1182,13 @@ async fn requiring_login_needs_an_administrator_account() {
         }
     };
     refuse("no account at all").await;
+    // The screen is told why (it disables the switch); the save decides again.
+    assert!(
+        !auth_settings_view(&state, state.settings.auth_config().await.unwrap())
+            .await
+            .unwrap()
+            .has_admin_account
+    );
     users_create_body(&state, "editor1", "password123", "Editor", Role::Editor)
         .await
         .expect("create editor");
@@ -5877,9 +5884,11 @@ async fn auth_disabled_permissions_view_hides_unregistered_leftovers() {
     let wire = serde_json::to_value(AuthSettingsView {
         settings: AuthSettings::default(),
         disabled_permissions: vec!["alarm.ack".to_string()],
+        has_admin_account: true,
     })
     .unwrap();
     assert_eq!(wire["disabled"], false);
+    assert_eq!(wire["hasAdminAccount"], true);
     assert_eq!(wire["disabledRole"], "admin");
     assert_eq!(
         wire["disabledPermissions"],

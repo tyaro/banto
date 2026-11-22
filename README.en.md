@@ -53,17 +53,20 @@ Architecture overview (Japanese, Mermaid diagrams):
   offer install over a secure context — that requires HTTPS/localhost or a
   TLS reverse proxy, not the default plain-HTTP LAN. No service worker
   (no offline mode).
-- **Auth, RBAC, and user management**: argon2id credential store with
-  first-run setup, three roles (admin/editor/viewer), a user management
+- **Auth, RBAC, and user management**: argon2id credential store,
+  three roles (admin/editor/viewer), a user management
   screen, and identical permission checks across both the REST and Tauri
   paths. Separately from roles, users can hold individually granted
   **permissions** (`equipment.operate` style); the app registers the
   vocabulary and the template registers none (no field appears in the admin
   screen). See [docs/recipes/add-permission.en.md](docs/recipes/add-permission.en.md).
 - **Audit log**, a settings framework (`SettingsProvider`), and an
-  auto-login / no-login mode. The desktop first-run screen offers "Start
-  without a login" - a small app can begin with no account at all and
-  switch to login-based operation later as it grows; see
+  auto-login / no-login mode. **A new database starts with no account and
+  no login** (there is no first-run setup; the desktop app opens straight
+  into the app). When more people use it, create an administrator account
+  in user management and require a login under Settings -> Security. The
+  first administrator of a headless install (`banto-serve`) is created with
+  `banto-serve create-admin`; see
   [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md) (Japanese).
 - **Pinned header/sidebar, nav badges, and status chips** (2026-09): the
   header and sidebar stay pinned while the content scrolls; sidebar nav
@@ -111,8 +114,8 @@ Architecture overview (Japanese, Mermaid diagrams):
 Requirements: Node 26+ / pnpm 10+. This is the standalone browser **demo
 mode**: data lives in memory and `admin / admin` is a demo-only fixed account.
 To run the real thing with a SQLite database, install Rust and start the
-desktop app (`pnpm --filter admin-template tauri dev`; the first run creates
-the admin account — see [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md),
+desktop app (`pnpm --filter admin-template tauri dev`; a new database opens with no
+account and no login; see [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md),
 Japanese).
 
 ```sh
