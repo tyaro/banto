@@ -341,6 +341,9 @@ Issue の「決めること」への答え:
 - `users` を数える所（ユーザー一覧・件数・CSV・バックアップの検証・最後の管理者のガード・今の `is_initialized`）を
   `kind = 'account'` に直す。組み込みの行が migration で入るので、**C1 で**洗う（§5）。組み込みかどうかの判定は、
   どこでも名前ではなく `kind`。
+- **C1 の途中の条件**: `setup_first_user` の INSERT（`users.rs:776`）の `WHERE NOT EXISTS (SELECT 1 FROM users)` も、
+  `WHERE NOT EXISTS (SELECT 1 FROM users WHERE kind = 'account')` に直す（直さないと、組み込みの `admin` の行があるため
+  初回セットアップが常に失敗する）。C2b で初回セットアップごと消すまでの条件。試験: 組み込みの行だけがある DB で初回セットアップが通る（両方言）。
 
 **破壊的変更と移行**: 初回セットアップが無くなる（画面・REST の口・Tauri のコマンド・`AuthProvider.setup`・
 `BANTO_ALLOW_SETUP`）。新しい DB の既定がログインなしになる。ユーザー一覧に `admin` が 1 行居る。
@@ -749,7 +752,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | **C0** | ADR: 持ち主の識別、組み込みの `admin`、初回セットアップの撤去とロックダウンの条件（新規 ADR-0034、ADR-0017 の改訂）。conventions §11 の「基準の作り直し」の注記。`.en.md` も | `docs/adr`・`docs/conventions` | — | fable | **オーナーの承認**。§10 の N2〜N6 を含めて確定 |
 | S1 | #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
 | S2 | #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
-| C1 | 基準の作り直し（2 方言）: `0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | §4.1 の試験（両方言）。新しい DB で今の初回セットアップができ、ui-settings が今のまま読み書きできる。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
+| C1 | 基準の作り直し（2 方言）: `0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | §4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
 | C2 | #778 組み込みの行の保護（禁止・verifier・SQL の `kind`）・予約名（一覧を渡す口）・grant を後から足したときの起動時の検査・帰属の印と監査の actor（`actor_id` を書く） | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート | **破壊的** | fable | §4.3 の試験（C2b の分を除く）。両経路の対称 |
 | C2b | 初回セットアップの撤去（決定 18）: `auth.disabled` の既定を on、ロックダウンの条件（管理者のアカウントが 1 つ以上）、`setup_first_user`・`is_initialized`・`/api/auth/setup`・`auth_setup`・bootstrap の窓・`AuthProvider.setup`・ログインの画面の分岐と文言を消す。ヘッドレスの最初のアカウント（N3）。e2e（`createFirstAdmin` の置き換え・smoke・add-resource）・`rename.mjs`・scaffold の seed・基準画像 | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`・テンプレート・`e2e`・`scripts` | **破壊的** | fable | §4.3 の C2b の試験。新しい DB がユーザーなしで起動し、ユーザー管理からアカウントを作れる。e2e が通る。scaffold の 4 プリセットの dry-run と template-acceptance。両経路の対称 |
 | C3 | #790 `accountId` を wire に載せる・`sessionOwnerKey` | `banto-server`・`src-tauri`・`admin-core`・テンプレート | **破壊的** | fable | §4.2 の試験（復元の回帰試験を含む）。持ち主つきの記憶の利用箇所を全部確認 |
