@@ -1426,6 +1426,20 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 			expect(wrong.slice(0, 5)).toEqual([]);
 		});
 	}
+	// #845: found when the sequences above were shuffled another way (PR #840). `d` is shown into
+	// `row[a]` at `.6` of it - its share of the whole row, with `e` (out, `.25`) not counted - where
+	// `a .15 : d .6` is `.2 / .8`; so `a` ends at `.3`. The shadow tree gives `.15 / .6 / .25`
+	// (`shadow-parallel.test.ts`): fixed when `show` goes by it (#782 PR5).
+	it.fails(
+		'KNOWN FAILURE (#845, pinned): row[a,column[b,tabs[c,d]],e], the column floated, b taken out, the rest hidden and shown',
+		() => {
+			const make = L5['row[a,column[b,tabs[c,d]],e]'];
+			const dock = runSteps(make, '~d ^d ~c ~b !b -d -e +e -e +d +e ^c'.split(' '));
+			const old = removePanel(make(), 'b');
+			expect(JSON.stringify(shapeOf(dock.layout.docked))).toBe(JSON.stringify(shapeOf(old)));
+			expect(sameSizes(sizesOf(dock.layout.docked), sizesOf(old))).toBe(true);
+		}
+	);
 
 	// #741: one row, every step checked against what the shares mean. A pane out of the row (hidden
 	// or floated) holds its share of the whole row - the panes in it and the ones out that still hold

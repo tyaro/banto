@@ -1,14 +1,18 @@
 /**
- * The chart colours of banto.css (#557): the 8 categorical slots, the
+ * The chart colours of banto.css (#557): the 16 categorical slots, the
  * sequential ramp and the diverging ramp, read from the CSS (not copied here).
  *
- * - Categorical: under normal vision AND the simulated protanopia /
+ * - Categorical, slots 1..8: under normal vision AND the simulated protanopia /
  *   deuteranopia / tritanopia of Machado, Oliveira & Fernandes 2009 (severity
  *   1.0, applied in linear sRGB), every pair of slots stays at least
  *   `ALL_PAIRS_MIN` apart and every neighbour pair (i, i+1 - the order series
  *   take, spec §6.4 rule 1) at least `NEIGHBOUR_MIN`. The distance is the
  *   Euclidean distance in OKLab (Ottosson; L in 0..1), not CIEDE2000.
- * - Every categorical slot is a graphic object: >= 3:1 (WCAG 1.4.11) against
+ * - Categorical, slots 9..16 (#851): a weaker promise. Any two of 1..16 stay
+ *   at least `EXTENDED_PAIRS_MIN` apart under NORMAL vision only (no
+ *   neighbour margin, no simulated deficiency, no status colours - see
+ *   `EXTENDED_PAIRS_MIN`).
+ * - Every categorical slot (1..16) is a graphic object: >= 3:1 (WCAG 1.4.11) against
  *   the surfaces a chart sits on (light: --banto-surface; dark: --banto-surface
  *   and --banto-surface-raised), at every --banto-brand-hue since the neutrals
  *   are tinted by it.
@@ -47,6 +51,24 @@ type Rgb = [number, number, number];
 const NEIGHBOUR_MIN = 0.1;
 const ALL_PAIRS_MIN = 0.09;
 const DIVERGING_SIDES_MIN = 0.07;
+/** Slots 1..8 carry the full checks; 9..16 the weaker ones below (#851). */
+const CORE_SLOTS = 8;
+const TOTAL_SLOTS = 16;
+/**
+ * Any two of slots 1..16, normal vision (#851, plan §4.14 / §10 B3).
+ *
+ * Measured (smallest pair that involves a slot of 9..16):
+ *   light  0.092 (8 / 9), then 0.093 (2 / 9), 0.094 (4 / 12)
+ *   dark   0.076 (7 / 13), then 0.077 (2 / 15), 0.077 (9 / 12)
+ *
+ * Not covered, by decision: simulated colour-vision deficiency and the status
+ * colours. 16 fixed colours cannot keep the 1..8 margins there; measured
+ * smallest pairs are light 0.013 (protanopia 2 / 9, deuteranopia 7 / 11) and
+ * dark 0.008 (deuteranopia 7 / 11), and light slot 15 is 0.055 from danger.
+ * A chart with 9 or more series must not rely on colour alone (legend, dash,
+ * marker).
+ */
+const EXTENDED_PAIRS_MIN = 0.06;
 /**
  * Slots 1..4 against the status colours, normal vision (#795, plan §4.10).
  *
@@ -203,7 +225,7 @@ it('the colour helpers match known values', () => {
 
 for (const [theme, rules] of Object.entries(THEMES) as [keyof typeof THEMES, string][]) {
 	describe(`${theme}: categorical --banto-chart-1..8`, () => {
-		const slots = hexSteps(rules, 'banto-chart');
+		const slots = hexSteps(rules, 'banto-chart').slice(0, CORE_SLOTS);
 		it('has exactly 8 slots', () => expect(slots).toHaveLength(8));
 
 		for (const [vision, matrix] of Object.entries(VISIONS)) {
@@ -220,6 +242,30 @@ for (const [theme, rules] of Object.entries(THEMES) as [keyof typeof THEMES, str
 
 		it('every slot is >= 3:1 on the surface at every --banto-brand-hue', () => {
 			for (const [i, hex] of slots.entries()) {
+				const fg = hexToLinear(hex);
+				for (const bg of SURFACES[theme])
+					for (let hue = 0; hue < 360; hue++)
+						expect(contrast(fg, bg(hue)), `slot ${i + 1} at hue ${hue}`).toBeGreaterThanOrEqual(3);
+			}
+		});
+	});
+
+	describe(`${theme}: categorical --banto-chart-1..${TOTAL_SLOTS} (#851)`, () => {
+		const slots = hexSteps(rules, 'banto-chart');
+		it(`has exactly ${TOTAL_SLOTS} slots`, () => expect(slots).toHaveLength(TOTAL_SLOTS));
+
+		it(`normal vision: all pairs >= ${EXTENDED_PAIRS_MIN} (OKLab)`, () => {
+			const seen = slots.map(hexToLinear);
+			for (let i = 0; i < seen.length; i++)
+				for (let j = i + 1; j < seen.length; j++)
+					expect(deltaE(seen[i], seen[j]), `slots ${i + 1} and ${j + 1}`).toBeGreaterThanOrEqual(
+						EXTENDED_PAIRS_MIN
+					);
+		});
+
+		it(`slots ${CORE_SLOTS + 1}..${TOTAL_SLOTS} are >= 3:1 on the surface at every --banto-brand-hue`, () => {
+			for (const [i, hex] of slots.entries()) {
+				if (i < CORE_SLOTS) continue;
 				const fg = hexToLinear(hex);
 				for (const bg of SURFACES[theme])
 					for (let hue = 0; hue < 360; hue++)

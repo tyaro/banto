@@ -15,10 +15,25 @@
  * `Blob`/`document`), so only the pure regex-substitution helper below is
  * Vitest-covered (`vite.config.ts` runs tests under `environment: 'node'`,
  * no DOM). `serializeChartSvg`/`downloadSvg` themselves are exercised
- * manually (dashboard demo) rather than unit tested.
+ * manually (dashboard demo) rather than unit tested - except the fallback
+ * pass of `serializeChartSvg`, which tests/series-color.test.ts runs in jsdom
+ * (#851; jsdom does not compute `fill`/`stroke`, so the baking pass is not).
  */
 
-const CSS_VAR_REF = /var\((--[a-zA-Z0-9-]+)\)/g;
+const CSS_VAR_OPEN = /var\(\s*(--[a-zA-Z0-9-]+)\s*([,)])/g;
+
+/** Index of the `)` that closes the `var(` whose arguments start at `from`, or -1 (unbalanced). */
+function closingParen(value: string, from: number): number {
+	let depth = 0;
+	for (let i = from; i < value.length; i++) {
+		if (value[i] === '(') depth++;
+		else if (value[i] === ')') {
+			if (depth === 0) return i;
+			depth--;
+		}
+	}
+	return -1;
+}
 
 /**
  * Replace every `var(--x)` reference found in `value` with `resolve(name)`
@@ -27,12 +42,31 @@ const CSS_VAR_REF = /var\((--[a-zA-Z0-9-]+)\)/g;
  * original `var(...)` text rather than collapsing to `''`, so a missed or
  * typo'd variable fails visibly (a literal `var(--x)` left in the output) —
  * instead of silently vanishing into invalid/empty attribute values.
+ *
+ * A reference with a fallback - `var(--x, fallback)`, as `seriesColorVar`
+ * returns for slots 9..16 (#851) - becomes `resolve('--x')` when that
+ * answers, and otherwise the fallback (itself resolved the same way, so
+ * `var(--x, var(--y))` ends as the value of `--y`), like CSS does.
  */
 export function inlineCssVarRefs(value: string, resolve: (name: string) => string): string {
-	return value.replace(CSS_VAR_REF, (match, name: string) => {
+	let out = '';
+	let last = 0;
+	const re = new RegExp(CSS_VAR_OPEN);
+	for (let m = re.exec(value); m; m = re.exec(value)) {
+		const [open, name, sep] = m;
+		const argsEnd = m.index + open.length;
+		const close = sep === ')' ? argsEnd - 1 : closingParen(value, argsEnd);
+		if (close < 0) break; // unbalanced: leave the rest as written
 		const resolved = resolve(name).trim();
-		return resolved || match;
-	});
+		const fallback = sep === ',' ? value.slice(argsEnd, close).trim() : '';
+		out += value.slice(last, m.index);
+		if (resolved) out += resolved;
+		else if (fallback) out += inlineCssVarRefs(fallback, resolve);
+		else out += value.slice(m.index, close + 1);
+		last = close + 1;
+		re.lastIndex = last;
+	}
+	return out + value.slice(last);
 }
 
 /** Colour functions a standalone SVG viewer may not understand (computed style returns them as written, e.g. `oklch(...)`). */
