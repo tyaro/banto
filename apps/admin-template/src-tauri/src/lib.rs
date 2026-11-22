@@ -324,12 +324,23 @@ type AuthModeSource = Arc<dyn Fn() -> AuthFuture<AuthSettings> + Send + Sync>;
 type AuthConfigSave =
     Arc<dyn Fn(AuthSettings, Option<Vec<PermissionKey>>) -> AuthFuture<()> + Send + Sync>;
 
+/// A session's per-user permissions read ([`permissions_of_session`]).
+/// Injected so a test can hold a command between its session check and the
+/// end of its permissions read (ADR-0034 §6, cross-review of PR #862).
+/// Handed the state's CURRENT services on every call (not captured ones).
+type PermissionsSource = Arc<
+    dyn Fn(UsersService, SettingsService, DesktopSession) -> AuthFuture<SessionPermissions>
+        + Send
+        + Sync,
+>;
+
 /// See [`AppState::auth_io`].
 struct AuthIo {
     verify: CredentialVerifier,
     setup_first_user: FirstUserSetup,
     auth_mode: AuthModeSource,
     save_auth_config: AuthConfigSave,
+    permissions: PermissionsSource,
 }
 
 impl AuthIo {
@@ -339,6 +350,9 @@ impl AuthIo {
         let save_settings = settings.clone();
         let settings = settings.clone();
         Self {
+            permissions: Arc::new(|users, settings, session| {
+                Box::pin(async move { read_session_permissions(&users, &settings, &session).await })
+            }),
             verify: Arc::new(move |username, password| {
                 let users = verify_users.clone();
                 Box::pin(async move { users.verify(&username, &password).await })
@@ -457,17 +471,61 @@ async fn permissions_of_session(
     state: &AppState,
     session: &DesktopSession,
 ) -> Result<SessionPermissions, BantoError> {
+    (state.auth_io.permissions)(state.users.clone(), state.settings.clone(), session.clone()).await
+}
+
+/// The production read behind [`permissions_of_session`]
+/// ([`AuthIo::production`]).
+async fn read_session_permissions(
+    users: &UsersService,
+    settings: &SettingsService,
+    session: &DesktopSession,
+) -> Result<SessionPermissions, BantoError> {
     match session {
-        DesktopSession::Account(identity) => state.users.session_permissions(identity.id).await,
+        DesktopSession::Account(identity) => users.session_permissions(identity.id).await,
         DesktopSession::AuthDisabledLocal(_) => {
-            let catalog = state.users.permission_catalog();
+            let catalog = users.permission_catalog();
             if catalog.is_empty() {
                 return Ok(SessionPermissions::none());
             }
-            let stored = state.settings.auth_disabled_permissions().await?;
+            let stored = settings.auth_disabled_permissions().await?;
             Ok(SessionPermissions::new(catalog.effective(&stored)))
         }
     }
+}
+
+/// The current session AND the permissions it holds, as ONE authorization
+/// (ADR-0034 §6; the Tauri twin of
+/// `banto_server::AuthState::authenticate_with_permissions`).
+///
+/// [`current_session`] settles the session against the slot; reading the
+/// permissions awaits once more, and an `auth_config_apply` (or a logout,
+/// another login) can complete in that window. So the slot's `seq` is read
+/// right after the settle - no `.await` in between - and compared again
+/// after the permissions were read: every write that changes what the
+/// session is authorized as advances `seq` (see [`settle_session`]), so an
+/// unchanged `seq` means the pair still describes the slot. If it moved, the
+/// whole authorization is done once more from the slot as it is now; if it
+/// moved again, the answer is "no session" (`Ok(None)`) - never a session
+/// of a mode, or a binding, that has ended.
+///
+/// Everything that needs both goes through here: [`require_permission`],
+/// [`session_permissions`] and `auth_identity`. (`auth_resolve` reports the
+/// same window as `stale` instead, see [`resolve_body`].)
+async fn authorized_session(
+    state: &AppState,
+) -> Result<Option<(DesktopSession, SessionPermissions)>, BantoError> {
+    for _ in 0..2 {
+        let Some(session) = current_session(state).await? else {
+            return Ok(None);
+        };
+        let (_, settled_seq) = read_slot(state);
+        let permissions = permissions_of_session(state, &session).await?;
+        if read_slot(state).1 == settled_seq {
+            return Ok(Some((session, permissions)));
+        }
+    }
+    Ok(None)
 }
 
 /// The current session ([`current_session`], re-validated) and the
@@ -479,11 +537,9 @@ async fn permissions_of_session(
 async fn session_permissions(
     state: &AppState,
 ) -> Result<Option<(UserIdentity, SessionPermissions)>, BantoError> {
-    let Some(session) = current_session(state).await? else {
-        return Ok(None);
-    };
-    let permissions = permissions_of_session(state, &session).await?;
-    Ok(Some((session.identity().clone(), permissions)))
+    Ok(authorized_session(state)
+        .await?
+        .map(|(session, permissions)| (session.identity().clone(), permissions)))
 }
 
 /// `UserIdentity.id` shown for the synthetic auth-disabled-mode ("local")
@@ -811,14 +867,11 @@ async fn require_permission(
     permission: &PermissionKey,
     resource: &str,
 ) -> Result<Caller, BantoError> {
-    let Some(session) = current_session(state).await? else {
+    let Some((session, permissions)) = authorized_session(state).await? else {
         return Err(BantoError::Unauthorized);
     };
     let caller = Caller::of(state, &session);
-    if permissions_of_session(state, &session)
-        .await?
-        .has(permission)
-    {
+    if permissions.has(permission) {
         return Ok(caller);
     }
     record_denied_as(&state.audit, &caller.actor, "tauri", resource, None).await;
@@ -1394,10 +1447,10 @@ async fn auth_identity(state: State<'_, AppState>) -> Result<Option<Identity>, B
 
 /// Body of [`auth_identity`] (testable with a plain `&AppState`).
 async fn auth_identity_body(state: &AppState) -> Result<Option<Identity>, BantoError> {
-    match current_session(state).await? {
-        Some(session) => Ok(Some(identity_of(state, &session).await?)),
-        None => Ok(None),
-    }
+    // One authorization to the end of the permissions read (ADR-0034 §6).
+    Ok(authorized_session(state)
+        .await?
+        .map(|(session, permissions)| identity_from(session.identity(), permissions)))
 }
 
 /// Issue #260 (design §5.3): the frontend provider's `resolve()` - the
@@ -1453,6 +1506,21 @@ async fn resolve_body(state: &AppState) -> Result<AuthResolveResult, BantoError>
                 Some(session) => Some(identity_of(state, session).await?),
                 None => None,
             };
+            // ADR-0034 §6 (cross-review of PR #862): that read awaited, and
+            // an apply / logout / login may have re-bound the slot meanwhile.
+            // The answer would name a session that is no longer the slot's,
+            // so it is reported `stale` like a re-bind during the store read
+            // above (the provider resolves again).
+            let seq_now = read_slot(state).1;
+            if seq_now != seq_after {
+                return Ok(AuthResolveResult {
+                    identity: None,
+                    kind: None,
+                    checked: seq_at_entry,
+                    current: seq_now,
+                    stale: true,
+                });
+            }
             AuthResolveResult {
                 identity,
                 kind: session.as_ref().map(session_kind),

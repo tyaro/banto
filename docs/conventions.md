@@ -456,12 +456,20 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
     入口で断り、照合を走らせない（失敗の回数にも、監査にも残らない。Tauri の `auth_login` と同じ扱い・同じ文言
     `LOGIN_DISABLED_MESSAGE`）。await を挟んで発行する口を足すときは、同じく入口の世代を渡す。
   - **認可**: アカウントのトークンは発行時の世代を持ち、今の世代と同じ間だけ通る。`AuthState::authenticate` は
-    アカウントの照合の**後**に確かめ、`require_auth` は権限の読み取りの後（監査の主体のスナップショットを作る
-    直前）にもう一度確かめる。認可の途中に切り替えが終わった要求は 401。
+    アカウントの照合の**後**に確かめる。権限の読み取りは、その後のもう 1 つの await なので、**トークンと権限を
+    両方読む所は `AuthState::authenticate_with_permissions` を通す**（入口の世代を、権限の読み取りの後にもう
+    一度比べる）。`require_auth`・`GET /api/auth/identity`・`require_auth` なしで重ねた `PermissionGuard` が
+    これを通る。`authenticate` と `session_permissions` を手で組み合わせない。認可の途中に切り替えが終わった
+    要求は未認証（`require_auth` は 401、identity は `null`）。
   - **進行中の書き込み**: ガードを通った（主体のスナップショットを持った）書き込みは、切り替えで中断せず、
     認可したときの主体で最後まで走る（§1 の「認可はガードを通った時点で決まる」と同じ。切り替えは待たない）。
   - **Tauri の画面のセッション**は、スロットの `seq` と `auth_config_lock` が同じ直列を保つ
-    （`install_account_unless_auth_disabled`・`settle_session`。S-94・S-95・S-99）。
+    （`install_account_unless_auth_disabled`・`settle_session`。S-94・S-95・S-99）。セッションと権限を両方読む所は
+    `authorized_session` を通す（確定の直後の `seq` を、権限の読み取りの後にもう一度比べる。`require_permission`・
+    `session_permissions`・`auth_identity`）。`auth_resolve` は同じ窓を `stale` で返す。
+  - **`/api/auth/setup` を開けた配線（`allow_setup = true`）で、`AuthState` をログインなしに切り替えない**
+    （初回セットアップを消すまでの間の条件）。作ったアカウントに、表に入っていないトークンを返すことになる。
+    標準の Tauri は `allow_setup = false`、`banto-serve` はモードを写さないので、標準の配線では重ならない。
   - `banto-serve` は実行中にモードを切り替える口を持たず、まだモードを写さない（`AuthState` の既定の
     ログイン必須のまま）。ログインなしの間の REST の読み取り専用と listen の条件は、初回セットアップの撤去
     （計画書の C2b）で入れる。

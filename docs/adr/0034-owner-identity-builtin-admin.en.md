@@ -740,15 +740,21 @@ points that need confirmation are listed separately in the PR description.
    text as Tauri's `auth_login`); `Unavailable` (503, a retry gets in) when the mode went there and back during the
    credential check and is login-required again. In no-login mode the login is refused on entry and the verifier does not
    run (nothing counted, nothing audited - as on the Tauri side).
-3. **When authorization is complete**: `authenticate` checks against the table after the account lookup, and `require_auth`
-   compares with the generation it read on entry once more after reading the permissions (right before the audit-actor
-   snapshot).
+3. **When authorization is complete**: `authenticate` checks against the table after the account lookup. Reading the
+   permissions is one more await after that, so everything that reads both a token and its permissions is gathered into
+   `AuthState::authenticate_with_permissions`, which compares the generation it read on entry once more after the
+   permissions read (`require_auth`, `GET /api/auth/identity`, a `PermissionGuard` without `require_auth`; cross-review of
+   PR #862). The Tauri webview has the same shape: `authorized_session` compares the `seq` right after the settle once more
+   after the permissions read (`require_permission`, `session_permissions`, `auth_identity`). `auth_resolve` reports the
+   same window as `stale`.
 4. **Writes in progress**: a write that passed the guard is not interrupted, and the switch does not wait for the remaining
    work (the same as #793's "revocation takes effect from the next request"). The switch's `settings_change` audit detail
    carries the number of account tokens it revoked as `revokedSessions: n` (omitted when 0). The audit of a write in
    progress stays with the actor it was authorized as.
 5. **`issue_token` / `issue_token_remembered` / `issue_account_token` keep their return type.** In no-login mode they return
-   a token that was not stored (401 on first use). They do not await, so they need no entry generation.
+   a token that was not stored (401 on first use). They do not await, so they need no entry generation. A wiring that opens
+   `/api/auth/setup` (`allow_setup = true`) must not switch its `AuthState` to no-login until first-run setup is removed (the
+   two do not meet in the stock wiring).
 6. **Only the Tauri app is wired**: `auth_config_apply` switches right after its save, and start-up copies the stored mode.
    So while the Tauri app is in no-login mode, the embedded server refuses account logins, and account tokens are revoked at
    the switch (the first half of item 2 of "this premise is protected by the following four"). `banto-serve` does not copy

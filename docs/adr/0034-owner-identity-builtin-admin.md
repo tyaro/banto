@@ -605,13 +605,17 @@ C2（PR #858）の実装で、§9 の「作業用のコピーへの migration �
 2. **断り方は 2 つ**: 今がログインなしなら `LoginOutcome::LoginDisabled`（`200 {success:false, error}`。Tauri の `auth_login` と
    同じ文言）。照合の間に往復して、今はログイン必須に戻っているなら `Unavailable`（503。やり直せば入れる）。
    ログインなしの間は入口で断り、照合を走らせない（失敗の回数にも監査にも残らない。Tauri と同じ）。
-3. **認可の完了の時点**: `authenticate` がアカウントの照合の後に表で確かめ、`require_auth` が権限の読み取りの後
-   （監査の主体のスナップショットを作る直前）に、入口で読んだ世代ともう一度比べる。
+3. **認可の完了の時点**: `authenticate` がアカウントの照合の後に表で確かめる。権限の読み取りはその後のもう 1 つの await なので、
+   トークンと権限を両方読む所は `AuthState::authenticate_with_permissions` に 1 つにまとめ、入口で読んだ世代を権限の読み取りの後に
+   もう一度比べる（`require_auth`・`GET /api/auth/identity`・`require_auth` なしの `PermissionGuard`。PR #862 のクロスレビュー）。
+   Tauri の画面も同じ形にした: `authorized_session` が、確定の直後の `seq` を権限の読み取りの後に比べる（`require_permission`・
+   `session_permissions`・`auth_identity`）。`auth_resolve` は同じ窓を `stale` で返す。
 4. **進行中の書き込み**: ガードを通った書き込みは中断しない。切り替えは残った仕事を待たない（#793 の「失効が効くのは次の要求から」と
    同じ）。監査は、切り替えの `settings_change` の detail に、失効させたアカウントのトークンの数を `revokedSessions: n` で
    載せる（0 のときは載せない）。進行中の書き込みの監査は、認可したときの主体でそのまま残る。
 5. **`issue_token` / `issue_token_remembered` / `issue_account_token` は戻り値の型を変えない**。ログインなしの間は、表に
-   入れていないトークンを返す（最初の利用で 401）。await を挟まない口なので、入口の世代は要らない。
+   入れていないトークンを返す（最初の利用で 401）。await を挟まない口なので、入口の世代は要らない。`/api/auth/setup` を開けた配線
+   （`allow_setup = true`）では、初回セットアップを消すまで、`AuthState` をログインなしに切り替えない（標準の配線では重ならない）。
 6. **配線は Tauri だけ**: `auth_config_apply` が保存の直後に切り替え、起動時に保存済みのモードを写す。これで、Tauri の
    ログインなしの間は、組み込みサーバーがアカウントのログインを断り、切り替えの時点でアカウントのトークンが失効する
    （上の「この前提は、次の 4 つで守る」の 2 の前半）。`banto-serve` はまだモードを写さない（既定のログイン必須のまま）。

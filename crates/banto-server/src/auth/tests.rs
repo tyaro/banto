@@ -2186,3 +2186,72 @@ async fn the_mode_serializes_without_a_session_lookup_too() {
     assert!(!is_live(&auth, &token).await);
     assert!(auth.identity_for(&token).is_none());
 }
+
+/// An account state whose permission reader switches the mode away and back
+/// once armed (the slot holds the state): the second await of an
+/// authorization, overtaken by a completed switch.
+fn auth_switching_while_permissions_are_read(
+    store: &FakeStore,
+) -> (AuthState, Arc<std::sync::Mutex<Option<AuthState>>>) {
+    let slot: Arc<std::sync::Mutex<Option<AuthState>>> = Arc::default();
+    let reader_slot = slot.clone();
+    let auth = store
+        .auth()
+        .with_permission_reader(move |_account_id: i64| {
+            let auth = reader_slot.lock().unwrap().clone();
+            Box::pin(async move {
+                if let Some(auth) = auth {
+                    switch_away_and_back(&auth);
+                }
+                Ok(SessionPermissions::new(
+                    [perm("equipment.operate")].into_iter().collect(),
+                ))
+            })
+        });
+    (auth, slot)
+}
+
+#[tokio::test]
+async fn identity_is_null_when_the_switch_completes_while_permissions_are_read() {
+    // `/api/auth/identity` is not behind `require_auth`; it runs the same
+    // single authorization, so it cannot report a session of a generation
+    // that ended (cross-review of PR #862).
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let (auth, slot) = auth_switching_while_permissions_are_read(&store);
+    let token = login_token(&auth, "alice", false).await;
+    let router = auth_routes(auth.clone());
+
+    let body = identity_kind(&router, &token).await;
+    assert_eq!(
+        body["kind"], "account",
+        "no switch: the session is reported"
+    );
+    assert_eq!(
+        body["permissions"],
+        serde_json::json!(["equipment.operate"])
+    );
+
+    *slot.lock().unwrap() = Some(auth.clone());
+    assert!(identity_kind(&router, &token).await.is_null());
+    assert!(auth
+        .authenticate_with_permissions(&token)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn a_grant_session_is_reported_across_a_switch_during_its_permissions_read() {
+    let store = FakeStore::default();
+    let (auth, slot) = auth_switching_while_permissions_are_read(&store);
+    let token = issue(&auth, &public_viewer_spec());
+    *slot.lock().unwrap() = Some(auth.clone());
+
+    // A grant session's permissions are not read at all, so switch by hand
+    // between two reports: it is outside the mode either way.
+    let router = auth_routes(auth.clone());
+    assert!(!identity_kind(&router, &token).await.is_null());
+    switch_away_and_back(&auth);
+    assert!(!identity_kind(&router, &token).await.is_null());
+}

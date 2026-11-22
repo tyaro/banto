@@ -558,10 +558,44 @@ impl AuthState {
         (tokens.mode, tokens.mode_generation)
     }
 
-    /// The auth-mode generation right now. [`require_auth`] reads it on entry
-    /// and compares it once more when the authorization is complete.
+    /// The auth-mode generation right now.
+    /// [`AuthState::authenticate_with_permissions`] reads it on entry and
+    /// compares it once more when the authorization is complete.
     pub(super) fn mode_generation(&self) -> u64 {
         self.mode_now().1
+    }
+
+    /// [`AuthState::authenticate`] plus the session's per-user permissions
+    /// ([`AuthState::session_permissions`]), as ONE authorization that is
+    /// serialized with the auth mode to its very end (ADR-0034 section 6).
+    ///
+    /// `authenticate` settles the token against the mode as it is when the
+    /// account lookup returns; reading the permissions awaits once more. So
+    /// the mode's generation is read on entry and compared again after the
+    /// permissions were read: generations only grow, which makes "still the
+    /// one read on entry" cover both awaits. An account session whose
+    /// authorization was still in flight when
+    /// [`AuthState::switch_auth_mode`] completed is `Ok(None)`. A grant
+    /// session is outside the mode (ADR-0017).
+    ///
+    /// Everything that reads the permissions next to a token goes through
+    /// here - [`require_auth`], `GET /api/auth/identity`, and a permission
+    /// guard stacked without `require_auth` - so none of them can answer for
+    /// a session of a generation that ended. Code that needs both must not
+    /// pair `authenticate` and `session_permissions` by hand.
+    pub async fn authenticate_with_permissions(
+        &self,
+        token: &str,
+    ) -> Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError> {
+        let entered = self.mode_generation();
+        let Some(session) = self.authenticate(token).await? else {
+            return Ok(None);
+        };
+        let permissions = self.session_permissions(&session).await?;
+        if session.grant.is_none() && self.mode_generation() != entered {
+            return Ok(None);
+        }
+        Ok(Some((session, permissions)))
     }
 
     /// Switch the auth mode (ADR-0034 section 6): under the token table's one
@@ -578,8 +612,8 @@ impl AuthState {
     ///   credentials issues nothing ([`AuthState::login_rate_limited`]);
     /// - a request whose account lookup is still in flight is not authorized
     ///   ([`AuthState::authenticate`] settles against the table after the
-    ///   lookup; [`require_auth`] compares the generation once more after the
-    ///   permissions were read);
+    ///   lookup; [`AuthState::authenticate_with_permissions`] compares the
+    ///   generation once more after the permissions were read);
     /// - a request that was ALREADY authorized (it is past the guard, holding
     ///   its `AuditActor` snapshot) is not interrupted: it runs to the end as
     ///   the actor it was authorized as, the same rule as for any other

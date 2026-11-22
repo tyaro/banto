@@ -528,17 +528,31 @@ without a runtime guard are **upheld by reviewing every call site**.
     that awaits must pass its entry generation the same way.
   - **Authorization**: an account token carries the generation it was issued
     in and is valid only while that is the current one.
-    `AuthState::authenticate` checks AFTER the account lookup, and
-    `require_auth` once more after reading the permissions (right before the
-    audit-actor snapshot). A request still being authorized when a switch
-    finishes gets 401.
+    `AuthState::authenticate` checks AFTER the account lookup. Reading the
+    permissions is one more await after that, so **anything that reads both a
+    token and its permissions goes through
+    `AuthState::authenticate_with_permissions`** (it compares the entry
+    generation once more after the permissions read): `require_auth`,
+    `GET /api/auth/identity`, and a `PermissionGuard` stacked without
+    `require_auth`. Do not pair `authenticate` and `session_permissions` by
+    hand. A request still being authorized when a switch finishes is
+    unauthenticated (401 from `require_auth`, `null` from identity).
   - **Writes in progress**: a write that passed the guard (it holds its actor
     snapshot) is not interrupted by a switch and runs to the end as the actor
     it was authorized as (the same as §1's "authorization is decided when the
     guard is passed"; the switch does not wait).
   - **The Tauri webview session** keeps the same serialization with the slot's
     `seq` and `auth_config_lock` (`install_account_unless_auth_disabled`,
-    `settle_session`; S-94, S-95, S-99).
+    `settle_session`; S-94, S-95, S-99). Anything that reads both the session
+    and its permissions goes through `authorized_session` (the `seq` right
+    after the settle is compared once more after the permissions read:
+    `require_permission`, `session_permissions`, `auth_identity`).
+    `auth_resolve` reports the same window as `stale`.
+  - **A wiring that opens `/api/auth/setup` (`allow_setup = true`) must not
+    switch its `AuthState` to no-login** (a condition until first-run setup is
+    removed): the account it creates would be handed a token that was never
+    stored. The stock Tauri app has `allow_setup = false` and `banto-serve`
+    does not copy the mode, so the two do not meet in the stock wiring.
   - `banto-serve` has no way to switch the mode at run time and does not copy
     the mode yet (it stays on `AuthState`'s default, login required).
     Read-only REST in no-login mode and the listen condition come with the

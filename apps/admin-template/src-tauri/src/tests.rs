@@ -6377,3 +6377,98 @@ async fn adr0034_a_failed_save_leaves_the_lan_auth_mode_and_sessions() {
         .unwrap()
         .is_some());
 }
+
+/// Hold the first per-user permissions read of `state` (after the session
+/// was settled); the read itself is the production one.
+fn hold_permissions(state: &mut AppState) -> Hold {
+    let (slot, hold) = gate();
+    state.auth_io.permissions = Arc::new(move |users, settings, session| {
+        let slot = slot.clone();
+        Box::pin(async move {
+            pass_gate(&slot).await;
+            read_session_permissions(&users, &settings, &session).await
+        })
+    });
+    hold
+}
+
+/// Cross-review of PR #862: the webview's authorization awaits twice (the
+/// session check, then the permissions read). An apply that completes during
+/// the second await ended the account session, so `auth_identity` must not
+/// answer with it, and a permission-guarded command must not pass as it.
+/// Both decide again from the slot as it is now: the mode's `local` session.
+#[tokio::test]
+async fn adr0034_an_apply_during_the_permissions_read_does_not_authorize_the_ended_session() {
+    let (mut state, _op) = permission_app_state().await;
+    let ack = perm("alarm.ack");
+    let account = auth_identity_body(&state)
+        .await
+        .expect("identity")
+        .expect("the admin's account session");
+
+    // `auth_identity`.
+    {
+        let mut hold = hold_permissions(&mut state);
+        let identity = auth_identity_body(&state);
+        tokio::pin!(identity);
+        run_until_held!(identity, hold);
+        auth_config_apply_body(&state, true, "viewer")
+            .await
+            .expect("apply true");
+        hold.release.send(()).unwrap();
+        let identity = identity
+            .await
+            .expect("identity")
+            .expect("the local session");
+        assert_ne!(identity.id, account.id, "not the ended account session");
+        assert_eq!(identity.role, "viewer");
+    }
+
+    // A permission-guarded command, the other way round: the `local` session
+    // (holding the permission) is being authorized when the mode is turned
+    // off.
+    auth_config_apply_with_permissions_body(&state, true, "viewer", Some(&[ack.to_string()]))
+        .await
+        .expect("give the mode the permission");
+    assert!(require_permission(&state, &ack, "alarm").await.is_ok());
+    let mut hold = hold_permissions(&mut state);
+    let guarded = require_permission(&state, &ack, "alarm");
+    tokio::pin!(guarded);
+    run_until_held!(guarded, hold);
+    auth_config_apply_body(&state, false, "viewer")
+        .await
+        .expect("apply false");
+    hold.release.send(()).unwrap();
+    assert!(
+        matches!(guarded.await, Err(BantoError::Unauthorized)),
+        "the local session ended with its mode; there is no session now"
+    );
+}
+
+/// The same window for `auth_resolve`: it reports `stale` (nothing about the
+/// ended session), and the next resolve answers for the slot as it is.
+#[tokio::test]
+async fn adr0034_a_resolve_overtaken_during_its_permissions_read_is_stale() {
+    let (mut state, _op) = permission_app_state().await;
+    let (_, seq_before) = read_slot(&state);
+    let mut hold = hold_permissions(&mut state);
+
+    let resolve = resolve_body(&state);
+    tokio::pin!(resolve);
+    run_until_held!(resolve, hold);
+    auth_config_apply_body(&state, true, "viewer")
+        .await
+        .expect("apply true");
+    hold.release.send(()).unwrap();
+    let result = resolve.await.expect("resolve");
+
+    assert!(result.stale);
+    assert!(result.identity.is_none() && result.kind.is_none());
+    assert_eq!(result.checked, seq_before);
+    assert_eq!(result.current, read_slot(&state).1);
+    assert!(result.current > seq_before);
+
+    let again = resolve_body(&state).await.expect("resolve");
+    assert!(!again.stale);
+    assert_eq!(again.kind, Some("local"));
+}
