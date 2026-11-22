@@ -34,7 +34,13 @@
 <script lang="ts">
 	import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
+	import {
+		BantoForm,
+		UnsavedChangesNotice,
+		createFormStore,
+		emptyFileValue,
+		uploadPendingFiles
+	} from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import {
 		conflictOf,
@@ -50,10 +56,14 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { saveErrorMessage } from '#lib/banto/connectionRecovery.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
-	import { formValidationMessages, referenceFieldMessages } from '#lib/banto/i18n.js';
+	import {
+		fileFieldMessages,
+		formValidationMessages,
+		referenceFieldMessages
+	} from '#lib/banto/i18n.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
-	import { resolveAppPath } from '#lib/appPath.js';
+	import { resolveAppPath, type AppPath } from '#lib/appPath.js';
 	import ConflictDialog from './ConflictDialog.svelte';
 	import { recordRecentRecord } from './recentRecords';
 	import { recordTitle } from './recordTitle';
@@ -68,6 +78,7 @@
 		type ConflictField
 	} from './conflict';
 	import { editableFieldNames } from './listState';
+	import { stashPendingUploads, takePendingUploads } from './pendingUploads';
 	import { resourcePermissions } from './permissions';
 	import type { AppResourceDefinition, ResourceRow } from './types';
 
@@ -110,7 +121,9 @@
 	const def = untrack(() => resource);
 	const rawId = untrack(() => id);
 	const isNew = rawId === null;
-	const schema = def.schema as FormSchema;
+	const fullSchema = def.schema as FormSchema;
+	// #714 F2: the `file` field (one at most) uploads to the record's attachments.
+	const fileField = fullSchema.fields.find((field) => field.type === 'file');
 	const listHref = resolveAppPath(def.path);
 
 	// ADR-0030 §5. Spec M10 RBAC: a `viewer` can still open an existing
@@ -129,6 +142,22 @@
 	// it is treated as not-found immediately - load is never called for it.
 	const parsedId = typeof rawId === 'number' ? rawId : Number(rawId ?? '');
 	const idValid = !isNew && rawId !== '' && Number.isInteger(parsedId);
+
+	// Files that did not upload when this record was created (#714 F2): the edit
+	// form shows them with their reasons so they can be retried.
+	const leftovers = fileField && idValid ? takePendingUploads(def.name, parsedId) : null;
+	// The create form and a form with leftovers carry the `file` field. An
+	// existing record's form leaves it out: the attachments panel (`after`)
+	// already lists, uploads and deletes that record's files, and the field
+	// would show the same list twice.
+	const schema: FormSchema =
+		fileField && !isNew && !leftovers
+			? { ...fullSchema, fields: fullSchema.fields.filter((field) => field.type !== 'file') }
+			: fullSchema;
+	const withLeftovers = (values: Record<string, unknown>): Record<string, unknown> =>
+		fileField && leftovers
+			? { ...values, [fileField.name]: { existing: null, pending: leftovers } }
+			: values;
 
 	// Issue #215/#255: `scope` is the session this form was built for. The
 	// last-opened marker is saved for its owner only, and the save handler
@@ -215,7 +244,11 @@
 		await formResource.load();
 		if (!isNew && formResource.initialValues) {
 			base = formResource.initialValues;
-			store = createFormStore(schema, formResource.initialValues, formValidationMessages());
+			store = createFormStore(
+				schema,
+				withLeftovers(formResource.initialValues),
+				formValidationMessages()
+			);
 			storeReady = true;
 			// #711: the palette's "recent records" - once the record exists, so
 			// a deleted one never lands there. Written for `scope` only (see
@@ -396,6 +429,25 @@
 			} else {
 				store.markClean();
 			}
+			// #714 F2: a created record's chosen files go up now (the record exists).
+			// The ones that fail do not roll the record back: the edit form of
+			// the new record opens with them, reasons shown, ready to retry.
+			if (isNew && fileField) {
+				const createdId = Number((result.row as { id?: unknown } | undefined)?.id);
+				if (Number.isInteger(createdId)) {
+					const outcome = await uploadPendingFiles(schema, store, createdId, fileFieldMessages());
+					if (outcome.failed.length > 0) {
+						stashPendingUploads(def.name, createdId, outcome.failed);
+						// Handed over: nothing is left unsaved on this form.
+						store.values = { ...store.values, [fileField.name]: emptyFileValue() };
+						notify('error', m['resource.filesNotUploaded']({ count: outcome.failed.length }));
+						if (!destroyed && guard.canAutoNavigate) {
+							goto(resolveAppPath(`${def.path}/${createdId}` as AppPath));
+						}
+						return;
+					}
+				}
+			}
 			if (!onSaved && guard.canAutoNavigate) goto(listHref);
 		} else {
 			store.setServerErrors(result.fieldErrors);
@@ -486,6 +538,8 @@
 			submitting={(formResource?.saving ?? false) || resolving || !canSave}
 			submitLabel={m['common.save']()}
 			referenceMessages={referenceFieldMessages()}
+			fileParentId={isNew ? null : parsedId}
+			fileMessages={fileFieldMessages()}
 		>
 			<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
 			{#if !isNew && perms.delete}

@@ -29,9 +29,12 @@ export function initialLoadMode(
 
 /** Schema field names an inline edit may write back (every field that is not `readonly`). */
 export function editableFieldNames(
-	schema: { fields: readonly { name: string; readonly?: boolean }[] } | undefined
+	schema: { fields: readonly { name: string; readonly?: boolean; type?: string }[] } | undefined
 ): string[] {
-	return (schema?.fields ?? []).filter((field) => !field.readonly).map((field) => field.name);
+	// A `file` field's files are attachments, not a column of the record (#714).
+	return (schema?.fields ?? [])
+		.filter((field) => !field.readonly && field.type !== 'file')
+		.map((field) => field.name);
 }
 
 /**

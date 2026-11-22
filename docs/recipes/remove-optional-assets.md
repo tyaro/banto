@@ -178,6 +178,10 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とそ�
    どれも `[scaffold:attachments]` の印で囲んである。`[id]` の snippet を消したら
    `<ResourceDetail … />` の自己終了タグにする。そのうえで
    `items/ItemAttachments.svelte`（`AttachmentsPanel` を置く部品）を削除。
+   あわせて `src/lib/banto/resources/items.ts` の `file` 欄（`files`）と、その欄だけが使う
+   import（`attachmentsAdmin`・`attachmentsClient`・`confirm`）を削除する（これも
+   `[scaffold:attachments]` の印で囲んである。欄の前のカンマも消す）。新規作成の保存のあとに
+   ファイルを上げる配線（`ResourceDetail`）は、`file` 欄が無ければ何もしないので残してよい。
 2. `apps/admin-template/src/lib/banto/attachmentsClient.ts`・
    `src/lib/banto/attachmentsAdmin.ts` を削除。
 3. `apps/admin-template/core/src/rest/attachments.rs` **ファイルを削除**し、
