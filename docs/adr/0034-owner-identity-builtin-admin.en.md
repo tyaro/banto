@@ -853,4 +853,17 @@ the owner; once confirmed, this heading becomes "confirmed by the owner").
     check (an argon2 PHC string that carries its output). The password itself
     is not checked. Startup, the restore candidate and the lock-down all ask
     this one function; a database whose only administrator rows have damaged
-    hashes is treated like one with no administrator.
+    hashes is treated like one with no administrator. "Can check" means:
+    an algorithm, version and parameters argon2 accepts, with a salt and an
+    output. The last-administrator guard (demotion, deletion) asks the same
+    predicate (`can_log_in`) inside its write transaction: is there ANOTHER
+    administrator that can log in.
+11. **A failed preparation is handled the same way by a start and by the
+    restore check** (cross-review of PR #865): a failure of `db::prepare`
+    (migrations and the app's seed) or of the first-boot settings seed
+    **stops the start** in both wirings (the seed failure used to be a
+    warning), and is "could not check" for a candidate (the pending restore
+    is kept, nothing is swapped). Going on would let a later start seed an
+    unmarked database over settings saved in between (a lock-down). A failed
+    `BANTO_VIEWER_PUBLIC` write lets both go on; the check then judges by
+    the stored value.

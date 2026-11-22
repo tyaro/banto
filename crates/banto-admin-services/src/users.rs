@@ -99,8 +99,16 @@ fn verify_password(password: &str, hash: &str) -> bool {
 /// Could [`UsersService::verify`] ever accept this account - whatever the
 /// password? The name must be one it looks up (not empty, not longer than
 /// [`MAX_USERNAME_LEN`]) and the stored hash one [`verify_password`] can
-/// check: a PHC string of an argon2 variant that carries its output. Nothing
-/// is verified here; this only tells a usable credential from a damaged one.
+/// check: a PHC string whose algorithm, version and parameters argon2 accepts
+/// and which carries a salt and an output - everything `verify_password`
+/// needs before it compares. Nothing is verified here; this only tells a
+/// usable credential from a damaged one.
+///
+/// The ONE definition of "an administrator that can log in": startup, the
+/// restore check and the lock-down ask it through
+/// [`UsersService::has_admin`], and the last-administrator guard of a
+/// demotion or a deletion asks it inside its write transaction
+/// ([`another_admin_can_log_in`]).
 fn can_log_in(username: &str, hash: Option<&str>) -> bool {
     let len = username.chars().count();
     if len == 0 || len > MAX_USERNAME_LEN {
@@ -109,7 +117,32 @@ fn can_log_in(username: &str, hash: Option<&str>) -> bool {
     let Some(Ok(parsed)) = hash.map(PasswordHash::new) else {
         return false;
     };
-    argon2::Algorithm::try_from(parsed.algorithm).is_ok() && parsed.hash.is_some()
+    argon2::Algorithm::try_from(parsed.algorithm).is_ok()
+        && parsed
+            .version
+            .is_none_or(|version| argon2::Version::try_from(version).is_ok())
+        && argon2::Params::try_from(&parsed).is_ok()
+        && parsed.salt.is_some()
+        && parsed.hash.is_some()
+}
+
+// Is there an administrator account OTHER than `$id` that can log in
+// ([`can_log_in`])? Read on the write transaction of a demotion / deletion,
+// under its lock, so the answer holds until the write commits. Expanded for
+// each backend (the statement binds nothing, so it is the same text).
+macro_rules! another_admin_can_log_in {
+    ($tx:expr, $id:expr) => {{
+        let admins: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, username, password_hash FROM users \
+             WHERE role = 'admin' AND kind = 'account'",
+        )
+        .fetch_all($tx)
+        .await
+        .map_err(banto_storage::storage_error)?;
+        admins
+            .iter()
+            .any(|(id, username, hash)| *id != $id && can_log_in(username, hash.as_deref()))
+    }};
 }
 
 /// [`verify_password`] on tokio's blocking pool (Issue #279). An argon2id
@@ -526,18 +559,24 @@ macro_rules! with_users_write_transaction {
 
 /// Validate the locked snapshot (spec M10's last-admin condition). An
 /// update to admin cannot remove an admin; a delete always potentially can.
+///
+/// `state` is the target's role and whether ANOTHER administrator account
+/// can log in ([`another_admin_can_log_in`]). Counting rows is not enough
+/// (cross-review of PR #865): with one damaged administrator row and one
+/// good one, removing the good one would leave an install nobody can log in
+/// to administer - the same condition the startup refuses.
 fn ensure_admin_removal_allowed(
     id: i64,
-    state: Option<(String, i64)>,
+    state: Option<(String, bool)>,
     removes_admin: bool,
 ) -> Result<(), BantoError> {
-    let Some((role, admin_count)) = state else {
+    let Some((role, another_admin_can_log_in)) = state else {
         return Err(BantoError::NotFound {
             resource: "users".to_string(),
             id: id.to_string(),
         });
     };
-    if Role::from_str(&role)?.is_admin() && removes_admin && admin_count <= 1 {
+    if Role::from_str(&role)?.is_admin() && removes_admin && !another_admin_can_log_in {
         return Err(BantoError::Other(
             "最後の管理者を降格・削除することはできません".to_string(),
         ));
@@ -1559,9 +1598,10 @@ impl UsersService {
                 ensure_account_row(g)?;
                 check_version(expected_version, &guard_summary(g)?)?;
             }
+            let another_admin = another_admin_can_log_in!(&mut *tx, id);
             ensure_admin_removal_allowed(
                 id,
-                guard.as_ref().map(|g| (g.0.clone(), g.1)),
+                guard.as_ref().map(|g| (g.0.clone(), another_admin)),
                 !role.is_admin(),
             )?;
             let updated: Option<Updated> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
@@ -1758,7 +1798,8 @@ impl UsersService {
                 ensure_account_row(g)?;
                 check_version(expected_version, &guard_summary(g)?)?;
             }
-            ensure_admin_removal_allowed(id, guard.map(|g| (g.0, g.1)), true)?;
+            let another_admin = another_admin_can_log_in!(&mut *tx, id);
+            ensure_admin_removal_allowed(id, guard.map(|g| (g.0, another_admin)), true)?;
             let row: Option<Deleted> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .fetch_optional(&mut *tx)
@@ -1938,6 +1979,9 @@ mod tests {
             "",
             "not-a-hash",
             "$argon2id$v=19$m=19456,t=2,p=1$",
+            // An unknown version, parameters argon2 refuses, no salt.
+            "$argon2id$v=99$m=65536,t=2,p=1$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno",
+            "$argon2id$v=19$m=1,t=0,p=0$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno",
             // Another scheme's PHC string: parses, but argon2 cannot verify it.
             "$pbkdf2-sha256$i=600000$c29tZXNhbHQ$QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo",
         ] {
@@ -1954,6 +1998,50 @@ mod tests {
         svc.create_user("second", "password123", "x", Role::Admin)
             .await
             .unwrap();
+        assert!(svc.has_admin().await.unwrap());
+    }
+
+    /// Cross-review of PR #865: the last-administrator guard asks the same
+    /// question as the startup. With a damaged administrator row next to a
+    /// good one, the good one cannot be demoted or deleted (the damaged row
+    /// is no way in); the damaged one can, and once a second good
+    /// administrator exists the first may go.
+    #[tokio::test]
+    async fn the_last_admin_guard_counts_only_admins_that_can_log_in() {
+        let svc = service().await;
+        let good = svc
+            .create_user("good", "password123", "x", Role::Admin)
+            .await
+            .unwrap();
+        let damaged = svc
+            .create_user("damaged", "password123", "x", Role::Admin)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE users SET password_hash = 'not-a-hash' WHERE id = ?")
+            .bind(damaged.id)
+            .execute(svc.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+        assert!(svc.has_admin().await.unwrap());
+
+        svc.update_user(good.id, "x", Role::Editor)
+            .await
+            .expect_err("demoting the only administrator that can log in");
+        svc.delete_user(good.id, None)
+            .await
+            .expect_err("deleting the only administrator that can log in");
+        assert!(svc.has_admin().await.unwrap());
+
+        // The damaged row is not what keeps the install administrable.
+        svc.delete_user(damaged.id, None).await.unwrap();
+        let second = svc
+            .create_user("second", "password123", "x", Role::Admin)
+            .await
+            .unwrap();
+        svc.update_user(good.id, "x", Role::Editor).await.unwrap();
+        svc.delete_user(second.id, None)
+            .await
+            .expect_err("now `second` is the last one");
         assert!(svc.has_admin().await.unwrap());
     }
 
@@ -2788,8 +2876,8 @@ mod tests {
                 .unwrap();
             sqlx::query(
                 "INSERT INTO users (id, username, password_hash, display_name, role, account_uid) VALUES
-                 (1, 'owner1', 'unused', 'Original 1', 'admin', 'uid-1'),
-                 (2, 'owner2', 'unused', 'Original 2', 'admin', 'uid-2')",
+                 (1, 'owner1', '$argon2id$v=19$m=65536,t=2,p=1$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno', 'Original 1', 'admin', 'uid-1'),
+                 (2, 'owner2', '$argon2id$v=19$m=65536,t=2,p=1$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno', 'Original 2', 'admin', 'uid-2')",
             )
             .execute(&first_pool)
             .await

@@ -186,7 +186,16 @@ async fn check_restore_candidate(
 /// the call `init_db*` make, whose failure stops a start), the first-boot
 /// settings seed (which writes only when the marker is missing), and for
 /// `banto-serve` with `BANTO_VIEWER_PUBLIC=1` the public-viewing write.
-/// Any failure means the start could not get this far either.
+///
+/// The failure policy is the start's own, step by step (cross-review of PR
+/// #865), so a candidate is never held to more than a start is:
+///
+/// - `db::prepare` or the first-boot seed fails: both entry points stop
+///   their start on that, so here it is `Err` - "could not check"; the
+///   pending restore is kept and nothing is swapped.
+/// - the `BANTO_VIEWER_PUBLIC` write fails: the start reports it and goes on
+///   to [`check`], which judges by the stored flag. Same here - the error is
+///   dropped and the check that follows decides.
 async fn prepare_like_a_startup(db: Db, wiring: Wiring) -> Result<(), BantoError> {
     crate::db::prepare(&db).await?;
     let settings = SettingsService::new(db);
@@ -195,7 +204,7 @@ async fn prepare_like_a_startup(db: Db, wiring: Wiring) -> Result<(), BantoError
         seed_viewer_public: true,
     } = wiring
     {
-        seed_viewer_public(&settings).await?;
+        let _ = seed_viewer_public(&settings).await;
     }
     Ok(())
 }

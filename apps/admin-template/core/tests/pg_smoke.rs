@@ -1368,8 +1368,8 @@ async fn concurrent_admin_removals_on_postgres(url: &str) {
             .unwrap();
         sqlx::query(
             "INSERT INTO users (username, password_hash, display_name, role, account_uid) VALUES
-             ('owner1', 'unused', 'Original 1', 'admin', 'uid-owner1'),
-             ('owner2', 'unused', 'Original 2', 'admin', 'uid-owner2')",
+             ('owner1', '$argon2id$v=19$m=65536,t=2,p=1$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno', 'Original 1', 'admin', 'uid-owner1'),
+             ('owner2', '$argon2id$v=19$m=65536,t=2,p=1$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno', 'Original 2', 'admin', 'uid-owner2')",
         )
         .execute(&control)
         .await

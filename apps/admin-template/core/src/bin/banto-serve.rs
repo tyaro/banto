@@ -187,8 +187,8 @@ async fn create_admin(args: &[String], db_target: &str) -> i32 {
             // before it and stay applied (a start would apply them too).
             eprintln!(
                 "banto-serve: 管理者のアカウントを作れませんでした: {reason}\n\
-                 banto-serve: アカウント・認証の設定・監査ログは変更していません\
-                 （新しい DB の場合、migration は適用済みです）"
+                 banto-serve: create-admin としては、アカウント・認証の設定・監査ログを変更していません\
+                 （新しい DB の場合、migration は適用済みで、認証の設定の初期値はその migration が入れています）"
             );
             1
         }
@@ -291,10 +291,22 @@ async fn main() {
     // below, so a display-preset app's seeded `auth.disabled = true` (say)
     // takes effect on the very first launch. No-op today: the const ships
     // empty.
+    //
+    // A seed that could not be written STOPS the start (cross-review of PR
+    // #865). Going on without it would leave the database unseeded and
+    // unmarked: a later start would then seed over whatever was saved in
+    // between - a preset's `auth.disabled = true` over a lock-down. The
+    // restore check treats the same failure as "could not check"
+    // (`startup::prepare_like_a_startup`), so a start and a candidate agree.
     match seed_first_boot_settings(&settings).await {
         Ok(true) => println!("banto-serve: 初回起動の既定設定を適用しました"),
         Ok(false) => {}
-        Err(err) => eprintln!("banto-serve: 初回起動の既定設定の書き込みに失敗しました: {err}"),
+        Err(err) => {
+            eprintln!(
+                "banto-serve: 起動できません: 初回起動の既定設定を書き込めませんでした: {err}"
+            );
+            std::process::exit(1);
+        }
     }
     // Issue #189: write 閲覧公開 on when asked - before the check below, which
     // reads the STORED flag (no login + no public viewing = this server does
@@ -302,7 +314,8 @@ async fn main() {
     // route judges by the stored flag, so if this write fails on a no-login
     // database the start stops instead of listening with no way in. The
     // restore check makes the same write on its working copy
-    // (`startup::seed_viewer_public`, one function for both).
+    // (`startup::seed_viewer_public`, one function for both), and goes on
+    // after a failed write the same way: the stored value decides.
     if seed_viewer_public {
         if let Err(err) = startup::seed_viewer_public(&settings).await {
             eprintln!("banto-serve: 閲覧公開設定の保存に失敗しました: {err}");
@@ -471,6 +484,7 @@ async fn main() {
     // the baseline security headers, regardless of which inner router
     // produced it.
     let added_resources = resources_router(resources, audit.clone(), auth.clone());
+    let settings_for_messages = settings.clone();
     let services = Services {
         items,
         users,
@@ -512,8 +526,17 @@ async fn main() {
              To manage this server, stop it and run `banto-serve create-admin`"
         );
     }
-    if seed_viewer_public {
-        println!("banto-serve: public viewing is ENABLED (BANTO_VIEWER_PUBLIC=1) - POST /api/auth/grant/publicViewer will hand out anonymous viewer sessions");
+    // What is stored, not what was asked for: the grant route reads the
+    // setting, and the `BANTO_VIEWER_PUBLIC` write above may have failed.
+    match settings_for_messages.server_config().await {
+        Ok(config) if config.viewer_public => println!(
+            "banto-serve: public viewing is ENABLED - POST /api/auth/grant/publicViewer will hand out anonymous viewer sessions"
+        ),
+        Ok(_) if seed_viewer_public => eprintln!(
+            "banto-serve: BANTO_VIEWER_PUBLIC=1 was given, but public viewing is NOT enabled (the setting could not be saved)"
+        ),
+        Ok(_) => {}
+        Err(err) => eprintln!("banto-serve: サーバー設定の読み取りに失敗しました: {err}"),
     }
     println!("banto-serve: press Ctrl-C to stop");
 

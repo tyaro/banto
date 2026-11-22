@@ -4809,10 +4809,22 @@ pub fn run() {
             // `auth.disabled = true` (say) takes effect on the very first
             // launch rather than one launch late. No-op today: the const
             // ships empty.
+            //
+            // A seed that could not be written STOPS the start (cross-review
+            // of PR #865), as in `banto-serve`: going on would leave the
+            // database unseeded and unmarked, and a later start would seed
+            // over whatever was saved in between (a preset's
+            // `auth.disabled = true` over a lock-down). The restore check
+            // treats the same failure as "could not check".
             match tauri::async_runtime::block_on(seed_first_boot_settings(&settings)) {
                 Ok(true) => println!("banto: 初回起動の既定設定を適用しました"),
                 Ok(false) => {}
-                Err(err) => eprintln!("banto: 初回起動の既定設定の書き込みに失敗しました: {err}"),
+                Err(err) => {
+                    eprintln!("banto: 起動できません: 初回起動の既定設定を書き込めませんでした: {err}");
+                    return Err(
+                        format!("起動できません: 初回起動の既定設定を書き込めませんでした: {err}").into(),
+                    );
+                }
             }
             // ADR-0034 §2/§4/§5/§6: the checks that stop a startup, after the
             // migrations and the seed - the same function `banto-serve`
