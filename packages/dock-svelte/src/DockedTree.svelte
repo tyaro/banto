@@ -907,7 +907,7 @@
 	.pin-btn:hover,
 	.collapse-btn:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 	}
 
 	.collapse-btn:disabled {

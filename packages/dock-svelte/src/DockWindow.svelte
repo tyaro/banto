@@ -622,7 +622,7 @@
 
 	.popout-btn:hover {
 		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 	}
 
 	.close-btn:focus-visible,
@@ -640,7 +640,7 @@
 	.key-btn:hover,
 	.key-btn.active {
 		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 	}
 
 	/* The keyboard-mode buttons stay out of sight until they have focus (or the

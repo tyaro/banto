@@ -192,7 +192,7 @@
 		margin-inline-start: var(--banto-space-2);
 		padding: 0 var(--banto-space-2);
 		border-radius: var(--banto-radius-full, 999px);
-		background: var(--banto-surface-muted, var(--banto-border));
+		background: var(--banto-surface-muted);
 		font-size: var(--banto-font-size-sm);
 		color: var(--banto-text-muted);
 	}

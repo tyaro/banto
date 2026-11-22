@@ -419,6 +419,8 @@
 
 	/* Surface hierarchy (visual-refresh-plan.md 付録A.1) */
 	--banto-surface-subtle: var(--banto-neutral-3);
+	/* 小さなバッジ・件数の地。surface-subtle と同じ値（text-muted が 4.5:1 を保つ面） */
+	--banto-surface-muted: var(--banto-surface-subtle);
 
 	--banto-surface-hover: var(--banto-neutral-4);
 
@@ -539,6 +541,8 @@
 
 	/* Surface hierarchy (visual-refresh-plan.md 付録A.1, dark column) */
 	--banto-surface-subtle: var(--banto-neutral-3);
+	/* 小さなバッジ・件数の地。surface-subtle と同じ値（text-muted が 4.5:1 を保つ面） */
+	--banto-surface-muted: var(--banto-surface-subtle);
 	--banto-surface-hover: var(--banto-neutral-5);
 	--banto-surface-overlay: var(--banto-surface-raised);
 

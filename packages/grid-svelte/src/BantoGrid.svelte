@@ -2435,7 +2435,7 @@
 	}
 
 	.bulk-all {
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 	}
 
 	.bulk-clear {
@@ -2495,7 +2495,7 @@
 		width: 1em;
 		flex: 0 0 auto;
 		text-align: center;
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 	}
 
 	.group-label {
