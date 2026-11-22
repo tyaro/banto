@@ -171,13 +171,31 @@ function joinSplit(
 	const total = old.reduce((a, b) => a + b, 0);
 	const scaled = old.map((s) => (total > 0 ? s / total : 1 / old.length));
 	const shown = scaled.reduce((sum, s, i) => (shows[i] ? sum + s : sum), 0);
-	const among = shows.includes(false) && shown > 0;
-	const there = collectPanelIds(docked).filter((id) => !among || !away.has(id));
-	const held = usable(share) ? share : defaultShare(split, index, new Set(there));
+	const mixed = shows.includes(false) && shows.includes(true);
+	const among = mixed && shown > 0;
+	// Without a share to take: the default share against the default siblings that show - or,
+	// when none of them shows (what shows beside the places is from elsewhere), against the places.
+	const all = collectPanelIds(docked);
+	const showing = new Set(all.filter((id) => !away.has(id)));
+	const siblingShows = split.children.some(
+		(child, i) => i !== index && collectPanelIds(child).some((id) => showing.has(id))
+	);
+	const there = mixed && siblingShows ? showing : new Set(all);
+	const held = usable(share) ? share : defaultShare(split, index, there);
 	return replaceNodeById(tree, splitId, (node) => {
 		if (node.type !== 'split') return node;
 		const at = node.children.findIndex((c) => c.id === panel.id);
 		if (at === -1 || node.children.length !== old.length + 1) return node;
+		if (mixed && !among) {
+			// The children that show hold 0 together ("Shares of 0", `core/shadow.ts`): they show
+			// evenly, and a share of what shows cannot be kept in a total of 0. As for any write to
+			// such a split, the ones that show - the pane too - take the even part of it, their count
+			// out of all its children, and the places share the rest in the proportion they had.
+			const count = shows.filter(Boolean).length;
+			const part = (count + 1) / (scaled.length + 1);
+			const rest = scaled.map((s, i) => (shows[i] ? ((1 - held) * part) / count : s * (1 - part)));
+			return { ...node, sizes: [...rest.slice(0, at), held * part, ...rest.slice(at)] };
+		}
 		// `held` of what shows, as a share of the whole split: every other child - a place too -
 		// gives way in proportion. This undoes what taking the pane out did (`removeFromShadow`,
 		// #743), so a place holds what it held before the pane was hidden.

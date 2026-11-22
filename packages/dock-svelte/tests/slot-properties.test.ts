@@ -696,6 +696,22 @@ describe('hidden and floated panes together (#782 PR6)', () => {
 		expect(treeDiff(dock.layout.docked, back)).toBeNull();
 	});
 
+	// Found with `DOCK_PROPERTY_RUNS=4000 DOCK_PROPERTY_SEED=7`: `e` is shown beside the place of
+	// `d` (floated) in a column whose only child that shows is not one of its default siblings. Its
+	// default share is then taken against the place - not the whole of what shows (sizes [1, 0]).
+	it('pinned: a pane shown beside a place, in a split where no default sibling shows', () => {
+		const tree = split('s1', 'row', even(4), [
+			panel('a'),
+			panel('b'),
+			panel('c'),
+			split('s2', 'column', [0.5, 0.5], [panel('d'), panel('e')])
+		]);
+		const steps = ['a>e:bottom', '-b', '~d', 'a>e:center', '-c', '-e', '+b', '+c', '+e'];
+		const docked = treeAfter(tree, steps, false);
+		expect(shapeText(docked)).toBe('{"column":["e",{"row":["a","b","c"]}]}');
+		expect(docked?.type === 'split' && docked.sizes.every((size) => size > 0.1)).toBe(true);
+	});
+
 	it('pinned: column[row[a, b, c], d, e], c moved beside d with a floated and b hidden: both back in the row they left, in either order', () => {
 		const tree = split('s1', 'column', even(3), [
 			split('s2', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')]),

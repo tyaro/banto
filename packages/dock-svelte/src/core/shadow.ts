@@ -714,6 +714,54 @@ export function resizeShadowSplit(
 	return writeShadowSizes(s, splitId, after.sizes);
 }
 
+/**
+ * S with the `sizes` of its split `splitId` as they are in `from`, an S of before (a cancelled
+ * divider drag, #782 PR6): the tombstones' shares too, which a write to a split whose shown
+ * children had 0 together changed ("Shares of 0" at the top). The same S when the sizes are the
+ * same already; `undefined` when the split is not in both with the same children in the same order
+ * (the caller then writes what shows only).
+ */
+export function copyShadowSizes(
+	s: ShadowNode | null,
+	splitId: string,
+	from: ShadowNode | null
+): ShadowNode | null | undefined {
+	const now = s ? pathTo(s, splitId)?.at(-1) : undefined;
+	const then = from ? pathTo(from, splitId)?.at(-1) : undefined;
+	if (!s || now?.type !== 'split' || then?.type !== 'split') return undefined;
+	if (now.children.length !== then.children.length) return undefined;
+	if (!now.children.every((child, i) => child.id === then.children[i].id)) return undefined;
+	if (
+		now.sizes.length === then.sizes.length &&
+		now.sizes.every((size, i) => size === then.sizes[i])
+	)
+		return s;
+	return replaceNode(s, splitId, () => ({ ...now, sizes: then.sizes.slice() }));
+}
+
+/**
+ * S with a new id (`makeId`) for every split / tab group whose id is in `taken` - the ids of the
+ * layout that are not in the docked tree (`core/autohide.ts#idsOutOfDocked`). S keeps a split / tab
+ * group that does not show, with its id; while it is out of sight the id is free for the layout (a
+ * floating window may take it), so it is checked when a step may show it again (#782 PR6: a layout
+ * holds an id once, `validateDockLayout`). The same S when no id is taken.
+ */
+export function withFreeShadowIds(
+	s: ShadowNode | null,
+	taken: ReadonlySet<string>,
+	makeId: () => string = defaultMakeId
+): ShadowNode | null {
+	if (s === null || taken.size === 0) return s;
+	const free = (node: ShadowNode): ShadowNode => {
+		if (node.type === 'panel') return node;
+		const base = taken.has(node.id) ? { ...node, id: makeId() } : node;
+		if (base.type === 'tabs') return base;
+		const children = base.children.map(free);
+		return children.some((c, i) => c !== base.children[i]) ? { ...base, children } : base;
+	};
+	return free(s);
+}
+
 // ----- following the docked tree (#782 PR4) ----------------------------------------------------
 
 /** Two shares that are the same but for the last digits (a projection scales `sizes` to add up to 1). */
