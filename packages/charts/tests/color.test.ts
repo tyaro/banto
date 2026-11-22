@@ -83,10 +83,7 @@ describe('seriesColorVar', () => {
 		}
 	});
 
-	it('clamps overflow (index >= 8) to slot 8 instead of cycling back to slot 1', () => {
-		expect(seriesColorVar(8)).toBe('var(--banto-chart-8)');
-		expect(seriesColorVar(20)).toBe('var(--banto-chart-8)');
-	});
+	// Slots 9..16 and the overflow past 16 (#851): tests/series-color.test.ts.
 });
 
 describe('sequentialColor', () => {
