@@ -223,7 +223,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   組み直す（`inflateShadow`）。浮かせた時の slot は読まない。setter の `share` の補正（`#withoutGoneShares` /
   `#withoutLeftShares` / `slotsWithoutLeft`）は消した: 比率は S が持ち、ドッキング中の pane が消えれば
   `removeFromShadow` が墓石にも比例で配る（#743）。slot に手で補正を足し直さない。例外は 2 つ:
-  区画が端の帯にある間は S がその pane を持たないので、S が全員を持っていた最後の時点の場所（`#placeSaid`）で組む
+  区画が端の帯にある間は S がその pane を持たないので、隣の名前は S が全員を持っていた最後の時点の場所（`#placeSaid`）から、比率は今の S から取って組む（`withSharesOf`。帯の pane を名指す段は控えた比率のまま）
   （PR8 で帯を S に載せたら消す）。S に場所が無くなった pane（「場所なし」）は、その場所を `core/slot.ts` で戻す。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:
   - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。5 段以上の slot を含むレイアウトだけ `version: 3` で保存する

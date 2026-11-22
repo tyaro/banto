@@ -233,6 +233,45 @@ export function watchShadow(dock: DockState, watch: ((follow: ShadowFollow) => v
 	watchShadowImpl(dock, watch);
 }
 
+/**
+ * The slot `place` with the `share` / `size` of every split level that `now` - the slot S says for
+ * the same pane now - has too (the same split, by id and direction): where the pane is among its
+ * neighbours as `place` says, how much it holds as S has it now. Not for a level that names one
+ * of `banded` (the panes and regions in the edge bands): S does not hold them, so its shares of
+ * that split are of what is left of it - the share `place` says counts them.
+ */
+function withSharesOf(place: DockSlot, now: DockSlot, banded: Set<string>): DockSlot {
+	const held = new Map<string, Extract<DockSlot, { kind: 'split' }>>();
+	for (let s: DockSlot | undefined = now; s && s.kind !== 'root'; s = s.outer)
+		if (s.kind === 'split') held.set(s.splitId, s);
+	const walk = (slot: DockSlot): DockSlot => {
+		if (slot.kind === 'root') return slot;
+		const outer = slot.outer ? { outer: walk(slot.outer) } : {};
+		if (slot.kind === 'tab') return { ...slot, ...outer };
+		const of = held.get(slot.splitId);
+		const names = [slot.neighborId, ...slot.anchors, ...(slot.otherAnchors ?? [])];
+		if (of === undefined || of.direction !== slot.direction || names.some((n) => banded.has(n)))
+			return { ...slot, ...outer };
+		const { share: _, ...rest } = slot;
+		return {
+			...rest,
+			size: of.size,
+			...(of.share === undefined ? {} : { share: of.share }),
+			...outer
+		};
+	};
+	return walk(place);
+}
+
+/** What a `DockState` holds beside its layout at one moment (`rememberShadow`). */
+interface HeldShadow {
+	shadow: ShadowNode | null;
+	homes: Map<string, DockSlot>;
+	unplaced: Set<string>;
+	/** `#placeSaid` of each `homeSlot` (`undefined`: none). */
+	said: Map<DockSlot, DockSlot | undefined>;
+}
+
 export class DockState {
 	#layout: DockLayout = $state(emptyLayout());
 	/**
@@ -298,13 +337,15 @@ export class DockState {
 	#shadowAt = new WeakMap<DockNode, ShadowNode>();
 	/**
 	 * What this state held beside a layout it was told a copy of (`rememberShadow`: a gesture's
-	 * snapshot), by that copy: S (also `null`, nothing docked) and the floated panes' `homeSlot`s.
-	 * `adoptLayout` of the copy puts both back (#782 PR7): a pane that was floating then remembers
-	 * its place again, also when it was docked meanwhile. Weak: gone with the copy.
+	 * snapshot), by that copy: S (also `null`, nothing docked), the floated panes' `homeSlot`s, the
+	 * ones S had no place for and what `#placeSaid` held for them. `adoptLayout` of the copy puts
+	 * all of it back as it was (#782 PR7) - S is taken as it is, whatever happened since: a pane
+	 * that was floating then remembers its place again, also when it was docked meanwhile, and
+	 * holds the share it held then. Weak: gone with the copy.
 	 */
-	#heldAt = new WeakMap<DockLayout, { shadow: ShadowNode | null; homes: Map<string, DockSlot> }>();
-	/** S as it was with the layout `#adopt` is putting back (`#heldAt`); `undefined` = not such a layout. */
-	#adoptFrom: ShadowNode | null | undefined = undefined;
+	#heldAt = new WeakMap<DockLayout, HeldShadow>();
+	/** What `#heldAt` has for the layout `#adopt` is putting back; `undefined` = not such a layout. */
+	#adoptHeld: HeldShadow | undefined = undefined;
 	/** The panes out of the tree that remember a place S has no room for (`inflateShadow`'s `unplaced`). */
 	#shadowUnplaced = new Set<string>();
 	/** What the method assigning `layout` next does to S (`#mirror`); taken by the setter. */
@@ -347,7 +388,11 @@ export class DockState {
 					})
 				: [];
 		// Was a region in an edge band before this assignment (`#followShadow`)?
-		const banded = untrack(() => (this.#layout.autoHidden?.length ?? 0) > 0);
+		const banded = untrack(() => {
+			const bands = this.#layout.autoHidden ?? [];
+			if (bands.length === 0) return null;
+			return new Set([...autoHiddenPanelIds(this.#layout), ...bands.map((e) => e.node.id)]);
+		});
 		this.#noteStructure(next);
 		this.#layout = next;
 		for (const id of spent) this.#homeSlots.delete(id);
@@ -396,11 +441,11 @@ export class DockState {
 	 * the docked tree shows otherwise (sizes, tabs, flags) is written onto S. When the projection of
 	 * S is then not `next.docked` - or `next` is a layout taken as a whole, or a pane remembers a
 	 * place S does not know - S is made again around `next.docked` (`inflateShadow`) from the places
-	 * S itself says (`deflateShadow`, #782 PR7). `banded`: a region was in an edge band before the
-	 * assignment. Never changes the layout, and never throws: a fault is reported
+	 * S itself says (`deflateShadow`, #782 PR7). `banded`: the panes and regions in the edge bands
+	 * before the assignment (`null`: none). Never changes the layout, and never throws: a fault is reported
 	 * (`core/report.ts`) and S becomes the docked tree with no pane remembered.
 	 */
-	#followShadow(next: DockLayout, step: ShadowStep | null, banded: boolean): void {
+	#followShadow(next: DockLayout, step: ShadowStep | null, banded: Set<string> | null): void {
 		const pending = this.#pendingById(next);
 		this.#shadowPending = pending;
 		this.#shadowFollows++;
@@ -408,9 +453,10 @@ export class DockState {
 		try {
 			// What S is made again from, when it has to be: the S before this assignment (for a layout
 			// put back as it was - a cancelled gesture's snapshot -, the S that showed it then).
+			const held = this.#adopting ? this.#adoptHeld : undefined;
 			let from = this.#adopting
-				? this.#adoptFrom !== undefined
-					? this.#adoptFrom
+				? held
+					? held.shadow
 					: this.#shadow
 				: step
 					? step.run(this.#shadow)
@@ -420,6 +466,24 @@ export class DockState {
 			for (const id of shadowPanelIds(from, 'away')) {
 				if (!pending.has(id))
 					from = this.#backAtPlace(from, id, next.docked) ?? removeFromShadow(from, id);
+			}
+			if (held) {
+				// A layout put back as it was: S is the one held with it, as it is (review of #870) -
+				// nothing of now is read, not the edge bands of now either.
+				const placed = new Set(shadowPanelIds(from, 'away'));
+				const unplaced = [...pending.keys()].filter((id) => !placed.has(id));
+				const shown = projectShadow(from);
+				if (
+					unplaced.every((id) => held.unplaced.has(id)) &&
+					(sameDocked(shown, next.docked) || sameDocked(shown, withoutLoneFlags(next.docked, from)))
+				) {
+					this.#shadowIs(from, next.docked);
+					this.#shadowUnplaced = new Set(unplaced);
+					this.#shadowWatch?.({ step: label, result: 'same' });
+					return;
+				}
+				// Not the layout it was held with after all: made again from that S alone.
+				banded = null;
 			}
 			if (!this.#adopting) {
 				const s = from;
@@ -463,12 +527,18 @@ export class DockState {
 			// can say it. Not while a region is in an edge band: S does not hold its panes (PR8), so
 			// the places are the ones S said when it last held every pane - a place beside a pane in a
 			// band is still beside it when that pane is back (#739).
-			const said = banded
-				? null
-				: new Map(deflateShadow(from).away.map((a) => [a.panel.id, a.slot]));
+			// The shares are S's of now all the same (Codex P2 on #870): of a place said before, only
+			// what names its neighbours is kept.
+			const said = new Map(deflateShadow(from).away.map((a) => [a.panel.id, a.slot]));
 			const away: ShadowAway[] = [];
 			for (const [id, home] of pending) {
-				const now = said?.get(id);
+				const fresh = said.get(id);
+				const now =
+					fresh === undefined
+						? undefined
+						: banded
+							? withSharesOf(this.#placeOf(home), fresh, banded)
+							: fresh;
 				if (now !== undefined) this.#placeSaid.set(home, now);
 				const win = next.floating.find((w) => w.id === id);
 				if (win)
@@ -1733,14 +1803,18 @@ export class DockState {
 		if (held) {
 			const floating = new Set(layout.floating.map((w) => w.id));
 			this.#homeSlots = new Map([...held.homes].filter(([id]) => floating.has(id)));
+			for (const [home, said] of held.said) {
+				if (said === undefined) this.#placeSaid.delete(home);
+				else this.#placeSaid.set(home, said);
+			}
 		}
 		this.#adopting = true;
-		this.#adoptFrom = held?.shadow;
+		this.#adoptHeld = held;
 		try {
 			this.layout = layout;
 		} finally {
 			this.#adopting = false;
-			this.#adoptFrom = undefined;
+			this.#adoptHeld = undefined;
 		}
 	}
 
@@ -1748,7 +1822,12 @@ export class DockState {
 		adoptImpl = (dock, layout) => dock.#adopt(layout);
 		forgetImpl = (dock) => dock.#homeSlots.clear();
 		rememberImpl = (dock, snapshot) => {
-			dock.#heldAt.set(snapshot, { shadow: dock.#shadow, homes: new Map(dock.#homeSlots) });
+			dock.#heldAt.set(snapshot, {
+				shadow: dock.#shadow,
+				homes: new Map(dock.#homeSlots),
+				unplaced: new Set(dock.#shadowUnplaced),
+				said: new Map([...dock.#homeSlots.values()].map((h) => [h, dock.#placeSaid.get(h)]))
+			});
 			if (snapshot.docked !== null && dock.#shadow !== null)
 				dock.#shadowAt.set(snapshot.docked, dock.#shadow);
 		};

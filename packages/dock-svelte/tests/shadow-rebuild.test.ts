@@ -5,7 +5,7 @@
 // out of the tree (the moves made on it, the shares) is kept, and nothing rewrites a `homeSlot`:
 // it only names the place.
 import { describe, expect, it } from 'vitest';
-import { dockPanelAtEdge } from '../src/core/tree';
+import { dockPanelAtEdge, removePanel } from '../src/core/tree';
 import {
 	adoptLayout,
 	createDockState,
@@ -171,6 +171,26 @@ describe('S made again keeps what S knew (#782 PR7)', () => {
 		close(sizesOf(dock.layout.docked), [0.2, 0.3, 0.5]);
 	});
 
+	it('a layout put back as it was takes the S held with it, whatever is in an edge band by then (review of #870)', () => {
+		// row[a .1, b .2, c .3, d .4], a floated. Meanwhile b is removed (a holds .125) and d goes
+		// to its band: put back, a holds .1 again.
+		const dock = dockOf(split('s', 'row', [0.1, 0.2, 0.3, 0.4], ['a', 'b', 'c', 'd'].map(panel)));
+		dock.undockPanel('a');
+		const then = shadowStateOf(dock).shadow;
+		const snapshot = JSON.parse(JSON.stringify(dock.layout)) as typeof dock.layout;
+		rememberShadow(dock, snapshot);
+		dock.layout = { ...dock.layout, docked: removePanel(dock.layout.docked, 'b') };
+		expect(heldIn(dock, 'a')).toBeCloseTo(0.125, 9);
+		expect(dock.autoHideRegion('d')).toBe(true);
+		const follows = followsOf(dock, () => adoptLayout(dock, snapshot));
+		expect(follows).toEqual([{ step: 'adopt', result: 'same' }]);
+		expect(shadowStateOf(dock).shadow).toBe(then);
+		expect(heldIn(dock, 'a')).toBeCloseTo(0.1, 9);
+		expect(back(dock, 'a')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c', 'd'] });
+		close(sizesOf(dock.layout.docked), [0.1, 0.2, 0.3, 0.4]);
+	});
+
 	it('a floated pane docked back at its place from outside holds its share again', () => {
 		// row[a .1, b .2, c .3, d .4], b and c floated; an assignment docks c back between a and d.
 		const dock = dockOf(split('s', 'row', [0.1, 0.2, 0.3, 0.4], ['a', 'b', 'c', 'd'].map(panel)));
@@ -186,5 +206,68 @@ describe('S made again keeps what S knew (#782 PR7)', () => {
 		expect(back(dock, 'b')).toBe(true);
 		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c', 'd'] });
 		close(sizesOf(dock.layout.docked), [0.1, 0.2, 0.3, 0.4]);
+	});
+});
+
+// Codex P2 on #870: while a region is in an edge band, S is made again from the places it said
+// when it last held every pane - but the shares S holds since are not lost with them.
+describe('a region in an edge band: the shares S holds since are kept (#782 PR7)', () => {
+	const tree = (): DockNode =>
+		split(
+			'col',
+			'column',
+			[0.7, 0.3],
+			[split('r', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)), panel('z')]
+		);
+	const rowOf = (dock: DockState): number[] => {
+		const find = (n: DockNode | null): number[] | undefined => {
+			if (n?.type !== 'split') return undefined;
+			if (n.id === 'r') return n.sizes;
+			for (const c of n.children) {
+				const hit = find(c);
+				if (hit) return hit;
+			}
+			return undefined;
+		};
+		return find(dock.layout.docked) ?? [];
+	};
+
+	it('a floated, z to its band, c removed by an assignment, z back, a back: a : b = .4 : .6', () => {
+		const dock = dockOf(tree());
+		dock.undockPanel('a');
+		expect(dock.autoHideRegion('z')).toBe(true);
+		dock.layout = { ...dock.layout, docked: removePanel(dock.layout.docked, 'c') };
+		expect(heldIn(dock, 'a')).toBeCloseTo(0.4, 9);
+		expect(dock.restoreAutoHidden('z')).toBe(true);
+		expect(heldIn(dock, 'a')).toBeCloseTo(0.4, 9);
+		expect(back(dock, 'a')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'b'] }, 'z'] });
+		close(rowOf(dock), [0.4, 0.6]);
+	});
+
+	it('the same with a pane added from outside while z is in its band', () => {
+		const dock = dockOf(tree());
+		dock.undockPanel('a');
+		expect(dock.autoHideRegion('z')).toBe(true);
+		dock.layout = { ...dock.layout, docked: removePanel(dock.layout.docked, 'c') };
+		// A pane added from outside while z is in its band: S is made again there too.
+		dock.layout = {
+			...dock.layout,
+			docked: dockPanelAtEdge(dock.layout.docked, panel('y'), 'right', () => 'edge')
+		};
+		expect(heldIn(dock, 'a')).toBeCloseTo(0.4, 9);
+		expect(dock.restoreAutoHidden('z')).toBe(true);
+		expect(back(dock, 'a')).toBe(true);
+		close(rowOf(dock), [0.4, 0.6]);
+	});
+
+	it('a stays beside the pane that was in the band (#739)', () => {
+		const dock = dockOf(split('r', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)));
+		dock.undockPanel('a');
+		expect(dock.autoHideRegion('b')).toBe(true);
+		expect(dock.restoreAutoHidden('b')).toBe(true);
+		expect(back(dock, 'a')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c'] });
+		close(sizesOf(dock.layout.docked), [0.2, 0.3, 0.5]);
 	});
 });
