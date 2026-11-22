@@ -1148,19 +1148,17 @@ export class DockState {
 		// The ids out of the docked tree: a split / tab group made again does not take one of them
 		// (a group in an edge band keeps the default group's id; Codex P2 on #863), and one S kept
 		// out of sight gets another.
+		// Freed before the pane is placed, as for a drop: an id given instead is then in S when the
+		// place takes a default id that is free (cross-review of PR #864).
 		const taken = idsOutOfDocked(layout);
 		const ids = this.#unused(makeId);
-		return withFreeShadowIds(
-			placeInShadowAtDefault(
-				this.#shadow,
-				this.defaultLayout?.docked ?? null,
-				panel,
-				win.dockShare,
-				ids,
-				taken
-			),
-			taken,
-			ids
+		return placeInShadowAtDefault(
+			withFreeShadowIds(this.#shadow, taken, ids),
+			this.defaultLayout?.docked ?? null,
+			panel,
+			win.dockShare,
+			ids,
+			taken
 		);
 	}
 

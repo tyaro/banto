@@ -166,6 +166,25 @@ describe('an id S keeps out of sight is not shown twice (review of PR #864, 3)',
 		expectLoads(dock);
 	});
 
+	// Cross-review of PR #864: the group made again at the default place takes its default id `G`
+	// directly, and the group S kept out of sight gets a new id by the same `makeId` - here one
+	// that says `G` too.
+	it('a default id taken by the place, and the same id given instead to another group: not twice', () => {
+		const tree = split('s', 'row', [0.5, 0.5], [tabs('G', ['a', 'b']), tabs('T', ['c', 'd'])]);
+		const dock = createDockState({ version: 2, floating: [], docked: tree }, () => 'G');
+		dock.defaultLayout = { version: 2, floating: [], docked: tree };
+		dock.dismiss('a');
+		dock.undockPanel('d');
+		dock.ensureWindow({ id: 'T', title: 'T' }, 800, 600);
+		expect(dock.show('a')).toBe('docked');
+		expectLoads(dock);
+		expect(back(dock, 'd')).toBe(true);
+		const groups = idsOf(dock.layout.docked);
+		expect(new Set(groups).size).toBe(2);
+		expect(groups).not.toContain('T');
+		expectLoads(dock);
+	});
+
 	it('the same for a pane hidden and shown into the group, and for a pane dropped onto its tab', () => {
 		const shown = dockOf(split('s', 'row', [0.5, 0.5], [panel('x'), tabs('T', ['a', 'b', 'c'])]));
 		shown.undockPanel('b');
