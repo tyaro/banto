@@ -88,7 +88,7 @@ describe('S-97: a stale auth_resolve after a Local role change (I-5, I-23)', () 
 			onActive: () => {}
 		});
 		const accountAdmin = (seq: number) => ({
-			identity: { id: 'admin', name: 'Admin', role: 'admin' },
+			identity: { id: 'admin', name: 'Admin', role: 'admin', accountId: 'uid-admin' },
 			kind: 'account',
 			checked: seq,
 			current: seq,
@@ -98,7 +98,7 @@ describe('S-97: a stale auth_resolve after a Local role change (I-5, I-23)', () 
 		const first = controller.resolve();
 		script.resolves()[0].reply.resolve(accountAdmin(0));
 		await expect(first).resolves.toMatchObject({ outcome: 'confirmed' });
-		expect(controller.snapshot).toMatchObject({ status: 'active', owner: 'account:admin' });
+		expect(controller.snapshot).toMatchObject({ status: 'active', owner: 'acct:uid-admin' });
 
 		// changePassword is pending; meanwhile the mode is switched on in Rust
 		// (Account -> Local, seq 0 -> 1) and an auth_resolve comes back stale.

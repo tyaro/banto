@@ -45,8 +45,8 @@ function json(status: number, body: unknown): Response {
 }
 
 const USERS: Record<string, Identity> = {
-	alice: { id: 'alice', name: 'Alice' },
-	bob: { id: 'bob', name: 'Bob' }
+	alice: { id: 'alice', name: 'Alice', accountId: 'uid-alice' },
+	bob: { id: 'bob', name: 'Bob', accountId: 'uid-bob' }
 };
 
 /**
@@ -150,7 +150,7 @@ async function aliceInTab1(server: ReturnType<typeof fakeServer>) {
 	const tab2 = openTab(server);
 	await loginRemembered(tab1, 'alice');
 	await expect(resolveSettled(tab1.controller)).resolves.toMatchObject({
-		snapshot: { owner: 'account:alice' }
+		snapshot: { owner: 'acct:uid-alice' }
 	});
 	deliver(tab2); // tab 2 hears tab 1's login
 	return { tab1, tab2 };
@@ -173,11 +173,11 @@ describe('another tab switches the Remember me session (#257, I-5, I-17)', () =>
 		});
 
 		const result = await resolveSettled(tab1.controller);
-		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'account:bob' } });
+		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'acct:uid-bob' } });
 		expect(tab1.controller.snapshot.generation).toBe(generation + 2);
 		expect(tab1.controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:alice',
-			to: 'account:bob'
+			from: 'acct:uid-alice',
+			to: 'acct:uid-bob'
 		});
 		expect(localStorage.getItem(KEY)).toBe(bobToken); // tab 2 stays logged in
 	});
@@ -201,10 +201,10 @@ describe('another tab switches the Remember me session (#257, I-5, I-17)', () =>
 		server.state.identityFails = false;
 		await tab1.scheduler.advance(1_000);
 		await flush();
-		expect(tab1.controller.snapshot).toMatchObject({ status: 'active', owner: 'account:bob' });
+		expect(tab1.controller.snapshot).toMatchObject({ status: 'active', owner: 'acct:uid-bob' });
 		expect(tab1.controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:alice',
-			to: 'account:bob'
+			from: 'acct:uid-alice',
+			to: 'acct:uid-bob'
 		});
 	});
 
@@ -219,7 +219,7 @@ describe('another tab switches the Remember me session (#257, I-5, I-17)', () =>
 
 		expect(tab1.controller.snapshot).toMatchObject({
 			status: 'active',
-			owner: 'account:alice',
+			owner: 'acct:uid-alice',
 			generation: generation + 2,
 			pendingOwnerChange: null
 		});
@@ -243,8 +243,8 @@ describe('another tab switches the Remember me session (#257, I-5, I-17)', () =>
 			resolveSettled(tab1.controller),
 			resolveSettled(tab2.controller)
 		]);
-		expect(one.snapshot.owner).toBe('account:bob');
-		expect(two.snapshot.owner).toBe('account:bob');
+		expect(one.snapshot.owner).toBe('acct:uid-bob');
+		expect(two.snapshot.owner).toBe('acct:uid-bob');
 	});
 
 	it('S-39: tab 1 logs out while tab 2 logs in as B (B’s write first): tab 1 does not delete B’s token and ends as B, not A', async () => {
@@ -261,7 +261,7 @@ describe('another tab switches the Remember me session (#257, I-5, I-17)', () =>
 
 		deliver(tab1);
 		await expect(resolveSettled(tab1.controller, { cause: 'signal' })).resolves.toMatchObject({
-			snapshot: { status: 'active', owner: 'account:bob' }
+			snapshot: { status: 'active', owner: 'acct:uid-bob' }
 		});
 	});
 

@@ -636,6 +636,7 @@ mod tests {
                 id: id.to_string(),
                 name: id.to_string(),
                 role: role.to_string(),
+                account_id: None,
             },
             std::sync::Arc::new(|| Box::pin(async { Ok(true) })),
         );
@@ -968,6 +969,7 @@ mod tests {
                 id: format!("{role}-user"),
                 name: role.to_string(),
                 role: role.to_string(),
+                account_id: None,
             },
             stamp: SessionStamp {
                 account_id: id,

@@ -77,7 +77,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		p.active(1, ALICE); // A's late answer
 		await flush();
 		expect(controller.snapshot).toBe(bob);
-		expect(bob.owner).toBe('account:bob');
+		expect(bob.owner).toBe('acct:uid-bob');
 	});
 
 	it('S-2: a standard provider reports the switch (hold); the old probe is dropped and a new one decides', async () => {
@@ -92,7 +92,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		p.active(1, ALICE); // stale answer for A
 		p.active(2, BOB);
 		await flush();
-		expect(controller.snapshot).toMatchObject({ status: 'active', owner: 'account:bob' });
+		expect(controller.snapshot).toMatchObject({ status: 'active', owner: 'acct:uid-bob' });
 	});
 
 	it('S-2: through the compatibility adapter the switch is not detectable (documented non-guarantee)', async () => {
@@ -113,7 +113,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		who = BOB; // switched with no revision and no notification
 		expect(controller.snapshot.status).toBe('active');
 		await controller.resolve();
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 		expect(controller.snapshot.generation).toBe(before + 1); // active(A) -> active(B), no hold
 	});
 
@@ -127,7 +127,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		await flush();
 		p.none(1);
 		await flush();
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 		expect(onNone).not.toHaveBeenCalled();
 	});
 
@@ -142,7 +142,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		await flush();
 		p.none(1);
 		await flush();
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 		expect(changes.some((c) => c.next.status === 'none')).toBe(false);
 		expect(p.live()).toBe(0);
 	});
@@ -177,7 +177,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 			await flush();
 			await expect(aCheck).resolves.toMatchObject({ outcome: 'superseded' });
 			await expect(bLoad).resolves.toMatchObject({ outcome: 'confirmed' });
-			expect(controller.snapshot.owner).toBe('account:bob');
+			expect(controller.snapshot.owner).toBe('acct:uid-bob');
 		}
 	});
 
@@ -189,7 +189,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		p.none(1);
 		p.active(2, BOB);
 		await flush();
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 		expect(changes.some((c) => c.next.status === 'none')).toBe(false);
 	});
 
@@ -203,7 +203,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		await expect(failed).resolves.toMatchObject({ outcome: 'unverified', error });
 		expect(controller.snapshot).toMatchObject({
 			status: 'active',
-			owner: 'account:alice',
+			owner: 'acct:uid-alice',
 			generation: before.generation,
 			verification: { state: 'failed', lastError: error }
 		});
@@ -261,7 +261,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		expect(onNone).not.toHaveBeenCalled();
 		expect(onActive).not.toHaveBeenCalled();
 		await settleTo(ALICE);
-		expect(controller.snapshot.owner).toBe('account:alice');
+		expect(controller.snapshot.owner).toBe('acct:uid-alice');
 	});
 
 	it('S-12: an old probe (before the hold) and a new one (after) settling in the same turn: only the new one counts', async () => {
@@ -275,7 +275,7 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		await flush();
 		await expect(old).resolves.toMatchObject({ outcome: 'superseded' });
 		await expect(fresh).resolves.toMatchObject({ outcome: 'confirmed' });
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 	});
 
 	it('S-13: two requests share one probe (single-flight) and get the same snapshot', async () => {
@@ -343,7 +343,7 @@ describe('§4.4 a switch followed by a failed confirmation (I-2, I-4, I-5, I-6)'
 		p.active(2, BOB);
 		await expect(retried).resolves.toMatchObject({ outcome: 'confirmed' });
 		expect(controller.snapshot.generation).toBe(generation + 2);
-		expect(onActive).toHaveBeenLastCalledWith('account:bob');
+		expect(onActive).toHaveBeenLastCalledWith('acct:uid-bob');
 	});
 
 	it('S-25: the retry confirms `none`: one commit, +1, cleared', async () => {
@@ -366,7 +366,7 @@ describe('§4.4 a switch followed by a failed confirmation (I-2, I-4, I-5, I-6)'
 		await expect(request).resolves.toMatchObject({ outcome: 'unverified' });
 		expect(controller.snapshot).toMatchObject({
 			status: 'active',
-			owner: 'account:alice',
+			owner: 'acct:uid-alice',
 			verification: { state: 'failed' }
 		});
 	});
@@ -583,17 +583,19 @@ describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () =
 		await flush();
 		p.active(p.probes.length - 1, BOB);
 		await expect(fallback).resolves.toMatchObject({ outcome: 'confirmed' });
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 		expect(p.entries).toHaveLength(1);
 	});
 
-	it('S-47: a `local` answer (Tauri auth-disabled) is keyed `local`, not `account:0`', async () => {
+	it('S-47: a `local` answer (Tauri auth-disabled) is keyed `local`, not `acct:0`', async () => {
 		const { p, controller } = setup();
 		const request = controller.resolve();
 		p.active(0, { id: 0 as unknown as string, name: 'local', role: 'admin' }, { kind: 'local' });
 		await request;
 		expect(controller.snapshot).toMatchObject({ status: 'active', kind: 'local', owner: 'local' });
-		expect(sessionOwnerKey({ id: '0', name: 'x' })).toBe('account:0');
+		expect(sessionOwnerKey({ id: '0', name: 'x', accountId: '0' })).toBe('acct:0');
+		// Whatever the identity carries, `local` is `local`.
+		expect(sessionOwnerKey({ id: '0', name: 'x', accountId: '0' }, 'local')).toBe('local');
 	});
 
 	it('S-66: the entry succeeds but the final confirmation fails: `unverified` with the `none` snapshot (503, not /login)', async () => {
@@ -790,14 +792,14 @@ describe('§6.1 grantFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-5
 		p.change(); // B logged in (none is not held; a background probe starts)
 		p.active(ctx.last(), BOB);
 		await flush();
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 		p.statuses[0].resolve({ grants: { publicViewer: true } });
 		await flush();
 		p.active(ctx.last(), BOB); // the policy confirms what is stored now
 
 		const result = await fallback;
 		expect(p.entries).toHaveLength(0); // enterGrant never called
-		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'account:bob' } });
+		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'acct:uid-bob' } });
 	});
 
 	it('S-20: a revoked token appeared before the mint, its event not yet delivered: the mint is superseded, the token confirmed `none` (cleared), and the re-run mints', async () => {
@@ -918,7 +920,7 @@ describe('§4.8 `superseded` under a load (I-8, I-16)', () => {
 		p.active(p.probes.length - 1, BOB);
 		const result = await load;
 		expect(result).toMatchObject({ outcome: 'confirmed' });
-		expect(result.snapshot.owner).toBe('account:bob');
+		expect(result.snapshot.owner).toBe('acct:uid-bob');
 		expect(result.snapshot.generation).toBe(controller.snapshot.generation);
 	});
 
@@ -942,7 +944,7 @@ describe('§4.8 `superseded` under a load (I-8, I-16)', () => {
 		await flush();
 		p.active(p.probes.length - 1, BOB);
 		await flush();
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 	});
 });
 
@@ -968,7 +970,7 @@ describe('§4.9 review scenarios (I-3, I-5, I-9, I-19, I-20)', () => {
 		p.active(0, ALICE);
 		const result = await request;
 		expect(result.outcome).toBe('confirmed');
-		expect(result.snapshot).toMatchObject({ generation: 1, owner: 'account:alice' });
+		expect(result.snapshot).toMatchObject({ generation: 1, owner: 'acct:uid-alice' });
 	});
 
 	it('S-58: resolve({cause: "signal"}) does not join the probe a signal() already started', async () => {
@@ -1106,7 +1108,7 @@ describe('§10 (a) catch-up after an unobserved seq advance (I-3, I-5, I-23)', (
 		expect(p.probes[1].checked).toBe(p.rev(5));
 		p.active(1, ALICE);
 		await expect(request).resolves.toMatchObject({ outcome: 'confirmed' });
-		expect(controller.snapshot.owner).toBe('account:alice');
+		expect(controller.snapshot.owner).toBe('acct:uid-alice');
 	});
 
 	it('S-85: a data command cleared A in Rust (seq advanced unobserved): A is held first, then `none` - no retry spent', async () => {
@@ -1182,7 +1184,7 @@ describe('§10 (a) one counting rule for replaced probes (P3-1)', () => {
 describe('§10 (b) the kind of an answer without `kind` (I-2, 統合修正 13)', () => {
 	it('S-87: no kind -> account; the issuer’s publicViewer marker -> publicViewer; a provider kind is kept', async () => {
 		const cases: [Parameters<ReturnType<typeof makeProbeProvider>['active']>, string, string][] = [
-			[[0, ALICE], 'account', 'account:alice'],
+			[[0, ALICE], 'account', 'acct:uid-alice'],
 			[[0, PUBLIC], 'publicViewer', 'publicViewer'],
 			[[0, PUBLIC, { kind: 'account' }], 'publicViewer', 'publicViewer'],
 			[[0, { id: 'op', name: 'op' }, { kind: 'local' }], 'local', 'local']
@@ -1197,9 +1199,99 @@ describe('§10 (b) the kind of an answer without `kind` (I-2, 統合修正 13)',
 	});
 
 	it('S-87: an account and the public viewer with the same id never share an owner', () => {
-		expect(sessionOwnerKey({ id: 'public', name: 'public' }, 'account')).toBe('account:public');
-		expect(sessionOwnerKey({ id: 'public', name: 'public' })).toBe('account:public');
+		const account = { id: 'public', name: 'public', accountId: 'uid-public' };
+		expect(sessionOwnerKey(account, 'account')).toBe('acct:uid-public');
+		expect(sessionOwnerKey(account)).toBe('acct:uid-public');
 		expect(sessionOwnerKey(PUBLIC, 'publicViewer')).toBe('publicViewer');
+		// A grant identity that (wrongly) carries an accountId is still keyed by its kind.
+		expect(sessionOwnerKey({ ...PUBLIC, accountId: 'uid-public' }, 'publicViewer')).toBe(
+			'publicViewer'
+		);
+	});
+});
+
+// ADR-0034 §1 / Issue #790: an account is keyed on its never-reused
+// `accountId`, not on the login name `id`.
+describe('sessionOwnerKey: an account is `acct:<accountId>` (ADR-0034 §1, Issue #790)', () => {
+	it('a re-created account with the same name gets a different key', () => {
+		const retired = { id: 'alice', name: 'Alice', accountId: 'uid-1' };
+		const recreated = { id: 'alice', name: 'Alice', accountId: 'uid-2' };
+		expect(sessionOwnerKey(retired)).toBe('acct:uid-1');
+		expect(sessionOwnerKey(recreated)).toBe('acct:uid-2');
+		expect(sessionOwnerKey(recreated)).not.toBe(sessionOwnerKey(retired));
+	});
+
+	it('a renamed account keeps its key (the accountId does not change)', () => {
+		expect(sessionOwnerKey({ id: 'alice', name: 'Alice', accountId: 'uid-1' })).toBe(
+			sessionOwnerKey({ id: 'alice2', name: 'Alice', accountId: 'uid-1' })
+		);
+	});
+
+	it('the same row id in another database (or after a restore) is another key: the row id is not part of it', () => {
+		// The server's `users.id` never reaches the screen; two databases each give
+		// their account #2 its own random accountId.
+		const here = { id: 'op', name: 'Op', accountId: '0a'.repeat(16) };
+		const there = { id: 'op', name: 'Op', accountId: '0b'.repeat(16) };
+		expect(sessionOwnerKey(here)).not.toBe(sessionOwnerKey(there));
+	});
+
+	it('no usable accountId -> null (fail closed), never the old `account:<id>` key', () => {
+		for (const identity of [
+			{ id: 'alice', name: 'Alice' },
+			{ id: 'alice', name: 'Alice', accountId: '' },
+			{ id: 'alice', name: 'Alice', accountId: 7 as unknown as string },
+			{ id: 'alice', name: 'Alice', accountId: null as unknown as string }
+		]) {
+			expect(sessionOwnerKey(identity)).toBeNull();
+			expect(sessionOwnerKey(identity, 'account')).toBeNull();
+		}
+		expect(sessionOwnerKey(null)).toBeNull();
+	});
+
+	it('an active account without accountId is confirmed with owner null: `onActive` (purge of other owners) does not run for it', async () => {
+		const { p, controller, onActive } = setup();
+		const request = controller.resolve();
+		p.active(0, { id: 'alice', name: 'Alice' });
+		await expect(request).resolves.toMatchObject({ outcome: 'confirmed' });
+		expect(controller.snapshot).toMatchObject({ status: 'active', kind: 'account', owner: null });
+		expect(controller.scope().owner).toBeNull();
+		expect(onActive).not.toHaveBeenCalled();
+	});
+
+	it('two accounts without accountId: a different login name still advances the generation (in-flight guards stay closed)', async () => {
+		const { controller, settleTo } = setup();
+		await settleTo({ id: 'alice', name: 'Alice' } as typeof ALICE);
+		const scope = controller.scope();
+		expect(scope.owner).toBeNull();
+		// A re-confirmation of the same identity is not a change.
+		await settleTo({ id: 'alice', name: 'Alice' } as typeof ALICE);
+		expect(controller.isCurrent(scope)).toBe(true);
+		// Another tab signed in as someone else, with no `none` in between.
+		await settleTo({ id: 'bob', name: 'Bob' } as typeof ALICE);
+		expect(controller.snapshot.owner).toBeNull();
+		expect(controller.snapshot.generation).toBe(scope.generation + 1);
+		expect(controller.isCurrent(scope)).toBe(false);
+		// Not a reportable change of owner: there is no owner to name.
+		expect(controller.snapshot.pendingOwnerChange).toBeNull();
+	});
+
+	it('a dev build warns once when an account identity has no accountId, and never for local / a grant / no identity', async () => {
+		vi.resetModules();
+		const fresh = await import('../src/sessionController.svelte');
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			fresh.sessionOwnerKey(null);
+			fresh.sessionOwnerKey({ id: '0', name: 'local' }, 'local');
+			fresh.sessionOwnerKey(PUBLIC, 'publicViewer');
+			fresh.sessionOwnerKey({ id: 'alice', name: 'Alice', accountId: 'uid-1' });
+			expect(warn).not.toHaveBeenCalled();
+			expect(fresh.sessionOwnerKey({ id: 'alice', name: 'Alice' })).toBeNull();
+			expect(fresh.sessionOwnerKey({ id: 'bob', name: 'Bob' }, 'account')).toBeNull();
+			expect(warn).toHaveBeenCalledTimes(1);
+			expect(String(warn.mock.calls[0][0])).toContain('accountId');
+		} finally {
+			warn.mockRestore();
+		}
 	});
 });
 
@@ -1245,12 +1337,12 @@ describe('switching the provider (owner review of #265 P1; I-1, I-18, I-20)', ()
 		await flush();
 		expect(controller.snapshot).toMatchObject({
 			status: 'active',
-			owner: 'account:bob',
+			owner: 'acct:uid-bob',
 			generation: generation + 2,
 			pendingOwnerChange: null
 		});
 		p.change(); // provider A's notifications are no longer heard
-		expect(controller.snapshot.owner).toBe('account:bob');
+		expect(controller.snapshot.owner).toBe('acct:uid-bob');
 	});
 
 	it('S-91: binding the same provider again is a no-op', async () => {
@@ -1273,8 +1365,8 @@ describe('an ownerless active in between (owner review of #265 P2; S-10, I-24)',
 		expect(controller.snapshot.pendingOwnerChange).toBeNull();
 		await settleTo(BOB);
 		expect(controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:alice',
-			to: 'account:bob'
+			from: 'acct:uid-alice',
+			to: 'acct:uid-bob'
 		});
 	});
 
@@ -1287,8 +1379,8 @@ describe('an ownerless active in between (owner review of #265 P2; S-10, I-24)',
 		await settleTo(BOB);
 		await settleTo({ id: '', name: 'nobody' });
 		expect(controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:alice',
-			to: 'account:bob'
+			from: 'acct:uid-alice',
+			to: 'acct:uid-bob'
 		});
 		await settleTo(ALICE);
 		expect(controller.snapshot.pendingOwnerChange).toBeNull();
@@ -1304,13 +1396,16 @@ describe('the public viewer is not a user (S-93, I-24; independent audit of 実�
 		p.change(); // the login stored A's token (reported): hold
 		expect(controller.snapshot.status).toBe('unknown');
 		await settleTo(ALICE);
-		expect(controller.snapshot).toMatchObject({ owner: 'account:alice', pendingOwnerChange: null });
+		expect(controller.snapshot).toMatchObject({
+			owner: 'acct:uid-alice',
+			pendingOwnerChange: null
+		});
 		// A later real change of user is still reported from A, not from P.
 		p.change();
 		await settleTo(BOB);
 		expect(controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:alice',
-			to: 'account:bob'
+			from: 'acct:uid-alice',
+			to: 'acct:uid-bob'
 		});
 	});
 
@@ -1359,8 +1454,8 @@ describe('the auth-disabled local session is not a user (S-107, I-24; Issue #291
 		ctx.p.active(ctx.p.probes.length - 1, BOB);
 		await request;
 		expect(ctx.controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:alice',
-			to: 'account:bob'
+			from: 'acct:uid-alice',
+			to: 'acct:uid-bob'
 		});
 	});
 
@@ -1428,8 +1523,8 @@ describe('a non-account active is not a user (S-108, I-24; Issue #308)', () => {
 		ctx.p.active(ctx.p.probes.length - 1, BOB);
 		await direct;
 		expect(ctx.controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:alice',
-			to: 'account:bob'
+			from: 'acct:uid-alice',
+			to: 'acct:uid-bob'
 		});
 		ctx.controller.acknowledgeOwnerChange();
 		// Commissioning followed by a user without a none: the last real
@@ -1447,8 +1542,8 @@ describe('a non-account active is not a user (S-108, I-24; Issue #308)', () => {
 		ctx.p.active(ctx.p.probes.length - 1, ALICE);
 		await toAlice;
 		expect(ctx.controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:bob',
-			to: 'account:alice'
+			from: 'acct:uid-bob',
+			to: 'acct:uid-alice'
 		});
 	});
 
@@ -1461,7 +1556,7 @@ describe('a non-account active is not a user (S-108, I-24; Issue #308)', () => {
 		await request;
 		expect(ctx.controller.snapshot).toMatchObject({
 			kind: 'account',
-			pendingOwnerChange: { from: 'account:alice', to: 'account:bob' }
+			pendingOwnerChange: { from: 'acct:uid-alice', to: 'acct:uid-bob' }
 		});
 	});
 });
@@ -1478,8 +1573,8 @@ describe('owner changes (I-12, I-24) - controller side of S-76/S-81/S-83', () =>
 		p.active(p.probes.length - 1, ALICE);
 		await request;
 		expect(controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:bob',
-			to: 'account:alice'
+			from: 'acct:uid-bob',
+			to: 'acct:uid-alice'
 		});
 	});
 
@@ -1491,8 +1586,8 @@ describe('owner changes (I-12, I-24) - controller side of S-76/S-81/S-83', () =>
 		await flush();
 		await settleTo(BOB);
 		expect(controller.snapshot.pendingOwnerChange).toEqual({
-			from: 'account:alice',
-			to: 'account:bob'
+			from: 'acct:uid-alice',
+			to: 'acct:uid-bob'
 		});
 		changes.length = 0;
 		controller.acknowledgeOwnerChange();
@@ -1509,7 +1604,7 @@ describe('owner changes (I-12, I-24) - controller side of S-76/S-81/S-83', () =>
 		await flush();
 		await settleTo(null);
 		expect(controller.snapshot.pendingOwnerChange).toBeNull();
-		await settleTo({ id: 'carol', name: 'Carol' });
+		await settleTo({ id: 'carol', name: 'Carol', accountId: 'uid-carol' });
 		expect(controller.snapshot.pendingOwnerChange).toBeNull();
 	});
 });
@@ -1580,7 +1675,11 @@ describe('§3.1 generation table (I-2)', () => {
 			alice,
 			async (ctx) => {
 				const request = ctx.controller.resolve();
-				ctx.p.active(ctx.p.probes.length - 1, { id: 'alice', name: 'Alice' }, { kind: 'local' });
+				ctx.p.active(
+					ctx.p.probes.length - 1,
+					{ id: 'alice', name: 'Alice', accountId: 'uid-alice' },
+					{ kind: 'local' }
+				);
 				await request;
 			},
 			1

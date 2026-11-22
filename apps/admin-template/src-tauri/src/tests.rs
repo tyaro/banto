@@ -2135,6 +2135,7 @@ async fn the_auth_disabled_local_session_lives_only_while_the_mode_is_on() {
         display_name: "ローカルユーザー".to_string(),
         role: Role::Admin,
         auth_epoch: 0,
+        account_uid: None,
     })));
     assert!(require_role(&state, Role::Admin, "settings").await.is_ok());
 
@@ -2599,6 +2600,7 @@ async fn s47_s67_the_auth_disabled_session_resolves_local_and_logout_keeps_seq()
         display_name: "ローカルユーザー".to_string(),
         role: Role::Viewer,
         auth_epoch: 0,
+        account_uid: None,
     })));
     let (_, seq) = read_slot(&state);
 
@@ -5986,6 +5988,7 @@ async fn the_no_login_session_is_audited_as_the_builtin_admin_like_a_marked_gran
             id: "commissioning".to_string(),
             name: "commissioning".to_string(),
             role: "viewer".to_string(),
+            account_id: None,
         },
         Arc::new(|| Box::pin(async { Ok(true) })),
     );
@@ -6712,4 +6715,75 @@ async fn adr0034_a_guard_refuses_a_session_established_during_its_first_read() {
         .await
         .unwrap()
         .is_some());
+}
+
+/// ADR-0034 §1 / Issue #790 (conventions §1, both paths): the Tauri identity
+/// and REST's `GET /api/auth/identity` carry the same `accountId` for the
+/// same account - the stored `users.account_uid` - next to the same `id`
+/// (the username), `name`, `role` and `permissions`; REST adds only `kind`
+/// (Tauri reports it on `auth_resolve`). The auth-disabled `local` session
+/// has no account behind it and carries no `accountId` (its owner key on the
+/// screen is `local`).
+#[tokio::test]
+async fn issue790_account_id_is_the_same_on_tauri_and_rest_and_absent_for_local() {
+    let state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    let stored = state
+        .users
+        .get_by_username("operator")
+        .await
+        .unwrap()
+        .expect("the seeded account")
+        .account_uid
+        .expect("an account has an account_uid");
+    assert_eq!(stored.len(), 32, "128 bits, hex: {stored}");
+
+    // Tauri: `auth_identity` and `auth_resolve` answer with the same shape.
+    desktop_login(&state, "operator").await;
+    let tauri = serde_json::to_value(auth_identity_body(&state).await.unwrap().unwrap()).unwrap();
+    assert_eq!(tauri["id"], "operator");
+    assert_eq!(tauri["accountId"], stored.as_str());
+    let resolved = serde_json::to_value(resolve_body(&state).await.unwrap()).unwrap();
+    assert_eq!(resolved["kind"], "account");
+    assert_eq!(resolved["identity"], tauri);
+
+    // REST: the same account, the same fields.
+    let token = rest_token(&state, "operator", false).await;
+    let (session, permissions) = state
+        .rest_auth
+        .authenticate_with_permissions(&token)
+        .await
+        .unwrap()
+        .expect("the session just issued");
+    let mut rest = serde_json::to_value(&session).unwrap();
+    rest["permissions"] = serde_json::to_value(&permissions).unwrap();
+    assert_eq!(rest["kind"], "account");
+    assert_eq!(rest["accountId"], stored.as_str());
+    let keys = |value: &serde_json::Value| -> Vec<String> {
+        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(
+        keys(&tauri),
+        ["accountId", "id", "name", "permissions", "role"]
+    );
+    assert_eq!(
+        keys(&rest),
+        ["accountId", "id", "kind", "name", "permissions", "role"]
+    );
+    for field in ["accountId", "id", "name", "role", "permissions"] {
+        assert_eq!(tauri[field], rest[field], "{field}");
+    }
+
+    // The auth-disabled `local` session: no key at all (not `null`).
+    start_in_no_login_mode(&state, Role::Editor).await;
+    let resolved = serde_json::to_value(resolve_body(&state).await.unwrap()).unwrap();
+    assert_eq!(resolved["kind"], "local");
+    assert!(
+        resolved["identity"].get("accountId").is_none(),
+        "{resolved}"
+    );
+    let local = serde_json::to_value(auth_identity_body(&state).await.unwrap().unwrap()).unwrap();
+    assert_eq!(keys(&local), ["id", "name", "permissions", "role"]);
 }

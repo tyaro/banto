@@ -25,6 +25,7 @@ fn demo_auth() -> AuthState {
                         id: "admin".to_string(),
                         name: "管理者".to_string(),
                         role: "admin".to_string(),
+                        account_id: None,
                     })
                 } else {
                     None
@@ -114,6 +115,7 @@ async fn issue_token_logs_in_without_calling_verify_credentials() {
         id: "owner".to_string(),
         name: "オーナー".to_string(),
         role: "admin".to_string(),
+        account_id: None,
     });
     assert!(auth.verify(&token));
     assert_eq!(auth.identity_for(&token).unwrap().id, "owner");
@@ -149,6 +151,7 @@ fn frozen_auth_with_remembered(
                         id: "admin".to_string(),
                         name: "管理者".to_string(),
                         role: "admin".to_string(),
+                        account_id: None,
                     })
                 } else {
                     None
@@ -218,6 +221,7 @@ async fn issue_token_sweeps_expired_tokens() {
         id: "admin".to_string(),
         name: "管理者".to_string(),
         role: "admin".to_string(),
+        account_id: None,
     });
     assert!(auth.verify(&fresh));
     assert_eq!(
@@ -252,6 +256,7 @@ fn counting_auth(rate_limit: RateLimitPolicy) -> (AuthState, Arc<AtomicUsize>) {
                         id: "admin".to_string(),
                         name: "管理者".to_string(),
                         role: "admin".to_string(),
+                        account_id: None,
                     })
                 } else {
                     None
@@ -847,6 +852,7 @@ fn public_viewer_spec() -> GrantSpec {
             id: crate::grant::PUBLIC_VIEWER_ID.to_string(),
             name: crate::grant::PUBLIC_VIEWER_ID.to_string(),
             role: "viewer".to_string(),
+            account_id: None,
         },
         always_true(),
     )
@@ -860,6 +866,7 @@ fn commissioning_spec() -> GrantSpec {
             id: "commissioning".to_string(),
             name: "試運転".to_string(),
             role: "admin".to_string(),
+            account_id: None,
         },
         always_true(),
     )
@@ -887,6 +894,72 @@ async fn identity_kind(router: &Router, token: &str) -> serde_json::Value {
         .await
         .unwrap();
     body_json(response).await
+}
+
+/// ADR-0034 section 1 / Issue #790: an account session's `accountId` (the
+/// never-reused `users.account_uid` its verifier / lookup reported) reaches
+/// the `GET /api/auth/identity` body under that name, next to the unchanged
+/// `id` (the username). An identity without one has NO `accountId` key (not
+/// `null`), so the screen's owner key is `null` for it (fail closed).
+#[tokio::test]
+async fn account_id_is_on_the_identity_body_of_an_account_session() {
+    let auth = demo_auth();
+    let router = auth_routes(auth.clone());
+    let with = auth.issue_token(Identity {
+        id: "alice".to_string(),
+        name: "Alice".to_string(),
+        role: "editor".to_string(),
+        account_id: Some("0123456789abcdef0123456789abcdef".to_string()),
+    });
+    let body = identity_kind(&router, &with).await;
+    assert_eq!(body["id"], "alice");
+    assert_eq!(body["kind"], "account");
+    assert_eq!(body["accountId"], "0123456789abcdef0123456789abcdef");
+    assert!(
+        body.get("account_id").is_none(),
+        "the wire name is camelCase: {body}"
+    );
+
+    let without = auth.issue_token(Identity {
+        id: "bob".to_string(),
+        name: "Bob".to_string(),
+        role: "viewer".to_string(),
+        account_id: None,
+    });
+    let body = identity_kind(&router, &without).await;
+    assert_eq!(body["id"], "bob");
+    assert!(
+        body.get("accountId").is_none(),
+        "left out, not null: {body}"
+    );
+}
+
+/// A grant session never carries an `accountId`, even when the app's
+/// `GrantSpec` put one into its fixed identity: there is no account behind a
+/// grant, and its owner on the screen is its kind (ADR-0034 section 1).
+#[tokio::test]
+async fn a_grant_session_never_carries_an_account_id() {
+    for mut spec in both_kinds() {
+        spec.identity.account_id = Some("not-an-account".to_string());
+        let auth = demo_auth();
+        let token = issue(&auth, &spec);
+        let session = auth.authenticate(&token).await.unwrap().unwrap();
+        assert_eq!(session.identity.account_id, None);
+        let body = identity_kind(&auth_routes(auth.clone()), &token).await;
+        assert_eq!(body["kind"], spec.kind.as_str());
+        assert!(body.get("accountId").is_none(), "{body}");
+    }
+}
+
+/// `Identity` still deserializes from the pre-`accountId` shape (the field
+/// is optional on the wire).
+#[test]
+fn identity_deserializes_with_and_without_an_account_id() {
+    let old: Identity = serde_json::from_str(r#"{"id":"a","name":"A","role":"admin"}"#).unwrap();
+    assert_eq!(old.account_id, None);
+    let new: Identity =
+        serde_json::from_str(r#"{"id":"a","name":"A","role":"admin","accountId":"u1"}"#).unwrap();
+    assert_eq!(new.account_id.as_deref(), Some("u1"));
 }
 
 #[tokio::test]
@@ -934,6 +1007,7 @@ async fn revoke_grant_tokens_removes_only_that_kind() {
         id: "1".into(),
         name: "admin".into(),
         role: "admin".into(),
+        account_id: None,
     });
 
     assert_eq!(auth.revoke_grant_tokens(&pv.kind), 2);
@@ -1195,6 +1269,7 @@ impl FakeStore {
                     id: username.to_string(),
                     name: format!("{username} name"),
                     role: role.to_string(),
+                    account_id: None,
                 },
                 stamp: SessionStamp {
                     account_id,

@@ -1247,6 +1247,7 @@ mod tests {
                         id: username.clone(),
                         name: username.clone(),
                         role: username,
+                        account_id: None,
                     })
                 })
             },

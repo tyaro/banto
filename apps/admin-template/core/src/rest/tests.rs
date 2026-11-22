@@ -51,6 +51,7 @@ fn demo_auth() -> AuthState {
                         id: "admin".to_string(),
                         name: "管理者".to_string(),
                         role: "admin".to_string(),
+                        account_id: None,
                     })
                 } else {
                     None
@@ -112,6 +113,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
                         id: identity.username,
                         name: identity.display_name,
                         role: identity.role.to_string(),
+                        account_id: identity.account_uid,
                     }),
                     _ => None,
                 }
@@ -4432,6 +4434,50 @@ async fn public_viewer_gate_follows_the_setting_without_a_restart() {
     public_viewer_token(&router).await;
 }
 
+/// ADR-0034 §1 / Issue #790: the app's REST wiring (`user_auth_state`) puts
+/// the account's `users.account_uid` on `GET /api/auth/identity` as
+/// `accountId`; `id` stays the username. A grant session (the public viewer)
+/// has none.
+#[tokio::test]
+async fn identity_carries_the_account_id_of_an_account_and_none_for_a_grant() {
+    let (router, _settings, audit, users) = router_with_viewer_public(true).await;
+    let created = users
+        .create_user("op790", "password123", "Op", Role::Editor)
+        .await
+        .unwrap();
+    let stored = created.account_uid.clone().expect("an account has one");
+    let auth = banto_server::routes::user_auth_state(users.clone(), audit.clone());
+    let token = match auth
+        .login_rate_limited(None, "op790", "password123", false)
+        .await
+    {
+        banto_server::LoginOutcome::Success(token) => token,
+        other => panic!("login failed: {other:?}"),
+    };
+    let identity = body_json(
+        banto_server::auth_routes(auth)
+            .oneshot(get_auth("/api/auth/identity", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(identity["id"], "op790");
+    assert_eq!(identity["kind"], "account");
+    assert_eq!(identity["accountId"], stored.as_str());
+
+    let viewer = public_viewer_token(&router).await;
+    let identity = body_json(
+        router
+            .clone()
+            .oneshot(get_auth("/api/auth/identity", &viewer))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(identity["kind"], "publicViewer");
+    assert!(identity.get("accountId").is_none(), "{identity}");
+}
+
 #[tokio::test]
 async fn public_viewer_token_identifies_as_the_public_viewer_kind_and_passes_check() {
     let (router, _settings, _audit, _users) = router_with_viewer_public(true).await;
@@ -4860,6 +4906,7 @@ async fn router_with_app_grant() -> (
             id: "commissioning".to_string(),
             name: "試運転".to_string(),
             role: "admin".to_string(),
+            account_id: None,
         },
         std::sync::Arc::new(move || {
             let condition = condition.clone();
@@ -5050,6 +5097,7 @@ async fn revoking_an_app_grant_ends_its_sessions_and_refuses_an_issuance_judged_
             id: "commissioning".to_string(),
             name: "試運転".to_string(),
             role: "admin".to_string(),
+            account_id: None,
         },
         std::sync::Arc::new(|| Box::pin(async { Ok(true) })),
     );
@@ -5066,6 +5114,7 @@ fn grant_registry_rejects_reserved_and_duplicate_kinds() {
                 id: kind.to_string(),
                 name: kind.to_string(),
                 role: "viewer".to_string(),
+                account_id: None,
             },
             std::sync::Arc::new(|| Box::pin(async { Ok(true) })),
         )

@@ -1110,6 +1110,7 @@ Connection: close
                         id: "admin".to_string(),
                         name: "管理者".to_string(),
                         role: "admin".to_string(),
+                        account_id: None,
                     })
                 })
             },

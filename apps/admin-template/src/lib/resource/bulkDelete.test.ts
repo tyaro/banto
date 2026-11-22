@@ -368,7 +368,7 @@ describe('collectMatchingItems', () => {
 
 describe('captureSendGuard (session check)', () => {
 	function session() {
-		const state = { generation: 1, owner: 'account:1', destroyed: false };
+		const state = { generation: 1, owner: 'acct:1', destroyed: false };
 		const guard = () =>
 			captureSendGuard({
 				capture: () => ({ generation: state.generation, owner: state.owner }),
@@ -393,7 +393,7 @@ describe('captureSendGuard (session check)', () => {
 	it('refuses after another account logged in', () => {
 		const { state, guard } = session();
 		const canSend = guard();
-		state.owner = 'account:2';
+		state.owner = 'acct:2';
 		expect(canSend()).toBe(false);
 	});
 

@@ -241,6 +241,13 @@ fn validate_username(username: &str) -> Result<String, BantoError> {
 /// the same statement as the rest of the row. A session records it (together
 /// with `id`) when it is established, and is ended as soon as the stored
 /// value differs - see [`UsersService`]'s "Session revocation" section.
+///
+/// `account_uid` (ADR-0034 §1, Issue #790) is the row's never-reused
+/// `users.account_uid`, which the REST/Tauri layers put on the wire as
+/// `Identity.accountId`. Every account row has one (a CHECK of
+/// `0003_users.sql`), so this service always returns `Some`; `None` is for a
+/// synthetic identity with no `users` row behind it (the Tauri auth-disabled
+/// `local` session), which must not carry one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserIdentity {
     pub id: i64,
@@ -248,6 +255,7 @@ pub struct UserIdentity {
     pub display_name: String,
     pub role: Role,
     pub auth_epoch: i64,
+    pub account_uid: Option<String>,
 }
 
 /// What a `users` row is (ADR-0034 §2, column `users.kind`). Whether a row is
@@ -522,6 +530,7 @@ macro_rules! insert_account {
             display_name: $new.display_name,
             role: $role,
             auth_epoch,
+            account_uid: Some(account_uid),
         })
     }};
 }
@@ -1133,11 +1142,11 @@ impl UsersService {
         // the response time does not tell the two apart.
         // AssertSqlSafe: see the note at the top of this file.
         let sql = format!(
-            "SELECT id, password_hash, display_name, role, auth_epoch FROM users \
+            "SELECT id, password_hash, display_name, role, auth_epoch, account_uid FROM users \
              WHERE username = {} AND kind = 'account'",
             self.db.dialect().placeholder(1)
         );
-        let row: Option<(i64, String, String, String, i64)> = match &self.db {
+        let row: Option<(i64, String, String, String, i64, Option<String>)> = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(username)
@@ -1155,7 +1164,7 @@ impl UsersService {
         .map_err(banto_storage::storage_error)?;
 
         match row {
-            Some((id, hash, display_name, role, auth_epoch)) => {
+            Some((id, hash, display_name, role, auth_epoch, account_uid)) => {
                 if verify_password_blocking(password, &hash).await {
                     Ok(Some(UserIdentity {
                         id,
@@ -1163,6 +1172,7 @@ impl UsersService {
                         display_name,
                         role: Role::from_str(&role)?,
                         auth_epoch,
+                        account_uid,
                     }))
                 } else {
                     Ok(None)
@@ -1350,11 +1360,11 @@ impl UsersService {
     ) -> Result<Option<UserIdentity>, BantoError> {
         // AssertSqlSafe: see the note at the top of this file.
         let sql = format!(
-            "SELECT id, display_name, role, auth_epoch FROM users \
+            "SELECT id, display_name, role, auth_epoch, account_uid FROM users \
              WHERE username = {} AND kind = 'account'",
             self.db.dialect().placeholder(1)
         );
-        let row: Option<(i64, String, String, i64)> = match &self.db {
+        let row: Option<(i64, String, String, i64, Option<String>)> = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(username)
@@ -1372,12 +1382,13 @@ impl UsersService {
         .map_err(banto_storage::storage_error)?;
 
         match row {
-            Some((id, display_name, role, auth_epoch)) => Ok(Some(UserIdentity {
+            Some((id, display_name, role, auth_epoch, account_uid)) => Ok(Some(UserIdentity {
                 id,
                 username: username.to_string(),
                 display_name,
                 role: Role::from_str(&role)?,
                 auth_epoch,
+                account_uid,
             })),
             None => Ok(None),
         }
@@ -3397,6 +3408,13 @@ mod tests {
         let owner_uid = uid_of(owner.id).await;
         let first_uid = uid_of(first.id).await;
         assert_ne!(owner_uid, first_uid);
+        // Issue #790: what the service hands to the REST/Tauri layers (the
+        // wire `Identity.accountId`) is the stored value, on every path.
+        assert_eq!(first.account_uid.as_deref(), Some(first_uid.as_str()));
+        let verified = svc.verify("op", "password123").await.unwrap().unwrap();
+        assert_eq!(verified.account_uid.as_deref(), Some(first_uid.as_str()));
+        let looked_up = svc.get_by_username("op").await.unwrap().unwrap();
+        assert_eq!(looked_up.account_uid.as_deref(), Some(first_uid.as_str()));
         for uid in [&owner_uid, &first_uid] {
             assert_eq!(uid.len(), 32, "{uid}");
             assert!(uid.chars().all(|c| c.is_ascii_hexdigit()), "{uid}");
@@ -3414,6 +3432,9 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(uid_of(again.id).await, first_uid);
+        assert_ne!(again.account_uid.as_deref(), Some(first_uid.as_str()));
+        let looked_up = svc.get_by_username("op").await.unwrap().unwrap();
+        assert_eq!(looked_up.account_uid, again.account_uid);
     }
 
     // --- ADR-0034 section 4: reserved names and the startup check ------------

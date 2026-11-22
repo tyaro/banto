@@ -70,7 +70,7 @@ async function switchToBob(p: Probe): Promise<SessionScope> {
 	p.active(last(p), BOB);
 	await expect(bobLoad).resolves.toMatchObject({
 		outcome: 'confirmed',
-		snapshot: { owner: 'account:bob' }
+		snapshot: { owner: 'acct:uid-bob' }
 	});
 	const bob = currentSessionScope();
 	saveListViewState(bob, 'items:server', {
@@ -82,7 +82,7 @@ async function switchToBob(p: Probe): Promise<SessionScope> {
 
 function expectBobUntouched(bob: SessionScope): void {
 	expect(isCurrentSessionScope(bob)).toBe(true);
-	expect(currentSessionScope().owner).toBe('account:bob');
+	expect(currentSessionScope().owner).toBe('acct:uid-bob');
 	expect(sessionGeneration()).toBe(bob.generation);
 	expect(loadListViewState(bob, 'items:server')?.sort).toEqual([
 		{ field: 'price', direction: 'asc' }
@@ -110,7 +110,7 @@ describe("a late answer for A's session leaves B's session alone (#255 5th revie
 		await flush();
 
 		// The earlier load was superseded and asked again: it can only report B.
-		await expect(aliceLoad).resolves.toMatchObject({ snapshot: { owner: 'account:bob' } });
+		await expect(aliceLoad).resolves.toMatchObject({ snapshot: { owner: 'acct:uid-bob' } });
 		expectBobUntouched(bob);
 	});
 
@@ -124,7 +124,7 @@ describe("a late answer for A's session leaves B's session alone (#255 5th revie
 		p.active(last(p), BOB);
 
 		const result = await load;
-		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'account:bob' } });
+		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'acct:uid-bob' } });
 		expect(result.snapshot.generation).toBe(sessionGeneration());
 	});
 
@@ -188,7 +188,7 @@ describe('requests settled in the same turn (#255 6th review, I-9)', () => {
 		p.change(); // B logs in
 		const nextLoad = resolveSettled(getSessionController());
 		p.active(last(p), BOB);
-		await expect(nextLoad).resolves.toMatchObject({ snapshot: { owner: 'account:bob' } });
+		await expect(nextLoad).resolves.toMatchObject({ snapshot: { owner: 'acct:uid-bob' } });
 	});
 
 	it('a signal and B’s load share the signal’s probe (it started after the signal)', async () => {
@@ -199,7 +199,7 @@ describe('requests settled in the same turn (#255 6th review, I-9)', () => {
 		expect(p.probes).toHaveLength(probes + 1);
 		p.active(last(p), BOB);
 
-		await expect(load).resolves.toMatchObject({ snapshot: { owner: 'account:bob' } });
+		await expect(load).resolves.toMatchObject({ snapshot: { owner: 'acct:uid-bob' } });
 		expect(p.probes).toHaveLength(probes + 1);
 	});
 });

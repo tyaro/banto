@@ -14,7 +14,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { primeThemeAndAuth } from '../visual/theme';
 
-const LAYOUT_KEY = 'banto.dock.threePane.workspace:account:admin';
+const LAYOUT_KEY = 'banto.dock.threePane.workspace:acct:demo';
 const PROVIDER_KEY = 'banto.ui.dock.threePane.workspace';
 const TREE = '対象のツリー';
 

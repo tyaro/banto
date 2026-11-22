@@ -35,6 +35,7 @@ pub fn audited_credential_verifier(
                         id: identity.username,
                         name: identity.display_name,
                         role: identity.role.to_string(),
+                        account_id: identity.account_uid,
                     })
                 }
                 _ => {
@@ -98,6 +99,7 @@ pub(crate) fn session_account(user: &UserIdentity) -> SessionAccount {
             id: user.username.clone(),
             name: user.display_name.clone(),
             role: user.role.to_string(),
+            account_id: user.account_uid.clone(),
         },
         stamp: SessionStamp {
             account_id: user.id,

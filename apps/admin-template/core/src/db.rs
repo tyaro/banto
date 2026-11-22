@@ -1273,4 +1273,111 @@ mod tests {
             .unwrap();
         assert!(op.is_some(), "the restored account is there");
     }
+
+    /// ADR-0034 §1 / Issue #790, the restore regression: `users.id` rewinds
+    /// with a restored backup (the id sequence is inside the database), so an
+    /// account created AFTER the restore can get the row id - and the login
+    /// name - of one created after the backup was taken. Its `accountId` on
+    /// the wire is still its own, so the browser's per-owner state of the
+    /// first (`sessionOwnerKey` = `acct:<accountId>`) is not handed to it.
+    /// An account that was in the backup keeps its `accountId` (the same
+    /// person).
+    #[tokio::test]
+    async fn an_account_created_after_a_restore_gets_its_own_account_id_for_the_same_row_id() {
+        use crate::audit::AuditLogService;
+        use crate::backup::BackupService;
+        use crate::users::{Role, UsersService};
+        use banto_server::LoginOutcome;
+
+        const PASSWORD: &str = "operator-password";
+
+        /// What the screen gets from `GET /api/auth/identity` after a login.
+        async fn wire_identity(db: &banto_storage::Db, username: &str) -> serde_json::Value {
+            let auth = banto_server::routes::user_auth_state(
+                UsersService::new(db.clone()),
+                AuditLogService::new(db.clone()),
+            );
+            let token = match auth
+                .login_rate_limited(None, username, PASSWORD, false)
+                .await
+            {
+                LoginOutcome::Success(token) => token,
+                other => panic!("login of {username} failed: {other:?}"),
+            };
+            let session = auth
+                .authenticate(&token)
+                .await
+                .unwrap()
+                .expect("the session just issued");
+            serde_json::to_value(session).unwrap()
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let db = init_db(&db_path).await.unwrap();
+        let users = UsersService::new(db.clone());
+        let kept = users
+            .create_user("kept", PASSWORD, "Kept", Role::Admin)
+            .await
+            .unwrap();
+        let kept_before = wire_identity(&db, "kept").await;
+
+        // The backup is taken BEFORE account A exists.
+        let backup = BackupService::new(db_path.clone(), db.clone())
+            .with_migrations(sqlite_migration_manifest());
+        let info = backup.create().await.unwrap();
+
+        let a = users
+            .create_user("op", PASSWORD, "Op A", Role::Editor)
+            .await
+            .unwrap();
+        let a_wire = wire_identity(&db, "op").await;
+        assert_eq!(a_wire["id"], "op");
+        assert_eq!(
+            a_wire["accountId"].as_str(),
+            a.account_uid.as_deref(),
+            "the wire accountId is users.account_uid: {a_wire}"
+        );
+
+        // Restore: A is gone, and so is the id it used.
+        backup
+            .stage_restore_from_file(&info.file_name)
+            .await
+            .unwrap();
+        db.as_sqlite().unwrap().close().await;
+        drop(users);
+        drop(backup);
+        drop(db);
+        BackupService::apply_pending_restore_at_startup(&db_path, &sqlite_migration_manifest())
+            .await
+            .unwrap()
+            .expect("the staged restore is applied");
+        let restored = init_db(&db_path).await.unwrap();
+        let users = UsersService::new(restored.clone());
+        assert!(users.get_by_username("op").await.unwrap().is_none());
+
+        // B: a new account with A's login name - and A's row id.
+        let b = users
+            .create_user("op", PASSWORD, "Op B", Role::Editor)
+            .await
+            .unwrap();
+        assert_eq!(b.id, a.id, "the restore rewound the row id");
+        assert_eq!(b.username, a.username);
+        let b_wire = wire_identity(&restored, "op").await;
+        assert_eq!(b_wire["id"], a_wire["id"], "the same login name");
+        assert!(b_wire["accountId"].is_string(), "{b_wire}");
+        assert_ne!(
+            b_wire["accountId"], a_wire["accountId"],
+            "B must not get A's owner key (acct:<accountId>)"
+        );
+
+        // An account that was in the backup is the same person: same value.
+        let kept_after = wire_identity(&restored, "kept").await;
+        assert_eq!(kept_after["accountId"], kept_before["accountId"]);
+        assert_eq!(
+            kept_after["accountId"].as_str(),
+            kept.account_uid.as_deref()
+        );
+        restored.as_sqlite().unwrap().close().await;
+    }
 }

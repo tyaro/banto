@@ -48,7 +48,7 @@ const account =
 		status: 'active',
 		checked: r,
 		current: r,
-		identity: { id: 'alice', name: 'Alice', role },
+		identity: { id: 'alice', name: 'Alice', accountId: 'uid-alice', role },
 		kind: 'account'
 	});
 const local = (r: CredentialRevision): ResolvedAuth => ({
@@ -110,7 +110,13 @@ describe('sessionStore (derived from the controller snapshot)', () => {
 				status: 'active',
 				checked: r,
 				current: r,
-				identity: { id: 'bob', name: 'Bob', role: 'viewer', permissions: ['equipment.operate'] },
+				identity: {
+					id: 'bob',
+					name: 'Bob',
+					accountId: 'uid-bob',
+					role: 'viewer',
+					permissions: ['equipment.operate']
+				},
 				kind: 'account'
 			}),
 			account('admin'),

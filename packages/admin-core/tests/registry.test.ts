@@ -92,7 +92,7 @@ describe('registry', () => {
 								status: 'active',
 								checked: revision,
 								current: revision,
-								identity: { id: 'alice', name: 'Alice' }
+								identity: { id: 'alice', name: 'Alice', accountId: 'uid-alice' }
 							}
 						: { status: 'none', checked: revision, current: revision };
 				}
@@ -109,7 +109,7 @@ describe('registry', () => {
 			await getAuthProvider().login({});
 			await expect(getAuthProvider().resolve()).resolves.toMatchObject({
 				status: 'active',
-				identity: { id: 'alice', name: 'Alice' }
+				identity: { id: 'alice', name: 'Alice', accountId: 'uid-alice' }
 			});
 		});
 
@@ -130,7 +130,7 @@ describe('registry', () => {
 								status: 'active',
 								checked: revision,
 								current: revision,
-								identity: { id: 'alice', name: 'Alice' }
+								identity: { id: 'alice', name: 'Alice', accountId: 'uid-alice' }
 							}
 						: { status: 'none', checked: revision, current: revision };
 				},

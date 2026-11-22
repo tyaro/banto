@@ -91,7 +91,7 @@ function setup(
 ) {
 	const storage = opts.storage ?? new MemoryStorage();
 	const provider = opts.provider ?? fakeProvider();
-	const session = fakeSession(opts.owner === undefined ? 'account:1' : opts.owner);
+	const session = fakeSession(opts.owner === undefined ? 'acct:1' : opts.owner);
 	const dock = createDockState();
 	const store = createDockLayoutStore({
 		dock,
@@ -119,14 +119,14 @@ afterEach(() => {
 describe('first paint (local copy)', () => {
 	it("draws the owner's own copy", () => {
 		const storage = new MemoryStorage();
-		storage.setItem(`${STORAGE_KEY}:account:1`, json(floating('mine')));
+		storage.setItem(`${STORAGE_KEY}:acct:1`, json(floating('mine')));
 		const { dock } = setup({ storage });
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['mine']);
 	});
 
 	it("never reads another user's copy", () => {
 		const storage = new MemoryStorage();
-		storage.setItem(`${STORAGE_KEY}:account:2`, json(floating('theirs')));
+		storage.setItem(`${STORAGE_KEY}:acct:2`, json(floating('theirs')));
 		const { dock } = setup({ storage });
 		expect(dock.layout.floating).toEqual([]);
 	});
@@ -153,10 +153,10 @@ describe('first paint (local copy)', () => {
 
 	it('drops a rejected copy', () => {
 		const storage = new MemoryStorage();
-		storage.setItem(`${STORAGE_KEY}:account:1`, '{broken');
+		storage.setItem(`${STORAGE_KEY}:acct:1`, '{broken');
 		const { dock } = setup({ storage });
 		expect(dock.layout.floating).toEqual([]);
-		expect(storage.getItem(`${STORAGE_KEY}:account:1`)).toBeNull();
+		expect(storage.getItem(`${STORAGE_KEY}:acct:1`)).toBeNull();
 	});
 });
 
@@ -168,7 +168,7 @@ describe('provider read', () => {
 		report();
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['remote']);
 		expect(provider.get).toHaveBeenCalledWith(SETTING_KEY);
-		expect(storage.getItem(`${STORAGE_KEY}:account:1`)).toBe(dock.serialize());
+		expect(storage.getItem(`${STORAGE_KEY}:acct:1`)).toBe(dock.serialize());
 		vi.runAllTimers();
 		expect(provider.set).not.toHaveBeenCalled();
 	});
@@ -199,14 +199,14 @@ describe('provider read', () => {
 		['a rejected value', async () => '{"version":99}']
 	])('restores the default on %s, not the local copy', async (_label, get) => {
 		const storage = new MemoryStorage();
-		storage.setItem(`${STORAGE_KEY}:account:1`, json(floating('cached')));
+		storage.setItem(`${STORAGE_KEY}:acct:1`, json(floating('cached')));
 		const provider = fakeProvider(get as () => Promise<string | null>);
 		const { dock, store, report } = setup({ storage, provider });
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['cached']);
 		await store.load();
 		report();
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['default']);
-		expect(storage.getItem(`${STORAGE_KEY}:account:1`)).toBe(json(DEFAULT));
+		expect(storage.getItem(`${STORAGE_KEY}:acct:1`)).toBe(json(DEFAULT));
 		vi.runAllTimers();
 		// The restored default is not a user change: nothing is written over the provider.
 		expect(provider.set).not.toHaveBeenCalled();
@@ -226,12 +226,12 @@ describe('provider read', () => {
 		const provider = fakeProvider(() => read.promise);
 		const { dock, store, session, storage } = setup({ provider });
 		const loading = store.load();
-		session.switchTo('account:2');
+		session.switchTo('acct:2');
 		read.resolve(json(floating('user1')));
 		await loading;
 		expect(dock.layout.floating).toEqual([]);
-		expect(storage.getItem(`${STORAGE_KEY}:account:1`)).toBeNull();
-		expect(storage.getItem(`${STORAGE_KEY}:account:2`)).toBeNull();
+		expect(storage.getItem(`${STORAGE_KEY}:acct:1`)).toBeNull();
+		expect(storage.getItem(`${STORAGE_KEY}:acct:2`)).toBeNull();
 	});
 
 	it('drops a result that returns after unmount', async () => {
@@ -265,7 +265,7 @@ describe('saving', () => {
 		report();
 		dock.layout = floating('a', 2);
 		report();
-		expect(storage.getItem(`${STORAGE_KEY}:account:1`)).toBe(json(floating('a', 2)));
+		expect(storage.getItem(`${STORAGE_KEY}:acct:1`)).toBe(json(floating('a', 2)));
 		expect(provider.set).not.toHaveBeenCalled();
 		vi.advanceTimersByTime(500);
 		expect(provider.set).toHaveBeenCalledTimes(1);
@@ -274,7 +274,7 @@ describe('saving', () => {
 
 	it('does not save the seeded default or the restored first paint', () => {
 		const storage = new MemoryStorage();
-		storage.setItem(`${STORAGE_KEY}:account:1`, json(floating('mine')));
+		storage.setItem(`${STORAGE_KEY}:acct:1`, json(floating('mine')));
 		const { store, provider, report } = setup({ storage });
 		report();
 		store.seedIfEmpty();
@@ -305,7 +305,7 @@ describe('saving', () => {
 		const { dock, provider, session, report } = setup();
 		dock.layout = floating('moved');
 		report();
-		session.switchTo('account:2');
+		session.switchTo('acct:2');
 		vi.runAllTimers();
 		expect(provider.set).not.toHaveBeenCalled();
 	});
@@ -322,7 +322,7 @@ describe('saving', () => {
 
 	it("does not write a stale session's layout into any copy", () => {
 		const { dock, storage, session, report } = setup();
-		session.switchTo('account:2');
+		session.switchTo('acct:2');
 		dock.layout = floating('moved');
 		report();
 		expect(storage.length).toBe(0);
@@ -330,7 +330,7 @@ describe('saving', () => {
 
 	it('reset restores the default and saves it', () => {
 		const storage = new MemoryStorage();
-		storage.setItem(`${STORAGE_KEY}:account:1`, json(floating('mine')));
+		storage.setItem(`${STORAGE_KEY}:acct:1`, json(floating('mine')));
 		const { dock, store, provider, report } = setup({ storage });
 		report();
 		store.reset();

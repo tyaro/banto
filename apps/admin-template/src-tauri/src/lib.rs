@@ -402,6 +402,14 @@ struct Identity {
     /// only, sorted) - the same field as REST's `GET /api/auth/identity`.
     /// For the screen only; commands decide with [`require_permission`].
     permissions: SessionPermissions,
+    /// ADR-0034 §1 / Issue #790: the account's never-reused
+    /// `users.account_uid` - the same field as REST's
+    /// `GET /api/auth/identity` (`banto_server::Identity::account_id`). The
+    /// screen keys per-owner saved state on it (`acct:<accountId>`). Left out
+    /// for the auth-disabled `local` session, which has no account behind it
+    /// (its owner key is `local`).
+    #[serde(rename = "accountId", skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -430,6 +438,7 @@ fn identity_from(user: &UserIdentity, permissions: SessionPermissions) -> Identi
         name: user.display_name.clone(),
         role: user.role.to_string(),
         permissions,
+        account_id: user.account_uid.clone(),
     }
 }
 
@@ -1639,6 +1648,8 @@ fn local_identity(role: Role) -> UserIdentity {
         display_name: "ローカルユーザー".to_string(),
         role,
         auth_epoch: 0,
+        // No account behind it: no `accountId` on the wire (ADR-0034 §1).
+        account_uid: None,
     }
 }
 

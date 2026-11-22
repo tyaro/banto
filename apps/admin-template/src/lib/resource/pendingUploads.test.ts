@@ -5,7 +5,7 @@ vi.mock('@banto/admin-core', () => ({ isCurrentSessionScope: () => live }));
 
 import { hasPendingUploads, stashPendingUploads, takePendingUploads } from './pendingUploads';
 
-const scope = { generation: 1, owner: 'account:1' };
+const scope = { generation: 1, owner: 'acct:1' };
 const pending = [{ file: new File(['x'], 'a.txt'), error: 'no' }] as never;
 
 describe('pendingUploads (#714 F2)', () => {
