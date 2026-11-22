@@ -175,8 +175,14 @@ for (const [index, locale] of ['ja', 'en'].entries())
 				.toBe(true);
 			await panel.press('Home');
 			await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBe(0);
-			await panel.press('PageDown');
-			await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+			// Pressed inside the poll: under parallel load the first key can land while the
+			// Home scroll is still settling and be lost (Issue #798 CI retry).
+			await expect
+				.poll(async () => {
+					await panel.press('PageDown');
+					return panel.evaluate((el) => el.scrollTop);
+				})
+				.toBeGreaterThan(0);
 			await page.screenshot({ path: testInfo.outputPath('long-error-narrow.png') });
 			await panel.press('Escape');
 			await expect(editor).toBeFocused();

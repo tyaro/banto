@@ -1913,7 +1913,7 @@ function replaceE2eForDisplay() {
 		CI_WORKFLOW,
 		'ci: e2e-visual ジョブ（ビジュアル回帰 + axe-core・デモビルド）除去',
 		`  e2e-visual:\n`,
-		`          name: playwright-test-results-visual\n          path: e2e/test-results/\n          retention-days: 3\n\n`
+		`          name: playwright-test-results-visual\n          path: |\n            e2e/test-results/\n            e2e/test-results-ui/\n          retention-days: 3\n\n`
 	);
 }
 

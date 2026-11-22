@@ -154,7 +154,18 @@ export default defineConfig({
 	reporter: process.env.CI
 		? [
 				['github'],
-				['html', { open: 'never', outputFolder: path.join(dirname, 'playwright-report') }]
+				[
+					'html',
+					{
+						open: 'never',
+						// ci.yml runs two Playwright invocations in the visual job; a second report
+						// folder keeps the later run from overwriting the first (Issue #798).
+						outputFolder: path.join(
+							dirname,
+							process.env.BANTO_E2E_REPORT_DIR || 'playwright-report'
+						)
+					}
+				]
 			]
 		: [['list']],
 	expect: {
@@ -266,6 +277,9 @@ export default defineConfig({
 		{
 			name: 'visual-ui',
 			testDir: './visual',
+			// Playwright clears a project's outputDir at the start of a run; a separate
+			// one keeps this run from deleting the `visual` run's failure diffs.
+			outputDir: path.join(dirname, 'test-results-ui'),
 			testIgnore: SNAPSHOT_SPECS,
 			fullyParallel: true,
 			workers: 4,
