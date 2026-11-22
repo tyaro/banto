@@ -600,7 +600,9 @@ onNavigate((navigation) => {
   に変更する（表示専用データ生成の決定化。件数 1 万・スキーマ・分布は不変。
   機能変更には当たらないが、単位 0 の PR で単独レビューする）。
 - 撮影マトリクス（計画 Phase 0 の間引きルール）:
-  - ログイン・ダッシュボード: 4 テーマ組 × 3 ビューポート
+  - ログイン・ダッシュボード: 当初は 4 テーマ組 × 3 ビューポートだったが、
+    #798 で Light/Standard と Dark/Glass の対角 2 組 × 3 ビューポートにした
+    （テーマの組はトークンで決まり、ほかの画面と同じ扱いでよいため）
   - 商品一覧・ユーザー管理・設定・コマンドパレット: Light/Standard と
     Dark/Glass の対角 2 組 × 1440×900
 - `use: { reducedMotion: 'reduce' }` + `toHaveScreenshot({ animations: 'disabled' })`
