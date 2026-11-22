@@ -18,13 +18,28 @@
  *  - A pane that leaves for good, or moves to another container, is taken out of S and its
  *    share goes to its siblings in proportion (`removeFromShadow`, the rule of #743). Only then
  *    does a split / tab group of S fold - when it has one child left in S, shown or not. A split
- *    that still holds a tombstone never folds.
+ *    that still holds a tombstone never folds. A pane put back into the split it was a child of
+ *    has not left it (#782: a new order inside one split is a move in S): the tombstones of that
+ *    split keep their share.
  *  - A drop is made against what the user sees, so its target is named by an id of the
  *    projection. `dockIntoShadow` maps it to S by the decision of #780: a drop at a side acts on
  *    the OUTERMOST node of S whose projection is exactly the target, found BEFORE the moved pane
  *    is taken out; a drop at the center (a tab) acts on the target's tab group / leaf itself.
  *  - A resize of a shown split is written back to the shown children only
  *    (`writeShadowSizes` / `resizeShadowSplit`); the tombstones keep their share of S.
+ *
+ * Shares of 0. A saved layout may hold a share of 0 (`validate.ts` only refuses a negative one),
+ * e.g. `row[a, b, c]` with `[0, 0, 1]`. The promise (review of PR #826):
+ *
+ *  - S keeps a 0 as it is. It is not repaired on the way in (no minimum share is applied to S, see
+ *    above), and the marks never write a share: hide `c`, show it again, and S is `[0, 0, 1]`.
+ *  - The projection shows children that have 0 together evenly, as `tree.ts#removePanel` does.
+ *  - Only a WRITE to such a split - a resize of it, or a pane put into it as a sibling - gives the
+ *    shown children a share, because the proportion the user sees and sets cannot be kept in a
+ *    total of 0: together they take the even part of the split (their count out of all its
+ *    children in S), in the proportion written, and the tombstones share the rest in the
+ *    proportion they had. This is the one case where a write changes the share of a tombstone.
+ *    From then on the split is like any other. (`shownShares`.)
  *
  * Ids of new split / tab group nodes come from an injected `makeId`, as in `tree.ts`.
  */
@@ -379,8 +394,12 @@ function visibleRegion(
 	return node;
 }
 
-function anchorOf(s: ShadowNode, targetId: string, movedId: string): Anchor | null {
-	const visible = projectNode(s);
+function anchorOf(
+	s: ShadowNode,
+	visible: DockNode | null,
+	targetId: string,
+	movedId: string
+): Anchor | null {
 	if (visible === null) return null;
 	const region = visibleRegion(visible, targetId);
 	if (region === null) return null;
@@ -429,9 +448,19 @@ function wrap(
  *  - `center` acts on the target itself: appended to its tab group of S (a group with one shown
  *    tab included), or a new group is made of the target's leaf and the pane. The pane becomes the
  *    active tab and the group is expanded.
+ *  - A split as the target must still show as a split once the pane is taken out (as
+ *    `dockExisting` resolves it: `tree.ts#resolveTarget` after `removePanel`). Its first leaf is
+ *    then the first leaf of what is left - `a` to the right of `S` in `row[x, column(S)[a, b, c]]`
+ *    gives `row[x, column(S)[row[b, a], c]]`. A split the removal folds, or leaves with one shown
+ *    child, is a stale id.
  *  - A target that does not show (a stale id, or the moved pane itself) falls back to the first
  *    shown leaf, as `tree.ts#resolveTarget` does. When nothing shows at all, S as a whole is
  *    wrapped half / half with the pane at that side (`center` = `right`); an empty S becomes the pane.
+ *  - A pane that was a direct child of a split and becomes a sibling in that same split again has
+ *    only changed its place in it: the children that do not show keep the share they had before
+ *    the pane was taken out, and the shown ones (the pane included) share the rest evenly -
+ *    `row[a†, b, c]` with `[.4, .2, .4]`, `b` to the right of `c`, is `row[a†, c, b]` with
+ *    `[.4, .3, .3]`. Any other move takes the pane out of its container first (#743).
  *
  * With no tombstone in S the projection of the result is `dockPanelIntoTree(removePanel(...))`,
  * except for a drop on the moved pane's own two-tab group (there the other tab is the target,
@@ -445,7 +474,9 @@ export function dockIntoShadow(
 	makeId: () => string = defaultMakeId
 ): ShadowNode {
 	const panel = shownLeaf(dropped);
-	const held = s ? anchorOf(s, targetId, panel.id) : null;
+	const seen = s ? projectNode(s) : null;
+	const held = s ? anchorOf(s, seen, targetId, panel.id) : null;
+	const home = s ? homeOf(s, panel.id) : null;
 	const rest = s ? removeNode(s, panel.id) : null;
 	if (rest === null) return panel;
 	const visible = projectNode(rest);
@@ -453,10 +484,16 @@ export function dockIntoShadow(
 		return wrap(rest, panel, region === 'center' ? 'right' : region, 0.5, makeId);
 	}
 	let anchor = held;
+	if (findNode(seen, targetId)?.type === 'split') {
+		// A split stands for its first leaf, and that is the first leaf of what is left of it - if
+		// it is left. The node found before the removal is kept when there was one (#780).
+		const again = anchorOf(rest, visible, targetId, panel.id);
+		anchor = again === null ? null : (held ?? again);
+	}
 	if (anchor === null) {
 		let first = visible;
 		while (first.type === 'split') first = first.children[0];
-		anchor = anchorOf(rest, first.id, panel.id)!;
+		anchor = anchorOf(rest, visible, first.id, panel.id)!;
 	}
 	const path = pathTo(rest, anchor.rep)!;
 	const leaf = path.length - 1;
@@ -488,8 +525,16 @@ export function dockIntoShadow(
 		const index = parent.children.indexOf(target) + (region === 'left' || region === 'top' ? 0 : 1);
 		const children = parent.children.slice();
 		children.splice(index, 0, panel);
-		const sizes = parent.sizes.slice();
-		sizes.splice(index, 0, 0);
+		// Back in the split it was a child of: the shares are the ones from before the removal, so
+		// nothing of the pane's share has gone to a tombstone. Else it comes in with nothing.
+		const before = home?.id === parent.id ? children.map((c) => home.sizes.get(c.id)) : [];
+		let sizes: number[];
+		if (before.length > 0 && before.every((size) => size !== undefined)) {
+			sizes = before as number[];
+		} else {
+			sizes = parent.sizes.slice();
+			sizes.splice(index, 0, 0);
+		}
 		const next = { ...parent, children, sizes: evenAmongShown(children, sizes) };
 		return settleCollapsed(replaceNode(rest, parent.id, () => next))!;
 	}
@@ -497,14 +542,43 @@ export function dockIntoShadow(
 	return settleCollapsed(replaceNode(rest, target.id, () => split))!;
 }
 
+/** The split the pane `panelId` is a direct child of, with the share of each child by id; else `null`. */
+function homeOf(s: ShadowNode, panelId: string): { id: string; sizes: Map<string, number> } | null {
+	const parent = pathTo(s, panelId)?.at(-2);
+	if (parent?.type !== 'split') return null;
+	return {
+		id: parent.id,
+		sizes: new Map(parent.children.map((c, i) => [c.id, parent.sizes[i] ?? 0]))
+	};
+}
+
+/**
+ * `sizes` of the children of a split of S, with its shown children given `weights` (one per shown
+ * child, in order, adding up to more than 0) as the proportion among them. They share what they
+ * have together and the others keep theirs. When they have 0 together (see "Shares of 0" at the
+ * top) they take the even part of the split - their count out of all the children - and the
+ * others share the rest in the proportion they had.
+ */
+function shownShares(children: ShadowNode[], sizes: number[], weights: number[]): number[] {
+	const shown = children.map(isShown);
+	const sum = weights.reduce((a, b) => a + b, 0);
+	const all = sizes.reduce((a, b) => a + b, 0);
+	if (!(all > 0)) return evenSizes(children.length);
+	let total = sizes.reduce((acc, size, i) => (shown[i] ? acc + size : acc), 0);
+	let others = 1;
+	if (!(total > 0)) {
+		total = (all * weights.length) / children.length;
+		others = (all - total) / all;
+	}
+	let k = 0;
+	return sizes.map((size, i) => (shown[i] ? (weights[k++] / sum) * total : size * others));
+}
+
 /** `sizes` with the shown children sharing evenly what they have together; the others keep theirs. */
 function evenAmongShown(children: ShadowNode[], sizes: number[]): number[] {
-	const shown = children.map(isShown);
-	const count = shown.filter(Boolean).length;
+	const count = children.filter(isShown).length;
 	if (count === children.length) return evenSizes(count);
-	const total = sizes.reduce((sum, size, i) => (shown[i] ? sum + size : sum), 0);
-	if (!(total > 0)) return evenSizes(children.length);
-	return sizes.map((size, i) => (shown[i] ? total / count : size));
+	return shownShares(children, sizes, evenSizes(count));
 }
 
 /**
@@ -534,8 +608,10 @@ export function dockAtShadowEdge(
  * Write the sizes of a split as the user sees it back to S: `sizes` has one share per SHOWN child
  * of the split `splitId` (the `sizes` of that split in the projection). The shown children share
  * what they have together in S in that proportion; the tombstones keep their share, so a pane that
- * comes back takes the same part of the split as before. The same S when the split is not in it or
- * `sizes` does not have one positive-sum share per shown child.
+ * comes back takes the same part of the split as before. The one exception is a split whose shown
+ * children have 0 together ("Shares of 0" at the top): a proportion other than the even one they
+ * show with gives them the even part of the split, and the tombstones the rest. The same S when
+ * the split is not in it or `sizes` does not have one positive-sum share per shown child.
  */
 export function writeShadowSizes(
 	s: ShadowNode | null,
@@ -553,8 +629,9 @@ export function writeShadowSizes(
 		next = sizes.slice();
 	} else {
 		const total = split.sizes.reduce((acc, size, i) => (shown[i] ? acc + size : acc), 0);
-		let k = 0;
-		next = split.sizes.map((size, i) => (shown[i] ? (sizes[k++] / sum) * total : size));
+		// Nothing to write: with 0 together they show evenly already.
+		if (!(total > 0) && sizes.every((size) => size === sizes[0])) return s;
+		next = shownShares(split.children, split.sizes, sizes);
 	}
 	if (next.every((size, i) => size === split.sizes[i])) return s;
 	return replaceNode(s, splitId, () => ({ ...split, sizes: next }));

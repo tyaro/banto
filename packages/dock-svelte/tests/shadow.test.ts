@@ -10,6 +10,7 @@
 // `DOCK_PROPERTY_RUNS` to look further).
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
+import { validateDockLayout } from '../src/core/validate';
 import {
 	dockAtShadowEdge,
 	dockIntoShadow,
@@ -342,6 +343,45 @@ describe('dockIntoShadow', () => {
 			'row[a, column[b, c]]'
 		);
 	});
+
+	it('a new order inside one split is a move in S: the tombstones keep their share (review of PR #826, 1)', () => {
+		const s = row('s1', [gone('a'), p('b'), p('c')], [0.4, 0.2, 0.4]);
+		const next = dockIntoShadow(s, p('b'), 'c', 'right', counterMakeId());
+		expect(text(next)).toBe('row[a†, c, b]');
+		// Not [.5, .25, .25]: b never left the split, so a's 40% is not shared out and back.
+		close(sizesOfSplit(next, 's1'), [0.4, 0.3, 0.3]);
+		close(sizesOfSplit(projectShadow(markPresent(next, 'a')), 's1'), [0.4, 0.3, 0.3]);
+		// The pane's own tombstone put back into the same split: the other tombstone keeps its share.
+		const two = row('s1', [gone('a'), gone('b'), p('c'), p('d')], [0.4, 0.2, 0.3, 0.1]);
+		const back = dockIntoShadow(two, p('b'), 'd', 'right', counterMakeId());
+		expect(text(back)).toBe('row[a†, c, d, b]');
+		close(sizesOfSplit(back, 's1'), [0.4, 0.2, 0.2, 0.2]);
+		// Leaving the split for another container is still #743: the share goes to the siblings.
+		const out = dockIntoShadow(s, p('b'), 'c', 'bottom', counterMakeId());
+		expect(text(out)).toBe('row[a†, column[c, b]]');
+		close(sizesOfSplit(out, 's1'), [0.5, 0.5]);
+	});
+
+	it('a split as the target is resolved again after the removal when it is still there (review of PR #826, 2)', () => {
+		// The first leaf of s2 is the moved pane itself: `tree.ts` takes the first leaf of what is left.
+		const s = row('s1', [p('x'), column('s2', [p('a'), p('b'), p('c')])]);
+		const next = dockIntoShadow(s, p('a'), 's2', 'right', counterMakeId());
+		expect(text(next)).toBe('row[x, column[row[b, a], c]]');
+		const mirror = dockPanelIntoTree(removePanel(s, 'a'), p('a'), 's2', 'right', counterMakeId());
+		expect(next).toEqual(mirror);
+		// A split that the removal folds is a stale id: the first shown leaf of the tree (`tree.ts`).
+		const folded = row('s1', [p('x'), column('s2', [p('b'), p('a')])]);
+		const stale = dockIntoShadow(folded, p('a'), 's2', 'right', counterMakeId());
+		expect(stale).toEqual(
+			dockPanelIntoTree(removePanel(folded, 'a'), p('a'), 's2', 'right', counterMakeId())
+		);
+		expect(text(stale)).toBe('row[x, a, b]');
+		// With a tombstone in it the split stays in S, but no longer shows as a split: stale as well.
+		const held = row('s1', [p('x'), column('s2', [p('a'), p('b'), gone('c')])]);
+		expect(text(dockIntoShadow(held, p('a'), 's2', 'center', counterMakeId()))).toBe(
+			'row[tabs[x, a], column[b, c†]]'
+		);
+	});
 });
 
 describe('dockAtShadowEdge', () => {
@@ -436,6 +476,69 @@ describe('writeShadowSizes / resizeShadowSplit', () => {
 	});
 });
 
+// The saved format allows a share of 0 (`validateDockLayout`). The promise for it (review of
+// PR #826, 3) is in the doc of `shadow.ts`: S keeps a 0 as it is, and only a write to a split
+// whose shown children have 0 together gives them a share - the even one.
+describe('shares of 0 (a layout the saved format allows)', () => {
+	const zero = (): DockSplitNode => row('s1', [p('a'), p('b'), p('c')], [0, 0, 1]) as DockSplitNode;
+
+	it('the fixture passes the validation of a saved layout as it is', () => {
+		const result = validateDockLayout({ version: 2, docked: zero(), floating: [] });
+		expect(result.ok).toBe(true);
+		expect(sizesOfSplit(result.ok ? result.layout.docked : null, 's1')).toEqual([0, 0, 1]);
+	});
+
+	it('hiding and coming back keep the 0: the mark alone never writes a share', () => {
+		const hidden = markAway(zero(), 'c');
+		expect(sizesOfSplit(hidden, 's1')).toEqual([0, 0, 1]);
+		// Shown as `tree.ts#removePanel` shows it: evenly.
+		expect(projectShadow(hidden)).toEqual(removePanel(zero(), 'c'));
+		close(sizesOfSplit(projectShadow(hidden), 's1'), [0.5, 0.5]);
+		expect(markPresent(hidden, 'c')).toEqual(zero());
+	});
+
+	it('a resize is not lost: the shown children take the even part of the split, the tombstone the rest', () => {
+		const hidden = markAway(zero(), 'c');
+		const next = resizeShadowSplit(hidden, 's1', 0, 0.1);
+		const mirror = resizeSplit(projectShadow(hidden), 's1', 0, 0.1);
+		close(sizesOfSplit(mirror, 's1'), [0.6, 0.4]);
+		close(sizesOfSplit(projectShadow(next), 's1'), [0.6, 0.4]);
+		// a and b had nothing to share, so they get 2 of 3 parts; c keeps the third.
+		close(sizesOfSplit(next, 's1'), [0.4, 4 / 15, 1 / 3]);
+		// From here on c keeps its share, as in any other split.
+		const again = resizeShadowSplit(next, 's1', 0, -0.2);
+		close(sizesOfSplit(again, 's1'), [4 / 15, 0.4, 1 / 3]);
+		// Writing what shows already changes nothing.
+		expect(writeShadowSizes(hidden, 's1', [0.5, 0.5])).toBe(hidden);
+	});
+
+	it('a drop beside them: the same even part, and tombstones keep their proportion', () => {
+		const hidden = markAway(zero(), 'c');
+		const next = dockIntoShadow(hidden, p('d'), 'b', 'right', counterMakeId());
+		expect(text(next)).toBe('row[a, b, d, c†]');
+		close(sizesOfSplit(next, 's1'), [0.25, 0.25, 0.25, 0.25]);
+		expect(
+			treeDiff(
+				projectShadow(next),
+				dockPanelIntoTree(projectShadow(hidden), p('d'), 'b', 'right', counterMakeId())
+			)
+		).toBeNull();
+		// Two tombstones of 0.75 and 0.25 stay 3 : 1 in what is left for them.
+		const two = row('s1', [p('a'), p('b'), gone('c'), gone('e')], [0, 0, 0.75, 0.25]);
+		const more = dockIntoShadow(two, p('d'), 'b', 'right', counterMakeId());
+		close(sizesOfSplit(more, 's1'), [0.2, 0.2, 0.2, 0.3, 0.1]);
+		// A 0 beside a share: nothing special, the shown children share what they have.
+		const part = row('s1', [p('a'), p('b'), gone('c')], [0, 0.5, 0.5]);
+		close(sizesOfSplit(resizeShadowSplit(part, 's1', 0, 0.2), 's1'), [0.1, 0.4, 0.5]);
+		close(sizesOfSplit(dockIntoShadow(part, p('d'), 'b', 'right', counterMakeId()), 's1'), [
+			1 / 6,
+			1 / 6,
+			1 / 6,
+			0.5
+		]);
+	});
+});
+
 // ----- properties ----------------------------------------------------------------------------
 
 type StepKind = 'away' | 'back' | 'remove' | 'move' | 'tab' | 'edge' | 'resize';
@@ -444,6 +547,12 @@ const SIDES: DropRegion[] = ['left', 'right', 'top', 'bottom'];
 
 const splitsOf = (node: DockNode | null): DockSplitNode[] =>
 	node?.type === 'split' ? [node, ...node.children.flatMap(splitsOf)] : [];
+
+/** The ids of the splits and tab groups of a visible tree, depth first. */
+const containerIds = (node: DockNode | null): string[] =>
+	node === null || node.type === 'panel'
+		? []
+		: [node.id, ...(node.type === 'split' ? node.children.flatMap(containerIds) : [])];
 
 interface Run {
 	s: ShadowNode | null;
@@ -500,15 +609,21 @@ function run(tree: DockNode, ops: OpRecipe[], kinds: StepKind[], mirror: boolean
 		} else if (kind === 'move' || kind === 'tab') {
 			const others = shown.filter((x) => x !== id);
 			if (others.length === 0) continue;
-			const target = others[op.j % others.length];
+			// A drop names a pane, or a split / tab group that shows (`dockExisting` takes any id).
+			const targets = [...others, ...containerIds(before)];
+			const target = targets[op.j % targets.length];
 			const region = kind === 'tab' ? 'center' : SIDES[op.r];
 			steps.push(`${id}>${target}:${region}`);
 			const hadTombstone = gone.length > 0;
 			s = dockIntoShadow(s, node, target, region, makeId);
 			// With tombstones a side drop may sit at a different depth than the visible tree would
 			// put it (#780), and split ids differ: only the tree without them has to agree.
-			if (!hadTombstone || kind === 'tab') {
-				expected = dockPanelIntoTree(removePanel(before, id), node, target, region, mirrorId);
+			// The pane's own two-tab group as the target is the one case `shadow.ts` answers by itself
+			// (the other tab; `tree.ts` no longer finds the group).
+			const rest = removePanel(before, id);
+			const ownGroup = findNode(before, target)?.type === 'tabs' && findNode(rest, target) === null;
+			if ((!hadTombstone || kind === 'tab') && !ownGroup) {
+				expected = dockPanelIntoTree(rest, node, target, region, mirrorId);
 				exact = !hadTombstone;
 			}
 		} else {
