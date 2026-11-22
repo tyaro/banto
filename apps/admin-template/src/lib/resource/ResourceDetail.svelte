@@ -79,6 +79,7 @@
 		type ConflictField
 	} from './conflict';
 	import { editableFieldNames } from './listState';
+	import { resetKeepingFile } from './carryFileField';
 	import { hasPendingUploads, stashPendingUploads, takePendingUploads } from './pendingUploads';
 	import { resourcePermissions } from './permissions';
 	import type { AppResourceDefinition, ResourceRow } from './types';
@@ -367,7 +368,7 @@
 		const { current, draft } = conflict;
 		const kept = keptEditsOverTheirs(conflictFieldNames, base, current, draft);
 		base = current;
-		store.reset(current);
+		resetRecord(current);
 		if (Object.keys(kept).length > 0) store.values = { ...store.values, ...kept };
 		conflict = null;
 		notify('info', m['resource.conflictTookTheirs']());
@@ -406,6 +407,12 @@
 		} finally {
 			creating = false;
 		}
+	}
+
+	/** `store.reset(record)` that keeps the `file` field's waiting files (not a column, so not in `record`). */
+	function resetRecord(record: Record<string, unknown>): void {
+		const hasFile = fileField && schema.fields.some((f) => f.type === 'file');
+		resetKeepingFile(store, hasFile ? fileField.name : null, record);
 	}
 
 	/** A create (with the upload of its files) is under way: further saves are turned away. */
@@ -495,7 +502,7 @@
 				const current = store.values;
 				// The submitted values under the response: a DataProvider may
 				// answer an update with only some fields (or without `id`).
-				store.reset({ ...values, ...((result.row ?? {}) as Record<string, unknown>) });
+				resetRecord({ ...values, ...((result.row ?? {}) as Record<string, unknown>) });
 				// Only the fields edited during the save go back on top - the
 				// others keep what the server stored.
 				const typed = inputTypedDuringSave(current, values);
@@ -556,7 +563,7 @@
 				notify('error', m['resource.conflictNotDeleted']());
 				if (refused.current) {
 					base = refused.current;
-					store.reset(refused.current);
+					resetRecord(refused.current);
 				} else {
 					await loadForm();
 				}
