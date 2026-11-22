@@ -16,7 +16,7 @@ test('viewer-public: the menu bar shows the allowlisted entries only, no admin n
 	try {
 		await page.route('**/api/ui-settings/shell.navLayout', async (route) => {
 			if (route.request().method() !== 'GET') return route.continue();
-			await route.fulfill({ json: { value: 'menubar' } });
+			await route.fulfill({ json: { value: 'menubar', revision: 'e2e' } });
 		});
 		await page.addInitScript(() => window.localStorage.setItem('banto.navLayout', 'menubar'));
 

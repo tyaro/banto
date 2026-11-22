@@ -422,6 +422,7 @@ const isAllowedPackageImport = (spec) =>
 		{ tauri: 'users_delete', rest: 'DELETE /api/users/{id}', role: 'Admin' },
 		{ tauri: 'users_reset_password', rest: 'POST /api/users/{id}/reset-password', role: 'Admin' },
 		{ tauri: 'ui_settings_set', rest: 'PUT /api/ui-settings/{key}', role: 'Viewer' },
+		{ tauri: 'ui_settings_delete', rest: 'DELETE /api/ui-settings/{key}', role: 'Viewer' },
 		{ tauri: 'login_notice_set', rest: 'PUT /api/login-notice', role: 'Admin' },
 		{ tauri: 'audit_config_apply', rest: 'PUT /api/audit-log/config', role: 'Admin' },
 		{ tauri: 'backups_create', rest: 'POST /api/backups', role: 'Admin' },

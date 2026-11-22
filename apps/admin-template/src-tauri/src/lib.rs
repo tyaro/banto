@@ -44,6 +44,7 @@ use admin_template_core::settings::{
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
 use admin_template_core::system_metrics::SystemMetricsSampler;
+use admin_template_core::ui_settings::{UiSetting, UiSettingRevision, UiSettingsOwner};
 use admin_template_core::users::{
     PermissionDiff, PermissionEntry, PermissionKey, Role, SessionPermissions, UserIdentity,
     UserIdentityView, UsersService,
@@ -861,13 +862,25 @@ async fn require_role(state: &AppState, min: Role, resource: &str) -> Result<Cal
 struct Caller {
     identity: UserIdentity,
     actor: AuditActor,
+    /// Whose UI settings this session reads and writes (ADR-0034 §8) - the
+    /// Tauri twin of REST's `owner_of`: an account by its `users.id`, the
+    /// no-login session as `local`. Decided from the session's VARIANT, like
+    /// `actor` (conventions §10), and NOT the audit attribution: the no-login
+    /// session's settings are `local`'s, not the built-in `admin`'s.
+    ui_owner: UiSettingsOwner,
 }
 
 impl Caller {
     fn of(state: &AppState, session: &DesktopSession) -> Self {
+        let identity = session.identity().clone();
+        let ui_owner = match session {
+            DesktopSession::Account(_) => UiSettingsOwner::Account(identity.id),
+            DesktopSession::AuthDisabledLocal(_) => UiSettingsOwner::Local,
+        };
         Self {
-            identity: session.identity().clone(),
+            identity,
             actor: session_actor(state.builtin_admin_id, session),
+            ui_owner,
         }
     }
 }
@@ -3684,7 +3697,7 @@ async fn bind_saved_server_at_launch(
 /// `admin`-only, symmetric with `settings_set` below: the generic key/value
 /// settings store holds privileged config (embedded-server enable/bind/port,
 /// `auth.disabled`/`auth.disabled_role`, `auth.autologin.username`, audit
-/// retention, and every user's `ui.{username}.*` namespace), so reading an
+/// retention), so reading an
 /// arbitrary key is as privileged as writing one. Without this guard an
 /// unauthenticated webview (the login screen is a real webview whose console
 /// can `invoke`) could read any of those. UI settings for the current user
@@ -3796,40 +3809,80 @@ async fn settings_set_body(
 
 // --- M12: per-user UI settings + window vibrancy ----------------------------
 
-/// Read one of the calling user's OWN UI settings (spec M12
-/// SettingsProvider migration: theme mode/preset, dock layout). Any
-/// authenticated role - unlike `settings_get`/`settings_set` these only ever
-/// touch keys namespaced under the caller's own username
-/// (`SettingsService::ui_get`'s `ui.{username}.{key}` scheme), so no
-/// privilege is involved. In auth-disabled mode (spec M11) the synthetic
-/// session's username is `"local"`, so all UI settings share that one
-/// namespace - consistent with that mode's "the whole device is one trusted
-/// user" framing.
+/// Read one of the calling session's OWN UI settings (spec M12, Issue #786:
+/// theme mode/preset, dock layout). Any authenticated role - unlike
+/// `settings_get`/`settings_set` these only ever touch the caller's own rows
+/// of `ui_settings` (`Caller::ui_owner`: an account's by its `users.id`, the
+/// no-login session's `local`), so no privilege is involved. Same answer as
+/// REST's `GET /api/ui-settings/{key}`: `{ value, revision }`, with
+/// `value: null` and `revision: "0"` when nothing is stored.
 #[tauri::command]
-async fn ui_settings_get(
-    state: State<'_, AppState>,
-    key: String,
-) -> Result<Option<String>, BantoError> {
-    let identity = require_role(&state, Role::Viewer, "settings").await?;
-    state.settings.ui_get(&identity.username, &key).await
+async fn ui_settings_get(state: State<'_, AppState>, key: String) -> Result<UiSetting, BantoError> {
+    ui_settings_get_body(&state, &key).await
 }
 
-/// Write one of the calling user's OWN UI settings (spec M12). Any
-/// authenticated role - deliberately NOT `admin`-gated like `settings_set`,
-/// see [`ui_settings_get`]'s doc comment. Spec M14: NOT audited, same
-/// reasoning as the REST `/api/ui-settings/*` routes (see `rest.rs`'s module
-/// doc comment) - this is each user's own theme/dock-layout preference, not
-/// an admin-scoped "settings change".
+/// Body of [`ui_settings_get`] (testable with a plain `&AppState`).
+async fn ui_settings_get_body(state: &AppState, key: &str) -> Result<UiSetting, BantoError> {
+    let caller = require_role(state, Role::Viewer, "settings").await?;
+    state.settings.ui_get(&caller.ui_owner, key).await
+}
+
+/// Write one of the calling session's OWN UI settings (spec M12, Issue
+/// #786). Same arguments and answer as REST's `PUT /api/ui-settings/{key}`
+/// (conventions §1): `if_revision` (wire `ifRevision`) left out = last write
+/// wins, `"0"` = only when nothing is stored, a revision = only while the row
+/// still has it; the answer is `{ revision }`, and a failed condition is the
+/// `conflict` error whose `current` is `{ value, revision }`. Any
+/// authenticated role - deliberately NOT `admin`-gated like `settings_set`.
+/// Spec M14: NOT audited, same reasoning as the REST routes (see `rest.rs`'s
+/// module doc comment) - this is each owner's own theme/dock-layout
+/// preference, not an admin-scoped "settings change".
 #[tauri::command]
 async fn ui_settings_set(
     state: State<'_, AppState>,
     key: String,
     value: String,
-) -> Result<(), BantoError> {
-    let identity = require_role(&state, Role::Viewer, "settings").await?;
+    if_revision: Option<String>,
+) -> Result<UiSettingRevision, BantoError> {
+    ui_settings_set_body(&state, &key, &value, if_revision.as_deref()).await
+}
+
+/// Body of [`ui_settings_set`] (testable with a plain `&AppState`).
+async fn ui_settings_set_body(
+    state: &AppState,
+    key: &str,
+    value: &str,
+    if_revision: Option<&str>,
+) -> Result<UiSettingRevision, BantoError> {
+    let caller = require_role(state, Role::Viewer, "settings").await?;
     state
         .settings
-        .ui_set(&identity.username, &key, &value)
+        .ui_put(&caller.ui_owner, key, value, if_revision)
+        .await
+}
+
+/// Delete one of the calling session's OWN UI settings (Issue #786) - the
+/// Tauri twin of REST's `DELETE /api/ui-settings/{key}`: same `ifRevision`,
+/// same answer (`{ revision: "0" }`), not audited.
+#[tauri::command]
+async fn ui_settings_delete(
+    state: State<'_, AppState>,
+    key: String,
+    if_revision: Option<String>,
+) -> Result<UiSettingRevision, BantoError> {
+    ui_settings_delete_body(&state, &key, if_revision.as_deref()).await
+}
+
+/// Body of [`ui_settings_delete`] (testable with a plain `&AppState`).
+async fn ui_settings_delete_body(
+    state: &AppState,
+    key: &str,
+    if_revision: Option<&str>,
+) -> Result<UiSettingRevision, BantoError> {
+    let caller = require_role(state, Role::Viewer, "settings").await?;
+    state
+        .settings
+        .ui_delete(&caller.ui_owner, key, if_revision)
         .await
 }
 
@@ -5219,6 +5272,7 @@ pub fn run() {
             login_notice_set,
             ui_settings_get,
             ui_settings_set,
+            ui_settings_delete,
             vibrancy_apply,
             vibrancy_status,
             users_list,

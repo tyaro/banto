@@ -511,8 +511,8 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   `users.id` で作ったアカウントにも、**ブラウザーに保存した**前の人の記憶（一覧の記憶・最近のコマンド・最近開いたレコード・
   ドックの配置の手元の控え）が渡らない。`Identity.id` はログイン名のまま。
 - **仕切れるのはブラウザーの保存だけ**: サーバーに保存する ui-settings（テンプレートではドックの配置の控え。手元の控えより
-  優先して読む）は、まだログイン名で持ち主を決めている（`ui.{username}.{key}`）。同名で作り直したアカウントには、前の人の
-  ドックの配置がサーバーから戻りうる。サーバー側の仕切りは #786（C4・C5）で入る。
+  優先して読む）は、C3 の時点ではログイン名で持ち主を決めていた（`ui.{username}.{key}`）。サーバー側の仕切りは
+  下の「ui-settings を表 `ui_settings` へ移す」（C4、#786）で入った。
 - **`Identity { .. }` を組み立てている Rust（A）**: `banto_server::Identity` に `account_id: Option<String>` が増えた。
   アカウントの verifier・`SessionLookup` は `Some(users.account_uid)`、grant の固定 identity と試験の固定 identity は `None`。
   `UsersService` の `UserIdentity` は `account_uid` を持っているので、`account_id: identity.account_uid` と書ける。
@@ -526,6 +526,39 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   サーバー側の読み書きは止まらない）。grant と `local` には載せない（載せても使われない）。
 - **持ち主のキーの値に依存している所**: 試験・E2E・自前の保存のキーにある `account:<ログイン名>` は `acct:<accountId>` になる
   （テンプレートの demo は `acct:demo`）。旧いキーで保存された記憶は読まれない。移す口は無い。
+  テンプレートのドックの配置は、手元の控えもサーバー側の控え（下の C4）も引き継がれないので、既定に戻る。
+
+**ui-settings を表 `ui_settings` へ移す・条件付きの書き込み（C4、#786、計画 §4.4、ADR-0034 §8）**。C1 の後に作った v8 用の DB
+（`0014_ui_settings.sql` が当たっている）を使っているなら、この変更のための**追加の**作り直しは要らない。v7.11.0 以前の DB は、
+この節の最初のとおり v8 では開けないので、新しい DB になる。**どちらの場合も、サーバーに保存していた旧い ui-settings は
+引き継がれない**（下の「何が変わるか」）。
+
+- **何が変わるか**: サーバーに保存する ui-settings の持ち主が、ログイン名（`settings` の `ui.{username}.{key}`）から
+  アカウントの行（`users.id`。表 `ui_settings` の持ち主 `acct:<users.id>`）になる。同名で作り直したアカウントは前の人の値を
+  読めず、アカウントを消すと値も外部キーで消える。grant のセッションは `grant:<kind>`、Tauri のログインなしは `local`。
+  **`settings` の `ui.*` に残っている値は読まれない**（移し替えは無い。消しもしない）。テーマ・ナビの配置・ドックの配置・
+  ダッシュボードのメモ・一覧の保存ビューなど、サーバーに保存していた画面の記憶は v8 ではサーバーから戻らないので、利用者に
+  設定し直してもらう（v7 から上げる場合は DB ごと新しくなるので、同じこと。テーマのようにブラウザーにも控えを持つ項目は、
+  その端末では控えの値のまま）。
+- **アカウントの削除との順序**: 削除が先に確定した後に届いた書き込みは行を作れない。無条件の PUT と `ifRevision: "0"` は
+  外部キーで断られて 401（セッションが無いときと同じ）、revision つきの PUT・DELETE は対象の行が無いので `409`
+  （`current` は `value: null`・`revision: "0"`）。PUT が先なら、削除が行も一緒に消す。
+- **REST（A）**: `GET /api/ui-settings/{key}` は `{ value, revision }`（無ければ `value: null`・`revision: "0"`）。`PUT` の本文は
+  `{ value, ifRevision? }`、応答は `204` ではなく `200 { revision }`。`DELETE /api/ui-settings/{key}?ifRevision=` が増えた
+  （`200 { revision: "0" }`）。`ifRevision` が合わなければ `409`（`kind: "conflict"`、`current` に今の `{ value, revision }`）。
+  `revision` は書き込みのたびに変わる乱数の文字列で、`"0"` は「行が無い」。
+- **Tauri のコマンド（B）**: `src-tauri/src/lib.rs` の `ui_settings_get` / `ui_settings_set` を差し替え、`ui_settings_delete` を足し、
+  `invoke_handler` に登録する。`Caller` に `ui_owner`（`DesktopSession::Account` は `UiSettingsOwner::Account(identity.id)`、
+  `AuthDisabledLocal` は `UiSettingsOwner::Local`）を足す。`scripts/verify-architecture.mjs` の `DUAL_PATH` に
+  `{ tauri: 'ui_settings_delete', rest: 'DELETE /api/ui-settings/{key}', role: 'Viewer' }` を足す。
+- **`SettingsService` を直に呼んでいる Rust（A）**: `ui_get(username, key)` / `ui_set(username, key, value)` は無い。
+  `ui_get(&owner, key)`（`UiSetting { value, revision }`）・`ui_put(&owner, key, value, if_revision)`・
+  `ui_delete(&owner, key, if_revision)` にする。持ち主は、認可したセッションの種類から作る（名前からは作らない）。
+- **画面（A）**: 同梱の `createHttpUiSettings` / `createTauriUiSettings` を使っていれば直す所は無い（公開の `UiSettingsProvider` の
+  形は据え置き。revision つきの形への置き換えは C5）。`@banto/admin-core` とサーバーは同じ版に揃える。`/api/ui-settings/*` を
+  自分で叩いている所と、`PUT` の `204` を待っている試験・E2E は直す。
+- **アカウントに結び付かないアカウントのセッション**（`SessionValidation::DisabledNoRevocation` の `AuthState` でログインさせた
+  もの）は、ui-settings が 401 になる。`user_auth_state` で組み立てる。
 
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に

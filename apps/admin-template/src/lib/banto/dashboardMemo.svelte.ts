@@ -15,7 +15,7 @@
  *
  * Apply = store the text through the existing `UiSettingsProvider` under
  * {@link MEMO_SETTING_KEY} (spec §12.1 / M12: per-user settings DB via REST or
- * Tauri - both reach the same `SettingsService::ui_set`, conventions §1 -
+ * Tauri - both reach the same `SettingsService::ui_put`, conventions §1 -
  * and localStorage in demo mode), through admin-core's `createSavedSetting`
  * (serialized saves, late answers after `dispose()` ignored, #437).
  *

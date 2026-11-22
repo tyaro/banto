@@ -1,75 +1,101 @@
 use super::*;
+use axum::Extension;
+use banto_admin_services::ui_settings::{UiSetting, UiSettingRevision, UiSettingsOwner};
 
-/// State for the `/api/ui-settings/*` handlers (spec M12): `SettingsService`
-/// for the per-user key/value store itself, plus `AuthState` to resolve the
-/// caller's own `username` from the bearer token `require_auth` already
-/// validated (same pattern as `auth::UsersAuthState`/`users::acting_user`
-/// in the sibling modules here).
-#[derive(Clone)]
-struct UiSettingsState {
-    settings: SettingsService,
-    auth: AuthState,
-}
-
-#[derive(Debug, Serialize)]
-struct UiSettingValueResponse {
-    value: Option<String>,
-}
-
+/// `PUT /api/ui-settings/{key}` body (Issue #786, plan §4.4). `ifRevision`
+/// left out = unconditional (the last write wins); `"0"` = only when nothing
+/// is stored yet; a revision = only while the stored row still has it.
 #[derive(Debug, Deserialize)]
 struct UiSettingSetRequest {
     value: String,
+    #[serde(rename = "ifRevision", default)]
+    if_revision: Option<String>,
 }
 
-/// Resolve the calling session's `username` (spec convention: bearer-token
-/// `Identity.id` IS the username, see `banto_server::auth::Identity`'s doc
-/// comment) from its bearer token. `require_auth` has already proven the
-/// token valid by the time a `/api/ui-settings/*` handler runs, so this
-/// should always succeed; `Unauthorized` here is a defensive fallback (e.g.
-/// the token expired between `require_auth` and this handler running), not
-/// an expected path - mirrors `users::acting_user`.
-fn acting_username(headers: &HeaderMap, auth: &AuthState) -> Result<String, BantoError> {
-    bearer_token(headers)
-        .and_then(|token| auth.identity_for(token))
-        .map(|identity| identity.id)
+/// `DELETE /api/ui-settings/{key}?ifRevision=` (a query parameter: a DELETE
+/// carries no body). Same meaning as [`UiSettingSetRequest::if_revision`].
+#[derive(Debug, Deserialize)]
+struct UiSettingDeleteQuery {
+    #[serde(rename = "ifRevision", default)]
+    if_revision: Option<String>,
+}
+
+/// Whose settings the request touches (ADR-0034 §8), from the session
+/// `require_auth` authorized and put into the request's extensions - nothing
+/// is looked up again, and nothing comes from the request itself:
+///
+/// - a grant session: its kind (`grant:<kind>`), also when its audit rows
+///   are attributed to the built-in `admin`;
+/// - an account session: the `users.id` it is bound to
+///   ([`SessionStamp::account_id`]). NOT the username - a new account with a
+///   reused name must not read the deleted account's values;
+/// - an account session without a stamp (an `AuthState` built without a
+///   session lookup - tests, a public-viewer-only server) has no account row
+///   to own a value: refused like a request without a session (fail closed).
+fn owner_of(session: &AuthenticatedSession) -> Result<UiSettingsOwner, BantoError> {
+    if let Some(kind) = &session.grant {
+        return Ok(UiSettingsOwner::Grant(kind.as_str().to_string()));
+    }
+    session
+        .stamp
+        .map(|stamp| UiSettingsOwner::Account(stamp.account_id))
         .ok_or(BantoError::Unauthorized)
 }
 
+/// `GET /api/ui-settings/{key}` -> `{ value, revision }` (`value: null`,
+/// `revision: "0"` when nothing is stored).
 async fn ui_settings_get(
-    State(state): State<UiSettingsState>,
-    headers: HeaderMap,
+    State(settings): State<SettingsService>,
+    Extension(session): Extension<AuthenticatedSession>,
     Path(key): Path<String>,
-) -> Result<Json<UiSettingValueResponse>, ApiError> {
-    let username = acting_username(&headers, &state.auth)?;
-    let value = state.settings.ui_get(&username, &key).await?;
-    Ok(Json(UiSettingValueResponse { value }))
+) -> Result<Json<UiSetting>, ApiError> {
+    let owner = owner_of(&session)?;
+    Ok(Json(settings.ui_get(&owner, &key).await?))
 }
 
+/// `PUT /api/ui-settings/{key}` -> `{ revision }`. A failed `ifRevision` is
+/// `409` with the `conflict` error body, whose `current` is the stored
+/// `{ value, revision }` now.
 async fn ui_settings_set(
-    State(state): State<UiSettingsState>,
-    headers: HeaderMap,
+    State(settings): State<SettingsService>,
+    Extension(session): Extension<AuthenticatedSession>,
     Path(key): Path<String>,
     Json(body): Json<UiSettingSetRequest>,
-) -> Result<StatusCode, ApiError> {
-    let username = acting_username(&headers, &state.auth)?;
-    state.settings.ui_set(&username, &key, &body.value).await?;
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Json<UiSettingRevision>, ApiError> {
+    let owner = owner_of(&session)?;
+    let revision = settings
+        .ui_put(&owner, &key, &body.value, body.if_revision.as_deref())
+        .await?;
+    Ok(Json(revision))
 }
 
-/// `/api/ui-settings/*` (spec M12): `require_auth` only, no
+/// `DELETE /api/ui-settings/{key}` -> `{ revision: "0" }`. Conflicts as for
+/// the PUT.
+async fn ui_settings_delete(
+    State(settings): State<SettingsService>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(key): Path<String>,
+    Query(query): Query<UiSettingDeleteQuery>,
+) -> Result<Json<UiSettingRevision>, ApiError> {
+    let owner = owner_of(&session)?;
+    let revision = settings
+        .ui_delete(&owner, &key, query.if_revision.as_deref())
+        .await?;
+    Ok(Json(revision))
+}
+
+/// `/api/ui-settings/*` (spec M12, Issue #786): `require_auth` only, no
 /// [`require_role_at_least`] floor - see `admin-template-core::rest`'s
 /// module doc comment for why (every route here only ever touches the
-/// caller's OWN namespaced keys).
+/// caller's OWN rows). Not audited (each owner's own screen memory).
 pub fn ui_settings_router(settings: SettingsService, auth: AuthState) -> Router {
-    let state = UiSettingsState {
-        settings,
-        auth: auth.clone(),
-    };
     Router::new()
         .route(
             "/api/ui-settings/{key}",
-            get(ui_settings_get).put(ui_settings_set),
+            get(ui_settings_get)
+                .put(ui_settings_set)
+                .delete(ui_settings_delete),
         )
-        .with_state(state)
+        .with_state(settings)
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }

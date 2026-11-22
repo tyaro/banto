@@ -20,6 +20,14 @@
  * other provider - callers that treat settings persistence as best-effort
  * (the app's settings store) simply catch and ignore.
  *
+ * Wire shape (Issue #786, v8.0.0): the backend answers a read with
+ * `{ value, revision }` and a write with `{ revision }` (REST and the Tauri
+ * commands alike), and takes an optional `ifRevision` for conditional writes
+ * plus a delete. The Tauri and HTTP adapters below read that shape and DROP
+ * the revision: this interface is still the old one (`get` -> string | null,
+ * `set` -> void, unconditional), so existing callers keep working. The
+ * revision-aware interface (and `remove`) replaces it in a later change.
+ *
  * Write ordering (#707; Tauri and HTTP providers): writes are serialized per
  * key so a late-arriving older write can never overwrite a newer one.
  * - At most one write per key is in flight. A value arriving meanwhile is held
@@ -208,6 +216,13 @@ export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiS
 	};
 }
 
+/** What the backend answers a read with (REST body and Tauri command alike, #786). */
+interface UiSettingWire {
+	value: string | null;
+	/** Changes on every write; `"0"` when nothing is stored. Not used by this interface yet. */
+	revision: string;
+}
+
 // --- Tauri invoke ----------------------------------------------------------
 
 export interface TauriUiSettingsOptions {
@@ -223,6 +238,10 @@ export interface TauriUiSettingsOptions {
 /**
  * `UiSettingsProvider` over the `ui_settings_get`/`ui_settings_set` Tauri
  * commands (spec M12: session required, any role).
+ * - `get` -> `ui_settings_get { key }` -> `{ value: string | null, revision }`
+ * - `set` -> `ui_settings_set { key, value }` -> `{ revision }` (no
+ *   `ifRevision`: unconditional)
+ * The revision is not used yet (see the file header, #786).
  */
 export function createTauriUiSettings(options: TauriUiSettingsOptions): UiSettingsProvider {
 	async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
@@ -238,12 +257,14 @@ export function createTauriUiSettings(options: TauriUiSettingsOptions): UiSettin
 		{
 			async get(key: string): Promise<string | null> {
 				assertValidKey(key);
-				return (await call<string | null>('ui_settings_get', { key })) ?? null;
+				const stored = await call<UiSettingWire>('ui_settings_get', { key });
+				return stored.value ?? null;
 			},
 
 			async set(key: string, value: string): Promise<void> {
 				assertValidKey(key);
-				await call<void>('ui_settings_set', { key, value });
+				// Answers `{ revision }`; dropped until the provider carries it (#786).
+				await call<unknown>('ui_settings_set', { key, value });
 			}
 		},
 		getSessionRevision ? () => getSessionRevision() : undefined
@@ -266,8 +287,10 @@ export interface HttpUiSettingsOptions {
 
 /**
  * `UiSettingsProvider` over the embedded REST server (spec M12):
- * - `get` -> `GET {base}/api/ui-settings/{key}` -> `{"value": string | null}`
- * - `set` -> `PUT {base}/api/ui-settings/{key}` with `{"value": string}` -> `204`
+ * - `get` -> `GET {base}/api/ui-settings/{key}` -> `{"value": string | null, "revision": string}`
+ * - `set` -> `PUT {base}/api/ui-settings/{key}` with `{"value": string}` -> `200 {"revision": string}`
+ *   (no `ifRevision`: unconditional)
+ * The revision is not used yet (see the file header, #786).
  * Same CSRF header (`X-Banto-Client: banto`) + `Authorization: Bearer`
  * conventions as `createHttpDataProvider`. Writes are serialized per key and
  * dropped on a token change / no token (see the file header, #707).
@@ -315,7 +338,7 @@ export function createHttpUiSettings(options: HttpUiSettingsOptions): UiSettings
 					throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
 				}
 				if (!response.ok) throw await errorFromResponse(response);
-				const body = (await response.json()) as { value: string | null };
+				const body = (await response.json()) as UiSettingWire;
 				return body.value ?? null;
 			},
 

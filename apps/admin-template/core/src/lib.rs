@@ -30,7 +30,9 @@ pub mod startup;
 // other services, and `admin_template_core::users::{UsersService, Role, ...}` -
 // resolve unchanged: the services' location changed, not the REST/Tauri
 // exposure (conventions §1 両経路対称は不変).
-pub use banto_admin_services::{audit, backup, settings, system_info, system_metrics, users};
+pub use banto_admin_services::{
+    audit, backup, settings, system_info, system_metrics, ui_settings, users,
+};
 
 /// The permissions this app registers (Issue #697, user-permissions-plan
 /// §3-3 / §8-2): the vocabulary of per-user permissions an admin can grant,

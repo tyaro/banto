@@ -217,10 +217,11 @@ fn validate_username(username: &str) -> Result<String, BantoError> {
             }],
         });
     }
-    // `.` is the separator of the per-user UI setting key
-    // (`ui.{username}.{key}`), so a name containing it could collide with
-    // another user's key. Only *new* names go through here (setup/create);
-    // accounts that predate this rule keep working everywhere else.
+    // `.` was the separator of the per-user UI setting key
+    // (`ui.{username}.{key}` in `settings`), where a name containing it could
+    // collide with another user's key. Since Issue #786 the owner of a UI
+    // setting is the account's row id (`ui_settings`), so nothing depends on
+    // this any more; the rule itself is kept (usernames stay the same shape).
     if trimmed.contains('.') {
         return Err(BantoError::Validation {
             field_errors: vec![FieldError {

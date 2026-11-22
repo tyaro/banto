@@ -6787,3 +6787,239 @@ async fn issue790_account_id_is_the_same_on_tauri_and_rest_and_absent_for_local(
     let local = serde_json::to_value(auth_identity_body(&state).await.unwrap().unwrap()).unwrap();
     assert_eq!(keys(&local), ["id", "name", "permissions", "role"]);
 }
+
+// --- Issue #786: per-owner UI settings (plan §4.4, ADR-0034 §8) ---------------
+
+/// `/api/ui-settings/*` of the embedded server, on an OS-picked port.
+async fn serve_ui_settings_routes(state: &AppState) -> RunningServer {
+    start(
+        ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        },
+        banto_server::routes::ui_settings_router(state.settings.clone(), state.rest_auth.clone()),
+    )
+    .await
+    .expect("start test server")
+}
+
+/// Conventions §1, both paths: the desktop commands and the REST routes take
+/// the same arguments, give the same answers (`{ value, revision }`,
+/// `{ revision }`, the `conflict` error with `current`), and - for the same
+/// account - read and write the SAME rows.
+#[tokio::test]
+async fn issue786_ui_settings_answer_the_same_on_tauri_and_rest() {
+    let state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let token = rest_token(&state, "operator", false).await;
+    let server = serve_ui_settings_routes(&state).await;
+    let path = "/api/ui-settings/dashboard.memo";
+    let rest = |method: &'static str, path: String, body: Option<serde_json::Value>| {
+        let server = &server;
+        let token = token.as_str();
+        async move {
+            let (status, raw) = http(server, method, &path, Some(token), body).await;
+            let json: serde_json::Value = serde_json::from_str(&raw)
+                .unwrap_or_else(|err| panic!("{method} {path}: {status} {raw:?}: {err}"));
+            (status, json)
+        }
+    };
+
+    // Nothing stored: the same answer on both.
+    let absent = serde_json::json!({ "value": null, "revision": "0" });
+    let tauri = ui_settings_get_body(&state, "dashboard.memo")
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(&tauri).unwrap(), absent);
+    assert_eq!(
+        rest("GET", path.to_string(), None).await,
+        (200, absent.clone())
+    );
+
+    // Written on Tauri (the old call: no `ifRevision`), read on REST.
+    let first = ui_settings_set_body(&state, "dashboard.memo", "from tauri", None)
+        .await
+        .unwrap();
+    let first_json = serde_json::to_value(&first).unwrap();
+    assert_eq!(
+        first_json,
+        serde_json::json!({ "revision": first.revision })
+    );
+    assert_eq!(
+        rest("GET", path.to_string(), None).await,
+        (
+            200,
+            serde_json::json!({ "value": "from tauri", "revision": first.revision })
+        )
+    );
+
+    // A conditional write on REST with that revision; Tauri reads it.
+    let (status, second) = rest(
+        "PUT",
+        path.to_string(),
+        Some(serde_json::json!({ "value": "from rest", "ifRevision": first.revision })),
+    )
+    .await;
+    assert_eq!(status, 200, "{second}");
+    let second = second["revision"].as_str().unwrap().to_string();
+    assert_eq!(
+        serde_json::to_value(
+            ui_settings_get_body(&state, "dashboard.memo")
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::json!({ "value": "from rest", "revision": second })
+    );
+
+    // The stale revision: the same `conflict` body on both paths.
+    let tauri_conflict =
+        ui_settings_set_body(&state, "dashboard.memo", "stale", Some(&first.revision))
+            .await
+            .unwrap_err();
+    let tauri_conflict = serde_json::to_value(&tauri_conflict).unwrap();
+    assert_eq!(tauri_conflict["kind"], "conflict");
+    assert_eq!(
+        tauri_conflict["current"],
+        serde_json::json!({ "value": "from rest", "revision": second })
+    );
+    let (status, rest_conflict) = rest(
+        "PUT",
+        path.to_string(),
+        Some(serde_json::json!({ "value": "stale", "ifRevision": first.revision })),
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(rest_conflict, tauri_conflict);
+    let tauri_conflict = ui_settings_delete_body(&state, "dashboard.memo", Some(&first.revision))
+        .await
+        .unwrap_err();
+    let (status, rest_conflict) = rest(
+        "DELETE",
+        format!("{path}?ifRevision={}", first.revision),
+        None,
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(
+        rest_conflict,
+        serde_json::to_value(&tauri_conflict).unwrap()
+    );
+
+    // Deleted on Tauri with the current revision; REST sees nothing, and
+    // answers a delete the same way.
+    let deleted = ui_settings_delete_body(&state, "dashboard.memo", Some(&second))
+        .await
+        .unwrap();
+    let deleted = serde_json::to_value(&deleted).unwrap();
+    assert_eq!(deleted, serde_json::json!({ "revision": "0" }));
+    assert_eq!(rest("GET", path.to_string(), None).await, (200, absent));
+    assert_eq!(rest("DELETE", path.to_string(), None).await, (200, deleted));
+    server.stop().await;
+}
+
+/// The no-login session's settings are `local`'s (ADR-0034 §8): not the
+/// built-in `admin`'s, although its audit rows are attributed to that row.
+/// An account's are its own, by `users.id`.
+#[tokio::test]
+async fn issue786_ui_settings_owner_is_local_or_the_account_row() {
+    let state = app_state().await;
+    let target_id = seed_revocation_accounts(&state).await;
+
+    desktop_login(&state, "target").await;
+    ui_settings_set_body(&state, "theme.mode", "dark", None)
+        .await
+        .unwrap();
+    let stored = state
+        .settings
+        .ui_get(&UiSettingsOwner::Account(target_id), "theme.mode")
+        .await
+        .unwrap();
+    assert_eq!(stored.value.as_deref(), Some("dark"));
+
+    start_in_no_login_mode(&state, Role::Editor).await;
+    // A different owner: the account's value is not the local session's.
+    let read = ui_settings_get_body(&state, "theme.mode").await.unwrap();
+    assert_eq!(read.value, None);
+    ui_settings_set_body(&state, "theme.mode", "light", None)
+        .await
+        .unwrap();
+    let local = state
+        .settings
+        .ui_get(&UiSettingsOwner::Local, "theme.mode")
+        .await
+        .unwrap();
+    assert_eq!(local.value.as_deref(), Some("light"));
+    let builtin = state
+        .settings
+        .ui_get(
+            &UiSettingsOwner::Account(state.builtin_admin_id),
+            "theme.mode",
+        )
+        .await
+        .unwrap();
+    assert_eq!(builtin.value, None, "not the built-in admin's");
+    let account = state
+        .settings
+        .ui_get(&UiSettingsOwner::Account(target_id), "theme.mode")
+        .await
+        .unwrap();
+    assert_eq!(account.value.as_deref(), Some("dark"), "untouched");
+}
+
+/// Handed over from #790 C3: an account created again under the same
+/// username does not read the deleted account's values through the desktop
+/// commands either (the owner is the row id, and the rows went with the row).
+#[tokio::test]
+async fn issue786_a_recreated_account_reads_nothing_of_the_old_one_on_tauri() {
+    let state = app_state().await;
+    let old_id = seed_revocation_accounts(&state).await;
+    desktop_login(&state, "target").await;
+    ui_settings_set_body(&state, "dock.dashboard", "old layout", None)
+        .await
+        .unwrap();
+
+    desktop_login(&state, "operator").await;
+    users_delete_body(&state, old_id, None).await.unwrap();
+    let created = users_create_body(
+        &state,
+        "target",
+        REVOCATION_PASSWORD,
+        "new target",
+        Role::Editor,
+    )
+    .await
+    .unwrap();
+    let created = serde_json::to_value(&created).unwrap();
+    assert_ne!(created["id"], old_id);
+
+    desktop_login(&state, "target").await;
+    let read = ui_settings_get_body(&state, "dock.dashboard")
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&read).unwrap(),
+        serde_json::json!({ "value": null, "revision": "0" })
+    );
+}
+
+/// No session: `Unauthorized` on all three, like every other command.
+#[tokio::test]
+async fn issue786_ui_settings_need_a_session() {
+    let state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    state.set_session_for_test(None);
+    assert!(matches!(
+        ui_settings_get_body(&state, "theme.mode").await,
+        Err(BantoError::Unauthorized)
+    ));
+    assert!(matches!(
+        ui_settings_set_body(&state, "theme.mode", "dark", None).await,
+        Err(BantoError::Unauthorized)
+    ));
+    assert!(matches!(
+        ui_settings_delete_body(&state, "theme.mode", None).await,
+        Err(BantoError::Unauthorized)
+    ));
+}

@@ -35,8 +35,9 @@
 //! | POST   | `/api/users/{id}/reset-password` | `{newPassword}` | `{success}` (admin) |
 //! | DELETE | `/api/users/{id}?version=` | -        | 204 (admin; stale `version` -> 409, #651) |
 //! | GET    | `/api/permissions`   | -              | `PermissionEntry[]` (admin; the app's catalog, #697) |
-//! | GET    | `/api/ui-settings/{key}` | -          | `{value: string \| null}` (any role) |
-//! | PUT    | `/api/ui-settings/{key}` | `{value}`  | 204 (any role)          |
+//! | GET    | `/api/ui-settings/{key}` | -          | `{value: string \| null, revision}` (any role; `revision` is `"0"` when nothing is stored, #786) |
+//! | PUT    | `/api/ui-settings/{key}` | `{value,ifRevision?}` | `{revision}` (any role; stale `ifRevision` -> 409 with `current: {value,revision}`, #786) |
+//! | DELETE | `/api/ui-settings/{key}?ifRevision=` | - | `{revision: "0"}` (any role; stale `ifRevision` -> 409, #786) |
 //! | POST   | `/api/audit-log/list?asOfId=` | `ListParams` | `AuditLogList` (`ListResult` + `asOfId`/`deletionEpoch`, admin; #248) |
 //! | GET    | `/api/audit-log/config` | -            | `AuditSettings` (admin) |
 //! | PUT    | `/api/audit-log/config` | `AuditSettings` | `AuditSettings` (admin) |
@@ -58,7 +59,7 @@
 //!
 //! There is no generic global `/api/settings/{key}` route. The only generic
 //! settings endpoint is `/api/ui-settings/{key}`, which writes to the caller's
-//! own `ui.{username}.{key}` namespace; it cannot replace `login.notice`.
+//! own rows of `ui_settings`; it cannot replace `login.notice`.
 //!
 //! The table above stays here - it is the artifact conventions §1 designates
 //! as the REST side of the Tauri⇔REST correspondence table, and
@@ -79,15 +80,19 @@
 //! [`api_router`] below is the assembly: it owns the `.merge()` order,
 //! the CSRF layer, and nothing else.
 //!
-//! `/api/ui-settings/*` (spec M12 SettingsProvider migration): per-user UI
-//! settings (theme/preset/dock layout), namespaced by the caller's own
-//! `username` (`SettingsService::ui_get`/`ui_set` - see that module for the
-//! `ui.{username}.{key}` storage key scheme). Guarded by `require_auth`
-//! alone - unlike `items`/`users`, there is no role floor: a `viewer` may
-//! freely read/write their OWN UI preferences, they just cannot touch
-//! anyone else's (there is no way to name another user's key over this
-//! wire - `username` always comes from the caller's own bearer token, never
-//! a request parameter).
+//! `/api/ui-settings/*` (spec M12 SettingsProvider migration, Issue #786):
+//! per-owner UI settings (theme/preset/dock layout) in the `ui_settings`
+//! table, owned by the caller's own session - an account by its `users.id`,
+//! a grant session by its kind (`banto_admin_services::ui_settings`, plan
+//! §4.4, ADR-0034 §8). `GET` answers `{ value, revision }`; `PUT`
+//! (`{ value, ifRevision? }`) and `DELETE` (`?ifRevision=`) answer
+//! `{ revision }` and, when `ifRevision` no longer matches, `409` with the
+//! `conflict` body whose `current` is the stored `{ value, revision }`.
+//! Guarded by `require_auth` alone - unlike `items`/`users`, there is no
+//! role floor: a `viewer` may freely read/write their OWN UI preferences,
+//! they just cannot touch anyone else's (there is no way to name another
+//! owner over this wire - the owner always comes from the session the
+//! caller's own bearer token resolved to, never a request parameter).
 //!
 //! `/api/auth/status` and `/api/auth/grant/{kind}` are deliberately NOT
 //! behind `require_auth` - the login page needs `status` before any session

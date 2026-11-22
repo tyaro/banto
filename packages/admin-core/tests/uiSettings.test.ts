@@ -56,26 +56,28 @@ describe('createLocalUiSettings', () => {
 });
 
 describe('createTauriUiSettings', () => {
+	// #786: the command answers `{ value, revision }`; the provider's shape is
+	// still the old one (a string), so the revision is dropped here.
 	it('get calls ui_settings_get with { key } and returns the stored string', async () => {
-		const invoke = vi.fn().mockResolvedValue('glass');
+		const invoke = vi.fn().mockResolvedValue({ value: 'glass', revision: 'a1b2' });
 		const provider = createTauriUiSettings({ invoke });
 
 		await expect(provider.get('theme.preset')).resolves.toBe('glass');
 		expect(invoke).toHaveBeenCalledWith('ui_settings_get', { key: 'theme.preset' });
 	});
 
-	it('get maps an unset key (null result) to null', async () => {
-		const invoke = vi.fn().mockResolvedValue(null);
+	it('get maps an unset key ({ value: null, revision: "0" }) to null', async () => {
+		const invoke = vi.fn().mockResolvedValue({ value: null, revision: '0' });
 		const provider = createTauriUiSettings({ invoke });
 
 		await expect(provider.get('theme.preset')).resolves.toBeNull();
 	});
 
-	it('set calls ui_settings_set with { key, value }', async () => {
-		const invoke = vi.fn().mockResolvedValue(undefined);
+	it('set calls ui_settings_set with { key, value } (no ifRevision) and resolves to undefined', async () => {
+		const invoke = vi.fn().mockResolvedValue({ revision: 'c3d4' });
 		const provider = createTauriUiSettings({ invoke });
 
-		await provider.set('theme.mode', 'dark');
+		await expect(provider.set('theme.mode', 'dark')).resolves.toBeUndefined();
 
 		expect(invoke).toHaveBeenCalledWith('ui_settings_set', { key: 'theme.mode', value: 'dark' });
 	});
@@ -104,7 +106,9 @@ describe('createTauriUiSettings', () => {
 
 describe('createHttpUiSettings', () => {
 	it('get GETs {base}/api/ui-settings/{key} with CSRF + bearer headers and returns body.value', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { value: 'dark' }));
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(200, { value: 'dark', revision: 'a1b2' }));
 		const provider = createHttpUiSettings({
 			baseUrl: 'http://h:8721',
 			getToken: () => 'tok',
@@ -118,15 +122,17 @@ describe('createHttpUiSettings', () => {
 		});
 	});
 
-	it('get maps {"value": null} (unset key) to null', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { value: null }));
+	it('get maps {"value": null, "revision": "0"} (unset key) to null', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { value: null, revision: '0' }));
 		const provider = createHttpUiSettings({ getToken: () => 'tok', fetchFn });
 
 		await expect(provider.get('theme.preset')).resolves.toBeNull();
 	});
 
-	it('set PUTs {base}/api/ui-settings/{key} with a {"value"} body and resolves on 204', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+	// #786: the PUT answers `200 { revision }` (it was `204`); the old provider
+	// shape resolves to undefined either way.
+	it('set PUTs {base}/api/ui-settings/{key} with a {"value"} body and resolves on 200 {revision}', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { revision: 'c3d4' }));
 		const provider = createHttpUiSettings({ getToken: () => 'tok', fetchFn });
 
 		await expect(provider.set('theme.preset', 'glass')).resolves.toBeUndefined();
@@ -436,7 +442,7 @@ describe('createTauriUiSettings write serialization', () => {
 		await expect(w).rejects.toSatisfy(isProviderError);
 		await flush();
 		expect(calls.map((c) => c.cmd)).toEqual(['ui_settings_set', 'ui_settings_get']);
-		pending[1].resolve('old');
+		pending[1].resolve({ value: 'old', revision: 'a1b2' });
 		await expect(got).resolves.toBe('old');
 	});
 
