@@ -916,3 +916,33 @@ describe('a field hidden while its own upload is on its way (PR #844 review)', (
 		]);
 	});
 });
+
+describe('a delete that ends while the list is read again (PR #844 review)', () => {
+	it('a reset during the delete: the list read before the delete was settled does not bring the file back', async () => {
+		const removed = deferred<void>();
+		const relisted = deferred<FileFieldMeta[]>();
+		const client = fakeClient([meta(1, 'keep.txt'), meta(2, 'gone.txt')]);
+		client.remove.mockImplementationOnce(() => removed.promise);
+		const schema: FormSchema = {
+			fields: [fileDef(client, { file: { client, resource: 'items', confirmRemove: () => true } })]
+		};
+		const store = createFormStore(schema);
+		render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 5 });
+		await fireEvent.click(await screen.findByRole('button', { name: 'gone.txt: 削除' }));
+		await waitFor(() => expect(client.remove).toHaveBeenCalledWith(2));
+
+		// The reset reads the list again; that read still sees the file.
+		client.list.mockImplementationOnce(() => relisted.promise);
+		store.reset();
+		await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+		removed.resolve();
+		await removed.promise;
+		await Promise.resolve();
+		relisted.resolve([meta(1, 'keep.txt'), meta(2, 'gone.txt')]);
+
+		await waitFor(() =>
+			expect(fileValueOf(store.values.files).existing).toEqual([meta(1, 'keep.txt')])
+		);
+		expect(screen.queryByRole('button', { name: 'gone.txt: 削除' })).toBeNull();
+	});
+});

@@ -21,7 +21,13 @@
 	 * the picker, `aria-describedby` on the fieldset, no label drawn by `BantoForm`.
 	 */
 	import { onDestroy, tick, untrack } from 'svelte';
-	import type { FieldDef, FileFieldMeta, FileFieldValue, PendingFile } from '../types';
+	import type {
+		FieldDef,
+		FileFieldClient,
+		FileFieldMeta,
+		FileFieldValue,
+		PendingFile
+	} from '../types';
 	import { pickFiles, type ValidationMessages } from '../validate';
 	import {
 		defaultFileFieldMessages,
@@ -94,12 +100,58 @@
 		return fileValueOf(value);
 	}
 
-	// A newer load (or the field going away) makes an older answer stale (conventions §8).
+	// ONE place for "whose files are these" (conventions §8). Every operation of
+	// the field - the list, an upload run, a delete - takes the owner when it
+	// starts (`takeOwner`) and asks it again after every await:
+	//
+	// - `same()`: the value is still the one of that record, through that client
+	//   and resource. Only then an answer is written into the value.
+	// - `shown()`: `same()`, and the field is still on screen. Only then anything
+	//   more is SENT. The field going away (hidden by `visibleWhen`) is NOT a
+	//   change of owner: what was sent still settles in the value, nothing more
+	//   is sent or deleted from a field nobody sees.
+	//
+	// `ownerToken` moves when the record / client / resource change (the effect
+	// below); the props are compared too, since that effect runs after they changed.
+	let ownerToken = 0;
+	let destroyed = false;
+	onDestroy(() => {
+		destroyed = true;
+	});
+	// Deletes that succeeded for this owner. A list read before one of them was
+	// settled may still name the file - also while the value does not know its
+	// files (a reset), where there is nothing to take the file out of.
+	let removedIds = new Set<number>();
+
+	interface Owner {
+		client: FileFieldClient;
+		resource: string;
+		target: string | number;
+		same: () => boolean;
+		shown: () => boolean;
+	}
+
+	function takeOwner(): Owner | null {
+		const target = parentId;
+		const client = config?.client;
+		const resource = config?.resource;
+		if (!client || resource === undefined || target === null || target === undefined) return null;
+		const token = ownerToken;
+		const same = () =>
+			token === ownerToken &&
+			// Once the field is gone its props are no longer read: the token decides.
+			(destroyed ||
+				(parentId === target && config?.client === client && config?.resource === resource));
+		return { client, resource, target, same, shown: () => !destroyed && same() };
+	}
+
+	// On top of the owner, the list has a generation of its own: a newer load (or
+	// the field going away) makes an older answer stale.
 	let loadToken = 0;
 
 	async function load(): Promise<void> {
-		const target = parentId;
-		if (!config || target === null || target === undefined) return;
+		const owner = takeOwner();
+		if (!owner) return;
 		const token = ++loadToken;
 		loading = true;
 		loadError = null;
@@ -107,8 +159,9 @@
 		// `uploadPendingFiles` after a create): the answer must not undo it.
 		const before = latest().existing;
 		try {
-			const list = await config.client.list(config.resource, String(target));
-			if (token !== loadToken) return;
+			const answer = await owner.client.list(owner.resource, String(owner.target));
+			if (token !== loadToken || !owner.shown()) return;
+			const list = answer.filter((meta) => !removedIds.has(meta.id));
 			const now = latest();
 			onInput({
 				existing: listAfterChanges(list, before, now.existing),
@@ -122,18 +175,6 @@
 		}
 	}
 
-	// The owner of an upload run or a delete: the record and where its files are.
-	// What was started for another owner sends nothing more and writes nothing
-	// into the value (conventions §8).
-	let ownerToken = 0;
-	// The field going away (hidden by `visibleWhen`) is NOT a change of owner:
-	// the value stays the record's, so an upload already sent still settles its
-	// entry - but nothing more is sent or deleted from a field nobody sees.
-	let destroyed = false;
-	onDestroy(() => {
-		destroyed = true;
-	});
-
 	$effect(() => {
 		// Tracked: the record and where its files are. Everything else is untracked.
 		const target = parentId;
@@ -141,6 +182,7 @@
 		void config?.resource;
 		untrack(() => {
 			ownerToken += 1;
+			removedIds = new Set();
 			loadToken += 1;
 			loading = false;
 			loadError = null;
@@ -188,26 +230,18 @@
 	});
 
 	function upload(keys: string[]): void {
-		const target = parentId;
-		const client = config?.client;
-		const resource = config?.resource;
-		if (!config || target === null || target === undefined) return;
-		const token = ownerToken;
+		const owner = takeOwner();
+		if (!config || !owner) return;
 		void uploadPending({
 			config,
-			parentId: target,
+			parentId: owner.target,
 			read: () => value,
 			write: onInput,
-			// Compared directly too: the effect that moves the token runs after the props changed.
-			// (Not once the field is gone: its props are no longer read.)
-			isCurrent: () =>
-				token === ownerToken &&
-				(destroyed ||
-					(parentId === target && config?.client === client && config?.resource === resource)),
-			canSend: () => !destroyed,
+			isCurrent: owner.same,
+			canSend: owner.shown,
 			// The value was reset while the file was on its way: it is the record's, so read the list again.
 			onDetached: () => {
-				if (!destroyed) void load();
+				if (owner.shown()) void load();
 			},
 			keys,
 			messages,
@@ -246,19 +280,10 @@
 	}
 
 	async function removeExisting(meta: FileFieldMeta): Promise<void> {
-		// The file is of THIS record, through THIS client: both are taken now, and
-		// checked again after the confirmation and after the answer.
-		const client = config?.client;
-		if (!config || !client || !hasParent || !ready || confirmingIds.has(meta.id)) return;
-		const token = ownerToken;
-		const target = parentId;
-		const resource = config.resource;
-		const same = () =>
-			!destroyed &&
-			token === ownerToken &&
-			parentId === target &&
-			config?.client === client &&
-			config?.resource === resource;
+		// The file is of THIS record, through THIS client: the owner is taken now,
+		// and asked again after the confirmation and after the answer.
+		const owner = takeOwner();
+		if (!config || !owner || !ready || confirmingIds.has(meta.id)) return;
 		const confirm = config.confirmRemove ?? ((message: string) => window.confirm(message));
 		confirmingIds.add(meta.id);
 		try {
@@ -266,21 +291,25 @@
 		} finally {
 			confirmingIds.delete(meta.id);
 		}
-		// Another record is shown now: nothing is deleted.
-		if (!same()) return;
+		// Another record is shown now (or the field is hidden): nothing is deleted.
+		if (!owner.shown()) return;
 		removingIds = [...removingIds, meta.id];
 		actionError = null;
 		try {
-			await client.remove(meta.id);
-			if (!same()) return;
+			await owner.client.remove(meta.id);
+			if (!owner.same()) return;
+			// Remembered for a list that was read before this: it must not bring the file back.
+			removedIds.add(meta.id);
 			const now = latest();
-			onInput({
-				existing: now.existing?.filter((item) => item.id !== meta.id) ?? null,
-				pending: now.pending
-			});
-			focusChoose();
+			if (now.existing !== null) {
+				onInput({
+					existing: now.existing.filter((item) => item.id !== meta.id),
+					pending: now.pending
+				});
+			}
+			if (owner.shown()) focusChoose();
 		} catch (err) {
-			if (same()) actionError = t.removeFailed(err);
+			if (owner.shown()) actionError = t.removeFailed(err);
 		} finally {
 			removingIds = removingIds.filter((item) => item !== meta.id);
 		}
