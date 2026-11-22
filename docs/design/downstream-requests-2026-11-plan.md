@@ -768,7 +768,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | C4 | #786 サーバー（条件付きの PUT・DELETE・乱数の revision・外部キー・Tauri）。参照先を `ui_settings` へ切り替える（移し替えなし）。**既存の UI の論理キー（例 `dashboard.memo`）は、変える必要があるものだけここ（C4/C5）で判断する（#814）**。admin-core の http・tauri アダプタの最小の追従（公開の provider の形は据え置き） | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`（アダプタだけ） | **破壊的** | fable | §4.4 の競合の試験（両方言、片方だけ成功）。削除と PUT の競合で行が残らない。旧い形の provider のまま画面が動く |
 | C5 | #786 provider の置き換え（`remove` を含む）・`updateUiSetting`・同梱の実装・呼び手の追従 | `admin-core`・テンプレート | **破壊的** | fable | #707 の直列化の試験が新しい形で通る |
 | C6 | `createSavedSetting` の再送・`merge`・`onSettled`・README | `admin-core` | 足すだけ | sonnet | 再送・停止・競合の単体テスト |
-| T1 | #794 Toast と浮かぶ面の tint（Grid の固定列の透けを含む）。**#808 のうち ToastHost の色だけを T1 に合わせる**（Dock/Grid の primary の文字と Tree の `--banto-surface-muted` は T1b） | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。ダークで、着色された BantoGrid の固定列の後ろにスクロールする文字が透けない。基準画像の再生成 |
+| T1（実装済み: fix/794-toast-dark-tint の PR）| #794 Toast と浮かぶ面の tint（Grid の固定列の透けを含む）。**#808 のうち ToastHost の色だけを T1 に合わせる**（Dock/Grid の primary の文字と Tree の `--banto-surface-muted` は T1b） | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。ダークで、着色された BantoGrid の固定列の後ろにスクロールする文字が透けない。基準画像の再生成 |
 | T1b | #808 primary の文字を `--banto-primary-text` へ（dock の DockedTree・DockWindow、grid の BantoGrid・HeaderCell）と、`--banto-surface-muted` の定義（Tree の 2 か所）。T1 とは別の小さな PR（見た目の差分の原因を追いやすくする） | `dock-svelte`・`grid-svelte`・`theme`・テンプレート | 見た目 | sonnet | axe が通る。基準画像の再生成。差分が T1 と混ざらない |
 | T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査 |
 | K1 | #792 `isOnScreen`（`docked`・`floating`・`autoHidden`・`flyoutPanel` から） | `dock-svelte` | 足すだけ | sonnet | 偽の 5 つと真の 3 つの単体テスト。README |
