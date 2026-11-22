@@ -1043,16 +1043,20 @@ export function regraftShadow(
 			const now = was ? find(s, was.id) : null;
 			// A tab of a group cannot hold a container: the group would not be one any more.
 			if (now && (parent.type === 'split' || now.type === 'panel') && !tabOf(s, now.id)) {
-				// The band flag of what shows is the container's then (it shows as that child).
+				// A tab group shows as its one tab: the band flag of that tab is the group's then. A
+				// split has no flag (`settleCollapsed` drops the one of its only child showing: S cannot
+				// hold it, and `DockState` keeps it on the docked tree).
 				const bare = { ...parent };
 				delete (bare as { collapsed?: boolean }).collapsed;
-				const flagged = now.type !== 'split' && now.collapsed === true;
-				const flag = flagged ? { collapsed: true } : {};
-				const inner: ShadowNode = now.type === 'split' ? now : withoutCollapsed(now);
 				const around: ShadowNode =
 					bare.type === 'split'
-						? { ...bare, children: [inner], sizes: [1], ...flag }
-						: { ...bare, children: [inner as ShadowPanelNode], activeIndex: 0, ...flag };
+						? { ...bare, children: [now], sizes: [1] }
+						: {
+								...bare,
+								children: [withoutCollapsed(now as ShadowPanelNode)],
+								activeIndex: 0,
+								...(now.type === 'panel' && now.collapsed === true ? { collapsed: true } : {})
+							};
 				s = replaceNode(s, now.id, () => around);
 				used.add(parent.id);
 				host = around;

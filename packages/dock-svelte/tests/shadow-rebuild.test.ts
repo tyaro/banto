@@ -13,7 +13,7 @@
 // `dockExisting*`, closing) is as before, and so are the edge bands (PR8).
 // A layout put back as it was (a cancelled gesture) gets the S that was held with it.
 import { describe, expect, it } from 'vitest';
-import { projectShadow, regraftShadow, type ShadowNode } from '../src/core/shadow';
+import { markPresent, projectShadow, regraftShadow, type ShadowNode } from '../src/core/shadow';
 import { dockPanelAtEdge, dockPanelIntoTree, removePanel } from '../src/core/tree';
 import {
 	adoptLayout,
@@ -491,6 +491,30 @@ describe('a region to and from an edge band is as before (#739, PR8)', () => {
 	});
 });
 
+// KNOWN FAILURE (Codex P2 on #870, 8c7cc0e1; left as it is until the owner decides how the edge bands
+// are handled before PR8 puts them on S): a pane floated while a sibling is in a band, and another
+// sibling closed - the pane in the band comes back in front of the floated pane's place. The slot
+// S says for `b` cannot name `c` (S does not hold the panes in a band), and with `d` gone it names
+// `e`: `c` is put back before `e`'s neighbour `b`... and ends before `b`.
+describe('known failure: floated while a sibling is in an edge band, another sibling closed (#782 PR8)', () => {
+	it.fails(
+		'row[a, b, c, d, e]: c to its band, b floated, d closed, c back, b back -> row[a, b, c, e]',
+		() => {
+			const dock = dockOf(
+				split('s', 'row', [0.2, 0.2, 0.2, 0.2, 0.2], ['a', 'b', 'c', 'd', 'e'].map(panel)),
+				true
+			);
+			expect(dock.autoHideRegion('c')).toBe(true);
+			dock.undockPanel('b');
+			dock.dismiss('d');
+			expect(dock.restoreAutoHidden('c')).toBe(true);
+			expect(back(dock, 'b')).toBe(true);
+			// Today: row[a, c, b, e].
+			expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c', 'e'] });
+		}
+	);
+});
+
 // Codex P2 on #870: a region that is not beside a floated pane's place, back from its band, leaves
 // that place as S has it - the index an assignment gave it meanwhile, and its share.
 describe('an edge band and a place it has nothing to do with (#782 PR7)', () => {
@@ -631,6 +655,38 @@ describe('regraftShadow (#782 PR7)', () => {
 		const { shadow, unplaced } = regraftShadow(old, docked);
 		expect(unplaced).toEqual([]);
 		expect(projectShadow(shadow)).toEqual(docked);
+	});
+
+	// Cross-review of #870: only a tab group takes the flag. A split has none - the flag of its
+	// only child showing is one S cannot hold (`DockState` keeps it on the docked tree).
+	it('a split put around its one pane in place again has no band flag, nor once the other pane is back', () => {
+		const old: ShadowNode = {
+			type: 'split',
+			id: 's',
+			direction: 'column',
+			sizes: [0.5, 0.5],
+			children: [row([gone('b'), panel('a')], [0.4, 0.6]), panel('e')]
+		};
+		const docked = split(
+			's',
+			'column',
+			[0.5, 0.5],
+			[{ ...panel('a'), collapsed: true }, panel('e')]
+		);
+		const { shadow, unplaced } = regraftShadow(old, docked);
+		expect(unplaced).toEqual([]);
+		const flagged = (node: ShadowNode | null): string[] =>
+			!node
+				? []
+				: [
+						...(node.type === 'split' && 'collapsed' in node ? [node.id] : []),
+						...(node.type === 'panel' ? [] : node.children.flatMap(flagged))
+					];
+		expect(flagged(shadow)).toEqual([]);
+		expect(flagged(markPresent(shadow, 'b'))).toEqual([]);
+		expect(shapeOf(projectShadow(markPresent(shadow, 'b')))).toEqual({
+			column: [{ row: ['b', 'a'] }, 'e']
+		});
 	});
 
 	it('tombstones that held the whole split leave the panes that show an even part', () => {
