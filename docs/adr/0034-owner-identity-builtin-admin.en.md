@@ -763,14 +763,14 @@ points that were to be confirmed are listed separately in the PR description; th
    come with the rest of C2b (copying the mode before the CLI exists would lock the administrators of a headless display
    app out).
 
-## Addendum (2026-11-23, from removing first-run setup = the rest of C2b; awaiting the owner's confirmation)
+## Addendum (2026-11-23, from removing first-run setup = the rest of C2b; confirmed by the owner)
 
 What was left of C2b in sections 5-7, 9 and 10 is in: the default, the
 settings check, the lock-down condition, `banto-serve`'s read-only mode and
 listening condition, the CLI, the pre-restore check, and the removal of
 first-run setup. Where the implementation differs from the text above, or
 settles a detail it left open, is listed here (and in the PR as questions for
-the owner; once confirmed, this heading becomes "confirmed by the owner").
+the owner; the owner confirmed all of them as recommended on 2026-11-23).
 
 1. **`0015_auth_mode_defaults.sql` writes `auth.disabled = 'false'` on a
    database that already holds accounts** (an addition to item 1 of the C1
