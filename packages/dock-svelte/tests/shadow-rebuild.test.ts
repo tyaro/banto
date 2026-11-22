@@ -264,6 +264,36 @@ describe('an assignment from outside: the container is gone - the default place 
 		expect(dock.layout.docked).toEqual(panel('b'));
 	});
 
+	// Review of #870: that a float lost its place ends with that float.
+	it('floated again after it went back to its default place: the new place is its own, an edge band does not drop it', () => {
+		const dock = dockOf(
+			split(
+				'col',
+				'column',
+				[0.5, 0.3, 0.2],
+				[split('r', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)), panel('d'), panel('z')]
+			),
+			true
+		);
+		dock.undockPanel('a');
+		take(dock, 'b');
+		take(dock, 'c');
+		expect(shadowStateOf(dock).unplaced).toEqual(['a']);
+		expect(back(dock, 'a')).toBe(true);
+		const placed = shapeOf(dock.layout.docked);
+		// Floated a second time, with no default layout any more: the place is the tombstone's.
+		dock.undockPanel('a');
+		dock.defaultLayout = null;
+		expect(shadowStateOf(dock).unplaced).toEqual([]);
+		expect(dock.autoHideRegion('z')).toBe(true);
+		expect(shadowStateOf(dock).unplaced).toEqual([]);
+		expect(dock.restoredAt('a', dock.homeSlot('a')!)).not.toBeNull();
+		expect(dock.restoreAutoHidden('z')).toBe(true);
+		expect(back(dock, 'a')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual(placed);
+		expect(dock.layout.floating).toEqual([]);
+	});
+
 	it('a pane that lost its place keeps none: a later assignment does not bring it back', () => {
 		const dock = dockOf(uneven(), true);
 		dock.undockPanel('a');

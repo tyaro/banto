@@ -402,7 +402,12 @@ export class DockState {
 		});
 		this.#noteStructure(next);
 		this.#layout = next;
-		for (const id of spent) this.#homeSlots.delete(id);
+		// ... and with it that the place of that float was lost (review of #870): the next time the
+		// pane is floated it has a place of its own.
+		for (const id of spent) {
+			this.#homeSlots.delete(id);
+			this.#shadowLost.delete(id);
+		}
 		untrack(() => {
 			try {
 				if (step === null && !this.#adopting && this.#shadowUpToDate(next)) return;
@@ -1519,6 +1524,7 @@ export class DockState {
 		// remembered as one that left for good.
 		if (slot) this.#homeSlots.set(panelId, slot);
 		else this.#homeSlots.delete(panelId);
+		this.#shadowLost.delete(panelId);
 		const docked = this.#projected(
 			'undockPanel',
 			slot ? away : removeFromShadow(this.#shadow, panelId)
@@ -1807,7 +1813,10 @@ export class DockState {
 
 	static {
 		adoptImpl = (dock, layout) => dock.#adopt(layout);
-		forgetImpl = (dock) => dock.#homeSlots.clear();
+		forgetImpl = (dock) => {
+			dock.#homeSlots.clear();
+			dock.#shadowLost.clear();
+		};
 		rememberImpl = (dock, snapshot) => {
 			dock.#heldAt.set(snapshot, {
 				shadow: dock.#shadow,
