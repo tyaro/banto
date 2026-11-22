@@ -27,11 +27,10 @@
 	import {
 		applyAuthSettings,
 		getPermissionCatalog,
-		type AuthDisabledRole,
 		type PermissionEntry,
 		type UserPermission
 	} from '#lib/banto/authAdmin.js';
-	import { isAdmin } from '#lib/permissions.js';
+	import { isAdmin, type Role } from '#lib/permissions.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
@@ -47,14 +46,14 @@
 		withPermission
 	} from './disabledPermissions';
 
-	const authDisabledRoleOptions: { value: AuthDisabledRole; label: string }[] = [
+	const authDisabledRoleOptions: { value: Role; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },
 		{ value: 'editor', label: m['role.editor']() },
 		{ value: 'viewer', label: m['role.viewer']() }
 	];
 
 	let disabledDraft = $state(false);
-	let disabledRoleDraft = $state<AuthDisabledRole>('admin');
+	let disabledRoleDraft = $state<Role>('admin');
 	let applyingAuth = $state(false);
 
 	// Issue #697 PR-2b: the permissions login-not-required mode's session holds.
