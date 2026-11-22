@@ -14,7 +14,12 @@ export interface ThemeCombo {
 	preset: ThemePreset;
 }
 
-/** All 4 combinations - used for login/dashboard (plan Phase 0's full matrix). */
+/**
+ * All 4 combinations - used by the control specs (boolean-controls,
+ * native-controls), where each theme/preset pairing restyles the control
+ * itself. login/dashboard used to shoot all 4 too (plan Phase 0) but now use
+ * DIAGONAL_MATRIX (#798), like every other screen.
+ */
 export const FULL_MATRIX: ThemeCombo[] = [
 	{ theme: 'light', preset: 'standard' },
 	{ theme: 'dark', preset: 'standard' },
@@ -26,7 +31,9 @@ export const FULL_MATRIX: ThemeCombo[] = [
  * The diagonal thinning rule (plan Phase 0 / design §12.1): every other
  * screen only shoots light/standard and dark/glass, the two combinations
  * furthest apart, which still catches a broken variable somewhere in the
- * 4-way matrix without shooting all 4.
+ * 4-way matrix without shooting all 4. The theme/preset pairs are decided
+ * by tokens (banto.css variables), not per-screen markup, so a screen's
+ * remaining two pairs add little; a11y.spec.ts also scans these two.
  */
 export const DIAGONAL_MATRIX: ThemeCombo[] = [
 	{ theme: 'light', preset: 'standard' },
