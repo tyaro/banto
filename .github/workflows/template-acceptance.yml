@@ -57,6 +57,7 @@ on:
       - 'apps/admin-template/core/src/**'
       - 'apps/admin-template/core/Cargo.toml'
       - 'apps/admin-template/src-tauri/src/lib.rs'
+      - 'apps/admin-template/src-tauri/src/tests.rs'
       - 'apps/admin-template/src-tauri/Cargo.toml'
       - 'apps/admin-template/src-tauri/tauri.conf.json'
       - 'apps/admin-template/src-tauri/tauri.fw-elev.conf.json'
@@ -98,6 +99,7 @@ on:
       - 'apps/admin-template/core/src/**'
       - 'apps/admin-template/core/Cargo.toml'
       - 'apps/admin-template/src-tauri/src/lib.rs'
+      - 'apps/admin-template/src-tauri/src/tests.rs'
       - 'apps/admin-template/src-tauri/Cargo.toml'
       - 'apps/admin-template/src-tauri/tauri.conf.json'
       - 'apps/admin-template/src-tauri/tauri.fw-elev.conf.json'
@@ -196,7 +198,7 @@ jobs:
   #
   # cargo test は presetによって banto-attachments を含む/含まないため、常に成立する
   # クレート集合（admin-template-core は banto-attachments を推移的に含むので full でも
-  # 検査される）を明示指定する。src-tauri は非対象（tauri-check.yml の担当）。
+  # 検査される）を明示指定する。src-tauri は display のみ `--no-run` でコンパイルを確かめる（実行は tauri-check.yml の担当）。
   #
   # `display`（docs/design/display-preset-plan.md、Issue #190）も同じ工程で検査する。
   # display は items デモ・users/audit-log 画面・ダッシュボードを外したうえで
@@ -305,6 +307,26 @@ jobs:
       - name: Cargo test the scaffolded copy (core crates)
         working-directory: ${{ env.DEST }}
         run: cargo test -p banto-core -p banto-storage -p banto-server -p admin-template-core
+
+      # display は items と attachments を両方外すので、src-tauri の lib.rs / tests.rs
+      # から消した名前の消し残しは、アンカー一致だけでは見つからずコンパイルでだけ
+      # 分かる（#820）。Tauri のシステム依存が要るので、コストを display に限る。
+      - name: Install Tauri system dependencies (display)
+        if: matrix.preset == 'display'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Compile the scaffolded copy's src-tauri tests (display)
+        if: matrix.preset == 'display'
+        working-directory: ${{ env.DEST }}
+        run: cargo test -p admin-template --no-run
 
   # リソース生成の受け入れ（#715、docs/recipes/add-resource.md の生成器の節）:
   # `pnpm banto add resource` が吐いたコードが、素のテンプレートに足した状態でビルド緑
