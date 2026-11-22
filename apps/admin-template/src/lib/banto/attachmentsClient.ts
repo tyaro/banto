@@ -13,6 +13,7 @@
  * mount would have nothing but rejected promises to show.
  */
 import type { AttachmentsClient } from '@banto/attachments';
+import type { SessionGuardedUpload } from '#lib/resource/sessionUpload.js';
 import {
 	listAttachments,
 	uploadAttachment,
@@ -21,9 +22,14 @@ import {
 	getDownloadUrl
 } from './attachmentsAdmin';
 
-export const attachmentsClient: AttachmentsClient = {
+export const attachmentsClient: AttachmentsClient & SessionGuardedUpload = {
 	list: listAttachments,
 	upload: uploadAttachment,
+	// #714 F2: what a resource form's `file` field sends through
+	// (`lib/resource/sessionUpload.ts`) - the adapter asks `guard.canSend()`
+	// right before the request leaves.
+	uploadWhile: (resource, resourceId, file, guard) =>
+		uploadAttachment(resource, resourceId, file, guard),
 	remove: deleteAttachment,
 	thumbnailUrl: getThumbnailUrl,
 	downloadUrl: getDownloadUrl

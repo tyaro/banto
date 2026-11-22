@@ -465,6 +465,8 @@ const schema: FormSchema = {
   `{ files: { existing: null, pending: failed } }` として渡せば引き継げる。
   テンプレートの配線の実例は `apps/admin-template` の `lib/resource/ResourceDetail.svelte`（作成のあとに上げ、失敗は
   `pendingUploads.ts` で編集画面へ引き継ぐ）と `lib/banto/resources/items.ts`（欄の定義）。
+  `ResourceDetail` に載せる `file` 欄のクライアントは `uploadWhile` を持つこと（送る直前にセッションを確かめる契約。
+  `lib/resource/sessionUpload.ts`）。持たないクライアントの送信は拒否される。
 
 - **値**: `FileFieldValue` = `{ existing: FileFieldMeta[] | null, pending: PendingFile[] }`。`existing` は口の `list` が返したもの
   （`null` は「まだ分からない」。一覧が届く前・取得の失敗）。
