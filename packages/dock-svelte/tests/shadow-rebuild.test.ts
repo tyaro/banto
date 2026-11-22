@@ -339,6 +339,59 @@ describe('a docked pane moved out of its split by an assignment (#782 PR7)', () 
 	});
 });
 
+// Review of #870: the last neighbour of a place moved out of the split by an assignment - the
+// split is gone with it, and the place is the split's own in the container around it.
+describe('the only neighbour of a floated pane moved out of their split by an assignment (#782 PR7)', () => {
+	const tabsOf = (id: string, ids: string[]): DockNode => ({
+		type: 'tabs',
+		id,
+		activeIndex: 0,
+		children: ids.map(panel)
+	});
+	const tree = (): DockNode =>
+		split(
+			'col',
+			'column',
+			[0.5, 0.3, 0.2],
+			[split('r', 'row', [0.4, 0.6], ['a', 'b'].map(panel)), tabsOf('t', ['d', 'e']), panel('x')]
+		);
+	const assignMove = (dock: DockState, id: string, target: string, region: 'center' | 'right') => {
+		dock.layout = {
+			...dock.layout,
+			docked: dockPanelIntoTree(
+				removePanel(dock.layout.docked, id),
+				panel(id),
+				target,
+				region,
+				() => 'moved'
+			)
+		};
+	};
+
+	it('b into the tab group of d: a goes back to its own place in the column, not into the tabs', () => {
+		const dock = dockOf(tree());
+		dock.undockPanel('a');
+		assignMove(dock, 'b', 'd', 'center');
+		expect(shadowStateOf(dock).unplaced).toEqual([]);
+		expect(back(dock, 'a')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ column: ['a', { tabs: ['d', 'e', 'b'] }, 'x'] });
+		expect(badSizes(dock.layout.docked)).toEqual([]);
+		expect(dock.layout.floating).toEqual([]);
+	});
+
+	it('b beside x: the same', () => {
+		const dock = dockOf(tree());
+		dock.undockPanel('a');
+		assignMove(dock, 'b', 'x', 'right');
+		expect(shadowStateOf(dock).unplaced).toEqual([]);
+		expect(back(dock, 'a')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({
+			column: ['a', { tabs: ['d', 'e'] }, { row: ['x', 'b'] }]
+		});
+		expect(badSizes(dock.layout.docked)).toEqual([]);
+	});
+});
+
 // The cases the property "floated panes: assignments from outside in between"
 // (`slot-properties.test.ts`) found while #782 PR7 was made, pinned.
 describe('pinned: docked panes moved by an assignment while panes are floated (#782 PR7)', () => {

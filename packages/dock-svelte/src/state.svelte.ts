@@ -289,9 +289,19 @@ function withoutMoved(place: DockSlot, moved: Map<string, Set<string>>): DockSlo
 		const kept = ids.filter(keep);
 		return [...kept.filter((id) => !moved.has(id)), ...kept.filter((id) => moved.has(id))];
 	};
-	if (place.kind === 'tab') return { ...place, anchors: names(place.anchors), ...outer };
+	// Nobody the level named is in its container any more: the container went with them, and the
+	// place is the one it had in the container around it (review of #870) - a pane that went out
+	// is not put beside again where it is now.
+	const up = (): DockSlot => (place.outer ? withoutMoved(place.outer, moved) : { kind: 'root' });
+	if (place.kind === 'tab') {
+		const anchors = names(place.anchors);
+		return anchors.length === 0 && place.anchors.length > 0
+			? up()
+			: { ...place, anchors, ...outer };
+	}
 	let anchors = names(place.anchors);
 	let otherAnchors = place.otherAnchors ? names(place.otherAnchors) : [];
+	if (anchors.length === 0 && otherAnchors.length === 0 && !keep(place.neighborId)) return up();
 	let side = place.side;
 	const stays = (ids: string[]): string | undefined => ids.find((id) => !moved.has(id));
 	// Nobody left to be beside on that side: the place is told from the other side.
@@ -735,7 +745,24 @@ export class DockState {
 			if (!docked.has(id)) return true;
 			const was = findParent(before, id);
 			if (was === null) return false;
-			if (childrenOf(next.docked, was.id)) return aroundNow(id) !== was.id;
+			const now = childrenOf(next.docked, was.id);
+			if (now) {
+				if (aroundNow(id) !== was.id) return true;
+				// In a container the assignment made in it: the pane it was made around stands where
+				// it stood among the children that were there before - the one dropped beside it does
+				// not, and left its place.
+				const top = now.find((c) => c.id === id || findNode(c, id) !== null);
+				if (!top || top.id === id) return false;
+				const here = new Set(now.map((c) => c.id));
+				const ahead = (list: DockNode[], end: number): number =>
+					list.slice(0, end).filter((c) => c.id !== id && here.has(c.id)).length;
+				return (
+					ahead(
+						was.children,
+						was.children.findIndex((c) => c.id === id)
+					) !== ahead(now, now.indexOf(top))
+				);
+			}
 			// The container around it is gone as well: nothing to go by, it is taken to have stayed.
 			const outer = findParent(before, was.id);
 			if (outer && !childrenOf(next.docked, outer.id)) return false;
