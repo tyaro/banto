@@ -85,14 +85,26 @@ that order (reviewed in S2 of Issue #793):
   (C2 replaces it with the guard's snapshot,
   [ADR-0034](adr/0034-owner-identity-builtin-admin.en.md) §3).
 - **A handler that waits on the client after its guards decides again after
-  the wait.** A body over 2 MiB (a backup upload, a large attachment) is
-  streamed to the handler after the guards have passed, so the client can take
-  as long as it likes. Once the body is in, call
-  `banto_server::routes::recheck_role_at_least` and write only when it passes
-  (and audit with the actor it returns). Bodies of 2 MiB or less are received
-  by the layer before the guards run, so they need nothing. A Tauri command
-  receives its arguments (file bytes included) before it calls `require_role`,
-  so it needs nothing either.
+  the wait.** A body over 2 MiB is streamed to the handler after the guards
+  have passed, so the client can take as long as it likes. **A route that
+  accepts a body over 2 MiB** (one whose `DefaultBodyLimit` is raised; today
+  `POST /api/backups/restore`, `POST /api/attachments` and
+  `POST /api/items/import`) calls
+  `banto_server::routes::recheck_role_at_least` once the body is in and
+  writes only when it passes (and audits with the actor it returns). Such a
+  route does not branch on the body's size: a small, non-streamed body is
+  decided again the same way. **Raise the limit on that route's
+  `MethodRouter` only** (`post(handler).layer(DefaultBodyLimit::max(..))`;
+  on the whole router it would let the other writes, which do not decide
+  again, accept a large body too). A route whose limit is not raised has its
+  body received by the layer before the guards run, so it needs nothing. The
+  router `pnpm banto add resource` generates does not raise the limit, so it
+  needs nothing (apply the same rule when you raise it, e.g. for a bulk
+  import). A Tauri command receives its arguments (file bytes included)
+  before it calls `require_role`, so it needs nothing either. The second
+  decision includes "the token is still valid when the lookup has finished"
+  (`AuthState::authenticate` settles the token's presence, expiry and stamp
+  under one lock after the account lookup).
 
 When adding a feature: do not add a new mutating command to only one of the
 paths. Always implement and test both paths + the denied case on both paths as

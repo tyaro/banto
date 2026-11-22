@@ -197,9 +197,12 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
   audit, and that work running on under a revoked session does not write) is **S2** (plan §7).
   - **Outcome of S2 (2026-11-22)**: the rules are in conventions §1. Authorization is decided when the guards
     pass, and a write that passed runs to the end (revocation takes effect from the next request). The exception
-    is a handler that waits on the client after its guards: a body over 2 MiB (streamed to the handler, §7) is
-    decided again once it is in (`routes::recheck_role_at_least`; added to the backup upload and the attachment
-    upload). REST's `record_write`, which looks the audit actor up again after the write, is fixed in C2
+    is a handler that waits on the client after its guards: a route that accepts a body over 2 MiB (streamed to
+    the handler, §7) decides again once the body is in (`routes::recheck_role_at_least`; added to the backup
+    upload, the attachment upload and the items bulk import - not by body size: on such a route a small body is
+    decided again the same way). The raised limit (`DefaultBodyLimit`) goes on that route alone, never on the
+    whole router. The second decision settles the token's presence, expiry and stamp under one lock after the
+    account lookup (`AuthState::settle_lookup`). REST's `record_write`, which looks the audit actor up again after the write, is fixed in C2
     (ADR-0034 §3).
 - Tests: `crates/banto-server/tests/detach_writes.rs` (both steps run after a disconnect / a GET is still dropped /
   a panic is 500 / a stop waits for a running write / a write that does not end is reported as remaining), the unit

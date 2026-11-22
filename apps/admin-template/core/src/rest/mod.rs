@@ -74,8 +74,8 @@
 //!   `/api/backups/*` and `/api/ui-settings/*`. Identical in every adopter,
 //!   so they are a dependency rather than copied code. The RBAC/audit
 //!   helpers the app's own routers use ([`RoleGuard`],
-//!   [`require_role_at_least`], [`record_write`], [`actor_identity`]) come
-//!   from there too.
+//!   [`require_role_at_least`], [`record_write`],
+//!   `banto_server::routes::recheck_role_at_least`) come from there too.
 //!
 //! [`api_router`] below is the assembly: it owns the `.merge()` order,
 //! the CSRF layer, and nothing else.
@@ -224,9 +224,9 @@ use axum::{Json, Router};
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment, MAX_ATTACHMENT_BYTES};
 use banto_core::{BantoError, ListParams, ListResult};
 use banto_server::routes::{
-    actor_identity, audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,
-    record_write, require_role_at_least, system_info_router, ui_settings_router, users_router,
-    LogoutAuditState, MetricsProbe, RoleGuard,
+    audit_log_router, audit_logout_middleware, backups_router, extra_auth_router, record_write,
+    require_role_at_least, system_info_router, ui_settings_router, users_router, LogoutAuditState,
+    MetricsProbe, RoleGuard,
 };
 use banto_server::{
     auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,

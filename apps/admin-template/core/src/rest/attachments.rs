@@ -185,7 +185,8 @@ async fn attachments_upload(
 ) -> Result<Json<AttachmentMeta>, ApiError> {
     // Issue #793 S2: a file over 2 MiB is streamed to this handler after the
     // guards have passed, for as long as the client takes. Decide again
-    // before storing it (see `recheck_role_at_least`).
+    // before storing it (see `recheck_role_at_least`) - for every body size,
+    // so the route has one rule.
     let session = banto_server::routes::recheck_role_at_least(
         &state.auth,
         &state.audit,
@@ -245,9 +246,11 @@ async fn attachments_delete(
 
 /// Mutating `attachments` routes (attachments-plan §3.5: `editor` and up, same RBAC
 /// floor as `items_write_router`). `DefaultBodyLimit::max` caps the upload
-/// route at `MAX_ATTACHMENT_BYTES` (+ [`ATTACHMENT_BODY_LIMIT_SLACK_BYTES`]);
-/// the other route here (`DELETE`) has no meaningful request body, so this
-/// is harmless for it (same reasoning as [`backups_router`]'s limit layer).
+/// route - and only that route - at `MAX_ATTACHMENT_BYTES`
+/// (+ [`ATTACHMENT_BODY_LIMIT_SLACK_BYTES`]). A route that accepts a body over
+/// 2 MiB must decide the role again once the body is in (Issue #793 S2,
+/// conventions section 1; `attachments_upload` does), so the raised cap is
+/// not spread over the router.
 fn attachments_write_router(
     attachments: AttachmentsService,
     items: ItemsService,
@@ -263,15 +266,17 @@ fn attachments_write_router(
         events,
     };
     Router::new()
-        .route("/api/attachments", post(attachments_upload))
+        .route(
+            "/api/attachments",
+            post(attachments_upload).layer(axum::extract::DefaultBodyLimit::max(
+                MAX_ATTACHMENT_BYTES + ATTACHMENT_BODY_LIMIT_SLACK_BYTES,
+            )),
+        )
         .route(
             "/api/attachments/{id}",
             axum::routing::delete(attachments_delete),
         )
         .with_state(state)
-        .layer(axum::extract::DefaultBodyLimit::max(
-            MAX_ATTACHMENT_BYTES + ATTACHMENT_BODY_LIMIT_SLACK_BYTES,
-        ))
         .layer(middleware::from_fn_with_state(
             RoleGuard {
                 auth: auth.clone(),

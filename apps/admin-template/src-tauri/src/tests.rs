@@ -396,6 +396,62 @@ async fn viewer_cannot_import_items() {
         "a forbidden import must not touch the table"
     );
 }
+
+/// Issue #793 S2 (review of #843), the Tauri twin of REST's
+/// `an_import_is_refused_when_its_editor_is_demoted_while_the_body_is_open`:
+/// REST decides the role again once the rows are in, because a body over
+/// 2 MiB reaches its handler after the guards. A Tauri command has no such
+/// wait - it holds its rows before `require_role` runs - so the same account
+/// change gives the same result with no extra check: an editor demoted after
+/// logging in is refused (a role change ends the account's sessions, Issue
+/// #204), nothing is imported and no `import` row is written.
+#[tokio::test]
+async fn items_import_decides_on_the_account_as_it_is_when_the_rows_are_in() {
+    let state = app_state().await;
+    let editor = state
+        .users
+        .create_user("editor", "password123", "編集者", Role::Editor)
+        .await
+        .expect("create_user");
+    let editor_id = editor.id;
+    state.set_session_for_test(Some(DesktopSession::Account(editor)));
+    let before = state
+        .items
+        .list(ListParams::default())
+        .await
+        .expect("list")
+        .total_count;
+
+    state
+        .users
+        .update_user(editor_id, "編集者", Role::Viewer)
+        .await
+        .expect("demote");
+
+    let result = items_import_body(
+        &state,
+        vec![ItemImportRow {
+            id: None,
+            name: "Nope".to_string(),
+            price: 1,
+            stock: 1,
+        }],
+    )
+    .await;
+    assert!(
+        matches!(result, Err(BantoError::Unauthorized)),
+        "{result:?}"
+    );
+
+    let list = state.items.list(ListParams::default()).await.expect("list");
+    assert_eq!(list.total_count, before, "a refused import writes nothing");
+    let audit = state.audit.list(ListParams::default()).await.unwrap();
+    assert!(
+        audit.rows.iter().all(|row| row.action != "import"),
+        "{:?}",
+        audit.rows
+    );
+}
 // [scaffold:items] end
 
 // --- M17: SQLite backup/restore -------------------------------------------

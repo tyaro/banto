@@ -1,7 +1,7 @@
 use super::*;
 
-/// Per-row byte budget backing `items_write_router`'s import
-/// `DefaultBodyLimit` (spec M15 / M-review 2026-08 M-14). Same two-tier
+/// Per-row byte budget backing the import route's `DefaultBodyLimit` (set on
+/// `/api/items/import` alone in `items_write_router`) (spec M15 / M-review 2026-08 M-14). Same two-tier
 /// reasoning as `ATTACHMENT_BODY_LIMIT_SLACK_BYTES`: the limit that actually
 /// matters is the service-layer row-count check in `ItemsService::import`
 /// (`crate::items::MAX_IMPORT_ROWS`, which returns a `422` `Validation`
@@ -169,13 +169,30 @@ async fn items_bulk_delete(
 /// `result: "ok"` against a single concrete `entity_id`) - see this module's
 /// doc comment ("Audit log" section) for why the result/detail depend on
 /// whether [`ItemsService::import`] rolled the batch back.
+///
+/// Issue #793 S2: this route accepts a body over 2 MiB (its own
+/// `DefaultBodyLimit` in `items_write_router`), and such a body is streamed
+/// to this handler after the guards have passed, for as long as the client
+/// takes. So the role floor is decided again once the rows are in
+/// (`banto_server::routes::recheck_role_at_least`, for every body size), the
+/// import runs only when it passes, and the audit row is attributed to the
+/// session that check returned - not looked up again after the write.
 async fn items_import(
     State(state): State<ItemsWriteState>,
     headers: HeaderMap,
     Json(rows): Json<Vec<ItemImportRow>>,
 ) -> Result<Json<ImportResult>, ApiError> {
+    let session = banto_server::routes::recheck_role_at_least(
+        &state.auth,
+        &state.audit,
+        &headers,
+        Role::Editor,
+        "items",
+        json!({ "method": "POST", "path": "/api/items/import" }),
+    )
+    .await?;
+    let identity = Some(session.identity);
     let result = state.items.import(rows).await?;
-    let identity = actor_identity(&headers, &state.auth);
     let (result_tag, detail) = if result.errors.is_empty() {
         (
             "ok",
@@ -216,14 +233,20 @@ fn items_read_router(items: ItemsService, auth: AuthState) -> Router {
 /// outside-in from the last one added) - a request must have a valid
 /// session before its role is even considered.
 ///
-/// `DefaultBodyLimit::max` also raises this router's body cap past axum's 2MB
-/// default to `MAX_IMPORT_ROWS * IMPORT_BODY_LIMIT_BYTES_PER_ROW` (spec
-/// M-review 2026-08 M-14), so a spec-valid `/api/items/import` payload AT the
+/// `DefaultBodyLimit::max` raises the body cap of `/api/items/import` ALONE
+/// past axum's 2MB default to `MAX_IMPORT_ROWS * IMPORT_BODY_LIMIT_BYTES_PER_ROW`
+/// (spec M-review 2026-08 M-14), so a spec-valid import payload AT the
 /// row-count limit reaches the service layer (a `422` row-count error)
 /// instead of being rejected by the transport cap (a `413`) first - same
-/// two-tier reasoning as `attachments_write_router`/`backups_router`. The
-/// create/update routes on this router carry only a small single-item JSON
-/// body, so the raised cap is harmless for them.
+/// two-tier reasoning as `attachments_write_router`/`backups_router`.
+///
+/// The raised cap is on that one route on purpose (Issue #793 S2,
+/// conventions section 1): a body over 2 MiB is streamed to its handler
+/// AFTER the guards have passed, so a route that accepts one must decide the
+/// role again once the body is in (`items_import` does). The other routes
+/// here keep the 2 MiB default, so the layer that detaches writes receives
+/// their whole body BEFORE the guards run and they need no second check. Do
+/// not raise the cap of another route without adding that check to it.
 fn items_write_router(
     items: ItemsService,
     audit: AuditLogService,
@@ -242,12 +265,14 @@ fn items_write_router(
             "/api/items/{id}",
             axum::routing::put(items_update).delete(items_delete),
         )
-        .route("/api/items/import", post(items_import))
+        .route(
+            "/api/items/import",
+            post(items_import).layer(axum::extract::DefaultBodyLimit::max(
+                crate::items::MAX_IMPORT_ROWS * IMPORT_BODY_LIMIT_BYTES_PER_ROW,
+            )),
+        )
         .route("/api/items/bulk-delete", post(items_bulk_delete))
         .with_state(state)
-        .layer(axum::extract::DefaultBodyLimit::max(
-            crate::items::MAX_IMPORT_ROWS * IMPORT_BODY_LIMIT_BYTES_PER_ROW,
-        ))
         .layer(middleware::from_fn_with_state(
             RoleGuard {
                 auth: auth.clone(),

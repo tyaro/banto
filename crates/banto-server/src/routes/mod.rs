@@ -287,6 +287,19 @@ pub async fn require_role_at_least(
 /// done by finishing the upload afterwards. Such a handler calls this FIRST
 /// (its body extractor has already run by then) and writes only on `Ok`.
 ///
+/// The rule is per ROUTE, not per body: a route whose `DefaultBodyLimit` is
+/// raised past 2 MiB (an upload, a bulk import) calls this for every
+/// request, small bodies included, so it has one rule. Raise the limit on
+/// that route's `MethodRouter` alone
+/// (`post(handler).layer(DefaultBodyLimit::max(..))`), never on the whole
+/// router - the other writes there do not call this and must keep the
+/// default, under which the layer receives their body before the guards.
+///
+/// "As of now" is exact: [`AuthState::authenticate`] settles the token's
+/// presence, expiry and stamp under one lock AFTER the account lookup
+/// returned, so a session that ended while the lookup was in flight is
+/// `Unauthorized` here.
+///
 /// The verdicts are the guards' own: no valid session -> `Unauthorized`
 /// (401, not audited); a role below `min` -> the `denied` audit row for
 /// `resource` with `detail` (REST: `{ method, path }`) and `Forbidden` (403);

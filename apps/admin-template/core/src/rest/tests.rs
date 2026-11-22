@@ -655,6 +655,179 @@ async fn oversized_import_payload_reaches_the_row_count_check_not_413() {
     assert_eq!(json["field_errors"][0]["field"], "rows");
 }
 
+/// Issue #793 S2 (review of #843): the raised body cap belongs to
+/// `/api/items/import` alone. A route that accepts a body over 2 MiB is
+/// streamed that body after its guards have passed and so has to decide the
+/// role again once it is in; the other write routes of this router do not,
+/// which is only sound while they cannot be sent such a body. Before the fix
+/// the cap was on the whole router and this body reached the handler (422).
+#[tokio::test]
+async fn only_the_import_route_accepts_a_body_over_the_default_limit() {
+    let (router, _admin, editor, _viewer) = router_with_role_tokens().await;
+    let ids: Vec<i64> = (0..400_000).collect(); // ~2.7 MB of JSON
+
+    let response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items/bulk-delete",
+            &editor,
+            json!({ "ids": ids }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/items",
+            &editor,
+            json!({ "name": "x", "price": 1, "stock": 1, "padding": ids }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// Issue #793 S2 (review of #843; the import twin of
+/// `a_restore_upload_is_refused_when_its_admin_is_deleted_while_the_upload_is_open`):
+/// `/api/items/import` accepts a body over 2 MiB, which reaches the handler
+/// as a stream after the guards have passed. An editor demoted to `viewer`
+/// while its import is open does not get the rows written by finishing the
+/// body - the handler decides again once the rows are in. A role change ends
+/// the account's sessions (Issue #204), so the refusal is `401`. Before the
+/// fix the rows were imported (200).
+#[tokio::test]
+async fn an_import_is_refused_when_its_editor_is_demoted_while_the_body_is_open() {
+    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+    let held_import = |name: &str| {
+        let head = format!(r#"[{{"id":null,"name":"{name}","price":1,"stock":1}}"#);
+        let (mut request, waiting, release) = held_upload(
+            "/api/items/import",
+            &editor,
+            head.into_bytes(),
+            b"]".to_vec(),
+        );
+        request.headers_mut().insert(
+            "content-type",
+            axum::http::HeaderValue::from_static("application/json"),
+        );
+        (request, waiting, release)
+    };
+
+    // Control first: a held import by the (still) editor is written, and
+    // audited to the editor.
+    let (request, waiting, release) = held_import("first");
+    let import = tokio::spawn(router.clone().oneshot(request));
+    waiting.await.expect("the handler is reading the body");
+    release.send(()).unwrap();
+    let response = import.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["created"], 1);
+
+    // The editor opens another import: the guards pass, the handler waits.
+    let (request, waiting, release) = held_import("second");
+    let import = tokio::spawn(router.clone().oneshot(request));
+    waiting.await.expect("the handler is reading the body");
+
+    // Meanwhile an admin demotes the account.
+    let users = body_json(
+        router
+            .clone()
+            .oneshot(get_auth("/api/users", &admin))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let editor_id = users
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|user| user["username"] == "editor")
+        .expect("the editor account")["id"]
+        .as_i64()
+        .unwrap();
+    let demoted = router
+        .clone()
+        .oneshot(put_json(
+            &format!("/api/users/{editor_id}"),
+            &admin,
+            json!({ "displayName": "編集者", "role": "viewer" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(demoted.status(), StatusCode::OK);
+
+    // The body finishes: refused, and only the first row is there.
+    release.send(()).unwrap();
+    let response = import.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let listed = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let names: Vec<_> = listed["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names, ["first"], "{listed}");
+    let rows = audit_rows_via_rest(&router, &admin).await;
+    let imports: Vec<_> = rows.iter().filter(|r| r["action"] == "import").collect();
+    assert_eq!(
+        imports.len(),
+        1,
+        "only the written import is audited: {rows:?}"
+    );
+    assert_eq!(imports[0]["actorUsername"], "editor");
+    assert_eq!(imports[0]["actorRole"], "editor");
+}
+
+/// Issue #793 S2 (review of #843): the second decision of
+/// `/api/items/import` also sees a session that simply ended. An editor that
+/// logs out (from another tab) while its import is open gets `401` when the
+/// body finishes: nothing is written, and nothing is audited as an import.
+#[tokio::test]
+async fn an_import_is_refused_when_its_session_is_logged_out_while_the_body_is_open() {
+    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+    let (mut request, waiting, release) = held_upload(
+        "/api/items/import",
+        &editor,
+        br#"[{"id":null,"name":"held","price":1,"stock":1}"#.to_vec(),
+        b"]".to_vec(),
+    );
+    request.headers_mut().insert(
+        "content-type",
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    let import = tokio::spawn(router.clone().oneshot(request));
+    waiting.await.expect("the handler is reading the body");
+
+    let logout = router
+        .clone()
+        .oneshot(post_json_auth("/api/auth/logout", &editor, json!({})))
+        .await
+        .unwrap();
+    assert!(logout.status().is_success(), "{}", logout.status());
+
+    release.send(()).unwrap();
+    let response = import.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let rows = audit_rows_via_rest(&router, &admin).await;
+    assert!(
+        rows.iter().all(|r| r["action"] != "import"),
+        "nothing was imported, so nothing is audited as an import: {rows:?}"
+    );
+}
+
 /// A batch with a per-row validation error is rolled back entirely - the
 /// valid row in the same batch must NOT land in the DB either - and is
 /// recorded as a single `result: "failed"` audit entry summarizing the

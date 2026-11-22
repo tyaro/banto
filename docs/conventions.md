@@ -71,11 +71,19 @@ handler を足すときに包む必要は無いが、**handler の中の順序�
   REST の `record_write` は書き込みの後に bearer から引き直すので、この約束をまだ満たしていない
   （C2 でガードのスナップショットを渡す形に直す。[ADR-0034](adr/0034-owner-identity-builtin-admin.md) §3）。
 - **ガードの後でクライアントを待つ handler は、待ちの後にもう一度確かめる**。2 MiB を超える本文
-  （バックアップのアップロード、大きい添付）は、ガードを通った後に handler が流し読みするので、
-  クライアントが好きなだけ時間を空けられる。本文を受け取り終えた所で
-  `banto_server::routes::recheck_role_at_least` を呼び、通ったときだけ書く（その戻り値の主体で
-  監査を書く）。2 MiB 以下の本文は層がガードの前に受け取り終えるので、要らない。Tauri の
+  は、ガードを通った後に handler が流し読みするので、クライアントが好きなだけ時間を空けられる。
+  **2 MiB を超える本文を受け付けるルート**（`DefaultBodyLimit` を上げたルート。今は
+  `POST /api/backups/restore`・`POST /api/attachments`・`POST /api/items/import` の 3 つ）は、本文を
+  受け取り終えた所で `banto_server::routes::recheck_role_at_least` を呼び、通ったときだけ書く
+  （その戻り値の主体で監査を書く）。そのルートでは本文の大きさで分けず、ストリームでない小さい
+  本文も統一して照合し直す。**上限を上げるのは、そのルートの `MethodRouter` だけ**にする
+  （`post(handler).layer(DefaultBodyLimit::max(..))`。ルーター全体に掛けると、照合し直さない
+  ほかの書き込みまで大きい本文を受け付けてしまう）。上限を上げていないルートは、層が本文を
+  ガードの前に受け取り終えるので、要らない。`pnpm banto add resource` が生成するルーターは上限を
+  上げないので、要らない（一括インポートなどで上げるときに、同じ規則を当てる）。Tauri の
   コマンドは引数（ファイルの中身を含む）を受け取ってから `require_role` を呼ぶので、要らない。
+  照合し直しの結果は「照合が終わった時点でトークンがまだ有効」まで含む（`AuthState::authenticate`
+  は、アカウントの照合の後に、トークンの存在・期限・stamp を 1 つのロックの下で確定する）。
 
 機能追加時: 新しい mutating コマンドを片方の経路にだけ足さない。両経路 +
 両経路の denied を必ずペアで実装・テストする（template-scope §6 チェックリスト④⑤）。
