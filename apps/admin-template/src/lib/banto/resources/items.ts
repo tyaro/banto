@@ -8,6 +8,11 @@
 import { Package } from '@lucide/svelte';
 import type { FormSchema } from '@banto/forms';
 import * as m from '#lib/paraglide/messages.js';
+// [scaffold:attachments] begin
+import { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';
+import { attachmentsClient } from '#lib/banto/attachmentsClient.js';
+import { confirmAction } from '#lib/confirm.svelte.js';
+// [scaffold:attachments] end
 import { defineResource, type ResourceImportRow, type ResourceRow } from '#lib/resource/types.js';
 import {
 	exportCsvToFolder,
@@ -79,7 +84,32 @@ export const itemsSchema: FormSchema = {
 			},
 			type: 'date',
 			readonly: true
+		},
+		// [scaffold:attachments] begin
+		// #714 F2: files chosen on the create form go to the new record's attachments
+		// (after the record is created). Only meaningful with attachments - the
+		// scaffold's attachments remover cuts this field and its imports. Hidden
+		// in demo mode, where attachments are refused.
+		{
+			name: 'files',
+			get label() {
+				return m['items.fieldFiles']();
+			},
+			type: 'file',
+			visibleWhen: () => isAttachmentsAvailable(),
+			file: {
+				client: attachmentsClient,
+				resource: 'items',
+				confirmRemove: (message) =>
+					confirmAction({
+						title: m['common.deleteConfirmTitle'](),
+						message,
+						confirmLabel: m['common.delete'](),
+						danger: true
+					})
+			}
 		}
+		// [scaffold:attachments] end
 	]
 };
 

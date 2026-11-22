@@ -177,21 +177,48 @@ export async function listAttachments(
 	});
 }
 
+/** What a caller may hand `uploadAttachment` besides the file (#714 F2). */
+export interface UploadAttachmentOptions {
+	/**
+	 * Whether the upload may still be sent - typically "the session that chose
+	 * the file is still the live one" (`isCurrentSessionScope(scope)`). Asked
+	 * AFTER the file's bytes were read and in the same synchronous stretch as
+	 * the request (the credentials are read and `fetch` / `invoke` is called
+	 * with no `await` in between), so no logout / login can slip in between
+	 * the check and the send. `false`: nothing is sent, the call rejects.
+	 */
+	canSend?: () => boolean;
+}
+
+export const UPLOAD_REFUSED_MESSAGE = 'セッションが切り替わったため、送信しませんでした';
+
+function refuseIfNotSendable(options: UploadAttachmentOptions | undefined): void {
+	if (options?.canSend && !options.canSend()) {
+		throw new ProviderError({ kind: 'other', message: UPLOAD_REFUSED_MESSAGE });
+	}
+}
+
 /**
  * `editor`+: upload a new attachment (attachments-plan §3.5). Metadata
  * (`resource`/`resourceId`/`fileName`) always rides alongside the raw
  * bytes, never inside them - see this module's doc comment for why each
  * mode carries it differently (query string vs. percent-encoded headers).
+ *
+ * `options.canSend` (#714 F2) is checked right before the request leaves -
+ * see `UploadAttachmentOptions`. Keep that check and the `invoke` / `fetch`
+ * call free of any `await` between them.
  */
 export async function uploadAttachment(
 	resource: string,
 	resourceId: string,
-	file: File
+	file: File,
+	options?: UploadAttachmentOptions
 ): Promise<AttachmentMeta> {
 	if (!isAttachmentsAvailable()) throw demoModeError();
 	const bytes = await file.arrayBuffer();
 
 	if (getBantoMode() === 'tauri') {
+		refuseIfNotSendable(options);
 		try {
 			// Raw invoke body (attachments-plan §3.5's Tauri "第一候補") - see
 			// src-tauri/src/lib.rs's `attachments_upload` doc comment for why
@@ -211,6 +238,7 @@ export async function uploadAttachment(
 
 	const query = new URLSearchParams({ resource, resourceId, fileName: file.name });
 	let response: Response;
+	refuseIfNotSendable(options);
 	try {
 		response = await fetch(`/api/attachments?${query.toString()}`, {
 			method: 'POST',

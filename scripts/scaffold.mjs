@@ -898,11 +898,22 @@ function removeAttachments() {
 		`\t<!-- [scaffold:attachments] begin -->`,
 		`<!-- [scaffold:attachments] end -->\n`
 	);
+	// items の resource 定義（#714 F2）: `file` 欄と、その欄だけが使う 3 つの import。
+	// 欄の前のカンマごと消す（最後の要素になるので、残すと prettier の整形とずれる）。
+	const ITEMS_RESOURCE = `${APP}/src/lib/banto/resources/items.ts`;
+	cutMarked(ITEMS_RESOURCE, 'items 資産定義の添付 import 除去', 'attachments');
+	cutRegion(
+		ITEMS_RESOURCE,
+		'items 資産定義の file 欄（添付）除去',
+		',\n\t\t// [scaffold:attachments] begin',
+		'// [scaffold:attachments] end'
+	);
 	removeFile(`${APP}/src/routes/(app)/items/ItemAttachments.svelte`, 'ItemAttachments.svelte 削除');
 
 	// (2) フロント: アプリ側クライアント/アダプタ
 	removeFile(`${APP}/src/lib/banto/attachmentsClient.ts`, 'attachmentsClient.ts 削除');
 	removeFile(`${APP}/src/lib/banto/attachmentsAdmin.ts`, 'attachmentsAdmin.ts 削除');
+	removeFile(`${APP}/src/lib/banto/attachmentsAdmin.test.ts`, 'attachmentsAdmin.test.ts 削除');
 
 	// (3) バックエンド: REST ルータ + items からの delete_for_record / 依存
 	//   rest/mod.rs

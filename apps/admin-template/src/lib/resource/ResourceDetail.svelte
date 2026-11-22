@@ -34,12 +34,19 @@
 <script lang="ts">
 	import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
+	import {
+		BantoForm,
+		UnsavedChangesNotice,
+		createFormStore,
+		emptyFileValue,
+		uploadPendingFiles
+	} from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import {
 		conflictOf,
 		createFormResource,
 		currentSessionScope,
+		isCurrentSessionScope,
 		getDataProvider,
 		isProviderError,
 		notify,
@@ -50,10 +57,14 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { saveErrorMessage } from '#lib/banto/connectionRecovery.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
-	import { formValidationMessages, referenceFieldMessages } from '#lib/banto/i18n.js';
+	import {
+		fileFieldMessages,
+		formValidationMessages,
+		referenceFieldMessages
+	} from '#lib/banto/i18n.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
-	import { resolveAppPath } from '#lib/appPath.js';
+	import { resolveAppPath, type AppPath } from '#lib/appPath.js';
 	import ConflictDialog from './ConflictDialog.svelte';
 	import { recordRecentRecord } from './recentRecords';
 	import { recordTitle } from './recordTitle';
@@ -68,7 +79,10 @@
 		type ConflictField
 	} from './conflict';
 	import { editableFieldNames } from './listState';
+	import { resetKeepingFile, valuesOnLoad } from './carryFileField';
+	import { hasPendingUploads, stashPendingUploads, takePendingUploads } from './pendingUploads';
 	import { resourcePermissions } from './permissions';
+	import { sendingWhile } from './sessionUpload';
 	import type { AppResourceDefinition, ResourceRow } from './types';
 
 	interface Props {
@@ -83,8 +97,10 @@
 		 * Below the form panel (the attachments panel goes here). Rendered only
 		 * for an existing record that has loaded, so it never runs for a
 		 * not-found / errored / new record. `canWrite` is the `edit` permission.
+		 * `filesInForm`: the form itself lists the record's files (the retry
+		 * of a failed upload), so a panel of the same files should stay out.
 		 */
-		after?: Snippet<[{ id: number; canWrite: boolean }]>;
+		after?: Snippet<[{ id: number; canWrite: boolean; filesInForm: boolean }]>;
 		/** Extra buttons in the form's action row, before "back to list". */
 		actions?: Snippet;
 		/**
@@ -110,7 +126,9 @@
 	const def = untrack(() => resource);
 	const rawId = untrack(() => id);
 	const isNew = rawId === null;
-	const schema = def.schema as FormSchema;
+	const fullSchema = def.schema as FormSchema;
+	// #714 F2: the `file` field (one at most) uploads to the record's attachments.
+	const fileField = fullSchema.fields.find((field) => field.type === 'file');
 	const listHref = resolveAppPath(def.path);
 
 	// ADR-0030 §5. Spec M10 RBAC: a `viewer` can still open an existing
@@ -129,6 +147,29 @@
 	// it is treated as not-found immediately - load is never called for it.
 	const parsedId = typeof rawId === 'number' ? rawId : Number(rawId ?? '');
 	const idValid = !isNew && rawId !== '' && Number.isInteger(parsedId);
+
+	// Files that did not upload when this record was created (#714 F2): the edit
+	// form shows them with their reasons so they can be retried. Only peeked at
+	// here (to choose the schema); they are taken once the record has loaded.
+	const hasLeftovers = !!fileField && idValid && hasPendingUploads(def.name, parsedId);
+	let filesInForm = $state(false);
+	// The create form and a form with leftovers carry the `file` field. An
+	// existing record's form leaves it out: the attachments panel (`after`)
+	// already lists, uploads and deletes that record's files, and the field
+	// would show the same list twice.
+	//
+	// Every upload this form starts - the automatic one after a create and the
+	// field's own upload / retry on the edit form - goes out only while the
+	// session this form was built for (`scope`, below) is the live one: the
+	// file client is handed that check and asks it right before it sends.
+	const schema: FormSchema =
+		fileField && !isNew && !hasLeftovers
+			? { ...fullSchema, fields: fullSchema.fields.filter((field) => field.type !== 'file') }
+			: sendingWhile(
+					fullSchema,
+					() => isCurrentSessionScope(scope),
+					() => m['connection.saveFailed']()
+				);
 
 	// Issue #215/#255: `scope` is the session this form was built for. The
 	// last-opened marker is saved for its owner only, and the save handler
@@ -215,7 +256,29 @@
 		await formResource.load();
 		if (!isNew && formResource.initialValues) {
 			base = formResource.initialValues;
-			store = createFormStore(schema, formResource.initialValues, formValidationMessages());
+			// Taken only now: the record is the one this session may edit.
+			// ...and only by the session that started this load, who may save.
+			// The handover is used ONCE, for the first initial values. Reading the
+			// same record again (after a conflict without `current`) carries the
+			// field as it is now instead: a file retried or cancelled since must
+			// not come back.
+			const reloading = storeReady;
+			let leftovers: ReturnType<typeof takePendingUploads> = null;
+			if (!reloading && isCurrentSessionScope(scope) && canSave) {
+				leftovers = takePendingUploads(def.name, parsedId);
+				filesInForm = leftovers !== null;
+			}
+			const hasFile = fileField && schema.fields.some((f) => f.type === 'file');
+			store = createFormStore(
+				schema,
+				valuesOnLoad({
+					record: formResource.initialValues,
+					fileFieldName: hasFile ? fileField.name : null,
+					current: reloading ? store.values : null,
+					leftovers
+				}),
+				formValidationMessages()
+			);
 			storeReady = true;
 			// #711: the palette's "recent records" - once the record exists, so
 			// a deleted one never lands there. Written for `scope` only (see
@@ -322,7 +385,7 @@
 		const { current, draft } = conflict;
 		const kept = keptEditsOverTheirs(conflictFieldNames, base, current, draft);
 		base = current;
-		store.reset(current);
+		resetRecord(current);
 		if (Object.keys(kept).length > 0) store.values = { ...store.values, ...kept };
 		conflict = null;
 		notify('info', m['resource.conflictTookTheirs']());
@@ -351,7 +414,33 @@
 		// Defense in depth: the form is read-only for a role that may not save,
 		// and the backend rejects it anyway - this just avoids a round trip.
 		if (!formResource || !canSave || resolving) return;
-		const result = await formResource.submit(values);
+		// #714 F2: a create and the upload of its files are ONE save. While the
+		// files go up the record already exists and the form may look idle;
+		// a second save must neither create it again nor start over.
+		if (isNew && creating) return;
+		if (isNew && fileField) creating = true;
+		try {
+			await submitValues(formResource, values, retried);
+		} finally {
+			creating = false;
+		}
+	}
+
+	/** `store.reset(record)` that keeps the `file` field's waiting files (not a column, so not in `record`). */
+	function resetRecord(record: Record<string, unknown>): void {
+		const hasFile = fileField && schema.fields.some((f) => f.type === 'file');
+		resetKeepingFile(store, hasFile ? fileField.name : null, record);
+	}
+
+	/** A create (with the upload of its files) is under way: further saves are turned away. */
+	let creating = $state(false);
+
+	async function submitValues(
+		resourceForm: NonNullable<typeof formResource>,
+		values: Record<string, unknown>,
+		retried: boolean
+	) {
+		const result = await resourceForm.submit(values);
 		if (!result.ok && result.conflict) {
 			await handleConflict(values, result.conflict.current, retried);
 			return;
@@ -388,13 +477,35 @@
 				const current = store.values;
 				// The submitted values under the response: a DataProvider may
 				// answer an update with only some fields (or without `id`).
-				store.reset({ ...values, ...((result.row ?? {}) as Record<string, unknown>) });
+				resetRecord({ ...values, ...((result.row ?? {}) as Record<string, unknown>) });
 				// Only the fields edited during the save go back on top - the
 				// others keep what the server stored.
 				const typed = inputTypedDuringSave(current, values);
 				if (Object.keys(typed).length > 0) store.values = { ...store.values, ...typed };
 			} else {
 				store.markClean();
+			}
+			// #714 F2: a created record's chosen files go up now (the record exists).
+			// The ones that fail do not roll the record back: the edit form of
+			// the new record opens with them, reasons shown, ready to retry.
+			if (isNew && fileField) {
+				const createdId = Number((result.row as { id?: unknown } | undefined)?.id);
+				// Only the session that created the record sends its files, and
+				// stops sending when that session ends (`schema`'s file client asks
+				// right before each request, see `sendingWhile`).
+				if (Number.isInteger(createdId) && isCurrentSessionScope(scope)) {
+					const outcome = await uploadPendingFiles(schema, store, createdId, fileFieldMessages());
+					if (outcome.failed.length > 0 && isCurrentSessionScope(scope)) {
+						stashPendingUploads(scope, def.name, createdId, outcome.failed);
+						// Handed over: nothing is left unsaved on this form.
+						store.values = { ...store.values, [fileField.name]: emptyFileValue() };
+						notify('error', m['resource.filesNotUploaded']({ count: outcome.failed.length }));
+						if (!destroyed && guard.canAutoNavigate) {
+							goto(resolveAppPath(`${def.path}/${createdId}` as AppPath));
+						}
+						return;
+					}
+				}
 			}
 			if (!onSaved && guard.canAutoNavigate) goto(listHref);
 		} else {
@@ -423,14 +534,18 @@
 				notify('error', m['resource.conflictNotDeleted']());
 				if (refused.current) {
 					base = refused.current;
-					store.reset(refused.current);
+					resetRecord(refused.current);
 				} else {
 					await loadForm();
 				}
 			}
 			return;
 		}
-		// The record is gone: unsaved edits to it are moot, don't prompt.
+		// The record is gone: unsaved edits to it are moot, don't prompt - and
+		// files still waiting to upload to it are dropped (they keep it dirty).
+		if (fileField && schema.fields.some((field) => field.type === 'file')) {
+			store.values = { ...store.values, [fileField.name]: emptyFileValue() };
+		}
 		store.markClean();
 		if (onDeleted) {
 			if (!destroyed) onDeleted();
@@ -483,9 +598,11 @@
 			{schema}
 			{store}
 			onSubmit={handleSubmit}
-			submitting={(formResource?.saving ?? false) || resolving || !canSave}
+			submitting={(formResource?.saving ?? false) || creating || resolving || !canSave}
 			submitLabel={m['common.save']()}
 			referenceMessages={referenceFieldMessages()}
+			fileParentId={isNew ? null : parsedId}
+			fileMessages={fileFieldMessages()}
 		>
 			<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
 			{#if !isNew && perms.delete}
@@ -514,7 +631,7 @@
 {/if}
 
 {#if after && idValid && storeReady}
-	{@render after({ id: parsedId, canWrite: perms.edit })}
+	{@render after({ id: parsedId, canWrite: perms.edit, filesInForm })}
 {/if}
 
 <style>

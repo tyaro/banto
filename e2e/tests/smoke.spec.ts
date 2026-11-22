@@ -2334,6 +2334,109 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByText('商品が見つかりません')).toBeVisible();
 	});
 
+	test('8b. items: files chosen on the create form upload after the save; a failed upload is retried on the edit form (#714)', async () => {
+		const name = `E2Eファイル欄商品-${Date.now()}`;
+		const fillItem = async () => {
+			await page.goto('/items/new');
+			await page.getByLabel('商品名').fill(name);
+			await page.getByLabel('価格').fill(String(ITEM_PRICE));
+			await page.getByLabel('在庫').fill(String(ITEM_STOCK));
+		};
+		const group = page.getByRole('group', { name: '添付ファイル' });
+		const png = { name: PNG_FILE_NAME, mimeType: 'image/png', buffer: minimalPngBuffer() };
+
+		// 1. A chosen file waits on the create form, then uploads once the record exists.
+		await fillItem();
+		await group.locator('input[type=file]').setInputFiles(png);
+		await expect(
+			group.getByText('選んだファイルは、保存のあとでアップロードされます')
+		).toBeVisible();
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+		await applyColumnFilter(page, '商品名', name);
+		const row = rowWithText(page, name);
+		const id = await rowItemId(row);
+		await page.goto(`/items/${id}`);
+		await expect(page.getByRole('img', { name: PNG_FILE_NAME, exact: true })).toBeVisible();
+		await confirmInDialog(page, page.locator('.form-panel').getByRole('button', { name: '削除' }), {
+			title: '削除の確認',
+			confirm: '削除'
+		});
+		await expect(page).toHaveURL(/\/items$/);
+
+		// 2. The upload fails once: the record stays, its edit form opens with the file
+		// still pending and the reason shown; 再試行 uploads it.
+		let refuse = true;
+		await page.route('**/api/attachments?*', async (route) => {
+			if (refuse && route.request().method() === 'POST') await route.abort('failed');
+			else await route.continue();
+		});
+		await fillItem();
+		await group.locator('input[type=file]').setInputFiles(png);
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items\/\d+$/);
+		const failed = page.getByRole('group', { name: '添付ファイル' });
+		await expect(failed.getByRole('alert')).toHaveText('サーバーに接続できません');
+		refuse = false;
+		await failed.getByRole('button', { name: `${PNG_FILE_NAME}: 再試行` }).click();
+		await expect(failed.getByRole('alert')).toHaveCount(0);
+		await expect(failed.getByText(PNG_FILE_NAME)).toBeVisible();
+		await page.unroute('**/api/attachments?*');
+
+		// Cleanup: the item and its attachment.
+		await confirmInDialog(
+			page,
+			page.locator('.form-panel').getByRole('button', { name: '削除', exact: true }),
+			{
+				title: '削除の確認',
+				confirm: '削除'
+			}
+		);
+		await expect(page).toHaveURL(/\/items$/);
+	});
+
+	test('8c. items: a second save while the files of a create are still uploading does not create the record twice (#714)', async () => {
+		const name = `E2E二重保存商品-${Date.now()}`;
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let uploadHeld: () => void = () => {};
+		const uploadStarted = new Promise<void>((resolve) => (uploadHeld = resolve));
+		await page.route('**/api/attachments?*', async (route) => {
+			if (route.request().method() === 'POST') {
+				uploadHeld();
+				await held;
+			}
+			await route.continue();
+		});
+		await page.goto('/items/new');
+		await page.getByLabel('商品名').fill(name);
+		await page.getByLabel('価格').fill(String(ITEM_PRICE));
+		await page.getByLabel('在庫').fill(String(ITEM_STOCK));
+		await page
+			.getByRole('group', { name: '添付ファイル' })
+			.locator('input[type=file]')
+			.setInputFiles({ name: PNG_FILE_NAME, mimeType: 'image/png', buffer: minimalPngBuffer() });
+		await page.getByRole('button', { name: '保存' }).click();
+		// The record exists, the upload is held: Enter in a field must not save again.
+		await uploadStarted;
+		await page.getByLabel('商品名').press('Enter');
+		await page.getByLabel('商品名').press('Enter');
+		release();
+		await expect(page).toHaveURL(/\/items$/);
+		await page.unroute('**/api/attachments?*');
+
+		await applyColumnFilter(page, '商品名', name);
+		await expect(rowWithText(page, name)).toHaveCount(1);
+		const id = await rowItemId(rowWithText(page, name));
+		await page.goto(`/items/${id}`);
+		await confirmInDialog(
+			page,
+			page.locator('.form-panel').getByRole('button', { name: '削除', exact: true }),
+			{ title: '削除の確認', confirm: '削除' }
+		);
+		await expect(page).toHaveURL(/\/items$/);
+	});
+
 	test('9. command palette: search and navigate to the audit log', async () => {
 		await page.goto('/items');
 		// The Ctrl+K listener lives on (app)/+layout.svelte's `<svelte:window>`,
