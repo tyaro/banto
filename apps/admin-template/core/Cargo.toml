@@ -70,7 +70,7 @@ futures-util = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 
 # Echo-off password entry for `banto-serve create-admin` (Issue #866, ADR-0002):
-# `password_input.rs` calls the console (Windows) / termios (Unix) directly. Both
+# `bin/banto_serve_parts/password_input.rs` (private to the binary) calls the console (Windows) / termios (Unix) directly. Both
 # crates are already in Cargo.lock (windows-sys 0.61.2, libc 0.2.191), so no crate
 # is added to the build; keep the versions equal to the transitive ones.
 [target.'cfg(windows)'.dependencies]

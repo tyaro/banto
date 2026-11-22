@@ -68,6 +68,11 @@
 //! `SystemMetricsSampler` into the System Info card's `metrics` field. Off
 //! (`--no-default-features`), or on an unsupported host, `metrics` is `null`.
 
+// Terminal control for `create-admin` lives with the binary on purpose: it owns
+// process-wide state (console mode / signal handlers) and must be called once.
+#[path = "banto_serve_parts/password_input.rs"]
+mod password_input;
+
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::AuditLogService;
 use admin_template_core::backup::BackupService;
@@ -134,7 +139,7 @@ fn parse_create_admin_args(args: &[String]) -> Result<CreateAdminArgs, String> {
 /// off, and ask twice (a typo here would lock the only admin out). From a pipe
 /// or a file: the first line of stdin, as before (CI and scripts).
 fn read_new_password() -> Result<String, String> {
-    use admin_template_core::password_input as pw;
+    use crate::password_input as pw;
     if !pw::stdin_is_terminal() {
         return pw::read_password_line(&mut std::io::stdin().lock())
             .map_err(|err| format!("パスワードを読めませんでした: {err}"));

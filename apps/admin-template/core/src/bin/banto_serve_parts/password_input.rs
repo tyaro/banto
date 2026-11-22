@@ -11,6 +11,7 @@
 //! of adding `rpassword` (see the PR for the comparison).
 
 use std::io::{self, BufRead, IsTerminal};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 /// Reads one line and strips the trailing `\r\n` / `\n` (only those; spaces
 /// are part of the password). EOF yields an empty string.
@@ -55,12 +56,25 @@ pub fn read_password_twice_hidden(
     Ok((first, second?))
 }
 
+/// Set while an [`EchoOff`] exists. The saved mode and the interrupt handlers
+/// are process-wide, so a second concurrent guard is refused instead of racing.
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+
 /// Restores the previous console / terminal mode on drop (and from the
 /// interrupt handler, which `Drop` cannot cover: the default Ctrl+C action
 /// ends the process without unwinding).
 struct EchoOff {
     #[cfg(unix)]
     old_handlers: [libc::sighandler_t; UNIX_SIGNALS.len()],
+}
+
+fn claim() -> io::Result<()> {
+    if ACTIVE.swap(true, AtomicOrdering::SeqCst) {
+        return Err(io::Error::other(
+            "端末の入力の非表示は同時に 2 つ使えません",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -108,7 +122,9 @@ mod win {
             SAVED_MODE.store(saved, Ordering::SeqCst);
             // Registered before the mode changes so an interrupt in between
             // is covered.
-            SetConsoleCtrlHandler(Some(on_ctrl), 1);
+            if SetConsoleCtrlHandler(Some(on_ctrl), 1) == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
             if SetConsoleMode(handle, saved & !ENABLE_ECHO_INPUT) == 0 {
                 let err = std::io::Error::last_os_error();
                 SetConsoleCtrlHandler(Some(on_ctrl), 0);
@@ -130,7 +146,11 @@ mod win {
 #[cfg(windows)]
 impl EchoOff {
     fn new() -> io::Result<Self> {
-        win::echo_off()?;
+        claim()?;
+        if let Err(err) = win::echo_off() {
+            ACTIVE.store(false, AtomicOrdering::SeqCst);
+            return Err(err);
+        }
         Ok(Self {})
     }
 }
@@ -139,6 +159,7 @@ impl EchoOff {
 impl Drop for EchoOff {
     fn drop(&mut self) {
         win::echo_restore();
+        ACTIVE.store(false, AtomicOrdering::SeqCst);
     }
 }
 
@@ -165,9 +186,19 @@ extern "C" fn on_signal(sig: libc::c_int) {
 #[cfg(unix)]
 impl EchoOff {
     fn new() -> io::Result<Self> {
+        claim()?;
+        let result = Self::enter();
+        if result.is_err() {
+            ACTIVE.store(false, AtomicOrdering::SeqCst);
+        }
+        result
+    }
+
+    fn enter() -> io::Result<Self> {
         // SAFETY: `termios` is plain data; `tcgetattr`/`tcsetattr` get a valid
-        // pointer for the duration of the call, on fd 0 (stdin). The handlers
-        // are installed after the statics they read are set.
+        // pointer for the duration of the call, on fd 0 (stdin). `claim()` made
+        // this the only guard, so the statics are written without a race, and
+        // the handlers are installed after the statics they read are set.
         unsafe {
             let mut saved: libc::termios = std::mem::zeroed();
             if libc::tcgetattr(libc::STDIN_FILENO, &mut saved) != 0 {
@@ -176,14 +207,23 @@ impl EchoOff {
             (*std::ptr::addr_of_mut!(SAVED_TERMIOS)).write(saved);
             let mut old_handlers = [libc::SIG_DFL; UNIX_SIGNALS.len()];
             let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
-            for (slot, sig) in old_handlers.iter_mut().zip(UNIX_SIGNALS) {
-                *slot = libc::signal(sig, handler);
+            for (i, sig) in UNIX_SIGNALS.into_iter().enumerate() {
+                let old = libc::signal(sig, handler);
+                if old == libc::SIG_ERR {
+                    let err = io::Error::last_os_error();
+                    // Put back only what was installed so far.
+                    for (done, old) in UNIX_SIGNALS.into_iter().zip(old_handlers).take(i) {
+                        libc::signal(done, old);
+                    }
+                    return Err(err);
+                }
+                old_handlers[i] = old;
             }
             let guard = Self { old_handlers };
             let mut quiet = saved;
             quiet.c_lflag &= !libc::ECHO;
             if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &quiet) != 0 {
-                // `guard` drops here and restores the handlers.
+                // `guard` drops here and restores the handlers (and the flag).
                 return Err(io::Error::last_os_error());
             }
             Ok(guard)
@@ -202,6 +242,7 @@ impl Drop for EchoOff {
                 libc::signal(sig, *old);
             }
         }
+        ACTIVE.store(false, AtomicOrdering::SeqCst);
     }
 }
 
@@ -226,6 +267,15 @@ mod tests {
     fn no_trailing_newline_and_eof_are_handled() {
         assert_eq!(read_password_line(&mut Cursor::new("abc")).unwrap(), "abc");
         assert_eq!(read_password_line(&mut Cursor::new("")).unwrap(), "");
+    }
+
+    #[test]
+    fn a_second_concurrent_guard_is_refused() {
+        claim().unwrap();
+        assert!(claim().is_err());
+        ACTIVE.store(false, AtomicOrdering::SeqCst);
+        claim().unwrap();
+        ACTIVE.store(false, AtomicOrdering::SeqCst);
     }
 
     #[test]
