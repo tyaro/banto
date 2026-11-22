@@ -326,8 +326,27 @@ export function createHttpDataProvider(options: HttpDataProviderOptions): DataPr
 export interface HttpAuthProviderOptions {
 	baseUrl?: string;
 	fetchFn?: typeof fetch;
-	/** sessionStorage key the bearer token is kept under. Default `'banto.auth.token'`. */
+	/**
+	 * Web storage key the bearer token is kept under (`sessionStorage`, or
+	 * `localStorage` with Remember me). Default `'banto.auth.token'`. Not used
+	 * with `storage: 'memory'`.
+	 */
 	storageKey?: string;
+	/**
+	 * Where the bearer token is kept (Issue #838). A closed choice - the
+	 * compare-and-set of #260 relies on how the provider itself reads and
+	 * hears about its store, so the store is not injectable.
+	 * - `'web'` (default): `sessionStorage`, or `localStorage` with Remember
+	 *   me, under `storageKey`; other tabs' changes arrive as `storage` events.
+	 * - `'memory'`: a variable inside this provider only. `localStorage` and
+	 *   `sessionStorage` are never read or written and no `storage` listener
+	 *   is added, so the token is gone on reload and is not shared with other
+	 *   tabs or with another app on the same origin. `login()` always sends
+	 *   `remember: false` (a `remember: true` is not an error - it is just not
+	 *   honoured), so the server does not keep a long-lived session for a
+	 *   token this document forgets on reload.
+	 */
+	storage?: 'web' | 'memory';
 	/**
 	 * Deadline of `resolve()`'s request (Issue #637). Default `0` (off): the
 	 * `SessionController` already gives every probe its own deadline and
@@ -373,6 +392,11 @@ function isIdentity(value: unknown): value is Identity {
  * interface so `createHttpDataProvider`/`createSseEventProvider` can share
  * the same token without a second source of truth.
  *
+ * Issue #838: with `storage: 'memory'` the token lives in a variable of this
+ * provider instead - web storage is never touched and no `storage` listener
+ * is added. Everything below works the same within the one document; there
+ * is no cross-tab part.
+ *
  * Issue #260 (docs/design/session-controller-design.md §5.2): the provider keeps a
  * `credentialRevision()` - an in-memory counter that advances on every
  * change it makes to the stored token and on every cross-tab `storage`
@@ -394,6 +418,15 @@ export function createHttpAuthProvider(
 	const baseUrl = options.baseUrl ?? '';
 	const fetchFn = options.fetchFn ?? fetch;
 	const storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
+	const storage = options.storage ?? 'web';
+	// A closed choice (Issue #838): a typo must not silently fall back to
+	// writing the token to web storage.
+	if (storage !== 'web' && storage !== 'memory') {
+		throw new Error(`createHttpAuthProvider: unknown storage ${JSON.stringify(storage)}`);
+	}
+	const inMemory = storage === 'memory';
+	/** The token with `storage: 'memory'` (Issue #838). Unused with `'web'`. */
+	let memoryToken: string | null = null;
 
 	/** The revision counter (I-23): `${counter}.0` is the opaque value handed out. */
 	let counter = 0;
@@ -410,8 +443,9 @@ export function createHttpAuthProvider(
 	// Another tab changed the shared (Remember me) token (#257): only events
 	// for this provider's key count - `key === null` is `localStorage.clear()`,
 	// which removes it too. Not reported for this tab's own writes (browsers
-	// fire `storage` only in OTHER documents).
-	if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+	// fire `storage` only in OTHER documents). `'memory'` shares nothing with
+	// other tabs, so it does not listen (Issue #838).
+	if (!inMemory && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
 		window.addEventListener('storage', (event) => {
 			const key = (event as { key?: string | null }).key;
 			if (key !== storageKey && key !== null) return;
@@ -421,11 +455,16 @@ export function createHttpAuthProvider(
 	}
 
 	function getToken(): string | null {
+		if (inMemory) return memoryToken;
 		return localStorage.getItem(storageKey) ?? sessionStorage.getItem(storageKey);
 	}
 
-	/** `remember` picks the storage a non-null `token` is written to; a `null` token clears BOTH storages regardless of `remember` (logout/expiry must never leave a stale copy behind in the other one). */
+	/** `remember` picks the storage a non-null `token` is written to; a `null` token clears BOTH storages regardless of `remember` (logout/expiry must never leave a stale copy behind in the other one). With `storage: 'memory'` there is one place and `remember` means nothing. */
 	function setToken(token: string | null, remember = false): void {
+		if (inMemory) {
+			memoryToken = token || null;
+			return;
+		}
 		if (token) {
 			if (remember) {
 				localStorage.setItem(storageKey, token);
@@ -509,12 +548,16 @@ export function createHttpAuthProvider(
 	return {
 		async login(params: Record<string, unknown>): Promise<AuthOperationResult> {
 			const start = startOperation();
+			// Issue #838: `remember` also selects the server's session lifetime.
+			// A token kept in memory is gone on reload, so it never asks for the
+			// long one. `'web'` sends `params` as they are.
+			const sent = inMemory ? { ...params, remember: false } : params;
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/login`, {
 					method: 'POST',
 					headers: headers(true),
-					body: JSON.stringify(params)
+					body: JSON.stringify(sent)
 				});
 			} catch {
 				return { success: false, error: NETWORK_ERROR_MESSAGE };

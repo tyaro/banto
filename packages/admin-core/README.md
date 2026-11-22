@@ -199,6 +199,28 @@ connection.onRecovered(() => invalidateAll()); // 切断から戻ったとき 1 
 - 自分では再接続もポーリングもしない（SSE の再接続・セッション確認のバックオフ・利用者の操作で戻る）。
 - SSE の再接続は `connectEvents` が既に `invalidateAll()` するので、`onRecovered` で読み直すと二重になりうる。
 
+## トークンを web storage に置かない（`createHttpAuthProvider` の `storage: 'memory'`）
+
+`createHttpAuthProvider` は、既定（`storage: 'web'`）ではトークンを `sessionStorage`（Remember me のときは
+`localStorage`）の `storageKey`（既定 `banto.auth.token`）に置く。同じオリジンに複数のアプリを置く配信
+（GitHub Pages のデモなど）では、アプリどうしでこのキーが重なる。`storage: 'memory'` を渡すと、トークンを
+provider の中だけに持つ（#838）。
+
+```ts
+const auth = createHttpAuthProvider({ storage: 'memory' });
+```
+
+- `localStorage`・`sessionStorage` を読まず、書かない。`window` の `storage` イベントも購読しない。`storageKey` は使わない。
+- トークンは再読み込みで消える（もう一度ログインする）。ほかのタブとは共有しない。同じ文書の中では、
+  `credentialRevision()`・`onCredentialChanged`・書き込みの追い越しの防止は `'web'` と同じに働く。
+- `login({ ..., remember: true })` はエラーにしないが、覚えない。サーバーへ送る本文も `remember: false` にする
+  （再読み込みで手元から消えるトークンに、長い期限のセッションをサーバーへ残さない）。ログイン画面から
+  「ログイン状態を保持」のチェックを外すのはアプリの側。
+- 選べるのは `'web'` と `'memory'` だけ（保存先の実装は渡せない。ほかの値は例外）。
+- 変わるのはトークンの置き場所だけ。同じオリジンのほかのキー（`createLocalUiSettings` の `banto.ui.*`、
+  テーマ、一覧の表示状態など）はそのまま。`createLocalUiSettings` には `storage`（`Storage`）を渡せる。
+- Tauri の provider（`createTauriAuthProvider`）には対の口が無い（web storage にトークンを持たないため）。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

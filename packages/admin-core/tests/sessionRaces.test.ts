@@ -208,17 +208,31 @@ describe('requests settled in the same turn (#255 6th review, I-9)', () => {
 // failure) is not "nobody" - the session scope and the saved state stay as
 // they are (I-4), and the same identity confirmed on the retry restores it.
 describe('a transient identity failure keeps the session and its saved state (#255 6th review, I-4)', () => {
-	function httpAuth(responses: (() => Promise<Response>)[]): AuthProvider {
-		sessionStorage.setItem('banto.auth.token', 'token-a');
+	/** The HTTP provider holding `token-a`, in either token store (Issue #838). */
+	async function httpAuth(
+		responses: (() => Promise<Response>)[],
+		tokenStorage: 'web' | 'memory'
+	): Promise<AuthProvider & { getToken(): string | null }> {
 		vi.stubGlobal('localStorage', makeMemoryStorage());
 		const fetchFn = vi.fn(async (url: string) => {
 			if (url.endsWith('/api/auth/identity')) return responses.shift()!();
+			if (url.endsWith('/api/auth/login')) {
+				return new Response(JSON.stringify({ success: true, token: 'token-a' }), { status: 200 });
+			}
 			throw new Error(`unexpected ${url}`);
 		});
-		return createHttpAuthProvider({ fetchFn: fetchFn as unknown as typeof fetch });
+		const auth = createHttpAuthProvider({
+			fetchFn: fetchFn as unknown as typeof fetch,
+			storage: tokenStorage
+		});
+		// `'memory'` has no storage to seed: the token gets in through a login.
+		if (tokenStorage === 'memory') await auth.login({ username: 'alice', password: 'pw' });
+		else sessionStorage.setItem('banto.auth.token', 'token-a');
+		expect(auth.getToken()).toBe('token-a');
+		return auth;
 	}
 
-	it.each([
+	const failures: [string, () => Promise<Response>][] = [
 		['a 500', async () => new Response('boom', { status: 500 })],
 		[
 			'a network failure',
@@ -226,12 +240,21 @@ describe('a transient identity failure keeps the session and its saved state (#2
 				throw new TypeError('Failed to fetch');
 			}
 		]
-	])('%s, then the same identity again', async (_label, failure) => {
-		const auth = httpAuth([
-			async () => new Response(JSON.stringify(ALICE), { status: 200 }),
-			failure,
-			async () => new Response(JSON.stringify(ALICE), { status: 200 })
-		]);
+	];
+
+	it.each(
+		(['web', 'memory'] as const).flatMap((tokenStorage) =>
+			failures.map(([label, failure]) => [label, tokenStorage, failure] as const)
+		)
+	)("%s, then the same identity again (storage: '%s')", async (_label, tokenStorage, failure) => {
+		const auth = await httpAuth(
+			[
+				async () => new Response(JSON.stringify(ALICE), { status: 200 }),
+				failure,
+				async () => new Response(JSON.stringify(ALICE), { status: 200 })
+			],
+			tokenStorage
+		);
 		initBanto({ dataProvider: {} as DataProvider, authProvider: auth, resources: [] });
 		const controller = getSessionController();
 		await expect(resolveSettled(controller)).resolves.toMatchObject({ outcome: 'confirmed' });
@@ -252,6 +275,64 @@ describe('a transient identity failure keeps the session and its saved state (#2
 			{ field: 'price', direction: 'desc' }
 		]);
 	});
+
+	// Issue #838: the real provider, both token stores. A's identity check is
+	// answered `401` only after this document logged out and in again as B:
+	// the answer is about A's token, so B's token and B's session stay.
+	it.each(['web', 'memory'] as const)(
+		"A's late 401 does not clear B's token nor end B's session (storage: '%s')",
+		async (tokenStorage) => {
+			vi.stubGlobal('localStorage', makeMemoryStorage());
+			const identityReplies: ((response: Response) => void)[] = [];
+			const tokens = ['token-a', 'token-b'];
+			const fetchFn = vi.fn(async (url: string) => {
+				if (url.endsWith('/api/auth/identity')) {
+					return new Promise<Response>((resolve) => identityReplies.push(resolve));
+				}
+				if (url.endsWith('/api/auth/login')) {
+					return new Response(JSON.stringify({ success: true, token: tokens.shift() }), {
+						status: 200
+					});
+				}
+				if (url.endsWith('/api/auth/logout')) return new Response(null, { status: 204 });
+				throw new Error(`unexpected ${url}`);
+			});
+			const auth = createHttpAuthProvider({
+				fetchFn: fetchFn as unknown as typeof fetch,
+				storage: tokenStorage
+			});
+			const identity = (who: unknown) => new Response(JSON.stringify(who), { status: 200 });
+			await auth.login({ username: 'alice', password: 'pw' });
+			initBanto({ dataProvider: {} as DataProvider, authProvider: auth, resources: [] });
+			const controller = getSessionController();
+			const aliceLoad = resolveSettled(controller);
+			await vi.waitFor(() => expect(identityReplies).toHaveLength(1));
+			identityReplies[0](identity(ALICE));
+			await expect(aliceLoad).resolves.toMatchObject({ snapshot: { owner: 'acct:uid-alice' } });
+
+			// A's check goes out; before it is answered, A logs out and B logs in.
+			const lateForAlice = auth.resolve();
+			await vi.waitFor(() => expect(identityReplies).toHaveLength(2));
+			await auth.logout();
+			await auth.login({ username: 'bob', password: 'pw' });
+			const bobLoad = resolveSettled(controller);
+			await vi.waitFor(() => expect(identityReplies).toHaveLength(3));
+			identityReplies[2](identity(BOB));
+			await expect(bobLoad).resolves.toMatchObject({
+				outcome: 'confirmed',
+				snapshot: { owner: 'acct:uid-bob' }
+			});
+			const bob = currentSessionScope();
+
+			identityReplies[1](new Response(JSON.stringify({ kind: 'unauthorized' }), { status: 401 }));
+			await expect(lateForAlice).rejects.toBeDefined();
+
+			expect(auth.getToken()).toBe('token-b');
+			expect(isCurrentSessionScope(bob)).toBe(true);
+			expect(currentSessionScope().owner).toBe('acct:uid-bob');
+			expect(sessionGeneration()).toBe(bob.generation);
+		}
+	);
 
 	it("an ownerless session (an identity without an id) does not drop the previous owner's entries (S-10)", async () => {
 		const p = await signedInAsAlice();
