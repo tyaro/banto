@@ -246,9 +246,14 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 	function wire(opts: { local?: object; shown: object; get: () => Promise<string | null> }) {
 		const storage = memoryStorage();
 		if (opts.local) storage.setItem(`${KEY}:${SCOPE.owner}`, JSON.stringify(opts.local));
+		// The provider's #786 shape: `{ value, revision }` / `{ revision }`.
 		const provider = {
-			get: vi.fn(opts.get),
-			set: vi.fn(async (_key: string, _value: string) => {})
+			get: vi.fn(async (_key: string) => {
+				const value = await opts.get();
+				return { value, revision: value === null ? '0' : 'rev' };
+			}),
+			set: vi.fn(async (_key: string, _value: string) => ({ revision: 'rev' })),
+			remove: vi.fn(async (_key: string) => ({ revision: '0' }))
 		} satisfies UiSettingsProvider;
 		const dock = asyncDock(opts.shown);
 		const { target, mount } = make();

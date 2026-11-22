@@ -122,10 +122,67 @@ onDestroy(() => requests.dispose());
   古い結果をもとに次の操作（切り取り元の削除など）をしないことまで。
 - 認証の credential revision（`sessionController`）の代わりにはしない。
 
+## UI 設定の provider（`UiSettingsProvider`）と `updateUiSetting`
+
+画面の記憶（テーマ・配置など）を、文字列のキーと値で読み書きする口（Issue #786）。実装は 3 つ:
+`createLocalUiSettings`（localStorage）・`createTauriUiSettings`（Tauri のコマンド）・`createHttpUiSettings`（REST）。
+
+```ts
+interface UiSettingsProvider {
+	get(key: string): Promise<{ value: string | null; revision: string }>;
+	set(
+		key: string,
+		value: string,
+		options?: { ifRevision?: string }
+	): Promise<{ revision: string; superseded?: false } | { revision: null; superseded: true }>;
+	remove(key: string, options?: { ifRevision?: string }): Promise<{ revision: string }>;
+}
+```
+
+- `revision` は書き込みのたびに変わる、中身の決まっていない文字列。何も無いときは `"0"`
+  （`UI_SETTING_ABSENT_REVISION`）。大小を比べない。`ifRevision` に返すだけにする。
+- `ifRevision` を省いた書き込みは無条件（最後の書き込みが勝つ）。付けると、保存されている revision が同じ間だけ書く
+  （`"0"` は「まだ無いこと」）。合わなければ `ProviderError`（`kind: 'conflict'`）で reject し、
+  `uiSettingConflict(error)` が今の `{ value, revision }` を返す（`conflict` でなければ `null`）。
+- **書き込みの直列化（Tauri・HTTP、#707）**: 同じキーの書き込みは同時に 1 つだけ送り、残りは受け付けた順に送る。
+  - 待っている**無条件の `set`** は、次に来た無条件の書き込み（`set` か `remove`）に置き換えられる。置き換えられた値は
+    送られず、その `set` は `{ revision: null, superseded: true }` で resolve する（「保存された」ではなく「送っていない」。
+    結果は後の書き込みが持つ）。
+  - **条件付きの書き込みは置き換えられない**（置き換えもしない）。必ず送り、サーバーの答えだけで決着する。
+    `remove` も置き換えられない。
+  - 受け付けた後にセッションが替わった書き込みは送らず、`unauthorized` で reject する。
+  - `get` は、そのキーの書き込みが終わるのを待ってから読む。
+
+### 別のタブの変更を上書きしない: `updateUiSetting`
+
+```ts
+import { updateUiSetting } from '@banto/admin-core';
+
+const { value, revision } = await updateUiSetting(provider, 'items.pinned', (current) => {
+	const pinned: string[] = current === null ? [] : JSON.parse(current);
+	return pinned.includes(id) ? (current as string) : JSON.stringify([...pinned, id]);
+});
+```
+
+読む → `apply(今の値)` → 条件付きで書く → `conflict` なら返ってきた今の値に当て直す、を繰り返す
+（条件付きの書き込みは既定で 5 回まで。`{ maxAttempts }`。使い切ったら最後のエラーで reject）。
+`apply` が渡された値をそのまま返したら、書かずに終える。
+
+**`apply` は冪等であること**（契約）: 自分の結果にもう一度当てても、同じ値になること（キーの上書き・集合への追加・
+欄の置き換え。「1 増やす」「末尾へ足す」は冪等ではない）。理由:
+
+- 応答だけが失われた書き込み（通信の失敗・5xx）は、**同じ PUT を送り直さない**。読み直して、値が送ったものと同じなら
+  成功として終える（以後の revision は読み直したもの）。違えば、その値に `apply` を当て直す。このとき、自分の書き込みが
+  既に入り、その上に別のタブが書いた値に当たることがある。
+- `conflict` の後も、今の値に当て直す。
+
+冪等にできない変更は、値の中に操作の id を持って、`apply` の中で重複を落とす（サーバーに操作の記録は無い）。
+断られた書き込み（`validation`・`unauthorized`・`forbidden` など）と、読み取りの失敗は、すぐ reject する。
+
 ## UI 設定の現在値と保存済みの値を分ける（`createSavedSetting`）
 
 `UiSettingsProvider`（Local / Tauri / HTTP）の上に乗る helper。provider は置き換えない
-（shared-primitives-upstream-plan §3.4）。「今編集している値（`current`）」と「保存に成功した最後の値
+（shared-primitives-upstream-plan §3.4）。書き込みは無条件で、revision は使わない（再送・`merge` は次の変更）。「今編集している値（`current`）」と「保存に成功した最後の値
 （`saved`）」を分け、保存が失敗しても編集中の値と前の保存値を守る。通知の文言・適用対象・標準値は
 アプリの責務（`error` / `save()` の結果を見て出す）。
 

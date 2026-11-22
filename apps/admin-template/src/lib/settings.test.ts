@@ -13,7 +13,19 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./banto/setup', () => ({
-	getUiSettings: () => ({ get: mocks.get, set: mocks.set })
+	// The mocks keep the bare value / nothing; the provider's #786 shape
+	// (`{ value, revision }` / `{ revision }`) is added here.
+	getUiSettings: () => ({
+		get: async (key: string) => {
+			const value = await mocks.get(key);
+			return { value, revision: value === null ? '0' : 'rev' };
+		},
+		set: async (key: string, value: string) => {
+			await mocks.set(key, value);
+			return { revision: 'rev' };
+		},
+		remove: async () => ({ revision: '0' })
+	})
 }));
 
 vi.mock('@banto/theme', async (importOriginal) => ({

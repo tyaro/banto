@@ -8,7 +8,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ProviderError } from '../src/errors';
-import { createHttpUiSettings, type UiSettingsProvider } from '../src/providers/uiSettings';
+import {
+	createHttpUiSettings,
+	type UiSettingSnapshot,
+	type UiSettingsProvider,
+	type UiSettingWriteResult
+} from '../src/providers/uiSettings';
 import {
 	createSavedSetting,
 	type SavedSetting,
@@ -21,18 +26,31 @@ interface Pending<R> {
 	reject: (error: unknown) => void;
 }
 
+/** A read answer in the provider's shape (#786). */
+function stored(value: string | null): UiSettingSnapshot {
+	return { value, revision: value === null ? '0' : 'rev' };
+}
+
+/** A write answer in the provider's shape (#786). */
+function written(): UiSettingWriteResult {
+	return { revision: 'rev' };
+}
+
 function manualProvider() {
 	const gets: Pending<string | null>[] = [];
 	const sets: Pending<void>[] = [];
+	// The tests answer with the bare value / nothing; the provider's #786 shape
+	// (`{ value, revision }` / `{ revision }`) is added here.
 	const provider: UiSettingsProvider = {
 		get: (key) =>
-			new Promise((resolve, reject) => {
+			new Promise<string | null>((resolve, reject) => {
 				gets.push({ args: [key], resolve, reject });
-			}),
+			}).then(stored),
 		set: (key, value) =>
-			new Promise((resolve, reject) => {
+			new Promise<void>((resolve, reject) => {
 				sets.push({ args: [key, value], resolve, reject });
-			})
+			}).then(written),
+		remove: async () => ({ revision: '0' })
 	};
 	return { provider, gets, sets };
 }
@@ -104,10 +122,11 @@ describe('save', () => {
 
 	it('treats a synchronous provider throw as a failure', async () => {
 		const provider: UiSettingsProvider = {
-			get: async () => null,
+			get: async () => stored(null),
 			set: () => {
 				throw new ProviderError({ kind: 'other', message: 'invalid ui-settings key' });
-			}
+			},
+			remove: async () => ({ revision: '0' })
 		};
 		const s = createSavedSetting(options(provider));
 		expect(await s.save()).toBe(false);
@@ -138,7 +157,7 @@ describe('a write dropped by the provider (#707)', () => {
 		const gated = (async (_url: string, init: RequestInit) => {
 			calls.push(String(init.body));
 			await gate;
-			return new Response(null, { status: 204 });
+			return new Response(JSON.stringify({ revision: 'rev' }), { status: 200 });
 		}) as unknown as typeof fetch;
 		const provider = createHttpUiSettings({ getToken: () => token, fetchFn: gated });
 		// An in-flight write for the same key holds the next one back.
@@ -424,15 +443,16 @@ describe('re-entrancy from callbacks', () => {
 		const ref: { setting?: SavedSetting<Pos> } = {};
 		let reentered: Promise<boolean> | undefined;
 		const provider: UiSettingsProvider = {
-			get: async () => null,
+			get: async () => stored(null),
 			set: (key, value) =>
-				new Promise((resolve, reject) => {
+				new Promise<void>((resolve, reject) => {
 					sets.push({ args: [key, value], resolve, reject });
 					if (sets.length === 1) {
 						ref.setting?.set({ x: 2 });
 						reentered = ref.setting?.save();
 					}
-				})
+				}).then(written),
+			remove: async () => ({ revision: '0' })
 		};
 		const s = createSavedSetting(options(provider));
 		ref.setting = s;

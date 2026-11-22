@@ -238,7 +238,7 @@ export function createDockLayoutStore(options: DockLayoutStoreOptions): DockLayo
 			loading = true;
 			let remote: string | null;
 			try {
-				remote = await options.provider().get(settingKey);
+				remote = (await options.provider().get(settingKey)).value;
 			} catch {
 				remote = null;
 			}

@@ -14,6 +14,14 @@
  * - Which old answers to drop: stale loads, and answers after `dispose()`
  *   (through {@link createRequestOwner}, keys `'load'` and `'save'`).
  *
+ * Revisions (Issue #786): this primitive still writes unconditionally and
+ * uses only the value of a read; the revision the provider returns is not
+ * kept. A `set` the provider answered as superseded (`{ revision: null,
+ * superseded: true }` - another writer of the same key, through the same
+ * provider, queued a later unconditional value) counts as saved, as it did
+ * before the provider could tell the two apart. Conditional writes, `merge`
+ * and re-sending are a later change (downstream-requests-2026-11-plan §4.4).
+ *
  * What the consumer owns: the wording of any notification (read `error` /
  * `save()`'s result), what the value applies to, the default value
  * (`fallback`), and how a raw string is validated (`parse`; corrupted or
@@ -280,7 +288,7 @@ class Impl<T> implements SavedSetting<T> {
 		try {
 			let stored: string | null;
 			try {
-				stored = await this.#options.provider.get(this.#options.key);
+				stored = (await this.#options.provider.get(this.#options.key)).value;
 			} catch (error) {
 				if (!request.isCurrent()) return 'stale';
 				this.#error = error;
