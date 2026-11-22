@@ -69,14 +69,37 @@ pub fn sqlite_restore_manifest() -> MigrationManifest {
 /// whatever the outcome.
 ///
 /// The answer separates the two ways this can end without an acceptance
-/// (see [`CandidateCheck`]): `Rejected` when the CANDIDATE would not start
-/// (a migration fails on it, or [`check`] refuses it), `Err` when the check
-/// itself could not be completed (the copy could not be made or opened, a
-/// read failed) - which says nothing about the candidate.
+/// (see [`CandidateCheck`]):
+///
+/// - `Rejected` only for a CONFIRMED finding about the candidate's content:
+///   what [`check`] refuses (the built-in row, a reserved-name collision).
+///   (Another version's history - versions, checksums - was refused before
+///   this runs, by the restore validation itself.)
+/// - `Err` whenever the check could not be completed: the copy could not be
+///   made or opened, a read failed, or **the migrations did not run on the
+///   copy**. A migration can fail for reasons that have nothing to do with
+///   the candidate (no disk space, a transient I/O error), and its error
+///   cannot tell those apart from a real incompatibility - so it is never a
+///   verdict. The pending restore is then kept, not applied, and the current
+///   database stays (ADR-0034 §9: a candidate that is not accepted never
+///   replaces it).
 async fn check_restore_candidate(candidate: PathBuf) -> Result<CandidateVerdict, BantoError> {
+    check_restore_candidate_with(candidate, |db| async move { crate::db::migrate(&db).await }).await
+}
+
+/// [`check_restore_candidate`] with the migration step passed in, so a test
+/// can make it fail.
+async fn check_restore_candidate_with<F, Fut>(
+    candidate: PathBuf,
+    migrate: F,
+) -> Result<CandidateVerdict, BantoError>
+where
+    F: FnOnce(Db) -> Fut,
+    Fut: std::future::Future<Output = Result<(), BantoError>>,
+{
     let copy = working_copy_path(&candidate);
     let result = match tokio::fs::copy(&candidate, &copy).await {
-        Ok(_) => check_working_copy(&copy).await,
+        Ok(_) => check_working_copy(&copy, migrate).await,
         Err(err) => Err(BantoError::Other(format!(
             "リストア候補の検査用コピーを作れませんでした: {err}"
         ))),
@@ -88,13 +111,18 @@ async fn check_restore_candidate(candidate: PathBuf) -> Result<CandidateVerdict,
     result
 }
 
-async fn check_working_copy(copy: &Path) -> Result<CandidateVerdict, BantoError> {
+async fn check_working_copy<F, Fut>(copy: &Path, migrate: F) -> Result<CandidateVerdict, BantoError>
+where
+    F: FnOnce(Db) -> Fut,
+    Fut: std::future::Future<Output = Result<(), BantoError>>,
+{
     let db = Db::connect_sqlite(copy).await?;
-    let result = match crate::db::migrate(&db).await {
+    let result = match migrate(db.clone()).await {
         Ok(()) => verdict_of(check(&db).await.map(|_| ())),
-        // A migration that does not apply to the candidate is the
-        // candidate's problem (ADR-0034 §9).
-        Err(err) => Ok(CandidateVerdict::Rejected(err.to_string())),
+        // Not a verdict: see `check_restore_candidate`.
+        Err(err) => Err(BantoError::Other(format!(
+            "リストア候補の検査用コピーに migration を当てられませんでした: {err}"
+        ))),
     };
     // Close before the caller deletes the file (Windows keeps an open SQLite
     // file locked).
@@ -313,6 +341,55 @@ mod tests {
         assert!(check_restore_candidate(missing).await.is_err());
         let mut entries = tokio::fs::read_dir(dir.path()).await.unwrap();
         assert!(entries.next_entry().await.unwrap().is_none());
+    }
+
+    /// Codex review of #858: the working copy was made, then the migration
+    /// step failed on it (no disk space, say). That is not a finding about
+    /// the candidate: a healthy pending restore is KEPT - not applied, not
+    /// deleted - the current database is byte-identical, no working copy is
+    /// left, and the restore goes through once the step works again.
+    #[tokio::test]
+    async fn a_migration_failure_on_the_copy_keeps_the_pending_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("app.sqlite3");
+        let db = migrated(&db_path).await;
+        let backup = BackupService::new(db_path.clone(), db.clone())
+            .with_migrations(sqlite_restore_manifest());
+        let info = backup.create().await.unwrap();
+        backup
+            .stage_restore_from_file(&info.file_name)
+            .await
+            .unwrap();
+        exec(&db, "PRAGMA wal_checkpoint(TRUNCATE)").await;
+        close(db).await;
+        let before = tokio::fs::read(&db_path).await.unwrap();
+
+        let failing = crate::db::sqlite_migration_manifest().with_candidate_check(
+            CandidateCheck::new(|candidate| {
+                check_restore_candidate_with(candidate, |_db| async {
+                    Err(BantoError::Storage("database or disk is full".into()))
+                })
+            }),
+        );
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &failing)
+            .await
+            .unwrap();
+        assert!(applied.is_none(), "not applied while it cannot be checked");
+        let scope = dir.path().join("backups").join("app.sqlite3");
+        assert!(scope.join("restore-pending.sqlite3").exists(), "kept");
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+        let mut entries = tokio::fs::read_dir(&scope).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            assert!(!name.starts_with(".restore-check-"), "{name}");
+        }
+
+        // The next start, with the step working: applied.
+        let applied =
+            BackupService::apply_pending_restore_at_startup(&db_path, &sqlite_restore_manifest())
+                .await
+                .unwrap();
+        assert!(applied.is_some());
     }
 
     /// The same check accepts a healthy candidate, and the swap goes through.
