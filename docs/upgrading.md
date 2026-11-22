@@ -892,3 +892,15 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
   これまでの値はそのまま読める。
 - 確認: `pnpm check`・`cargo test`。`FieldType` を switch している画面は型検査で漏れが分かる。行選択・固定を付けたグリッドは、横スクロールで
   固定した列が残ること、一括削除のあと選択が空になることを確かめる。
+
+### 例 11: v7.10.x → v7.11.0（`pnpm banto add resource`・グリッドの右クリックの口・dock の戻し位置の修正。A と B）
+
+`pnpm banto add resource <name>`（#715）、`@banto/grid-svelte` の `onRowContextMenu`（#784）、`@banto/dock-svelte` の隠れたパネルを戻す位置・比率の修正（#743・#777・#781）と据え置き pane のスクロール位置の復元（#768）、ルートの `pnpm check` への `e2e/` の型検査（#774）が入る。API の削除・改名はなく、公開の union への種類の追加もない。**minor**。
+
+- A（依存）: タグを `v7.11.0` に上げる（npm と Rust を同じタグに）。
+  - `@banto/grid-svelte`: `onRowContextMenu` は省略可能な prop の追加で、渡さなければ今までと同じ。ただし、Tab で入った（アクティブなセルがまだ無い）グリッドで、矢印キー・Home・End・PageUp・PageDown の最初の 1 回が最初のデータ行の先頭列をアクティブにするようになった（`onRowContextMenu` を渡さないグリッドにも効く）。アクティブなセルが無い状態でのキー入力の結果を前提にした自前のテスト・処理があれば確かめる。
+  - `@banto/dock-svelte`: 外周へ移したパネルを戻す位置・隠れたパネルの比率・据え置き pane のスクロール位置が直る（API・保存形式の変更なし）。以前の配置・比率を期待値にしたテストがあれば更新する（`row[a, b, c]` で `a` を隠し `b` を下の外周へ移して `a` を戻すと、`column[row[a, c], b]`。以前は `row[a, column[c, b]]`）。
+- B（派生アプリのルートとテンプレート）:
+  - ルートの `package.json` を取り込むなら、`check` に `check:e2e`（`tsc -p e2e/tsconfig.json --noEmit`）、devDependencies に `@types/node`・`typescript`・`axe-core` を足し、`e2e/tsconfig.json` を写す（#774）。取り込まなければ今までどおり。
+  - `pnpm banto add resource` を使うなら、`scripts/banto.mjs` ほか生成器のファイルと、アンカー `[banto:add-resource:*]` を持つテンプレートのファイルを写す: `core/src/lib.rs`・`core/src/resources.rs`（`AppResources`）・`core/src/rest/mod.rs`（`resources_router`）・`core/src/bin/banto-serve.rs`・`src-tauri/src/lib.rs`・`src/lib/banto/resources/index.ts`・`src/lib/appPath.ts`。アンカーが 1 つでも欠けていると生成器は何も書かずに止まる。使い方は [docs/recipes/add-resource.md](recipes/add-resource.md)。
+- 確認: `pnpm check`・`cargo test`。dock を使うアプリは、隠したパネルを戻したときの位置と比率、据え置き pane のスクロールが組み替え後も残ることを確かめる。
