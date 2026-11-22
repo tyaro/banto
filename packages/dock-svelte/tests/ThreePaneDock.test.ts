@@ -582,10 +582,12 @@ describe('ThreePaneDock: floated panes places across whole-layout replacements (
 	});
 });
 
-// #741: a pane out of the tree (floated or hidden) that a replacement takes away no longer holds
-// its share of the split, whichever way the replacement comes in: the panes still hidden come
-// back at their share of what is left, as when they are shown before it.
-describe('ThreePaneDock: a pending pane removed by a replacement releases its share (#741)', () => {
+// #741: a pane floated out of the tree that a replacement takes away no longer holds its share of
+// the split, whichever way the replacement comes in: the panes still floated come back at their
+// share of what is left. #782 PR5: a HIDDEN pane holds no place and no share of a split - only the
+// share it held when it was hidden, which it takes again at its default place (`right`: the right
+// of the centre, whatever the layout it was hidden from), whatever left the layout meanwhile.
+describe('ThreePaneDock: a pane out of the tree and a replacement (#741, #782 PR5)', () => {
 	const LOG: ThreePaneExtraPanelDef = { id: 'log', title: 'Log' };
 	const row = (): DockLayout => ({
 		version: 2,
@@ -611,7 +613,7 @@ describe('ThreePaneDock: a pending pane removed by a replacement releases its sh
 		['hidden', (d: DockState) => d.dismiss('log')],
 		['floated and closed', (d: DockState) => (d.undockPanel('log'), d.close('log'))]
 	] as const) {
-		it(`an extra panel ${name}, then removed from panels: right comes back at .375`, async () => {
+		it(`an extra panel ${name}, then removed from panels: right comes back at its default place with the .375 it held`, async () => {
 			const { dock, view } = start();
 			expect(sizes(dock)).toEqual([0.2, 0.3, 0.5]);
 			away(dock);
@@ -620,25 +622,25 @@ describe('ThreePaneDock: a pending pane removed by a replacement releases its sh
 			await settle();
 			expect(dock.layout.floating.map((w) => w.id)).toEqual(['right']);
 			dock.show('right');
-			expect(collectPanelIds(dock.layout.docked)).toEqual(['right', 'center']);
-			expect(sizes(dock)[0]).toBeCloseTo(0.375, 9);
+			expect(collectPanelIds(dock.layout.docked)).toEqual(['center', 'right']);
+			// Hidden after `log` left the row: .3 of the .8 left.
+			expect(sizes(dock)[1]).toBeCloseTo(0.375, 9);
 		});
 	}
 
-	// #743: the panel removed is DOCKED (in the row `right` is hidden from): it is no longer counted
-	// either - `right` comes back at .3 / (.3 + .5) of the row, not at .3 of it.
-	it('a docked extra panel removed from panels: right (hidden) comes back at .375', async () => {
+	// #743: the panel removed is DOCKED (in the row `right` is hidden from): the same.
+	it('a docked extra panel removed from panels: right (hidden) comes back at its default place with the .3 it held', async () => {
 		const { dock, view } = start();
 		dock.dismiss('right');
 		await view.rerender({ extra: [] });
 		await settle();
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['center']);
 		dock.show('right');
-		expect(collectPanelIds(dock.layout.docked)).toEqual(['right', 'center']);
-		expect(sizes(dock)[0]).toBeCloseTo(0.375, 9);
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['center', 'right']);
+		expect(sizes(dock)[1]).toBeCloseTo(0.3, 9);
 	});
 
-	it('a docked extra panel replaced by another one: the same', async () => {
+	it('a docked extra panel replaced by another one, right floated: back at .375 (its share of what is left)', async () => {
 		const { dock, view } = start();
 		dock.undockPanel('right');
 		await view.rerender({ extra: [{ id: 'other', title: 'Other' }] });
@@ -665,15 +667,17 @@ describe('ThreePaneDock: a pending pane removed by a replacement releases its sh
 		const saved = made.api().layoutSnapshot();
 		cleanup();
 		// Started from it without the panel ...
+		// `right` was hidden after `log`: it held .375 of row[right, center].
 		const first = mount({ withLeft: false, initialLayout: saved });
 		first.dock.show('right');
-		expect(sizes(first.dock)[0]).toBeCloseTo(0.375, 9);
+		expect(collectPanelIds(first.dock.layout.docked)).toEqual(['center', 'right']);
+		expect(sizes(first.dock)[1]).toBeCloseTo(0.375, 9);
 		cleanup();
 		// ... and restored into a running one.
 		const { dock, api } = mount({ withLeft: false });
 		expect((await api().restoreLayout(saved)).outcome).toBe('applied');
 		dock.show('right');
-		expect(sizes(dock)[0]).toBeCloseTo(0.375, 9);
+		expect(sizes(dock)[1]).toBeCloseTo(0.375, 9);
 	});
 
 	it('a used DockState given with a saved layout: the old places are not counted', () => {
@@ -691,6 +695,6 @@ describe('ThreePaneDock: a pending pane removed by a replacement releases its sh
 		});
 		expect(dock.homeSlot('log')).toBeUndefined();
 		dock.show('right');
-		expect(sizes(dock)[0]).toBeCloseTo(0.375, 9);
+		expect(sizes(dock)[1]).toBeCloseTo(0.375, 9);
 	});
 });

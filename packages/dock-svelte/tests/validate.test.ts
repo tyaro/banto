@@ -69,38 +69,51 @@ describe('validateDockLayout: accepted inputs', () => {
 		for (let i = n - 1; i >= 0; i--) s = splitSlot(`s${i}`, s);
 		return s;
 	};
-	it('accepts a v3 dockSlot eight deep that ends at a cut split, not nine deep', () => {
-		expect(validateDockLayout(layoutOf([win('b', { dockSlot: chain(8) })], null, 3)).ok).toBe(true);
-		const withRoot = chain(7, { kind: 'root' });
-		expect(validateDockLayout(layoutOf([win('b', { dockSlot: withRoot })], null, 3)).ok).toBe(true);
-		for (const nine of [chain(9), chain(8, { kind: 'root' })]) {
-			const r = validateDockLayout(layoutOf([win('b', { dockSlot: nine })], null, 3));
-			expect(r.ok).toBe(false);
-			if (!r.ok) expect(r.issues).toContainEqual({ code: 'shape', path: 'floating[0].dockSlot' });
+	// #782 PR5: a closed window holds no slot any more. A `dockSlot` in JSON of the releases before
+	// is not read - whatever it holds, however deep - and not kept: the window opens floating.
+	it("drops a window's dockSlot unread, whatever it holds", () => {
+		for (const slot of [
+			chain(4),
+			chain(8),
+			chain(9),
+			chain(8, { kind: 'root' }),
+			{ kind: 'split', splitId: 's' },
+			'nonsense',
+			null
+		]) {
+			for (const version of [2, 3]) {
+				const r = validateDockLayout(layoutOf([win('b', { dockSlot: slot })], null, version));
+				expect(r.ok).toBe(true);
+				if (!r.ok) continue;
+				expect('dockSlot' in r.layout.floating[0]).toBe(false);
+				expect(r.layout.version).toBe(2);
+			}
 		}
 	});
 
-	it('still accepts a dockSlot saved when the limit was four deep', () => {
-		const four = splitSlot('r2', splitSlot('c1', splitSlot('r1', splitSlot('s'))));
-		expect(validateDockLayout(layoutOf([win('b', { dockSlot: four })])).ok).toBe(true);
-		const withRoot = splitSlot('c1', splitSlot('r1', splitSlot('s', { kind: 'root' })));
-		expect(validateDockLayout(layoutOf([win('b', { dockSlot: withRoot })])).ok).toBe(true);
+	it('takes a dockShare in (0, 1] or none, and rejects any other', () => {
+		for (const dockShare of [undefined, 0.25, 1]) {
+			const r = validateDockLayout(layoutOf([win('b', { open: false, dockShare })]));
+			expect(r.ok && r.layout.floating[0].dockShare, String(dockShare)).toBe(dockShare);
+		}
+		for (const dockShare of [0, -0.1, 1.5, Number.NaN, '0.5', null]) {
+			const r = validateDockLayout(layoutOf([win('b', { open: false, dockShare })]));
+			expect(r.ok, String(dockShare)).toBe(false);
+			if (!r.ok) expect(r.issues).toContainEqual({ code: 'shape', path: 'floating[0].dockShare' });
+		}
 	});
 
 	describe('the version follows the slot depth (PR #732 review)', () => {
-		const slotLayout = (version: number, slot: unknown, where: 'floating' | 'autoHidden') =>
-			where === 'floating'
-				? layoutOf([win('b', { dockSlot: slot })], null, version)
-				: {
-						version,
-						floating: [],
-						docked: null,
-						autoHidden: [{ node: { type: 'panel', id: 'b', title: 'B' }, edge: 'left', slot }]
-					};
-		const path = (where: 'floating' | 'autoHidden') =>
-			where === 'floating' ? 'floating[0].dockSlot' : 'autoHidden[0].slot';
+		// Only a band holds a slot since #782 PR5 (a window's `dockSlot` is dropped unread, above).
+		const slotLayout = (version: number, slot: unknown, _where: 'autoHidden') => ({
+			version,
+			floating: [],
+			docked: null,
+			autoHidden: [{ node: { type: 'panel', id: 'b', title: 'B' }, edge: 'left', slot }]
+		});
+		const path = (_where: 'autoHidden') => 'autoHidden[0].slot';
 
-		for (const where of ['floating', 'autoHidden'] as const) {
+		for (const where of ['autoHidden'] as const) {
 			it(`${where}: v2 takes a slot four deep, not five (as the releases before #727)`, () => {
 				const r4 = validateDockLayout(slotLayout(2, chain(4), where));
 				expect(r4.ok && r4.layout.version).toBe(2);
@@ -123,7 +136,7 @@ describe('validateDockLayout: accepted inputs', () => {
 		}
 
 		it('takes a v3 layout with shallow slots only (or none), as v2', () => {
-			const r = validateDockLayout(layoutOf([win('b', { dockSlot: chain(2) })], goodDocked, 3));
+			const r = validateDockLayout(slotLayout(3, chain(2), 'autoHidden'));
 			expect(r.ok && r.layout.version).toBe(2);
 			const none = validateDockLayout(layoutOf([win('a')], null, 3));
 			expect(none.ok && none.layout.version).toBe(2);
@@ -356,7 +369,9 @@ describe('caller-supplied objects that JSON cannot produce (PR #440 review)', ()
 	});
 });
 
-// #736: a slot that contradicts itself is dropped (the window opens floating), the layout stays.
+// #736: a slot that contradicts itself is dropped, the layout stays. Only a band holds a slot
+// since #782 PR5 (a window's `dockSlot` is dropped unread: "accepted inputs" above); its
+// `share` (#733) is checked by `isDockSlot` as before.
 describe('validateDockLayout: a slot that contradicts itself', () => {
 	const tab = (over: Record<string, unknown> = {}) => ({
 		kind: 'tab',
@@ -377,77 +392,6 @@ describe('validateDockLayout: a slot that contradicts itself', () => {
 		otherAnchors: ['z'],
 		...over
 	});
-	const slotOfWindow = (slot: unknown) => {
-		const r = validateDockLayout(layoutOf([win('b', { dockSlot: slot })]));
-		if (!r.ok) throw new Error('layout rejected');
-		return r.layout.floating[0];
-	};
-
-	it('keeps a consistent tab slot and a consistent split slot', () => {
-		expect(slotOfWindow(tab()).dockSlot).toEqual(tab());
-		expect(slotOfWindow(tab({ index: 2 })).dockSlot).toEqual(tab({ index: 2 }));
-		expect(slotOfWindow(split()).dockSlot).toEqual(split());
-		expect(slotOfWindow(tab({ outer: split() })).dockSlot).toEqual(tab({ outer: split() }));
-	});
-
-	// #733: `share` (optional) is a share of the whole split, in (0, 1]; a slot without it is the
-	// form of the releases before, read as it was.
-	it('takes a split slot with a share in (0, 1] or none, and rejects any other share', () => {
-		for (const share of [undefined, 0.25, 1])
-			expect(slotOfWindow(split({ share })).dockSlot).toEqual(split({ share }));
-		for (const share of [0, -0.1, 1.5, Number.NaN, '0.5', null]) {
-			const r = validateDockLayout(layoutOf([win('b', { dockSlot: split({ share }) })]));
-			expect(r.ok, String(share)).toBe(false);
-		}
-	});
-
-	it('keeps a tab slot saved without anchors, whatever its index (older JSON)', () => {
-		expect(slotOfWindow(tab({ index: 9, anchors: [] })).dockSlot).toEqual(
-			tab({ index: 9, anchors: [] })
-		);
-	});
-
-	it.each([
-		['anchors twice', tab({ anchors: ['x', 'x'] })],
-		['its own id in anchors', tab({ anchors: ['x', 'b'] })],
-		['an index past the group', tab({ index: 3 })],
-		['a split slot with anchors twice', split({ anchors: ['x', 'x'] })],
-		['a split slot with its own id as the neighbour', split({ neighborId: 'b' })],
-		['a split slot with its own id in anchors', split({ anchors: ['b'] })],
-		['a pane on both sides of a split slot', split({ otherAnchors: ['y'] })],
-		['its own id in otherAnchors', split({ otherAnchors: ['b'] })]
-	])('drops a dockSlot with %s, keeps the window and the layout', (_name, slot) => {
-		const w = slotOfWindow(slot);
-		expect(w.id).toBe('b');
-		expect('dockSlot' in w).toBe(false);
-	});
-
-	it('drops the whole slot when only its outer contradicts', () => {
-		expect('dockSlot' in slotOfWindow(tab({ outer: split({ anchors: ['x', 'x'] }) }))).toBe(false);
-		expect(
-			'dockSlot' in
-				slotOfWindow(
-					split({
-						outer: split({ splitId: 'o', outer: split({ splitId: 'o2', neighborId: 'b' }) })
-					})
-				)
-		).toBe(false);
-	});
-
-	it('drops only the contradicting window slot, and a v3 layout falls back to version 2', () => {
-		let deep: unknown = split({ neighborId: 'b' });
-		for (let i = 1; i < 5; i++) deep = split({ splitId: `s${i}`, outer: deep });
-		const r = validateDockLayout(
-			layoutOf([win('a', { dockSlot: tab() }), win('b', { dockSlot: deep })], null, 3)
-		);
-		expect(r.ok).toBe(true);
-		if (r.ok) {
-			expect(r.layout.floating[0].dockSlot).toEqual(tab());
-			expect('dockSlot' in r.layout.floating[1]).toBe(false);
-			expect(r.layout.version).toBe(2);
-		}
-	});
-
 	it('turns the slot of an auto-hidden band into the root, and keeps a consistent one', () => {
 		const read = (slot: unknown) => {
 			const band = { node: { type: 'panel', id: 'p', title: 'P' }, edge: 'left', slot };
@@ -458,5 +402,17 @@ describe('validateDockLayout: a slot that contradicts itself', () => {
 		expect(read(tab({ anchors: ['x', 'p'] }))).toEqual({ kind: 'root' });
 		expect(read(tab({ outer: split({ neighborId: 'p' }) }))).toEqual({ kind: 'root' });
 		expect(read(tab())).toEqual(tab());
+		expect(read(split())).toEqual(split());
+		for (const share of [undefined, 0.25, 1])
+			expect(read(split({ share }))).toEqual(split({ share }));
+		for (const share of [0, -0.1, 1.5, Number.NaN, '0.5', null]) {
+			const band = {
+				node: { type: 'panel', id: 'p', title: 'P' },
+				edge: 'left',
+				slot: split({ share })
+			};
+			const r = validateDockLayout({ ...layoutOf([], goodDocked), autoHidden: [band] });
+			expect(r.ok, String(share)).toBe(false);
+		}
 	});
 });

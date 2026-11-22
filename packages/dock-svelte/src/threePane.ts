@@ -10,7 +10,7 @@
  */
 import { autoHiddenPanelIds, autoHideRegionInLayout } from './core/autohide';
 import { cascadePosition, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH } from './core/geometry';
-import { captureDockSlot, slotWithoutShares, type HiddenDockSlot } from './core/slot';
+import { dockShareOf } from './core/defaultPlace';
 import { withLayoutVersion } from './core/layoutVersion';
 import {
 	collectPanelIds,
@@ -159,14 +159,8 @@ function extraWindow(
 	};
 }
 
-/** A docked pane taken out as a closed window that remembers its place (`DockState.dismiss`'s shape). */
-function hiddenWindow(
-	root: DockNode | null,
-	node: DockPanelNode,
-	index: number,
-	hidden: HiddenDockSlot[]
-): FloatingWindow {
-	const slot = captureDockSlot(root, node.id, hidden);
+/** A docked pane taken out as a closed window hidden from the dock (`DockState.dismiss`'s shape). */
+function hiddenWindow(root: DockNode | null, node: DockPanelNode, index: number): FloatingWindow {
 	return {
 		id: node.id,
 		title: node.title,
@@ -176,14 +170,14 @@ function hiddenWindow(
 		width: DEFAULT_WINDOW_WIDTH,
 		height: DEFAULT_WINDOW_HEIGHT,
 		open: false,
-		...(slot ? { dockSlot: slot } : {})
+		dockShare: dockShareOf(root, node.id)
 	};
 }
 
 /**
  * The default layout (plan §4.1, §6-4): left | centre | right in a row, the sides at
  * `leftWidth` / `rightWidth` px of `hostWidth` as shares (shrunk so the centre keeps
- * `centerMinWidth`), a side with `*Open: false` hidden (it remembers its place), and the extra
+ * `centerMinWidth`), a side with `*Open: false` hidden (shown, it docks at its default place), and the extra
  * panels by their `initial`. Throws for a reserved / duplicated extra id. `resetLayout` and a
  * saved layout that cannot be repaired use it.
  */
@@ -221,15 +215,12 @@ export function threePaneDockLayout(options: ThreePaneDockLayoutOptions): DockLa
 			: normalizeSizes({ type: 'split', id: ROOT_ID, direction: 'row', children, sizes });
 
 	const floating: FloatingWindow[] = [];
-	const hidden: HiddenDockSlot[] = [];
 	for (const [node, open] of [
 		[left, options.leftOpen ?? true],
 		[right, options.rightOpen ?? true]
 	] as const) {
 		if (!node || open) continue;
-		const win = hiddenWindow(docked, node, floating.length, hidden);
-		if (win.dockSlot) hidden.push({ id: win.id, slot: win.dockSlot });
-		floating.push(win);
+		floating.push(hiddenWindow(docked, node, floating.length));
 		docked = removePanel(docked, node.id) ?? center;
 	}
 
@@ -373,36 +364,41 @@ function dockAtSide(
  * closed, auto-hidden, missing - the UI never allows those), gives the default layout. Never
  * throws for a bad saved value (only for a reserved / duplicated extra id, like the default).
  *
- * A hidden pane it drops (a closed window that remembers its docked place) no longer holds its
- * share of the split it was hidden from (#741): the `share`s of the hidden panes kept are taken
- * without it (`slotWithoutShares`), as when it is shown before them. So the result is a saved
- * value again - for `initialLayout` / `hydrate` / `replaceLayout(..., { saved: true })`, not for
- * `dock.layout = ...` over the layout it was made from (the setter would take the share out again).
+ * A hidden pane (a closed window with `dockShare`) remembers no place (#782 PR5), so dropping one
+ * changes nothing for the others.
  */
 export function reconcileThreePaneLayout(
 	saved: unknown,
 	options: ThreePaneDockLayoutOptions
 ): { layout: DockLayout; status: ThreePaneRestoreStatus } {
-	return reconcile(saved, options, false);
+	return reconcile(saved, options);
 }
 
 /**
  * `reconcileThreePaneLayout` for the layout a `DockState` holds now, assigned back to it with
- * `dock.layout = ...` (not exported from the package; `ThreePaneDock`'s `syncPanels`, #741): the
- * slots are left as they are - the setter takes the shares of the panes dropped out of the others',
- * the floated panes' (`homeSlot`, which only it knows) included. Once, not twice.
+ * `dock.layout = ...` (not exported from the package; `ThreePaneDock`'s `syncPanels`, #741). The
+ * same as `reconcileThreePaneLayout` since #782 PR5: a closed window holds no slot to take again.
  */
 export function fitThreePaneLayout(
 	layout: DockLayout,
 	options: ThreePaneDockLayoutOptions
 ): { layout: DockLayout; status: ThreePaneRestoreStatus } {
-	return reconcile(layout, options, true);
+	return reconcile(layout, options);
+}
+
+/**
+ * The default places of today's panes, for `DockState.defaultLayout` (#782 PR5; not exported from
+ * the package): the default layout with both sides docked - a side that starts hidden
+ * (`*Open: false`) still belongs beside the centre. An extra panel that starts `hidden` /
+ * `floating` has no docked place (shown again after it was docked and hidden, it opens floating).
+ */
+export function threePaneDefaultPlaces(options: ThreePaneDockLayoutOptions): DockLayout {
+	return threePaneDockLayout({ ...options, leftOpen: true, rightOpen: true });
 }
 
 function reconcile(
 	saved: unknown,
-	options: ThreePaneDockLayoutOptions,
-	live: boolean
+	options: ThreePaneDockLayoutOptions
 ): { layout: DockLayout; status: ThreePaneRestoreStatus } {
 	const fallback = () => ({ layout: threePaneDockLayout(options), status: 'default' as const });
 	const { panels } = options;
@@ -430,23 +426,8 @@ function reconcile(
 			changed = true;
 		}
 	}
-	let floating = layout.floating.filter((w) => known(w.id));
+	const floating = layout.floating.filter((w) => known(w.id));
 	if (floating.length !== layout.floating.length) changed = true;
-	if (!live) {
-		// The hidden panes dropped no longer hold a share (#741), counted on the tree as saved.
-		const all: HiddenDockSlot[] = layout.floating.flatMap((w) =>
-			!w.open && w.dockSlot ? [{ id: w.id, slot: w.dockSlot }] : []
-		);
-		const kept = all.filter((h) => known(h.id));
-		if (kept.length !== all.length) {
-			const root = layout.docked;
-			floating = floating.map((w) => {
-				if (w.open || !w.dockSlot) return w;
-				const dockSlot = slotWithoutShares(root, w.dockSlot, all, kept);
-				return dockSlot === w.dockSlot ? w : { ...w, dockSlot };
-			});
-		}
-	}
 	const autoHidden: DockAutoHidden[] = [];
 	for (const entry of layout.autoHidden ?? []) {
 		const kept = pruneAutoHidden(entry, known);

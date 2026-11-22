@@ -313,7 +313,7 @@ arrange?: boolean; // false = 利用者が組み替えられない（キオス�
   次の mount で戻せる）。`false` は DOM が残ること。`tab-switch` では `from` の pane のこと。dock / undock は
   docked の木と浮動の層をまたぐので、`keepMounted` でも `true`。`persistent` の pane（下記）は、どの変更でも `false`
   （`reparent` としては聞かない）。
-- **押し出される pane にも聞く（#666）**: docked の木へのドロップ（dock / move-docked。押し出される側は `tab-switch` / `reparent`）と `showPanel` で元の場所へ
+- **押し出される pane にも聞く（#666）**: docked の木へのドロップ（dock / move-docked。押し出される側は `tab-switch` / `reparent`）と `showPanel` でドックへ
   戻すときは、動かす pane のほかに、変わってしまう docked の pane にも先に聞く（木の順に 1 つずつ、最初の拒否で
   止めて何も変えない。最後に動かす pane 自身の `dock` / `move-docked`）。
   - タブの組へ落とす（戻す）と、それまで選択中だったタブが画面から外れる: `tab-switch`（`from` = そのタブ、
@@ -427,8 +427,9 @@ arrange?: boolean; // false = 利用者が組み替えられない（キオス�
 | `host.hidePanel(id)`              | hide（上と同じ）                                                                                               | `hide`              |
 | `host.closePanel(id)`             | close。`keepMounted` の pane でも中身を捨てる（隠れている中身も捨てる）。次に開くと新しく mount する           | `close`             |
 
-どれも window の位置と寸法は残す（次の `dock.open(id)` で同じ場所に出る）。docked の pane は、ドックの中の
-場所も覚える（次の「表示メニュー」節の `showPanel` で元の場所に戻る。`dock.open(id)` は従来どおり浮動で開く）。`hidePanel` / `closePanel` /
+どれも window の位置と寸法は残す（次の `dock.open(id)` で同じ場所に出る）。docked の pane は、ドックから隠した
+印と、隠す直前の比率だけを残す（次の「表示メニュー」節の `showPanel` で**既定の位置**に出る。隠した場所は覚えない。
+`dock.open(id)` は従来どおり浮動で開く）。`hidePanel` / `closePanel` /
 `resumeDeferredChange` は `bind:this` で得た `DockHost` から呼び、結果（`DockPanelChangeOutcome`:
 `applied` / `refused` / `stale` / `superseded` / `disposed`）を返す。中身を捨てる close を ✕ 以外（メニュー・
 コマンド）に置くのはアプリ。アプリでのつなぎ方（hide・tab-switch・dock は draft の capture だけ、close は
@@ -465,8 +466,8 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
     帯の pane・タイトルバーへ畳んだ浮動・閉じた浮動は `false`（そのとき `visible` は `true` のことがある）。
     表のタブ、畳んでいない開いた浮動、今引き出している帯の pane（`flyoutPanel`）が `true`。ホストの大きさや
     ブラウザのタブが隠れているかは見ない。「見えている間だけ購読する・読む」にはこちらを使う。
-  - `placement` — `'docked'` は docked の木にあるか、ドックから隠した pane（戻す場所を覚えている）。`'floating'` は
-    それ以外の浮動 window（開閉どちらも）。
+  - `placement` — `'docked'` は docked の木にあるか、ドックから隠した pane で既定の位置があるもの（`showPanel` で
+    ドックへ出る）。`'floating'` はそれ以外の浮動 window（開閉どちらも。既定の位置が無い隠した pane も）。
   - 並び順は、その `DockState` が id を初めて見た順（最初の layout の docked の木を木の順に、続けて浮動 window を
     配列の順に。あとから増えた id は末尾）。前面化・ドック・隠す操作では並び替わらない。`hydrate` / `layout = ...`
     でも既知の id は位置を保ち、新しい id は末尾に付く。アプリ独自の順にしたいときは行をアプリで並べ替える。
@@ -476,14 +477,21 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   チェックを入れる = `showPanel`。外すときに既に隠れていれば聞かずに `applied`。拒否されたときはチェックボックスを
   `row.visible` に戻すのはメニュー側（変わらない値は Svelte が書き戻さない）。
 - **`host.showPanel(id)`**: どこにあっても見える状態にする。
-  - ドックから隠した pane は**覚えている元の場所に戻す**（VS Code / Visual Studio のツールウィンドウと同じ）。
-    タブだった pane は同じタブグループの同じ位置に（選択中のタブにする）、分割の片側だった pane は同じ側に、
-    もとの割合で戻る。同じ分割から何枚か隠したときは、まだ隠れている pane の分を空けて戻すので、どの順で戻しても
-    全部戻せば元の割合になる（#733）。元のタブグループ・分割が消えていれば、隣にあった pane を目印にして同じ関係で戻す。
-    入れ子の分割では、目印の pane だけでなく、それを含む入れ物（同じ側にあった pane だけでできたもの）ごと包んで
-    戻す（`column[row[a,b], c]` の `c` は `b` の隣でなく `row[a,b]` の隣へ。#727）。目印も入れ物も無ければ、
-    入れ物があった場所へ、それも無ければさらに外側の入れ物があった場所へ戻す（#721・#727）。
-    どれもドックに無ければ浮動 window として開く（保存してある位置・寸法）。docked の木が空なら、木そのものになる。
+  - ドックから隠した pane（✕・`hidePanel` / `closePanel`・帯の pane の ✕）は、**既定のレイアウトでの位置に出す**
+    （隠した場所へは戻さない）。既定のレイアウトは `dock.defaultLayout`（下の「既定の位置」）。
+    - いまドックにある pane のうち、既定の木の並びでいちばん近い兄弟の隣に、既定と同じ側で入る（既定が
+      `row[a, b, c]` で `a` と `c` だけあるなら、`b` はその間。タブの組の仲間がドックにあれば、その組へ既定と同じ側の
+      タブとして入り、選択中のタブになる）。入れ子の既定では、兄弟が今まとまっている部分ごとの隣に入る
+      （既定が `row[a, column[b, c]]` なら、`a` は `column[b, c]` の隣）。
+    - 既定の兄弟が 1 つもドックに無ければ、既定の位置がある側の外周（既定で行の左端なら左の辺。`ThreePaneDock` の
+      左パネルは左、`initial: { edge }` の追加パネルはその辺）に出す。
+    - 既定のレイアウトが無い（`defaultLayout` を渡していない）、その pane が既定ではドックに無い、兄弟も外周の側も
+      無い、のどれかなら浮動 window として開く（保存してある位置・寸法）。docked の木が空なら、木そのものになる。
+    - 幅（比率）は、隠す直前にその pane が分割の中で持っていた比率 1 つだけを覚えていて、出た先の分割でその比率を
+      取る（ほかの pane は互いの比を保つ）。覚えた比率が無いとき（木の全体だった、など）は、既定の比率から決める。
+    - 既定の配置から隠しただけなら、**どの順で戻しても既定と同じ形**になる（比率まで元どおりになるのは、隠した逆の
+      順に戻したとき）。pane を動かした後は、その時にドックにある「いちばん近い既定の兄弟」の隣に出るので、戻す順で
+      形が変わることがある。
   - 閉じた浮動 window は開いて前面に、開いている浮動 window は前面に、docked の裏のタブは選択中のタブにする
     （`tab-switch` として聞く）。
   - タブグループへ選択中のタブとして戻すと、それまで選択中だった pane が画面から外れる（`keepMounted` でなければ
@@ -492,27 +500,38 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
     残っていた pane が新しいグループに入って作り直されるので `remount: true`。
   - `keepMounted` で中身が残っている pane をドックへ戻すときは `dock` の変更（`remount: true`）としても聞く
     （`tab-switch` があればその後。2 つの答えは 1 つの判断で、`tab-switch` を許したときの構造が `dock` を
-    当てるまでに変わったら（アプリが別のタブを選んだなど）`stale`）。分割へ戻すときに新しい分割を隣の pane
-    （またはタブの組）の周りに作り直すと、隣の中身は作り直されるので、先にその pane の `reparent` として聞く
+    当てるまでに変わったら（アプリが別のタブを選んだなど）`stale`）。分割へ出すときに新しい分割を隣の pane
+    （またはタブの組）の周りに作ると、隣の中身は作り直されるので、先にその pane の `reparent` として聞く
     （#666、上の「押し出される pane にも聞く」）。それ以外（既にある分割へ戻す・木が空・浮動で開く）は
     `dock.open` と同じく聞かない。
   - DOM のフォーカスは動かさない（前面化・選択中のタブだけ）。メニューを閉じたあとのフォーカスはメニュー側の
     約束に従い、pane の中へ移すかはアプリが決める。
-- 戻す場所は閉じた浮動 window の `dockSlot` として layout に入り、`serialize()` / `hydrate()` を通る（layout の
-  `version` は 2 のまま（slot は 4 段まで。それより深いと下の `version: 3`）。`dockSlot` の無い古い JSON はそのまま読め、その pane は浮動で開く）。
-- 入れ子の入れ物から隠すと、`dockSlot`（と端の帯の `slot`）は外側の入れ物の場所を `outer` で入れ子に覚える
-  （#727。slot 自身を含めて最大 8 段）。**5 段以上の slot を 1 つでも含む layout は `version: 3`** になり、
-  #727 より前の版では読めない（`validateDockLayout` が `version` で拒み、その利用者の layout は既定に戻る）。
-  4 段までなら今までどおり `version: 2` で、前の版でも読める。版は中身から毎回決まる（`dock.layout` に入れるたび・
-  `serialize()`・`layoutSnapshot()`。深い slot が消えれば 2 に戻る）。読むときは `version: 2`（と 1）の slot は
-  4 段まで、`version: 3` だけ 8 段まで受ける。`DockLayout['version']` の型は `2 | 3` なので、`version` で分岐する
-  コードは 3 の分岐も足す（`{ version: 2, ... }` と書いて渡す既存のコードはそのまま通る）。
-- `DockState` だけで扱う口もある（`beforePanelChange` には聞かない）: `dock.dismiss(id)`（隠す。docked なら場所を
-  覚える）・`dock.show(id)`（上の `showPanel` の layout の部分。戻り値は `'docked'` / `'floating'` / `null`）・
+- **既定の位置（`dock.defaultLayout`）**: `DockState` の欄 `defaultLayout: DockLayout | null`（既定は `null`）に、
+  アプリの既定のレイアウトを入れておく。読むのは `docked` の木だけで、`layout` には入らず、**保存されない**
+  （`serialize()` / `hydrate()` を通らない。マウントのたびにアプリが入れる）。既定の木の分割・タブの組の id は、
+  重ならない固定の値にする（戻すときに同じ id の分割・組を作り直す。id が今の木で使われていれば新しく振る）。
+  `ThreePaneDock` は自分の既定（左右とも開いた形）を入れるので、アプリは何もしなくてよい。`DockHost` を直に使う
+  アプリが入れなければ、ドックから隠した pane は浮動で開く。
+  ```ts
+  const dock = createDockState();
+  dock.defaultLayout = myDefaultLayout(); // reset / 初回に入れるのと同じ DockLayout
+  ```
+- ドックから隠した pane は、閉じた浮動 window に `dockShare`（隠す直前の比率。`0 < n <= 1`、`1` は「覚えた比率
+  なし」）を持つ。これが「ドックから隠した」印で、`serialize()` / `hydrate()` を通る。`dockShare` の無い閉じた
+  window は浮動で開く。**前の版の `dockSlot`（戻す場所）は廃止**（破壊的変更）: 型から消え、古い JSON にあっても
+  読まずに捨てる（その pane は浮動で開く。layout 全体は読める）。
+- 端の帯（自動で隠す）の `slot` は今までどおり場所を覚える。入れ子の入れ物からしまうと、外側の入れ物の場所を
+  `outer` で入れ子に覚える（#727。slot 自身を含めて最大 8 段）。**5 段以上の slot を 1 つでも含む layout は
+  `version: 3`** になり、#727 より前の版では読めない。4 段までなら `version: 2`。版は中身から毎回決まる
+  （`dock.layout` に入れるたび・`serialize()`・`layoutSnapshot()`）。読むときは `version: 2`（と 1）の slot は
+  4 段まで、`version: 3` だけ 8 段まで受ける。`DockLayout['version']` の型は `2 | 3`。
+- `DockState` だけで扱う口もある（`beforePanelChange` には聞かない）: `dock.dismiss(id)`（隠す。docked・帯の pane なら
+  `dockShare` を残す）・`dock.show(id)`（上の `showPanel` の layout の部分。戻り値は `'docked'` / `'floating'` / `null`）・
   `dock.showPlacement(id)`（`show` がどこに出すか）・`dock.showTabSwitch(id)`（`show` が選択中から外す pane）・
+  `dock.shownTree(id)`（`show` がドックへ出すときの木。`null` は浮動で開く。この 3 つは同じ計算を読む）・
   `dock.isVisible(id)`（閉じていないか）・`dock.isOnScreen(id)`（実際に画面に出ているか、#792。reactive）。
 - `dock.isOpen(id)` / `dock.open(id)` / `dock.close(id)` は従来どおり**浮動 window だけ**を見る（docked の id には
-  `false` / 何もしない）。`dock.open(id)` でドックから隠した pane を開くと浮動で開き、覚えた場所は捨てる。
+  `false` / 何もしない）。`dock.open(id)` でドックから隠した pane を開くと浮動で開き、`dockShare` は捨てる（次に閉じて `show` しても浮動）。
   `dock.ensureWindow` は docked の id を浮動として足さなくなった（id の重複を作っていた）。
 
 ### 錠（浮動 window の位置と大きさの固定）
@@ -590,7 +609,7 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   `reparent` で先に、次に区画の中で中身を描いている pane を `{ kind: 'auto-hide', to: 'band' | 'tree', remount: true }` で聞く
   （木と帯では描く親が違うので、`keepMounted` でも作り直す）。承認と適用の間に構造（引き出している pane も含む）が変わったら `stale`。
 - 帯の pane の ✕ は、ほかの pane と同じく hide / close（`beforePanelChange` の `hide` / `close`、`remount: true`）。その pane は帯から抜け、
-  区画の元の場所を覚えた閉じた浮動 window になる。`show(id)` / `showPanel(id)` は、帯の pane を引き出す（聞かない）。
+  ドックから隠した閉じた浮動 window になる（次に `showPanel` すると既定の位置に出る。帯へは戻らない）。`show(id)` / `showPanel(id)` は、帯の pane を引き出す（聞かない）。
 - ドラッグ: 帯と引き出した pane はドラッグ元にならず、ドロップ先にもならない（`data-dock-no-drop`。そこへのドロップは何も起きない）。
   外周のボタン・ほかの区画の十字はそのまま使える（ドラッグを始める押下で、引き出した pane は引っ込む）。帯の pane を動かすときは、
   ピンで戻してからドラッグする。引き出した pane に pop-out のボタンは出さない。
@@ -678,7 +697,10 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   外したパネルを承認の前に元へ戻した（今の配置のままでよくなった）ときも、古い依頼は承認されても適用しない。
 - **既定レイアウト**は純関数 `threePaneDockLayout({ hostWidth, leftWidth, rightWidth, panels })`: 左 | 中央 | 右の行で、
   `leftWidth`（既定 280）・`rightWidth`（既定 360）の px をマウント時に測った幅の比率に直す（中央が 320px を下回るなら
-  左右を縮める）。マウント時の `leftOpen`/`rightOpen` が `false` の側は隠れた状態で始まる（元の場所を覚える）。
+  左右を縮める）。マウント時の `leftOpen`/`rightOpen` が `false` の側は隠れた状態で始まる（開くと既定の位置＝中央の隣に出る）。
+  `ThreePaneDock` は、左右とも開いた形の既定を `dock.defaultLayout` に入れる（パネルの集合が変わるたびに入れ直す）。
+  左右を開閉しても、動かした後に隠しても、開くときは既定の側に出る。隠す前に広げた幅は覚えている。初期が `hidden` /
+  `floating` の追加パネルは既定ではドックに無いので、ドックへ入れてから隠しても、開くと浮動で出る。
 - **`leftOpen` / `rightOpen`（bindable）は「表示」メニューのチェックと同じ 1 か所の状態**（`dock.panels` の `visible`）。
   ✕・メニュー・メソッドのどれで変わっても書き戻る。アプリが書き換えると `setVisible` と同じ依頼になり、
   `beforePanelChange` が断ったら本当の状態が書き戻る。承認待ちの間に元の値へ戻すと（`false` → `true` など）、
@@ -722,9 +744,7 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   いるなら展開し、タブの組に入っている（裏でも表でも）なら組から抜いて組の隣に分割で置く（組の場所と比率は保ち、
   左のパネルを含む組なら中央はその右、ほかは左。`dropCenter: false` は新しい合流しか止めないので、組のままだと
   別のタブを押して中央を隠せてしまう）、中央が木に無い（浮動・閉じている・自動で隠れている）なら既定（`status: 'default'`）。
-  隠れている（元の場所を覚えた）パネルを知らない id として捨てたときは、残る隠れたパネルの `share` からその分を除く
-  （#741。結果は保存値と同じ形なので、`initialLayout` / `hydrate` / `replaceLayout(..., { saved: true })` で入れる。
-  元にした `dock.layout` へ `dock.layout = ...` で書き戻すと、setter がもう一度除く）。
+  隠れているパネルは場所を覚えないので、知らない id として捨てても、残る隠れたパネルには影響しない。
   保存のきっかけは `onLayoutCommit(saved, reason)`（#791。下の「保存してよい配置の確定」）。届く `saved` は
   `layoutSnapshot()` と同じ値で、`dock.serialize()` ではない（狭い表示のあいだ `dock.layout` は一時のレイアウト）。
   `dock.layout` を `$effect` で見て `layoutSnapshot()` を保存する形も動く（狭い表示の控えは、配置を入れるのと同じ

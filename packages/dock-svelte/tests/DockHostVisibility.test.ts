@@ -12,7 +12,8 @@ import DockHostHarness from './DockHostHarness.svelte';
 import PanelsMenuHarness from './PanelsMenuHarness.svelte';
 import { collectPanelIds } from '../src/core/tree';
 import type { DockPanelChange } from '../src/core/lifecycle';
-import { createDockState, type DockState } from '../src/state.svelte';
+import type { DockState } from '../src/state.svelte';
+import { dockWithDefault } from './fixtures/visibility-layouts';
 import type { DockLayout, DockTabGroupNode } from '../src/types';
 
 beforeAll(() => {
@@ -41,7 +42,8 @@ const layout = (): DockLayout => ({
 });
 
 function mount(props: Record<string, unknown> = {}, initial: DockLayout = layout()) {
-	const dock = createDockState(initial);
+	// The layout it starts with is its default layout: where a hidden pane is shown again (#782 PR5).
+	const dock = dockWithDefault(initial);
 	const view = render(DockHostHarness, { dock, ...props });
 	const host = () => view.component.host();
 	render(PanelsMenuHarness, {
@@ -282,7 +284,7 @@ describe('replaceLayout with { saved: true } (#739 review)', () => {
 		});
 	}
 
-	it('without saved: a floated pane kept by the replacement keeps its place and its share', async () => {
+	it('without saved: a floated pane kept by the replacement keeps its place', async () => {
 		const { dock, host } = mount({}, initial());
 		dock.undockPanel('a');
 		dock.dismiss('b');
@@ -295,10 +297,12 @@ describe('replaceLayout with { saved: true } (#739 review)', () => {
 		expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
 		const root = dock.layout.docked;
 		expect(root?.type === 'split' && root.children.map((c) => c.id)).toEqual(['a', 'b', 'c']);
+		// b, hidden, left the row for a's slot (#743: a holds .2 of .7 since) and came back at its
+		// default place with the share it held (.375 of row[b, c]); a then takes 2/7 of the row.
 		expect(root?.type === 'split' && root.sizes).toEqual([
-			expect.closeTo(0.2, 9),
-			expect.closeTo(0.3, 9),
-			expect.closeTo(0.5, 9)
+			expect.closeTo(2 / 7, 9),
+			expect.closeTo((0.375 * 5) / 7, 9),
+			expect.closeTo((0.625 * 5) / 7, 9)
 		]);
 	});
 });

@@ -1,11 +1,12 @@
-// 総当たりの部分（隠す順 × 戻す順のすべて、手順の全列挙など）は `panel-visibility-exhaustive-*.test.ts`
-// に分けた（#798）。道具は `fixtures/visibility-layouts.ts`。ここには事例と短い性質を残す。
-// The remembered docked place and the View-menu API (#663 ①-A): a docked pane
-// that is hidden / closed remembers where it was (`DockState.dismiss`,
-// `core/slot.ts`) and `show` puts it back there (tab group / split, with its
-// share of the space); when that place is gone it opens floating; the slot
-// survives `serialize` / `hydrate` (old JSON without it still loads);
-// `panels` lists every pane in a stable order with visible flags.
+// 隠す順 × 戻す順の総当たりと旧実装（`fixtures/slot-main.ts`）との比較は #782 PR5 で削った（Issue #782 の
+// 2026-11-22 の方針変更の 9）。性質は `default-place.test.ts` と `slot-properties.test.ts`。ここには事例を残す。
+// Hiding and showing a docked pane, and the View-menu API (#663 ①-A, #782 PR5): a docked pane that
+// is hidden / closed (`DockState.dismiss`) remembers no place; `show` docks it at its DEFAULT place
+// (`DockState.defaultLayout`, `core/defaultPlace.ts`), with the share it held. The docks here take
+// the layout they start with as the default (`dockWithDefault`), so "the old shape" below is the
+// default shape. Without a default place the pane opens floating; `dockShare` survives
+// `serialize` / `hydrate`; `panels` lists every pane in a stable order with visible flags.
+// A pane floated out of the tree still goes back to where it was (`homeSlot`, `core/slot.ts`).
 import { describe, expect, it, vi } from 'vitest';
 import { PanelLifecycle, type DockPanelChange } from '../src/core/lifecycle';
 import { collectPanelIds, findNode } from '../src/core/tree';
@@ -13,14 +14,11 @@ import { validateDockLayout } from '../src/core/validate';
 import { createDockState, type DockState } from '../src/state.svelte';
 import type { DockLayout, DockNode, DockSplitNode, DockTabGroupNode } from '../src/types';
 import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
-import { enumerateSequences, simRun } from './fixtures/visibility-sim';
 import {
 	L,
 	counterMakeId,
-	mainSlot,
-	mainSplit,
+	dockWithDefault,
 	nested,
-	nowSlot,
 	panel,
 	runSteps,
 	shapeOf,
@@ -52,13 +50,12 @@ const splitOf = (node: DockNode | null): DockSplitNode => {
 
 describe('slot memory: tab group', () => {
 	it('a hidden tab goes back to its group at the same index, as the active tab', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		dock.dismiss('y');
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['x', 'z', 'p']);
-		expect(winOf(dock, 'y')).toMatchObject({
-			open: false,
-			dockSlot: { kind: 'tab', groupId: 't', index: 1 }
-		});
+		// No place is remembered: only that it was hidden from the dock, and its group's share.
+		expect(winOf(dock, 'y')).toMatchObject({ open: false, dockShare: 0.6 });
+		expect(winOf(dock, 'y')).not.toHaveProperty('dockSlot');
 
 		expect(dock.show('y')).toBe('docked');
 		const group = findNode(dock.layout.docked, 't') as DockTabGroupNode;
@@ -68,7 +65,7 @@ describe('slot memory: tab group', () => {
 	});
 
 	it('a group that collapsed to one tab is made again around the anchor', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		dock.dismiss('z');
 		dock.dismiss('x'); // t collapses to the bare panel y
 		expect(findNode(dock.layout.docked, 't')).toBeNull();
@@ -94,7 +91,7 @@ describe('slot memory: tab order relative to the anchors', () => {
 		collectPanelIds(dock.layout.docked).filter((id) => id !== 'p');
 
 	it('[x, y, z]: hide y, hide x (lone z), show y = [y, z] (y was before z)', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		dock.dismiss('y');
 		dock.dismiss('x');
 		dock.show('y');
@@ -104,7 +101,7 @@ describe('slot memory: tab order relative to the anchors', () => {
 	});
 
 	it('mirrored: hide y, hide z (lone x), show y = [x, y] (y was after x)', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		dock.dismiss('y');
 		dock.dismiss('z');
 		dock.show('y');
@@ -118,7 +115,7 @@ describe('slot memory: tab order relative to the anchors', () => {
 		const layout = tabsLayout();
 		const t = splitOf(layout.docked).children[0] as DockTabGroupNode;
 		t.children.push(panel('w'));
-		const dock = createDockState(layout, counterMakeId());
+		const dock = dockWithDefault(layout, counterMakeId());
 		dock.dismiss('z');
 		dock.dismiss('x');
 		dock.show('z');
@@ -129,7 +126,7 @@ describe('slot memory: tab order relative to the anchors', () => {
 		const layout = tabsLayout();
 		const t = splitOf(layout.docked).children[0] as DockTabGroupNode;
 		t.children.push(panel('w'));
-		return createDockState(layout, counterMakeId());
+		return dockWithDefault(layout, counterMakeId());
 	};
 	// Every order of hiding two / three tabs of [x, y, z, w] and showing them again.
 	const permutations = (ids: string[]): string[][] =>
@@ -157,35 +154,11 @@ describe('slot memory: tab order relative to the anchors', () => {
 			}
 		}
 	}
-
-	it('a slot saved without the relative order (any old JSON) still restores at a sensible place', () => {
-		const dock = createDockState(
-			{
-				version: 2,
-				floating: [
-					{
-						id: 'q',
-						title: 'Q',
-						x: 0,
-						y: 0,
-						width: 100,
-						height: 100,
-						open: false,
-						dockSlot: { kind: 'tab', groupId: 't', index: 9, anchors: [] }
-					}
-				],
-				docked: tabsLayout().docked
-			},
-			counterMakeId()
-		);
-		dock.show('q');
-		expect(order(dock)).toEqual(['x', 'y', 'z', 'q']);
-	});
 });
 
 describe('slot memory: split', () => {
 	it('a pane of a 2-way split comes back on the same side with the same share', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		dock.dismiss('p'); // s collapses to the tab group t
 		expect(dock.layout.docked?.id).toBe('t');
 
@@ -198,7 +171,7 @@ describe('slot memory: split', () => {
 	});
 
 	it('a pane of a 3-way split goes back to its index with its share', () => {
-		const dock = createDockState(
+		const dock = dockWithDefault(
 			{
 				version: 2,
 				floating: [],
@@ -221,18 +194,18 @@ describe('slot memory: split', () => {
 	});
 
 	it('the whole docked tree when it was the only docked pane (and the tree is still empty)', () => {
-		const dock = createDockState({ version: 2, floating: [], docked: panel('only') });
+		const dock = dockWithDefault({ version: 2, floating: [], docked: panel('only') });
 		dock.dismiss('only');
 		expect(dock.layout.docked).toBeNull();
-		expect(winOf(dock, 'only')?.dockSlot).toEqual({ kind: 'root' });
+		expect(winOf(dock, 'only')?.dockShare).toBe(1);
 		expect(dock.show('only')).toBe('docked');
 		expect(dock.layout.docked).toEqual(panel('only'));
 	});
 });
 
-describe('slot memory: the place is gone', () => {
-	it('opens floating when neither the neighbour nor an anchor is docked any more', () => {
-		const dock = createDockState(
+describe('no default pane is docked, or no default place', () => {
+	it('docks along its default edge when no pane of the default layout is docked', () => {
+		const dock = dockWithDefault(
 			{
 				version: 2,
 				floating: [{ id: 'f', title: 'F', x: 10, y: 10, width: 300, height: 200, open: true }],
@@ -249,16 +222,41 @@ describe('slot memory: the place is gone', () => {
 		dock.dismiss('l');
 		dock.dockPanel('f', 'r', 'center');
 		dock.undockPanel('r'); // the tree is now just f; r floats
-		expect(dock.showPlacement('l')).toBe('floating');
+		expect(dock.showPlacement('l')).toBe('docked');
 
-		expect(dock.show('l')).toBe('floating');
-		expect(winOf(dock, 'l')).toMatchObject({ open: true });
-		expect(winOf(dock, 'l')?.dockSlot).toBeUndefined();
-		expect(collectPanelIds(dock.layout.docked)).toEqual(['f']);
+		// l is the first child of the default row: the left edge, with the half it held.
+		expect(dock.show('l')).toBe('docked');
+		expect(winOf(dock, 'l')).toBeUndefined();
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['l', 'f'] });
+		expect(splitOf(dock.layout.docked).sizes).toEqual([0.5, 0.5]);
 	});
 
-	it('a root slot opens floating once something else is docked', () => {
-		const dock = createDockState({
+	it('opens floating without a default layout, and for a pane the default layout does not dock', () => {
+		const layout = (): DockLayout => ({
+			version: 2,
+			floating: [{ id: 'f', title: 'F', x: 10, y: 10, width: 300, height: 200, open: true }],
+			docked: splitNode('s', 'row', [panel('l'), panel('r')])
+		});
+		// `DockHost` used directly, no `defaultLayout`: a hidden pane opens floating.
+		const plain = createDockState(layout(), counterMakeId());
+		plain.dismiss('l');
+		expect(plain.panels.find((p) => p.id === 'l')?.placement).toBe('floating');
+		expect(plain.showPlacement('l')).toBe('floating');
+		expect(plain.show('l')).toBe('floating');
+		expect(winOf(plain, 'l')).toMatchObject({ open: true });
+		expect(winOf(plain, 'l')?.dockShare).toBeUndefined();
+		expect(collectPanelIds(plain.layout.docked)).toEqual(['r']);
+
+		// f floats by default: docked by the user and hidden from the dock, it opens floating too.
+		const dock = dockWithDefault(layout(), counterMakeId());
+		dock.dockPanel('f', 'r', 'right');
+		dock.dismiss('f');
+		expect(dock.show('f')).toBe('floating');
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['l', 'r'] });
+	});
+
+	it('a pane that is the whole default tree has no sibling and no edge: floating once something else is docked', () => {
+		const dock = dockWithDefault({
 			version: 2,
 			floating: [{ id: 'f', title: 'F', x: 0, y: 0, width: 300, height: 200, open: true }],
 			docked: panel('only')
@@ -276,18 +274,19 @@ describe('slot memory: the place is gone', () => {
 });
 
 describe('open / close keep their floating-only meaning', () => {
-	it('open() of a pane hidden from the tree opens it floating and forgets the slot', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+	it('open() of a pane hidden from the tree opens it floating: it is no longer hidden from the dock', () => {
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		dock.dismiss('p');
+		expect(winOf(dock, 'p')?.dockShare).toBeCloseTo(0.4);
 		dock.open('p');
 		expect(winOf(dock, 'p')).toMatchObject({ open: true });
-		expect(winOf(dock, 'p')?.dockSlot).toBeUndefined();
+		expect(winOf(dock, 'p')?.dockShare).toBeUndefined();
 		dock.close('p');
 		expect(dock.show('p')).toBe('floating');
 	});
 
 	it('isOpen stays floating-only; isVisible counts docked panes', () => {
-		const dock = createDockState(tabsLayout());
+		const dock = dockWithDefault(tabsLayout());
 		expect(dock.isOpen('x')).toBe(false);
 		expect(dock.isVisible('x')).toBe(true);
 		expect(dock.isVisible('f')).toBe(true);
@@ -296,13 +295,13 @@ describe('open / close keep their floating-only meaning', () => {
 	});
 
 	it('ensureWindow does not add a floating copy of a docked id', () => {
-		const dock = createDockState(tabsLayout());
+		const dock = dockWithDefault(tabsLayout());
 		dock.ensureWindow({ id: 'x', title: 'X' }, 800, 600);
 		expect(winOf(dock, 'x')).toBeUndefined();
 	});
 
 	it('show() of a docked background tab activates it; unknown ids are null', () => {
-		const dock = createDockState(tabsLayout());
+		const dock = dockWithDefault(tabsLayout());
 		expect(dock.show('z')).toBe('docked');
 		expect((findNode(dock.layout.docked, 't') as DockTabGroupNode).activeIndex).toBe(2);
 		expect(dock.show('nope')).toBeNull();
@@ -310,82 +309,33 @@ describe('open / close keep their floating-only meaning', () => {
 });
 
 describe('serialize / hydrate', () => {
-	it('the remembered place survives a round trip', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+	it('`dockShare` survives a round trip; the default layout is not saved (the app gives it again)', () => {
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		dock.dismiss('p');
 		const json = dock.serialize();
 		expect(JSON.parse(json).version).toBe(2);
+		expect(JSON.parse(json).floating.find((w: { id: string }) => w.id === 'p')).not.toHaveProperty(
+			'dockSlot'
+		);
 
 		const restored = createDockState(json, counterMakeId());
-		expect(winOf(restored, 'p')?.dockSlot).toEqual(winOf(dock, 'p')?.dockSlot);
+		expect(winOf(restored, 'p')?.dockShare).toBeCloseTo(0.4);
+		expect(restored.defaultLayout).toBeNull();
+		expect(restored.showPlacement('p')).toBe('floating');
+		restored.defaultLayout = dock.defaultLayout;
+		expect(restored.showPlacement('p')).toBe('docked');
 		restored.show('p');
-		expect(splitOf(restored.layout.docked).children.map((c) => c.id)).toEqual(['t', 'p']);
+		const s = splitOf(restored.layout.docked);
+		expect(s.children.map((c) => c.id)).toEqual(['t', 'p']);
+		expect(s.sizes[1]).toBeCloseTo(0.4);
 	});
 
-	it('a split slot keeps `otherAnchors` through a round trip; a malformed one is rejected (#720 review)', () => {
-		const dock = createDockState(
-			{
-				version: 2,
-				floating: [],
-				docked: {
-					type: 'split',
-					id: 's',
-					direction: 'row',
-					sizes: [0.3, 0.3, 0.4],
-					children: [panel('a'), panel('b'), panel('c')]
-				}
-			},
-			counterMakeId()
-		);
-		dock.dismiss('b');
-		const slot = winOf(dock, 'b')?.dockSlot;
-		expect(slot).toMatchObject({ kind: 'split', anchors: ['c'], otherAnchors: ['a'] });
-		const restored = createDockState(dock.serialize(), counterMakeId());
-		expect(winOf(restored, 'b')?.dockSlot).toEqual(slot);
-		const bad = JSON.parse(dock.serialize());
-		bad.floating[0].dockSlot.otherAnchors = [1];
-		expect(validateDockLayout(bad).ok).toBe(false);
-	});
-
-	it('`outer` (#721) survives a round trip; a tab outer, a bad outer or one nested too deep is rejected', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
-		dock.dismiss('x');
-		const slot = winOf(dock, 'x')?.dockSlot;
-		expect(slot).toMatchObject({
-			kind: 'tab',
-			groupId: 't',
-			outer: { kind: 'split', splitId: 's', neighborId: 'p', side: 'before' }
-		});
-		const restored = createDockState(dock.serialize(), counterMakeId());
-		expect(winOf(restored, 'x')?.dockSlot).toEqual(slot);
-		const withOuter = (outer: unknown) => {
-			const raw = JSON.parse(dock.serialize());
-			raw.floating.find((w: { id: string }) => w.id === 'x').dockSlot.outer = outer;
-			return validateDockLayout(raw).ok;
-		};
-		expect(withOuter({ kind: 'root' })).toBe(true);
-		expect(withOuter({ kind: 'tab', groupId: 'g', index: 0, anchors: [] })).toBe(false);
-		expect(withOuter({ kind: 'split', splitId: 's' })).toBe(false);
-		expect(withOuter('root')).toBe(false);
-		// Nesting is headroom for later (one level is written today), but bounded.
-		let deep: Record<string, unknown> = { kind: 'root' };
-		for (let i = 0; i < 8; i++) deep = { ...(slot?.kind === 'tab' ? slot.outer : {}), outer: deep };
-		expect(withOuter(deep)).toBe(false);
-	});
-
-	it('the last tab of a group remembers the group, not the bare place it had (#721)', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+	it('the tabs of a group all hidden: the group is made again beside its default neighbour (#721)', () => {
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		dock.dismiss('x');
 		dock.dismiss('y');
 		dock.dismiss('z');
-		expect(winOf(dock, 'z')?.dockSlot).toMatchObject({
-			kind: 'tab',
-			groupId: 't',
-			index: 2,
-			anchors: ['y', 'x'],
-			outer: { kind: 'split', splitId: 's', neighborId: 'p' }
-		});
-		// x first: neither the group nor an anchor is docked, so x takes the group's place next to p.
+		// x first: no tab of its group is docked, so x takes the group's default place next to p.
 		expect(dock.show('x')).toBe('docked');
 		expect(dock.show('z')).toBe('docked');
 		expect(dock.show('y')).toBe('docked');
@@ -423,7 +373,7 @@ describe('serialize / hydrate', () => {
 		expect(dock.panels.map((r) => r.id)).toEqual(['x', 'y', 'z', 'p']);
 	});
 
-	it('a malformed dockSlot rejects the payload as a whole', () => {
+	it('a `dockSlot` of the releases before #782 PR5 is dropped (the window opens floating); a malformed `dockShare` rejects the payload', () => {
 		const bad = {
 			...tabsLayout(),
 			floating: [
@@ -439,16 +389,33 @@ describe('serialize / hydrate', () => {
 				}
 			]
 		};
-		const result = validateDockLayout(bad);
-		expect(result.ok).toBe(false);
-		if (!result.ok)
-			expect(result.issues).toContainEqual({ code: 'shape', path: 'floating[0].dockSlot' });
+		// Whatever the old slot holds (this one is malformed): not read, not kept.
+		const read = validateDockLayout(bad);
+		expect(read.ok).toBe(true);
+		if (read.ok) expect(read.layout.floating[0]).not.toHaveProperty('dockSlot');
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
+		expect(dock.hydrate(JSON.stringify(bad))).toBe(true);
+		expect(dock.show('q')).toBe('floating');
+
+		for (const dockShare of [0, -0.5, 1.5, '0.5', null]) {
+			const floating = [{ ...bad.floating[0], dockSlot: undefined, dockShare }];
+			const result = validateDockLayout({ ...bad, floating });
+			expect(result.ok, String(dockShare)).toBe(false);
+			if (!result.ok)
+				expect(result.issues).toContainEqual({ code: 'shape', path: 'floating[0].dockShare' });
+		}
+		expect(
+			validateDockLayout({
+				...bad,
+				floating: [{ ...bad.floating[0], dockSlot: undefined, dockShare: 1 }]
+			}).ok
+		).toBe(true);
 	});
 });
 
 describe('panels', () => {
 	it('lists every pane in first-seen order with visible / placement', () => {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		expect(dock.panels).toEqual([
 			{ id: 'x', title: 'X', icon: undefined, placement: 'docked', visible: true, onScreen: true },
 			{ id: 'y', title: 'Y', icon: undefined, placement: 'docked', visible: true, onScreen: false },
@@ -479,7 +446,7 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 		keepMounted?: (id: string) => boolean;
 		deferred?: () => boolean;
 	}) {
-		const dock = createDockState(tabsLayout(), counterMakeId());
+		const dock = dockWithDefault(tabsLayout(), counterMakeId());
 		const lifecycle = new PanelLifecycle(dock, () => ({
 			beforePanelChange: options.hook,
 			keepMounted: options.keepMounted,
@@ -650,7 +617,7 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 			asked.push(change);
 			return allow;
 		};
-		const dock = createDockState(
+		const dock = dockWithDefault(
 			{
 				version: 2,
 				floating: [],
@@ -702,7 +669,7 @@ describe('show() into a tab group is asked as a tab-switch from the active pane'
 describe('slot memory: the surviving child of a gone split is a split', () => {
 	it('row[row[a,b], p]: hide a and b, show a then b -> the inner row again (not row[a,b,p])', () => {
 		const make = () => nested('row', ['a', 'b'], ['p'], true, true);
-		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		const dock = dockWithDefault({ version: 2, floating: [], docked: make() }, counterMakeId());
 		dock.dismiss('a');
 		dock.dismiss('b');
 		dock.show('a');
@@ -712,7 +679,7 @@ describe('slot memory: the surviving child of a gone split is a split', () => {
 
 	it('row[column[a,b,c], d]: hide d then a, show d then a -> the old shape', () => {
 		const make = () => nested('row', ['a', 'b', 'c'], ['d']);
-		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		const dock = dockWithDefault({ version: 2, floating: [], docked: make() }, counterMakeId());
 		dock.dismiss('d');
 		dock.dismiss('a');
 		dock.show('d');
@@ -736,7 +703,7 @@ describe('slot memory: a hidden container still holds its place in the outer spl
 				panel('d')
 			]
 		});
-		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		const dock = dockWithDefault({ version: 2, floating: [], docked: make() }, counterMakeId());
 		for (const id of ['b', 'a', 'c']) dock.dismiss(id);
 		dock.show('a');
 		dock.dismiss('d');
@@ -764,7 +731,7 @@ describe('slot memory: a hidden container still holds its place in the outer spl
 				panel('d')
 			]
 		});
-		const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		const dock = dockWithDefault({ version: 2, floating: [], docked: make() }, counterMakeId());
 		for (const id of ['b', 'a']) dock.dismiss(id);
 		dock.show('b');
 		for (const id of ['d', 'c']) dock.dismiss(id);
@@ -834,7 +801,6 @@ describe('slot memory: regressions found by walking every sequence (#721)', () =
 		it(`${name}: ${steps} -> the old shape (${why})`, () => {
 			const make = L[name];
 			const want = shapeOf(make());
-			expect(shapeOf(simRun(mainSlot, make(), steps.split(' ')).docked)).toEqual(want);
 			expect(shapeOf(runSteps(make, steps.split(' ')).layout.docked)).toEqual(want);
 		});
 	}
@@ -861,27 +827,27 @@ it('column[row[a,column[row[tabs[b,c],x],d]],e]: -a -b -x -d -c +c +d +x +b +a -
 	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 });
 
-// PR #732 review: a layout with a slot more than four deep is saved as `version: 3` (the releases
-// before #727 reject such a slot as a whole), a shallow one stays 2; the v3 JSON reads back.
-describe('the saved version follows the slot depth', () => {
+// PR #732 review: a layout with a slot more than four deep is saved as `version: 3`. Since #782
+// PR5 a hidden pane's window holds no slot, so hiding panes however deep stays version 2 (a band's
+// `slot` can still make it 3: `autohide.test.ts`).
+describe('the saved version: hidden panes hold no slot', () => {
 	it('a shallow layout stays version 2', () => {
 		const dock = runSteps(L['row[a,tabs[b,c],column[d,e]]'], '-b -d -a'.split(' '));
 		expect(dock.layout.version).toBe(2);
 		expect(JSON.parse(dock.serialize()).version).toBe(2);
 	});
 
-	it('column[row[a,column[row[tabs[b,c],x],d]],e]: -a -b -x -d -c is version 3, and reads back', () => {
+	it('column[row[a,column[row[tabs[b,c],x],d]],e]: -a -b -x -d -c is version 2, and reads back', () => {
 		const make = L['column[row[a,column[row[tabs[b,c],x],d]],e]'];
 		const dock = runSteps(make, '-a -b -x -d -c'.split(' '));
 		const json = dock.serialize();
-		expect(JSON.parse(json).version).toBe(3);
+		expect(JSON.parse(json).version).toBe(2);
 		const back = createDockState(json, counterMakeId());
+		back.defaultLayout = dock.defaultLayout;
 		expect(back.layout).toEqual(dock.layout);
 		for (const id of 'c d x b a'.split(' ')) back.show(id);
 		expect(back.layout.floating).toEqual([]);
 		expect(shapeOf(back.layout.docked)).toEqual(shapeOf(make()));
-		// Every pane back: the deep slots are gone, and so is version 3.
-		expect(JSON.parse(back.serialize()).version).toBe(2);
 	});
 });
 
@@ -895,84 +861,25 @@ it('row[b,c,column[tabs[d,e],tabs[f,g]]]: -g -d -e -f -b -c +f +b +c +d +g +e ->
 	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 });
 
-// #734: a pane floated out of the tree (`undockPanel`, its `homeSlot`) and a pane hidden from it
-// (`dismiss`, its closed window's `dockSlot`) count each other, whichever is put back first.
-// Before, `dismiss` counted the closed windows only (the floated panes' places were kept by the
-// `DragController`), so `~b -a ^b +a` on row[a,b,c] came back as row[b,a,c].
-describe('slot memory: floated and hidden panes out of the same container (#734)', () => {
+// #734 made a pane floated out of the tree (`undockPanel`, its `homeSlot`) and a pane hidden from
+// it count each other. Since #782 PR5 a hidden pane holds no place: it comes back at its default
+// place, and a floated pane's `homeSlot` no longer counts it.
+describe('floated and hidden panes out of the same container (#734, #782 PR5)', () => {
 	const row3 = () => splitNode('s', 'row', ['a', 'b', 'c'].map(panel));
 
-	it('row[a,b,c]: ~b -a ^b +a -> the old shape (row[b,a,c] before #734)', () => {
+	it('row[a,b,c]: ~b -a ^b +a -> the old shape (the hidden pane comes back at its default place)', () => {
 		const steps = '~b -a ^b +a'.split(' ');
-		const want = shapeOf(row3());
-		expect(shapeOf(simRun(mainSplit, row3(), steps).docked)).toEqual({ row: ['b', 'a', 'c'] });
-		expect(shapeOf(simRun(nowSlot, row3(), steps).docked)).toEqual(want);
-		expect(shapeOf(runSteps(row3, steps).layout.docked)).toEqual(want);
-	});
-
-	it('row[a,b,c]: -b ~a +b ^a -> the old shape (the float counts the hidden pane, as before)', () => {
-		const steps = '-b ~a +b ^a'.split(' ');
 		expect(shapeOf(runSteps(row3, steps).layout.docked)).toEqual(shapeOf(row3()));
 	});
 
-	it('row[a,b,c]: every mixed sequence up to 8 steps comes back to the old shape', () => {
-		const result = enumerateSequences(row3, mainSplit, nowSlot, 8, { mixed: true });
-		expect(result.regressions).toEqual([]);
-		expect(result.improvements).toBeGreaterThan(0);
-		expect(result.nowRestores).toBe(result.sequences);
+	// What PR5 changes: a was floated from "the left of c" (b was hidden, and holds no place), so
+	// it goes back there - between b, shown at its default place meanwhile, and c. Before PR5 the
+	// float counted the hidden pane and this was row[a,b,c]. For PR6: with the default place
+	// worked out on the shadow tree, a's tombstone would be the sibling b goes beside.
+	it('row[a,b,c]: -b ~a +b ^a -> row[b,a,c] (a floated pane goes back to where it was, which no longer counts a hidden one)', () => {
+		const steps = '-b ~a +b ^a'.split(' ');
+		expect(shapeOf(runSteps(row3, steps).layout.docked)).toEqual({ row: ['b', 'a', 'c'] });
 	});
-
-	// Longer mixed sequences at random (fixed seed) with `createDockState`, checked against the
-	// model of the walk above and against main.
-	const rng = (seed: number) => () => {
-		seed = (seed + 0x6d2b79f5) | 0;
-		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	};
-	/** 10 to 16 steps, each pane out of the tree hidden or floated at random, with both kinds in each. */
-	const sequences = (ids: string[], count: number, seed: number): string[] => {
-		const random = rng(seed);
-		const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
-		const out = new Set<string>();
-		for (let tries = 0; out.size < count && tries < count * 20; tries++) {
-			const away = new Map<string, '-' | '~'>();
-			const steps: string[] = [];
-			const length = 10 + Math.floor(random() * 7);
-			for (let i = 0; i < length; i++) {
-				const docked = ids.filter((id) => !away.has(id));
-				const back = away.size > 0 && (docked.length === 0 || random() < 0.4);
-				const id = pick(back ? [...away.keys()] : docked);
-				if (back) {
-					steps.push(`${away.get(id) === '-' ? '+' : '^'}${id}`);
-					away.delete(id);
-				} else {
-					const kind = random() < 0.5 ? '-' : '~';
-					away.set(id, kind);
-					steps.push(`${kind}${id}`);
-				}
-			}
-			for (const [id, kind] of away) steps.push(`${kind === '-' ? '+' : '^'}${id}`);
-			const kinds = new Set(steps.map((s) => s[0]));
-			if (kinds.has('-') && kinds.has('~')) out.add(steps.join(' '));
-		}
-		return [...out];
-	};
-	const COUNT = 300;
-	for (const [name, make] of Object.entries(L)) {
-		it(`${name}: ${COUNT} mixed sequences with createDockState`, () => {
-			const want = JSON.stringify(shapeOf(make()));
-			const failures: string[] = [];
-			for (const seq of sequences(collectPanelIds(make()), COUNT, 734)) {
-				const steps = seq.split(' ');
-				const got = JSON.stringify(shapeOf(runSteps(make, steps).layout.docked));
-				expect(JSON.stringify(shapeOf(simRun(nowSlot, make(), steps).docked)), seq).toBe(got);
-				const onMain = JSON.stringify(shapeOf(simRun(mainSplit, make(), steps).docked));
-				if (onMain === want && got !== want) failures.push(seq);
-			}
-			expect(failures).toEqual([]);
-		});
-	}
 });
 
 // #735: a floated pane's `homeSlot` is dropped once the pane is not a floating window any more,
@@ -980,7 +887,7 @@ describe('slot memory: floated and hidden panes out of the same container (#734)
 describe('homeSlot follows the layout, not the path (#735)', () => {
 	const make = () => splitNode('s', 'row', ['a', 'b', 'c'].map(panel));
 	const fresh = () =>
-		createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+		dockWithDefault({ version: 2, floating: [], docked: make() }, counterMakeId());
 
 	it('docked through the API, then floated again: back puts it at the new place', () => {
 		const dock = fresh();
@@ -1014,7 +921,7 @@ describe('homeSlot follows the layout, not the path (#735)', () => {
 		expect(dock.hydrate('{ not json')).toBe(false);
 		expect(dock.hydrate(JSON.stringify({ version: 2, floating: 1, docked: null }))).toBe(false);
 		expect(dock.homeSlot('a')).toBeDefined();
-		const other = createDockState(
+		const other = dockWithDefault(
 			{ version: 2, floating: [], docked: splitNode('t', 'column', ['a', 'b', 'c'].map(panel)) },
 			counterMakeId()
 		);

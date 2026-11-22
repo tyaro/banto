@@ -1,7 +1,9 @@
 // #782 PR3: 影の木の inflate / deflate を、旧実装（main の slot、`fixtures/slot-main.ts`）と並べて走らせる
-// 総当たり。新しい歩き方は足していない: `panel-visibility-exhaustive-sequences-*.test.ts` の
-// `enumerateSequences` と、`-merged.test.ts` の `walkHideThenShow` を、今の slot の代わりに
-// `fixtures/shadow-slot.ts`（inflate → 印 → deflate / 射影）で回す（#782 の申し送り、#798）。
+// 総当たり。歩き方は `fixtures/visibility-sim.ts` の `enumerateSequences` と `walkHideThenShow`
+// （今の slot と main を並べていた `-sequences-*` / `-merged` の 4 本は #782 PR5 で削った）を、今の slot の
+// 代わりに `fixtures/shadow-slot.ts`（inflate → 印 → deflate / 射影）で回す（#782 の申し送り、#798）。
+// `DockState` は通らない純関数の比較で、PR5 で `dismiss` / `show` が slot を使わなくなった後も、
+// inflate / deflate（浮かせたパネルの墓石の組み直しに使う）の回帰として PR7 まで残す。
 //
 // 浅い既定と DOCK_EXHAUSTIVE=1（#798、`fixtures/exhaustive.ts`）: 手の数は 4 枚 6・5 枚以上 5（全部: 8・7・6 =
 // 元の 3 つのファイルの浅い既定）。影の木は手順の長さによらず同じ S に戻るので、深さを足しても影の木の側の

@@ -10,6 +10,7 @@ import { flushSync } from 'svelte';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import DockHostHarness from './DockHostHarness.svelte';
 import { createDockState } from '../src/state.svelte';
+import { dockWithDefault } from './fixtures/visibility-layouts';
 import {
 	canCollapseRegion,
 	dockPanelIntoTree,
@@ -227,8 +228,9 @@ describe('tree: collapsed rules', () => {
 });
 
 describe('DockState: docked collapse', () => {
+	// The layout it starts with is its default layout: where a hidden pane is shown again (#782 PR5).
 	const make = () =>
-		createDockState(
+		dockWithDefault(
 			layoutOf(split('s', 'row', [panel('a'), tabs('g', ['b', 'c']), panel('d')], [0.2, 0.5, 0.3]))
 		);
 
@@ -332,7 +334,7 @@ describe('DockState: docked collapse', () => {
 		const dock = make();
 		dock.setDockedCollapsed('a', true);
 		dock.dismiss('a');
-		expect(dock.layout.floating[0].dockSlot).toBeDefined();
+		expect(dock.layout.floating[0].dockShare).toBeDefined();
 		expect(JSON.stringify(dock.layout.floating[0])).not.toContain('collapsed');
 		dock.show('a');
 		expect(dock.isDockedCollapsed('a')).toBe(false);
