@@ -462,16 +462,13 @@ export class PanelLifecycle {
 			this.#whereIs(panelId) === 'hidden' &&
 			this.isRetained(panelId) &&
 			this.#dock.showPlacement(panelId) === 'docked';
-		// The docked tree after `show`: put back in its remembered place, or unchanged
-		// (opened floating). The fixed id of a group it would re-make keeps the
-		// preview stable across the re-checks (`DockState.showTabSwitch` does the same).
+		// The docked tree after `show` (`DockState.shownTree`, what `show` itself goes by): docked
+		// at its default place, or unchanged (opened floating). The fixed id of a group it would
+		// make keeps the preview stable across the re-checks (`DockState.showTabSwitch` does the same).
 		const preview = (): DockNode | null | undefined => {
 			if (this.#whereIs(panelId) !== 'hidden') return undefined;
-			const win = this.#dock.layout.floating.find((w) => w.id === panelId)!;
-			const docked = this.#dock.layout.docked;
-			if (!win.dockSlot) return docked;
 			return (
-				this.#dock.restoredAt(panelId, win.dockSlot, () => `${panelId}:restored-tabs`) ?? docked
+				this.#dock.shownTree(panelId, () => `${panelId}:restored-tabs`) ?? this.#dock.layout.docked
 			);
 		};
 		return this.requestPlacement(

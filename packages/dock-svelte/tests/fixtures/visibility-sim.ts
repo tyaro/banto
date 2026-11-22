@@ -263,9 +263,9 @@ export function enumerateSequences(
 
 /**
  * Every hide order of every set of panes of `make()`, then every show order, with the states
- * merged on the way (`keyOf`), run with `main` and `now` side by side (#732; moved here from
- * `panel-visibility-exhaustive-merged.test.ts` so that #782 PR3 runs the same walk with the shadow
- * tree). A run is checked when every pane is shown again: `now` must be back at the old shape
+ * merged on the way (`keyOf`), run with `main` and `now` side by side (#732; `now` is the shadow
+ * tree's inflate / deflate in `panel-visibility-exhaustive-shadow.test.ts`, the one user left
+ * since #782 PR5). A run is checked when every pane is shown again: `now` must be back at the old shape
  * (`want: 'all'`), or at least whenever `main` is (`want: 'main'`).
  */
 export function walkHideThenShow(

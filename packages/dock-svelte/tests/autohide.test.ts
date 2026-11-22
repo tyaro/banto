@@ -16,7 +16,7 @@ import {
 } from '../src/core/autohide';
 import { PanelLifecycle, type DockPanelChange } from '../src/core/lifecycle';
 import { captureRegionSlot, restoreRegionSlot } from '../src/core/slot';
-import { structureKey } from '../src/core/tree';
+import { collectPanelIds, findNode, structureKey } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import { createDockState } from '../src/state.svelte';
 import type { DockLayout, DockNode } from '../src/types';
@@ -177,8 +177,9 @@ describe('DockState auto-hide', () => {
 		expect(dock.flyoutPanel).toBeNull();
 	});
 
-	it('dismiss takes one pane out of its band as a closed window remembering the region`s place', () => {
+	it('dismiss takes one pane out of its band as a closed window hidden from the dock: shown at its default place (#782 PR5)', () => {
 		const dock = createDockState(layout());
+		dock.defaultLayout = layout();
 		dock.autoHideRegion('T');
 		dock.openFlyout('B1');
 		dock.dismiss('B1');
@@ -186,9 +187,21 @@ describe('DockState auto-hide', () => {
 		expect(dock.autoHidden[0].node).toMatchObject({ type: 'panel', id: 'B2' });
 		const win = dock.layout.floating.find((w) => w.id === 'B1')!;
 		expect(win.open).toBe(false);
-		expect(win.dockSlot).toMatchObject({ kind: 'split', splitId: 'mid' });
+		// No place: only the share its region held when it went to the band.
+		expect(win).not.toHaveProperty('dockSlot');
+		expect(win.dockShare).toBeGreaterThan(0);
+		expect(win.dockShare).toBeLessThan(1);
 		dock.dismiss('B2');
 		expect(dock.autoHidden).toHaveLength(0);
+		// Both come back docked (not to the band), in the tab group of the default layout.
+		expect(dock.show('B2')).toBe('docked');
+		expect(dock.show('B1')).toBe('docked');
+		expect(dock.layout.floating).toEqual([]);
+		expect(collectPanelIds(dock.layout.docked)).toEqual(collectPanelIds(layout().docked));
+		expect(findNode(dock.layout.docked, 'T')).toMatchObject({
+			type: 'tabs',
+			children: [{ id: 'B1' }, { id: 'B2' }]
+		});
 	});
 
 	it('does nothing for a split, an unknown id, or a pane not auto-hidden', () => {

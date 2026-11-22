@@ -25,7 +25,6 @@ export function slotDepth(slot: DockSlot): number {
 export function layoutVersionFor(layout: Omit<DockLayout, 'version'>): 2 | 3 {
 	const deep = (slot: DockSlot | undefined): boolean =>
 		slot !== undefined && slotDepth(slot) > V2_MAX_SLOT_DEPTH;
-	if (layout.floating.some((w) => deep(w.dockSlot))) return 3;
 	if ((layout.autoHidden ?? []).some((e) => deep(e.slot))) return 3;
 	return 2;
 }

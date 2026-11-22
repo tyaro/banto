@@ -271,7 +271,8 @@ function resolveTarget(root: DockNode, targetId: string): DockPanelNode | DockTa
 	return node;
 }
 
-function replaceNodeById(
+/** `root` with the node `id` replaced by `replace(node)` (the same object when nothing changes). A tab group's panels are not searched. */
+export function replaceNodeById(
 	root: DockNode,
 	id: string,
 	replace: (node: DockNode) => DockNode
@@ -310,20 +311,23 @@ function appendCenter(
  * `resolveTarget`) and present in `root`. If `target`'s direct parent is a
  * split with the same direction this drop implies, the new panel is spliced
  * in as a sibling (evenly re-sized) instead of nesting a redundant single-use
- * split - keeps the tree shallow, per spec.
+ * split - keeps the tree shallow, per spec. `flatten: false` always nests
+ * (`core/defaultPlace.ts`: the parent is another split of the default layout);
+ * `target` may then be a split too.
  */
 export function splitInsert(
 	root: DockNode,
-	target: DockPanelNode | DockTabGroupNode,
+	target: DockNode,
 	panel: DockPanelNode,
 	region: 'left' | 'right' | 'top' | 'bottom',
-	makeId: () => string = defaultMakeId
+	makeId: () => string = defaultMakeId,
+	flatten = true
 ): DockNode {
 	const direction: 'row' | 'column' = region === 'left' || region === 'right' ? 'row' : 'column';
 	const before = region === 'left' || region === 'top';
 	const parent = findParent(root, target.id);
 
-	if (parent && parent.type === 'split' && parent.direction === direction) {
+	if (flatten && parent && parent.type === 'split' && parent.direction === direction) {
 		const idx = parent.children.findIndex((c) => c.id === target.id);
 		const insertAt = before ? idx : idx + 1;
 		const children = parent.children.slice();

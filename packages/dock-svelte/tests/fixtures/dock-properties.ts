@@ -128,8 +128,12 @@ export const counterMakeId = (start = 0): (() => string) => {
 	return () => `gen-${n++}`;
 };
 
-export const newDock = (tree: DockNode): DockState =>
-	createDockState({ version: 2, floating: [], docked: tree }, counterMakeId());
+/** A state docked as `tree`, which is also its default layout (where a hidden pane comes back). */
+export const newDock = (tree: DockNode): DockState => {
+	const dock = createDockState({ version: 2, floating: [], docked: tree }, counterMakeId());
+	dock.defaultLayout = { version: 2, floating: [], docked: tree };
+	return dock;
+};
 
 /**
  * A new state made from the saved text alone (what a reload does): nothing but `dock.serialize()`
@@ -138,7 +142,10 @@ export const newDock = (tree: DockNode): DockState =>
 export function loadedFresh(dock: DockState): DockState {
 	// Not the same text back: a load normalizes the sizes (the last digits), so the callers compare
 	// the trees within `EPS`.
-	return createDockState(dock.serialize(), counterMakeId(10_000));
+	const fresh = createDockState(dock.serialize(), counterMakeId(10_000));
+	// The default layout is not saved: the app gives it again.
+	fresh.defaultLayout = dock.defaultLayout;
+	return fresh;
 }
 
 export const dockedIds = (dock: DockState): string[] => collectPanelIds(dock.layout.docked);
@@ -172,9 +179,9 @@ export function expectAllDocked(
 		failCase(tree, steps, `not back docked once: ${[...new Set(bad)].join(', ')}`);
 	}
 }
-/** The hidden panes that remember a docked place, in the order they were hidden. */
+/** The panes hidden from the dock (`dockShare`), in the order they were hidden. */
 export const hiddenIds = (dock: DockState): string[] =>
-	dock.layout.floating.filter((w) => !w.open && w.dockSlot).map((w) => w.id);
+	dock.layout.floating.filter((w) => !w.open && w.dockShare !== undefined).map((w) => w.id);
 /** The floated panes that remember a docked place (`homeSlot`). */
 export const floatedIds = (dock: DockState): string[] =>
 	dock.layout.floating.filter((w) => w.open && dock.homeSlot(w.id)).map((w) => w.id);

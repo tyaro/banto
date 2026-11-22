@@ -28,13 +28,14 @@ export interface FloatingWindow {
 	/** Closed panels keep their geometry around so reopening restores it. */
 	open: boolean;
 	/**
-	 * Where this pane was docked before it was hidden / closed (#663). Only set
-	 * on a CLOSED window that came out of the docked tree; `DockState.show`
-	 * puts the pane back there (`core/slot.ts`), `DockState.open` opens it
-	 * floating and drops the slot. Optional: a layout without it (older JSON)
-	 * reads as "no remembered place", so the layout `version` stays 2.
+	 * Set on a CLOSED window whose pane was hidden from the docked tree or an edge band (#663,
+	 * #782): `DockState.show` docks the pane at its default place (`DockState.defaultLayout`,
+	 * `core/defaultPlace.ts`) - not where it was hidden from - and `DockState.open` opens it
+	 * floating and drops this. The value is the share (`0 <= n <= 1`) it held of its split when it
+	 * was hidden, which it takes again (`1` = none to speak of: its default share). A closed
+	 * window without it opens floating.
 	 */
-	dockSlot?: DockSlot;
+	dockShare?: number;
 	/**
 	 * Locked by the user (#663 ②, renamed from `pinned` in #694 PR-3): the window's
 	 * position and size are fixed - no title-bar drag, no resize, no keyboard move /
