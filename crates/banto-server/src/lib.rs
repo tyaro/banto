@@ -24,7 +24,9 @@
 
 pub mod auth;
 pub mod csrf;
+pub mod detach;
 pub mod events;
+pub mod exposure;
 pub mod grant;
 pub mod reach_check;
 pub mod response;
@@ -39,7 +41,9 @@ pub use auth::{
     SessionPermissions, SessionStamp, SessionValidation, TokenPolicy,
 };
 pub use csrf::require_banto_client_header;
+pub use detach::{RemainingWrites, StopOutcome, WriteBudget, MAX_DETACHED_WRITES};
 pub use events::{sse_route, ServerEvent};
+pub use exposure::{restoring_previous_stays_within, ServerExposure};
 pub use grant::{
     grant_router, is_loopback_peer, GrantCondition, GrantGeneration, GrantKind, GrantRegistry,
     GrantSpec, DEFAULT_GRANT_MAX_SESSIONS, PUBLIC_VIEWER_ID,
@@ -59,6 +63,6 @@ pub use security_headers::{
 pub use server::{
     bind, bind_with_port_fallback, bind_without_fallback, lan_addrs_for_bind, lan_urls,
     lan_urls_for_bind, start, BoundServer, PortFallbackError, RunningServer, ServerConfig,
-    PORT_FALLBACK_SPAN,
+    DETACHED_WRITES_STOP_TIMEOUT, PORT_FALLBACK_SPAN,
 };
 pub use static_files::{guess_mime, static_router, UiAssets};

@@ -5,6 +5,10 @@
 
 use super::*;
 
+// Issue #793: `server_apply` with writes of the stopped listener still
+// running (`src/tests/server_writes.rs`).
+mod server_writes;
+
 /// [`auth_config_apply_with_permissions_body`] without permissions,
 /// returning just the settings (most tests do not care about them).
 async fn auth_config_apply_body(
@@ -5216,6 +5220,8 @@ fn server_status_serializes_live_generation_and_apply_failure() {
             reason: ServerApplyFailureReason::PortInUse,
             previous: PreviousServerOutcome::RestoreFailed,
         }),
+        leftover_writes: LeftoverWrites::default(),
+        write_budget: WriteBudget::default(),
     };
     let value = serde_json::to_value(build_status(&ServerSettings::default(), &slot)).unwrap();
     assert_eq!(value["live"], serde_json::Value::Null);

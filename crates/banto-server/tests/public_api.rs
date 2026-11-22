@@ -56,3 +56,42 @@ fn security_headers_loopback_local_selector_is_public(router: axum::Router) -> a
         .extra_connect_src_when(request_is_loopback_local);
     with_security_headers_using(router, config)
 }
+
+/// Issue #793 / ADR-0035: a caller that stops a listener and starts another
+/// one (a derived app's own settings apply) has to see whether writes were
+/// left running, wait for them, and tell which way the change moves the
+/// exposure. Narrowing any of these must fail compilation.
+async fn stop_outcome_and_exposure_api_is_public(server: banto_server::RunningServer) -> bool {
+    use banto_server::{
+        restoring_previous_stays_within, RemainingWrites, ServerExposure, StopOutcome,
+        DETACHED_WRITES_STOP_TIMEOUT,
+    };
+    let outcome: StopOutcome = server
+        .stop_waiting_writes_for(DETACHED_WRITES_STOP_TIMEOUT)
+        .await;
+    let remaining: Option<RemainingWrites> = outcome.remaining();
+    if let Some(remaining) = remaining {
+        let _: usize = remaining.count();
+        let _: Vec<String> = remaining.operations();
+        let _: bool = remaining.is_finished();
+        let _: bool = remaining.wait(DETACHED_WRITES_STOP_TIMEOUT).await;
+    }
+    let requested = ServerExposure {
+        listening: true,
+        bind: "127.0.0.1".to_string(),
+        viewer_public: false,
+    };
+    restoring_previous_stays_within(&ServerExposure::closed(), &requested)
+}
+
+/// ADR-0035 §7: an app that replaces its listener shares one write budget
+/// over the generations.
+fn write_budget_api_is_public(
+    old: &banto_server::RunningServer,
+    bound: banto_server::BoundServer,
+) -> banto_server::BoundServer {
+    let budget: banto_server::WriteBudget = old.write_budget();
+    let _: usize = budget.running();
+    let _: usize = banto_server::MAX_DETACHED_WRITES;
+    bound.with_write_budget(budget)
+}

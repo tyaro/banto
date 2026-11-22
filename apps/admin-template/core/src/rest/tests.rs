@@ -13,6 +13,9 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 use tower::ServiceExt;
 
+// Issue #793: a write survives its client disconnecting (real socket).
+mod detach;
+
 const CLIENT_HEADER: (&str, &str) = ("X-Banto-Client", "banto");
 
 /// A `BackupService` for router helpers that do not exercise
