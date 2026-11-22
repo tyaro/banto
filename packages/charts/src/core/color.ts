@@ -1,17 +1,37 @@
 /**
  * Categorical series color slots (spec §6.4 rule 1):
- * series take CSS var slots 1..8 IN FIXED ORDER by series index - never
+ * series take CSS var slots 1..16 IN FIXED ORDER by series index - never
  * cycle, never reassign when a series is removed (color follows the
  * entity, i.e. its position in the caller's `series`/`data` array).
- * More than 8 series is out of scope for v1; overflow series are clamped
- * to the last slot rather than wrapping back to slot 1 (wrapping would
- * silently alias a later series onto an earlier one's color).
+ * Overflow series (17th and later) are clamped to the last slot rather than
+ * wrapping back to slot 1 (wrapping would silently alias a later series onto
+ * an earlier one's color).
+ *
+ * Slots 9..16 (#851) are a weaker palette than 1..8: any two of 1..16 are
+ * told apart under normal vision only (chart-palette.test.ts in
+ * @banto/theme), so a chart with 9 or more series needs a second cue
+ * (legend, dash, marker).
  */
-export const MAX_CHART_SERIES = 8;
+export const MAX_CHART_SERIES = 16;
 
+/**
+ * The slots every theme has. A theme written before #851 (an older
+ * `@banto/theme`, or an app theme that defines only 1..8) has no slot above
+ * this one.
+ */
+const BASE_CHART_SERIES = 8;
+
+/**
+ * `var(--banto-chart-N)` for slots 1..8. For slots 9..16 the reference falls
+ * back to slot 8 - `var(--banto-chart-N, var(--banto-chart-8))` - so with a
+ * theme that has no slot N the series keeps the colour it had while
+ * `MAX_CHART_SERIES` was 8, instead of an undefined one. Treat the result as
+ * an opaque CSS colour value; do not parse it.
+ */
 export function seriesColorVar(index: number): string {
 	const slot = Math.min(Math.max(index, 0) + 1, MAX_CHART_SERIES);
-	return `var(--banto-chart-${slot})`;
+	if (slot <= BASE_CHART_SERIES) return `var(--banto-chart-${slot})`;
+	return `var(--banto-chart-${slot}, var(--banto-chart-${BASE_CHART_SERIES}))`;
 }
 
 /**

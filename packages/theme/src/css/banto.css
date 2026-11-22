@@ -363,9 +363,9 @@
 	);
 
 	/* Charts (consumed by @banto/charts from M4, spec §6). Categorical series
-     take slots 1..8 in fixed order by series index - never cycle/reassign.
-     Fixed sRGB values (they do NOT follow --banto-brand-hue): checked by
-     packages/theme/tests/chart-palette.test.ts - every pair (and, with a
+     take slots 1..16 in fixed order by series index - never cycle/reassign.
+     Fixed sRGB values (they do NOT follow --banto-brand-hue). Slots 1..8 are
+     checked by packages/theme/tests/chart-palette.test.ts - every pair (and, with a
      larger margin, every neighbour i/i+1) stays apart in OKLab under normal
      vision and simulated protan/deutan/tritan vision, and each is >= 3:1 on
      the surface (#557). */
@@ -377,6 +377,21 @@
 	--banto-chart-6: #117c72;
 	--banto-chart-7: #8c69cd;
 	--banto-chart-8: #915f21;
+	/* Slots 9..16 (#851): for charts with more than 8 series. A weaker promise
+     than 1..8 - any two of 1..16 are >= 0.06 apart in OKLab under NORMAL
+     vision only, and each is >= 3:1 on the surface. Not checked against
+     simulated colour-vision deficiency or the status colours, so a chart
+     with 9+ series needs a second cue (legend, dash, marker). A theme that
+     overrides 1..8 should define these too; @banto/charts falls back to
+     slot 8 for any that is missing. */
+	--banto-chart-9: #a67c00;
+	--banto-chart-10: #d81b60;
+	--banto-chart-11: #3b82c4;
+	--banto-chart-12: #5c940d;
+	--banto-chart-13: #b5179e;
+	--banto-chart-14: #343a40;
+	--banto-chart-15: #c4472a;
+	--banto-chart-16: #7d8794;
 	/* Sequential (magnitude, one blue hue): step 1 = low = closest to the
      surface, step 7 = high = most contrast; OKLab lightness is monotone. */
 	--banto-chart-seq-1: #cde2fb;
@@ -523,6 +538,15 @@
 	--banto-chart-6: #3df4ef;
 	--banto-chart-7: #ca99ef;
 	--banto-chart-8: #fed48d;
+	/* Slots 9..16 (#851): the weaker promise described in the light block. */
+	--banto-chart-9: #d9c23a;
+	--banto-chart-10: #ff6fa5;
+	--banto-chart-11: #7fb5f0;
+	--banto-chart-12: #a6d44a;
+	--banto-chart-13: #e87ce0;
+	--banto-chart-14: #c9ced4;
+	--banto-chart-15: #ff8a65;
+	--banto-chart-16: #8a97a6;
 	--banto-chart-seq-1: #1f3f61;
 	--banto-chart-seq-2: #23578d;
 	--banto-chart-seq-3: #2a71b8;
