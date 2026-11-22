@@ -118,7 +118,13 @@ pub(super) struct PendingEntry {
     pub pending_id: String,
     pub ts: String,
     pub actor_username: Option<String>,
+    /// Absent in a file spooled before v8.0.0 (reads as `None`).
+    #[serde(default)]
+    pub actor_id: Option<i64>,
     pub actor_role: Option<String>,
+    /// Absent in a file spooled before v8.0.0 (reads as `None`).
+    #[serde(default)]
+    pub actor_kind: Option<String>,
     pub action: String,
     pub resource: String,
     pub entity_id: Option<String>,
@@ -137,7 +143,9 @@ impl PendingEntry {
             pending_id,
             ts,
             actor_username: entry.actor_username.map(str::to_string),
+            actor_id: entry.actor_id,
             actor_role: entry.actor_role.map(str::to_string),
+            actor_kind: entry.actor_kind.map(str::to_string),
             action: entry.action.to_string(),
             resource: entry.resource.to_string(),
             entity_id: entry.entity_id.map(str::to_string),

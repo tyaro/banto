@@ -192,6 +192,10 @@ pub(super) struct TokenRecord {
     /// for tokens minted without one ([`AuthState::issue_token`]), which a
     /// lookup-enabled state rejects.
     pub(super) stamp: Option<SessionStamp>,
+    /// `GrantSpec::audit_as_builtin_admin` of the kind that minted this token
+    /// (ADR-0034 section 3); `false` for an account session. Kept HERE
+    /// because the session is rebuilt from this record on every request.
+    pub(super) audit_as_builtin_admin: bool,
 }
 
 impl TokenRecord {

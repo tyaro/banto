@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use banto_admin_services::audit::{grant_actor_kind, ActorSession, AuditActor, ACTOR_KIND_ACCOUNT};
 use banto_core::BantoError;
 use futures_util::future::BoxFuture;
 use uuid::Uuid;
@@ -80,6 +81,9 @@ pub(super) struct Inner {
     /// ([`AuthState::with_permission_reader`]). `None` = no session holds
     /// any. Set once while the state is built, read on every request.
     permission_reader: RwLock<Option<PermissionReader>>,
+    /// The id of the built-in `admin` row ([`AuthState::with_builtin_admin_id`],
+    /// ADR-0034 section 3). Set once while the state is built.
+    builtin_admin_id: RwLock<Option<i64>>,
     token_policy: TokenPolicy,
     /// Long-lived policy applied to tokens issued with "Remember me" (spec
     /// M11) instead of `token_policy` - see [`TokenRecord::remembered`].
@@ -219,6 +223,7 @@ impl AuthState {
                 verify_credentials,
                 session_lookup,
                 permission_reader: RwLock::new(None),
+                builtin_admin_id: RwLock::new(None),
                 token_policy,
                 remembered_policy,
                 rate_limit,
@@ -258,6 +263,56 @@ impl AuthState {
             .write()
             .expect("auth permission reader lock poisoned") = Some(reader);
         self
+    }
+
+    /// Tell the state the id of the built-in `admin` row (ADR-0034 section
+    /// 3). The wiring reads it ONCE at startup by `kind = 'builtin'`
+    /// (`UsersService::check_startup`) - never by name, never as a fixed
+    /// number - and it becomes the `actor_id` of every session marked
+    /// `audit_as_builtin_admin`. Applies to every clone of this state; call
+    /// it while building the state, before serving. (A restore swaps the
+    /// database only across a restart, so the id cannot go stale.)
+    pub fn with_builtin_admin_id(self, id: i64) -> Self {
+        *self
+            .inner
+            .builtin_admin_id
+            .write()
+            .expect("auth builtin admin lock poisoned") = Some(id);
+        self
+    }
+
+    /// Who the audit log attributes `session`'s actions to (ADR-0034 section
+    /// 3) - the snapshot [`crate::require_auth`] puts into the request's
+    /// extensions. One rule for every session, the service layer's
+    /// [`AuditActor::attribute`] (the desktop commands call the same one):
+    ///
+    /// - an account: its username, `actor_id` = its `users.id`, kind
+    ///   `account`;
+    /// - a grant with the mark: the built-in `admin`, `actor_id` = the
+    ///   built-in row's id, kind `grant:<kind>`;
+    /// - a grant without it: its fixed id, no `actor_id`, kind `grant:<kind>`.
+    ///
+    /// The role is the session's own in every case.
+    pub fn audit_actor(&self, session: &AuthenticatedSession) -> AuditActor {
+        let grant_kind = session
+            .grant
+            .as_ref()
+            .map(|kind| grant_actor_kind(kind.as_str()));
+        let builtin_admin_id = *self
+            .inner
+            .builtin_admin_id
+            .read()
+            .expect("auth builtin admin lock poisoned");
+        AuditActor::attribute(
+            ActorSession {
+                username: &session.identity.id,
+                account_id: session.stamp.map(|stamp| stamp.account_id),
+                role: &session.identity.role,
+                kind: grant_kind.as_deref().unwrap_or(ACTOR_KIND_ACCOUNT),
+                audit_as_builtin_admin: session.audit_as_builtin_admin,
+            },
+            builtin_admin_id,
+        )
     }
 
     /// The per-user permissions `session` is authorized with (Issue #697):
@@ -488,6 +543,7 @@ impl AuthState {
                 grant: Some(spec.kind.clone()),
                 policy: spec.policy,
                 stamp: None,
+                audit_as_builtin_admin: spec.audit_as_builtin_admin,
             },
         );
         queue.tokens.push_back(token.clone());
@@ -553,6 +609,7 @@ impl AuthState {
                 grant: None,
                 policy: None,
                 stamp,
+                audit_as_builtin_admin: false,
             },
         );
         token
@@ -774,6 +831,7 @@ impl AuthState {
                     identity: account.identity,
                     grant: None,
                     stamp: Some(account.stamp),
+                    audit_as_builtin_admin: false,
                 })
             }
             _ if current == Some(validated) => {
@@ -864,6 +922,7 @@ impl AuthState {
                 identity: record.identity.clone(),
                 grant: record.grant.clone(),
                 stamp: record.stamp,
+                audit_as_builtin_admin: record.audit_as_builtin_admin,
             })
         }
     }

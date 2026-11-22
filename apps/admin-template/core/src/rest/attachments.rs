@@ -196,8 +196,9 @@ async fn attachments_upload(
         json!({ "method": "POST", "path": "/api/attachments" }),
     )
     .await?;
-    let actor = session.identity;
-    let created_by = Some(actor.id.clone());
+    // ADR-0034 section 3: the actor of the session re-validated just above.
+    let actor = state.auth.audit_actor(&session);
+    let created_by = Some(session.identity.id);
     validate_attachment_parent(&state.items, &query.resource, &query.resource_id).await?;
     let meta = state
         .attachments
@@ -211,7 +212,7 @@ async fn attachments_upload(
         .await?;
     banto_server::routes::record_write_as(
         &state.audit,
-        Some(banto_server::routes::AuditActor::from(&actor)),
+        Some(&actor),
         "rest",
         "create",
         "attachments",
@@ -225,15 +226,14 @@ async fn attachments_upload(
 
 async fn attachments_delete(
     State(state): State<AttachmentsWriteState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let meta = state.attachments.delete(id).await?;
     let detail = attachment_delete_audit_detail(&state.items, &meta).await;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "delete",
         "attachments",
         Some(&id.to_string()),

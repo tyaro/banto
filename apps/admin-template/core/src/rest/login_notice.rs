@@ -1,8 +1,8 @@
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::middleware;
 use axum::routing::{get, put};
 use axum::{Json, Router};
+use banto_server::routes::AuditActor;
 use banto_server::routes::{record_write, require_role_at_least, RoleGuard};
 use banto_server::{require_auth, ApiError, AuthState};
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,6 @@ use crate::users::Role;
 struct LoginNoticeState {
     settings: SettingsService,
     audit: AuditLogService,
-    auth: AuthState,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -35,14 +34,13 @@ async fn login_notice_get(
 
 async fn login_notice_set(
     State(state): State<LoginNoticeState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Json(body): Json<LoginNoticeBody>,
 ) -> Result<Json<LoginNoticeBody>, ApiError> {
     let notice = state.settings.set_login_notice(&body.notice).await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "settings_change",
         "settings",
         None,
@@ -60,7 +58,6 @@ pub fn login_notice_router(
     let state = LoginNoticeState {
         settings,
         audit: audit.clone(),
-        auth: auth.clone(),
     };
     let public = Router::new()
         .route("/api/login-notice", get(login_notice_get))

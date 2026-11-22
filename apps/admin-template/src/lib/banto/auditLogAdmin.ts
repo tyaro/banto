@@ -35,7 +35,19 @@ export interface AuditLogEntry {
 	id: number;
 	ts: string;
 	actorUsername: string | null;
+	/**
+	 * `users.id` of the actor (ADR-0034 §3): the account's row, or the built-in
+	 * `admin` row for a no-login session attributed to it. `null` when the actor
+	 * is no `users` row (an unmarked grant such as `public`) or there is none.
+	 */
+	actorId: number | null;
 	actorRole: string | null;
+	/**
+	 * The channel the actor came through: `account`, `local` (the desktop's
+	 * no-login session), `grant:<kind>`, `cli`, or an app's own word. `null` for
+	 * a row without an actor. Display only - nothing may decide on it.
+	 */
+	actorKind: string | null;
 	action: string;
 	resource: string;
 	entityId: string | null;

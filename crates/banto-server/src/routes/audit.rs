@@ -1,7 +1,6 @@
 use super::*;
 use axum::extract::rejection::QueryRejection;
 use banto_admin_services::audit::AuditLogList;
-use banto_admin_services::users::bound_username_for_audit;
 
 // --- M14: audit log ---------------------------------------------------------
 
@@ -26,18 +25,12 @@ pub fn audited_credential_verifier(
         Box::pin(async move {
             match users.verify(&username, &password).await {
                 Ok(Some(identity)) => {
-                    audit
-                        .record(AuditEntry {
-                            actor_username: Some(&identity.username),
-                            actor_role: Some(identity.role.as_str()),
-                            action: "login",
-                            resource: "auth",
-                            entity_id: None,
-                            detail: None,
-                            origin: "rest",
-                            result: "ok",
-                        })
-                        .await;
+                    let actor = AuditActor::account(
+                        &identity.username,
+                        identity.id,
+                        identity.role.as_str(),
+                    );
+                    record_write(&audit, &actor, "login", "auth", None, None).await;
                     Some(Identity {
                         id: identity.username,
                         name: identity.display_name,
@@ -46,20 +39,8 @@ pub fn audited_credential_verifier(
                 }
                 _ => {
                     // Issue #278: the username is attacker-supplied and need
-                    // not be a real account, so never store it unbounded.
-                    let bounded = bound_username_for_audit(&username);
-                    audit
-                        .record(AuditEntry {
-                            actor_username: Some(&bounded),
-                            actor_role: None,
-                            action: "login_failed",
-                            resource: "auth",
-                            entity_id: None,
-                            detail: None,
-                            origin: "rest",
-                            result: "failed",
-                        })
-                        .await;
+                    // not be a real account, so it is stored bounded.
+                    record_login_failed_as(&audit, "rest", &username, None).await;
                     None
                 }
             }
@@ -171,8 +152,10 @@ pub async fn audit_logout_middleware(
 ) -> Response {
     let is_logout =
         req.method() == axum::http::Method::POST && req.uri().path() == "/api/auth/logout";
-    let identity = if is_logout {
-        actor_identity(req.headers(), &state.auth)
+    // The actor is read BEFORE the handler drops the token (ADR-0034 section
+    // 3: the snapshot of the session being ended).
+    let actor = if is_logout {
+        actor_for_token(req.headers(), &state.auth)
     } else {
         None
     };
@@ -180,24 +163,12 @@ pub async fn audit_logout_middleware(
     let response = next.run(req).await;
 
     // Issue #278: only a logout that ended a real session is audited. With no
-    // token, an unknown/expired/already-revoked one, `identity` is `None` and
+    // token, an unknown/expired/already-revoked one, `actor` is `None` and
     // the request - which needs no credentials - leaves no row, so it cannot
     // be used to grow the audit table. (Tauri's `auth_logout` already records
     // only when it cleared a session; conventions §1/§6.)
-    if is_logout && identity.is_some() {
-        state
-            .audit
-            .record(AuditEntry {
-                actor_username: identity.as_ref().map(|i| i.id.as_str()),
-                actor_role: identity.as_ref().map(|i| i.role.as_str()),
-                action: "logout",
-                resource: "auth",
-                entity_id: None,
-                detail: None,
-                origin: "rest",
-                result: "ok",
-            })
-            .await;
+    if let Some(actor) = &actor {
+        record_write(&state.audit, actor, "logout", "auth", None, None).await;
     }
 
     response
@@ -205,15 +176,13 @@ pub async fn audit_logout_middleware(
 
 /// State for the `/api/audit-log/*` handlers (spec M14): `AuditLogService`
 /// for the read/write itself, `SettingsService` for the retention-policy
-/// config endpoints (and the list route's opportunistic prune), plus
-/// `AuthState` so `audit_config_apply` can resolve the calling actor (via
-/// [`actor_identity`]) for its own `settings_change` audit entry, same as
-/// the items/users write handlers' `record_write` helper.
+/// config endpoints (and the list route's opportunistic prune).
+/// `audit_config_apply` records its `settings_change` entry with the guard's
+/// `Extension<AuditActor>`, like the items/users write handlers.
 #[derive(Clone)]
 struct AuditLogState {
     audit: AuditLogService,
     settings: SettingsService,
-    auth: AuthState,
 }
 
 /// `POST /api/audit-log/list?asOfId=` (spec M14, `admin`-only): filtered/
@@ -274,18 +243,17 @@ async fn audit_config_get(
 /// [`banto_admin_services::settings::AuditSettings`]),
 /// mirroring `src-tauri`'s `audit_config_apply` command - same
 /// `settings_change`/`settings` audit entry shape, just `origin: "rest"` and
-/// the actor resolved from the bearer token (`actor_identity`) instead of
-/// from Tauri's session mutex.
+/// the actor is the snapshot `require_auth` made instead of the one
+/// `require_role` returns.
 async fn audit_config_apply(
     State(state): State<AuditLogState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Json(config): Json<AuditSettings>,
 ) -> Result<Json<AuditSettings>, ApiError> {
     state.settings.set_audit_config(&config).await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "settings_change",
         "settings",
         None,
@@ -317,7 +285,6 @@ pub fn audit_log_router(
     let state = AuditLogState {
         audit: audit.clone(),
         settings,
-        auth: auth.clone(),
     };
     let list = Router::new()
         .route("/api/audit-log/list", post(audit_log_list))

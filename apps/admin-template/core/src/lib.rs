@@ -17,6 +17,7 @@ pub mod items;
 // [banto:add-resource:core-mod]
 pub mod resources;
 pub mod rest;
+pub mod startup;
 
 // Theme C (docs/template-scope.md §7): the domain-agnostic services moved to
 // the shared `banto-admin-services` crate to shrink the surface a template

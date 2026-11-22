@@ -66,10 +66,13 @@ handler を足すときに包む必要は無いが、**handler の中の順序�
 - **確定と失効は 1 つの書き込みにする**。セッションを終わらせる変更（ロール・パスワード）は、
   同じ `UPDATE` が `auth_epoch` を進める（別の文に分けない）。設定を閉じる変更は「閉じた状態を
   保存 → 発行済みのトークンを失効」の順（[ADR-0017](adr/0017-credential-less-grant.md) §2）。
-- **監査の主体は、書き込みの前に手に入れたものを使う**（書き込みの後に引き直さない。その間に
-  セッションが終わっていると主体が取れない）。Tauri は `require_role` の戻り値を渡している。
-  REST の `record_write` は書き込みの後に bearer から引き直すので、この約束をまだ満たしていない
-  （C2 でガードのスナップショットを渡す形に直す。[ADR-0034](adr/0034-owner-identity-builtin-admin.md) §3）。
+- **監査の主体は、認可したときのスナップショットを使う**（書き込みの後に引き直さない。その間に
+  セッションが終わっていると主体が取れない。[ADR-0034](adr/0034-owner-identity-builtin-admin.md) §3）。
+  ガードが、通したセッションから監査の主体（`AuditActor`: `actor_username`・`actor_id`・`actor_role`・
+  `actor_kind`）を 1 回だけ作る。REST は `require_auth` がリクエストに付け、handler は
+  `Extension<AuditActor>` で受け取って `record_write` に渡す。Tauri は `require_role` の戻り値（`Caller`）を
+  `record_ok` に渡す。拒否の監査も同じスナップショットで書く。**誰に帰属させるかを決める関数は 1 つ**
+  （`AuditActor::attribute`。見るのは配線が付けた印だけで、id・name からは決めない。§10）。
 - **ガードの後でクライアントを待つ handler は、待ちの後にもう一度確かめる**。2 MiB を超える本文
   は、ガードを通った後に handler が流し読みするので、クライアントが好きなだけ時間を空けられる。
   **2 MiB を超える本文を受け付けるルート**（`DefaultBodyLimit` を上げたルート。今は

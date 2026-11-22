@@ -1066,12 +1066,12 @@ export function restRs(spec) {
 //! ${GENERATED_NOTE}
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::middleware;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use banto_core::{ListParams, ListResult};
-use banto_server::routes::{record_write, require_role_at_least, RoleGuard};
+use banto_server::routes::{record_write, require_role_at_least, AuditActor, RoleGuard};
 use banto_server::{require_auth, ApiError, AuthState};
 
 use crate::audit::AuditLogService;
@@ -1095,26 +1095,26 @@ async fn ${name}_get(
     Ok(Json(${name}.get(id).await?))
 }
 
-/// State of the write handlers: the service, plus what \`record_write\` needs
-/// to write the audit entry once the change has succeeded. Reads are not
+/// State of the write handlers: the service, plus the audit log
+/// \`record_write\` writes to once the change has succeeded. The actor of the
+/// entry is the snapshot \`require_auth\` made when it authorized the request
+/// (\`Extension<AuditActor>\`), never a second look at the token. Reads are not
 /// audited.
 #[derive(Clone)]
 struct WriteState {
     ${name}: ${serviceType},
     audit: AuditLogService,
-    auth: AuthState,
 }
 
 async fn ${name}_create(
     State(state): State<WriteState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Json(input): Json<${inputType}>,
 ) -> Result<Json<${rowType}>, ApiError> {
     let ${singular} = state.${name}.create(input).await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "create",
         "${name}",
         Some(&${singular}.id.to_string()),
@@ -1126,15 +1126,14 @@ async fn ${name}_create(
 
 async fn ${name}_update(
     State(state): State<WriteState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(id): Path<i64>,
     Json(input): Json<${inputType}>,
 ) -> Result<Json<${rowType}>, ApiError> {
     let (previous, ${singular}) = state.${name}.update_returning_previous(id, input).await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "update",
         "${name}",
         Some(&${singular}.id.to_string()),
@@ -1154,7 +1153,7 @@ struct DeleteQuery {
 
 async fn ${name}_delete(
     State(state): State<WriteState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(id): Path<i64>,
     query: Result<axum::extract::Query<DeleteQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<StatusCode, ApiError> {
@@ -1168,8 +1167,7 @@ async fn ${name}_delete(
         .await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "delete",
         "${name}",
         Some(&id.to_string()),
@@ -1195,7 +1193,6 @@ fn ${name}_write_router(${name}: ${serviceType}, audit: AuditLogService, auth: A
     let state = WriteState {
         ${name},
         audit: audit.clone(),
-        auth: auth.clone(),
     };
     Router::new()
         .route("/api/${name}", post(${name}_create))

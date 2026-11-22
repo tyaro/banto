@@ -225,8 +225,8 @@ use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment, MAX_A
 use banto_core::{BantoError, ListParams, ListResult};
 use banto_server::routes::{
     audit_log_router, audit_logout_middleware, backups_router, extra_auth_router, record_write,
-    require_role_at_least, system_info_router, ui_settings_router, users_router, LogoutAuditState,
-    MetricsProbe, RoleGuard,
+    require_role_at_least, system_info_router, ui_settings_router, users_router, AuditActor,
+    LogoutAuditState, MetricsProbe, RoleGuard,
 };
 use banto_server::{
     auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,
@@ -237,7 +237,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use crate::audit::{AuditEntry, AuditLogService};
+use crate::audit::AuditLogService;
 use crate::backup::BackupService;
 use crate::resources::AppResources;
 // [scaffold:items] begin
@@ -315,6 +315,30 @@ pub struct Services {
     pub metrics: Option<MetricsProbe>,
 }
 
+/// ADR-0017: the grant kinds this app issues without credentials - THE list,
+/// read by [`api_router`] (which issues them) and by
+/// [`crate::startup::reserved_usernames`] (which reserves their fixed ids as
+/// account names, ADR-0034 §4).
+///
+/// The template has exactly one - viewer-public (`server.viewer_public`, read
+/// live on every request so the settings screen's toggle takes effect without
+/// a restart). `GET /api/auth/status` reports its availability as
+/// `grants.publicViewer` and `POST /api/auth/grant/publicViewer` issues it.
+///
+/// A derived app registers its own kinds here (e.g. a commissioning grant
+/// with `require_loopback_peer: true`), and decides per kind whether its
+/// sessions are recorded in the audit log as the built-in `admin`'s
+/// (`GrantSpec::audit_as_builtin_admin`, ADR-0034 §3). A fixed id added here
+/// must not be the name of an existing account: the next startup stops with
+/// a message naming it ([`crate::startup::check`]).
+pub fn grant_registry(settings: SettingsService) -> GrantRegistry {
+    let mut grants = GrantRegistry::new();
+    grants
+        .register(GrantSpec::public_viewer(settings))
+        .expect("the viewer-public grant registers on an empty registry");
+    grants
+}
+
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
 /// logout/check/identity from `banto_server` - wrapped with an audit-log
 /// hook for `logout`, spec M14 - plus status/setup/change-password here
@@ -354,19 +378,10 @@ pub fn api_router(
         audit_logout_middleware,
     ));
 
-    // ADR-0017: the grant kinds this app issues without credentials. The
-    // template has exactly one - viewer-public (`server.viewer_public`, read
-    // live on every request so the settings screen's toggle takes effect
-    // without a restart). `GET /api/auth/status` reports its availability as
-    // `grants.publicViewer` and `POST /api/auth/grant/publicViewer` issues
-    // it. A derived app registers its own kinds here (e.g. a commissioning
-    // grant with `require_loopback_peer: true`). `None` extras - the template
-    // itself adds no app-specific `status` fields (`banto_server::AuthStatusExtras`
-    // is the hook an adopter fills in here).
-    let mut grants = GrantRegistry::new();
-    grants
-        .register(GrantSpec::public_viewer(settings.clone()))
-        .expect("the viewer-public grant registers on an empty registry");
+    // `None` extras - the template itself adds no app-specific `status`
+    // fields (`banto_server::AuthStatusExtras` is the hook an adopter fills
+    // in here).
+    let grants = grant_registry(settings.clone());
 
     Router::new()
         .merge(audited_auth_routes)

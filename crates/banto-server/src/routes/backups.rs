@@ -27,13 +27,12 @@ struct BackupsState {
 
 async fn backups_create_handler(
     State(state): State<BackupsState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
 ) -> Result<Json<BackupInfo>, ApiError> {
     let info = state.backup.create().await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "backup",
         "backups",
         Some(&info.file_name),
@@ -108,7 +107,7 @@ async fn backups_restore_from_upload(
     // ever recorded inside `detail` (maintenance-review-2026-08 §5.3 M-15).
     record_write_as(
         &state.audit,
-        Some(AuditActor::from(&session.identity)),
+        Some(&state.auth.audit_actor(&session)),
         "rest",
         "restore_staged",
         "backups",
@@ -123,14 +122,13 @@ async fn backups_restore_from_upload(
 /// an existing backup already in `backups/`.
 async fn backups_restore_from_existing(
     State(state): State<BackupsState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(file_name): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     state.backup.stage_restore_from_file(&file_name).await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "restore_staged",
         "backups",
         Some(&file_name),
@@ -148,13 +146,12 @@ async fn backups_pending_status(
 
 async fn backups_cancel_pending(
     State(state): State<BackupsState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
 ) -> Result<StatusCode, ApiError> {
     state.backup.cancel_pending_restore().await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "restore_cancelled",
         "backups",
         None,

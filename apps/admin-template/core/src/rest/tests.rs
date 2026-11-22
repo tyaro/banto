@@ -61,6 +61,14 @@ fn demo_auth() -> AuthState {
     )
 }
 
+/// A `UsersService` wired like the app's (ADR-0034 §4): the grants' fixed ids
+/// are reserved as account names, on top of the built-in `admin`.
+fn reserved_users(db: &banto_storage::Db) -> UsersService {
+    UsersService::new(db.clone()).with_reserved_usernames(crate::startup::reserved_usernames(
+        &SettingsService::new(db.clone()),
+    ))
+}
+
 /// Router + one bearer token per role (admin/editor/viewer), for the
 /// RBAC tests below (spec M10). Unlike [`demo_auth_with_roles`] (whose
 /// login verifier is independent of any `UsersService`), the three
@@ -74,7 +82,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
@@ -146,7 +154,7 @@ async fn router_with_token() -> (Router, String) {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
@@ -364,7 +372,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, mut rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
@@ -1482,7 +1490,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
@@ -1695,7 +1703,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
@@ -2248,7 +2256,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
@@ -2342,7 +2350,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
 
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(db.clone()).with_events(tx.clone());
-    let users = UsersService::new(db.clone());
+    let users = reserved_users(&db);
     let settings = SettingsService::new(db.clone());
     let backup = BackupService::new(db_path, db.clone())
         .with_migrations(crate::db::sqlite_migration_manifest());
@@ -2503,7 +2511,9 @@ async fn audit_log_list_as_of_id_pins_the_snapshot() {
         audit
             .try_record(crate::audit::AuditEntry {
                 actor_username: Some("admin"),
+                actor_id: None,
                 actor_role: Some("admin"),
+                actor_kind: None,
                 action,
                 resource: "items",
                 entity_id: None,
@@ -2563,7 +2573,9 @@ async fn audit_log_list_with_as_of_id_does_not_prune() {
         audit
             .try_record(crate::audit::AuditEntry {
                 actor_username: Some("admin"),
+                actor_id: None,
                 actor_role: Some("admin"),
+                actor_kind: None,
                 action: "create",
                 resource: "items",
                 entity_id: None,
@@ -2739,7 +2751,7 @@ async fn system_info_reports_metrics_when_probe_is_present() {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
@@ -3660,19 +3672,14 @@ async fn a_restore_upload_is_refused_when_its_admin_is_deleted_while_the_upload_
     assert_eq!(staged["result"], "ok");
 }
 
-/// Issue #793 S2, finding handed to C2 (ADR-0034 section 3, "the audit actor
-/// is the snapshot the guard authorized with"): a write whose session ends
-/// while it runs is still done - it was authorized when it started - but its
-/// audit row is written with NO actor, because `record_write` looks the
-/// bearer token up again after the write and the token is gone by then.
-/// Here an admin logs out while its own `POST /api/users` is in flight: the
-/// account is created and the `create` row has `actorUsername: null`.
-///
-/// Ignored until C2 replaces the re-lookup with the guard's snapshot; remove
-/// the `#[ignore]` there. (The Tauri commands already pass the identity
-/// `require_role` returned, so they do not have this.)
+/// ADR-0034 section 3 (found by Issue #793 S2): a write whose session ends
+/// while it runs is still done - it was authorized when it started - and its
+/// audit row carries the actor that was AUTHORIZED. The handler records with
+/// the snapshot `require_auth` made, not with a second look at the bearer
+/// token (which is gone by then: `record_write` used to do that and left the
+/// row without an actor). Here an admin logs out while its own
+/// `POST /api/users` is in flight.
 #[tokio::test]
-#[ignore = "known: record_write re-reads the token after the write (fixed by C2, ADR-0034 section 3)"]
 async fn a_write_is_audited_to_its_actor_when_the_session_ends_while_it_runs() {
     let (router, _dir, manager, _editor, _viewer) = router_with_role_tokens_and_backup().await;
     let created = router
@@ -3741,6 +3748,8 @@ async fn a_write_is_audited_to_its_actor_when_the_session_ends_while_it_runs() {
         .unwrap_or_else(|| panic!("expected the create row of `third`, got {rows:?}"));
     assert_eq!(create["actorUsername"], "second");
     assert_eq!(create["actorRole"], "admin");
+    assert_eq!(create["actorKind"], "account");
+    assert!(create["actorId"].as_i64().is_some(), "{create}");
 }
 
 // --- M20: attachments -------------------------------------------------------
@@ -4105,7 +4114,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         .await
         .expect("seed item 1");
     let items = items.with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let dir = tempdir().expect("tempdir");
@@ -4168,7 +4177,7 @@ async fn attachment_upload_survives_a_thumbnail_flag_update_failure_with_audit_a
         .await
         .expect("seed item 1");
     let items = items.with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let dir = tempdir().expect("tempdir");
@@ -4372,6 +4381,10 @@ async fn router_with_viewer_public(
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    // Not `reserved_users`: `real_public_accounts_keep_identity_and_password_ownership`
+    // needs an ACCOUNT named `public` next to the grant - what only a
+    // database that predates the reservation holds (ADR-0034 §4; the real
+    // wiring refuses to create it and stops the startup on finding it).
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
@@ -4637,7 +4650,9 @@ async fn public_viewer_token_cannot_change_a_password_or_create_an_account() {
     );
 }
 
-// #209: the account name is not reserved; provenance comes from issuance.
+// #209 / conventions §10: provenance comes from issuance, never from the
+// name. (v8.0.0 reserves the name - ADR-0034 §4 - but a session is still not
+// judged by it: the account here stands for one that predates the reservation.)
 #[tokio::test]
 async fn real_public_accounts_keep_identity_and_password_ownership() {
     for role in [Role::Admin, Role::Viewer] {
@@ -4732,28 +4747,145 @@ async fn real_public_accounts_keep_identity_and_password_ownership() {
     }
 }
 
+/// ADR-0034 §2 over REST (the desktop twin is
+/// `the_builtin_row_and_reserved_names_are_protected_on_the_desktop`): the
+/// built-in row is listed read-only, and an admin can neither update it, set
+/// a password on it nor delete it. It cannot log in, and the attempt is
+/// recorded like one for an account that does not exist (`login_failed`, no
+/// actor id or kind). None of the refusals leaves a success row.
 #[tokio::test]
-async fn setup_public_account_returns_a_regular_session_identity() {
-    let (router, _audit) = router_with_real_login(true).await;
-    let setup = router
+async fn the_builtin_row_and_reserved_names_are_protected_over_rest() {
+    let (router, _dir, manager, _editor, _viewer) = router_with_role_tokens_and_backup().await;
+    let listed = body_json(
+        router
+            .clone()
+            .oneshot(get_auth("/api/users", &manager))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let builtin = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "builtin")
+        .unwrap_or_else(|| panic!("the built-in row is listed: {listed}"))
+        .clone();
+    assert_eq!(builtin["username"], "admin");
+    let id = builtin["id"].as_i64().unwrap();
+
+    let refused = [
+        // Built here, not with `put_json_auth`: that helper lives in the
+        // items block, which a scaffold preset cuts.
+        HttpRequest::put(format!("/api/users/{id}"))
+            .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+            .header("Authorization", format!("Bearer {manager}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "displayName": "renamed", "role": "viewer" }).to_string(),
+            ))
+            .unwrap(),
+        post_json_auth(
+            &format!("/api/users/{id}/reset-password"),
+            &manager,
+            json!({ "newPassword": "password123" }),
+        ),
+        delete_auth(&format!("/api/users/{id}"), &manager),
+    ];
+    for request in refused {
+        let label = format!("{} {}", request.method(), request.uri());
+        let response = router.clone().oneshot(request).await.unwrap();
+        // An explicit refusal (403), not a server failure.
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{label}");
+    }
+
+    let login = router
         .clone()
         .oneshot(post_json(
-            "/api/auth/setup",
-            json!({ "username": "public", "password": "password123", "displayName": "public" }),
+            "/api/auth/login",
+            json!({ "username": "admin", "password": "password123" }),
         ))
         .await
         .unwrap();
-    assert_eq!(setup.status(), StatusCode::OK);
-    let setup = body_json(setup).await;
-    let token = setup["token"].as_str().unwrap();
-    let identity = router
-        .oneshot(get_auth("/api/auth/identity", token))
-        .await
-        .unwrap();
-    let identity = body_json(identity).await;
-    assert_eq!(identity["id"], "public");
-    assert_eq!(identity["role"], "admin");
-    assert_eq!(identity["kind"], "account");
+    assert_eq!(body_json(login).await["success"], false);
+
+    let after = body_json(
+        router
+            .clone()
+            .oneshot(get_auth("/api/users", &manager))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let still = after
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "builtin")
+        .expect("the built-in row is still there");
+    assert_eq!(still, &builtin, "the row is unchanged");
+
+    let rows = audit_rows_as(&router, &manager).await;
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r["resource"] == "users" && r["result"] == "ok"),
+        "no refused write is recorded as done: {rows:?}"
+    );
+    let failed = rows
+        .iter()
+        .find(|r| r["action"] == "login_failed")
+        .unwrap_or_else(|| panic!("expected a login_failed row, got {rows:?}"));
+    assert_eq!(failed["actorUsername"], "admin");
+    assert_eq!(failed["actorId"], serde_json::Value::Null);
+    assert_eq!(failed["actorRole"], serde_json::Value::Null);
+    assert_eq!(failed["actorKind"], serde_json::Value::Null);
+}
+
+/// ADR-0034 §4: the built-in `admin` and a grant's fixed id (`public`) are
+/// reserved as account names, ignoring case - at the first-run setup and at
+/// `POST /api/users` alike. The refusal is a field error on `username`.
+#[tokio::test]
+async fn reserved_usernames_are_refused_at_setup_and_at_create() {
+    for name in ["public", "Public", "admin", "ADMIN"] {
+        let (router, _audit) = router_with_real_login(true).await;
+        let setup = router
+            .oneshot(post_json(
+                "/api/auth/setup",
+                json!({ "username": name, "password": "password123", "displayName": "x" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(setup.status(), StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+        let body = body_json(setup).await;
+        assert!(body.to_string().contains("username"), "{name}: {body}");
+    }
+
+    let (router, _dir, manager, _editor, _viewer) = router_with_role_tokens_and_backup().await;
+    for name in ["public", "PUBLIC", "Admin"] {
+        let created = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/users",
+                &manager,
+                json!({
+                    "username": name,
+                    "password": "password123",
+                    "displayName": "x",
+                    "role": "viewer"
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+    }
+    let rows = audit_rows_as(&router, &manager).await;
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r["action"] == "create" && r["resource"] == "users"),
+        "a refused create leaves no create row: {rows:?}"
+    );
 }
 
 #[tokio::test]
@@ -4804,7 +4936,7 @@ async fn auth_status_flattens_app_supplied_extras() {
     // in a response-rewriting layer. The template passes `None`; this test
     // stands in for an adopter passing `Some`.
     let pool = migrate_memory().await.expect("migrate_memory");
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = demo_auth();
@@ -4847,7 +4979,7 @@ async fn router_with_app_grant() -> (
     AuthState,
 ) {
     let pool = migrate_memory().await.expect("migrate_memory");
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = AuthState::new(
@@ -5093,7 +5225,7 @@ async fn router_with_user_sessions() -> (Router, UsersService) {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, _rx) = broadcast::channel(16);
     let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
+    let users = reserved_users(&pool);
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
@@ -5442,7 +5574,7 @@ async fn router_with_permission_catalog() -> (Router, UsersService, AuditLogServ
         .unwrap()
         .register("alarm.ack", "perm.ack", "perm.ack_desc")
         .unwrap();
-    let users = UsersService::new(pool.clone()).with_permission_catalog(catalog);
+    let users = reserved_users(&pool).with_permission_catalog(catalog);
     users
         .setup_first_user("owner", REVOCATION_PASSWORD, "Owner")
         .await
