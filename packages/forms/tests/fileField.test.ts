@@ -15,6 +15,7 @@ import { pickFiles, validateAll, validateField } from '../src/validate';
 import {
 	acceptsFile,
 	fileValueOf,
+	listAfterChanges,
 	formatFileSize,
 	newPendingFile,
 	uploadPendingFiles
@@ -798,5 +799,69 @@ describe('a delete and its owner; a field hidden during the run (PR #844 cross-r
 		const value = fileValueOf(store.values.files);
 		expect(value.existing).toEqual([meta(90, 'a.txt')]);
 		expect(value.pending.map((entry) => entry.file.name)).toEqual(['b.txt']);
+	});
+});
+
+describe('a list answered after what it does not know yet (PR #844 review)', () => {
+	it('a list asked before the upload and answered after it keeps the uploaded file', async () => {
+		const listed = deferred<FileFieldMeta[]>();
+		const client = fakeClient();
+		client.list.mockImplementationOnce(() => listed.promise);
+		const schema: FormSchema = { fields: [fileDef(client)] };
+		const store = createFormStore(schema);
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn() });
+		await pick(view.container, [file('a.txt')]);
+
+		// After the create: the form moves to the record, then the chosen files are sent.
+		await view.rerender({ fileParentId: 9 });
+		await waitFor(() => expect(client.list).toHaveBeenCalledWith('items', '9'));
+		const outcome = await uploadPendingFiles(schema, store, 9);
+		expect(outcome.uploaded.map((row) => row.fileName)).toEqual(['a.txt']);
+
+		// The list was read before the file arrived.
+		listed.resolve([]);
+		await waitFor(() => expect(screen.queryByText('読み込み中…')).toBeNull());
+		expect(fileValueOf(store.values.files).existing?.map((row) => row.fileName)).toEqual(['a.txt']);
+		expect(fileValueOf(store.values.files).pending).toEqual([]);
+		expect(screen.getByRole('button', { name: 'a.txt: 削除' })).toBeTruthy();
+	});
+
+	it('listAfterChanges: keeps what arrived and leaves out what was deleted meanwhile', () => {
+		const a = meta(1, 'a');
+		const b = meta(2, 'b');
+		const c = meta(3, 'c');
+		// Nothing happened: the list as it is (also for a value that was reset).
+		expect(listAfterChanges([a, b], [a], [a])).toEqual([a, b]);
+		expect(listAfterChanges([a, b], [a], null)).toEqual([a, b]);
+		expect(listAfterChanges([a], null, [])).toEqual([a]);
+		// `c` arrived while the list was on its way; listed or not, it is there once.
+		expect(listAfterChanges([a], [a], [a, c])).toEqual([a, c]);
+		expect(listAfterChanges([a, c], [a], [a, c])).toEqual([a, c]);
+		// `b` was deleted while the list was on its way.
+		expect(listAfterChanges([a, b], [a, b], [a])).toEqual([a]);
+	});
+
+	it('a confirmation answered after the field got another client deletes nothing', async () => {
+		const asked = deferred<boolean>();
+		const confirmRemove = () => asked.promise;
+		const first = fakeClient([meta(1, 'of-first.txt')]);
+		const second = fakeClient([meta(1, 'of-second.txt')]);
+		const schemaOf = (client: FileFieldClient): FormSchema => ({
+			fields: [fileDef(client, { file: { client, resource: 'items', confirmRemove } })]
+		});
+		const schema = schemaOf(first);
+		const store = createFormStore(schema);
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 5 });
+		await fireEvent.click(await screen.findByRole('button', { name: 'of-first.txt: 削除' }));
+
+		// The same id, another client: another file.
+		await view.rerender({ schema: schemaOf(second) });
+		await screen.findByRole('button', { name: 'of-second.txt: 削除' });
+		asked.resolve(true);
+		await asked.promise;
+		await Promise.resolve();
+		expect(first.remove).not.toHaveBeenCalled();
+		expect(second.remove).not.toHaveBeenCalled();
+		expect(fileValueOf(store.values.files).existing).toEqual([meta(1, 'of-second.txt')]);
 	});
 });

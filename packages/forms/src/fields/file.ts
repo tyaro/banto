@@ -189,6 +189,28 @@ function mergeById(list: FileFieldMeta[], added: FileFieldMeta[]): FileFieldMeta
 	return [...list.filter((meta) => !ids.has(meta.id)), ...added];
 }
 
+/**
+ * A list that was ASKED when the value listed `before` and ANSWERED when it
+ * lists `now`: the answer may be older than what happened in between, so what
+ * arrived meanwhile (an upload that ended, also one of `uploadPendingFiles`)
+ * is kept and what was deleted meanwhile stays away. `now === null`: the value
+ * was reset, nothing happened to it - the list as it is.
+ */
+export function listAfterChanges(
+	list: FileFieldMeta[],
+	before: FileFieldMeta[] | null,
+	now: FileFieldMeta[] | null
+): FileFieldMeta[] {
+	if (now === null) return list;
+	const had = new Set((before ?? []).map((meta) => meta.id));
+	const has = new Set(now.map((meta) => meta.id));
+	const listed = new Set(list.map((meta) => meta.id));
+	return [
+		...list.filter((meta) => !had.has(meta.id) || has.has(meta.id)),
+		...now.filter((meta) => !had.has(meta.id) && !listed.has(meta.id))
+	];
+}
+
 /** What an upload run did: the files that arrived, and the ones the client refused (each with its `error`). */
 export interface FileUploadOutcome {
 	uploaded: FileFieldMeta[];

@@ -27,6 +27,7 @@
 		defaultFileFieldMessages,
 		fileValueOf,
 		formatFileSize,
+		listAfterChanges,
 		uploadPending,
 		type FileFieldMessages
 	} from './file';
@@ -102,10 +103,17 @@
 		const token = ++loadToken;
 		loading = true;
 		loadError = null;
+		// An upload may end while the list is on its way (the app's
+		// `uploadPendingFiles` after a create): the answer must not undo it.
+		const before = latest().existing;
 		try {
 			const list = await config.client.list(config.resource, String(target));
 			if (token !== loadToken) return;
-			onInput({ existing: list, pending: latest().pending });
+			const now = latest();
+			onInput({
+				existing: listAfterChanges(list, before, now.existing),
+				pending: now.pending
+			});
 		} catch (err) {
 			if (token !== loadToken) return;
 			loadError = t.loadFailed(err);
