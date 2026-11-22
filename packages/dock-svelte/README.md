@@ -753,6 +753,12 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 （#743。置き換えや `dock.layout = ...` で外す・`dockExisting` で別の split やタブの組へ入れる・`dockExistingAtEdge` で外周へ出す。
 同じ split の中での並べ替え、仕切りの移動、split に新しく入るパネル、隠す・浮かせる、帯へ自動で隠す、`hydrate` / `reset` では変えない）。保存した値を `saved` なしで渡すと、この調整が保存値にかかって比率がずれる）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
 
+`DockHost.cancelGesture(): boolean`（#796）は、進行中の操作（ドラッグ・リサイズ・仕切りの移動）を取り消して対象を元に戻す。取り消したら `true`、
+無ければ `false` で何も起こらない。`onGestureEnd` へは `('cancel', 'api')` で 1 回届く。`replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout`
+を含む）は、不正でない値なら `beforePanelChange` に聞く前にこれを呼ぶ（操作中の配置ではなく、元に戻った配置に対して聞く）。拒否・`stale` になっても
+取り消した操作は戻らない。`invalid` のときは取り消さない。
+`replaceLayout` が処理中（`beforePanelChange` の承認待ちを含む）の間は、新しい操作も始まらない（`canStartGesture` を呼ぶ前に止める）。並行して複数あれば、最後の 1 件が返るまで続く。
+
 ## 保存の約束（serialize / hydrate と書き込みは別）
 
 `serialize()` は文字列を返すだけで、`hydrate(json)` は文字列を検証して layout に採るだけ。**実ストレージへの書き込み

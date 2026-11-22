@@ -772,7 +772,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | T1b | #808 primary の文字を `--banto-primary-text` へ（dock の DockedTree・DockWindow、grid の BantoGrid・HeaderCell）と、`--banto-surface-muted` の定義（Tree の 2 か所）。T1 とは別の小さな PR（見た目の差分の原因を追いやすくする） | `dock-svelte`・`grid-svelte`・`theme`・テンプレート | 見た目 | sonnet | axe が通る。基準画像の再生成。差分が T1 と混ざらない |
 | T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査 |
 | K1 | #792 `isOnScreen`（`docked`・`floating`・`autoHidden`・`flyoutPanel` から） | `dock-svelte` | 足すだけ | sonnet | 偽の 5 つと真の 3 つの単体テスト。README。**実装済み**（`tests/on-screen.test.ts`。`isVisible` は改名せず doc を直した。PR は #825（#792 を Closes）） |
-| K2 | #796 `cancelGesture` と自動の取り消し | `dock-svelte` | 挙動 | sonnet | 操作中の `replaceLayout` の単体テスト |
+| K2 | #796 `cancelGesture` と自動の取り消し | `dock-svelte` | 挙動 | sonnet | 操作中の `replaceLayout` の単体テスト 状態: **PR 提出済み**（2026-11-22、`feat/796-dock-cancel-gesture`。`replaceLayout` は `invalid` なら取り消さず、拒否・`stale` でも取り消したままにする。`lifecycle.requestReplace` は変更なし） |
 | K3 | #791 前半（`DockHost` と `ThreePaneDock` の両方に `onLayoutCommit`） | `dock-svelte`・テンプレート | 足すだけ | fable | §4.6 の試験。e2e（workspace-dock の保存） |
 | #782 PR2〜PR8 | Issue の本文どおり | `dock-svelte` | PR ごとに判定（§9.2） | fable | 本文の各 PR の条件。PR6 で #780 を閉じる |
 | K4 | #791 後半 | `dock-svelte`・テンプレート・scaffold | **破壊的** | fable | ダッシュボード・workspace-dock の保存が今と同じ（API 経由の表示切替・キーボード・タブの切り替えを含む）。scaffold の dry-run |
