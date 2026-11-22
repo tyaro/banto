@@ -1,10 +1,11 @@
 # 下流の要望（2026-11）をまとめて入れる計画書
 
 作成日: 2026-11-22
-状態: **計画**（オーナー決定済み、§2。§10 の確認事項は 2026-11-22 に推奨どおりで確定、#716 の判断（§4.13）だけ待ち。**2026-11-22 変更: 互換不要・DB 作り直し**の前提で簡素化した。実装は未着手。**2026-11-22: §11（#756 からの取り込み）を確定**。C0 の ADR-0034 は 2026-11-22 に Accepted。計画書との食い違いは ADR が正）
+状態: **計画**（オーナー決定済み、§2。§10 の確認事項は 2026-11-22 に推奨どおりで確定、#716 の判断（§4.13）だけ待ち。**2026-11-22 変更: 互換不要・DB 作り直し**の前提で簡素化した。実装の進み具合は §7 の表。**2026-11-22: §11（#756 からの取り込み）を確定**。C0 の ADR-0034 は 2026-11-22 に Accepted。計画書との食い違いは ADR が正。**2026-11-22 追加: banto-industrial の 4 件（#838・#850・#851・#852）を §4.14 と §7（C7・U1・T3・X1）に取り込んだ。判断点は §10 の B1〜B5（判断待ち）**）
 トラック: 保守者向け（トラックA）
 Issue: [#778](https://github.com/tyaro/banto/issues/778)・[#786](https://github.com/tyaro/banto/issues/786)・[#790](https://github.com/tyaro/banto/issues/790)・[#791](https://github.com/tyaro/banto/issues/791)・[#792](https://github.com/tyaro/banto/issues/792)・[#793](https://github.com/tyaro/banto/issues/793)・[#794](https://github.com/tyaro/banto/issues/794)・[#795](https://github.com/tyaro/banto/issues/795)・[#796](https://github.com/tyaro/banto/issues/796)、
 洗練案の [#714](https://github.com/tyaro/banto/issues/714)（残りの 4 = ファイル型）・[#716](https://github.com/tyaro/banto/issues/716)（ウィジェット盤。**判断待ち**）、
+追加（2026-11-22、banto-industrial。§4.14）の [#838](https://github.com/tyaro/banto/issues/838)・[#850](https://github.com/tyaro/banto/issues/850)・[#851](https://github.com/tyaro/banto/issues/851)・[#852](https://github.com/tyaro/banto/issues/852)、
 既存の [#782](https://github.com/tyaro/banto/issues/782)（影の木。PR の分け方は Issue の本文が正）・[#780](https://github.com/tyaro/banto/issues/780)（#782 の PR6 で通す）
 関連: [three-pane-dock-plan.md](three-pane-dock-plan.md)（`ThreePaneDock`・`dockLayoutStore`）、
 [attachments-plan.md](attachments-plan.md)・[attachment-history-plan.md](attachment-history-plan.md)（添付）、[template-scope.md](../template-scope.md) §4.2、
@@ -712,6 +713,81 @@ W1 ウィジェットの登録の型と、固定部のカードの載せ替え �
 **注意**（Issue のとおり）: command-palette の基準画像も変わる。charts を外すプリセットで壊れないこと
 （scaffold の dry-run）。キオスクの大型 KPI と touch 密度。
 
+### 4.14 追加の 4 件（#838・#850・#851・#852。2026-11-22、banto-industrial）
+
+2026-11-22 に banto-industrial から 4 件が届いた。下流の開発は止まっている（§1）ので、同じ 1 回のリリースに載せる。
+#838 は v8 で要る（GitHub Pages のデモ）。ほかの 3 件は急がないが、どれも下流の写し・回り道の解消なので、
+**D1（下流の使い勝手の精査）の前に入れる**（入れないと D1 で同じ写しをもう一度数える）。入れるかどうかの判断は §10 の B5。
+口の形は §10 の B1〜B4 が**判断待ち**で、下に書くのは推奨の形。コードの場所は 2026-11-22 の main（`cfc538d8`）で確かめた。
+
+4 条件（[template-scope.md](../template-scope.md) §1）に照らした判定:
+
+| Issue | 横断性 | 削除容易性 | 代替不能性 | 無ドメイン性 | 置き場所 | 破壊的か | PR |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| #838 トークンをメモリだけに持つ | 可（同じオリジンに複数のアプリを置く形は業種を問わない） | 可（任意の引数。既定は今のまま） | 可（provider の中の保存先で、外からは替えられない） | 可 | `@banto/admin-core`（`providers/http.ts`） | 足すだけ | C7 |
+| #850 狭い画面のドロワーの状態 | 可（テンプレートのシェル自身が使っている） | 可（使わなければ import しない） | 可（シェルの 900px の境と対の状態） | 可 | `@banto/ui`（テンプレートの写しを移す） | 足すだけ（テンプレートのファイルは移る） | U1 |
+| #851 系列色を 16 枠に | 可（系列の多いグラフは業種を問わない。「16 ペン」は下流の都合だが、枠の数に工場の知識は無い） | 可（トークンと上限の定数） | 可（1〜8 との距離は theme の中でしか検査できない） | 可 | `@banto/theme`・`@banto/charts` | 見た目（9 本目以降の色が変わる） | T3 |
+| #852 DOM の試験の下準備 | 可（charts の上に部品を作る利用者に共通） | 可（サブパス。本体の束には入らない） | 可（何を差し替えるかは charts の実装の都合で、外からは追えない） | 可 | `@banto/charts/testing`（新しいサブパス） | 足すだけ | X1 |
+
+4 件とも banto に入れてよい。トレンド・ペン・デモの中身など、工場系の部品は banto-industrial に残る
+（banto に入るのは、保存先の切り替え・画面幅の状態・色の枠・試験の差し替えだけ）。
+
+**#838（C7）**
+
+- いま: `createHttpAuthProvider` は、トークンを `getToken()` で `localStorage` → `sessionStorage` の順に読み、
+  `setToken()` で `remember` に応じてどちらかへ書く。作成時に `window` の `storage` イベントを購読し、`storageKey` の変更と
+  `localStorage.clear()` で `credentialRevision` を進める（外す口は無い）。選べるのは `storageKey` だけ。
+  書き込みの compare-and-set（#260）は「始めたときの revision」と「始めたときに保存先から読んだトークン」の両方を比べる。
+- 推奨の形（B1）: `HttpAuthProviderOptions` に `storage?: 'web' | 'memory'` を足す（既定は `'web'` = 今のまま）。`'memory'` では
+  トークンを provider の中の変数だけに持ち、web storage を読まず・書かず、`storage` イベントも購読しない。`storageKey` は使わない。
+  `login({ remember: true })` は覚えない（再読み込みでセッションが消える）。`credentialRevision`・compare-and-set・
+  `onCredentialChanged` は同じ文書の中で今のまま働く（タブ間の同期は無い）。
+- Tauri の provider（`providers/tauri.ts`）は web storage にトークンを持たないので、対の口は足さない（README に 1 文）。
+- 範囲の外: 同じオリジンのほかのキー（`createLocalUiSettings` の `banto.ui.*`、テーマ、dock の配置の写し）。
+  `createLocalUiSettings` は今でも `storage`（`Storage`）を渡せる。ほかは下流のデモの側で分け、足りない口は D1 で洗う。
+- 試験: `'memory'` で `localStorage`・`sessionStorage` に一度も触れない、`storage` の購読が無い、ログイン → `resolve()` → ログアウトと
+  追い越しの試験（`sessionRaces`・`httpRevision`）が `'memory'` でも通る、既定の挙動が変わらない。
+
+**#850（U1）**
+
+- いま: 狭い幅の判定はテンプレートの `src/lib/narrowViewport.svelte.ts`（`NARROW_QUERY`・`createSubscriber`）。ドロワーの状態は
+  `src/routes/(app)/+layout.svelte` が持つ（`overlayOpen`、遷移と Escape で閉じる、メニューバーが入りきらないときの
+  `menubarInsufficient` → `menubarWideDrawer`・`showSidebar`）。`Header.svelte`・`Sidebar.svelte` は `narrowViewport` を読んで、
+  ☰ と折り畳みのボタンのどちらを出すかを決める。`@banto/ui` の `LauncherBar` は同じ 900px を自前の `matchMedia` で見ている。
+- 推奨の形（B2）: `@banto/ui` に `NARROW_QUERY`・`narrowViewport` を移し、ドロワーの状態を
+  `createShellDrawer({ navPlacement, menubarFits })`（どちらも getter）として出す。返すのは `open`・`isDrawer`
+  （狭い幅、またはメニューバーが入りきらない）・`toggleTarget`（`'drawer' | 'fold'`）・`toggle()`・`close()`。
+  `isDrawer` が偽に戻ったら閉じる。DOM（backdrop・フォーカスの移し替え・Escape の購読）はテンプレートに残す。
+  テンプレートと `LauncherBar` は新しい口に載せ替える。境の値は 900px の固定（CSS の `@media` と対なので、引数にしない）。
+- `.svelte.ts` を足すので conventions §14（dev optimizer の除外）を確かめる（`@banto/ui` は既に `.svelte.ts` を持つ）。
+
+**#851（T3）**
+
+- いま: 系列色は `--banto-chart-1〜8`（ライト・ダーク）。`@banto/charts` の `seriesColorVar` は 8 で**折り返さず、8 番に固定する**
+  （`MAX_CHART_SERIES = 8`、`core/color.ts`）。`packages/theme/tests/chart-palette.test.ts` は「ちょうど 8 枠」、隣どうし 0.10・
+  どの 2 つも 0.09（OKLab。色覚特性の模擬ごと）、面との比 3:1（全ブランド色相）、先頭 4 系列と状態色 0.09（T2）を確かめている。
+- 推奨の形（B3）: `--banto-chart-9〜16` を足し、`MAX_CHART_SERIES` を 16 にする（17 本目以降は 16 番に固定。折り返さない）。
+  **1〜8 の値と検査は変えない**。9〜16 は「1〜16 のどの 2 つも 0.06 以上（正常色覚）・面との比 3:1 以上」を検査に足す。
+  色覚特性の模擬での距離と、状態色との距離は 9〜16 では保証しない（決定 7 と同じ考え。16 色で 0.09 を保てるかは未確認で、
+  保てない見込み）。README に「9 本目以降は色だけで見分けさせない（凡例・線種・マーカーを併用）」と書く。
+- 色の出発点は banto-industrial の `--bi-chart-9〜16`（`apps/chronogazer/src/app.css`）。検査に落ちるもの（Issue が挙げる
+  ダークの 15 `#ff8a65` と 2 `#ed770e` など）だけを直す。
+- 1〜8 を変えないので、8 系列以下のグラフの見た目と基準画像は変わらない見込み（PR で確かめる）。
+
+**#852（X1）**
+
+- いま: 共通の下準備は無い。各パッケージの試験がファイルごとに `// @vitest-environment jsdom` を付け、自分で差し替えている
+  （`ResizeObserver`、`HTMLElement.prototype` の `clientWidth`・`clientHeight`・`offsetHeight`、`document.elementFromPoint`、
+  `getComputedStyle` など。charts は `tests/messages-reactive.test.ts`・`tests/label-font.test.ts`）。charts の `src` が `ResizeObserver` を
+  使うのは `internal/ChartContainer.svelte` と `internal/label-font.ts`、canvas の `getContext` は `core/export.ts`（画像の書き出し）だけ。
+- 推奨の形（B4）: `@banto/charts/testing` のサブパス（`packages/charts/src/testing/`、`package.json` の `exports` に足す）。
+  出すのは「charts の部品をマウントするのに要る差し替えを入れ、戻す関数を返す」1 つの口（大きさを引数で渡す）と、
+  要れば描画の待ち合わせ。**vitest を import しない**（conventions §5 の `package-bare-imports`。`src` の素の import は `svelte` だけ）。
+  charts 自身の DOM の試験もこの口を使う（口が実装とずれないようにする）。README に vitest の設定と 1 本の例を載せる。
+  `jsdom`・`@testing-library/svelte` は使う側の devDependencies（banto の依存は増えない）。
+- dock-svelte・grid-svelte などの同じ口は、求めが出てから足す（D1 で確かめる）。パッケージ間の import はできない
+  （conventions §4）ので、共通の下準備を 1 つのパッケージにまとめる形は採らない。
+
 ## 5. 依存関係
 
 - C0（ADR の承認）→ C1（基準の作り直し）→ C2（#778 の保護と帰属）→ C2b（初回セットアップの撤去）→ C3（#790）→
@@ -733,7 +809,13 @@ W1 ウィジェットの登録の型と、固定部のカードの載せ替え �
 - F1 → F2（#714）は誰とも重ならない（`packages/forms` とテンプレートの items）。早く始めてよい。
 - W0（#716 の判断）は C0 と同時に諮る。W1 は判断の後すぐ、W2 は **K4 と C5 の後**（保存の部品と provider の形）、
   ダッシュボードの保存を K4 が載せ替えた後に触る（同じ `+page.svelte`）。
-- D1 は全部（#714・#716 を含む）の後。
+- **追加の 4 件（§4.14）**: C7（#838）は **C3 の後**（C2b が `setup` を消し、C3 が Identity を触る。どちらも
+  `admin-core` の `providers/http.ts` の同じ provider）。C4〜C6 とは並べられる（そちらが触るのは `providers/uiSettings.ts` と呼び手）。
+  U1（#850）は **C2b の後**（C2b がテンプレートのシェルと基準画像を触る。U1 は見た目を変えない PR にして、差分の原因を分ける）。
+  K4・W1〜W3 とはファイルが重ならない（dock のページとダッシュボード）。T3（#851）は T2（済み）の後で、誰とも重ならない。
+  X1（#852）も誰とも重ならない。T3 と X1 は同じ `packages/charts` だが、T3 は `core/color.ts` と色の試験、X1 は
+  `src/testing/` と DOM の試験なので並べられる。4 件とも判断（§10 の B1〜B5）の後に着手し、**D1 の前に入れる**。
+- D1 は全部（#714・#716・追加の 4 件を含む）の後。
 
 ## 6. dock の PR の順序（ファイルの衝突を減らす）
 
@@ -763,28 +845,32 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | PR | 範囲 | パッケージ・場所 | 破壊的 | モデル | 完了条件 |
 | --- | --- | --- | --- | --- | --- |
 | **C0** | ADR: 持ち主の識別、組み込みの `admin`、初回セットアップの撤去とロックダウンの条件（新規 ADR-0034、ADR-0017 の改訂）。conventions §11 の「基準の作り直し」の注記。`.en.md` も | `docs/adr`・`docs/conventions` | — | fable | **済み**（PR #804。2026-11-22 に Accepted。§10 の N2〜N6 を含めて確定） |
-| S1 | **状態: 実装済み・レビュー待ち（PR #829、ADR-0035 は 2026-11-22 に Accepted、5 点はオーナーが推奨どおりで確定）。** #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
-| S2 | **状態: 実装済み・レビュー待ち（2026-11-22。点検の表は PR 本文）。直したのは 3 点: 2 MiB を超える本文を受け付けるルート（バックアップの復元・添付・items の一括インポート）を、本文を受け取り終えた所でもう一度認可する（`routes::recheck_role_at_least`。上限を上げるのはそのルートだけ。照合の後にトークンの存在・期限・stamp を 1 つのロックの下で確定する）／REST のパスワード変更の監査の `entity_id` を確定の前の値から取る／Tauri の `backups_stage_restore` の監査の `entity_id` を REST に揃える。持ち越し: REST の `record_write` が書き込みの後に主体を引き直す件は C2（ADR-0034 §3。再現する試験を `#[ignore]` で置いた）、自動ログインの有効化が失敗したときにキーリングへ残る資格情報は未対応（PR 本文）。** #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
-| C1 | 基準の作り直し（2 方言）: **#814 のうち、今回追加する起動・seed 用のキー（`auth.disabled` 等、seed 済みの印）の名前だけを決める（C1 の前に、キーと利用先を読み取りで棚卸しする。既存の UI の論理キーは触らない。C4/C5 の行を参照）**。`0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**組み込みの行の最低限の保護**（verifier を `kind = 'account'` に絞る・パスワード・更新・削除・CSV の取り込みが `kind = 'builtin'` を断る）と、**復元の検査**（`_sqlx_migrations` の版と checksum を予約と適用の直前に読み取り専用で確かめる。migrator は配線が `BackupService` に渡す。ADR-0034 §9）。**初回の seed の条件の直し**（`seed_first_boot_settings` を「表が空」から「seed 済みの印が無い」へ。0014 が `settings` に行を入れるので同じ PR で。ADR-0034 §5）。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | **実装済み・レビュー待ち**（PR #830、2026-11-22。決めた点: seed 済みの印は `first_boot.seeded` で、一覧が空でも書く。試験の `admin` は `manager` に改名。**持ち越し**: `0014` への `auth.disabled`・`auth.disabled_role` の INSERT は入れていない — 入れると今の `banto-serve` が起動を断り初回セットアップも通らないので、C2b で入れる。demo の `admin / admin` の改名もログインの画面が変わる C2b へ）。§4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。**C1 の実 migration（0001〜0014）を当てた DB で display の生成物を起動し、公開閲覧（`server.viewer_public`・`server.enabled`・bind の seed）を確かめる**。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
-| C1b | #820 `apps/admin-template/src-tauri/src/lib.rs` のテストを別ファイルに分ける（準備。C2・C2b が認証まわりを大きく触るので、先に分けて衝突を減らす） | `src-tauri` | — | sonnet | 分ける前後でテストの数と結果が同じ。挙動の変更なし（Tauri 側はレビューで担保）。**状態: 実装済み**（`src-tauri/src/tests.rs` に分離。scaffold・add-resource の差し込み先も移した） |
+| S1 | **状態: 済み（PR #829、ADR-0035 は 2026-11-22 に Accepted、5 点はオーナーが推奨どおりで確定）。** #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
+| S2 | **状態: 済み（PR #843、2026-11-22。点検の表は PR 本文）。直したのは 3 点: 2 MiB を超える本文を受け付けるルート（バックアップの復元・添付・items の一括インポート）を、本文を受け取り終えた所でもう一度認可する（`routes::recheck_role_at_least`。上限を上げるのはそのルートだけ。照合の後にトークンの存在・期限・stamp を 1 つのロックの下で確定する）／REST のパスワード変更の監査の `entity_id` を確定の前の値から取る／Tauri の `backups_stage_restore` の監査の `entity_id` を REST に揃える。持ち越し: REST の `record_write` が書き込みの後に主体を引き直す件は C2（ADR-0034 §3。再現する試験を `#[ignore]` で置いた）、自動ログインの有効化が失敗したときにキーリングへ残る資格情報は未対応（PR 本文）。** #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
+| C1 | 基準の作り直し（2 方言）: **#814 のうち、今回追加する起動・seed 用のキー（`auth.disabled` 等、seed 済みの印）の名前だけを決める（C1 の前に、キーと利用先を読み取りで棚卸しする。既存の UI の論理キーは触らない。C4/C5 の行を参照）**。`0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**組み込みの行の最低限の保護**（verifier を `kind = 'account'` に絞る・パスワード・更新・削除・CSV の取り込みが `kind = 'builtin'` を断る）と、**復元の検査**（`_sqlx_migrations` の版と checksum を予約と適用の直前に読み取り専用で確かめる。migrator は配線が `BackupService` に渡す。ADR-0034 §9）。**初回の seed の条件の直し**（`seed_first_boot_settings` を「表が空」から「seed 済みの印が無い」へ。0014 が `settings` に行を入れるので同じ PR で。ADR-0034 §5）。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | **済み**（PR #830、2026-11-22。決めた点: seed 済みの印は `first_boot.seeded` で、一覧が空でも書く。試験の `admin` は `manager` に改名。**持ち越し**: `0014` への `auth.disabled`・`auth.disabled_role` の INSERT は入れていない — 入れると今の `banto-serve` が起動を断り初回セットアップも通らないので、C2b で入れる。demo の `admin / admin` の改名もログインの画面が変わる C2b へ）。§4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。**C1 の実 migration（0001〜0014）を当てた DB で display の生成物を起動し、公開閲覧（`server.viewer_public`・`server.enabled`・bind の seed）を確かめる**。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
+| C1b | #820 `apps/admin-template/src-tauri/src/lib.rs` のテストを別ファイルに分ける（準備。C2・C2b が認証まわりを大きく触るので、先に分けて衝突を減らす） | `src-tauri` | — | sonnet | 分ける前後でテストの数と結果が同じ。挙動の変更なし（Tauri 側はレビューで担保）。**状態: 済み**（PR #828。`src-tauri/src/tests.rs` に分離。scaffold・add-resource の差し込み先も移した） |
 | C2 | **#807 auth フローの `AuditEntry` を `*_as` へ**。#778 組み込みの行の保護（禁止・verifier・SQL の `kind`）・予約名（一覧を渡す口）・grant を後から足したときの起動時の検査・帰属の印（`audit_as_builtin_admin`）と認可時のスナップショット・監査の `actor_id` / `actor_kind`（列を足す。wire は `actorKind`）。**予約名の導入で、smoke の管理者名 `public`（`e2e/tests/smoke.spec.ts:51,269–273`）と公開閲覧 suite の同名（`e2e/tests-public-viewer/public-viewer.spec.ts:37,191–217`）が使えなくなるので、e2e の名前の変更は C2 と同時** | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート | **破壊的** | fable | §4.3 の試験（C2b の分を除く）。両経路の対称。**この PR で足す起動時の検査（組み込みの行・予約名の当たり）を、同じ関数で復元前の検査にも掛ける**（断ったら元の DB を保つ。ADR-0034 §9） |
 | C2b | **#819 ロール型の統一（フロントの変更と一緒に）**。初回セットアップの撤去（決定 18）: `auth.disabled` の既定を on、ロックダウンの条件（管理者のアカウントが 1 つ以上）、ログインなしの間の REST（読み取り専用。ログインの許可・トークンの発行・認可をモードの世代で切り替えと直列化。ADR-0034 §6）、設定の明示と異常時の停止（キーの欠落・破損。seed の条件の直しは C1 で済み）、`banto-serve` の listen の条件（ログインなしで閲覧公開も off なら listen せず止まる）、`setup_first_user`・`is_initialized`・`/api/auth/setup`・`auth_setup`・bootstrap の窓・`AuthProvider.setup`・ログインの画面の分岐と文言を消す。ヘッドレスの最初のアカウント（N3。CLI は予約された復元があれば明示のエラーで止まる）。e2e（`createFirstAdmin` の置き換え・smoke・add-resource に加え、setup を直接呼ぶ公開閲覧 suite のケース 5 も移行。公開閲覧 suite は「実アカウント 0 件のまま閲覧成功・業務の書き込み拒否」と「CLI で管理者を作成し、ログイン必須・公開閲覧有効の別 DB でログイン／ログアウト／セッション競合」に分け、両方の保証を残す）・`rename.mjs`・scaffold の seed・基準画像 | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`・テンプレート・`e2e`・`scripts` | **破壊的** | fable | §4.3 の C2b の試験。新しい DB がユーザーなしで起動し、ユーザー管理からアカウントを作れる。e2e が通る。scaffold の 4 プリセットの dry-run と template-acceptance。両経路の対称。**実装条件**: (1) この PR で足す起動時の検査（必須の設定・ログイン必須での管理者 ≥1）を、同じ関数で復元前の検査にも掛ける（断ったら元の DB を保つ。未適用の migration がある候補・seed 済みの印が無い候補は作業用のコピーで検査。`banto-serve` の配線は待ち受けの可否も含め、同じ候補を Tauri は許しヘッドレスは交換の前に断る試験を足す。ADR-0034 §9）。(2) 照合・認可の DB 照合を止めている間に切り替えを終わらせる回帰試験で、旧い世代から発行も利用もできない（進行中の書き込みの扱いは #793・§4.5 とそろえる。ADR-0034 §6）。(3) CLI は起動と同じ関数で初回の seed と印を書いてから、同じトランザクションでロックダウンを書く。新しい DB（SQLite・PostgreSQL、display の生成物）で通常の起動をせずに CLI → 起動 → ログインの回帰試験（ADR-0034 §5・§7） |
 | C3 | #790 `accountId` を wire に載せる・`sessionOwnerKey` | `banto-server`・`src-tauri`・`admin-core`・テンプレート | **破壊的** | fable | §4.2 の試験（復元の回帰試験を含む）。持ち主つきの記憶の利用箇所を全部確認 |
 | C4 | #786 サーバー（条件付きの PUT・DELETE・乱数の revision・外部キー・Tauri）。参照先を `ui_settings` へ切り替える（移し替えなし）。**既存の UI の論理キー（例 `dashboard.memo`）は、変える必要があるものだけここ（C4/C5）で判断する（#814）**。admin-core の http・tauri アダプタの最小の追従（公開の provider の形は据え置き） | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`（アダプタだけ） | **破壊的** | fable | §4.4 の競合の試験（両方言、片方だけ成功）。削除と PUT の競合で行が残らない。旧い形の provider のまま画面が動く |
 | C5 | #786 provider の置き換え（`remove` を含む）・`updateUiSetting`・同梱の実装・呼び手の追従 | `admin-core`・テンプレート | **破壊的** | fable | #707 の直列化の試験が新しい形で通る |
 | C6 | `createSavedSetting` の再送・`merge`・`onSettled`・README | `admin-core` | 足すだけ | sonnet | 再送・停止・競合の単体テスト |
-| T1（実装済み: fix/794-toast-dark-tint の PR）| #794 Toast と浮かぶ面の tint（Grid の固定列の透けを含む）。**#808 のうち ToastHost の色だけを T1 に合わせる**（Dock/Grid の primary の文字と Tree の `--banto-surface-muted` は T1b） | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。ダークで、着色された BantoGrid の固定列の後ろにスクロールする文字が透けない。実ブラウザーで success・error・warning の Toast の背景の最下層が不透明（`e2e/demo/toast-opaque.spec.ts`。基準画像は使わない） |
-| T1b | #808 primary の文字を `--banto-primary-text` へ（dock の DockedTree・DockWindow、grid の BantoGrid・HeaderCell）と、`--banto-surface-muted` の定義（Tree の 2 か所）。T1 とは別の小さな PR（見た目の差分の原因を追いやすくする） | `dock-svelte`・`grid-svelte`・`theme`・テンプレート | 見た目 | sonnet | axe が通る。基準画像の再生成。差分が T1 と混ざらない（実装済み: fix/808-primary-text-tokens の PR。#808 の残りはこれで全部） |
-| T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査（実装済み: fix/795-series-color-distance の PR。下限 0.09、ダークの `--banto-chart-2` だけ変えた。§4.10） |
-| K1 | #792 `isOnScreen`（`docked`・`floating`・`autoHidden`・`flyoutPanel` から） | `dock-svelte` | 足すだけ | sonnet | 偽の 5 つと真の 3 つの単体テスト。README。**実装済み**（`tests/on-screen.test.ts`。`isVisible` は改名せず doc を直した。PR は #825（#792 を Closes）） |
-| K2 | #796 `cancelGesture` と自動の取り消し | `dock-svelte` | 挙動 | sonnet | 操作中の `replaceLayout` の単体テスト 状態: **PR 提出済み**（2026-11-22、`feat/796-dock-cancel-gesture`。`replaceLayout` は `invalid` なら取り消さず、拒否・`stale` でも取り消したままにする。`lifecycle.requestReplace` は変更なし） |
-| K3 | #791 前半（`DockHost` と `ThreePaneDock` の両方に `onLayoutCommit`） | `dock-svelte`・テンプレート | 足すだけ | fable | §4.6 の試験。e2e（workspace-dock の保存） 状態: **PR 提出済み**（2026-11-22、`feat/791-on-layout-commit`。`tests/DockHostCommit.test.ts`・`tests/ThreePaneDockCommit.test.ts`・`e2e/demo/dock-layout-commit.spec.ts`。`'reset'` は値が同じでも毎回通知し、`'narrow-switch'` は保存する値が変わったときだけ通知する。`replaceLayout` に `commit` と `applied` を足した。マウント後の `dock.hydrate` は `'user'` で届く（K4 の保存の部品は自分の基準で落とす）） |
-| #782 PR2〜PR8 | Issue の本文どおり | `dock-svelte` | PR ごとに判定（§9.2） | fable | 本文の各 PR の条件。PR6 で #780 を閉じる。**PR2（`core/shadow.ts` の純関数と試験）は PR #826**（配線なし。設計上の判断は PR の本文） |
+| T1（済み: PR #827）| #794 Toast と浮かぶ面の tint（Grid の固定列の透けを含む）。**#808 のうち ToastHost の色だけを T1 に合わせる**（Dock/Grid の primary の文字と Tree の `--banto-surface-muted` は T1b） | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。ダークで、着色された BantoGrid の固定列の後ろにスクロールする文字が透けない。実ブラウザーで success・error・warning の Toast の背景の最下層が不透明（`e2e/demo/toast-opaque.spec.ts`。基準画像は使わない） |
+| T1b | #808 primary の文字を `--banto-primary-text` へ（dock の DockedTree・DockWindow、grid の BantoGrid・HeaderCell）と、`--banto-surface-muted` の定義（Tree の 2 か所）。T1 とは別の小さな PR（見た目の差分の原因を追いやすくする） | `dock-svelte`・`grid-svelte`・`theme`・テンプレート | 見た目 | sonnet | axe が通る。基準画像の再生成。差分が T1 と混ざらない（済み: PR #839。#808 の残りはこれで全部） |
+| T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査（済み: PR #847。下限 0.09、ダークの `--banto-chart-2` だけ変えた。§4.10） |
+| K1 | #792 `isOnScreen`（`docked`・`floating`・`autoHidden`・`flyoutPanel` から） | `dock-svelte` | 足すだけ | sonnet | 偽の 5 つと真の 3 つの単体テスト。README。**済み**（`tests/on-screen.test.ts`。`isVisible` は改名せず doc を直した。PR は #825（#792 を Closes）） |
+| K2 | #796 `cancelGesture` と自動の取り消し | `dock-svelte` | 挙動 | sonnet | 操作中の `replaceLayout` の単体テスト 状態: **済み**（PR #824、2026-11-22。`replaceLayout` は `invalid` なら取り消さず、拒否・`stale` でも取り消したままにする。`lifecycle.requestReplace` は変更なし） |
+| K3 | #791 前半（`DockHost` と `ThreePaneDock` の両方に `onLayoutCommit`） | `dock-svelte`・テンプレート | 足すだけ | fable | §4.6 の試験。e2e（workspace-dock の保存） 状態: **済み**（PR #842、2026-11-22。`tests/DockHostCommit.test.ts`・`tests/ThreePaneDockCommit.test.ts`・`e2e/demo/dock-layout-commit.spec.ts`。`'reset'` は値が同じでも毎回通知し、`'narrow-switch'` は保存する値が変わったときだけ通知する。`replaceLayout` に `commit` と `applied` を足した。マウント後の `dock.hydrate` は `'user'` で届く（K4 の保存の部品は自分の基準で落とす）） |
+| #782 PR2〜PR8 | Issue の本文どおり | `dock-svelte` | PR ごとに判定（§9.2） | fable | 本文の各 PR の条件。PR6 で #780 を閉じる。**PR2（`core/shadow.ts` の純関数と試験）は PR #826 で済み**（配線なし。設計上の判断は PR の本文）。**PR3（`deflateShadow` / `inflateShadow`）は PR #846 でマージ待ち** |
 | K4 | #791 後半 | `dock-svelte`・テンプレート・scaffold | **破壊的** | fable | ダッシュボード・workspace-dock の保存が今と同じ（API 経由の表示切替・キーボード・タブの切り替えを含む）。scaffold の dry-run |
-| F1 | #714 `file` 型（保留の持ち方・画面の検証・送信値から除く・1 欄まで・ui-demo の見本）。**状態: 実装済み（PR 提出、2026-11-22）。親の id は `BantoForm` の `fileParentId`、作成後の送信は `uploadPendingFiles`、`FormDraft` は `file` 欄を受けない** | `forms`・ui-demo | union に追加 | fable | §4.12 の単体テスト。forms がほかのパッケージを import しない |
+| F1 | #714 `file` 型（保留の持ち方・画面の検証・送信値から除く・1 欄まで・ui-demo の見本）。**状態: 済み（PR #844、2026-11-22）。親の id は `BantoForm` の `fileParentId`、作成後の送信は `uploadPendingFiles`、`FormDraft` は `file` 欄を受けない** | `forms`・ui-demo | union に追加 | fable | §4.12 の単体テスト。forms がほかのパッケージを import しない |
 | F2 | #714 テンプレートの配線（items の新規・編集、作成後のアップロード、失敗の再試行）・README・片付け | テンプレート・scaffold | 足すだけ | sonnet | e2e。添付を外すプリセットの dry-run。#714 を閉じる |
 | W0 | #716 の判断（§4.13 の 1〜4）と template-scope §4.2 の 1 文 | `docs` | — | fable | **オーナーの判断** |
 | W1〜W3 | #716（判断の後に §4.13 を設計へ書き直してから。W2 は K4・C5 の後） | テンプレート（＋判断による） | 見た目・保存 | fable | 判断の後に決める。基準画像の再生成、scaffold の dry-run |
+| C7 | #838 `createHttpAuthProvider` に `storage: 'web' \| 'memory'`（既定は `'web'`）。`'memory'` はトークンを provider の中だけに持ち、web storage を読まず・書かず、`storage` イベントを購読しない。`remember` は覚えない。README（Tauri には対の口が無いことを含む）。**口の形は §10 の B1（判断待ち）**。§4.14 | `admin-core`（`providers/http.ts`・README） | 足すだけ | fable | `'memory'` で web storage に一度も触れず、`storage` の購読も無い試験。追い越しの試験（`sessionRaces`・`httpRevision`）が両方の保存先で通る。既定の挙動が変わらない。#838 を閉じる |
+| U1 | #850 `NARROW_QUERY`・`narrowViewport` を `@banto/ui` へ移し、ドロワーの状態を `createShellDrawer` として出す（開く・閉じる・広い幅に戻ったら閉じる・☰ の振り分け・メニューバーが入りきらないときのドロワー）。テンプレート（`(app)/+layout.svelte`・`Header`・`Sidebar`）と `LauncherBar` を載せ替える。DOM とフォーカスの移し替えはテンプレートに残す。**口の形は §10 の B2（判断待ち）**。§4.14 | `ui`・テンプレート | 足すだけ（テンプレートの `src/lib/narrowViewport.svelte.ts` はパッケージへ移る） | sonnet | 状態の単体テスト（下流の `mobileNav.test.ts`・`viewportWatch.test.ts` が見ている場合分けを含む）。テンプレートの挙動と基準画像が変わらない（e2e のメニューバー・ドロワー）。scaffold の 4 プリセットの dry-run。conventions §14 の除外の確認。#850 を閉じる |
+| T3 | #851 `--banto-chart-9〜16`（ライト・ダーク）と、`MAX_CHART_SERIES` を 16 に（折り返さず、17 本目以降は 16 番に固定）。1〜8 の値と検査は変えない。9〜16 の検査（1〜16 のどの 2 つも 0.06 以上・面との比 3:1 以上）を足す。README と [visual-refresh-plan.md](visual-refresh-plan.md) の付録に値と保証しない範囲。**色の決め方と下限は §10 の B3（判断待ち）**。§4.14 | `theme`・`charts` | 見た目（9 本目以降の色が変わる。`MAX_CHART_SERIES` の値が変わる） | fable | `chart-palette.test.ts` が 16 枠で両テーマとも通る。1〜8 の既存の検査がそのまま通る。charts の色の試験（9〜16 番・17 本目以降）。基準画像が変わらないことの確認。#851 を閉じる |
+| X1 | #852 `@banto/charts/testing`（jsdom に無いものの差し替えを入れて戻す口・要れば描画の待ち合わせ）。vitest を import しない。charts 自身の DOM の試験を載せ替える。README に vitest の設定と 1 本の例。**置き場所は §10 の B4（判断待ち）**。§4.14 | `charts`（`src/testing/`・`package.json` の `exports`・README） | 足すだけ | sonnet | charts の DOM の試験が新しい口で通る。`pnpm verify:architecture`（`package-bare-imports`）。パッケージの外から `@banto/charts/testing` を解決して 1 つの部品をマウントする試験（fixture か template-acceptance）。#852 を閉じる |
 | D1 | 下流の使い勝手の精査（回り道・写し・自前の包みを読み、置き換えられるか・足りない口を洗う）。**#821 `BantoTree` の不足（行末のアクション・ドロップの可否の口・外からの絞り込み）が不足かどうかを確かめる（調査だけ。不足が確かめられたら別 Issue・別 PR）** | 読み取りのみ | — | fable | 所見の一覧（Issue か文書） |
 | D2 | D1 の結果のリファクタ（PR に分ける）。**v8 で入れる（確定）: #811 日付・時刻の解析と形式の複製の解消（#813・#815 を統合。D13 の前提）・#816 ピッカーの `ownText`・`mirroredValue` の統合・#818 テスト差し替え用の抽象の削除・#822 BantoGrid の編集の状態遷移の分離（D1 の後に独立 PR。#713 で入った既存の行選択・一括操作（#749・#752・#751・#753・#754）の挙動は維持）。各々 D1 の所見の後に着手する（必ずやる）** | D1 による | D1 による | D1 による | D1 の所見が閉じる |
 | D3 | upgrading・CHANGELOG の「消費側への注意」・実機確認（#757 に #793 の切断と #794 のダークを足す）・版の判定 | `docs` | — | sonnet | リリースの準備の PR |
@@ -792,6 +878,8 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 並べ方: C0 の承認が最初。その後は 4 本の列を並べる — サーバー（S1 → S2 → C1 → C1b → C2 → C2b → C3 → C4）、
 画面（C5 → C6、C4 の後）、theme（T1・T1b・T2）、dock（§6）。S1 と C1 は並行できる。C1b は C1 と並行して準備してよい（C2 の前に C1・C1b の両方が必須）。
 F1・F2 はいつでも。W0 は C0 と一緒に諮り、W1〜W3 は dock の列の後ろ（K4 の後）に付ける。
+追加の 4 件（§4.14）は、§10 の B1〜B5 の判断の後に並べる: C7 は画面の列の C3 の後（C4〜C6 と並行可）、U1 は C2b の後、
+T3 は theme の列の続き、X1 はいつでも（T3 と並行可）。急ぐのは C7（下流のデモが待つ）で、U1・T3・X1 は列の空きに入れる。4 件とも D1 の前に入れる。
 C1 は「スキーマ・採番・数え方・fixture の改名」で大きいが、分けると途中の main が壊れる（組み込みの行が入った時点で、
 `admin` を作る試験と、全行を数える初回セットアップの判定が落ちる）。C1 のエージェントには、fixture の改名を
 機械的な置換として先に済ませる順を指示する。
@@ -831,6 +919,14 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
   欄の必須・件数は画面だけの制約で、サーバーは保証しない。1 つのフォームに 1 欄まで。
 - **ダッシュボード**（#716 の判断による）: 配置の保存が既定へ戻る、ウィジェットの登録の口。
 - **theme**: ダークの Toast の背景、`--banto-chart-2`（ほか先頭 4 系列）の色。
+  `--banto-chart-9`〜`16` が増える（#851）。`--banto-chart-1〜8` を自分のテーマで上書きしているアプリは、9〜16 も定義する
+  （しないと 9 本目以降だけ banto の既定の色になる）。9〜16 は 1〜8 より保証が弱い（色覚特性の模擬での距離・状態色との距離は保証しない）。
+- **charts**: `MAX_CHART_SERIES` が 8 から 16 になる。9 本目以降の系列は、8 番の色の固定から 9〜16 番の色に変わる（#851）。
+  `@banto/charts/testing` が増える（#852。使う側の DOM の試験の下準備。`jsdom`・`@testing-library/svelte` は使う側で入れる）。
+- **admin-core（認証）**: `createHttpAuthProvider` に `storage: 'memory'`（#838。既定は今のまま）。`'memory'` では再読み込みで
+  セッションが消え、`remember` は効かず、タブ間の同期も無い。同じオリジンのほかの保存（ui-settings の localStorage の実装・テーマなど）は別に分ける。
+- **ui**: `narrowViewport`・`NARROW_QUERY`・`createShellDrawer` が増える（#850）。テンプレートの `src/lib/narrowViewport.svelte.ts` は
+  無くなるので、テンプレートを写した派生アプリは import を `@banto/ui` に替える。
 
 ## 9. 未確認・各 PR で検討
 
@@ -966,6 +1062,34 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
     復元には効かない）。あわせて消す口（DELETE・provider の `remove`）を足し、C4 に admin-core のアダプタの最小の追従を含める（§4.4）。
 20. **解決（互換不要）**: 旧い `ui.*` の行を全部消す手順は要らない（移し替えが無い）。旧版へ戻せないことは、
     「この版は旧版の DB を読めない」として §8 に書く。
+
+追加の 4 件の判断（2026-11-22 に置いた。**どれも判断待ち**。設計は §4.14、PR は §7 の C7・U1・T3・X1）:
+
+- **B1. #838 の口の形（判断待ち）**: 推奨は `storage: 'web' | 'memory'`。別案は Issue の `tokenStore`（`get` / `set` を渡す）。
+  provider の compare-and-set は「保存先を今読んだ値」と他タブの変更の通知に頼っている。保存先を外から渡せるようにすると、
+  通知の口まで契約に入り、認証情報の持ち方の正しさが消費側の実装しだいになる（conventions §6）。求められているのは
+  「web storage に書かない」だけなので、閉じた 2 択にする。あわせて: (a) `'memory'` では `storage` イベントを購読しない。
+  (b) `remember: true` はエラーにせず、覚えないだけにする（ログインの画面からチェックを外すのは消費側）。
+  (c) Tauri の provider には対の口を足さない（web storage にトークンを持たない）。
+  (d) 同じオリジンのほかのキー（ui-settings の localStorage の実装・テーマ・dock の写し）は #838 の範囲に入れない。
+- **B2. #850 の置き場所と範囲（判断待ち）**: 推奨は `@banto/ui`（900px の境は theme の CSS と `LauncherBar` が既に持つ。admin-core は
+  画面の幅を知らない層）。出すのは**状態だけ**（`narrowViewport` と `createShellDrawer`）で、ドロワーの部品（DOM・backdrop・
+  フォーカス）は出さない。別案はシェルの部品ごと `@banto/ui` に出す（テンプレートの `Sidebar`・`Header` はアプリが書き換える層なので、
+  部品にすると書き換えの口が要り、大きくなる）。境の値は 900px の固定。
+- **B3. #851 の色の決め方と検査の下限（判断待ち）**: 推奨は「1〜8 の値と検査（隣 0.10・どの 2 つも 0.09・色覚特性の模擬ごと・
+  先頭 4 系列と状態色 0.09）は変えない。9〜16 は 1〜16 のどの 2 つも 0.06 以上（正常色覚）と面との比 3:1 以上だけを保証し、
+  色覚特性の模擬と状態色は保証しない」。色は banto-industrial の値を出発点に、検査に落ちるものだけ直す。
+  別案 A は 16 枠の全部に今の 1〜8 と同じ下限を掛ける（保てない見込み。保つには 1〜8 も動かすことになり、T2 の結果と
+  基準画像が変わる）。別案 B は面との比を下流と同じ値（ライト 3.5:1・ダーク 5:1）にする（1〜8 が 3:1 なので、9〜16 だけ
+  厳しくする理由が弱い）。charts の割り当ては、`MAX_CHART_SERIES` を 16 にし、今と同じく折り返さない（17 本目以降は 16 番）。
+- **B4. #852 の置き場所（判断待ち）**: 推奨は `@banto/charts/testing` のサブパスで、まず charts だけ。別案は試験用の新しい
+  パッケージ（`@banto/testing` のような）。別案は、パッケージ間の import ができない（conventions §4）ので banto の
+  各パッケージ自身は使えず、「banto の試験が実際に使っている下準備」ではなくなって実装とずれる。template-scope §3 の表の行と
+  公開の手順も 1 つ増える。サブパスなら charts の試験と同じものを出せる。dock-svelte・grid-svelte の同じ口は、求めが出てから。
+- **B5. 急がない 3 件（#850・#851・#852）をこの版に入れるか（判断待ち）**: 推奨は入れる。下流が止まっている間に写しを消せる形を
+  そろえられ、#851 の見た目の変化（9 本目以降の色・`MAX_CHART_SERIES`）と #850 のテンプレートのファイルの移動を、
+  互換を問わない版に載せられる。入れると PR が 3 本増える（どれも小さく、主な列と重ならない）。別案は #838 だけを入れ、
+  3 件は次の版に回す（その場合、D1 では「既知の写し」として数えるだけにする）。
 
 ## 11. 合図待ちの項目（#756）から v8 に取り込む項目（2026-11-22 確定）
 
