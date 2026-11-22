@@ -6,7 +6,7 @@
  * new props must show the new strings.
  */
 import { cleanup, render } from '@testing-library/svelte';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import BoxPlot from '../src/BoxPlot.svelte';
 import GanttChart from '../src/GanttChart.svelte';
 import Gauge from '../src/Gauge.svelte';
@@ -14,21 +14,16 @@ import Histogram from '../src/Histogram.svelte';
 import LineChart from '../src/LineChart.svelte';
 import ParetoChart from '../src/ParetoChart.svelte';
 import StackedAreaChart from '../src/StackedAreaChart.svelte';
+import { installChartDom, type ChartDomHandle } from '../src/testing';
 
+let dom: ChartDomHandle;
 beforeAll(() => {
-	// jsdom has no layout: give every element a width so ChartContainer's
-	// `bind:clientWidth` goes positive and the plot (not just the empty
-	// state) renders. ResizeObserver is absent too.
-	Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
-		configurable: true,
-		get: () => 400
-	});
-	globalThis.ResizeObserver = class {
-		observe() {}
-		unobserve() {}
-		disconnect() {}
-	};
+	// jsdom has no layout: the shared stand-ins (@banto/charts/testing) give
+	// every element a width so ChartContainer's `bind:clientWidth` goes
+	// positive and the plot (not just the empty state) renders.
+	dom = installChartDom();
 });
+afterAll(() => dom.restore());
 
 afterEach(cleanup);
 

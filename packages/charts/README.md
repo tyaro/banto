@@ -144,6 +144,50 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
 
 値と実測は [visual-refresh-plan.md](../../docs/design/visual-refresh-plan.md) の付録 A.3a。
 
+## 試験の下準備（`@banto/charts/testing`）
+
+charts の上に部品を作るアプリの DOM の試験（jsdom）向け。jsdom にはレイアウトが無く、幅が 0 のままだと
+チャートは空の表示しか出さない（`ResizeObserver` も無い）。`installChartDom()` が要る差し替えを入れ、
+`restore()` が入れる前の状態へ戻す。試験ランナーは import しない（vitest 以外でも使える）。
+`jsdom`・`@testing-library/svelte` は使う側の devDependencies に入れる（charts の依存は増えない）。
+
+```ts
+// vitest.config.ts
+import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelteTesting } from '@testing-library/svelte/vite';
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+	plugins: [svelte(), svelteTesting()],
+	test: {
+		environment: 'jsdom',
+		// @banto/* はソース（.svelte / .ts）で配布されるので、外部化せず変換させる
+		server: { deps: { inline: [/@banto\//] } }
+	}
+});
+```
+
+```ts
+import { render } from '@testing-library/svelte';
+import { LineChart } from '@banto/charts';
+import { flushChart, installChartDom } from '@banto/charts/testing';
+import { afterEach, beforeEach, expect, it } from 'vitest';
+
+let dom: ReturnType<typeof installChartDom>;
+beforeEach(() => (dom = installChartDom({ width: 400, height: 240 })));
+afterEach(() => dom.restore());
+
+it('系列を描く', async () => {
+	const { container } = render(LineChart, { data, x, series, label: '売上' });
+	await flushChart();
+	expect(container.querySelectorAll('svg.chart-svg path').length).toBeGreaterThan(0);
+});
+```
+
+- `installChartDom({ width = 400, height = 240 })`: `HTMLElement` の `clientWidth` / `clientHeight` / `offsetWidth` / `offsetHeight` を固定値にし、何もしない `ResizeObserver` を入れる。幅・高さは 0 より大きい値。`restore()` は元の定義へ戻す（2 回呼んでもよい）。差し替えの途中で失敗したとき（例: 再定義できない `ResizeObserver`）は、途中までの差し替えを戻してから例外を投げる。入れている間にもう一度呼ぶと、重ねると戻す順で差し替えが残るので、明示のエラーで断る（テストごとの setup と共通の setup が重なっていないか確かめ、先に `restore()` する）。
+- `flushChart()`: 幅の反映と描画が済むまで待つ。内部で `setTimeout(0)` を待つので、fake timers（`vi.useFakeTimers()` など）の下では止まる。`flushChart()` の前に本物のタイマーへ戻す（`vi.useRealTimers()`）。タイマーを登録するのは最初の `await tick()` の後なので、同期の `vi.advanceTimersByTime(0)` を先に呼んでも効かない。
+- 画像の書き出し（canvas の `getContext`）や `getComputedStyle` の差し替えは含まない（使うアプリが自前で足す）。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

@@ -13,6 +13,9 @@
     ".": {
       "svelte": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./testing": {
+      "default": "./src/testing/index.ts"
     }
   },
   "files": [
