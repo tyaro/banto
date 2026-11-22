@@ -100,8 +100,9 @@
 		 * menu. Never called for group headers, placeholder (loading) rows or an
 		 * empty grid. The row is passed as is: whether to act on it alone or on
 		 * every selected row (`selectedRowIds`) is the caller's decision. Does NOT
-		 * change the row selection or the cell range (the active cell follows the
-		 * click, before the callback).
+		 * change the row selection. The active cell follows the click, before the
+		 * callback: inside the current cell range the range is kept; outside it
+		 * the range collapses to the clicked cell, as with a left click.
 		 */
 		onRowContextMenu?: (row: TRow, position: { x: number; y: number }) => void;
 		onCellEdit?: (edit: CellEdit<TRow>) => void | Promise<void>;
