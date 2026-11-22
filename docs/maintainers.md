@@ -224,7 +224,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   入れ物が無ければ S に場所を持たず、「元の場所に戻す」は既定の位置に出す（`#shadowLost` → `placeInShadowAtDefault`）。
   代入をまたぐ比率の再現（#741・#743 の補正、`#withoutGoneShares` / `#withoutLeftShares` / `slotsWithoutLeft`）は消した。
   **木の差分から「動いた pane」を当てる処理を足し直さない**（PR #870 で 5 回塞いで収束せず、オーナーが規則ごと変えた）。
-  端の帯への出し入れだけは、S 自身が言う場所から組み直す（`deflateShadow` → `inflateShadow`、`#placeSaid`・`withSharesOf`）。
+  端の帯への出し入れだけは、その領域の隣の場所に限って、S 自身が言う場所から組み直す（`deflateShadow` → `inflateShadow`、`#placeSaid`・`withSharesOf`。ほかの場所は今の S のまま）。
   PR8 で帯を S に載せたら、この経路ごと消す。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:
   - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。5 段以上の slot を含むレイアウトだけ `version: 3` で保存する

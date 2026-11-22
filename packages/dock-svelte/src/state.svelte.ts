@@ -538,33 +538,104 @@ export class DockState {
 				([...bandsNow].some((id) => !banded.has(id)) ||
 					[...bandsBefore].some((id) => collectPanelIds(next.docked).includes(id)));
 			if (toOrFromBand) {
-				// A region to or from an edge band stays as it was (PR8 puts the bands on S): S is
-				// made again (`inflateShadow`) from the places S itself says (`deflateShadow`). While
-				// a region is in a band S does not hold its panes, so a place is named as S said it
-				// when it last held every pane - beside a pane in a band, it is still beside it when
-				// that pane is back (#739) - with the shares S has now (Codex P2 on #870).
+				// A region to or from an edge band (PR8 puts the bands on S). Only the places beside
+				// that region are made again (`inflateShadow`) from the slots S says (`deflateShadow`):
+				// the ones in the split / tab group the region leaves or comes back into, and the ones
+				// whose own container names a pane of it. While a region is in a band S does not hold
+				// its panes, so such a place is named as S said it when it last held them - beside a
+				// pane in a band, it is still beside it when that pane is back (#739) - with the shares
+				// S has now. Every other place stays as S has it, position and share (Codex P2 on #870).
+				const dockedNow = new Set(collectPanelIds(next.docked));
+				const moving = new Set([
+					...[...bandsNow].filter((id) => !banded.has(id)),
+					...[...bandsBefore].filter((id) => dockedNow.has(id))
+				]);
+				const touched = new Set<string>();
+				const parents = new Map<string, string>();
+				// The container a pane's place is in: for a subtree with no pane showing, the one the
+				// whole subtree is in (it is put back as a whole).
+				const walk = (node: ShadowNode | null): void => {
+					if (!node || node.type === 'panel') return;
+					for (const child of node.children) {
+						if (child.type === 'panel') parents.set(child.id, node.id);
+						else if (shadowPanelIds(child, 'shown').length === 0) {
+							for (const id of shadowPanelIds(child)) parents.set(id, node.id);
+							continue;
+						}
+						walk(child);
+					}
+				};
+				// Nothing shows: the whole of S is places, in no container.
+				if (shadowPanelIds(from, 'shown').length > 0) walk(from);
+				// Every container around a pane of the region, before (in S) and after (in the tree).
+				const around = (node: ShadowNode | DockNode | null, id: string): boolean => {
+					if (!node) return false;
+					if (node.type === 'panel') return node.id === id;
+					if (!node.children.some((child) => around(child, id))) return false;
+					touched.add(node.id);
+					return true;
+				};
+				for (const id of moving) {
+					around(from, id);
+					around(next.docked, id);
+				}
+				// Does the slot name a pane of the region, up to the level of the container `upTo`
+				// (every level when the place is in none: nothing but places is left of S)?
+				const near = (slot: DockSlot, upTo: string | undefined): boolean => {
+					for (let level: DockSlot | undefined = slot; level && level.kind !== 'root';) {
+						const names =
+							level.kind === 'tab'
+								? level.anchors
+								: [level.neighborId, ...level.anchors, ...(level.otherAnchors ?? [])];
+						if (names.some((name) => moving.has(name) || banded.has(name))) return true;
+						const here = level.kind === 'tab' ? level.groupId : level.splitId;
+						if (here === upTo) return false;
+						level = level.outer;
+					}
+					return false;
+				};
 				const said = new Map(deflateShadow(from).away.map((a) => [a.panel.id, a.slot]));
 				const away: ShadowAway[] = [];
-				for (const [id, home] of pending) {
-					if (this.#shadowLost.has(id)) continue;
+				let rest = from;
+				const beside = (id: string, home: DockSlot): void => {
 					const fresh = said.get(id);
+					const kept = this.#placeOf(home);
 					const now =
 						fresh === undefined
 							? undefined
-							: banded.size > 0
-								? withSharesOf(this.#placeOf(home), fresh, banded)
+							: near(kept, parents.get(id))
+								? withSharesOf(kept, fresh, banded)
 								: fresh;
 					if (now !== undefined) this.#placeSaid.set(home, now);
 					const win = next.floating.find((w) => w.id === id);
 					if (win)
 						away.push({
 							panel: { type: 'panel', id, title: win.title, icon: win.icon },
-							slot: now ?? this.#placeOf(home)
+							slot: now ?? kept
 						});
+					rest = removeFromShadow(rest, id);
+				};
+				for (const [id, home] of pending) {
+					if (this.#shadowLost.has(id)) continue;
+					const parent = parents.get(id);
+					if (
+						!said.has(id) ||
+						(parent !== undefined && touched.has(parent)) ||
+						near(this.#placeOf(home), parent)
+					)
+						beside(id, home);
 				}
-				const { shadow, unplaced } = inflateShadow(next.docked, away, idsOutOfDocked(next));
-				this.#shadowIs(shadow, next.docked);
-				this.#shadowUnplaced = new Set([...unplaced, ...this.#shadowLost]);
+				const taken = idsOutOfDocked(next);
+				// A place that is not beside the region but whose container went with it all the same
+				// is read from its slot too.
+				for (const id of regraftShadow(rest, next.docked, taken).unplaced) {
+					const home = pending.get(id);
+					if (home !== undefined && !this.#shadowLost.has(id)) beside(id, home);
+				}
+				const made = inflateShadow(next.docked, away, taken);
+				const kept = regraftShadow(rest, made.shadow, taken);
+				this.#shadowIs(kept.shadow, next.docked);
+				this.#shadowUnplaced = new Set([...made.unplaced, ...kept.unplaced, ...this.#shadowLost]);
 				this.#shadowWatch?.({ step: label, result: 'rebuilt' });
 				return;
 			}

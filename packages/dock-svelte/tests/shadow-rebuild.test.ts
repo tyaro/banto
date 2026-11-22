@@ -13,7 +13,7 @@
 // `dockExisting*`, closing) is as before, and so are the edge bands (PR8).
 // A layout put back as it was (a cancelled gesture) gets the S that was held with it.
 import { describe, expect, it } from 'vitest';
-import { regraftShadow, type ShadowNode } from '../src/core/shadow';
+import { projectShadow, regraftShadow, type ShadowNode } from '../src/core/shadow';
 import { dockPanelAtEdge, dockPanelIntoTree, removePanel } from '../src/core/tree';
 import {
 	adoptLayout,
@@ -491,6 +491,57 @@ describe('a region to and from an edge band is as before (#739, PR8)', () => {
 	});
 });
 
+// Codex P2 on #870: a region that is not beside a floated pane's place, back from its band, leaves
+// that place as S has it - the index an assignment gave it meanwhile, and its share.
+describe('an edge band and a place it has nothing to do with (#782 PR7)', () => {
+	const tree = (): DockNode =>
+		split(
+			'col',
+			'column',
+			[0.7, 0.3],
+			[split('r', 'row', [0.1, 0.2, 0.3, 0.4], ['a', 'b', 'c', 'd'].map(panel)), panel('z')]
+		);
+
+	it('b floated, z to its band, a removed by an assignment, z back, b back: row[c, b, d]', () => {
+		const dock = dockOf(tree());
+		dock.undockPanel('b');
+		expect(dock.autoHideRegion('z')).toBe(true);
+		take(dock, 'a');
+		expect(heldIn(dock, 'b')).toBeCloseTo(0.2, 9);
+		const held = shadowStateOf(dock).shadow;
+		expect(dock.restoreAutoHidden('z')).toBe(true);
+		expect(shadowStateOf(dock).unplaced).toEqual([]);
+		expect(heldIn(dock, 'b')).toBeCloseTo(0.2, 9);
+		expect(back(dock, 'b')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['c', 'b', 'd'] }, 'z'] });
+		close(sizesIn(dock, 'r'), [(0.8 * 3) / 7, 0.2, (0.8 * 4) / 7]);
+		expect(held).not.toBeNull();
+	});
+
+	it('the same without the assignment: the row as it was', () => {
+		const dock = dockOf(tree());
+		dock.undockPanel('b');
+		expect(dock.autoHideRegion('z')).toBe(true);
+		expect(dock.restoreAutoHidden('z')).toBe(true);
+		expect(back(dock, 'b')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'b', 'c', 'd'] }, 'z'] });
+		close(sizesIn(dock, 'r'), [0.1, 0.2, 0.3, 0.4]);
+		close(sizesIn(dock, 'col'), [0.7, 0.3]);
+	});
+
+	it('a divider moved while z is in its band: the share S holds stays', () => {
+		const dock = dockOf(tree());
+		dock.undockPanel('b');
+		expect(dock.autoHideRegion('z')).toBe(true);
+		dock.resizeSplit('r', 0, 0.1);
+		const then = heldIn(dock, 'b');
+		expect(dock.restoreAutoHidden('z')).toBe(true);
+		expect(heldIn(dock, 'b')).toBeCloseTo(then!, 9);
+		expect(back(dock, 'b')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'b', 'c', 'd'] }, 'z'] });
+	});
+});
+
 describe('regraftShadow (#782 PR7)', () => {
 	const gone = (id: string): ShadowNode => ({ ...panel(id), away: true });
 	const row = (children: ShadowNode[], sizes: number[]): ShadowNode => ({
@@ -557,6 +608,29 @@ describe('regraftShadow (#782 PR7)', () => {
 		expect(back(dock, 'b')).toBe(true);
 		expect(back(dock, 'a')).toBe(true);
 		close(sizesIn(dock, 'r'), [0, 0.2, 0.3, 0.5]);
+	});
+
+	it('a container put around its one pane in place again takes the band flag of that pane', () => {
+		const old: ShadowNode = {
+			type: 'split',
+			id: 's',
+			direction: 'row',
+			sizes: [0.5, 0.5],
+			children: [
+				{
+					type: 'tabs',
+					id: 't',
+					activeIndex: 1,
+					children: [{ ...panel('b'), away: true }, panel('a')],
+					collapsed: true
+				},
+				panel('e')
+			]
+		};
+		const docked = split('s', 'row', [0.5, 0.5], [{ ...panel('a'), collapsed: true }, panel('e')]);
+		const { shadow, unplaced } = regraftShadow(old, docked);
+		expect(unplaced).toEqual([]);
+		expect(projectShadow(shadow)).toEqual(docked);
 	});
 
 	it('tombstones that held the whole split leave the panes that show an even part', () => {
