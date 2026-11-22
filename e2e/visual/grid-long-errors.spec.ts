@@ -169,14 +169,20 @@ for (const [index, locale] of ['ja', 'en'].entries())
 			await editor.press('Tab');
 			await expect(panel).toBeFocused();
 			await expect(panel).toHaveCSS('outline-style', 'solid');
-			await panel.press('End');
 			await expect
-				.poll(() => panel.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1))
+				.poll(async () => {
+					await panel.press('End');
+					return panel.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
+				})
 				.toBe(true);
-			await panel.press('Home');
-			await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBe(0);
-			// Pressed inside the poll: under parallel load the first key can land while the
-			// Home scroll is still settling and be lost (Issue #798 CI retry).
+			// Pressed inside the poll: under parallel load a key can land while the previous
+			// keyboard scroll animation is still settling and be lost (Issues #798 / #831).
+			await expect
+				.poll(async () => {
+					await panel.press('Home');
+					return panel.evaluate((el) => el.scrollTop);
+				})
+				.toBe(0);
 			await expect
 				.poll(async () => {
 					await panel.press('PageDown');
@@ -208,9 +214,11 @@ for (const [index, locale] of ['ja', 'en'].entries())
 			await expect(panel).toBeFocused();
 			await page.emulateMedia({ forcedColors: 'active' });
 			await expect(panel).toHaveCSS('outline-style', 'solid');
-			await panel.press('End');
 			await expect
-				.poll(() => panel.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1))
+				.poll(async () => {
+					await panel.press('End');
+					return panel.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
+				})
 				.toBe(true);
 			await page.emulateMedia({ forcedColors: 'none' });
 			await panel.press('Escape');
