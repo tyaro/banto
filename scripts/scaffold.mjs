@@ -1858,7 +1858,7 @@ function replaceE2eForDisplay() {
 	swapText(
 		PLAYWRIGHT_CONFIG,
 		'playwright: selectWebServers の visual / demo の URL 対応を除去',
-		`\t\tvisual: VISUAL_BASE_URL,\n\t\tdemo: DEMO_BASE_URL,\n`,
+		`\t\tvisual: VISUAL_BASE_URL,\n\t\tdemo: DEMO_BASE_URL,\n\t\t'public-viewer': PUBLIC_VIEWER_BASE_URL,\n`,
 		``
 	);
 	cutRegion(
