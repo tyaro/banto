@@ -70,7 +70,7 @@ futures-util = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "net", "io-util"] }
 tower = { workspace = true, features = ["util"] }
 tempfile = { workspace = true }
 

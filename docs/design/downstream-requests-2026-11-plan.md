@@ -758,7 +758,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | PR | 範囲 | パッケージ・場所 | 破壊的 | モデル | 完了条件 |
 | --- | --- | --- | --- | --- | --- |
 | **C0** | ADR: 持ち主の識別、組み込みの `admin`、初回セットアップの撤去とロックダウンの条件（新規 ADR-0034、ADR-0017 の改訂）。conventions §11 の「基準の作り直し」の注記。`.en.md` も | `docs/adr`・`docs/conventions` | — | fable | **済み**（PR #804。2026-11-22 に Accepted。§10 の N2〜N6 を含めて確定） |
-| S1 | #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
+| S1 | **状態: 実装済み・レビュー待ち（PR #829、ADR-0035 は 2026-11-22 に Accepted、5 点はオーナーが推奨どおりで確定）。** #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
 | S2 | #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
 | C1 | 基準の作り直し（2 方言）: **#814 のうち、今回追加する起動・seed 用のキー（`auth.disabled` 等、seed 済みの印）の名前だけを決める（C1 の前に、キーと利用先を読み取りで棚卸しする。既存の UI の論理キーは触らない。C4/C5 の行を参照）**。`0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**組み込みの行の最低限の保護**（verifier を `kind = 'account'` に絞る・パスワード・更新・削除・CSV の取り込みが `kind = 'builtin'` を断る）と、**復元の検査**（`_sqlx_migrations` の版と checksum を予約と適用の直前に読み取り専用で確かめる。migrator は配線が `BackupService` に渡す。ADR-0034 §9）。**初回の seed の条件の直し**（`seed_first_boot_settings` を「表が空」から「seed 済みの印が無い」へ。0014 が `settings` に行を入れるので同じ PR で。ADR-0034 §5）。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | §4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。**C1 の実 migration（0001〜0014）を当てた DB で display の生成物を起動し、公開閲覧（`server.viewer_public`・`server.enabled`・bind の seed）を確かめる**。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
 | C1b | #820 `apps/admin-template/src-tauri/src/lib.rs` のテストを別ファイルに分ける（準備。C2・C2b が認証まわりを大きく触るので、先に分けて衝突を減らす） | `src-tauri` | — | sonnet | 分ける前後でテストの数と結果が同じ。挙動の変更なし（Tauri 側はレビューで担保）。**状態: 実装済み**（`src-tauri/src/tests.rs` に分離。scaffold・add-resource の差し込み先も移した） |
@@ -833,8 +833,13 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
 
 - #793: 失効と監査の順、ロックダウンの再検証（S2）。Tauri のコマンドが途中で捨てられない前提（S1）。
   `axum::middleware::from_fn` の `Next` を spawn へ渡せるか（`Send + 'static`）、二重に包んだときの挙動（S1）。
+  **S1 で確認済み**: `Next` は spawn へ渡せる（axum 0.8）。Tauri の async コマンドは `async_runtime::spawn` で
+  走る（`tauri` 2.12 の `InvokeResolver::respond_async`）ので、途中で捨てられない。二重に包むと入れ子になるだけ。
+  ADR-0035 §1・§6。
 - #793: Issue が挙げる industrial の `local_grant.rs:678` は別リポジトリで、ここでは開いていない。
 - #793: 構成の「露出の向き」を比べる項目の全部（有効・bind・閲覧公開のほかにあるか）と、残った仕事を監査に書く形（S1）。
+  **S1 で確認済み**: `ServerSettings` の項目は有効・bind・ポート・閲覧公開の 4 つで、ポートは露出を変えない。
+  監査は `detail.remainingWrites = {count, operations}`（ADR-0035 §5）。
 - 基準の作り直し（C1）: sqlx が、新しい migration を当てる**前に** checksum の不一致で止まること（両方言。試験で固定）。
   `VersionMismatch` を明示の文言に写す所の形。下流が自分の migration を何番から足しているか（D1）。
   `users` へ直接 INSERT している試験・seed・scaffold の生成物（`scripts/lib/add-resource-rust.mjs` ほか）の数。

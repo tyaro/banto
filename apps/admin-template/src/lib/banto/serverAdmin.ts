@@ -115,13 +115,23 @@ export interface ServerListener {
  * asked for (nothing was saved), why it failed, and whether the listener
  * that was running before is back (`restored`), was never there (`none`),
  * or could not be brought back (`restoreFailed` - nothing serves).
+ *
+ * `reason: 'writesRemaining'` (Issue #793, ADR-0035): writes the stopped
+ * listener had accepted were still running, so no listener was started for
+ * the requested settings. With `previous: 'restored'` nothing was saved (a
+ * widening or equal change). With `previous: 'leftClosed'` the change was a
+ * narrowing one: the settings WERE saved and the listener stays closed until
+ * the settings are applied again. Any other `reason` with
+ * `previous: 'leftClosed'` (e.g. `'saveFailed'`) is "closed, NOT saved": the
+ * narrowing change failed while writes remained, so the previous listener was
+ * not brought back either.
  */
 export interface ServerApplyFailure {
 	enabled: boolean;
 	bind: string;
 	port: number;
-	reason: 'portInUse' | 'bindFailed' | 'saveFailed';
-	previous: 'none' | 'restored' | 'restoreFailed';
+	reason: 'portInUse' | 'bindFailed' | 'saveFailed' | 'writesRemaining';
+	previous: 'none' | 'restored' | 'restoreFailed' | 'leftClosed';
 }
 
 /**
