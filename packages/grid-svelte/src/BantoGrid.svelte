@@ -91,6 +91,19 @@
 		/** Server mode only: total row count backing the virtual scroller (NOT `rows.length`, which is just the sparse array's current extent). */
 		totalRows?: number;
 		onRowClick?: (row: TRow) => void;
+		/**
+		 * A data row's context menu was requested: mouse right-click on a cell, or
+		 * (grid focused, active cell on a data row, not editing) the ContextMenu
+		 * key / Shift+F10 - keyboard `x`/`y` = the active cell's left / bottom edge.
+		 * When provided the browser's default menu is suppressed; when omitted it
+		 * is left alone. Right-clicking inside a cell editor keeps the native text
+		 * menu. Never called for group headers, placeholder (loading) rows or an
+		 * empty grid. The row is passed as is: whether to act on it alone or on
+		 * every selected row (`selectedRowIds`) is the caller's decision. Does NOT
+		 * change the row selection or the cell range (the active cell follows the
+		 * click, before the callback).
+		 */
+		onRowContextMenu?: (row: TRow, position: { x: number; y: number }) => void;
 		onCellEdit?: (edit: CellEdit<TRow>) => void | Promise<void>;
 		onRangePaste?: (edits: CellEdit<TRow>[], info: { skipped: number }) => void | Promise<void>;
 		/**
@@ -197,6 +210,7 @@
 		mode = 'client',
 		totalRows,
 		onRowClick,
+		onRowContextMenu,
 		onCellEdit,
 		onRangePaste,
 		onParamsChange,
@@ -1082,6 +1096,37 @@
 		if (!hasEditableColumns) onRowClick?.(row);
 	}
 
+	// Right-click on a data cell (#784). Same contract as BantoTree's
+	// `onContextMenu`: no callback -> the browser's own menu; the cell editor
+	// keeps the native text menu; focus follows the click BEFORE the callback;
+	// the row selection and the cell range are left alone.
+	function handleCellContextMenu(event: MouseEvent, rowIndex: number, field: string, row: TRow) {
+		if (!onRowContextMenu) return;
+		if (
+			event.target instanceof HTMLElement &&
+			event.target.closest('input, select, textarea') &&
+			editing?.rowId === getRowId(row)
+		)
+			return;
+		event.preventDefault();
+		containerEl?.focus({ preventScroll: true });
+		// Inside an existing range only the active cell moves (the range, and so
+		// any copy target, stays); anywhere else it collapses to the clicked cell
+		// like a left click.
+		const range = selection.getRange(orderedFieldIds);
+		const fieldIndex = orderedFieldIds.indexOf(field);
+		const inRange =
+			selection.rangeEnd !== null &&
+			range !== null &&
+			rowIndex >= range.rowStart &&
+			rowIndex <= range.rowEnd &&
+			fieldIndex >= range.fieldStart &&
+			fieldIndex <= range.fieldEnd;
+		if (inRange) selection.active = { rowIndex, field };
+		else selection.setActive(rowIndex, field, false);
+		onRowContextMenu(row, { x: event.clientX, y: event.clientY });
+	}
+
 	function handleCellDoubleClick(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
 		if (isEditable(column, row)) {
 			startEditing(rowIndex, column, row);
@@ -1109,6 +1154,18 @@
 		const activeRow = rowAtDisplayIndex(selection.active!.rowIndex);
 
 		switch (event.key) {
+			case 'ContextMenu':
+			case 'F10': {
+				if (event.key === 'F10' && !event.shiftKey) break;
+				if (!onRowContextMenu || !activeRow) break;
+				event.preventDefault();
+				const cellEl = containerEl?.querySelector<HTMLElement>(
+					`[data-cell-row="${selection.active.rowIndex}"][data-cell-field="${CSS.escape(selection.active.field)}"]`
+				);
+				const rect = cellEl?.getBoundingClientRect();
+				onRowContextMenu(activeRow, { x: rect?.left ?? 0, y: rect?.bottom ?? 0 });
+				break;
+			}
 			case 'ArrowUp':
 				event.preventDefault();
 				// Group headers are just another row slot in `groupedEntries`, so
@@ -1834,6 +1891,7 @@
 							class:error={isEditingCell && !!editing?.error}
 							onpointerdown={(event) => handleCellPointerDown(event, rowIndex, column.id)}
 							onclick={() => handleCellClick(row)}
+							oncontextmenu={(event) => handleCellContextMenu(event, rowIndex, column.id, row)}
 							ondblclick={() => handleCellDoubleClick(rowIndex, column, row)}
 						>
 							{#if column.render}
