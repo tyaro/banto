@@ -1106,8 +1106,9 @@
 				</span>
 			</div>
 			<div class="sample">
-				<span class="caption" id="ui-demo-campaign-label">{m['uiDemo.dateRange.rangeLabel']()}</span
-				>
+				<span class="caption" id="ui-demo-campaign-label">
+					{m['uiDemo.dateRange.rangeLabel']()}
+				</span>
 				<DateRangeInput
 					id="ui-demo-campaign"
 					labelledBy="ui-demo-campaign-label"
@@ -1157,9 +1158,9 @@
 		</div>
 		<span class="caption">
 			{m['uiDemo.choices.submitted']()}:
-			<code data-testid="ui-demo-choices-values"
-				>{choicesDemoValues ? JSON.stringify(choicesDemoValues) : m['uiDemo.form.none']()}</code
-			>
+			<code data-testid="ui-demo-choices-values">
+				{choicesDemoValues ? JSON.stringify(choicesDemoValues) : m['uiDemo.form.none']()}
+			</code>
 		</span>
 	</SurfaceCard>
 
@@ -1177,9 +1178,9 @@
 		</div>
 		<span class="caption">
 			{m['uiDemo.choices.submitted']()}:
-			<code data-testid="ui-demo-reference-values"
-				>{referenceDemoValues ? JSON.stringify(referenceDemoValues) : m['uiDemo.form.none']()}</code
-			>
+			<code data-testid="ui-demo-reference-values">
+				{referenceDemoValues ? JSON.stringify(referenceDemoValues) : m['uiDemo.form.none']()}
+			</code>
 		</span>
 	</SurfaceCard>
 
@@ -1311,8 +1312,10 @@
 									onclick={() => {
 										threePaneLine = line.id;
 										threePaneDrawer = false;
-									}}>{line.label()}</button
+									}}
 								>
+									{line.label()}
+								</button>
 							</li>
 						{/each}
 					</ul>

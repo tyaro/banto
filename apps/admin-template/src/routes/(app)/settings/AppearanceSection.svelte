@@ -232,9 +232,9 @@
 				<label class="field">
 					<span class="launcher-opacity-label">
 						{m['settings.launcherOpacityLabel']()}
-						<span class="launcher-opacity-value"
-							>{m['settings.launcherOpacityValue']({ value: settings.launcherOpacity })}</span
-						>
+						<span class="launcher-opacity-value">
+							{m['settings.launcherOpacityValue']({ value: settings.launcherOpacity })}
+						</span>
 					</span>
 					<input
 						type="range"

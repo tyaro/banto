@@ -1578,12 +1578,12 @@
 				{#snippet trigger(props)}
 					<button {...props} type="button" class="banto-btn banto-btn--ghost columns-trigger">
 						{m['grid.columnsMenuButton']()}
-						<span class="columns-count"
-							>{m['grid.columnsMenuCount']({
+						<span class="columns-count">
+							{m['grid.columnsMenuCount']({
 								visible: columnsState.orderedColumns.length,
 								total: columnsState.allColumns.length
-							})}</span
-						>
+							})}
+						</span>
 					</button>
 				{/snippet}
 				<MenuGroup label={m['resource.columnsShowGroup']()}>

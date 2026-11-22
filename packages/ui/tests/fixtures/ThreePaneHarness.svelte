@@ -94,8 +94,8 @@
 	<button type="button">Body</button>
 </ThreePaneLayout>
 {#snippet titleSnippet()}<strong>Snippet title</strong>{/snippet}
-<output data-testid="state"
-	>{JSON.stringify({
+<output data-testid="state">
+	{JSON.stringify({
 		leftWidth,
 		rightWidth,
 		leftCollapsed,
@@ -105,8 +105,8 @@
 		narrow,
 		leftOpen,
 		rightOpen
-	})}</output
->
+	})}
+</output>
 <output
 	data-testid="toggles"
 	data-left={leftToggleEl?.getAttribute('aria-controls') ?? ''}

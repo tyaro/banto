@@ -138,9 +138,9 @@
 		<section class="spc-chart" bind:this={histogramWrapper}>
 			<div class="spc-chart-header">
 				<h3>{m['dashboard.spcHistogramTitle']()}</h3>
-				<button type="button" class="export-btn" onclick={exportHistogram}
-					>{m['dashboard.svgExport']()}</button
-				>
+				<button type="button" class="export-btn" onclick={exportHistogram}>
+					{m['dashboard.svgExport']()}
+				</button>
 			</div>
 			<Histogram
 				values={prices}

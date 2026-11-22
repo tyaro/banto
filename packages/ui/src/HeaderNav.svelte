@@ -592,9 +592,9 @@
 					>
 						<span>{entry.label}</span>
 						{#if entry.kind === 'link'}
-							{#if (entry.count ?? 0) > 0}<span class="badge"
-									>{headerNavBadgeText(entry.count ?? 0)}</span
-								>{/if}
+							{#if (entry.count ?? 0) > 0}<span class="badge">
+									{headerNavBadgeText(entry.count ?? 0)}
+								</span>{/if}
 						{:else}
 							{#if entryCount(entry) > 0}<span class="dot"></span>{/if}
 							{@render caret()}

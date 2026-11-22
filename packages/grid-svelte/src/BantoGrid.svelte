@@ -1987,8 +1987,10 @@
 										class="cell-link"
 										href={linkInfo.href}
 										onclick={(event) => event.stopPropagation()}
-										ondblclick={(event) => event.stopPropagation()}>{linkInfo.text}</a
+										ondblclick={(event) => event.stopPropagation()}
 									>
+										{linkInfo.text}
+									</a>
 								{:else}
 									{linkInfo.text}
 								{/if}
@@ -2051,8 +2053,10 @@
 										class="cell-link"
 										href={view.href}
 										onclick={(event) => event.stopPropagation()}
-										ondblclick={(event) => event.stopPropagation()}>{view.text}</a
+										ondblclick={(event) => event.stopPropagation()}
 									>
+										{view.text}
+									</a>
 								{:else}
 									{view.text}
 								{/if}
@@ -2103,16 +2107,16 @@
 										<!-- With pinned columns (#713) the heading stays at the left edge
 										     while the rows scroll sideways, like the pinned cells do. -->
 										<span class="group-header-content" class:stuck={pinActive}>
-											<span class="disclosure" aria-hidden="true"
-												>{entry.collapsed ? '▸' : '▾'}</span
-											>
-											<span class="group-label"
-												>{entry.label}{t.groupCountSuffix(entry.count.toLocaleString())}</span
-											>
+											<span class="disclosure" aria-hidden="true">
+												{entry.collapsed ? '▸' : '▾'}
+											</span>
+											<span class="group-label">
+												{entry.label}{t.groupCountSuffix(entry.count.toLocaleString())}
+											</span>
 											{#each gridState.orderedColumns.filter((c) => c.aggregate) as aggColumn (aggColumn.id)}
-												<span class="agg-chip"
-													>{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}</span
-												>
+												<span class="agg-chip">
+													{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}
+												</span>
 											{/each}
 										</span>
 									</div>

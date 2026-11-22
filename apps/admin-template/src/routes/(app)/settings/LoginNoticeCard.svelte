@@ -83,13 +83,13 @@
 			<span class="banto-field-label">{m['settings.loginNoticeLabel']()}</span>
 		</label>
 		<div class="save-row">
-			<Button type="submit" variant="primary" loading={saving} disabled={loading || loadFailed}
-				>{m['settings.loginNoticeSave']()}</Button
-			>
+			<Button type="submit" variant="primary" loading={saving} disabled={loading || loadFailed}>
+				{m['settings.loginNoticeSave']()}
+			</Button>
 			{#if loadFailed}
-				<Button type="button" variant="secondary" onclick={load}
-					>{m['settings.loginNoticeRetry']()}</Button
-				>
+				<Button type="button" variant="secondary" onclick={load}>
+					{m['settings.loginNoticeRetry']()}
+				</Button>
 			{/if}
 		</div>
 		{#if feedback}<p class="note" role="status">{feedback}</p>{/if}

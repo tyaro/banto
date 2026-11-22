@@ -426,9 +426,9 @@
 					<dd>
 						{selected.entityId ?? '-'}
 						{#if selectedTargetHref}
-							<a class="open-target" href={selectedTargetHref} data-testid="audit-open-target"
-								>{m['audit.openTarget']()}</a
-							>
+							<a class="open-target" href={selectedTargetHref} data-testid="audit-open-target">
+								{m['audit.openTarget']()}
+							</a>
 						{/if}
 					</dd>
 					<dt>{m['audit.colOrigin']()}</dt>

@@ -78,13 +78,14 @@
 	</label>
 
 	<div class="footer">
-		<Button type="submit" variant="primary" disabled={!dirty || invalid}
-			>{m['common.save']()}</Button
-		>
+		<Button type="submit" variant="primary" disabled={!dirty || invalid}>
+			{m['common.save']()}
+		</Button>
 		<Button type="button" disabled={!dirty} onclick={onDiscard}>{m['unsaved.discard']()}</Button>
 		<UnsavedChangesNotice pending={dirty} label={m['unsaved.notice']()} />
-		{#if savedNotice && !dirty}<span class="saved" role="status">{m['tree.workspace.saved']()}</span
-			>{/if}
+		{#if savedNotice && !dirty}<span class="saved" role="status">
+				{m['tree.workspace.saved']()}
+			</span>{/if}
 	</div>
 </form>
 

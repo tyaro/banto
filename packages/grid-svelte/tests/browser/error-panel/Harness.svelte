@@ -56,13 +56,15 @@
 
 <main>
 	<h1>Grid error fixture</h1>
-	<label
-		>Save behavior <select bind:value={behavior}
-			><option value="success">Success</option><option value="reject">Reject</option><option
-				value="defer">Defer</option
-			></select
-		></label
-	>
+	<label>
+		Save behavior <select bind:value={behavior}>
+			<option value="success">Success</option><option value="reject">Reject</option><option
+				value="defer"
+			>
+				Defer
+			</option>
+		</select>
+	</label>
 	<output aria-label="Save calls">{calls}</output>
 	<button id="resolve-save" onclick={() => finish?.()}>Resolve save</button>
 	<button id="reject-save" onclick={() => fail?.()}>Reject save</button>
