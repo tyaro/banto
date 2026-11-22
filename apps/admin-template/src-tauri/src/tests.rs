@@ -6405,7 +6405,8 @@ fn hold_permissions(state: &mut AppState) -> Hold {
 /// session check, then the permissions read). An apply that completes during
 /// the second await ended the account session, so `auth_identity` must not
 /// answer with it, and a permission-guarded command must not pass as it.
-/// Both decide again from the slot as it is now: the mode's `local` session.
+/// `auth_identity` (display) reads again and shows the slot as it is now;
+/// the guard ends as unauthenticated.
 #[tokio::test]
 async fn adr0034_an_apply_during_the_permissions_read_does_not_authorize_the_ended_session() {
     let (mut state, _op) = permission_app_state().await;
@@ -6530,4 +6531,109 @@ async fn adr0034_the_session_and_its_seq_are_one_snapshot_of_the_slot() {
     };
     assert_eq!(local.role, Role::Editor);
     assert_eq!(seq_now, read_slot(&state).1);
+}
+
+/// Cross-review of PR #862 (re-review): a permission guard never authorizes
+/// a request as a subject it did not start from. The admin's command is
+/// being authorized (its permissions read is in flight) when an apply
+/// replaces the account session with the mode's `local` session - which
+/// holds the SAME permission. The command must not pass as `local` (it would
+/// run and be audited under another name): it ends `Unauthorized`, nothing
+/// is audited as a refusal, and the next command - a new request - is
+/// authorized as `local`.
+#[tokio::test]
+async fn adr0034_a_guard_overtaken_by_an_apply_does_not_pass_as_the_new_subject() {
+    let (mut state, _op) = permission_app_state().await;
+    let ack = perm("alarm.ack");
+    let admin = state
+        .users
+        .get_by_username("manager")
+        .await
+        .unwrap()
+        .unwrap();
+    state
+        .users
+        .set_permissions(admin.id, std::slice::from_ref(&ack), None, "manager")
+        .await
+        .unwrap();
+    assert_eq!(
+        require_permission(&state, &ack, "alarm")
+            .await
+            .expect("the admin holds it")
+            .username,
+        "manager"
+    );
+    let denied_before = audit_action_count(&state, "denied").await;
+
+    for finer in [false, true] {
+        desktop_login_as(&state, "manager").await;
+        auth_config_apply_body(&state, false, "admin")
+            .await
+            .expect("login required");
+        desktop_login_as(&state, "manager").await;
+        let mut hold = hold_permissions(&mut state);
+        let guarded = async {
+            if finer {
+                session_permissions(&state).await.map(|held| held.is_some())
+            } else {
+                require_permission(&state, &ack, "alarm")
+                    .await
+                    .map(|_| true)
+            }
+        };
+        tokio::pin!(guarded);
+        run_until_held!(guarded, hold);
+        auth_config_apply_with_permissions_body(&state, true, "admin", Some(&[ack.to_string()]))
+            .await
+            .expect("apply true, the mode holds the same permission");
+        hold.release.send(()).unwrap();
+
+        match guarded.await {
+            Err(BantoError::Unauthorized) if !finer => {}
+            Ok(false) if finer => {}
+            other => panic!("finer={finer}: passed as another subject: {other:?}"),
+        }
+        assert_eq!(audit_action_count(&state, "denied").await, denied_before);
+        // A NEW request is authorized as the session the slot holds now.
+        let local = require_permission(&state, &ack, "alarm")
+            .await
+            .expect("local holds it");
+        assert_eq!(local.username, "local");
+    }
+}
+
+/// The first settle of a guard cannot adopt another subject either: a check
+/// that started from the account session and is overtaken (during its store
+/// read) by an apply settles `Stale` with no session, not with `local`.
+#[tokio::test]
+async fn adr0034_a_stale_first_settle_does_not_hand_a_guard_another_subject() {
+    let state = admin_app_state().await;
+    let (cached, seq_at_entry) = read_slot(&state);
+    let cached = cached.expect("the admin's account session");
+    let fresh = read_session_source(&state, &cached).await.unwrap();
+    assert!(fresh.is_some(), "the account itself is unchanged");
+
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+    assert!(is_local(&read_slot(&state).0));
+
+    assert!(matches!(
+        settle_session(&state, &cached, fresh, seq_at_entry),
+        Settled::Stale {
+            valid_now: None,
+            ..
+        }
+    ));
+}
+
+/// Sign `username` in on the webview with its stored row (no password).
+async fn desktop_login_as(state: &AppState, username: &str) {
+    let user = state
+        .users
+        .get_by_username(username)
+        .await
+        .unwrap()
+        .expect("account");
+    state.set_session_for_test(Some(DesktopSession::Account(user)));
 }

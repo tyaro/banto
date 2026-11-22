@@ -506,17 +506,42 @@ async fn read_session_permissions(
 /// would pass the comparison below - Codex review of PR #862). Reading the
 /// permissions awaits once more, and the same writers can complete in that
 /// window. So that `seq` is compared again after the permissions were read:
-/// every write that changes what the
-/// session is authorized as advances `seq` (see [`settle_session`]), so an
-/// unchanged `seq` means the pair still describes the slot. If it moved, the
-/// whole authorization is done once more from the slot as it is now; if it
-/// moved again, the answer is "no session" (`Ok(None)`) - never a session
-/// of a mode, or a binding, that has ended.
+/// every write that changes what the session is authorized as advances `seq`
+/// (see [`settle_session`]), so an unchanged `seq` means the pair still
+/// describes the slot.
 ///
-/// Everything that needs both goes through here: [`require_permission`],
-/// [`session_permissions`] and `auth_identity`. (`auth_resolve` reports the
-/// same window as `stale` instead, see [`resolve_body`].)
+/// If it moved, the answer is "no session" (`Ok(None)`), and the caller's
+/// command fails `Unauthorized`. It is deliberately NOT decided again from
+/// the slot as it is now (cross-review of PR #862): the slot may hold a
+/// different subject by then, and a command that had not passed its guard
+/// yet would run - and be audited - as a subject it was never sent by. The
+/// client sends a new request. (The first settle cannot adopt another
+/// subject either: [`Settled::Stale`]'s `valid_now` is the slot's session
+/// only when it has the binding this command started from.)
+///
+/// The guards go through here: [`require_permission`] and
+/// [`session_permissions`]. What the screen shows is
+/// [`displayed_session`]; `auth_resolve` reports the same window as `stale`
+/// ([`resolve_body`]).
 async fn authorized_session(
+    state: &AppState,
+) -> Result<Option<(DesktopSession, SessionPermissions)>, BantoError> {
+    let Some((session, settled_seq)) = current_session_at(state).await? else {
+        return Ok(None);
+    };
+    let permissions = permissions_of_session(state, &session).await?;
+    if read_slot(state).1 != settled_seq {
+        return Ok(None);
+    }
+    Ok(Some((session, permissions)))
+}
+
+/// The session and its permissions for DISPLAY (`auth_identity`): the same
+/// one-snapshot rule as [`authorized_session`], but a slot re-bound during
+/// the permissions read is simply read once more, so the screen is told
+/// about the session the slot holds now rather than about none. Nothing is
+/// authorized by this answer - never use it for a guard.
+async fn displayed_session(
     state: &AppState,
 ) -> Result<Option<(DesktopSession, SessionPermissions)>, BantoError> {
     for _ in 0..2 {
@@ -1470,8 +1495,8 @@ async fn auth_identity(state: State<'_, AppState>) -> Result<Option<Identity>, B
 
 /// Body of [`auth_identity`] (testable with a plain `&AppState`).
 async fn auth_identity_body(state: &AppState) -> Result<Option<Identity>, BantoError> {
-    // One authorization to the end of the permissions read (ADR-0034 §6).
-    Ok(authorized_session(state)
+    // One snapshot to the end of the permissions read (ADR-0034 §6).
+    Ok(displayed_session(state)
         .await?
         .map(|(session, permissions)| identity_from(session.identity(), permissions)))
 }

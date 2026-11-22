@@ -608,8 +608,9 @@ C2（PR #858）の実装で、§9 の「作業用のコピーへの migration �
 3. **認可の完了の時点**: `authenticate` がアカウントの照合の後に表で確かめる。権限の読み取りはその後のもう 1 つの await なので、
    トークンと権限を両方読む所は `AuthState::authenticate_with_permissions` に 1 つにまとめ、入口で読んだ世代を権限の読み取りの後に
    もう一度比べる（`require_auth`・`GET /api/auth/identity`・`require_auth` なしの `PermissionGuard`。PR #862 のクロスレビュー）。
-   Tauri の画面も同じ形にした: `authorized_session` が、確定の直後の `seq` を権限の読み取りの後に比べる（`require_permission`・
-   `session_permissions`・`auth_identity`）。`auth_resolve` は同じ窓を `stale` で返す。
+   Tauri の画面も同じ形にした: `authorized_session` が、確定のロックの中の `seq` を権限の読み取りの後に比べ、動いていたら
+   未認証で終える（`require_permission`・`session_permissions`。今のスロットから認可し直さない = 別の主体として通さない）。
+   画面に出す `auth_identity` だけは読み直す。`auth_resolve` は同じ窓を `stale` で返す。
 4. **進行中の書き込み**: ガードを通った書き込みは中断しない。切り替えは残った仕事を待たない（#793 の「失効が効くのは次の要求から」と
    同じ）。監査は、切り替えの `settings_change` の detail に、失効させたアカウントのトークンの数を `revokedSessions: n` で
    載せる（0 のときは載せない）。進行中の書き込みの監査は、認可したときの主体でそのまま残る。

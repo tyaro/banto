@@ -744,9 +744,10 @@ points that need confirmation are listed separately in the PR description.
    permissions is one more await after that, so everything that reads both a token and its permissions is gathered into
    `AuthState::authenticate_with_permissions`, which compares the generation it read on entry once more after the
    permissions read (`require_auth`, `GET /api/auth/identity`, a `PermissionGuard` without `require_auth`; cross-review of
-   PR #862). The Tauri webview has the same shape: `authorized_session` compares the `seq` right after the settle once more
-   after the permissions read (`require_permission`, `session_permissions`, `auth_identity`). `auth_resolve` reports the
-   same window as `stale`.
+   PR #862). The Tauri webview has the same shape: `authorized_session` compares the `seq` from the settle's own lock after
+   the permissions read and, if it moved, ends as unauthenticated (`require_permission`, `session_permissions`; it does not
+   authorize again from the slot as it is now, i.e. never as another subject). Only `auth_identity`, which is for display,
+   reads again. `auth_resolve` reports the same window as `stale`.
 4. **Writes in progress**: a write that passed the guard is not interrupted, and the switch does not wait for the remaining
    work (the same as #793's "revocation takes effect from the next request"). The switch's `settings_change` audit detail
    carries the number of account tokens it revoked as `revokedSessions: n` (omitted when 0). The audit of a write in

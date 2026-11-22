@@ -543,11 +543,16 @@ without a runtime guard are **upheld by reviewing every call site**.
     guard is passed"; the switch does not wait).
   - **The Tauri webview session** keeps the same serialization with the slot's
     `seq` and `auth_config_lock` (`install_account_unless_auth_disabled`,
-    `settle_session`; S-94, S-95, S-99). Anything that reads both the session
-    and its permissions goes through `authorized_session` (the `seq` right
-    after the settle is compared once more after the permissions read:
-    `require_permission`, `session_permissions`, `auth_identity`).
-    `auth_resolve` reports the same window as `stale`.
+    `settle_session`; S-94, S-95, S-99). A guard that reads both the session
+    and its permissions goes through `authorized_session`
+    (`require_permission`, `session_permissions`). It takes the settled
+    session together with the `seq` from the settle's own lock (never a later
+    `read_slot`) and compares that `seq` after the permissions read. If it
+    moved, the guard **ends as unauthenticated** (it does not authorize again
+    from the slot as it is now: a request that had not passed its guard would
+    run with another subject's permissions and audit name). Only
+    `auth_identity`, which is for display, may read again
+    (`displayed_session`); `auth_resolve` reports the same window as `stale`.
   - **A wiring that opens `/api/auth/setup` (`allow_setup = true`) must not
     switch its `AuthState` to no-login** (a condition until first-run setup is
     removed): the account it creates would be handed a token that was never
