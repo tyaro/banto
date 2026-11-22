@@ -12,11 +12,13 @@
 	that use it.
 -->
 <script lang="ts">
-	import { AttachmentsPanel } from '@banto/attachments';
+	import { AttachmentsPanel, type AttachmentsClient } from '@banto/attachments';
+	import { currentSessionScope, isCurrentSessionScope } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
 	import { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';
 	import { attachmentsClient } from '#lib/banto/attachmentsClient.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
+	import { guardUpload } from '#lib/resource/sessionUpload.js';
 
 	interface Props {
 		id: number;
@@ -24,11 +26,25 @@
 	}
 
 	let { id, canWrite }: Props = $props();
+
+	// #714: an upload goes out only while the session this panel was mounted
+	// for is the live one (logout, or another user logging in, while the
+	// file's bytes are still being read, sends nothing). The same check
+	// `ResourceDetail`'s `file` field uses (`lib/resource/sessionUpload.ts`).
+	const scope = currentSessionScope();
+	const client: AttachmentsClient = {
+		...attachmentsClient,
+		upload: guardUpload(
+			attachmentsClient,
+			() => isCurrentSessionScope(scope),
+			() => m['connection.saveFailed']()
+		)
+	};
 </script>
 
 {#if isAttachmentsAvailable()}
 	<AttachmentsPanel
-		client={attachmentsClient}
+		{client}
 		resource="items"
 		resourceId={String(id)}
 		{canWrite}
