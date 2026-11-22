@@ -240,11 +240,61 @@ impl CandidateRefusal {
     }
 }
 
-impl From<BantoError> for CandidateRefusal {
-    /// Every failure of the built-in checks (open, integrity, tables,
-    /// migration history) is about the candidate.
-    fn from(err: BantoError) -> Self {
-        Self::Invalid(err)
+/// Which failed reads still tell something about the candidate's CONTENT.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadOf {
+    /// Opening the file, the integrity check, `sqlite_master`: the statement
+    /// cannot fail because of what the candidate's schema looks like.
+    File,
+    /// A query over a table of the candidate. A column that is missing or of
+    /// another type is a finding about the candidate (it is arbitrary
+    /// operator-supplied input), not a failed read.
+    CandidateTable,
+}
+
+/// SQLite's primary result code of `err`, when SQLite reported one.
+fn sqlite_primary_code(err: &sqlx::Error) -> Option<i32> {
+    let sqlx::Error::Database(db_err) = err else {
+        return None;
+    };
+    // sqlx-sqlite reports the EXTENDED code; the low byte is the primary one.
+    db_err.code()?.parse::<i32>().ok().map(|code| code & 0xff)
+}
+
+/// Sort a read that failed while validating a candidate (cross-review of
+/// #858). Only an error in which SQLite CONFIRMS that the content is not a
+/// usable database is the candidate's fault: `SQLITE_CORRUPT` (11),
+/// `SQLITE_NOTADB` (26), and - for [`ReadOf::CandidateTable`] - a table of
+/// another shape. Everything else (`SQLITE_IOERR`, `SQLITE_CANTOPEN`,
+/// `SQLITE_BUSY`, a permission, an I/O error of the driver, ...) means the
+/// file could not be READ: nothing is known about it, so it must not be
+/// reported - or, at startup, deleted - as an invalid candidate.
+fn read_failure(context: &str, read: ReadOf, err: sqlx::Error) -> CandidateRefusal {
+    const SQLITE_ERROR: i32 = 1;
+    const SQLITE_CORRUPT: i32 = 11;
+    const SQLITE_NOTADB: i32 = 26;
+    let about_content = match sqlite_primary_code(&err) {
+        Some(SQLITE_CORRUPT | SQLITE_NOTADB) => true,
+        Some(SQLITE_ERROR) => read == ReadOf::CandidateTable,
+        Some(_) => false,
+        None => {
+            read == ReadOf::CandidateTable
+                && matches!(
+                    err,
+                    sqlx::Error::ColumnDecode { .. }
+                        | sqlx::Error::ColumnNotFound(_)
+                        | sqlx::Error::ColumnIndexOutOfBounds { .. }
+                        | sqlx::Error::Decode(_)
+                        | sqlx::Error::TypeNotFound { .. }
+                )
+        }
+    };
+    if about_content {
+        CandidateRefusal::Invalid(validation_err(format!(
+            "{context}（ファイルが破損しているか、Banto のSQLiteデータベースではありません）: {err}"
+        )))
+    } else {
+        CandidateRefusal::Unchecked(BantoError::Storage(format!("{context}: {err}")))
     }
 }
 
@@ -309,10 +359,10 @@ impl MigrationManifest {
 /// Error of a candidate whose migration history does not match this app
 /// (ADR-0034 §9). One wording for every mismatch: the operator's remedy is the
 /// same (use a backup taken by this version of the app).
-fn migration_history_err(reason: impl std::fmt::Display) -> BantoError {
-    validation_err(format!(
+fn migration_history_err(reason: impl std::fmt::Display) -> CandidateRefusal {
+    CandidateRefusal::Invalid(validation_err(format!(
         "このファイルは、このアプリの版のデータベースではありません（{reason}）。v8.0.0 より前の版や、より新しい版のバックアップは復元できません"
-    ))
+    )))
 }
 
 /// One backup file, as listed/created by [`BackupService::list`]/
@@ -443,11 +493,15 @@ async fn validate_sqlite_file(
         .create_if_missing(false)
         .read_only(true);
 
-    let mut conn = SqliteConnection::connect_with(&options).await.map_err(|err| {
-        validation_err(format!(
-            "SQLiteデータベースとして開けませんでした（ファイルが破損しているか、SQLiteデータベースではありません）: {err}"
-        ))
-    })?;
+    let mut conn = SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|err| {
+            read_failure(
+                "SQLiteデータベースとして開けませんでした",
+                ReadOf::File,
+                err,
+            )
+        })?;
 
     // Run the actual checks in a sub-function and close `conn` on EVERY exit
     // path (success or failure) before propagating the result - critically
@@ -477,15 +531,15 @@ async fn validate_sqlite_file(
 async fn run_validation_checks(
     conn: &mut SqliteConnection,
     manifest: &MigrationManifest,
-) -> Result<(), BantoError> {
+) -> Result<(), CandidateRefusal> {
     let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&mut *conn)
         .await
-        .map_err(|err| validation_err(format!("整合性チェックの実行に失敗しました: {err}")))?;
+        .map_err(|err| read_failure("整合性チェックの実行に失敗しました", ReadOf::File, err))?;
     if integrity != "ok" {
-        return Err(validation_err(format!(
+        return Err(CandidateRefusal::Invalid(validation_err(format!(
             "整合性チェックでエラーが見つかりました: {integrity}"
-        )));
+        ))));
     }
 
     for table in REQUIRED_TABLES {
@@ -494,11 +548,13 @@ async fn run_validation_checks(
                 .bind(table)
                 .fetch_optional(&mut *conn)
                 .await
-                .map_err(banto_storage::storage_error)?;
+                .map_err(|err| {
+                    read_failure("テーブルの一覧を読めませんでした", ReadOf::File, err)
+                })?;
         if exists.is_none() {
-            return Err(validation_err(format!(
+            return Err(CandidateRefusal::Invalid(validation_err(format!(
                 "必須テーブル '{table}' が見つかりません。Banto のデータベースファイルではない可能性があります"
-            )));
+            ))));
         }
     }
 
@@ -510,23 +566,26 @@ async fn run_validation_checks(
 async fn check_migration_history(
     conn: &mut SqliteConnection,
     manifest: &MigrationManifest,
-) -> Result<(), BantoError> {
+) -> Result<(), CandidateRefusal> {
     let has_history: Option<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
     )
     .fetch_optional(&mut *conn)
     .await
-    .map_err(banto_storage::storage_error)?;
+    .map_err(|err| read_failure("テーブルの一覧を読めませんでした", ReadOf::File, err))?;
     if has_history.is_none() {
         return Err(migration_history_err("migration の履歴がありません"));
     }
-    // A history table of an unexpected shape is a refusal, not a storage
-    // failure: the candidate is arbitrary operator-supplied input.
+    // A history table of an unexpected shape is a refusal of the candidate
+    // (it is arbitrary operator-supplied input); a read that FAILED is not -
+    // `read_failure` tells the two apart.
     let applied: Vec<(i64, bool, Vec<u8>)> =
         sqlx::query_as("SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&mut *conn)
             .await
-            .map_err(|err| migration_history_err(format!("migration の履歴を読めません: {err}")))?;
+            .map_err(|err| {
+                read_failure("migration の履歴を読めません", ReadOf::CandidateTable, err)
+            })?;
     for (version, success, checksum) in &applied {
         if !success {
             return Err(migration_history_err(format!(
@@ -1892,5 +1951,160 @@ mod tests {
             .unwrap();
         assert!(applied.is_some());
         drop(dir);
+    }
+
+    // --- cross-review of #858: a read that FAILED is not a bad candidate -----
+
+    /// Hold `path` the way another process would (a scanner, a copy still in
+    /// progress): an exclusive SQLite lock, so every read of it by somebody
+    /// else fails with `SQLITE_BUSY`. The content is not changed.
+    async fn lock_exclusively(path: &Path) -> SqliteConnection {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(false);
+        let mut conn = SqliteConnection::connect_with(&options)
+            .await
+            .expect("open the file to lock");
+        // `locking_mode` first: on a WAL file a plain exclusive transaction
+        // would not keep readers out.
+        for sql in ["PRAGMA locking_mode = EXCLUSIVE", "BEGIN EXCLUSIVE"] {
+            sqlx::query(sql).execute(&mut conn).await.expect(sql);
+        }
+        conn
+    }
+
+    async fn unlock(mut conn: SqliteConnection) {
+        sqlx::query("ROLLBACK").execute(&mut conn).await.unwrap();
+        conn.close().await.unwrap();
+    }
+
+    /// The built-in read checks (open, integrity, tables, history) run before
+    /// the app's candidate check. A pending file they could not READ is not a
+    /// bad candidate: it is kept, the database is not replaced, and the next
+    /// start - when it can be read - applies it.
+    #[tokio::test]
+    async fn a_pending_restore_that_cannot_be_read_is_kept_and_applied_later() {
+        let (svc, dir) = service().await;
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let manifest = test_manifest();
+        let backup = svc.create().await.unwrap();
+        svc.stage_restore_from_file(&backup.file_name)
+            .await
+            .unwrap();
+        let pending = svc.pending_restore_path().unwrap();
+        let staged = tokio::fs::read(&pending).await.unwrap();
+        let before = tokio::fs::read(&db_path).await.unwrap();
+
+        let lock = lock_exclusively(&pending).await;
+        let refusal = validate_sqlite_file(&pending, &manifest).await.unwrap_err();
+        assert!(
+            matches!(refusal, CandidateRefusal::Unchecked(_)),
+            "{refusal:?}"
+        );
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .expect("an unreadable pending file must not fail startup");
+        assert!(applied.is_none(), "not applied while it cannot be read");
+        assert!(pending.exists(), "kept for a retry");
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+        unlock(lock).await;
+        assert_eq!(
+            tokio::fs::read(&pending).await.unwrap(),
+            staged,
+            "the pending file itself is unchanged"
+        );
+
+        // The next start can read it: now it is applied. (The pool is closed
+        // first, as at a real restart.)
+        svc.sqlite_pool().unwrap().close().await;
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .unwrap();
+        assert!(applied.is_some());
+        assert!(!pending.exists());
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), staged);
+        drop(dir);
+    }
+
+    /// The same split at the moment a restore is STAGED: a backup that cannot
+    /// be read right now is a retryable error (not `validation`), an earlier
+    /// pending restore is left alone, and the same backup is staged once it
+    /// can be read.
+    #[tokio::test]
+    async fn staging_a_backup_that_cannot_be_read_is_a_retryable_error() {
+        let (svc, dir) = service().await;
+        let first = svc.create().await.unwrap();
+        svc.stage_restore_from_file(&first.file_name).await.unwrap();
+        let staged = svc.pending_restore().await.expect("staged");
+        let second = svc
+            .create_at("2026-11-22 10:00:00")
+            .await
+            .expect("a second backup");
+        let second_path = svc.safe_backup_path(&second.file_name).unwrap();
+
+        let lock = lock_exclusively(&second_path).await;
+        let err = svc
+            .stage_restore_from_file(&second.file_name)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Other(_)), "{err:?}");
+        assert_eq!(
+            svc.pending_restore().await,
+            Some(staged),
+            "the earlier pending restore is untouched"
+        );
+        assert!(second_path.exists(), "the backup is not deleted either");
+        unlock(lock).await;
+
+        svc.stage_restore_from_file(&second.file_name)
+            .await
+            .expect("staged once it can be read");
+        drop(dir);
+    }
+
+    /// What the built-in checks answer for each kind of failure: a file that
+    /// cannot be opened is `Unchecked`; content SQLite itself calls not a
+    /// database, a missing table and a foreign history stay `Invalid`.
+    #[tokio::test]
+    async fn the_read_checks_tell_a_failed_read_from_a_bad_candidate() {
+        let dir = tempdir().unwrap();
+        let manifest = test_manifest();
+
+        let missing = dir.path().join("missing.sqlite3");
+        let refusal = validate_sqlite_file(&missing, &manifest).await.unwrap_err();
+        assert!(
+            matches!(refusal, CandidateRefusal::Unchecked(_)),
+            "{refusal:?}"
+        );
+
+        // Bigger than one page, so SQLite reads a full header and reports
+        // "file is not a database" rather than treating it as a short file.
+        let garbage = dir.path().join("garbage.sqlite3");
+        tokio::fs::write(&garbage, vec![b'x'; 8192]).await.unwrap();
+        let empty = dir.path().join("empty.sqlite3");
+        tokio::fs::write(&empty, b"").await.unwrap();
+        let foreign = dir.path().join("foreign.sqlite3");
+        tokio::fs::write(
+            &foreign,
+            candidate_bytes(
+                dir.path(),
+                "foreign-src.sqlite3",
+                "DROP TABLE _sqlx_migrations; CREATE TABLE _sqlx_migrations (version TEXT)",
+            )
+            .await,
+        )
+        .await
+        .unwrap();
+        for bad in [&garbage, &empty, &foreign] {
+            let refusal = validate_sqlite_file(bad, &manifest).await.unwrap_err();
+            assert!(
+                matches!(
+                    refusal,
+                    CandidateRefusal::Invalid(BantoError::Validation { .. })
+                ),
+                "{}: {refusal:?}",
+                bad.display()
+            );
+        }
     }
 }
