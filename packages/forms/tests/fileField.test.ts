@@ -865,3 +865,54 @@ describe('a list answered after what it does not know yet (PR #844 review)', () 
 		expect(fileValueOf(store.values.files).existing).toEqual([meta(1, 'of-second.txt')]);
 	});
 });
+
+describe('a field hidden while its own upload is on its way (PR #844 review)', () => {
+	it('the sent file settles its entry, the rest is not sent, and showing the field again lists it once', async () => {
+		const rows: FileFieldMeta[] = [];
+		const sent = deferred<FileFieldMeta>();
+		const client = {
+			list: vi.fn(async () => [...rows]),
+			upload: vi.fn((_resource: string, _resourceId: string, _file: File) => sent.promise),
+			remove: vi.fn(async () => {})
+		} satisfies FileFieldClient;
+		const schema: FormSchema = {
+			fields: [
+				{ name: 'attach', label: '添付する', type: 'checkbox' },
+				fileDef(client, { visibleWhen: (values) => values.attach === true })
+			]
+		};
+		const store = createFormStore(schema, { attach: true });
+		const { container } = render(BantoForm, {
+			schema,
+			store,
+			onSubmit: vi.fn(),
+			fileParentId: 5
+		});
+		await screen.findByText('ファイルはありません');
+		await pick(container, [file('a.txt'), file('b.txt')]);
+		await waitFor(() => expect(client.upload).toHaveBeenCalledTimes(1));
+
+		store.setValue('attach', false);
+		await waitFor(() => expect(screen.queryByRole('group', { name: /資料/ })).toBeNull());
+		rows.push(meta(7, 'a.txt'));
+		sent.resolve(meta(7, 'a.txt'));
+		await waitFor(() =>
+			expect(fileValueOf(store.values.files).existing).toEqual([meta(7, 'a.txt')])
+		);
+		// The entry of the sent file is gone; the other one waits and was not sent.
+		expect(fileValueOf(store.values.files).pending.map((entry) => entry.file.name)).toEqual([
+			'b.txt'
+		]);
+		expect(client.upload).toHaveBeenCalledTimes(1);
+
+		store.setValue('attach', true);
+		await screen.findByRole('button', { name: 'a.txt: 削除' });
+		await waitFor(() => expect(screen.queryByText('読み込み中…')).toBeNull());
+		expect(
+			screen.getAllByRole('listitem').map((row) => [row.dataset.fileState, row.textContent])
+		).toEqual([
+			['existing', expect.stringContaining('a.txt')],
+			['pending', expect.stringContaining('b.txt')]
+		]);
+	});
+});

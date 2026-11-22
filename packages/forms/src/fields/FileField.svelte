@@ -20,7 +20,7 @@
 	 * Like `RadioField`: a `fieldset` + `legend`, `id` on the button that opens
 	 * the picker, `aria-describedby` on the fieldset, no label drawn by `BantoForm`.
 	 */
-	import { tick, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import type { FieldDef, FileFieldMeta, FileFieldValue, PendingFile } from '../types';
 	import { pickFiles, type ValidationMessages } from '../validate';
 	import {
@@ -126,6 +126,13 @@
 	// What was started for another owner sends nothing more and writes nothing
 	// into the value (conventions §8).
 	let ownerToken = 0;
+	// The field going away (hidden by `visibleWhen`) is NOT a change of owner:
+	// the value stays the record's, so an upload already sent still settles its
+	// entry - but nothing more is sent or deleted from a field nobody sees.
+	let destroyed = false;
+	onDestroy(() => {
+		destroyed = true;
+	});
 
 	$effect(() => {
 		// Tracked: the record and where its files are. Everything else is untracked.
@@ -150,7 +157,6 @@
 			void load();
 		});
 		return () => {
-			ownerToken += 1;
 			loadToken += 1;
 		};
 	});
@@ -193,13 +199,16 @@
 			read: () => value,
 			write: onInput,
 			// Compared directly too: the effect that moves the token runs after the props changed.
+			// (Not once the field is gone: its props are no longer read.)
 			isCurrent: () =>
 				token === ownerToken &&
-				parentId === target &&
-				config?.client === client &&
-				config?.resource === resource,
+				(destroyed ||
+					(parentId === target && config?.client === client && config?.resource === resource)),
+			canSend: () => !destroyed,
 			// The value was reset while the file was on its way: it is the record's, so read the list again.
-			onDetached: () => void load(),
+			onDetached: () => {
+				if (!destroyed) void load();
+			},
 			keys,
 			messages,
 			onStart: (key) => (uploadingKeys = [...uploadingKeys, key]),
@@ -245,6 +254,7 @@
 		const target = parentId;
 		const resource = config.resource;
 		const same = () =>
+			!destroyed &&
 			token === ownerToken &&
 			parentId === target &&
 			config?.client === client &&
