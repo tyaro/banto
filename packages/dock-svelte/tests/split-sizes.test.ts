@@ -46,7 +46,7 @@ const placeFrom = (slot: DockSlot): Place => {
  * remembers no place.
  */
 const placeOf = (dock: DockState, id: string): Place | undefined => {
-	if (dock.homeSlot(id) === undefined) return undefined;
+	if (!dock.hasHome(id)) return undefined;
 	const slot = deflateShadow(shadowStateOf(dock).shadow).away.find((a) => a.panel.id === id)?.slot;
 	return slot && placeFrom(slot);
 };
@@ -225,9 +225,8 @@ const outByFloat = (dock: DockState): DockState => {
 		else dismiss(id);
 	};
 	dock.show = (id) => {
-		const slot = dock.homeSlot(id);
-		if (slot === undefined) return show(id);
-		return dock.dockAtSlot(id, slot) ? 'docked' : 'floating';
+		if (!dock.hasHome(id)) return show(id);
+		return dock.dockBack(id) ? 'docked' : 'floating';
 	};
 	return dock;
 };
@@ -270,8 +269,7 @@ const runSteps = (
 			const [panelId, target, region] = id.split(':');
 			dock.dockPanel(panelId, target, (region ?? 'center') as DropRegion);
 		} else {
-			const slot = dock.homeSlot(id);
-			if (slot) dock.dockAtSlot(id, slot);
+			dock.dockBack(id);
 		}
 	}
 	return dock;
@@ -360,7 +358,7 @@ describe('split sizes come back in any show order (#733)', () => {
 		const after = runSteps(L['row[a,b,c] uneven'], ['~a', '-b', '>a:c']);
 		const slotOf = (d: DockState) => placeOf(d, 'b');
 		expect(slotOf(after)).toEqual({ ...slotOf(before), share: expect.closeTo(0.375, 9) });
-		expect(after.homeSlot('a')).toBeUndefined();
+		expect(after.hasHome('a')).toBe(false);
 	});
 
 	it('a floated pane put back in its place (`dockAtSlot`) keeps its share counted: the old sizes', () => {
@@ -398,13 +396,13 @@ describe('a pane out of the tree that leaves the layout, or goes back into its s
 		}
 		// A floated pane still there keeps its place, its share taken without the one removed.
 		const dock = runSteps(L['row[a,b,c,d]'], ['~a', '-b', '~c', '!a']);
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 		const home = slotOf(dock, 'c');
 		expect(home?.kind === 'split' && home.share).toBeCloseTo(0.3 / 0.9, 9);
 		const hidden = slotOf(dock, 'b');
 		expect(hidden?.kind === 'split' && hidden.share).toBeCloseTo(0.2 / 0.9, 9);
 		dock.show('b');
-		dock.dockAtSlot('c', dock.homeSlot('c')!);
+		dock.dockBack('c');
 		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['b', 'c', 'd'] });
 		expect(sameSizes(sizesOf(dock.layout.docked), [[2 / 9, 3 / 9, 4 / 9]])).toBe(true);
 	});
@@ -526,7 +524,7 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			expect(shareOf(slotOf(dock, 'b'))).toBeCloseTo(0.2 / 0.9, 9);
 			expect(shareOf(slotOf(dock, 'c'))).toBeCloseTo(0.3 / 0.9, 9);
 			dock.show('b');
-			dock.dockAtSlot('c', dock.homeSlot('c')!);
+			dock.dockBack('c');
 			const now = around(dock, 'b');
 			expect(now.b).toBeCloseTo(2 / 9, 9);
 			expect(now.c).toBeCloseTo(3 / 9, 9);
@@ -810,11 +808,7 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			unchanged(four, (d) => d.dismiss('a'), 'hidden');
 			unchanged(four, (d) => d.undockPanel('a'), 'floated');
 			unchanged(four, (d) => (d.dismiss('a'), d.show('a')), 'hidden and shown');
-			unchanged(
-				four,
-				(d) => (d.undockPanel('a'), d.dockAtSlot('a', d.homeSlot('a')!)),
-				'floated and back'
-			);
+			unchanged(four, (d) => (d.undockPanel('a'), d.dockBack('a')), 'floated and back');
 			// Floated and docked again into the split elsewhere (#741, the second item).
 			unchanged(four, (d) => (d.undockPanel('a'), d.dockPanel('a', 'd', 'right')), 'elsewhere');
 		});
@@ -1202,7 +1196,7 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 							count.redocked++;
 						} else {
 							steps.push(`^${id}`);
-							expect(dock.dockAtSlot(id, dock.homeSlot(id)!), steps.join(' ')).toBe(true);
+							expect(dock.dockBack(id), steps.join(' ')).toBe(true);
 							const expected = Math.min(0.95, Math.max(0.05, share / (1 - held(id))));
 							expect(sizeOf(id), steps.join(' ')).toBeCloseTo(expected, 6);
 							out.delete(id);

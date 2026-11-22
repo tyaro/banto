@@ -53,8 +53,8 @@ import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
 import type { DockPanelChange, DockPanelChangeOutcome, PanelLifecycle } from './lifecycle';
 import { resolveCapabilities, type DockPolicy } from './policy';
 import { collectPanelIds, EDGE_DOCK_RATIO, findNode, findParent } from './tree';
-import type { DockState } from '../state.svelte';
-import type { DockEdge, DockNode, DockSlot, DropRegion } from '../types';
+import { homeMark, type DockState } from '../state.svelte';
+import type { DockEdge, DockNode, DropRegion } from '../types';
 import {
 	crossButtons,
 	hitGuideButton,
@@ -476,7 +476,7 @@ export class DragController {
 	/**
 	 * Float the docked pane `panelId` (a drop on free space): asks the pane a shrinking split /
 	 * tab group leaves first (`reparent`, #682), then `undock`. Its docked place is remembered
-	 * for `placeBack` (`DockState.homeSlot`, set by `undockPanel`: #734). `null` = its `undock`
+	 * for `placeBack` (`DockState.hasHome`, set by `undockPanel`: #734). `null` = its `undock`
 	 * capability withholds it: nothing changes. Also the keyboard path (`DockHost.movePanel`,
 	 * #663 ④).
 	 */
@@ -512,10 +512,10 @@ export class DragController {
 	 * there: `#backAllowed`). Re-read by the lifecycle before each step and before the apply,
 	 * so a rule that changes while the answer waits makes it `stale`.
 	 */
-	#backPreview(panelId: string, slot: DockSlot | undefined): DockNode | undefined {
+	#backPreview(panelId: string): DockNode | undefined {
 		const win = this.#dock.layout.floating.find((w) => w.id === panelId);
-		if (!win || !win.open || !slot) return undefined;
-		const after = this.#dock.restoredAt(panelId, slot, () => `${panelId}:restored`);
+		if (!win || !win.open || !this.#dock.hasHome(panelId)) return undefined;
+		const after = this.#dock.backTree(panelId, () => `${panelId}:restored`);
 		return after && this.#backAllowed(after, panelId) ? after : undefined;
 	}
 
@@ -547,23 +547,23 @@ export class DragController {
 	}
 
 	/**
-	 * Dock the floating window `panelId` back where it was docked (`DockState.homeSlot`, #663 ④):
+	 * Dock the floating window `panelId` back where it was docked (`DockState.dockBack`, #663 ④):
 	 * asked like any other drop into the tree (the panes it pushes out, then `dock`). `null` = no
 	 * remembered place, or the place is gone: nothing changes.
 	 */
 	placeBack(panelId: string, guard?: MoveGuard): Promise<DockPanelChangeOutcome> | null {
 		const dock = this.#dock;
-		const slot = dock.homeSlot(panelId);
-		if (!slot || this.#backPreview(panelId, slot) === undefined) return null;
+		const mark = homeMark(dock, panelId);
+		if (mark === undefined || this.#backPreview(panelId) === undefined) return null;
 		return this.#placement(
 			panelId,
 			() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
 			// A pane docked and floated again while the answer waits remembers another place (#735):
 			// the approved one is gone, so the request is `stale`.
-			() => (dock.homeSlot(panelId) === slot ? this.#backPreview(panelId, slot) : undefined),
-			{ back: slot },
+			() => (homeMark(dock, panelId) === mark ? this.#backPreview(panelId) : undefined),
+			{ back: mark },
 			() => {
-				dock.dockAtSlot(panelId, slot, () => `${panelId}:restored`);
+				dock.dockBack(panelId, () => `${panelId}:restored`);
 			},
 			guard
 		);
@@ -571,7 +571,7 @@ export class DragController {
 
 	/** Whether `placeBack(panelId)` would do something now (a remembered place that still exists and the drag would drop it there). */
 	canPlaceBack(panelId: string): boolean {
-		return this.#backPreview(panelId, this.#dock.homeSlot(panelId)) !== undefined;
+		return this.#backPreview(panelId) !== undefined;
 	}
 
 	/** Whether an outer-edge drop is offered for `panelId` (some OTHER pane is docked). */

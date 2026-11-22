@@ -236,7 +236,7 @@ describe('replaceLayout with { saved: true } (#739 review)', () => {
 		dock.dismiss('b');
 		const saved = JSON.parse(dock.serialize()) as DockLayout;
 		expect(await host().replaceLayout(saved, { saved: true })).toBe('applied');
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 		dock.show('b');
 		const root = dock.layout.docked;
 		expect(root?.type === 'split' && root.sizes[0]).toBeCloseTo(0.375, 9);
@@ -259,7 +259,7 @@ describe('replaceLayout with { saved: true } (#739 review)', () => {
 		};
 		expect(await host().replaceLayout(other, { saved: true })).toBe('refused');
 		expect(dock.serialize()).toBe(before);
-		expect(dock.homeSlot('a')).toBeDefined();
+		expect(dock.hasHome('a')).toBe(true);
 	});
 
 	// #741: without `saved`, the layout is one made from today's and goes in like `dock.layout = ...`:
@@ -294,7 +294,7 @@ describe('replaceLayout with { saved: true } (#739 review)', () => {
 		};
 		expect(await host().replaceLayout(next)).toBe('applied');
 		dock.show('b');
-		expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
+		expect(dock.dockBack('a')).toBe(true);
 		const root = dock.layout.docked;
 		expect(root?.type === 'split' && root.children.map((c) => c.id)).toEqual(['a', 'b', 'c']);
 		// b, hidden, left the row (#743: a's place holds .2 of .7 since) and came back at its default

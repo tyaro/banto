@@ -18,6 +18,7 @@ import { dockPanelAtEdge, dockPanelIntoTree, removePanel } from '../src/core/tre
 import {
 	adoptLayout,
 	createDockState,
+	homeMark,
 	rememberShadow,
 	shadowStateOf,
 	watchShadow,
@@ -49,7 +50,7 @@ const dockOf = (tree: DockNode, defaults = false): DockState => {
 	if (defaults) dock.defaultLayout = { version: 2, floating: [], docked: tree };
 	return dock;
 };
-const back = (dock: DockState, id: string): boolean => dock.dockAtSlot(id, dock.homeSlot(id)!);
+const back = (dock: DockState, id: string): boolean => dock.dockBack(id);
 const sizesOf = (node: DockNode | null | undefined): number[] =>
 	node?.type === 'split' ? node.sizes : [];
 const close = (got: number[], want: number[]) => {
@@ -160,9 +161,9 @@ describe('an assignment from outside: the container a floated pane was in is sti
 	it('the `homeSlot` is the same object all along: it names the place, nothing rewrites it', () => {
 		const dock = dockOf(split('s', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)));
 		dock.undockPanel('a');
-		const home = dock.homeSlot('a');
+		const home = homeMark(dock, 'a');
 		add(dock, 'z', 'bottom');
-		expect(dock.homeSlot('a')).toBe(home);
+		expect(homeMark(dock, 'a')).toBe(home);
 		expect(heldIn(dock, 'a')).toBeCloseTo(0.2, 9);
 		expect(back(dock, 'a')).toBe(true);
 		expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'b', 'c'] }, 'z'] });
@@ -242,12 +243,12 @@ describe('an assignment from outside: the container is gone - the default place 
 	it('the row folded around the one pane left: back at the default place', () => {
 		const dock = dockOf(uneven(), true);
 		dock.undockPanel('a');
-		const home = dock.homeSlot('a');
+		const home = homeMark(dock, 'a');
 		take(dock, 'c');
 		expect(dock.layout.docked).toEqual(panel('b'));
 		expect(shadowStateOf(dock).unplaced).toEqual(['a']);
-		expect(dock.homeSlot('a')).toBe(home);
-		expect(dock.restoredAt('a', home!)).not.toBeNull();
+		expect(homeMark(dock, 'a')).toBe(home);
+		expect(dock.backTree('a')).not.toBeNull();
 		expect(back(dock, 'a')).toBe(true);
 		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b'] });
 		expect(badSizes(dock.layout.docked)).toEqual([]);
@@ -258,7 +259,9 @@ describe('an assignment from outside: the container is gone - the default place 
 		const dock = dockOf(uneven());
 		dock.undockPanel('a');
 		take(dock, 'c');
-		expect(dock.restoredAt('a', dock.homeSlot('a')!)).toBeNull();
+		// It still remembers a place (#782 PR8a): whether it can go back is `backTree`, not `hasHome`.
+		expect(dock.hasHome('a')).toBe(true);
+		expect(dock.backTree('a')).toBeNull();
 		expect(back(dock, 'a')).toBe(false);
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['a']);
 		expect(dock.layout.docked).toEqual(panel('b'));
@@ -287,7 +290,7 @@ describe('an assignment from outside: the container is gone - the default place 
 		expect(shadowStateOf(dock).unplaced).toEqual([]);
 		expect(dock.autoHideRegion('z')).toBe(true);
 		expect(shadowStateOf(dock).unplaced).toEqual([]);
-		expect(dock.restoredAt('a', dock.homeSlot('a')!)).not.toBeNull();
+		expect(dock.backTree('a')).not.toBeNull();
 		expect(dock.restoreAutoHidden('z')).toBe(true);
 		expect(back(dock, 'a')).toBe(true);
 		expect(shapeOf(dock.layout.docked)).toEqual(placed);
@@ -430,15 +433,15 @@ describe('a layout put back as it was (a cancelled gesture) (#782 PR7)', () => {
 
 	it('a pane floating then, docked again meanwhile, remembers its place again', () => {
 		const dock = moved780();
-		const home = dock.homeSlot('a');
+		const home = homeMark(dock, 'a');
 		const snapshot = snapshotOf(dock);
 		// Meanwhile a is docked somewhere else (its place is spent) and d is floated.
 		dock.dockPanel('a', 'd', 'bottom');
 		dock.undockPanel('d');
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 		adoptLayout(dock, snapshot);
-		expect(dock.homeSlot('a')).toBe(home);
-		expect(dock.homeSlot('d')).toBeUndefined();
+		expect(homeMark(dock, 'a')).toBe(home);
+		expect(dock.hasHome('d')).toBe(false);
 		expect(shadowStateOf(dock).unplaced).toEqual([]);
 		for (const id of ['e', 'a', 'b']) expect(back(dock, id), id).toBe(true);
 		expect(shapeOf(dock.layout.docked)).toEqual(shape780);

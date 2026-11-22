@@ -894,15 +894,14 @@ describe('homeSlot follows the layout, not the path (#735)', () => {
 	it('docked through the API, then floated again: back puts it at the new place', () => {
 		const dock = fresh();
 		dock.undockPanel('a');
-		expect(dock.homeSlot('a')).toBeDefined();
+		expect(dock.hasHome('a')).toBe(true);
 		dock.dockPanel('a', 'c', 'right');
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 		dock.undockPanel('a');
-		const slot = dock.homeSlot('a');
-		expect(slot).toBeDefined();
-		expect(dock.dockAtSlot('a', slot!)).toBe(true);
+		expect(dock.hasHome('a')).toBe(true);
+		expect(dock.dockBack('a')).toBe(true);
 		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['b', 'c', 'a'] });
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 	});
 
 	it('docked by `layout = ...`, or gone and loaded again floating: forgotten', () => {
@@ -910,10 +909,10 @@ describe('homeSlot follows the layout, not the path (#735)', () => {
 		dock.undockPanel('a');
 		const json = dock.serialize();
 		dock.layout = { ...dock.layout, floating: [], docked: make() };
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 		// The saved layout with `a` floating: no place comes back with it (not saved).
 		expect(dock.hydrate(json)).toBe(true);
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 	});
 
 	// #738 review: the id stays floating across the swap, so the setter alone would keep it.
@@ -922,7 +921,7 @@ describe('homeSlot follows the layout, not the path (#735)', () => {
 		dock.undockPanel('a');
 		expect(dock.hydrate('{ not json')).toBe(false);
 		expect(dock.hydrate(JSON.stringify({ version: 2, floating: 1, docked: null }))).toBe(false);
-		expect(dock.homeSlot('a')).toBeDefined();
+		expect(dock.hasHome('a')).toBe(true);
 		const other = dockWithDefault(
 			{ version: 2, floating: [], docked: splitNode('t', 'column', ['a', 'b', 'c'].map(panel)) },
 			counterMakeId()
@@ -930,14 +929,14 @@ describe('homeSlot follows the layout, not the path (#735)', () => {
 		other.undockPanel('a');
 		expect(dock.hydrate(other.serialize())).toBe(true);
 		expect(dock.layout.floating.some((w) => w.id === 'a')).toBe(true);
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 	});
 
 	it('reset re-creating the same pane as a floating window: forgotten', () => {
 		const dock = fresh();
 		dock.undockPanel('a');
 		dock.reset([{ id: 'a', title: 'A' }], 1000, 800);
-		expect(dock.homeSlot('a')).toBeUndefined();
+		expect(dock.hasHome('a')).toBe(false);
 	});
 
 	it('hidden and shown in its new place: the old place is not kept', () => {
@@ -946,16 +945,16 @@ describe('homeSlot follows the layout, not the path (#735)', () => {
 		dock.dockPanel('b', 'c', 'right');
 		dock.dismiss('b');
 		expect(dock.show('b')).toBe('docked');
-		expect(dock.homeSlot('b')).toBeUndefined();
+		expect(dock.hasHome('b')).toBe(false);
 	});
 
 	it('a floated window closed and opened again keeps its place (as before)', () => {
 		const dock = fresh();
 		dock.undockPanel('b');
 		dock.close('b');
-		expect(dock.homeSlot('b')).toBeDefined();
+		expect(dock.hasHome('b')).toBe(true);
 		dock.open('b');
-		expect(dock.dockAtSlot('b', dock.homeSlot('b')!)).toBe(true);
+		expect(dock.dockBack('b')).toBe(true);
 		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 	});
 });

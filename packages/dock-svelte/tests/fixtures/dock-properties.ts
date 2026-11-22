@@ -195,7 +195,7 @@ export const hiddenIds = (dock: DockState): string[] =>
 	dock.layout.floating.filter((w) => !w.open && w.dockShare !== undefined).map((w) => w.id);
 /** The floated panes that remember a docked place (`homeSlot`). */
 export const floatedIds = (dock: DockState): string[] =>
-	dock.layout.floating.filter((w) => w.open && dock.homeSlot(w.id)).map((w) => w.id);
+	dock.layout.floating.filter((w) => w.open && dock.hasHome(w.id)).map((w) => w.id);
 
 /**
  * Run one step as text (the notation of `split-sizes.test.ts`'s `runSteps`, with the moves of a
@@ -240,8 +240,7 @@ export function runStep(dock: DockState, step: string): void {
 	else if (step[0] === '+') dock.show(id);
 	else if (step[0] === '~') dock.undockPanel(id);
 	else if (step[0] === '^') {
-		const slot = dock.homeSlot(id);
-		if (slot) dock.dockAtSlot(id, slot);
+		dock.dockBack(id);
 	} else throw new Error(`unknown step ${step}`);
 }
 

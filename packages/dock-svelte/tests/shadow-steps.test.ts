@@ -36,7 +36,7 @@ function dockOf(tree: DockNode): DockState {
 	dock.defaultLayout = { version: 2, floating: [], docked: tree };
 	return dock;
 }
-const back = (dock: DockState, id: string): boolean => dock.dockAtSlot(id, dock.homeSlot(id)!);
+const back = (dock: DockState, id: string): boolean => dock.dockBack(id);
 const sizesOf = (node: DockNode | null | undefined): number[] =>
 	node?.type === 'split' ? node.sizes : [];
 const idsOf = (node: DockNode | null | undefined): string[] =>
@@ -134,7 +134,7 @@ describe('an id S keeps out of sight is not shown twice (review of PR #864, 3)',
 		const again = dockOf(grouped());
 		again.undockPanel('b');
 		again.ensureWindow({ id: 'T', title: 'T' }, 800, 600);
-		const predicted = again.restoredAt('b', again.homeSlot('b')!, counterMakeId());
+		const predicted = again.backTree('b', counterMakeId());
 		expect(predicted).toEqual(dock.layout.docked);
 	});
 
@@ -146,8 +146,8 @@ describe('an id S keeps out of sight is not shown twice (review of PR #864, 3)',
 		dock.undockPanel('b');
 		dock.ensureWindow({ id: 'T', title: 'T' }, 800, 600);
 		dock.ensureWindow({ id: 'b:restored', title: 'other' }, 800, 600);
-		const predicted = dock.restoredAt('b', dock.homeSlot('b')!, fixed);
-		expect(dock.dockAtSlot('b', dock.homeSlot('b')!, fixed)).toBe(true);
+		const predicted = dock.backTree('b', fixed);
+		expect(dock.dockBack('b', fixed)).toBe(true);
 		expect(dock.layout.docked).toEqual(predicted);
 		const group = dock.layout.docked?.type === 'split' ? dock.layout.docked.children[1] : null;
 		expect(group?.id).toBe('b:restored-2');

@@ -60,7 +60,7 @@ describe('an id made again by a slot is free of the whole layout (#782 PR6)', ()
 		dock.undockPanel('b');
 		dock.dockExistingAtEdge('c', 'left');
 		expect(dock.autoHideRegion('d')).toBe(true);
-		expect(dock.dockAtSlot('b', dock.homeSlot('b')!)).toBe(true);
+		expect(dock.dockBack('b')).toBe(true);
 		expect(twice(allIds(dock.layout))).toEqual([]);
 		expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
 		// And the band's region comes back beside it.

@@ -211,15 +211,15 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   - 引き出しの中で開いたモーダル（`aria-modal`）と背景では引っ込めない。ドッキングの層と引き出しの層は
     `isolation: isolate` で分けるが、モーダルが開いている間は外す（OverlayPanel はその場に fixed で描くため）。
 - 隠した pane の出し直し（#782 PR5）: 既定のレイアウトでの位置（`core/defaultPlace.ts`。`DockState.defaultLayout` は保存しない）。
-  閉じた窓は `dockShare`（隠す直前の比率）だけを持ち、slot は持たない。下の slot の話は、浮かせた pane（`homeSlot`）と
+  閉じた窓は `dockShare`（隠す直前の比率）だけを持ち、slot は持たない。下の slot の話は、浮かせた pane（`homeSlot` / `hasHome`）と
   端の帯（`autoHidden[].slot`）にだけ残る。
 - 影の木 S が配置を決める（#782 PR6）: 浮かせる・元の場所へ戻す・移動・ドロップ・仕切りのドラッグ・隠す・出し直すは、
   `DockState` が非公開の S（`core/shadow.ts`。浮かせた pane は墓石）の上で結果を作り、`layout.docked` にはその射影を入れる。
   新しい配置の操作を足すときも「S の上で作って射影を入れる」（`#projected`）。`core/tree.ts` で見える木を直に組むと、
   墓石の場所を知らない結果になり、S は組み直しになる。事前の問い合わせ（予告）も同じ S の関数を読む
-  （`shownTree`・`restoredAt`・`droppedTree`・`droppedAtEdgeTree`）。`homeSlot` の slot は「その場所の名前」として渡すだけ。
+  （`shownTree`・`backTree`・`droppedTree`・`droppedAtEdgeTree`）。`homeSlot` の slot は「その場所の名前」として渡すだけ。
 - S の上で作らない変化（#782 PR7、2026-11-23 オーナー決定）: 外からの代入（`dock.layout = ...`・`syncPanels`・`saved` なしの
-  `replaceLayout`）・丸ごとの置き換え・`homeSlot` 以外の slot での `dockAtSlot` では、**代入が何を動かしたかを推し量らない**。
+  `replaceLayout`）・丸ごとの置き換え・`homeSlot` 以外の slot での `dockAtSlot`（PR8c で経路ごと消す）では、**代入が何を動かしたかを推し量らない**。
   `regraftShadow`（`core/shadow.ts`）が、後の木に前の S の墓石を「元いた入れ物（id）の、元の添字」へ入れ直すだけ。
   入れ物が無ければ S に場所を持たず、「元の場所に戻す」は既定の位置に出す（`#shadowLost` → `placeInShadowAtDefault`）。
   代入をまたぐ比率の再現（#741・#743 の補正、`#withoutGoneShares` / `#withoutLeftShares` / `slotsWithoutLeft`）は消した。
@@ -230,7 +230,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。5 段以上の slot を含むレイアウトだけ `version: 3` で保存する
     （`core/layoutVersion.ts`。`DockLayout['version']` は `2 | 3`）。旧実装の複製 `tests/fixtures/slot-main.ts` は #782 PR7 で削った。
   - validate は、帯の矛盾した slot だけ root にして読む。浮動 window の `dockSlot`（#782 PR5 より前の保存値）は読まずに捨てる。
-  - 外したパネルの元の場所は `DockState` の非公開 Map（公開は `homeSlot(id)`、README 未記載）。足すのは `undockPanel` だけ。
+  - 外したパネルの元の場所は `DockState` の非公開 Map（公開は `hasHome(id)`・`dockBack(id)`・`backTree(id)`、README 未記載。旧 `homeSlot(id)` は PR8c で消す）。足すのは `undockPanel` だけ。
     消すのは、setter（浮動でなくなった id）・`hydrate`・`reset`・`forgetHomeSlots`。
   - slot の `share` は「外したパネルも数えた split 全体の割合」（`size` は旧来の意味、`version` 不変）。
     `homeSlot` の slot は浮かせた時に S から 1 回書き、書き換えない（#782 PR7。比率の正は S）。
