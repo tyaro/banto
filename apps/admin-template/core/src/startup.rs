@@ -372,6 +372,15 @@ mod tests {
         ] {
             let candidate_path = dir.path().join("candidate.sqlite3");
             let candidate = migrated(&candidate_path).await;
+            // A database that has started once (the seed marker is there):
+            // the check on the working copy then seeds nothing, so what is
+            // broken here stays broken whatever this app's seed list holds
+            // (an unseeded candidate is judged AFTER the seed - see
+            // `an_unseeded_candidate_is_judged_by_its_settings_after_the_seed`).
+            SettingsService::new(candidate.clone())
+                .seed_first_boot(&[])
+                .await
+                .unwrap();
             exec(&candidate, breakage).await;
             exec(&candidate, "PRAGMA wal_checkpoint(TRUNCATE)").await;
             close(candidate).await;
@@ -652,10 +661,14 @@ mod tests {
         };
         let dir = tempfile::tempdir().unwrap();
 
-        // The candidate: a desktop database in its default mode, started once.
+        // The candidate: a desktop database in its default mode (no login, no
+        // public viewing), started once. The seed is written empty here, not
+        // from this app's `FIRST_BOOT_SETTINGS`: a preset's seed may turn
+        // public viewing on, and this test is about a candidate without it.
         let candidate_path = dir.path().join("candidate.sqlite3");
         let candidate = migrated(&candidate_path).await;
-        crate::first_boot::seed_first_boot_settings(&SettingsService::new(candidate.clone()))
+        SettingsService::new(candidate.clone())
+            .seed_first_boot(&[])
             .await
             .unwrap();
         check(&candidate, Wiring::Desktop).await.unwrap();
