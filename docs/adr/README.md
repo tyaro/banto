@@ -80,6 +80,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0032](0032-root-e2e-typecheck-devdeps.md)          | e2e/ の型検査のため、ルートの devDependencies に `@types/node`・`typescript`・`axe-core` を足す（ADR-0002 の例外。実行時の影響なし）                                                            | Accepted                   |
 | [0033](0033-dock-svelte-fast-check-devdep.md)       | `@banto/dock-svelte` の性質テストのため、devDependencies に `fast-check` を足す（ADR-0002 の例外。テストだけで実行時の影響なし）                                                                | Accepted                   |
 | [0034](0034-owner-identity-builtin-admin.md)        | 持ち主は再利用されない `accountId` で識別し、ログインなしの操作は組み込みの `admin` に帰属させ、初回セットアップを無くす（v8.0.0。互換不要・DB 作り直し。ADR-0017 に追記）                      | Accepted                   |
+| [0035](0035-detached-writes.md)                     | 書き込みは接続の切断から切り離して最後まで走らせ、停止は残った書き込みを成功にしない（Issue #793。`BoundServer::serve` の層 1 つ。再設定は露出の向きで分ける）                                  | Proposed                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 

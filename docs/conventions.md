@@ -54,6 +54,13 @@ CI の frontend ジョブで強制）が検査する。対象は各節に **[機
   「認証済みだがロール不足」のみ。無セッション（Unauthorized）は記録しない
   — この判断も両側で揃える。
 
+**書き込みを接続の切断から切り離す層は REST だけにある**（Issue #793、
+[ADR-0035](adr/0035-detached-writes.md)）。`BoundServer::serve` が POST・PUT・PATCH・DELETE を
+別のタスクで最後まで走らせる（除外の口は無い。冪等にはしない）。Tauri のコマンドは接続に
+結び付いていないので層が要らない。これは輸送の違いで、認可と監査の対称は変わらない。
+handler を足すときに包む必要は無いが、**handler の中の順序（確定 → 失効 → 監査）は層では
+直らない**。
+
 機能追加時: 新しい mutating コマンドを片方の経路にだけ足さない。両経路 +
 両経路の denied を必ずペアで実装・テストする（template-scope §6 チェックリスト④⑤）。
 
@@ -151,7 +158,7 @@ SQL の違いが読めることを優先する。match の片方の腕だけを�
 | `chrono` / `time` | 例外あり（[ADR-0029](adr/0029-chrono-datetime-formatting.md)） | 日時の文字列変換（`SystemTime`・エポックからの日数 → `YYYY-MM-DD` など）は `banto-core::datetime` の 1 か所が `chrono`（`default-features = false`）で行い、`banto-attachments`・`banto-admin-services`（backup・audit）・app の `core/src/db.rs` はそれを呼ぶ（手書きの `civil_from_days` は無い）。`compact_stamp` は文字列処理のまま。ローカル日付の取得だけは app の core が `clock` feature を足す（[ADR-0028](adr/0028-chrono-local-date.md)） |
 | MIME 検出ライブラリ | マジックバイト判定 | `banto-attachments` `detect_mime`（下記§6） |
 | `multipart` | 生バイト body + `?fileName=` クエリ | `banto-server` `routes/backups.rs`・app `rest/attachments.rs` のアップロード |
-| `tower-http` | `axum::middleware::from_fn` の手書き | `security_headers.rs` / `csrf.rs` |
+| `tower-http` | `axum::middleware::from_fn` の手書き | `security_headers.rs` / `csrf.rs` / `detach.rs` |
 | markdown ライブラリ | 自前パーサ + エスケープ | `packages/report/src/core/{parse,bind,html}.ts`（deps 空） |
 | `tracing` | `eprintln!` | `audit.rs` |
 

@@ -22,6 +22,7 @@ mod elevated_launch;
 mod firewall_change;
 mod firewall_status;
 mod keyring_store;
+mod leftover_writes;
 
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::attachment_wiring::{attachment_audit_detail, sweep_item_attachments};
@@ -53,10 +54,12 @@ use banto_server::routes::{
 };
 use banto_server::{
     bind as bind_listener, bind_with_port_fallback, bind_without_fallback, lan_addrs_for_bind,
-    lan_urls_for_bind, reach_check_router, static_router, with_security_headers, AuthState,
-    BoundServer, GrantKind, PortFallbackError, ReachCheckState, ReachCheckStatus, ReachIssue,
-    ReachIssueError, ReachTarget, RunningServer, ServerConfig, ServerEvent,
+    lan_urls_for_bind, reach_check_router, restoring_previous_stays_within, static_router,
+    with_security_headers, AuthState, BoundServer, GrantKind, PortFallbackError, ReachCheckState,
+    ReachCheckStatus, ReachIssue, ReachIssueError, ReachTarget, RunningServer, ServerConfig,
+    ServerEvent, ServerExposure,
 };
+use leftover_writes::LeftoverWrites;
 use qrcode::render::svg;
 use qrcode::QrCode;
 use serde::Serialize;
@@ -2113,6 +2116,11 @@ struct ServerSlot {
     /// listener, and what became of that listener. Cleared by a successful
     /// apply.
     apply_failure: Option<ServerApplyFailure>,
+    /// Writes that listeners stopped by earlier applies had accepted and that
+    /// were still running when the stop gave up waiting (Issue #793,
+    /// ADR-0035). No listener is started for a new configuration while any
+    /// of them runs.
+    leftover_writes: LeftoverWrites,
 }
 
 impl ServerSlot {
@@ -2122,6 +2130,7 @@ impl ServerSlot {
             generation: 0,
             port_notice,
             apply_failure: None,
+            leftover_writes: LeftoverWrites::default(),
         }
     }
 }
@@ -2163,10 +2172,16 @@ struct ServerListener {
 /// A `server_apply` that failed after it had stopped the listener that was
 /// running (Issue #459). Codes and values only - the frontend builds any text
 /// (conventions §13). Mirrors `serverAdmin.ts::ServerApplyFailure`.
+///
+/// One case is not "nothing was saved" (Issue #793, ADR-0035):
+/// `reason: WritesRemaining` with `previous: LeftClosed` is a NARROWING change
+/// whose settings WERE saved; only the new listener was not started, because
+/// writes of the stopped one are still running.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ServerApplyFailure {
-    /// The settings the failed apply asked for (none of them were saved).
+    /// The settings the failed apply asked for (none of them were saved,
+    /// except with `previous: LeftClosed` - see above).
     enabled: bool,
     bind: String,
     port: u16,
@@ -2184,6 +2199,10 @@ enum ServerApplyFailureReason {
     /// The new listener was bound but the settings could not be saved (a
     /// storage error, or the final auth/LAN re-validation refused them).
     SaveFailed,
+    /// Writes accepted by the stopped listener (or by one stopped earlier)
+    /// were still running after the wait, so no listener was started for the
+    /// requested settings (Issue #793, ADR-0035).
+    WritesRemaining,
 }
 
 /// What became of the listener that was running before a failed apply.
@@ -2197,6 +2216,11 @@ enum PreviousServerOutcome {
     /// The previous listener could not be bound again: nothing is serving
     /// although the saved settings still say enabled.
     RestoreFailed,
+    /// The previous listener was deliberately NOT brought back: the change
+    /// narrows the exposure (public viewing off, a narrower bind), so the
+    /// settings were saved and the listener stays closed until the remaining
+    /// writes are done and the settings are applied again (Issue #793).
+    LeftClosed,
 }
 
 /// `server_status`/`server_apply`'s shared response shape - mirrors
@@ -2942,6 +2966,10 @@ async fn server_apply_body(
 
     // Refuse an illegal auth/LAN combination BEFORE anything is stopped.
     state.settings.validate_server_config(&config).await?;
+    // What the listener that is about to stop was serving under (閲覧公開 is
+    // read from the saved settings per request) - for the direction of the
+    // change, should writes remain after the stop (Issue #793).
+    let saved_before = state.settings.server_config().await?;
 
     // From here on the live state changes (Issue #459: a new generation),
     // whatever the outcome. Bumped before the first await that changes
@@ -2957,16 +2985,64 @@ async fn server_apply_body(
     // The rollback below restores the listener that is actually running - its
     // own bind address and port (Issue #459) - not the saved settings, which
     // may differ (e.g. a launch-time port fallback whose save failed).
+    let stop_started = std::time::Instant::now();
     let previous = match slot.live.take() {
         Some(live) => {
             let previous = ServerConfig {
                 bind: live.bind.clone(),
                 port: live.server.local_addr().port(),
             };
-            live.server.stop().await;
+            // Issue #793 / ADR-0035: the stop refuses new writes, waits for
+            // the ones the listener accepted, and says so when some are still
+            // running. They cannot be cancelled, so they are kept track of.
+            let stopped = live.server.stop_waiting_writes_for(WRITES_STOP_WAIT).await;
+            if let Some(remaining) = stopped.remaining() {
+                slot.leftover_writes.add(remaining);
+            }
             Some(previous)
         }
         None => None,
+    };
+    // Writes left behind by an EARLIER apply get the rest of the same wait
+    // (all of it when nothing had to be stopped just now).
+    let writes_done = slot
+        .leftover_writes
+        .wait(WRITES_STOP_WAIT.saturating_sub(stop_started.elapsed()))
+        .await;
+    let remaining_writes = (!writes_done).then(|| slot.leftover_writes.audit_detail());
+    // With writes still running, no listener may start under the requested
+    // settings: such a write could change state after the new configuration
+    // took effect. Which way out is safe depends on the direction:
+    // - the server is being turned off: nothing starts anyway - go on (save,
+    //   stay closed), and put the remaining writes in the audit row;
+    // - widening or equal: fail the switch, save nothing, bring the previous
+    //   listener back (the rollback below) - the writes finish under the
+    //   configuration that accepted them;
+    // - narrowing: the previous listener must NOT come back (it would leave
+    //   open what was just closed). Save, stay closed, ask to apply again.
+    let writes_block = if writes_done || !config.enabled {
+        None
+    } else {
+        let previous_exposure = match &previous {
+            Some(previous) => ServerExposure {
+                listening: true,
+                bind: previous.bind.clone(),
+                viewer_public: saved_before.viewer_public,
+            },
+            None => ServerExposure::closed(),
+        };
+        let requested_exposure = ServerExposure {
+            listening: true,
+            bind: config.bind.clone(),
+            viewer_public: config.viewer_public,
+        };
+        Some(
+            if restoring_previous_stays_within(&previous_exposure, &requested_exposure) {
+                WritesBlock::RefuseAndRestore
+            } else {
+                WritesBlock::SaveAndStayClosed
+            },
+        )
     };
 
     // Serving on an already-bound listener cannot fail (the bind is the only
@@ -3006,6 +3082,25 @@ async fn server_apply_body(
     // still stored. (Saving first - the oldest order - left the new values
     // stored while the old server was already gone whenever the bind failed.)
     let outcome: Result<Option<LiveServer>, (ServerApplyFailureReason, BantoError)> = async {
+        match writes_block {
+            None => {}
+            Some(WritesBlock::RefuseAndRestore) => {
+                return Err((
+                    ServerApplyFailureReason::WritesRemaining,
+                    BantoError::Other(
+                        "処理中の書き込みが残っているため、設定を切り替えられませんでした。\
+                         設定は変更していません。少し待ってから、もう一度適用してください。"
+                            .to_string(),
+                    ),
+                ));
+            }
+            Some(WritesBlock::SaveAndStayClosed) => {
+                save_server_config_locked(state, &config)
+                    .await
+                    .map_err(|err| (ServerApplyFailureReason::SaveFailed, err))?;
+                return Ok(None);
+            }
+        }
         let bound = if config.enabled {
             // No fallback port here (an explicit choice is never silently
             // changed), but a port in use is told apart for the status.
@@ -3037,25 +3132,51 @@ async fn server_apply_body(
 
     match outcome {
         Ok(started) => {
+            // Saved, but no listener although the settings say enabled: the
+            // narrowing change with writes still running (see above).
+            let left_closed = config.enabled && started.is_none();
             slot.live = started;
             // The user's own settings now apply; a launch-time port notice
             // or an earlier failure no longer describes the live server.
             slot.port_notice = None;
-            slot.apply_failure = None;
+            slot.apply_failure = left_closed.then(|| ServerApplyFailure {
+                enabled: config.enabled,
+                bind: config.bind.clone(),
+                port: config.port,
+                reason: ServerApplyFailureReason::WritesRemaining,
+                previous: PreviousServerOutcome::LeftClosed,
+            });
+            let mut detail = serde_json::json!({
+                "serverEnabled": config.enabled,
+                "bind": config.bind,
+                "port": config.port,
+                "viewerPublic": config.viewer_public,
+            });
+            // Issue #793: writes of the stopped listener that were still
+            // running when the settings were saved stay on record (how many,
+            // and which as far as known).
+            if let Some(remaining) = &remaining_writes {
+                detail["remainingWrites"] = remaining.clone();
+            }
+            if left_closed {
+                detail["listening"] = serde_json::json!(false);
+            }
             record_ok(
                 &state.audit,
                 &actor,
                 "settings_change",
                 "settings",
                 None,
-                Some(serde_json::json!({
-                    "serverEnabled": config.enabled,
-                    "bind": config.bind,
-                    "port": config.port,
-                    "viewerPublic": config.viewer_public,
-                })),
+                Some(detail),
             )
             .await;
+            if left_closed {
+                return Err(BantoError::Other(
+                    "設定を保存し、サーバーを停止しました。処理中の書き込みが残っているため、\
+                     新しい設定ではまだ起動していません。少し待ってから、もう一度適用してください。"
+                        .to_string(),
+                ));
+            }
             // `config` is what was just saved, under this same lock.
             Ok(build_status(&config, &slot))
         }
@@ -3091,7 +3212,7 @@ async fn server_apply_body(
             // The failed attempt is audited too (conventions §1: an applied
             // change and a refused/failed one both leave a record), with the
             // same `resource`/`action` as the success entry.
-            let detail = serde_json::json!({
+            let mut detail = serde_json::json!({
                 "serverEnabled": config.enabled,
                 "bind": config.bind,
                 "port": config.port,
@@ -3100,6 +3221,9 @@ async fn server_apply_body(
                 "restoredPrevious": restored,
                 "error": err.to_string(),
             });
+            if let Some(remaining) = &remaining_writes {
+                detail["remainingWrites"] = remaining.clone();
+            }
             state
                 .audit
                 .record(AuditEntry {
@@ -3117,6 +3241,24 @@ async fn server_apply_body(
         }
     }
 }
+
+/// What `server_apply` does when writes of a stopped listener are still
+/// running and the requested settings need a listener (Issue #793, ADR-0035).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WritesBlock {
+    /// Widening or equal change: fail, save nothing, restore the previous
+    /// listener.
+    RefuseAndRestore,
+    /// Narrowing change: save, leave the listener closed.
+    SaveAndStayClosed,
+}
+
+/// How long `server_apply` waits for the writes of the listener it stops
+/// (ADR-0035). Short under test, where a write is held on purpose.
+#[cfg(not(test))]
+const WRITES_STOP_WAIT: std::time::Duration = banto_server::DETACHED_WRITES_STOP_TIMEOUT;
+#[cfg(test)]
+const WRITES_STOP_WAIT: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Re-validate (inside `set_server_config`, which re-reads `auth.disabled`),
 /// save the `server.*` settings and revoke public viewer tokens, all under
@@ -4776,6 +4918,10 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Issue #793: `server_apply` with writes of the stopped listener still
+    // running (`src/tests/server_writes.rs`).
+    mod server_writes;
 
     /// [`auth_config_apply_with_permissions_body`] without permissions,
     /// returning just the settings (most tests do not care about them).
@@ -9982,6 +10128,7 @@ mod tests {
                 reason: ServerApplyFailureReason::PortInUse,
                 previous: PreviousServerOutcome::RestoreFailed,
             }),
+            leftover_writes: LeftoverWrites::default(),
         };
         let value = serde_json::to_value(build_status(&ServerSettings::default(), &slot)).unwrap();
         assert_eq!(value["live"], serde_json::Value::Null);

@@ -62,6 +62,14 @@ Tauri paths**. Only the origin (`"rest"` / `"tauri"`) differs.
   (Unauthorized) is not recorded — this decision, too, is aligned on both
   sides.
 
+**The layer that detaches writes from the connection exists on REST only**
+(Issue #793, [ADR-0035](adr/0035-detached-writes.en.md)). `BoundServer::serve`
+runs POST, PUT, PATCH and DELETE to completion in their own task (no opt-out;
+not idempotent). A Tauri command is not tied to a connection, so it needs no
+layer. This is a difference of transport; the symmetry of authorization and
+audit is unchanged. A new handler needs no wrapping, but **the order inside a
+handler (commit -> revoke -> audit) is not fixed by the layer**.
+
 When adding a feature: do not add a new mutating command to only one of the
 paths. Always implement and test both paths + the denied case on both paths as
 a pair (template-scope §6 checklist ④⑤).
@@ -154,7 +162,7 @@ implementation:
 | `chrono` / `time` | Exception ([ADR-0029](adr/0029-chrono-datetime-formatting.en.md)) | Turning dates and times into text (`SystemTime` / days since the epoch -> `YYYY-MM-DD` etc.) is done in one place, `banto-core::datetime`, with `chrono` (`default-features = false`); `banto-attachments`, `banto-admin-services` (backup, audit) and the app's `core/src/db.rs` call it (no hand-written `civil_from_days` remains). `compact_stamp` stays plain string handling. Only reading the local date makes the app core add the `clock` feature ([ADR-0028](adr/0028-chrono-local-date.en.md)) |
 | MIME detection library | magic-byte detection | `banto-attachments` `detect_mime` (see §6 below) |
 | `multipart` | raw byte body + `?fileName=` query | uploads in `banto-server` `routes/backups.rs` · app `rest/attachments.rs` |
-| `tower-http` | hand-written `axum::middleware::from_fn` | `security_headers.rs` / `csrf.rs` |
+| `tower-http` | hand-written `axum::middleware::from_fn` | `security_headers.rs` / `csrf.rs` / `detach.rs` |
 | markdown library | own parser + escaping | `packages/report/src/core/{parse,bind,html}.ts` (deps empty) |
 | `tracing` | `eprintln!` | `audit.rs` |
 
