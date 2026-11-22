@@ -272,6 +272,47 @@ interface HeldShadow {
 	said: Map<DockSlot, DockSlot | undefined>;
 }
 
+/**
+ * The slot `place` without the names of the panes of `moved` at the levels they are no longer in:
+ * `moved` gives, for a docked pane an assignment put somewhere else, the splits / tab groups of S
+ * that still hold it. A level names the panes its container held (`deflateShadow`), and the
+ * container is found again by them (`inflateShadow`): a pane that went out of it is not one.
+ */
+function withoutMoved(place: DockSlot, moved: Map<string, Set<string>>): DockSlot {
+	if (moved.size === 0 || place.kind === 'root') return place;
+	const outer = place.outer ? { outer: withoutMoved(place.outer, moved) } : {};
+	const here = place.kind === 'tab' ? place.groupId : place.splitId;
+	const keep = (id: string): boolean => moved.get(id)?.has(here) !== false;
+	// A moved pane still in the container is named last: it tells which container this is, not
+	// where in it the place is (the ones that stayed do, nearest first).
+	const names = (ids: string[]): string[] => {
+		const kept = ids.filter(keep);
+		return [...kept.filter((id) => !moved.has(id)), ...kept.filter((id) => moved.has(id))];
+	};
+	if (place.kind === 'tab') return { ...place, anchors: names(place.anchors), ...outer };
+	let anchors = names(place.anchors);
+	let otherAnchors = place.otherAnchors ? names(place.otherAnchors) : [];
+	let side = place.side;
+	const stays = (ids: string[]): string | undefined => ids.find((id) => !moved.has(id));
+	// Nobody left to be beside on that side: the place is told from the other side.
+	if (stays(anchors) === undefined && stays(otherAnchors) !== undefined) {
+		[anchors, otherAnchors] = [otherAnchors, anchors];
+		side = side === 'before' ? 'after' : 'before';
+	}
+	const { otherAnchors: _, ...rest } = place;
+	return {
+		...rest,
+		side,
+		neighborId:
+			side === place.side && keep(place.neighborId) && !moved.has(place.neighborId)
+				? place.neighborId
+				: (stays(anchors) ?? anchors[0] ?? place.neighborId),
+		anchors,
+		...(otherAnchors.length > 0 ? { otherAnchors } : {}),
+		...outer
+	};
+}
+
 export class DockState {
 	#layout: DockLayout = $state(emptyLayout());
 	/**
@@ -485,6 +526,10 @@ export class DockState {
 				// Not the layout it was held with after all: made again from that S alone.
 				banded = null;
 			}
+			// S before the docked panes that left their place are taken out of it (below): what the
+			// places are named by.
+			const named = from;
+			let moved = new Map<string, Set<string>>();
 			if (!this.#adopting) {
 				const s = from;
 				const placed = new Set(shadowPanelIds(s, 'away'));
@@ -520,6 +565,7 @@ export class DockState {
 					const left = this.#withoutLeft(s, next);
 					if (known && !left.banded && left.tree !== s && fits(left.tree)) return;
 					from = left.tree;
+					moved = left.moved;
 				}
 			}
 			// Made again (`inflateShadow`) from the places S itself says (`deflateShadow`): what S knew
@@ -529,16 +575,28 @@ export class DockState {
 			// band is still beside it when that pane is back (#739).
 			// The shares are S's of now all the same (Codex P2 on #870): of a place said before, only
 			// what names its neighbours is kept.
-			const said = new Map(deflateShadow(from).away.map((a) => [a.panel.id, a.slot]));
+			// Likewise for the docked panes this assignment took out of their place: the shares are
+			// S's without them (#743), the names S's with them - a pane moved elsewhere still tells
+			// which split a place was in (the split is found again by the panes it held), but for
+			// the containers it is no longer in (`withoutMoved`).
+			const slotsOf = (tree: ShadowNode | null) =>
+				new Map(deflateShadow(tree).away.map((a) => [a.panel.id, a.slot]));
+			const said = slotsOf(from);
+			const names =
+				named === from
+					? said
+					: new Map([...slotsOf(named)].map(([id, slot]) => [id, withoutMoved(slot, moved)]));
+			const none = new Set<string>();
 			const away: ShadowAway[] = [];
 			for (const [id, home] of pending) {
 				const fresh = said.get(id);
+				const base = banded ? this.#placeOf(home) : (names.get(id) ?? fresh);
 				const now =
-					fresh === undefined
+					fresh === undefined || base === undefined
 						? undefined
-						: banded
-							? withSharesOf(this.#placeOf(home), fresh, banded)
-							: fresh;
+						: base === fresh
+							? fresh
+							: withSharesOf(base, fresh, banded ?? none);
 				if (now !== undefined) this.#placeSaid.set(home, now);
 				const win = next.floating.find((w) => w.id === id);
 				if (win)
@@ -600,9 +658,10 @@ export class DockState {
 	}
 
 	/**
-	 * `s` without its shown panes that `next` no longer docks - dropped by an assignment made from
-	 * today's layout (`ThreePaneDock`'s `syncPanels`, `DockHost.replaceLayout` without `saved`): they
-	 * left for good, so their shares go to their siblings in S, the tombstones among them (#743,
+	 * `s` without its shown panes that `next` takes out of the split / tab group they were in -
+	 * dropped, or docked into another container, by an assignment made from today's layout
+	 * (`ThreePaneDock`'s `syncPanels`, `DockHost.replaceLayout` without `saved`): they left their
+	 * place for good, so their shares go to their siblings in S, the tombstones among them (#743,
 	 * `removeFromShadow`), and the places S remembers stay as they are (#782 PR6). `tree` is `s`
 	 * itself when none left. A pane that went to an edge band is not taken out (`banded`): a region
 	 * there comes back by `size` and its share is not taken out of the others' (#739) - S is made
@@ -611,15 +670,98 @@ export class DockState {
 	#withoutLeft(
 		s: ShadowNode | null,
 		next: DockLayout
-	): { tree: ShadowNode | null; banded: boolean } {
+	): { tree: ShadowNode | null; banded: boolean; moved: Map<string, Set<string>> } {
 		const docked = new Set(collectPanelIds(next.docked));
-		const left = shadowPanelIds(s, 'shown').filter((id) => !docked.has(id));
-		if (left.length === 0) return { tree: s, banded: false };
+		// Out of the split / tab group it was in: gone from the tree, or docked in another one. When
+		// the one it was in is gone too (folded around the last pane left in it), the pane that
+		// stayed is the one docked where that container was: in the container around it, at its
+		// place among the children that were there before (the first such pane).
+		const before = projectShadow(s);
+		const childrenOf = (root: DockNode | null, id: string | undefined): DockNode[] | null => {
+			const node = id === undefined ? null : findNode(root, id);
+			return node && node.type !== 'panel' ? node.children : null;
+		};
+		// The container around `id` in `next` that was there before: one made by the assignment
+		// (around the pane and what was dropped beside it) is not another place.
+		const known = new Set<string>();
+		const note = (node: DockNode | null): void => {
+			if (!node || node.type === 'panel') return;
+			known.add(node.id);
+			node.children.forEach(note);
+		};
+		note(before);
+		const aroundNow = (id: string): string | undefined => {
+			let parent = findParent(next.docked, id);
+			while (parent && !known.has(parent.id)) parent = findParent(next.docked, parent.id);
+			return parent?.id;
+		};
+		// What stayed of a container that is gone: its children standing where it stood - the one
+		// the tree was folded around, or the ones a container made by the assignment holds there.
+		const stayed = new Map<string, Set<string>>();
+		const stayedOf = (was: Exclude<DockNode, DockPanelNode>): Set<string> => {
+			const seen = stayed.get(was.id);
+			if (seen) return seen;
+			const mine = new Set<string>(was.children.map((c) => c.id));
+			const of = (node: DockNode): Set<string> => {
+				const out = new Set<string>();
+				const walk = (n: DockNode): void => {
+					if (mine.has(n.id)) out.add(n.id);
+					else if (n.type !== 'panel' && !known.has(n.id)) n.children.forEach(walk);
+				};
+				walk(node);
+				return out;
+			};
+			let found = new Set<string>();
+			const outer = findParent(before, was.id);
+			const now = childrenOf(next.docked, outer?.id);
+			// The root: what the whole tree was folded around.
+			if (!outer) found = next.docked ? of(next.docked) : found;
+			else if (now) {
+				const here = new Set(now.map((c) => c.id));
+				const others = new Set(outer.children.filter((c) => c.id !== was.id).map((c) => c.id));
+				const ahead = (list: DockNode[], end: number): number =>
+					list.slice(0, end).filter((c) => others.has(c.id) && here.has(c.id)).length;
+				const place = ahead(
+					outer.children,
+					outer.children.findIndex((c) => c.id === was.id)
+				);
+				const at = now.find((c, i) => of(c).size > 0 && ahead(now, i) === place);
+				if (at) found = of(at);
+			}
+			stayed.set(was.id, found);
+			return found;
+		};
+		const left = shadowPanelIds(s, 'shown').filter((id) => {
+			if (!docked.has(id)) return true;
+			const was = findParent(before, id);
+			if (was === null) return false;
+			if (childrenOf(next.docked, was.id)) return aroundNow(id) !== was.id;
+			// The container around it is gone as well: nothing to go by, it is taken to have stayed.
+			const outer = findParent(before, was.id);
+			if (outer && !childrenOf(next.docked, outer.id)) return false;
+			return !stayedOf(was).has(id);
+		});
 		const inBand = new Set(autoHiddenPanelIds(next));
 		const gone = left.filter((id) => !inBand.has(id));
+		// A pane docked elsewhere is still in every container of S around the one it is in now.
+		const moved = new Map<string, Set<string>>();
+		for (const id of gone) {
+			if (!docked.has(id)) continue;
+			const around = new Set<string>();
+			const now = aroundNow(id);
+			const walk = (n: ShadowNode): boolean => {
+				if (n.type === 'panel') return false;
+				if (n.id !== now && !n.children.some(walk)) return false;
+				around.add(n.id);
+				return true;
+			};
+			if (now !== undefined && s !== null) walk(s);
+			moved.set(id, around);
+		}
 		return {
 			tree: gone.reduce((tree, id) => removeFromShadow(tree, id), s),
-			banded: gone.length < left.length
+			banded: gone.length < left.length,
+			moved
 		};
 	}
 

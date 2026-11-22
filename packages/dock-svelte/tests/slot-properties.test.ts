@@ -20,7 +20,7 @@
 // #782 PR8. The 14 by floats that #782 PR6 passed are ordinary cases now.
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
-import { collectPanelIds, removePanel } from '../src/core/tree';
+import { collectPanelIds, findNode, findParent, removePanel } from '../src/core/tree';
 import type { DockState } from '../src/state.svelte';
 import type { DockNode } from '../src/types';
 import {
@@ -36,6 +36,7 @@ import {
 	newDock,
 	opRecipe,
 	permutations,
+	resolveStep,
 	runOps,
 	runStep,
 	runSteps,
@@ -841,5 +842,99 @@ describe('the generators (#782 PR1)', () => {
 			params(300)
 		);
 		expect(seen.size).toBeGreaterThan(100);
+	});
+});
+
+// #782 PR7: the docked tree changed from outside (`dock.layout = ...`, made with `core/tree.ts` on
+// the docked tree: what `ThreePaneDock`'s `syncPanels` and an app's own assignment do) while panes
+// are floated. S follows such an assignment - a pane that left its split releases its share, and
+// S is made again from the places it says - so the floated panes still go back.
+describe('floated panes: assignments from outside in between (#782 PR7)', () => {
+	const OUTSIDE: OpKind[] = ['drop', 'assign', 'assignTab'];
+
+	it('docked panes removed and moved by assignments: every floated pane goes back docked, the sizes are sound', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(1, 4), ops(1, 3), ops(0, 2), (recipe, out, outside, more) => {
+				const tree = buildTree(recipe);
+				const dock = newDock(tree);
+				const steps = [
+					...runOps(dock, out, ['float']),
+					...runOps(dock, outside, OUTSIDE),
+					...runOps(dock, more, ['float', 'move', 'edge', ...OUTSIDE])
+				];
+				const floated = floatedIds(dock);
+				fc.pre(floated.length >= 1);
+				for (const id of floated) {
+					runStep(dock, `^${id}`);
+					steps.push(`^${id}`);
+				}
+				const left = floated.filter((id) => !dockedIds(dock).includes(id));
+				if (left.length > 0) failCase(tree, steps, `not back docked: ${left.join(', ')}`);
+				if (dock.layout.floating.length > 0) failCase(tree, steps, 'a window is left');
+				const bad = badSizes(dock.layout.docked);
+				if (bad.length > 0) failCase(tree, steps, `bad sizes ${bad.join(', ')}`);
+			}),
+			params(300)
+		);
+	});
+
+	it('a docked pane removed by an assignment is as one hidden for good (#743): the same tree after the floated panes are back', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(1, 4), ops(1, 3), (recipe, out, drops) => {
+				const tree = buildTree(recipe);
+				const dock = newDock(tree);
+				const steps = [...runOps(dock, out, ['float']), ...runOps(dock, drops, ['drop'])];
+				const floated = floatedIds(dock);
+				fc.pre(floated.length >= 1 && steps.some((step) => step[0] === '!'));
+				const backs = floated.map((id) => `^${id}`);
+				const hidden = steps.map((step) => (step[0] === '!' ? `-${step.slice(1)}` : step));
+				const diff = treeDiff(
+					treeAfter(tree, [...steps, ...backs], false),
+					treeAfter(tree, [...hidden, ...backs], false)
+				);
+				if (diff) failCase(tree, [...steps, ...backs], `not as with ${hidden.join(' ')}: ${diff}`);
+			}),
+			params(300)
+		);
+	});
+
+	it('a docked pane moved out of its split by an assignment: the shares of the split it left are as when it is removed', () => {
+		fc.assert(
+			fc.property(splitTreeRecipe, ops(1, 3), opRecipe, (recipe, out, move) => {
+				const tree = buildTree(recipe);
+				const dock = newDock(tree);
+				const steps = runOps(dock, out, ['float']);
+				const step = resolveStep(dock, move, ['assign']);
+				fc.pre(step !== null);
+				const [id, target] = [step!.split('=>')[0], step!.split('=>')[1].split(':')[0]];
+				// Out of its split, and not into one that is made around a sibling of it.
+				const parentOf = (pane: string) => findParent(dock.layout.docked, pane)?.id;
+				const from = parentOf(id);
+				fc.pre(parentOf(id) !== undefined && parentOf(id) !== parentOf(target));
+				const floated = floatedIds(dock);
+				fc.pre(floated.length >= 1);
+				const backs = floated.map((f) => `^${f}`);
+				const all = [...steps, step!, ...backs];
+				// Which pane left is told by the split still being there (a split of two that is folded
+				// around the other one, with the moved pane put next to it, reads either way).
+				runStep(dock, step!);
+				fc.pre(findNode(dock.layout.docked, from!)?.type === 'split');
+				const movedTree = treeAfter(tree, all, false);
+				const removedTree = treeAfter(tree, [...steps, `!${id}`, ...backs], false);
+				// The split it left (when it is still there, with the same children) is shared as when
+				// the pane is removed. Where the floated panes land around the pane's new place is as
+				// far as a slot can say it (`inflateShadow`), and the sizes there are the assignment's.
+				const sharesOf = (root: DockNode | null): string | null => {
+					const node = root && findNode(root, from!);
+					if (!node || node.type !== 'split') return null;
+					return node.children.map((c, i) => `${c.id}:${node.sizes[i].toFixed(6)}`).join(' ');
+				};
+				const [got, want] = [sharesOf(movedTree), sharesOf(removedTree)];
+				const ids = (text: string) => text.replace(/:[\d.]+/g, '');
+				if (got !== null && want !== null && ids(got) === ids(want) && got !== want)
+					failCase(tree, all, `the split it left: ${got} != ${want} (with !${id})`);
+			}),
+			params(300)
+		);
 	});
 });

@@ -778,7 +778,7 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 `DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent?, saved?, commit?, applied? })`（`commit`・`applied` は下の「保存してよい配置の確定」。レイアウト全体の置き換えを `beforePanelChange` を通して
 行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない。保存した値（`serialize()` /
 `savedLayout()`）を入れるときは `saved: true` を渡す。浮かせたパネルの「元の場所に戻す」の控えを、`hydrate` と同じく入れるのと同時に捨てる。
-`saved` を付けないときは、今の `dock.layout` から作った値として `dock.layout = ...` と同じに入れる（#741）: 控えは残す。置き換えがドッキング中のパネルを外したときは、
+`saved` を付けないときは、今の `dock.layout` から作った値として `dock.layout = ...` と同じに入れる（#741）: 控えは残す。置き換えがドッキング中のパネルを外した・別の分割やタブの組へ動かしたときは、
 そのパネルが持っていた比率を、同じ分割の残り（浮かせたパネルの元の場所も数える）に比例で配る（#743）。
 置き換えがパネルを足す・動かすときも、浮かせたパネルの元の場所は引き継ぐ（#782 PR7）。保存した値を `saved` なしで渡すと、今の配置の控えが保存値の木に当てはめられる）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
 

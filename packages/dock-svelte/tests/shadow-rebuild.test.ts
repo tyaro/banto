@@ -5,7 +5,7 @@
 // out of the tree (the moves made on it, the shares) is kept, and nothing rewrites a `homeSlot`:
 // it only names the place.
 import { describe, expect, it } from 'vitest';
-import { dockPanelAtEdge, removePanel } from '../src/core/tree';
+import { dockPanelAtEdge, dockPanelIntoTree, removePanel } from '../src/core/tree';
 import {
 	adoptLayout,
 	createDockState,
@@ -16,7 +16,7 @@ import {
 	type ShadowFollow
 } from '../src/state.svelte';
 import type { DockNode, DockPanelNode } from '../src/types';
-import { counterMakeId } from './fixtures/dock-properties';
+import { badSizes, counterMakeId, runSteps } from './fixtures/dock-properties';
 import { permutations } from './fixtures/exhaustive';
 import { shapeOf } from './fixtures/visibility-sim';
 
@@ -270,4 +270,130 @@ describe('a region in an edge band: the shares S holds since are kept (#782 PR7)
 		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c'] });
 		close(sizesOf(dock.layout.docked), [0.2, 0.3, 0.5]);
 	});
+});
+
+// Codex P2 on #870 (the second): a docked pane an assignment moves into another container left
+// the split it was in, as one it removes did (#743) - its share goes to the ones left there, the
+// places of the floated panes among them.
+describe('a docked pane moved out of its split by an assignment (#782 PR7)', () => {
+	const tree = (): DockNode =>
+		split(
+			'col',
+			'column',
+			[0.6, 0.4],
+			[split('r', 'row', [0.1, 0.2, 0.3, 0.4], ['a', 'b', 'c', 'e'].map(panel)), panel('d')]
+		);
+	const moved = (dock: DockState, id: string, target: string, region: 'right' | 'center') => {
+		const node = panel(id);
+		dock.layout = {
+			...dock.layout,
+			docked: dockPanelIntoTree(
+				removePanel(dock.layout.docked, id),
+				node,
+				target,
+				region,
+				() => 'moved'
+			)
+		};
+	};
+	const rowR = (dock: DockState): number[] => {
+		const find = (n: DockNode | null): number[] | undefined => {
+			if (n?.type !== 'split') return undefined;
+			if (n.id === 'r') return n.sizes;
+			for (const c of n.children) {
+				const hit = find(c);
+				if (hit) return hit;
+			}
+			return undefined;
+		};
+		return find(dock.layout.docked) ?? [];
+	};
+
+	for (const region of ['right', 'center'] as const) {
+		it(`a floated, c moved to ${region} of d by an assignment, a back: 1/7, 2/7, 4/7`, () => {
+			const dock = dockOf(tree());
+			dock.undockPanel('a');
+			moved(dock, 'c', 'd', region);
+			expect(heldIn(dock, 'a')).toBeCloseTo(1 / 7, 9);
+			expect(back(dock, 'a')).toBe(true);
+			close(rowR(dock), [1 / 7, 2 / 7, 4 / 7]);
+		});
+	}
+
+	it('the same as the move made by `dockExisting`', () => {
+		const by = dockOf(tree());
+		by.undockPanel('a');
+		by.dockExisting('c', 'd', 'right');
+		expect(back(by, 'a')).toBe(true);
+		close(rowR(by), [1 / 7, 2 / 7, 4 / 7]);
+	});
+
+	it('a pane moved inside its split holds its share: the places are as they were', () => {
+		const dock = dockOf(tree());
+		dock.undockPanel('a');
+		moved(dock, 'c', 'e', 'right');
+		expect(heldIn(dock, 'a')).toBeCloseTo(0.1, 9);
+		expect(back(dock, 'a')).toBe(true);
+		expect(rowR(dock).reduce((x, y) => x + y, 0)).toBeCloseTo(1, 9);
+		expect(rowR(dock)[0]).toBeCloseTo(0.1, 9);
+	});
+});
+
+// The cases the property "floated panes: assignments from outside in between"
+// (`slot-properties.test.ts`) found while #782 PR7 was made, pinned.
+describe('pinned: docked panes moved by an assignment while panes are floated (#782 PR7)', () => {
+	const even = (id: string, direction: 'row' | 'column', children: DockNode[]): DockNode =>
+		split(
+			id,
+			direction,
+			children.map(() => 1 / children.length),
+			children
+		);
+	const cases: [string, DockNode, string[], unknown][] = [
+		[
+			'the last pane showing of a split moved into the split beside it',
+			even('s1', 'row', [
+				even('s2', 'column', ['a', 'b', 'c'].map(panel)),
+				even('s3', 'column', ['d', 'e'].map(panel))
+			]),
+			['~a', '~b', 'c=>d:left', '^a', '^b'],
+			{ row: [{ column: ['a', 'b'] }, { column: [{ row: ['c', 'd'] }, 'e'] }] }
+		],
+		[
+			'a pane moved into the tabs of a pane deeper in its own split',
+			even('s1', 'row', [
+				panel('a'),
+				even('s2', 'column', [even('s3', 'row', ['b', 'c'].map(panel)), panel('d')]),
+				panel('e'),
+				panel('f')
+			]),
+			['~e', '~f', 'a=>c:center', '^e', '^f'],
+			{ row: [{ column: [{ row: ['b', { tabs: ['c', 'a'] }] }, 'd'] }, 'e', 'f'] }
+		],
+		[
+			'a split of two folded around the pane left, the other put beside it',
+			even('s1', 'row', [panel('a'), even('s2', 'column', ['b', 'c'].map(panel)), panel('d')]),
+			['~a', 'b=>d:left', '^a'],
+			{ row: ['a', 'c', 'b', 'd'] }
+		],
+		[
+			'a pane moved into the split a pane of its own was folded into',
+			even('s1', 'column', [
+				panel('a'),
+				panel('b'),
+				panel('c'),
+				even('s2', 'row', ['d', 'e'].map(panel))
+			]),
+			['~a', '~b', 'c=>d:left', '^a', '^b'],
+			{ column: ['a', 'b', { row: ['c', 'd', 'e'] }] }
+		]
+	];
+	for (const [name, tree, steps, shape] of cases) {
+		it(`${name}: ${steps.join(' ')}`, () => {
+			const dock = runSteps(tree, steps);
+			expect(dock.layout.floating).toEqual([]);
+			expect(badSizes(dock.layout.docked)).toEqual([]);
+			expect(JSON.stringify(shapeOf(dock.layout.docked))).toBe(JSON.stringify(shape));
+		});
+	}
 });

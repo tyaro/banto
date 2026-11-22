@@ -222,7 +222,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   `homeSlot` 以外の slot での `dockAtSlot`）では、**その時点の S から場所を書き出して**（`deflateShadow`）新しい木に
   組み直す（`inflateShadow`）。浮かせた時の slot は読まない。setter の `share` の補正（`#withoutGoneShares` /
   `#withoutLeftShares` / `slotsWithoutLeft`）は消した: 比率は S が持ち、ドッキング中の pane が消えれば
-  `removeFromShadow` が墓石にも比例で配る（#743）。slot に手で補正を足し直さない。例外は 2 つ:
+  `removeFromShadow` が墓石にも比例で配る（#743）。代入で別の入れ物へ動かされた pane も「離れた」と数える（`#withoutLeft`。判定は代入の前後の見える木から。場所の名前は外す前の S、比率は外した後の S から取る）。slot に手で補正を足し直さない。例外は 2 つ:
   区画が端の帯にある間は S がその pane を持たないので、隣の名前は S が全員を持っていた最後の時点の場所（`#placeSaid`）から、比率は今の S から取って組む（`withSharesOf`。帯の pane を名指す段は控えた比率のまま）
   （PR8 で帯を S に載せたら消す）。S に場所が無くなった pane（「場所なし」）は、その場所を `core/slot.ts` で戻す。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:

@@ -7,7 +7,7 @@
 // what goes into a pinned case.
 import fc from 'fast-check';
 import { autoHiddenPanelIds } from '../../src/core/autohide';
-import { collectPanelIds } from '../../src/core/tree';
+import { collectPanelIds, dockPanelIntoTree, findNode, removePanel } from '../../src/core/tree';
 import { createDockState, type DockState } from '../../src/state.svelte';
 import type { DockEdge, DockNode, DropRegion } from '../../src/types';
 import { shapeOf } from './visibility-sim';
@@ -114,7 +114,18 @@ export interface OpRecipe {
  * `move`: `dockExisting` at a side of another docked pane; `tab`: `dockExisting` into its tab
  * group (`center`); `edge`: `dockExistingAtEdge`; `back`: a floated pane back to its place.
  */
-export type OpKind = 'hide' | 'show' | 'move' | 'tab' | 'edge' | 'float' | 'back';
+export type OpKind =
+	| 'hide'
+	| 'show'
+	| 'move'
+	| 'tab'
+	| 'edge'
+	| 'float'
+	| 'back'
+	/** By an assignment from outside: a docked pane removed / moved to a side of another / into its tabs. */
+	| 'drop'
+	| 'assign'
+	| 'assignTab';
 
 export const opRecipe: fc.Arbitrary<OpRecipe> = fc.record({
 	kind: fc.nat({ max: 11 }),
@@ -190,10 +201,33 @@ export const floatedIds = (dock: DockState): string[] =>
  * Run one step as text (the notation of `split-sizes.test.ts`'s `runSteps`, with the moves of a
  * docked pane added): `-x` hide, `+x` show, `~x` float, `^x` back to its place,
  * `x>y:region` `dockExisting`, `x>>edge` `dockExistingAtEdge`, `@` `serialize` / `hydrate`.
+ * By an assignment from outside, made on the docked tree with `core/tree.ts` (#782 PR7, what
+ * `ThreePaneDock`'s `syncPanels` or an app's `dock.layout = ...` does): `!x` the docked pane `x`
+ * removed, `x=>y:region` the docked pane `x` moved to `region` of `y`.
  */
 export function runStep(dock: DockState, step: string): void {
 	if (step === '@') {
 		if (!dock.hydrate(dock.serialize())) throw new Error('hydrate refused its own serialize');
+		return;
+	}
+	const assigned = /^(\w+)=>(\w+):(\w+)$/.exec(step);
+	if (assigned) {
+		const node = findNode(dock.layout.docked, assigned[1]);
+		if (node?.type !== 'panel') return;
+		let n = 0;
+		const docked = dockPanelIntoTree(
+			removePanel(dock.layout.docked, node.id),
+			node,
+			assigned[2],
+			assigned[3] as DropRegion,
+			() =>
+				`asg-${dock.layout.floating.length}-${collectPanelIds(dock.layout.docked).length}-${node.id}-${n++}`
+		);
+		dock.layout = { ...dock.layout, docked };
+		return;
+	}
+	if (step[0] === '!') {
+		dock.layout = { ...dock.layout, docked: removePanel(dock.layout.docked, step.slice(1)) };
 		return;
 	}
 	const edge = /^(\w+)>>(\w+)$/.exec(step);
@@ -229,9 +263,11 @@ export function resolveStep(dock: DockState, op: OpRecipe, kinds: OpKind[]): str
 			? docked.length > 1
 			: kind === 'move' || kind === 'tab' || kind === 'edge'
 				? docked.length > 1
-				: kind === 'show'
-					? hidden.length > 0
-					: floated.length > 0;
+				: kind === 'drop' || kind === 'assign' || kind === 'assignTab'
+					? docked.length > 2
+					: kind === 'show'
+						? hidden.length > 0
+						: floated.length > 0;
 	const able = kinds.filter(can);
 	if (able.length === 0) return null;
 	const kind = able[op.kind % able.length];
@@ -241,12 +277,14 @@ export function resolveStep(dock: DockState, op: OpRecipe, kinds: OpKind[]): str
 	if (kind === 'show') return `+${pick(hidden, op.i)}`;
 	if (kind === 'back') return `^${pick(floated, op.i)}`;
 	const id = pick(docked, op.i);
+	if (kind === 'drop') return `!${id}`;
 	if (kind === 'edge') return `${id}>>${EDGES[op.r % EDGES.length]}`;
 	const target = pick(
 		docked.filter((d) => d !== id),
 		op.j
 	);
-	return `${id}>${target}:${kind === 'tab' ? 'center' : EDGES[op.r % EDGES.length]}`;
+	const region = kind === 'tab' || kind === 'assignTab' ? 'center' : EDGES[op.r % EDGES.length];
+	return `${id}${kind === 'assign' || kind === 'assignTab' ? '=>' : '>'}${target}:${region}`;
 }
 
 /** Run the recipes against `dock`, each resolved when it runs. Returns the steps as text. */
