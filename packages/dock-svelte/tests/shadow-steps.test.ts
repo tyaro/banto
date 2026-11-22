@@ -4,7 +4,15 @@
 // flag S cannot hold.
 import { describe, expect, it } from 'vitest';
 import { validateDockLayout } from '../src/core/validate';
-import { createDockState, shadowStateOf, type DockState } from '../src/state.svelte';
+import { shadowPanelIds } from '../src/core/shadow';
+import { captureDockSlot } from '../src/core/slot';
+import {
+	createDockState,
+	shadowStateOf,
+	watchShadow,
+	type DockState,
+	type ShadowFollow
+} from '../src/state.svelte';
 import type { DockNode, DockPanelNode } from '../src/types';
 import { counterMakeId } from './fixtures/dock-properties';
 
@@ -130,6 +138,34 @@ describe('an id S keeps out of sight is not shown twice (review of PR #864, 3)',
 		expect(predicted).toEqual(dock.layout.docked);
 	});
 
+	// Cross-review of PR #864: the id given instead must be free too. "Back" from the panel menu
+	// docks with a fixed `<pane>:restored`, which a window may have as well.
+	it('the id given instead is one nothing has: a fixed `makeId` whose id is a window`s too', () => {
+		const fixed = (): string => 'b:restored';
+		const dock = dockOf(grouped());
+		dock.undockPanel('b');
+		dock.ensureWindow({ id: 'T', title: 'T' }, 800, 600);
+		dock.ensureWindow({ id: 'b:restored', title: 'other' }, 800, 600);
+		const predicted = dock.restoredAt('b', dock.homeSlot('b')!, fixed);
+		expect(dock.dockAtSlot('b', dock.homeSlot('b')!, fixed)).toBe(true);
+		expect(dock.layout.docked).toEqual(predicted);
+		const group = dock.layout.docked?.type === 'split' ? dock.layout.docked.children[1] : null;
+		expect(group?.id).toBe('b:restored-2');
+		expectLoads(dock);
+	});
+
+	it('a slot of one`s own (the slot path): the split made again takes an id nothing has', () => {
+		const dock = dockOf(split('s', 'row', [0.5, 0.5], [panel('x'), panel('y')]));
+		const slot = captureDockSlot(dock.layout.docked, 'y')!;
+		dock.undockPanel('y');
+		// The row folded into `x`; its id `s` and the fixed id are both a window's now.
+		dock.ensureWindow({ id: 's', title: 'S' }, 800, 600);
+		dock.ensureWindow({ id: 'y:restored', title: 'other' }, 800, 600);
+		expect(dock.dockAtSlot('y', slot, () => 'y:restored')).toBe(true);
+		expect(dock.layout.docked?.id).toBe('y:restored-2');
+		expectLoads(dock);
+	});
+
 	it('the same for a pane hidden and shown into the group, and for a pane dropped onto its tab', () => {
 		const shown = dockOf(split('s', 'row', [0.5, 0.5], [panel('x'), tabs('T', ['a', 'b', 'c'])]));
 		shown.undockPanel('b');
@@ -211,7 +247,13 @@ describe('a `collapsed` flag S cannot hold stays (review of PR #864, 4)', () => 
 
 	it('another divider dragged: a stays collapsed', () => {
 		const dock = collapsedA();
+		const follows: ShadowFollow[] = [];
+		watchShadow(dock, (follow) => follows.push(follow));
 		dock.resizeSplit('s', 1, 0.05);
+		// S is kept as the step made it - not made again from the slots, which would lose what S
+		// knows of the places (cross-review of PR #864).
+		expect(follows.map((f) => f.result)).not.toContain('rebuilt');
+		expect(shadowPanelIds(shadowStateOf(dock).shadow, 'away')).toEqual(['b']);
 		expect(dock.isDockedCollapsed('a')).toBe(true);
 		close(sizesOf(dock.layout.docked), [0.4, 0.35, 0.25]);
 	});

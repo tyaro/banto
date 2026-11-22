@@ -57,6 +57,7 @@ import {
 	sameDocked,
 	shadowPanelIds,
 	withFreeShadowIds,
+	withoutLoneFlags,
 	writeShadowView,
 	type ShadowAway,
 	type ShadowNode
@@ -410,8 +411,17 @@ export class DockState {
 					}
 					if (s === this.#shadow && next.docked === this.#shadowSeen) return;
 					const fits = (tree: ShadowNode | null): boolean => {
-						const same = sameDocked(projectShadow(tree), next.docked);
-						const written = same ? tree : writeShadowView(tree, next.docked);
+						const shown = projectShadow(tree);
+						let same = sameDocked(shown, next.docked);
+						let written = same ? tree : writeShadowView(tree, next.docked);
+						if (written === undefined) {
+							// But for a `collapsed` flag S cannot hold (`#shows` keeps it on the docked
+							// tree): S is as it should be, and is not made again from the slots.
+							const held = withoutLoneFlags(next.docked, tree);
+							if (held === next.docked) return false;
+							same = sameDocked(shown, held);
+							written = same ? tree : writeShadowView(tree, held);
+						}
 						if (written === undefined) return false;
 						this.#shadowIs(written, next.docked);
 						this.#shadowWatch?.({ step: label, result: same ? 'same' : 'written' });
@@ -1139,17 +1149,18 @@ export class DockState {
 		// (a group in an edge band keeps the default group's id; Codex P2 on #863), and one S kept
 		// out of sight gets another.
 		const taken = idsOutOfDocked(layout);
+		const ids = this.#unused(makeId);
 		return withFreeShadowIds(
 			placeInShadowAtDefault(
 				this.#shadow,
 				this.defaultLayout?.docked ?? null,
 				panel,
 				win.dockShare,
-				makeId,
+				ids,
 				taken
 			),
 			taken,
-			makeId
+			ids
 		);
 	}
 
@@ -1191,6 +1202,34 @@ export class DockState {
 	 * `#shownShadow`'s own call, `#droppedOnto`, `#droppedAtEdge`). An assignment from outside that
 	 * docks a pane makes S again (`inflateShadow`, which is given the same ids).
 	 */
+	/**
+	 * `makeId`, made to give ids nothing has (cross-review of PR #864): not a node of S - shown or
+	 * not -, not a floating window or a region in an edge band, not `incoming`, and not one it gave
+	 * before. An id in use gets a number after it (`x`, `x-2`, `x-3` ...). The callers' `makeId`
+	 * may be a fixed one - "back" from the panel menu docks with `<pane>:restored`, the previews
+	 * with theirs - and a random one may be the app's own. What it is not asked for costs nothing.
+	 */
+	#unused(makeId: () => string, incoming?: string): () => string {
+		let used: Set<string> | null = null;
+		return () => {
+			if (used === null) {
+				used = idsOutOfDocked(this.layout);
+				if (incoming !== undefined) used.add(incoming);
+				const add = (node: ShadowNode | null): void => {
+					if (node === null) return;
+					used!.add(node.id);
+					if (node.type !== 'panel') node.children.forEach(add);
+				};
+				add(this.#shadow);
+			}
+			const first = makeId();
+			let id = first;
+			for (let n = 2; used.has(id); n++) id = `${first}-${n}`;
+			used.add(id);
+			return id;
+		};
+	}
+
 	#freed(s: ShadowNode | null, makeId: () => string, incoming?: string): ShadowNode | null {
 		const taken = idsOutOfDocked(this.layout);
 		// The pane a step brings in: a new one (`ensurePanel`) is in no list of the layout yet.
@@ -1221,7 +1260,7 @@ export class DockState {
 		if (slot !== this.#homeSlots.get(id)) return null;
 		if (findShadowPanel(this.#shadow, id)?.away !== true) return null;
 		const win = this.layout.floating.find((w) => w.id === id);
-		return win ? this.#freed(markPresent(this.#shadow, id, win), makeId) : null;
+		return win ? this.#freed(markPresent(this.#shadow, id, win), this.#unused(makeId)) : null;
 	}
 
 	/** S with the pane `node` (docked, or a floating window's) dropped at `region` of `targetId`. */
@@ -1233,13 +1272,15 @@ export class DockState {
 	): ShadowNode | null {
 		// Freed before the step (Codex P2 on #864): the pane's own id counts, so S never holds it
 		// twice; what the step makes anew takes its ids from `makeId`.
-		const s = this.#freed(this.#shadow, makeId, node.id);
-		return dockIntoShadow(s, node, targetId, region, makeId);
+		const ids = this.#unused(makeId, node.id);
+		const s = this.#freed(this.#shadow, ids, node.id);
+		return dockIntoShadow(s, node, targetId, region, ids);
 	}
 
 	/** S with the pane `node` (docked, or a floating window's) along the outer edge `edge`. */
 	#droppedAtEdge(node: DockPanelNode, edge: DockEdge, makeId: () => string): ShadowNode | null {
-		return dockAtShadowEdge(this.#freed(this.#shadow, makeId, node.id), node, edge, makeId);
+		const ids = this.#unused(makeId, node.id);
+		return dockAtShadowEdge(this.#freed(this.#shadow, ids, node.id), node, edge, ids);
 	}
 
 	/**
@@ -1264,7 +1305,7 @@ export class DockState {
 			this.layout.docked,
 			panel,
 			slot,
-			makeId,
+			this.#unused(makeId),
 			this.#pendingSlots(id),
 			idsOutOfDocked(this.layout)
 		);

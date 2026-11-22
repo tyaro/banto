@@ -580,8 +580,9 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		follows.length = 0;
 		dock.setDockedCollapsed('b', true);
 		expect(dock.isDockedCollapsed('b')).toBe(true);
-		// Not written: S is made again, and shows the tree without the flag.
-		expect(follows).toEqual([{ step: null, result: 'rebuilt' }]);
+		// Not written, and S stays as it is (#782 PR6: not made again from the slots): it shows the
+		// tree without the flag, which `DockState` keeps on the docked tree alone.
+		expect(follows).toEqual([{ step: null, result: 'same' }]);
 		const { shadow } = shadowStateOf(dock);
 		expect(sameDocked(projectShadow(shadow), dock.layout.docked)).toBe(false);
 		expect(notFollowing(dock)).toBe(null);

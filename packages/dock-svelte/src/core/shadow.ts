@@ -762,6 +762,34 @@ export function withFreeShadowIds(
 	return free(s);
 }
 
+/**
+ * `docked` without the `collapsed` flags S cannot hold (`writeShadowView`): the flag of a region
+ * that is the only child of a split of `s` that shows. `docked` itself when it has none. What
+ * `DockState` compares the projection of S with: such a flag lives on the docked tree alone, and
+ * is no reason to make S again (#782 PR6).
+ */
+export function withoutLoneFlags(docked: DockNode | null, s: ShadowNode | null): DockNode | null {
+	if (docked === null || s === null) return docked;
+	const lone = new Set<string>();
+	const visit = (node: ShadowNode): void => {
+		if (node.type !== 'split') return;
+		const shown = node.children.filter(isShown);
+		const only = shown.length === 1 ? projectNode(shown[0]) : null;
+		if (only && only.type !== 'split') lone.add(only.id);
+		node.children.forEach(visit);
+	};
+	visit(s);
+	if (lone.size === 0) return docked;
+	const strip = (node: DockNode): DockNode => {
+		if (node.type === 'split') {
+			const children = node.children.map(strip);
+			return children.some((c, i) => c !== node.children[i]) ? { ...node, children } : node;
+		}
+		return lone.has(node.id) ? withoutCollapsed(node) : node;
+	};
+	return strip(docked);
+}
+
 // ----- following the docked tree (#782 PR4) ----------------------------------------------------
 
 /** Two shares that are the same but for the last digits (a projection scales `sizes` to add up to 1). */
@@ -917,9 +945,9 @@ function viewOnto(node: ShadowNode, seen: DockNode): ShadowNode | undefined {
  * One thing S cannot hold: the `collapsed` flag of a region that is the only shown child of a
  * split of S (the others are tombstones). `projectShadow` shows that child without its flag, as
  * `tree.ts#collapse` drops it when the split folds - but in the docked tree the region may be
- * collapsed AFTER the fold, beside its new siblings. `undefined` then (and `inflateShadow` makes an
- * S that shows the tree without that flag); where the flag goes is decided with the write-back of
- * `setRegionCollapsed` (#782 PR5 / PR6).
+ * collapsed AFTER the fold, beside its new siblings. `undefined` then. Such a flag lives on the
+ * docked tree alone (#782 PR6): `DockState` writes the tree without it (`withoutLoneFlags`), so S
+ * stays as it is, and carries the flag over the steps it makes on S.
  */
 export function writeShadowView(
 	s: ShadowNode | null,
