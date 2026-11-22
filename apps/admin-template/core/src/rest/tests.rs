@@ -3301,6 +3301,275 @@ async fn stage_restore_from_existing_backup_then_cancel_is_recorded_in_the_audit
     );
 }
 
+// --- Issue #793 S2: an upload is decided again once its body is in -----------
+
+/// An upload whose body arrives in two parts: `head` at once, `tail` only
+/// when the returned sender fires. The returned receiver resolves when the
+/// handler has started waiting for `tail` - the body is read by the handler's
+/// own extractor, so by then `require_auth` and the role guard have passed.
+/// This is the shape of a body over 2 MiB behind the layer that detaches
+/// writes (it streams those to the handler; smaller ones it hands over whole,
+/// before the guards run). Whatever the test does between the two happens
+/// "while the upload is open".
+fn held_upload(
+    path: &str,
+    token: &str,
+    head: Vec<u8>,
+    tail: Vec<u8>,
+) -> (
+    HttpRequest<Body>,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    use futures_util::StreamExt;
+    let (waiting_tx, waiting_rx) = tokio::sync::oneshot::channel::<()>();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let first = futures_util::stream::once(async move {
+        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(head))
+    });
+    let second = futures_util::stream::once(async move {
+        let _ = waiting_tx.send(());
+        let _ = release_rx.await;
+        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(tail))
+    });
+    let request = HttpRequest::post(path)
+        .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("content-type", "application/octet-stream")
+        .body(Body::from_stream(first.chain(second)))
+        .unwrap();
+    (request, waiting_rx, release_tx)
+}
+
+/// Log `username` in over REST and return its bearer token.
+async fn login_via_rest(router: &Router, username: &str) -> String {
+    let response = router
+        .clone()
+        .oneshot(post_json(
+            "/api/auth/login",
+            json!({ "username": username, "password": "password123" }),
+        ))
+        .await
+        .unwrap();
+    let body = body_json(response).await;
+    assert_eq!(body["success"], true, "{body}");
+    body["token"].as_str().unwrap().to_string()
+}
+
+/// Every audit row, read as `admin` (not `audit_rows_via_rest`: that one
+/// lives in the items block, which a scaffold preset cuts).
+async fn audit_rows_as(router: &Router, admin: &str) -> Vec<serde_json::Value> {
+    let response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/audit-log/list",
+            admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    body_json(response).await["rows"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+/// Issue #793 S2: the guards of `POST /api/backups/restore` decide when the
+/// head of the request arrives; the upload may then stay open for any length
+/// of time. An admin whose account is deleted meanwhile must not get a
+/// restore staged by finishing the upload: the handler decides again once
+/// the body is in. Before the fix this staged the restore (204).
+#[tokio::test]
+async fn a_restore_upload_is_refused_when_its_admin_is_deleted_while_the_upload_is_open() {
+    let (router, _dir, manager, _editor, _viewer) = router_with_role_tokens_and_backup().await;
+
+    // A second admin, and a real backup's bytes to upload.
+    let created = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/users",
+            &manager,
+            json!({
+                "username": "second",
+                "password": "password123",
+                "displayName": "二人目",
+                "role": "admin"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    let second_id = body_json(created).await["id"].as_i64().unwrap();
+    let second = login_via_rest(&router, "second").await;
+
+    let backup = router
+        .clone()
+        .oneshot(post_bytes_auth("/api/backups", &manager, Vec::new()))
+        .await
+        .unwrap();
+    let file_name = body_json(backup).await["fileName"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let download = router
+        .clone()
+        .oneshot(get_auth(&format!("/api/backups/{file_name}"), &manager))
+        .await
+        .unwrap();
+    assert_eq!(download.status(), StatusCode::OK);
+    let bytes = body_bytes(download).await;
+    let (head, tail) = bytes.split_at(bytes.len() / 2);
+
+    // `second` opens the upload: the guards pass, the handler waits.
+    let (request, waiting, release) = held_upload(
+        "/api/backups/restore?fileName=theirs.sqlite3",
+        &second,
+        head.to_vec(),
+        tail.to_vec(),
+    );
+    let upload = tokio::spawn(router.clone().oneshot(request));
+    waiting.await.expect("the handler is reading the body");
+
+    // Meanwhile the other admin deletes the account.
+    let deleted = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/users/{second_id}"), &manager))
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    // The upload finishes: refused, nothing staged, nothing audited as staged.
+    release.send(()).unwrap();
+    let response = upload.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(body_json(response).await["kind"], "unauthorized");
+    let pending = router
+        .clone()
+        .oneshot(get_auth("/api/backups/pending-restore", &manager))
+        .await
+        .unwrap();
+    assert_eq!(body_json(pending).await, serde_json::Value::Null);
+    let rows = audit_rows_as(&router, &manager).await;
+    assert!(
+        !rows.iter().any(|r| r["action"] == "restore_staged"),
+        "nothing was staged, so nothing is recorded as staged: {rows:?}"
+    );
+
+    // Control: the same held upload by an admin nothing happened to is
+    // staged, and audited to that admin (the actor is the session the
+    // handler decided on).
+    let (request, waiting, release) = held_upload(
+        "/api/backups/restore?fileName=mine.sqlite3",
+        &manager,
+        head.to_vec(),
+        tail.to_vec(),
+    );
+    let upload = tokio::spawn(router.clone().oneshot(request));
+    waiting.await.expect("the handler is reading the body");
+    release.send(()).unwrap();
+    let response = upload.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let pending = router
+        .clone()
+        .oneshot(get_auth("/api/backups/pending-restore", &manager))
+        .await
+        .unwrap();
+    assert!(body_json(pending).await["sizeBytes"].as_u64().unwrap() > 0);
+    let rows = audit_rows_as(&router, &manager).await;
+    let staged = rows
+        .iter()
+        .find(|r| r["action"] == "restore_staged")
+        .unwrap_or_else(|| panic!("expected a restore_staged entry, got {rows:?}"));
+    assert_eq!(staged["actorUsername"], "manager");
+    assert_eq!(staged["actorRole"], "admin");
+    assert_eq!(staged["entityId"], serde_json::Value::Null);
+    assert_eq!(staged["origin"], "rest");
+    assert_eq!(staged["result"], "ok");
+}
+
+/// Issue #793 S2, finding handed to C2 (ADR-0034 section 3, "the audit actor
+/// is the snapshot the guard authorized with"): a write whose session ends
+/// while it runs is still done - it was authorized when it started - but its
+/// audit row is written with NO actor, because `record_write` looks the
+/// bearer token up again after the write and the token is gone by then.
+/// Here an admin logs out while its own `POST /api/users` is in flight: the
+/// account is created and the `create` row has `actorUsername: null`.
+///
+/// Ignored until C2 replaces the re-lookup with the guard's snapshot; remove
+/// the `#[ignore]` there. (The Tauri commands already pass the identity
+/// `require_role` returned, so they do not have this.)
+#[tokio::test]
+#[ignore = "known: record_write re-reads the token after the write (fixed by C2, ADR-0034 section 3)"]
+async fn a_write_is_audited_to_its_actor_when_the_session_ends_while_it_runs() {
+    let (router, _dir, manager, _editor, _viewer) = router_with_role_tokens_and_backup().await;
+    let created = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/users",
+            &manager,
+            json!({
+                "username": "second",
+                "password": "password123",
+                "displayName": "二人目",
+                "role": "admin"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    let second = login_via_rest(&router, "second").await;
+
+    // `second` starts creating an account: the guards pass, the handler
+    // waits for the rest of the JSON body.
+    let body = json!({
+        "username": "third",
+        "password": "password123",
+        "displayName": "三人目",
+        "role": "viewer"
+    })
+    .to_string()
+    .into_bytes();
+    let (head, tail) = body.split_at(5);
+    let (mut request, waiting, release) =
+        held_upload("/api/users", &second, head.to_vec(), tail.to_vec());
+    request
+        .headers_mut()
+        .insert("content-type", "application/json".parse().unwrap());
+    let write = tokio::spawn(router.clone().oneshot(request));
+    waiting.await.expect("the handler is reading the body");
+
+    // Meanwhile `second` logs out.
+    let logout = router
+        .clone()
+        .oneshot(
+            HttpRequest::post("/api/auth/logout")
+                .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+                .header("Authorization", format!("Bearer {second}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::OK);
+
+    // The write was authorized when it started: it is done ...
+    release.send(()).unwrap();
+    let response = write.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    // ... and it must be audited to the admin who made it.
+    let rows = audit_rows_as(&router, &manager).await;
+    let create = rows
+        .iter()
+        .find(|r| {
+            r["action"] == "create"
+                && r["resource"] == "users"
+                && r["detail"].as_str().is_some_and(|d| d.contains("third"))
+        })
+        .unwrap_or_else(|| panic!("expected the create row of `third`, got {rows:?}"));
+    assert_eq!(create["actorUsername"], "second");
+    assert_eq!(create["actorRole"], "admin");
+}
+
 // --- M20: attachments -------------------------------------------------------
 
 /// Full upload -> list -> download -> thumbnail(404, non-image) -> delete
@@ -3807,6 +4076,94 @@ async fn attachment_upload_survives_a_thumbnail_flag_update_failure_with_audit_a
                 && r["result"] == "ok"),
         "expected a successful create audit entry, got {rows:?}"
     );
+}
+
+/// `id` of the account `username`, read as `admin`.
+async fn user_id_via_rest(router: &Router, admin: &str, username: &str) -> i64 {
+    let response = router
+        .clone()
+        .oneshot(get_auth("/api/users", admin))
+        .await
+        .unwrap();
+    let users = body_json(response).await;
+    users
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|user| user["username"] == username)
+        .unwrap_or_else(|| panic!("no account {username} in {users}"))["id"]
+        .as_i64()
+        .unwrap()
+}
+
+/// Issue #793 S2 (the attachments twin of
+/// `a_restore_upload_is_refused_when_its_admin_is_deleted_while_the_upload_is_open`):
+/// an editor demoted to `viewer` while its upload is open does not get the
+/// file stored by finishing the upload. A role change ends the account's
+/// sessions (Issue #204), so the refusal is `401`. Before the fix the file
+/// was stored (200).
+#[tokio::test]
+async fn an_attachment_upload_is_refused_when_its_editor_is_demoted_while_the_upload_is_open() {
+    let (router, _dir, manager, editor, _viewer) = router_with_role_tokens_and_backup().await;
+    let editor_id = user_id_via_rest(&router, &manager, "editor").await;
+    let path = "/api/attachments?resource=items&resourceId=42&fileName=notes.txt";
+
+    // Control first: a held upload by the (still) editor is stored, and
+    // audited to the editor.
+    let (request, waiting, release) = held_upload(path, &editor, b"hello ".to_vec(), b"a".to_vec());
+    let upload = tokio::spawn(router.clone().oneshot(request));
+    waiting.await.expect("the handler is reading the body");
+    release.send(()).unwrap();
+    let response = upload.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stored = body_json(response).await;
+    assert_eq!(stored["createdBy"], "editor");
+    assert_eq!(stored["sizeBytes"], 7);
+
+    // The editor opens another upload: the guards pass, the handler waits.
+    let (request, waiting, release) = held_upload(path, &editor, b"hello ".to_vec(), b"b".to_vec());
+    let upload = tokio::spawn(router.clone().oneshot(request));
+    waiting.await.expect("the handler is reading the body");
+
+    // Meanwhile an admin demotes the account.
+    let demoted = router
+        .clone()
+        .oneshot(put_json(
+            &format!("/api/users/{editor_id}"),
+            &manager,
+            json!({ "displayName": "編集者", "role": "viewer" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(demoted.status(), StatusCode::OK);
+
+    // The upload finishes: refused, and only the first file is there.
+    release.send(()).unwrap();
+    let response = upload.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let list = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/attachments/list",
+            &manager,
+            json!({ "resource": "items", "resourceId": "42" }),
+        ))
+        .await
+        .unwrap();
+    let listed = body_json(list).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+    let rows = audit_rows_as(&router, &manager).await;
+    let creates: Vec<_> = rows
+        .iter()
+        .filter(|r| r["action"] == "create" && r["resource"] == "attachments")
+        .collect();
+    assert_eq!(
+        creates.len(),
+        1,
+        "only the stored file is audited: {rows:?}"
+    );
+    assert_eq!(creates[0]["actorUsername"], "editor");
+    assert_eq!(creates[0]["actorRole"], "editor");
 }
 
 // --- end M20 attachments -----------------------------------------------------

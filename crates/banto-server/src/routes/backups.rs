@@ -86,16 +86,30 @@ async fn backups_restore_from_upload(
     Query(query): Query<RestoreUploadQuery>,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
+    // Issue #793 S2: the guards decided when the head of the request came
+    // in; the upload itself (up to 256 MB, streamed) may have taken any
+    // length of time since. Decide again before staging - an admin removed
+    // or demoted meanwhile must not get a restore staged by finishing an
+    // upload it had left open.
+    let session = recheck_role_at_least(
+        &state.auth,
+        &state.audit,
+        &headers,
+        Role::Admin,
+        "backups",
+        json!({ "method": "POST", "path": "/api/backups/restore" }),
+    )
+    .await?;
     state.backup.stage_restore_from_bytes(&body).await?;
     // `entity_id` stays `None` here on purpose: the canonical rule is
     // "entity_id = the backup file's real name" (like `backups_create` /
     // restore-from-existing on BOTH paths), and an upload has no real backup
     // file identity - the client-supplied display name is untrusted and only
     // ever recorded inside `detail` (maintenance-review-2026-08 §5.3 M-15).
-    record_write(
+    record_write_as(
         &state.audit,
-        &state.auth,
-        &headers,
+        Some(AuditActor::from(&session.identity)),
+        "rest",
         "restore_staged",
         "backups",
         None,

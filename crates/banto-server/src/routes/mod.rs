@@ -88,9 +88,16 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 /// Resolve the caller's [`Identity`] from its bearer token, best-effort
 /// (spec M14): every audit-recording call site needs "who did this", and
 /// every one of them runs AFTER `require_auth`/[`require_role_at_least`] has
-/// already proven the token valid, so this should always resolve - `None`
-/// here is a defensive fallback (e.g. the token expired in the instant
-/// between the guard and the handler running), not an expected path. Shared
+/// already proven the token valid, so this normally resolves.
+///
+/// **Known gap (Issue #793 S2):** this reads the token again, at the time it
+/// is called. Called AFTER a write (as [`record_write`] does), it returns
+/// `None` when the session ended while the write ran - a logout, the
+/// account's deletion or role change, the token's expiry - and the write's
+/// audit row then has no actor. Call it before the write, or better, take
+/// the session the guards validated (`Extension<AuthenticatedSession>`) and
+/// use [`record_write_as`]. C2 replaces this re-lookup with the guard's
+/// snapshot (ADR-0034 section 3). Shared
 /// by the users/backups write handlers here and by the app's own
 /// `items`/`attachments` write handlers; auth-flow events (login/setup/
 /// logout) resolve their own actor differently since they run before or
@@ -174,8 +181,10 @@ pub async fn record_denied_as(
 /// Record a successful write (spec M14: create/update/delete/password_reset
 /// etc.) once the service call it follows has already succeeded. Resolves
 /// the actor from the same bearer token `require_auth`/[`require_role_at_least`]
-/// validated - see [`actor_identity`]. `origin` is `"rest"`; a caller with
-/// another principal or channel uses [`record_write_as`].
+/// validated - see [`actor_identity`], including its known gap: the actor
+/// is looked up when this is called, i.e. after the write. `origin` is
+/// `"rest"`; a caller with another principal or channel uses
+/// [`record_write_as`].
 pub async fn record_write(
     audit: &AuditLogService,
     auth: &AuthState,
@@ -261,6 +270,60 @@ pub async fn require_role_at_least(
             .await
         }
     }
+}
+
+/// Decide the role floor AGAIN, for a handler that waited on the client after
+/// its guards ran (Issue #793 S2).
+///
+/// [`require_auth`] and [`require_role_at_least`] decide when the request's
+/// HEAD arrives. For an ordinary write that is the moment the write starts:
+/// the layer that detaches writes hands over a body of up to 2 MiB before the
+/// guards run, so nothing the client does can stretch the time between the
+/// decision and the write. A LARGER body is streamed to the handler instead
+/// (a backup upload, a big attachment): the guards have passed, and the
+/// handler then waits for the rest of the body for as long as the client
+/// cares to take. An account that was deleted, demoted or re-keyed during
+/// that wait - or a session that was logged out - must not get its write
+/// done by finishing the upload afterwards. Such a handler calls this FIRST
+/// (its body extractor has already run by then) and writes only on `Ok`.
+///
+/// The verdicts are the guards' own: no valid session -> `Unauthorized`
+/// (401, not audited); a role below `min` -> the `denied` audit row for
+/// `resource` with `detail` (REST: `{ method, path }`) and `Forbidden` (403);
+/// the account store failing to answer -> that error (the session is kept).
+/// `Ok` is the session as of NOW - attribute the write's audit row to its
+/// identity ([`record_write_as`]) rather than looking the token up once more.
+///
+/// The Tauri commands need no twin: a command receives its arguments (the
+/// file bytes included) before `require_role` runs, so there is no wait
+/// between its decision and its write.
+pub async fn recheck_role_at_least(
+    auth: &AuthState,
+    audit: &AuditLogService,
+    headers: &HeaderMap,
+    min: Role,
+    resource: &str,
+    detail: serde_json::Value,
+) -> Result<AuthenticatedSession, BantoError> {
+    let Some(token) = bearer_token(headers) else {
+        return Err(BantoError::Unauthorized);
+    };
+    let Some(session) = auth.authenticate(token).await? else {
+        return Err(BantoError::Unauthorized);
+    };
+    let role = Role::from_str(&session.identity.role).ok();
+    if role.is_some_and(|role| role.at_least(min)) {
+        return Ok(session);
+    }
+    record_denied_as(
+        audit,
+        AuditActor::from(&session.identity),
+        "rest",
+        resource,
+        detail,
+    )
+    .await;
+    Err(BantoError::Forbidden)
 }
 
 /// The session a guard decides on (Issue #204): the one `require_auth`
@@ -666,6 +729,140 @@ mod tests {
         held.lock().unwrap().insert(1, vec![]);
         assert_eq!(call(&router, Some(&viewer)).await, StatusCode::FORBIDDEN);
         assert!(auth.verify(&viewer));
+    }
+
+    // --- Issue #793 S2: recheck_role_at_least ---------------------------------
+
+    /// What the account store answers for the account (id 3) in the recheck
+    /// tests: its role, `None` = the account is gone, `Err` = the store does
+    /// not answer.
+    type StoreAnswer = std::sync::Arc<std::sync::Mutex<Result<Option<&'static str>, ()>>>;
+
+    fn recheck_auth(answer: StoreAnswer) -> AuthState {
+        AuthState::new(
+            |_u: String, _p: String| Box::pin(async { None }),
+            SessionValidation::lookup(move |_username: String| {
+                let answer = *answer.lock().unwrap();
+                Box::pin(async move {
+                    match answer {
+                        Ok(role) => Ok(role.map(|role| account(3, role))),
+                        Err(()) => Err(BantoError::Other("store down".into())),
+                    }
+                })
+            }),
+        )
+    }
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        headers
+    }
+
+    async fn recheck(
+        auth: &AuthState,
+        audit: &AuditLogService,
+        headers: &HeaderMap,
+    ) -> Result<AuthenticatedSession, BantoError> {
+        recheck_role_at_least(
+            auth,
+            audit,
+            headers,
+            Role::Editor,
+            "attachments",
+            json!({ "method": "POST", "path": "/api/attachments" }),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn recheck_passes_a_session_that_still_has_the_role() {
+        let audit = service().await;
+        let answer: StoreAnswer = std::sync::Arc::new(std::sync::Mutex::new(Ok(Some("editor"))));
+        let auth = recheck_auth(answer);
+        let token = auth.issue_account_token(account(3, "editor"), false);
+
+        let session = recheck(&auth, &audit, &bearer(&token)).await.unwrap();
+        assert_eq!(session.identity.id, "editor-user");
+        assert_eq!(session.identity.role, "editor");
+        assert!(rows(&audit).await.is_empty(), "a pass records nothing");
+    }
+
+    /// The role is the account's role NOW, not the one the guards saw: too
+    /// low is the guards' own refusal (403 + the `denied` row).
+    #[tokio::test]
+    async fn recheck_refuses_a_role_that_dropped_below_the_floor_and_audits_it() {
+        let audit = service().await;
+        let answer: StoreAnswer = std::sync::Arc::new(std::sync::Mutex::new(Ok(Some("editor"))));
+        let auth = recheck_auth(answer.clone());
+        let token = auth.issue_account_token(account(3, "editor"), false);
+        // The guards passed (as an editor) ...
+        assert!(auth.authenticate(&token).await.unwrap().is_some());
+        // ... then the store reports a viewer under the same stamp.
+        *answer.lock().unwrap() = Ok(Some("viewer"));
+
+        let err = recheck(&auth, &audit, &bearer(&token)).await.unwrap_err();
+        assert!(matches!(err, BantoError::Forbidden), "{err:?}");
+        let rows = rows(&audit).await;
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.actor_username.as_deref(), Some("viewer-user"));
+        assert_eq!(r.actor_role.as_deref(), Some("viewer"));
+        assert_eq!((r.action.as_str(), r.result.as_str()), ("denied", "denied"));
+        assert_eq!(
+            (r.resource.as_str(), r.origin.as_str()),
+            ("attachments", "rest")
+        );
+        assert_eq!(
+            r.detail.as_deref(),
+            Some(r#"{"method":"POST","path":"/api/attachments"}"#)
+        );
+    }
+
+    /// A session that ended while the handler waited - logged out, or its
+    /// account deleted - is `Unauthorized`, and (like `require_auth`) leaves
+    /// no audit row.
+    #[tokio::test]
+    async fn recheck_refuses_a_session_that_ended_and_records_nothing() {
+        let audit = service().await;
+        let answer: StoreAnswer = std::sync::Arc::new(std::sync::Mutex::new(Ok(Some("editor"))));
+        let auth = recheck_auth(answer.clone());
+
+        // Logged out.
+        let token = auth.issue_account_token(account(3, "editor"), false);
+        auth.logout(&token);
+        let err = recheck(&auth, &audit, &bearer(&token)).await.unwrap_err();
+        assert!(matches!(err, BantoError::Unauthorized), "{err:?}");
+
+        // The account is gone.
+        let token = auth.issue_account_token(account(3, "editor"), false);
+        *answer.lock().unwrap() = Ok(None);
+        let err = recheck(&auth, &audit, &bearer(&token)).await.unwrap_err();
+        assert!(matches!(err, BantoError::Unauthorized), "{err:?}");
+        assert!(!auth.verify(&token), "the session is revoked");
+
+        // No token at all.
+        let err = recheck(&auth, &audit, &HeaderMap::new()).await.unwrap_err();
+        assert!(matches!(err, BantoError::Unauthorized), "{err:?}");
+
+        assert!(rows(&audit).await.is_empty());
+    }
+
+    /// The store failing to answer is neither a pass nor a revocation.
+    #[tokio::test]
+    async fn recheck_fails_without_revoking_when_the_store_does_not_answer() {
+        let audit = service().await;
+        let answer: StoreAnswer = std::sync::Arc::new(std::sync::Mutex::new(Err(())));
+        let auth = recheck_auth(answer);
+        let token = auth.issue_account_token(account(3, "editor"), false);
+
+        let err = recheck(&auth, &audit, &bearer(&token)).await.unwrap_err();
+        assert!(matches!(err, BantoError::Other(_)), "{err:?}");
+        assert!(auth.verify(&token), "the session is kept");
+        assert!(rows(&audit).await.is_empty());
     }
 
     #[tokio::test]

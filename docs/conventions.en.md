@@ -68,7 +68,31 @@ runs POST, PUT, PATCH and DELETE to completion in their own task (no opt-out;
 not idempotent). A Tauri command is not tied to a connection, so it needs no
 layer. This is a difference of transport; the symmetry of authorization and
 audit is unchanged. A new handler needs no wrapping, but **the order inside a
-handler (commit -> revoke -> audit) is not fixed by the layer**.
+handler (commit -> revoke -> audit) is not fixed by the layer**. The rules of
+that order (reviewed in S2 of Issue #793):
+
+- **Authorization is decided when the guards pass.** A write that passed runs
+  to the end even if its session ends afterwards (logout, account deletion,
+  role change). Revocation takes effect from the next request.
+- **Commit and revocation are one write.** A change that ends sessions (role,
+  password) advances `auth_epoch` in the same `UPDATE` (never a separate
+  statement). A change that closes a setting goes "persist the closed state ->
+  revoke the issued tokens" ([ADR-0017](adr/0017-credential-less-grant.en.md) §2).
+- **The audit actor is the one obtained before the write** (never looked up
+  again after it: if the session ended in between, there is no actor to find).
+  Tauri passes what `require_role` returned. REST's `record_write` looks the
+  bearer token up again after the write, so it does not meet this rule yet
+  (C2 replaces it with the guard's snapshot,
+  [ADR-0034](adr/0034-owner-identity-builtin-admin.en.md) §3).
+- **A handler that waits on the client after its guards decides again after
+  the wait.** A body over 2 MiB (a backup upload, a large attachment) is
+  streamed to the handler after the guards have passed, so the client can take
+  as long as it likes. Once the body is in, call
+  `banto_server::routes::recheck_role_at_least` and write only when it passes
+  (and audit with the actor it returns). Bodies of 2 MiB or less are received
+  by the layer before the guards run, so they need nothing. A Tauri command
+  receives its arguments (file bytes included) before it calls `require_role`,
+  so it needs nothing either.
 
 When adding a feature: do not add a new mutating command to only one of the
 paths. Always implement and test both paths + the denied case on both paths as

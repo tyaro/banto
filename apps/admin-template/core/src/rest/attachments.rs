@@ -183,7 +183,20 @@ async fn attachments_upload(
     Query(query): Query<AttachmentUploadQuery>,
     body: Bytes,
 ) -> Result<Json<AttachmentMeta>, ApiError> {
-    let created_by = actor_identity(&headers, &state.auth).map(|identity| identity.id);
+    // Issue #793 S2: a file over 2 MiB is streamed to this handler after the
+    // guards have passed, for as long as the client takes. Decide again
+    // before storing it (see `recheck_role_at_least`).
+    let session = banto_server::routes::recheck_role_at_least(
+        &state.auth,
+        &state.audit,
+        &headers,
+        Role::Editor,
+        "attachments",
+        json!({ "method": "POST", "path": "/api/attachments" }),
+    )
+    .await?;
+    let actor = session.identity;
+    let created_by = Some(actor.id.clone());
     validate_attachment_parent(&state.items, &query.resource, &query.resource_id).await?;
     let meta = state
         .attachments
@@ -195,10 +208,10 @@ async fn attachments_upload(
             bytes: body.to_vec(),
         })
         .await?;
-    record_write(
+    banto_server::routes::record_write_as(
         &state.audit,
-        &state.auth,
-        &headers,
+        Some(banto_server::routes::AuditActor::from(&actor)),
+        "rest",
         "create",
         "attachments",
         Some(&meta.id.to_string()),
