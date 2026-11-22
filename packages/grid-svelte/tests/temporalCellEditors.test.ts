@@ -8,7 +8,7 @@
  * next one to the grid, a click inside the dialog neither commits nor
  * unmounts the editor. Plus the native fallback and pasting.
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import DateTimeInput from '../../ui/src/DateTimeInput.svelte';
@@ -74,8 +74,10 @@ const injected: CellEditors = { time: TimeInput, datetime: DateTimeInput };
 function setup(provided: CellEditors = injected) {
 	const onCellEdit = vi.fn();
 	const onRangePaste = vi.fn();
+	const onRowContextMenu = vi.fn();
 	const view = render(CellEditorsHarness<Row>, {
 		provided,
+		onRowContextMenu,
 		rows,
 		columns,
 		getRowId: (row: Row) => row.id,
@@ -87,7 +89,7 @@ function setup(provided: CellEditors = injected) {
 		view.container.querySelector<HTMLElement>(
 			`[data-cell-row="${row}"][data-cell-field="${field}"]`
 		)!;
-	return { ...view, grid, cell, onCellEdit, onRangePaste };
+	return { ...view, grid, cell, onCellEdit, onRangePaste, onRowContextMenu };
 }
 
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
@@ -191,6 +193,16 @@ describe('DateTimeInput in a cell (§5.8)', () => {
 		expect(input.value).toBe('2026-11-20 14:30');
 		expect(document.activeElement).toBe(input);
 		expect(onCellEdit).not.toHaveBeenCalled();
+	});
+
+	it('a right-click on any part of the injected editor does not open the row menu (#784)', async () => {
+		const { cell, onRowContextMenu } = setup();
+		await startEditing(cell(0, 'starts'));
+		const button = cell(0, 'starts').querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!;
+		const event = createEvent.contextMenu(button);
+		button.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(false);
+		expect(onRowContextMenu).not.toHaveBeenCalled();
 	});
 
 	it('typed text stays as typed; a picked value is the editor’s value (its button names it)', async () => {

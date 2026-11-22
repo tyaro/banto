@@ -16,6 +16,7 @@
 		getRowId: (row: TRow) => string | number;
 		onCellEdit?: (edit: CellEdit<TRow>) => void | Promise<void>;
 		onRowClick?: (row: TRow) => void;
+		onRowContextMenu?: (row: TRow, position: { x: number; y: number }) => void;
 		onRangePaste?: (edits: CellEdit<TRow>[], info: { skipped: number }) => void;
 	}
 
@@ -27,6 +28,7 @@
 		getRowId,
 		onCellEdit,
 		onRowClick,
+		onRowContextMenu,
 		onRangePaste
 	}: Props = $props();
 
@@ -34,5 +36,14 @@
 	provideCellEditors(provided ?? {});
 </script>
 
-<BantoGrid {rows} {columns} {getRowId} {onCellEdit} {onRowClick} {onRangePaste} {cellEditors} />
+<BantoGrid
+	{rows}
+	{columns}
+	{getRowId}
+	{onCellEdit}
+	{onRowClick}
+	{onRowContextMenu}
+	{onRangePaste}
+	{cellEditors}
+/>
 <button type="button">Outside</button>

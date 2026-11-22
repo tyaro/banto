@@ -91,6 +91,20 @@
 		/** Server mode only: total row count backing the virtual scroller (NOT `rows.length`, which is just the sparse array's current extent). */
 		totalRows?: number;
 		onRowClick?: (row: TRow) => void;
+		/**
+		 * A data row's context menu was requested: mouse right-click on a cell, or
+		 * (grid focused, active cell on a data row, not editing) the ContextMenu
+		 * key / Shift+F10 - keyboard `x`/`y` = the active cell's left / bottom edge.
+		 * When provided the browser's default menu is suppressed; when omitted it
+		 * is left alone. Right-clicking inside a cell editor keeps the native text
+		 * menu. Never called for group headers, placeholder (loading) rows or an
+		 * empty grid. The row is passed as is: whether to act on it alone or on
+		 * every selected row (`selectedRowIds`) is the caller's decision. Does NOT
+		 * change the row selection. The active cell follows the click, before the
+		 * callback: inside the current cell range the range is kept; outside it
+		 * the range collapses to the clicked cell, as with a left click.
+		 */
+		onRowContextMenu?: (row: TRow, position: { x: number; y: number }) => void;
 		onCellEdit?: (edit: CellEdit<TRow>) => void | Promise<void>;
 		onRangePaste?: (edits: CellEdit<TRow>[], info: { skipped: number }) => void | Promise<void>;
 		/**
@@ -197,6 +211,7 @@
 		mode = 'client',
 		totalRows,
 		onRowClick,
+		onRowContextMenu,
 		onCellEdit,
 		onRangePaste,
 		onParamsChange,
@@ -1082,6 +1097,41 @@
 		if (!hasEditableColumns) onRowClick?.(row);
 	}
 
+	// Right-click on a data cell (#784). Same contract as BantoTree's
+	// `onContextMenu`: no callback -> the browser's own menu; the cell editor
+	// keeps the native text menu; focus follows the click BEFORE the callback;
+	// the row selection and the cell range are left alone.
+	function handleCellContextMenu(event: MouseEvent, rowIndex: number, field: string, row: TRow) {
+		if (!onRowContextMenu) return;
+		// The whole injected editor (calendar buttons, popover) keeps its own menu,
+		// not just its text box.
+		const editorRoot = editorRootEl ?? editorEl;
+		if (
+			editing?.rowId === getRowId(row) &&
+			event.target instanceof Node &&
+			((editorRoot && editorRoot.contains(event.target)) ||
+				(event.target instanceof HTMLElement && event.target.closest('input, select, textarea')))
+		)
+			return;
+		event.preventDefault();
+		containerEl?.focus({ preventScroll: true });
+		// Inside an existing range only the active cell moves (the range, and so
+		// any copy target, stays); anywhere else it collapses to the clicked cell
+		// like a left click.
+		const range = selection.getRange(orderedFieldIds);
+		const fieldIndex = orderedFieldIds.indexOf(field);
+		const inRange =
+			selection.rangeEnd !== null &&
+			range !== null &&
+			rowIndex >= range.rowStart &&
+			rowIndex <= range.rowEnd &&
+			fieldIndex >= range.fieldStart &&
+			fieldIndex <= range.fieldEnd;
+		if (inRange) selection.active = { rowIndex, field };
+		else selection.setActive(rowIndex, field, false);
+		onRowContextMenu(row, { x: event.clientX, y: event.clientY });
+	}
+
 	function handleCellDoubleClick(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
 		if (isEditable(column, row)) {
 			startEditing(rowIndex, column, row);
@@ -1091,6 +1141,83 @@
 	}
 
 	// --- Keyboard navigation (grid container; spec §4.5, §4.7) ---
+	const ENTER_CELL_KEYS = new Set([
+		'ArrowUp',
+		'ArrowDown',
+		'ArrowLeft',
+		'ArrowRight',
+		'Home',
+		'End',
+		'PageUp',
+		'PageDown'
+	]);
+
+	/**
+	 * No active cell yet (grid reached by Tab, no pointer): the first navigation
+	 * key only "enters" the grid - the first data row in view, first column -
+	 * without moving further (#784). With no data row in view (e.g. the visible
+	 * window is still loading), a navigation key falls back to the first data
+	 * row in display order and scrolls to it; the ContextMenu / Shift+F10 keys
+	 * (when wired) open the row menu only on a data row in view, so the menu is
+	 * never anchored to a row that is not on screen.
+	 */
+	function enterFirstCellFromKeyboard(event: KeyboardEvent) {
+		const isMenuKey = event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey);
+		if (isMenuKey ? !onRowContextMenu : !ENTER_CELL_KEYS.has(event.key)) return;
+		const field = orderedFieldIds[0];
+		if (field === undefined) return;
+		const count = effectiveRowCount;
+		if (count === 0) return;
+		const rowHeight = gridState.rowHeight;
+		const firstInView = Math.min(
+			count - 1,
+			Math.max(0, Math.floor(effectiveScrollTop / rowHeight))
+		);
+		const lastInView = Math.min(
+			count - 1,
+			Math.max(firstInView, Math.ceil((effectiveScrollTop + rowsViewportHeight) / rowHeight) - 1)
+		);
+		// [first data row in view, first data row in display order]
+		let inView = -1;
+		let first = -1;
+		if (mode === 'server') {
+			// Only enumerate loaded slots (integer keys come in ascending order);
+			// `totalRows` can span millions of holes, as in `adjacentRow`.
+			for (const key of Object.keys(rows)) {
+				const index = Number(key);
+				if (!Number.isInteger(index) || index >= count || rows[index] === undefined) continue;
+				if (first === -1) first = index;
+				if (index > lastInView) break;
+				if (index >= firstInView) {
+					inView = index;
+					break;
+				}
+			}
+		} else {
+			for (let i = firstInView; i <= lastInView && inView === -1; i++) {
+				if (rowAtDisplayIndex(i)) inView = i;
+			}
+			if (inView !== -1) first = inView;
+			for (let i = 0; i < count && first === -1; i++) {
+				if (rowAtDisplayIndex(i)) first = i;
+			}
+		}
+		const rowIndex = isMenuKey ? inView : inView !== -1 ? inView : first;
+		if (rowIndex === -1) return;
+		event.preventDefault();
+		selection.setActive(rowIndex, field, false);
+		scrollActiveIntoView();
+		if (!isMenuKey) return;
+		const row = rowAtDisplayIndex(rowIndex)!;
+		void tick().then(() => {
+			const cellEl = containerEl?.querySelector<HTMLElement>(
+				`[data-cell-row="${rowIndex}"][data-cell-field="${CSS.escape(field)}"]`
+			);
+			const rect = cellEl?.getBoundingClientRect();
+			onRowContextMenu?.(row, { x: rect?.left ?? 0, y: rect?.bottom ?? 0 });
+		});
+	}
+
 	function handleContainerKeydown(event: KeyboardEvent) {
 		// Header controls, filter inputs and row links own their keyboard
 		// actions. A retained cell selection must not intercept bubbled keys.
@@ -1102,13 +1229,28 @@
 		// Outside an editor, Tab/Shift+Tab follow the browser's focus order,
 		// including header controls and row links, so focus can leave the grid.
 		if (event.key === 'Tab') return;
-		if (!selection.active) return;
+		if (!selection.active) {
+			enterFirstCellFromKeyboard(event);
+			return;
+		}
 
 		const rowCount = effectiveRowCount;
 		const activeColumn = gridState.orderedColumns.find((c) => c.id === selection.active!.field);
 		const activeRow = rowAtDisplayIndex(selection.active!.rowIndex);
 
 		switch (event.key) {
+			case 'ContextMenu':
+			case 'F10': {
+				if (event.key === 'F10' && !event.shiftKey) break;
+				if (!onRowContextMenu || !activeRow) break;
+				event.preventDefault();
+				const cellEl = containerEl?.querySelector<HTMLElement>(
+					`[data-cell-row="${selection.active.rowIndex}"][data-cell-field="${CSS.escape(selection.active.field)}"]`
+				);
+				const rect = cellEl?.getBoundingClientRect();
+				onRowContextMenu(activeRow, { x: rect?.left ?? 0, y: rect?.bottom ?? 0 });
+				break;
+			}
 			case 'ArrowUp':
 				event.preventDefault();
 				// Group headers are just another row slot in `groupedEntries`, so
@@ -1834,6 +1976,7 @@
 							class:error={isEditingCell && !!editing?.error}
 							onpointerdown={(event) => handleCellPointerDown(event, rowIndex, column.id)}
 							onclick={() => handleCellClick(row)}
+							oncontextmenu={(event) => handleCellContextMenu(event, rowIndex, column.id, row)}
 							ondblclick={() => handleCellDoubleClick(rowIndex, column, row)}
 						>
 							{#if column.render}
