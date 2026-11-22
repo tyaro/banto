@@ -54,19 +54,19 @@
 		updateUser,
 		withPermission,
 		type PermissionEntry,
-		type Role as UserRole,
 		type UserPermission,
 		type UserSummary
 	} from '#lib/banto/usersAdmin.js';
+	import type { Role } from '#lib/permissions.js';
 	import PermissionsField from './PermissionsField.svelte';
 
-	const roleOptions: { value: UserRole; label: string }[] = [
+	const roleOptions: { value: Role; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },
 		{ value: 'editor', label: m['role.editor']() },
 		{ value: 'viewer', label: m['role.viewer']() }
 	];
 
-	function roleLabel(role: UserRole): string {
+	function roleLabel(role: Role): string {
 		return roleOptions.find((option) => option.value === role)?.label ?? role;
 	}
 
@@ -74,12 +74,12 @@
 	// alone - admin gets the "info" variant, editor/viewer both "neutral" but
 	// keep distinct icons so they stay visually distinguishable from each
 	// other too.
-	const roleBadgeVariant: Record<UserRole, StatusBadgeVariant> = {
+	const roleBadgeVariant: Record<Role, StatusBadgeVariant> = {
 		admin: 'info',
 		editor: 'neutral',
 		viewer: 'neutral'
 	};
-	const roleBadgeIcon: Record<UserRole, Component> = {
+	const roleBadgeIcon: Record<Role, Component> = {
 		admin: ShieldCheck,
 		editor: Pencil,
 		viewer: Eye
@@ -188,7 +188,7 @@
 				username: String(values.username),
 				password: String(values.password),
 				displayName: String(values.displayName),
-				role: values.role as UserRole
+				role: values.role as Role
 			});
 			toastStore.push('success', m['users.created']());
 			createStore = createFormStore(createSchema);
@@ -227,7 +227,7 @@
 			header: m['common.role'](),
 			accessor: 'role',
 			width: 110,
-			format: (value) => roleLabel(value as UserRole)
+			format: (value) => roleLabel(value as Role)
 		},
 		{ id: 'createdAt', header: m['users.colCreatedAt'](), accessor: 'createdAt', width: 180 }
 	];
@@ -237,7 +237,7 @@
 	// from the original edit session.
 	let selectionEpoch = 0;
 	let editDisplayName = $state('');
-	let editRole: UserRole = $state('viewer');
+	let editRole: Role = $state('viewer');
 	// Issue #651 (optimistic lock): the version the edit form was opened with
 	// (or last saved / reset to). Deliberately NOT the list's current row: a
 	// list reload or SSE refresh while the form is open must not move it, or a
@@ -303,7 +303,7 @@
 	}
 
 	/** What `showLatest` put in the form, so `syncPermissions` can tell input made while the list was re-read. */
-	function conflictSnapshot(): { displayName: string; role: UserRole; version: number } {
+	function conflictSnapshot(): { displayName: string; role: Role; version: number } {
 		return { displayName: editDisplayName, role: editRole, version: editVersion };
 	}
 
@@ -321,7 +321,7 @@
 	function syncPermissions(
 		targetId: number,
 		epoch: number,
-		snapshot: { displayName: string; role: UserRole; version: number }
+		snapshot: { displayName: string; role: Role; version: number }
 	): void {
 		if (editPermissions !== null || epoch !== selectionEpoch || selected?.id !== targetId) return;
 		const row = users.find((user) => user.id === targetId);
