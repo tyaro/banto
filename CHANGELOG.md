@@ -24,6 +24,7 @@
 
 消費側への注意（破壊的。次のメジャー v8.0.0 に入る。詳細は下の各項目と [docs/upgrading.md](docs/upgrading.md) 4.2 節）:
 
+- **Node の基準を 24 から 26 に上げる（#837 を置き換える）。** Node 26 は 2026-10-28 から Active LTS。派生アプリ（ルートの `package.json` を取り込む場合）は Node 26 が必要になる: `engines.node` を `>=26`、`.nvmrc` を `26`、devDependencies の `@types/node` を `^26.0.0`、CI の `setup-node` の `node-version` を `26` にする。取り込まなければ今までどおり。
 - **基準の作り直し: DB を作り直す（#790・#778・#786 の C1、[ADR-0034](docs/adr/0034-owner-identity-builtin-admin.md) 決定 §9）。** `core/migrations-{sqlite,postgres}/0003_users.sql`・`0005_audit_log.sql` を差し替え、`0014_ui_settings.sql` を足す（自分の migration を 0014 以降で足しているなら番号をずらす）。v7.11.0 以前の DB は起動時に「この DB は v8.0.0 より前の版のものです。読めません。DB を作り直してください」で止まり、旧版のバックアップはリストアの予約で断られる。データの移行は無い。
   - 新しい DB には組み込みのユーザー `admin`（`users.kind = 'builtin'`）が 1 行居る。ログイン・変更・削除はできない。`admin` という username のアカウントは作れないので、試験・fixture で作っているなら別の名前にする。`UserSummary` に `kind`（`'account'` / `'builtin'`）が増えた（Rust の構造体と wire の両方）。
   - `users` へ直接 INSERT しているコード・試験は `account_uid`（一意の文字列）を入れる（無いと CHECK で失敗）。アカウントは `kind = 'account'` で数える。
@@ -37,6 +38,7 @@
 
 ### Changed
 
+- **Node の基準を 24 から 26 に上げた（#837 を置き換える）。** `.nvmrc`・ルートの `engines.node`（`>=26`）・`@types/node`（`^26.0.0`。ルートと `fixtures/external-consumer`）・全 workflow の `node-version`・README / `docs/upgrading.md` / `docs/recipes/windows-setup.md` の前提表記を 26 にした。
 - **dock-svelte・grid-svelte・theme:** primary の文字（DockedTree・DockWindow の選択・開閉、BantoGrid の一括選択・開閉記号、HeaderCell の並べ替え・絞り込み表示）を `--banto-primary-text` に移した。ダークでコントラストが上がる（#808）。`--banto-surface-muted`（`--banto-surface-subtle` と同値）を theme に足し、Tree の件数バッジが未定義の変数でなく定義済みの面を参照するようにした。消費側が `.disclosure`・`.sort-arrow` などの色を自前の CSS で上書きしていれば、そちらが優先される
 - **基準の作り直し（破壊的。#790・#778・#786 の C1、ADR-0034）。** `users` に `kind`・`account_uid`（アカウントの作成時にサービス層が採番する 128 bit の乱数）を足し `password_hash` を NULL 可に、`audit_log` に `actor_id` を足した（`0003`・`0005` の書き換え、2 方言）。`0014_ui_settings.sql` が表 `ui_settings` と組み込みのユーザー `admin` の行を入れる。組み込みの行はログインの照合・件数・`has_admin`・最後の管理者のガードから外れ、更新・パスワードの設定・権限の付与・削除はサービス層が断る（ユーザー一覧だけが読み取り専用の 1 行として返す）。旧版の DB は起動時に明示のエラーで断り、リストアの候補は必須の表（`ui_settings` を追加）に加えて migration の履歴（版と checksum）を予約と適用の直前に確かめる。初回の seed の条件を「`settings` が空」から「seed 済みの印（`first_boot.seeded`）が無い」に直した。`pnpm verify:migrations` は、タグ `v7.11.0` と比べるときだけこの 4 ファイルの変更を許す。
 - **CI: e2e の「長いエラーの折り返し・キー操作」（`grid-long-errors.spec.ts`）の不安定さを直した（#831）。** パネルでの `End` / `Home` を、前のキースクロールが終わる前に押すと落ちることがあったので、`PageDown`（#798）と同じく、押すのを poll の中に入れた。テストだけの変更で、`src/`・公開 API の変更なし。

@@ -108,7 +108,7 @@ Architecture overview (Japanese, Mermaid diagrams):
 
 ## Try it first: browser demo (in-memory)
 
-Requirements: Node 24+ / pnpm 10+. This is the standalone browser **demo
+Requirements: Node 26+ / pnpm 10+. This is the standalone browser **demo
 mode**: data lives in memory and `admin / admin` is a demo-only fixed account.
 To run the real thing with a SQLite database, install Rust and start the
 desktop app (`pnpm --filter admin-template tauri dev`; the first run creates

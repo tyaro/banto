@@ -61,7 +61,7 @@ Banto は業務アプリに絞ったテンプレートで、汎用の管理画�
 
 ## まず試す: ブラウザデモ（InMemory）
 
-前提: Node 24+ / pnpm 10+。以下はブラウザ単体の**デモモード**で、データはメモリ上
+前提: Node 26+ / pnpm 10+。以下はブラウザ単体の**デモモード**で、データはメモリ上
 （再読み込みで消える）、`admin / admin` はデモ専用の固定アカウント。
 
 ```sh
@@ -364,7 +364,7 @@ Rust クレート（`crates/`、MIT）:
 
 ## 開発
 
-前提: Node 24+ / pnpm 10+ / Rust（Tauri の[プラットフォーム別前提条件](https://tauri.app/start/prerequisites/)）。
+前提: Node 26+ / pnpm 10+ / Rust（Tauri の[プラットフォーム別前提条件](https://tauri.app/start/prerequisites/)）。
 Windows の手順は [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)。
 
 ```sh
@@ -425,7 +425,7 @@ SQLite（WAL）の同時アクセス、Caddy による TLS 終端とプロキシ
 
 ## Windowsでのローカルセットアップ
 
-Node.js 24+ / pnpm 10+ / Rust（MSVC ツールチェーン + Visual Studio Build Tools）/
+Node.js 26+ / pnpm 10+ / Rust（MSVC ツールチェーン + Visual Studio Build Tools）/
 WebView2 Runtime を入れて `pnpm install` → `pnpm --filter admin-template tauri dev`。
 初回起動で管理者アカウントを作成する。前提ツールの入手先・SQLite ファイルの置き場
 （`%APPDATA%\dev.banto.admin\admin-template.sqlite3`）・アイコン差し替え等の補足は
