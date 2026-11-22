@@ -203,6 +203,39 @@ function sharedIds(makeId: () => string): { makeId: () => string; again: () => (
 	};
 }
 
+const sameIds = (a: string[] | undefined, b: string[] | undefined): boolean =>
+	a === b ||
+	(a !== undefined && b !== undefined && a.length === b.length && a.every((id, i) => id === b[i]));
+
+/** Do two slots say the same place: every field of `DockSlot` and the `outer` chain, whatever the order of their keys? */
+function sameSlot(a: DockSlot | undefined, b: DockSlot | undefined): boolean {
+	if (a === b) return true;
+	if (a === undefined || b === undefined || a.kind !== b.kind) return false;
+	if (a.kind === 'root') return true;
+	if (a.kind === 'tab') {
+		const other = b as Extract<DockSlot, { kind: 'tab' }>;
+		return (
+			a.groupId === other.groupId &&
+			a.index === other.index &&
+			sameIds(a.anchors, other.anchors) &&
+			sameSlot(a.outer, other.outer)
+		);
+	}
+	const other = b as Extract<DockSlot, { kind: 'split' }>;
+	return (
+		a.splitId === other.splitId &&
+		a.direction === other.direction &&
+		a.index === other.index &&
+		a.neighborId === other.neighborId &&
+		a.side === other.side &&
+		a.size === other.size &&
+		a.share === other.share &&
+		sameIds(a.anchors, other.anchors) &&
+		sameIds(a.otherAnchors, other.otherAnchors) &&
+		sameSlot(a.outer, other.outer)
+	);
+}
+
 export class DockState {
 	#layout: DockLayout = $state(emptyLayout());
 	/** The structure revision (plain, not reactive) - see `structureRevision`. */
@@ -260,7 +293,16 @@ export class DockState {
 		const step = this.#shadowStep;
 		this.#shadowStep = null;
 		// Before the shares are taken again below: a slot that is another one as assigned.
-		const replaced = !this.#adopting && untrack(() => this.#slotReplaced(next));
+		// Never throws (as `#followShadow`): a layout it cannot read is one to make S again from.
+		const replaced =
+			!this.#adopting &&
+			untrack(() => {
+				try {
+					return this.#slotReplaced(next);
+				} catch {
+					return true;
+				}
+			});
 		next = withLayoutVersion(next);
 		// Collapsed regions (#663 ③-B) are kept valid on EVERY assignment (a close, a drop,
 		// `hydrate`, a restore ...): a flag that no longer fits the tree is dropped here.
@@ -291,7 +333,11 @@ export class DockState {
 		this.#layout = next;
 		for (const id of spent) this.#homeSlots.delete(id);
 		untrack(() => {
-			if (step === null && !replaced && !this.#adopting && this.#shadowUpToDate(next)) return;
+			try {
+				if (step === null && !replaced && !this.#adopting && this.#shadowUpToDate(next)) return;
+			} catch {
+				// Not known to be up to date: followed below, which keeps its own faults in.
+			}
 			this.#followShadow(next, step, replaced);
 		});
 		// The slid-out pane is no longer auto-hidden: it is not slid out any more.
@@ -315,7 +361,7 @@ export class DockState {
 			if (w.open || !w.dockSlot) continue;
 			const had = this.#shadowPending.get(w.id);
 			if (had === undefined || had === w.dockSlot) continue;
-			if (JSON.stringify(had) !== JSON.stringify(w.dockSlot)) return true;
+			if (!sameSlot(had, w.dockSlot)) return true;
 		}
 		return false;
 	}

@@ -591,6 +591,45 @@ describe('the panes S remembers (#782 PR4)', () => {
 		expect(notFollowing(dock)).toBe(null);
 	});
 
+	it('the same slots with their keys in another order (every level of `outer`): S is kept', () => {
+		// Slots two levels deep, and a share written onto S that the slots do not have: an S made
+		// again from them would not be the same.
+		const { dock, follows } = watched(
+			split(
+				's',
+				'row',
+				[0.4, 0.6],
+				[
+					panel('x'),
+					split('in', 'column', [0.2, 0.3, 0.5], [panel('a'), panel('b'), tabs('t', ['c', 'd'])])
+				]
+			)
+		);
+		dock.dismiss('a');
+		dock.dismiss('d');
+		dock.resizeSplit('in', 0, 0.1);
+		const before = shadowStateOf(dock).shadow;
+		const reversed = (value: unknown): unknown =>
+			Array.isArray(value) || value === null || typeof value !== 'object'
+				? value
+				: Object.fromEntries(
+						Object.entries(value)
+							.reverse()
+							.map(([key, inner]) => [key, reversed(inner)])
+					);
+		follows.length = 0;
+		const floating = dock.layout.floating.map((w) => {
+			const dockSlot = reversed(w.dockSlot) as typeof w.dockSlot;
+			expect(JSON.stringify(dockSlot)).not.toBe(JSON.stringify(w.dockSlot));
+			expect(dockSlot).toEqual(w.dockSlot);
+			return { ...w, dockSlot };
+		});
+		dock.layout = { ...dock.layout, floating };
+		expect(follows.filter((f) => f.result === 'rebuilt')).toEqual([]);
+		expect(shadowStateOf(dock).shadow).toBe(before);
+		expect(notFollowing(dock)).toBe(null);
+	});
+
 	const row = (): DockNode =>
 		split('s', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')]);
 
