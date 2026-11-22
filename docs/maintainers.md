@@ -74,7 +74,7 @@
 
 - 基準画像は **Linux でだけ**作る。`visual-baselines.yml` を dispatch して再生成する（ローカルでは作らない）。
   - 見た目が変わる PR は、**PR を作る前**に基準画像を作る。CI は `pull_request` と `main` への push でだけ起動し（`.github/workflows/ci.yml` の `on:`）、
-    作業ブランチへの push だけでは走らないので、ブランチを push → `gh workflow run visual-baselines.yml --ref <branch> -f commit=true` →
+    作業ブランチへの push だけでは走らないので、ブランチを push → `gh workflow run visual-baselines.yml --ref <branch>`（`commit` の既定は true。試すだけなら `-f commit=false`）→
     bot のコミットを待って PR を作る、とすると CI が 1 回で済む。委譲の指示にも書く。
   - ワークフローが走っている間は、そのブランチへ push しない（non-fast-forward で bot の push が落ちる）。
     修正はコミットまでにして、画像が載ってから取り込む。

@@ -24,6 +24,7 @@
 
 ### Changed
 
+- **ci:** `visual-baselines.yml` を `visual.spec.ts` だけの再生成・確認にし、Rust のビルドをやめ、`commit` の既定を true にした。1 回の dispatch で済む（#798）。
 - **CI: `@banto/dock-svelte` の総当たりテストを別ファイルに分け、深さを環境変数 `DOCK_EXHAUSTIVE` で切り替えるようにした（#798 PR-d）。** `panel-visibility.test.ts` の総当たり（隠す順 × 戻す順・手順の全列挙・乱数の手順）を `panel-visibility-exhaustive-*.test.ts` に移し（共有の道具は `tests/fixtures/`）、`DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走る。未設定（手元の既定）は浅く、CI は dock-svelte を触る PR と main の push で全部、触らない PR は浅い既定（`ci.yml` の `changes` の出力 `dock`）。テストと CI だけの変更で、`src/`・公開 API・保存形式の変更なし。
 
 ## [7.11.0] - 2026-11-22
