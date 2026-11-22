@@ -178,14 +178,15 @@ items と同じ形（`Services`・`AppState` に欄を足す）でも、`AppReso
 **1 つでも見つからなければ、理由を全部出して何も書かずに止まる。** 消してしまったら、
 下の表の場所にコメントを戻す。
 
-| ファイル                           | slot                                              | 場所                                                                                           |
-| ---------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `core/src/lib.rs`                  | `core-mod`                                        | `pub mod resources;` の前                                                                      |
-| `core/src/resources.rs`            | `resource-fields`・`resource-init`                | `AppResources` の欄の末尾・`new` の `Self { … }` の末尾                                        |
-| `core/src/rest/mod.rs`             | `route-table`・`rest-mod`・`rest-routers`         | モジュール doc の Route table の末尾・`mod` の並び・`resources_router` の `Router::new()` の次 |
-| `src-tauri/src/lib.rs`             | `tauri-commands`・`tauri-handlers`・`tauri-tests` | コマンドの並び（トップレベル）・`generate_handler![…]` の中・`mod tests` の末尾                |
-| `scripts/verify-architecture.mjs`  | `dual-path`・`tauri-read`・`rest-read`            | `DUAL_PATH`・`TAURI_READ`・`REST_READ` の先頭                                                  |
-| `src/lib/banto/resources/index.ts` | `resource-imports`・`resource-list`               | import の並び・`resources` の定義の後                                                          |
+| ファイル                           | slot                                      | 場所                                                                                           |
+| ---------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `core/src/lib.rs`                  | `core-mod`                                | `pub mod resources;` の前                                                                      |
+| `core/src/resources.rs`            | `resource-fields`・`resource-init`        | `AppResources` の欄の末尾・`new` の `Self { … }` の末尾                                        |
+| `core/src/rest/mod.rs`             | `route-table`・`rest-mod`・`rest-routers` | モジュール doc の Route table の末尾・`mod` の並び・`resources_router` の `Router::new()` の次 |
+| `src-tauri/src/lib.rs`             | `tauri-commands`・`tauri-handlers`        | コマンドの並び（トップレベル）・`generate_handler![…]` の中                                    |
+| `src-tauri/src/tests.rs`           | `tauri-tests`                             | ファイルの末尾（`lib.rs` の `mod tests;` が読むテスト）                                        |
+| `scripts/verify-architecture.mjs`  | `dual-path`・`tauri-read`・`rest-read`    | `DUAL_PATH`・`TAURI_READ`・`REST_READ` の先頭                                                  |
+| `src/lib/banto/resources/index.ts` | `resource-imports`・`resource-list`       | import の並び・`resources` の定義の後                                                          |
 
 生成→ビルドは CI の `Generate resource → check`（`template-acceptance.yml`）が検査する。
 `scripts/fixtures/add-resource/orders.json`（5 つの型すべて・必須と任意・`audit`・`title`・
