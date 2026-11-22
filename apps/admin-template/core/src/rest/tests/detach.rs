@@ -80,12 +80,23 @@ async fn user_create_and_its_audit_row_survive_a_client_disconnect() {
             .unwrap()
             .iter()
             .any(|user| user["username"] == "leftearly");
-        let audited = audit_rows_via_rest(&router, &admin)
-            .await
-            .iter()
-            .any(|row| {
-                row["action"] == "create" && row["resource"] == "users" && row["result"] == "ok"
-            });
+        // Queried here rather than through a helper of `tests.rs`: the
+        // scaffold removes the helpers that only the `items` tests use.
+        let audit = body_json(
+            router
+                .clone()
+                .oneshot(post_json_auth(
+                    "/api/audit-log/list",
+                    &admin,
+                    json!(ListParams::default()),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        let audited = audit["rows"].as_array().unwrap().iter().any(|row| {
+            row["action"] == "create" && row["resource"] == "users" && row["result"] == "ok"
+        });
         found = (created, audited);
         if created && audited {
             break;
