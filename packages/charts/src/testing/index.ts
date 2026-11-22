@@ -58,19 +58,40 @@ export function installChartDom(options: ChartDomOptions = {}): ChartDomHandle {
 	if (!(size.width > 0) || !(size.height > 0))
 		throw new RangeError('installChartDom: width and height must be greater than 0');
 
-	active = true;
 	const proto = HTMLElement.prototype;
 	const saved = new Map<string, PropertyDescriptor | undefined>();
-	for (const [prop, dim] of Object.entries(SIZE_PROPS)) {
-		saved.set(prop, Object.getOwnPropertyDescriptor(proto, prop));
-		Object.defineProperty(proto, prop, { configurable: true, get: () => size[dim] });
-	}
 	const savedObserver = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
-	Object.defineProperty(globalThis, 'ResizeObserver', {
-		configurable: true,
-		writable: true,
-		value: StubResizeObserver
-	});
+	// Undo whatever has been replaced so far (used on failure and by restore()).
+	const revert = () => {
+		for (const [prop, descriptor] of saved) {
+			if (descriptor) Object.defineProperty(proto, prop, descriptor);
+			else delete (proto as unknown as Record<string, unknown>)[prop];
+		}
+		saved.clear();
+		if (savedObserver) Object.defineProperty(globalThis, 'ResizeObserver', savedObserver);
+		else delete (globalThis as unknown as Record<string, unknown>).ResizeObserver;
+	};
+	try {
+		for (const [prop, dim] of Object.entries(SIZE_PROPS)) {
+			const descriptor = Object.getOwnPropertyDescriptor(proto, prop);
+			Object.defineProperty(proto, prop, { configurable: true, get: () => size[dim] });
+			saved.set(prop, descriptor);
+		}
+		Object.defineProperty(globalThis, 'ResizeObserver', {
+			configurable: true,
+			writable: true,
+			value: StubResizeObserver
+		});
+	} catch (error) {
+		// Half-installed: put back what was replaced, leave `active` false so a retry works.
+		try {
+			revert();
+		} catch {
+			// nothing more can be done; surface the original failure
+		}
+		throw error;
+	}
+	active = true;
 
 	let restored = false;
 	return {
@@ -78,12 +99,7 @@ export function installChartDom(options: ChartDomOptions = {}): ChartDomHandle {
 			if (restored) return;
 			restored = true;
 			active = false;
-			for (const [prop, descriptor] of saved) {
-				if (descriptor) Object.defineProperty(proto, prop, descriptor);
-				else delete (proto as unknown as Record<string, unknown>)[prop];
-			}
-			if (savedObserver) Object.defineProperty(globalThis, 'ResizeObserver', savedObserver);
-			else delete (globalThis as unknown as Record<string, unknown>).ResizeObserver;
+			revert();
 		}
 	};
 }
