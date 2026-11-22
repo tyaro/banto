@@ -391,6 +391,10 @@
 	);
 	setPanelMover(mover);
 
+	// Number of `replaceLayout` calls in flight (#796): while > 0 no gesture starts, or its late
+	// commit / restore could overwrite the replacement. A count, so one finishing early does not
+	// release the others.
+	let replacing = 0;
 	// svelte-ignore state_referenced_locally
 	const gesture = new GestureOwner(
 		dock,
@@ -398,6 +402,7 @@
 		() => ({
 			// A `drag` may end in dock / undock: not started while structure changes are held (IME).
 			canStart: (kind, panelId) =>
+				replacing === 0 &&
 				!(kind === 'drag' && lifecycle.isDeferred()) &&
 				(canStartGesture ? canStartGesture(kind, panelId) : true),
 			isEscapeBlocked,
@@ -555,6 +560,17 @@
 	}
 
 	/**
+	 * Cancel the gesture in progress (a drag, resize or divider move; #796): its target goes back to
+	 * how it was and `onGestureEnd` gets `('cancel', 'api')`. `true` if there was one, `false`
+	 * (nothing happens) otherwise. `replaceLayout` does this by itself before it asks anything.
+	 */
+	export function cancelGesture(): boolean {
+		if (!gesture.active) return false;
+		gesture.cancel('api');
+		return true;
+	}
+
+	/**
 	 * Replace the whole layout (#663 ④, three-pane-dock-plan §4.4: `ThreePaneDock`'s `resetLayout` /
 	 * `restoreLayout`) through `beforePanelChange`: every pane whose content the replacement takes
 	 * off the screen or re-mounts is asked first (`hide` / `close` / `tab-switch` / `dock` / `undock` /
@@ -572,6 +588,11 @@
 	 * hidden) that `next` drops, or shows somewhere else, no longer holds its share of its split.
 	 * `options.isCurrent` is re-read before each request and right before the replacement is
 	 * applied: `false` = `stale`, nothing changed (like `setPanelVisible`'s).
+	 * A gesture in progress is cancelled first (`cancelGesture`, #796), once `next` passed the
+	 * check: the panes are asked about the layout the gesture restored, and the replacement is
+	 * not overwritten by the gesture's later commit / restore. A refused replacement still leaves
+	 * the gesture cancelled. No new gesture starts while a `replaceLayout` is in flight (including
+	 * while `beforePanelChange` is pending), until the last one in flight has returned.
 	 */
 	export async function replaceLayout(
 		next: DockLayout,
@@ -580,27 +601,34 @@
 		const checked = validateDockLayout(next);
 		if (!checked.ok) return 'invalid';
 		const layout = checked.layout;
-		const active = document.activeElement;
-		const focusWasInHost = !!hostEl && !!active && hostEl.contains(active);
-		const outcome = await lifecycle.guarded(options.isCurrent, () =>
-			lifecycle.requestReplace(
-				() => layout,
-				(l) => {
-					if (options.saved) {
-						forgetHomeSlots(dock);
-						adoptLayout(dock, l);
-					} else dock.layout = l;
-				}
-			)
-		);
-		if (outcome !== 'applied' || !focusWasInHost) return outcome;
-		await tick();
-		const now = document.activeElement;
-		if (hostEl?.isConnected && (!now || now === document.body)) {
-			const to = options.focusPanel ?? collectPanelIds(dock.layout.docked)[0];
-			if (to) titleBarFocusTarget(hostEl, to)?.focus();
+		// Counted before the cancel: an `onGestureEnd` that starts another gesture is stopped too.
+		replacing++;
+		try {
+			cancelGesture();
+			const active = document.activeElement;
+			const focusWasInHost = !!hostEl && !!active && hostEl.contains(active);
+			const outcome = await lifecycle.guarded(options.isCurrent, () =>
+				lifecycle.requestReplace(
+					() => layout,
+					(l) => {
+						if (options.saved) {
+							forgetHomeSlots(dock);
+							adoptLayout(dock, l);
+						} else dock.layout = l;
+					}
+				)
+			);
+			if (outcome !== 'applied' || !focusWasInHost) return outcome;
+			await tick();
+			const now = document.activeElement;
+			if (hostEl?.isConnected && (!now || now === document.body)) {
+				const to = options.focusPanel ?? collectPanelIds(dock.layout.docked)[0];
+				if (to) titleBarFocusTarget(hostEl, to)?.focus();
+			}
+			return outcome;
+		} finally {
+			replacing--;
 		}
-		return outcome;
 	}
 
 	/** Retry a change held by `isStructureChangeDeferred` now (a custom predicate turned false without a composition / focus event). */
