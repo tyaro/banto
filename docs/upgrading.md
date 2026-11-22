@@ -523,7 +523,7 @@ Git 依存の導入と svelte-check・vite build を確かめるために、部�
   fixture・ワークフロー自身を変えたときだけ走る。
 - **合格条件**（job `npm`）: `vite dev` で開いたページにマーカーが描画される、`console.error`・`pageerror` が
   ゼロ、dev ログに依存オプティマイザのエラー（`error while updating dependencies`・`js_parse_error`）が無い、
-  続けて `pnpm check`・`pnpm build` が通る。#150 が再現しても dev の `/` は 200 のまま（動的 import が 504 →
+  続けて `pnpm check`・`pnpm build` が通る。あわせて `pnpm test`（vitest + jsdom）が、Git 依存で入れた `@banto/charts/testing`（#852）を読んで系列が SVG に描かれること・`restore()` 後に差し替えが残らないことを確かめる（タグの経路では、そのタグに `./testing` が無ければ落ちる）。#150 が再現しても dev の `/` は 200 のまま（動的 import が 504 →
   クライアント側の 500 画面）なので、HTTP の応答では判定しない。job `rust` は `cargo check` と
   `cargo check --all-features`（postgres・system-metrics の feature の経路）。
 - **診断**（job `npm-no-exclude`、成功条件にしない）: `optimizeDeps.exclude` を外して dev + Playwright だけを流し、

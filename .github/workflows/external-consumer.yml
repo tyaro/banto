@@ -238,6 +238,13 @@ jobs:
           done
           exit 1
 
+      # `@banto/charts/testing`（#852）を Git 依存の経路で読み、jsdom で系列が描かれること・
+      # 戻した後に差し替えが残らないことを確かめる。タグの経路では、そのタグに
+      # `./testing` が無ければ（v7.11.0 以前）ここで落ちる（次のリリースタグから通る）。
+      - name: Unit test (@banto/charts/testing)
+        working-directory: ${{ env.FIXTURE_DIR }}
+        run: pnpm test
+
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
