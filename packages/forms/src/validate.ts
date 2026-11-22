@@ -4,8 +4,9 @@
  * Japanese; override via the `messages` param for i18n injection.
  */
 import { formatDateTimeText, isIsoDate, isIsoDateTime, isIsoTime, isOnTimeStep } from './date';
+import { fileProblem, fileValueOf, formatFileSize, newPendingFile } from './fields/file';
 import { isFieldVisible } from './layout';
-import type { FieldDef, FieldError, FormSchema } from './types';
+import type { FieldDef, FieldError, FormSchema, PendingFile } from './types';
 
 export interface ValidationMessages {
 	required?: (def: FieldDef) => string;
@@ -40,6 +41,12 @@ export interface ValidationMessages {
 	dateTimeMax?: (def: FieldDef, max: string) => string;
 	/** draft: the field's `visibleWhen` never settles (showing and hiding it flip each other), so nothing is committed (#714). */
 	visibilityUnsettled?: (def: FieldDef) => string;
+	/** file: a file is larger than `FieldDef.file.maxFileSize` (bytes). On screen only (§4.12). */
+	fileTooLarge?: (def: FieldDef, maxBytes: number) => string;
+	/** file: a file's kind is not in `FieldDef.file.accept`. On screen only. */
+	fileTypeNotAccepted?: (def: FieldDef, accept: string) => string;
+	/** file: more files than `FieldDef.file.maxFiles`. On screen only. */
+	fileTooMany?: (def: FieldDef, max: number) => string;
 }
 
 const defaultMessages: Required<ValidationMessages> = {
@@ -61,7 +68,10 @@ const defaultMessages: Required<ValidationMessages> = {
 	dateTimeInvalid: () => '日時を YYYY-MM-DD HH:mm の形で入力してください',
 	dateTimeMin: (_def, min) => `${min}以降の日時を入力してください`,
 	dateTimeMax: (_def, max) => `${max}以前の日時を入力してください`,
-	visibilityUnsettled: () => '表示の条件が定まらないため保存できません。値を見直してください'
+	visibilityUnsettled: () => '表示の条件が定まらないため保存できません。値を見直してください',
+	fileTooLarge: (_def, maxBytes) => `${formatFileSize(maxBytes)}以下のファイルを選んでください`,
+	fileTypeNotAccepted: (_def, accept) => `この種類のファイルは選べません（${accept}）`,
+	fileTooMany: (_def, max) => `ファイルは${max}件までです`
 };
 
 /**
@@ -85,6 +95,22 @@ export function validateField(
 	messages: ValidationMessages = {}
 ): string | null {
 	const msg = { ...defaultMessages, ...messages };
+
+	// file: the value is the record's files plus the chosen ones. These checks
+	// only help the input - the server does not enforce them (§4.12).
+	if (def.type === 'file') {
+		const { existing, pending } = fileValueOf(value);
+		const count = (existing?.length ?? 0) + pending.length;
+		// `existing === null`: the record's files are not known, so "none" cannot be said.
+		if (def.required && existing !== null && count === 0) return msg.required(def);
+		const max = def.file?.maxFiles;
+		if (max !== undefined && count > max) return msg.fileTooMany(def, max);
+		for (const entry of pending) {
+			const problem = fileProblemMessage(def, entry.file, messages);
+			if (problem) return problem;
+		}
+		return def.validate?.(value, values) || null;
+	}
 
 	if (def.required && isEmpty(value)) {
 		return msg.required(def);
@@ -179,6 +205,49 @@ export function validateAll(
 		if (message) errors.push({ field: def.name, message });
 	}
 	return errors;
+}
+
+/** file: what the field's own limits (`accept`, `maxFileSize`) say against one file, or `null`. */
+export function fileProblemMessage(
+	def: FieldDef,
+	file: { name: string; type: string; size: number },
+	messages: ValidationMessages = {}
+): string | null {
+	const msg = { ...defaultMessages, ...messages };
+	const problem = fileProblem(def.file, file);
+	if (problem === 'type') return msg.fileTypeNotAccepted(def, def.file?.accept ?? '');
+	if (problem === 'size') return msg.fileTooLarge(def, def.file?.maxFileSize ?? 0);
+	return null;
+}
+
+/**
+ * file: sort the files a picker returned into the ones the field takes (as
+ * new pending entries) and the ones it refuses, each with its reason. A file
+ * of the wrong kind or size is refused; so is every file past `maxFiles`
+ * (counting the record's files and the ones already chosen).
+ */
+export function pickFiles(
+	def: FieldDef,
+	value: unknown,
+	files: readonly File[],
+	messages: ValidationMessages = {}
+): { accepted: PendingFile[]; refused: Array<{ file: File; message: string }> } {
+	const msg = { ...defaultMessages, ...messages };
+	const { existing, pending } = fileValueOf(value);
+	const max = def.file?.maxFiles;
+	let room = max === undefined ? Infinity : max - (existing?.length ?? 0) - pending.length;
+	const accepted: PendingFile[] = [];
+	const refused: Array<{ file: File; message: string }> = [];
+	for (const file of files) {
+		const problem = fileProblemMessage(def, file, messages);
+		if (problem) refused.push({ file, message: problem });
+		else if (room <= 0) refused.push({ file, message: msg.fileTooMany(def, max ?? 0) });
+		else {
+			accepted.push(newPendingFile(file));
+			room -= 1;
+		}
+	}
+	return { accepted, refused };
 }
 
 /** Message for raw date text that does not parse (used by `FormDraft.commit`). */

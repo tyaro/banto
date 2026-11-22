@@ -19,16 +19,45 @@ export function hiddenFieldNames(schema: FormSchema, values: Record<string, unkn
 }
 
 /**
- * `values` without the keys of hidden fields. Keys that no field names (a
- * lock version, say) stay. A new object; `values` is not changed.
+ * `values` without the keys of hidden fields and of `file` fields. Keys that
+ * no field names (a lock version, say) stay. A new object; `values` is not
+ * changed.
+ *
+ * A `file` field is never submitted (§4.12): the record's API takes no `File`
+ * and no file content - files only go through the field's injected client.
  */
 export function submitValuesOf(
 	schema: FormSchema,
 	values: Record<string, unknown>
 ): Record<string, unknown> {
-	const hidden = hiddenFieldNames(schema, values);
-	if (hidden.size === 0) return { ...values };
-	return Object.fromEntries(Object.entries(values).filter(([name]) => !hidden.has(name)));
+	const left = hiddenFieldNames(schema, values);
+	for (const def of schema.fields) if (def.type === 'file') left.add(def.name);
+	if (left.size === 0) return { ...values };
+	return Object.fromEntries(Object.entries(values).filter(([name]) => !left.has(name)));
+}
+
+/**
+ * Throws for a schema forms cannot run, at the time the form is defined
+ * (`createFormStore`): more than one `file` field - attachments belong to the
+ * record, not to a field, so two fields would show the same list (§4.12) - or
+ * a `file` field without its client.
+ */
+export function assertFormSchema(schema: FormSchema): void {
+	const files = schema.fields.filter((def) => def.type === 'file');
+	if (files.length > 1) {
+		const names = files.map((def) => `'${def.name}'`).join(', ');
+		throw new Error(
+			`@banto/forms: a form takes one 'file' field at most (found ${names}). ` +
+				'Files are attached to the record, not to a field.'
+		);
+	}
+	for (const def of files) {
+		if (!def.file?.client || !def.file.resource) {
+			throw new Error(
+				`@banto/forms: the 'file' field '${def.name}' needs \`file.client\` and \`file.resource\`.`
+			);
+		}
+	}
 }
 
 /** Columns of a group: its own, else the form's, else 1; anything but 1-3 counts as 1. */

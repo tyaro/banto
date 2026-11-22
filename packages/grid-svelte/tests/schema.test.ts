@@ -54,6 +54,13 @@ describe('columnsFromSchema', () => {
 		expect(byId('name').accessor).toBe('name');
 	});
 
+	it('skips file fields: the files hang on the record, not on a column (#714)', () => {
+		const withFile = columnsFromSchema<Row>({
+			fields: [...schema.fields, { name: 'files', label: '資料', type: 'file' }]
+		});
+		expect(withFile.map((c) => c.id)).toEqual(columns.map((c) => c.id));
+	});
+
 	it('derives filterable text/number columns and right-aligns numbers', () => {
 		expect(byId('name').filterable).toBe(true);
 		expect(byId('name').filterType).toBe('text');

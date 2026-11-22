@@ -781,7 +781,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | K3 | #791 前半（`DockHost` と `ThreePaneDock` の両方に `onLayoutCommit`） | `dock-svelte`・テンプレート | 足すだけ | fable | §4.6 の試験。e2e（workspace-dock の保存） 状態: **PR 提出済み**（2026-11-22、`feat/791-on-layout-commit`。`tests/DockHostCommit.test.ts`・`tests/ThreePaneDockCommit.test.ts`・`e2e/demo/dock-layout-commit.spec.ts`。`'reset'` は値が同じでも毎回通知し、`'narrow-switch'` は保存する値が変わったときだけ通知する。`replaceLayout` に `commit` と `applied` を足した。マウント後の `dock.hydrate` は `'user'` で届く（K4 の保存の部品は自分の基準で落とす）） |
 | #782 PR2〜PR8 | Issue の本文どおり | `dock-svelte` | PR ごとに判定（§9.2） | fable | 本文の各 PR の条件。PR6 で #780 を閉じる。**PR2（`core/shadow.ts` の純関数と試験）は PR #826**（配線なし。設計上の判断は PR の本文） |
 | K4 | #791 後半 | `dock-svelte`・テンプレート・scaffold | **破壊的** | fable | ダッシュボード・workspace-dock の保存が今と同じ（API 経由の表示切替・キーボード・タブの切り替えを含む）。scaffold の dry-run |
-| F1 | #714 `file` 型（保留の持ち方・画面の検証・送信値から除く・1 欄まで・ui-demo の見本） | `forms`・ui-demo | union に追加 | fable | §4.12 の単体テスト。forms がほかのパッケージを import しない |
+| F1 | #714 `file` 型（保留の持ち方・画面の検証・送信値から除く・1 欄まで・ui-demo の見本）。**状態: 実装済み（PR 提出、2026-11-22）。親の id は `BantoForm` の `fileParentId`、作成後の送信は `uploadPendingFiles`、`FormDraft` は `file` 欄を受けない** | `forms`・ui-demo | union に追加 | fable | §4.12 の単体テスト。forms がほかのパッケージを import しない |
 | F2 | #714 テンプレートの配線（items の新規・編集、作成後のアップロード、失敗の再試行）・README・片付け | テンプレート・scaffold | 足すだけ | sonnet | e2e。添付を外すプリセットの dry-run。#714 を閉じる |
 | W0 | #716 の判断（§4.13 の 1〜4）と template-scope §4.2 の 1 文 | `docs` | — | fable | **オーナーの判断** |
 | W1〜W3 | #716（判断の後に §4.13 を設計へ書き直してから。W2 は K4・C5 の後） | テンプレート（＋判断による） | 見た目・保存 | fable | 判断の後に決める。基準画像の再生成、scaffold の dry-run |
