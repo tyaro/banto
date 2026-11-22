@@ -172,6 +172,18 @@ export function rememberShadow(dock: DockState, snapshot: DockLayout): void {
 	rememberImpl(dock, snapshot);
 }
 
+let homeMarkImpl: (dock: DockState, id: string) => object | undefined;
+
+/**
+ * An object that stands for the place floated pane `id` remembers (not exported from the
+ * package; `undefined`: none): the same object for as long as the pane remembers the same place,
+ * another one once it is docked and floated again (#735). For asking "is it the same floating
+ * window as when the answer was asked?" without a slot (#782 PR8a).
+ */
+export function homeMark(dock: DockState, id: string): object | undefined {
+	return homeMarkImpl(dock, id);
+}
+
 let forgetImpl: (dock: DockState) => void;
 
 /**
@@ -1201,9 +1213,21 @@ export class DockState {
 	 * panel menu's "back to where it was"); `undefined` = it did not come out of the tree that
 	 * way, or it was docked again since (by any path). Kept for this state's lifetime only (not
 	 * part of `serialize`). The place may be gone by now: `dockAtSlot` tells.
+	 *
+	 * To be removed in #782 PR8c: use `hasHome` / `dockBack` / `backTree`.
 	 */
 	homeSlot(id: string): DockSlot | undefined {
 		return this.#homeSlots.get(id);
+	}
+
+	/**
+	 * Whether the floating window `id` remembers a docked place (it came out of the tree by
+	 * `undockPanel`, and was not docked again since). Kept for this state's lifetime only (not part
+	 * of `serialize`). `true` does not mean it can go back: the place may be lost with no default
+	 * one left. Whether it can is `backTree(id) !== null`.
+	 */
+	hasHome(id: string): boolean {
+		return this.#homeSlots.get(id) !== undefined;
 	}
 
 	#isDocked(id: string): boolean {
@@ -1394,6 +1418,8 @@ export class DockState {
 	 * took with `captureDockSlot`), or a `homeSlot` S has no place for, is put back by
 	 * `core/slot.ts#restoreDockSlot` on the docked tree, counting the other panes that remember a
 	 * docked place (#733).
+	 *
+	 * To be removed in #782 PR8c: use `backTree` for the pane's own place.
 	 */
 	restoredAt(id: string, slot: DockSlot, makeId: () => string = this.#makeId): DockNode | null {
 		const win = this.layout.floating.find((w) => w.id === id);
@@ -1411,6 +1437,17 @@ export class DockState {
 			this.#awaySlots(id),
 			idsOutOfDocked(this.layout)
 		);
+	}
+
+	/**
+	 * The docked tree with the floating window `id` (open or closed) put back where it was docked
+	 * (its `hasHome` place): `restoredAt` for that place, without the slot. `null` = no such
+	 * window, it remembers no place, or the place is gone (lost, and no default one). So whether it
+	 * can go back is `backTree(id) !== null`, not `hasHome(id)`. Pure: the layout does not change.
+	 */
+	backTree(id: string, makeId: () => string = this.#makeId): DockNode | null {
+		const slot = this.#homeSlots.get(id);
+		return slot === undefined ? null : this.restoredAt(id, slot, makeId);
 	}
 
 	/** Closes the window but keeps its geometry so a later `open`/`toggle` restores the same position/size. */
@@ -1702,6 +1739,8 @@ export class DockState {
 	 * `DockHost.movePanel`'s `{ back: true }`): the tree `restoredAt` gives, with the region the pane
 	 * comes back into expanded. Returns `false` (nothing changes) when it is not an open floating
 	 * window or the place is gone.
+	 *
+	 * To be removed in #782 PR8c: use `dockBack`.
 	 */
 	dockAtSlot(panelId: string, slot: DockSlot, makeId: () => string = this.#makeId): boolean {
 		const win = this.layout.floating.find((w) => w.id === panelId);
@@ -1722,6 +1761,17 @@ export class DockState {
 			docked
 		};
 		return true;
+	}
+
+	/**
+	 * Move the OPEN floating window `panelId` back where it was docked (`DockHost.movePanel`'s
+	 * `{ back: true }`): the tree `backTree` gives, with the region the pane comes back into
+	 * expanded. Returns `false` (nothing changes) when it is not an open floating window, it
+	 * remembers no place, or the place is gone.
+	 */
+	dockBack(panelId: string, makeId: () => string = this.#makeId): boolean {
+		const slot = this.#homeSlots.get(panelId);
+		return slot === undefined ? false : this.dockAtSlot(panelId, slot, makeId);
 	}
 
 	/** Change the visible tab of the docked tab group `groupId`. No-op if unknown. */
@@ -1884,6 +1934,7 @@ export class DockState {
 
 	static {
 		adoptImpl = (dock, layout) => dock.#adopt(layout);
+		homeMarkImpl = (dock, id) => dock.#homeSlots.get(id);
 		forgetImpl = (dock) => {
 			dock.#homeSlots.clear();
 			dock.#shadowLost.clear();

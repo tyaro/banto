@@ -550,7 +550,7 @@ describe('ThreePaneDock: floated panes places across whole-layout replacements (
 		const { dock, view } = start();
 		await view.rerender({ extra: [LOG] });
 		await settle();
-		expect(dock.homeSlot('left')).toBeDefined();
+		expect(dock.hasHome('left')).toBe(true);
 		expect(ratio(dock)).toBeCloseTo(control, 9);
 	});
 
@@ -575,7 +575,7 @@ describe('ThreePaneDock: floated panes places across whole-layout replacements (
 		const saved = api().layoutSnapshot();
 		const { outcome } = await api().restoreLayout(saved);
 		expect(outcome).toBe('applied');
-		expect(dock.homeSlot('left')).toBeUndefined();
+		expect(dock.hasHome('left')).toBe(false);
 		expect(written.length).toBeGreaterThan(0);
 		for (const json of written) expect(JSON.parse(json)).toEqual(saved.layout);
 		expect(ratio(dock)).toBeCloseTo(control, 9);
@@ -649,7 +649,7 @@ describe('ThreePaneDock: a pane out of the tree and a replacement (#741, #782 PR
 		await view.rerender({ extra: [{ id: 'other', title: 'Other' }] });
 		await settle();
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['center']);
-		expect(dock.dockAtSlot('right', dock.homeSlot('right')!)).toBe(true);
+		expect(dock.dockBack('right')).toBe(true);
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['center', 'right']);
 		expect(sizes(dock)[0] + sizes(dock)[1]).toBeCloseTo(1, 9);
 		expect(sizes(dock)[1]).toBeGreaterThan(0);
@@ -661,7 +661,7 @@ describe('ThreePaneDock: a pane out of the tree and a replacement (#741, #782 PR
 		dock.undockPanel('right');
 		await view.rerender({ extra: [] });
 		await settle();
-		expect(dock.dockAtSlot('right', dock.homeSlot('right')!)).toBe(true);
+		expect(dock.dockBack('right')).toBe(true);
 		expect(sizes(dock)[0]).toBeCloseTo(0.375, 9);
 	});
 
@@ -691,14 +691,14 @@ describe('ThreePaneDock: a pane out of the tree and a replacement (#741, #782 PR
 		made.dock.dismiss('right');
 		const saved = made.api().layoutSnapshot();
 		cleanup();
-		expect(made.dock.homeSlot('log')).toBeDefined();
+		expect(made.dock.hasHome('log')).toBe(true);
 		const { dock } = mount({
 			withLeft: false,
 			extra: [LOG],
 			initialLayout: saved,
 			dock: made.dock
 		});
-		expect(dock.homeSlot('log')).toBeUndefined();
+		expect(dock.hasHome('log')).toBe(false);
 		dock.show('right');
 		expect(sizes(dock)[1]).toBeCloseTo(0.375, 9);
 	});

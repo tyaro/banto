@@ -202,7 +202,7 @@ describe('ThreePaneDock: the narrow display', () => {
 		const kept = api().layoutSnapshot();
 		const share = kept.layout.floating.find((w) => w.id === 'right')?.dockShare;
 		await resize(700);
-		expect(dock.homeSlot('left')).toBeUndefined();
+		expect(dock.hasHome('left')).toBe(false);
 		await resize(1000);
 		dock.show('right');
 		const root = dock.layout.docked as DockSplitNode;
@@ -481,11 +481,11 @@ describe('ThreePaneDock: the kept wide layout and the shares (#741)', () => {
 		dock.open('log');
 		dock.dockPanel('log', 'center', 'right');
 		dock.undockPanel('log');
-		expect(dock.homeSlot('log')).toBeDefined();
+		expect(dock.hasHome('log')).toBe(true);
 		await resize(1000);
 		expect(view.component.isNarrow()).toBe(false);
 		expect(dock.layout.floating.map((w) => w.id)).toContain('log');
-		expect(dock.homeSlot('log')).toBeUndefined();
+		expect(dock.hasHome('log')).toBe(false);
 	});
 });
 

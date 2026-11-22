@@ -131,7 +131,7 @@ function withoutLoneFlags(docked: DockNode | null, s: ShadowNode | null): DockNo
 /** The panes out of the tree that remember a docked place: floated (`homeSlot`), open or closed since. */
 const pendingIds = (dock: DockState): string[] =>
 	dock.layout.floating
-		.filter((w) => dock.homeSlot(w.id) !== undefined)
+		.filter((w) => dock.hasHome(w.id))
 		.map((w) => w.id)
 		.sort();
 
@@ -302,7 +302,7 @@ describe('S follows the layout (#782 PR4)', () => {
 		dock.undockPanel('a');
 		dock.dockExistingAtEdge('b', 'left');
 		expect(calls).toBe(2);
-		dock.dockAtSlot('a', dock.homeSlot('a')!);
+		dock.dockBack('a');
 		dock.undockPanel('c');
 		dock.dockPanel('c', 'a', 'center');
 		expect(calls).toBe(3);
@@ -547,7 +547,7 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		// And that is where the tab comes back (#782 PR6; the decision on PR #857's judgment 30): the
 		// second tab, as it was, whatever was moved around its place - and the active one.
 		follows.length = 0;
-		expect(dock.dockAtSlot('b', dock.homeSlot('b')!)).toBe(true);
+		expect(dock.dockBack('b')).toBe(true);
 		expect(follows).toEqual([{ step: 'dockAtSlot', result: 'same' }]);
 		const back = findNode(dock.layout.docked, 't');
 		expect(back?.type === 'tabs' && back.children.map((c) => c.id)).toEqual(['c', 'b', 'a', 'd']);

@@ -455,9 +455,10 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   直す所: 代入のたびに分割・タブの組の id を振り直しているなら、そのまま渡す。`DockHost` を直に使い、代入の後も戻したいなら
   `dock.defaultLayout` を入れる。ドラッグ・浮かせる・閉じる・`dockExisting*`・端の帯の結果は変わらない。
 - **`@banto/dock-svelte`: `dock.homeSlot(id)` の slot は場所の名前で、中身は書き換わらない（#782 PR7）**。
-  `dock.dockAtSlot(id, dock.homeSlot(id))`・`dock.restoredAt(..)`・`movePanel(id, { back: true })` はそのまま使える。
-  `homeSlot` の slot を自分で `restoreDockSlot` に渡している・`share` を読んでいる所だけ、`dock.restoredAt` /
-  `dock.dockAtSlot` に替える（slot の `share` は浮かせた時点の値のままになる）。
+  `dock.dockBack(id)`・`dock.backTree(id)`（slot を受けない新しい口。#782 PR8a。戻れるかは `backTree(id) !== null`）・
+  `movePanel(id, { back: true })` を使う（旧い `dockAtSlot(id, dock.homeSlot(id))`・`restoredAt(..)` も PR8c で消すまで動く）。
+  `homeSlot` の slot を自分で `restoreDockSlot` に渡している・`share` を読んでいる所だけ、`dock.backTree` /
+  `dock.dockBack` に替える（slot の `share` は浮かせた時点の値のままになる）。
 
 **初回セットアップの撤去（C2b、ADR-0034 §5〜§7・§9）**。C1・C2 の後に作った DB は作り直さなくてよい
 （`0015_auth_mode_defaults.sql` が足されるだけ）。

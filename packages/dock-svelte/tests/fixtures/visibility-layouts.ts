@@ -84,8 +84,7 @@ export const runSteps = (make: () => DockNode, steps: string[]): DockState => {
 		else if (step[0] === '+') dock.show(id);
 		else if (step[0] === '~') dock.undockPanel(id);
 		else {
-			const slot = dock.homeSlot(id);
-			if (slot) dock.dockAtSlot(id, slot);
+			dock.dockBack(id);
 		}
 	}
 	return dock;

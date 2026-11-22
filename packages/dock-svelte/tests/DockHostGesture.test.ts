@@ -315,7 +315,7 @@ describe('split divider', () => {
 		expect(sizes(dock)[0]).toBeCloseTo(0.6);
 		expect(pressEscape().defaultPrevented).toBe(true);
 		expect(sizes(dock)).toEqual([0.5, 0.5]);
-		expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
+		expect(dock.dockBack('a')).toBe(true);
 		expect(sizes(dock)).toEqual([1, 0, 0]);
 		// Committed instead, the write stays: the three share the row.
 		dock.undockPanel('a');
@@ -323,7 +323,7 @@ describe('split divider', () => {
 		firePointer(screen.getByRole('separator'), 'pointerdown', 500, 100);
 		firePointer(window, 'pointermove', 600, 100);
 		firePointer(window, 'pointerup', 600, 100);
-		expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
+		expect(dock.dockBack('a')).toBe(true);
 		expect(sizes(dock)[0]).toBeCloseTo(1 / 3);
 	});
 
