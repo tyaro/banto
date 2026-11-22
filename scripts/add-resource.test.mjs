@@ -500,6 +500,7 @@ test('テンプレートのコピーに生成し、2 つ目のリソースも続
 				`${APP}/messages/en.json`,
 				`${APP}/messages/ja.json`,
 				`${APP}/src-tauri/src/lib.rs`,
+				`${APP}/src-tauri/src/tests.rs`,
 				`${APP}/src/lib/banto/resources/index.ts`,
 				'scripts/verify-architecture.mjs'
 			].sort()
@@ -529,7 +530,8 @@ test('テンプレートのコピーに生成し、2 つ目のリソースも続
 		for (const verb of ['list', 'get', 'create', 'update', 'delete'])
 			assert.match(tauri, new RegExp(`#\\[tauri::command\\]\\nasync fn orders_${verb}\\(`));
 		assert.match(tauri, /require_role\(state, Role::Editor, "orders"\)/);
-		assert.match(tauri, /async fn orders_viewer_writes_are_forbidden_and_recorded_as_denied/);
+		const tauriTests = read(dir, `${APP}/src-tauri/src/tests.rs`);
+		assert.match(tauriTests, /async fn orders_viewer_writes_are_forbidden_and_recorded_as_denied/);
 		assert.match(tauri, /\n {12}orders_delete,\n {12}\/\/ \[banto:add-resource:tauri-handlers\]/);
 
 		const restMod = read(dir, `${APP}/core/src/rest/mod.rs`);

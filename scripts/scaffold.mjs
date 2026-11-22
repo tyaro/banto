@@ -313,6 +313,7 @@ const REST_ITEMS = `${APP}/core/src/rest/items.rs`;
 const REST_TESTS = `${APP}/core/src/rest/tests.rs`;
 const BANTO_SERVE = `${APP}/core/src/bin/banto-serve.rs`;
 const LIB_RS = `${APP}/src-tauri/src/lib.rs`;
+const TAURI_TESTS = `${APP}/src-tauri/src/tests.rs`;
 const WS_CARGO = 'Cargo.toml';
 const CORE_CARGO = `${APP}/core/Cargo.toml`;
 const TAURI_CARGO = `${APP}/src-tauri/Cargo.toml`;
@@ -1342,26 +1343,28 @@ function removeAttachmentsFromLibRs() {
 		`            attachments_list,\n            attachments_read_thumbnail,\n            attachments_read_body,\n            attachments_upload,\n            attachments_delete,\n            attachments_open_folder,\n`
 	);
 	cutRegion(
-		LIB_RS,
-		'lib.rs: test app_state の attachments 除去',
-		`            attachments: AttachmentsService::new(\n                pool,`,
-		`            attachments_dir: PathBuf::from("unused-in-tests").join("attachments"),`
+		TAURI_TESTS,
+		'tests.rs: test app_state の attachments 除去',
+		`        attachments: AttachmentsService::new(
+            pool,`,
+		`        attachments_dir: PathBuf::from("unused-in-tests").join("attachments"),`
 	);
 	drop(
-		LIB_RS,
-		'lib.rs: test app_state_with_tempdir の attachments 除去',
-		`            attachments: AttachmentsService::new(pool, dir.path().join("attachments")),\n            attachments_dir: dir.path().join("attachments"),\n`
+		TAURI_TESTS,
+		'tests.rs: test app_state_with_tempdir の attachments 除去',
+		`        attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
+        attachments_dir: dir.path().join("attachments"),
+`
 	);
 	// test の attachments コマンドテスト（M-5、upload/delete の _body を叩く2本）を
 	// マーカーごと丸ごと除去。attachments_*_body は上の M20 コマンド cutRegion で
 	// 消えるので、テスト側もここで消さないと未定義シンボル参照で cargo test が赤くなる。
-	// マーカーは mod tests の閉じ括弧の手前にあるため、cutRegion（両端含む）で
-	// モジュールの `}` は残る。
+	// マーカーは tests.rs の末尾付近にあり、cutRegion は両端のマーカー行だけを含めて外す。
 	cutRegion(
-		LIB_RS,
-		'lib.rs: test の M20 attachments コマンドテスト除去',
-		`    // --- M20: attachments command tests -----------------------------------`,
-		`    // --- end M20 attachments command tests ---------------------------------`
+		TAURI_TESTS,
+		'tests.rs: test の M20 attachments コマンドテスト除去',
+		`// --- M20: attachments command tests -----------------------------------`,
+		`// --- end M20 attachments command tests ---------------------------------`
 	);
 }
 
@@ -1698,26 +1701,32 @@ function removeItemsFromRestModImports() {
 	);
 }
 
-/** `src-tauri/src/lib.rs` の items 区画（マーカー15箇所）を出現順に外す。 */
+/** `src-tauri/src/lib.rs` と `tests.rs` の items 区画（マーカー15箇所）を出現順に外す。 */
 function removeItemsFromLibRs() {
 	// 列0（3）: use・items_* コマンド群・items_export_csv_to_folder
 	cutMarked(LIB_RS, 'lib.rs: items use 除去', 'items');
 	cutMarked(LIB_RS, 'lib.rs: items_* コマンド群除去', 'items');
 	cutMarked(LIB_RS, 'lib.rs: items_export_csv_to_folder 除去', 'items');
-	// インデント4（4）: AppState フィールド・start_embedded_server 引数・
-	//                   M15 テスト章・items_delete 監査テスト
+	// インデント4（2）: AppState フィールド・start_embedded_server 引数
 	cutMarked(LIB_RS, 'lib.rs: AppState の items フィールド除去', 'items', '    ');
 	cutMarked(LIB_RS, 'lib.rs: start_embedded_server の items 引数除去', 'items', '    ');
-	cutMarked(LIB_RS, 'lib.rs: test の M15 CSV import 章除去', 'items', '    ');
-	cutMarked(LIB_RS, 'lib.rs: test の items_delete 監査テスト除去', 'items', '    ');
+	cutMarked(TAURI_TESTS, 'tests.rs: test の M15 CSV import 章除去', 'items');
+	cutMarked(TAURI_TESTS, 'tests.rs: test の items_delete 監査テスト除去', 'items');
 	// インデント8（1）: start_embedded_server の Services リテラル
 	cutMarked(LIB_RS, 'lib.rs: Services リテラルから items 除去', 'items', '        ');
-	// インデント12（4）: setup の ItemsService 構築・invoke_handler 登録・
-	//                    test app_state / app_state_with_tempdir
+	// インデント12（2）: setup の ItemsService 構築・invoke_handler 登録
 	cutMarked(LIB_RS, 'lib.rs: setup の ItemsService 構築除去', 'items', '            ');
 	cutMarked(LIB_RS, 'lib.rs: invoke_handler の items コマンド登録除去', 'items', '            ');
-	cutMarked(LIB_RS, 'lib.rs: test app_state の items 除去', 'items', '            ');
-	cutMarked(LIB_RS, 'lib.rs: test app_state_with_tempdir の items 除去', 'items', '            ');
+	cutMarked(TAURI_TESTS, 'tests.rs: test app_state の items 除去', 'items', '        ');
+	cutMarked(
+		TAURI_TESTS,
+		'tests.rs: test app_state_with_tempdir の items 除去',
+		'items',
+		'        '
+	);
+	// tests.rs（4）: M15 テスト章・items_delete 監査テスト（列0）と、
+	//                test app_state / app_state_with_tempdir（インデント8）
+	// （順序は出現順に依らない。cutMarked は同じインデントの最初のマーカーを外す）
 	// インデント16（2）: server_apply の実引数・AppState 構築リテラル
 	cutMarked(LIB_RS, 'lib.rs: server_apply の items 実引数除去', 'items', '                ');
 	cutMarked(LIB_RS, 'lib.rs: AppState 構築リテラルの items 除去', 'items', '                ');
