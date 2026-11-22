@@ -16,7 +16,7 @@ import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import { validateDockLayout } from '../src/core/validate';
 import { slotDepth } from '../src/core/layoutVersion';
-import { MAX_SLOT_DEPTH, captureDockSlot } from '../src/core/slot';
+import { MAX_SLOT_DEPTH, captureDockSlot, restoreDockSlot } from '../src/core/slot';
 import {
 	deflateShadow,
 	dockAtShadowEdge,
@@ -116,6 +116,10 @@ describe('projectShadow', () => {
 		const tree = row('s1', [p('a'), column('s2', [p('b'), tabs('t1', [p('c'), p('d')], 1)])]);
 		expect(projectShadow(shadowOf(tree as DockNode))).toBe(tree);
 		expect(projectShadow(null)).toBeNull();
+		// A tab group of one tab too (a saved layout may hold one): it is not shown as the pane.
+		const lone = row('s1', [tabs('t1', [p('a')]), p('b')]);
+		expect(projectShadow(lone)).toBe(lone);
+		expect(text(projectShadow(markAway(lone, 'b')))).toBe('tabs[a]');
 	});
 
 	it('leaves the tombstones out and shares the sizes among the shown children', () => {
@@ -1220,6 +1224,178 @@ describe('inflateShadow', () => {
 		close(sizesOfSplit(back.shadow, 'x'), [0.25, 0.75]);
 		close(sizesOfSplit(back.shadow, 'r'), [0.4, 0.6]);
 		expect(markPresent(back.shadow, 'b')).toEqual(tree);
+	});
+
+	// Slots as `slot.ts` writes them, where they say less or something else than the ones of
+	// `deflateShadow` (cross review of PR #846): what `restoreDockSlot` makes of them is kept.
+	it('slots of `slot.ts` that differ on a container with no pane showing: the last one given counts', () => {
+		const tree = row('r', [tabs('g', [p('a'), p('b')]), p('c')], [0.3, 0.7]) as DockNode;
+		// Hide `a` (the group has .3 of the row), drag the row to .6 / .4, hide `b`.
+		const slotA = captureDockSlot(tree, 'a')!;
+		const resized = resizeSplit(removePanel(tree, 'a')!, 'r', 0, 0.3);
+		close(sizesOfSplit(resized, 'r'), [0.6, 0.4]);
+		const slotB = captureDockSlot(resized, 'b', [{ id: 'a', slot: slotA }])!;
+		const docked = removePanel(resized, 'b');
+		expect(docked).toEqual(p('c'));
+		// Both remember the group and its place in the row, with the share of their own time.
+		expect(slotA).toMatchObject({ kind: 'tab', groupId: 'g', outer: { splitId: 'r', share: 0.3 } });
+		expect(slotB).toMatchObject({ kind: 'tab', groupId: 'g', outer: { splitId: 'r', share: 0.6 } });
+		const hidden = [
+			{ id: 'a', slot: slotA },
+			{ id: 'b', slot: slotB }
+		];
+		const back = inflateShadow(
+			docked,
+			hidden.map((h) => ({ panel: p(h.id), slot: h.slot }))
+		);
+		expect(back.unplaced).toEqual([]);
+		expect(text(back.shadow)).toBe('row[tabs[a†, b†], c]');
+		// The resize is not lost: the share of the slot taken last, not of the first pane found.
+		close(sizesOfSplit(back.shadow, 'r'), [0.6, 0.4]);
+		// `restoreDockSlot` gives the pane that comes back first the share of its own slot (.6 for
+		// `b`, .3 for `a`): S has one share for the group, the one of the last slot, whichever
+		// comes back first.
+		const old = restoreDockSlot(docked, p('b'), slotB, counterMakeId(), hidden);
+		expect(text(old)).toBe('row[b, c]');
+		close(sizesOfSplit(old, 'r'), [0.6, 0.4]);
+		for (const id of ['a', 'b']) {
+			const now = projectShadow(markPresent(back.shadow, id));
+			expect(text(now)).toBe(`row[${id}, c]`);
+			close(sizesOfSplit(now, 'r'), [0.6, 0.4]);
+		}
+		// "Last" is the order given (the order they were hidden in): the other way round, `a`'s.
+		const other = inflateShadow(docked, [
+			{ panel: p('b'), slot: slotB },
+			{ panel: p('a'), slot: slotA }
+		]);
+		expect(text(other.shadow)).toBe('row[tabs[a†, b†], c]');
+		close(sizesOfSplit(other.shadow, 'r'), [0.3, 0.7]);
+		// The slots of one S agree, so there the order does not matter.
+		const s = row('r', [tabs('g', [gone('a'), gone('b')]), p('c')], [0.6, 0.4]);
+		for (const order of permutations(['a', 'b'])) {
+			expect(canon(roundTrip(s, order).shadow)).toBe(canon(s));
+		}
+	});
+
+	it('a slot whose `neighborId` is a split / tab group of the tree, with no anchors: beside it', () => {
+		// Older JSON: the split is gone, no pane is named, the neighbour is the inner column.
+		const inner = column('c', [p('a'), p('b')]) as DockNode;
+		const slot: DockSlot = {
+			kind: 'split',
+			splitId: 'r',
+			direction: 'row',
+			index: 0,
+			neighborId: 'c',
+			side: 'before',
+			size: 0.25,
+			anchors: []
+		};
+		const back = inflateShadow(inner, [{ panel: p('x'), slot }]);
+		expect(back.unplaced).toEqual([]);
+		expect(text(back.shadow)).toBe('row[x†, column[a, b]]');
+		// The column is not taken apart: the docked tree's own object, and so the projection.
+		expect((back.shadow as DockSplitNode).children[1]).toBe(inner);
+		expect(projectShadow(back.shadow)).toBe(inner);
+		// As `restoreDockSlot`.
+		const old = restoreDockSlot(inner, p('x'), slot, counterMakeId());
+		expect(projectShadow(markPresent(back.shadow, 'x'))).toEqual(old);
+		expect(text(old)).toBe('row[x, column[a, b]]');
+		close(sizesOfSplit(old, 'r'), [0.25, 0.75]);
+		// A tab group as the neighbour, the pane after it.
+		const group = tabs('g', [p('a'), p('b')]) as DockNode;
+		const afterGroup: DockSlot = { ...slot, index: 1, neighborId: 'g', side: 'after' };
+		const beside = inflateShadow(group, [{ panel: p('x'), slot: afterGroup }]);
+		expect(beside.unplaced).toEqual([]);
+		expect(text(beside.shadow)).toBe('row[tabs[a, b], x†]');
+		expect(projectShadow(markPresent(beside.shadow, 'x'))).toEqual(
+			restoreDockSlot(group, p('x'), afterGroup, counterMakeId())
+		);
+		// A neighbour that is nowhere, and no anchors: still no place.
+		const nowhere: DockSlot = { ...slot, neighborId: 'gone' };
+		expect(inflateShadow(inner, [{ panel: p('x'), slot: nowhere }]).unplaced).toEqual(['x']);
+	});
+
+	it('a slot of `slot.ts` after the split was put in another order: beside the neighbour that shows', () => {
+		const tree = row('r', [p('a'), p('b'), p('c'), p('d')], [0.2, 0.3, 0.3, 0.2]) as DockNode;
+		// Hide `b` (index 1, before `c`, after `a`), then move `c` to the left of `a`.
+		const slot = captureDockSlot(tree, 'b')!;
+		const without = removePanel(removePanel(tree, 'b')!, 'c')!;
+		const moved = dockPanelIntoTree(without, p('c'), 'a', 'left', counterMakeId());
+		expect(text(moved)).toBe('row[c, a, d]');
+		const back = inflateShadow(moved, [{ panel: p('b'), slot }]);
+		expect(back.unplaced).toEqual([]);
+		// Not at the old index 1 (between `c` and `a`): before `c`, the neighbour of the slot.
+		expect(text(back.shadow)).toBe('row[b†, c, a, d]');
+		expect(projectShadow(back.shadow)).toEqual(moved);
+		const old = restoreDockSlot(moved, p('b'), slot, counterMakeId());
+		const now = projectShadow(markPresent(back.shadow, 'b'));
+		expect(text(now)).toBe('row[b, c, a, d]');
+		expect(text(now)).toBe(text(old));
+		close(sizesOfSplit(now, 'r'), sizesOfSplit(old, 'r'));
+		// Two panes hidden from the end, the two left swapped: `x` after `b` (the nearest pane it
+		// names; its neighbour `y` is away), `y` after `x` (its neighbour) - not at the end, where
+		// their indexes 2 and 3 are.
+		const four = row('r', [p('a'), p('b'), p('x'), p('y')]) as DockNode;
+		const slotX = captureDockSlot(four, 'x')!;
+		const noX = removePanel(four, 'x')!;
+		const slotY = captureDockSlot(noX, 'y', [{ id: 'x', slot: slotX }])!;
+		const swapped = row('r', [p('b'), p('a')]) as DockNode;
+		const hidden = [
+			{ id: 'x', slot: slotX },
+			{ id: 'y', slot: slotY }
+		];
+		for (const order of permutations(hidden)) {
+			const both = inflateShadow(
+				swapped,
+				order.map((h) => ({ panel: p(h.id), slot: h.slot }))
+			);
+			expect(both.unplaced).toEqual([]);
+			expect(projectShadow(both.shadow)).toEqual(swapped);
+			expect(text(both.shadow)).toBe('row[b, x†, y†, a]');
+		}
+		// As `restoreDockSlot`, `x` then `y`.
+		const makeId = counterMakeId();
+		const withX = restoreDockSlot(swapped, p('x'), slotX, makeId, hidden)!;
+		expect(text(restoreDockSlot(withX, p('y'), slotY, makeId, [hidden[1]]))).toBe(
+			'row[b, x, y, a]'
+		);
+	});
+
+	it('a tab group of one tab in a saved layout stays a group', () => {
+		// `validateDockLayout` takes a group of one tab, and `DockState` keeps it as it is.
+		const s = row('r', [tabs('g', [p('a')]), p('b'), gone('c')]);
+		const checked = validateDockLayout(layoutOf(s));
+		if (!checked.ok) throw new Error('the layout is not valid');
+		const { docked, floating } = checked.layout;
+		expect(text(docked)).toBe('row[tabs[a], b]');
+		// Nothing away: the tree itself, and it projects to itself.
+		expect(inflateShadow(docked, []).shadow).toBe(docked);
+		expect(projectShadow(shadowOf(docked))).toBe(docked);
+		// A tombstone elsewhere: the group and its id are in the projection.
+		const back = inflateShadow(docked, [{ panel: p('c'), slot: floating[0].dockSlot! }]);
+		expect(back.unplaced).toEqual([]);
+		expect(canon(back.shadow)).toBe(canon(s));
+		expect(projectShadow(back.shadow)).toEqual(docked);
+		expect(findNode(projectShadow(back.shadow), 'g')?.type).toBe('tabs');
+		// Its one tab hidden and shown: the group again.
+		const hidden = markAway(back.shadow, 'a');
+		expect(text(projectShadow(hidden))).toBe('b');
+		expect(text(projectShadow(markPresent(hidden, 'a')))).toBe('row[tabs[a], b]');
+		// Saved while its tab is away, the group is not kept (a slot cannot tell it from a group
+		// that lost its other tabs; `slot.ts` gives the pane back without a group too).
+		for (const order of permutations(['a', 'c'])) {
+			const again = roundTrip(hidden, order);
+			expect(again.unplaced).toEqual([]);
+			expect(text(again.shadow)).toBe('row[a†, b, c†]');
+		}
+		// The one case the projection is not the docked tree: a tombstone IN such a group. It is a
+		// group with one tab showing then, which shows as the pane (as after hiding a tab of two).
+		const inGroup = slotOf(row('r', [tabs('g', [p('a'), gone('x')]), p('b')]), 'x');
+		const into = inflateShadow(docked, [{ panel: p('x'), slot: inGroup }]);
+		expect(into.unplaced).toEqual([]);
+		expect(text(into.shadow)).toBe('row[tabs[a, x†], b]');
+		expect(text(projectShadow(into.shadow))).toBe('row[a, b]');
+		expect(text(projectShadow(markPresent(into.shadow, 'x')))).toBe('row[tabs[a, x], b]');
 	});
 });
 

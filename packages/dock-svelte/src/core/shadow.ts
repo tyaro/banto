@@ -205,10 +205,12 @@ function projectNode(node: ShadowNode): DockNode | null {
 	if (node.type === 'tabs') {
 		const shown = node.children.filter((c) => c.away !== true);
 		if (shown.length === 0) return null;
+		// Every tab shows: the group as it is - one with a single tab too (`validate.ts` takes such
+		// a group in a saved layout, and `DockState` keeps it).
+		if (shown.length === node.children.length) return node;
 		if (shown.length === 1) {
 			return node.collapsed === true ? { ...shown[0], collapsed: true } : shown[0];
 		}
-		if (shown.length === node.children.length) return node;
 		const before = node.children.slice(0, node.activeIndex).filter((c) => c.away !== true).length;
 		return { ...node, children: shown, activeIndex: Math.min(before, shown.length - 1) };
 	}
@@ -229,8 +231,9 @@ function projectNode(node: ShadowNode): DockNode | null {
 }
 
 /**
- * The docked tree the user sees: S without its tombstones. A tab group with one shown tab shows
- * as that pane, a split with one shown child as that child (not flattened into a split around it,
+ * The docked tree the user sees: S without its tombstones. A tab group with tombstones and one
+ * shown tab shows as that pane (a group of one tab, with no tombstone, stays a group: a saved
+ * layout may hold one), a split with one shown child as that child (not flattened into a split around it,
  * exactly like `tree.ts#collapse`), and a split's `sizes` are the shares of its shown children,
  * scaled to add up to 1. A split / tab group that shows keeps its id of S. `collapsed` flags follow
  * `tree.ts#normalizeCollapsed`. An S without tombstones projects to itself (the same object).
@@ -793,6 +796,9 @@ function slotOfPath(path: ShadowNode[]): DockSlot {
  *    comes back is made the active one anyway);
  *  - the place of a tombstone more than `MAX_SLOT_DEPTH` containers deep, when no container the
  *    slot still names can be found by its id or by a pane of it: the pane is `unplaced` then;
+ *  - a tab group of one tab (a saved layout may hold one) whose tab is away: the tombstone comes
+ *    back without the group (a slot cannot tell it from a group that lost its other tabs;
+ *    `slot.ts` gives the pane back without a group too);
  *  - last digits of `sizes` (the projection's sizes are scaled to 1 and scaled back).
  */
 export function deflateShadow(s: ShadowNode | null): DeflatedShadow {
@@ -845,6 +851,20 @@ interface SlotLevel {
 interface SlotRecord {
 	index: number;
 	share?: number;
+	/** A split level: the old neighbour, then the anchors by distance, either side (`slot.ts#restoreSplit`'s candidates). */
+	near?: { id: string; before: boolean }[];
+}
+
+/** The neighbour and the anchors of a split slot, nearest first (`slot.ts#splitAnchors`). */
+function nearOf(slot: Extract<DockSlot, { kind: 'split' }>): { id: string; before: boolean }[] {
+	const before = slot.side === 'before';
+	const others = slot.otherAnchors ?? [];
+	const out = [{ id: slot.neighborId, before }];
+	for (let d = 0; d < Math.max(slot.anchors.length, others.length); d++) {
+		if (d < slot.anchors.length) out.push({ id: slot.anchors[d], before });
+		if (d < others.length) out.push({ id: others[d], before: !before });
+	}
+	return out;
 }
 
 function workOf(node: DockNode): Work {
@@ -926,7 +946,10 @@ function slotLevels(
 			...(s.kind === 'split' ? { direction: s.direction } : {}),
 			panels: new Set(names)
 		});
-		records.push({ index: s.index, ...(s.kind === 'split' ? { share: s.share ?? s.size } : {}) });
+		records.push({
+			index: s.index,
+			...(s.kind === 'split' ? { share: s.share ?? s.size, near: nearOf(s) } : {})
+		});
 	}
 	return { levels, records };
 }
@@ -936,7 +959,8 @@ function slotLevels(
  * The tree is S cut down to the panes it has so far, so the container of a level is in it by its
  * id (it shows two or more children, or was made again already), or as the one node that holds
  * exactly the panes of it that are in the tree (it is made again around that node), or not at all
- * (none of its panes is here yet: the tombstone then stands for it one level up).
+ * (none of its panes is here yet: the tombstone then stands for it one level up). A name of the
+ * slot that is a container of the tree (`neighborId` may be one) stands for the panes in it.
  * `false` when no level fits; nothing is changed then.
  */
 function placeTombstone(
@@ -958,7 +982,15 @@ function placeTombstone(
 			found.touched = true;
 			return true;
 		}
-		const here = new Set([...level.panels].filter((id) => present.has(id)));
+		const here = new Set<string>();
+		for (const id of level.panels) {
+			if (present.has(id)) here.add(id);
+			else if (id !== level.id) {
+				// Not a pane: the split / tab group the slot names as the neighbour, when it is here.
+				const named = findWork(root, id);
+				if (named?.box) workLeaves(named).forEach((l) => here.add(l.id));
+			}
+		}
 		if (here.size === 0) continue;
 		// The id is in use for something else: not the tree this slot was taken in.
 		if (found || reserved.has(level.id)) return false;
@@ -1010,17 +1042,25 @@ function finishWork(work: Work, records: Map<string, Map<string, SlotRecord>>): 
 		return { ...work.src, children } as ShadowNode;
 	}
 	// A child none of whose panes show is at the index its slots say; the ones that show keep
-	// their order and fill the places between.
+	// their order and fill the places between. The slots of one S say the same of a child whichever
+	// pane of it is asked. Slots that differ (`slot.ts` takes one when a pane is hidden, and the
+	// split may be resized before the next pane of the container goes): the one given last counts,
+	// as in `slot.ts#splitPending` (the most recent slot of a container).
 	const of = records.get(work.id);
 	const entries = work.children.map((child) => {
 		const leaves = workLeaves(child);
 		const shown = leaves.some((l) => l.node.away !== true);
-		const named = shown ? undefined : leaves.find((l) => of?.has(l.id));
-		return { child, shown, record: named ? of!.get(named.id) : undefined };
+		let record: SlotRecord | undefined;
+		if (!shown && of) {
+			const ids = new Set(leaves.map((l) => l.id));
+			for (const [id, said] of of) if (ids.has(id)) record = said;
+		}
+		return { child, shown, record };
 	});
 	const fixed = entries
 		.filter((e) => e.record !== undefined)
 		.sort((a, b) => a.record!.index - b.record!.index);
+	const byIndex = [...fixed];
 	const free = entries.filter((e) => e.record === undefined);
 	const ordered: typeof entries = [];
 	while (fixed.length + free.length > 0) {
@@ -1029,6 +1069,24 @@ function finishWork(work: Work, records: Map<string, Map<string, SlotRecord>>): 
 				? fixed.shift()!
 				: free.shift()!;
 		ordered.push(next);
+	}
+	// In a split the index only counts when the slot names nothing that is here: as
+	// `slot.ts#restoreSplit` in a split still there, such a child goes beside the nearest one its
+	// slot names - the old neighbour, then the anchors by distance - among the children that show
+	// and the ones placed before it (lower index). For the slots of one S that is the place the
+	// index says. It is another one when the children that show were put in another order since
+	// the slot was taken (`slot.ts` keeps the slot of a hidden pane as it was).
+	const settled = new Set(entries.filter((e) => e.record === undefined));
+	for (const entry of work.tabs ? [] : byIndex) {
+		for (const c of entry.record!.near ?? []) {
+			const beside = ordered.find((e) => settled.has(e) && findWork(e.child, c.id) !== null);
+			if (beside === undefined) continue;
+			ordered.splice(ordered.indexOf(entry), 1);
+			const n = ordered.indexOf(beside);
+			ordered.splice(c.before ? n : n + 1, 0, entry);
+			break;
+		}
+		settled.add(entry);
 	}
 	if (work.tabs) {
 		const children = ordered.map((e) => nodes.get(e.child) as ShadowPanelNode);
@@ -1091,8 +1149,11 @@ function finishWork(work: Work, records: Map<string, Map<string, SlotRecord>>): 
  *
  *  - the projection of the result is `docked` (shape, ids, active tabs, sizes), but for a band
  *    flag (`collapsed`) on a region that is now the only child showing of a split made again -
- *    S has no such flag (see `settleCollapsed`);
- *  - the order of `away` does not matter (when the slots are of one S);
+ *    S has no such flag (see `settleCollapsed`) - and for a tab group of one tab in `docked` that
+ *    a slot puts a tombstone into: it shows as the pane then (`projectShadow`);
+ *  - the order of `away` does not matter when the slots are of one S. Slots `slot.ts` took at
+ *    different times may say different things of one place: there `away` is read as the order
+ *    the panes left in, and the last one counts (below);
  *  - with no pane to place the result is `docked` itself.
  *
  * A slot is read level by level, nearest first (the slot, then its `outer` chain). The container
@@ -1101,15 +1162,22 @@ function finishWork(work: Work, records: Map<string, Map<string, SlotRecord>>): 
  * node with the slot's id; else, when none of its panes is in the tree, one level up, where the
  * tombstone stands for it until another one of it comes. So a split / tab group that was folded
  * away when its panes left is in S again, however deep (the known failure 6 of #782). No id is
- * made up: a container whose id is in use by something else is not made again.
+ * made up: a container whose id is in use by something else is not made again. A name that is
+ * a split / tab group of the tree (a `neighborId` may be one, and older JSON has such a slot with
+ * no `anchors`) stands for the panes in it: the pane goes beside that container, left whole.
  *
  * In a container, a child that does not show goes to the `index` its slot says, among the ones
- * that show in their order. In a split it has the `share` its slot says (`size` for a slot without),
- * and the children that show share the rest in the proportion of the docked tree.
+ * that show in their order; in a split, beside the nearest child its slot names (the neighbour,
+ * then the anchors) when one is there - the same place for the slots of one S, and the one
+ * `slot.ts#restoreSplit` takes when the children were put in another order since. In a split it
+ * has the `share` its slot says (`size` for a slot without), and the children that show share the
+ * rest in the proportion of the docked tree. A child with several panes, none showing, is read
+ * from the slot given last among theirs (`slot.ts#splitPending`: the most recent slot of a
+ * container - the share after the last resize).
  *
  * A slot that fits nowhere - a `root` slot once something is docked, panes it names scattered
- * over other containers, an id in use - is not guessed at ("beside the nearest anchor", as
- * `slot.ts#restoreDockSlot` does). An entry for a pane that is docked, or a second entry for a
+ * over other containers, an id in use - is not guessed at ("beside the nearest anchor" in another
+ * container, as `slot.ts#restoreDockSlot` does). An entry for a pane that is docked, or a second entry for a
  * pane, is ignored.
  */
 export function inflateShadow(docked: DockNode | null, away: Iterable<ShadowAway>): InflatedShadow {
