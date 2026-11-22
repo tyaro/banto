@@ -223,6 +223,9 @@ export default defineConfig({
 			name: 'demo',
 			testDir: './demo',
 			workers: 1,
+			// Own outputDir (see visual-ui): ci.yml runs demo after `visual` even when it
+			// failed, and must not clear the screenshot diffs.
+			outputDir: path.join(dirname, 'test-results-demo'),
 			use: { ...devices['Desktop Chrome'], baseURL: DEMO_BASE_URL }
 		},
 		// Phase 0 visual regression + axe-core (visual-refresh-design.md §12).

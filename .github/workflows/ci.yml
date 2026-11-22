@@ -564,6 +564,7 @@ jobs:
         if: ${{ !cancelled() && steps.visual.conclusion != 'skipped' }}
         env:
           BANTO_E2E_SERVERS: demo
+          BANTO_E2E_REPORT_DIR: playwright-report-demo
         run: pnpm e2e:demo
 
       - name: Upload Playwright report
@@ -574,6 +575,7 @@ jobs:
           path: |
             e2e/playwright-report/
             e2e/playwright-report-ui/
+            e2e/playwright-report-demo/
           retention-days: 7
 
       # Diff/actual/expected images for failed toHaveScreenshot() comparisons
@@ -587,6 +589,7 @@ jobs:
           path: |
             e2e/test-results/
             e2e/test-results-ui/
+            e2e/test-results-demo/
           retention-days: 3
 
   audit:
