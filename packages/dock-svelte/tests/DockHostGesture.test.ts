@@ -438,6 +438,25 @@ describe('cancelGesture / replaceLayout during a gesture (#796)', () => {
 			expect(net).toBe(0);
 		});
 
+		it('a gesture started from onGestureEnd during the cancel does not survive', async () => {
+			const g = gate();
+			const dock = createDockState(withB());
+			const onGestureEnd = vi.fn(() => tryResize());
+			const view = render(DockHostHarness, { dock, onGestureEnd, beforePanelChange: g.ask });
+			tryResize();
+			expect(widthOf(dock)).toBe(390);
+			const result = view.component.host().replaceLayout(without());
+			await settle();
+			expect(onGestureEnd).toHaveBeenCalledTimes(1);
+			g.pending[0](true);
+			expect(await result).toBe('applied');
+			firePointer(window, 'pointermove', 600, 240);
+			firePointer(window, 'pointerup', 600, 240);
+			pressEscape();
+			expect(widthOf(dock)).toBe(500);
+			expect(net).toBe(0);
+		});
+
 		it('with two in flight, the guard stays until the last one returns', async () => {
 			const g = gate();
 			const { dock, host } = mountGated(g.ask);

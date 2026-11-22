@@ -601,9 +601,10 @@
 		const checked = validateDockLayout(next);
 		if (!checked.ok) return 'invalid';
 		const layout = checked.layout;
-		cancelGesture();
+		// Counted before the cancel: an `onGestureEnd` that starts another gesture is stopped too.
 		replacing++;
 		try {
+			cancelGesture();
 			const active = document.activeElement;
 			const focusWasInHost = !!hostEl && !!active && hostEl.contains(active);
 			const outcome = await lifecycle.guarded(options.isCurrent, () =>
