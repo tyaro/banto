@@ -187,8 +187,18 @@ pub struct MigrationManifest {
 /// database with one that cannot boot. The wiring layer therefore hands over
 /// the SAME function its startup runs, and the restore validation calls it at
 /// both moments a candidate is looked at: when the restore is staged, and
-/// right before the swap. `Err` refuses the candidate; the current database
-/// is not touched either way.
+/// right before the swap. The current database is not touched whatever the
+/// answer:
+///
+/// - `Ok(CandidateVerdict::Accepted)`: the candidate may be staged / applied;
+/// - `Ok(CandidateVerdict::Rejected(reason))`: the CANDIDATE is the problem.
+///   Staging is refused (`validation`), and a pending file found at startup
+///   is deleted;
+/// - `Err(_)`: the check could not be COMPLETED (no disk space for the
+///   working copy, a permission, a read that failed). That says nothing about
+///   the candidate: staging fails with that error and can be retried, and a
+///   pending file found at startup is KEPT - the restore is not applied this
+///   time and is looked at again on the next start.
 ///
 /// The function receives the candidate's PATH and must not change that file:
 /// it opens it read-only, or - when the startup would first run migrations -
@@ -196,19 +206,58 @@ pub struct MigrationManifest {
 #[derive(Clone)]
 pub struct CandidateCheck(Arc<CandidateCheckFn>);
 
-type CandidateCheckFn =
-    dyn Fn(PathBuf) -> Pin<Box<dyn Future<Output = Result<(), BantoError>> + Send>> + Send + Sync;
+/// What a [`CandidateCheck`] found, when it could look.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CandidateVerdict {
+    Accepted,
+    /// The app would not start on this candidate; the reason, for the operator.
+    Rejected(String),
+}
+
+type CandidateCheckFn = dyn Fn(PathBuf) -> Pin<Box<dyn Future<Output = Result<CandidateVerdict, BantoError>> + Send>>
+    + Send
+    + Sync;
+
+/// Why a restore candidate is not used.
+#[derive(Debug)]
+enum CandidateRefusal {
+    /// The candidate itself is unusable (not SQLite, corrupt, another
+    /// version's history, a database the app would not start on).
+    Invalid(BantoError),
+    /// The check could not be completed; nothing is known about the candidate.
+    Unchecked(BantoError),
+}
+
+impl CandidateRefusal {
+    fn into_error(self) -> BantoError {
+        match self {
+            Self::Invalid(err) => err,
+            Self::Unchecked(err) => BantoError::Other(format!(
+                "リストアの候補を検査できませんでした（候補の内容の問題ではありません）。\
+                 空き容量や権限を確かめて、もう一度お試しください: {err}"
+            )),
+        }
+    }
+}
+
+impl From<BantoError> for CandidateRefusal {
+    /// Every failure of the built-in checks (open, integrity, tables,
+    /// migration history) is about the candidate.
+    fn from(err: BantoError) -> Self {
+        Self::Invalid(err)
+    }
+}
 
 impl CandidateCheck {
     pub fn new<F, Fut>(check: F) -> Self
     where
         F: Fn(PathBuf) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), BantoError>> + Send + 'static,
+        Fut: Future<Output = Result<CandidateVerdict, BantoError>> + Send + 'static,
     {
         Self(Arc::new(move |path| Box::pin(check(path))))
     }
 
-    async fn run(&self, candidate: &Path) -> Result<(), BantoError> {
+    async fn run(&self, candidate: &Path) -> Result<CandidateVerdict, BantoError> {
         (self.0)(candidate.to_path_buf()).await
     }
 }
@@ -385,7 +434,10 @@ fn unique_path(dir: &Path, base_stem: &str, ext: &str) -> PathBuf {
 ///
 /// `manifest` is the app's migration list (ADR-0034 §9): the candidate's
 /// `_sqlx_migrations` history must match it (see [`MigrationManifest`]).
-async fn validate_sqlite_file(path: &Path, manifest: &MigrationManifest) -> Result<(), BantoError> {
+async fn validate_sqlite_file(
+    path: &Path,
+    manifest: &MigrationManifest,
+) -> Result<(), CandidateRefusal> {
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(false)
@@ -410,13 +462,15 @@ async fn validate_sqlite_file(path: &Path, manifest: &MigrationManifest) -> Resu
     // ADR-0034 §9: the app's startup conditions, on a file whose history is
     // already known to be this app's. Run after `conn` is closed - the check
     // opens the candidate itself.
-    match &manifest.candidate_check {
-        Some(check) => check.run(path).await.map_err(|err| {
-            validation_err(format!(
-                "このバックアップは、戻すとアプリを起動できなくなるため使えません: {err}"
-            ))
-        }),
-        None => Ok(()),
+    let Some(check) = &manifest.candidate_check else {
+        return Ok(());
+    };
+    match check.run(path).await {
+        Ok(CandidateVerdict::Accepted) => Ok(()),
+        Ok(CandidateVerdict::Rejected(reason)) => Err(CandidateRefusal::Invalid(validation_err(
+            format!("このバックアップは、戻すとアプリを起動できなくなるため使えません: {reason}"),
+        ))),
+        Err(err) => Err(CandidateRefusal::Unchecked(err)),
     }
 }
 
@@ -774,7 +828,9 @@ impl BackupService {
             });
         }
 
-        validate_sqlite_file(&source_path, manifest).await?;
+        validate_sqlite_file(&source_path, manifest)
+            .await
+            .map_err(CandidateRefusal::into_error)?;
 
         let dir = self.scope_dir()?;
         tokio::fs::create_dir_all(&dir)
@@ -816,9 +872,9 @@ impl BackupService {
             .await
             .map_err(|err| io_err("アップロードされたファイルの書き込みに失敗しました", err))?;
 
-        if let Err(err) = validate_sqlite_file(&temp_path, manifest).await {
+        if let Err(refusal) = validate_sqlite_file(&temp_path, manifest).await {
             let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(err);
+            return Err(refusal.into_error());
         }
 
         if let Err(err) = tokio::fs::rename(&temp_path, self.pending_restore_path()?).await {
@@ -893,7 +949,10 @@ impl BackupService {
     ///    block the app from starting at all (it would retry-and-fail every
     ///    boot otherwise). Instead it is logged, the bad pending file is
     ///    deleted, and this returns `Ok(None)` - as if nothing had been
-    ///    staged.
+    ///    staged. When the app's own check ([`CandidateCheck`]) could not be
+    ///    COMPLETED (an I/O failure, not a verdict on the file), the pending
+    ///    file is kept instead: nothing is applied now, and the next start
+    ///    looks again.
     /// 3. If the CURRENT db file exists, checkpoint it (`PRAGMA
     ///    wal_checkpoint(TRUNCATE)`) via a short-lived one-off connection,
     ///    best-effort. JUDGMENT CALL (spec explicitly leaves this open,
@@ -943,12 +1002,24 @@ impl BackupService {
             return Ok(None);
         }
 
-        if let Err(err) = validate_sqlite_file(&pending_path, manifest).await {
-            eprintln!(
-                "banto: 起動時に検出したリストア予約ファイルが不正なため、適用をスキップして削除します: {err}"
-            );
-            let _ = tokio::fs::remove_file(&pending_path).await;
-            return Ok(None);
+        match validate_sqlite_file(&pending_path, manifest).await {
+            Ok(()) => {}
+            Err(CandidateRefusal::Invalid(err)) => {
+                eprintln!(
+                    "banto: 起動時に検出したリストア予約ファイルが不正なため、適用をスキップして削除します: {err}"
+                );
+                let _ = tokio::fs::remove_file(&pending_path).await;
+                return Ok(None);
+            }
+            // The check could not be completed: nothing is known about the
+            // candidate, so it is neither applied nor thrown away. The
+            // current database stays, and the next start looks again.
+            Err(CandidateRefusal::Unchecked(err)) => {
+                eprintln!(
+                    "banto: リストア予約ファイルを検査できなかったため、今回は適用しません（予約は残します。次の起動でもう一度確かめます）: {err}"
+                );
+                return Ok(None);
+            }
         }
 
         // Step 3: best-effort checkpoint of the CURRENT db (see doc comment
@@ -1716,5 +1787,110 @@ mod tests {
         assert!(applied.is_none());
         assert!(!pending.exists());
         assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+    }
+
+    // --- ADR-0034 §9: the app's candidate check ------------------------------
+
+    /// A manifest whose candidate check answers what `answer` holds NOW.
+    fn manifest_answering(
+        answer: Arc<std::sync::Mutex<Result<CandidateVerdict, String>>>,
+    ) -> MigrationManifest {
+        test_manifest().with_candidate_check(CandidateCheck::new(move |_candidate| {
+            let answer = answer.lock().unwrap().clone();
+            async move { answer.map_err(BantoError::Other) }
+        }))
+    }
+
+    /// A REJECTED candidate is the candidate's fault: staging is a
+    /// `validation` error and leaves no pending file; a pending file found at
+    /// startup is deleted and the database is not replaced.
+    #[tokio::test]
+    async fn a_rejected_candidate_is_refused_and_a_pending_one_is_deleted() {
+        let (svc, dir) = service().await;
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let answer = Arc::new(std::sync::Mutex::new(Ok(CandidateVerdict::Rejected(
+            "組み込みの行がありません".to_string(),
+        ))));
+        let manifest = manifest_answering(answer.clone());
+        let svc = svc.with_migrations(manifest.clone());
+        let backup = svc.create().await.unwrap();
+
+        let err = svc
+            .stage_restore_from_file(&backup.file_name)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+        assert!(svc.pending_restore().await.is_none());
+
+        // Staged while the check accepted it, rejected at the next start.
+        *answer.lock().unwrap() = Ok(CandidateVerdict::Accepted);
+        svc.stage_restore_from_file(&backup.file_name)
+            .await
+            .unwrap();
+        *answer.lock().unwrap() = Ok(CandidateVerdict::Rejected("x".to_string()));
+        let before = tokio::fs::read(&db_path).await.unwrap();
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .unwrap();
+        assert!(applied.is_none());
+        assert!(svc.pending_restore().await.is_none(), "deleted");
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+        drop(dir);
+    }
+
+    /// A check that could not be COMPLETED says nothing about the candidate
+    /// (cross-review of #858): staging fails with a retryable error that is
+    /// not `validation`, an earlier pending restore is left alone, and a
+    /// pending file found at startup is KEPT - not applied now, applied once
+    /// the check can run.
+    #[tokio::test]
+    async fn a_check_that_could_not_run_keeps_the_pending_restore_for_a_retry() {
+        let (svc, dir) = service().await;
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let answer = Arc::new(std::sync::Mutex::new(Ok(CandidateVerdict::Accepted)));
+        let manifest = manifest_answering(answer.clone());
+        let svc = svc.with_migrations(manifest.clone());
+        let backup = svc.create().await.unwrap();
+        svc.stage_restore_from_file(&backup.file_name)
+            .await
+            .unwrap();
+        let staged = svc.pending_restore().await.expect("staged");
+
+        *answer.lock().unwrap() = Err("no space left on device".to_string());
+        for err in [
+            svc.stage_restore_from_file(&backup.file_name)
+                .await
+                .unwrap_err(),
+            svc.stage_restore_from_bytes(&svc.read(&backup.file_name).await.unwrap())
+                .await
+                .unwrap_err(),
+        ] {
+            assert!(matches!(err, BantoError::Other(_)), "{err:?}");
+            assert!(err.to_string().contains("no space left"), "{err}");
+        }
+        assert_eq!(
+            svc.pending_restore().await,
+            Some(staged),
+            "the earlier pending restore is untouched"
+        );
+
+        let before = tokio::fs::read(&db_path).await.unwrap();
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .unwrap();
+        assert!(applied.is_none(), "not applied while it cannot be checked");
+        assert!(svc.pending_restore().await.is_some(), "kept for a retry");
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+
+        // The next start can check it: now it is applied. (The pool is
+        // closed first, as at a real restart - Windows cannot replace an
+        // open file.)
+        svc.sqlite_pool().unwrap().close().await;
+        *answer.lock().unwrap() = Ok(CandidateVerdict::Accepted);
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .unwrap();
+        assert!(applied.is_some());
+        drop(dir);
     }
 }

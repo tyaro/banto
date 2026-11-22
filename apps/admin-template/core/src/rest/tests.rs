@@ -4795,7 +4795,8 @@ async fn the_builtin_row_and_reserved_names_are_protected_over_rest() {
     for request in refused {
         let label = format!("{} {}", request.method(), request.uri());
         let response = router.clone().oneshot(request).await.unwrap();
-        assert!(!response.status().is_success(), "{label}");
+        // An explicit refusal (403), not a server failure.
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{label}");
     }
 
     let login = router

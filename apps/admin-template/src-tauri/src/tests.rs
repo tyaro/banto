@@ -5882,6 +5882,20 @@ async fn auth_disabled_permissions_view_hides_unregistered_leftovers() {
 
 // --- ADR-0034 §3: the audit actor (C2) ---------------------------------------
 
+/// An [`AppState`] signed in as the account `actor` with `role`. (Not
+/// `app_state_as`: that helper lives in the items block, which a scaffold
+/// preset cuts.)
+async fn state_signed_in_as(role: Role) -> AppState {
+    let state = app_state().await;
+    let user = state
+        .users
+        .create_user("actor", "password123", "操作者", role)
+        .await
+        .expect("create_user");
+    state.set_session_for_test(Some(DesktopSession::Account(user)));
+    state
+}
+
 /// `(actor_username, actor_id, actor_role, actor_kind, action, result)` of
 /// every audit row, oldest first.
 async fn actor_rows(
@@ -6016,7 +6030,7 @@ async fn the_no_login_session_is_audited_as_the_builtin_admin_like_a_marked_gran
 /// `actor_kind` `account` - for a success and for a denial.
 #[tokio::test]
 async fn an_account_session_is_audited_with_its_row_id() {
-    let state = app_state_as(Role::Viewer).await;
+    let state = state_signed_in_as(Role::Viewer).await;
     let account = state
         .users
         .get_by_username("actor")
@@ -6045,18 +6059,20 @@ async fn an_account_session_is_audited_with_its_row_id() {
 /// take a reserved name - and none of the refusals leaves a success row.
 #[tokio::test]
 async fn the_builtin_row_and_reserved_names_are_protected_on_the_desktop() {
-    let state = app_state_as(Role::Admin).await;
+    let state = state_signed_in_as(Role::Admin).await;
     let builtin = state.builtin_admin_id;
 
-    assert!(
+    // The same explicit refusal REST answers with a 403.
+    let refusals = [
         users_update_body(&state, builtin, "renamed", Role::Viewer, None, None)
             .await
-            .is_err()
-    );
-    assert!(users_reset_password_body(&state, builtin, "password123")
-        .await
-        .is_err());
-    assert!(users_delete_body(&state, builtin, None).await.is_err());
+            .map(|_| ()),
+        users_reset_password_body(&state, builtin, "password123").await,
+        users_delete_body(&state, builtin, None).await,
+    ];
+    for refusal in refusals {
+        assert!(matches!(refusal, Err(BantoError::Forbidden)), "{refusal:?}");
+    }
     for name in ["admin", "Admin", "public", "PUBLIC"] {
         let err = users_create_body(&state, name, "password123", "x", Role::Viewer)
             .await

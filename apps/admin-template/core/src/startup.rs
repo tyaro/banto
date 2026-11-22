@@ -22,7 +22,7 @@ use std::time::SystemTime;
 use banto_core::BantoError;
 use banto_storage::Db;
 
-use crate::backup::{CandidateCheck, MigrationManifest};
+use crate::backup::{CandidateCheck, CandidateVerdict, MigrationManifest};
 use crate::settings::SettingsService;
 use crate::users::{ReservedUsernames, StartupUsers, UsersService};
 
@@ -67,25 +67,34 @@ pub fn sqlite_restore_manifest() -> MigrationManifest {
 /// that); the startup applies them before it checks, so this does too. The
 /// candidate itself is never opened for writing, and the copy is deleted
 /// whatever the outcome.
-async fn check_restore_candidate(candidate: PathBuf) -> Result<(), BantoError> {
+///
+/// The answer separates the two ways this can end without an acceptance
+/// (see [`CandidateCheck`]): `Rejected` when the CANDIDATE would not start
+/// (a migration fails on it, or [`check`] refuses it), `Err` when the check
+/// itself could not be completed (the copy could not be made or opened, a
+/// read failed) - which says nothing about the candidate.
+async fn check_restore_candidate(candidate: PathBuf) -> Result<CandidateVerdict, BantoError> {
     let copy = working_copy_path(&candidate);
-    tokio::fs::copy(&candidate, &copy).await.map_err(|err| {
-        BantoError::Other(format!(
+    let result = match tokio::fs::copy(&candidate, &copy).await {
+        Ok(_) => check_working_copy(&copy).await,
+        Err(err) => Err(BantoError::Other(format!(
             "リストア候補の検査用コピーを作れませんでした: {err}"
-        ))
-    })?;
-    let result = check_working_copy(&copy).await;
+        ))),
+    };
+    // Whatever happened - a copy that stopped half-way included.
     for path in [copy.clone(), sidecar(&copy, "-wal"), sidecar(&copy, "-shm")] {
         let _ = tokio::fs::remove_file(path).await;
     }
     result
 }
 
-async fn check_working_copy(copy: &Path) -> Result<(), BantoError> {
+async fn check_working_copy(copy: &Path) -> Result<CandidateVerdict, BantoError> {
     let db = Db::connect_sqlite(copy).await?;
     let result = match crate::db::migrate(&db).await {
-        Ok(()) => check(&db).await.map(|_| ()),
-        Err(err) => Err(err),
+        Ok(()) => verdict_of(check(&db).await.map(|_| ())),
+        // A migration that does not apply to the candidate is the
+        // candidate's problem (ADR-0034 §9).
+        Err(err) => Ok(CandidateVerdict::Rejected(err.to_string())),
     };
     // Close before the caller deletes the file (Windows keeps an open SQLite
     // file locked).
@@ -93,6 +102,17 @@ async fn check_working_copy(copy: &Path) -> Result<(), BantoError> {
         pool.close().await;
     }
     result
+}
+
+/// [`check`]'s result as a verdict: a storage error means the database could
+/// not be READ (the check is incomplete); every other refusal is a finding
+/// about its content.
+fn verdict_of(result: Result<(), BantoError>) -> Result<CandidateVerdict, BantoError> {
+    match result {
+        Ok(()) => Ok(CandidateVerdict::Accepted),
+        Err(err @ BantoError::Storage(_)) => Err(err),
+        Err(err) => Ok(CandidateVerdict::Rejected(err.to_string())),
+    }
 }
 
 fn working_copy_path(candidate: &Path) -> PathBuf {
@@ -199,6 +219,14 @@ mod tests {
         for (label, breakage) in [
             ("no builtin row", "DELETE FROM users WHERE kind = 'builtin'"),
             (
+                "a builtin row that is not admin",
+                "UPDATE users SET username = 'root' WHERE kind = 'builtin'",
+            ),
+            (
+                "a builtin row whose role is not admin",
+                "UPDATE users SET role = 'viewer' WHERE kind = 'builtin'",
+            ),
+            (
                 "an account named like a grant id",
                 "INSERT INTO users (username, password_hash, display_name, role, account_uid) \
                  VALUES ('public', 'x', 'p', 'viewer', 'uid-1')",
@@ -260,6 +288,31 @@ mod tests {
         // (3) The current database still passes the startup check.
         check(&db).await.unwrap();
         close(db).await;
+    }
+
+    /// A storage error is "could not look", not a finding about the candidate.
+    #[test]
+    fn only_a_content_finding_rejects_the_candidate() {
+        assert_eq!(verdict_of(Ok(())).unwrap(), CandidateVerdict::Accepted);
+        assert_eq!(
+            verdict_of(Err(BantoError::Other("組み込みの行がありません".into()))).unwrap(),
+            CandidateVerdict::Rejected("組み込みの行がありません".into())
+        );
+        assert!(matches!(
+            verdict_of(Err(BantoError::Storage("disk I/O error".into()))),
+            Err(BantoError::Storage(_))
+        ));
+    }
+
+    /// A candidate that cannot be copied is not judged: `Err`, not a
+    /// rejection, and no working copy is left behind.
+    #[tokio::test]
+    async fn a_candidate_that_cannot_be_copied_is_not_judged() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("gone.sqlite3");
+        assert!(check_restore_candidate(missing).await.is_err());
+        let mut entries = tokio::fs::read_dir(dir.path()).await.unwrap();
+        assert!(entries.next_entry().await.unwrap().is_none());
     }
 
     /// The same check accepts a healthy candidate, and the swap goes through.

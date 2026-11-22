@@ -291,10 +291,11 @@ pub struct StartupUsers {
 }
 
 /// Refusal of every write aimed at the built-in row (ADR-0034 §2).
-const BUILTIN_USER_MESSAGE: &str = "組み込みのユーザーは変更・削除できません";
-
+/// `Forbidden` (403): an explicit refusal of the operation, not a failure of
+/// the server. (The management screen never offers these operations on the
+/// built-in row; only a hand-made request gets here.)
 fn builtin_user_error() -> BantoError {
-    BantoError::Other(BUILTIN_USER_MESSAGE.to_string())
+    BantoError::Forbidden
 }
 
 /// Public listing of an account (spec M10's user-management screen):
@@ -666,26 +667,30 @@ impl UsersService {
     /// swapped (ADR-0034 §9), so a backup that could not boot is refused
     /// while the current database is still in place.
     ///
-    /// 1. Exactly one built-in row exists (`kind = 'builtin'`). None or
-    ///    several only happens through a direct edit of the database; it is
-    ///    reported, never repaired.
+    /// 1. Exactly one built-in row exists (`kind = 'builtin'`), and it is the
+    ///    `admin` the baseline migration inserted: username exactly `admin`,
+    ///    role `admin`. The row is FOUND by `kind`; its name and role are then
+    ///    checked, because the audit log writes that row's id under the name
+    ///    `admin` and the schema does not pin either column. Anything else
+    ///    only happens through a direct edit of the database; it is reported,
+    ///    never repaired.
     /// 2. No account (`kind = 'account'`) has a reserved name, ignoring case.
     ///    Creating one is refused, so this only finds an account that existed
     ///    before a grant with the same fixed id was added to the app.
     pub async fn check_startup(&self) -> Result<StartupUsers, BantoError> {
-        const SQL: &str = "SELECT id, username, kind FROM users ORDER BY id";
-        let rows: Vec<(i64, String, String)> = match &self.db {
+        const SQL: &str = "SELECT id, username, kind, role FROM users ORDER BY id";
+        let rows: Vec<(i64, String, String, String)> = match &self.db {
             Db::Sqlite(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
         }
         .map_err(banto_storage::storage_error)?;
 
-        let mut builtin_ids = Vec::new();
+        let mut builtin_rows = Vec::new();
         let mut collisions = Vec::new();
-        for (id, username, kind) in rows {
+        for (id, username, kind, role) in rows {
             match UserKind::from_str(&kind)? {
-                UserKind::Builtin => builtin_ids.push(id),
+                UserKind::Builtin => builtin_rows.push((id, username, role)),
                 UserKind::Account => {
                     if self.reserved.contains(&username) {
                         collisions.push(username);
@@ -693,21 +698,26 @@ impl UsersService {
                 }
             }
         }
-        let builtin_admin_id = match builtin_ids.as_slice() {
-            [id] => *id,
+        const EDITED: &str = "この DB は直接書き換えられた可能性があります。\
+             バックアップから戻すか、DB を作り直してください";
+        let builtin_admin_id = match builtin_rows.as_slice() {
+            [(id, username, role)] => {
+                if username != BUILTIN_ADMIN_USERNAME || role != Role::Admin.as_str() {
+                    return Err(BantoError::Other(format!(
+                        "組み込みのユーザーの行が admin ではありません（username: {username}、role: {role}）。{EDITED}"
+                    )));
+                }
+                *id
+            }
             [] => {
-                return Err(BantoError::Other(
-                    "組み込みのユーザー admin の行がありません。この DB は直接書き換えられた可能性があります。\
-                     バックアップから戻すか、DB を作り直してください"
-                        .to_string(),
-                ))
+                return Err(BantoError::Other(format!(
+                    "組み込みのユーザー admin の行がありません。{EDITED}"
+                )))
             }
             _ => {
-                return Err(BantoError::Other(
-                    "組み込みのユーザーの行が 2 つ以上あります。この DB は直接書き換えられた可能性があります。\
-                     バックアップから戻すか、DB を作り直してください"
-                        .to_string(),
-                ))
+                return Err(BantoError::Other(format!(
+                    "組み込みのユーザーの行が 2 つ以上あります。{EDITED}"
+                )))
             }
         };
         if !collisions.is_empty() {
@@ -3436,9 +3446,11 @@ mod tests {
             .await
             .unwrap();
         let before = builtin_row(&svc).await;
-        let refused = |err: BantoError| match err {
-            BantoError::Other(message) => assert_eq!(message, BUILTIN_USER_MESSAGE),
-            other => panic!("expected the built-in refusal, got {other:?}"),
+        let refused = |err: BantoError| {
+            assert!(
+                matches!(err, BantoError::Forbidden),
+                "expected the built-in refusal, got {err:?}"
+            )
         };
 
         refused(
@@ -3627,8 +3639,34 @@ mod tests {
         let err = with_grant.check_startup().await.unwrap_err();
         assert!(err.to_string().contains("Kiosk"), "{err}");
 
-        // No built-in row: reported, never repaired.
+        // A built-in row that is not `admin` / role `admin` (the schema pins
+        // neither): reported with what was found, never corrected.
         let pool = svc.db.as_sqlite().expect("sqlite test service");
+        for (edit, undo, found) in [
+            (
+                "UPDATE users SET username = 'root' WHERE kind = 'builtin'",
+                "UPDATE users SET username = 'admin' WHERE kind = 'builtin'",
+                "root",
+            ),
+            (
+                "UPDATE users SET username = 'Admin' WHERE kind = 'builtin'",
+                "UPDATE users SET username = 'admin' WHERE kind = 'builtin'",
+                "Admin",
+            ),
+            (
+                "UPDATE users SET role = 'viewer' WHERE kind = 'builtin'",
+                "UPDATE users SET role = 'admin' WHERE kind = 'builtin'",
+                "viewer",
+            ),
+        ] {
+            sqlx::query(edit).execute(pool).await.unwrap();
+            let err = svc.check_startup().await.unwrap_err();
+            assert!(err.to_string().contains(found), "{edit}: {err}");
+            sqlx::query(undo).execute(pool).await.unwrap();
+        }
+        svc.check_startup().await.expect("restored by the test");
+
+        // No built-in row: reported, never repaired.
         sqlx::query("DELETE FROM users WHERE kind = 'builtin'")
             .execute(pool)
             .await

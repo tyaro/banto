@@ -418,12 +418,15 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   配線は `UsersService::new(db).with_reserved_usernames(startup::reserved_usernames(&settings))` と組み立てる
   （REST と Tauri の両方）。試験・e2e で `public` や `Admin` というアカウントを作っているなら別の名前にする。
 - **起動時の検査**: 両方の配線が、migration と初回の seed の後に `admin_template_core::startup::check(&db)` を呼ぶ。
-  組み込みの行が無い・2 つ以上ある DB と、予約名と同じ名前のアカウントがある DB（grant を後から足したときだけ起きる）は、
+  組み込みの行が無い・2 つ以上ある・名前が `admin` でない・ロールが `admin` でない DB と、予約名と同じ名前のアカウントがある DB（grant を後から足したときだけ起きる）は、
   名前と対処を書いたエラーで起動を止める。返ってくる組み込みの行の id を
   `user_auth_state(..).with_builtin_admin_id(id)` と Tauri の `AppState.builtin_admin_id` に渡す。
 - **復元前の検査**: `with_migrations` と `apply_pending_restore_at_startup` には、`db::sqlite_migration_manifest()` の代わりに
   `startup::sqlite_restore_manifest()` を渡す。同じ `startup::check` を、リストアの候補にも（予約のときと適用の直前に）掛ける。
   起動を止める検査を自分で足す派生アプリは、`startup::check` に足す（1 か所で両方に効く）。
+  検査の関数（`CandidateCheck`）は `CandidateVerdict` を返す: 候補が不正なら `Rejected(理由)`、検査そのものを終えられなかった
+  （コピーを作れない・読めない）なら `Err`。`Err` のときは候補を捨てず、予約のファイルも元の DB も残る（次の起動で確かめ直す）。
+- **組み込みの行への更新・削除・パスワードの設定の拒否**は、500（`other`）ではなく 403（`forbidden`）で返る。
 
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に
