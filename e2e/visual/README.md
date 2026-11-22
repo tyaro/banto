@@ -83,10 +83,13 @@ platform's set.
 Without a Linux box, dispatch `.github/workflows/visual-baselines.yml` on the
 branch carrying the visual change: it regenerates the `-linux` baselines on
 the same `ubuntu-latest` image CI uses, re-runs the suite against them to
-prove they pass, and uploads them as an artifact. Dispatch it again with
-`commit: true` to push the regenerated PNGs back to that branch.
+prove they pass, uploads them as an artifact, and (`commit` defaults to
+`true`) pushes the regenerated PNGs back to that branch in one dispatch.
+Pass `-f commit=false` for a trial run that writes nothing. It runs only
+`visual.spec.ts` (the one spec that takes screenshots) against `vite preview`
+(`BANTO_E2E_SERVERS=visual`), so it needs no Rust build.
 
-One more step after `commit: true`: the workflow pushes with the built-in
+One more step after the commit: the workflow pushes with the built-in
 `GITHUB_TOKEN`, so `ci.yml` does not start on the baseline commit by itself.
 It is **parked, not missing** — GitHub still creates the `pull_request` run
 for that commit but leaves it awaiting approval (`action_required`, zero

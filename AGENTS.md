@@ -128,7 +128,7 @@ ubuntu/windows で実行）で担保する。
 CI は `.github/workflows/ci.yml` の各ジョブ（frontend / i18n-offline / rust /
 storage-postgres / app-postgres / e2e / audit）に加えて、週次+トリガ型の
 `template-acceptance.yml`（copy→rename→check + scaffold 4プリセットの受け入れ）、
-`visual-baselines.yml`（Linux visual ベースライン再生成、dispatch。`commit: true` の
+`visual-baselines.yml`（Linux visual ベースライン再生成、dispatch。既定で書き戻す（`commit: true`）。その
 あと push し直した CI は、同じ base（merge commit の親）を全部検証して通った run の
 記録からの差分が基準画像だけなら
 ci.yml の `changes` ジョブの判定で e2e-visual 以外を飛ばす）、
