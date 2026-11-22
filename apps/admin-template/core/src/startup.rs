@@ -23,7 +23,9 @@ use banto_core::BantoError;
 use banto_storage::Db;
 
 use crate::backup::{CandidateCheck, CandidateVerdict, MigrationManifest};
-use crate::settings::{auth_server_combination_allowed, AuthSettings, SettingsService};
+use crate::settings::{
+    auth_server_combination_allowed, AuthSettings, ServerSettings, SettingsService,
+};
 use crate::users::{ReservedUsernames, StartupUsers, UsersService};
 
 /// The account names this app reserves on top of the built-in `admin`
@@ -49,9 +51,12 @@ pub enum Wiring {
     /// it is only useful with public viewing on, so without it the start is
     /// refused (ADR-0034 §6-3).
     ///
-    /// `viewer_public_forced`: `BANTO_VIEWER_PUBLIC=1` - this start turns
-    /// public viewing on before it checks, whatever the database holds.
-    Headless { viewer_public_forced: bool },
+    /// `seed_viewer_public`: `BANTO_VIEWER_PUBLIC=1` - this start WRITES
+    /// public viewing on ([`seed_viewer_public`]) before it checks. The check
+    /// itself only ever reads the stored flag (the one the grant route reads),
+    /// so a write that failed cannot make a no-login server listen. The
+    /// restore check makes the same write on its working copy.
+    Headless { seed_viewer_public: bool },
 }
 
 /// What [`check`] read on the way, for the wiring to use afterwards.
@@ -82,7 +87,9 @@ const FIRST_ACCOUNT_REMEDY: &str = "banto-serve の create-admin で管理者の
 ///   (ADR-0034 §6). The app is never put back into no-login mode instead;
 /// - for [`Wiring::Headless`]: the server may listen - not "no login, and no
 ///   public viewing either" (ADR-0034 §6-3). The same rule as the settings
-///   save, with `server.enabled` taken as on.
+///   save, with `server.enabled` taken as on. Public viewing is the STORED
+///   `server.viewer_public`, the value the grant route judges by - never an
+///   intention (an environment variable) that may not have been written.
 ///
 /// The settings are read as they are stored, so the caller runs this after
 /// the migrations and the first-boot seed (the effective settings).
@@ -99,11 +106,8 @@ pub async fn check(db: &Db, wiring: Wiring) -> Result<Startup, BantoError> {
              バックアップから戻すこともできます"
         )));
     }
-    if let Wiring::Headless {
-        viewer_public_forced,
-    } = wiring
-    {
-        let viewer_public = viewer_public_forced || settings.server_config().await?.viewer_public;
+    if let Wiring::Headless { .. } = wiring {
+        let viewer_public = settings.server_config().await?.viewer_public;
         if !auth_server_combination_allowed(auth.disabled, true, viewer_public) {
             return Err(BantoError::Other(format!(
                 "ログインなしの設定で、閲覧公開も無効です。この状態ではネットワークから誰も使えないので、\
@@ -112,6 +116,22 @@ pub async fn check(db: &Db, wiring: Wiring) -> Result<Startup, BantoError> {
         }
     }
     Ok(Startup { users, auth })
+}
+
+/// `BANTO_VIEWER_PUBLIC=1` (Issue #189): write public viewing on, keeping the
+/// other server settings as they are stored (`enabled` / `bind` / `port` -
+/// `banto-serve` listens from its environment, and flipping `enabled` here
+/// would change what the desktop app does with the same database). One
+/// function for the start and for the restore check's working copy, so both
+/// judge the same stored value afterwards.
+pub async fn seed_viewer_public(settings: &SettingsService) -> Result<(), BantoError> {
+    let config = settings.server_config().await?;
+    settings
+        .set_server_config(&ServerSettings {
+            viewer_public: true,
+            ..config
+        })
+        .await
 }
 
 /// [`crate::db::sqlite_migration_manifest`] plus [`check`] as the candidate
@@ -127,12 +147,14 @@ pub fn sqlite_restore_manifest(wiring: Wiring) -> MigrationManifest {
 }
 
 /// Run [`check`] on a restore candidate the way the next startup would see
-/// it: on a COPY, after the migrations and the first-boot seed. A candidate
+/// it: on a COPY, after everything a start does first ([`prepare_like_a_startup`]:
+/// the migrations and the app's own seed, the first-boot settings seed, and
+/// `banto-serve`'s `BANTO_VIEWER_PUBLIC` write). A candidate
 /// may lack migrations a derived app added after the baseline (the restore
 /// validation allows that), and it may never have been started (no seed
-/// marker); the startup applies the migrations and the seed before it checks,
+/// marker); the startup prepares the database before it checks,
 /// so this does too - the settings [`check`] reads are the ones the startup
-/// would read. The candidate itself is never opened for writing, and the copy
+/// would read, and a candidate the start could not prepare is not accepted. The candidate itself is never opened for writing, and the copy
 /// is deleted whatever the outcome.
 ///
 /// The answer separates the two ways this can end without an acceptance
@@ -145,8 +167,8 @@ pub fn sqlite_restore_manifest(wiring: Wiring) -> MigrationManifest {
 ///   (Another version's history - versions, checksums - was refused before
 ///   this runs, by the restore validation itself.)
 /// - `Err` whenever the check could not be completed: the copy could not be
-///   made or opened, a read failed, or **the migrations or the seed did not
-///   run on the copy**. Those can fail for reasons that have nothing to do
+///   made or opened, a read failed, or **the preparation (migrations, seeds)
+///   did not run on the copy**. Those can fail for reasons that have nothing to do
 ///   with the candidate (no disk space, a transient I/O error), and the error
 ///   cannot tell those apart from a real incompatibility - so it is never a
 ///   verdict. The pending restore is then kept, not applied, and the current
@@ -156,14 +178,25 @@ async fn check_restore_candidate(
     candidate: PathBuf,
     wiring: Wiring,
 ) -> Result<CandidateVerdict, BantoError> {
-    check_restore_candidate_with(candidate, wiring, prepare_like_a_startup).await
+    check_restore_candidate_with(candidate, wiring, |db| prepare_like_a_startup(db, wiring)).await
 }
 
-/// What a startup does to a database before it checks it: the migrations,
-/// then the first-boot seed (which writes only when the marker is missing).
-async fn prepare_like_a_startup(db: Db) -> Result<(), BantoError> {
-    crate::db::migrate(&db).await?;
-    crate::first_boot::seed_first_boot_settings(&SettingsService::new(db)).await?;
+/// What a startup of `wiring` does to a database before it checks it, in the
+/// same order: [`crate::db::prepare`] (the migrations and the app's own seed -
+/// the call `init_db*` make, whose failure stops a start), the first-boot
+/// settings seed (which writes only when the marker is missing), and for
+/// `banto-serve` with `BANTO_VIEWER_PUBLIC=1` the public-viewing write.
+/// Any failure means the start could not get this far either.
+async fn prepare_like_a_startup(db: Db, wiring: Wiring) -> Result<(), BantoError> {
+    crate::db::prepare(&db).await?;
+    let settings = SettingsService::new(db);
+    crate::first_boot::seed_first_boot_settings(&settings).await?;
+    if let Wiring::Headless {
+        seed_viewer_public: true,
+    } = wiring
+    {
+        seed_viewer_public(&settings).await?;
+    }
     Ok(())
 }
 
@@ -206,7 +239,7 @@ where
         Ok(()) => verdict_of(check(&db, wiring).await.map(|_| ())),
         // Not a verdict: see `check_restore_candidate`.
         Err(err) => Err(BantoError::Other(format!(
-            "リストア候補の検査用コピーに migration と初回の既定設定を当てられませんでした: {err}"
+            "リストア候補の検査用コピーで、起動の準備（migration・seed）を終えられませんでした: {err}"
         ))),
     };
     // Close before the caller deletes the file (Windows keeps an open SQLite
@@ -574,7 +607,7 @@ mod tests {
             for wiring in [
                 Wiring::Desktop,
                 Wiring::Headless {
-                    viewer_public_forced: true,
+                    seed_viewer_public: false,
                 },
             ] {
                 let err = check(&db, wiring).await.unwrap_err();
@@ -606,33 +639,32 @@ mod tests {
     async fn the_headless_server_does_not_listen_in_no_login_mode_without_public_viewing() {
         let db = crate::db::migrate_memory().await.unwrap();
         let headless = Wiring::Headless {
-            viewer_public_forced: false,
+            seed_viewer_public: false,
         };
         // A new database: no login, public viewing off.
         check(&db, Wiring::Desktop).await.unwrap();
         let err = check(&db, headless).await.unwrap_err();
         assert!(err.to_string().contains("待ち受けを始めません"), "{err}");
 
-        // `BANTO_VIEWER_PUBLIC=1`, or the stored setting: it listens (read-only).
-        check(
-            &db,
-            Wiring::Headless {
-                viewer_public_forced: true,
-            },
-        )
-        .await
-        .unwrap();
-        exec(
-            &db,
-            "INSERT INTO settings (key, value) VALUES ('server.viewer_public', 'true')",
-        )
-        .await;
+        // Cross-review of PR #865: `BANTO_VIEWER_PUBLIC=1` alone opens
+        // nothing. Only the STORED flag counts (the one the grant route
+        // reads), so a start whose write failed still does not listen.
+        let asked_only = Wiring::Headless {
+            seed_viewer_public: true,
+        };
+        let err = check(&db, asked_only).await.unwrap_err();
+        assert!(err.to_string().contains("待ち受けを始めません"), "{err}");
+        // Written (what the start does before it checks): it listens, read-only.
+        seed_viewer_public(&SettingsService::new(db.clone()))
+            .await
+            .unwrap();
         assert!(check(&db, headless).await.unwrap().auth.disabled);
+        assert!(check(&db, asked_only).await.unwrap().auth.disabled);
 
         // Login required (with an administrator): it listens without it too.
         exec(
             &db,
-            "DELETE FROM settings WHERE key = 'server.viewer_public'",
+            "UPDATE settings SET value = 'false' WHERE key = 'server.viewer_public'",
         )
         .await;
         crate::first_account::create_admin_and_require_login_on(
@@ -657,7 +689,7 @@ mod tests {
     #[tokio::test]
     async fn a_no_login_candidate_is_accepted_by_the_desktop_and_refused_by_the_headless_server() {
         let headless = Wiring::Headless {
-            viewer_public_forced: false,
+            seed_viewer_public: false,
         };
         let dir = tempfile::tempdir().unwrap();
 
@@ -766,14 +798,14 @@ mod tests {
             ("server.viewer_public", "true"),
         ];
         async fn prepare(db: Db) -> Result<(), BantoError> {
-            crate::db::migrate(&db).await?;
+            crate::db::prepare(&db).await?;
             SettingsService::new(db)
                 .seed_first_boot(DISPLAY_SEED)
                 .await?;
             Ok(())
         }
         let headless = Wiring::Headless {
-            viewer_public_forced: false,
+            seed_viewer_public: false,
         };
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("candidate.sqlite3");
@@ -807,5 +839,57 @@ mod tests {
             matches!(&verdict, CandidateVerdict::Rejected(why) if why.contains("待ち受け")),
             "{verdict:?}"
         );
+    }
+
+    /// Cross-review of PR #865: the restore check prepares its working copy
+    /// the way the start of that wiring does. A `banto-serve` started with
+    /// `BANTO_VIEWER_PUBLIC=1` writes public viewing on before it checks, so
+    /// the same no-login candidate it would otherwise refuse is accepted -
+    /// judged by the value written on the copy, never by the variable alone.
+    /// And a preparation the start could not finish is "could not check".
+    #[tokio::test]
+    async fn the_working_copy_is_prepared_like_the_start_of_that_wiring() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("candidate.sqlite3");
+        let candidate = migrated(&path).await;
+        SettingsService::new(candidate.clone())
+            .seed_first_boot(&[])
+            .await
+            .unwrap();
+        exec(&candidate, "PRAGMA wal_checkpoint(TRUNCATE)").await;
+        close(candidate).await;
+        let before = tokio::fs::read(&path).await.unwrap();
+
+        let refused = check_restore_candidate(
+            path.clone(),
+            Wiring::Headless {
+                seed_viewer_public: false,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(refused, CandidateVerdict::Rejected(_)),
+            "{refused:?}"
+        );
+        let accepted = check_restore_candidate(
+            path.clone(),
+            Wiring::Headless {
+                seed_viewer_public: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(accepted, CandidateVerdict::Accepted);
+        // The candidate itself was never written.
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), before);
+
+        // The app's own seed failing on the copy (what stops a start in
+        // `init_db*`) is not an acceptance and not a verdict.
+        let unchecked = check_restore_candidate_with(path.clone(), Wiring::Desktop, |_db| async {
+            Err(BantoError::Other("seed failed".into()))
+        })
+        .await;
+        assert!(unchecked.is_err());
     }
 }

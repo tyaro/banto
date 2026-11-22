@@ -48,7 +48,9 @@
 //! ```
 //!
 //! It creates an administrator account AND requires login, in one transaction,
-//! without listening, and exits (0 = done, 1 = nothing written). The password
+//! without listening, and exits (0 = done; 1 = no account, no auth setting and
+//! no audit row written - the migrations may have been applied; 2 = bad
+//! arguments). The password
 //! is the first line of standard input - never an argument (process lists and
 //! shell histories keep those). Run it with the app and the server stopped.
 //! The same command repairs a database the startup refuses for its auth
@@ -76,7 +78,7 @@ use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::ItemsService;
 use admin_template_core::resources::AppResources;
 use admin_template_core::rest::{api_router, resources_router, user_auth_state, Services};
-use admin_template_core::settings::{ServerSettings, SettingsService};
+use admin_template_core::settings::SettingsService;
 use admin_template_core::startup::{self, sqlite_restore_manifest, Wiring};
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
@@ -142,7 +144,7 @@ async fn create_admin(args: &[String], db_target: &str) -> i32 {
     );
     let mut password = String::new();
     if let Err(err) = std::io::stdin().read_line(&mut password) {
-        eprintln!("banto-serve: パスワードを読めませんでした: {err}。何も変更していません");
+        eprintln!("banto-serve: パスワードを読めませんでした: {err}。DB には触れていません");
         return 1;
     }
     let password = password.trim_end_matches(['\r', '\n']);
@@ -181,8 +183,12 @@ async fn create_admin(args: &[String], db_target: &str) -> i32 {
                 }
                 other => other.to_string(),
             };
+            // What the transaction covers, said exactly: the migrations run
+            // before it and stay applied (a start would apply them too).
             eprintln!(
-                "banto-serve: 管理者のアカウントを作れませんでした（何も変更していません）: {reason}"
+                "banto-serve: 管理者のアカウントを作れませんでした: {reason}\n\
+                 banto-serve: アカウント・認証の設定・監査ログは変更していません\
+                 （新しい DB の場合、migration は適用済みです）"
             );
             1
         }
@@ -220,9 +226,7 @@ async fn main() {
 
     // What stops THIS entry point's start - and so what a restore candidate
     // is held to before it is swapped in (ADR-0034 §9).
-    let wiring = Wiring::Headless {
-        viewer_public_forced: seed_viewer_public,
-    };
+    let wiring = Wiring::Headless { seed_viewer_public };
 
     let db_path_buf = PathBuf::from(&db_path);
 
@@ -292,26 +296,16 @@ async fn main() {
         Ok(false) => {}
         Err(err) => eprintln!("banto-serve: 初回起動の既定設定の書き込みに失敗しました: {err}"),
     }
-    // Issue #189: seed 閲覧公開 when asked - before the check below, which
-    // reads it (no login + no public viewing = this server does not start).
-    // Read-modify-write rather than constructing a fresh `ServerSettings` so
-    // `enabled`/`bind`/`port` (whatever a previous run or the settings screen
-    // persisted) survive - the LAN listener this binary starts comes from
-    // `BANTO_BIND`/`PORT`, not from these keys, so flipping `enabled` here
-    // would silently change what the Tauri app does with the same DB.
-    // Best-effort: a failure is reported, and the grant then stays closed.
+    // Issue #189: write 閲覧公開 on when asked - before the check below, which
+    // reads the STORED flag (no login + no public viewing = this server does
+    // not start). The check never takes the variable's word for it: the grant
+    // route judges by the stored flag, so if this write fails on a no-login
+    // database the start stops instead of listening with no way in. The
+    // restore check makes the same write on its working copy
+    // (`startup::seed_viewer_public`, one function for both).
     if seed_viewer_public {
-        match settings.server_config().await {
-            Ok(config) => {
-                let seeded = ServerSettings {
-                    viewer_public: true,
-                    ..config
-                };
-                if let Err(err) = settings.set_server_config(&seeded).await {
-                    eprintln!("banto-serve: 閲覧公開設定の保存に失敗しました: {err}");
-                }
-            }
-            Err(err) => eprintln!("banto-serve: サーバー設定の読み取りに失敗しました: {err}"),
+        if let Err(err) = startup::seed_viewer_public(&settings).await {
+            eprintln!("banto-serve: 閲覧公開設定の保存に失敗しました: {err}");
         }
     }
     // ADR-0034 §2/§4/§5/§6: the checks that stop a startup, after the

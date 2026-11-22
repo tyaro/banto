@@ -1220,7 +1220,7 @@ async fn the_first_admin_cli_on_postgres(
         ("server.viewer_public", "true"),
     ];
     let headless = Wiring::Headless {
-        viewer_public_forced: false,
+        seed_viewer_public: false,
     };
     let pool = db.as_postgres().expect("postgres handle").clone();
     let settings = SettingsService::new(db.clone());

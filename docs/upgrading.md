@@ -476,7 +476,8 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   `SettingsService::auth_config()` も、この 2 つのキーを既定で埋めずにエラーを返す（自分の試験で `settings` を空の表から
   作っている所は、`auth.disabled` の行を入れる）。
 - **配線の呼び方（B）**: `startup::check(&db)` → `startup::check(&db, Wiring::Desktop)`（`banto-serve` は
-  `Wiring::Headless { viewer_public_forced: <BANTO_VIEWER_PUBLIC=1 か> }`）。戻り値は `Startup { users, auth }`
+  `Wiring::Headless { seed_viewer_public: <BANTO_VIEWER_PUBLIC=1 か> }`。`BANTO_VIEWER_PUBLIC=1` のときは、検査の前に
+  `startup::seed_viewer_public(&settings)` で設定へ書く。検査は保存済みの値だけを見る）。戻り値は `Startup { users, auth }`
   （組み込みの行の id は `.users.builtin_admin_id`、起動時のモードは `.auth`）。`startup::sqlite_restore_manifest()` →
   `sqlite_restore_manifest(wiring)`（復元の候補を、その配線が起動できるかで確かめる）。`api_router` と
   `extra_auth_router` の引数から `allow_setup` が消えた。

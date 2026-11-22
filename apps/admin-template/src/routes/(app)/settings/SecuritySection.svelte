@@ -241,6 +241,8 @@
 					{m['settings.authRequireLoginNeedsAdmin']()}
 					{#if usersNav}
 						<a href={resolveAppPath(usersNav.path)}>{m['settings.authRequireLoginOpenUsers']()}</a>
+					{:else}
+						{m['settings.authRequireLoginUseCli']()}
 					{/if}
 				</p>
 			{/if}

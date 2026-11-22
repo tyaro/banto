@@ -796,7 +796,13 @@ the owner; once confirmed, this heading becomes "confirmed by the owner").
    `Wiring::Headless { viewer_public_forced }`. `banto-serve` writes
    `BANTO_VIEWER_PUBLIC=1` to the settings before it checks and passes it to
    the restore-candidate check as `viewer_public_forced`, so the check equals
-   what actually stops that start (section 9, (e)). A candidate is checked on
+   what actually stops that start (section 9, (e)). **The check reads only
+   the stored `server.viewer_public`**; the variable is "written before the
+   check" (`startup::seed_viewer_public`, one function for the start and the
+   working copy), so a no-login database whose write failed does not listen
+   (cross-review of PR #865). The working copy is prepared like a start:
+   `db::prepare` (migrations and the app's seed), the first-boot seed, then
+   that write. A candidate is checked on
    a working copy after the migrations AND the first-boot seed (the same
    function as a start); a failing seed is "could not check", like a failing
    migration (C2 addendum, item 2).
@@ -808,7 +814,10 @@ the owner; once confirmed, this heading becomes "confirmed by the owner").
    `banto-serve create-admin --username <name> [--display-name <name>]`. The
    password is the first line of standard input (the trailing newline is
    dropped; typed at a terminal it is echoed). The database is `BANTO_DB`.
-   Exit codes: 0 = done, 1 = nothing written, 2 = bad arguments. Two audit
+   Exit codes: 0 = done, 1 = no account, auth setting or audit row written
+   (the migrations may have been applied), 2 = bad arguments. The database
+   is opened with the migrations only (`db::open_migrated`; the app's demo
+   seed of a start does not run). Two audit
    rows (`create` / `users`, and `settings_change` / `settings`
    `{authDisabled: false}`) with `actor_username = 'admin'`, `actor_id` = the
    built-in row, `actor_kind = 'cli'`, `origin = 'cli'`. A database without
@@ -837,3 +846,11 @@ the owner; once confirmed, this heading becomes "confirmed by the owner").
    (S-18, S-19, S-95's setup, PostgreSQL's concurrent setup), and
    `auth_config_apply` from an empty slot (one S-67 test; with login required
    and no session it is `Unauthorized`).
+10. **What "an administrator that can log in" means** (cross-review of PR
+    #865): `UsersService::has_admin` answers whether some row with
+    `kind = 'account'` and `role = 'admin'` has a username the verifier looks
+    up (not empty, within the length limit) and a stored hash the verifier can
+    check (an argon2 PHC string that carries its output). The password itself
+    is not checked. Startup, the restore candidate and the lock-down all ask
+    this one function; a database whose only administrator rows have damaged
+    hashes is treated like one with no administrator.

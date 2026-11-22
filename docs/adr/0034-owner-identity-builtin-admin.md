@@ -642,13 +642,17 @@ PR の本文に「オーナーに確かめたい点」として分けて書い�
    管理者を作ってから `require_login_on_*` で書く（この判定は通さない。条件は自分で満たしている）。
 3. **`startup::check(db, wiring)`**。`Wiring::Desktop` と `Wiring::Headless { viewer_public_forced }` の 2 つ。
    `banto-serve` の `BANTO_VIEWER_PUBLIC=1` は、検査の前に設定へ書き、復元の候補の検査には `viewer_public_forced` として
-   渡す（その起動が実際に止まる条件と一致させる。§9 の (e)）。復元の候補は、作業用のコピーに migration と初回の seed
+   渡す（その起動が実際に止まる条件と一致させる。§9 の (e)）。**検査が見るのは保存済みの `server.viewer_public` だけ**で、
+   環境変数は「検査の前に書く」（`startup::seed_viewer_public`。起動と作業用のコピーで同じ関数）。書き込みに失敗した
+   ログインなしの DB では待ち受けない（PR #865 のクロスレビュー）。作業用のコピーの準備は、起動と同じ `db::prepare`
+   （migration とアプリの seed）→ 初回の seed → 上の書き込み、の順。復元の候補は、作業用のコピーに migration と初回の seed
    （起動と同じ関数）を当ててから検査する。seed が失敗したときは、migration の失敗と同じく「検査できなかった」（C2 の追記 2）。
 4. **ログイン必須のときは `auth.disabled_role` を検査しない**。合成セッションを組まないので、無くても知らない値でも
    起動を止めない（読み取りは `admin` を返すが、使われない。次の保存が書き直す）。
 5. **CLI の細目**（§7 の「引数の細目は C2b で決める」）: `banto-serve create-admin --username <名前> [--display-name <表示名>]`。
    パスワードは標準入力の 1 行目（末尾の改行は除く。端末から入力すると表示される）。DB は `BANTO_DB`。終了コードは
-   0 = 成功、1 = 何も変更していない、2 = 引数の誤り。監査は 2 行（`create` / `users` と `settings_change` / `settings`
+   0 = 成功、1 = アカウント・認証の設定・監査は変更していない（migration は適用済みのことがある）、2 = 引数の誤り。
+   DB は migration だけを当てて開く（`db::open_migrated`。起動のときの業務データの seed は走らせない）。監査は 2 行（`create` / `users` と `settings_change` / `settings`
    `{authDisabled: false}`）で、`actor_username = 'admin'`・`actor_id` = 組み込みの行・`actor_kind = 'cli'`・`origin = 'cli'`。
    組み込みの行が無い DB（直接の編集）は CLI では直さない（`actor_id` は NULL で書き、次の起動の検査が止める）。
    処理は `admin_template_core::first_account::create_admin_and_require_login`。
@@ -663,3 +667,7 @@ PR の本文に「オーナーに確かめたい点」として分けて書い�
    e2e は、閲覧公開の suite を「アカウント 0 件・ログインなし」と「CLI の管理者 + ログイン必須」の 2 本のサーバーに分けた。
 9. **無くなった試験**: 初回セットアップと、その競合（S-18・S-19・S-95 の setup、PostgreSQL の同時セットアップ）、
    空のスロットからの `auth_config_apply`（S-67 の 1 本。ログイン必須でセッションが無ければ `Unauthorized` になる）。
+10. **「ログインできる管理者」の判定**（PR #865 のクロスレビュー）: `UsersService::has_admin` は、`kind = 'account'` かつ
+    `role = 'admin'` の行のうち、username が照合の対象になり（空でなく、長さの上限以内）、保存済みのハッシュが verifier で
+    確かめられる形（argon2 の PHC 文字列で、出力を持つ）のものが 1 つ以上あるかを返す。パスワードそのものは確かめない。
+    起動・復元の候補・ロックダウンの 3 か所が同じ関数を通る。ハッシュが壊れた行しか無い DB は「管理者が 0」と同じ扱い。

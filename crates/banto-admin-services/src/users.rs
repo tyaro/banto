@@ -96,6 +96,22 @@ fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
+/// Could [`UsersService::verify`] ever accept this account - whatever the
+/// password? The name must be one it looks up (not empty, not longer than
+/// [`MAX_USERNAME_LEN`]) and the stored hash one [`verify_password`] can
+/// check: a PHC string of an argon2 variant that carries its output. Nothing
+/// is verified here; this only tells a usable credential from a damaged one.
+fn can_log_in(username: &str, hash: Option<&str>) -> bool {
+    let len = username.chars().count();
+    if len == 0 || len > MAX_USERNAME_LEN {
+        return false;
+    }
+    let Some(Ok(parsed)) = hash.map(PasswordHash::new) else {
+        return false;
+    };
+    argon2::Algorithm::try_from(parsed.algorithm).is_ok() && parsed.hash.is_some()
+}
+
 /// [`verify_password`] on tokio's blocking pool (Issue #279). An argon2id
 /// verification is tens of milliseconds of pure CPU; running it inline in an
 /// `async fn` pins an async worker thread for that long, so a handful of
@@ -1018,16 +1034,26 @@ impl UsersService {
     /// install with no administrator at all. Requiring login (`auth.disabled`
     /// off) has the same guard (ADR-0034 §6): "some account exists" is not
     /// enough (an install may hold only editors/viewers).
+    ///
+    /// "Exists" means "could log in": the row's name is one the verifier
+    /// looks up and its stored hash is one the verifier can check
+    /// ([`can_log_in`]). A row whose hash was damaged or edited by hand is an
+    /// administrator nobody can become, so it does not count - at startup, in
+    /// the restore check and at the lock-down alike (they all ask here). The
+    /// password itself is not checked.
     pub async fn has_admin(&self) -> Result<bool, BantoError> {
         // Accounts only: the built-in `admin` row cannot log in.
-        const SQL: &str = "SELECT COUNT(*) FROM users WHERE role = 'admin' AND kind = 'account'";
-        let count: i64 = match &self.db {
-            Db::Sqlite(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
+        const SQL: &str =
+            "SELECT username, password_hash FROM users WHERE role = 'admin' AND kind = 'account'";
+        let rows: Vec<(String, Option<String>)> = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
+            Db::Postgres(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
         }
         .map_err(banto_storage::storage_error)?;
-        Ok(count > 0)
+        Ok(rows
+            .iter()
+            .any(|(username, hash)| can_log_in(username, hash.as_deref())))
     }
 
     /// Verify a username/password pair. `Ok(None)` (rather than an error)
@@ -1895,6 +1921,40 @@ mod tests {
                 .await,
             Err(BantoError::NotFound { .. })
         ));
+    }
+
+    /// Cross-review of PR #865: an administrator row whose stored hash the
+    /// verifier cannot check is not an administrator that can log in.
+    #[tokio::test]
+    async fn has_admin_needs_a_hash_the_verifier_can_check() {
+        let svc = service().await;
+        let owner = svc
+            .create_user("owner", "password123", "オーナー", Role::Admin)
+            .await
+            .unwrap();
+        assert!(svc.has_admin().await.unwrap());
+        let pool = svc.db.as_sqlite().unwrap();
+        for broken in [
+            "",
+            "not-a-hash",
+            "$argon2id$v=19$m=19456,t=2,p=1$",
+            // Another scheme's PHC string: parses, but argon2 cannot verify it.
+            "$pbkdf2-sha256$i=600000$c29tZXNhbHQ$QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo",
+        ] {
+            sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+                .bind(broken)
+                .bind(owner.id)
+                .execute(pool)
+                .await
+                .unwrap();
+            assert!(!svc.has_admin().await.unwrap(), "{broken:?}");
+            assert!(svc.verify("owner", "password123").await.unwrap().is_none());
+        }
+        // A second administrator with a usable hash counts again.
+        svc.create_user("second", "password123", "x", Role::Admin)
+            .await
+            .unwrap();
+        assert!(svc.has_admin().await.unwrap());
     }
 
     #[tokio::test]

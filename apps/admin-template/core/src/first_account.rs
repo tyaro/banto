@@ -60,8 +60,13 @@ pub struct CreatedAdmin {
 ///    throw away what the operator asked for here; ignoring it would let the
 ///    next start apply it and throw away the account and the lock-down. The
 ///    operator decides which comes first.
-/// 2. The migrations (the same call a start makes), so a new database works.
-/// 3. ONE transaction ([`create_admin_and_require_login_on`]).
+/// 2. The migrations, so a new database works - and only the migrations
+///    ([`crate::db::open_migrated`]): the app's demo seed is a start's
+///    business, and a run that refuses its input must not have filled a
+///    business table. The migrations stay applied whatever happens next.
+/// 3. ONE transaction ([`create_admin_and_require_login_on`]): the account,
+///    the auth mode, the first-boot seed and the audit rows are all written,
+///    or none of them is.
 ///
 /// Run it with the app and the server stopped: a running process keeps its
 /// sessions in memory, and nothing here can end them.
@@ -72,7 +77,7 @@ pub async fn create_admin_and_require_login(
     if !crate::db::is_postgres_url(target) {
         refuse_a_pending_restore(Path::new(target))?;
     }
-    let db = crate::db::init_db_from_target(target).await?;
+    let db = crate::db::open_migrated(target).await?;
     let result = create_admin_and_require_login_on(&db, FIRST_BOOT_SETTINGS, admin).await;
     // Close before the process (or a test) moves on: Windows keeps an open
     // SQLite file locked.
@@ -252,7 +257,7 @@ mod tests {
     async fn a_new_database_gets_its_first_admin_and_requires_login() {
         let db = crate::db::migrate_memory().await.unwrap();
         let headless = Wiring::Headless {
-            viewer_public_forced: false,
+            seed_viewer_public: false,
         };
         let err = startup::check(&db, headless).await.unwrap_err();
         assert!(err.to_string().contains("create-admin"), "{err}");
@@ -328,7 +333,7 @@ mod tests {
         let started = startup::check(
             &db,
             Wiring::Headless {
-                viewer_public_forced: false,
+                seed_viewer_public: false,
             },
         )
         .await
@@ -430,7 +435,7 @@ mod tests {
             for wiring in [
                 Wiring::Desktop,
                 Wiring::Headless {
-                    viewer_public_forced: true,
+                    seed_viewer_public: true,
                 },
             ] {
                 startup::check(&db, wiring)
@@ -443,7 +448,7 @@ mod tests {
             for wiring in [
                 Wiring::Desktop,
                 Wiring::Headless {
-                    viewer_public_forced: false,
+                    seed_viewer_public: false,
                 },
             ] {
                 let started = startup::check(&db, wiring)
@@ -494,6 +499,64 @@ mod tests {
         assert_eq!(created.user.username, "owner");
     }
 
+    /// Cross-review of PR #865: what a refused run leaves on a new file is
+    /// the migrated schema and nothing else - no account, no lock-down, no
+    /// seed marker, no audit row, and no demo rows in a business table (the
+    /// demo seed is a start's, not the CLI's).
+    #[tokio::test]
+    async fn a_refused_run_on_a_new_file_leaves_only_the_migrations() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("fresh.sqlite3");
+        let err = create_admin_and_require_login(
+            db_path.to_str().unwrap(),
+            NewAdmin {
+                username: "Admin",
+                ..OWNER
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, BantoError::Validation { .. }), "{err}");
+
+        let db = Db::connect_sqlite(&db_path).await.unwrap();
+        for (what, sql) in [
+            (
+                "accounts",
+                "SELECT COUNT(*) FROM users WHERE kind = 'account'",
+            ),
+            ("audit rows", "SELECT COUNT(*) FROM audit_log"),
+            (
+                "the seed marker",
+                "SELECT COUNT(*) FROM settings WHERE key = 'first_boot.seeded'",
+            ),
+            (
+                "a lock-down",
+                "SELECT COUNT(*) FROM settings WHERE key = 'auth.disabled' AND value = 'false'",
+            ),
+        ] {
+            assert_eq!(count(&db, sql).await, 0, "{what}");
+        }
+        // The app's business tables, whatever they are in this app: empty.
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' \
+             AND name NOT LIKE '\\_sqlx%' ESCAPE '\\' AND name NOT IN ('users', 'settings')",
+        )
+        .fetch_all(db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+        assert!(!tables.is_empty());
+        for table in tables {
+            let rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM \"{table}\""
+            )))
+            .fetch_one(db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+            assert_eq!(rows, 0, "{table} was filled by a refused run");
+        }
+        db.as_sqlite().unwrap().close().await;
+    }
+
     /// ADR-0034 §10 (C2b, 3): a new FILE, never started - CLI, then a start
     /// (migrations, seed, check), then the account logs in.
     #[tokio::test]
@@ -515,7 +578,7 @@ mod tests {
         let started = startup::check(
             &db,
             Wiring::Headless {
-                viewer_public_forced: false,
+                seed_viewer_public: false,
             },
         )
         .await

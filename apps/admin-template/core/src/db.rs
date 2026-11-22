@@ -55,6 +55,41 @@ pub async fn init_db_from_target(target: &str) -> Result<Db, BantoError> {
     }
 }
 
+/// Connect to `target` (the same backend rule as [`init_db_from_target`]) and
+/// run the migrations - nothing else. No demo seed: the offline first-account
+/// CLI (`first_account`, ADR-0034 §7) opens the database with this, so a run
+/// that ends up refusing its input has not filled a business table on the way.
+/// (The migrations themselves stay applied; a start would apply them too.)
+pub async fn open_migrated(target: &str) -> Result<Db, BantoError> {
+    let db = if is_postgres_url(target) {
+        #[cfg(feature = "postgres")]
+        {
+            Db::connect_postgres(target).await?
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            return Err(BantoError::Storage(format!(
+                "connection target {:?} is a PostgreSQL URL but this build was compiled without the `postgres` feature",
+                display_target(target)
+            )));
+        }
+    } else {
+        Db::connect_sqlite(target).await?
+    };
+    run_migrations(&db).await?;
+    Ok(db)
+}
+
+/// Everything a start does to a database before anything reads it: the
+/// migrations and the app's own seed - what [`init_db`] /
+/// [`init_db_from_target`] run after connecting, and what stops the start
+/// when it fails. The restore check runs this same function on its working
+/// copy (`startup`, ADR-0034 §9), so a candidate the start could not prepare
+/// never replaces the current database.
+pub async fn prepare(db: &Db) -> Result<(), BantoError> {
+    run_migrations_and_seed(db).await
+}
+
 /// Does `target` name a PostgreSQL server (vs. a SQLite filesystem path)?
 /// Matches the two canonical libpq URL schemes.
 ///

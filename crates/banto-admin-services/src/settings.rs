@@ -1069,8 +1069,9 @@ mod tests {
             .expect("connect in-memory sqlite");
         for sql in [
             "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-            // The two columns "require login" reads (ADR-0034 §6).
-            "CREATE TABLE users (id INTEGER PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL)",
+            // The columns "require login" reads (ADR-0034 §6).
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL DEFAULT 'someone', \
+             password_hash TEXT, role TEXT NOT NULL, kind TEXT NOT NULL)",
         ] {
             sqlx::query(sql)
                 .execute(
@@ -1085,7 +1086,11 @@ mod tests {
 
     /// An administrator account: what "require login" needs (ADR-0034 §6).
     async fn add_admin_account(svc: &SettingsService) {
-        sqlx::query("INSERT INTO users (role, kind) VALUES ('admin', 'account')")
+        // A PHC string the verifier can check (what "can log in" means).
+        sqlx::query(
+            "INSERT INTO users (role, kind, password_hash) VALUES ('admin', 'account', \
+             '$argon2id$v=19$m=65536,t=2,p=1$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno')",
+        )
             .execute(svc.db.as_sqlite().expect("sqlite"))
             .await
             .expect("insert admin");
@@ -1353,7 +1358,8 @@ mod tests {
 
         // An editor is not enough.
         sqlx::query(
-            "INSERT INTO users (role, kind) VALUES ('editor', 'account'), ('admin', 'builtin')",
+            "INSERT INTO users (role, kind, password_hash) VALUES \
+             ('editor', 'account', 'x'), ('admin', 'builtin', NULL), ('admin', 'account', 'damaged')",
         )
         .execute(svc.db.as_sqlite().unwrap())
         .await
