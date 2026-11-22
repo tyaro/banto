@@ -159,6 +159,19 @@ export function adoptLayout(dock: DockState, layout: DockLayout): void {
 	adoptImpl(dock, layout);
 }
 
+let rememberImpl: (dock: DockState, snapshot: DockLayout) => void;
+
+/**
+ * Tell `dock` that `snapshot` is a copy of its layout as it is now (not exported from the
+ * package): the shadow tree of now is kept for it, so `restoreSplitSizes(id, snapshot)` puts the
+ * shares of the panes out of the tree back too (#782 PR6, Codex P2 on #864). The gesture
+ * controller's snapshot is a clone (`$state.snapshot`), which `DockState` cannot know by identity
+ * as it knows the layouts it was assigned. Held weakly: gone with the snapshot.
+ */
+export function rememberShadow(dock: DockState, snapshot: DockLayout): void {
+	rememberImpl(dock, snapshot);
+}
+
 let forgetImpl: (dock: DockState) => void;
 
 /**
@@ -272,8 +285,9 @@ export class DockState {
 	/** The `docked` tree `#shadow` was last made to show. */
 	#shadowSeen: DockNode | null = null;
 	/**
-	 * The S that showed each docked tree this state has had (weak: gone with the tree): what a
-	 * cancelled divider drag puts back of S, from the layout it was started in (`restoreSplitSizes`).
+	 * The S that showed each docked tree this state has had, and each copy of one it was told of
+	 * (`rememberShadow`: a gesture's snapshot) - weak, gone with the tree: what a cancelled divider
+	 * drag puts back of S, from the layout it was started in (`restoreSplitSizes`).
 	 */
 	#shadowAt = new WeakMap<DockNode, ShadowNode>();
 	/** The panes out of the tree that remember a place S has no room for (`inflateShadow`'s `unplaced`). */
@@ -1692,6 +1706,10 @@ export class DockState {
 	static {
 		adoptImpl = (dock, layout) => dock.#adopt(layout);
 		forgetImpl = (dock) => dock.#homeSlots.clear();
+		rememberImpl = (dock, snapshot) => {
+			if (snapshot.docked !== null && dock.#shadow !== null)
+				dock.#shadowAt.set(snapshot.docked, dock.#shadow);
+		};
 		shadowImpl = (dock) => ({
 			shadow: dock.#shadow,
 			unplaced: [...dock.#shadowUnplaced],
