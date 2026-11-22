@@ -29,6 +29,7 @@
 
 ### Changed
 
+- **CI: e2e の「長いエラーの折り返し・キー操作」（`grid-long-errors.spec.ts`）の不安定さを直した（#831）。** パネルでの `End` / `Home` を、前のキースクロールが終わる前に押すと落ちることがあったので、`PageDown`（#798）と同じく、押すのを poll の中に入れた。テストだけの変更で、`src/`・公開 API の変更なし。
 - **`@banto/dock-svelte`: 影の木の純関数 `core/shadow.ts` を足した（#782 の PR2）。** 隠れた・浮かせたパネルの「元の場所」を、墓石つきの全体木 S で持つための型と操作（見える木への射影、隠す・戻すの印、取り除き、`dockExisting` / 外周への移動、リサイズの書き戻し）と、その単体テスト・性質テスト（`tests/shadow.test.ts`。シードと件数は固定）。まだどこからも使っておらず、`index.ts` からも出していない。挙動・公開 API・保存形式の変更なし。
 - **dock-svelte（挙動の変化）:** `DockHost.replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout` を含む）は、不正でない置き換えなら、`beforePanelChange` に聞く前に進行中の操作を自動で取り消す。消費側への注意: 操作中に `replaceLayout` / `resetLayout` を呼ぶと、操作は確定せず `onGestureEnd(kind, 'cancel', 'api')` で閉じる。置き換えが拒否（`refused`）・`stale` になっても、取り消した操作は戻らない。`invalid` のときは取り消さない。さらに、`replaceLayout` が処理中（`beforePanelChange` の承認待ちを含む）の間は新しい操作（ドラッグ・リサイズ・仕切り）が始まらず、置き換えの結果が返るまで続く（承認待ちの間に始めた操作の pointerup や Esc が新しい配置を上書きしないため。並行して複数あれば最後の 1 件が返るまで）（#796）。
 - **ui:** `ToastHost` の success・error・warning の背景を、不透明な `--banto-surface-overlay` の上に tint を重ねる形にした。ダークの tint は半透明なので、下の画面が透けて通知が読みにくかった。theme のトークンは変えていない。`BantoGrid` の固定列（行・セルの状態色の層つき）は元から不透明で、`ConnectionBanner`・`UnsavedChangesNotice` は浮かぶ面でないので変更なし（#794、#808 の ToastHost の色の分）。
