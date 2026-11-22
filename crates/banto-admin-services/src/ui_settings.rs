@@ -139,9 +139,11 @@ fn validate_if_revision(if_revision: Option<&str>) -> Result<(), BantoError> {
     }
 }
 
-/// A write for an account that no longer exists is the same refusal as a
+/// An INSERT for an account that no longer exists is the same refusal as a
 /// request without a session, not a storage error (plan §4.4): the delete
-/// committed first, so the session behind the write is gone too.
+/// committed first, so the session behind the write is gone too. (A
+/// conditional UPDATE never gets here - its row went with the account, and
+/// zero rows changed is a conflict. See [`SettingsService::ui_put`].)
 fn write_error(err: sqlx::Error) -> BantoError {
     let foreign_key = err
         .as_database_error()
@@ -170,9 +172,21 @@ impl SettingsService {
     /// `if_revision`: `None` = unconditional; `Some("0")` = only when there is
     /// no row; `Some(revision)` = only when the row still has that revision.
     /// A failed condition is [`BantoError::Conflict`] whose `current` is the
-    /// row as it is now (`{ value, revision }`). An account that no longer
-    /// exists is [`BantoError::Unauthorized`]. See the module doc for why
+    /// row as it is now (`{ value, revision }`). See the module doc for why
     /// each case is a single statement.
+    ///
+    /// When the owner is an account that was deleted before the write
+    /// reached the database (the request was authorized first), the answer
+    /// follows the statement:
+    ///
+    /// - `None` and `Some("0")` INSERT, so the foreign key refuses them:
+    ///   [`BantoError::Unauthorized`], the same refusal as no session;
+    /// - `Some(revision)` is an UPDATE of a row the delete took with it:
+    ///   zero rows, so [`BantoError::Conflict`] with `value: null`,
+    ///   `revision: "0"`.
+    ///
+    /// No row is created in either case. (The session of a deleted account
+    /// is refused at the guard from its next request on.)
     pub async fn ui_put(
         &self,
         owner: &UiSettingsOwner,
@@ -674,18 +688,26 @@ mod tests {
         delete_user(&svc, id).await;
         assert_eq!(row_count(&svc).await, 0);
 
-        // The delete, then a PUT that was accepted before it: refused, in
-        // every form, and nothing is left behind.
-        for if_revision in [None, Some("0"), Some(written.revision.as_str())] {
+        // The delete, then a PUT that was accepted before it. The forms
+        // that INSERT are refused by the foreign key (`Unauthorized`); a
+        // revision is an UPDATE of a row that is gone (`Conflict`, nothing
+        // stored). Nothing is left behind either way.
+        for if_revision in [None, Some("0")] {
             let result = svc.ui_put(&owner, "theme", "late", if_revision).await;
             assert!(
-                matches!(
-                    result,
-                    Err(BantoError::Unauthorized | BantoError::Conflict { .. })
-                ),
+                matches!(result, Err(BantoError::Unauthorized)),
                 "ifRevision {if_revision:?}: got {result:?}"
             );
         }
+        let current = conflict_current(
+            svc.ui_put(&owner, "theme", "late", Some(&written.revision))
+                .await
+                .unwrap_err(),
+        );
+        assert_eq!(
+            current,
+            serde_json::json!({ "value": null, "revision": "0" })
+        );
         assert_eq!(row_count(&svc).await, 0);
     }
 

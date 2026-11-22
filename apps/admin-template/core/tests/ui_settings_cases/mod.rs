@@ -171,22 +171,44 @@ async fn account_delete_and_put_in_both_orders(
         assert_eq!(svc.ui_get(&owner, "cases.owned").await.unwrap().value, None);
     }
 
-    // The delete first: a PUT accepted before it cannot create the row.
-    for if_revision in [
-        None,
-        Some(UI_SETTING_ABSENT_REVISION),
-        Some(written.revision.as_str()),
-    ] {
+    // The delete first: a write accepted before it cannot create the row.
+    // Each form has its own answer (plan §4.4):
+    // - the two that INSERT (unconditional, `"0"`) hit the foreign key and
+    //   are refused like a request without a session;
+    // - a revision is an UPDATE of a row that is gone: zero rows, so the
+    //   ordinary conflict, with "nothing stored" as the current row.
+    for if_revision in [None, Some(UI_SETTING_ABSENT_REVISION)] {
         let result = b.ui_put(&owner, "cases.owned", "late", if_revision).await;
         assert!(
-            matches!(
-                result,
-                Err(BantoError::Unauthorized | BantoError::Conflict { .. })
-            ),
+            matches!(result, Err(BantoError::Unauthorized)),
             "ifRevision {if_revision:?}: {result:?}"
         );
-        assert_eq!(a.ui_get(&owner, "cases.owned").await.unwrap().value, None);
     }
+    let absent = serde_json::json!({ "value": null, "revision": "0" });
+    assert_eq!(
+        conflict_current(
+            b.ui_put(&owner, "cases.owned", "late", Some(&written.revision))
+                .await
+        ),
+        absent
+    );
+    // Deleting: nothing is there, which is what an unconditional delete (and
+    // `"0"`) asks for; a revision conflicts the same way.
+    for if_revision in [None, Some(UI_SETTING_ABSENT_REVISION)] {
+        let deleted = b
+            .ui_delete(&owner, "cases.owned", if_revision)
+            .await
+            .unwrap();
+        assert_eq!(deleted.revision, UI_SETTING_ABSENT_REVISION);
+    }
+    assert_eq!(
+        conflict_current(
+            b.ui_delete(&owner, "cases.owned", Some(&written.revision))
+                .await
+        ),
+        absent
+    );
+    assert_eq!(a.ui_get(&owner, "cases.owned").await.unwrap().value, None);
 }
 
 /// The same, raced: whichever commits first, the account's row is gone once
