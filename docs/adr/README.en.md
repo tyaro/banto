@@ -81,7 +81,7 @@ corresponding ADR exists, be traced from there.
 | [0031](0031-user-permissions-separate-axis.en.md)      | Keep per-user permissions as an axis separate from roles (the consuming app registers them in a catalog; even an Admin does not hold them by default)                                                        | Accepted                   |
 | [0032](0032-root-e2e-typecheck-devdeps.en.md)          | Add `@types/node`, `typescript` and `axe-core` to the root devDependencies to type-check e2e/ (an exception to ADR-0002; no runtime effect)                                                                  | Accepted                   |
 | [0033](0033-dock-svelte-fast-check-devdep.en.md)       | Add `fast-check` to the devDependencies of `@banto/dock-svelte` for property tests (an exception to ADR-0002; tests only, no runtime effect)                                                                 | Accepted                   |
-| [0034](0034-owner-identity-builtin-admin.en.md)        | Identify owners by a never-reused `accountId`, attribute login-less operations to the built-in `admin`, and remove first-run setup (v8.0.0; no compatibility, databases are recreated; addendum to ADR-0017) | Proposed                   |
+| [0034](0034-owner-identity-builtin-admin.en.md)        | Identify owners by a never-reused `accountId`, attribute login-less operations to the built-in `admin`, and remove first-run setup (v8.0.0; no compatibility, databases are recreated; addendum to ADR-0017) | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 

@@ -580,8 +580,8 @@ chronogazer（tyaro/banto-industrial）:
 ## 追記（2026-11-22、Issue #778・#790・#786）: 組み込みの `admin`・監査の帰属・ロックダウンの条件（ADR-0034）
 
 [ADR-0034](0034-owner-identity-builtin-admin.md) が、本文の 3 か所を v8.0.0 で改める。grant の仕組み
-（発行口・`GrantSpec` / `GrantRegistry`・発行と失効の直列化・決定 §6）は変えない。ADR-0034 が `Proposed` の間は
-本文のままで、`Accepted` になり実装が入った時点（計画書 §7 の C2・C2b・C4）からこの追記が効く。
+（発行口・`GrantSpec` / `GrantRegistry`・発行と失効の直列化・決定 §6）は変えない。ADR-0034 は 2026-11-22 に
+`Accepted` になった。この追記は実装が入った時点（計画書 §7 の C2・C2b・C4）から効き、それまでは本文のまま。
 
 - **決定 §3（自己削除のガード）**: grant セッションが acting id 無しで `delete_user` を呼べる形は変えない
   （印つきの grant も、自分のアカウントの行は持たない）。変わるのは 2 点。

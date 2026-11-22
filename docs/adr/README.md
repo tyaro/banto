@@ -79,7 +79,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0031](0031-user-permissions-separate-axis.md)      | ロールとは別の軸として、ユーザーへ個別に付ける権限（permission）を持つ（利用側がカタログで登録・Admin も既定では持たない）                                                                      | Accepted                   |
 | [0032](0032-root-e2e-typecheck-devdeps.md)          | e2e/ の型検査のため、ルートの devDependencies に `@types/node`・`typescript`・`axe-core` を足す（ADR-0002 の例外。実行時の影響なし）                                                            | Accepted                   |
 | [0033](0033-dock-svelte-fast-check-devdep.md)       | `@banto/dock-svelte` の性質テストのため、devDependencies に `fast-check` を足す（ADR-0002 の例外。テストだけで実行時の影響なし）                                                                | Accepted                   |
-| [0034](0034-owner-identity-builtin-admin.md)        | 持ち主は再利用されない `accountId` で識別し、ログインなしの操作は組み込みの `admin` に帰属させ、初回セットアップを無くす（v8.0.0。互換不要・DB 作り直し。ADR-0017 に追記）                      | Proposed                   |
+| [0034](0034-owner-identity-builtin-admin.md)        | 持ち主は再利用されない `accountId` で識別し、ログインなしの操作は組み込みの `admin` に帰属させ、初回セットアップを無くす（v8.0.0。互換不要・DB 作り直し。ADR-0017 に追記）                      | Accepted                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 

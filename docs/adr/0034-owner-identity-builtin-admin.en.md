@@ -2,9 +2,10 @@
 
 > 日本語: [0034-owner-identity-builtin-admin.md](0034-owner-identity-builtin-admin.md)
 
-- Status: Proposed (drafted 2026-11-22. The direction is settled by the owner's decisions 1-6 and 16-19 of the same
-  day and by N1-N6 in §10 of the plan. Awaiting approval of the details this ADR newly fixes: the name and carrier
-  of the mark in decision §3, the hand-over point for reserved names in §4, and the recovery path in §7. On the same
+- Status: Accepted (drafted 2026-11-22. The direction is settled by the owner's decisions 1-6 and 16-19 of the same
+  day and by N1-N6 in §10 of the plan. On the same day the owner approved, all as recommended, the details this ADR
+  newly fixed (the name and carrier of the mark in decision §3, the hand-over point for reserved names in §4, the
+  recovery path in §7) and every point in "Points to confirm with the owner" of PR #804. Also on the same
   day the four cross-review findings on PR #804 were incorporated: the timing of the protection and the display
   contract in §2, the authorization-time snapshot and `actor_kind` in §3, the LAN write condition and the headless
   CLI contract in §5-§7, the restore check in §9, and the acceptance tests in §10)
@@ -504,4 +505,4 @@ mark set by the wiring layer.
   check, the attribution mark and the authorization-time snapshot, `actor_id` / `actor_kind`), C2b (removing
   first-run setup, explicit settings and stopping on broken ones, REST while login is off, the lockdown condition,
   the CLI), C3 (`accountId` on the wire), C4 and C5 (ui-settings). The table in plan §7 places the protection in
-  C2; the split in this ADR takes precedence. Implementation does not start until this ADR is `Accepted`.
+  C2; the split in this ADR takes precedence. Implementation can start with C1 (`Accepted` on 2026-11-22).

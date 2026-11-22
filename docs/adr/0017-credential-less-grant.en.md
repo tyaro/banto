@@ -622,8 +622,8 @@ is settled in the implementation PR (not a design open point).
 
 [ADR-0034](0034-owner-identity-builtin-admin.en.md) changes three places of the body in v8.0.0. The grant mechanism
 itself (the issuing route, `GrantSpec` / `GrantRegistry`, the serialization of issuance and revocation, decision §6)
-does not change. While ADR-0034 is `Proposed` the body stands as written; this addendum takes effect once it is
-`Accepted` and the implementation lands (C2, C2b and C4 in §7 of the plan).
+does not change. ADR-0034 became `Accepted` on 2026-11-22. This addendum takes effect once the implementation lands
+(C2, C2b and C4 in §7 of the plan); until then the body stands as written.
 
 - **Decision §3 (the self-deletion guard)**: a grant session still calls `delete_user` without an acting id (a
   marked grant has no account row of its own either). Two things change.
