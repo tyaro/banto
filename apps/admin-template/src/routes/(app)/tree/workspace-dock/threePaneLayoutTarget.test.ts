@@ -262,9 +262,9 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 			scope: SCOPE,
 			isCurrent: () => true
 		});
-		/** The page's autosave effect. */
+		/** The page's `onLayoutCommit` handler (a reason other than `'reset'`). */
 		const report = () => store.changed(target.serialize());
-		/** The page's mount effect, then the autosave effect's first run. */
+		/** The page's mount effect (what is shown at mount is mirrored into the local copy). */
 		const start = () => {
 			mount(dock.api);
 			void store.load();

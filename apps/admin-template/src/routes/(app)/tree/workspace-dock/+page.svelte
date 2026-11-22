@@ -14,9 +14,10 @@
 	 * - The "View" menu (`PageViewMenu`, the menu bar's 表示) comes from `viewMenuItems()`; the
 	 *   toolbar buttons call `toggle` / `float` / `dockBack` and read the pressed state from
 	 *   `leftOpen` / `rightOpen` (no strip of toggles, plan §4.8).
-	 * - The layout is saved per user and screen (plan §4.4): `layoutSnapshot()` - not
-	 *   `dock.serialize()` - goes to `dockLayoutStore` through `threePaneLayoutTarget.ts`; "reset
-	 *   layout" saves the default as a user's change.
+	 * - The layout is saved per user and screen (plan §4.4): what `onLayoutCommit` reports (#791:
+	 *   a settled `layoutSnapshot()`, never a step of a drag or of the narrow switch) goes to
+	 *   `dockLayoutStore` through `threePaneLayoutTarget.ts`; "reset layout" (reason `'reset'`)
+	 *   saves the default as a user's change.
 	 * - Narrow (<= 900px of the component) is the dock's own narrow display (the panes are edge bands
 	 *   whose flyout is the drawer); kiosk (`settings.kiosk`) is `arrange={false}` (plan §4.5): the
 	 *   saved layout is shown, nothing can be rearranged, no View menu or toolbar. Touch needs no
@@ -26,7 +27,12 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { guardUnsavedChanges } from '@banto/forms';
-	import { createDockState, ThreePaneDock } from '@banto/dock-svelte';
+	import {
+		createDockState,
+		ThreePaneDock,
+		type ThreePaneLayoutCommitReason,
+		type ThreePaneSavedLayout
+	} from '@banto/dock-svelte';
 	import { EmptyState, PageHeader, Tabs } from '@banto/ui';
 	import { tick, untrack } from 'svelte';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
@@ -260,41 +266,37 @@
 
 	// Once mounted: remember what the dock started with, then read the provider's copy once - it
 	// wins (also over a move made meanwhile); nothing saved or a failure restores the default. A
-	// read for a session that has ended is dropped (dockLayoutStore.svelte.ts).
+	// read for a session that has ended is dropped (dockLayoutStore.svelte.ts). What is shown at
+	// mount is mirrored into the local copy (it is the store's baseline: nothing goes to the provider).
 	$effect(() => {
 		if (!three) return;
 		untrack(() => {
 			layoutTarget.attach();
 			void layoutStore.load();
+			layoutStore.changed(layoutTarget.serialize());
 		});
 	});
 
-	// Autosave on every change of the layout to save (`layoutSnapshot()`: the kept wide layout while
-	// narrow; reading it ties this effect to every move / resize / dock / float / tab / close). The
-	// local copy saves at once; the provider gets one write 500ms after the layout stops changing.
-	$effect(() => {
-		if (!three) return;
-		const json = layoutTarget.serialize();
-		untrack(() => layoutStore.changed(json));
-	});
+	/**
+	 * Autosave (#791): the dock reports a settled layout to save - the end of a move / resize, a
+	 * dock / float / tab / close, a View menu choice; the kept wide layout while narrow - never a
+	 * step in between. The local copy saves at once; the provider gets one write 500ms after the
+	 * last report. `'reset'` ("reset layout" was applied; the dock installed the default itself) is
+	 * saved as a user's change even when the default was already shown. A layout the store applied
+	 * (the provider's copy, `restoreLayout`) is not reported. The text comes from `layoutTarget`: it
+	 * is the reported value, except while a stored layout is still being installed.
+	 */
+	function saveLayout(_saved: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason): void {
+		if (reason === 'reset') layoutTarget.withoutApplying(() => layoutStore.reset());
+		else layoutStore.changed(layoutTarget.serialize());
+	}
 
 	// Unmount: flush (not drop) a pending provider save - unless the session changed.
 	$effect(() => () => layoutStore.dispose());
 
-	/** "Reset layout": the dock's default (asked through `beforePanelChange`), then saved as a user's change. */
-	async function resetLayout(): Promise<void> {
-		if (!three) return;
-		const outcome = await three.resetLayout();
-		if (outcome === 'applied') layoutTarget.withoutApplying(() => layoutStore.reset());
-	}
-
-	/** The panes' View menu entries (checked from the dock's state) with our own "reset layout". */
+	/** The panes' View menu entries (checked from the dock's state) and "reset layout". */
 	const viewMenuItems: PageViewMenuItem[] = $derived(
-		(three?.viewMenuItems({ resetLayout: m['dashboard.resetLayout']() }) ?? []).map((item) =>
-			item.id === 'reset-layout' && item.kind === 'action'
-				? { ...item, onSelect: () => void resetLayout() }
-				: item
-		)
+		three?.viewMenuItems({ resetLayout: m['dashboard.resetLayout']() }) ?? []
 	);
 
 	const leftFloating = $derived(dock.layout.floating.some((w) => w.id === 'left' && w.open));
@@ -377,6 +379,7 @@
 			bind:narrow
 			{dock}
 			initialLayout={layoutTarget.initialLayout}
+			onLayoutCommit={saveLayout}
 			{arrange}
 			messages={paneDockMessages}
 			isEscapeBlocked={isDockEscapeBlocked}

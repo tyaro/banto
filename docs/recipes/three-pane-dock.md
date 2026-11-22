@@ -82,8 +82,11 @@
   設定のキーは `dock.threePane.<画面キー>`（利用者ごと・画面ごとに 1 つ）、500ms の debounce、localStorage の写しは
   最初の描画だけに使う。**写しと provider の結果は利用者（セッション）に結び付く**: ログアウト・別の利用者に替わったあとに
   届いた読み込みや書き込みは捨てるので、前の利用者の配置が別の人に出ない。そのままコピーして画面キーだけ替える。
-- 保存のきっかけは `layoutTarget.serialize()`（= `layoutSnapshot()` のテキスト）を読む `$effect`。見本のとおり
-  `$effect` の依存はこれだけにして、保存の呼び出し（`changed`）は `untrack` に入れる。
+- 保存のきっかけは `ThreePaneDock` の `onLayoutCommit(saved, reason)`（#791）。保存してよい配置が確定したときだけ
+  届く（ドラッグの途中・狭い ⇄ 広いの切り替えの途中・復元では届かない）。見本は、`'reset'`（「レイアウトを既定に戻す」が
+  適用された）なら `layoutStore.reset()`、ほかは `layoutStore.changed(layoutTarget.serialize())` を呼ぶ。
+  `$effect` で `layoutSnapshot()` を読む形は要らない。細かい約束は `@banto/dock-svelte` の README
+  「保存してよい配置の確定」。
 - 一覧の「ビュー」（絞り込み・並び）には入れない。ビューは何を見るか、レイアウトはどう並べるか。
 
 ## 狭い表示・`arrange={false}`・touch

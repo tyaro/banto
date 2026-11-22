@@ -96,7 +96,7 @@
 		type DockPolicy
 	} from './core/policy';
 	import { adoptLayout, forgetHomeSlots, type DockState } from './state.svelte';
-	import type { DockLayout, DockNode, PanelContent } from './types';
+	import type { DockLayout, DockLayoutCommitReason, DockNode, PanelContent } from './types';
 	import { validateDockLayout } from './core/validate';
 	import DockAutoHide from './DockAutoHide.svelte';
 	import DockedTree from './DockedTree.svelte';
@@ -241,6 +241,21 @@
 		 * goes away moves to its pane. Default `true`.
 		 */
 		arrange?: boolean;
+		/**
+		 * A layout worth saving is settled (#791): called with the layout as `dock.serialize()` writes
+		 * it (a plain copy) whenever, at a settle point, it differs from the one last reported - or
+		 * last put in by a `replaceLayout` without `commit` (a restore), or held when the host was
+		 * created. Settle points: the end of a pointer / keyboard gesture (before `onGestureEnd`; one
+		 * call for a whole drag, one per keyboard step on a divider), and - while no gesture is in
+		 * progress - the tick after any other change: a method of this host (`showPanel`,
+		 * `setPanelVisible`, `movePanel`, ...), a button of the dock UI (✕, tab, pin, collapse, lock),
+		 * or the app's own `DockState` call (`hydrate` included). All of those say `'user'`. Not called
+		 * for the steps of a gesture in progress, nor for a change that was refused, `stale` or
+		 * cancelled (the layout is the same). `replaceLayout(next, { commit })` reports its own reason
+		 * (`'reset'`) in the step that puts `next` in, changed or not; without `commit` it reports
+		 * nothing. A change not yet reported when the host unmounts is reported then.
+		 */
+		onLayoutCommit?: (layout: DockLayout, reason: DockLayoutCommitReason) => void;
 	}
 
 	let {
@@ -258,7 +273,8 @@
 		keepMounted,
 		persistent,
 		isStructureChangeDeferred,
-		arrange = true
+		arrange = true,
+		onLayoutCommit
 	}: Props = $props();
 
 	// Published through context; getters keep reading the live props.
@@ -406,11 +422,37 @@
 				!(kind === 'drag' && lifecycle.isDeferred()) &&
 				(canStartGesture ? canStartGesture(kind, panelId) : true),
 			isEscapeBlocked,
-			onEnd: (session, outcome, reason) => onGestureEnd?.(session.kind, outcome, reason)
+			onEnd: (session, outcome, reason) => {
+				// The gesture is closed and the layout holds its outcome: a settle point (#791).
+				settleLayout();
+				onGestureEnd?.(session.kind, outcome, reason);
+			}
 		})
 	);
 	setGestureOwner(gesture);
 	onDestroy(() => gesture.dispose());
+
+	// --- `onLayoutCommit` (#791, the prop's doc) ---
+	/** `dock.serialize()` as last reported, or as last put in without a report (a restore, the start). */
+	let settledLayout = untrack(() => dock.serialize());
+	/** A settle point: report the layout as `'user'` when it is not the one last settled. */
+	function settleLayout(): void {
+		if (gesture.active) return;
+		const now = dock.serialize();
+		if (now === settledLayout) return;
+		settledLayout = now;
+		onLayoutCommit?.(JSON.parse(now) as DockLayout, 'user');
+	}
+	// Changes outside a gesture are compared in the tick after them. While a gesture is in progress
+	// only its session is tracked (its steps are not serialized); its end runs this again, which
+	// also covers a session that closes without `onEnd` (a refused drag).
+	$effect(() => {
+		if (gesture.session !== null) return;
+		void dock.serialize();
+		untrack(settleLayout);
+	});
+	// Registered after the gesture's dispose: the cancelled gesture's target is back by now.
+	onDestroy(() => untrack(settleLayout));
 
 	// `arrange` turned off (#663 ④, three-pane-dock-plan §4.5): a gesture in progress is cancelled
 	// (its target goes back to how it was) and a change still being asked is not applied (`stale`).
@@ -593,10 +635,22 @@
 	 * not overwritten by the gesture's later commit / restore. A refused replacement still leaves
 	 * the gesture cancelled. No new gesture starts while a `replaceLayout` is in flight (including
 	 * while `beforePanelChange` is pending), until the last one in flight has returned.
+	 * `options.commit` (#791): the reason `onLayoutCommit` is called with, in the same step that puts
+	 * `next` in (`'reset'` for a "back to the default" the user asked for). Left off, the replacement
+	 * is a restore: nothing is reported, and `next` becomes the layout later changes are compared
+	 * with. `options.applied` runs in that same step, right after `next` went in and before the
+	 * report: a caller that keeps state beside the layout (`ThreePaneDock`'s narrow display) settles
+	 * it there, so nothing reads the new layout with the old state.
 	 */
 	export async function replaceLayout(
 		next: DockLayout,
-		options: { focusPanel?: string; isCurrent?: () => boolean; saved?: boolean } = {}
+		options: {
+			focusPanel?: string;
+			isCurrent?: () => boolean;
+			saved?: boolean;
+			commit?: DockLayoutCommitReason;
+			applied?: () => void;
+		} = {}
 	): Promise<DockPanelChangeOutcome | 'invalid'> {
 		const checked = validateDockLayout(next);
 		if (!checked.ok) return 'invalid';
@@ -615,6 +669,10 @@
 							forgetHomeSlots(dock);
 							adoptLayout(dock, l);
 						} else dock.layout = l;
+						options.applied?.();
+						settledLayout = dock.serialize();
+						if (options.commit)
+							onLayoutCommit?.(JSON.parse(settledLayout) as DockLayout, options.commit);
 					}
 				)
 			);

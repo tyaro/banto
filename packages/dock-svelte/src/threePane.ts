@@ -257,6 +257,13 @@ export interface ThreePaneSavedLayout {
 	layout: DockLayout;
 }
 
+/**
+ * Why `ThreePaneDock`'s `onLayoutCommit` reports a value to save (#791): `DockHost`'s reasons
+ * (`'user'`, `'reset'` = `resetLayout`), and `'narrow-switch'` = the value changed when the narrow
+ * / wide display was switched (e.g. the default measured again at the width it came back at).
+ */
+export type ThreePaneLayoutCommitReason = 'user' | 'reset' | 'narrow-switch';
+
 /** The value to save for `layout` (plan §4.4). */
 export function threePaneSavedLayout(layout: DockLayout): ThreePaneSavedLayout {
 	const ids = new Set<string>(collectPanelIds(layout.docked));
