@@ -68,11 +68,9 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .expect("init_db_from_target should run migrations-postgres and seed");
     the_baseline_schema_holds_on_postgres(&db).await;
     the_first_boot_seed_runs_once_on_postgres(&db).await;
-    // ADR-0034 §2: with only the built-in row there, the first setup works.
-    let existing = UsersService::new(db.clone())
-        .setup_first_user("existing", "password123", "Existing")
-        .await
-        .expect("the first setup works beside the built-in row");
+    // ADR-0034 §7/§10: the first administrator comes from the offline CLI
+    // (never started database -> CLI -> start -> login), beside the built-in row.
+    let existing = the_first_admin_cli_on_postgres(&url, &db).await;
     assert_eq!(existing.auth_epoch, 0);
     period_filter_uses_the_collate_c_index(&url).await;
 
@@ -1029,7 +1027,6 @@ async fn the_baseline_schema_holds_on_postgres(db: &banto_storage::Db) {
     }
 
     let users = UsersService::new(db.clone());
-    assert!(!users.is_initialized().await.unwrap());
     assert!(!users.has_admin().await.unwrap());
     assert!(users.verify("admin", "admin").await.unwrap().is_none());
     let listed = users.list_users().await.unwrap();
@@ -1090,7 +1087,7 @@ async fn the_baseline_schema_holds_on_postgres(db: &banto_storage::Db) {
 /// transaction, so two starts on the same unseeded database cannot both seed.
 /// The second waits for the first; after the first's ROLLBACK it seeds, after
 /// the first's COMMIT it writes nothing - not even over a setting that was
-/// changed in between. Leaves `settings` empty.
+/// changed in between. Leaves `settings` as the migrations left it (no marker).
 async fn the_first_boot_seed_runs_once_on_postgres(db: &banto_storage::Db) {
     use admin_template_core::settings::seed_first_boot_postgres;
     use std::time::Duration;
@@ -1098,7 +1095,11 @@ async fn the_first_boot_seed_runs_once_on_postgres(db: &banto_storage::Db) {
     const SEED: &[(&str, &str)] = &[("server.viewer_public", "true")];
     let pool = db.as_postgres().expect("postgres handle").clone();
     let settings = SettingsService::new(db.clone());
-    assert!(settings.is_empty().await.unwrap());
+    assert_eq!(
+        settings.get("first_boot.seeded").await.unwrap(),
+        None,
+        "never started"
+    );
 
     // First start fails after the seed: the waiting second start then seeds.
     let mut first = pool.begin().await.unwrap();
@@ -1135,7 +1136,7 @@ async fn the_first_boot_seed_runs_once_on_postgres(db: &banto_storage::Db) {
     );
 
     // Start over: the first start commits, the waiting one writes nothing.
-    sqlx::query("DELETE FROM settings")
+    sqlx::query("DELETE FROM settings WHERE key IN ('first_boot.seeded', 'server.viewer_public')")
         .execute(&pool)
         .await
         .unwrap();
@@ -1178,10 +1179,156 @@ async fn the_first_boot_seed_runs_once_on_postgres(db: &banto_storage::Db) {
     );
     assert!(!settings.seed_first_boot(SEED).await.unwrap());
 
-    sqlx::query("DELETE FROM settings")
+    sqlx::query("DELETE FROM settings WHERE key IN ('first_boot.seeded', 'server.viewer_public')")
         .execute(&pool)
         .await
         .unwrap();
+}
+
+/// ADR-0034 §5/§7/§10 on PostgreSQL (the display preset's seed): a database
+/// that has never started does not start headless; the CLI seeds, creates the
+/// administrator, requires login and writes the audit rows in ONE transaction;
+/// the next start does not put the seed's `auth.disabled = true` back; the
+/// account logs in. A failed run leaves nothing - not even the seed marker.
+///
+/// Leaves the account (`existing`, admin) and `auth.disabled = false`; the
+/// seed's other rows, the marker and the audit rows are removed again.
+async fn the_first_admin_cli_on_postgres(
+    url: &str,
+    db: &banto_storage::Db,
+) -> admin_template_core::users::UserIdentity {
+    use admin_template_core::first_account::{
+        create_admin_and_require_login, create_admin_and_require_login_on, NewAdmin,
+    };
+    use admin_template_core::startup::{self, Wiring};
+
+    const DISPLAY_SEED: &[(&str, &str)] = &[
+        ("auth.disabled", "true"),
+        ("auth.disabled_role", "viewer"),
+        ("server.enabled", "true"),
+        ("server.bind", "0.0.0.0"),
+        ("server.viewer_public", "true"),
+    ];
+    let headless = Wiring::Headless {
+        viewer_public_forced: false,
+    };
+    let pool = db.as_postgres().expect("postgres handle").clone();
+    let settings = SettingsService::new(db.clone());
+    let users = UsersService::new(db.clone());
+
+    // A new database: no login (0015), so this server would not listen.
+    let fresh = settings.auth_config().await.expect("0015 wrote the mode");
+    assert!(fresh.disabled);
+    assert_eq!(fresh.disabled_role, Role::Admin);
+    let err = startup::check(db, headless).await.unwrap_err();
+    assert!(err.to_string().contains("create-admin"), "{err}");
+    startup::check(db, Wiring::Desktop)
+        .await
+        .expect("the desktop app starts on a new database");
+
+    // A failed run (a reserved name, refused after the seed was written in the
+    // same transaction) leaves no account, no lock-down and no marker.
+    let err = create_admin_and_require_login_on(
+        db,
+        DISPLAY_SEED,
+        NewAdmin {
+            username: "Admin",
+            password: "password123",
+            display_name: "x",
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, banto_core::BantoError::Validation { .. }),
+        "{err}"
+    );
+    assert_eq!(settings.get("first_boot.seeded").await.unwrap(), None);
+    assert!(settings.auth_config().await.unwrap().disabled);
+    assert!(!settings.server_config().await.unwrap().viewer_public);
+    assert!(!users.has_admin().await.unwrap());
+
+    // The CLI on the never-started database.
+    let created = create_admin_and_require_login_on(
+        db,
+        DISPLAY_SEED,
+        NewAdmin {
+            username: "existing",
+            password: "password123",
+            display_name: "Existing",
+        },
+    )
+    .await
+    .expect("create-admin");
+    assert!(created.seeded);
+    assert_eq!(created.user.role, Role::Admin);
+
+    // The next start: the seed finds its marker, the check passes, login works.
+    assert!(!settings.seed_first_boot(DISPLAY_SEED).await.unwrap());
+    let started = startup::check(db, headless).await.expect("starts now");
+    assert!(!started.auth.disabled, "the lock-down stayed over the seed");
+    let server = settings.server_config().await.unwrap();
+    assert!(server.viewer_public && server.enabled);
+    assert!(users
+        .verify("existing", "password123")
+        .await
+        .unwrap()
+        .is_some());
+    let rows: Vec<(
+        String,
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT action, resource, actor_id, actor_username, actor_kind, origin \
+             FROM audit_log WHERE origin = 'cli' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(
+        (rows[0].0.as_str(), rows[0].1.as_str()),
+        ("create", "users")
+    );
+    assert_eq!(
+        (rows[1].0.as_str(), rows[1].1.as_str()),
+        ("settings_change", "settings")
+    );
+    for row in &rows {
+        assert_eq!(row.2, Some(started.users.builtin_admin_id));
+        assert_eq!(row.3.as_deref(), Some("admin"));
+        assert_eq!(row.4.as_deref(), Some("cli"));
+    }
+
+    // The whole entry point (`BANTO_DB` = this URL) on the started database:
+    // it seeds nothing, and a duplicate name writes nothing.
+    let err = create_admin_and_require_login(
+        url,
+        NewAdmin {
+            username: "existing",
+            password: "password123",
+            display_name: "again",
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, banto_core::BantoError::Validation { .. }),
+        "{err}"
+    );
+
+    // Back to what the rest of this smoke test expects.
+    for sql in [
+        "TRUNCATE audit_log RESTART IDENTITY",
+        "DELETE FROM settings WHERE key = 'first_boot.seeded' OR key LIKE 'server.%'",
+        "UPDATE settings SET value = 'admin' WHERE key = 'auth.disabled_role'",
+    ] {
+        sqlx::query(sql).execute(&pool).await.unwrap();
+    }
+    created.user
 }
 
 // Issue #207 / roadmap M10: keep this in the existing smoke test so no other

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::permissions::{PermissionCatalog, PermissionKey};
 use crate::rbac::Role;
+use crate::users::UsersService;
 
 const KEY_SERVER_ENABLED: &str = "server.enabled";
 const KEY_SERVER_BIND: &str = "server.bind";
@@ -245,9 +246,13 @@ impl Default for ServerSettings {
 
 /// Auth-mode settings (spec M11): the "ログイン不要モード" (auth-disabled)
 /// toggle + its synthetic-identity role, and the desktop "自動ログイン"
-/// (autologin) opt-in + which account it targets. Defaults to today's
-/// behavior (a real login screen, no autologin) so an existing DB with none
-/// of these keys set behaves exactly as before M11.
+/// (autologin) opt-in + which account it targets.
+///
+/// `disabled` and (while it is on) `disabled_role` are never defaulted when
+/// they are read: a new database gets both from a migration, a save writes
+/// both, and [`SettingsService::auth_config`] refuses a database where one is
+/// missing or unreadable (ADR-0034 §5). [`Default`] is only a value to build
+/// a save from.
 ///
 /// Deliberately does NOT carry the autologin password: that lives only in
 /// the OS keyring (`src-tauri`'s `keyring_store` module), never in this
@@ -327,6 +332,53 @@ pub fn auth_server_combination_allowed(
     viewer_public: bool,
 ) -> bool {
     !(auth_disabled && server_enabled && !viewer_public)
+}
+
+/// The refusal of "require login" while no administrator account exists
+/// (ADR-0034 §6). One message for the settings save and the wirings.
+pub fn lockdown_needs_an_admin() -> BantoError {
+    BantoError::Validation {
+        field_errors: vec![FieldError {
+            field: "disabled".to_string(),
+            message: "ログイン必須にするには、先に管理者のアカウントを作ってください".to_string(),
+        }],
+    }
+}
+
+/// A stored auth-mode key that cannot be used (ADR-0034 §5). The remedy is the
+/// same for every cause, so it is written once here.
+fn broken_auth_setting(cause: &str) -> BantoError {
+    BantoError::Other(format!(
+        "{cause}。この DB は直接書き換えられたか、壊れている可能性があります。\
+         banto-serve の create-admin で管理者を作ってログイン必須に直すか、\
+         バックアップから戻してください"
+    ))
+}
+
+/// Write "login is required" on a SQLite connection that is inside the
+/// caller's transaction (the headless first-account CLI, ADR-0034 §7). The
+/// caller has created an administrator account in the same transaction, which
+/// is what [`SettingsService::set_auth_config`] checks before it writes this.
+pub async fn require_login_on_sqlite(conn: &mut sqlx::SqliteConnection) -> Result<(), BantoError> {
+    sqlx::query(SEED_UPSERT_SQLITE)
+        .bind(KEY_AUTH_DISABLED)
+        .bind("false")
+        .execute(&mut *conn)
+        .await
+        .map_err(banto_storage::storage_error)?;
+    Ok(())
+}
+
+/// PostgreSQL twin of [`require_login_on_sqlite`].
+#[cfg(feature = "postgres")]
+pub async fn require_login_on_postgres(conn: &mut sqlx::PgConnection) -> Result<(), BantoError> {
+    sqlx::query(SEED_UPSERT_POSTGRES)
+        .bind(KEY_AUTH_DISABLED)
+        .bind("false")
+        .execute(&mut *conn)
+        .await
+        .map_err(banto_storage::storage_error)?;
+    Ok(())
 }
 
 impl SettingsService {
@@ -659,25 +711,49 @@ impl SettingsService {
         .await
     }
 
-    /// Read the auth-mode settings (spec M11), falling back to
-    /// [`AuthSettings::default`] for any key that has not been set yet, and
-    /// falling back the same way for `auth.disabled_role` specifically if it
-    /// holds a value [`Role::from_str`] does not recognize (e.g. a future
-    /// downgrade, or a hand-edited DB) - a corrupt role value degrades to the
-    /// safe default (`admin`) rather than failing the whole read.
+    /// Read the auth-mode settings (spec M11).
+    ///
+    /// `auth.disabled` must be stored as `true` or `false`, and while it is
+    /// `true`, `auth.disabled_role` must be a known role. Anything else is an
+    /// error, never a default (ADR-0034 §5): a missing key must not decide
+    /// whether the app asks for a login, and an unreadable role must not turn
+    /// into an admin session. A new database gets both keys from a migration
+    /// and every save writes both, so this only fails on a database that was
+    /// edited directly or is damaged. Both wirings call this at startup and
+    /// stop on an error (`admin_template_core::startup::check`).
+    ///
+    /// The autologin keys keep their defaults: they only matter with a real
+    /// account and a keyring entry.
     pub async fn auth_config(&self) -> Result<AuthSettings, BantoError> {
         let defaults = AuthSettings::default();
 
-        let disabled = self
-            .get(KEY_AUTH_DISABLED)
-            .await?
-            .map(|value| value == "true")
-            .unwrap_or(defaults.disabled);
-        let disabled_role = self
-            .get(KEY_AUTH_DISABLED_ROLE)
-            .await?
-            .and_then(|value| Role::from_str(&value).ok())
-            .unwrap_or(defaults.disabled_role);
+        let disabled = match self.get(KEY_AUTH_DISABLED).await?.as_deref() {
+            Some("true") => true,
+            Some("false") => false,
+            Some(_) => {
+                return Err(broken_auth_setting(
+                    "設定 auth.disabled の値が true / false ではありません",
+                ))
+            }
+            None => return Err(broken_auth_setting("設定 auth.disabled がありません")),
+        };
+        let stored_role = self.get(KEY_AUTH_DISABLED_ROLE).await?;
+        let disabled_role = match stored_role.as_deref().map(Role::from_str) {
+            Some(Ok(role)) => role,
+            // Login is required: the role builds no session, so an unreadable
+            // one stops nothing. The next save writes it again.
+            _ if !disabled => defaults.disabled_role,
+            Some(Err(_)) => {
+                return Err(broken_auth_setting(
+                    "設定 auth.disabled_role の値が知らないロールです",
+                ))
+            }
+            None => {
+                return Err(broken_auth_setting(
+                    "ログインなしの設定なのに、設定 auth.disabled_role がありません",
+                ))
+            }
+        };
         let autologin_enabled = self
             .get(KEY_AUTOLOGIN_ENABLED)
             .await?
@@ -708,6 +784,9 @@ impl SettingsService {
     /// checked so whichever settings screen the user acts on second is the
     /// one that catches the conflict, and so the two can never disagree on
     /// whether a given combination is legal.
+    ///
+    /// Refuses to turn the mode OFF (require login) while no administrator
+    /// account exists (ADR-0034 §6): nobody could log in to manage the app.
     pub async fn set_auth_config(&self, config: &AuthSettings) -> Result<(), BantoError> {
         self.set_auth_config_and_disabled_permissions(config, None)
             .await
@@ -733,6 +812,13 @@ impl SettingsService {
                 "LANアクセスが有効な間は、閲覧公開が有効な場合のみ認証無効モードを有効化できます"
                     .to_string(),
             ));
+        }
+        // ADR-0034 §6: login may be required only while an administrator
+        // account can log in. The last administrator can never be removed
+        // (the guard holds in no-login mode too), so one that exists here
+        // still exists when the keys are written.
+        if !config.disabled && !UsersService::new(self.db.clone()).has_admin().await? {
+            return Err(lockdown_needs_an_admin());
         }
 
         // One transaction (freshness audit of #266, P2-3): all keys or
@@ -966,18 +1052,43 @@ mod tests {
     /// `apps/admin-template/core/migrations-sqlite/0002_settings.sql`. Same
     /// pattern `banto-attachments` uses to avoid a backwards dependency on
     /// the app crate's `db::migrate_memory` (conventions §"逆依存禁止").
+    ///
+    /// The database is in the login-required state: `auth.disabled = false`
+    /// and one administrator account (what the mode needs, ADR-0034 §6).
+    /// [`bare_service`] is the same tables with no rows.
     async fn service() -> SettingsService {
+        let svc = bare_service().await;
+        add_admin_account(&svc).await;
+        svc.set(KEY_AUTH_DISABLED, "false").await.unwrap();
+        svc
+    }
+
+    async fn bare_service() -> SettingsService {
         let db = Db::connect_sqlite_memory()
             .await
             .expect("connect in-memory sqlite");
-        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            .execute(
-                db.as_sqlite()
-                    .expect("service tests run on a SQLite handle"),
-            )
-            .await
-            .expect("create settings table");
+        for sql in [
+            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            // The two columns "require login" reads (ADR-0034 §6).
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL)",
+        ] {
+            sqlx::query(sql)
+                .execute(
+                    db.as_sqlite()
+                        .expect("service tests run on a SQLite handle"),
+                )
+                .await
+                .expect("create table");
+        }
         SettingsService::new(db)
+    }
+
+    /// An administrator account: what "require login" needs (ADR-0034 §6).
+    async fn add_admin_account(svc: &SettingsService) {
+        sqlx::query("INSERT INTO users (role, kind) VALUES ('admin', 'account')")
+            .execute(svc.db.as_sqlite().expect("sqlite"))
+            .await
+            .expect("insert admin");
     }
 
     /// Issue #697: `auth.disabled_permissions` defaults to none, saving
@@ -1109,7 +1220,7 @@ mod tests {
 
     #[tokio::test]
     async fn is_empty_true_on_a_fresh_table() {
-        let svc = service().await;
+        let svc = bare_service().await;
         assert!(svc.is_empty().await.unwrap());
     }
 
@@ -1147,14 +1258,21 @@ mod tests {
     // --- Auth-mode settings (spec M11) -------------------------------------
 
     #[tokio::test]
-    async fn auth_config_defaults_when_unset() {
-        let svc = service().await;
+    async fn auth_config_refuses_a_missing_or_unreadable_mode() {
+        let svc = bare_service().await;
+        // No `auth.disabled` at all: an error, not "login required" and not
+        // "no login" (ADR-0034 §5).
+        let err = svc.auth_config().await.unwrap_err();
+        assert!(err.to_string().contains("auth.disabled"), "{err}");
+
+        svc.set(KEY_AUTH_DISABLED, "yes").await.unwrap();
+        let err = svc.auth_config().await.unwrap_err();
+        assert!(err.to_string().contains("true / false"), "{err}");
+
+        // Login required: the autologin keys keep their defaults.
+        svc.set(KEY_AUTH_DISABLED, "false").await.unwrap();
         let config = svc.auth_config().await.unwrap();
         assert_eq!(config, AuthSettings::default());
-        assert!(!config.disabled);
-        assert_eq!(config.disabled_role, Role::Admin);
-        assert!(!config.autologin_enabled);
-        assert_eq!(config.autologin_username, None);
     }
 
     #[tokio::test]
@@ -1190,12 +1308,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_config_falls_back_to_default_role_on_an_invalid_stored_value() {
-        let svc = service().await;
+    async fn auth_config_refuses_an_unreadable_role_only_in_no_login_mode() {
+        let svc = bare_service().await;
+        // No-login mode builds a session from the role: missing or unknown is
+        // an error, never an admin session (ADR-0034 §5).
+        svc.set(KEY_AUTH_DISABLED, "true").await.unwrap();
+        let err = svc.auth_config().await.unwrap_err();
+        assert!(err.to_string().contains("auth.disabled_role"), "{err}");
         // Simulate a corrupt/hand-edited DB value bypassing the typed setter.
         svc.set(KEY_AUTH_DISABLED_ROLE, "not-a-role").await.unwrap();
+        let err = svc.auth_config().await.unwrap_err();
+        assert!(err.to_string().contains("auth.disabled_role"), "{err}");
+
+        // Login required: the role builds nothing, so it stops nothing.
+        svc.set(KEY_AUTH_DISABLED, "false").await.unwrap();
         let config = svc.auth_config().await.unwrap();
+        assert!(!config.disabled);
         assert_eq!(config.disabled_role, Role::Admin);
+    }
+
+    /// ADR-0034 §6: login can be required only once an administrator account
+    /// exists; nothing is written when it is refused.
+    #[tokio::test]
+    async fn set_auth_config_refuses_requiring_login_without_an_admin_account() {
+        let svc = bare_service().await;
+        svc.set_auth_config(&AuthSettings {
+            disabled: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .expect("no-login mode needs no account");
+
+        let err = svc
+            .set_auth_config(&AuthSettings::default())
+            .await
+            .unwrap_err();
+        match err {
+            BantoError::Validation { field_errors } => {
+                assert_eq!(field_errors[0].field, "disabled");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+        assert!(svc.auth_config().await.unwrap().disabled, "nothing written");
+
+        // An editor is not enough.
+        sqlx::query(
+            "INSERT INTO users (role, kind) VALUES ('editor', 'account'), ('admin', 'builtin')",
+        )
+        .execute(svc.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+        svc.set_auth_config(&AuthSettings::default())
+            .await
+            .unwrap_err();
+
+        add_admin_account(&svc).await;
+        svc.set_auth_config(&AuthSettings::default()).await.unwrap();
+        assert!(!svc.auth_config().await.unwrap().disabled);
     }
 
     /// Freshness audit of #266 (P2-3): `set_many` stores every pair (one

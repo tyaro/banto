@@ -705,6 +705,14 @@ impl BackupService {
         }
     }
 
+    /// Where a staged restore of the database at `db_path` waits for the next
+    /// start. For a caller that must not run while one is pending and has no
+    /// service at hand (the headless first-account CLI, ADR-0034 §7): it only
+    /// looks whether the file is there.
+    pub fn pending_restore_file(db_path: &Path) -> Result<PathBuf, BantoError> {
+        Ok(scope_dir_of(db_path)?.join(PENDING_RESTORE_FILE_NAME))
+    }
+
     fn pending_restore_path(&self) -> Result<PathBuf, BantoError> {
         Ok(self.scope_dir()?.join(PENDING_RESTORE_FILE_NAME))
     }

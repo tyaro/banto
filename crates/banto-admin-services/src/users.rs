@@ -34,6 +34,13 @@ use banto_core::{BantoError, FieldError};
 use banto_storage::Db;
 use serde::Serialize;
 
+// AssertSqlSafe (throughout this file): the only interpolated fragments in
+// the `format!`-built statements are `dialect.placeholder(n)` /
+// `dialect.now_expr()` (internally generated from the `Dialect` enum, never
+// caller input) and, occasionally, a hardcoded literal like `'admin'`. Every
+// actual value - username, password hash, display name, role, id - is always
+// passed via `.bind(...)`, never interpolated into the SQL text.
+
 pub use crate::permissions::{
     PermissionCatalog, PermissionDiff, PermissionEntry, PermissionKey, SessionPermissions,
 };
@@ -362,8 +369,9 @@ impl From<UserIdentity> for UserIdentityView {
 }
 
 /// Local credential store (spec §8.2): argon2id password hashes in the
-/// `users` table (migration `0003_users.sql`). No seed user - the app starts
-/// "uninitialized" and the first run walks through `setup_first_user`.
+/// `users` table (migration `0003_users.sql`). A new database holds no account:
+/// it starts in no-login mode, and accounts are created from user management
+/// or by the headless CLI (ADR-0034 §5/§7).
 ///
 /// `Clone` is cheap (`Db` is an `Arc`-backed connection handle), matching
 /// `ItemsService`/`SettingsService`.
@@ -396,6 +404,68 @@ pub struct UsersService {
     /// Names an account may not take (ADR-0034 §4). `admin` alone unless the
     /// wiring calls [`UsersService::with_reserved_usernames`].
     reserved: ReservedUsernames,
+}
+
+/// A new account's validated name and trimmed display name.
+struct NewAccount {
+    username: String,
+    display_name: String,
+}
+
+// The duplicate check and the INSERT of `UsersService::create_user`, expanded
+// for each executor (a pool, or a connection inside the caller's
+// transaction) without a generic SQL layer. `$exec` is evaluated twice.
+macro_rules! insert_account {
+    ($exec:expr, $dialect:expr, $new:expr, $password:expr, $role:expr) => {{
+        let dialect = $dialect;
+        let exists_sql = format!(
+            "SELECT id FROM users WHERE username = {}",
+            dialect.placeholder(1)
+        );
+        let existing: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(exists_sql))
+            .bind(&$new.username)
+            .fetch_optional($exec)
+            .await
+            .map_err(banto_storage::storage_error)?;
+        if existing.is_some() {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "username".to_string(),
+                    message: "このユーザー名は既に使用されています".to_string(),
+                }],
+            });
+        }
+
+        let hash = hash_password($password)?;
+        let insert_sql = format!(
+            "INSERT INTO users (username, password_hash, display_name, role, account_uid) \
+             VALUES ({}, {}, {}, {}, {}) \
+             RETURNING id, auth_epoch",
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.placeholder(3),
+            dialect.placeholder(4),
+            dialect.placeholder(5),
+        );
+        let account_uid = new_account_uid();
+        let (id, auth_epoch): (i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(insert_sql))
+            .bind(&$new.username)
+            .bind(&hash)
+            .bind(&$new.display_name)
+            .bind($role.as_str())
+            .bind(&account_uid)
+            .fetch_one($exec)
+            .await
+            .map_err(banto_storage::storage_error)?;
+
+        Ok(UserIdentity {
+            id,
+            username: $new.username,
+            display_name: $new.display_name,
+            role: $role,
+            auth_epoch,
+        })
+    }};
 }
 
 // Issue #207 / roadmap M10: the last-admin predicate and its write must
@@ -941,27 +1011,13 @@ impl UsersService {
         )
     }
 
-    /// Has *any* account been created yet? Used by the login page (spec
-    /// §3.3/§8.2) to decide between the first-run setup form and the normal
-    /// login form.
-    pub async fn is_initialized(&self) -> Result<bool, BantoError> {
-        // Accounts only: the built-in row is always there (ADR-0034 §2).
-        const SQL: &str = "SELECT COUNT(*) FROM users WHERE kind = 'account'";
-        let count: i64 = match &self.db {
-            Db::Sqlite(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
-        }
-        .map_err(banto_storage::storage_error)?;
-        Ok(count > 0)
-    }
-
     /// Does at least one `admin` account exist? A derived app that lets an
     /// admin-equivalent grant (ADR-0017, e.g. banto-hub's commissioning mode)
     /// administer the install uses this as the guard before closing that
     /// grant ("lock-down"): without a real admin, closing it would leave the
-    /// install with no administrator at all. [`UsersService::is_initialized`]
-    /// is not enough for that (an install may hold only editors/viewers).
+    /// install with no administrator at all. Requiring login (`auth.disabled`
+    /// off) has the same guard (ADR-0034 §6): "some account exists" is not
+    /// enough (an install may hold only editors/viewers).
     pub async fn has_admin(&self) -> Result<bool, BantoError> {
         // Accounts only: the built-in `admin` row cannot log in.
         const SQL: &str = "SELECT COUNT(*) FROM users WHERE role = 'admin' AND kind = 'account'";
@@ -972,115 +1028,6 @@ impl UsersService {
         }
         .map_err(banto_storage::storage_error)?;
         Ok(count > 0)
-    }
-
-    /// Create the very first account. Only succeeds while the `users` table
-    /// is empty - once any account exists, this always fails with
-    /// `BantoError::Other`, regardless of the requested username (spec:
-    /// "first run is uninitialized", not "create if missing").
-    pub async fn setup_first_user(
-        &self,
-        username: &str,
-        password: &str,
-        display_name: &str,
-    ) -> Result<UserIdentity, BantoError> {
-        if self.is_initialized().await? {
-            return Err(BantoError::Other("既に初期化されています".to_string()));
-        }
-
-        let username = validate_username(username)?;
-        self.ensure_username_not_reserved(&username)?;
-        validate_password_len(password, "password")?;
-        let display_name = display_name.trim();
-        let hash = hash_password(password)?;
-
-        // The very first account is always `admin` (spec M10): there is no
-        // one else yet to have assigned it a lesser role, and the app needs
-        // at least one admin to exist to manage everyone else.
-        let dialect = self.db.dialect();
-        // AssertSqlSafe (here and throughout this file): the only
-        // interpolated fragments in these `format!`-built statements are
-        // `dialect.placeholder(n)`/`dialect.now_expr()` (internally
-        // generated from the `Dialect` enum, never caller input) and,
-        // occasionally, a hardcoded literal like `'admin'`. Every actual
-        // value - username, password hash, display name, role, id - is
-        // always passed via `.bind(...)`, never interpolated into the SQL
-        // text.
-        // Issue #277: "is the table empty?" and the INSERT must be one atomic
-        // step, otherwise two concurrent setups both see an empty table and
-        // create two admins (distinct usernames do not collide on UNIQUE).
-        // The insert is a single conditional statement
-        // (`INSERT ... SELECT ... WHERE NOT EXISTS (SELECT 1 FROM users WHERE
-        // kind = 'account')` - the built-in row does not count, ADR-0034 §2);
-        // zero rows returned means someone else initialised first.
-        // CAST: PostgreSQL cannot infer the type of a bare `$n` in a SELECT
-        // list; SQLite accepts the same syntax.
-        let sql = format!(
-            "INSERT INTO users (username, password_hash, display_name, role, account_uid) \
-             SELECT CAST({} AS TEXT), CAST({} AS TEXT), CAST({} AS TEXT), CAST({} AS TEXT), \
-             CAST({} AS TEXT) \
-             WHERE NOT EXISTS (SELECT 1 FROM users WHERE kind = 'account') \
-             RETURNING id, auth_epoch",
-            dialect.placeholder(1),
-            dialect.placeholder(2),
-            dialect.placeholder(3),
-            dialect.placeholder(4),
-            dialect.placeholder(5),
-        );
-        let account_uid = new_account_uid();
-        let inserted: Option<(i64, i64)> = match &self.db {
-            // SQLite: one statement takes the database write lock before it
-            // evaluates the NOT EXISTS subquery, so across tasks *and*
-            // processes sharing the file the check+insert is atomic.
-            Db::Sqlite(pool) => {
-                sqlx::query_as(sqlx::AssertSqlSafe(sql))
-                    .bind(&username)
-                    .bind(&hash)
-                    .bind(display_name)
-                    .bind(Role::Admin.as_str())
-                    .bind(&account_uid)
-                    .fetch_optional(pool)
-                    .await
-            }
-            // PostgreSQL (READ COMMITTED): the statement alone is not enough
-            // - two sessions can both see an empty table in their snapshots.
-            // SHARE ROW EXCLUSIVE conflicts with itself (and with writers),
-            // so concurrent setups serialise on the lock; the statement
-            // after the lock takes a fresh snapshot and sees the winner's
-            // committed row. The lock is released at commit/rollback.
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                async {
-                    let mut tx = pool.begin().await?;
-                    sqlx::query("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE")
-                        .execute(&mut *tx)
-                        .await?;
-                    let row = sqlx::query_as(sqlx::AssertSqlSafe(sql))
-                        .bind(&username)
-                        .bind(&hash)
-                        .bind(display_name)
-                        .bind(Role::Admin.as_str())
-                        .bind(&account_uid)
-                        .fetch_optional(&mut *tx)
-                        .await?;
-                    tx.commit().await?;
-                    Ok::<_, sqlx::Error>(row)
-                }
-                .await
-            }
-        }
-        .map_err(banto_storage::storage_error)?;
-        let Some((id, auth_epoch)) = inserted else {
-            return Err(BantoError::Other("既に初期化されています".to_string()));
-        };
-
-        Ok(UserIdentity {
-            id,
-            username,
-            display_name: display_name.to_string(),
-            role: Role::Admin,
-            auth_epoch,
-        })
     }
 
     /// Verify a username/password pair. `Ok(None)` (rather than an error)
@@ -1110,7 +1057,7 @@ impl UsersService {
         // and is not a row to verify against. It falls into the `None` arm
         // below - the same dummy hash verification as an unknown username, so
         // the response time does not tell the two apart.
-        // AssertSqlSafe: see the note in `setup_first_user` above.
+        // AssertSqlSafe: see the note at the top of this file.
         let sql = format!(
             "SELECT id, password_hash, display_name, role, auth_epoch FROM users \
              WHERE username = {} AND kind = 'account'",
@@ -1155,7 +1102,7 @@ impl UsersService {
     }
 
     /// Verify `current`, then update the account's password to `new`
-    /// (validated the same way as `setup_first_user`'s password, but with
+    /// (validated the same way as `create_user`'s password, but with
     /// field name `newPassword` so the Tauri/REST layers can map the error
     /// straight onto the change-password form's second input).
     ///
@@ -1172,7 +1119,7 @@ impl UsersService {
         current: &str,
         new: &str,
     ) -> Result<i64, BantoError> {
-        // AssertSqlSafe: see the note in `setup_first_user` above.
+        // AssertSqlSafe: see the note at the top of this file.
         // Accounts only (ADR-0034 §2): the built-in row has no password to
         // change, and answers like an unknown username.
         let select_sql = format!(
@@ -1217,7 +1164,7 @@ impl UsersService {
         let new_hash = hash_password(new)?;
 
         let dialect = self.db.dialect();
-        // AssertSqlSafe: see the note in `setup_first_user` above.
+        // AssertSqlSafe: see the note at the top of this file.
         let update_sql = format!(
             "UPDATE users SET password_hash = {}, auth_epoch = auth_epoch + 1, updated_at = {} \
              WHERE id = {} AND password_hash = {} AND kind = 'account' RETURNING auth_epoch",
@@ -1260,7 +1207,7 @@ impl UsersService {
     /// [`UserSummary`].
     /// The kind of the row `id`, or `None` when there is no such row.
     async fn kind_of(&self, id: i64) -> Result<Option<UserKind>, BantoError> {
-        // AssertSqlSafe: see the note in `setup_first_user` above.
+        // AssertSqlSafe: see the note at the top of this file.
         let sql = format!(
             "SELECT kind FROM users WHERE id = {}",
             self.db.dialect().placeholder(1)
@@ -1327,7 +1274,7 @@ impl UsersService {
         &self,
         username: &str,
     ) -> Result<Option<UserIdentity>, BantoError> {
-        // AssertSqlSafe: see the note in `setup_first_user` above.
+        // AssertSqlSafe: see the note at the top of this file.
         let sql = format!(
             "SELECT id, display_name, role, auth_epoch FROM users \
              WHERE username = {} AND kind = 'account'",
@@ -1362,12 +1309,10 @@ impl UsersService {
         }
     }
 
-    /// Create an additional account (spec M10; distinct from
-    /// [`UsersService::setup_first_user`], which only ever runs once and
-    /// always assigns `admin`). Validates the same way `setup_first_user`
-    /// does, plus a friendly `BantoError::Validation` on a duplicate
-    /// username (rather than surfacing the raw UNIQUE-constraint storage
-    /// error to the admin form).
+    /// Create an account (spec M10). Validates the name (reserved names
+    /// included) and the password, and answers a duplicate username with a
+    /// friendly `BantoError::Validation` (rather than surfacing the raw
+    /// UNIQUE-constraint storage error to the admin form).
     pub async fn create_user(
         &self,
         username: &str,
@@ -1375,86 +1320,72 @@ impl UsersService {
         display_name: &str,
         role: Role,
     ) -> Result<UserIdentity, BantoError> {
+        let new = self.validate_new_account(username, password, display_name)?;
+        let dialect = self.db.dialect();
+        match &self.db {
+            Db::Sqlite(pool) => insert_account!(pool, dialect, new, password, role),
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => insert_account!(pool, dialect, new, password, role),
+        }
+    }
+
+    /// [`Self::create_user`] on a SQLite connection that is inside the
+    /// caller's transaction: the same validation and the same INSERT, for a
+    /// caller that must commit the account together with other rows (the
+    /// headless first-account CLI, ADR-0034 §7). Nothing is written when it
+    /// fails.
+    pub async fn create_user_on_sqlite(
+        &self,
+        conn: &mut sqlx::SqliteConnection,
+        username: &str,
+        password: &str,
+        display_name: &str,
+        role: Role,
+    ) -> Result<UserIdentity, BantoError> {
+        let new = self.validate_new_account(username, password, display_name)?;
+        insert_account!(
+            &mut *conn,
+            banto_storage::Dialect::Sqlite,
+            new,
+            password,
+            role
+        )
+    }
+
+    /// PostgreSQL twin of [`Self::create_user_on_sqlite`].
+    #[cfg(feature = "postgres")]
+    pub async fn create_user_on_postgres(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        username: &str,
+        password: &str,
+        display_name: &str,
+        role: Role,
+    ) -> Result<UserIdentity, BantoError> {
+        let new = self.validate_new_account(username, password, display_name)?;
+        insert_account!(
+            &mut *conn,
+            banto_storage::Dialect::Postgres,
+            new,
+            password,
+            role
+        )
+    }
+
+    /// The checks of a new account that need no database: the name's shape,
+    /// the reserved names, the password's length.
+    fn validate_new_account(
+        &self,
+        username: &str,
+        password: &str,
+        display_name: &str,
+    ) -> Result<NewAccount, BantoError> {
         let username = validate_username(username)?;
         self.ensure_username_not_reserved(&username)?;
         validate_password_len(password, "password")?;
-        let display_name = display_name.trim();
-
-        // AssertSqlSafe: see the note in `setup_first_user` above.
-        let exists_sql = format!(
-            "SELECT id FROM users WHERE username = {}",
-            self.db.dialect().placeholder(1)
-        );
-        let existing: Option<i64> = match &self.db {
-            Db::Sqlite(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(exists_sql))
-                    .bind(&username)
-                    .fetch_optional(pool)
-                    .await
-            }
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(exists_sql))
-                    .bind(&username)
-                    .fetch_optional(pool)
-                    .await
-            }
-        }
-        .map_err(banto_storage::storage_error)?;
-        if existing.is_some() {
-            return Err(BantoError::Validation {
-                field_errors: vec![FieldError {
-                    field: "username".to_string(),
-                    message: "このユーザー名は既に使用されています".to_string(),
-                }],
-            });
-        }
-
-        let hash = hash_password(password)?;
-        let dialect = self.db.dialect();
-        // AssertSqlSafe: see the note in `setup_first_user` above.
-        let insert_sql = format!(
-            "INSERT INTO users (username, password_hash, display_name, role, account_uid) \
-             VALUES ({}, {}, {}, {}, {}) \
-             RETURNING id, auth_epoch",
-            dialect.placeholder(1),
-            dialect.placeholder(2),
-            dialect.placeholder(3),
-            dialect.placeholder(4),
-            dialect.placeholder(5),
-        );
-        let account_uid = new_account_uid();
-        let (id, auth_epoch): (i64, i64) = match &self.db {
-            Db::Sqlite(pool) => {
-                sqlx::query_as(sqlx::AssertSqlSafe(insert_sql))
-                    .bind(&username)
-                    .bind(&hash)
-                    .bind(display_name)
-                    .bind(role.as_str())
-                    .bind(&account_uid)
-                    .fetch_one(pool)
-                    .await
-            }
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                sqlx::query_as(sqlx::AssertSqlSafe(insert_sql))
-                    .bind(&username)
-                    .bind(&hash)
-                    .bind(display_name)
-                    .bind(role.as_str())
-                    .bind(&account_uid)
-                    .fetch_one(pool)
-                    .await
-            }
-        }
-        .map_err(banto_storage::storage_error)?;
-
-        Ok(UserIdentity {
-            id,
+        Ok(NewAccount {
             username,
-            display_name: display_name.to_string(),
-            role,
-            auth_epoch,
+            display_name: display_name.trim().to_string(),
         })
     }
 
@@ -1553,7 +1484,7 @@ impl UsersService {
         let catalog = &self.catalog;
 
         let dialect = self.db.dialect();
-        // AssertSqlSafe: see the note in `setup_first_user` above.
+        // AssertSqlSafe: see the note at the top of this file.
         let sql = format!(
             "UPDATE users SET display_name = {}, \
              auth_epoch = auth_epoch + CASE WHEN role = {} THEN 0 ELSE 1 END, \
@@ -1693,7 +1624,7 @@ impl UsersService {
         let hash = hash_password(new_password)?;
 
         let dialect = self.db.dialect();
-        // AssertSqlSafe: see the note in `setup_first_user` above.
+        // AssertSqlSafe: see the note at the top of this file.
         let sql = format!(
             "UPDATE users SET password_hash = {}, auth_epoch = auth_epoch + 1, updated_at = {} \
              WHERE id = {} AND kind = 'account'",
@@ -1779,7 +1710,7 @@ impl UsersService {
             ));
         }
 
-        // AssertSqlSafe: see the note in `setup_first_user` above.
+        // AssertSqlSafe: see the note at the top of this file.
         let sql = format!(
             "DELETE FROM users WHERE id = {} AND kind = 'account' \
              RETURNING id, username, display_name, role, created_at, version",
@@ -1922,7 +1853,7 @@ mod tests {
     async fn create_delete_details_exclude_credentials_and_return_removed_row() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "owner-secret-password", "Owner")
+            .create_user("owner", "owner-secret-password", "Owner", Role::Admin)
             .await
             .unwrap();
         let target = svc
@@ -1967,18 +1898,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn is_initialized_is_false_on_a_fresh_db() {
-        let svc = service().await;
-        assert!(!svc.is_initialized().await.unwrap());
-    }
-
-    #[tokio::test]
     async fn has_admin_counts_only_admin_accounts() {
         // ADR-0017 §3 / B3: the lock-down guard of an admin-equivalent grant.
         let svc = service().await;
         assert!(!svc.has_admin().await.unwrap());
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         assert!(svc.has_admin().await.unwrap());
@@ -2001,7 +1926,6 @@ mod tests {
             .await
             .unwrap_err(); // last admin
         assert!(svc.has_admin().await.unwrap());
-        assert!(svc.is_initialized().await.unwrap());
     }
 
     #[tokio::test]
@@ -2010,7 +1934,7 @@ mod tests {
         // check - but the last-admin guard is unchanged.
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2024,29 +1948,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn setup_first_user_then_verify_round_trips() {
-        let svc = service().await;
-        let created = svc
-            .setup_first_user("owner", "password123", "オーナー")
-            .await
-            .expect("setup should succeed");
-        assert_eq!(created.username, "owner");
-        assert_eq!(created.display_name, "オーナー");
-
-        assert!(svc.is_initialized().await.unwrap());
-
-        let identity = svc
-            .verify("owner", "password123")
-            .await
-            .unwrap()
-            .expect("verify should succeed with the right password");
-        assert_eq!(identity.username, "owner");
-    }
-
-    #[tokio::test]
     async fn verify_wrong_password_is_none() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         assert!(svc
@@ -2060,162 +1964,6 @@ mod tests {
     async fn verify_unknown_user_is_none() {
         let svc = service().await;
         assert!(svc.verify("nobody", "whatever1").await.unwrap().is_none());
-    }
-
-    const USERS_DDL: &str = "CREATE TABLE users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT,
-                display_name TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
-                auth_epoch INTEGER NOT NULL DEFAULT 0,
-                version INTEGER NOT NULL DEFAULT 1,
-                kind TEXT NOT NULL DEFAULT 'account' CHECK (kind IN ('account', 'builtin')),
-                account_uid TEXT UNIQUE,
-                CHECK ((kind = 'builtin') = (password_hash IS NULL)),
-                CHECK ((kind = 'builtin') = (account_uid IS NULL))
-            )";
-
-    /// Issue #277: concurrent first-run setups with different usernames must
-    /// create exactly one admin. Tasks are released by a barrier, each with
-    /// its own `UsersService` over the same file-backed SQLite database
-    /// (separate pools = separate connections, like separate processes).
-    #[tokio::test]
-    async fn concurrent_setup_first_user_creates_exactly_one_admin() {
-        let dir = std::env::temp_dir().join(format!("banto-277-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("race.db");
-        let _ = std::fs::remove_file(&path);
-        let db = Db::connect_sqlite(&path).await.unwrap();
-        sqlx::query(USERS_DDL)
-            .execute(db.as_sqlite().unwrap())
-            .await
-            .unwrap();
-        // The built-in row is there before the first setup (ADR-0034 §2).
-        sqlx::query(BUILTIN_ROW_SQL)
-            .execute(db.as_sqlite().unwrap())
-            .await
-            .unwrap();
-
-        let n = 6;
-        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(n));
-        let mut handles = Vec::new();
-        for i in 0..n {
-            let svc = UsersService::new(Db::connect_sqlite(&path).await.unwrap());
-            let barrier = barrier.clone();
-            handles.push(tokio::spawn(async move {
-                barrier.wait().await;
-                svc.setup_first_user(&format!("admin{i}"), "password123", "x")
-                    .await
-            }));
-        }
-        let mut ok = 0;
-        for h in handles {
-            match h.await.unwrap() {
-                Ok(_) => ok += 1,
-                Err(BantoError::Other(m)) => assert_eq!(m, "既に初期化されています"),
-                Err(other) => panic!("unexpected error: {other:?}"),
-            }
-        }
-        assert_eq!(ok, 1, "exactly one setup may succeed");
-        let admins: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND kind = 'account'",
-        )
-        .fetch_one(db.as_sqlite().unwrap())
-        .await
-        .unwrap();
-        assert_eq!(admins, 1);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Issue #277 on PostgreSQL. Skipped (not failed) unless
-    /// `BANTO_TEST_PG_URL` is set (CI's `app-postgres` job sets it). Uses its
-    /// own schema (selected through the connection's `search_path`) so it
-    /// never touches a `users` table in `public`.
-    #[cfg(feature = "postgres")]
-    #[tokio::test]
-    async fn pg_concurrent_setup_first_user_creates_exactly_one_admin() {
-        let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
-            return;
-        };
-        let schema = format!("banto_277_{}", std::process::id());
-        let admin = Db::connect_postgres(&url).await.unwrap();
-        let pool = admin.as_postgres().unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP SCHEMA IF EXISTS {schema} CASCADE"
-        )))
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(pool)
-            .await
-            .unwrap();
-        let sep = if url.contains('?') { '&' } else { '?' };
-        let scoped = format!("{url}{sep}options=-c%20search_path%3D{schema}");
-        let db = Db::connect_postgres(&scoped).await.unwrap();
-        sqlx::query(
-            "CREATE TABLE users (
-                id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT,
-                display_name TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT now()::text,
-                updated_at TEXT NOT NULL DEFAULT now()::text,
-                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
-                auth_epoch BIGINT NOT NULL DEFAULT 0,
-                version BIGINT NOT NULL DEFAULT 1,
-                kind TEXT NOT NULL DEFAULT 'account' CHECK (kind IN ('account', 'builtin')),
-                account_uid TEXT UNIQUE,
-                CHECK ((kind = 'builtin') = (password_hash IS NULL)),
-                CHECK ((kind = 'builtin') = (account_uid IS NULL))
-            )",
-        )
-        .execute(db.as_postgres().unwrap())
-        .await
-        .unwrap();
-        // The built-in row is there before the first setup (ADR-0034 §2).
-        sqlx::query(BUILTIN_ROW_SQL)
-            .execute(db.as_postgres().unwrap())
-            .await
-            .unwrap();
-
-        let n = 6;
-        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(n));
-        let mut handles = Vec::new();
-        for i in 0..n {
-            let svc = UsersService::new(Db::connect_postgres(&scoped).await.unwrap());
-            let barrier = barrier.clone();
-            handles.push(tokio::spawn(async move {
-                barrier.wait().await;
-                svc.setup_first_user(&format!("admin{i}"), "password123", "x")
-                    .await
-            }));
-        }
-        let mut ok = 0;
-        for h in handles {
-            match h.await.unwrap() {
-                Ok(_) => ok += 1,
-                Err(BantoError::Other(m)) => assert_eq!(m, "既に初期化されています"),
-                Err(other) => panic!("unexpected error: {other:?}"),
-            }
-        }
-        assert_eq!(ok, 1, "exactly one setup may succeed");
-        let admins: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND kind = 'account'",
-        )
-        .fetch_one(db.as_postgres().unwrap())
-        .await
-        .unwrap();
-        assert_eq!(admins, 1);
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP SCHEMA IF EXISTS {schema} CASCADE"
-        )))
-        .execute(pool)
-        .await
-        .unwrap();
     }
 
     #[tokio::test]
@@ -2239,26 +1987,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn setup_first_user_can_only_run_once() {
-        let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
-            .await
-            .unwrap();
-        let err = svc
-            .setup_first_user("someone-else", "password123", "誰か")
-            .await
-            .unwrap_err();
-        match err {
-            BantoError::Other(message) => assert_eq!(message, "既に初期化されています"),
-            other => panic!("expected Other, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn setup_first_user_rejects_short_password() {
+    async fn create_user_rejects_short_password() {
         let svc = service().await;
         let err = svc
-            .setup_first_user("owner", "short", "オーナー")
+            .create_user("owner", "short", "オーナー", Role::Admin)
             .await
             .unwrap_err();
         match err {
@@ -2274,35 +2006,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn setup_first_user_rejects_blank_username() {
+    async fn create_user_rejects_blank_username() {
         let svc = service().await;
         let err = svc
-            .setup_first_user("   ", "password123", "オーナー")
+            .create_user("   ", "password123", "オーナー", Role::Admin)
             .await
             .unwrap_err();
         assert!(matches!(err, BantoError::Validation { .. }));
     }
 
     #[tokio::test]
-    async fn setup_first_user_rejects_username_with_dot() {
-        let svc = service().await;
-        let err = svc
-            .setup_first_user("a.b", "password123", "オーナー")
-            .await
-            .unwrap_err();
-        match err {
-            BantoError::Validation { field_errors } => {
-                assert_eq!(field_errors[0].field, "username");
-            }
-            other => panic!("expected Validation, got {other:?}"),
-        }
-        assert!(!svc.is_initialized().await.unwrap());
-    }
-
-    #[tokio::test]
     async fn create_user_rejects_username_with_dot() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let err = svc
@@ -2337,12 +2053,10 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_username_on_a_future_create_path_is_a_storage_error() {
-        // `setup_first_user` itself can only ever run once (see the test
-        // above); this exercises the UNIQUE constraint directly, standing in
-        // for any future "add another user" path that would otherwise hit
-        // the same constraint.
+        // This exercises the UNIQUE constraint directly (a write that skips
+        // `create_user`'s own duplicate check).
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let hash = hash_password("password123").unwrap();
@@ -2366,7 +2080,7 @@ mod tests {
     #[tokio::test]
     async fn change_password_happy_path() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         svc.change_password("owner", "password123", "newpassword1")
@@ -2380,7 +2094,7 @@ mod tests {
     #[tokio::test]
     async fn change_password_rejects_wrong_current_password() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let err = svc
@@ -2399,7 +2113,7 @@ mod tests {
     #[tokio::test]
     async fn change_password_rejects_short_new_password() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let err = svc
@@ -2427,27 +2141,10 @@ mod tests {
     // --- M10 user management CRUD -----------------------------------------
 
     #[tokio::test]
-    async fn setup_first_user_is_always_admin() {
-        let svc = service().await;
-        let created = svc
-            .setup_first_user("owner", "password123", "オーナー")
-            .await
-            .unwrap();
-        assert_eq!(created.role, Role::Admin);
-
-        let identity = svc
-            .verify("owner", "password123")
-            .await
-            .unwrap()
-            .expect("verify should succeed");
-        assert_eq!(identity.role, Role::Admin);
-    }
-
-    #[tokio::test]
     async fn create_list_update_reset_password_and_delete_round_trip() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
 
@@ -2496,7 +2193,7 @@ mod tests {
     #[tokio::test]
     async fn create_user_rejects_duplicate_username() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let err = svc
@@ -2515,7 +2212,7 @@ mod tests {
     async fn update_user_rejects_demoting_the_last_admin() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
 
@@ -2540,7 +2237,7 @@ mod tests {
     async fn update_user_allows_demoting_a_non_last_admin() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         svc.create_user("owner2", "password123", "オーナー2", Role::Admin)
@@ -2559,7 +2256,7 @@ mod tests {
     #[tokio::test]
     async fn user_version_starts_at_1_and_each_update_bumps_it() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2598,7 +2295,7 @@ mod tests {
     #[tokio::test]
     async fn update_with_a_stale_version_conflicts_with_the_current_row_and_writes_nothing() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2652,7 +2349,7 @@ mod tests {
     #[tokio::test]
     async fn password_changes_do_not_bump_the_user_version() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2679,7 +2376,7 @@ mod tests {
     async fn delete_with_a_stale_version_conflicts_and_keeps_the_row() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2718,7 +2415,7 @@ mod tests {
     async fn the_last_admin_guard_still_applies_with_a_matching_version() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         assert!(svc
@@ -2735,7 +2432,7 @@ mod tests {
     async fn update_user_returning_previous_gives_before_and_after_and_detail() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2798,7 +2495,7 @@ mod tests {
     async fn delete_user_rejects_deleting_the_last_admin() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2819,7 +2516,7 @@ mod tests {
     async fn delete_user_rejects_self_deletion() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         svc.create_user("owner2", "password123", "オーナー2", Role::Admin)
@@ -2836,7 +2533,7 @@ mod tests {
     async fn delete_user_missing_id_is_not_found() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let err = svc.delete_user(999, Some(owner.id)).await.unwrap_err();
@@ -2848,7 +2545,7 @@ mod tests {
     #[tokio::test]
     async fn get_by_username_finds_and_misses() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let found = svc
@@ -2874,7 +2571,7 @@ mod tests {
     async fn new_accounts_start_at_epoch_zero_everywhere_they_are_read() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2890,7 +2587,7 @@ mod tests {
     #[tokio::test]
     async fn role_change_password_change_and_reset_each_advance_the_epoch() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -2938,7 +2635,7 @@ mod tests {
     async fn refused_updates_and_failed_password_changes_keep_the_epoch() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         // Last-admin refusal rolls back, epoch included.
@@ -2957,7 +2654,7 @@ mod tests {
     #[tokio::test]
     async fn epoch_changes_leave_other_accounts_untouched() {
         let svc = service().await;
-        svc.setup_first_user("owner", "password123", "オーナー")
+        svc.create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let editor = svc
@@ -3129,7 +2826,7 @@ mod tests {
     async fn permission_fixture() -> (UsersService, UserIdentity, UserIdentity) {
         let svc = service().await.with_permission_catalog(test_catalog());
         let owner = svc
-            .setup_first_user("owner", "owner-secret-password", "Owner")
+            .create_user("owner", "owner-secret-password", "Owner", Role::Admin)
             .await
             .unwrap();
         let operator = svc
@@ -3395,16 +3092,14 @@ mod tests {
             serde_json::to_value(&builtin).unwrap()["kind"],
             serde_json::json!("builtin")
         );
-        assert!(!svc.is_initialized().await.unwrap());
         assert!(!svc.has_admin().await.unwrap());
         assert!(svc.get_by_username("admin").await.unwrap().is_none());
 
         let first = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
-            .expect("the first setup works beside the built-in row");
+            .expect("an account is created beside the built-in row");
         assert_ne!(first.id, builtin.id);
-        assert!(svc.is_initialized().await.unwrap());
         assert!(svc.has_admin().await.unwrap());
         svc.create_user("viewer1", "password123", "閲覧者", Role::Viewer)
             .await
@@ -3442,7 +3137,7 @@ mod tests {
             .unwrap();
         let svc = service().await.with_permission_catalog(catalog);
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let before = builtin_row(&svc).await;
@@ -3499,7 +3194,7 @@ mod tests {
     async fn the_builtin_row_does_not_count_as_the_last_admin() {
         let svc = service().await;
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         assert!(svc.delete_user(owner.id, None).await.is_err());
@@ -3531,7 +3226,7 @@ mod tests {
             }
         };
         let owner = svc
-            .setup_first_user("owner", "password123", "オーナー")
+            .create_user("owner", "password123", "オーナー", Role::Admin)
             .await
             .unwrap();
         let first = svc
@@ -3579,7 +3274,7 @@ mod tests {
             );
         }
         let err = plain
-            .setup_first_user("ADMIN", "password123", "x")
+            .create_user("ADMIN", "password123", "x", Role::Admin)
             .await
             .unwrap_err();
         assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");

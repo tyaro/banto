@@ -345,7 +345,7 @@ impl GrantRegistry {
     /// Whether each kind may be issued to `peer` RIGHT NOW: `enabled()` and,
     /// for `require_loopback_peer`, a known loopback peer. A kind whose
     /// condition fails (`Err`) is `false` (fail closed); the caller's own
-    /// failures (e.g. `is_initialized` in the status route) are not this
+    /// failures are not this
     /// method's concern. Status is a point-in-time report: the issuing route
     /// judges again.
     pub async fn availability(&self, peer: Option<SocketAddr>) -> BTreeMap<GrantKind, bool> {

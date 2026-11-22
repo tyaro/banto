@@ -8,6 +8,7 @@ pub mod assets;
 pub mod attachment_wiring;
 pub mod db;
 pub mod events;
+pub mod first_account;
 pub mod first_boot;
 // [scaffold:items] begin
 pub mod items;

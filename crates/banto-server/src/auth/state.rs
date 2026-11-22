@@ -496,9 +496,8 @@ impl AuthState {
     /// through some other path, bound to its [`SessionStamp`] (Issue #204) -
     /// the stamped counterpart of [`AuthState::issue_token`]/
     /// [`AuthState::issue_token_remembered`], and the one to use while a
-    /// [`SessionLookup`] is installed (e.g. `POST /api/auth/setup` logging
-    /// the first account in). `remember` selects the "Remember me" policy
-    /// (spec M11).
+    /// [`SessionLookup`] is installed (e.g. an app's own sign-in route).
+    /// `remember` selects the "Remember me" policy (spec M11).
     ///
     /// ADR-0034 section 6: in [`AuthMode::NoLogin`] no account token exists,
     /// so the returned token is NOT stored - it is rejected on first use,
@@ -511,9 +510,8 @@ impl AuthState {
     /// Mint and store a new bearer token for an already-verified `identity`,
     /// without going through `verify_credentials` again. Used by callers
     /// that just created/authenticated an account through some other path
-    /// (e.g. the REST `/api/auth/setup` handler, right after
-    /// `UsersService::setup_first_user` succeeds) and want to log the new
-    /// session in immediately, the same way `login` would. Not "remembered"
+    /// and want to log the new session in immediately, the same way `login`
+    /// would. Not "remembered"
     /// (spec M11) - use [`AuthState::issue_token_remembered`] for that.
     ///
     /// The token carries no [`SessionStamp`] (Issue #204): while a
