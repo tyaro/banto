@@ -811,6 +811,7 @@
   "audit.originRest": "LAN/ブラウザ",
   "audit.colTs": "時刻",
   "audit.colUser": "ユーザー",
+  "audit.colActorKind": "セッションの種類",
   "audit.colAction": "アクション",
   "audit.colResource": "リソース",
   "audit.colEntityId": "対象ID",

@@ -221,6 +221,75 @@ impl FromStr for UserKind {
     }
 }
 
+/// Username of the built-in row (ADR-0034 §2). Fixed: the row cannot be
+/// renamed. Used to WRITE the audit actor of a session marked
+/// `audit_as_builtin_admin` and to reserve the name - never to decide whether
+/// a row or a session is the built-in one (that is `kind`, and the mark).
+pub const BUILTIN_ADMIN_USERNAME: &str = "admin";
+
+/// Usernames an account may not take (ADR-0034 §4), compared ignoring case:
+/// the built-in `admin` - always, the service layer adds it itself - plus the
+/// fixed identity ids of the grants the app registers, which only the wiring
+/// layer knows (`GrantRegistry::identity_ids`) and hands over through
+/// [`UsersService::with_reserved_usernames`].
+///
+/// Reserving a name is about telling actors apart in the audit log and the
+/// user list. It is never evidence of what a session is (conventions §10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReservedUsernames {
+    /// Lowercased.
+    names: std::collections::BTreeSet<String>,
+}
+
+impl Default for ReservedUsernames {
+    fn default() -> Self {
+        Self::new(std::iter::empty::<&str>())
+    }
+}
+
+impl ReservedUsernames {
+    /// `names`: what the wiring reserves on top of `admin` (the grants'
+    /// fixed identity ids). `admin` is always included.
+    pub fn new<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> Self {
+        let mut names: std::collections::BTreeSet<String> = names
+            .into_iter()
+            .map(|name| name.as_ref().trim().to_lowercase())
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.insert(BUILTIN_ADMIN_USERNAME.to_string());
+        Self { names }
+    }
+
+    /// Is `username` reserved? Both sides are lowercased here, in Rust: the
+    /// `users.username` uniqueness stays case-sensitive and no database
+    /// collation is relied on.
+    pub fn contains(&self, username: &str) -> bool {
+        self.names.contains(&username.trim().to_lowercase())
+    }
+
+    /// The reserved names, lowercased, in order.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.names.iter().map(String::as_str)
+    }
+}
+
+fn reserved_username_error() -> BantoError {
+    BantoError::Validation {
+        field_errors: vec![FieldError {
+            field: "username".to_string(),
+            message: "このユーザー名は予約されているため使えません".to_string(),
+        }],
+    }
+}
+
+/// What the startup check found (ADR-0034 §2/§3): the id of the built-in
+/// row, which the wiring keeps to write `actor_id` for the sessions marked
+/// `audit_as_builtin_admin`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartupUsers {
+    pub builtin_admin_id: i64,
+}
+
 /// Refusal of every write aimed at the built-in row (ADR-0034 §2).
 const BUILTIN_USER_MESSAGE: &str = "組み込みのユーザーは変更・削除できません";
 
@@ -323,6 +392,9 @@ pub struct UsersService {
     /// The permissions the app registered (Issue #697). Empty unless the app
     /// calls [`UsersService::with_permission_catalog`].
     catalog: PermissionCatalog,
+    /// Names an account may not take (ADR-0034 §4). `admin` alone unless the
+    /// wiring calls [`UsersService::with_reserved_usernames`].
+    reserved: ReservedUsernames,
 }
 
 // Issue #207 / roadmap M10: the last-admin predicate and its write must
@@ -563,7 +635,90 @@ impl UsersService {
         Self {
             db,
             catalog: PermissionCatalog::empty(),
+            reserved: ReservedUsernames::default(),
         }
+    }
+
+    /// Reserve `reserved` for account names (ADR-0034 §4): creating an
+    /// account under one of them is refused, ignoring case. The wiring layer
+    /// passes the fixed identity ids of the grants it registers; `admin` is
+    /// reserved whether or not this is called.
+    pub fn with_reserved_usernames(mut self, reserved: ReservedUsernames) -> Self {
+        self.reserved = reserved;
+        self
+    }
+
+    /// The reserved account names in effect.
+    pub fn reserved_usernames(&self) -> &ReservedUsernames {
+        &self.reserved
+    }
+
+    fn ensure_username_not_reserved(&self, username: &str) -> Result<(), BantoError> {
+        if self.reserved.contains(username) {
+            return Err(reserved_username_error());
+        }
+        Ok(())
+    }
+
+    /// The checks that stop a startup (ADR-0034 §2/§4), read-only. Both
+    /// wirings call this once the migrations have run, and the restore
+    /// validation calls the SAME function on a candidate before anything is
+    /// swapped (ADR-0034 §9), so a backup that could not boot is refused
+    /// while the current database is still in place.
+    ///
+    /// 1. Exactly one built-in row exists (`kind = 'builtin'`). None or
+    ///    several only happens through a direct edit of the database; it is
+    ///    reported, never repaired.
+    /// 2. No account (`kind = 'account'`) has a reserved name, ignoring case.
+    ///    Creating one is refused, so this only finds an account that existed
+    ///    before a grant with the same fixed id was added to the app.
+    pub async fn check_startup(&self) -> Result<StartupUsers, BantoError> {
+        const SQL: &str = "SELECT id, username, kind FROM users ORDER BY id";
+        let rows: Vec<(i64, String, String)> = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
+        }
+        .map_err(banto_storage::storage_error)?;
+
+        let mut builtin_ids = Vec::new();
+        let mut collisions = Vec::new();
+        for (id, username, kind) in rows {
+            match UserKind::from_str(&kind)? {
+                UserKind::Builtin => builtin_ids.push(id),
+                UserKind::Account => {
+                    if self.reserved.contains(&username) {
+                        collisions.push(username);
+                    }
+                }
+            }
+        }
+        let builtin_admin_id = match builtin_ids.as_slice() {
+            [id] => *id,
+            [] => {
+                return Err(BantoError::Other(
+                    "組み込みのユーザー admin の行がありません。この DB は直接書き換えられた可能性があります。\
+                     バックアップから戻すか、DB を作り直してください"
+                        .to_string(),
+                ))
+            }
+            _ => {
+                return Err(BantoError::Other(
+                    "組み込みのユーザーの行が 2 つ以上あります。この DB は直接書き換えられた可能性があります。\
+                     バックアップから戻すか、DB を作り直してください"
+                        .to_string(),
+                ))
+            }
+        };
+        if !collisions.is_empty() {
+            return Err(BantoError::Other(format!(
+                "予約されたユーザー名と同じ名前のアカウントがあります: {}。\
+                 この名前は組み込みのユーザーか、ログインなしのセッション（grant）の固定 id に使われています。\
+                 そのアカウントを別の名前で作り直すか、grant の固定 id を変えてください",
+                collisions.join(", ")
+            )));
+        }
+        Ok(StartupUsers { builtin_admin_id })
     }
 
     /// Use `catalog` as the registered permissions (Issue #697,
@@ -824,6 +979,7 @@ impl UsersService {
         }
 
         let username = validate_username(username)?;
+        self.ensure_username_not_reserved(&username)?;
         validate_password_len(password, "password")?;
         let display_name = display_name.trim();
         let hash = hash_password(password)?;
@@ -1210,6 +1366,7 @@ impl UsersService {
         role: Role,
     ) -> Result<UserIdentity, BantoError> {
         let username = validate_username(username)?;
+        self.ensure_username_not_reserved(&username)?;
         validate_password_len(password, "password")?;
         let display_name = display_name.trim();
 
@@ -3389,5 +3546,99 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(uid_of(again.id).await, first_uid);
+    }
+
+    // --- ADR-0034 section 4: reserved names and the startup check ------------
+
+    /// `admin` is reserved by the service itself, the wiring adds the
+    /// grants' fixed ids; both are compared ignoring case, at the first-run
+    /// setup and at `create_user`. Other names are untouched.
+    #[tokio::test]
+    async fn reserved_usernames_are_refused_ignoring_case() {
+        let plain = service().await;
+        for name in ["Admin", "ADMIN", " admin "] {
+            let err = plain
+                .create_user(name, "password123", "x", Role::Viewer)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, BantoError::Validation { .. }),
+                "{name}: {err:?}"
+            );
+        }
+        let err = plain
+            .setup_first_user("ADMIN", "password123", "x")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+        // Without the wiring's list, a grant's id is an ordinary name.
+        plain
+            .create_user("public", "password123", "x", Role::Viewer)
+            .await
+            .expect("not reserved by the service itself");
+
+        let wired = service()
+            .await
+            .with_reserved_usernames(ReservedUsernames::new(["public", "Commissioning"]));
+        for name in ["public", "Public", "COMMISSIONING", "admin"] {
+            let err = wired
+                .create_user(name, "password123", "x", Role::Viewer)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, BantoError::Validation { .. }),
+                "{name}: {err:?}"
+            );
+        }
+        wired
+            .create_user("publican", "password123", "x", Role::Viewer)
+            .await
+            .expect("only an exact name is reserved");
+        assert_eq!(
+            wired.reserved_usernames().iter().collect::<Vec<_>>(),
+            vec!["admin", "commissioning", "public"]
+        );
+    }
+
+    /// The startup check reports the built-in row's id (read by `kind`), and
+    /// stops on a missing built-in row or on an account that has a reserved
+    /// name - the case of a grant added after the account was created.
+    #[tokio::test]
+    async fn check_startup_finds_the_builtin_row_and_reserved_name_collisions() {
+        let svc = service().await;
+        let builtin = builtin_row(&svc).await;
+        assert_eq!(
+            svc.check_startup().await.unwrap(),
+            StartupUsers {
+                builtin_admin_id: builtin.id
+            }
+        );
+
+        // An account created before the app registered a grant with its name.
+        svc.create_user("Kiosk", "password123", "x", Role::Viewer)
+            .await
+            .unwrap();
+        svc.check_startup()
+            .await
+            .expect("the name is not reserved yet");
+        let with_grant = svc
+            .clone()
+            .with_reserved_usernames(ReservedUsernames::new(["kiosk"]));
+        let err = with_grant.check_startup().await.unwrap_err();
+        assert!(err.to_string().contains("Kiosk"), "{err}");
+
+        // No built-in row: reported, never repaired.
+        let pool = svc.db.as_sqlite().expect("sqlite test service");
+        sqlx::query("DELETE FROM users WHERE kind = 'builtin'")
+            .execute(pool)
+            .await
+            .unwrap();
+        let err = svc.check_startup().await.unwrap_err();
+        assert!(err.to_string().contains("組み込みのユーザー"), "{err}");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE kind = 'builtin'")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "the check writes nothing");
     }
 }

@@ -122,20 +122,8 @@ async fn auth_setup_handler(
             // is accepted by a lookup-enabled `AuthState` (and ends like
             // any other once the account changes).
             let account = super::audit::session_account(&user);
-            let identity = account.identity.clone();
-            state
-                .audit
-                .record(AuditEntry {
-                    actor_username: Some(&identity.id),
-                    actor_role: Some(&identity.role),
-                    action: "setup",
-                    resource: "auth",
-                    entity_id: None,
-                    detail: None,
-                    origin: "rest",
-                    result: "ok",
-                })
-                .await;
+            let actor = AuditActor::account(&user.username, user.id, user.role.as_str());
+            record_write(&state.audit, &actor, "setup", "auth", None, None).await;
             let token = state.auth.issue_account_token(account, false);
             Ok(Json(SetupResponse {
                 success: true,
@@ -191,23 +179,24 @@ async fn auth_change_password_handler(
     let Some(session) = state.auth.authenticate(token).await? else {
         return Err(ApiError(BantoError::Unauthorized));
     };
+    // ADR-0034 section 3: the actor of the session validated just above,
+    // for the denial row and the success row alike.
+    let actor = state.auth.audit_actor(&session);
     let identity = session.identity;
     // ADR-0017 (conventions §6): a grant session is never a credential
     // owner, even when a real account happens to share its display label.
     if session.grant.is_some() {
-        state
-            .audit
-            .record(AuditEntry {
-                actor_username: Some(&identity.id),
-                actor_role: Some(&identity.role),
-                action: "password_change",
-                resource: "users",
-                entity_id: None,
-                detail: None,
-                origin: "rest",
-                result: "denied",
-            })
-            .await;
+        record_as(
+            &state.audit,
+            Some(&actor),
+            "rest",
+            "password_change",
+            "users",
+            None,
+            None,
+            "denied",
+        )
+        .await;
         return Err(ApiError(BantoError::Forbidden));
     }
 
@@ -246,19 +235,15 @@ async fn auth_change_password_handler(
             .flatten()
             .map(|user| user.id.to_string()),
     };
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&identity.id),
-            actor_role: Some(&identity.role),
-            action: "password_change",
-            resource: "users",
-            entity_id: entity_id.as_deref(),
-            detail: None,
-            origin: "rest",
-            result: "ok",
-        })
-        .await;
+    record_write(
+        &state.audit,
+        &actor,
+        "password_change",
+        "users",
+        entity_id.as_deref(),
+        None,
+    )
+    .await;
     Ok(Json(ChangePasswordResponse { success: true }))
 }
 

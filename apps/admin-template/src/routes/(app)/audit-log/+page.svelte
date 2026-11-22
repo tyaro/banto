@@ -418,6 +418,8 @@
 					<dd>{selected.actorUsername ?? '-'}</dd>
 					<dt>{m['common.role']()}</dt>
 					<dd>{selected.actorRole ?? '-'}</dd>
+					<dt>{m['audit.colActorKind']()}</dt>
+					<dd>{selected.actorKind ?? '-'}</dd>
 					<dt>{m['audit.colAction']()}</dt>
 					<dd>{actionLabel(selected.action)}</dd>
 					<dt>{m['audit.colResource']()}</dt>

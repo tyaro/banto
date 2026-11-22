@@ -1667,7 +1667,7 @@ function removeItemsFromRestModImports() {
 	swapText(
 		REST_MOD,
 		'rest: banto_server::routes の items/attachments 専用ヘルパ除去',
-		`use banto_server::routes::{\n    audit_log_router, audit_logout_middleware, backups_router, extra_auth_router, record_write,\n    require_role_at_least, system_info_router, ui_settings_router, users_router, LogoutAuditState,\n    MetricsProbe, RoleGuard,\n};`,
+		`use banto_server::routes::{\n    audit_log_router, audit_logout_middleware, backups_router, extra_auth_router, record_write,\n    require_role_at_least, system_info_router, ui_settings_router, users_router, AuditActor,\n    LogoutAuditState, MetricsProbe, RoleGuard,\n};`,
 		`use banto_server::routes::{\n    audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,\n    system_info_router, ui_settings_router, users_router, LogoutAuditState, MetricsProbe,\n};`
 	);
 	swapText(
@@ -1678,21 +1678,6 @@ function removeItemsFromRestModImports() {
 	);
 	drop(REST_MOD, 'rest: serde::Deserialize import 除去', `use serde::Deserialize;\n`);
 	drop(REST_MOD, 'rest: serde_json::json import 除去', `use serde_json::json;\n`);
-	drop(
-		REST_MOD,
-		'rest: AuditEntry import 除去',
-		`use crate::audit::{AuditEntry, AuditLogService};\n`
-	);
-	editFile(REST_MOD, 'rest: AuditLogService import を再追加', (s) =>
-		s.includes('use crate::audit::AuditLogService;')
-			? null
-			: s.includes('use crate::backup::BackupService;')
-				? s.replace(
-						'use crate::backup::BackupService;',
-						'use crate::audit::AuditLogService;\nuse crate::backup::BackupService;'
-					)
-				: undefined
-	);
 	swapText(
 		REST_MOD,
 		'rest: users の Role import 除去',

@@ -47,8 +47,12 @@ const SERVER_MODE: ItemsViewLabels = {
 	item: '少しずつ読み込む（大量データ向け）'
 };
 
-// #209: this ordinary account must not be confused with a synthetic session.
-const ADMIN_USERNAME = 'public';
+// An ordinary account. (Until v8.0.0 this was `public`, to show that an
+// account sharing the viewer-public grant's fixed id is not taken for a
+// synthetic session - #209. That name is reserved now, ADR-0034 §4: the
+// account cannot be created. The rule itself - a session is judged by how it
+// was issued, never by its name - is covered by the Rust tests.)
+const ADMIN_USERNAME = 'e2e-admin';
 const ADMIN_PASSWORD = 'E2eAdminPass1';
 const ADMIN_DISPLAY_NAME = 'E2E管理者';
 
@@ -273,9 +277,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 		// With public viewing disabled, reload restores the ordinary account
-		// from the identity endpoint even though its username is "public".
+		// from the identity endpoint.
 		expect(await reloadAndReadIdentity(page)).toMatchObject({
-			id: 'public',
+			id: ADMIN_USERNAME,
 			role: 'admin',
 			kind: 'account'
 		});

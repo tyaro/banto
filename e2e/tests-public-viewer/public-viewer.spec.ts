@@ -33,8 +33,10 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 import { reloadAndReadIdentity } from '../reload-identity';
 import { expectCheckOutageKeepsTheSession } from '../tests/session-check-outage';
 
-// #209: a normal account may share the synthetic identity's string ID.
-const ADMIN_USERNAME = 'public';
+// An ordinary account. (Until v8.0.0 this was `public`, the viewer-public
+// grant's fixed id - #209. That name is reserved now, ADR-0034 §4, so the
+// setup form would refuse it.)
+const ADMIN_USERNAME = 'e2e-admin';
 const ADMIN_PASSWORD = 'E2ePvAdminPass1';
 const ADMIN_DISPLAY_NAME = 'E2E閲覧公開管理者';
 
@@ -208,10 +210,10 @@ test.describe.serial('Banto viewer-public mode', () => {
 		// signed in" - no change-of-user notice (audit of #260 実装-3 P2-1).
 		await expect(page.getByText(OWNER_CHANGED_NOTICE)).toHaveCount(0);
 
-		// Restoring an ordinary "public" account must keep its normal UI
-		// while anonymous public viewing is enabled on the same server.
+		// Restoring an ordinary account must keep its normal UI while
+		// anonymous public viewing is enabled on the same server.
 		expect(await reloadAndReadIdentity(page)).toMatchObject({
-			id: 'public',
+			id: ADMIN_USERNAME,
 			role: 'admin',
 			kind: 'account'
 		});

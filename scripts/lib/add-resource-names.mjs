@@ -99,6 +99,7 @@ const RESERVED_TYPE_NAMES = new Set([
 	).split(' '),
 	'AppResources',
 	'AppState',
+	'AuditActor',
 	'BantoError',
 	'Box',
 	'ColumnMap',

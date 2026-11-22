@@ -510,7 +510,9 @@ async fn app_layer_crud_round_trips_on_postgres() {
         audit
             .try_record(AuditEntry {
                 actor_username: Some("alice"),
+                actor_id: None,
                 actor_role: Some("editor"),
+                actor_kind: None,
                 action: "create",
                 resource: "items",
                 entity_id: Some(&i.to_string()),
@@ -636,7 +638,9 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
         audit
             .try_record(AuditEntry {
                 actor_username: Some("alice"),
+                actor_id: None,
                 actor_role: Some("editor"),
+                actor_kind: None,
                 action: "create",
                 resource,
                 entity_id: Some(entity_id),
@@ -741,7 +745,9 @@ async fn audit_snapshot_boundary_on_postgres(audit: &AuditLogService, db: &banto
             audit
                 .try_record(AuditEntry {
                     actor_username: Some("alice"),
+                    actor_id: None,
                     actor_role: Some("admin"),
+                    actor_kind: None,
                     action: "create",
                     resource: "items",
                     entity_id: None,

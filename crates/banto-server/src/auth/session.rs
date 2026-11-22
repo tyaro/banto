@@ -150,6 +150,12 @@ pub struct AuthenticatedSession {
     pub grant: Option<GrantKind>,
     #[serde(skip)]
     pub stamp: Option<SessionStamp>,
+    /// The audit-attribution mark of the grant that issued the session
+    /// (`GrantSpec::audit_as_builtin_admin`, ADR-0034 section 3); `false` for
+    /// an account session. Internal: never serialized, never an input to
+    /// authorization. Read by [`crate::AuthState::audit_actor`] only.
+    #[serde(skip)]
+    pub audit_as_builtin_admin: bool,
 }
 
 /// `identity.kind` on the wire: the grant kind, or `account`. The same

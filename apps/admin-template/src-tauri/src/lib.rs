@@ -26,7 +26,9 @@ mod leftover_writes;
 
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::attachment_wiring::{attachment_audit_detail, sweep_item_attachments};
-use admin_template_core::audit::{AuditEntry, AuditLogList, AuditLogService};
+use admin_template_core::audit::{
+    ActorSession, AuditActor, AuditLogList, AuditLogService, ACTOR_KIND_ACCOUNT, ACTOR_KIND_LOCAL,
+};
 use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
@@ -49,8 +51,8 @@ use admin_template_core::users::{
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::{
-    list_users_with_permissions, permission_catalog_entries, MetricsProbe, SystemInfo,
-    UserWithPermissions,
+    list_users_with_permissions, permission_catalog_entries, record_as, record_denied_as,
+    record_login_failed_as, record_write_as, MetricsProbe, SystemInfo, UserWithPermissions,
 };
 use banto_server::{
     bind as bind_listener, bind_with_port_fallback, bind_without_fallback, lan_addrs_for_bind,
@@ -129,6 +131,12 @@ struct AppState {
     /// must never take `state.server`; if it ever has to, it must take it
     /// BEFORE this lock.
     auth_config_lock: AsyncMutex<()>,
+    /// The id of the built-in `admin` row (ADR-0034 §3), read once at startup
+    /// by `kind = 'builtin'` (`admin_template_core::startup::check`): the
+    /// `actor_id` of what the no-login session does ([`session_actor`]). A
+    /// restore swaps the database only across a restart, so it cannot go
+    /// stale.
+    builtin_admin_id: i64,
     /// The local credential store (spec §8.2): argon2id-hashed accounts in
     /// the same SQLite settings DB as `settings` below. Shared with
     /// `rest_auth`'s verifier closure so the webview session and the
@@ -698,34 +706,90 @@ fn settle_session(
 /// the account's CURRENT one, and a deleted/re-keyed account's session is
 /// ended (`Unauthorized`), exactly like REST's `require_auth` +
 /// `RoleGuard`.
-async fn require_role(
-    state: &AppState,
-    min: Role,
-    resource: &str,
-) -> Result<UserIdentity, BantoError> {
-    let current = current_session(state)
-        .await?
-        .map(|session| session.identity().clone());
-    match current {
-        Some(identity) if identity.role.at_least(min) => Ok(identity),
-        Some(identity) => {
-            state
-                .audit
-                .record(AuditEntry {
-                    actor_username: Some(&identity.username),
-                    actor_role: Some(identity.role.as_str()),
-                    action: "denied",
-                    resource,
-                    entity_id: None,
-                    detail: None,
-                    origin: "tauri",
-                    result: "denied",
-                })
-                .await;
-            Err(BantoError::Forbidden)
-        }
-        None => Err(BantoError::Unauthorized),
+///
+/// ADR-0034 §3: what comes back is a [`Caller`] - the identity plus the audit
+/// actor of the session that was authorized, made ONCE here. The command
+/// hands it to [`record_ok`]; a refusal is recorded with the same snapshot.
+async fn require_role(state: &AppState, min: Role, resource: &str) -> Result<Caller, BantoError> {
+    let Some(session) = current_session(state).await? else {
+        return Err(BantoError::Unauthorized);
+    };
+    let caller = Caller::of(state, &session);
+    if caller.identity.role.at_least(min) {
+        return Ok(caller);
     }
+    record_denied_as(&state.audit, &caller.actor, "tauri", resource, None).await;
+    Err(BantoError::Forbidden)
+}
+
+/// The caller of a command, as [`require_role`] / [`require_permission`]
+/// authorized it: the session's [`UserIdentity`] (read through `Deref`, so
+/// `caller.username` / `caller.id` work as before) and the audit actor of
+/// that session (ADR-0034 §3) - a snapshot, handed to [`record_ok`].
+#[derive(Debug, Clone)]
+struct Caller {
+    identity: UserIdentity,
+    actor: AuditActor,
+}
+
+impl Caller {
+    fn of(state: &AppState, session: &DesktopSession) -> Self {
+        Self {
+            identity: session.identity().clone(),
+            actor: session_actor(state.builtin_admin_id, session),
+        }
+    }
+}
+
+impl std::ops::Deref for Caller {
+    type Target = UserIdentity;
+
+    fn deref(&self) -> &UserIdentity {
+        &self.identity
+    }
+}
+
+impl AsRef<AuditActor> for Caller {
+    fn as_ref(&self) -> &AuditActor {
+        &self.actor
+    }
+}
+
+/// Who the audit log attributes a desktop session's actions to (ADR-0034
+/// §3) - the Tauri twin of `banto_server::AuthState::audit_actor`, through
+/// the same rule ([`AuditActor::attribute`], conventions §1):
+///
+/// - an account: its username, `actor_id` = its `users.id`, kind `account`;
+/// - the no-login session ([`DesktopSession::AuthDisabledLocal`]): the
+///   built-in `admin`, `actor_id` = the built-in row's id, kind `local`. The
+///   mark is the session's VARIANT - set by the wiring that installs it -
+///   never its id or name (conventions §10). `actor_role` stays the mode's
+///   role (a viewer stays `viewer`).
+///
+/// Only the audit attribution: the owner of UI settings and the session's
+/// wire identity stay `local`.
+fn session_actor(builtin_admin_id: i64, session: &DesktopSession) -> AuditActor {
+    let identity = session.identity();
+    let (account_id, kind, audit_as_builtin_admin) = match session {
+        DesktopSession::Account(_) => (Some(identity.id), ACTOR_KIND_ACCOUNT, false),
+        DesktopSession::AuthDisabledLocal(_) => (None, ACTOR_KIND_LOCAL, true),
+    };
+    AuditActor::attribute(
+        ActorSession {
+            username: &identity.username,
+            account_id,
+            role: identity.role.as_str(),
+            kind,
+            audit_as_builtin_admin,
+        },
+        Some(builtin_admin_id),
+    )
+}
+
+/// [`session_actor`] of an account that is not (yet) the slot's session: a
+/// login or setup that just succeeded, an account session being replaced.
+fn account_actor(identity: &UserIdentity) -> AuditActor {
+    AuditActor::account(&identity.username, identity.id, identity.role.as_str())
 }
 
 /// Require an active webview session holding the per-user `permission`
@@ -746,69 +810,56 @@ async fn require_permission(
     state: &AppState,
     permission: &PermissionKey,
     resource: &str,
-) -> Result<UserIdentity, BantoError> {
+) -> Result<Caller, BantoError> {
     let Some(session) = current_session(state).await? else {
         return Err(BantoError::Unauthorized);
     };
-    let identity = session.identity().clone();
+    let caller = Caller::of(state, &session);
     if permissions_of_session(state, &session)
         .await?
         .has(permission)
     {
-        return Ok(identity);
+        return Ok(caller);
     }
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&identity.username),
-            actor_role: Some(identity.role.as_str()),
-            action: "denied",
-            resource,
-            entity_id: None,
-            detail: None,
-            origin: "tauri",
-            result: "denied",
-        })
-        .await;
+    record_denied_as(&state.audit, &caller.actor, "tauri", resource, None).await;
     Err(BantoError::Forbidden)
 }
 
 /// Record a successful, actor-attributed audit event from a Tauri command
-/// (spec M14) - the desktop counterpart to
-/// `admin_template_core::rest::record_write` (conventions §1: both paths
-/// record the SAME shape, so a helper on each side keeps them from drifting).
-/// The REST helper re-resolves the actor from the request's bearer token; the
-/// Tauri side already holds the caller's [`UserIdentity`] - from the
-/// [`require_role`] guard that ran first, or the auth flow that just
-/// established the session - so it is passed in directly. `origin` is always
-/// `"tauri"` and `result` always `"ok"`.
+/// (spec M14) - the desktop counterpart of REST's `record_write`, and like it
+/// a thin wrapper over the shared `banto_server::routes::record_write_as`
+/// (conventions §1: both paths write the SAME columns through the same
+/// builder). `origin` is `"tauri"`, `result` `"ok"`.
 ///
-/// The handlers whose entry does not fit this shape build their `AuditEntry`
-/// by hand, exactly as their REST counterparts do: [`items_import_body`]'s
-/// `ok`/`failed` result, [`auth_login`]'s `login_failed` (no [`UserIdentity`],
-/// `result: "failed"`), [`auth_config_apply`]'s escape hatch (actor may be
-/// absent), the `denied` entry in [`require_role`] itself, and the startup
-/// `restore_applied` (no caller identity exists yet).
+/// `actor` is the snapshot of who was authorized (ADR-0034 §3): the
+/// [`Caller`] [`require_role`] returned, or - in the auth flows, which run
+/// before or without a guard - the [`AuditActor`] of the session being
+/// established or ended ([`session_actor`] / [`account_actor`]).
+///
+/// The entries that are not a plain success go through the same shared
+/// builders with their own shape, exactly as their REST counterparts do:
+/// `record_as` ([`items_import_body`]'s `ok`/`failed`, a failed
+/// `server_apply`, the firewall change's result), `record_login_failed_as`
+/// (no actor), `record_denied_as` ([`require_role`] itself), and
+/// `record_write_as` with no actor (the startup's `restore_applied`).
 async fn record_ok(
     audit: &AuditLogService,
-    actor: &UserIdentity,
+    actor: &impl AsRef<AuditActor>,
     action: &str,
     resource: &str,
     entity_id: Option<&str>,
     detail: Option<serde_json::Value>,
 ) {
-    audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action,
-            resource,
-            entity_id,
-            detail,
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_write_as(
+        audit,
+        Some(actor.as_ref()),
+        "tauri",
+        action,
+        resource,
+        entity_id,
+        detail,
+    )
+    .await;
 }
 
 /// Smoke-test command used by the frontend to verify the bridge.
@@ -995,19 +1046,17 @@ async fn items_import_body(
             serde_json::json!({ "errorCount": result.errors.len() }),
         )
     };
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "import",
-            resource: "items",
-            entity_id: None,
-            detail: Some(detail),
-            origin: "tauri",
-            result: result_tag,
-        })
-        .await;
+    record_as(
+        &state.audit,
+        Some(&actor.actor),
+        "tauri",
+        "import",
+        "items",
+        None,
+        Some(detail),
+        result_tag,
+    )
+    .await;
     Ok(result)
 }
 
@@ -1082,7 +1131,15 @@ async fn setup_body(
     }
     match (state.auth_io.setup_first_user)(username, password, display_name).await {
         Ok(identity) => {
-            record_ok(&state.audit, &identity, "setup", "auth", None, None).await;
+            record_ok(
+                &state.audit,
+                &account_actor(&identity),
+                "setup",
+                "auth",
+                None,
+                None,
+            )
+            .await;
             install_account_unless_auth_disabled(state, seq_at_entry, identity).await
         }
         Err(err @ BantoError::Validation { .. }) => Err(err),
@@ -1196,27 +1253,21 @@ async fn login_body(
         Some(identity) => {
             // Recorded at verification success, before the install decides
             // (design §1.7, decision 7) - as for a superseded login.
-            record_ok(&state.audit, &identity, "login", "auth", None, None).await;
+            record_ok(
+                &state.audit,
+                &account_actor(&identity),
+                "login",
+                "auth",
+                None,
+                None,
+            )
+            .await;
             install_account_unless_auth_disabled(state, seq_at_entry, identity).await
         }
         None => {
-            state
-                .audit
-                .record(AuditEntry {
-                    // Bounded like the REST path (Issue #278): the name is
-                    // caller-supplied and need not be a real account.
-                    actor_username: Some(&admin_template_core::users::bound_username_for_audit(
-                        &username,
-                    )),
-                    actor_role: None,
-                    action: "login_failed",
-                    resource: "auth",
-                    entity_id: None,
-                    detail: None,
-                    origin: "tauri",
-                    result: "failed",
-                })
-                .await;
+            // The same builder as the REST path: no actor, the tried name
+            // bounded (Issue #278).
+            record_login_failed_as(&state.audit, "tauri", &username, None).await;
             Ok(LoginResult {
                 success: false,
                 error: Some("ユーザー名またはパスワードが違います".to_string()),
@@ -1312,7 +1363,7 @@ async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
     if let Some(session) = previous {
         record_ok(
             &state.audit,
-            session.identity(),
+            &session_actor(state.builtin_admin_id, &session),
             "logout",
             "auth",
             None,
@@ -1322,7 +1373,7 @@ async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
     }
     // Only `Installed` can happen here: with `seq` unchanged since the clear,
     // the slot is empty.
-    record_local_rebind(&state.audit, &rebind).await;
+    record_local_rebind(&state.audit, state.builtin_admin_id, &rebind).await;
     Ok(LogoutResult { seq })
 }
 
@@ -1476,7 +1527,7 @@ async fn change_own_password(
     // recorded.
     record_ok(
         &state.audit,
-        &identity,
+        &account_actor(&identity),
         "password_change",
         "users",
         Some(&identity.id.to_string()),
@@ -1521,16 +1572,31 @@ fn local_identity(role: Role) -> UserIdentity {
 /// Spec M14: auth-disabled mode still records a `login` for its synthetic
 /// session, same as a normal login would - it is still "someone" starting to
 /// use the app, just without a credential check.
-async fn record_local_login(audit: &AuditLogService, identity: &UserIdentity) {
+///
+/// ADR-0034 §3: the actor is the built-in `admin` (`actor_kind` `local`),
+/// like everything the no-login session does afterwards ([`session_actor`]).
+async fn record_local_login(
+    audit: &AuditLogService,
+    builtin_admin_id: i64,
+    identity: &UserIdentity,
+) {
     record_ok(
         audit,
-        identity,
+        &local_actor(builtin_admin_id, identity),
         "login",
         "auth",
         None,
         Some(serde_json::json!({ "mode": "auth_disabled" })),
     )
     .await;
+}
+
+/// [`session_actor`] of the no-login session whose identity is `local`.
+fn local_actor(builtin_admin_id: i64, local: &UserIdentity) -> AuditActor {
+    session_actor(
+        builtin_admin_id,
+        &DesktopSession::AuthDisabledLocal(local.clone()),
+    )
 }
 
 /// What [`rebind_local_session`] did to the slot.
@@ -1666,14 +1732,15 @@ fn apply_mode_to_session(
 /// user's logout, whose `detail` is empty).
 async fn record_mode_session_change(
     audit: &AuditLogService,
+    builtin_admin_id: i64,
     rebind: &LocalRebind,
     ended_local: Option<UserIdentity>,
 ) {
-    record_local_rebind(audit, rebind).await;
+    record_local_rebind(audit, builtin_admin_id, rebind).await;
     if let Some(local) = ended_local {
         record_ok(
             audit,
-            &local,
+            &local_actor(builtin_admin_id, &local),
             "logout",
             "auth",
             None,
@@ -1707,20 +1774,24 @@ fn end_local_session(state: &AppState) -> Option<UserIdentity> {
 /// logout the user asked for - the detail tells the two apart) and then the
 /// synthetic `login`. A role change records nothing here (the synthetic
 /// session goes on; the apply's `settings_change` records the change).
-async fn record_local_rebind(audit: &AuditLogService, outcome: &LocalRebind) {
+async fn record_local_rebind(
+    audit: &AuditLogService,
+    builtin_admin_id: i64,
+    outcome: &LocalRebind,
+) {
     match outcome {
-        LocalRebind::Installed(local) => record_local_login(audit, local).await,
+        LocalRebind::Installed(local) => record_local_login(audit, builtin_admin_id, local).await,
         LocalRebind::Replaced { previous, local } => {
             record_ok(
                 audit,
-                previous,
+                &account_actor(previous),
                 "logout",
                 "auth",
                 None,
                 Some(serde_json::json!({ "reason": "auth_disabled" })),
             )
             .await;
-            record_local_login(audit, local).await;
+            record_local_login(audit, builtin_admin_id, local).await;
         }
         LocalRebind::Skipped | LocalRebind::RoleChanged | LocalRebind::Unchanged => {}
     }
@@ -1808,16 +1879,17 @@ async fn auth_config_apply_with_permissions_body(
     // the audit entry below still has one when possible, instead of
     // skipping those paths' write entirely.
     let actor = if currently_disabled || !state.users.is_initialized().await? {
-        // Audit label only (these two paths do not authorize by session).
+        // Audit attribution only (these two paths do not authorize by
+        // session): the actor of whatever session the slot holds.
         state
             .auth
             .lock()
             .expect("auth mutex poisoned")
             .session
             .as_ref()
-            .map(|session| session.identity().clone())
+            .map(|session| session_actor(state.builtin_admin_id, session))
     } else {
-        Some(require_role(state, Role::Admin, "settings").await?)
+        Some(require_role(state, Role::Admin, "settings").await?.actor)
     };
 
     // An unrecognized role string falls back to `admin` (same convention as
@@ -1869,7 +1941,8 @@ async fn auth_config_apply_with_permissions_body(
         // it and re-bind/end from that, then report the error.
         if let Ok(stored) = state.settings.auth_config().await {
             let (rebind, ended_local) = apply_mode_to_session(state, &previous, &stored, false);
-            record_mode_session_change(&state.audit, &rebind, ended_local).await;
+            record_mode_session_change(&state.audit, state.builtin_admin_id, &rebind, ended_local)
+                .await;
         }
         return Err(err);
     }
@@ -1899,26 +1972,23 @@ async fn auth_config_apply_with_permissions_body(
     // re-save of `false` touches nothing.
     let (rebind, ended_local) =
         apply_mode_to_session(state, &previous, &config, !permission_diff.is_empty());
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: actor.as_ref().map(|i| i.username.as_str()),
-            actor_role: actor.as_ref().map(|i| i.role.as_str()),
-            action: "settings_change",
-            resource: "settings",
-            entity_id: None,
-            detail: Some(settings_change_detail(disabled, &permission_diff)),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_write_as(
+        &state.audit,
+        actor.as_ref(),
+        "tauri",
+        "settings_change",
+        "settings",
+        None,
+        Some(settings_change_detail(disabled, &permission_diff)),
+    )
+    .await;
 
     // The session change is recorded after the settings change it follows
     // from. Setup-skip flow (choiapp-feedback-2026-09 §5): from the
     // first-run screen there is no session, so this is the synthetic
     // `login` only; from the settings screen, the admin's session end
     // (`logout`, reason `auth_disabled`) and the synthetic `login`.
-    record_mode_session_change(&state.audit, &rebind, ended_local).await;
+    record_mode_session_change(&state.audit, state.builtin_admin_id, &rebind, ended_local).await;
     let disabled_permissions = auth_disabled_permissions_view(state).await?;
     Ok(AuthSettingsView {
         settings: config,
@@ -2664,19 +2734,17 @@ async fn firewall_rule_change_body(
         }
     };
     let entity_id = firewall_status::rule_names(identifier).map(|names| names.program);
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "firewall_change",
-            resource: "firewall",
-            entity_id: entity_id.as_deref(),
-            detail: Some(attempt.audit_detail(operation, stale)),
-            origin: "tauri",
-            result: attempt.outcome.audit_result(),
-        })
-        .await;
+    record_as(
+        &state.audit,
+        Some(&actor.actor),
+        "tauri",
+        "firewall_change",
+        "firewall",
+        entity_id.as_deref(),
+        Some(attempt.audit_detail(operation, stale)),
+        attempt.outcome.audit_result(),
+    )
+    .await;
     let status = read_firewall_rule_status(state, identifier, deps.probe).await;
     Ok(FirewallChangeResult::new(operation, attempt, stale, status))
 }
@@ -3270,19 +3338,17 @@ async fn server_apply_body(
             if left_closed {
                 detail["listening"] = serde_json::json!(false);
             }
-            state
-                .audit
-                .record(AuditEntry {
-                    actor_username: Some(&actor.username),
-                    actor_role: Some(actor.role.as_str()),
-                    action: "settings_change",
-                    resource: "settings",
-                    entity_id: None,
-                    detail: Some(detail),
-                    origin: "tauri",
-                    result: "failed",
-                })
-                .await;
+            record_as(
+                &state.audit,
+                Some(&actor.actor),
+                "tauri",
+                "settings_change",
+                "settings",
+                None,
+                Some(detail),
+                "failed",
+            )
+            .await;
             Err(err)
         }
     }
@@ -3436,18 +3502,17 @@ async fn bind_saved_server_at_launch(
             saved.port
         );
     }
-    audit
-        .record(AuditEntry {
-            actor_username: None,
-            actor_role: None,
-            action: "settings_change",
-            resource: "settings",
-            entity_id: None,
-            detail: Some(detail),
-            origin: "tauri",
-            result: if saved_ok { "ok" } else { "failed" },
-        })
-        .await;
+    record_as(
+        audit,
+        None,
+        "tauri",
+        "settings_change",
+        "settings",
+        None,
+        Some(detail),
+        if saved_ok { "ok" } else { "failed" },
+    )
+    .await;
     (
         Some(bound),
         Some(ServerPortNotice::Fallback {
@@ -3536,7 +3601,7 @@ async fn login_notice_set_body(state: &AppState, notice: &str) -> Result<String,
 /// too low).
 async fn settings_set_body(
     state: &AppState,
-    actor: &UserIdentity,
+    actor: &Caller,
     key: String,
     value: String,
 ) -> Result<(), BantoError> {
@@ -3815,7 +3880,9 @@ async fn users_update(
 
 /// Body of [`users_update`] (spec M14 pattern, see [`users_create_body`]).
 /// Issue #697: the `granted_by` of new permission rows is the admin of THIS
-/// command (its re-read session), never anything the caller sends.
+/// command (the audit actor of its re-read session, ADR-0034 §3 - the same
+/// name the `update` row carries, as on REST), never anything the caller
+/// sends.
 async fn users_update_body(
     state: &AppState,
     id: i64,
@@ -3834,7 +3901,7 @@ async fn users_update_body(
             role,
             permissions.as_deref(),
             version,
-            &actor.username,
+            &actor.actor.username,
         )
         .await?;
     record_ok(
@@ -4546,11 +4613,14 @@ pub fn run() {
             // at all - the current db (if any) is left untouched on error,
             // per that function's own per-step safety notes.
             let applied_restore = match tauri::async_runtime::block_on(
-                // ADR-0034 §9: the candidate's migration history is checked
-                // against this app's migrations before anything is swapped.
+                // ADR-0034 §9: before anything is swapped, the candidate's
+                // migration history is checked against this app's migrations
+                // and the checks that stop a startup (`startup::check`) are
+                // run on it - a refused candidate leaves the current
+                // database in place.
                 BackupService::apply_pending_restore_at_startup(
                     &db_path,
-                    &admin_template_core::db::sqlite_migration_manifest(),
+                    &admin_template_core::startup::sqlite_restore_manifest(),
                 ),
             ) {
                 Ok(applied) => applied,
@@ -4575,9 +4645,15 @@ pub fn run() {
             // Issue #697: the app's one catalog (`admin_template_core::
             // permission_catalog`, also used by `banto-serve`), so the
             // desktop commands and the embedded REST server judge alike.
-            let users = UsersService::new(db.clone())
-                .with_permission_catalog(admin_template_core::permission_catalog());
             let settings = SettingsService::new(db.clone());
+            // ADR-0034 §4: the grants' fixed ids are reserved as account
+            // names (the built-in `admin` always is) - the same list
+            // `banto-serve` passes.
+            let users = UsersService::new(db.clone())
+                .with_permission_catalog(admin_template_core::permission_catalog())
+                .with_reserved_usernames(admin_template_core::startup::reserved_usernames(
+                    &settings,
+                ));
             // D1-a (display-preset-plan.md, Issue #190 prep): seed
             // `FIRST_BOOT_SETTINGS` BEFORE the M11 bootstrap below reads
             // `settings.auth_config()`, so a display-preset app's seeded
@@ -4589,8 +4665,22 @@ pub fn run() {
                 Ok(false) => {}
                 Err(err) => eprintln!("banto: 初回起動の既定設定の書き込みに失敗しました: {err}"),
             }
+            // ADR-0034 §2/§4: the checks that stop a startup, after the
+            // migrations and the seed - the same function `banto-serve`
+            // calls, and the one a restore candidate goes through before the
+            // swap (§9). A database that fails them is not repaired here:
+            // the message names the cause and the remedy.
+            let startup_users =
+                match tauri::async_runtime::block_on(admin_template_core::startup::check(&db)) {
+                    Ok(found) => found,
+                    Err(err) => {
+                        eprintln!("banto: 起動できません: {err}");
+                        return Err(format!("起動できません: {err}").into());
+                    }
+                };
+            let builtin_admin_id = startup_users.builtin_admin_id;
             let backup = BackupService::new(db_path.clone(), db.clone())
-                .with_migrations(admin_template_core::db::sqlite_migration_manifest());
+                .with_migrations(admin_template_core::startup::sqlite_restore_manifest());
             // M20 attachments (spec docs/design/attachments-plan.md §3.3): same
             // sibling-directory convention as `backups/` above, next to the
             // DB file inside the app's own data directory.
@@ -4625,7 +4715,10 @@ pub fn run() {
             // Issue #204: also re-checks the account on every request, so
             // deleting/demoting/re-keying it (from this window or over REST)
             // ends its LAN sessions.
-            let rest_auth = user_auth_state(users.clone(), audit.clone());
+            // ADR-0034 §3: the built-in row's id is the `actor_id` of every
+            // REST session marked `audit_as_builtin_admin`.
+            let rest_auth = user_auth_state(users.clone(), audit.clone())
+                .with_builtin_admin_id(builtin_admin_id);
             let reach_check = ReachCheckState::new();
 
             // Spec M17: record `restore_applied` now that a real
@@ -4636,18 +4729,17 @@ pub fn run() {
             // auth-disabled bootstrap's synthetic `login` entry below has no
             // "real" actor either.
             if let Some(applied) = &applied_restore {
-                tauri::async_runtime::block_on(audit.record(AuditEntry {
-                    actor_username: None,
-                    actor_role: None,
-                    action: "restore_applied",
-                    resource: "backups",
-                    entity_id: None,
-                    detail: Some(serde_json::json!({
+                tauri::async_runtime::block_on(record_write_as(
+                    &audit,
+                    None,
+                    "tauri",
+                    "restore_applied",
+                    "backups",
+                    None,
+                    Some(serde_json::json!({
                         "preRestoreBackupFileName": applied.pre_restore_backup_file_name,
                     })),
-                    origin: "tauri",
-                    result: "ok",
-                }));
+                ));
             }
 
             // Startup prune (spec M14: "アプリ起動時に1回 + list実行時に軽く" -
@@ -4701,7 +4793,11 @@ pub fn run() {
                 // runtime install paths (`auth_config_apply_body` /
                 // `logout_body`): `local_identity` / `record_local_login`.
                 let local_identity = local_identity(auth_config.disabled_role);
-                tauri::async_runtime::block_on(record_local_login(&audit, &local_identity));
+                tauri::async_runtime::block_on(record_local_login(
+                    &audit,
+                    builtin_admin_id,
+                    &local_identity,
+                ));
                 Some(DesktopSession::AuthDisabledLocal(local_identity))
             } else if auth_config.autologin_enabled {
                 match &auth_config.autologin_username {
@@ -4712,7 +4808,7 @@ pub fn run() {
                                 Ok(Some(identity)) => {
                                     tauri::async_runtime::block_on(record_ok(
                                         &audit,
-                                        &identity,
+                                        &account_actor(&identity),
                                         "login",
                                         "auth",
                                         None,
@@ -4729,30 +4825,22 @@ pub fn run() {
                                     eprintln!(
                                         "banto: 自動ログインの資格情報が無効です（パスワード変更等）。ログイン画面を表示します。"
                                     );
-                                    tauri::async_runtime::block_on(audit.record(AuditEntry {
-                                        actor_username: Some(username),
-                                        actor_role: None,
-                                        action: "login_failed",
-                                        resource: "auth",
-                                        entity_id: None,
-                                        detail: Some(serde_json::json!({ "via": "autologin" })),
-                                        origin: "tauri",
-                                        result: "failed",
-                                    }));
+                                    tauri::async_runtime::block_on(record_login_failed_as(
+                                        &audit,
+                                        "tauri",
+                                        username,
+                                        Some(serde_json::json!({ "via": "autologin" })),
+                                    ));
                                     None
                                 }
                                 Err(err) => {
                                     eprintln!("banto: 自動ログインの検証に失敗しました: {err}");
-                                    tauri::async_runtime::block_on(audit.record(AuditEntry {
-                                        actor_username: Some(username),
-                                        actor_role: None,
-                                        action: "login_failed",
-                                        resource: "auth",
-                                        entity_id: None,
-                                        detail: Some(serde_json::json!({ "via": "autologin" })),
-                                        origin: "tauri",
-                                        result: "failed",
-                                    }));
+                                    tauri::async_runtime::block_on(record_login_failed_as(
+                                        &audit,
+                                        "tauri",
+                                        username,
+                                        Some(serde_json::json!({ "via": "autologin" })),
+                                    ));
                                     None
                                 }
                             }
@@ -4879,6 +4967,7 @@ pub fn run() {
                 firewall_change_running: std::sync::atomic::AtomicBool::new(false),
                 auth_io: AuthIo::production(&users, &settings),
                 auth_config_lock: AsyncMutex::new(()),
+                builtin_admin_id,
                 users,
                 settings,
                 events,

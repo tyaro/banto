@@ -388,11 +388,48 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
 - **初回の seed**: `FIRST_BOOT_SETTINGS` は「`settings` が空のとき」ではなく、新しい DB の最初の起動で 1 回だけ書かれる
   （印は `settings` の `first_boot.seeded`）。
 
+**監査の主体・予約名・起動時の検査（C2、ADR-0034 §2〜§4・§9）**。上の C1 の後で DB を作った場合も、`0005_audit_log.sql` に
+列 `actor_kind` が増えたので **DB をもう一度作り直す**（checksum が変わる）。
+
+- **REST の handler（A）**: `record_write(&audit, &auth, &headers, ..)` は無くなった。handler は
+  `axum::Extension(actor): axum::Extension<AuditActor>`（`banto_server::routes::AuditActor`。`require_auth` が付ける）を
+  引数に取り、`record_write(&audit, &actor, action, resource, entity_id, detail)` と呼ぶ。`actor_identity` は消えた
+  （ガードの外でトークンから主体が要る所だけ `actor_for_token`）。`recheck_role_at_least` の後は
+  `auth.audit_actor(&session)` で主体を作る。
+- **`AuditActor` は所有の型に変わった**（`{ username: String, id: Option<i64>, role: String, kind: String }`）。
+  セッションでない主体（API キー・MCP）を自分で組み立てている所は `id: None` と `kind`（経路を表す自分の語。例 `"apikey"`）を足し、
+  `record_write_as(&audit, Some(&actor), ..)`・`record_denied_as(&audit, &actor, origin, resource, Some(detail))` と参照で渡す
+  （`record_denied_as` の `detail` は `Option` になった）。成功・拒否のどちらでもない行は `record_as(.., result)`、
+  ログインの失敗は `record_login_failed_as`。
+- **`AuditEntry` を直に組み立てている所**は、`actor_id`・`actor_kind` の 2 欄が増えたので、`AuditEntry::by(actor, origin, ..)` か
+  上の `record_*_as` に置き換える。監査の行（`AuditLogEntry`）と wire に `actorId`・`actorKind` が増えた。
+- **Tauri のコマンド（B）**: `require_role` / `require_permission` の戻り値が `UserIdentity` から `Caller` に変わった
+  （`Deref` で `caller.username`・`caller.id` はそのまま読める。`record_ok(&state.audit, &caller, ..)` もそのまま）。
+  `&UserIdentity` を受ける自分の関数へ渡している所は `&caller.identity`、監査の主体だけが要る所は `&caller.actor`。
+  `AppState` に `builtin_admin_id` が増えた。
+- **ログインなし（`local`）の監査の actor が `local` から `admin` に変わった**（`actorId` は組み込みの行の id、
+  `actorKind` は `local`、`actorRole` はそのモードの実際のロール）。監査を `actorUsername = 'local'` で絞っている所は
+  `actorKind = 'local'` に直す。ui-settings の持ち主と `auth_resolve` の `kind` は `local` のまま。
+- **grant を足している派生アプリ**: `GrantSpec` に `audit_as_builtin_admin: bool`（既定 `false`）が増えた。構造体リテラルで
+  組み立てている所は欄を足す（`GrantSpec::new` は既定を入れる）。`true` にした kind の操作は、監査で組み込みの `admin` の
+  操作として残る（`actorKind` は `grant:<kind>`）。grant の一覧は `core/src/rest/mod.rs` の `grant_registry` に 1 つにまとめた
+  （`api_router` と予約名の両方がそこから読む）。
+- **予約名**: `admin`（大小無視）と、登録した grant の固定 id（テンプレートでは `public`）のアカウントは作れない。
+  配線は `UsersService::new(db).with_reserved_usernames(startup::reserved_usernames(&settings))` と組み立てる
+  （REST と Tauri の両方）。試験・e2e で `public` や `Admin` というアカウントを作っているなら別の名前にする。
+- **起動時の検査**: 両方の配線が、migration と初回の seed の後に `admin_template_core::startup::check(&db)` を呼ぶ。
+  組み込みの行が無い・2 つ以上ある DB と、予約名と同じ名前のアカウントがある DB（grant を後から足したときだけ起きる）は、
+  名前と対処を書いたエラーで起動を止める。返ってくる組み込みの行の id を
+  `user_auth_state(..).with_builtin_admin_id(id)` と Tauri の `AppState.builtin_admin_id` に渡す。
+- **復元前の検査**: `with_migrations` と `apply_pending_restore_at_startup` には、`db::sqlite_migration_manifest()` の代わりに
+  `startup::sqlite_restore_manifest()` を渡す。同じ `startup::check` を、リストアの候補にも（予約のときと適用の直前に）掛ける。
+  起動を止める検査を自分で足す派生アプリは、`startup::check` に足す（1 か所で両方に効く）。
+
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に
 `restore-pending.sqlite3` という名前で置く → 起動する。起動は「予約の適用 → migration → 初回の seed → 設定の読み取り」の
-順で進む。置いたファイルも適用の直前に検査され（整合性・必須の表・migration の履歴）、通らなければ消されて、
-元の DB は変わらない。SQLite 専用（PostgreSQL は運用者の道具で戻す）。
+順で進む。置いたファイルも適用の直前に検査され（整合性・必須の表・migration の履歴・起動時の検査 = 組み込みの行と予約名の当たり）、
+通らなければ消されて、元の DB は変わらない。SQLite 専用（PostgreSQL は運用者の道具で戻す）。
 
 ## 5. 派生アプリの基準版の記録（同期記録）
 

@@ -45,14 +45,13 @@ struct ItemsWriteState {
 
 async fn items_create(
     State(state): State<ItemsWriteState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Json(input): Json<ItemInput>,
 ) -> Result<Json<Item>, ApiError> {
     let item = state.items.create(input).await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "create",
         "items",
         Some(&item.id.to_string()),
@@ -64,15 +63,14 @@ async fn items_create(
 
 async fn items_update(
     State(state): State<ItemsWriteState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(id): Path<i64>,
     Json(input): Json<ItemInput>,
 ) -> Result<Json<Item>, ApiError> {
     let (previous, item) = state.items.update_returning_previous(id, input).await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "update",
         "items",
         Some(&item.id.to_string()),
@@ -99,7 +97,7 @@ struct ItemsDeleteQuery {
 
 async fn items_delete(
     State(state): State<ItemsWriteState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(id): Path<i64>,
     query: Result<axum::extract::Query<ItemsDeleteQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<StatusCode, ApiError> {
@@ -116,8 +114,7 @@ async fn items_delete(
     let sweep = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "delete",
         "items",
         Some(&id.to_string()),
@@ -138,7 +135,7 @@ async fn items_delete(
 /// one per row. The Tauri `items_bulk_delete` command takes the same target.
 async fn items_bulk_delete(
     State(state): State<ItemsWriteState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Json(target): Json<crate::items::BulkDeleteTarget>,
 ) -> Result<Json<crate::items::BulkDeleteResult>, ApiError> {
     let deleted = state.items.bulk_delete(&target).await?;
@@ -149,8 +146,7 @@ async fn items_bulk_delete(
     let detail = crate::items::item_bulk_delete_detail(&target, &deleted, sweep);
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "bulk_delete",
         "items",
         None,
@@ -165,7 +161,7 @@ async fn items_bulk_delete(
 /// `POST /api/items/import` (spec M15): bulk create/update, `editor`+
 /// (same `ItemsWriteState`/`RoleGuard` as `items_create`/`update`/`delete`
 /// above). Unlike those, a single `action: "import"` audit entry is written
-/// here directly (not via [`record_write`], which always writes
+/// through `record_as` (not [`record_write`], which always writes
 /// `result: "ok"` against a single concrete `entity_id`) - see this module's
 /// doc comment ("Audit log" section) for why the result/detail depend on
 /// whether [`ItemsService::import`] rolled the batch back.
@@ -191,7 +187,8 @@ async fn items_import(
         json!({ "method": "POST", "path": "/api/items/import" }),
     )
     .await?;
-    let identity = Some(session.identity);
+    // ADR-0034 section 3: the actor of the session re-validated just above.
+    let actor = state.auth.audit_actor(&session);
     let result = state.items.import(rows).await?;
     let (result_tag, detail) = if result.errors.is_empty() {
         (
@@ -201,19 +198,17 @@ async fn items_import(
     } else {
         ("failed", json!({ "errorCount": result.errors.len() }))
     };
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: identity.as_ref().map(|i| i.id.as_str()),
-            actor_role: identity.as_ref().map(|i| i.role.as_str()),
-            action: "import",
-            resource: "items",
-            entity_id: None,
-            detail: Some(detail),
-            origin: "rest",
-            result: result_tag,
-        })
-        .await;
+    banto_server::routes::record_as(
+        &state.audit,
+        Some(&actor),
+        "rest",
+        "import",
+        "items",
+        None,
+        Some(detail),
+        result_tag,
+    )
+    .await;
     Ok(Json(result))
 }
 

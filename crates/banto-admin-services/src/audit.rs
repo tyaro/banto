@@ -105,7 +105,15 @@ pub struct AuditLogEntry {
     pub id: i64,
     pub ts: String,
     pub actor_username: Option<String>,
+    /// `users.id` of the actor (ADR-0034 section 3): the account's row, or
+    /// the built-in `admin` row for a session marked
+    /// `audit_as_builtin_admin`. `None` when the actor is no `users` row.
+    pub actor_id: Option<i64>,
     pub actor_role: Option<String>,
+    /// The channel the actor came through (wire `actorKind`): `account`,
+    /// `local`, `grant:<kind>`, `cli`, or an app's own word. `None` for a row
+    /// without an actor. A record only - never an input to authorization.
+    pub actor_kind: Option<String>,
     pub action: String,
     pub resource: String,
     pub entity_id: Option<String>,
@@ -163,9 +171,15 @@ pub struct AuditEntry<'a> {
     /// Username snapshot of the actor, or `None` for an unauthenticated
     /// event (e.g. a login failure before any session exists).
     pub actor_username: Option<&'a str>,
+    /// `users.id` of the actor, when the actor is a `users` row (ADR-0034
+    /// section 3). No foreign key: the entry outlives the account.
+    pub actor_id: Option<i64>,
     /// The actor's role AT THE TIME of the action (spec: not looked up
     /// later - a role change afterward must not rewrite history).
     pub actor_role: Option<&'a str>,
+    /// The channel the actor came through ([`AuditActor::kind`]); `None`
+    /// for an entry without an actor.
+    pub actor_kind: Option<&'a str>,
     /// e.g. `"create"`, `"update"`, `"delete"`, `"login"`, `"login_failed"`,
     /// `"logout"`, `"setup"`, `"password_reset"`, `"settings_change"`,
     /// `"denied"`.
@@ -184,6 +198,130 @@ pub struct AuditEntry<'a> {
     pub result: &'a str,
 }
 
+/// `actor_kind` of an account session (ADR-0034 section 3).
+pub const ACTOR_KIND_ACCOUNT: &str = "account";
+/// `actor_kind` of the desktop's no-login session.
+pub const ACTOR_KIND_LOCAL: &str = "local";
+/// `actor_kind` of the offline CLI (ADR-0034 section 7).
+pub const ACTOR_KIND_CLI: &str = "cli";
+
+/// `actor_kind` of a grant session of `kind`: `grant:<kind>`.
+pub fn grant_actor_kind(kind: &str) -> String {
+    format!("grant:{kind}")
+}
+
+/// Who an audit row is attributed to (ADR-0034 section 3): the
+/// `actor_username` / `actor_id` / `actor_role` / `actor_kind` columns.
+///
+/// It is a SNAPSHOT. The guard that authorizes a request (REST's
+/// `require_auth`, the desktop's `require_role`) builds one from the session
+/// it let through, and the handler hands that same value to the success row
+/// and to the denial row. Nothing reads the session again when the row is
+/// written, so a session that ended while the write ran still leaves the
+/// actor that was authorized.
+///
+/// A principal that is no session (an API key, an MCP tool) builds its own:
+/// `id` is `None` unless it is a `users` row, `kind` is the app's own word for
+/// the channel. `kind` is a record only - never an input to authorization
+/// (conventions section 10) - and must never carry a token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditActor {
+    pub username: String,
+    pub id: Option<i64>,
+    /// The role the action ran with. For a session attributed to the built-in
+    /// `admin` this is still the SESSION's role (a viewer stays `viewer`).
+    pub role: String,
+    pub kind: String,
+}
+
+/// A session as its wiring knows it, the input of [`AuditActor::attribute`].
+#[derive(Debug, Clone, Copy)]
+pub struct ActorSession<'a> {
+    /// The account's username, a grant's fixed id, or `local`.
+    pub username: &'a str,
+    /// `users.id` for an account session, `None` otherwise.
+    pub account_id: Option<i64>,
+    pub role: &'a str,
+    /// [`ACTOR_KIND_ACCOUNT`], [`ACTOR_KIND_LOCAL`], [`grant_actor_kind`], ...
+    pub kind: &'a str,
+    /// The mark the wiring put on the session (`GrantSpec.audit_as_builtin_admin`,
+    /// or the desktop's no-login session).
+    pub audit_as_builtin_admin: bool,
+}
+
+impl AuditActor {
+    /// The actor of an account that is not (yet) a session: a login that
+    /// just succeeded, a first-run setup. Same columns as an account
+    /// session's ([`AuditActor::attribute`] without the mark).
+    pub fn account(username: &str, id: i64, role: &str) -> Self {
+        Self {
+            username: username.to_string(),
+            id: Some(id),
+            role: role.to_string(),
+            kind: ACTOR_KIND_ACCOUNT.to_string(),
+        }
+    }
+
+    /// THE attribution rule (ADR-0034 section 3), shared by REST and the
+    /// desktop commands. It looks at the mark only - never at the session's
+    /// id or name (conventions section 10):
+    ///
+    /// - marked: `username` is the built-in `admin`'s, `id` is
+    ///   `builtin_admin_id` (the row the wiring read once at startup by
+    ///   `kind = 'builtin'`; `None` only when the wiring did not pass it);
+    /// - not marked: the session's own `username`, with `account_id`.
+    ///
+    /// `role` and `kind` are the session's own either way.
+    pub fn attribute(session: ActorSession<'_>, builtin_admin_id: Option<i64>) -> Self {
+        let (username, id) = if session.audit_as_builtin_admin {
+            (crate::users::BUILTIN_ADMIN_USERNAME, builtin_admin_id)
+        } else {
+            (session.username, session.account_id)
+        };
+        Self {
+            username: username.to_string(),
+            id,
+            role: session.role.to_string(),
+            kind: session.kind.to_string(),
+        }
+    }
+}
+
+impl AsRef<AuditActor> for AuditActor {
+    fn as_ref(&self) -> &AuditActor {
+        self
+    }
+}
+
+impl<'a> AuditEntry<'a> {
+    /// An entry attributed to `actor` (`None` = no actor: the four actor
+    /// columns are NULL). The one place the columns are filled from an
+    /// [`AuditActor`], so no call site can set some of them and forget the
+    /// rest.
+    pub fn by(
+        actor: Option<&'a AuditActor>,
+        origin: &'a str,
+        action: &'a str,
+        resource: &'a str,
+        entity_id: Option<&'a str>,
+        detail: Option<serde_json::Value>,
+        result: &'a str,
+    ) -> Self {
+        Self {
+            actor_username: actor.map(|a| a.username.as_str()),
+            actor_id: actor.and_then(|a| a.id),
+            actor_role: actor.map(|a| a.role.as_str()),
+            actor_kind: actor.map(|a| a.kind.as_str()),
+            action,
+            resource,
+            entity_id,
+            detail,
+            origin,
+            result,
+        }
+    }
+}
+
 /// Column whitelist for [`AuditLogService::list`] (spec M14, mirrors
 /// `admin_template_core::items::column_map`): wire field name (camelCase, as
 /// sent by the audit-log viewer) -> actual `audit_log` SQL column.
@@ -195,7 +333,9 @@ fn column_map() -> ColumnMap {
         .column("id", "id")
         .column("ts", "ts")
         .text_column("actorUsername", "actor_username")
+        .column("actorId", "actor_id")
         .text_column("actorRole", "actor_role")
+        .text_column("actorKind", "actor_kind")
         .text_column("action", "action")
         .text_column("resource", "resource")
         .text_column("entityId", "entity_id")
@@ -236,14 +376,14 @@ fn stderr_sink() -> AuditLogSink {
 /// The `audit_log` INSERT of an entry that has a `pending_id` (the spool
 /// path, ADR-0019). Same statement for the first attempt and the flush.
 const SQLITE_INSERT_PENDING: &str = "INSERT INTO audit_log \
-     (pending_id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result) \
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (pending_id) DO NOTHING";
+     (pending_id, ts, actor_username, actor_id, actor_role, actor_kind, action, resource, entity_id, detail, origin, result) \
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (pending_id) DO NOTHING";
 /// PostgreSQL: `ts` is bound as UTC text and cast through `timestamptz` so
 /// the stored text is what the column DEFAULT `now()::text` would write.
 #[cfg(feature = "postgres")]
 const PG_INSERT_PENDING: &str = "INSERT INTO audit_log \
-     (pending_id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result) \
-     VALUES ($1, CAST(CAST($2 AS timestamptz) AS text), $3, $4, $5, $6, $7, $8, $9, $10) \
+     (pending_id, ts, actor_username, actor_id, actor_role, actor_kind, action, resource, entity_id, detail, origin, result) \
+     VALUES ($1, CAST(CAST($2 AS timestamptz) AS text), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
      ON CONFLICT (pending_id) DO NOTHING";
 
 /// `ts` of an entry recorded at `now`, as bound by the pending INSERT (see
@@ -295,7 +435,9 @@ async fn insert_pending(db: &Db, entry: &PendingEntry, flushed: bool) -> Result<
             .bind(&entry.pending_id)
             .bind(&entry.ts)
             .bind(&entry.actor_username)
+            .bind(entry.actor_id)
             .bind(&entry.actor_role)
+            .bind(&entry.actor_kind)
             .bind(&entry.action)
             .bind(&entry.resource)
             .bind(&entry.entity_id)
@@ -310,7 +452,9 @@ async fn insert_pending(db: &Db, entry: &PendingEntry, flushed: bool) -> Result<
             .bind(&entry.pending_id)
             .bind(&entry.ts)
             .bind(&entry.actor_username)
+            .bind(entry.actor_id)
             .bind(&entry.actor_role)
+            .bind(&entry.actor_kind)
             .bind(&entry.action)
             .bind(&entry.resource)
             .bind(&entry.entity_id)
@@ -428,18 +572,20 @@ impl AuditLogService {
         let dialect = self.db.dialect();
         // sqlx 0.9: `sqlx::query` requires `impl SqlSafeStr`, which a runtime
         // `String` does not implement directly. AssertSqlSafe is safe here
-        // because the only interpolated fragment is `dialect.placeholders(8)`,
+        // because the only interpolated fragment is `dialect.placeholders(10)`,
         // which is internally generated from the `Dialect` enum (never
         // caller input) - every actual value is bound below via `.bind(...)`.
         let sql = format!(
-            "INSERT INTO audit_log (actor_username, actor_role, action, resource, entity_id, detail, origin, result) \
+            "INSERT INTO audit_log (actor_username, actor_id, actor_role, actor_kind, action, resource, entity_id, detail, origin, result) \
              VALUES ({})",
-            dialect.placeholders(8),
+            dialect.placeholders(10),
         );
         match &self.db {
             Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(entry.actor_username)
+                .bind(entry.actor_id)
                 .bind(entry.actor_role)
+                .bind(entry.actor_kind)
                 .bind(entry.action)
                 .bind(entry.resource)
                 .bind(entry.entity_id)
@@ -452,7 +598,9 @@ impl AuditLogService {
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(entry.actor_username)
+                .bind(entry.actor_id)
                 .bind(entry.actor_role)
+                .bind(entry.actor_kind)
                 .bind(entry.action)
                 .bind(entry.resource)
                 .bind(entry.entity_id)
@@ -708,7 +856,7 @@ impl AuditLogService {
         // spooled and older rows, so the filtered history need not parse the
         // full audit table on each read.
         const SELECT_ROWS: &str =
-            "SELECT id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result \
+            "SELECT id, ts, actor_username, actor_id, actor_role, actor_kind, action, resource, entity_id, detail, origin, result \
              FROM (SELECT * FROM audit_log WHERE id <= ";
         const SELECT_COUNT: &str = "SELECT COUNT(*) FROM (SELECT * FROM audit_log WHERE id <= ";
         const BOUNDED_ALIAS: &str = ") AS audit_log";
@@ -1012,7 +1160,9 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL DEFAULT (datetime('now')),
                 actor_username TEXT,
+                actor_id INTEGER,
                 actor_role TEXT,
+                actor_kind TEXT,
                 action TEXT NOT NULL,
                 resource TEXT NOT NULL,
                 entity_id TEXT,
@@ -1076,7 +1226,9 @@ mod tests {
     fn sample_entry<'a>(action: &'a str, resource: &'a str, actor: &'a str) -> AuditEntry<'a> {
         AuditEntry {
             actor_username: Some(actor),
+            actor_id: None,
             actor_role: Some("admin"),
+            actor_kind: None,
             action,
             resource,
             entity_id: Some("1"),
@@ -1118,7 +1270,9 @@ mod tests {
         let svc = service().await;
         svc.try_record(AuditEntry {
             actor_username: None,
+            actor_id: None,
             actor_role: None,
+            actor_kind: None,
             action: "login_failed",
             resource: "auth",
             entity_id: None,
@@ -1783,7 +1937,9 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL DEFAULT (datetime('now')),
                 actor_username TEXT,
+                actor_id INTEGER,
                 actor_role TEXT,
+                actor_kind TEXT,
                 action TEXT NOT NULL,
                 resource TEXT NOT NULL,
                 entity_id TEXT,
@@ -2571,7 +2727,9 @@ mod tests {
                 id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
                 ts TEXT NOT NULL DEFAULT (now()::text),
                 actor_username TEXT,
+                actor_id INTEGER,
                 actor_role TEXT,
+                actor_kind TEXT,
                 action TEXT NOT NULL,
                 resource TEXT NOT NULL,
                 entity_id TEXT,
@@ -2882,5 +3040,101 @@ mod tests {
         svc.record(sample_entry("a", "items", "admin")).await;
         svc.record(sample_entry("b", "items", "admin")).await;
         assert!(has_line(&lines, "記録を破棄しました"));
+    }
+
+    // --- ADR-0034 section 3: the audit actor ---------------------------------
+
+    /// The four actor columns are written together and read back on the
+    /// wire as `actorId` / `actorKind`; `actorKind` is filterable.
+    #[tokio::test]
+    async fn an_actor_is_recorded_with_its_id_and_kind() {
+        let svc = service().await;
+        let account = AuditActor::account("alice", 7, "editor");
+        svc.try_record(AuditEntry::by(
+            Some(&account),
+            "rest",
+            "update",
+            "items",
+            Some("3"),
+            None,
+            "ok",
+        ))
+        .await
+        .unwrap();
+        svc.try_record(AuditEntry::by(
+            None,
+            "rest",
+            "restore_applied",
+            "backups",
+            None,
+            None,
+            "ok",
+        ))
+        .await
+        .unwrap();
+
+        let rows = svc.list(ListParams::default()).await.unwrap().rows;
+        let with = rows.iter().find(|r| r.action == "update").unwrap();
+        assert_eq!(with.actor_username.as_deref(), Some("alice"));
+        assert_eq!(with.actor_id, Some(7));
+        assert_eq!(with.actor_role.as_deref(), Some("editor"));
+        assert_eq!(with.actor_kind.as_deref(), Some("account"));
+        let wire = serde_json::to_value(with).unwrap();
+        assert_eq!(
+            (&wire["actorId"], &wire["actorKind"]),
+            (&serde_json::json!(7), &serde_json::json!("account"))
+        );
+        let without = rows.iter().find(|r| r.action == "restore_applied").unwrap();
+        assert_eq!(
+            (
+                without.actor_username.clone(),
+                without.actor_id,
+                without.actor_role.clone(),
+                without.actor_kind.clone()
+            ),
+            (None, None, None, None)
+        );
+    }
+
+    /// The attribution looks at the mark only (conventions section 10): a
+    /// session NAMED `admin` without the mark is itself, a marked session of
+    /// any name is the built-in `admin` with the built-in row's id - and
+    /// keeps its own role and kind.
+    #[test]
+    fn attribute_follows_the_mark_and_nothing_else() {
+        let session = |username: &'static str, mark: bool| ActorSession {
+            username,
+            account_id: None,
+            role: "viewer",
+            kind: "grant:kiosk",
+            audit_as_builtin_admin: mark,
+        };
+        let marked = AuditActor::attribute(session("kiosk", true), Some(1));
+        assert_eq!(
+            marked,
+            AuditActor {
+                username: "admin".to_string(),
+                id: Some(1),
+                role: "viewer".to_string(),
+                kind: "grant:kiosk".to_string(),
+            }
+        );
+        let unmarked = AuditActor::attribute(session("admin", false), Some(1));
+        assert_eq!((unmarked.username.as_str(), unmarked.id), ("admin", None));
+        assert_eq!(unmarked.kind, "grant:kiosk");
+
+        let account = AuditActor::attribute(
+            ActorSession {
+                username: "alice",
+                account_id: Some(7),
+                role: "admin",
+                kind: ACTOR_KIND_ACCOUNT,
+                audit_as_builtin_admin: false,
+            },
+            Some(1),
+        );
+        assert_eq!(account, AuditActor::account("alice", 7, "admin"));
+        assert_eq!(grant_actor_kind("publicViewer"), "grant:publicViewer");
+        assert_eq!((ACTOR_KIND_LOCAL, ACTOR_KIND_CLI), ("local", "cli"));
     }
 }

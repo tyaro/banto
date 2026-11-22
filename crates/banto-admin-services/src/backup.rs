@@ -48,7 +48,10 @@
 //! startup only prints a warning (see `warn_legacy_shared_area`). They are left
 //! untouched for the operator to move by hand.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use banto_core::datetime::iso_datetime_from_system_time;
@@ -165,11 +168,64 @@ const REQUIRED_TABLES: [&str; 4] = ["settings", "users", "audit_log", "ui_settin
 /// applied. Versions after the baseline may be missing: the next startup's
 /// migration run adds them. Anything else would swap in a file the startup
 /// migration check then refuses, leaving a database that cannot boot.
+///
+/// [`MigrationManifest::with_candidate_check`] adds the app's own startup
+/// conditions on top of the history (ADR-0034 §9): the checks that would stop
+/// the startup AFTER the swap are run on the candidate BEFORE it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationManifest {
     migrations: Vec<(i64, Vec<u8>)>,
     baseline_version: i64,
+    candidate_check: Option<CandidateCheck>,
 }
+
+/// The app's startup conditions, run on a restore candidate (ADR-0034 §9).
+///
+/// A candidate whose migration history is fine can still be a database the
+/// app refuses to start on (no built-in `admin` row, an account whose name a
+/// grant's fixed id now reserves, ...). Swapping it in would replace a good
+/// database with one that cannot boot. The wiring layer therefore hands over
+/// the SAME function its startup runs, and the restore validation calls it at
+/// both moments a candidate is looked at: when the restore is staged, and
+/// right before the swap. `Err` refuses the candidate; the current database
+/// is not touched either way.
+///
+/// The function receives the candidate's PATH and must not change that file:
+/// it opens it read-only, or - when the startup would first run migrations -
+/// works on a copy it deletes afterwards.
+#[derive(Clone)]
+pub struct CandidateCheck(Arc<CandidateCheckFn>);
+
+type CandidateCheckFn =
+    dyn Fn(PathBuf) -> Pin<Box<dyn Future<Output = Result<(), BantoError>> + Send>> + Send + Sync;
+
+impl CandidateCheck {
+    pub fn new<F, Fut>(check: F) -> Self
+    where
+        F: Fn(PathBuf) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), BantoError>> + Send + 'static,
+    {
+        Self(Arc::new(move |path| Box::pin(check(path))))
+    }
+
+    async fn run(&self, candidate: &Path) -> Result<(), BantoError> {
+        (self.0)(candidate.to_path_buf()).await
+    }
+}
+
+impl std::fmt::Debug for CandidateCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CandidateCheck(..)")
+    }
+}
+
+impl PartialEq for CandidateCheck {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for CandidateCheck {}
 
 impl MigrationManifest {
     /// `migrations`: `(version, checksum)` of every embedded migration (for a
@@ -182,7 +238,15 @@ impl MigrationManifest {
         Self {
             migrations: migrations.into_iter().collect(),
             baseline_version,
+            candidate_check: None,
         }
+    }
+
+    /// Also run `check` - the app's startup conditions - on every restore
+    /// candidate, after the history check passed (see [`CandidateCheck`]).
+    pub fn with_candidate_check(mut self, check: CandidateCheck) -> Self {
+        self.candidate_check = Some(check);
+        self
     }
 
     fn checksum_of(&self, version: i64) -> Option<&[u8]> {
@@ -341,7 +405,19 @@ async fn validate_sqlite_file(path: &Path, manifest: &MigrationManifest) -> Resu
     // rejected pending-restore file) once this returns.
     let result = run_validation_checks(&mut conn, manifest).await;
     let _ = conn.close().await;
-    result
+    result?;
+
+    // ADR-0034 §9: the app's startup conditions, on a file whose history is
+    // already known to be this app's. Run after `conn` is closed - the check
+    // opens the candidate itself.
+    match &manifest.candidate_check {
+        Some(check) => check.run(path).await.map_err(|err| {
+            validation_err(format!(
+                "このバックアップは、戻すとアプリを起動できなくなるため使えません: {err}"
+            ))
+        }),
+        None => Ok(()),
+    }
 }
 
 async fn run_validation_checks(

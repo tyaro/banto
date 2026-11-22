@@ -53,17 +53,16 @@
 //! (`--no-default-features`), or on an unsupported host, `metrics` is `null`.
 
 use admin_template_core::assets::FrontendAssets;
-use admin_template_core::audit::{AuditEntry, AuditLogService};
+use admin_template_core::audit::AuditLogService;
 use admin_template_core::backup::BackupService;
-use admin_template_core::db::{
-    display_target, init_db_from_target, is_postgres_url, sqlite_migration_manifest,
-};
+use admin_template_core::db::{display_target, init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
 use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::ItemsService;
 use admin_template_core::resources::AppResources;
 use admin_template_core::rest::{api_router, resources_router, user_auth_state, Services};
 use admin_template_core::settings::{ServerSettings, SettingsService};
+use admin_template_core::startup::{self, sqlite_restore_manifest};
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
 use admin_template_core::system_metrics::SystemMetricsSampler;
@@ -110,11 +109,13 @@ async fn main() {
     let applied_restore = if is_postgres_url(&db_path) {
         None
     } else {
-        // ADR-0034 §9: the candidate's migration history is checked against
-        // this app's migrations before anything is swapped.
+        // ADR-0034 §9: before anything is swapped, the candidate's migration
+        // history is checked against this app's migrations, and the checks
+        // that stop a startup (`startup::check`) are run on it - a refused
+        // candidate leaves the current database in place.
         match BackupService::apply_pending_restore_at_startup(
             &db_path_buf,
-            &sqlite_migration_manifest(),
+            &sqlite_restore_manifest(),
         )
         .await
         {
@@ -140,9 +141,12 @@ async fn main() {
     // The resources added by `pnpm banto add resource` (none in the template).
     let resources = AppResources::new(&db, &events);
     let items = ItemsService::new(db.clone()).with_events(events.clone());
-    let users = UsersService::new(db.clone())
-        .with_permission_catalog(admin_template_core::permission_catalog());
     let settings = SettingsService::new(db.clone());
+    // ADR-0034 §4: the grants' fixed ids are reserved as account names (the
+    // built-in `admin` always is).
+    let users = UsersService::new(db.clone())
+        .with_permission_catalog(admin_template_core::permission_catalog())
+        .with_reserved_usernames(startup::reserved_usernames(&settings));
     // D1-a (display-preset-plan.md, Issue #190 prep): seed
     // `FIRST_BOOT_SETTINGS` before any `auth_config`/`server_config` read
     // below, so a display-preset app's seeded `auth.disabled = true` (say)
@@ -153,8 +157,19 @@ async fn main() {
         Ok(false) => {}
         Err(err) => eprintln!("banto-serve: 初回起動の既定設定の書き込みに失敗しました: {err}"),
     }
+    // ADR-0034 §2/§4: the checks that stop a startup, after the migrations
+    // and the seed. A database that fails them is not repaired here - the
+    // message names the cause and the remedy. The SAME function is run on a
+    // restore candidate before the swap (`sqlite_restore_manifest`, §9).
+    let startup_users = match startup::check(&db).await {
+        Ok(found) => found,
+        Err(err) => {
+            eprintln!("banto-serve: 起動できません: {err}");
+            std::process::exit(1);
+        }
+    };
     let backup = BackupService::new(db_path_buf.clone(), db.clone())
-        .with_migrations(sqlite_migration_manifest());
+        .with_migrations(sqlite_restore_manifest());
     // M20 attachments (spec docs/design/attachments-plan.md §3.3): base_dir is the
     // directory `banto_attachments::base_dir_for_target` picks (Issue #208):
     // - SQLite: the DB file's own parent directory + `attachments` (same
@@ -238,26 +253,28 @@ async fn main() {
     // `login`/`login_failed` audit entries (spec M14), and re-checks the
     // account on every request so deleting/demoting/re-keying it ends its
     // sessions (Issue #204).
-    let auth = user_auth_state(users.clone(), audit.clone());
+    // ADR-0034 §3: the built-in row's id, read once above by `kind`, is the
+    // `actor_id` of every session marked `audit_as_builtin_admin`.
+    let auth = user_auth_state(users.clone(), audit.clone())
+        .with_builtin_admin_id(startup_users.builtin_admin_id);
 
     // Spec M17: record `restore_applied` now that a real `AuditLogService`
     // exists - `apply_pending_restore_at_startup` itself cannot do this (it
     // runs before any pool/audit service exists at all).
     if let Some(applied) = applied_restore {
-        audit
-            .record(AuditEntry {
-                actor_username: None,
-                actor_role: None,
-                action: "restore_applied",
-                resource: "backups",
-                entity_id: None,
-                detail: Some(serde_json::json!({
-                    "preRestoreBackupFileName": applied.pre_restore_backup_file_name,
-                })),
-                origin: "rest",
-                result: "ok",
-            })
-            .await;
+        // No caller exists at startup: the row has no actor.
+        banto_server::routes::record_write_as(
+            &audit,
+            None,
+            "rest",
+            "restore_applied",
+            "backups",
+            None,
+            Some(serde_json::json!({
+                "preRestoreBackupFileName": applied.pre_restore_backup_file_name,
+            })),
+        )
+        .await;
         println!(
             "banto-serve: 起動時にリストアを適用しました（適用前の自動バックアップ: {}）",
             applied.pre_restore_backup_file_name

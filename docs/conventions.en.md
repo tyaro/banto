@@ -78,12 +78,18 @@ that order (reviewed in S2 of Issue #793):
   password) advances `auth_epoch` in the same `UPDATE` (never a separate
   statement). A change that closes a setting goes "persist the closed state ->
   revoke the issued tokens" ([ADR-0017](adr/0017-credential-less-grant.en.md) §2).
-- **The audit actor is the one obtained before the write** (never looked up
-  again after it: if the session ended in between, there is no actor to find).
-  Tauri passes what `require_role` returned. REST's `record_write` looks the
-  bearer token up again after the write, so it does not meet this rule yet
-  (C2 replaces it with the guard's snapshot,
-  [ADR-0034](adr/0034-owner-identity-builtin-admin.en.md) §3).
+- **The audit actor is the snapshot taken when the request was authorized**
+  (never looked up again after the write: if the session ended in between,
+  there is no actor to find;
+  [ADR-0034](adr/0034-owner-identity-builtin-admin.en.md) §3). The guard builds
+  the audit actor (`AuditActor`: `actor_username`, `actor_id`, `actor_role`,
+  `actor_kind`) once, from the session it let through. On REST `require_auth`
+  attaches it to the request and a handler takes it with
+  `Extension<AuditActor>` and passes it to `record_write`; on Tauri
+  `require_role` returns it (`Caller`) and the command passes it to
+  `record_ok`. A denial is recorded with the same snapshot. **One function
+  decides the attribution** (`AuditActor::attribute`: it looks only at the mark
+  the wiring put on the session, never at an id or a name, §10).
 - **A handler that waits on the client after its guards decides again after
   the wait.** A body over 2 MiB is streamed to the handler after the guards
   have passed, so the client can take as long as it likes. **A route that

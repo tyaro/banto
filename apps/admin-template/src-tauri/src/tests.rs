@@ -35,6 +35,16 @@ impl AppState {
     }
 }
 
+/// The `UsersService` wiring of `run()` (ADR-0034 §4): the grants' fixed ids
+/// are reserved as account names, on top of the built-in `admin`.
+macro_rules! wired_users {
+    ($pool:expr) => {
+        UsersService::new($pool.clone()).with_reserved_usernames(
+            admin_template_core::startup::reserved_usernames(&SettingsService::new($pool.clone())),
+        )
+    };
+}
+
 /// A minimal [`AppState`] over an in-memory DB, no running server, and a
 /// dummy REST verifier - just enough state to exercise command bodies
 /// (like [`change_own_password`]) that only touch the service handles.
@@ -43,6 +53,12 @@ async fn app_state() -> AppState {
         .await
         .expect("init_db_memory");
     let events = event_channel();
+    // What `run()` reads once at startup (ADR-0034 §3), through the same
+    // startup check.
+    let builtin_admin_id = admin_template_core::startup::check(&pool)
+        .await
+        .expect("the startup check passes on a new database")
+        .builtin_admin_id;
     AppState {
         // [scaffold:items] begin
         items: ItemsService::new(pool.clone()).with_events(events.clone()),
@@ -51,19 +67,15 @@ async fn app_state() -> AppState {
         auth: Mutex::new(AuthSlot::default()),
         firewall_change_running: std::sync::atomic::AtomicBool::new(false),
         auth_config_lock: AsyncMutex::new(()),
-        auth_io: AuthIo::production(
-            &UsersService::new(pool.clone()),
-            &SettingsService::new(pool.clone()),
-        ),
-        users: UsersService::new(pool.clone()),
+        builtin_admin_id,
+        auth_io: AuthIo::production(&wired_users!(pool), &SettingsService::new(pool.clone())),
+        users: wired_users!(pool),
         settings: SettingsService::new(pool.clone()),
         events,
         // Issue #204: the production wiring, so cross-transport tests
         // exercise the same session re-check the embedded server uses.
-        rest_auth: user_auth_state(
-            UsersService::new(pool.clone()),
-            AuditLogService::new(pool.clone()),
-        ),
+        rest_auth: user_auth_state(wired_users!(pool), AuditLogService::new(pool.clone()))
+            .with_builtin_admin_id(builtin_admin_id),
         server: AsyncMutex::new(ServerSlot::new(None, None)),
         reach_check: ReachCheckState::new(),
         audit: AuditLogService::new(pool.clone()),
@@ -108,6 +120,12 @@ async fn app_state_in(dir: &tempfile::TempDir) -> AppState {
         .await
         .expect("init_db");
     let events = event_channel();
+    // What `run()` reads once at startup (ADR-0034 §3), through the same
+    // startup check.
+    let builtin_admin_id = admin_template_core::startup::check(&pool)
+        .await
+        .expect("the startup check passes on a new database")
+        .builtin_admin_id;
     AppState {
         // [scaffold:items] begin
         items: ItemsService::new(pool.clone()).with_events(events.clone()),
@@ -116,19 +134,15 @@ async fn app_state_in(dir: &tempfile::TempDir) -> AppState {
         auth: Mutex::new(AuthSlot::default()),
         firewall_change_running: std::sync::atomic::AtomicBool::new(false),
         auth_config_lock: AsyncMutex::new(()),
-        auth_io: AuthIo::production(
-            &UsersService::new(pool.clone()),
-            &SettingsService::new(pool.clone()),
-        ),
-        users: UsersService::new(pool.clone()),
+        builtin_admin_id,
+        auth_io: AuthIo::production(&wired_users!(pool), &SettingsService::new(pool.clone())),
+        users: wired_users!(pool),
         settings: SettingsService::new(pool.clone()),
         events,
         // Issue #204: the production wiring, so cross-transport tests
         // exercise the same session re-check the embedded server uses.
-        rest_auth: user_auth_state(
-            UsersService::new(pool.clone()),
-            AuditLogService::new(pool.clone()),
-        ),
+        rest_auth: user_auth_state(wired_users!(pool), AuditLogService::new(pool.clone()))
+            .with_builtin_admin_id(builtin_admin_id),
         server: AsyncMutex::new(ServerSlot::new(None, None)),
         reach_check: ReachCheckState::new(),
         audit: AuditLogService::new(pool.clone()),
@@ -1029,7 +1043,10 @@ async fn auth_config_apply_bootstrap_window_enables_and_synthesizes_session() {
         .iter()
         .find(|r| r.action == "login" && r.resource == "auth")
         .unwrap_or_else(|| panic!("expected a synthetic login entry, got {:?}", audit.rows));
-    assert_eq!(login.actor_username.as_deref(), Some("local"));
+    // ADR-0034 §3: the no-login session is audited as the built-in `admin`.
+    assert_eq!(login.actor_username.as_deref(), Some("admin"));
+    assert_eq!(login.actor_id, Some(state.builtin_admin_id));
+    assert_eq!(login.actor_kind.as_deref(), Some("local"));
     let detail: serde_json::Value =
         serde_json::from_str(login.detail.as_deref().expect("detail present"))
             .expect("detail is json");
@@ -2771,7 +2788,7 @@ async fn s94_config_apply_true_rebinds_an_account_session_to_local() {
     assert!(
         logins
             .iter()
-            .any(|(actor, detail)| actor.as_deref() == Some("local")
+            .any(|(actor, detail)| actor.as_deref() == Some("admin")
                 && detail
                     .as_deref()
                     .is_some_and(|d| d.contains("auth_disabled"))),
@@ -2941,6 +2958,7 @@ async fn s103_settings_set_refuses_auth_keys() {
         .unwrap()
         .unwrap();
     state.set_session_for_test(Some(DesktopSession::Account(admin.clone())));
+    let admin = Caller::of(&state, &DesktopSession::Account(admin));
     let before = read_slot(&state);
     for key in [
         "auth.disabled",
@@ -3148,7 +3166,7 @@ async fn s99_config_apply_false_ends_local_at_once_and_an_old_resolve_is_stale()
     assert_eq!(read_slot(&state), (None, seq_n + 1));
     let logouts = audit_rows(&state, "logout").await;
     assert_eq!(logouts.len(), 1);
-    assert_eq!(logouts[0].0.as_deref(), Some("local"));
+    assert_eq!(logouts[0].0.as_deref(), Some("admin"));
     let detail: serde_json::Value =
         serde_json::from_str(logouts[0].1.as_deref().expect("detail")).unwrap();
     assert_eq!(detail, serde_json::json!({ "reason": "auth_enabled" }));
@@ -4140,7 +4158,7 @@ async fn settings_set_refuses_server_keys_but_server_apply_still_writes_them() {
 }
 
 /// The account of the admin session [`admin_app_state`] set up.
-async fn current_actor(state: &AppState) -> UserIdentity {
+async fn current_actor(state: &AppState) -> Caller {
     require_role(state, Role::Admin, "settings")
         .await
         .expect("admin session")
@@ -5861,3 +5879,210 @@ async fn auth_disabled_permissions_view_hides_unregistered_leftovers() {
 // above this line (denied + audited, the Tauri half of conventions
 // section 1).
 // [banto:add-resource:tauri-tests]
+
+// --- ADR-0034 §3: the audit actor (C2) ---------------------------------------
+
+/// `(actor_username, actor_id, actor_role, actor_kind, action, result)` of
+/// every audit row, oldest first.
+async fn actor_rows(
+    state: &AppState,
+) -> Vec<(
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+)> {
+    let mut rows = state
+        .audit
+        .list(ListParams::default())
+        .await
+        .expect("audit list")
+        .rows;
+    rows.sort_by_key(|row| row.id);
+    rows.into_iter()
+        .map(|row| {
+            (
+                row.actor_username,
+                row.actor_id,
+                row.actor_role,
+                row.actor_kind,
+                row.action,
+                row.result,
+            )
+        })
+        .collect()
+}
+
+/// The no-login session is audited as the built-in `admin` - success and
+/// denial alike - with the built-in row's id, the MODE's role (a viewer stays
+/// `viewer`) and `actor_kind` `local`; an account session is itself. And it
+/// is the same actor REST gives a grant session carrying the mark
+/// (`GrantSpec::audit_as_builtin_admin`): both go through
+/// `AuditActor::attribute` (conventions §1). Only `actor_kind` tells the two
+/// channels apart.
+#[tokio::test]
+async fn the_no_login_session_is_audited_as_the_builtin_admin_like_a_marked_grant() {
+    let state = app_state().await;
+    let builtin = Some(state.builtin_admin_id);
+
+    // Viewer mode: an admin-only command is refused, and the refusal is the
+    // built-in admin's, with the session's real role.
+    auth_config_apply_body(&state, true, "viewer")
+        .await
+        .expect("enable as viewer (bootstrap window)");
+    let err = login_notice_set_body(&state, "x").await.unwrap_err();
+    assert!(matches!(err, BantoError::Forbidden), "{err:?}");
+    let rows = actor_rows(&state).await;
+    let denied = rows.iter().find(|row| row.4 == "denied").expect("denied");
+    assert_eq!(
+        (
+            denied.0.as_deref(),
+            denied.1,
+            denied.2.as_deref(),
+            denied.3.as_deref()
+        ),
+        (Some("admin"), builtin, Some("viewer"), Some("local"))
+    );
+
+    // What REST records for a marked grant with the same role.
+    let mut spec = banto_server::GrantSpec::new(
+        GrantKind::new("commissioning").unwrap(),
+        banto_server::Identity {
+            id: "commissioning".to_string(),
+            name: "commissioning".to_string(),
+            role: "viewer".to_string(),
+        },
+        Arc::new(|| Box::pin(async { Ok(true) })),
+    );
+    spec.audit_as_builtin_admin = true;
+    let token = state
+        .rest_auth
+        .issue_grant_token(&spec, state.rest_auth.grant_generation(&spec.kind))
+        .expect("grant token");
+    let session = state
+        .rest_auth
+        .authenticate(&token)
+        .await
+        .unwrap()
+        .expect("grant session");
+    let rest = state.rest_auth.audit_actor(&session);
+    assert_eq!(
+        (rest.username.as_str(), rest.id, rest.role.as_str()),
+        (
+            denied.0.as_deref().unwrap(),
+            denied.1,
+            denied.2.as_deref().unwrap()
+        )
+    );
+    assert_eq!(rest.kind, "grant:commissioning");
+
+    // Admin mode: a write succeeds and is the built-in admin's too.
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("switch the mode's role");
+    login_notice_set_body(&state, "お知らせ")
+        .await
+        .expect("admin mode may write");
+    let rows = actor_rows(&state).await;
+    let change = rows
+        .iter()
+        .rev()
+        .find(|row| row.4 == "settings_change")
+        .expect("settings_change");
+    assert_eq!(
+        (
+            change.0.as_deref(),
+            change.1,
+            change.2.as_deref(),
+            change.3.as_deref()
+        ),
+        (Some("admin"), builtin, Some("admin"), Some("local"))
+    );
+    assert!(
+        rows.iter().all(|row| row.0.as_deref() != Some("local")),
+        "nothing is attributed to the session's own label any more: {rows:?}"
+    );
+
+    // The attribution is the audit log's only: the session itself, and the
+    // owner of its UI settings, stay `local`.
+    let answer = resolve_body(&state).await.expect("resolve");
+    assert_eq!(answer.kind, Some("local"));
+    assert_eq!(answer.identity.expect("active").id, "local");
+}
+
+/// An account session is audited as itself: its username, its `users.id`,
+/// `actor_kind` `account` - for a success and for a denial.
+#[tokio::test]
+async fn an_account_session_is_audited_with_its_row_id() {
+    let state = app_state_as(Role::Viewer).await;
+    let account = state
+        .users
+        .get_by_username("actor")
+        .await
+        .unwrap()
+        .expect("account");
+    let err = login_notice_set_body(&state, "x").await.unwrap_err();
+    assert!(matches!(err, BantoError::Forbidden), "{err:?}");
+    let rows = actor_rows(&state).await;
+    assert_eq!(
+        rows,
+        vec![(
+            Some("actor".to_string()),
+            Some(account.id),
+            Some("viewer".to_string()),
+            Some("account".to_string()),
+            "denied".to_string(),
+            "denied".to_string(),
+        )]
+    );
+}
+
+/// ADR-0034 §2/§4 on the desktop path (the REST twin is
+/// `the_builtin_row_and_reserved_names_are_protected_over_rest`): the
+/// built-in row cannot be updated, re-keyed or deleted, an account cannot
+/// take a reserved name - and none of the refusals leaves a success row.
+#[tokio::test]
+async fn the_builtin_row_and_reserved_names_are_protected_on_the_desktop() {
+    let state = app_state_as(Role::Admin).await;
+    let builtin = state.builtin_admin_id;
+
+    assert!(
+        users_update_body(&state, builtin, "renamed", Role::Viewer, None, None)
+            .await
+            .is_err()
+    );
+    assert!(users_reset_password_body(&state, builtin, "password123")
+        .await
+        .is_err());
+    assert!(users_delete_body(&state, builtin, None).await.is_err());
+    for name in ["admin", "Admin", "public", "PUBLIC"] {
+        let err = users_create_body(&state, name, "password123", "x", Role::Viewer)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, BantoError::Validation { .. }),
+            "{name}: {err:?}"
+        );
+    }
+
+    // The row is as the migration left it, and it still cannot log in.
+    let listed = list_users_with_permissions(&state.users).await.unwrap();
+    let row = listed
+        .iter()
+        .find(|row| row.user.id == builtin)
+        .expect("the built-in row is listed");
+    assert_eq!(
+        (row.user.username.as_str(), row.user.role),
+        ("admin", Role::Admin)
+    );
+    assert!(state
+        .users
+        .verify("admin", "password123")
+        .await
+        .unwrap()
+        .is_none());
+    let rows = actor_rows(&state).await;
+    assert!(rows.is_empty(), "a refused write records nothing: {rows:?}");
+}
