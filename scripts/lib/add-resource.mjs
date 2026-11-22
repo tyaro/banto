@@ -184,7 +184,7 @@ export function planAddResource(root, name, rawSpec = DEFAULT_SPEC) {
 		},
 		{ file: `${APP}/src-tauri/src/lib.rs`, slot: 'tauri-commands', text: tauriCommands(spec) },
 		{ file: `${APP}/src-tauri/src/lib.rs`, slot: 'tauri-handlers', text: tauriHandlers(spec) },
-		{ file: `${APP}/src-tauri/src/lib.rs`, slot: 'tauri-tests', text: tauriTests(spec) },
+		{ file: `${APP}/src-tauri/src/tests.rs`, slot: 'tauri-tests', text: tauriTests(spec) },
 		{
 			file: 'scripts/verify-architecture.mjs',
 			slot: 'dual-path',

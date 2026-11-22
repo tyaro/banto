@@ -116,13 +116,17 @@
 	}
 
 	.toast.success {
-		background: var(--banto-success-tint);
+		background:
+			linear-gradient(var(--banto-success-tint), var(--banto-success-tint)),
+			var(--banto-surface-overlay);
 		border-left-color: var(--banto-success-solid);
 		color: var(--banto-success-tint-text);
 	}
 
 	.toast.error {
-		background: var(--banto-danger-tint);
+		background:
+			linear-gradient(var(--banto-danger-tint), var(--banto-danger-tint)),
+			var(--banto-surface-overlay);
 		border-left-color: var(--banto-danger-solid);
 		color: var(--banto-danger-tint-text);
 	}
@@ -131,7 +135,9 @@
 		/* No --banto-warning-solid token (only danger/success have a -solid
 		   variant); the base --banto-warning accent plays that role, paired
 		   with the warning tint/tint-text (theme Appendix A.3). */
-		background: var(--banto-warning-tint);
+		background:
+			linear-gradient(var(--banto-warning-tint), var(--banto-warning-tint)),
+			var(--banto-surface-overlay);
 		border-left-color: var(--banto-warning);
 		color: var(--banto-warning-tint-text);
 	}
