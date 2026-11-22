@@ -637,6 +637,9 @@ does not change. While ADR-0034 is `Proposed` the body stands as written; this a
     `actor_id` is NULL.
   - Marked (admin-equivalent grants): `actor_username = 'admin'`, `actor_id` = the id of the built-in row.
     `actor_role` is the session's actual role. Nothing is inferred from id or name (conventions §10).
+  - The mark is kept on the `TokenRecord` at issuance, and the audit writer receives **the snapshot of the
+    principal used for authorization** (it does not re-resolve the bearer). The path is kept in `actor_kind`
+    (`grant:<kind>` for grants). It is never used for authorization, and token values are never recorded.
   - ui-settings are no longer kept under `ui.<identity.id>.*` but under the owner `grant:<kind>` of the table
     `ui_settings` (still shared by terminals of the same kind).
   - A grant's fixed id (`GrantSpec.identity.id`) becomes a reserved account username (case-insensitive). If a
@@ -646,6 +649,10 @@ does not change. While ADR-0034 is `Proposed` the body stands as written; this a
   log in exists. The judgment is placed **before** "save → revoke", under the same lock. The order "save → revoke
   right after, in the same function" does not change. A derived app's commissioning lockdown places the same
   condition before its save (for reference, like decision §5; not a banto rule).
+- **REST is read-only while login is off (`auth.disabled` = on)** (ADR-0034 decision §6): account login is
+  refused, and right after the save that switches to login-less, in the same function, account tokens are
+  revoked. Only viewer-public (reads and the ui-settings of its own kind) and explicitly registered grants get
+  through. `banto-serve` does not listen when login is off and viewer-public is off too.
 - First-run setup (`POST /api/auth/setup`, `BANTO_ALLOW_SETUP`) is removed. While there are zero accounts, only
   the grant routes and viewer-public reads get through over REST. The cautions for admin-equivalent grants
   (`require_loopback_peer`, a small `max_sessions`, decision §6) weigh correspondingly more.

@@ -593,6 +593,9 @@ chronogazer（tyaro/banto-industrial）:
   - 印なし（閲覧公開の `public` など）: 本文のまま、固定 identity の id が actor。`actor_id` は NULL。
   - 印つき（管理者相当の grant）: `actor_username = 'admin'`・`actor_id` = 組み込みの行の id。`actor_role` は
     セッションの実際のロール。id・name からは推測しない（conventions §10）。
+  - 印は発行時の `TokenRecord` に持ち、監査には**認可に使った主体のスナップショット**を渡す（監査を書く所で
+    bearer から引き直さない）。経路は `actor_kind`（grant は `grant:<kind>`）に残す。認可には使わず、
+    トークンの値は残さない。
   - ui-settings は `ui.<identity.id>.*` ではなく、表 `ui_settings` の持ち主 `grant:<kind>` に持つ
     （同じ kind の端末で共有する性質は同じ）。
   - grant の固定 id（`GrantSpec.identity.id`）は、アカウントの username の予約名になる（大小無視）。
@@ -601,6 +604,10 @@ chronogazer（tyaro/banto-industrial）:
   ロックダウン（`auth.disabled` を off にする）は、ログインできる管理者のアカウントが 1 つ以上あるときだけ許す。
   判定は「保存 → 失効」の**手前**に、同じロックの中で置く。「保存 → 同じ関数の中で直後に失効」の順は変えない。
   派生アプリの試運転のロックダウンも、同じ条件を保存の手前に置く（決定 §5 と同じく参考。banto の規約ではない）。
+- **ログインなしの間（`auth.disabled` = on）の REST は読み取り専用**（ADR-0034 決定 §6）: アカウントのログインを
+  断り、ログインなしへ切り替える保存の直後に、同じ関数の中でアカウントのトークンを失効させる。届くのは閲覧公開
+  （読み取りと、自分の kind の ui-settings）と、明示して登録した grant だけ。`banto-serve` は、ログインなしで
+  閲覧公開も off なら listen しない。
 - 初回セットアップ（`POST /api/auth/setup`・`BANTO_ALLOW_SETUP`）は無くなる。アカウントが 0 の間に REST から
   届くのは、grant の口と閲覧公開の読み取りだけになる。管理者相当の grant の注意（`require_loopback_peer`・
   小さい `max_sessions`・決定 §6）は、その分だけ重くなる。
