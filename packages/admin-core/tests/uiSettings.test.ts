@@ -1108,3 +1108,243 @@ describe('updateUiSetting', () => {
 		expect(calls).toEqual(['ui_settings_get', 'ui_settings_set', 'ui_settings_get']);
 	});
 });
+
+describe('updateUiSetting and a session change (the update belongs to the session it started in)', () => {
+	function restWorld() {
+		const pending: Deferred[] = [];
+		const calls: Array<{ method: string; auth?: string; body?: string }> = [];
+		const fetchFn = vi.fn((_url: string, init: RequestInit) => {
+			const d = deferred();
+			pending.push(d);
+			calls.push({
+				method: init.method as string,
+				auth: (init.headers as Record<string, string>).Authorization,
+				body: init.body as string | undefined
+			});
+			return d.promise as Promise<Response>;
+		});
+		const session = { token: 'alice' as string | null };
+		const provider = createHttpUiSettings({
+			getToken: () => session.token,
+			fetchFn: fetchFn as unknown as typeof fetch
+		});
+		return { provider, pending, calls, session };
+	}
+
+	function tauriWorld() {
+		const pending: Deferred[] = [];
+		const calls: string[] = [];
+		const invoke = vi.fn((cmd: string) => {
+			const d = deferred();
+			pending.push(d);
+			calls.push(cmd);
+			return d.promise;
+		});
+		const session = { revision: 'rev-alice' };
+		const provider = createTauriUiSettings({ invoke, getSessionRevision: () => session.revision });
+		return { provider, pending, calls, session };
+	}
+
+	const unauthorized = { body: { kind: 'unauthorized' } };
+
+	it('REST: a switch while the read is pending stops before anything is written', async () => {
+		const w = restWorld();
+		const apply = vi.fn(addTag('b'));
+		const done = updateUiSetting(w.provider, 'tags', apply);
+		await flush();
+		w.session.token = 'bob'; // another account logged in on this tab
+		// Nothing stored: "0" is the same revision for every account.
+		w.pending[0].resolve(jsonResponse(200, { value: null, revision: '0' }));
+
+		await expect(done).rejects.toMatchObject(unauthorized);
+		expect(apply).not.toHaveBeenCalled();
+		expect(w.calls.map((c) => c.method)).toEqual(['GET']);
+	});
+
+	it('REST: a switch while a write is pending stops the retry after a conflict', async () => {
+		const w = restWorld();
+		const done = updateUiSetting(w.provider, 'tags', addTag('b'));
+		await flush();
+		w.pending[0].resolve(jsonResponse(200, { value: '["a"]', revision: 'r0' }));
+		await flush();
+		expect(w.calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+		w.session.token = 'bob';
+		w.pending[1].resolve(jsonResponse(409, conflictBody({ value: '["x"]', revision: 'r1' })));
+
+		await expect(done).rejects.toMatchObject(unauthorized);
+		// No second PUT: alice's value is never written with bob's token.
+		expect(w.calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+		expect(w.calls.every((c) => c.auth === 'Bearer alice')).toBe(true);
+	});
+
+	it('REST: a switch while a write is pending stops the re-read after a lost answer', async () => {
+		const w = restWorld();
+		const done = updateUiSetting(w.provider, 'tags', addTag('b'));
+		await flush();
+		w.pending[0].resolve(jsonResponse(200, { value: null, revision: '0' }));
+		await flush();
+		w.session.token = 'bob';
+		w.pending[1].reject(new TypeError('network down'));
+
+		await expect(done).rejects.toMatchObject(unauthorized);
+		expect(w.calls.map((c) => c.method)).toEqual(['GET', 'PUT']); // no GET for bob
+	});
+
+	it('REST: a switch while the re-read is pending stops before the next write', async () => {
+		const w = restWorld();
+		const done = updateUiSetting(w.provider, 'tags', addTag('b'));
+		await flush();
+		w.pending[0].resolve(jsonResponse(200, { value: null, revision: '0' }));
+		await flush();
+		w.pending[1].reject(new TypeError('network down'));
+		await flush();
+		expect(w.calls.map((c) => c.method)).toEqual(['GET', 'PUT', 'GET']);
+		w.session.token = 'bob';
+		w.pending[2].resolve(jsonResponse(200, { value: null, revision: '0' }));
+
+		await expect(done).rejects.toMatchObject(unauthorized);
+		expect(w.calls.map((c) => c.method)).toEqual(['GET', 'PUT', 'GET']);
+	});
+
+	it('REST: a switch while the write is pending does not hand its result to the new session', async () => {
+		const w = restWorld();
+		const done = updateUiSetting(w.provider, 'tags', addTag('b'));
+		await flush();
+		w.pending[0].resolve(jsonResponse(200, { value: null, revision: '0' }));
+		await flush();
+		w.session.token = 'bob';
+		w.pending[1].resolve(jsonResponse(200, { revision: 'r1' }));
+
+		await expect(done).rejects.toMatchObject(unauthorized);
+	});
+
+	it('REST: a logout (no token) stops it the same way', async () => {
+		const w = restWorld();
+		const done = updateUiSetting(w.provider, 'tags', addTag('b'));
+		await flush();
+		w.session.token = null;
+		w.pending[0].resolve(jsonResponse(200, { value: null, revision: '0' }));
+
+		await expect(done).rejects.toMatchObject(unauthorized);
+		expect(w.calls.map((c) => c.method)).toEqual(['GET']);
+	});
+
+	it('Tauri: a switch while the read is pending stops before anything is written', async () => {
+		const w = tauriWorld();
+		const done = updateUiSetting(w.provider, 'tags', addTag('b'));
+		await flush();
+		w.session.revision = 'rev-bob';
+		w.pending[0].resolve({ value: null, revision: '0' });
+
+		await expect(done).rejects.toMatchObject(unauthorized);
+		expect(w.calls).toEqual(['ui_settings_get']);
+	});
+
+	it('Tauri: a switch while a write is pending stops the retry (conflict) and the re-read (lost answer)', async () => {
+		for (const fail of [
+			(d: Deferred) => d.reject(conflictBody({ value: '["x"]', revision: 'r1' })),
+			(d: Deferred) => d.reject(new Error('ipc closed'))
+		]) {
+			const w = tauriWorld();
+			const done = updateUiSetting(w.provider, 'tags', addTag('b'));
+			await flush();
+			w.pending[0].resolve({ value: '["a"]', revision: 'r0' });
+			await flush();
+			expect(w.calls).toEqual(['ui_settings_get', 'ui_settings_set']);
+			w.session.revision = 'rev-bob';
+			fail(w.pending[1]);
+
+			await expect(done).rejects.toMatchObject(unauthorized);
+			expect(w.calls).toEqual(['ui_settings_get', 'ui_settings_set']);
+		}
+	});
+
+	it('Tauri without getSessionRevision: the session is not checked (the guard always holds)', async () => {
+		const provider = createTauriUiSettings({ invoke: vi.fn() });
+		const guard = provider.sessionGuard?.();
+		expect(guard?.()).toBe(true);
+	});
+
+	it('the guard of the bundled providers follows the session key', () => {
+		const w = restWorld();
+		const guard = w.provider.sessionGuard?.();
+		expect(guard?.()).toBe(true);
+		w.session.token = 'bob';
+		expect(guard?.()).toBe(false);
+		w.session.token = 'alice';
+		expect(guard?.()).toBe(true);
+	});
+});
+
+describe('createLocalUiSettings cross-tab lock', () => {
+	/** A lock manager that runs one callback at a time per name, in order (what `navigator.locks` does). */
+	function fakeLocks() {
+		const names: string[] = [];
+		const tails = new Map<string, Promise<unknown>>();
+		const locks = {
+			request<T>(name: string, callback: () => T | Promise<T>): Promise<T> {
+				names.push(name);
+				const run = (tails.get(name) ?? Promise.resolve()).then(() => callback());
+				tails.set(
+					name,
+					run.catch(() => {})
+				);
+				return run;
+			}
+		};
+		return { locks, names };
+	}
+
+	it('every write runs under a lock named after the key; reads take none', async () => {
+		const { locks, names } = fakeLocks();
+		const provider = createLocalUiSettings({ storage: makeMemoryStorage(), locks });
+
+		const first = await provider.set('k', 'a');
+		await provider.get('k');
+		await provider.set('k', 'b', { ifRevision: first.revision as string });
+		await provider.remove('k');
+		await provider.set('other', 'x');
+
+		expect(names).toEqual(['banto.ui.k', 'banto.ui.k', 'banto.ui.k', 'banto.ui.other']);
+	});
+
+	it('two tabs writing from the same revision: exactly one wins, the other gets the conflict', async () => {
+		const storage = makeMemoryStorage();
+		const { locks } = fakeLocks();
+		const tabA = createLocalUiSettings({ storage, locks });
+		const tabB = createLocalUiSettings({ storage, locks });
+
+		const results = await Promise.allSettled([
+			tabA.set('k', 'a', { ifRevision: '0' }),
+			tabB.set('k', 'b', { ifRevision: '0' })
+		]);
+		expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+		const lost = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+		expect(uiSettingConflict(lost.reason)?.value).toBe('a');
+		await expect(tabA.get('k')).resolves.toMatchObject({ value: 'a' });
+	});
+
+	it('a conflict raised under the lock reaches the caller as is', async () => {
+		const { locks } = fakeLocks();
+		const provider = createLocalUiSettings({ storage: makeMemoryStorage(), locks });
+		await provider.set('k', 'a');
+		await expect(provider.set('k', 'b', { ifRevision: '0' })).rejects.toMatchObject({
+			body: { kind: 'conflict' }
+		});
+		await expect(provider.remove('k', { ifRevision: '0' })).rejects.toMatchObject({
+			body: { kind: 'conflict' }
+		});
+	});
+
+	it('works without a lock manager (locks: null), and when the lock cannot be taken', async () => {
+		const unlocked = createLocalUiSettings({ storage: makeMemoryStorage(), locks: null });
+		await expect(unlocked.set('k', 'a')).resolves.toMatchObject({ revision: expect.any(String) });
+
+		const refused = createLocalUiSettings({
+			storage: makeMemoryStorage(),
+			locks: { request: () => Promise.reject(new Error('SecurityError')) }
+		});
+		const written = await refused.set('k', 'a');
+		await expect(refused.get('k')).resolves.toEqual({ value: 'a', revision: written.revision });
+	});
+});

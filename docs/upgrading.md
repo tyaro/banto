@@ -573,6 +573,10 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   **`apply` は冪等にする**（同じ変更を 2 回当てても結果が同じ）。冪等にできない変更は、値の中に操作の id を持って重複を落とす。
   自分で条件付きに書くなら `set(key, value, { ifRevision })` と `uiSettingConflict(error)`（`conflict` なら今の `{ value, revision }`、
   でなければ `null`）。`revision` は中身の決まっていない文字列で、大小を比べない。`ifRevision` に返すだけにする。
+  **読んだ値を後の書き込みに持ち込むときは、間にセッションが替わっていないことを確かめる**（`get` はセッションを見ない。
+  `"0"` はどのアカウントでも同じ revision なので、条件だけでは別のアカウントへの書き込みを止められない）。`updateUiSetting` は
+  これを行う（替わったら `unauthorized` で止まる）。自分で書くなら、読む前に `const same = provider.sessionGuard?.()` を取り、
+  書く直前（同じ同期の 1 歩の中）に `same?.() === false` なら止める。
 
   ```ts
   import { updateUiSetting } from '@banto/admin-core';
@@ -590,6 +594,8 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   `set` は条件を確かめてから書いて `{ revision }`（合わなければ
   `new ProviderError({ kind: 'conflict', message, current: { value, revision } })` を投げる）、`remove` を足す。
   revision は書き込みのたびに変える（同じ値を書いても変える）。条件付きの `set` に `superseded` を返さない。
+  セッション（ログインしている相手）を持つ実装は、省略可の `sessionGuard()`（今のセッションを覚えて、「まだ同じか」を返す
+  関数を返す）も実装する。無いと、`updateUiSetting` はセッションの切り替えを検出できない。
   試験のモックは `get: async () => ({ value: null, revision: '0' })`・`set: async () => ({ revision: 'r1' })`・
   `remove: async () => ({ revision: '0' })` の形にする。
 - **テンプレート（B）**: `apps/admin-template/src/lib/settings.svelte.ts`・`src/lib/banto/locale.ts`・
@@ -597,7 +603,10 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   （ほかの呼び手は `createSavedSetting` 経由で、変更なし）。
 - **ブラウザーの保存（`createLocalUiSettings`）**: 値の置き場所（`banto.ui.<key>`）は変わらない。revision を置くキー
   `banto.ui-rev.<key>` が増える。`banto.ui.*` を直に書いている試験（E2E の初期値など）はそのままでよい
-  （次の読み取りで新しい revision が付く）。
+  （次の読み取りで新しい revision が付く）。書き込みは Web Locks API（`navigator.locks`）のロックの下で行うので、
+  値が localStorage に入るのは `set` を呼んだ同期の間ではなく少し後（`set` の Promise を待てば入っている）。`set` の直後に
+  同期で `localStorage` を読んでいる試験は、待つ形にする。Web Locks API の無い環境（secure context でないページなど）では、
+  条件付きの書き込みはタブをまたいだ上書きを防げない（同じ文書の中だけ）。
 
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に

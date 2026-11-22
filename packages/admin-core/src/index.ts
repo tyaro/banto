@@ -187,6 +187,7 @@ export {
 	type UpdateUiSettingOptions,
 	type UpdatedUiSetting,
 	type LocalUiSettingsOptions,
+	type UiSettingsLocks,
 	type TauriUiSettingsOptions,
 	type HttpUiSettingsOptions
 } from './providers/uiSettings';

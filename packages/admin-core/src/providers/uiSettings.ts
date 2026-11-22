@@ -64,6 +64,11 @@
  *   as a 401), so callers never treat an unsent value as saved.
  * - Key validation still fails immediately, at the call.
  *
+ * - `get` is not session-checked by itself (it sends with whatever session is
+ *   current when it is sent). A caller that carries a read into a later write
+ *   must check the session in between - `sessionGuard()` is that check, and
+ *   `updateUiSetting` does it.
+ *
  * `updateUiSetting(provider, key, apply)` is the read-apply-conditional-write
  * loop on top of this (see its doc: `apply` must be idempotent).
  */
@@ -114,6 +119,16 @@ export interface UiSettingsProvider {
 	set(key: string, value: string, options?: UiSettingWriteOptions): Promise<UiSettingWriteResult>;
 	/** Delete what is stored under `key` (same `ifRevision` condition as `set`). Deleting nothing succeeds. */
 	remove(key: string, options?: UiSettingWriteOptions): Promise<UiSettingRemoveResult>;
+	/**
+	 * Optional. Captures the session the provider would write for right now and
+	 * returns a function answering "is it still that session?". `updateUiSetting`
+	 * uses it to stop when the session changes between its read and its writes
+	 * (logout, another account): one account's value must never be applied to
+	 * another's setting. A provider without sessions (localStorage) leaves it
+	 * out. The bundled Tauri / HTTP providers implement it with the same session
+	 * key their writes are checked against.
+	 */
+	sessionGuard?(): () => boolean;
 }
 
 function isSnapshot(value: unknown): value is UiSettingSnapshot {
@@ -308,6 +323,12 @@ function serializeWrites(
 			// A remove is never superseded, so its answer always carries a revision.
 			const result = await accept(key, null, options);
 			return { revision: result.revision ?? UI_SETTING_ABSENT_REVISION };
+		},
+
+		sessionGuard() {
+			if (!getSessionKey) return () => true;
+			const captured = getSessionKey();
+			return () => getSessionKey() === captured;
 		}
 	};
 }
@@ -318,9 +339,26 @@ const LOCAL_PREFIX = 'banto.ui.';
 /** Where the revision of `banto.ui.<key>` lives (not under `banto.ui.`, so it cannot collide with a key). */
 const LOCAL_REVISION_PREFIX = 'banto.ui-rev.';
 
+/** The part of the Web Locks API (`navigator.locks`) the localStorage provider uses. */
+export interface UiSettingsLocks {
+	request<T>(name: string, callback: () => T | Promise<T>): Promise<T>;
+}
+
 export interface LocalUiSettingsOptions {
 	/** Injected for tests; defaults to the global `localStorage`. */
 	storage?: Storage;
+	/**
+	 * The cross-tab lock every write is made under. Defaults to
+	 * `navigator.locks` (Web Locks API) when the environment has it; `null`
+	 * turns locking off. Without a lock, a conditional write is only checked
+	 * against writes of the same document (see `createLocalUiSettings`).
+	 */
+	locks?: UiSettingsLocks | null;
+}
+
+function defaultLocks(): UiSettingsLocks | null {
+	const nav = (globalThis as { navigator?: { locks?: UiSettingsLocks } }).navigator;
+	return nav?.locks ?? null;
 }
 
 /** FNV-1a (32 bit) of the value: ties a stored revision to the value it was minted for. */
@@ -353,9 +391,18 @@ function newLocalRevision(): string {
  * value (`f<fingerprint>`), so a revision handed out before that change stops
  * matching, as it should, and `get` never writes.
  *
- * Each call checks and writes within one synchronous step, so a conditional
- * write is atomic against other tabs (localStorage is shared and synchronous).
- * Nothing is queued, so `set` never answers `superseded`.
+ * Conditional writes across tabs: localStorage has no compare-and-set, and
+ * browsers do not lock it across processes, so "check the revision, then
+ * write" in one tab can interleave with another tab's write. Every write
+ * (`set` and `remove`, conditional or not) therefore runs under a Web Lock
+ * named after the key (`navigator.locks`, shared by the tabs of the origin
+ * like localStorage itself). **Where the Web Locks API is missing** (a page
+ * that is not a secure context, an old browser, `locks: null`) the check and
+ * the write are still one synchronous step, which is only guaranteed against
+ * writes from the same document: there, do not rely on `ifRevision` /
+ * `updateUiSetting` to keep two tabs from overwriting each other. (The demo
+ * and offline fallback this provider is for run on https or localhost, where
+ * the API exists.) `get` takes no lock. `set` never answers `superseded`.
  */
 export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiSettingsProvider {
 	function storage(): Storage {
@@ -393,6 +440,31 @@ export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiS
 		}
 	}
 
+	/** Run one check-and-write step under the key's cross-tab lock (when there is one). */
+	async function locked<T>(key: string, step: () => T): Promise<T> {
+		const locks = options.locks === undefined ? defaultLocks() : options.locks;
+		if (!locks) return step();
+		// The step never throws inside the lock callback: its outcome (a value, or
+		// its own error - a conflict, a full storage) is carried out and settled
+		// here, so the lock is released the same way on every implementation.
+		let outcome: { value: T } | { error: unknown } | undefined;
+		try {
+			await locks.request(`${LOCAL_PREFIX}${key}`, () => {
+				try {
+					outcome = { value: step() };
+				} catch (error) {
+					outcome = { error };
+				}
+			});
+		} catch {
+			// The lock could not be taken at all (e.g. refused in a sandboxed
+			// frame): fall back to the unlocked step below, unless it already ran.
+		}
+		if (outcome === undefined) return step();
+		if ('error' in outcome) throw outcome.error;
+		return outcome.value;
+	}
+
 	return {
 		async get(key) {
 			assertValidKey(key);
@@ -401,17 +473,21 @@ export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiS
 
 		async set(key, value, writeOptions) {
 			assertValidKey(key);
-			check(key, writeOptions?.ifRevision);
-			storage().setItem(`${LOCAL_PREFIX}${key}`, value);
-			return { revision: mint(key, value) };
+			return locked(key, () => {
+				check(key, writeOptions?.ifRevision);
+				storage().setItem(`${LOCAL_PREFIX}${key}`, value);
+				return { revision: mint(key, value) };
+			});
 		},
 
 		async remove(key, writeOptions) {
 			assertValidKey(key);
-			check(key, writeOptions?.ifRevision);
-			storage().removeItem(`${LOCAL_PREFIX}${key}`);
-			storage().removeItem(`${LOCAL_REVISION_PREFIX}${key}`);
-			return { revision: UI_SETTING_ABSENT_REVISION };
+			return locked(key, () => {
+				check(key, writeOptions?.ifRevision);
+				storage().removeItem(`${LOCAL_PREFIX}${key}`);
+				storage().removeItem(`${LOCAL_REVISION_PREFIX}${key}`);
+				return { revision: UI_SETTING_ABSENT_REVISION };
+			});
 		}
 	};
 }
@@ -645,6 +721,14 @@ function isDefiniteRefusal(error: unknown): boolean {
  * the last error (a `conflict` `ProviderError` when it kept losing). A refusal
  * (`validation`, `unauthorized`, `forbidden`, ...) and a failed read reject at
  * once. `apply` is called with nothing locked: keep it pure and synchronous.
+ *
+ * The whole update belongs to the session it started in: when the provider
+ * has a `sessionGuard` (the bundled Tauri / HTTP providers do) and the session
+ * changes at any point - while the read, a write or a re-read is pending - the
+ * update stops with `unauthorized`. Nothing read for one account is applied
+ * to, written for, or returned to another (`"0"`, "nothing stored", is the
+ * same revision for every account, so the condition alone would not stop it).
+ * A write already sent for the old session may have been stored for it.
  */
 export async function updateUiSetting(
 	provider: UiSettingsProvider,
@@ -653,7 +737,20 @@ export async function updateUiSetting(
 	options: UpdateUiSettingOptions = {}
 ): Promise<UpdatedUiSetting> {
 	const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? DEFAULT_UPDATE_ATTEMPTS));
-	let current = await provider.get(key);
+	// Captured before the first read. Checked after every await, and each write
+	// is handed to the provider in the same synchronous step as the last check
+	// (the provider captures the session for that write right there).
+	const sameSession = provider.sessionGuard?.() ?? (() => true);
+	const assertSameSession = (): void => {
+		if (!sameSession()) throw new ProviderError({ kind: 'unauthorized' });
+	};
+	const read = async (): Promise<UiSettingSnapshot> => {
+		const snapshot = await provider.get(key);
+		assertSameSession();
+		return snapshot;
+	};
+
+	let current = await read();
 	let lastError: unknown;
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
 		const next = apply(current.value);
@@ -662,18 +759,20 @@ export async function updateUiSetting(
 		try {
 			written = await provider.set(key, next, { ifRevision: current.revision });
 		} catch (error) {
+			assertSameSession();
 			lastError = error;
 			if (error instanceof ProviderError && error.body.kind === 'conflict') {
 				// Somebody else wrote first: go again from the value it returned.
-				current = uiSettingConflict(error) ?? (await provider.get(key));
+				current = uiSettingConflict(error) ?? (await read());
 				continue;
 			}
 			if (isDefiniteRefusal(error)) throw error;
 			// Unknown outcome: never send the same PUT again. Read instead.
-			current = await provider.get(key);
+			current = await read();
 			if (current.value === next) return { value: next, revision: current.revision };
 			continue;
 		}
+		assertSameSession();
 		if (written.revision === null) {
 			// A conditional write is never superseded (provider contract).
 			throw new ProviderError({

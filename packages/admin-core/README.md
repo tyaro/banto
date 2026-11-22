@@ -151,7 +151,12 @@ interface UiSettingsProvider {
   - **条件付きの書き込みは置き換えられない**（置き換えもしない）。必ず送り、サーバーの答えだけで決着する。
     `remove` も置き換えられない。
   - 受け付けた後にセッションが替わった書き込みは送らず、`unauthorized` で reject する。
-  - `get` は、そのキーの書き込みが終わるのを待ってから読む。
+  - `get` は、そのキーの書き込みが終わるのを待ってから読む。`get` 自体はセッションを見ない（送る時点のセッションで読む）。
+    読んだ値を後の書き込みに持ち込むときは、`sessionGuard?.()`（今のセッションを覚え、「まだ同じか」を返す関数を返す。
+    Tauri・HTTP の実装が持つ）で間の切り替えを確かめる。`updateUiSetting` はこれを行う。
+- **`createLocalUiSettings` とタブ**: 書き込みは Web Locks API（`navigator.locks`）のロックの下で、判定と書き込みをまとめて行う。
+  Web Locks API の無い環境（secure context でないページ・古いブラウザー）では、条件付きの書き込みは同じ文書の中だけで確かで、
+  タブをまたいだ上書きの防止には使えない。
 
 ### 別のタブの変更を上書きしない: `updateUiSetting`
 
@@ -178,6 +183,11 @@ const { value, revision } = await updateUiSetting(provider, 'items.pinned', (cur
 
 冪等にできない変更は、値の中に操作の id を持って、`apply` の中で重複を落とす（サーバーに操作の記録は無い）。
 断られた書き込み（`validation`・`unauthorized`・`forbidden` など）と、読み取りの失敗は、すぐ reject する。
+
+1 回の更新は、始めたときのセッションのもの。読み取り・書き込み・読み直しのどれを待っている間でも、セッションが替わったら
+`unauthorized` で止まる（前のアカウントで読んだ値を、次のアカウントの設定に当てない・書かない・返さない。`"0"` はどの
+アカウントでも同じ revision なので、条件だけでは止まらない）。前のセッションで既に送った書き込みは、そのセッションの値として
+入っていることがある。
 
 ## UI 設定の現在値と保存済みの値を分ける（`createSavedSetting`）
 
