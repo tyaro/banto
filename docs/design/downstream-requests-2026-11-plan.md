@@ -1,7 +1,7 @@
 # 下流の要望（2026-11）をまとめて入れる計画書
 
 作成日: 2026-11-22
-状態: **計画**（オーナー決定済み、§2。§10 の確認事項は 2026-11-22 に推奨どおりで確定、#716 の判断（§4.13）だけ待ち。**2026-11-22 変更: 互換不要・DB 作り直し**の前提で簡素化した。実装は未着手。C0 の ADR-0034 は 2026-11-22 に Accepted。計画書との食い違いは ADR が正）
+状態: **計画**（オーナー決定済み、§2。§10 の確認事項は 2026-11-22 に推奨どおりで確定、#716 の判断（§4.13）だけ待ち。**2026-11-22 変更: 互換不要・DB 作り直し**の前提で簡素化した。実装は未着手。**2026-11-22: §11（#756 からの取り込み）を確定**。C0 の ADR-0034 は 2026-11-22 に Accepted。計画書との食い違いは ADR が正）
 トラック: 保守者向け（トラックA）
 Issue: [#778](https://github.com/tyaro/banto/issues/778)・[#786](https://github.com/tyaro/banto/issues/786)・[#790](https://github.com/tyaro/banto/issues/790)・[#791](https://github.com/tyaro/banto/issues/791)・[#792](https://github.com/tyaro/banto/issues/792)・[#793](https://github.com/tyaro/banto/issues/793)・[#794](https://github.com/tyaro/banto/issues/794)・[#795](https://github.com/tyaro/banto/issues/795)・[#796](https://github.com/tyaro/banto/issues/796)、
 洗練案の [#714](https://github.com/tyaro/banto/issues/714)（残りの 4 = ファイル型）・[#716](https://github.com/tyaro/banto/issues/716)（ウィジェット盤。**判断待ち**）、
@@ -712,6 +712,7 @@ W1 ウィジェットの登録の型と、固定部のカードの載せ替え �
 - C0（ADR の承認）→ C1（基準の作り直し）→ C2（#778 の保護と帰属）→ C2b（初回セットアップの撤去）→ C3（#790）→
   C4（#786 サーバー）→ C5（provider）→ C6（`createSavedSetting`）。C1〜C4 は同じファイル（`users.rs`・`audit.rs`・
   Tauri の `lib.rs`）に触れるので直列。
+- **C1b（#820 の `lib.rs` のテスト分離）→ C2**: C2・C2b が `lib.rs` の認証まわりを大きく触るので、C1b の準備 PR を先に入れる（C1 と並べられる）。
 - **2026-11-22 変更（互換不要・DB 作り直し）**: データの移行の手順（組み込みの行を起動時に入れる・`account_uid` の埋め込み・
   旧い `ui.*` の移し替え）は無くなった。組み込みの行は C1 の migration が入れるので、**`users` の数え方の直しは C1 に入る**
   （入れないと、新しい DB で初回セットアップが出なくなる）。初回セットアップそのものは C2b で外す。
@@ -759,14 +760,15 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | **C0** | ADR: 持ち主の識別、組み込みの `admin`、初回セットアップの撤去とロックダウンの条件（新規 ADR-0034、ADR-0017 の改訂）。conventions §11 の「基準の作り直し」の注記。`.en.md` も | `docs/adr`・`docs/conventions` | — | fable | **済み**（PR #804。2026-11-22 に Accepted。§10 の N2〜N6 を含めて確定） |
 | S1 | #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
 | S2 | #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
-| C1 | 基準の作り直し（2 方言）: `0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**組み込みの行の最低限の保護**（verifier を `kind = 'account'` に絞る・パスワード・更新・削除・CSV の取り込みが `kind = 'builtin'` を断る）と、**復元の検査**（`_sqlx_migrations` の版と checksum を予約と適用の直前に読み取り専用で確かめる。migrator は配線が `BackupService` に渡す。ADR-0034 §9）。**初回の seed の条件の直し**（`seed_first_boot_settings` を「表が空」から「seed 済みの印が無い」へ。0014 が `settings` に行を入れるので同じ PR で。ADR-0034 §5）。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | §4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。**C1 の実 migration（0001〜0014）を当てた DB で display の生成物を起動し、公開閲覧（`server.viewer_public`・`server.enabled`・bind の seed）を確かめる**。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
-| C2 | #778 組み込みの行の保護（禁止・verifier・SQL の `kind`）・予約名（一覧を渡す口）・grant を後から足したときの起動時の検査・帰属の印（`audit_as_builtin_admin`）と認可時のスナップショット・監査の `actor_id` / `actor_kind`（列を足す。wire は `actorKind`） | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート | **破壊的** | fable | §4.3 の試験（C2b の分を除く）。両経路の対称。**この PR で足す起動時の検査（組み込みの行・予約名の当たり）を、同じ関数で復元前の検査にも掛ける**（断ったら元の DB を保つ。ADR-0034 §9） |
-| C2b | 初回セットアップの撤去（決定 18）: `auth.disabled` の既定を on、ロックダウンの条件（管理者のアカウントが 1 つ以上）、ログインなしの間の REST（読み取り専用。ログインの許可・トークンの発行・認可をモードの世代で切り替えと直列化。ADR-0034 §6）、設定の明示と異常時の停止（キーの欠落・破損。seed の条件の直しは C1 で済み）、`banto-serve` の listen の条件（ログインなしで閲覧公開も off なら listen せず止まる）、`setup_first_user`・`is_initialized`・`/api/auth/setup`・`auth_setup`・bootstrap の窓・`AuthProvider.setup`・ログインの画面の分岐と文言を消す。ヘッドレスの最初のアカウント（N3。CLI は予約された復元があれば明示のエラーで止まる）。e2e（`createFirstAdmin` の置き換え・smoke・add-resource）・`rename.mjs`・scaffold の seed・基準画像 | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`・テンプレート・`e2e`・`scripts` | **破壊的** | fable | §4.3 の C2b の試験。新しい DB がユーザーなしで起動し、ユーザー管理からアカウントを作れる。e2e が通る。scaffold の 4 プリセットの dry-run と template-acceptance。両経路の対称。**実装条件**: (1) この PR で足す起動時の検査（必須の設定・ログイン必須での管理者 ≥1）を、同じ関数で復元前の検査にも掛ける（断ったら元の DB を保つ。未適用の migration がある候補・seed 済みの印が無い候補は作業用のコピーで検査。`banto-serve` の配線は待ち受けの可否も含め、同じ候補を Tauri は許しヘッドレスは交換の前に断る試験を足す。ADR-0034 §9）。(2) 照合・認可の DB 照合を止めている間に切り替えを終わらせる回帰試験で、旧い世代から発行も利用もできない（進行中の書き込みの扱いは #793・§4.5 とそろえる。ADR-0034 §6）。(3) CLI は起動と同じ関数で初回の seed と印を書いてから、同じトランザクションでロックダウンを書く。新しい DB（SQLite・PostgreSQL、display の生成物）で通常の起動をせずに CLI → 起動 → ログインの回帰試験（ADR-0034 §5・§7） |
+| C1 | 基準の作り直し（2 方言）: **#814 settings のキー名の整理（C1 の前にどのキーを指すか洗い、C1 に含める）**。`0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**組み込みの行の最低限の保護**（verifier を `kind = 'account'` に絞る・パスワード・更新・削除・CSV の取り込みが `kind = 'builtin'` を断る）と、**復元の検査**（`_sqlx_migrations` の版と checksum を予約と適用の直前に読み取り専用で確かめる。migrator は配線が `BackupService` に渡す。ADR-0034 §9）。**初回の seed の条件の直し**（`seed_first_boot_settings` を「表が空」から「seed 済みの印が無い」へ。0014 が `settings` に行を入れるので同じ PR で。ADR-0034 §5）。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | §4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。**C1 の実 migration（0001〜0014）を当てた DB で display の生成物を起動し、公開閲覧（`server.viewer_public`・`server.enabled`・bind の seed）を確かめる**。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
+| C1b | #820 `apps/admin-template/src-tauri/src/lib.rs` のテストを別ファイルに分ける（準備。C2・C2b が認証まわりを大きく触るので、先に分けて衝突を減らす） | `src-tauri` | — | sonnet | 分ける前後でテストの数と結果が同じ。挙動の変更なし（Tauri 側はレビューで担保） |
+| C2 | **#807 auth フローの `AuditEntry` を `*_as` へ**。#778 組み込みの行の保護（禁止・verifier・SQL の `kind`）・予約名（一覧を渡す口）・grant を後から足したときの起動時の検査・帰属の印（`audit_as_builtin_admin`）と認可時のスナップショット・監査の `actor_id` / `actor_kind`（列を足す。wire は `actorKind`） | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート | **破壊的** | fable | §4.3 の試験（C2b の分を除く）。両経路の対称。**この PR で足す起動時の検査（組み込みの行・予約名の当たり）を、同じ関数で復元前の検査にも掛ける**（断ったら元の DB を保つ。ADR-0034 §9） |
+| C2b | **#819 ロール型の統一（フロントの変更と一緒に）**。初回セットアップの撤去（決定 18）: `auth.disabled` の既定を on、ロックダウンの条件（管理者のアカウントが 1 つ以上）、ログインなしの間の REST（読み取り専用。ログインの許可・トークンの発行・認可をモードの世代で切り替えと直列化。ADR-0034 §6）、設定の明示と異常時の停止（キーの欠落・破損。seed の条件の直しは C1 で済み）、`banto-serve` の listen の条件（ログインなしで閲覧公開も off なら listen せず止まる）、`setup_first_user`・`is_initialized`・`/api/auth/setup`・`auth_setup`・bootstrap の窓・`AuthProvider.setup`・ログインの画面の分岐と文言を消す。ヘッドレスの最初のアカウント（N3。CLI は予約された復元があれば明示のエラーで止まる）。e2e（`createFirstAdmin` の置き換え・smoke・add-resource）・`rename.mjs`・scaffold の seed・基準画像 | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`・テンプレート・`e2e`・`scripts` | **破壊的** | fable | §4.3 の C2b の試験。新しい DB がユーザーなしで起動し、ユーザー管理からアカウントを作れる。e2e が通る。scaffold の 4 プリセットの dry-run と template-acceptance。両経路の対称。**実装条件**: (1) この PR で足す起動時の検査（必須の設定・ログイン必須での管理者 ≥1）を、同じ関数で復元前の検査にも掛ける（断ったら元の DB を保つ。未適用の migration がある候補・seed 済みの印が無い候補は作業用のコピーで検査。`banto-serve` の配線は待ち受けの可否も含め、同じ候補を Tauri は許しヘッドレスは交換の前に断る試験を足す。ADR-0034 §9）。(2) 照合・認可の DB 照合を止めている間に切り替えを終わらせる回帰試験で、旧い世代から発行も利用もできない（進行中の書き込みの扱いは #793・§4.5 とそろえる。ADR-0034 §6）。(3) CLI は起動と同じ関数で初回の seed と印を書いてから、同じトランザクションでロックダウンを書く。新しい DB（SQLite・PostgreSQL、display の生成物）で通常の起動をせずに CLI → 起動 → ログインの回帰試験（ADR-0034 §5・§7） |
 | C3 | #790 `accountId` を wire に載せる・`sessionOwnerKey` | `banto-server`・`src-tauri`・`admin-core`・テンプレート | **破壊的** | fable | §4.2 の試験（復元の回帰試験を含む）。持ち主つきの記憶の利用箇所を全部確認 |
 | C4 | #786 サーバー（条件付きの PUT・DELETE・乱数の revision・外部キー・Tauri）。参照先を `ui_settings` へ切り替える（移し替えなし）。admin-core の http・tauri アダプタの最小の追従（公開の provider の形は据え置き） | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`（アダプタだけ） | **破壊的** | fable | §4.4 の競合の試験（両方言、片方だけ成功）。削除と PUT の競合で行が残らない。旧い形の provider のまま画面が動く |
 | C5 | #786 provider の置き換え（`remove` を含む）・`updateUiSetting`・同梱の実装・呼び手の追従 | `admin-core`・テンプレート | **破壊的** | fable | #707 の直列化の試験が新しい形で通る |
 | C6 | `createSavedSetting` の再送・`merge`・`onSettled`・README | `admin-core` | 足すだけ | sonnet | 再送・停止・競合の単体テスト |
-| T1 | #794 Toast と浮かぶ面の tint | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。基準画像の再生成 |
+| T1 | #794 Toast と浮かぶ面の tint。**#808 primary の文字を `--banto-primary-text` へ、`--banto-surface-muted` の定義（同じ PR か直後）** | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。基準画像の再生成 |
 | T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査 |
 | K1 | #792 `isOnScreen`（`docked`・`floating`・`autoHidden`・`flyoutPanel` から） | `dock-svelte` | 足すだけ | sonnet | 偽の 5 つと真の 3 つの単体テスト。README |
 | K2 | #796 `cancelGesture` と自動の取り消し | `dock-svelte` | 挙動 | sonnet | 操作中の `replaceLayout` の単体テスト |
@@ -777,11 +779,11 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | F2 | #714 テンプレートの配線（items の新規・編集、作成後のアップロード、失敗の再試行）・README・片付け | テンプレート・scaffold | 足すだけ | sonnet | e2e。添付を外すプリセットの dry-run。#714 を閉じる |
 | W0 | #716 の判断（§4.13 の 1〜4）と template-scope §4.2 の 1 文 | `docs` | — | fable | **オーナーの判断** |
 | W1〜W3 | #716（判断の後に §4.13 を設計へ書き直してから。W2 は K4・C5 の後） | テンプレート（＋判断による） | 見た目・保存 | fable | 判断の後に決める。基準画像の再生成、scaffold の dry-run |
-| D1 | 下流の使い勝手の精査（回り道・写し・自前の包みを読み、置き換えられるか・足りない口を洗う） | 読み取りのみ | — | fable | 所見の一覧（Issue か文書） |
-| D2 | D1 の結果のリファクタ（PR に分ける） | D1 による | D1 による | D1 による | D1 の所見が閉じる |
+| D1 | 下流の使い勝手の精査（回り道・写し・自前の包みを読み、置き換えられるか・足りない口を洗う）。**#821 `BantoTree` の不足（行末のアクション・ドロップの可否の口・外からの絞り込み）が不足かどうかを確かめる** | 読み取りのみ | — | fable | 所見の一覧（Issue か文書） |
+| D2 | D1 の結果のリファクタ（PR に分ける）。**v8 で入れる（確定）: #811 日付・時刻の解析と形式の複製の解消（#813・#815 を統合。D13 の前提）・#816 ピッカーの `ownText`・`mirroredValue` の統合・#818 テスト差し替え用の抽象の削除・#822 BantoGrid の編集の状態遷移の分離（#713 と同じ時期）。各々 D1 の所見の後に着手する（必ずやる）** | D1 による | D1 による | D1 による | D1 の所見が閉じる |
 | D3 | upgrading・CHANGELOG の「消費側への注意」・実機確認（#757 に #793 の切断と #794 のダークを足す）・版の判定 | `docs` | — | sonnet | リリースの準備の PR |
 
-並べ方: C0 の承認が最初。その後は 4 本の列を並べる — サーバー（S1 → S2 → C1 → C2 → C2b → C3 → C4）、
+並べ方: C0 の承認が最初。その後は 4 本の列を並べる — サーバー（S1 → S2 → C1 → C1b → C2 → C2b → C3 → C4）、
 画面（C5 → C6、C4 の後）、theme（T1・T2）、dock（§6）。S1 と C1 は並行できる。
 F1・F2 はいつでも。W0 は C0 と一緒に諮り、W1〜W3 は dock の列の後ろ（K4 の後）に付ける。
 C1 は「スキーマ・採番・数え方・fixture の改名」で大きいが、分けると途中の main が壊れる（組み込みの行が入った時点で、
@@ -949,23 +951,23 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
 20. **解決（互換不要）**: 旧い `ui.*` の行を全部消す手順は要らない（移し替えが無い）。旧版へ戻せないことは、
     「この版は旧版の DB を読めない」として §8 に書く。
 
-## 11. 合図待ちの項目（#756）から v8 に取り込む候補（2026-11-22）
+## 11. 合図待ちの項目（#756）から v8 に取り込む項目（2026-11-22 確定）
 
-**いずれもオーナー判断待ち**（v8 の範囲が広がるため）。統合: #813・#815 → #811、#809 → #808。
-§7 の表と §5 の依存関係には、確定するまで書き足さない（ここから参照するだけ）。
+**2026-11-22 オーナーが案どおりで確定**（v8 の範囲が広がる）。統合: #813・#815 → #811、#809 → #808。
+確定した項目は §7 の表（C1・C1b・C2・C2b・T1・D1・D2）と §5 の依存関係に載せた。
 
 | Issue | 何をするか | 入れる先 | 理由 |
 | --- | --- | --- | --- |
 | #814 | settings のキー名の整理 | C1 の前に洗い、C1 に含める | C1 で DB の基準を作り直し、ui-settings を `users.id` で持つ（#790・#786）。v8 は互換不要なのでキー名を変える費用が最小 |
-| #820 | `lib.rs` のテストを別ファイルに分ける | C2 の前の準備 PR | C2・C2b が `apps/admin-template/src-tauri/src/lib.rs` の認証まわりを大きく触る。先に分けて衝突を減らす |
+| #820 | `lib.rs` のテストを別ファイルに分ける | C1b（C2 の前の準備 PR） | C2・C2b が `apps/admin-template/src-tauri/src/lib.rs` の認証まわりを大きく触る。先に分けて衝突を減らす |
 | #807 | auth フローの `AuditEntry` を `*_as` へ | C2 | C2 で監査の主体のスナップショットと `actor_kind` を入れる（#778・ADR-0034）。合図だった banto-industrial の追従は、v8 が破壊的で下流も作り直すので待つ理由が無い |
 | #819 | ロール型の統一 | C2b（フロントの変更と一緒に） | 組み込み admin・`AuthDisabledRole`・`UserSummary.kind`（#778）を触るので、型を 1 つにするなら同時が安い |
 | #808 | primary の文字を `--banto-primary-text` へ、`--banto-surface-muted` の定義 | T1（#794）と同じ PR か直後 | 同じ ToastHost を触る（#794・#795）。#809 を統合済み |
 | #821 | `BantoTree` の不足（行末のアクション・ドロップの可否の口・外からの絞り込み） | D1 | temp-scada の回り道を見るときに、不足かどうかを確かめる |
-| #811 | 日付・時刻の解析と形式の複製の解消（#813・#815 を統合） | D2 の候補 | 期間の強調表示（D13）の前提。3 パッケージの複製の解消で、D1 の所見の後に判断する |
-| #816 | ピッカーの `ownText`・`mirroredValue` の統合 | D2 の候補 | #811 と同じ日付入力まわり |
-| #818 | テスト差し替え用の抽象の削除 | D2 の候補 | 対象は着手時に洗う |
-| #822 | BantoGrid の編集の状態遷移の分離 | D2 の候補 | 編集・保存の Issue（#713 の行選択・一括操作）と一緒に判断する |
+| #811 | 日付・時刻の解析と形式の複製の解消（#813・#815 を統合） | D2 | 期間の強調表示（D13）の前提。3 パッケージの複製を解消する。D1 の所見の後に着手する（必ずやる） |
+| #816 | ピッカーの `ownText`・`mirroredValue` の統合 | D2 | #811 と同じ日付入力まわり |
+| #818 | テスト差し替え用の抽象の削除 | D2 | 対象は着手時に洗う |
+| #822 | BantoGrid の編集の状態遷移の分離 | D2 | 編集・保存の Issue（#713 の行選択・一括操作）と同じ時期に着手する（必ずやる） |
 | #812 | 再マウントを避ける設計（portal 等） | 取り込まない | 関連 #782（影の木）・#791。合図は据え置き（実際に要る画面が出たとき） |
 | #805 | 依存監査の除外を外す | 取り込まない | v8 と無関係。sqlx のリリース待ち |
 | #806 | paraglide 3 の `outputStructure` の明示 | 取り込まない | v8 と無関係。出力の不具合待ち |
