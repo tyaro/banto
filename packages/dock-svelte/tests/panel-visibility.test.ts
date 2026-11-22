@@ -450,11 +450,11 @@ describe('panels', () => {
 	it('lists every pane in first-seen order with visible / placement', () => {
 		const dock = createDockState(tabsLayout(), counterMakeId());
 		expect(dock.panels).toEqual([
-			{ id: 'x', title: 'X', icon: undefined, placement: 'docked', visible: true },
-			{ id: 'y', title: 'Y', icon: undefined, placement: 'docked', visible: true },
-			{ id: 'z', title: 'Z', icon: undefined, placement: 'docked', visible: true },
-			{ id: 'p', title: 'P', icon: undefined, placement: 'docked', visible: true },
-			{ id: 'f', title: 'F', icon: undefined, placement: 'floating', visible: true }
+			{ id: 'x', title: 'X', icon: undefined, placement: 'docked', visible: true, onScreen: true },
+			{ id: 'y', title: 'Y', icon: undefined, placement: 'docked', visible: true, onScreen: false },
+			{ id: 'z', title: 'Z', icon: undefined, placement: 'docked', visible: true, onScreen: false },
+			{ id: 'p', title: 'P', icon: undefined, placement: 'docked', visible: true, onScreen: true },
+			{ id: 'f', title: 'F', icon: undefined, placement: 'floating', visible: true, onScreen: true }
 		]);
 
 		dock.dismiss('y');

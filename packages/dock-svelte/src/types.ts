@@ -121,8 +121,14 @@ export interface DockPanelInfo {
 	 * or closed, with no remembered docked place.
 	 */
 	placement: 'docked' | 'floating';
-	/** In the docked tree (even as a background tab), auto-hidden to an edge band, or an open floating window = the checkbox is checked. */
+	/** In the docked tree (even as a background tab), auto-hidden to an edge band, or an open floating window = the checkbox is checked (not "closed"; see `onScreen`). */
 	visible: boolean;
+	/**
+	 * Really on screen (#792): the front tab of an uncollapsed docked region, an open floating
+	 * window not collapsed to its title bar, or the auto-hidden pane slid out now. False for the
+	 * rest of `visible` (collapsed region, background tab, auto-hidden and not slid out).
+	 */
+	onScreen: boolean;
 	/** Auto-hidden to a band on the host's edge (#694 PR-3; `placement` is `docked`). Written only when `true`. */
 	autoHidden?: true;
 }
