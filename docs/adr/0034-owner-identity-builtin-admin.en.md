@@ -730,7 +730,7 @@ result. The owner confirmed it the same day. Where the body differs, this addend
 ## Addendum (2026-11-22, from the mode-switch serialization = C2b-b; confirmed by the owner)
 
 Only §6's "allowing a login, issuing a token and authorizing with a token are serialized with the mode switch" was cut out
-of C2b and landed first (PR #**PR**). Where it differs from the body, and the details the body did not have, are below. The
+of C2b and landed first (PR #862). Where it differs from the body, and the details the body did not have, are below. The
 points that were to be confirmed are listed separately in the PR description; the owner confirmed all of them as recommended.
 
 1. **The generation check landed in this PR, not in C2** (this replaces "the generation check is added here in C2" in §6's
