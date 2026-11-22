@@ -1012,7 +1012,7 @@ mod tests {
     #[tokio::test]
     async fn an_unexplained_checksum_mismatch_does_not_suggest_recreating_the_database() {
         let dir = tempfile::tempdir().unwrap();
-        for (version, checksum) in [(9_i64, "x'00'"), (V7_USERS_MIGRATION_VERSION, "x'00'")] {
+        for (version, checksum) in [(2_i64, "x'00'"), (V7_USERS_MIGRATION_VERSION, "x'00'")] {
             let path = dir.path().join(format!("mismatch-{version}.sqlite3"));
             let db = init_db(&path).await.unwrap();
             let pool = db.as_sqlite().unwrap();
