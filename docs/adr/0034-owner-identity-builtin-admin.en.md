@@ -504,5 +504,5 @@ mark set by the wiring layer.
   by `kind`, **the minimum protection of the built-in row**, the restore check), C2 (reserved names, the start-up
   check, the attribution mark and the authorization-time snapshot, `actor_id` / `actor_kind`), C2b (removing
   first-run setup, explicit settings and stopping on broken ones, REST while login is off, the lockdown condition,
-  the CLI), C3 (`accountId` on the wire), C4 and C5 (ui-settings). The table in plan §7 places the protection in
-  C2; the split in this ADR takes precedence. Implementation can start with C1 (`Accepted` on 2026-11-22).
+  the CLI), C3 (`accountId` on the wire), C4 and C5 (ui-settings). The table in plan §7 was aligned with
+  this split (2026-11-22); if they differ, this ADR takes precedence. Implementation can start with C1 (`Accepted` on 2026-11-22).
