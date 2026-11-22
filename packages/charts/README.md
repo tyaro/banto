@@ -122,6 +122,25 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
   `GaugeThresholds` に `warningLow` / `dangerLow`（`value <=` で warning / danger 色）を追加。
   上側の `warning` / `danger` の挙動は変わらない。
 
+### 系列の色（16 枠。次の版から）
+
+系列は並び順に `--banto-chart-1`〜`16` を使う（`seriesColorVar(index)`、`MAX_CHART_SERIES = 16`）。
+折り返さないので、17 本目以降は 16 番の色に固定する。`PieChart` の切れ目と、`colorIndex` を渡していない
+`GanttChart` の行も、同じ並び順で枠を使う。
+
+- **9 本目以降は色だけで見分けさせない。** 1〜8 番は、色覚シミュレーション（1 型・2 型・3 型）でも
+  互いに見分けられるよう検査している。9〜16 番が保証するのは、正常色覚で 1〜16 のどの 2 つも
+  OKLab 距離 0.06 以上・面に 3:1 以上、の 2 つだけ（色覚シミュレーションでの距離と状態色との距離は
+  保証しない）。9 本以上を 1 つのグラフに描くときは、凡例・線種・マーカーを併用する。
+- **9〜16 を持たないテーマでは 8 番の色になる。** `seriesColorVar` は 9〜16 番を
+  `var(--banto-chart-N, var(--banto-chart-8))` で返す。旧い `@banto/theme` や、`--banto-chart-1〜8` だけを
+  定義した自前のテーマでは、9 本目以降は 8 番の色（`MAX_CHART_SERIES` が 8 だった頃と同じ見た目）に
+  なる。SVG の書き出し（`serializeChartSvg`）でも同じ色になる。戻り値は CSS の色の値として
+  そのまま使う（文字列を解析しない）。
+- `MAX_CHART_SERIES` を系列の数の上限として使っているコードは、値が 8 から 16 に変わる。
+
+値と実測は [visual-refresh-plan.md](../../docs/design/visual-refresh-plan.md) の付録 A.3a。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ
