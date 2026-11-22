@@ -16,12 +16,40 @@
 import { describe, expect, it } from 'vitest';
 import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
 import { collectPanelIds, findNode, removePanel } from '../src/core/tree';
-import { createDockState, type DockState } from '../src/state.svelte';
+import { deflateShadow } from '../src/core/shadow';
+import { createDockState, shadowStateOf, type DockState } from '../src/state.svelte';
 import type { DockNode, DockSlot, DropRegion } from '../src/types';
 import { keyOf, shapeOf, simStep, type Sim, type SlotImpl } from './fixtures/visibility-sim';
 
 const nowSlot: SlotImpl = { capture: captureDockSlot, restore: restoreDockSlot };
 const EPS = 1e-9;
+
+/** A place in the shadow tree: the containers around it, nearest first, and the share held in each split. */
+type Place =
+	| { kind: 'root' }
+	| { kind: 'tab'; groupId: string; outer?: Place }
+	| { kind: 'split'; splitId: string; share?: number; outer?: Place };
+
+const placeFrom = (slot: DockSlot): Place => {
+	if (slot.kind === 'root') return { kind: 'root' };
+	const outer = slot.outer ? { outer: placeFrom(slot.outer) } : {};
+	if (slot.kind === 'tab') return { kind: 'tab', groupId: slot.groupId, ...outer };
+	const share = slot.share === undefined ? {} : { share: slot.share };
+	return { kind: 'split', splitId: slot.splitId, ...share, ...outer };
+};
+
+/**
+ * The place the pane `id`, floated out of the tree, goes back to (#782 PR7): read off the shadow
+ * tree, which holds it - `homeSlot(id)` names that place and is not rewritten when the shares
+ * around it change. What the rules of #733 - #743 are about: the split / tab group it is in, and
+ * the share of the whole split it holds (the panes out of it counted). `undefined`: the pane
+ * remembers no place.
+ */
+const placeOf = (dock: DockState, id: string): Place | undefined => {
+	if (dock.homeSlot(id) === undefined) return undefined;
+	const slot = deflateShadow(shadowStateOf(dock).shadow).away.find((a) => a.panel.id === id)?.slot;
+	return slot && placeFrom(slot);
+};
 
 const panel = (id: string): DockNode => ({ type: 'panel', id, title: id.toUpperCase() });
 const split = (
@@ -330,7 +358,7 @@ describe('split sizes come back in any show order (#733)', () => {
 		// The hidden pane's slot itself: the share of `row[b,c]` now, the rest of it as it was.
 		const before = runSteps(L['row[a,b,c] uneven'], ['~a', '-b']);
 		const after = runSteps(L['row[a,b,c] uneven'], ['~a', '-b', '>a:c']);
-		const slotOf = (d: DockState) => d.homeSlot('b');
+		const slotOf = (d: DockState) => placeOf(d, 'b');
 		expect(slotOf(after)).toEqual({ ...slotOf(before), share: expect.closeTo(0.375, 9) });
 		expect(after.homeSlot('a')).toBeUndefined();
 	});
@@ -345,7 +373,7 @@ describe('split sizes come back in any show order (#733)', () => {
 		// The slot is not touched.
 		const before = runSteps(make, ['~a', '-b']);
 		const after = runSteps(make, ['~a', '-b', '^a']);
-		const slotOf = (d: DockState) => d.homeSlot('b');
+		const slotOf = (d: DockState) => placeOf(d, 'b');
 		expect(slotOf(after)).toEqual(slotOf(before));
 	});
 });
@@ -356,7 +384,7 @@ describe('a pane out of the tree that leaves the layout, or goes back into its s
 		if (root?.type !== 'split') throw new Error('no split');
 		return Object.fromEntries(root.children.map((c, i) => [c.id, root.sizes[i]]));
 	};
-	const slotOf = (d: DockState, id: string) => d.homeSlot(id);
+	const slotOf = placeOf;
 
 	// The third item: an assignment made from today's layout that drops a pane out of the tree
 	// (`ThreePaneDock`'s `syncPanels` for a panel removed from `panels`, `replaceLayout` without
@@ -371,7 +399,7 @@ describe('a pane out of the tree that leaves the layout, or goes back into its s
 		// A floated pane still there keeps its place, its share taken without the one removed.
 		const dock = runSteps(L['row[a,b,c,d]'], ['~a', '-b', '~c', '!a']);
 		expect(dock.homeSlot('a')).toBeUndefined();
-		const home = dock.homeSlot('c');
+		const home = slotOf(dock, 'c');
 		expect(home?.kind === 'split' && home.share).toBeCloseTo(0.3 / 0.9, 9);
 		const hidden = slotOf(dock, 'b');
 		expect(hidden?.kind === 'split' && hidden.share).toBeCloseTo(0.2 / 0.9, 9);
@@ -431,6 +459,11 @@ describe('a pane out of the tree that leaves the layout, or goes back into its s
 	});
 });
 
+// #782 PR7: what an assignment from outside (`dock.layout = ...`) does to the places of the floated
+// panes is no longer told from the difference of the trees (owner's decision of 2026-11-23): the
+// cases of #743 made by an assignment are gone from here - `shadow-rebuild.test.ts` has the rule
+// (the container that is still there, at the index it had; else the default place). The cases
+// below are the moves made on the shadow tree (`dockExisting*`).
 // #743: a DOCKED pane that leaves a split panes are out of (hidden: a closed window's `dockSlot`;
 // floated: a `homeSlot`). A `share` is of the whole split, the panes out of it counted (#733): the
 // one that left is no longer counted, so the panes still out come back at their share of what is
@@ -438,8 +471,8 @@ describe('a pane out of the tree that leaves the layout, or goes back into its s
 describe('a docked pane that leaves a split panes are out of (#743)', () => {
 	const uneven = L['row[a,b,c] uneven'];
 	const four = L['row[a,b,c,d]'];
-	const slotOf = (d: DockState, id: string) => d.homeSlot(id);
-	const shareOf = (slot: DockSlot | undefined) => (slot?.kind === 'split' ? slot.share : undefined);
+	const slotOf = placeOf;
+	const shareOf = (slot: Place | undefined) => (slot?.kind === 'split' ? slot.share : undefined);
 	/** The sizes of the split that holds the pane `id`, by child (a tab group / split: its id). */
 	const around = (dock: DockState, id: string): Record<string, number> => {
 		const find = (n: DockNode | null): Extract<DockNode, { type: 'split' }> | null => {
@@ -455,50 +488,9 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 		if (!parent) throw new Error(`${id} is not a child of a split`);
 		return Object.fromEntries(parent.children.map((c, i) => [c.id, parent.sizes[i]]));
 	};
-	/** An assignment made from today's layout without the docked panes `ids` (`syncPanels`). */
-	const take = (dock: DockState, ...ids: string[]) => {
-		dock.layout = {
-			...dock.layout,
-			docked: ids.reduce((t, id) => removePanel(t, id), dock.layout.docked)
-		};
-	};
-
 	describe('the ways out', () => {
-		it('row[a .2, b .3, c .5]: b hidden, a removed by an assignment, show b -> .375 / .625 (was .3 / .7)', () => {
-			const dock = runSteps(uneven, ['-b']);
-			expect(shareOf(slotOf(dock, 'b'))).toBeCloseTo(0.3, 9);
-			take(dock, 'a');
-			expect(shareOf(slotOf(dock, 'b'))).toBeCloseTo(0.375, 9);
-			dock.show('b');
-			expect(shapeOf(dock.layout.docked)).toEqual({ row: ['b', 'c'] });
-			expect(sameSizes(sizesOf(dock.layout.docked), [[0.375, 0.625]])).toBe(true);
-		});
-
-		it('the same for a floated pane (its homeSlot)', () => {
-			const floated = runSteps(uneven, ['~b']);
-			take(floated, 'a');
-			expect(shareOf(floated.homeSlot('b'))).toBeCloseTo(0.375, 9);
-			expect(floated.dockAtSlot('b', floated.homeSlot('b')!)).toBe(true);
-			expect(sameSizes(sizesOf(floated.layout.docked), [[0.375, 0.625]])).toBe(true);
-		});
-
-		it('replaced: a removed and another pane added (closed) by the same assignment', () => {
-			const dock = runSteps(uneven, ['-b']);
-			dock.layout = {
-				...dock.layout,
-				docked: removePanel(dock.layout.docked, 'a'),
-				floating: [
-					...dock.layout.floating,
-					{ id: 'z', title: 'Z', x: 0, y: 0, width: 200, height: 100, open: false }
-				]
-			};
-			dock.show('b');
-			expect(sameSizes(sizesOf(dock.layout.docked), [[0.375, 0.625]])).toBe(true);
-		});
-
 		// row[a .1, b .2, c .3, d .4], b hidden: a's part of the whole row is .1.
 		for (const [name, leave] of [
-			['removed by an assignment', (d: DockState) => take(d, 'a')],
 			[
 				'docked below d (dockExisting, another split)',
 				(d: DockState) => d.dockExisting('a', 'd', 'bottom')
@@ -532,7 +524,7 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			const dock = runSteps(four, ['-b', '~c']);
 			dock.dockExisting('a', 'd', 'bottom');
 			expect(shareOf(slotOf(dock, 'b'))).toBeCloseTo(0.2 / 0.9, 9);
-			expect(shareOf(dock.homeSlot('c'))).toBeCloseTo(0.3 / 0.9, 9);
+			expect(shareOf(slotOf(dock, 'c'))).toBeCloseTo(0.3 / 0.9, 9);
 			dock.show('b');
 			dock.dockAtSlot('c', dock.homeSlot('c')!);
 			const now = around(dock, 'b');
@@ -550,101 +542,9 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 				expect(around(dock, 'b').b, region).toBeCloseTo(0.375, 9);
 			}
 		});
-
-		it('a pane out of the tree and a docked one taken away by the same assignment', () => {
-			// b .2 and c .3 hidden; c's window and the docked a (.1) go: b : d = .2 : .4.
-			const dock = runSteps(four, ['-b', '-c']);
-			dock.layout = {
-				...dock.layout,
-				docked: removePanel(dock.layout.docked, 'a'),
-				floating: dock.layout.floating.filter((w) => w.id !== 'c')
-			};
-			expect(shareOf(slotOf(dock, 'b'))).toBeCloseTo(1 / 3, 9);
-			dock.show('b');
-			expect(sameSizes(sizesOf(dock.layout.docked), [[1 / 3, 2 / 3]])).toBe(true);
-		});
-
-		it('a pane back in the split and a docked one taken away by the same assignment (#743 review)', () => {
-			// b .2 and c .3 hidden; c goes back and the docked a (.1) goes: as one after the other.
-			const steps = runSteps(four, ['-b', '-c', '+c']);
-			const tree = removePanel(steps.layout.docked, 'a');
-			take(steps, 'a');
-			expect(shareOf(slotOf(steps, 'b')), 'one by one').toBeCloseTo(0.2 / 0.9, 9);
-			const dock = runSteps(four, ['-b', '-c']);
-			dock.layout = {
-				...dock.layout,
-				docked: tree,
-				floating: dock.layout.floating.filter((w) => w.id !== 'c')
-			};
-			expect(shareOf(slotOf(dock, 'b')), 'at once').toBeCloseTo(0.2 / 0.9, 9);
-			steps.show('b');
-			dock.show('b');
-			expect(around(dock, 'b').b).toBeCloseTo(2 / 9, 9);
-			expect(sameSizes(sizesOf(dock.layout.docked), sizesOf(steps.layout.docked))).toBe(true);
-		});
 	});
 
 	describe('nested splits', () => {
-		const nested = (): DockNode =>
-			split(
-				's',
-				'column',
-				[0.5, 0.2, 0.3],
-				[split('r', 'row', [0.3, 0.7], ['a', 'b'].map(panel)), panel('d'), panel('e')]
-			);
-
-		it('the outer split (a slot outer): column[row[a,b] .5, d .2, e .3], a and b hidden, d removed', () => {
-			const dock = runSteps(nested, ['-a', '-b']);
-			take(dock, 'd');
-			dock.show('b');
-			expect(shapeOf(dock.layout.docked)).toEqual({ column: ['b', 'e'] });
-			expect(sameSizes(sizesOf(dock.layout.docked), [[0.625, 0.375]])).toBe(true);
-			dock.show('a');
-			expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'b'] }, 'e'] });
-			expect(
-				sameSizes(sizesOf(dock.layout.docked), [
-					[0.625, 0.375],
-					[0.3, 0.7]
-				])
-			).toBe(true);
-		});
-
-		it('the same when a is shown first', () => {
-			const dock = runSteps(nested, ['-a', '-b']);
-			take(dock, 'd');
-			dock.show('a');
-			dock.show('b');
-			expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'b'] }, 'e'] });
-			expect(
-				sameSizes(sizesOf(dock.layout.docked), [
-					[0.625, 0.375],
-					[0.3, 0.7]
-				])
-			).toBe(true);
-		});
-
-		it('the last docked pane of a split that is gone: column[row[a .2, b .3, c .5], d], a and b hidden, c removed', () => {
-			const make = () =>
-				split(
-					's',
-					'column',
-					[0.6, 0.4],
-					[split('r', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)), panel('d')]
-				);
-			const dock = runSteps(make, ['-a', '-b']);
-			expect(shapeOf(dock.layout.docked)).toEqual({ column: ['c', 'd'] });
-			take(dock, 'c');
-			dock.show('a');
-			dock.show('b');
-			expect(shapeOf(dock.layout.docked)).toEqual({ column: [{ row: ['a', 'b'] }, 'd'] });
-			expect(
-				sameSizes(sizesOf(dock.layout.docked), [
-					[0.6, 0.4],
-					[0.4, 0.6]
-				])
-			).toBe(true);
-		});
-
 		// column[row[a .2, b .3, c .5] .5, d .2, e .3]: a and b hidden, the row is gone and c is all
 		// that is left of it. c moved away has left it as c removed has (cross-review P2 on #743).
 		const lone = () =>
@@ -654,8 +554,6 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 				[0.5, 0.2, 0.3],
 				[split('r', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)), panel('d'), panel('e')]
 			);
-		const outerShareOf = (slot: DockSlot | undefined) =>
-			slot && slot.kind !== 'root' ? shareOf(slot.outer) : undefined;
 		for (const [name, leave, shape] of [
 			[
 				'docked into the tabs of d (dockExisting)',
@@ -697,29 +595,6 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 				expect(column.e).toBeCloseTo(0.3, 9);
 			});
 		}
-
-		it('the same with a pane out of the split around it: the slots are as when c is removed (#743 review)', () => {
-			const removed = runSteps(lone, ['-a', '-b', '-e']);
-			take(removed, 'c');
-			for (const leave of [
-				(d: DockState) => d.dockExisting('c', 'd', 'center'),
-				(d: DockState) => d.dockExistingAtEdge('c', 'bottom')
-			]) {
-				const dock = runSteps(lone, ['-a', '-b', '-e']);
-				leave(dock);
-				for (const id of ['a', 'b', 'e']) {
-					const [got, want] = [slotOf(dock, id), slotOf(removed, id)];
-					expect(shareOf(got), `the share of ${id}`).toBeCloseTo(shareOf(want)!, 9);
-					if (id !== 'e')
-						expect(outerShareOf(got), `the outer share of ${id}`).toBeCloseTo(
-							outerShareOf(want)!,
-							9
-						);
-				}
-				expect(shareOf(slotOf(dock, 'a'))).toBeCloseTo(0.4, 9);
-				expect(shareOf(slotOf(dock, 'e'))).toBeCloseTo(0.3, 9);
-			}
-		});
 
 		// #777: e hidden from the column too. Its slot named c for the gone row (the one docked pane
 		// of it), so e shown first took c from the edge into the column made again around it.
@@ -896,28 +771,6 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			expect(row.a).toBeCloseTo(0.2 / 0.7, 9);
 			expect(row.c).toBeCloseTo(0.5 / 0.7, 9);
 		});
-
-		it('a hidden pane holds the place of the container its last pane left: nothing to take out', () => {
-			// row[column[a,b] .4, c .3, d .3]: a hidden, b removed - a stands for the column in the row.
-			const inSplit = () =>
-				split(
-					's',
-					'row',
-					[0.4, 0.3, 0.3],
-					[split('in', 'column', [0.3, 0.7], ['a', 'b'].map(panel)), panel('c'), panel('d')]
-				);
-			const dock = runSteps(inSplit, ['-a']);
-			take(dock, 'b');
-			dock.show('a');
-			expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'c', 'd'] });
-			expect(sameSizes(sizesOf(dock.layout.docked), [[0.4, 0.3, 0.3]])).toBe(true);
-			// The same for a tab group: row[tabs[a,b] .5, c .2, d .3].
-			const tabbed = runSteps(L['row[tabs[a,b],c,d]'], ['-a']);
-			take(tabbed, 'b');
-			tabbed.show('a');
-			expect(shapeOf(tabbed.layout.docked)).toEqual({ row: ['a', 'c', 'd'] });
-			expect(sameSizes(sizesOf(tabbed.layout.docked), [[0.5, 0.2, 0.3]])).toBe(true);
-		});
 	});
 
 	// Not a pane leaving its split: the slots of the panes out of it are left as they are.
@@ -985,13 +838,6 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			banded.show('b');
 			expect(around(banded, 'b').b).toBeCloseTo(0.2, 9);
 		});
-
-		it('a pane removed from a split nothing is out of', () => {
-			const dock = runSteps(L['column[row[a,b],c]'], ['-c']);
-			const before = slotOf(dock, 'c');
-			take(dock, 'a');
-			expect(slotOf(dock, 'c')).toEqual(before);
-		});
 	});
 
 	// Codex P2 on #776: a pane the same change hides or floats has not left, even when its slot
@@ -1027,40 +873,6 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			const before = slots(dock, 'b', 'c');
 			dock.undockPanel('a');
 			expect(slots(dock, 'b', 'c')).toEqual(before);
-		});
-
-		// Cross-review P2 on #776: a pending pane whose slot names ANOTHER split has left - only a
-		// slot that names no split at all (`root`) says nothing about where the pane went.
-		it('column[row[a .2, b .3, c .5], row[x, y, z]]: b hidden, a moved beside y and hidden - by one assignment as step by step: b at .375', () => {
-			const two = () =>
-				split(
-					'out',
-					'column',
-					[0.5, 0.5],
-					[
-						split('in', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)),
-						split('low', 'row', [0.2, 0.3, 0.5], ['x', 'y', 'z'].map(panel))
-					]
-				);
-			const steps = runSteps(two, ['-b']);
-			steps.dockExisting('a', 'y', 'left');
-			steps.dismiss('a');
-			expect(shareOf(slotOf(steps, 'b')), 'one by one').toBeCloseTo(0.375, 9);
-			const slotA = slotOf(steps, 'a');
-			expect(slotA?.kind === 'split' && slotA.splitId).toBe('low');
-			// The same tree and the same slot of a (it names `low`), b's slot as it was (.3).
-			const dock = runSteps(two, ['-b']);
-			expect(shareOf(slotOf(dock, 'b'))).toBeCloseTo(0.3, 9);
-			dock.layout = {
-				...dock.layout,
-				docked: steps.layout.docked,
-				floating: [...dock.layout.floating, steps.layout.floating.find((w) => w.id === 'a')!]
-			};
-			expect(shareOf(slotOf(dock, 'b')), 'at once').toBeCloseTo(0.375, 9);
-			expect(JSON.stringify(slotOf(dock, 'b'))).toBe(JSON.stringify(slotOf(steps, 'b')));
-			for (const d of [steps, dock]) d.show('b');
-			expect(around(dock, 'b').b).toBeCloseTo(0.375, 9);
-			expect(sameSizes(sizesOf(dock.layout.docked), sizesOf(steps.layout.docked))).toBe(true);
 		});
 	});
 });

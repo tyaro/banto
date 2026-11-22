@@ -20,8 +20,11 @@
 // #782 PR8. The 14 by floats that #782 PR6 passed are ordinary cases now.
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
-import { collectPanelIds, removePanel } from '../src/core/tree';
-import type { DockState } from '../src/state.svelte';
+import { autoHiddenPanelIds } from '../src/core/autohide';
+import { collectPanelIds, findNode, findParent, removePanel } from '../src/core/tree';
+import { validateDockLayout } from '../src/core/validate';
+import type { ShadowNode } from '../src/core/shadow';
+import { shadowStateOf, type DockState } from '../src/state.svelte';
 import type { DockNode } from '../src/types';
 import {
 	EDGES,
@@ -736,7 +739,9 @@ describe('hidden and floated panes together (#782 PR6)', () => {
 });
 
 describe('floated panes: shares are kept (#782 property 4, floats)', () => {
-	it('a docked pane that leaves the layout: the rest is the tree without it, floated panes included (#743)', () => {
+	// #782 PR7: where the floated panes land, and with what share, is the rule of an assignment
+	// from outside (below, and `shadow-rebuild.test.ts`) - not the tree without the pane any more.
+	it('a docked pane that leaves the layout: the floated panes all go back docked, the sizes are sound (#743)', () => {
 		fc.assert(
 			fc.property(treeRecipe, ops(1, 3), fc.nat({ max: 6 }), (recipe, out, pick) => {
 				const tree = buildTree(recipe);
@@ -745,7 +750,6 @@ describe('floated panes: shares are kept (#782 property 4, floats)', () => {
 				const docked = dockedIds(before);
 				fc.pre(docked.length >= 2);
 				const gone = docked[pick % docked.length];
-				const expected = removePanel(tree, gone);
 				for (const order of permutations(floatedIds(before))) {
 					const dock = runSteps(tree, steps);
 					// An assignment made from today's layout (`ThreePaneDock`'s `syncPanels`).
@@ -760,8 +764,6 @@ describe('floated panes: shares are kept (#782 property 4, floats)', () => {
 					);
 					const bad = badSizes(dock.layout.docked);
 					if (bad.length > 0) failCase(tree, all, `bad sizes ${bad.join(', ')}`);
-					const diff = treeDiff(dock.layout.docked, expected);
-					if (diff) failCase(tree, all, diff);
 				}
 			}),
 			params(300)
@@ -841,5 +843,138 @@ describe('the generators (#782 PR1)', () => {
 			params(300)
 		);
 		expect(seen.size).toBeGreaterThan(100);
+	});
+});
+
+// #782 PR7: the docked tree changed from outside (`dock.layout = ...`, made with `core/tree.ts` on
+// the docked tree: what `ThreePaneDock`'s `syncPanels` and an app's own assignment do) while panes
+// are floated. No guess is made of what the assignment moved (owner's decision of 2026-11-23): a
+// floated pane goes back into the split / tab group it was in when that is still in the tree (by
+// its id), else to its default place. No pane is lost, and the sizes stay sound.
+describe('floated panes: assignments from outside in between (#782 PR7)', () => {
+	const OUTSIDE: OpKind[] = ['drop', 'assign', 'assignTab'];
+
+	it('docked panes removed and moved by assignments: every floated pane goes back docked, the sizes are sound', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(1, 4), ops(1, 3), ops(0, 2), (recipe, out, outside, more) => {
+				const tree = buildTree(recipe);
+				const dock = newDock(tree);
+				const steps = [
+					...runOps(dock, out, ['float']),
+					...runOps(dock, outside, OUTSIDE),
+					...runOps(dock, more, ['float', 'move', 'edge', ...OUTSIDE])
+				];
+				const floated = floatedIds(dock);
+				fc.pre(floated.length >= 1);
+				for (const id of floated) {
+					runStep(dock, `^${id}`);
+					steps.push(`^${id}`);
+				}
+				const left = floated.filter((id) => !dockedIds(dock).includes(id));
+				if (left.length > 0) failCase(tree, steps, `not back docked: ${left.join(', ')}`);
+				if (dock.layout.floating.length > 0) failCase(tree, steps, 'a window is left');
+				const bad = badSizes(dock.layout.docked);
+				if (bad.length > 0) failCase(tree, steps, `bad sizes ${bad.join(', ')}`);
+			}),
+			params(300)
+		);
+	});
+
+	it('with a region in an edge band meanwhile: no pane is lost, the sizes are sound', () => {
+		fc.assert(
+			fc.property(
+				treeRecipe,
+				ops(1, 3),
+				ops(0, 2),
+				fc.nat({ max: 6 }),
+				ops(1, 3),
+				(recipe, out, outside, pick, inBand) => {
+					const tree = buildTree(recipe);
+					const all = collectPanelIds(tree);
+					const dock = newDock(tree);
+					const steps = [...runOps(dock, out, ['float']), ...runOps(dock, outside, OUTSIDE)];
+					const docked = dockedIds(dock);
+					fc.pre(docked.length >= 2);
+					const region = docked[pick % docked.length];
+					fc.pre(dock.autoHideRegion(region));
+					steps.push(`(${region} to its band)`);
+					// Assignments while it is there (they do not touch the band: the layout is spread).
+					steps.push(...runOps(dock, inBand, OUTSIDE));
+					const banded = autoHiddenPanelIds(dock.layout);
+					for (const id of banded) {
+						if (dock.isAutoHidden(id) && dock.restoreAutoHidden(id)) steps.push(`(${id} back)`);
+					}
+					for (const id of floatedIds(dock)) {
+						runStep(dock, `^${id}`);
+						steps.push(`^${id}`);
+					}
+					// Every pane is in the layout once at most - docked, or a floating window whose
+					// place is gone - and the ones the assignments removed are nowhere.
+					const here = [...dockedIds(dock), ...dock.layout.floating.map((w) => w.id)];
+					const twice = here.filter((id, i) => here.indexOf(id) !== i);
+					if (twice.length > 0) failCase(tree, steps, `twice: ${twice.join(', ')}`);
+					const removed = new Set(steps.filter((x) => x[0] === '!').map((x) => x.slice(1)));
+					const lost = all.filter((id) => !removed.has(id) && !here.includes(id));
+					if (lost.length > 0) failCase(tree, steps, `lost: ${lost.join(', ')}`);
+					const bad = badSizes(dock.layout.docked);
+					if (bad.length > 0) failCase(tree, steps, `bad sizes ${bad.join(', ')}`);
+					if (!validateDockLayout(JSON.parse(dock.serialize())).ok)
+						failCase(tree, steps, 'the layout does not load again');
+				}
+			),
+			params(300)
+		);
+	});
+
+	it('a floated pane goes back into the split / tab group it was in when that is still in the tree', () => {
+		const seen = { there: 0, gone: 0 };
+		fc.assert(
+			fc.property(treeRecipe, ops(1, 4), ops(1, 3), (recipe, out, outside) => {
+				const tree = buildTree(recipe);
+				const dock = newDock(tree);
+				const steps = [...runOps(dock, out, ['float'])];
+				// The container each floated pane is in, in S, before anything is assigned.
+				const homes = new Map<string, string>();
+				const note = (node: ShadowNode | null): void => {
+					if (!node || node.type === 'panel') return;
+					for (const child of node.children) {
+						if (child.type === 'panel' && child.away) homes.set(child.id, node.id);
+						note(child);
+					}
+				};
+				note(shadowStateOf(dock).shadow);
+				steps.push(...runOps(dock, outside, OUTSIDE));
+				const floated = floatedIds(dock);
+				fc.pre(floated.length >= 1);
+				// As the tree is right after the assignments: the panes whose container is still
+				// there go back first (a default place may make a container again with its id).
+				const still = new Set(
+					floated.filter((id) => {
+						const home = homes.get(id);
+						return home !== undefined && findNode(dock.layout.docked, home) !== null;
+					})
+				);
+				for (const id of [...floated].sort((x, y) => Number(still.has(y)) - Number(still.has(x)))) {
+					const home = homes.get(id);
+					const there = still.has(id);
+					runStep(dock, `^${id}`);
+					steps.push(`^${id}`);
+					if (!there) {
+						seen.gone++;
+						continue;
+					}
+					seen.there++;
+					const now = findParent(dock.layout.docked, id)?.id;
+					if (now !== home) failCase(tree, steps, `${id} is in ${now}, not in ${home}`);
+				}
+				if (dock.layout.floating.length > 0) failCase(tree, steps, 'a window is left');
+				const bad = badSizes(dock.layout.docked);
+				if (bad.length > 0) failCase(tree, steps, `bad sizes ${bad.join(', ')}`);
+			}),
+			params(300)
+		);
+		// Both happen: the container still there, and gone (the default place).
+		expect(seen.there).toBeGreaterThan(50);
+		expect(seen.gone).toBeGreaterThan(20);
 	});
 });

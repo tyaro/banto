@@ -640,14 +640,19 @@ describe('ThreePaneDock: a pane out of the tree and a replacement (#741, #782 PR
 		expect(sizes(dock)[1]).toBeCloseTo(0.3, 9);
 	});
 
-	it('a docked extra panel replaced by another one, right floated: back at .375 (its share of what is left)', async () => {
+	// #782 PR7: the row `right` was floated out of is gone with the panel replaced (only `center`
+	// is left docked), so `right` goes back to its default place - beside the centre, at its
+	// default width - not to a share worked out from what the replacement took away.
+	it('a docked extra panel replaced by another one, right floated: back at its default place', async () => {
 		const { dock, view } = start();
 		dock.undockPanel('right');
 		await view.rerender({ extra: [{ id: 'other', title: 'Other' }] });
 		await settle();
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['center']);
 		expect(dock.dockAtSlot('right', dock.homeSlot('right')!)).toBe(true);
-		expect(sizes(dock)[0]).toBeCloseTo(0.375, 9);
+		expect(collectPanelIds(dock.layout.docked)).toEqual(['center', 'right']);
+		expect(sizes(dock)[0] + sizes(dock)[1]).toBeCloseTo(1, 9);
+		expect(sizes(dock)[1]).toBeGreaterThan(0);
 	});
 
 	it('the same when right is floated (its homeSlot) and put back', async () => {

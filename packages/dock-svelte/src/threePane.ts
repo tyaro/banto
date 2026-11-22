@@ -365,25 +365,14 @@ function dockAtSide(
  * throws for a bad saved value (only for a reserved / duplicated extra id, like the default).
  *
  * A hidden pane (a closed window with `dockShare`) remembers no place (#782 PR5), so dropping one
- * changes nothing for the others.
+ * changes nothing for the others. Also what `ThreePaneDock` fits today's layout with (`syncPanels`),
+ * assigned back with `dock.layout = ...`: the shadow tree follows that assignment (#782 PR7).
  */
 export function reconcileThreePaneLayout(
 	saved: unknown,
 	options: ThreePaneDockLayoutOptions
 ): { layout: DockLayout; status: ThreePaneRestoreStatus } {
 	return reconcile(saved, options);
-}
-
-/**
- * `reconcileThreePaneLayout` for the layout a `DockState` holds now, assigned back to it with
- * `dock.layout = ...` (not exported from the package; `ThreePaneDock`'s `syncPanels`, #741). The
- * same as `reconcileThreePaneLayout` since #782 PR5: a closed window holds no slot to take again.
- */
-export function fitThreePaneLayout(
-	layout: DockLayout,
-	options: ThreePaneDockLayoutOptions
-): { layout: DockLayout; status: ThreePaneRestoreStatus } {
-	return reconcile(layout, options);
 }
 
 /**

@@ -448,6 +448,16 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   浮かせている間にほかの pane を動かす・隠す・浮かせるをはさんでも、浮かせた時の分割・タブの組へその時の比率で戻り、
   戻す順によらない（前は順で形や比率が変わることがあった）。「浮かせて戻す」「浮かせたまま隣を動かす」を E2E や
   基準画像で見ているアプリは確かめ直す。
+- **`@banto/dock-svelte`: レイアウトを外から代入したときの「元の場所に戻す」の規則が変わる（#782 PR7）**。
+  浮かせた pane が居る間に `dock.layout = ...`（`ThreePaneDock` の `panels` の変更・`saved` なしの `replaceLayout` を含む）で
+  木が変わったとき、その pane は、元いた分割・タブの組が同じ id で残っていればその中の元の位置へ、残っていなければ
+  既定の位置（`dock.defaultLayout`）へ戻る。代入で消えた・動いた pane の取り分を配り直す比率の再現（#741・#743）はしない。
+  直す所: 代入のたびに分割・タブの組の id を振り直しているなら、そのまま渡す。`DockHost` を直に使い、代入の後も戻したいなら
+  `dock.defaultLayout` を入れる。ドラッグ・浮かせる・閉じる・`dockExisting*`・端の帯の結果は変わらない。
+- **`@banto/dock-svelte`: `dock.homeSlot(id)` の slot は場所の名前で、中身は書き換わらない（#782 PR7）**。
+  `dock.dockAtSlot(id, dock.homeSlot(id))`・`dock.restoredAt(..)`・`movePanel(id, { back: true })` はそのまま使える。
+  `homeSlot` の slot を自分で `restoreDockSlot` に渡している・`share` を読んでいる所だけ、`dock.restoredAt` /
+  `dock.dockAtSlot` に替える（slot の `share` は浮かせた時点の値のままになる）。
 
 **初回セットアップの撤去（C2b、ADR-0034 §5〜§7・§9）**。C1・C2 の後に作った DB は作り直さなくてよい
 （`0015_auth_mode_defaults.sql` が足されるだけ）。

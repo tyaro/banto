@@ -962,6 +962,163 @@ export function writeShadowView(
 	return sameDocked(projectShadow(settled), docked) ? settled : undefined;
 }
 
+// ----- an assignment from outside --------------------------------------------------------------
+
+/**
+ * S for a docked tree that was assigned from outside (`dock.layout = ...`, #782 PR7): `docked`
+ * with the tombstones of `old` - the S before the assignment - put back by the container each
+ * was in, and nothing else. No guess is made of what the assignment moved:
+ *
+ *  - the split / tab group a tombstone was in is still in `docked` (by its id, the same kind and
+ *    direction): the tombstone goes into it at the index it had in S (at the end when the
+ *    container has fewer children now), with the share it had there; the children that show
+ *    share the rest as `docked` has them. Tombstones that had the whole of a split between them
+ *    leave the children that show an even part;
+ *  - the container did not show as itself before - all its other children were tombstones, so
+ *    S showed the one child that was not in its place - and that child (by its id) is still in
+ *    `docked`: the container is put around it again, with its id;
+ *  - else the pane has no place in S any more: `unplaced` (the caller docks it at its default
+ *    place, or not at all).
+ *
+ * A subtree of `old` with no pane showing is put back as a whole, by the container it was in.
+ * `taken`: the ids of the layout that are not in `docked` (an edge band's, a floating window's) -
+ * a container is not made again with one of them. The projection of the result is `docked`.
+ */
+export function regraftShadow(
+	old: ShadowNode | null,
+	docked: DockNode | null,
+	taken: Iterable<string> = []
+): InflatedShadow {
+	const away = shadowPanelIds(old, 'away');
+	if (old === null || away.length === 0) return { shadow: docked, unplaced: [] };
+	if (docked === null)
+		return !isShown(old) ? { shadow: old, unplaced: [] } : { shadow: null, unplaced: away };
+	interface Unit {
+		node: ShadowNode;
+		index: number;
+		share: number;
+	}
+	// The subtrees with nothing showing, by the container each is in - outer containers first.
+	const groups: { parent: ShadowSplitNode | ShadowTabGroupNode; units: Unit[] }[] = [];
+	const collect = (node: ShadowNode): void => {
+		if (node.type === 'panel') return;
+		const units: Unit[] = [];
+		node.children.forEach((child, index) => {
+			if (isShown(child)) return;
+			units.push({ node: child, index, share: node.type === 'split' ? node.sizes[index] : 0 });
+		});
+		if (units.length > 0) groups.push({ parent: node, units });
+		for (const child of node.children) if (isShown(child)) collect(child);
+	};
+	if (!isShown(old)) return { shadow: docked, unplaced: away };
+	collect(old);
+	let s: ShadowNode = docked;
+	const used = new Set<string>(taken);
+	idsOf(s, used);
+	const unplaced: string[] = [];
+	const find = (node: ShadowNode, id: string): ShadowNode | null => {
+		if (node.id === id) return node;
+		if (node.type === 'panel') return null;
+		for (const child of node.children) {
+			const hit = find(child, id);
+			if (hit) return hit;
+		}
+		return null;
+	};
+	// Nothing of a subtree put back is in the tree already, and its containers take no id in use
+	// (its panes are floating windows: their ids are theirs).
+	const inTree = idsOf(s);
+	const free = (node: ShadowNode): boolean =>
+		!inTree.has(node.id) &&
+		(node.type === 'panel' || (!used.has(node.id) && node.children.every(free)));
+	const sameKind = (a: ShadowNode, b: ShadowNode): boolean =>
+		a.type === b.type && (a.type !== 'split' || a.direction === (b as ShadowSplitNode).direction);
+	for (const { parent, units } of groups) {
+		let host = find(s, parent.id);
+		const kind = (u: Unit): boolean => parent.type === 'split' || u.node.type === 'panel';
+		if (host === null && !used.has(parent.id) && units.some((u) => kind(u) && free(u.node))) {
+			// The container showed as its one child that was in place: around that child again.
+			const shown = parent.children.filter(isShown);
+			const was = shown.length === 1 ? projectShadow(shown[0]) : null;
+			const now = was ? find(s, was.id) : null;
+			// A tab of a group cannot hold a container: the group would not be one any more.
+			if (now && (parent.type === 'split' || now.type === 'panel') && !tabOf(s, now.id)) {
+				// A tab group shows as its one tab: the band flag of that tab is the group's then. A
+				// split has no flag (`settleCollapsed` drops the one of its only child showing: S cannot
+				// hold it, and `DockState` keeps it on the docked tree).
+				const bare = { ...parent };
+				delete (bare as { collapsed?: boolean }).collapsed;
+				const around: ShadowNode =
+					bare.type === 'split'
+						? { ...bare, children: [now], sizes: [1] }
+						: {
+								...bare,
+								children: [withoutCollapsed(now as ShadowPanelNode)],
+								activeIndex: 0,
+								...(now.type === 'panel' && now.collapsed === true ? { collapsed: true } : {})
+							};
+				s = replaceNode(s, now.id, () => around);
+				used.add(parent.id);
+				host = around;
+			}
+		}
+		const fits = units.filter(
+			(u) =>
+				host !== null &&
+				sameKind(host, parent) &&
+				(host.type === 'split' || u.node.type === 'panel') &&
+				free(u.node)
+		);
+		for (const u of units) if (!fits.includes(u)) unplaced.push(...shadowPanelIds(u.node));
+		if (host === null || host.type === 'panel' || fits.length === 0) continue;
+		for (const u of fits) {
+			idsOf(u.node, used);
+			idsOf(u.node, inTree);
+		}
+		if (host.type === 'tabs') {
+			const children = [...host.children];
+			let activeIndex = host.activeIndex;
+			for (const u of fits) {
+				const at = Math.min(u.index, children.length);
+				children.splice(at, 0, u.node as ShadowPanelNode);
+				if (at <= activeIndex) activeIndex++;
+			}
+			const group: ShadowTabGroupNode = { ...host, children, activeIndex };
+			s = replaceNode(s, host.id, () => group);
+			continue;
+		}
+		// The tombstones keep the share they had; the children that show share the rest as they
+		// are. Shares that leave nothing for them give every child an even part.
+		const said = fits.map((u) => (Number.isFinite(u.share) && u.share > 0 ? u.share : 0));
+		const total = said.reduce((a, b) => a + b, 0);
+		const count = host.children.length + fits.length;
+		// A share of 0 is one ("Shares of 0" at the top): it does not unsettle the others.
+		const sound = total < 1 - 1e-9;
+		const room = sound ? 1 - total : host.children.length / count;
+		const shares = sound
+			? said
+			: said.map((x) => (total > 0 ? (x / total) * (1 - room) : (1 - room) / fits.length));
+		const mine = normalized(host.sizes);
+		const children = [...host.children];
+		const sizes = mine.map((x) => x * room);
+		fits.forEach((u, k) => {
+			const at = Math.min(u.index, children.length);
+			children.splice(at, 0, u.node);
+			sizes.splice(at, 0, shares[k]);
+		});
+		const split: ShadowSplitNode = { ...host, children, sizes };
+		s = replaceNode(s, host.id, () => split);
+	}
+	return { shadow: settleCollapsed(s), unplaced };
+}
+
+/** Is the node `id` a tab of a tab group of `root`? */
+function tabOf(root: ShadowNode, id: string): boolean {
+	if (root.type === 'panel') return false;
+	if (root.type === 'tabs') return root.children.some((c) => c.id === id);
+	return root.children.some((c) => tabOf(c, id));
+}
+
 // ----- the saved form: slots -------------------------------------------------------------------
 
 /** A pane that is out of the dock (hidden, or floated) and the docked place it goes back to. */

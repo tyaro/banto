@@ -64,7 +64,6 @@
 	import {
 		assertExtraPanelIds,
 		defaultThreePaneDockMessages,
-		fitThreePaneLayout,
 		isPaneShown,
 		isThreePaneNarrow,
 		reconcileThreePaneLayout,
@@ -305,11 +304,11 @@
 		} else {
 			// A saved value, or the layout the given `dock` holds now (#741): the first is taken as a
 			// whole, as by `hydrate` - the places of the panes floated in `dock` belong to the layout
-			// replaced; the second goes in like any change of today's layout (the setter takes the
-			// share of a pane out of the tree that is dropped out of the others').
+			// replaced; the second goes in like any change of today's layout (the shadow tree follows
+			// it: a floated pane keeps its place when the container it was in is still there).
 			const live = initialLayout === undefined;
 			const result = live
-				? fitThreePaneLayout(dock.layout, options)
+				? reconcileThreePaneLayout(dock.layout, options)
 				: reconcileThreePaneLayout(initialLayout, options);
 			if (live && result.status !== 'default') dock.layout = result.layout;
 			else {
@@ -346,7 +345,7 @@
 		wideIsDefault = installedDefault !== null && dock.layout === installedDefault;
 		// As saved (#739 review): the floated panes' places do not outlive the narrow display.
 		wideLayout = dock.savedLayout();
-		// ... nor a closed one's, which the narrow display keeps floating (the kept shares do not count it).
+		// ... nor a closed one's, which the narrow display keeps floating (its place is in the wide tree).
 		forgetHomeSlots(dock);
 		installedDefault = null;
 		adoptLayout(dock, threePaneNarrowLayout(wideLayout, narrowOptions()));
@@ -375,14 +374,14 @@
 		if (want) {
 			const base = dock.layout;
 			// Kept as saved (#739 review): the floated panes' `homeSlot`s are dropped by the narrow
-			// display, so the kept wide layout - saved by `layoutSnapshot` and shown again - must not
-			// count them. Taken before the switch, while they are still there.
+			// display; the kept wide layout - saved by `layoutSnapshot` and shown again - is the
+			// layout as it is saved. Taken before the switch.
 			const kept = dock.savedLayout();
 			outcome = await host.replaceLayout(threePaneNarrowLayout(base, narrowOptions()), {
 				focusPanel: CENTER,
 				isCurrent: () => current() && dock.layout === base,
 				// A closed floated pane stays floating in the narrow display, so its `homeSlot` would
-				// survive and be counted again by the kept shares (#739 review): dropped in the same step.
+				// survive and name a place of the wide tree (#739 review): dropped in the same step.
 				saved: true,
 				// Settled in the step that puts the narrow display in (#791): `replaceLayout` goes on
 				// waiting (the focus repair), and `layoutSnapshot()` must not answer with the narrow
@@ -500,9 +499,9 @@
 			if (kept.status !== 'default') quietly(() => (wideLayout = fitted));
 		}
 		// Today's layout, assigned back with the setter (below, and `replaceLayout` without `saved`):
-		// a pane out of the tree that is dropped releases its share there (#741), the kept wide
-		// layout's in `reconcileThreePaneLayout` (a saved value: no `DockState` holds it).
-		const result = fitThreePaneLayout(dock.layout, options);
+		// the shadow tree follows it there (#741, #782 PR7). The kept wide layout is a saved value
+		// (no `DockState` holds it): fitted above.
+		const result = reconcileThreePaneLayout(dock.layout, options);
 		if (result.status === 'default') {
 			panelTarget = null;
 			return;
