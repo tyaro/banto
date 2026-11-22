@@ -1,13 +1,9 @@
-// `panel-visibility.test.ts` と `panel-visibility-exhaustive-shadow.test.ts` などが共有する道具（#798 で
-// 総当たりを別ファイルに分けたときに寄せた）: 木の形（`shapeOf`）、レイアウトの集合 `L`、
-// 手順の実行（`runSteps`）、既定の配置つきの `DockState`（`dockWithDefault`、#782 PR5）、
-// main の slot と今の slot（`mainSlot` / `nowSlot`。PR7 で `slot-main.ts` と一緒に消す）。
-import { captureDockSlot, restoreDockSlot } from '../../src/core/slot';
+// `panel-visibility.test.ts` などが共有する道具（#798 で総当たりを別ファイルに分けたときに寄せた）:
+// 木の形（`shapeOf`）、レイアウトの集合 `L`、手順の実行（`runSteps`）、既定の配置つきの
+// `DockState`（`dockWithDefault`、#782 PR5）。旧実装（main の slot）との比較は #782 PR7 で削った。
 import type { DockState } from '../../src/state.svelte';
 import { createDockState } from '../../src/state.svelte';
 import type { DockLayout, DockNode } from '../../src/types';
-import { captureDockSlot as mainCapture, restoreDockSlot as mainRestore } from './slot-main';
-import type { SlotImpl } from './visibility-sim';
 
 export function counterMakeId(): () => string {
 	let n = 0;
@@ -94,10 +90,6 @@ export const runSteps = (make: () => DockNode, steps: string[]): DockState => {
 	}
 	return dock;
 };
-export const mainSlot: SlotImpl = { capture: mainCapture, restore: mainRestore };
-/** main's slot with main's wiring (#734: `dismiss` did not count the floated panes). */
-export const mainSplit: SlotImpl = { ...mainSlot, split: true };
-export const nowSlot: SlotImpl = { capture: captureDockSlot, restore: restoreDockSlot };
 
 export const L = {
 	'row[a,tabs[b,c],column[d,e]]': () =>
@@ -244,25 +236,3 @@ export const L = {
 			])
 		])
 } satisfies Record<string, () => DockNode>;
-
-/** `L` の `part` 番目（0 始まり）の `parts` 分の 1（並びの添字の剰余で割る）: 重い総当たりを複数のファイルに割る。 */
-export const layoutPart = (part: number, parts: number) =>
-	Object.entries(L).filter((_, i) => i % parts === part) as [keyof typeof L, () => DockNode][];
-
-/**
- * The layouts of "every hide order then every show order" (`walkHideThenShow`), and whether every
- * run has to come back to the old shape (`all`) or the ones that do on main (`main`). The last two
- * are the deepest (left out by the shallow default, `fixtures/exhaustive.ts`).
- */
-export const MERGED_CASES: [keyof typeof L, 'all' | 'main'][] = [
-	['row[b,c,column[tabs[d,e],tabs[f,g]]]', 'all'],
-	['row[a,column[b,row[tabs[c,d],e]]]', 'all'],
-	['column[row[a,tabs[b,c]],tabs[d,e],f]', 'all'],
-	['row[column[tabs[a,b],c],column[d,tabs[e,f]]]', 'all'],
-	// A tab group five containers deep. With `MAX_SLOT_DEPTH` at 4, the last tab's chain
-	// (t, r2, c1, r1) was cut at a split that is gone, and `restoreDockSlot` had nothing to go
-	// on with: the tab opened floating (`-a -b -x -d -c +c ...`), where main puts it beside e.
-	// The limit is 8 now (#727).
-	['column[row[a,column[row[tabs[b,c],x],d]],e]', 'all'],
-	['row[a,column[b,row[c,column[tabs[d,e],f]]]]', 'all']
-];

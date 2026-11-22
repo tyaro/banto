@@ -7,7 +7,6 @@ import { collectPanelIds, findNode, findParent } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import { createDockState } from '../src/state.svelte';
 import {
-	fitThreePaneLayout,
 	reconcileThreePaneLayout,
 	threePaneDockLayout,
 	threePaneSavedLayout,
@@ -414,7 +413,7 @@ describe('layoutChanges (DockHost.replaceLayout)', () => {
 
 // #741 took a hidden pane dropped from a saved layout out of the shares of the hidden panes kept.
 // #782 PR5: a hidden pane holds no slot - dropping one changes nothing for the others, and
-// `fitThreePaneLayout` (today's layout, assigned back with `dock.layout = ...`) does the same.
+// today's layout is fitted by the same function (`fitThreePaneLayout` went with #782 PR7).
 describe('reconcileThreePaneLayout: a hidden pane it drops (#741, #782 PR5)', () => {
 	const LOG = { id: 'log', title: 'Log' };
 	const withLog: ThreePanePanels = { center: PANES.center, right: PANES.right, extra: [LOG] };
@@ -441,7 +440,7 @@ describe('reconcileThreePaneLayout: a hidden pane it drops (#741, #782 PR5)', ()
 	it('the pane kept holds the share it held when it was hidden, the other dropped or not', () => {
 		// Hidden after `log`: .3 of the .8 left.
 		expect(share(saved())).toBeCloseTo(0.375, 9);
-		for (const fit of [reconcileThreePaneLayout, fitThreePaneLayout]) {
+		for (const fit of [reconcileThreePaneLayout]) {
 			const dropped = fit(saved(), { hostWidth: 1000, panels: without });
 			expect(dropped.status).toBe('repaired');
 			expect(dropped.layout.floating.map((w) => w.id)).toEqual(['right']);

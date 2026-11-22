@@ -637,11 +637,11 @@
 	 * focus the replacement dropped from the host goes to `focusPanel`'s title bar, default the
 	 * first docked pane's); a focus the app took elsewhere meanwhile is left alone.
 	 * `options.saved`: `next` is a saved layout (`serialize()` / `savedLayout()`), not one built from
-	 * today's: its shares do not count the floated panes' places (#739), so they are dropped in the
-	 * same step that puts it in, as by `hydrate` - a save reacting to the change never sees the new
-	 * layout with the old places. Leave it off for a layout made from the live one: it goes in like
-	 * `dock.layout = next` (#741) - the places are kept, and a pane out of the tree (floated or
-	 * hidden) that `next` drops, or shows somewhere else, no longer holds its share of its split.
+	 * today's: the floated panes' places belong to the layout it replaces (#739), so they are
+	 * dropped in the same step that puts it in, as by `hydrate` - a save reacting to the change
+	 * never sees the new layout with the old places. Leave it off for a layout made from the live
+	 * one: it goes in like `dock.layout = next` (#741) - the places are kept, and a pane that `next`
+	 * drops, or shows somewhere else, no longer holds its share of its split.
 	 * `options.isCurrent` is re-read before each request and right before the replacement is
 	 * applied: `false` = `stale`, nothing changed (like `setPanelVisible`'s).
 	 * A gesture in progress is cancelled first (`cancelGesture`, #796), once `next` passed the

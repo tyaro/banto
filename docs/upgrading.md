@@ -448,6 +448,10 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   浮かせている間にほかの pane を動かす・隠す・浮かせるをはさんでも、浮かせた時の分割・タブの組へその時の比率で戻り、
   戻す順によらない（前は順で形や比率が変わることがあった）。「浮かせて戻す」「浮かせたまま隣を動かす」を E2E や
   基準画像で見ているアプリは確かめ直す。
+- **`@banto/dock-svelte`: `dock.homeSlot(id)` の slot は場所の名前で、中身は書き換わらない（#782 PR7）**。
+  `dock.dockAtSlot(id, dock.homeSlot(id))`・`dock.restoredAt(..)`・`movePanel(id, { back: true })` はそのまま使える。
+  `homeSlot` の slot を自分で `restoreDockSlot` に渡している・`share` を読んでいる所だけ、`dock.restoredAt` /
+  `dock.dockAtSlot` に替える（slot の `share` は浮かせた時点の値のままになる）。
 
 **初回セットアップの撤去（C2b、ADR-0034 §5〜§7・§9）**。C1・C2 の後に作った DB は作り直さなくてよい
 （`0015_auth_mode_defaults.sql` が足されるだけ）。

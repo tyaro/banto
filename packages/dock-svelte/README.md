@@ -778,10 +778,9 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 `DockHost` 単体でも、`replaceLayout(layout, { focusPanel?, isCurrent?, saved?, commit?, applied? })`（`commit`・`applied` は下の「保存してよい配置の確定」。レイアウト全体の置き換えを `beforePanelChange` を通して
 行う。不正な値は `invalid`。`isCurrent` は各依頼の前と適用の直前に読み直し、`false` なら `stale` で何も変えない。保存した値（`serialize()` /
 `savedLayout()`）を入れるときは `saved: true` を渡す。浮かせたパネルの「元の場所に戻す」の控えを、`hydrate` と同じく入れるのと同時に捨てる。
-`saved` を付けないときは、今の `dock.layout` から作った値として `dock.layout = ...` と同じに入れる（#741）: 控えは残し、木の外にある（浮かせた・隠した）
-パネルを置き換えが無くしたときは、残る隠れたパネルの `share` からその分を除く。ドッキング中のパネルが、隠れたパネルと同じ split を離れたときも同じに除く
-（#743。置き換えや `dock.layout = ...` で外す・`dockExisting` で別の split やタブの組へ入れる・`dockExistingAtEdge` で外周へ出す。
-同じ split の中での並べ替え、仕切りの移動、split に新しく入るパネル、隠す・浮かせる、帯へ自動で隠す、`hydrate` / `reset` では変えない）。保存した値を `saved` なしで渡すと、この調整が保存値にかかって比率がずれる）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
+`saved` を付けないときは、今の `dock.layout` から作った値として `dock.layout = ...` と同じに入れる（#741）: 控えは残す。置き換えがドッキング中のパネルを外したときは、
+そのパネルが持っていた比率を、同じ分割の残り（浮かせたパネルの元の場所も数える）に比例で配る（#743）。
+置き換えがパネルを足す・動かすときも、浮かせたパネルの元の場所は引き継ぐ（#782 PR7）。保存した値を `saved` なしで渡すと、今の配置の控えが保存値の木に当てはめられる）と `canMovePanel(id, target)`（`movePanel` が今できるか。何も聞かず、読み上げない）を使える。
 
 `DockHost.cancelGesture(): boolean`（#796）は、進行中の操作（ドラッグ・リサイズ・仕切りの移動）を取り消して対象を元に戻す。取り消したら `true`、
 無ければ `false` で何も起こらない。`onGestureEnd` へは `('cancel', 'api')` で 1 回届く。`replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout`

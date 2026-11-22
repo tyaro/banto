@@ -2,16 +2,14 @@
 //
 // `DOCK_EXHAUSTIVE=1` のときは全部の深さ・件数で走る（dock-svelte を触る PR の CI と main の push）。
 // 未設定（手元の既定と、dock-svelte を触らない PR の CI）では浅くする。浅くしても同じ性質を同じ
-// 道具で見る（外すのは、深さ・件数だけ）。使うファイル: `panel-visibility-exhaustive-shadow.test.ts`、
-// `DockHostKeyboardMove.test.ts`（hide × show の総当たりの 6 本は #782 PR5 で削った）。
+// 道具で見る（外すのは、深さ・件数だけ）。使うファイル: `DockHostKeyboardMove.test.ts`（hide × show の
+// 総当たりの 6 本は #782 PR5 で、旧実装の slot との比較 `panel-visibility-exhaustive-shadow.test.ts` は
+// #782 PR7 で削った）。
 
 const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
 
 /** `DOCK_EXHAUSTIVE=1`（`0` と空は浅い）。 */
 export const EXHAUSTIVE: boolean = !!env?.DOCK_EXHAUSTIVE && env.DOCK_EXHAUSTIVE !== '0';
-
-/** 全部の深さなら `full`、浅い既定なら `shallow`。 */
-export const depth = <T>(shallow: T, full: T): T => (EXHAUSTIVE ? full : shallow);
 
 export const permutations = (ids: string[]): string[][] =>
 	ids.length <= 1

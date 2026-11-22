@@ -192,8 +192,9 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   clamp は効く。
 - pane が組み替わると再マウントされる（Svelte は親を移せない）。確認（`beforePanelChange`。押し出される側 → 動かす pane の順）で守る。
   `persistent` の pane は木の外で 1 回だけ描き、DOM ごと移すので作り直さない。
-- 総当たりのテスト（`panel-visibility-exhaustive-shadow.test.ts` と `DockHostKeyboardMove.test.ts` の float × back。
-  hide × show の総当たりと旧実装との比較の 6 本は #782 PR5 で削った。性質は `slot-properties.test.ts`）は、
+- 総当たりのテスト（`DockHostKeyboardMove.test.ts` の float × back。hide × show の総当たりと旧実装との比較の 6 本は
+  #782 PR5 で、旧実装の slot と並べる `panel-visibility-exhaustive-shadow.test.ts` は #782 PR7 で削った。性質は
+  `slot-properties.test.ts`）は、
   環境変数 `DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走り、未設定（手元の既定）は浅い（#798）。
   CI は dock-svelte を触る PR と main の push で `1` にし、触らない PR は浅い既定（ci.yml の `changes` の出力 `dock`）。
   切り替えは `packages/dock-svelte/tests/fixtures/exhaustive.ts` の 1 か所。slot / lifecycle の変更は、手元でも
@@ -216,20 +217,25 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   `DockState` が非公開の S（`core/shadow.ts`。浮かせた pane は墓石）の上で結果を作り、`layout.docked` にはその射影を入れる。
   新しい配置の操作を足すときも「S の上で作って射影を入れる」（`#projected`）。`core/tree.ts` で見える木を直に組むと、
   墓石の場所を知らない結果になり、S は組み直しになる。事前の問い合わせ（予告）も同じ S の関数を読む
-  （`shownTree`・`restoredAt`・`droppedTree`・`droppedAtEdgeTree`）。`homeSlot` の slot は「その場所の名前」として渡すだけで、
-  中身を読むのは S を組み直すとき（帯への出し入れ・丸ごとの置き換え・`homeSlot` 以外の slot での `dockAtSlot`）だけ。
-  帯を S に載せる（PR8）までは、setter の `share` の補正（`#withoutGoneShares` / `#withoutLeftShares`）もそのために残す。
+  （`shownTree`・`restoredAt`・`droppedTree`・`droppedAtEdgeTree`）。`homeSlot` の slot は「その場所の名前」として渡すだけ。
+- S の組み直し（#782 PR7）: S の上で作らない変化（外からの代入で pane を足す・動かす、丸ごとの置き換え、帯への出し入れ、
+  `homeSlot` 以外の slot での `dockAtSlot`）では、**その時点の S から場所を書き出して**（`deflateShadow`）新しい木に
+  組み直す（`inflateShadow`）。浮かせた時の slot は読まない。setter の `share` の補正（`#withoutGoneShares` /
+  `#withoutLeftShares` / `slotsWithoutLeft`）は消した: 比率は S が持ち、ドッキング中の pane が消えれば
+  `removeFromShadow` が墓石にも比例で配る（#743）。slot に手で補正を足し直さない。例外は 2 つ:
+  区画が端の帯にある間は S がその pane を持たないので、S が全員を持っていた最後の時点の場所（`#placeSaid`）で組む
+  （PR8 で帯を S に載せたら消す）。S に場所が無くなった pane（「場所なし」）は、その場所を `core/slot.ts` で戻す。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:
   - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。5 段以上の slot を含むレイアウトだけ `version: 3` で保存する
-    （`core/layoutVersion.ts`。`DockLayout['version']` は `2 | 3`）。回帰比較の fixture は `tests/fixtures/slot-main.ts`。
+    （`core/layoutVersion.ts`。`DockLayout['version']` は `2 | 3`）。旧実装の複製 `tests/fixtures/slot-main.ts` は #782 PR7 で削った。
   - validate は、帯の矛盾した slot だけ root にして読む。浮動 window の `dockSlot`（#782 PR5 より前の保存値）は読まずに捨てる。
   - 外したパネルの元の場所は `DockState` の非公開 Map（公開は `homeSlot(id)`、README 未記載）。足すのは `undockPanel` だけ。
     消すのは、setter（浮動でなくなった id）・`hydrate`・`reset`・`forgetHomeSlots`。
   - slot の `share` は「外したパネルも数えた split 全体の割合」（`size` は旧来の意味、`version` 不変）。
-    setter は保留中の slot を前後で比べ、元の入れ物に戻らず消えた分を除く。`adoptLayout`（内部）は正規化しない。
-  - ライブの置き換え（`syncPanels`・`saved` なしの `replaceLayout`）は setter で入れる。保存値は
-    `reconcileThreePaneLayout` が、消えた隠れパネルの分を 1 回だけ除き、`adoptLayout` で入れる（#742）。
-    `reconcileThreePaneLayout` の結果を live の layout に使って setter で書き戻すと、二重に引く（README 記載）。
+    `homeSlot` の slot は浮かせた時に S から 1 回書き、書き換えない（#782 PR7。比率の正は S）。
+  - ライブの置き換え（`syncPanels`・`saved` なしの `replaceLayout`）は setter で入れる（S が追従する）。保存値は
+    `reconcileThreePaneLayout` で合わせて `forgetHomeSlots` → `adoptLayout` で入れる（#742）。隠れたパネルは slot を
+    持たないので（#782 PR5）、`reconcileThreePaneLayout` は今の layout を合わせるのにも使う（`fitThreePaneLayout` は消した）。
   - 公開 API: `DockState.restoredAt`・`DockState.savedLayout()`・`restoreDockSlot` の第 5 引数 `hidden`・
     `DockHost.replaceLayout` の `saved` オプション。保存値は `saved: true` で入れる（`forgetHomeSlots` → `adoptLayout`）。
     3 ペインの保存は `layoutSnapshot()`（`savedLayout()`）を `dockLayoutStore` に渡す。
@@ -248,7 +254,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   設計の段階で「保存値とライブ値の境目」と全経路を洗い出してから委譲する。直すときは、ライブの置き換えと
   保存値の適用を区別できているかを先に確かめる。
 - **推定・復元のロジック**（dock の slot など）は、最初から、旧実装の複製と並べた全列挙の比較テストを書かせる
-  （#725 で Codex の P2 が 5 件続き、これで収束した。`tests/fixtures/slot-main.ts`）。確証が無いときは旧実装の振る舞いに倒す。
+  （#725 で Codex の P2 が 5 件続き、これで収束した。その fixture `tests/fixtures/slot-main.ts` は、仕組みを影の木に置き換えた #782 PR7 で役目を終えて削った）。確証が無いときは旧実装の振る舞いに倒す。
 - Codex は同じ型の指摘を続けて出すので、委譲時に最初から見直させる。
   - ピッカー: 「クリックとフォーカスの一致」「端の値」。
   - charts: 「描画領域の下限を保証し、超える分はラベル側を切る」。
