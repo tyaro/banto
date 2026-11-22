@@ -5195,6 +5195,7 @@ fn server_status_serializes_live_generation_and_apply_failure() {
             previous: PreviousServerOutcome::RestoreFailed,
         }),
         leftover_writes: LeftoverWrites::default(),
+        write_budget: WriteBudget::default(),
     };
     let value = serde_json::to_value(build_status(&ServerSettings::default(), &slot)).unwrap();
     assert_eq!(value["live"], serde_json::Value::Null);

@@ -57,7 +57,7 @@ use banto_server::{
     lan_urls_for_bind, reach_check_router, restoring_previous_stays_within, static_router,
     with_security_headers, AuthState, BoundServer, GrantKind, PortFallbackError, ReachCheckState,
     ReachCheckStatus, ReachIssue, ReachIssueError, ReachTarget, RunningServer, ServerConfig,
-    ServerEvent, ServerExposure,
+    ServerEvent, ServerExposure, WriteBudget,
 };
 use leftover_writes::LeftoverWrites;
 use qrcode::render::svg;
@@ -2121,16 +2121,26 @@ struct ServerSlot {
     /// ADR-0035). No listener is started for a new configuration while any
     /// of them runs.
     leftover_writes: LeftoverWrites,
+    /// The room for new writes (ADR-0035 §7), shared by every listener this
+    /// slot ever serves: writes a stopped listener left running still count
+    /// against the listener that replaces it.
+    write_budget: WriteBudget,
 }
 
 impl ServerSlot {
     fn new(live: Option<LiveServer>, port_notice: Option<ServerPortNotice>) -> Self {
+        // The launch-time listener (if any) already has a budget: keep it.
+        let write_budget = live
+            .as_ref()
+            .map(|live| live.server.write_budget())
+            .unwrap_or_default();
         Self {
             live,
             generation: 0,
             port_notice,
             apply_failure: None,
             leftover_writes: LeftoverWrites::default(),
+            write_budget,
         }
     }
 }
@@ -3062,7 +3072,11 @@ async fn server_apply_body(
     // fallible step), so everything fallible happens BEFORE the listener is
     // reachable by a request.
     let generation = slot.generation;
+    // Every listener of this slot counts its writes against the same budget
+    // (ADR-0035 §7) - the new one, and the previous one when it is restored.
+    let write_budget = &slot.write_budget.clone();
     let launch = |bound: BoundServer| {
+        let bound = bound.with_write_budget(write_budget.clone());
         async move {
             start_embedded_server(
                 // [scaffold:items] begin

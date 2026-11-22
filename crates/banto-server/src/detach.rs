@@ -29,7 +29,10 @@
 //!   disconnected client's write no longer occupies a connection, so writes
 //!   could otherwise pile up beyond the number of connections. Only NEW
 //!   writes are refused (503, the handler never starts); one that was
-//!   accepted is never stopped.
+//!   accepted is never stopped. The bound is a [`WriteBudget`]; an app that
+//!   replaces its listener hands the old listener's budget to the new one
+//!   ([`BoundServer::with_write_budget`](crate::BoundServer::with_write_budget)),
+//!   so the writes a stopped listener left running still count.
 //! - **Panic**: a handler that panics is answered 500 ("read the state again,
 //!   then retry") instead of a dropped connection, and logged with
 //!   `eprintln!` (no `tracing`, conventions §3).
@@ -48,23 +51,69 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use banto_core::{BantoError, ErrorBody};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::sync::watch;
 
-/// How many detached writes one listener runs at once (ADR-0035 §7). A write
-/// that arrives while this many are running is answered 503 and does not
-/// start. Far above what this kind of app sees - a write is short, and before
+/// How many detached writes run at once under one [`WriteBudget`] (ADR-0035
+/// §7) - one listener, or every listener generation that shares the budget.
+/// A write that arrives while this many are running is answered 503 and does
+/// not start. Far above what this kind of app sees - a write is short, and before
 /// the layer the number was bounded by the open connections - so it only cuts
 /// off writes piled up by clients that send and disconnect.
 pub const MAX_DETACHED_WRITES: usize = 256;
+
+/// The shared count behind [`MAX_DETACHED_WRITES`] (ADR-0035 §7).
+///
+/// Each listener has its own gate and its own list of running writes (a stop
+/// closes and drains one generation), but the room for NEW writes belongs to
+/// the app: a listener that was stopped with writes still running keeps
+/// their share of the budget until they finish, and the listener that
+/// replaces it - the same configuration brought back after a refused switch,
+/// for instance - can only start what is left. Get it from
+/// [`RunningServer::write_budget`](crate::RunningServer::write_budget) and
+/// pass it to
+/// [`BoundServer::with_write_budget`](crate::BoundServer::with_write_budget).
+/// A listener that is given none has a budget of its own.
+#[derive(Clone, Default)]
+pub struct WriteBudget(Arc<AtomicUsize>);
+
+impl WriteBudget {
+    /// How many writes are running under this budget now, over all the
+    /// listeners that share it.
+    pub fn running(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// Takes one place, unless [`MAX_DETACHED_WRITES`] are taken.
+    fn try_take(&self) -> bool {
+        self.0
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |running| {
+                (running < MAX_DETACHED_WRITES).then_some(running + 1)
+            })
+            .is_ok()
+    }
+
+    fn give_back(&self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl std::fmt::Debug for WriteBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WriteBudget")
+            .field("running", &self.running())
+            .finish()
+    }
+}
 
 /// Why [`DetachedWrites::enter`] refused a write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Refused {
     /// The server was asked to stop.
     Stopping,
-    /// [`MAX_DETACHED_WRITES`] writes are running.
+    /// [`MAX_DETACHED_WRITES`] writes are running under the budget.
     Busy,
 }
 
@@ -85,6 +134,8 @@ struct Inner {
     /// `state.running.len()`, published under the `state` lock, so a waiter
     /// can sleep until it is 0.
     running_count: watch::Sender<usize>,
+    /// The room for new writes, possibly shared with other generations.
+    budget: WriteBudget,
 }
 
 struct Running {
@@ -96,6 +147,13 @@ struct Running {
 
 impl Default for DetachedWrites {
     fn default() -> Self {
+        Self::with_budget(WriteBudget::default())
+    }
+}
+
+impl DetachedWrites {
+    /// The writes of one listener, counted against `budget`.
+    pub(crate) fn with_budget(budget: WriteBudget) -> Self {
         Self(Arc::new(Inner {
             state: Mutex::new(Running {
                 closed: false,
@@ -103,11 +161,15 @@ impl Default for DetachedWrites {
                 running: BTreeMap::new(),
             }),
             running_count: watch::channel(0).0,
+            budget,
         }))
     }
-}
 
-impl DetachedWrites {
+    /// The budget this listener counts against.
+    pub(crate) fn budget(&self) -> WriteBudget {
+        self.0.budget.clone()
+    }
+
     fn state(&self) -> MutexGuard<'_, Running> {
         // Nothing panics while the lock is held; if it ever did, the map is
         // still consistent (every change is a single insert/remove).
@@ -119,14 +181,16 @@ impl DetachedWrites {
 
     /// Counts one more running write until the returned guard is dropped, or
     /// refuses: once the gate is closed, or while [`MAX_DETACHED_WRITES`] are
-    /// running. The check and the count are one step under the lock: a write
-    /// is either refused, or seen by the stop that closed the gate.
+    /// running under the budget (this listener's and those of the other
+    /// generations sharing it). The gate check and the count are one step
+    /// under the lock: a write is either refused, or seen by the stop that
+    /// closed the gate.
     pub(crate) fn enter(&self, label: String) -> Result<DetachedWriteGuard, Refused> {
         let mut state = self.state();
         if state.closed {
             return Err(Refused::Stopping);
         }
-        if state.running.len() >= MAX_DETACHED_WRITES {
+        if !self.0.budget.try_take() {
             return Err(Refused::Busy);
         }
         let id = state.next_id;
@@ -184,6 +248,7 @@ impl Drop for DetachedWriteGuard {
     fn drop(&mut self) {
         let mut state = self.writes.state();
         state.running.remove(&self.id);
+        self.writes.0.budget.give_back();
         self.writes
             .0
             .running_count
@@ -406,6 +471,61 @@ mod tests {
         assert!(writes.enter("POST /again".to_string()).is_ok());
     }
 
+    /// Review of PR #829: the bound covers every generation that shares the
+    /// budget. A stopped listener's unfinished writes keep their places, the
+    /// listener that replaces it can start only what is left, and a place
+    /// comes back when an old write finishes. The gate and the drain stay
+    /// per generation.
+    #[tokio::test]
+    async fn generations_sharing_a_budget_share_the_room_for_new_writes() {
+        let budget = WriteBudget::default();
+        let old = DetachedWrites::with_budget(budget.clone());
+        let mut old_writes: Vec<_> = (0..3)
+            .map(|i| old.enter(format!("POST /old/{i}")).unwrap())
+            .collect();
+        // The old listener stops with its three writes still running.
+        old.close();
+        assert!(!old.wait_idle(Duration::from_millis(10)).await);
+
+        let new = DetachedWrites::with_budget(budget.clone());
+        let new_writes: Vec<_> = (0..MAX_DETACHED_WRITES - 3)
+            .map(|i| new.enter(format!("POST /new/{i}")).unwrap())
+            .collect();
+        assert_eq!(budget.running(), MAX_DETACHED_WRITES);
+        assert_eq!(
+            new.enter("POST /new/over".to_string()).err(),
+            Some(Refused::Busy)
+        );
+        // Each generation still counts (and drains) its own writes.
+        assert_eq!((old.count(), new.count()), (3, MAX_DETACHED_WRITES - 3));
+
+        // An old write finishes: exactly one place comes back.
+        old_writes.pop();
+        let one_more = new.enter("POST /new/room".to_string()).unwrap();
+        assert_eq!(
+            new.enter("POST /new/over".to_string()).err(),
+            Some(Refused::Busy)
+        );
+
+        drop(old_writes);
+        assert!(old.wait_idle(Duration::from_secs(3)).await);
+        assert_eq!(budget.running(), MAX_DETACHED_WRITES - 2);
+        drop((new_writes, one_more));
+        assert_eq!(budget.running(), 0);
+    }
+
+    /// Listeners that were given no budget do not share one.
+    #[test]
+    fn separate_budgets_do_not_affect_each_other() {
+        let first = DetachedWrites::default();
+        let _held: Vec<_> = (0..MAX_DETACHED_WRITES)
+            .map(|i| first.enter(format!("POST /{i}")).unwrap())
+            .collect();
+        assert!(DetachedWrites::default()
+            .enter("POST /x".to_string())
+            .is_ok());
+    }
+
     #[test]
     fn the_listed_operations_are_bounded_but_the_count_is_exact() {
         let writes = DetachedWrites::default();
@@ -426,7 +546,6 @@ mod tests {
     async fn a_write_after_the_gate_closed_is_answered_503_and_never_runs() {
         use axum::body::Body;
         use axum::routing::post;
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use tower::ServiceExt;
 
         let ran = Arc::new(AtomicUsize::new(0));

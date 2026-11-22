@@ -260,6 +260,49 @@ async fn a_narrowing_change_whose_save_fails_does_not_bring_the_listener_back() 
     drop(held);
 }
 
+/// Review of PR #829 (ADR-0035 §7): the bound on concurrent writes covers
+/// every listener generation. A refused switch brings the same configuration
+/// back while a write of the stopped listener still runs: the restored
+/// listener can start only the remaining room, and the place comes back when
+/// the old write finishes.
+#[tokio::test]
+async fn the_restored_listener_shares_the_write_budget_with_the_stopped_one() {
+    use banto_server::MAX_DETACHED_WRITES;
+
+    let state = admin_app_state().await;
+    let port_a = free_port();
+    apply(&state, true, port_a, false).await.expect("apply A");
+    let old_write = hold_write(&state).await;
+
+    // Equal change with a write remaining: refused, A is restored.
+    assert!(apply(&state, true, free_port(), false).await.is_err());
+    assert!(answers_http(port_a).await, "the previous listener is back");
+
+    let try_hold = || async {
+        let slot = state.server.lock().await;
+        slot.live
+            .as_ref()
+            .expect("a live listener")
+            .server
+            .hold_write_for_test("POST /api/items")
+    };
+    let mut new_writes = Vec::new();
+    for _ in 0..MAX_DETACHED_WRITES - 1 {
+        new_writes.push(try_hold().await.expect("room left"));
+    }
+    assert!(
+        try_hold().await.is_none(),
+        "the old generation's write still takes one place"
+    );
+
+    drop(old_write);
+    new_writes.push(try_hold().await.expect("the place came back"));
+    assert!(try_hold().await.is_none());
+
+    drop(new_writes);
+    stop_running_server(&state).await;
+}
+
 #[test]
 fn the_new_failure_codes_serialize_in_camel_case() {
     assert_eq!(

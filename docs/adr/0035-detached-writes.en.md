@@ -129,6 +129,13 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
   the bound is reached is answered **503** (`kind: other`) without starting its handler, and logged with
   `eprintln!`. **A write that was accepted is never stopped.** 256 is set far above the usual concurrency of this
   kind of app (one write is short).
+- **The room is shared across listener generations** (`WriteBudget`; added by the re-review of PR #829). The gate
+  of a stop, and each generation's own count and drain, stay per listener; only the room for new writes is shared.
+  Writes a stopped listener left running keep their places until they finish. When a switch is refused and the
+  previous configuration is brought back, the restored listener can start only what is left, and a place comes
+  back when an old write finishes. Take it with `RunningServer::write_budget()` and hand it to the next listener
+  with `BoundServer::with_write_budget()` (the template keeps one in its `ServerSlot`). A listener that is given
+  none has a budget of its own. Tauri commands do not pass the layer, so they are outside this budget (§6).
 - **No limit on the duration of one write.** Cutting it short is exactly what this ADR prevents. A long write (a
   backup) keeps running after a disconnect and finishes. A write that never ends shows up as "remaining" at a stop.
 

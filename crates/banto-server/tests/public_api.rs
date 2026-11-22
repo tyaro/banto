@@ -83,3 +83,15 @@ async fn stop_outcome_and_exposure_api_is_public(server: banto_server::RunningSe
     };
     restoring_previous_stays_within(&ServerExposure::closed(), &requested)
 }
+
+/// ADR-0035 §7: an app that replaces its listener shares one write budget
+/// over the generations.
+fn write_budget_api_is_public(
+    old: &banto_server::RunningServer,
+    bound: banto_server::BoundServer,
+) -> banto_server::BoundServer {
+    let budget: banto_server::WriteBudget = old.write_budget();
+    let _: usize = budget.running();
+    let _: usize = banto_server::MAX_DETACHED_WRITES;
+    bound.with_write_budget(budget)
+}

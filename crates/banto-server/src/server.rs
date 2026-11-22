@@ -1,6 +1,6 @@
 //! Server lifecycle: bind, run, graceful-stop (spec §11.1, §11.4).
 
-use crate::detach::{detach_writes, DetachedWrites, RemainingWrites, StopOutcome};
+use crate::detach::{detach_writes, DetachedWrites, RemainingWrites, StopOutcome, WriteBudget};
 use axum::Router;
 use banto_core::BantoError;
 use std::net::SocketAddr;
@@ -122,6 +122,13 @@ impl RunningServer {
         self.sse_connections.count()
     }
 
+    /// The budget this listener's writes count against (ADR-0035 §7). Keep it
+    /// and hand it to the listener that replaces this one
+    /// ([`BoundServer::with_write_budget`]).
+    pub fn write_budget(&self) -> WriteBudget {
+        self.detached_writes.budget()
+    }
+
     /// Signal graceful shutdown and wait for the server task to finish.
     ///
     /// Open SSE streams are told to end ([`ShutdownSignal`]). As a safety net
@@ -200,6 +207,7 @@ impl RunningServer {
 pub struct BoundServer {
     listener: TcpListener,
     local_addr: SocketAddr,
+    write_budget: WriteBudget,
 }
 
 impl BoundServer {
@@ -209,6 +217,17 @@ impl BoundServer {
         self.local_addr
     }
 
+    /// Count this listener's writes against `budget` instead of a budget of
+    /// its own (Issue #793, ADR-0035 §7). An app that stops a listener and
+    /// starts another passes the stopped one's
+    /// ([`RunningServer::write_budget`]): writes the old listener left
+    /// running then still take up room, and at most
+    /// [`crate::MAX_DETACHED_WRITES`] run at once over all generations.
+    pub fn with_write_budget(mut self, budget: WriteBudget) -> Self {
+        self.write_budget = budget;
+        self
+    }
+
     /// Start serving `router` in a background task, with graceful shutdown
     /// wired up. Infallible: every failure mode of starting a server (the
     /// bind) was already resolved by [`bind`].
@@ -216,10 +235,11 @@ impl BoundServer {
         let BoundServer {
             listener,
             local_addr,
+            write_budget,
         } = self;
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         let sse_connections = SseConnections::default();
-        let detached_writes = DetachedWrites::default();
+        let detached_writes = DetachedWrites::with_budget(write_budget);
         let router = router
             .layer(axum::Extension(ShutdownSignal(shutdown_rx.clone())))
             .layer(axum::Extension(sse_connections.clone()))
@@ -289,6 +309,7 @@ fn bound_from(listener: TcpListener) -> Result<BoundServer, BantoError> {
     Ok(BoundServer {
         listener,
         local_addr,
+        write_budget: WriteBudget::default(),
     })
 }
 
