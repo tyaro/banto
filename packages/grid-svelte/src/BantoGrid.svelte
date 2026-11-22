@@ -1154,9 +1154,12 @@
 
 	/**
 	 * No active cell yet (grid reached by Tab, no pointer): the first navigation
-	 * key only "enters" the grid - the first data row in view (else the first in
-	 * display order), first column - without moving further (#784). The
-	 * ContextMenu / Shift+F10 keys also open the row menu there, when wired.
+	 * key only "enters" the grid - the first data row in view, first column -
+	 * without moving further (#784). With no data row in view (e.g. the visible
+	 * window is still loading), a navigation key falls back to the first data
+	 * row in display order and scrolls to it; the ContextMenu / Shift+F10 keys
+	 * (when wired) open the row menu only on a data row in view, so the menu is
+	 * never anchored to a row that is not on screen.
 	 */
 	function enterFirstCellFromKeyboard(event: KeyboardEvent) {
 		const isMenuKey = event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey);
@@ -1164,33 +1167,42 @@
 		const field = orderedFieldIds[0];
 		if (field === undefined) return;
 		const count = effectiveRowCount;
+		if (count === 0) return;
+		const rowHeight = gridState.rowHeight;
 		const firstInView = Math.min(
-			count,
-			Math.max(0, Math.floor(effectiveScrollTop / gridState.rowHeight))
+			count - 1,
+			Math.max(0, Math.floor(effectiveScrollTop / rowHeight))
 		);
-		let rowIndex = -1;
+		const lastInView = Math.min(
+			count - 1,
+			Math.max(firstInView, Math.ceil((effectiveScrollTop + rowsViewportHeight) / rowHeight) - 1)
+		);
+		// [first data row in view, first data row in display order]
+		let inView = -1;
+		let first = -1;
 		if (mode === 'server') {
 			// Only enumerate loaded slots (integer keys come in ascending order);
 			// `totalRows` can span millions of holes, as in `adjacentRow`.
-			let first = -1;
 			for (const key of Object.keys(rows)) {
 				const index = Number(key);
 				if (!Number.isInteger(index) || index >= count || rows[index] === undefined) continue;
 				if (first === -1) first = index;
+				if (index > lastInView) break;
 				if (index >= firstInView) {
-					rowIndex = index;
+					inView = index;
 					break;
 				}
 			}
-			if (rowIndex === -1) rowIndex = first;
 		} else {
-			for (let i = firstInView; i < count && rowIndex === -1; i++) {
-				if (rowAtDisplayIndex(i)) rowIndex = i;
+			for (let i = firstInView; i <= lastInView && inView === -1; i++) {
+				if (rowAtDisplayIndex(i)) inView = i;
 			}
-			for (let i = 0; i < firstInView && rowIndex === -1; i++) {
-				if (rowAtDisplayIndex(i)) rowIndex = i;
+			if (inView !== -1) first = inView;
+			for (let i = 0; i < count && first === -1; i++) {
+				if (rowAtDisplayIndex(i)) first = i;
 			}
 		}
+		const rowIndex = isMenuKey ? inView : inView !== -1 ? inView : first;
 		if (rowIndex === -1) return;
 		event.preventDefault();
 		selection.setActive(rowIndex, field, false);

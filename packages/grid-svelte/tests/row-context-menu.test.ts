@@ -282,6 +282,64 @@ describe('BantoGrid onRowContextMenu (#784)', () => {
 			expect(onRowContextMenu.mock.calls[0][0]).toBe(rows[1]);
 		});
 
+		it('server mode: no loaded row in view - the menu key waits, an arrow key enters the first loaded row', async () => {
+			const sparse: Row[] = [];
+			sparse[2] = rows[1];
+			sparse[900] = rows[2];
+			const onRowContextMenu = vi.fn();
+			const state = new GridState<Row>(columns);
+			render(BantoGrid<Row>, {
+				mode: 'server',
+				totalRows: 1000,
+				rows: sparse,
+				columns,
+				getRowId,
+				state,
+				onRowContextMenu
+			});
+			const grid = screen.getByRole('grid');
+			// View from row 10: nothing loaded there (2 is above, 900 far below).
+			grid.scrollTop = 10 * state.rowHeight + 32;
+			await fireEvent.scroll(grid);
+			const menu = createEvent.keyDown(grid, { key: 'ContextMenu' });
+			grid.dispatchEvent(menu);
+			await tick();
+			expect(menu.defaultPrevented).toBe(false);
+			expect(onRowContextMenu).not.toHaveBeenCalled();
+			// Never the far row 900: an arrow key enters the first loaded row (2).
+			await fireEvent.keyDown(grid, { key: 'ArrowDown' });
+			await fireEvent.keyDown(grid, { key: 'F10', shiftKey: true });
+			await tick();
+			expect(onRowContextMenu).toHaveBeenCalledTimes(1);
+			expect(onRowContextMenu.mock.calls[0][0]).toBe(rows[1]);
+		});
+
+		it('client mode: the menu key picks the first data row in view after scrolling', async () => {
+			const many: Row[] = Array.from({ length: 200 }, (_, i) => ({
+				id: i + 1,
+				name: `n${i}`,
+				price: i
+			}));
+			const onRowContextMenu = vi.fn();
+			const state = new GridState<Row>(columns);
+			const { container } = render(BantoGrid<Row>, {
+				rows: many,
+				columns,
+				getRowId,
+				state,
+				onRowContextMenu
+			});
+			const grid = screen.getByRole('grid');
+			// The header probe is 32px tall in these stubs.
+			grid.scrollTop = 50 * state.rowHeight + 32;
+			await fireEvent.scroll(grid);
+			await fireEvent.keyDown(grid, { key: 'ContextMenu' });
+			await tick();
+			expect(onRowContextMenu).toHaveBeenCalledTimes(1);
+			expect(onRowContextMenu.mock.calls[0][0]).toBe(many[50]);
+			expect(cellOf(container, 50, 'name').classList.contains('active')).toBe(true);
+		});
+
 		it('server mode: nothing loaded yet does nothing', async () => {
 			const onRowContextMenu = vi.fn();
 			render(BantoGrid<Row>, {
