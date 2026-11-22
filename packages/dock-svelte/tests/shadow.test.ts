@@ -6,15 +6,23 @@
 // of S after a step is that answer (`tree.ts` on the projection before the step). And what the
 // slots could not give: every order of coming back ends in the same S.
 //
+// #782 PR3 (the end of the file): `deflateShadow` / `inflateShadow`, S to the saved form (the
+// docked tree and a `DockSlot` per pane away) and back - cases, then properties: the round trip is
+// S again, the projection of an inflated S is the docked tree whatever the slots are.
+//
 // Fixed seed and number of cases, as in `slot-properties.test.ts` (`DOCK_PROPERTY_SEED` /
 // `DOCK_PROPERTY_RUNS` to look further).
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import { validateDockLayout } from '../src/core/validate';
+import { slotDepth } from '../src/core/layoutVersion';
+import { MAX_SLOT_DEPTH, captureDockSlot } from '../src/core/slot';
 import {
+	deflateShadow,
 	dockAtShadowEdge,
 	dockIntoShadow,
 	findShadowPanel,
+	inflateShadow,
 	markAway,
 	markPresent,
 	projectShadow,
@@ -35,7 +43,7 @@ import {
 	removePanel,
 	resizeSplit
 } from '../src/core/tree';
-import type { DockNode, DockPanelNode, DockSplitNode, DropRegion } from '../src/types';
+import type { DockNode, DockPanelNode, DockSlot, DockSplitNode, DropRegion } from '../src/types';
 import {
 	EDGES,
 	EPS,
@@ -846,3 +854,503 @@ function ownShare(tree: DockNode, id: string): number | null {
 	}
 	return null;
 }
+
+// ----- the saved form: deflate / inflate (#782 PR3) --------------------------------------------
+
+/**
+ * S as text with everything a slot can say: ids, the marks, the order, sizes (9 places), titles,
+ * the active tab - of a group that shows a tab (with none showing it is not kept, see
+ * `deflateShadow`).
+ */
+const canon = (s: ShadowNode | null): string => {
+	// The keys in one order (JSON.stringify writes them as the object has them).
+	const sorted = (node: object, over: Record<string, unknown>): unknown =>
+		Object.entries({ ...node, ...over }).sort(([a], [b]) => (a < b ? -1 : 1));
+	const walk = (node: ShadowNode): unknown =>
+		node.type === 'panel'
+			? sorted(node, {})
+			: node.type === 'tabs'
+				? sorted(node, {
+						activeIndex: node.children.some((c) => c.away !== true) ? node.activeIndex : 0,
+						children: node.children.map(walk)
+					})
+				: sorted(node, {
+						sizes: node.sizes.map((x) => Math.round(x * 1e9) / 1e9),
+						children: node.children.map(walk)
+					});
+	return JSON.stringify(s === null ? null : walk(s));
+};
+
+/** The slot of the tombstone `id` as `deflateShadow` writes it. */
+const slotOf = (s: ShadowNode | null, id: string): DockSlot => {
+	const entry = deflateShadow(s).away.find((a) => a.panel.id === id);
+	if (!entry) throw new Error(`${id} is not away in ${text(s)}`);
+	return entry.slot;
+};
+
+/** `inflateShadow` of what `deflateShadow` made, the panes given in the order `order` (default: as written). */
+const roundTrip = (s: ShadowNode | null, order?: string[]) => {
+	const { docked, away: list } = deflateShadow(s);
+	const sorted = order ? order.map((id) => list.find((a) => a.panel.id === id)!) : list;
+	return inflateShadow(docked, sorted);
+};
+
+/** The layout a `DockState` would save for S: the panes away as closed windows with their slot. */
+const layoutOf = (s: ShadowNode | null) => {
+	const { docked, away: list } = deflateShadow(s);
+	return {
+		version: 3,
+		docked,
+		floating: list.map(({ panel, slot }) => ({
+			id: panel.id,
+			title: panel.title,
+			x: 0,
+			y: 0,
+			width: 300,
+			height: 200,
+			open: false,
+			dockSlot: slot
+		}))
+	};
+};
+
+/** How many containers are above the deepest tombstone of S. */
+const tombstoneDepth = (s: ShadowNode | null, above = 0): number =>
+	s === null
+		? 0
+		: s.type === 'panel'
+			? s.away === true
+				? above
+				: 0
+			: Math.max(...s.children.map((c) => tombstoneDepth(c, above + 1)));
+
+describe('deflateShadow', () => {
+	it('with no tombstone: the tree itself, and no slot', () => {
+		const tree = row('r', [p('a'), column('x', [p('b'), p('c')])]);
+		const out = deflateShadow(tree);
+		expect(out.docked).toBe(tree);
+		expect(out.away).toEqual([]);
+		expect(deflateShadow(null)).toEqual({ docked: null, away: [] });
+	});
+
+	it("a split's child: its index and share in S, every other pane of the split, then the root", () => {
+		const s = row('r', [gone('a'), p('b'), column('x', [p('c'), gone('d')])], [0.2, 0.3, 0.5]);
+		expect(slotOf(s, 'a')).toEqual({
+			kind: 'split',
+			splitId: 'r',
+			direction: 'row',
+			index: 0,
+			neighborId: 'b',
+			side: 'before',
+			size: 0.2,
+			share: 0.2,
+			anchors: ['b', 'c', 'd'],
+			outer: { kind: 'root' }
+		});
+		// The last child names the one before it; `d` is in `x`, and `x` in `r` - a pane that is away
+		// (`a`) is named like any other.
+		expect(slotOf(s, 'd')).toEqual({
+			kind: 'split',
+			splitId: 'x',
+			direction: 'column',
+			index: 1,
+			neighborId: 'c',
+			side: 'after',
+			size: 0.5,
+			share: 0.5,
+			anchors: ['c'],
+			outer: {
+				kind: 'split',
+				splitId: 'r',
+				direction: 'row',
+				index: 2,
+				neighborId: 'b',
+				side: 'after',
+				size: 0.625,
+				share: 0.5,
+				anchors: ['b', 'a'],
+				outer: { kind: 'root' }
+			}
+		});
+		expect(deflateShadow(s).away.map((a) => a.panel)).toEqual([p('a'), p('d')]);
+	});
+
+	it('a tab: its index among all the tabs of S, the others by distance', () => {
+		const s = row('r', [tabs('t', [p('a'), gone('b'), p('c'), gone('d')]), p('e')]);
+		expect(slotOf(s, 'b')).toMatchObject({
+			kind: 'tab',
+			groupId: 't',
+			index: 1,
+			anchors: ['c', 'a', 'd'],
+			outer: { kind: 'split', splitId: 'r', index: 0, neighborId: 'e', anchors: ['e'] }
+		});
+		expect(slotOf(s, 'd')).toMatchObject({ kind: 'tab', index: 3, anchors: ['c', 'b', 'a'] });
+	});
+
+	it('the only pane: a root slot', () => {
+		expect(deflateShadow(gone('a'))).toEqual({
+			docked: null,
+			away: [{ panel: p('a'), slot: { kind: 'root' } }]
+		});
+	});
+
+	it('a share of 0 is written as `size: 0` without `share`, and the layout validates', () => {
+		const s = row('r', [p('a'), p('b'), gone('c')], [0.5, 0.5, 0]);
+		const slot = slotOf(s, 'c');
+		expect(slot).toMatchObject({ kind: 'split', size: 0 });
+		expect('share' in slot).toBe(false);
+		expect(validateDockLayout(layoutOf(s)).ok).toBe(true);
+	});
+
+	it('a slot names at most MAX_SLOT_DEPTH containers, the nearest ones', () => {
+		// c0[s, c1[t1†, c2[t2†, ... c9[p†, q†]]]]
+		let s: ShadowNode = row('c9', [gone('p'), gone('q')]);
+		for (let i = 8; i >= 1; i--) s = (i % 2 ? column : row)(`c${i}`, [gone(`t${i}`), s]);
+		s = row('c0', [p('s'), s]);
+		const slot = slotOf(s, 'p');
+		expect(slotDepth(slot)).toBe(MAX_SLOT_DEPTH);
+		const named: string[] = [];
+		for (let at: DockSlot | undefined = slot; at && at.kind !== 'root'; at = at.outer) {
+			named.push(at.kind === 'split' ? at.splitId : at.groupId);
+		}
+		expect(named).toEqual(['c9', 'c8', 'c7', 'c6', 'c5', 'c4', 'c3', 'c2']);
+		expect(validateDockLayout(layoutOf(s)).ok).toBe(true);
+		// Alone, `p` has nothing to go on: none of the containers it names is in the tree.
+		const alone = inflateShadow(
+			p('s'),
+			deflateShadow(s).away.filter((a) => a.panel.id === 'p')
+		);
+		expect(alone).toEqual({ shadow: p('s'), unplaced: ['p'] });
+		// With the others it comes back, whatever the order: they make the containers again.
+		for (const order of [undefined, ['p', 'q', 't8', 't7', 't6', 't5', 't4', 't3', 't2', 't1']]) {
+			const back = roundTrip(s, order);
+			expect(back.unplaced).toEqual([]);
+			expect(canon(back.shadow)).toBe(canon(s));
+		}
+	});
+});
+
+describe('inflateShadow', () => {
+	it('with nothing away: the docked tree itself', () => {
+		const tree = row('r', [p('a'), p('b')]);
+		expect(inflateShadow(tree, [])).toEqual({ shadow: tree, unplaced: [] });
+		expect(inflateShadow(tree, []).shadow).toBe(tree);
+		expect(inflateShadow(null, [])).toEqual({ shadow: null, unplaced: [] });
+	});
+
+	it('a split that still shows: the tombstone at its index, the shares of S', () => {
+		const s = row('r', [p('a'), gone('b'), p('c'), gone('d')], [0.1, 0.2, 0.3, 0.4]);
+		const { docked } = deflateShadow(s);
+		expect(text(docked)).toBe('row[a, c]');
+		close(sizesOfSplit(docked, 'r'), [0.25, 0.75]);
+		const back = roundTrip(s);
+		expect(back.unplaced).toEqual([]);
+		expect(text(back.shadow)).toBe('row[a, b†, c, d†]');
+		close(sizesOfSplit(back.shadow, 'r'), [0.1, 0.2, 0.3, 0.4]);
+		// The part of the tree nothing was added to is the docked tree's own object.
+		const nested = row('r', [gone('a'), p('b'), column('x', [p('c'), p('d')])]);
+		const inner = (deflateShadow(nested).docked as DockSplitNode).children[1];
+		expect((roundTrip(nested).shadow as DockSplitNode).children[2]).toBe(inner);
+	});
+
+	it('a split folded away is made again around what is left of it, with its id', () => {
+		// The user sees `c` alone.
+		const s = column('y', [row('x', [gone('a'), p('c')], [0.3, 0.7]), gone('e')], [0.6, 0.4]);
+		expect(deflateShadow(s).docked).toEqual(p('c'));
+		for (const order of permutations(['a', 'e'])) {
+			const back = roundTrip(s, order);
+			expect(back.unplaced).toEqual([]);
+			expect(canon(back.shadow)).toBe(canon(s));
+		}
+	});
+
+	it('containers with nothing showing come back whole, in any order of the panes', () => {
+		const s = row(
+			'y',
+			[column('x', [gone('a'), row('z', [gone('b'), gone('q')], [0.25, 0.75])]), p('c'), p('d')],
+			[0.5, 0.2, 0.3]
+		);
+		expect(text(deflateShadow(s).docked)).toBe('row[c, d]');
+		for (const order of permutations(['a', 'b', 'q'])) {
+			const back = roundTrip(s, order);
+			expect(back.unplaced).toEqual([]);
+			expect(canon(back.shadow)).toBe(canon(s));
+		}
+		// One of them alone stands for its containers, where they were.
+		const { docked, away: list } = deflateShadow(s);
+		const one = inflateShadow(docked, [list[1]]);
+		expect(text(one.shadow)).toBe('row[b†, c, d]');
+		close(sizesOfSplit(one.shadow, 'y'), [0.5, 0.2, 0.3]);
+	});
+
+	it('everything away: S from the slots alone', () => {
+		const s = row('r', [gone('a'), tabs('t', [gone('b'), gone('c')])], [0.3, 0.7]);
+		expect(deflateShadow(s).docked).toBeNull();
+		for (const order of permutations(['a', 'b', 'c'])) {
+			const back = roundTrip(s, order);
+			expect(back.unplaced).toEqual([]);
+			expect(canon(back.shadow)).toBe(canon(s));
+		}
+		expect(roundTrip(gone('a'))).toEqual({ shadow: gone('a'), unplaced: [] });
+	});
+
+	it('a tab group shown as its one tab is a group again: the active tab, the band flag', () => {
+		const group = { ...tabs('t', [gone('a'), p('b'), gone('c')], 1), collapsed: true };
+		const s = row('r', [group, p('d')]);
+		const { docked } = deflateShadow(s);
+		expect(docked).toMatchObject({ children: [{ id: 'b', collapsed: true }, { id: 'd' }] });
+		const back = roundTrip(s);
+		expect(back.unplaced).toEqual([]);
+		expect(back.shadow).toEqual(s);
+		expect(projectShadow(back.shadow)).toEqual(docked);
+	});
+
+	it('shares of 0 come back as they are (the promise of PR #826)', () => {
+		// What shows has 0 together: it shows evenly, and S is `[0, 0, 1]` again.
+		const s = row('r', [p('a'), p('b'), gone('c')], [0, 0, 1]);
+		close(sizesOfSplit(deflateShadow(s).docked, 'r'), [0.5, 0.5]);
+		close(sizesOfSplit(roundTrip(s).shadow, 'r'), [0, 0, 1]);
+		close(sizesOfSplit(markPresent(roundTrip(s).shadow, 'c'), 'r'), [0, 0, 1]);
+		// The tombstone has 0.
+		const t = row('r', [p('a'), p('b'), gone('c')], [0.25, 0.75, 0]);
+		close(sizesOfSplit(roundTrip(t).shadow, 'r'), [0.25, 0.75, 0]);
+		// After a write to the split (resize: the shown take the even part) it is like any other.
+		const resized = resizeShadowSplit(s, 'r', 0, 0.1);
+		close(sizesOfSplit(roundTrip(resized).shadow, 'r'), sizesOfSplit(resized, 'r'));
+	});
+
+	it('the known failure 6 of #782: a tab made in a folded split, saved and loaded', () => {
+		// row[a, column[b, c]]: -b, a>c:center, -a, save / load, then both back.
+		let s: ShadowNode | null = row('r', [p('a'), column('x', [p('b'), p('c')])]);
+		s = markAway(s, 'b');
+		s = dockIntoShadow(s, p('a'), 'c', 'center', counterMakeId());
+		s = markAway(s, 'a');
+		expect(text(s)).toBe('column[b†, tabs[c, a†]]');
+		const layout = layoutOf(s);
+		expect(layout.docked).toEqual(p('c'));
+		const checked = validateDockLayout(JSON.parse(JSON.stringify(layout)));
+		if (!checked.ok) throw new Error('the saved layout does not validate');
+		const loaded = inflateShadow(
+			checked.layout.docked,
+			checked.layout.floating.map((w) => ({ panel: p(w.id), slot: w.dockSlot! }))
+		);
+		expect(loaded.unplaced).toEqual([]);
+		expect(canon(loaded.shadow)).toBe(canon(s));
+		for (const order of permutations(['a', 'b'])) {
+			expect(text(present(loaded.shadow, ...order))).toBe('column[b, tabs[c, a]]');
+		}
+	});
+
+	it('#780: the place beside `d` is kept through a save and a load', () => {
+		let s: ShadowNode | null = column('col', [row('r', [p('a'), p('b'), p('c')]), p('d'), p('e')]);
+		s = away(s, 'a', 'b', 'e');
+		s = dockIntoShadow(s, p('c'), 'd', 'right', counterMakeId());
+		expect(text(s)).toBe('column[row[a†, b†], row[d, c], e†]');
+		const back = roundTrip(s);
+		expect(back.unplaced).toEqual([]);
+		expect(canon(back.shadow)).toBe(canon(s));
+		for (const order of permutations(['a', 'b', 'e'])) {
+			expect(text(present(back.shadow, ...order))).toBe('column[row[a, b], row[d, c], e]');
+		}
+	});
+
+	it('a slot that names no place in the tree: the pane is unplaced, the tree unchanged', () => {
+		const tree = row('r', [p('a'), p('b')]);
+		const slot = slotOf(row('q', [gone('x'), p('y'), p('z')]), 'x');
+		// The split is not here and neither is any pane the slot names.
+		expect(inflateShadow(tree, [{ panel: p('x'), slot }])).toEqual({
+			shadow: tree,
+			unplaced: ['x']
+		});
+		// A root slot once something is docked (as `restoreDockSlot`: it opens floating).
+		expect(inflateShadow(tree, [{ panel: p('x'), slot: { kind: 'root' } }]).unplaced).toEqual([
+			'x'
+		]);
+		// The panes it names are here, but not as one node: no guess.
+		const scattered = slotOf(row('q', [gone('x'), p('a'), p('c')]), 'x');
+		const three = row('r', [p('a'), p('b'), p('c')]);
+		expect(inflateShadow(three, [{ panel: p('x'), slot: scattered }])).toEqual({
+			shadow: three,
+			unplaced: ['x']
+		});
+		// The split's id is a column here: not the tree the slot was taken in.
+		const other = column('q', [p('a'), p('c')]);
+		expect(inflateShadow(other, [{ panel: p('x'), slot: scattered }]).unplaced).toEqual(['x']);
+		// And the id of a split to make again is in use (a tab group's here).
+		const folded = slotOf(row('t', [gone('x'), p('c')]), 'x');
+		const used = row('r', [tabs('t', [p('a'), p('b')]), p('c')]);
+		expect(inflateShadow(used, [{ panel: p('x'), slot: folded }])).toEqual({
+			shadow: used,
+			unplaced: ['x']
+		});
+	});
+
+	it('an entry for a docked pane, or a second one for a pane, is ignored', () => {
+		const s = row('r', [p('a'), gone('b'), p('c')]);
+		const { docked, away: list } = deflateShadow(s);
+		const stale = { panel: p('a'), slot: list[0].slot };
+		const twice = { panel: p('b'), slot: { kind: 'root' } as DockSlot };
+		const back = inflateShadow(docked, [stale, list[0], twice]);
+		expect(back.unplaced).toEqual([]);
+		expect(canon(back.shadow)).toBe(canon(s));
+	});
+
+	it('the title and icon of a tombstone are the ones given', () => {
+		const s = row('r', [p('a'), gone('b')]);
+		const { docked, away: list } = deflateShadow(s);
+		const renamed = {
+			panel: { ...p('b'), title: 'New', icon: '*', collapsed: true },
+			slot: list[0].slot
+		};
+		expect(findShadowPanel(inflateShadow(docked, [renamed]).shadow, 'b')).toEqual({
+			type: 'panel',
+			id: 'b',
+			title: 'New',
+			icon: '*',
+			away: true
+		});
+	});
+
+	it('reads a slot of `slot.ts` (`captureDockSlot`): the folded column is in S again', () => {
+		const tree = row('r', [p('a'), column('x', [p('b'), p('c')], [0.25, 0.75])], [0.4, 0.6]);
+		const slot = captureDockSlot(tree, 'b')!;
+		const back = inflateShadow(removePanel(tree, 'b'), [{ panel: p('b'), slot }]);
+		expect(back.unplaced).toEqual([]);
+		expect(text(back.shadow)).toBe('row[a, column[b†, c]]');
+		close(sizesOfSplit(back.shadow, 'x'), [0.25, 0.75]);
+		close(sizesOfSplit(back.shadow, 'r'), [0.4, 0.6]);
+		expect(markPresent(back.shadow, 'b')).toEqual(tree);
+	});
+});
+
+describe('properties of deflate / inflate (#782 PR3)', () => {
+	const ops = (max: number): fc.Arbitrary<OpRecipe[]> => fc.array(opRecipe, { maxLength: max });
+	/** `list` in an order picked by `n`. */
+	const shuffled = <T>(list: T[], n: number): T[] => {
+		const rest = list.slice();
+		const out: T[] = [];
+		for (let k = n; rest.length > 0; k = Math.floor(k / 7) + 13) {
+			out.push(...rest.splice(k % rest.length, 1));
+		}
+		return out;
+	};
+	const sameSeen = (after: DockNode | null, docked: DockNode | null): string | null =>
+		treeDiff(after, docked) ??
+		(JSON.stringify(activeOf(after)) === JSON.stringify(activeOf(docked))
+			? null
+			: `ids / active tabs differ: ${JSON.stringify(after)} != ${JSON.stringify(docked)}`);
+
+	it('deflate then inflate is S again, whatever the order of the panes away', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(12), fc.nat(), (recipe, list, n) => {
+				const tree = buildTree(recipe);
+				const { s, steps } = run(tree, list, ALL, false);
+				const { docked, away: slots } = deflateShadow(s);
+				const fail = (why: string): never => {
+					throw new Error(
+						`${why}\n  tree:  ${treeText(tree)}\n  steps: ${steps.join(' ')}\n  S:     ${text(s)}`
+					);
+				};
+				if (sameSeen(docked, projectShadow(s)) !== null) fail('docked is not the projection');
+				expect(slots.map((a) => a.panel.id)).toEqual(shadowPanelIds(s, 'away'));
+				const back = inflateShadow(docked, shuffled(slots, n));
+				const bad = invalid(back.shadow);
+				if (bad.length > 0) fail(`inflated S is not valid: ${bad.join('; ')}`);
+				const seen = sameSeen(projectShadow(back.shadow), docked);
+				if (seen !== null) fail(`the projection of the inflated S is not docked: ${seen}`);
+				// A tombstone under more containers than a slot names may have no place (`deflateShadow`).
+				if (tombstoneDepth(s) > MAX_SLOT_DEPTH) {
+					expect([...shadowPanelIds(back.shadow, 'away'), ...back.unplaced].sort()).toEqual(
+						shadowPanelIds(s, 'away').sort()
+					);
+					return;
+				}
+				if (back.unplaced.length > 0) fail(`unplaced: ${back.unplaced.join(', ')}`);
+				if (canon(back.shadow) !== canon(s)) fail(`inflated S differs: ${text(back.shadow)}`);
+			}),
+			params(800)
+		);
+	});
+
+	it('the saved layout validates and keeps every slot', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(12), (recipe, list) => {
+				const { s } = run(buildTree(recipe), list, ALL, false);
+				const layout = layoutOf(s);
+				const checked = validateDockLayout(JSON.parse(JSON.stringify(layout)));
+				if (!checked.ok)
+					throw new Error(`not valid: ${JSON.stringify(checked.issues)}\n  ${text(s)}`);
+				expect(checked.layout.floating.map((w) => w.dockSlot)).toEqual(
+					layout.floating.map((w) => w.dockSlot)
+				);
+			}),
+			params(300)
+		);
+	});
+
+	it('hiding and showing other panes does not change the slot of a pane that is away (but `size`)', () => {
+		const withoutSize = (slot: DockSlot): string =>
+			JSON.stringify(slot, (k, v: unknown) => (k === 'size' ? undefined : v));
+		fc.assert(
+			fc.property(treeRecipe, ops(8), ops(6), (recipe, list, marks) => {
+				const { s } = run(buildTree(recipe), list, ALL, false);
+				const before = new Map(deflateShadow(s).away.map((a) => [a.panel.id, withoutSize(a.slot)]));
+				const { s: after } = run(s as DockNode, marks, ['away', 'back'], false);
+				for (const entry of deflateShadow(after).away) {
+					const was = before.get(entry.panel.id);
+					if (was !== undefined) expect(withoutSize(entry.slot)).toBe(was);
+				}
+			}),
+			params(300)
+		);
+	});
+
+	it('whatever the slots are, the projection of the inflated S is the docked tree', () => {
+		// The slots of another S over the same panes: some fit, some do not.
+		fc.assert(
+			fc.property(treeRecipe, ops(8), treeRecipe, ops(8), (r1, l1, r2, l2) => {
+				const docked = projectShadow(run(buildTree(r1), l1, ALL, false).s);
+				const foreign = deflateShadow(run(buildTree(r2), l2, ALL, false).s).away;
+				const back = inflateShadow(docked, foreign);
+				const why = (what: string): string =>
+					`${what}\n  docked: ${treeText(docked)}\n  slots:  ${JSON.stringify(foreign)}\n  S:      ${text(back.shadow)}`;
+				// Shares of 0 are allowed here (a slot may say 1 for a pane that is away): the rest of `invalid`.
+				const bad = invalid(back.shadow).filter((b) => !b.includes('sizes'));
+				if (bad.length > 0) throw new Error(why(bad.join('; ')));
+				for (const at of splitsOf(back.shadow as DockNode | null)) {
+					const sum = at.sizes.reduce((a, b) => a + b, 0);
+					if (at.sizes.some((x) => !(x >= 0)) || Math.abs(sum - 1) > 1e-9) {
+						throw new Error(why(`${at.id}: sizes ${JSON.stringify(at.sizes)}`));
+					}
+				}
+				const seen = sameSeen(projectShadow(back.shadow), docked);
+				if (seen !== null) throw new Error(why(seen));
+				const wanted = foreign
+					.map((a) => a.panel.id)
+					.filter((id) => !collectPanelIds(docked).includes(id));
+				expect([...shadowPanelIds(back.shadow, 'away'), ...back.unplaced].sort()).toEqual(
+					wanted.sort()
+				);
+			}),
+			params(600)
+		);
+	});
+
+	it('one pane hidden by `captureDockSlot` (slot.ts): inflate puts it where it was', () => {
+		fc.assert(
+			fc.property(treeRecipe, fc.nat({ max: 6 }), (recipe, pick) => {
+				const tree = buildTree(recipe);
+				const all = collectPanelIds(tree);
+				const id = all[pick % all.length];
+				const slot = captureDockSlot(tree, id)!;
+				const back = inflateShadow(removePanel(tree, id), [
+					{ panel: findNode(tree, id) as DockPanelNode, slot }
+				]);
+				expect(back.unplaced).toEqual([]);
+				const diff = sameS(markPresent(back.shadow, id), tree);
+				if (diff !== null) throw new Error(`${diff}\n  tree: ${treeText(tree)}\n  hidden: ${id}`);
+			}),
+			params(300)
+		);
+	});
+});
