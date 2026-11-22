@@ -30,6 +30,7 @@ export type SchemaFieldType =
 	| 'radio'
 	| 'multiselect'
 	| 'reference'
+	| 'file'
 	| 'checkbox'
 	| 'password';
 
@@ -266,6 +267,8 @@ const FILTER_BY_TYPE: Partial<Record<SchemaFieldType, FilterType>> = {
  * Derive `GridColumn`s from a form schema. Rules:
  *
  * - `password` fields are skipped entirely (a grid must never display them).
+ * - `file` fields are skipped too: their value is not a column of the row
+ *   (the files hang on the record and go through the field's own client).
  * - `label` → `header`, `name` → `id` + `accessor`.
  * - `text`/`textarea`/`number`/`date`/`datetime` become filterable with the
  *   matching `filterType` (`date`/`datetime`: a day range, date-time-pickers
@@ -302,7 +305,7 @@ export function columnsFromSchema<TRow>(
 	const columns: GridColumn<TRow>[] = [];
 
 	for (const field of schema.fields) {
-		if (field.type === 'password') continue;
+		if (field.type === 'password' || field.type === 'file') continue;
 
 		const column: GridColumn<TRow> = {
 			id: field.name,

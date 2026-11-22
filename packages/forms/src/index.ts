@@ -6,6 +6,11 @@ export type {
 	FieldOption,
 	ReferenceOption,
 	FieldDef,
+	FileFieldMeta,
+	PendingFile,
+	FileFieldValue,
+	FileFieldClient,
+	FileFieldConfig,
 	FormSection,
 	FormColumns,
 	FormSchema,
@@ -17,6 +22,7 @@ export {
 	isFieldVisible,
 	hiddenFieldNames,
 	submitValuesOf,
+	assertFormSchema,
 	resolveColumns,
 	layoutOf,
 	focusCandidateNames,
@@ -92,4 +98,16 @@ export { default as RadioField } from './fields/RadioField.svelte';
 export { default as MultiselectField } from './fields/MultiselectField.svelte';
 export { default as ReferenceField } from './fields/ReferenceField.svelte';
 export { REFERENCE_SEARCH_DEBOUNCE_MS, type ReferenceFieldMessages } from './fields/reference';
+// `file` type (§4.12, Issue #714): files go through the injected client only.
+export { default as FileField } from './fields/FileField.svelte';
+export {
+	uploadPendingFiles,
+	fileValueOf,
+	emptyFileValue,
+	formatFileSize,
+	fileErrorText,
+	type FileFieldMessages,
+	type FileUploadOutcome,
+	type FileUploadStore
+} from './fields/file';
 export { default as DateField } from './fields/DateField.svelte';

@@ -460,6 +460,15 @@ class Draft implements FormDraft<Values> {
 
 /** Create a draft that outlives its pane (shared-primitives-upstream-plan §3.5). */
 export function createFormDraft(options: FormDraftOptions): FormDraft {
+	// A draft copies its values (snapshots, baselines) and outlives the pane; a
+	// chosen `File` is neither copied nor kept that way. `file` fields are for
+	// `FormStore` / `BantoForm` only (§4.12).
+	const file = options.schema.fields.find((def) => def.type === 'file');
+	if (file) {
+		throw new Error(
+			`@banto/forms: a FormDraft does not take a 'file' field ('${file.name}'). Use FormStore / BantoForm.`
+		);
+	}
 	return new Draft(options);
 }
 

@@ -410,6 +410,89 @@ import { referenceFrom } from '#lib/banto/reference.js';
   名前を出すときは、行やアプリがすでに持っている名前を `overrides[name].format` で渡す。
 - **消費側の注意**: `FieldType` の union に `'reference'` が増えるので、網羅 switch をしている利用側は型エラーになる。
 
+## ファイル型（Issue #714、計画 §4.12）
+
+`type: 'file'` は、レコードに付くファイルの欄。**ファイルはレコードの列ではなく、添付の既存の仕組み**
+（親の `resource`・`resourceId` に付く別の行）のまま扱う。forms は通信の契約を持たず（参照選択の `search` と同じ流儀）、
+フィールド定義の `file.client` に渡された口だけを通す。`@banto/attachments` は import しない。
+
+```ts
+import { attachmentsClient } from '#lib/banto/attachmentsClient.js'; // アプリの添付クライアント
+
+const schema: FormSchema = {
+	fields: [
+		{ name: 'name', label: '名前', type: 'text', required: true },
+		{
+			name: 'files',
+			label: '資料',
+			type: 'file',
+			file: {
+				client: attachmentsClient, // list / upload / remove（AttachmentsClient の部分。そのまま渡せる）
+				resource: 'items',
+				accept: '.pdf,image/*', // 画面だけの確認
+				maxFileSize: 5 * 1024 * 1024, // 同上（バイト）
+				maxFiles: 3 // 同上（既にあるもの + 選んだもの）
+			}
+		}
+	]
+};
+```
+
+```svelte
+<!-- 編集: fileParentId にレコードの id。新規: 渡さない（null） -->
+<BantoForm {schema} {store} fileParentId={item?.id ?? null} onSubmit={save} />
+```
+
+- **編集（`fileParentId` あり）**: 一覧を出し、選んだらすぐアップロード、削除もすぐ（`file.confirmRemove` で確認。既定は
+  `window.confirm`）。`AttachmentsPanel` と同じ振る舞いで、サーバーの口は既存の添付のルート・コマンドだけ。
+- **新規（`fileParentId` なし）**: 選んだファイルは欄の値の中で保留する。**レコードの作成が成功した後で**、返ってきた id に
+  `uploadPendingFiles` で順にアップロードする（先に上げて後で結び付ける形は採らない）。
+
+  ```ts
+  import { uploadPendingFiles } from '@banto/forms';
+
+  async function save(values: Record<string, unknown>) {
+  	const created = await provider.create('items', values); // values にファイルは入っていない
+  	store.markClean();
+  	const { failed } = await uploadPendingFiles(schema, store, created.id);
+  	// failed が空でなくてもレコードは残る。失敗したファイルは欄に理由つきで残るので、
+  	// fileParentId に created.id を渡して編集の状態にすれば「再試行」できる。
+  }
+  ```
+
+  `uploadPendingFiles` は reject しない。成功したものは `existing` へ移り、断られたものは `pending` に `error` つきで残る
+  （黙って捨てない）。`store` を作り直して編集画面へ移るなら、`failed` を `initial` に
+  `{ files: { existing: null, pending: failed } }` として渡せば引き継げる。
+
+- **値**: `FileFieldValue` = `{ existing: FileFieldMeta[] | null, pending: PendingFile[] }`。`existing` は口の `list` が返したもの
+  （`null` は「まだ分からない」。一覧が届く前・取得の失敗）。
+- **送信値に入らない**: `store.submitValues`（`onSubmit` に渡る値）と `submitValuesOf` は `file` 型のキーを除く。
+  レコードの API は `File` もファイルの中身も受けない。
+- **未保存**: 見えている欄に保留（`pending`）がある間は `store.isDirty` が真。`markClean()` では消えない
+  （アップロードされるか、取り消されるまで）。`existing` の増減は dirty にしない。
+- **`visibleWhen`**: 隠れている欄は検証されず、dirty にも数えず、`uploadPendingFiles` も何も送らない（値は残る）。
+- **1 つのフォームに 1 欄まで**: 添付は親のレコードに付き、欄を区別できない。2 欄目は `createFormStore` が例外を投げる
+  （`file.client`・`file.resource` の無い `file` 欄も同じ）。確かめるだけなら `assertFormSchema(schema)`。
+- **`FormDraft` では使えない**: `createFormDraft` は `file` 欄のある schema で例外を投げる（draft は値を複製して pane より
+  長く持つので、`File` を持たせない）。
+- 文言は `BantoForm` の `fileMessages`（単体の `FileField` では `messages`）と、検証の `ValidationMessages` の
+  `fileTooLarge`・`fileTypeNotAccepted`・`fileTooMany`。口が reject したら、その `message` をそのまま出す
+  （demo モードの拒否、サーバーの上限など）。
+- `columnsFromSchema`（`@banto/grid-svelte`）は `file` 欄を列にしない。
+
+### 画面の検証は「入力の手助け」で、保証ではない
+
+添付の API は `resource`・`resourceId` の単位で、どの欄のファイルかを知らない。そこで分かれる:
+
+- **欄の制約**（`required`・`maxFiles`・`accept`・`maxFileSize`）は**画面だけ**が見る。サーバーは強制しない。
+  **業務上の必須は保証しない**: 別のクライアントから作ったレコードや、新規で作成の後のアップロードが失敗した場合に、
+  「必須」の添付が無いレコードができる。保証したいアプリは、自分のドメインのサーバーの契約
+  （例: 状態を進める操作の handler が添付の数を確かめる）に置く。
+- **共通の安全の上限**（1 ファイルの大きさ、マジックバイトでの MIME の判定、認可、親の実在）は**サーバー**が今のまま強制する。
+  画面の制約がこれより緩くても、サーバーの拒否がそのまま表示される。`accept` はブラウザが申告した種類と名前で見るだけ。
+
+- **消費側の注意**: `FieldType` の union に `'file'` が増えるので、網羅 switch をしている利用側は型エラーになる。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

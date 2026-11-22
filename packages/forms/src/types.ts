@@ -18,6 +18,12 @@
  * combobox): the value is the record's id as the option gave it (a number
  * stays a number), `null` when nothing is chosen. The candidates and the name
  * shown for a stored value come from `FieldDef.search` / `FieldDef.resolve`.
+ *
+ * `file` attaches files to the record (downstream-requests-2026-11-plan
+ * §4.12). Its value is a `FileFieldValue` - the files the record already has
+ * plus the chosen ones not uploaded yet - and is NEVER part of what a form
+ * submits: files only travel through the injected `FieldDef.file.client`.
+ * A form has at most one `file` field.
  */
 export type FieldType =
 	| 'text'
@@ -30,6 +36,7 @@ export type FieldType =
 	| 'radio'
 	| 'multiselect'
 	| 'reference'
+	| 'file'
 	| 'checkbox'
 	| 'password';
 
@@ -57,6 +64,88 @@ export interface ReferenceOption {
 	description?: string;
 }
 
+/**
+ * A file the record already has. A STRUCTURAL subset of `@banto/attachments`'
+ * `AttachmentMeta` (forms imports no other package, conventions §4), so the
+ * app's attachment metadata fits as it is.
+ */
+export interface FileFieldMeta {
+	id: number;
+	fileName: string;
+	sizeBytes: number;
+	mime?: string;
+}
+
+/** A chosen file that is not uploaded yet. */
+export interface PendingFile {
+	/** Identifies the entry in the list (unique in the page; made by forms). */
+	key: string;
+	file: File;
+	/** Why the last upload of this file failed (what the client rejected with). Absent: not tried yet. */
+	error?: string;
+}
+
+/**
+ * Value of a `file` field. Not sent with the form: `FormStore.submitValues`
+ * (what `BantoForm` hands to `onSubmit`) leaves the field out.
+ */
+export interface FileFieldValue {
+	/**
+	 * The files the record has, as the client listed them. `null`: not known
+	 * (the list has not arrived, or failed) - `required` is not judged then.
+	 */
+	existing: FileFieldMeta[] | null;
+	/** Chosen, not uploaded. While a visible field has any, the form is dirty. */
+	pending: PendingFile[];
+}
+
+/**
+ * The transport of a `file` field, injected by the app. A STRUCTURAL subset of
+ * `@banto/attachments`' `AttachmentsClient`: the app's attachments client
+ * (`attachmentsAdmin.ts`) can be passed as it is. forms holds no data contract
+ * and adds no operation: these are the existing attachment routes / commands,
+ * so their authorisation, audit and limits apply unchanged. A rejection is
+ * shown as it is (its `message`).
+ */
+export interface FileFieldClient {
+	list(resource: string, resourceId: string): Promise<FileFieldMeta[]>;
+	upload(resource: string, resourceId: string, file: File): Promise<FileFieldMeta>;
+	remove(id: number): Promise<void>;
+}
+
+/**
+ * Settings of a `file` field (`FieldDef.file`).
+ *
+ * `accept` / `maxFileSize` / `maxFiles` (and the field's `required`) are
+ * checked ON SCREEN ONLY, to help the input. The attachments API works per
+ * record, not per field, so the server does not enforce them: another client,
+ * or an upload that fails after the record was created, can leave a record
+ * without a "required" file. An app that must guarantee one puts that check in
+ * its own server contract. What the server does enforce (its size limit, the
+ * type by magic bytes, authorisation, the parent's existence) is shown as the
+ * client's rejection, also when it is stricter than these.
+ */
+export interface FileFieldConfig {
+	client: FileFieldClient;
+	/** The resource the files hang on (`AttachmentsClient`'s `resource`). */
+	resource: string;
+	/**
+	 * Allowed kinds, like `<input accept>`: comma-separated `.ext`, `type/*`
+	 * or `type/subtype` (matched against the name and the type the browser
+	 * reports). Omitted: any.
+	 */
+	accept?: string;
+	/** Largest size of one file, in bytes. */
+	maxFileSize?: number;
+	/** Most files the field holds (existing + chosen). `1`: the picker takes one file. */
+	maxFiles?: number;
+	/**
+	 * Asked before a file the record has is deleted (deleting is immediate).
+	 * Default: `window.confirm(message)`.
+	 */
+	confirmRemove?: (message: string, file: FileFieldMeta) => boolean | Promise<boolean>;
+}
+
 export interface FieldDef {
 	name: string;
 	label: string;
@@ -82,6 +171,8 @@ export interface FieldDef {
 	 * such record) or a rejection: the value itself is shown.
 	 */
 	resolve?: (value: string | number, signal: AbortSignal) => Promise<ReferenceOption | null>;
+	/** file: the client the files go through and the on-screen limits. Required for a `file` field. */
+	file?: FileFieldConfig;
 	/** radio: `'segmented'` shows the choices as a row of buttons; the value and keyboard behaviour are the same. */
 	variant?: 'segmented';
 	/**

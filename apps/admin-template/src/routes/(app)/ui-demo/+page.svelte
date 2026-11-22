@@ -29,7 +29,15 @@
 	 * Not in the API on purpose (ADR-0018 §2): `IconButton` has no `disabled`
 	 * prop in phase 1, so no disabled sample.
 	 */
-	import { BantoForm, createFormStore, type FormSchema, type ReferenceOption } from '@banto/forms';
+	import {
+		BantoForm,
+		createFormStore,
+		uploadPendingFiles,
+		type FileFieldClient,
+		type FileFieldMeta,
+		type FormSchema,
+		type ReferenceOption
+	} from '@banto/forms';
 	import {
 		CommandPalette,
 		DateInput,
@@ -93,6 +101,7 @@
 		dateInputMessages,
 		dateRangeInputMessages,
 		dateTimeInputMessages,
+		fileFieldMessages,
 		formValidationMessages,
 		gridMessages,
 		referenceFieldMessages
@@ -572,6 +581,81 @@
 		formValidationMessages()
 	);
 	let referenceDemoValues = $state<Record<string, unknown> | null>(null);
+	// BantoForm file type (#714, plan §4.12). The "store" is a local array, so
+	// the card needs no backend in any mode (an app passes its attachments
+	// client, `attachmentsAdmin.ts`, as `file.client`). It takes 64 KB at most
+	// while the field allows 1 MB: a rejection stricter than the screen.
+	const FILE_DEMO_STORE_LIMIT = 64 * 1024;
+	let fileDemoRows: FileFieldMeta[] = [];
+	let fileDemoNextId = 1;
+	const fileDemoClient: FileFieldClient = {
+		list: async () => [...fileDemoRows],
+		upload: async (_resource, _resourceId, file) => {
+			if (file.size > FILE_DEMO_STORE_LIMIT) throw new Error(m['uiDemo.file.serverLimit']());
+			const row = { id: fileDemoNextId++, fileName: file.name, sizeBytes: file.size };
+			fileDemoRows = [...fileDemoRows, row];
+			return row;
+		},
+		remove: async (id) => {
+			fileDemoRows = fileDemoRows.filter((row) => row.id !== id);
+		}
+	};
+	const fileDemoSchema: FormSchema = {
+		fields: [
+			{
+				name: 'title',
+				get label() {
+					return m['uiDemo.file.fieldTitle']();
+				},
+				type: 'text'
+			},
+			{
+				name: 'files',
+				get label() {
+					return m['uiDemo.file.fieldFiles']();
+				},
+				get help() {
+					return m['uiDemo.file.fieldFilesHelp']();
+				},
+				type: 'file',
+				file: {
+					client: fileDemoClient,
+					resource: 'ui-demo',
+					accept: '.txt,.pdf,image/*',
+					maxFileSize: 1024 * 1024,
+					maxFiles: 3,
+					confirmRemove: (message) => confirmAction({ title: message, danger: true })
+				}
+			}
+		]
+	};
+	const fileDemoStore = createFormStore(fileDemoSchema, undefined, formValidationMessages());
+	/** The record the card edits; `null` until "create" made one. */
+	let fileDemoParentId = $state<number | null>(null);
+	let fileDemoValues = $state<Record<string, unknown> | null>(null);
+	let fileDemoOutcome = $state<{ uploaded: number; failed: number } | null>(null);
+	async function submitFileDemo(values: Record<string, unknown>): Promise<void> {
+		fileDemoValues = values;
+		fileDemoStore.markClean();
+		if (fileDemoParentId !== null) return;
+		// "Create" succeeded: only now do the chosen files go to the new record.
+		const id = 1;
+		const outcome = await uploadPendingFiles(
+			fileDemoSchema,
+			fileDemoStore,
+			id,
+			fileFieldMessages()
+		);
+		fileDemoOutcome = { uploaded: outcome.uploaded.length, failed: outcome.failed.length };
+		fileDemoParentId = id;
+	}
+	function resetFileDemo(): void {
+		fileDemoRows = [];
+		fileDemoParentId = null;
+		fileDemoValues = null;
+		fileDemoOutcome = null;
+		fileDemoStore.reset();
+	}
 	// BantoGrid card (date-time-pickers PR-4): an editable date column gets
 	// the DateInput the root layout injects (`provideCellEditors`); the range
 	// comes from the schema (min / max, like the ship date above). Fixed
@@ -1095,6 +1179,39 @@
 			{m['uiDemo.choices.submitted']()}:
 			<code data-testid="ui-demo-reference-values"
 				>{referenceDemoValues ? JSON.stringify(referenceDemoValues) : m['uiDemo.form.none']()}</code
+			>
+		</span>
+	</SurfaceCard>
+
+	<SurfaceCard title="BantoForm" description={m['uiDemo.file.desc']()}>
+		<div data-testid="ui-demo-file">
+			<BantoForm
+				schema={fileDemoSchema}
+				store={fileDemoStore}
+				submitLabel={fileDemoParentId === null
+					? m['uiDemo.file.create']()
+					: m['uiDemo.file.save']()}
+				fileParentId={fileDemoParentId}
+				fileMessages={fileFieldMessages()}
+				onSubmit={submitFileDemo}
+			>
+				<button type="button" class="banto-btn banto-btn--secondary" onclick={resetFileDemo}>
+					{m['uiDemo.file.reset']()}
+				</button>
+			</BantoForm>
+		</div>
+		<span class="caption" data-testid="ui-demo-file-state">
+			{fileDemoParentId === null
+				? m['uiDemo.file.stateNew']()
+				: m['uiDemo.file.stateEdit']({ id: fileDemoParentId })}
+			{#if fileDemoOutcome}
+				- {m['uiDemo.file.uploaded'](fileDemoOutcome)}
+			{/if}
+		</span>
+		<span class="caption">
+			{m['uiDemo.choices.submitted']()}:
+			<code data-testid="ui-demo-file-values"
+				>{fileDemoValues ? JSON.stringify(fileDemoValues) : m['uiDemo.form.none']()}</code
 			>
 		</span>
 	</SurfaceCard>
