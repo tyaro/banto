@@ -297,12 +297,13 @@ describe('replaceLayout with { saved: true } (#739 review)', () => {
 		expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
 		const root = dock.layout.docked;
 		expect(root?.type === 'split' && root.children.map((c) => c.id)).toEqual(['a', 'b', 'c']);
-		// b, hidden, left the row for a's slot (#743: a holds .2 of .7 since) and came back at its
-		// default place with the share it held (.375 of row[b, c]); a then takes 2/7 of the row.
+		// b, hidden, left the row (#743: a's place holds .2 of .7 since) and came back at its default
+		// place with the share it held of what showed (.375 of row[b, c]), a's place giving way as
+		// it took: the row as it was (#782 PR6; a took 2/7 before, when b did not count a's place).
 		expect(root?.type === 'split' && root.sizes).toEqual([
-			expect.closeTo(2 / 7, 9),
-			expect.closeTo((0.375 * 5) / 7, 9),
-			expect.closeTo((0.625 * 5) / 7, 9)
+			expect.closeTo(0.2, 9),
+			expect.closeTo(0.3, 9),
+			expect.closeTo(0.5, 9)
 		]);
 	});
 });

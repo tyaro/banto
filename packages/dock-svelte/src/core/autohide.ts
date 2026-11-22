@@ -217,6 +217,21 @@ export function autoHideRegionInLayout(
 }
 
 /**
+ * The ids of `layout` that are not in its docked tree: the floating windows, and the regions in
+ * the edge bands with their panes. A layout holds an id once (`validateDockLayout`), so a split /
+ * tab group made in the docked tree takes none of them (`core/defaultPlace.ts`'s and
+ * `core/slot.ts`'s `taken`).
+ */
+export function idsOutOfDocked(layout: DockLayout): Set<string> {
+	const taken = new Set<string>(layout.floating.map((w) => w.id));
+	for (const entry of layout.autoHidden ?? []) {
+		taken.add(entry.node.id);
+		if (entry.node.type === 'tabs') for (const tab of entry.node.children) taken.add(tab.id);
+	}
+	return taken;
+}
+
+/**
  * `layout` with the auto-hidden region that holds `id` back in the docked tree:
  * at its remembered place, else at its edge. `null` when `id` is not
  * auto-hidden, or one of its ids is in the tree already.
@@ -232,10 +247,12 @@ export function restoreAutoHiddenInLayout(
 	const root = layout.docked;
 	const ids = [entry.node.id, ...regionPanelIds(entry.node)];
 	if (ids.some((x) => findNode(root, x))) return null;
-	const docked =
-		restoreRegionSlot(root, entry.node, entry.slot, makeId) ??
-		dockPanelAtEdge(root, entry.node, entry.edge, makeId);
 	const list = (layout.autoHidden ?? []).filter((_, i) => i !== index);
+	// A split made again does not take an id the rest of the layout holds (#782 PR6).
+	const taken = idsOutOfDocked({ ...layout, autoHidden: list });
+	const docked =
+		restoreRegionSlot(root, entry.node, entry.slot, makeId, taken) ??
+		dockPanelAtEdge(root, entry.node, entry.edge, makeId);
 	return withAutoHidden({ ...layout, docked }, list);
 }
 

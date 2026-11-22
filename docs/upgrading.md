@@ -444,6 +444,10 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   `ThreePaneDock` は自分で入れる。型 `FloatingWindow` の `dockSlot` は無くなり（`dockShare` に置き換え）、保存済みの
   layout の `dockSlot` は読まずに捨てる（layout は読める。データの移行は無い）。詳細は CHANGELOG と
   `packages/dock-svelte/README.md` の「表示メニュー」。
+- **`@banto/dock-svelte`: 浮かせた pane の「元の場所に戻す」の結果が変わる（#782 PR6）**。コードを直す所は無い。
+  浮かせている間にほかの pane を動かす・隠す・浮かせるをはさんでも、浮かせた時の分割・タブの組へその時の比率で戻り、
+  戻す順によらない（前は順で形や比率が変わることがあった）。「浮かせて戻す」「浮かせたまま隣を動かす」を E2E や
+  基準画像で見ているアプリは確かめ直す。
 
 **初回セットアップの撤去（C2b、ADR-0034 §5〜§7・§9）**。C1・C2 の後に作った DB は作り直さなくてよい
 （`0015_auth_mode_defaults.sql` が足されるだけ）。

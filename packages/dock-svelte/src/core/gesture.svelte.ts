@@ -70,7 +70,7 @@
  *   unconsumed Esc of an active session.
  */
 import { getContext, setContext } from 'svelte';
-import { adoptLayout, type DockState } from '../state.svelte';
+import { adoptLayout, rememberShadow, type DockState } from '../state.svelte';
 import type { DockLayout } from '../types';
 
 /**
@@ -244,7 +244,7 @@ export class GestureOwner {
 	instant(kind: GestureKind, panelId: string | null, apply: () => void): boolean {
 		if (this.#disposed || this.session) return false;
 		if (!this.#allowed(kind, panelId)) return false;
-		const snapshot = $state.snapshot(this.#dock.layout) as DockLayout;
+		const snapshot = this.#snapshot();
 		apply();
 		this.#getOptions().onEnd?.(
 			{ kind, pointerId: null, panelId, snapshot, activeLayer: null },
@@ -313,6 +313,16 @@ export class GestureOwner {
 		return ok && !this.#disposed && !this.session;
 	}
 
+	/**
+	 * The layout as it is now, for a cancel to go back to. A clone, so `DockState` is told which
+	 * shadow tree showed it (`rememberShadow`): a cancelled divider drag puts that back too.
+	 */
+	#snapshot(): DockLayout {
+		const snapshot = $state.snapshot(this.#dock.layout) as DockLayout;
+		rememberShadow(this.#dock, snapshot);
+		return snapshot;
+	}
+
 	#open(
 		kind: GestureKind,
 		pointerId: number | null,
@@ -324,7 +334,7 @@ export class GestureOwner {
 			kind,
 			pointerId,
 			panelId,
-			snapshot: $state.snapshot(this.#dock.layout) as DockLayout,
+			snapshot: this.#snapshot(),
 			activeLayer
 		};
 		this.#spec = spec;
