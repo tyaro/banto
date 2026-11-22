@@ -555,6 +555,17 @@
 	}
 
 	/**
+	 * Cancel the gesture in progress (a drag, resize or divider move; #796): its target goes back to
+	 * how it was and `onGestureEnd` gets `('cancel', 'api')`. `true` if there was one, `false`
+	 * (nothing happens) otherwise. `replaceLayout` does this by itself before it asks anything.
+	 */
+	export function cancelGesture(): boolean {
+		if (!gesture.active) return false;
+		gesture.cancel('api');
+		return true;
+	}
+
+	/**
 	 * Replace the whole layout (#663 ④, three-pane-dock-plan §4.4: `ThreePaneDock`'s `resetLayout` /
 	 * `restoreLayout`) through `beforePanelChange`: every pane whose content the replacement takes
 	 * off the screen or re-mounts is asked first (`hide` / `close` / `tab-switch` / `dock` / `undock` /
@@ -572,6 +583,10 @@
 	 * hidden) that `next` drops, or shows somewhere else, no longer holds its share of its split.
 	 * `options.isCurrent` is re-read before each request and right before the replacement is
 	 * applied: `false` = `stale`, nothing changed (like `setPanelVisible`'s).
+	 * A gesture in progress is cancelled first (`cancelGesture`, #796), once `next` passed the
+	 * check: the panes are asked about the layout the gesture restored, and the replacement is
+	 * not overwritten by the gesture's later commit / restore. A refused replacement still leaves
+	 * the gesture cancelled.
 	 */
 	export async function replaceLayout(
 		next: DockLayout,
@@ -580,6 +595,7 @@
 		const checked = validateDockLayout(next);
 		if (!checked.ok) return 'invalid';
 		const layout = checked.layout;
+		cancelGesture();
 		const active = document.activeElement;
 		const focusWasInHost = !!hostEl && !!active && hostEl.contains(active);
 		const outcome = await lifecycle.guarded(options.isCurrent, () =>

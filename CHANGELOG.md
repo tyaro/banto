@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **dock-svelte:** `DockHost.cancelGesture(): boolean` を足した。進行中の操作（ドラッグ・リサイズ・仕切りの移動）を取り消し、対象を元に戻す。取り消したら `true`、無ければ `false` で何も起こらない。`onGestureEnd` へは `'cancel'` と理由 `'api'` で届く。`arrange` を一瞬 `false` にする回り道が要らなくなる（#796）。
+
+### Changed
+
+- **dock-svelte（挙動の変化）:** `DockHost.replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout` を含む）は、不正でない置き換えなら、`beforePanelChange` に聞く前に進行中の操作を自動で取り消す。消費側への注意: 操作中に `replaceLayout` / `resetLayout` を呼ぶと、操作は確定せず `onGestureEnd(kind, 'cancel', 'api')` で閉じる。置き換えが拒否（`refused`）・`stale` になっても、取り消した操作は戻らない。`invalid` のときは取り消さない（#796）。
+
 ### Changed
 
 - **ci:** `visual-baselines.yml` を `visual.spec.ts` だけの再生成・確認にし、Rust のビルドをやめ、`commit` の既定を true にした。1 回の dispatch で済む（#798）。
@@ -48,8 +56,6 @@
 - **`pnpm banto add resource <name>`: CRUD リソース 1 つ分の定型コードを Rust 側まで生成する（#715 E-2）。** 両方言のマイグレーション（番号は今の最大の次）、サービス、REST、Tauri コマンド、両経路の対称テスト（denied を含む）、監査の detail、ResourcePage の定義とルート 3 本、メッセージのキー（ja・en）、ナビの項目を書く。入力は JSON のフィールド定義（`--fields`。省くと必須の `name` だけ）で、`text`・`textarea`・`number`・`checkbox`・`date` の欄を作れる。版（`version` 列）による楽観ロックは既定で付く。**監査の detail に値が残るのは、定義で `audit: true` を付けた欄だけ**（既定は残さない。`detail.name` は `title: true` を付けた text の欄だけ）で、生成したテストが付けていない欄の値が出ないことを確かめる。フォームと Rust の検証は同じ意味にそろえてある（文字数は UTF-16 の単位、日付は実在日、整数は ±(2^53−1)）。PostgreSQL の識別子の上限（63 バイト）を超える名前、予約語、生成する名前どうしやテンプレートの既存の名前との重なりは、何も書く前に断る。生成物は普通のコードで、再生成・差分の適用はしない。既存のファイルへの追記は `[banto:add-resource:<slot>]` のコメントの位置に行い、1 つでも欠けていれば何も書かずに止まる。`pnpm scaffold` のどのプリセットの後でも使える。使い方は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)「生成器で足す」。依存は足していない（Node の標準モジュールのみ）。生成→ビルドは CI（template-acceptance の `Generate resource → check`）が毎回確かめる: フィクスチャ（`scripts/fixtures/add-resource/orders.json`）で生成したコピーが `verify:architecture`・`pnpm check`・`cargo test`（core と src-tauri）を通り、そのまま Playwright（`pnpm e2e:add-resource`、`e2e/tests-add-resource/`）で、初回セットアップ → ナビから orders の一覧 → フォームで 1 件作成 → 一覧にその行、まで通る。
 - **テンプレート: 生成したリソースのサービスを入れる `AppResources`（`core/src/resources.rs`）と `rest::resources_router`。** 新しいリソースが `rest::Services`・`AppState` と、その呼び出し側に欄を足さずに済むようにした。`banto-serve` と `src-tauri` の `start_embedded_server` は `api_router` の隣に `resources_router` を merge し、`AppState` は `resources` を持つ。テンプレートのままでは空で、挙動は変わらない。
 - **`@banto/grid-svelte`: `BantoGrid` に行の右クリックの口 `onRowContextMenu(row, { x, y })` を足す（#784）。** `BantoTree` の `onContextMenu` と同じ扱いで、渡したときだけブラウザの既定のメニューを抑え、右クリックのほか `ContextMenu` キー・Shift+F10 でも呼ぶ（位置はアクティブなセルの左端・下端）。フォーカスはコールバックの前にクリックしたセルへ移り、行の選択は変えない。グループ見出し・読み込み中の行・セルの編集中は呼ばない。行はそのまま渡す（選択中の全行を対象にするかは呼び出し側）。編集中は、注入したエディタ全体（カレンダーのボタン・ポップオーバーも）の右クリックを素通しにする。あわせて、ポインター操作なしで Tab で入った（アクティブなセルがまだ無い）グリッドでは、矢印キー・Home・End・PageUp・PageDown（と、`onRowContextMenu` を渡したときの `ContextMenu` キー・Shift+F10）の最初の 1 回が、見えている最初のデータ行の先頭列をアクティブにする（その 1 回は移動しない）。`onRowContextMenu` を渡さないグリッドにも効く。
-
-### Changed
 
 - **`e2e/` の TypeScript を `pnpm check` で型検査する。** ルートに `check:e2e`（`tsc -p e2e/tsconfig.json --noEmit`）を足して `check` から呼び、そのためにルートの devDependencies へ `@types/node`（`^24.0.0`）・`typescript`・`axe-core` を足した（[ADR-0032](docs/adr/0032-root-e2e-typecheck-devdeps.md)。型だけで実行時の影響なし）。`e2e/playwright.config.ts` の `selectWebServers` は型を明示した（挙動は同じ）。display プリセットの scaffold は、型検査で見つかった残骸（`e2e/demo` と、消した定数を参照する `selectWebServers` の対応表）を一緒に外すようにした。消費側への注意: 派生アプリのルート `package.json` にも `check:e2e` と上記 3 つの devDependency が入る。
 

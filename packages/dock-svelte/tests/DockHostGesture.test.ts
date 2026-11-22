@@ -309,3 +309,78 @@ describe('split divider', () => {
 		expect(net).toBe(0);
 	});
 });
+
+describe('cancelGesture / replaceLayout during a gesture (#796)', () => {
+	const mount = () => {
+		const dock = createDockState(floatingA());
+		const onGestureEnd = vi.fn();
+		const view = render(DockHostHarness, { dock, onGestureEnd });
+		return { dock, view, onGestureEnd, host: () => view.component.host() };
+	};
+
+	it('cancelGesture is false without a gesture and does nothing', () => {
+		const { dock, onGestureEnd, host } = mount();
+		expect(host().cancelGesture()).toBe(false);
+		expect(onGestureEnd).not.toHaveBeenCalled();
+		expect(widthOf(dock)).toBe(320);
+	});
+
+	it('cancelGesture undoes a resize, reports api once, and frees the listeners', () => {
+		const { dock, onGestureEnd, host } = mount();
+		firePointer(
+			screen.getByRole('dialog', { name: 'A' }).querySelector('.handle-se')!,
+			'pointerdown',
+			360,
+			240
+		);
+		firePointer(window, 'pointermove', 430, 240);
+		expect(widthOf(dock)).toBe(390);
+		expect(host().cancelGesture()).toBe(true);
+		expect(widthOf(dock)).toBe(320);
+		expect(onGestureEnd).toHaveBeenCalledTimes(1);
+		expect(onGestureEnd.mock.calls[0]).toEqual(['resize', 'cancel', 'api']);
+		expect(host().cancelGesture()).toBe(false);
+		firePointer(window, 'pointerup', 430, 240);
+		expect(widthOf(dock)).toBe(320);
+		expect(net).toBe(0);
+	});
+
+	it('replaceLayout during a resize cancels it and applies the replacement intact', async () => {
+		const { dock, onGestureEnd, host } = mount();
+		firePointer(
+			screen.getByRole('dialog', { name: 'A' }).querySelector('.handle-se')!,
+			'pointerdown',
+			360,
+			240
+		);
+		firePointer(window, 'pointermove', 430, 240);
+		const next: DockLayout = {
+			version: 2,
+			floating: [{ id: 'a', title: 'A', x: 10, y: 10, width: 500, height: 200, open: true }],
+			docked: null
+		};
+		expect(await host().replaceLayout(next)).toBe('applied');
+		expect(onGestureEnd).toHaveBeenCalledTimes(1);
+		expect(onGestureEnd.mock.calls[0]).toEqual(['resize', 'cancel', 'api']);
+		expect(widthOf(dock)).toBe(500);
+		firePointer(window, 'pointermove', 600, 240);
+		firePointer(window, 'pointerup', 600, 240);
+		expect(widthOf(dock)).toBe(500);
+		expect(net).toBe(0);
+	});
+
+	it('an invalid replaceLayout leaves the gesture running', async () => {
+		const { dock, host } = mount();
+		firePointer(
+			screen.getByRole('dialog', { name: 'A' }).querySelector('.handle-se')!,
+			'pointerdown',
+			360,
+			240
+		);
+		firePointer(window, 'pointermove', 430, 240);
+		expect(await host().replaceLayout({ version: 99 } as unknown as DockLayout)).toBe('invalid');
+		expect(widthOf(dock)).toBe(390);
+		firePointer(window, 'pointerup', 430, 240);
+		expect(widthOf(dock)).toBe(390);
+	});
+});
