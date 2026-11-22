@@ -69,7 +69,7 @@
 //! (`--no-default-features`), or on an unsupported host, `metrics` is `null`.
 
 // Terminal control for `create-admin` lives with the binary on purpose: it owns
-// process-wide state (console mode / signal handlers) and must be called once.
+// process-wide state (console mode) and must be called once.
 #[path = "banto_serve_parts/password_input.rs"]
 mod password_input;
 
