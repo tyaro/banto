@@ -11,7 +11,13 @@
  * validation), keeping it reactive to the active locale.
  */
 import type { GridMessages, ColumnValidationMessages } from '@banto/grid-svelte';
-import type { ReferenceFieldMessages, ValidationMessages } from '@banto/forms';
+import {
+	fileErrorText,
+	formatFileSize,
+	type FileFieldMessages,
+	type ReferenceFieldMessages,
+	type ValidationMessages
+} from '@banto/forms';
 import type { TreeMessages } from '@banto/tree-svelte';
 import type { UiMessages } from '@banto/ui';
 import * as m from '#lib/paraglide/messages.js';
@@ -86,7 +92,11 @@ export function formValidationMessages(): ValidationMessages {
 		dateTimeInvalid: () => m['validation.dateTimeInvalid'](),
 		dateTimeMin: (_def, min) => m['validation.dateTimeMin']({ min }),
 		dateTimeMax: (_def, max) => m['validation.dateTimeMax']({ max }),
-		visibilityUnsettled: () => m['validation.visibilityUnsettled']()
+		visibilityUnsettled: () => m['validation.visibilityUnsettled'](),
+		fileTooLarge: (_def, maxBytes) =>
+			m['validation.fileTooLarge']({ size: formatFileSize(maxBytes) }),
+		fileTypeNotAccepted: (_def, accept) => m['validation.fileTypeNotAccepted']({ accept }),
+		fileTooMany: (_def, max) => m['validation.fileTooMany']({ max })
 	};
 }
 
@@ -99,6 +109,33 @@ export function referenceFieldMessages(): ReferenceFieldMessages {
 		resultCount: (count) => m['reference.resultCount']({ count }),
 		searchFailed: () => m['reference.searchFailed'](),
 		listLabel: (def) => m['reference.listLabel']({ label: def.label })
+	};
+}
+
+/**
+ * @banto/forms `FileFieldMessages` (BantoForm `fileMessages`, `uploadPendingFiles`): the texts of a `file` field.
+ * A rejection of the injected client is shown as it is (its own message); the keys are the fallback.
+ */
+export function fileFieldMessages(): FileFieldMessages {
+	return {
+		choose: () => m['fileField.choose'](),
+		pendingNote: () => m['fileField.pendingNote'](),
+		pending: () => m['fileField.pending'](),
+		uploading: () => m['fileField.uploading'](),
+		upload: () => m['fileField.upload'](),
+		retry: () => m['fileField.retry'](),
+		cancel: () => m['fileField.cancel'](),
+		remove: () => m['fileField.remove'](),
+		actionLabel: (action, fileName) => m['fileField.actionLabel']({ action, fileName }),
+		removeConfirm: (fileName) => m['fileField.removeConfirm']({ fileName }),
+		loading: () => m['fileField.loading'](),
+		loadFailed: (error) => fileErrorText(error) ?? m['fileField.loadFailed'](),
+		reload: () => m['fileField.reload'](),
+		empty: () => m['fileField.empty'](),
+		uploadFailed: (error) => fileErrorText(error) ?? m['fileField.uploadFailed'](),
+		removeFailed: (error) => fileErrorText(error) ?? m['fileField.removeFailed'](),
+		rejected: (fileName, reason) => m['fileField.rejected']({ fileName, reason }),
+		listLabel: (def) => m['fileField.listLabel']({ label: def.label })
 	};
 }
 

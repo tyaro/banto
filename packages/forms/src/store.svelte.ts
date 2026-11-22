@@ -4,7 +4,8 @@
  * `createFormResource` supplies server-side errors via `setServerErrors`.
  */
 import { isTemporalType, type FieldDef, type FieldError, type FormSchema } from './types';
-import { isFieldVisible, submitValuesOf } from './layout';
+import { emptyFileValue, hasPendingFiles, withoutFileFields } from './fields/file';
+import { assertFormSchema, isFieldVisible, submitValuesOf } from './layout';
 import { validateAll, validateField, type ValidationMessages } from './validate';
 
 function defaultsFrom(schema: FormSchema): Record<string, unknown> {
@@ -18,6 +19,8 @@ function defaultsFrom(schema: FormSchema): Record<string, unknown> {
 		else if (isTemporalType(field.type)) values[field.name] = null;
 		// A reference with nothing chosen is `null` (the value is an id, never typed text).
 		else if (field.type === 'reference') values[field.name] = null;
+		// A file field: the record's files not known yet, nothing chosen.
+		else if (field.type === 'file') values[field.name] = emptyFileValue();
 		else values[field.name] = '';
 	}
 	return values;
@@ -40,19 +43,38 @@ export class FormStore {
 		initial?: Record<string, unknown>,
 		messages: ValidationMessages = {}
 	) {
+		// A second `file` field (or one without a client) is an error here, when the form is defined (§4.12).
+		assertFormSchema(schema);
 		this.#schema = schema;
 		this.#messages = messages;
 		this.values = { ...defaultsFrom(schema), ...initial };
-		this.#initialSnapshot = JSON.stringify(this.values);
+		this.#initialSnapshot = this.#snapshot();
 	}
 
-	/** True when `values` differs from the snapshot taken at construction/last reset. */
-	get isDirty(): boolean {
-		return JSON.stringify(this.values) !== this.#initialSnapshot;
+	// `file` fields stay out of the snapshot: their dirtiness is "has chosen
+	// files that are not uploaded", whatever the baseline is.
+	#snapshot(): string {
+		return JSON.stringify(withoutFileFields(this.#schema, this.values));
 	}
 
 	/**
-	 * `values` without the fields `visibleWhen` hides: what `BantoForm` hands to
+	 * True when `values` differs from the snapshot taken at construction/last
+	 * reset, or a visible `file` field has chosen files that are not uploaded
+	 * (those stay unsaved until they are uploaded or taken off; `markClean()`
+	 * does not clear them).
+	 */
+	get isDirty(): boolean {
+		return this.#snapshot() !== this.#initialSnapshot || hasPendingFiles(this.#schema, this.values);
+	}
+
+	/** The validation messages given at construction (a `file` field checks picked files with them). */
+	get messages(): ValidationMessages {
+		return this.#messages;
+	}
+
+	/**
+	 * `values` without the fields `visibleWhen` hides and without `file` fields
+	 * (files never travel with the record): what `BantoForm` hands to
 	 * `onSubmit`. Hidden input stays in `values` (and in `isDirty`), it is just
 	 * not sent.
 	 */
@@ -117,13 +139,13 @@ export class FormStore {
 	 * unsaved). Unlike `reset()`, values/errors/touched are left as they are.
 	 */
 	markClean(): void {
-		this.#initialSnapshot = JSON.stringify(this.values);
+		this.#initialSnapshot = this.#snapshot();
 	}
 
 	/** Reset values to schema defaults merged with `newInitial`, and clear errors/touched. */
 	reset(newInitial?: Record<string, unknown>): void {
 		this.values = { ...defaultsFrom(this.#schema), ...newInitial };
-		this.#initialSnapshot = JSON.stringify(this.values);
+		this.#initialSnapshot = this.#snapshot();
 		this.errors = {};
 		this.touched = {};
 	}

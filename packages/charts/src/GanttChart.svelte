@@ -244,9 +244,9 @@
 			{#if todayVisible && todayMs !== null}
 				{@const tx = timeScale(todayMs)}
 				<line x1={tx} x2={tx} y1={m.innerTop} y2={m.innerBottom} class="today-line" />
-				<text x={tx} y={m.innerBottom + 16} class="today-label" text-anchor="middle"
-					>{msg.ganttToday()}</text
-				>
+				<text x={tx} y={m.innerBottom + 16} class="today-label" text-anchor="middle">
+					{msg.ganttToday()}
+				</text>
 			{/if}
 		{/snippet}
 		{#snippet overlay()}

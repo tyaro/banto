@@ -80,9 +80,9 @@
 		<span class="icon"><Icon size={20} aria-hidden="true" /></span>
 		<span class="label">{navLabel(item)}</span>
 		{#if badgeCount > 0}
-			<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}
-				>{badgeText(badgeCount)}</span
-			>
+			<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}>
+				{badgeText(badgeCount)}
+			</span>
 		{/if}
 	</a>
 {/snippet}

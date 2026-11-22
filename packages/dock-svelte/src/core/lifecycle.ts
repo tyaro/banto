@@ -548,11 +548,15 @@ export class PanelLifecycle {
 	 * = applied at once. The layout `preview` gives now is part of the request's identity: the same
 	 * replacement while it is asked shares the pending one, another destination is asked on its own
 	 * (whichever is applied first wins, the other is `stale`), and a `preview` that later gives
-	 * another layout makes it `stale`.
+	 * another layout makes it `stale`. So is `effects` (PR #842 review), a JSON value naming what
+	 * `apply` does besides putting the layout in (a report, state kept beside the layout): only the
+	 * pending request's `apply` runs for the calls that share it, so two calls with the same
+	 * destination and other effects are asked apart, and only the one whose `apply` ran is `applied`.
 	 */
 	requestReplace(
 		preview: () => DockLayout | undefined,
-		apply: (next: DockLayout) => void
+		apply: (next: DockLayout) => void,
+		effects: unknown = null
 	): Promise<DockPanelChangeOutcome> {
 		if (this.#disposed) return Promise.resolve('disposed');
 		const first = preview();
@@ -578,7 +582,7 @@ export class PanelLifecycle {
 				const next = preview();
 				if (next !== undefined) apply(next);
 			},
-			{ replace: destination }
+			{ replace: destination, effects }
 		);
 	}
 

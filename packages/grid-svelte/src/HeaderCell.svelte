@@ -356,12 +356,12 @@
 
 	.header-cell[aria-sort='ascending'] .label,
 	.header-cell[aria-sort='descending'] .label {
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 	}
 
 	.sort-arrow {
 		font-size: var(--banto-font-size-xs);
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 	}
 
 	.sort-priority {
@@ -387,7 +387,7 @@
 	}
 
 	.filter-button.active {
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 		text-decoration-line: underline;
 		text-decoration-style: double;
 		text-decoration-thickness: var(--banto-border-width, 1px);

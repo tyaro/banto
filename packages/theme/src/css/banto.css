@@ -419,6 +419,8 @@
 
 	/* Surface hierarchy (visual-refresh-plan.md 付録A.1) */
 	--banto-surface-subtle: var(--banto-neutral-3);
+	/* 小さなバッジ・件数の地。surface-subtle と同じ値（text-muted が 4.5:1 を保つ面） */
+	--banto-surface-muted: var(--banto-surface-subtle);
 
 	--banto-surface-hover: var(--banto-neutral-4);
 
@@ -509,9 +511,12 @@
 
 	/* Same slot order and hue families as light, re-tuned for the dark
      surface (and raised); same checks (chart-palette.test.ts). Sequential
-     runs dark -> bright here so "more" still means "more contrast". */
+     runs dark -> bright here so "more" still means "more contrast".
+     Slot 2 sits halfway between --banto-warning and --banto-danger (0.092
+     from each in OKLab; slots 1..4 keep >= 0.09 from the status colours,
+     #795) - moving it towards either one fails that test. */
 	--banto-chart-1: #407aea;
-	--banto-chart-2: #f48815;
+	--banto-chart-2: #ed770e;
 	--banto-chart-3: #a7719d;
 	--banto-chart-4: #75b992;
 	--banto-chart-5: #de401b;
@@ -539,6 +544,8 @@
 
 	/* Surface hierarchy (visual-refresh-plan.md 付録A.1, dark column) */
 	--banto-surface-subtle: var(--banto-neutral-3);
+	/* 小さなバッジ・件数の地。surface-subtle と同じ値（text-muted が 4.5:1 を保つ面） */
+	--banto-surface-muted: var(--banto-surface-subtle);
 	--banto-surface-hover: var(--banto-neutral-5);
 	--banto-surface-overlay: var(--banto-surface-raised);
 

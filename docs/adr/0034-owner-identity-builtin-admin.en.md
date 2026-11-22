@@ -280,7 +280,9 @@ mark set by the wiring layer.
     read before the lookup (`auth/state.rs:690-714`); `refresh_identity` (`:817-824`) writes the identity back when
     the stamp matches. A token revoked by a switch during the lookup could pass this one time. After the lookup,
     confirm "the token is still in the table and its generation equals the current one"; otherwise treat the
-    request as unauthenticated.
+    request as unauthenticated. (Added 2026-11-22: the first half landed early, in S2 of #793 -
+    `AuthState::settle_lookup` settles the token's presence, expiry and stamp under one lock after the lookup. The
+    line numbers above predate it. C2 adds the generation check there.)
   - **Contract**: once a switch has completed, nothing can be issued from or used under the old generation.
     Lockdown (login-less → login required) advances the same generation (revoking the synthetic session and the
     grants that lockdown closes is as described below).

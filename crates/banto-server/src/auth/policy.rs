@@ -153,6 +153,19 @@ pub(super) enum IdleWindow {
     Keep,
 }
 
+/// How a finished account lookup settles against the token's state at that
+/// instant (`AuthState::settle_lookup`, Issue #793 S2 review).
+#[derive(Debug)]
+pub(super) enum Settled {
+    /// Present, unexpired and bound to the stamp the store reported.
+    Valid(AuthenticatedSession),
+    /// Gone, expired, or stale (revoked here).
+    Invalid,
+    /// Re-bound meanwhile to a stamp this lookup did not report; look up
+    /// once more.
+    Rebound,
+}
+
 /// One stored session token: the identity it authenticates plus the two
 /// timestamps [`TokenPolicy`] is evaluated against. Times are measured on
 /// [`Clock`]'s monotonic scale (a `Duration` since the state was created).

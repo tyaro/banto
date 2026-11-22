@@ -622,8 +622,8 @@ function removeDock() {
 		TREE_PAGE,
 		'tree デモ: dock 版へのリンクカード除去',
 		`\t<SurfaceCard\n\t\ttitle={m['tree.workspaceDock.linkTitle']()}\n\t\tdescription={m['tree.workspaceDock.linkHint']()}\n\t>\n` +
-			`\t\t<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace-dock')}\n` +
-			`\t\t\t>{m['tree.workspaceDock.linkOpen']()}</a\n\t\t>\n\t</SurfaceCard>\n\n`
+			`\t\t<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace-dock')}>\n` +
+			`\t\t\t{m['tree.workspaceDock.linkOpen']()}\n\t\t</a>\n\t</SurfaceCard>\n\n`
 	);
 	for (const [file, label] of [
 		[MSG_JA, 'messages/ja'],
@@ -1667,7 +1667,7 @@ function removeItemsFromRestModImports() {
 	swapText(
 		REST_MOD,
 		'rest: banto_server::routes の items/attachments 専用ヘルパ除去',
-		`use banto_server::routes::{\n    actor_identity, audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,\n    record_write, require_role_at_least, system_info_router, ui_settings_router, users_router,\n    LogoutAuditState, MetricsProbe, RoleGuard,\n};`,
+		`use banto_server::routes::{\n    audit_log_router, audit_logout_middleware, backups_router, extra_auth_router, record_write,\n    require_role_at_least, system_info_router, ui_settings_router, users_router, LogoutAuditState,\n    MetricsProbe, RoleGuard,\n};`,
 		`use banto_server::routes::{\n    audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,\n    system_info_router, ui_settings_router, users_router, LogoutAuditState, MetricsProbe,\n};`
 	);
 	swapText(

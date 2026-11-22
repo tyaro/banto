@@ -267,9 +267,9 @@
 									{#if item.badge}
 										<span class="launcher__badge" aria-hidden="true">{item.badge.text}</span>
 									{/if}
-									<span class="launcher__name"
-										>{item.badge ? `${item.label} ${item.badge.label}` : item.label}</span
-									>
+									<span class="launcher__name">
+										{item.badge ? `${item.label} ${item.badge.label}` : item.label}
+									</span>
 								</a>
 								<span class="launcher__tooltip" aria-hidden="true">{item.label}</span>
 							</li>

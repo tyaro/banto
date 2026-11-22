@@ -8,7 +8,7 @@ Windows でデスクトップアプリ（Tauri）として開発・起動する�
 
 ## 前提ツール（未導入のもののみ）
 
-1. **Node.js 24+**: https://nodejs.org/
+1. **Node.js 26+**: https://nodejs.org/
 2. **pnpm 10+**: 管理者不要。`corepack enable pnpm` または `npm i -g pnpm`
 3. **Rust**: https://rustup.rs/ （MSVCツールチェーン。インストーラの指示に従い
    Visual Studio Build Tools の「C++によるデスクトップ開発」を入れる）

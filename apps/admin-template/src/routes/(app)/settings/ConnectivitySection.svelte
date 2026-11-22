@@ -581,11 +581,11 @@
 				</p>
 				<p class="status">
 					{m['settings.systemInfoUptime']()}
-					<strong
-						>{m['settings.systemInfoUptimeValue']({
+					<strong>
+						{m['settings.systemInfoUptimeValue']({
 							secs: systemInfoStore.value.uptimeSecs
-						})}</strong
-					>
+						})}
+					</strong>
 				</p>
 				<p class="status">
 					{m['settings.systemInfoSessions']()}

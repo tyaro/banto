@@ -396,6 +396,62 @@ async fn viewer_cannot_import_items() {
         "a forbidden import must not touch the table"
     );
 }
+
+/// Issue #793 S2 (review of #843), the Tauri twin of REST's
+/// `an_import_is_refused_when_its_editor_is_demoted_while_the_body_is_open`:
+/// REST decides the role again once the rows are in, because a body over
+/// 2 MiB reaches its handler after the guards. A Tauri command has no such
+/// wait - it holds its rows before `require_role` runs - so the same account
+/// change gives the same result with no extra check: an editor demoted after
+/// logging in is refused (a role change ends the account's sessions, Issue
+/// #204), nothing is imported and no `import` row is written.
+#[tokio::test]
+async fn items_import_decides_on_the_account_as_it_is_when_the_rows_are_in() {
+    let state = app_state().await;
+    let editor = state
+        .users
+        .create_user("editor", "password123", "編集者", Role::Editor)
+        .await
+        .expect("create_user");
+    let editor_id = editor.id;
+    state.set_session_for_test(Some(DesktopSession::Account(editor)));
+    let before = state
+        .items
+        .list(ListParams::default())
+        .await
+        .expect("list")
+        .total_count;
+
+    state
+        .users
+        .update_user(editor_id, "編集者", Role::Viewer)
+        .await
+        .expect("demote");
+
+    let result = items_import_body(
+        &state,
+        vec![ItemImportRow {
+            id: None,
+            name: "Nope".to_string(),
+            price: 1,
+            stock: 1,
+        }],
+    )
+    .await;
+    assert!(
+        matches!(result, Err(BantoError::Unauthorized)),
+        "{result:?}"
+    );
+
+    let list = state.items.list(ListParams::default()).await.expect("list");
+    assert_eq!(list.total_count, before, "a refused import writes nothing");
+    let audit = state.audit.list(ListParams::default()).await.unwrap();
+    assert!(
+        audit.rows.iter().all(|row| row.action != "import"),
+        "{:?}",
+        audit.rows
+    );
+}
 // [scaffold:items] end
 
 // --- M17: SQLite backup/restore -------------------------------------------
@@ -496,6 +552,16 @@ async fn stage_restore_then_pending_reports_it() {
         .unwrap_or_else(|| panic!("expected a restore_staged entry, got {:?}", audit.rows));
     assert_eq!(entry.actor_username.as_deref(), Some("manager"));
     assert_eq!(entry.resource, "backups");
+    // Issue #793 S2: the backup file's real name, as on the REST path
+    // (`POST /api/backups/{fileName}/restore`) - it used to be `None` here.
+    assert_eq!(entry.entity_id.as_deref(), Some(info.file_name.as_str()));
+    let detail: serde_json::Value =
+        serde_json::from_str(entry.detail.as_deref().expect("detail present"))
+            .expect("detail is json");
+    assert_eq!(
+        detail,
+        serde_json::json!({ "source": "existing", "fileName": info.file_name })
+    );
     assert_eq!(entry.origin, "tauri");
     assert_eq!(entry.result, "ok");
 
@@ -1324,6 +1390,60 @@ async fn attachments_delete_is_recorded_as_delete() {
         2
     );
 }
+/// Issue #793 S2, the Tauri side of REST's
+/// `an_attachment_upload_is_refused_when_its_editor_is_demoted_while_the_upload_is_open`:
+/// a command receives the file bytes BEFORE [`require_role`] runs, so its
+/// decision is already "as of when the bytes are in" - there is no open
+/// upload to wait on, and nothing to decide twice. An editor demoted before
+/// the command runs gets nothing stored and nothing audited as created; the
+/// role change ended its session (Issue #204), so the answer is
+/// `Unauthorized`, as on REST.
+#[tokio::test]
+async fn attachments_upload_decides_on_the_account_as_it_is_when_the_bytes_are_in() {
+    let (state, dir) = app_state_with_tempdir().await;
+    let editor = state
+        .users
+        .create_user("editor", "password123", "編集者", Role::Editor)
+        .await
+        .expect("create_user");
+    let editor_id = editor.id;
+    state.set_session_for_test(Some(DesktopSession::Account(editor)));
+
+    state
+        .users
+        .update_user(editor_id, "編集者", Role::Viewer)
+        .await
+        .expect("demote");
+
+    let result = attachments_upload_body(
+        &state,
+        "items".to_string(),
+        "1".to_string(),
+        "note.txt".to_string(),
+        b"hello attachment".to_vec(),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(BantoError::Unauthorized)),
+        "{result:?}"
+    );
+
+    let audit = state.audit.list(ListParams::default()).await.unwrap();
+    assert!(
+        audit
+            .rows
+            .iter()
+            .all(|row| !(row.resource == "attachments" && row.action == "create")),
+        "{:?}",
+        audit.rows
+    );
+    let attachment_dir = dir.path().join("attachments");
+    assert!(
+        !attachment_dir.exists() || std::fs::read_dir(attachment_dir).unwrap().next().is_none(),
+        "a refused upload must not write an attachment body"
+    );
+}
+
 // --- end M20 attachments command tests ---------------------------------
 
 // --- Issue #204: session revocation across transports and processes ----

@@ -24,6 +24,8 @@
 	import MultiselectField from './fields/MultiselectField.svelte';
 	import ReferenceField from './fields/ReferenceField.svelte';
 	import type { ReferenceFieldMessages } from './fields/reference';
+	import FileField from './fields/FileField.svelte';
+	import type { FileFieldMessages } from './fields/file';
 
 	interface Props {
 		schema: FormSchema;
@@ -39,6 +41,15 @@
 		fieldInputs?: FieldInputs;
 		/** Texts of the `reference` fields (loading, nothing found, the search failed); defaults are Japanese. */
 		referenceMessages?: Partial<ReferenceFieldMessages>;
+		/**
+		 * The record the `file` field's files belong to (§4.12). Given (edit):
+		 * the field lists them, uploads a chosen file at once and deletes at
+		 * once. `null` / omitted (a new record): chosen files wait in the field
+		 * until the app sends them with `uploadPendingFiles` after the create.
+		 */
+		fileParentId?: string | number | null;
+		/** Texts of the `file` field; defaults are Japanese. */
+		fileMessages?: Partial<FileFieldMessages>;
 	}
 
 	let {
@@ -50,7 +61,9 @@
 		appearance = 'default',
 		children,
 		fieldInputs,
-		referenceMessages
+		referenceMessages,
+		fileParentId = null,
+		fileMessages
 	}: Props = $props();
 
 	const providedInputs = getFieldInputs();
@@ -120,7 +133,7 @@
 
 	/** A group of inputs: it draws its own `fieldset` + `legend`, so the form adds no label (and no underline look). */
 	function isGroupType(def: FieldDef): boolean {
-		return def.type === 'radio' || def.type === 'multiselect';
+		return def.type === 'radio' || def.type === 'multiselect' || def.type === 'file';
 	}
 
 	function fieldComponent(def: FieldDef) {
@@ -194,6 +207,20 @@
 								error={store.errors[def.name]}
 								disabled={submitting}
 								messages={referenceMessages}
+								onInput={(value: unknown) => store.setValue(def.name, value)}
+								onBlur={() => store.touch(def.name)}
+							/>
+						{:else if def.type === 'file'}
+							<FileField
+								{def}
+								id={inputId}
+								aria-describedby={describedBy}
+								value={store.values[def.name]}
+								error={store.errors[def.name]}
+								disabled={submitting}
+								parentId={fileParentId}
+								messages={fileMessages}
+								validationMessages={store.messages}
 								onInput={(value: unknown) => store.setValue(def.name, value)}
 								onBlur={() => store.touch(def.name)}
 							/>

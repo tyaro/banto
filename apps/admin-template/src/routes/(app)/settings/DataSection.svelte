@@ -340,8 +340,9 @@
 
 					{#if pendingRestore}
 						<p class="pending-restore">
-							{m['backup.pendingApplied']()}<strong>{pendingRestore.stagedAt}</strong
-							>（{formatBytes(pendingRestore.sizeBytes)}）
+							{m['backup.pendingApplied']()}<strong>
+								{pendingRestore.stagedAt}
+							</strong>（{formatBytes(pendingRestore.sizeBytes)}）
 							<Button variant="secondary" onclick={handleCancelRestore} loading={cancellingRestore}>
 								{m['backup.cancel']()}
 							</Button>

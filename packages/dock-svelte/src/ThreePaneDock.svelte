@@ -27,8 +27,10 @@
 	 *   except the measured default's shares and today's titles (no structure change). A change of
 	 *   `panels` that changes the structure goes through `replaceLayout` too (`syncPanels`).
 	 * - Saving is the app's (plan §4.4, PR-5): pass the saved value as `initialLayout` (or restore
-	 *   later with `restoreLayout`), and save `layoutSnapshot()` - not `dock.serialize()` - when
-	 *   `dock.layout` changes.
+	 *   later with `restoreLayout`), and save what `onLayoutCommit` reports (#791) - the same value
+	 *   as `layoutSnapshot()`, not `dock.serialize()` - or delete it when the reason is `'reset'`.
+	 *   The state beside the layout (the narrow display's) is settled in the same step that puts a
+	 *   layout in, so `layoutSnapshot()` read from an effect on `dock.layout` is the settled value too.
 	 * - Narrow (plan §4.5, §9 Q7): at a component width `<= narrowBreakpoint` (or `narrowOverride`)
 	 *   the dock shows a temporary layout (`threePaneNarrowLayout`): the centre alone, the shown
 	 *   sides in edge bands (their flyout is the drawer), everything else hidden. The layout to save
@@ -73,13 +75,14 @@
 		threePaneSavedLayout,
 		type ThreePaneDockLayoutOptions,
 		type ThreePaneDockMessages,
+		type ThreePaneLayoutCommitReason,
 		type ThreePanePanels,
 		type ThreePaneRestoreStatus,
 		type ThreePaneSavedLayout,
 		type ThreePaneViewMenuItem,
 		type ThreePaneViewMenuLabels
 	} from './threePane';
-	import type { DockEdge, DockLayout, PanelContent } from './types';
+	import type { DockEdge, DockLayout, DockLayoutCommitReason, PanelContent } from './types';
 
 	interface Props {
 		/** Left pane (pick the target). Omitted = no left pane. */
@@ -138,6 +141,19 @@
 		narrow?: boolean;
 		/** `false` = the user cannot rearrange the layout (kiosk, plan §4.5 / §9 Q4; module doc). Default `true`. */
 		arrange?: boolean;
+		/**
+		 * The value to save is settled (#791; `DockHost`'s `onLayoutCommit`, as `layoutSnapshot()`
+		 * gives it): called when, at a settle point, the value differs from the one last reported - or
+		 * last restored (`initialLayout`, `restoreLayout`) or followed by this component (the default
+		 * measured at mount, a change of `panels` / the titles). `'user'`: a gesture's end, a button of
+		 * the dock UI, a method (`setVisible`, `move`, ...), `leftOpen` / `rightOpen`, the app's own
+		 * `DockState` call. `'reset'`: `resetLayout` was applied (always reported, even when the value
+		 * is the same; the app may delete what it saved). `'narrow-switch'`: the value changed in a
+		 * switch of the narrow / wide display. Not called for the steps of a gesture in progress, for
+		 * a refused or `stale` change, for a restore, nor for changes made to the narrow display (they
+		 * are not saved).
+		 */
+		onLayoutCommit?: (saved: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason) => void;
 	}
 
 	let {
@@ -167,7 +183,8 @@
 		narrowBreakpoint = THREE_PANE_NARROW_BREAKPOINT,
 		narrowOverride,
 		narrow = $bindable(false),
-		arrange = true
+		arrange = true,
+		onLayoutCommit
 	}: Props = $props();
 
 	// svelte-ignore state_referenced_locally
@@ -241,6 +258,37 @@
 	/** The display last asked for (the newest wish; an older switch still being asked is `stale` when it differs). */
 	let narrowWish: boolean | null = null;
 	let narrowGen = 0;
+
+	// --- `onLayoutCommit` (#791, the prop's doc) ---
+	/** `layoutSnapshot()` (JSON) as last reported, restored or followed. `null` until mounted: nothing is reported before. */
+	let settledSnapshot: string | null = null;
+	const snapshotKey = (): string => JSON.stringify(layoutSnapshot());
+
+	/** Report the value to save: when it is not the one last settled, or always for a `'reset'`. */
+	function commitLayout(reason: ThreePaneLayoutCommitReason): void {
+		if (settledSnapshot === null) return;
+		const saved = layoutSnapshot();
+		const key = JSON.stringify(saved);
+		if (reason !== 'reset' && key === settledSnapshot) return;
+		settledSnapshot = key;
+		onLayoutCommit?.(saved, reason);
+	}
+
+	/** `DockHost` settled a layout: the value to save may be the same (a change to the narrow display). */
+	function hostCommitted(_layout: DockLayout, reason: DockLayoutCommitReason): void {
+		commitLayout(reason);
+	}
+
+	/**
+	 * A write of this component's own (today's panes and titles): followed without a report. A
+	 * change not reported yet stays unsettled, so the next settle point reports it.
+	 */
+	function quietly<T>(write: () => T): T {
+		const unsettled = settledSnapshot !== null && snapshotKey() !== settledSnapshot;
+		const result = write();
+		if (settledSnapshot !== null && !unsettled) settledSnapshot = snapshotKey();
+		return result;
+	}
 
 	// --- the starting layout (before the first render, so nothing is mounted twice) ---
 	/** The default layout this component installed and nobody changed yet (its shares are re-measured at mount). */
@@ -332,13 +380,17 @@
 				isCurrent: () => current() && dock.layout === base,
 				// A closed floated pane stays floating in the narrow display, so its `homeSlot` would
 				// survive and be counted again by the kept shares (#739 review): dropped in the same step.
-				saved: true
+				saved: true,
+				// Settled in the step that puts the narrow display in (#791): `replaceLayout` goes on
+				// waiting (the focus repair), and `layoutSnapshot()` must not answer with the narrow
+				// display meanwhile.
+				applied: () => {
+					wideLayout = kept;
+					wideIsDefault = false;
+					narrowShown = true;
+					commitLayout('narrow-switch');
+				}
 			});
-			if (outcome === 'applied') {
-				wideLayout = kept;
-				wideIsDefault = false;
-				narrowShown = true;
-			}
 		} else {
 			const kept = wideLayout;
 			outcome = await host.replaceLayout(wideTarget(), {
@@ -346,13 +398,14 @@
 				isCurrent: () => current() && wideLayout === kept,
 				// The kept layout is a saved one (or the default), not made from the narrow display
 				// (#741): the places of the panes floated while narrow belong to the narrow tree.
-				saved: true
+				saved: true,
+				applied: () => {
+					wideLayout = null;
+					wideIsDefault = false;
+					narrowShown = false;
+					commitLayout('narrow-switch');
+				}
 			});
-			if (outcome === 'applied') {
-				wideLayout = null;
-				wideIsDefault = false;
-				narrowShown = false;
-			}
 		}
 		if (outcome === 'disposed') return;
 		writeOpen();
@@ -384,6 +437,8 @@
 		}
 		installedDefault = null;
 		narrowWish = narrowShown;
+		// From here on a change of the value to save is reported (#791): the starting layout is not.
+		settledSnapshot = snapshotKey();
 		if (typeof ResizeObserver === 'undefined' || !rootEl) return;
 		const observer = new ResizeObserver(() => {
 			const w = rootEl?.clientWidth ?? 0;
@@ -435,7 +490,8 @@
 		// Narrow: the kept wide layout follows today's panes too (not on screen: nothing to ask).
 		if (narrowShown && wideLayout !== null && !wideIsDefault) {
 			const kept = reconcileThreePaneLayout(wideLayout, options);
-			if (kept.status !== 'default') wideLayout = kept.layout;
+			const fitted = kept.layout;
+			if (kept.status !== 'default') quietly(() => (wideLayout = fitted));
 		}
 		// Today's layout, assigned back with the setter (below, and `replaceLayout` without `saved`):
 		// a pane out of the tree that is dropped releases its share there (#741), the kept wide
@@ -470,13 +526,19 @@
 		panelTarget = target;
 		if (target === JSON.stringify(dock.layout)) return;
 		if (!host || structureKey(next) === structureKey(dock.layout)) {
-			dock.layout = next;
+			quietly(() => (dock.layout = next));
 			return;
 		}
+		// Today's panes, not the user's change: `replaceLayout` reports nothing, and the value to
+		// save follows in the same step (#791).
+		const unsettled = settledSnapshot !== null && snapshotKey() !== settledSnapshot;
 		const outcome = await host.replaceLayout(next, {
 			focusPanel: CENTER,
 			// The display switched while it was asked: what it was built for is gone.
-			isCurrent: () => panelTarget === target && narrowShown === wasNarrow
+			isCurrent: () => panelTarget === target && narrowShown === wasNarrow,
+			applied: () => {
+				if (settledSnapshot !== null && !unsettled) settledSnapshot = snapshotKey();
+			}
 		});
 		if (gen !== panelSync || outcome === 'disposed') return;
 		writeOpen();
@@ -692,32 +754,47 @@
 		if (!arrange) return 'refused';
 		const { width, height } = hostSize();
 		const next = threePaneDockLayout(layoutOptions(width, height));
-		return install(next, true);
+		return install(next, true, 'reset');
 	}
 
 	/**
 	 * Show `next` as the wide layout (`resetLayout` / `restoreLayout`): replaced through
-	 * `replaceLayout`, or - narrow - kept for later, with the narrow display built from it.
+	 * `replaceLayout`, or - narrow - kept for later, with the narrow display built from it. The
+	 * newest one asked wins (PR #842 review): an older one still being asked is `stale` when it
+	 * would be applied - also when both show the same layout (a restore, then a reset to the same
+	 * default; narrow, two wide layouts with the same narrow display), where each has its own
+	 * report and kept layout.
 	 */
+	let installGen = 0;
 	async function install(
 		next: DockLayout,
-		isDefault: boolean
+		isDefault: boolean,
+		commit?: 'reset'
 	): Promise<DockPanelChangeOutcome | 'invalid' | 'unavailable'> {
 		if (!host) return 'unavailable';
 		const wasNarrow = narrowShown;
 		const shown = wasNarrow ? threePaneNarrowLayout(next, narrowOptions()) : next;
+		const gen = ++installGen;
 		const outcome = await host.replaceLayout(shown, {
 			focusPanel: CENTER,
 			// The display switched while it was asked: what it was built for is gone.
-			isCurrent: () => narrowShown === wasNarrow,
+			isCurrent: () => gen === installGen && narrowShown === wasNarrow,
 			// A saved (or default) layout, not today's: the floated panes' places go in the same step
 			// (#739 review). A live replacement (`syncPanels`) keeps them.
-			saved: true
+			saved: true,
+			// `resetLayout` is reported as `'reset'` by `DockHost` (through `hostCommitted`); a restore
+			// reports nothing (#791).
+			commit,
+			applied: () => {
+				// In the same step (#791): narrow, the kept layout is the value to save.
+				if (wasNarrow) {
+					wideLayout = next;
+					wideIsDefault = isDefault;
+				}
+				// A restore is the value the app already holds: later changes are compared with it.
+				if (!commit && settledSnapshot !== null) settledSnapshot = snapshotKey();
+			}
 		});
-		if (outcome === 'applied' && wasNarrow) {
-			wideLayout = next;
-			wideIsDefault = isDefault;
-		}
 		writeOpen();
 		return outcome;
 	}
@@ -797,6 +874,7 @@
 		persistent={panePersistent}
 		{isStructureChangeDeferred}
 		{arrange}
+		onLayoutCommit={hostCommitted}
 	/>
 </div>
 

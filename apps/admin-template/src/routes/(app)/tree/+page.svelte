@@ -81,18 +81,18 @@
 	<PageHeader hideTitle title={m['nav.tree']()} description={m['tree.demo.intro']()} />
 
 	<SurfaceCard title={m['tree.workspace.linkTitle']()} description={m['tree.workspace.linkHint']()}>
-		<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace')}
-			>{m['tree.workspace.linkOpen']()}</a
-		>
+		<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace')}>
+			{m['tree.workspace.linkOpen']()}
+		</a>
 	</SurfaceCard>
 
 	<SurfaceCard
 		title={m['tree.workspaceDock.linkTitle']()}
 		description={m['tree.workspaceDock.linkHint']()}
 	>
-		<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace-dock')}
-			>{m['tree.workspaceDock.linkOpen']()}</a
-		>
+		<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace-dock')}>
+			{m['tree.workspaceDock.linkOpen']()}
+		</a>
 	</SurfaceCard>
 
 	<SurfaceCard title={m['tree.demo.explorerTitle']()} description={m['tree.demo.explorerHint']()}>
@@ -192,7 +192,7 @@
 		margin-inline-start: var(--banto-space-2);
 		padding: 0 var(--banto-space-2);
 		border-radius: var(--banto-radius-full, 999px);
-		background: var(--banto-surface-muted, var(--banto-border));
+		background: var(--banto-surface-muted);
 		font-size: var(--banto-font-size-sm);
 		color: var(--banto-text-muted);
 	}

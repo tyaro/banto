@@ -604,6 +604,11 @@ body の読みが失敗して handler が自分で終わる（切り離しの対
 - 調整は系列の側を最小に（`--banto-chart-2` の色相を warning から離す）。並べ替えはしない。
   色覚特性（CVD）の既存の検査を通し直す。下限の数値は T2 で、今の値を測ってから決める。
 - 既存のグラフの 2 本目の色が変わる（基準画像の再生成、CHANGELOG の注意）。
+- **T2 の結果**: 下限は 0.09（系列どうしの「どの 2 つも」と同じ値、正常色覚）。実測の最小はライト 0.110
+  （2 と warning）、ダーク 0.052（同）。ライトは通るので変えず、ダークの `--banto-chart-2` だけ
+  `#f48815` → `#ed770e`（warning・danger の両方から 0.092）。ダークは warning と danger が 0.164 しか
+  離れておらず、間に居る橙は 0.09 前後が上限。値と保証しない範囲は
+  [visual-refresh-plan.md](visual-refresh-plan.md) の付録 A.3a。
 
 ### 4.11 #782・#780 影の木
 
@@ -759,7 +764,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | --- | --- | --- | --- | --- | --- |
 | **C0** | ADR: 持ち主の識別、組み込みの `admin`、初回セットアップの撤去とロックダウンの条件（新規 ADR-0034、ADR-0017 の改訂）。conventions §11 の「基準の作り直し」の注記。`.en.md` も | `docs/adr`・`docs/conventions` | — | fable | **済み**（PR #804。2026-11-22 に Accepted。§10 の N2〜N6 を含めて確定） |
 | S1 | **状態: 実装済み・レビュー待ち（PR #829、ADR-0035 は 2026-11-22 に Accepted、5 点はオーナーが推奨どおりで確定）。** #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
-| S2 | #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
+| S2 | **状態: 実装済み・レビュー待ち（2026-11-22。点検の表は PR 本文）。直したのは 3 点: 2 MiB を超える本文を受け付けるルート（バックアップの復元・添付・items の一括インポート）を、本文を受け取り終えた所でもう一度認可する（`routes::recheck_role_at_least`。上限を上げるのはそのルートだけ。照合の後にトークンの存在・期限・stamp を 1 つのロックの下で確定する）／REST のパスワード変更の監査の `entity_id` を確定の前の値から取る／Tauri の `backups_stage_restore` の監査の `entity_id` を REST に揃える。持ち越し: REST の `record_write` が書き込みの後に主体を引き直す件は C2（ADR-0034 §3。再現する試験を `#[ignore]` で置いた）、自動ログインの有効化が失敗したときにキーリングへ残る資格情報は未対応（PR 本文）。** #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
 | C1 | 基準の作り直し（2 方言）: **#814 のうち、今回追加する起動・seed 用のキー（`auth.disabled` 等、seed 済みの印）の名前だけを決める（C1 の前に、キーと利用先を読み取りで棚卸しする。既存の UI の論理キーは触らない。C4/C5 の行を参照）**。`0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**組み込みの行の最低限の保護**（verifier を `kind = 'account'` に絞る・パスワード・更新・削除・CSV の取り込みが `kind = 'builtin'` を断る）と、**復元の検査**（`_sqlx_migrations` の版と checksum を予約と適用の直前に読み取り専用で確かめる。migrator は配線が `BackupService` に渡す。ADR-0034 §9）。**初回の seed の条件の直し**（`seed_first_boot_settings` を「表が空」から「seed 済みの印が無い」へ。0014 が `settings` に行を入れるので同じ PR で。ADR-0034 §5）。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | **実装済み・レビュー待ち**（PR #830、2026-11-22。決めた点: seed 済みの印は `first_boot.seeded` で、一覧が空でも書く。試験の `admin` は `manager` に改名。**持ち越し**: `0014` への `auth.disabled`・`auth.disabled_role` の INSERT は入れていない — 入れると今の `banto-serve` が起動を断り初回セットアップも通らないので、C2b で入れる。demo の `admin / admin` の改名もログインの画面が変わる C2b へ）。§4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。**C1 の実 migration（0001〜0014）を当てた DB で display の生成物を起動し、公開閲覧（`server.viewer_public`・`server.enabled`・bind の seed）を確かめる**。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
 | C1b | #820 `apps/admin-template/src-tauri/src/lib.rs` のテストを別ファイルに分ける（準備。C2・C2b が認証まわりを大きく触るので、先に分けて衝突を減らす） | `src-tauri` | — | sonnet | 分ける前後でテストの数と結果が同じ。挙動の変更なし（Tauri 側はレビューで担保）。**状態: 実装済み**（`src-tauri/src/tests.rs` に分離。scaffold・add-resource の差し込み先も移した） |
 | C2 | **#807 auth フローの `AuditEntry` を `*_as` へ**。#778 組み込みの行の保護（禁止・verifier・SQL の `kind`）・予約名（一覧を渡す口）・grant を後から足したときの起動時の検査・帰属の印（`audit_as_builtin_admin`）と認可時のスナップショット・監査の `actor_id` / `actor_kind`（列を足す。wire は `actorKind`）。**予約名の導入で、smoke の管理者名 `public`（`e2e/tests/smoke.spec.ts:51,269–273`）と公開閲覧 suite の同名（`e2e/tests-public-viewer/public-viewer.spec.ts:37,191–217`）が使えなくなるので、e2e の名前の変更は C2 と同時** | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート | **破壊的** | fable | §4.3 の試験（C2b の分を除く）。両経路の対称。**この PR で足す起動時の検査（組み込みの行・予約名の当たり）を、同じ関数で復元前の検査にも掛ける**（断ったら元の DB を保つ。ADR-0034 §9） |
@@ -769,14 +774,14 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | C5 | #786 provider の置き換え（`remove` を含む）・`updateUiSetting`・同梱の実装・呼び手の追従 | `admin-core`・テンプレート | **破壊的** | fable | #707 の直列化の試験が新しい形で通る |
 | C6 | `createSavedSetting` の再送・`merge`・`onSettled`・README | `admin-core` | 足すだけ | sonnet | 再送・停止・競合の単体テスト |
 | T1（実装済み: fix/794-toast-dark-tint の PR）| #794 Toast と浮かぶ面の tint（Grid の固定列の透けを含む）。**#808 のうち ToastHost の色だけを T1 に合わせる**（Dock/Grid の primary の文字と Tree の `--banto-surface-muted` は T1b） | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。ダークで、着色された BantoGrid の固定列の後ろにスクロールする文字が透けない。実ブラウザーで success・error・warning の Toast の背景の最下層が不透明（`e2e/demo/toast-opaque.spec.ts`。基準画像は使わない） |
-| T1b | #808 primary の文字を `--banto-primary-text` へ（dock の DockedTree・DockWindow、grid の BantoGrid・HeaderCell）と、`--banto-surface-muted` の定義（Tree の 2 か所）。T1 とは別の小さな PR（見た目の差分の原因を追いやすくする） | `dock-svelte`・`grid-svelte`・`theme`・テンプレート | 見た目 | sonnet | axe が通る。基準画像の再生成。差分が T1 と混ざらない |
-| T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査 |
+| T1b | #808 primary の文字を `--banto-primary-text` へ（dock の DockedTree・DockWindow、grid の BantoGrid・HeaderCell）と、`--banto-surface-muted` の定義（Tree の 2 か所）。T1 とは別の小さな PR（見た目の差分の原因を追いやすくする） | `dock-svelte`・`grid-svelte`・`theme`・テンプレート | 見た目 | sonnet | axe が通る。基準画像の再生成。差分が T1 と混ざらない（実装済み: fix/808-primary-text-tokens の PR。#808 の残りはこれで全部） |
+| T2 | #795 色差の試験と最小の調整 | `theme` | 見た目 | fable | 試験が両テーマで通る。CVD の検査（実装済み: fix/795-series-color-distance の PR。下限 0.09、ダークの `--banto-chart-2` だけ変えた。§4.10） |
 | K1 | #792 `isOnScreen`（`docked`・`floating`・`autoHidden`・`flyoutPanel` から） | `dock-svelte` | 足すだけ | sonnet | 偽の 5 つと真の 3 つの単体テスト。README。**実装済み**（`tests/on-screen.test.ts`。`isVisible` は改名せず doc を直した。PR は #825（#792 を Closes）） |
 | K2 | #796 `cancelGesture` と自動の取り消し | `dock-svelte` | 挙動 | sonnet | 操作中の `replaceLayout` の単体テスト 状態: **PR 提出済み**（2026-11-22、`feat/796-dock-cancel-gesture`。`replaceLayout` は `invalid` なら取り消さず、拒否・`stale` でも取り消したままにする。`lifecycle.requestReplace` は変更なし） |
-| K3 | #791 前半（`DockHost` と `ThreePaneDock` の両方に `onLayoutCommit`） | `dock-svelte`・テンプレート | 足すだけ | fable | §4.6 の試験。e2e（workspace-dock の保存） |
+| K3 | #791 前半（`DockHost` と `ThreePaneDock` の両方に `onLayoutCommit`） | `dock-svelte`・テンプレート | 足すだけ | fable | §4.6 の試験。e2e（workspace-dock の保存） 状態: **PR 提出済み**（2026-11-22、`feat/791-on-layout-commit`。`tests/DockHostCommit.test.ts`・`tests/ThreePaneDockCommit.test.ts`・`e2e/demo/dock-layout-commit.spec.ts`。`'reset'` は値が同じでも毎回通知し、`'narrow-switch'` は保存する値が変わったときだけ通知する。`replaceLayout` に `commit` と `applied` を足した。マウント後の `dock.hydrate` は `'user'` で届く（K4 の保存の部品は自分の基準で落とす）） |
 | #782 PR2〜PR8 | Issue の本文どおり | `dock-svelte` | PR ごとに判定（§9.2） | fable | 本文の各 PR の条件。PR6 で #780 を閉じる。**PR2（`core/shadow.ts` の純関数と試験）は PR #826**（配線なし。設計上の判断は PR の本文）。**PR3（`deflateShadow` / `inflateShadow` と試験、旧実装との総当たりの比較）は実装済み**（配線なし。保存形式は `version` 2 \| 3 のまま。§9.2 の「S をそのまま保存する」の得失と PR4 への申し送りは PR の本文） |
 | K4 | #791 後半 | `dock-svelte`・テンプレート・scaffold | **破壊的** | fable | ダッシュボード・workspace-dock の保存が今と同じ（API 経由の表示切替・キーボード・タブの切り替えを含む）。scaffold の dry-run |
-| F1 | #714 `file` 型（保留の持ち方・画面の検証・送信値から除く・1 欄まで・ui-demo の見本） | `forms`・ui-demo | union に追加 | fable | §4.12 の単体テスト。forms がほかのパッケージを import しない |
+| F1 | #714 `file` 型（保留の持ち方・画面の検証・送信値から除く・1 欄まで・ui-demo の見本）。**状態: 実装済み（PR 提出、2026-11-22）。親の id は `BantoForm` の `fileParentId`、作成後の送信は `uploadPendingFiles`、`FormDraft` は `file` 欄を受けない** | `forms`・ui-demo | union に追加 | fable | §4.12 の単体テスト。forms がほかのパッケージを import しない |
 | F2 | #714 テンプレートの配線（items の新規・編集、作成後のアップロード、失敗の再試行）・README・片付け | テンプレート・scaffold | 足すだけ | sonnet | e2e。添付を外すプリセットの dry-run。#714 を閉じる |
 | W0 | #716 の判断（§4.13 の 1〜4）と template-scope §4.2 の 1 文 | `docs` | — | fable | **オーナーの判断** |
 | W1〜W3 | #716（判断の後に §4.13 を設計へ書き直してから。W2 は K4・C5 の後） | テンプレート（＋判断による） | 見た目・保存 | fable | 判断の後に決める。基準画像の再生成、scaffold の dry-run |
@@ -832,6 +837,11 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
 ### 9.1 未確認（実装の PR で確かめる）
 
 - #793: 失効と監査の順、ロックダウンの再検証（S2）。Tauri のコマンドが途中で捨てられない前提（S1）。
+  **S2 で確認済み**: 確定と失効は同じ `UPDATE`（`auth_epoch`）で、順序の穴は無い。監査の順は、Tauri は
+  ガードの戻り値を渡すので穴が無く、REST の `record_write` は書き込みの後に bearer から引き直すので、その間に
+  セッションが終わると**主体なしの監査行**になる（再現済み。C2 で直す）。ロックダウン（`server_apply` の
+  最後の再検証・`auth_config_apply`）は、`auth_config_lock` の下で「再検証 → 保存 → 失効」の順で、穴は無い。
+  別に、ガードの後で本文を待つ書き込み（アップロードと一括インポート）が、待ちの間に失効しても書けた（S2 で直した）。
   `axum::middleware::from_fn` の `Next` を spawn へ渡せるか（`Send + 'static`）、二重に包んだときの挙動（S1）。
   **S1 で確認済み**: `Next` は spawn へ渡せる（axum 0.8）。Tauri の async コマンドは `async_runtime::spawn` で
   走る（`tauri` 2.12 の `InvokeResolver::respond_async`）ので、途中で捨てられない。二重に包むと入れ子になるだけ。

@@ -30,15 +30,16 @@
 {#snippet setDiff(change: AuditChange)}
 	<span class="set-diff">
 		{#if change.added && change.added.length > 0}
-			<span
-				><span class="muted">{m['resource.changesAdded']()}:</span> {change.added.join(', ')}</span
-			>
+			<span>
+				<span class="muted">{m['resource.changesAdded']()}:</span>
+				{change.added.join(', ')}
+			</span>
 		{/if}
 		{#if change.removed && change.removed.length > 0}
-			<span
-				><span class="muted">{m['resource.changesRemoved']()}:</span>
-				{change.removed.join(', ')}</span
-			>
+			<span>
+				<span class="muted">{m['resource.changesRemoved']()}:</span>
+				{change.removed.join(', ')}
+			</span>
 		{/if}
 	</span>
 {/snippet}

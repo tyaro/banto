@@ -232,9 +232,9 @@
 					stroke={bandColor}
 				/>
 				{#if band.label}
-					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}
-						>{band.label}</text
-					>
+					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}>
+						{band.label}
+					</text>
 				{/if}
 			{/each}
 

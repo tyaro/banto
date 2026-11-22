@@ -197,6 +197,14 @@ export type DropRegion = 'center' | 'left' | 'right' | 'top' | 'bottom';
 export type DockEdge = Exclude<DropRegion, 'center'>;
 
 /**
+ * Why `DockHost`'s `onLayoutCommit` reports a layout (#791): `'user'` = a change that settled and
+ * is neither a restore nor a reset (a gesture's end, a button of the dock UI, a method of the host,
+ * the app's own `DockState` call); `'reset'` = a `replaceLayout` that said so (`commit: 'reset'`),
+ * so the app may delete what it saved instead of saving the default.
+ */
+export type DockLayoutCommitReason = 'user' | 'reset';
+
+/**
  * A docked region (a panel, or a tab group) auto-hidden to a band on the host's
  * edge (#694 PR-3, "unpinned" in Visual Studio's words): it is out of the docked
  * tree, its tabs sit in the band, and pressing one slides the pane out over the
