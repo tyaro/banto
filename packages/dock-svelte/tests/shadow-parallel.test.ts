@@ -31,6 +31,7 @@ import {
 	type ShadowNode
 } from '../src/core/shadow';
 import { findNode, removePanel } from '../src/core/tree';
+import { validateDockLayout } from '../src/core/validate';
 import {
 	createDockState,
 	shadowStateOf,
@@ -272,6 +273,10 @@ describe('S follows the layout (#782 PR4)', () => {
 					const wrong = notFollowing(dock);
 					if (wrong) failCase(tree, steps, wrong);
 					if (follows.some((f) => f.result === 'failed')) failCase(tree, steps, 'failed');
+					// The layout can be saved and loaded at every step: no id twice (a split / tab group
+					// of S that does not show, or one in an edge band, keeps its id from being made again).
+					const saved = validateDockLayout(JSON.parse(dock.serialize()));
+					if (!saved.ok) failCase(tree, steps, `not a layout: ${JSON.stringify(saved.issues)}`);
 				});
 			}),
 			params(1500)
