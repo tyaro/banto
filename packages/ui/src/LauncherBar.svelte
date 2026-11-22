@@ -34,6 +34,7 @@
 	 */
 	import { onMount, untrack } from 'svelte';
 	import { hasVisibleLayerAbove } from './layering';
+	import { narrowViewport } from './narrowViewport.svelte';
 	import {
 		LAUNCHER_MAGNIFY_RANGE_ITEMS,
 		magnifyScale,
@@ -66,8 +67,9 @@
 	// --- environment (media queries, followed on `change`) -------------------
 	let reducedMotion = $state(false);
 	let hoverNone = $state(false);
-	let narrow = $state(false);
 
+	// Same breakpoint as the shell (nav-launcher-plan.md §4.6): the shared 900px state.
+	const narrow = $derived(narrowViewport.current);
 	const magnifyActive = $derived(magnify && !reducedMotion && !hoverNone && !narrow);
 
 	// --- magnification -------------------------------------------------------
@@ -204,8 +206,6 @@
 			};
 			follow('(prefers-reduced-motion: reduce)', (v) => (reducedMotion = v));
 			follow('(hover: none)', (v) => (hoverNone = v));
-			// Same breakpoint as the shell (nav-launcher-plan.md §4.6).
-			follow('(max-width: 900px)', (v) => (narrow = v));
 		}
 		return () => {
 			for (const cleanup of cleanups) cleanup();

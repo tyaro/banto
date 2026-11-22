@@ -373,6 +373,34 @@ SvelteKit のクライアント遷移は呼び出し側のアプリでそのま�
 <LauncherBar {groups} />
 ```
 
+## シェルの狭い幅の状態（#850）
+
+900px 以下でサイドバーをドロワーにするかを決める部品と状態（DOM・backdrop・フォーカスの移し替えは出さない。アプリが持つ）。
+`.svelte.ts` を含むので `optimizeDeps.exclude` に `@banto/ui` を足す（トーストと同じ）。
+
+| 名前                                                                         | 役割                                                                                                                            |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `NARROW_QUERY`・`narrowViewport`                                             | 900px 以下のメディアクエリと、それを読むリアクティブな状態（`narrowViewport.current`）。境は 900px 固定（CSS の `@media` と対） |
+| `resolveShellNav(layout, isNarrow, menubarInsufficient, { narrowSidebar? })` | 純関数。`showBar`・`showSidebar`・`drawerMode`・`showDrawerButton` を返す                                                       |
+| `createShellDrawer({ isDrawer })`                                            | ドロワーの開閉の状態。`open`・`toggle()`・`close()`。`isDrawer()`（getter）が偽に戻ったら閉じ、偽の間は開かない                 |
+
+- `layout`: `'sidebar'`・`'launcher'`・`'menubar'`。launcher はサイドバーも ☰ も出さない。menubar は 900px より広ければバー、900px 以下か
+  `menubarInsufficient`（バーが「その他」にまとめても入りきらない。HeaderNav の `onInsufficient`）の間はサイドバーがドロワー。バーは
+  入りきらない間も隠して置いたままにし、幅が戻ったら測り直す（フラグを偽に戻す）とバーへ戻る。
+- `narrowSidebar`: `'sidebar'` の狭い幅の扱い。`'drawer'`（既定。admin-template・banto-hub）はドロワー、`'column'`（ChronoGazer）は狭くても列のまま
+  （ドロワーになるのは menubar の代わりのときだけ）。
+- `createShellDrawer` は判断を持たない。`isDrawer` に `resolveShellNav(...).drawerMode` か自前の条件を渡す。遷移で閉じる・Esc・フォーカスはアプリ側。
+
+```svelte
+<script lang="ts">
+	import { createShellDrawer, narrowViewport, resolveShellNav } from '@banto/ui';
+
+	let menubarInsufficient = $state(false);
+	const nav = $derived(resolveShellNav(navLayout, narrowViewport.current, menubarInsufficient));
+	const drawer = createShellDrawer({ isDrawer: () => nav.drawerMode });
+</script>
+```
+
 ## HeaderNav（段階 6）
 
 ナビのリンクをヘッダーの 1 行に並べる「メニューバー」（[nav-menubar-plan.md](../../docs/design/nav-menubar-plan.md)、

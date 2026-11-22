@@ -25,8 +25,7 @@
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
-	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
-	import { IconButton } from '@banto/ui';
+	import { IconButton, narrowViewport } from '@banto/ui';
 	import { PanelLeftClose, PanelLeftOpen } from '@lucide/svelte';
 
 	interface Props {

@@ -62,6 +62,7 @@
 
 ### Added
 
+- **ui:** 狭い幅のシェルの状態を足した（足すだけ。#850）。`NARROW_QUERY`・`narrowViewport`（900px 以下を見るリアクティブな状態。admin-template の `src/lib/narrowViewport.svelte.ts` から移した）、ドロワーにするかを決める純関数 `resolveShellNav(layout, isNarrow, menubarInsufficient, { narrowSidebar? })`（`layout` は `'sidebar' | 'launcher' | 'menubar'`、`narrowSidebar` は `'drawer'`（既定）か `'column'`。launcher ではトグルを出さない）、状態 `createShellDrawer({ isDrawer })`（`open`・`toggle()`・`close()`。`isDrawer()` が偽に戻ったら閉じる。コンポーネントの初期化中に呼ぶ）を `@banto/ui` から出す。`LauncherBar` は同じ状態を使う（見た目・挙動は変わらない）。admin-template は載せ替えた。派生アプリが `#lib/narrowViewport.svelte.js` を import していたら `@banto/ui` に替える。
 - **attachments:** `AttachmentsPanel` に任意の props `canSave?: () => boolean` を足した（足すだけの変更。#714）。ダウンロードの保存を始める直前に呼び、`false` なら保存せず object URL を解放する。テンプレートの `ItemAttachments` は、マウント時のセッションが生きているかを渡す。
 - **template:** items の新規作成にファイル欄（`file` 型）を配線した（#714 の 4、F2。`Closes #714`）。選んだファイルは保存のあとで新しいレコードの添付へ上がり、上がらなかったものは編集画面に理由つきで引き継いで「再試行」できる（`ResourceDetail` が `uploadPendingFiles` を呼ぶ。引き継ぎは `lib/resource/pendingUploads.ts`）。既存レコードの編集は従来どおり添付パネル。添付を外すプリセットでは欄と import が `[scaffold:attachments]` の印で消える。
 - **charts:** `@banto/charts/testing` を足す（#852）。jsdom に無い幅・`ResizeObserver` の差し替えを入れて戻す `installChartDom()` と、描画の待ち合わせ `flushChart()`。試験ランナーを import しない。charts 自身の DOM の試験を載せ替え、外部利用 fixture が Git 依存の経路でサブパスを読む試験を足した。README に vitest の設定と例。`installChartDom()` は入れている間の 2 回目の呼び出しを明示のエラーで断る（重ねると戻す順で差し替えが残るため）。足すだけ。

@@ -211,6 +211,15 @@ export {
 	type ToastStore,
 	type ToastStoreOptions
 } from './toast.svelte';
+export { NARROW_QUERY, narrowViewport } from './narrowViewport.svelte';
+export {
+	resolveShellNav,
+	type NarrowSidebar,
+	type ShellNavLayout,
+	type ShellNavOptions,
+	type ShellNavView
+} from './shellNav';
+export { createShellDrawer, type ShellDrawer, type ShellDrawerOptions } from './shellDrawer.svelte';
 export { defaultUiMessages, type UiMessages } from './messages';
 export type {
 	SegmentedOption,
