@@ -658,7 +658,7 @@
 	 * layout (`ThreePaneDock`'s narrow display) settles it there, so nothing reads the new layout
 	 * with the old state.
 	 * The same replacement asked again while it is pending shares the pending one only when it does
-	 * the same besides (`commit`, `saved`, and no `applied`): otherwise each call is asked on its
+	 * the same besides (`commit`, `saved`, and no `applied` / `isCurrent`): otherwise each call is asked on its
 	 * own, the first one applied wins and the other is `stale` - a call resolves `applied` only when
 	 * its own `applied` / report ran (PR #842 review). An exception from `applied` or
 	 * `onLayoutCommit` is reported as an uncaught error (`reportError`) and does not change the
@@ -679,10 +679,13 @@
 		const layout = checked.layout;
 		// What this call does besides putting `next` in is part of its identity (PR #842 review): a
 		// call that is asked while the same replacement is pending shares it only when it would do
-		// the same - `applied` is the caller's own closure, so such a call is never shared.
-		const effects = options.applied
-			? ['call', ++replaceCalls]
-			: [options.commit ?? null, !!options.saved];
+		// the same - `applied` and `isCurrent` are the caller's own closures, so such a call is never
+		// shared (a shared one would be `applied` without its own check ever read, or take the
+		// other call's `stale`).
+		const effects =
+			options.applied || options.isCurrent
+				? ['call', ++replaceCalls]
+				: [options.commit ?? null, !!options.saved];
 		// Counted before the cancel: an `onGestureEnd` that starts another gesture is stopped too.
 		replacing++;
 		try {

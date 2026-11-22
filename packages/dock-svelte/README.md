@@ -791,7 +791,7 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   配置の横に状態を持つ呼び出し側（`ThreePaneDock` の狭い表示の控え）が、新しい配置と古い状態の組を誰にも読ませない
   ために使う。
 - **同じ配置への `replaceLayout` が重なったとき**: 承認待ちの間に同じ配置をもう一度頼んだ呼び出しが、待っている 1 件を
-  共有するのは、配置を入れる以外にすることも同じ（`commit`・`saved` が同じで、`applied` を渡していない）ときだけ。
+  共有するのは、配置を入れる以外にすることも同じ（`commit`・`saved` が同じで、`applied`・`isCurrent` を渡していない）ときだけ。
   違えば別々に聞き、先に適用されたほうが勝って、もう一方は `stale` になる（自分の `applied`・通知が走っていない
   呼び出しに `applied` は返らない）。`ThreePaneDock` の `resetLayout`・`restoreLayout` は後から頼んだほうを残す
   （承認待ちの復元に reset を重ねると、復元が `stale`、reset が適用されて `'reset'` が届く。狭い表示で、同じ表示に写る

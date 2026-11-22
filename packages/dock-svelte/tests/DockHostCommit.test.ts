@@ -427,6 +427,50 @@ describe('DockHost onLayoutCommit: replacements asked at the same time (PR #842 
 		expect(second).toHaveBeenCalledTimes(1);
 	});
 
+	it('two calls with their own `isCurrent` never share: each check decides its own outcome', async () => {
+		const held = heldHook();
+		const { commits, host } = mount({ beforePanelChange: held.hook });
+		// The first one's check turns false while it is asked; the second one's stays true.
+		let firstWanted = true;
+		const secondCheck = vi.fn(() => true);
+		const a = host().replaceLayout(other(), {
+			saved: true,
+			commit: 'reset',
+			isCurrent: () => firstWanted
+		});
+		await settle();
+		const asked = held.asks.length;
+		const b = host().replaceLayout(other(), {
+			saved: true,
+			commit: 'reset',
+			isCurrent: secondCheck
+		});
+		await settle();
+		expect(held.asks.length).toBe(asked + 1);
+		firstWanted = false;
+		await held.drain('first');
+		// Not the first one's `stale`, and not `applied` without its own check.
+		expect([await a, await b]).toEqual(['stale', 'applied']);
+		expect(secondCheck).toHaveBeenCalled();
+		expect(commits.map((c) => c[1])).toEqual(['reset']);
+	});
+
+	it('... and a call whose check is false is `stale` while the pending one without a check is applied', async () => {
+		const held = heldHook();
+		const { commits, host } = mount({ beforePanelChange: held.hook });
+		const a = host().replaceLayout(other(), { saved: true, commit: 'reset' });
+		await settle();
+		const b = host().replaceLayout(other(), {
+			saved: true,
+			commit: 'reset',
+			isCurrent: () => false
+		});
+		await settle();
+		await held.drain('first');
+		expect([await a, await b]).toEqual(['applied', 'stale']);
+		expect(commits.map((c) => c[1])).toEqual(['reset']);
+	});
+
 	it('the same replacement with the same effects still shares the pending one (one question, one report)', async () => {
 		const held = heldHook();
 		const { commits, host } = mount({ beforePanelChange: held.hook });
