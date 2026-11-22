@@ -146,6 +146,51 @@ describe('an id S keeps out of sight is not shown twice (review of PR #864, 3)',
 	});
 });
 
+describe('a new pane with the id of a group S keeps out of sight (Codex P2 on #864)', () => {
+	// tabs(T)[a, b], `b` floated: the group shows as `a`. A new pane `T` is no id of the layout.
+	const fresh = (): DockState => {
+		const dock = dockOf(tabs('T', ['a', 'b']));
+		dock.undockPanel('b');
+		return dock;
+	};
+
+	it('ensurePanel as a tab of a: the group takes another id, and b still comes back into it', () => {
+		const dock = fresh();
+		dock.ensurePanel({ id: 'T', title: 'new panel' }, 800, 600, 'center', 'a');
+		expect(idsOf(dock.layout.docked)).toEqual(['a', 'T']);
+		expect(dock.layout.docked?.id).not.toBe('T');
+		expectLoads(dock);
+		expect(back(dock, 'b')).toBe(true);
+		expect(idsOf(dock.layout.docked)).toEqual(['a', 'b', 'T']);
+		expectLoads(dock);
+	});
+
+	it('ensurePanel beside a, and at no target: the same', () => {
+		const beside = fresh();
+		beside.ensurePanel({ id: 'T', title: 'new panel' }, 800, 600, 'left', 'a');
+		expectLoads(beside);
+		expect(back(beside, 'b')).toBe(true);
+		expectLoads(beside);
+
+		const root = fresh();
+		root.ensurePanel({ id: 'T', title: 'new panel' }, 800, 600);
+		expectLoads(root);
+		expect(back(root, 'b')).toBe(true);
+		expectLoads(root);
+	});
+
+	it('a floating window T dropped at an outer edge, and the prediction of it', () => {
+		const dock = fresh();
+		dock.ensureWindow({ id: 'T', title: 'T' }, 800, 600);
+		const predicted = dock.droppedAtEdgeTree('T', 'top', counterMakeId(50));
+		expect(idsOf(predicted)).toEqual(['T', 'a']);
+		dock.dockPanelAtEdge('T', 'top');
+		expectLoads(dock);
+		expect(back(dock, 'b')).toBe(true);
+		expectLoads(dock);
+	});
+});
+
 describe('a `collapsed` flag S cannot hold stays (review of PR #864, 4)', () => {
 	// row[column[a, b], c, d], `b` floated: `a` shows as a child of the row and can be collapsed
 	// there, but in S it is the only child of its column that shows.

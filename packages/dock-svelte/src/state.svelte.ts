@@ -1181,10 +1181,16 @@ export class DockState {
 	/**
 	 * `s`, made from S by a step that may show a split / tab group S kept out of sight, with a new
 	 * id for one whose id the layout took meanwhile (`withFreeShadowIds`: a floating window, a region
-	 * in an edge band).
+	 * in an edge band) or the pane `incoming` has. The one place the ids of S are checked against
+	 * the rest of the layout: every step that puts a pane into S goes through it (`#backInShadow`,
+	 * `#shownShadow`'s own call, `#droppedOnto`, `#droppedAtEdge`). An assignment from outside that
+	 * docks a pane makes S again (`inflateShadow`, which is given the same ids).
 	 */
-	#freed(s: ShadowNode | null, makeId: () => string): ShadowNode | null {
-		return withFreeShadowIds(s, idsOutOfDocked(this.layout), makeId);
+	#freed(s: ShadowNode | null, makeId: () => string, incoming?: string): ShadowNode | null {
+		const taken = idsOutOfDocked(this.layout);
+		// The pane a step brings in: a new one (`ensurePanel`) is in no list of the layout yet.
+		if (incoming !== undefined) taken.add(incoming);
+		return withFreeShadowIds(s, taken, makeId);
 	}
 
 	/**
@@ -1220,12 +1226,15 @@ export class DockState {
 		region: DropRegion,
 		makeId: () => string
 	): ShadowNode | null {
-		return this.#freed(dockIntoShadow(this.#shadow, node, targetId, region, makeId), makeId);
+		// Freed before the step (Codex P2 on #864): the pane's own id counts, so S never holds it
+		// twice; what the step makes anew takes its ids from `makeId`.
+		const s = this.#freed(this.#shadow, makeId, node.id);
+		return dockIntoShadow(s, node, targetId, region, makeId);
 	}
 
 	/** S with the pane `node` (docked, or a floating window's) along the outer edge `edge`. */
 	#droppedAtEdge(node: DockPanelNode, edge: DockEdge, makeId: () => string): ShadowNode | null {
-		return this.#freed(dockAtShadowEdge(this.#shadow, node, edge, makeId), makeId);
+		return dockAtShadowEdge(this.#freed(this.#shadow, makeId, node.id), node, edge, makeId);
 	}
 
 	/**
