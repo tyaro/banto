@@ -400,7 +400,9 @@ function anchorOf(
 	targetId: string,
 	movedId: string
 ): Anchor | null {
-	if (visible === null) return null;
+	// The moved pane itself is no target, and neither is its tab group in its name (`tree.ts`
+	// looks the id up after the removal): only the group's own id stands for the other tabs.
+	if (visible === null || targetId === movedId) return null;
 	const region = visibleRegion(visible, targetId);
 	if (region === null) return null;
 	const rep =
@@ -611,7 +613,9 @@ export function dockAtShadowEdge(
  * comes back takes the same part of the split as before. The one exception is a split whose shown
  * children have 0 together ("Shares of 0" at the top): a proportion other than the even one they
  * show with gives them the even part of the split, and the tombstones the rest. The same S when
- * the split is not in it or `sizes` does not have one positive-sum share per shown child.
+ * the split is not in it or `sizes` does not have one share per shown child - each finite and not
+ * negative, adding up to more than 0. `sizes` need not add up to 1: only its proportion is taken,
+ * so the `sizes` of a split of S always add up to 1.
  */
 export function writeShadowSizes(
 	s: ShadowNode | null,
@@ -623,10 +627,12 @@ export function writeShadowSizes(
 	if (split?.type !== 'split') return s;
 	const shown = split.children.map(isShown);
 	const sum = sizes.reduce((a, b) => a + b, 0);
-	if (sizes.length !== shown.filter(Boolean).length || !(sum > 0)) return s;
+	if (sizes.length !== shown.filter(Boolean).length) return s;
+	if (!sizes.every((size) => Number.isFinite(size) && size >= 0)) return s;
+	if (!(sum > 0) || !Number.isFinite(sum)) return s;
 	let next: number[];
 	if (sizes.length === split.children.length) {
-		next = sizes.slice();
+		next = sum === 1 ? sizes.slice() : sizes.map((size) => size / sum);
 	} else {
 		const total = split.sizes.reduce((acc, size, i) => (shown[i] ? acc + size : acc), 0);
 		// Nothing to write: with 0 together they show evenly already.

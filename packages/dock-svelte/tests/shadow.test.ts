@@ -344,6 +344,33 @@ describe('dockIntoShadow', () => {
 		);
 	});
 
+	it("the moved pane's own id is a stale target, also when it is a tab of a group (re-review of PR #826)", () => {
+		// Not the group of a: the first shown leaf, as `tree.ts` (a is gone when the target is looked up).
+		for (const group of [
+			tabs('t1', [p('a'), p('b'), p('c')]),
+			tabs('t1', [p('a'), p('b')]),
+			tabs('t1', [p('a'), p('b'), gone('c')])
+		]) {
+			const s = row('s1', [p('x'), group]);
+			for (const region of ['right', 'center'] as const) {
+				const next = dockIntoShadow(s, p('a'), 'a', region, counterMakeId());
+				const seen = projectShadow(s);
+				const mirror = dockPanelIntoTree(
+					removePanel(seen, 'a'),
+					p('a'),
+					'a',
+					region,
+					counterMakeId()
+				);
+				expect(treeDiff(projectShadow(next), mirror)).toBeNull();
+			}
+		}
+		const three = row('s1', [p('x'), tabs('t1', [p('a'), p('b'), p('c')])]);
+		expect(text(dockIntoShadow(three, p('a'), 'a', 'right', counterMakeId()))).toBe(
+			'row[x, a, tabs[b, c]]'
+		);
+	});
+
 	it('a new order inside one split is a move in S: the tombstones keep their share (review of PR #826, 1)', () => {
 		const s = row('s1', [gone('a'), p('b'), p('c')], [0.4, 0.2, 0.4]);
 		const next = dockIntoShadow(s, p('b'), 'c', 'right', counterMakeId());
@@ -449,6 +476,14 @@ describe('writeShadowSizes / resizeShadowSplit', () => {
 	it('with every child shown the sizes are written as they are', () => {
 		const all = row('s1', [p('a'), p('b')], [0.5, 0.5]);
 		expect(sizesOfSplit(writeShadowSizes(all, 's1', [0.3, 0.7]), 's1')).toEqual([0.3, 0.7]);
+	});
+
+	it('what is written adds up to 1; a negative or not finite share is not written', () => {
+		const all = row('s1', [p('a'), p('b'), p('c')]);
+		close(sizesOfSplit(writeShadowSizes(all, 's1', [0.2, 0.3, 2]), 's1'), [0.08, 0.12, 0.8]);
+		expect(writeShadowSizes(all, 's1', [0.5, -0.1, 0.6])).toBe(all);
+		expect(writeShadowSizes(all, 's1', [0.5, Number.NaN, 0.5])).toBe(all);
+		expect(writeShadowSizes(all, 's1', [1, Number.POSITIVE_INFINITY, 1])).toBe(all);
 	});
 
 	it('no-ops: an unknown split, a wrong number of sizes, sizes adding up to 0, nothing changed', () => {
@@ -610,7 +645,8 @@ function run(tree: DockNode, ops: OpRecipe[], kinds: StepKind[], mirror: boolean
 			const others = shown.filter((x) => x !== id);
 			if (others.length === 0) continue;
 			// A drop names a pane, or a split / tab group that shows (`dockExisting` takes any id).
-			const targets = [...others, ...containerIds(before)];
+			// The pane's own id comes last: a stale target once the pane is taken out.
+			const targets = [...others, ...containerIds(before), id];
 			const target = targets[op.j % targets.length];
 			const region = kind === 'tab' ? 'center' : SIDES[op.r];
 			steps.push(`${id}>${target}:${region}`);
