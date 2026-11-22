@@ -32,9 +32,22 @@ pnpm --filter admin-template build
 pnpm e2e:visual
 ```
 
+The specs are split into two Playwright projects (Issue #798):
+
+- `visual` (`pnpm e2e:visual`): only the specs that call `toHaveScreenshot`,
+  listed in `SNAPSHOT_SPECS` in `e2e/playwright.config.ts` (today
+  `visual.spec.ts`). Few workers, to keep screenshots stable.
+- `visual-ui` (`pnpm e2e:visual-ui`): every other spec in this directory
+  (functional + axe-core), run in parallel.
+
+**When you add a spec that takes screenshots, add it to `SNAPSHOT_SPECS`** -
+otherwise it runs in `visual-ui`, which neither regenerates nor owns baselines,
+and the baseline workflow (which runs `--project=visual`) would skip it. A spec
+without screenshots needs no registration.
+
 `pnpm e2e` (the M18 smoke suite) never runs these specs - it's pinned to
-`--project=chromium`. Conversely `pnpm e2e:visual` is pinned to
-`--project=visual` and never runs `e2e/tests/smoke.spec.ts`.
+`--project=chromium`. Conversely `pnpm e2e:visual` / `pnpm e2e:visual-ui` are pinned to
+their projects and never run `e2e/tests/smoke.spec.ts`.
 
 ## Updating baselines
 

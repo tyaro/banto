@@ -64,6 +64,11 @@ const PUBLIC_VIEWER_BASE_URL = `http://127.0.0.1:${PUBLIC_VIEWER_PORT}`;
 
 // `visual` project (browser demo mode, vite preview - see doc comment above).
 const VISUAL_PORT = 4173;
+// Specs that take `toHaveScreenshot` baselines (Issue #798). ONLY these belong to the
+// `visual` project; every other spec under ./visual runs in `visual-ui`. Add a new
+// screenshot spec HERE, so `visual-baselines.yml` (which selects `--project=visual`)
+// and ci.yml regenerate and verify exactly the same files.
+const SNAPSHOT_SPECS = ['**/visual.spec.ts'];
 const VISUAL_BASE_URL = `http://127.0.0.1:${VISUAL_PORT}`;
 
 // `demo` project (Issue #553): the same app as a DEMO build (`VITE_BANTO_DEMO=1`,
@@ -137,8 +142,10 @@ export default defineConfig({
 	// instead of staying under e2e/ (see .gitignore's `e2e/test-results/`).
 	outputDir: path.join(dirname, 'test-results'),
 	globalTeardown: path.join(dirname, 'global-teardown.ts'),
+	// Upper bound only: every project below sets its own `workers` (Playwright 1.65
+	// supports it per project). Serial ones are pinned to 1; `visual-ui` fans out.
 	fullyParallel: false,
-	workers: 1,
+	workers: 4,
 	// A single retry in CI absorbs shared-runner hiccups (slow first paint,
 	// a cold-cache SQLite VACUUM INTO for the backup scenario) without
 	// masking a genuinely broken scenario - locally we want an immediate,
@@ -147,7 +154,18 @@ export default defineConfig({
 	reporter: process.env.CI
 		? [
 				['github'],
-				['html', { open: 'never', outputFolder: path.join(dirname, 'playwright-report') }]
+				[
+					'html',
+					{
+						open: 'never',
+						// ci.yml runs two Playwright invocations in the visual job; a second report
+						// folder keeps the later run from overwriting the first (Issue #798).
+						outputFolder: path.join(
+							dirname,
+							process.env.BANTO_E2E_REPORT_DIR || 'playwright-report'
+						)
+					}
+				]
 			]
 		: [['list']],
 	expect: {
@@ -173,7 +191,7 @@ export default defineConfig({
 		// M18 smoke suite (unchanged behavior): explicit testDir so adding the
 		// `visual` project below can never pull tests/visual/*.spec.ts into the
 		// wrong project or vice versa.
-		{ name: 'chromium', testDir: './tests', use: { ...devices['Desktop Chrome'] } },
+		{ name: 'chromium', testDir: './tests', workers: 1, use: { ...devices['Desktop Chrome'] } },
 		// Viewer-public mode (Issue #189): LAN/REST mode like `chromium`, but
 		// against the second banto-serve started with BANTO_VIEWER_PUBLIC=1
 		// (see `webServer` below). Own testDir so neither project can pick up
@@ -181,6 +199,7 @@ export default defineConfig({
 		{
 			name: 'public-viewer',
 			testDir: './tests-public-viewer',
+			workers: 1,
 			use: { ...devices['Desktop Chrome'], baseURL: PUBLIC_VIEWER_BASE_URL }
 		},
 		// `pnpm banto add resource` の生成直後の確認（Issue #715）。`tests-add-resource/` の
@@ -196,12 +215,17 @@ export default defineConfig({
 			// 1 つ（webServer が共通）。再試行は 2 回目が通常ログイン画面で必ず落ち、
 			// 最初の失敗の場所を隠すだけになる。
 			retries: 0,
+			workers: 1,
 			use: { ...devices['Desktop Chrome'] }
 		},
 		// Demo-build-only UI (Issue #553), against `vite dev` with VITE_BANTO_DEMO=1.
 		{
 			name: 'demo',
 			testDir: './demo',
+			workers: 1,
+			// Own outputDir (see visual-ui): ci.yml runs demo after `visual` even when it
+			// failed, and must not clear the screenshot diffs.
+			outputDir: path.join(dirname, 'test-results-demo'),
 			use: { ...devices['Desktop Chrome'], baseURL: DEMO_BASE_URL }
 		},
 		// Phase 0 visual regression + axe-core (visual-refresh-design.md §12).
@@ -211,7 +235,9 @@ export default defineConfig({
 		{
 			name: 'visual',
 			testDir: './visual',
-			testMatch: /.*\.spec\.ts/,
+			testMatch: SNAPSHOT_SPECS,
+			// Screenshots stay stable with few workers (CPU contention shifts rendering).
+			workers: 2,
 			use: {
 				...devices['Desktop Chrome'],
 				viewport: { width: 1440, height: 900 },
@@ -245,6 +271,26 @@ export default defineConfig({
 				// regenerate via `.github/workflows/visual-baselines.yml`
 				// (see e2e/visual/README.md).
 				toHaveScreenshot: { animations: 'disabled', maxDiffPixels: 250 }
+			}
+		},
+		// The rest of ./visual (functional + axe-core, no screenshots), run in
+		// parallel against the same `vite preview` (Issue #798). Each test gets its
+		// own browser context (own localStorage) and the data is the in-memory demo
+		// store, so specs share no state. `BANTO_E2E_SERVERS=visual` serves both.
+		{
+			name: 'visual-ui',
+			testDir: './visual',
+			// Playwright clears a project's outputDir at the start of a run; a separate
+			// one keeps this run from deleting the `visual` run's failure diffs.
+			outputDir: path.join(dirname, 'test-results-ui'),
+			testIgnore: SNAPSHOT_SPECS,
+			fullyParallel: true,
+			workers: 4,
+			use: {
+				...devices['Desktop Chrome'],
+				viewport: { width: 1440, height: 900 },
+				reducedMotion: 'reduce',
+				baseURL: VISUAL_BASE_URL
 			}
 		}
 	],

@@ -1827,9 +1827,9 @@ function replaceE2eForDisplay() {
 	// を保つ）。どちらも「残す要素の直後 … 配列の最後の要素の終わり」の1領域。
 	cutRegion(
 		PLAYWRIGHT_CONFIG,
-		'playwright: public-viewer / visual project 除去',
+		'playwright: public-viewer / visual / visual-ui project 除去',
 		`,\n\t\t// Viewer-public mode (Issue #189)`,
-		`toHaveScreenshot: { animations: 'disabled', maxDiffPixels: 250 }\n\t\t\t}\n\t\t}`
+		`baseURL: VISUAL_BASE_URL\n\t\t\t}\n\t\t}`
 	);
 	cutRegion(
 		PLAYWRIGHT_CONFIG,
@@ -1882,6 +1882,11 @@ function replaceE2eForDisplay() {
 	);
 	drop(
 		ROOT_PKG,
+		'root package.json: e2e:visual-ui スクリプト除去',
+		`    "e2e:visual-ui": "playwright test --config=e2e/playwright.config.ts --project=visual-ui",\n`
+	);
+	drop(
+		ROOT_PKG,
 		'root package.json: e2e:add-resource スクリプト除去',
 		`    "e2e:add-resource": "playwright test --config=e2e/playwright.config.ts --project=add-resource",\n`
 	);
@@ -1908,7 +1913,7 @@ function replaceE2eForDisplay() {
 		CI_WORKFLOW,
 		'ci: e2e-visual ジョブ（ビジュアル回帰 + axe-core・デモビルド）除去',
 		`  e2e-visual:\n`,
-		`          name: playwright-test-results-visual\n          path: e2e/test-results/\n          retention-days: 3\n\n`
+		`          name: playwright-test-results-visual\n          path: |\n            e2e/test-results/\n            e2e/test-results-ui/\n            e2e/test-results-demo/\n          retention-days: 3\n\n`
 	);
 }
 
