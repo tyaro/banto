@@ -10,6 +10,7 @@
 import { isFieldVisible } from '../layout';
 import type {
 	FieldDef,
+	FileFieldClient,
 	FileFieldConfig,
 	FileFieldMeta,
 	FileFieldValue,
@@ -314,6 +315,27 @@ export async function uploadPending(options: UploadPendingOptions): Promise<File
 	return outcome;
 }
 
+type RecordFilesListener = (client: FileFieldClient, resource: string, parentId: string) => void;
+
+const recordFilesListeners = new Set<RecordFilesListener>();
+
+/**
+ * Package-internal: be told when a record's files changed on the server without
+ * the value saying so (an upload of `uploadPendingFiles` that arrived after the
+ * store was reset). A mounted `FileField` showing that record reads its list
+ * again; nothing is written into any value from here. Returns the unsubscribe.
+ */
+export function onRecordFilesChanged(listener: RecordFilesListener): () => void {
+	recordFilesListeners.add(listener);
+	return () => {
+		recordFilesListeners.delete(listener);
+	};
+}
+
+function announceRecordFiles(client: FileFieldClient, resource: string, parentId: string): void {
+	for (const listener of [...recordFilesListeners]) listener(client, resource, parentId);
+}
+
 /** The part of a `FormStore` the upload needs. */
 export interface FileUploadStore {
 	readonly values: Record<string, unknown>;
@@ -334,7 +356,8 @@ export interface FileUploadStore {
  *
  * If the store is reset while a file is on its way, that file's answer is not
  * written into the reset form (its entry is gone); the files not yet sent are
- * gone with the reset and are not sent.
+ * gone with the reset and are not sent. A `FileField` that shows `parentId`'s
+ * files at that moment reads its list again, so the file is not missing there.
  */
 export async function uploadPendingFiles(
 	schema: FormSchema,
@@ -344,12 +367,14 @@ export async function uploadPendingFiles(
 ): Promise<FileUploadOutcome> {
 	const def = fileFieldOf(schema);
 	if (!def?.file || !isFieldVisible(def, store.values)) return { uploaded: [], failed: [] };
+	const config = def.file;
 	return uploadPending({
-		config: def.file,
+		config,
 		parentId,
 		read: () => store.values[def.name],
 		write: (value) => store.setValue(def.name, value),
 		canSend: () => isFieldVisible(def, store.values),
+		onDetached: () => announceRecordFiles(config.client, config.resource, String(parentId)),
 		messages
 	});
 }

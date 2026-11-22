@@ -946,3 +946,102 @@ describe('a delete that ends while the list is read again (PR #844 review)', () 
 		expect(screen.queryByRole('button', { name: 'gone.txt: 削除' })).toBeNull();
 	});
 });
+
+describe('hidden, and another record at the same time (PR #844 cross-review)', () => {
+	it('record A’s upload is not written when the form moved to B as the field got hidden', async () => {
+		const sent = deferred<FileFieldMeta>();
+		const client = {
+			list: vi.fn(async () => [] as FileFieldMeta[]),
+			upload: vi.fn((_resource: string, _resourceId: string, _file: File) => sent.promise),
+			remove: vi.fn(async () => {})
+		} satisfies FileFieldClient;
+		const schema: FormSchema = {
+			fields: [
+				{ name: 'attach', label: '添付する', type: 'checkbox' },
+				fileDef(client, { visibleWhen: (values) => values.attach === true })
+			]
+		};
+		const store = createFormStore(schema, { attach: true });
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 5 });
+		await screen.findByText('ファイルはありません');
+		await pick(view.container, [file('of-a.txt')]);
+		await waitFor(() => expect(client.upload).toHaveBeenCalledTimes(1));
+
+		// In ONE step: record B, where the field is hidden. The field never sees B.
+		store.setValue('attach', false);
+		await view.rerender({ fileParentId: 6 });
+		expect(screen.queryByRole('group', { name: /資料/ })).toBeNull();
+		sent.resolve(meta(7, 'of-a.txt'));
+		await sent.promise;
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// (The pair of "hidden under the same record", above: there it IS written.)
+		const value = fileValueOf(store.values.files);
+		expect(value.existing).toEqual([]);
+		expect(value.pending.map((entry) => [entry.file.name, entry.error])).toEqual([
+			['of-a.txt', undefined]
+		]);
+	});
+});
+
+describe('uploadPendingFiles and a mounted field (PR #844 review)', () => {
+	it('a file that arrives after a reset is read into the field that shows its record', async () => {
+		const rows: Record<string, FileFieldMeta[]> = {};
+		const sent = deferred<FileFieldMeta>();
+		const client = {
+			list: vi.fn(async (_resource: string, resourceId: string) => [...(rows[resourceId] ?? [])]),
+			upload: vi.fn((_resource: string, _resourceId: string, _file: File) => sent.promise),
+			remove: vi.fn(async () => {})
+		} satisfies FileFieldClient;
+		const schema: FormSchema = { fields: [fileDef(client)] };
+		const store = createFormStore(schema);
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn() });
+		await pick(view.container, [file('a.txt')]);
+
+		// After the create: the form shows the record, the chosen file is on its way.
+		await view.rerender({ fileParentId: 9 });
+		const run = uploadPendingFiles(schema, store, 9);
+		await waitFor(() => expect(client.upload).toHaveBeenCalledTimes(1));
+
+		// A reset: the list is read again, and answers before the file arrived.
+		store.reset();
+		await waitFor(() => expect(fileValueOf(store.values.files).existing).toEqual([]));
+		const reads = client.list.mock.calls.length;
+
+		rows['9'] = [meta(90, 'a.txt')];
+		sent.resolve(meta(90, 'a.txt'));
+		await run;
+		await waitFor(() =>
+			expect(fileValueOf(store.values.files).existing).toEqual([meta(90, 'a.txt')])
+		);
+		expect(client.list.mock.calls.length).toBe(reads + 1);
+		expect(fileValueOf(store.values.files).pending).toEqual([]);
+	});
+
+	it('…but not into a field that shows another record', async () => {
+		const sent = deferred<FileFieldMeta>();
+		const client = {
+			list: vi.fn(async () => [] as FileFieldMeta[]),
+			upload: vi.fn((_resource: string, _resourceId: string, _file: File) => sent.promise),
+			remove: vi.fn(async () => {})
+		} satisfies FileFieldClient;
+		const schema: FormSchema = { fields: [fileDef(client)] };
+		const store = createFormStore(schema);
+		store.setValue('files', known([file('a.txt')]));
+		const view = render(BantoForm, { schema, store, onSubmit: vi.fn(), fileParentId: 9 });
+		const run = uploadPendingFiles(schema, store, 9);
+		await waitFor(() => expect(client.upload).toHaveBeenCalledTimes(1));
+
+		store.reset();
+		await view.rerender({ fileParentId: 10 });
+		await waitFor(() => expect(client.list).toHaveBeenLastCalledWith('items', '10'));
+		await waitFor(() => expect(fileValueOf(store.values.files).existing).toEqual([]));
+		const reads = client.list.mock.calls.length;
+		sent.resolve(meta(90, 'a.txt'));
+		await run;
+		await Promise.resolve();
+		expect(client.list.mock.calls.length).toBe(reads);
+		expect(fileValueOf(store.values.files)).toEqual({ existing: [], pending: [] });
+	});
+});

@@ -34,6 +34,7 @@
 		fileValueOf,
 		formatFileSize,
 		listAfterChanges,
+		onRecordFilesChanged,
 		uploadPending,
 		type FileFieldMessages
 	} from './file';
@@ -112,7 +113,10 @@
 	//   is sent or deleted from a field nobody sees.
 	//
 	// `ownerToken` moves when the record / client / resource change (the effect
-	// below); the props are compared too, since that effect runs after they changed.
+	// below). The props are compared too, ALWAYS: that effect runs after they
+	// changed, and not at all once the field is gone - but the form that passes
+	// `parentId` lives on, so a record that changes while (or as) the field is
+	// hidden is still seen here.
 	let ownerToken = 0;
 	let destroyed = false;
 	onDestroy(() => {
@@ -139,9 +143,9 @@
 		const token = ownerToken;
 		const same = () =>
 			token === ownerToken &&
-			// Once the field is gone its props are no longer read: the token decides.
-			(destroyed ||
-				(parentId === target && config?.client === client && config?.resource === resource));
+			parentId === target &&
+			def.file?.client === client &&
+			def.file?.resource === resource;
 		return { client, resource, target, same, shown: () => !destroyed && same() };
 	}
 
@@ -228,6 +232,15 @@
 			}
 		});
 	});
+
+	// The record's files changed without the value saying so (see `onRecordFilesChanged`).
+	$effect(() =>
+		onRecordFilesChanged((client, resource, id) => {
+			const owner = takeOwner();
+			if (!owner || owner.client !== client || owner.resource !== resource) return;
+			if (String(owner.target) === id) void load();
+		})
+	);
 
 	function upload(keys: string[]): void {
 		const owner = takeOwner();
