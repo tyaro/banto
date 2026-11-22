@@ -349,5 +349,13 @@ async fn main() {
         .await
         .expect("failed to listen for ctrl-c");
     println!("banto-serve: shutting down");
-    server.stop().await;
+    // Issue #793 / ADR-0035: the stop waits (with an upper bound) for the
+    // writes that were accepted. What is still running then ends with the
+    // process - a database transaction is either committed or rolled back.
+    if let Some(remaining) = server.stop().await.remaining() {
+        eprintln!(
+            "banto-serve: {} write(s) were still running at exit",
+            remaining.count()
+        );
+    }
 }
