@@ -305,7 +305,7 @@
 			// A saved value, or the layout the given `dock` holds now (#741): the first is taken as a
 			// whole, as by `hydrate` - the places of the panes floated in `dock` belong to the layout
 			// replaced; the second goes in like any change of today's layout (the shadow tree follows
-			// it: a docked pane that is dropped releases its share to the others).
+			// it: a floated pane keeps its place when the container it was in is still there).
 			const live = initialLayout === undefined;
 			const result = live
 				? reconcileThreePaneLayout(dock.layout, options)

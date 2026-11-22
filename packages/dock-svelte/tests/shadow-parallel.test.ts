@@ -712,7 +712,7 @@ describe('the panes S remembers (#782 PR4)', () => {
 		expect(follows).toEqual([{ step: 'show', result: 'same' }]);
 	});
 
-	it('a docked pane dropped by an assignment leaves S; the places S remembers stay (#743, #782 PR6)', () => {
+	it('a docked pane dropped by an assignment: S is made again by the containers that are still there (#782 PR7)', () => {
 		// The case of #780: column[row[a, b, c], d, e], a and b floated, c moved to the right of d.
 		const tree = split(
 			's',
@@ -729,19 +729,17 @@ describe('the panes S remembers (#782 PR4)', () => {
 		follows.length = 0;
 		// `ThreePaneDock`'s `syncPanels`: a layout made from today's, without `e`.
 		dock.layout = { ...dock.layout, docked: removePanel(dock.layout.docked, 'e') };
-		// Not made again from the slots: `a` and `b` keep the row S holds for them.
-		expect(follows).toEqual([{ step: null, result: 'same' }]);
+		// #782 PR7 (owner's decision of 2026-11-23): no guess is made of what the assignment did.
+		// The column `a` and `b`'s row was in is not in the tree any more (it was folded around the
+		// row of `d` and `c`), so they have no place in S: "back" is their default place
+		// (`shadow-rebuild.test.ts` has the rule).
+		expect(follows).toEqual([{ step: null, result: 'rebuilt' }]);
 		expect(notFollowing(dock)).toBe(null);
+		expect(shadowStateOf(dock).unplaced.sort()).toEqual(['a', 'b']);
 		runStep(dock, '^b');
 		runStep(dock, '^a');
-		expect(treeText(dock.layout.docked)).toContain(
-			'{"column":[{"row":["a","b"]},{"row":["d","c"]}]}'
-		);
-		const top = dock.layout.docked?.type === 'split' ? dock.layout.docked.children[0] : null;
-		// `a` and `b` as they were to each other (.2 : .3); `e`'s .3 went to the two rows (4 : 3).
-		expect(top?.type === 'split' && top.sizes[0]).toBeCloseTo(0.4, 9);
-		const sizes = dock.layout.docked?.type === 'split' ? dock.layout.docked.sizes : [];
-		expect(sizes[0]).toBeCloseTo(4 / 7, 9);
+		expect(dock.layout.floating).toEqual([]);
+		expect(notFollowing(dock)).toBe(null);
 	});
 
 	it('a region auto-hidden to a band is not in S (#782 PR8); S is made again around it', () => {

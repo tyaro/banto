@@ -641,7 +641,8 @@
 	 * dropped in the same step that puts it in, as by `hydrate` - a save reacting to the change
 	 * never sees the new layout with the old places. Leave it off for a layout made from the live
 	 * one: it goes in like `dock.layout = next` (#741) - the places are kept, and a pane that `next`
-	 * drops, or shows somewhere else, no longer holds its share of its split.
+	 * drops, or shows somewhere else, changes nothing of them: a floated pane goes back into the
+	 * split / tab group it was in when that is still in the tree, else to its default place.
 	 * `options.isCurrent` is re-read before each request and right before the replacement is
 	 * applied: `false` = `stale`, nothing changed (like `setPanelVisible`'s).
 	 * A gesture in progress is cancelled first (`cancelGesture`, #796), once `next` passed the

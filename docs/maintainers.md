@@ -218,13 +218,14 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   新しい配置の操作を足すときも「S の上で作って射影を入れる」（`#projected`）。`core/tree.ts` で見える木を直に組むと、
   墓石の場所を知らない結果になり、S は組み直しになる。事前の問い合わせ（予告）も同じ S の関数を読む
   （`shownTree`・`restoredAt`・`droppedTree`・`droppedAtEdgeTree`）。`homeSlot` の slot は「その場所の名前」として渡すだけ。
-- S の組み直し（#782 PR7）: S の上で作らない変化（外からの代入で pane を足す・動かす、丸ごとの置き換え、帯への出し入れ、
-  `homeSlot` 以外の slot での `dockAtSlot`）では、**その時点の S から場所を書き出して**（`deflateShadow`）新しい木に
-  組み直す（`inflateShadow`）。浮かせた時の slot は読まない。setter の `share` の補正（`#withoutGoneShares` /
-  `#withoutLeftShares` / `slotsWithoutLeft`）は消した: 比率は S が持ち、ドッキング中の pane が消えれば
-  `removeFromShadow` が墓石にも比例で配る（#743）。代入で別の入れ物へ動かされた pane も「離れた」と数える（`#withoutLeft`。判定は代入の前後の見える木から。場所の名前は外す前の S、比率は外した後の S から取る）。slot に手で補正を足し直さない。例外は 2 つ:
-  区画が端の帯にある間は S がその pane を持たないので、隣の名前は S が全員を持っていた最後の時点の場所（`#placeSaid`）から、比率は今の S から取って組む（`withSharesOf`。帯の pane を名指す段は控えた比率のまま）
-  （PR8 で帯を S に載せたら消す）。S に場所が無くなった pane（「場所なし」）は、その場所を `core/slot.ts` で戻す。
+- S の上で作らない変化（#782 PR7、2026-11-23 オーナー決定）: 外からの代入（`dock.layout = ...`・`syncPanels`・`saved` なしの
+  `replaceLayout`）・丸ごとの置き換え・`homeSlot` 以外の slot での `dockAtSlot` では、**代入が何を動かしたかを推し量らない**。
+  `regraftShadow`（`core/shadow.ts`）が、後の木に前の S の墓石を「元いた入れ物（id）の、元の添字」へ入れ直すだけ。
+  入れ物が無ければ S に場所を持たず、「元の場所に戻す」は既定の位置に出す（`#shadowLost` → `placeInShadowAtDefault`）。
+  代入をまたぐ比率の再現（#741・#743 の補正、`#withoutGoneShares` / `#withoutLeftShares` / `slotsWithoutLeft`）は消した。
+  **木の差分から「動いた pane」を当てる処理を足し直さない**（PR #870 で 5 回塞いで収束せず、オーナーが規則ごと変えた）。
+  端の帯への出し入れだけは、S 自身が言う場所から組み直す（`deflateShadow` → `inflateShadow`、`#placeSaid`・`withSharesOf`）。
+  PR8 で帯を S に載せたら、この経路ごと消す。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:
   - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。5 段以上の slot を含むレイアウトだけ `version: 3` で保存する
     （`core/layoutVersion.ts`。`DockLayout['version']` は `2 | 3`）。旧実装の複製 `tests/fixtures/slot-main.ts` は #782 PR7 で削った。
@@ -233,7 +234,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
     消すのは、setter（浮動でなくなった id）・`hydrate`・`reset`・`forgetHomeSlots`。
   - slot の `share` は「外したパネルも数えた split 全体の割合」（`size` は旧来の意味、`version` 不変）。
     `homeSlot` の slot は浮かせた時に S から 1 回書き、書き換えない（#782 PR7。比率の正は S）。
-  - ライブの置き換え（`syncPanels`・`saved` なしの `replaceLayout`）は setter で入れる（S が追従する）。保存値は
+  - ライブの置き換え（`syncPanels`・`saved` なしの `replaceLayout`）は setter で入れる（上の `regraftShadow` の規則）。保存値は
     `reconcileThreePaneLayout` で合わせて `forgetHomeSlots` → `adoptLayout` で入れる（#742）。隠れたパネルは slot を
     持たないので（#782 PR5）、`reconcileThreePaneLayout` は今の layout を合わせるのにも使う（`fitThreePaneLayout` は消した）。
   - 公開 API: `DockState.restoredAt`・`DockState.savedLayout()`・`restoreDockSlot` の第 5 引数 `hidden`・

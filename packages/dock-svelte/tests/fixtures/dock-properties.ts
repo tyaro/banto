@@ -205,6 +205,9 @@ export const floatedIds = (dock: DockState): string[] =>
  * `ThreePaneDock`'s `syncPanels` or an app's `dock.layout = ...` does): `!x` the docked pane `x`
  * removed, `x=>y:region` the docked pane `x` moved to `region` of `y`.
  */
+/** Ids for the containers an assignment from outside makes (never one in use). */
+let assignedIds = 0;
+
 export function runStep(dock: DockState, step: string): void {
 	if (step === '@') {
 		if (!dock.hydrate(dock.serialize())) throw new Error('hydrate refused its own serialize');
@@ -214,14 +217,12 @@ export function runStep(dock: DockState, step: string): void {
 	if (assigned) {
 		const node = findNode(dock.layout.docked, assigned[1]);
 		if (node?.type !== 'panel') return;
-		let n = 0;
 		const docked = dockPanelIntoTree(
 			removePanel(dock.layout.docked, node.id),
 			node,
 			assigned[2],
 			assigned[3] as DropRegion,
-			() =>
-				`asg-${dock.layout.floating.length}-${collectPanelIds(dock.layout.docked).length}-${node.id}-${n++}`
+			() => `asg-${assignedIds++}`
 		);
 		dock.layout = { ...dock.layout, docked };
 		return;
