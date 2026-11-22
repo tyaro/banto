@@ -79,9 +79,10 @@
 		type ConflictField
 	} from './conflict';
 	import { editableFieldNames } from './listState';
-	import { resetKeepingFile } from './carryFileField';
+	import { resetKeepingFile, valuesOnLoad } from './carryFileField';
 	import { hasPendingUploads, stashPendingUploads, takePendingUploads } from './pendingUploads';
 	import { resourcePermissions } from './permissions';
+	import { sendingWhile } from './sessionUpload';
 	import type { AppResourceDefinition, ResourceRow } from './types';
 
 	interface Props {
@@ -151,20 +152,24 @@
 	// form shows them with their reasons so they can be retried. Only peeked at
 	// here (to choose the schema); they are taken once the record has loaded.
 	const hasLeftovers = !!fileField && idValid && hasPendingUploads(def.name, parsedId);
-	let leftovers: ReturnType<typeof takePendingUploads> = null;
 	let filesInForm = $state(false);
 	// The create form and a form with leftovers carry the `file` field. An
 	// existing record's form leaves it out: the attachments panel (`after`)
 	// already lists, uploads and deletes that record's files, and the field
 	// would show the same list twice.
+	//
+	// Every upload this form starts - the automatic one after a create and the
+	// field's own upload / retry on the edit form - goes out only while the
+	// session this form was built for (`scope`, below) is the live one: the
+	// file client is handed that check and asks it right before it sends.
 	const schema: FormSchema =
 		fileField && !isNew && !hasLeftovers
 			? { ...fullSchema, fields: fullSchema.fields.filter((field) => field.type !== 'file') }
-			: fullSchema;
-	const withLeftovers = (values: Record<string, unknown>): Record<string, unknown> =>
-		fileField && leftovers
-			? { ...values, [fileField.name]: { existing: null, pending: leftovers } }
-			: values;
+			: sendingWhile(
+					fullSchema,
+					() => isCurrentSessionScope(scope),
+					() => m['connection.saveFailed']()
+				);
 
 	// Issue #215/#255: `scope` is the session this form was built for. The
 	// last-opened marker is saved for its owner only, and the save handler
@@ -253,13 +258,25 @@
 			base = formResource.initialValues;
 			// Taken only now: the record is the one this session may edit.
 			// ...and only by the session that started this load, who may save.
-			if (isCurrentSessionScope(scope) && canSave) {
-				leftovers ??= takePendingUploads(def.name, parsedId);
+			// The handover is used ONCE, for the first initial values. Reading the
+			// same record again (after a conflict without `current`) carries the
+			// field as it is now instead: a file retried or cancelled since must
+			// not come back.
+			const reloading = storeReady;
+			let leftovers: ReturnType<typeof takePendingUploads> = null;
+			if (!reloading && isCurrentSessionScope(scope) && canSave) {
+				leftovers = takePendingUploads(def.name, parsedId);
+				filesInForm = leftovers !== null;
 			}
-			filesInForm = leftovers !== null;
+			const hasFile = fileField && schema.fields.some((f) => f.type === 'file');
 			store = createFormStore(
 				schema,
-				withLeftovers(formResource.initialValues),
+				valuesOnLoad({
+					record: formResource.initialValues,
+					fileFieldName: hasFile ? fileField.name : null,
+					current: reloading ? store.values : null,
+					leftovers
+				}),
 				formValidationMessages()
 			);
 			storeReady = true;
@@ -418,48 +435,6 @@
 	/** A create (with the upload of its files) is under way: further saves are turned away. */
 	let creating = $state(false);
 
-	/**
-	 * A chosen file whose bytes are only handed out while `scope`'s session is
-	 * live. The client reads them (`arrayBuffer`) right before it reads the
-	 * credentials and sends, so this is the last check before the request.
-	 */
-	class SessionFile extends File {
-		constructor(source: File) {
-			super([source], source.name, { type: source.type, lastModified: source.lastModified });
-		}
-		override async arrayBuffer(): Promise<ArrayBuffer> {
-			const bytes = await super.arrayBuffer();
-			if (!isCurrentSessionScope(scope)) throw new Error(m['connection.saveFailed']());
-			return bytes;
-		}
-	}
-
-	/** `schema` whose file client refuses to upload once `scope`'s session has ended. */
-	function inSession(source: FormSchema): FormSchema {
-		return {
-			...source,
-			fields: source.fields.map((field) => {
-				const file = field.file;
-				if (field.type !== 'file' || !file) return field;
-				return {
-					...field,
-					file: {
-						...file,
-						client: {
-							...file.client,
-							upload: (resource: string, resourceId: string, chosen: File) => {
-								if (!isCurrentSessionScope(scope)) {
-									return Promise.reject(new Error(m['connection.saveFailed']()));
-								}
-								return file.client.upload(resource, resourceId, new SessionFile(chosen));
-							}
-						}
-					}
-				};
-			})
-		};
-	}
-
 	async function submitValues(
 		resourceForm: NonNullable<typeof formResource>,
 		values: Record<string, unknown>,
@@ -516,14 +491,10 @@
 			if (isNew && fileField) {
 				const createdId = Number((result.row as { id?: unknown } | undefined)?.id);
 				// Only the session that created the record sends its files, and
-				// stops sending when that session ends (checked before each file).
+				// stops sending when that session ends (`schema`'s file client asks
+				// right before each request, see `sendingWhile`).
 				if (Number.isInteger(createdId) && isCurrentSessionScope(scope)) {
-					const outcome = await uploadPendingFiles(
-						inSession(schema),
-						store,
-						createdId,
-						fileFieldMessages()
-					);
+					const outcome = await uploadPendingFiles(schema, store, createdId, fileFieldMessages());
 					if (outcome.failed.length > 0 && isCurrentSessionScope(scope)) {
 						stashPendingUploads(scope, def.name, createdId, outcome.failed);
 						// Handed over: nothing is left unsaved on this form.
