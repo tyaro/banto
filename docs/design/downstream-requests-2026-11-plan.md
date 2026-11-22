@@ -1,7 +1,7 @@
 # 下流の要望（2026-11）をまとめて入れる計画書
 
 作成日: 2026-11-22
-状態: **計画**（オーナー決定済み、§2。実装は未着手。最初の PR は C0 の ADR）
+状態: **計画**（オーナー決定済み、§2。**2026-11-22 変更: 互換不要・DB 作り直し**の前提で簡素化した。実装は未着手。最初の PR は C0 の ADR）
 トラック: 保守者向け（トラックA）
 Issue: [#778](https://github.com/tyaro/banto/issues/778)・[#786](https://github.com/tyaro/banto/issues/786)・[#790](https://github.com/tyaro/banto/issues/790)・[#791](https://github.com/tyaro/banto/issues/791)・[#792](https://github.com/tyaro/banto/issues/792)・[#793](https://github.com/tyaro/banto/issues/793)・[#794](https://github.com/tyaro/banto/issues/794)・[#795](https://github.com/tyaro/banto/issues/795)・[#796](https://github.com/tyaro/banto/issues/796)、
 洗練案の [#714](https://github.com/tyaro/banto/issues/714)（残りの 4 = ファイル型）・[#716](https://github.com/tyaro/banto/issues/716)（ウィジェット盤。**判断待ち**）、
@@ -42,29 +42,40 @@ conventions §1 / §2 / §3 / §4 / §5 / §6 / §10 / §11、[upgrading.md](../
 5. 全 Issue の後に、D1 下流の使い勝手の精査（読み取り）→ D2 リファクタ → D3 upgrading・CHANGELOG の
    「消費側への注意」・実機確認（[#757](https://github.com/tyaro/banto/issues/757)）→ **1 回でリリース**。
    版は v8.0.0 の見込みだが、最後に `[Unreleased]` を規約に照らして判定する。
+6. **互換性を保つ必要はない。DB は 1 から作り直す**（決定 16）。既存の DB・既存のデータを移す設計は置かない。
+   下流も同じ前提で作り直す。旧版の DB・バックアップは、読まずに明示のエラーで断る（§4.1）。
+7. **初回セットアップでユーザーもパスワードも作らない**（決定 18）。新しい DB はログインなしで起動し、
+   その操作は組み込みの `admin`（決定 17）の操作として記録する（§4.3）。
 
 範囲に入れないもの: #712、Hub の手動書き込みそのもの（banto-industrial 側）、
 下流のリポジトリの変更（D1 は読むだけ。置き換えは下流の別セッション）。
 
 ## 2. 決定事項（2026-11-22 オーナー）
 
+**2026-11-22 変更: 互換不要・DB 作り直し**（決定 16〜18）。これに合わせて、既存の DB・既存のデータを前提にした
+設計（旧い `ui.{username}.*` の移し替え、既存の `Admin` / `admin` アカウントの検出と改名の口、`account_uid` の
+既存行への埋め込み、旧版のバックアップの事前検査）を**全部外した**。形が変わった決定には注記を付けた。
+
 | # | 決めたこと | 関係 |
 | --- | --- | --- |
-| 1 | #790・#778・#786 のスキーマの変更を **1 回の migration 0014** に束ねる。**レビューで変更**: 0014 はスキーマの追加だけ。行の追加・移し替えは、呼び出し側の切り替えと同じ PR に置く（§10 の 10） | §4.1〜4.3 |
-| 2 | `Identity.id` は username のまま。**`accountId` を足す**。`accountId` が無ければ `sessionOwnerKey` は `null`（fail closed）。**レビューで変更**: `accountId` は `users.id` ではなく作成時の乱数 `users.account_uid`、キーは `acct:<accountId>`（§10 の 1） | §4.2 |
-| 3 | 既に `Admin`（大小無視）のアカウントがある DB は、**起動時に検出して明示のエラーで止める**（黙って改名しない）。`Admin` と grant の固定 id は大小無視で予約名にする。**独立レビューで変更**: 止める形は保ち、新しい版の側に改名の口を足す。検出は毎回の起動（§10 の 14・15） | §4.3 |
-| 4 | ログインなしのロールが viewer でも、監査の actor 名は `Admin`。組み込みの行のロールは表示だけ（判定に使わない）。**独立レビューで追加**: どのセッションを `Admin` に帰属させるかは、配線の層の明示の印で決める（§10 の 16） | §4.3 |
+| 1 | #790・#778・#786 のスキーマの変更を 1 回に束ねる。**2026-11-22 変更（互換不要・DB 作り直し）**: データの移行は無い。形は「既存の migration を書き換えて基準を作り直す」を推奨（§4.1、§10 の N2） | §4.1〜4.3 |
+| 2 | `Identity.id` は username のまま。**`accountId` を足す**（作成時の乱数 `users.account_uid`、キーは `acct:<accountId>`）。無ければ `sessionOwnerKey` は `null`（fail closed）。**2026-11-22 変更**: 既存の行への埋め込みは無い。アカウントの行では最初から必須 | §4.2 |
+| 3 | **2026-11-22 変更（互換不要・DB 作り直し）**: 組み込みのユーザーは**小文字の `admin`**。新しい DB には最初から居る。既存の `Admin` / `admin` アカウントの検出・起動の停止・改名の口は**置かない**（既存の DB は読まない）。`admin`（大小無視）と grant の固定 id を新規の作成で断るのは残す | §4.3 |
+| 4 | ログインなしのロールが viewer でも、監査の actor 名は `admin`（組み込み）。組み込みの行のロールは表示だけ（判定に使わない）。どのセッションを `admin` に帰属させるかは、配線の層の明示の印で決める。Tauri のログインなし（`local`）は `admin` に帰属させる（決定 18） | §4.3 |
 | 5 | grant セッションの ui-settings は、ユーザーの行を作らず **kind をキー**にする | §4.4 |
-| 6 | ~~`instance.id`（DB ごとの乱数）を持ち主のキーに入れる~~ **レビューで変更**: `instance.id` は置かない。DB の中の値はバックアップの復元で採番と一緒に巻き戻るので、アカウントごとの乱数 `account_uid` に替える（§10 の 1） | §4.2 |
+| 6 | `instance.id` は置かない。アカウントごとの乱数 `account_uid` を使う（DB を作り直しても、バックアップを復元しても、別人に同じキーが渡らない）。**2026-11-22 注記**: 互換不要でも、新しい版どうしの復元は残るので形は変えない | §4.2 |
 | 7 | #795 は**先頭 4 系列だけ**状態色との色差を保証する。調整は最小、並べ替えなし | §4.10 |
 | 8 | #793 は**ログインを含む全書き込み**に既定で掛ける。除外の口は作らない | §4.5 |
-| 9 | #786 は provider の `get` / `set` を **revision つきの形に置き換える**（足すのではない）。**独立レビューで変更**: revision は数ではなく書き込みごとの乱数、消す口も足す（§10 の 19） | §4.4 |
+| 9 | #786 は provider の `get` / `set` を **revision つきの形に置き換える**（足すのではない）。revision は数ではなく書き込みごとの乱数、消す口も足す（§10 の 19） | §4.4 |
 | 10 | #796 の `replaceLayout` / `resetLayout` は、進行中の操作を**自動で取り消す** | §4.7 |
-| 11 | #791 の `onLayoutCommit` に**確定の理由**を渡す。reset のとき消費側が保存を消せる。**独立レビューで変更**: 発火は「確定点で `serialize()` が変わっていたら」と定義する（§10 の 18） | §4.6 |
+| 11 | #791 の `onLayoutCommit` に**確定の理由**を渡す。reset のとき消費側が保存を消せる。発火は「確定点で `serialize()` が変わっていたら」と定義する（§10 の 18） | §4.6 |
 | 12 | #791 後半（パッケージ化）では、持ち主の照合と `beforeBaseline` を**省略可能**にする（temp-scada は不要と表明） | §4.6 |
 | 13 | リリースは §1 の方針どおり 1 回。#782・#780 と dock の Issue もその前提 | §6・§7 |
 | 14 | #782 の本文の決定は覆さない。ただし互換のために残している形を壊して正しくできる所を、各 PR で検討する | §9.2 |
 | 15 | #714 の 4（ファイル型）に着手する（保留を解く）。#716 も同じ版に入れる。#712 は入れない | §4.12・§4.13 |
+| 16 | **互換性を保つ必要はない。DB は 1 から作り直す**。既存の DB・既存のデータは気にしない（下流も同じ前提で作り直す）。旧版の DB・バックアップは読まずに明示のエラーで断る | §4.1・§8 |
+| 17 | #778 の組み込みのユーザーは**小文字の `admin`**。新しい DB では最初から居る | §4.3 |
+| 18 | **初回セットアップでユーザーもパスワードも作らない**。新しい DB はユーザーを作らずに起動し、ログインなしの操作は組み込みの `admin` の操作として記録する。ユーザー管理が要る利用者だけが、ユーザー管理の画面からユーザーを作る。組み込みの `admin` は**パスワードを持たず、ログインできない**。ログイン必須への切り替え（ロックダウン）は、ログインできる管理者のアカウントが 1 つ以上あるときだけ許す | §4.3 |
 
 （当初の「#793 だけ先に v7.12.0 で出す」案は、決定 13 で無効。）
 
@@ -74,7 +85,7 @@ conventions §1 / §2 / §3 / §4 / §5 / §6 / §10 / §11、[upgrading.md](../
 | --- | --- | --- |
 | ui-settings の保存先 | `crates/banto-admin-services/src/settings.rs:428`・`:445` | `settings` 表のキー `ui.{username}.{key}`（単純な連結）。revision なし |
 | ユーザーの削除 | `crates/banto-admin-services/src/users.rs:1485` | `DELETE FROM users` だけ。ui-settings の行は残る |
-| 最後の管理者のガード | 同 `users.rs:313`（`ensure_admin_removal_allowed`）、数えるのは `:1487-1489` 付近の `COUNT(*) ... role = 'admin'` | 組み込みの行を足すと、数え方を変える必要がある |
+| 最後の管理者のガード | 同 `users.rs:313`（`ensure_admin_removal_allowed`）、数えるのは `:1487-1489` 付近の `COUNT(*) ... role = 'admin'`。`has_admin`（`:723`）の呼び手は試験だけ | 組み込みの行を足すと、数え方を変える必要がある。ログイン必須への切り替えは、管理者の有無を見ていない |
 | username の検査 | 同 `users.rs:134`（`validate_username`） | trim・長さ・`.` の禁止だけ。予約名も大小無視の照合も無い |
 | REST の `Identity` | `crates/banto-server/src/auth/session.rs:27`（`id`・`name`・`role`）、組み立ては `routes/audit.rs:117`（`id: user.username.clone()`）と `:42` | `account_id` は `SessionStamp`（`audit.rs:122`）にあり、画面へは出ていない |
 | Tauri の `Identity` | `apps/admin-template/src-tauri/src/lib.rs:419`、ui-settings は `:3403`・`:3421` が `identity.username` を渡す | REST と同じ形 |
@@ -83,7 +94,12 @@ conventions §1 / §2 / §3 / §4 / §5 / §6 / §10 / §11、[upgrading.md](../
 | ui-settings の provider | `packages/admin-core/src/providers/uiSettings.ts:46-51`（`get`・`set`）、直列化は `:89-140` 付近 | キーごとに直列化、置き換えられた `set` は成功として resolve（#707） |
 | `createSavedSetting` | `packages/admin-core/src/savedSetting.svelte.ts` | 失敗は `error`・`dirty` に残るだけで再送しない |
 | サーバーの起動 | `crates/banto-server/src/server.rs:162`（`BoundServer::serve`） | 層は `axum::Extension` の 2 つ。書き込みを切り離す層は無い |
-| migration | `apps/admin-template/core/migrations-sqlite/`・`migrations-postgres/` | 最新は `0013_user_permissions.sql`。次は **0014** |
+| migration | `apps/admin-template/core/migrations-sqlite/`・`migrations-postgres/`、適用は `core/src/db.rs:181`（`run_migrations`） | 最新は `0013_user_permissions.sql`。派生アプリはこのディレクトリを丸ごと持つ（scaffold は 4 本を名前で消すだけ、`scripts/scaffold.mjs:1064-1069`・`1485-1508`） |
+| migration の凍結 | `scripts/verify-migrations-frozen.mjs`（`pnpm verify:migrations`）、conventions §11 | 最新の `v*` タグにある migration の変更・削除を CI が拒む。sqlx は適用済みの checksum を照らし、違えば `VersionMismatch` で起動しない |
+| 復元の検証 | `crates/banto-admin-services/src/backup.rs:151`（`REQUIRED_TABLES`）・`:269`（`validate_sqlite_file`） | `settings`・`users`・`audit_log` の表があるかだけを見る。列・migration の版は見ない |
+| ログインなし | `crates/banto-admin-services/src/settings.rs:180`（`auth.disabled` の既定は off）・`:237-242`（`auth_server_combination_allowed`） | Tauri の「ログイン不要モード」。ログインなし + LAN は、閲覧公開が on のときだけ許す |
+| 初回セットアップ | `users.rs:706`（`is_initialized`）・`:738`（`setup_first_user`）、`routes/auth.rs:95-117`、Tauri の `lib.rs:1049`・`1756`・`1807`、`login/+page.svelte:74`、`e2e/first-run-setup.ts` | アカウント 0 のときだけ、認証なしで最初の管理者を作れる。REST は `allow_setup`（`BANTO_ALLOW_SETUP=1`）が要る |
+| ログイン試行の制限 | `crates/banto-server/src/auth/policy.rs:54-72`（`RateLimitPolicy`） | REST のログイン。IP + username で 5 回、IP だけで 20 回、60 秒。居ないユーザーにもダミーの検証を回す |
 | SQLite の外部キー | `crates/banto-storage/src/sqlite.rs:25`・`:39` | `foreign_keys(true)`（有効） |
 | 狭い ⇄ 広いの切り替え | `packages/dock-svelte/src/ThreePaneDock.svelte:330-355` | `await host.replaceLayout(...)` の**後**で `wideLayout`・`narrowShown` を確定 |
 | `replaceLayout` | `packages/dock-svelte/src/DockHost.svelte:576-598`（適用は `:585-595`、その後 `await tick()`） | フォーカスが枠の中にあると、適用から戻るまで 1 tick あく |
@@ -105,106 +121,100 @@ conventions §1 / §2 / §3 / §4 / §5 / §6 / §10 / §11、[upgrading.md](../
   `UiSettingsProvider` と持ち主の照合は構造的な型で受ける（admin-core を import しない）。
 - **§10**: 環境分岐は配線の層だけ。通常のアカウントも `public` という username を持てるので、
   identity の id・name から合成セッションを推測しない（予約名にしても、この規則は変えない）。
-- **§11**: migration は 2 系統の連番を対称に。リリース済みは追記のみ。0014 はリリースまでは直せるが、
-  C1 で全体を一度に入れて、後の PR で書き換えない。
+- **§11**: migration は 2 系統の連番を対称に。リリース済みは追記のみ。**この計画は、この規則を 1 回だけ破る**
+  （基準の作り直し、§4.1。オーナーの決定 16 が前提。ADR と conventions に書く）。C1 で全体を一度に入れて、
+  後の PR で書き換えない。
 
 ## 4. Issue ごとの設計
 
-### 4.1 共通: migration 0014 と持ち主の識別（#790・#778・#786）
+### 4.1 共通: 基準の作り直しと持ち主の識別（#790・#778・#786）
 
 **根本原因**: 持ち主を username で識別している所が 3 層にある（サーバーの `ui.{username}.{key}`、
 wire の `Identity.id`、画面の `account:${id}`）。username は再利用できる。`users.id` は再利用されないが、
-DB を作り直すと 1 から数え直す。**バックアップの復元でも巻き戻る**（採番の履歴も DB の中にある。
-クロスレビューが `VACUUM INTO` で再現）。DB の中に置く `instance.id` も一緒に巻き戻るので、守りにならない。
+DB を作り直すと 1 から数え直し、**バックアップの復元でも巻き戻る**（採番の履歴も DB の中にある）。
 
-**設計**（migration 0014、SQLite・PostgreSQL の両方。**スキーマの追加だけ**。レビューで変更）:
+**前提（2026-11-22 変更: 互換不要・DB 作り直し。決定 16）**: 既存の DB・既存のデータは読まない。この節から、
+旧い `ui.{username}.*` の移し替えと削除（あいまいな行・`ui.local.*`・退役済みのユーザーの行の規則、advisory lock、
+「固定 id → kind」を先に渡す手順）、`account_uid` の既存行への埋め込み、組み込みの行を起動時に入れる冪等な手順を外した。
 
-- `users.kind`（`'account'` 既定 / `'builtin'`）。列だけ足す。組み込みの行は 0014 では入れない（下の「段階」）。
-  組み込みの行は 1 つだけ、を**部分一意インデックス**（`WHERE kind = 'builtin'`）で守る（独立レビューで追加。§4.3）。
-- `users.account_uid`（NULL 可・一意）。アカウントごとの再利用されない識別子（§4.2）。
-- `audit_log.actor_id`（NULL 可）。`actor_username` のスナップショットは残す。
-- 新しい表 `ui_settings`（持ち主・key・value・revision）。持ち主の表し方と、revision が乱数の文字列であることは §4.4。
-- `instance.id` は**置かない**（レビューで変更。決定 6）。
-- `users.password_hash` は両方言で `NOT NULL`（`0003_users.sql`）のまま変えない。組み込みの行には
-  **資格情報ではない固定値**（PHC 文字列として解釈できない 1 文字。例 `!`）を置く（§4.3）。NULL を許す形は、
-  SQLite で表の作り直しが要るので採らない。
+**migration の形**（選び直し。§10 の N2）:
 
-**段階**（レビューで変更。どの PR の後でも main が動くこと）:
+| 案 | 中身 | 得 | 失 |
+| --- | --- | --- | --- |
+| (i) 0014 を足す | 既存の 13 本は触らず、`ALTER TABLE` と新しい表を 0014 に置く | リリース済みは追記のみ（conventions §11）のまま。`pnpm verify:migrations` に手を入れない | sqlx は旧版の DB に 0014 を**そのまま当てる**（断るには自前の検査が要る）。SQLite の `ALTER TABLE` では `account_uid` を必須にできず、`password_hash` の `NOT NULL` も外せない（NULL の行の扱いと、資格情報ではない固定値が残る） |
+| **(ii) 基準を作り直す（推奨）** | `0003_users.sql`・`0005_audit_log.sql` を新しい形に**書き換え**、`0014_ui_settings.sql` を足す。ほかの 11 本とファイル名・連番は変えない | 旧版の DB は sqlx が自分で断る（下）。列の制約を最初から正しく置ける。scaffold が名前で消す 4 本（`scripts/scaffold.mjs:1064-1069`・`1485-1508`）に触れない | conventions §11 の「追記のみ」を 1 回だけ破る。`verify-migrations-frozen.mjs` に今回かぎりの許可が要る。保守者の手元の DB も作り直し |
 
-- **C1 はスキーマだけ**。行を足さず、旧い `ui.{username}.{key}` も消さない。0014 を当てた直後も、
-  `is_initialized()`（`users.rs:706`、全行を数える）、初回の管理者の INSERT（`users.rs:776`、
-  `NOT EXISTS (SELECT 1 FROM users)`）、ui-settings の読み書きは今のまま動く。
-- **組み込みの行を入れるのは C2**。数え方（上の 2 か所ほか）を `kind = 'account'` に直すのと同じ PR で、
-  起動時の冪等な手順（無ければ入れる）として置く。migration に入れないので、古いバックアップを
-  復元した DB にも同じ手順が効く。派生アプリが呼び忘れない置き場は C2 で決める。
-  「無ければ」は `kind = 'builtin'` の行で見て（username では見ない）、条件付きの 1 文
-  （`INSERT ... WHERE NOT EXISTS`。部分一意インデックスに当たった場合は成功として扱う）にする。
-- **`account_uid` の埋め込みは C3**。既存の行は起動時に 1 トランザクションで埋め（行ごとの
-  `UPDATE ... WHERE id = ? AND account_uid IS NULL`。先に埋まった値を上書きしない）、新しい行は作成時に
-  サービス層で作る（SQL だけで乱数を作る手段が方言で違うため）。埋まるまでは `accountId` を載せない（fail closed）。
-- **旧い `ui.*` の移し替えと削除は C4**。REST・Tauri の参照先を `ui_settings` へ替えるのと同じ PR で、
-  起動時の冪等な手順として 1 トランザクションで行う（`ui.` で始まる行は、移した・捨てたを問わず
-  **全部** `settings` から消す。下の「移し替えの規則」）。
-- **同時の起動**（独立レビューで追加）: PostgreSQL では複数のインスタンスが同じ DB で同時に起動しうる。
-  上の 3 つの手順は、条件付きの文（`WHERE account_uid IS NULL`・`WHERE NOT EXISTS`）にするか、
-  トランザクションの先頭で advisory lock（`pg_advisory_xact_lock`）を取る。C4 の移し替えは読んでから書くので
-  lock を取る。SQLite は書き込みが 1 つなので、書き込みのトランザクションとして始めれば足りる。
-  サービス層を通らない INSERT（試験・seed・派生アプリの直接の SQL）の行は `account_uid` が NULL のまま残るので、
-  ログイン時に同じ条件付きの文で遅れて埋めるかを C3 で検討する（埋めなければ、その行は次の起動まで fail closed）。
+推奨は **(ii)**。理由: (1) 安全。sqlx は適用済みの migration の checksum を埋め込みと照らすので
+（`scripts/verify-migrations-frozen.mjs` の冒頭の説明、conventions §11）、0003 の本文が変われば旧版の DB は
+`VersionMismatch` で止まる。0014 は連番の最後なので、**新しい migration が旧版の DB に当たる前に止まる**
+（順序は C1 の試験で固定する。§9.1）。(i) は「旧版の DB に 0014 だけが当たって、移していないデータと混ざる」状態を、
+自前の検査の入れ忘れで作れる。(2) 単純。`account_uid` の NULL・固定値の `password_hash`・遅れて埋める手順が
+要らなくなり、認証の分岐が減る。(3) 写す側の手間は小さい。派生アプリはテンプレートの
+`core/migrations-{sqlite,postgres}/` を丸ごと持っていて（scaffold は名前で一部を消すだけ）、どちらの案でも DB は作り直す。
+全部を 1〜数本に畳み直す形（連番も変える）は、scaffold・レシピ・README がファイル名を引いている所を全部直すことに
+なるので採らない。
 
-**移し替えの規則**（C4）: 持ち主の候補は、users の行**と合成セッションの名前**（Tauri の認証なしの `local`、
-grant の固定 id）。現行は認証なしも `ui.local.*` に保存し（`lib.rs:1511`・`3394`）、`local` という通常の
-アカウントも作れる（`validate_username`、`users.rs:134` に予約が無い）ので、名前だけでは区別できない。
+**設計**（SQLite・PostgreSQL の両方。rule 11 の対称は保つ）:
 
-- 候補が 1 つだけ: アカウントなら `acct:<users.id>`、合成セッションなら `local` / `grant:<kind>` へ移す
-  （`local` のアカウントが居ない DB の端末共通の値は、消さずに `local` へ残る）。
-- 候補が 2 つ以上（`a` と `a.b` が両方いるときの `ui.a.b.c`、`settings.rs:436-441` の既知のあいまいさ。
-  **合成セッションの名前と同名のアカウントが居る場合**も同じ）と、候補が無い行は、**どちらにも渡さずに捨てる**
-  （§10 の 3）。端末共通の値を個人に渡さない、個人の値を端末共通にしない、の両方を守る。
-- 既に同名の作り直しで引き継がれてしまった行は見分けられない。そのまま移る（今見えているものが固定されるだけ）。
-- **`ui.` で始まる行は、同じトランザクションで全部消す**（独立レビューで変更。当初は「移した行だけ」。§10 の 20）。
-  残すと、起動のたびに走る手順が後から拾う。(A) 退役した bob の `ui.bob.*`（削除は users の行だけを消す、
-  `users.rs:1484-1486`）が、後で別人の bob を作った次の起動でその人へ移る。(B) `local` と同名のアカウントが居て
-  あいまいで残した `ui.local.*` が、そのアカウントを消した後の起動で端末共通へ移る。
-  `ui.` 接頭辞の全体設定は無い（`desktop.vibrancy` は別の接頭辞、`lib.rs:3428`）。以後も `ui.` を全体設定の
-  キーに使わないことを `settings.rs` に書く。
-- 判定は 1 回きりになるので、派生アプリは **C4 を取り込む時点で**「grant の固定 id → kind」の対応を渡しておく
-  （口は §4.3 の予約名の一覧と同じ。渡し忘れた grant の値は候補なしで捨てられ、やり直せない。§8）。
+- `0003_users.sql`（書き換え）: `kind`（`'account'` 既定 / `'builtin'`）、`account_uid`（一意。§4.2）、
+  `password_hash` は NULL 可にする。CHECK で「`kind = 'builtin'` ⇔ `password_hash IS NULL`」
+  「`kind = 'builtin'` ⇔ `account_uid IS NULL`」を守る（アカウントの行は両方が必須。サービス層を通らない INSERT が
+  `account_uid` を入れ忘れると、黙って NULL で残らずに失敗する）。組み込みの行は 1 つだけ、を
+  **部分一意インデックス**（`WHERE kind = 'builtin'`）で守る。
+- `0005_audit_log.sql`（書き換え）: `actor_id`（NULL 可）。`actor_username` のスナップショットは残す。
+  外部キーは張らない（ユーザーを消しても監査は残す）。
+- `0014_ui_settings.sql`（新規）: 表 `ui_settings`（持ち主・key・value・revision、アカウントの行の外部キー。§4.4）と、
+  **組み込みの `admin` の行の INSERT**（`kind = 'builtin'`・`role = 'admin'`。role・`auth_epoch`・`version` の列は
+  0004・0007・0012 が足すので、行を入れるのはその後）。起動時に入れる手順は要らない（新しい DB には migration の後、必ず居る）。
+- `instance.id` は置かない（決定 6）。
+- `pnpm verify:migrations`: 「タグ `v7.11.0` と比べるときに、この 4 ファイル（2 方言 × 2 本）の変更だけを許す」を
+  スクリプトに書く（タグを名指しするので、v8.0.0 のタグの後は自動で効かなくなる）。conventions §11 に
+  「v8.0.0 で基準を作り直した。以後はまた追記のみ」と書く。C1 で全体を一度に入れて、後の PR で書き換えない。
 
-**破壊的変更と移行**: 派生アプリは migration 0014 の 2 ファイルを取り込む。`REQUIRED_TABLES` に
-`ui_settings` を足すかは C1 で決める（古いバックアップのリストアを拒むことになるので、足さない案を推奨）。
+**旧版の DB・バックアップを断る所**（読まずに明示のエラー。決めるのは 1 か所）:
 
-**リスク**: migration の途中で止まる DB。0014 は 1 トランザクションで済む形にし、起動時の手順も
-それぞれ 1 トランザクション・冪等にする（途中で落ちても、次の起動でやり直せる）。
+- **`db::run_migrations`**（`apps/admin-template/core/src/db.rs:181`。起動で必ず通る、両方言）。sqlx の
+  `VersionMismatch` を「この DB は v8.0.0 より前の版のものです。読めません。DB を作り直してください」に写す。
+  PostgreSQL をアプリの外で復元した場合（`backup.rs:207-213`）も、次の起動でここに当たる。
+- 復元だけは、置き換えの**前**に断る必要がある（置き換えた後で止まると、起動できない DB が残る）。既にある検査
+  `validate_sqlite_file`（`backup.rs:269`。予約と適用の両方が通る）の `REQUIRED_TABLES`（`backup.rs:151`）に
+  **`ui_settings` を足す**。旧版のバックアップは「必須の表が無い」で予約の時点に拒まれ、今の DB は置き換わらない。
+  新しい検査の関数は足さない（当初の「予約名のアカウントを含む候補の事前検査」は不要になった）。
 
-**試験**（両方言）: 0014 だけを当てた新しい DB で初期設定ができ、既存の DB で保存済みの ui-settings が読める（C1）。
-移し替えは「0013 までの DB に、あいまいな行・持ち主の居ない行・`ui.local.*` を入れてから当てる」で、
-`local` のアカウントが居ない／居るの 2 通りと grant の固定 id を確かめる（C4）。2 回走らせても同じ結果。
-手順の後に `ui.` で始まる行が 1 つも残らないこと。**捨てた後に同名のアカウントを作って再起動しても渡らない**こと
-（上の A・B の両方）。PostgreSQL では、2 つの接続から同時に走らせても行が重複・欠落しないこと（C2〜C4 の各手順）。
+**破壊的変更と移行**: 派生アプリは `0003_users.sql`・`0005_audit_log.sql` を差し替え、`0014_ui_settings.sql` を足し、
+**DB を作り直す**（データの移行の口は無い）。自分の migration を 0014 以降の番号で足している派生アプリは番号をずらす
+（下流の実際の番号は D1 で見る）。
+
+**リスク**: 書き換えで列・索引を落とす。C1 の試験で、書き換え前の 0003・0005 を当てた DB と、書き換え後の DB の
+スキーマを比べ、差が意図した列・制約だけであることを確かめる（1 回きりの試験。両方言）。
+
+**試験**（両方言）: 新しい DB に migration を当てると、組み込みの `admin` が 1 行だけ居る（2 行目は入らない）。
+`account_uid` なしのアカウントの INSERT、`password_hash` つきの組み込みの行は CHECK で失敗する。
+v7.11.0 の migration で作った DB を開くと、明示のエラーで止まり、スキーマが変わっていない。
+v7.11.0 の形のバックアップは復元の予約で拒まれる。
 
 ### 4.2 #790 再利用されないアカウントの ID
 
 **設計**:
 
-- **再利用されない識別子**（レビューで変更）: `users.account_uid`。アカウントの作成時にサービス層で作る
-  128 bit の乱数（OS の乱数源、文字列）。一意制約。改名・ロールの変更では変えない。秘密ではない（認証にも認可にも
-  使わない。記憶を仕切る名前）。組み込みの行には持たせない。
+- **再利用されない識別子**: `users.account_uid`。アカウントの作成時にサービス層で作る 128 bit の乱数
+  （OS の乱数源、文字列）。一意制約。改名・ロールの変更では変えない。秘密ではない（認証にも認可にも使わない。
+  記憶を仕切る名前）。組み込みの行には持たせない（ログインしないので、持ち主つきの記憶を持たない）。
   - 復元に強い理由: 取得後に作った A の値は、復元した DB には無い。復元後に作る B は新しい乱数を引くので、
     `users.id` が A と同じ 2 でも一致しない。取得の時点で居たアカウントは同じ値に戻る（同じ人なので正しい）。
-  - DB を作り直した場合・別の DB の同じ `users.id` も一致しない。`instance.id` が担うはずだった役は、これで足りる。
-  - 0014 より前のバックアップを復元すると、起動時の埋め込みで新しい値になる（記憶が 1 回既定へ戻る。安全な側）。
+  - DB を作り直した場合・別の DB の同じ `users.id` も一致しない（決定 16 で、作り直しは全部の利用者に起きる）。
+  - **2026-11-22 変更**: 既存の行への埋め込みは無い。アカウントの行では列の制約で必須（§4.1）。
+    列が必須なので、作成時の採番は C1 に入る（wire に載せるのは C3）。
 - wire の `Identity` に `accountId` を足す（REST の `/api/auth/identity`・ログインの応答、Tauri のコマンド）。
-  アカウントのセッションでは `account_uid`。grant セッション・Tauri の認証なし（`local`）には載せない。
+  アカウントのセッションでは `account_uid`。grant セッション・Tauri のログインなし（`local`）には載せない。
   `instanceId` は足さない。
 - `sessionOwnerKey`（`sessionController.svelte.ts:207-217`）: `local` と grant の kind は今のまま。
   アカウントは `acct:<accountId>`。無ければ `null`（何とも一致しない）。
-  接頭辞を `account:` から `acct:` に変えるので、古いキーで保存された記憶は読まれない。
 - `Identity.id` は username のまま（監査の主体・画面の表示・`acting_username` の呼び手を変えない）。
   ただしサーバーの中で「持ち主」に username を使っている所（ui-settings）は `users.id` に替える（§4.4）。
   サーバーの中の `users.id`（`ui_settings`・`actor_id`）は同じ DB の行どうしで、復元しても一緒に戻るので食い違わない。
   画面の側（ブラウザーの保存）は DB と一緒に戻らないので、`account_uid` を使う。
-- 監査に `actor_id` を書く（REST・Tauri の両方。§1）。
+- 監査に `actor_id` を書く（REST・Tauri の両方。§1。帰属の規則と一緒に C2 で入れる）。
 
 **破壊的変更と移行**: `Identity` を自分で組み立てている派生アプリ（Tauri の `lib.rs`、REST の
 credential verifier）は `accountId`（`account_uid`）を載せる。載せないと持ち主のキーが `null` になり、
@@ -220,140 +230,154 @@ credential verifier）は `accountId`（`account_uid`）を載せる。載せな
 （`users.id` = 2）→ 復元を適用 → B を作る（同じ `users.id` = 2）で、B の `accountId` と `sessionOwnerKey` が
 A と違うこと。同じ URL・同じブラウザーを想定し、A のキーで保存した記憶を B の画面が読まないこと（画面の単体）。
 
-### 4.3 #778 組み込みのユーザー `Admin`
+### 4.3 #778 組み込みのユーザー `admin` と、初回セットアップの撤去
+
+**決定（2026-11-22。決定 17・18）**: 組み込みのユーザーは小文字の `admin`。新しい DB に最初から居る。
+パスワードを持たず、ログインできない。初回セットアップ（最初の管理者とパスワードを作る画面）は無くす。
+新しい DB はユーザーを作らずに起動し、ログインなしの操作は組み込みの `admin` の操作として監査に残る。
+ユーザー管理が要る利用者だけが、ユーザー管理の画面からアカウントを作る。
+（前の版の「`Admin` か `admin` か内部名 `builtin.admin` か」「既存の DB の `admin` を止める・改名する」の比較は、
+決定 16・17 で不要になったので消した。）
 
 Issue の「決めること」への答え:
 
-1. **ロックダウン後**: `Admin` はログインできない行のまま。パスワードは持たせない。
+1. **ロックダウン後**: `admin` はログインできない行のまま。パスワードは持たせない。
 2. **改名・無効化・降格・パスワードの設定・削除**をすべて禁じる（サービス層で。§2）。
 3. **最後の管理者のガード**: 組み込みの行は数えない（`role = 'admin' AND kind = 'account'`）。
    数えると、人のアカウントを全部消せてしまう。
-4. **ADR-0017 の改訂**: 行にするのは `Admin` だけ。`public` などほかの grant の固定 identity は行を作らず、
+4. **ADR-0017 の改訂**: 行にするのは `admin` だけ。`public` などほかの grant の固定 identity は行を作らず、
    固定 id を予約名にする。
-5. **既存の DB**: 決定 3（起動時に検出して止める）。止めたうえで、新しい版の側に改名の口を置く
-   （独立レビューで変更。下の「移行の口」）。
+5. **既存の DB**: 読まない（決定 16。§4.1）。
+
+**いまの形（確かめた）**:
+
+- ログインなしは既にある: Tauri の「ログイン不要モード」（`auth.disabled`。合成セッション `local`、ロールは
+  `auth.disabled_role`）。既定は off（`settings.rs:180`）。
+- 新しい DB（アカウント 0）では、ログインの画面が初回セットアップに替わる（`login/+page.svelte:74`、
+  `status.initialized`）。経路は Tauri の `auth_setup`（`lib.rs:1049`）と REST の `POST /api/auth/setup`
+  （`routes/auth.rs:95-117`。`allow_setup` が要り、`banto-serve` は `BANTO_ALLOW_SETUP=1` のときだけ、
+  `banto-serve.rs:85`）。アカウント 0 の間は、セッションなしで `auth_config_apply` を呼べる
+  （「ログインなしで使い始める」、`lib.rs:1756`・`1807`）。
+- **ログインなしと LAN は両立しない**: 「`auth.disabled` かつ `server.enabled`」は、閲覧公開（`viewer_public`）が
+  on のときだけ許す（`auth_server_combination_allowed`、`settings.rs:237-242`。保存の両側と、Tauri の起動時
+  `lib.rs:4583-4600` が同じ判定を使う）。
+- ログイン必須へ切り替えるときに、管理者のアカウントがあるかは**見ていない**（`has_admin`、`users.rs:723` の
+  呼び手は試験だけ）。今は、0 件のまま切り替えると初回セットアップの画面に出る。
 
 **設計**:
 
-- 組み込みの行: `username = 'Admin'`、`kind = 'builtin'`。`password_hash` は `NOT NULL` なので、資格情報ではない
-  固定値を置く（§4.1）。credential verifier は `kind = 'builtin'` を、ハッシュを見る**前に**拒む
-  （ハッシュを後から入れられても通らない、二重の守り）。固定値がハッシュの検証で「不一致」になり、
-  エラーや panic にならないことも C2 の試験に入れる。
-  - 独立レビューで追加: `kind` で拒むときも、ユーザーが居ないときと同じ**ダミーのハッシュ検証は回す**
-    （現行 `users.rs:895-898`。応答の時間で組み込みの行を見分けさせない）。
+- **組み込みの行**: `username = 'admin'`・`kind = 'builtin'`・`password_hash` は NULL（§4.1 の CHECK）。
+  migration が入れる。credential verifier は `kind = 'builtin'` を、ハッシュを見る**前に**拒む
+  （列の CHECK と二重の守り）。拒むときも、ユーザーが居ないときと同じ**ダミーのハッシュ検証は回す**
+  （現行 `users.rs:895-898`。応答の時間で組み込みの行を見分けさせない）。
   - `change_password`（SELECT は `users.rs:922`、UPDATE は `:965`）と `reset_password`（UPDATE は `:1399`）の文に
-    `kind = 'account'` を入れる。サービス層の検査を抜けても、組み込みの行にハッシュが入らない。
-- ログインなしの操作（管理者相当の grant セッション）の監査は `actor_username = 'Admin'`・
-  `actor_id = 組み込みの行の id`。`actor_role` はそのセッションの実際のロール（viewer なら viewer）を書く。
-  行の `role` は一覧の表示だけで、認可の判定には使わない（決定 4。ADR に明記）。
-- **どのセッションが `Admin` の操作か**（独立レビューで追加。§10 の 16）: id・name からは推測しない
-  （conventions §10）。配線の層が付ける**明示の印**で決める。`GrantSpec` に「組み込みの actor に帰属する」フラグ
-  （既定は off。名前は C0 の ADR で確定）を足し、発行したセッションの `SessionStamp` に写す。監査を書く所は印だけを見る。
-  - 印つきの grant セッション: `actor_username = 'Admin'`・`actor_id = 組み込みの行の id`。
+    `kind = 'account'` を入れる。サービス層の検査を抜けても、組み込みの行にハッシュが入らない（入れば CHECK でも落ちる）。
+  - **既知の名前 `admin` がパスワードの的になるリスクは無い**: ログインできないので、当てるパスワードが無い。
+    `admin` へのログインの試行は、居ないユーザーと同じ扱いで、REST のログイン試行の制限
+    （`crates/banto-server/src/auth/policy.rs:54-72`。IP + username で 5 回、IP だけで 20 回、60 秒）にそのまま掛かる。
+- **新しい DB の既定をログインなしにする**: `auth.disabled` の既定を on に変える（`settings.rs:180`。キーが無いとき）。
+  Tauri は起動すると合成セッション `local`（ロールは `auth.disabled_role`、既定 admin）でアプリに入る。
+  ログインの画面も初回セットアップの画面も出ない。
+- **安全の前提**（ADR-0017・spec M11 の考え方のまま。ADR に明記する）: ログインなしの間は、**その端末の前に居る人を
+  信用する**。誰でも、合成セッションのロール（既定は admin）で操作できる。これが許されるのは、ログインなしの間は
+  LAN から書き込めないから（上の `auth_server_combination_allowed`。開けられるのは閲覧公開 = 読むだけ、だけ）。
+  **この組み合わせの規則は緩めない**。LAN から操作させたい利用者は、先にアカウントを作ってロックダウンする。
+- **アカウントが 0 の間に REST でできること**（conventions §1 の対称）: REST にログインなしの管理者のセッションは無い。
+  ログインは必ず失敗し（アカウントが無い。組み込みは拒む）、初回セットアップの口も無くなるので、REST から届くのは
+  閲覧公開の読み取りと、派生アプリが足した grant だけ。ユーザーの作成の認可と監査は両経路で同じ関数を通る
+  （REST の口はアカウントのセッションが要るので、0 の間は誰も届かない。認可の規則は同じ）。
+  - ヘッドレス（`banto-serve` だけ。PostgreSQL の運用・e2e）は Tauri のログインなしを持たないので、最初のアカウントを
+    作る手段が別に要る。**DB に触れる人の CLI**（`banto-serve` の引数。ネットワーク越しの口にしない。監査は
+    組み込みの `admin` の操作として残す）を推奨する（§10 の N3）。`BANTO_ALLOW_SETUP` は消す。
+- **ロックダウン**（`auth.disabled` を off にする。`auth_config_apply`）: **ログインできる管理者のアカウント
+  （`kind = 'account' AND role = 'admin'`）が 1 つ以上あるときだけ**許す。無ければ `Validation` で断り、
+  「先に管理者のアカウントを作ってください」と返す。判定と保存は同じ `auth_config_lock` の中で行う
+  （ADR-0017 のロックダウンの流れ「保存 → 同じ関数の中で直後に grant の失効」の手前に置く）。
+  - **最後の管理者のガードは、ログインなしの間も常に掛ける**（今のまま。§10 の N5）。1 つ作った管理者は 0 に戻せないので、
+    「判定の後・保存の前に最後の管理者が消える」競合が起きない。ログインなしの間は害が無い（アカウントが残るだけ）。
+  - ログイン必須なのに管理者が 0 の DB（直接の編集でしか起きない）は、起動時に明示のエラーで止める。
+    黙ってログインなしへ戻さない（fail-open になる。§10 の N4）。
+- **初回セットアップを外す**（C2b）。消す・置き換えるもの:
+  - サービス層: `setup_first_user`（`users.rs:738`）と、初回の INSERT の `NOT EXISTS (SELECT 1 FROM users)`
+    （`users.rs:776`）、PostgreSQL の同時セットアップの試験（`ci.yml:423-426` の `pg_concurrent_setup`）。
+  - `is_initialized`（`users.rs:706`）: 「初期化済み」の判定は**要らなくなる**（新しい DB は migration の後、いつでも
+    使える状態）。呼び手（`auth_status` `lib.rs:1029-1031`、bootstrap の窓 `lib.rs:1807`、REST の status
+    `routes/auth.rs:64`）と一緒に消す。「アカウントがあるか」を知りたい所（ロックダウンの判定）は
+    `has_admin`（`kind = 'account'` を数える形に直す）を使う。
+  - REST: `POST /api/auth/setup` と `allow_setup`（`routes/auth.rs`）、status の `initialized`。
+    Tauri: `auth_setup` コマンド、`auth_config_apply` の bootstrap の窓（ログインなしの間は「認可を通さない出口」
+    が既にあるので、窓は要らない）。
+  - 画面: ログインの画面の `setup` の分岐と「ログインなしで使い始める」（`login/+page.svelte`）、`AuthProvider.setup`
+    （`provider.ts`・`providers/http.ts`・`providers/tauri.ts`・demo）、`auth.setup*` の文言（i18n の両言語）。
+    ロックダウンの入口は今の設定の画面（認証の節）のまま。管理者が 0 のときは、切り替えを押せない理由と
+    ユーザー管理への導線を出す。
+  - e2e: `e2e/first-run-setup.ts` の `createFirstAdmin`（`smoke.spec.ts:268` のシナリオ 1、
+    `tests-add-resource/orders.spec.ts:28`）を「CLI で作ったアカウントでログインする」に置き換える
+    （`playwright.config.ts:267` の `BANTO_ALLOW_SETUP` も）。ログインの画面の基準画像と a11y の試験が変わる。
+  - scaffold・rename: `scripts/rename.mjs:221` はログインの見出しの書き換え先に `e2e/first-run-setup.ts` を挙げている。
+    置き換えたファイルへ直す。display プリセットが初回起動で入れる `auth.disabled = true`（`scripts/scaffold.mjs:2022`）は
+    既定と同じになる（`auth.disabled_role` などは残す）。**scaffold の 4 プリセットの dry-run と、template-acceptance の
+    実行が要る**（フロントだけの変更では template-acceptance が走らない）。
+- **ログインなしの操作の帰属**（決定 4・18）: id・name からは推測しない（conventions §10）。配線の層が付ける
+  **明示の印**で決める。`GrantSpec` に「組み込みの actor に帰属する」フラグ（既定は off。名前は C0 の ADR で確定）を
+  足し、発行したセッションの `SessionStamp` に写す。監査を書く所は印だけを見る。
+  - Tauri のログインなし（`local`。現行の監査は `local`、`lib.rs:5733`）: 同じ印を Tauri の配線で付け、
+    `actor_username = 'admin'`・`actor_id = 組み込みの行の id` を書く。`actor_role` はそのセッションの実際のロール
+    （viewer なら viewer）。行の `role` は一覧の表示だけで、認可の判定には使わない。
+    ui-settings の持ち主と `sessionOwnerKey` は `local` のまま（帰属は監査だけ）。
+  - 印つきの grant セッション（派生アプリの管理者相当の grant）: 同じく `admin` に帰属する。
   - 印なしの grant セッション（閲覧公開の `public` など）: 今のまま固定 id を書き、`actor_id` は NULL。
-  - Tauri の認証なし（`local`。現行の監査は `local`、`lib.rs:5733`）: 同じ印を Tauri の配線で付け、`Admin` に
-    帰属させる（推奨。「ログインなしの操作」が両経路で同じ名前になる）。ui-settings の持ち主と `sessionOwnerKey` は
-    `local` のまま（帰属は監査だけ）。別案は監査も `local` のまま残す（#778 の趣旨が Tauri だけ外れる）。
   - wire の `Identity`（id・name・role）は変えず、印は画面へ出さない。
-- 予約名: `Admin` と grant の固定 id を、大小無視で作成・初期設定・改名から拒む。
-  conventions §10 の「id・name から合成セッションを推測しない」は変えない（予約は見分けやすさのためで、
-  判定の根拠にしない）。
+- **予約名**: `admin`（大小無視）と grant の固定 id を、アカウントの作成・改名で断る（新しい DB でも、人が
+  `Admin`・`ADMIN` を作って見分けにくくするのを防ぐ）。conventions §10 の「id・name から合成セッションを
+  推測しない」は変えない（予約は見分けやすさのためで、判定の根拠にしない）。
   - 予約名の一覧を知っているのは配線の層だけ（grant は派生アプリが足せる開いた集合、`grant.rs:89-94`・`:200`。
-    サービス層は axum / tauri を知らない、§2）。配線の層が `GrantSpec` の一覧から「固定 id → kind」の対応を作り、
-    サービス層へ渡す口（`UsersService` の構築時の引数など）を置く（独立レビューで追加）。形は C0 の ADR で決め、
-    C2 で入れる。C4 の移し替え（§4.1）も同じ対応を使う。
-- **初期設定の判定**（「users が空なら最初の管理者を作れる」）は `kind = 'account'` の行だけを数える。
-  ここを直し忘れると、新しい DB で初期設定ができなくなる。ユーザー一覧・件数・CSV・バックアップの
-  検証など、`users` を数える所を C2 で洗う。
-- 起動時の検出（独立レビューで変更。§10 の 15）: **毎回の起動で**、migration を当てる前に、`Admin`（大小無視）や
-  予約名と同じ username のアカウントを探し、あれば migration を当てずに明示のエラーで止める。
-  「0014 の前に 1 回」では足りない: grant は後から足せ（新しい固定 id が既存のアカウントと当たる）、PostgreSQL は
-  アプリの復元を通らず（`backup.rs:207-213`）、開発中は C1〜C2 の間に 0014 済みの DB で `Admin` を作れる。
-  - 対象は `kind = 'account'` の行（`kind` の列が無い 0014 より前の DB では全部の行）。
-  - **組み込みの行の有無は `kind = 'builtin'` で判定する**。username では判定しない（人が作った `Admin` を
-    組み込みと誤認しない）。1 行だけ、は 0014 の部分一意インデックスで守る（§4.1）。
-  - 検出・予約・下の移行の口・fixture の改名は**同じ PR（C2）**に置く（C1 に検出だけを入れると、`admin` を使う
-    既存の試験と demo が止まる）。リリースは 1 回なので、利用者の DB で「新しい版の最初の起動で、0014 の前に止まる」は変わらない。
-  - エラーには、当たった名前と対処（下の移行の口の使い方）を書く。
-- **移行の口**（独立レビューで追加。§10 の 14）: `Admin` の大小無視の予約は、最初の管理者を `admin` にした DB を
-  全部止める。`admin` はこのリポジトリの標準の名前で（`apps/admin-template/src-tauri/src/lib.rs:5660`・`5748`・`5769` の
-  `setup_first_user("admin", …)`、demo、`scripts/lib/add-resource-rust.mjs:1248`）、当たる DB は多い。
-  `UsersService` に改名の口は無く、自己削除もできないので、「前の版で作り直す」は対処にならない。
-  - 新しい版に**予約名のアカウントを改名する口**を置く。検出に当たった行だけが対象で、username だけを変える
-    （`users.id`・ロール・パスワードは変えない。`auth_epoch` を進めてセッションを切り、監査に残す）。
-    `users.id` が同じなので、監査の `actor_id` と `account_uid`（C3 で埋まる）は続く。
-  - 旧い `ui.{旧名}.*` のキーも同じトランザクションで新しい名前へ付け替える（C4 の移し替えの前に名前だけが
-    変わると、候補なしで捨てられる）。0014 の前後どちらの DB でも動く形にする。
-  - 形: 起動の引数で呼ぶ CLI（サーバーと Tauri の実行ファイルの両方。DB に触れる人の操作）を基本にする。
-    Tauri に、止まったときの初回画面（そのアカウントのパスワードを確かめてから改名）を足すかは C0 で決める。
-    ネットワーク越しの認証なしの口は作らない。
-  - C2 の範囲に、`admin` を使う試験・fixture・e2e・demo・scaffold の生成物（`add-resource-rust.mjs`）の改名を含める。
-  - 別案: 予約を**完全一致の `Admin` だけ**にする。既存の DB は止まらず、移行の口も fixture の改名も要らない。
-    代わりに、一覧と監査に `admin`（人）と `Admin`（組み込み）が並び、目では見分けにくい（`kind`・`actor_id` では
-    区別できる）。grant の固定 id の予約も完全一致に揃えるかを別に決める必要がある。
-- **組み込みの行の名前の案**（オーナーの案、未確定。§10 の 14）: 上の本文は決定 3 のまま（`Admin`・大小無視の予約・
-  移行の口）で書いてある。次の 2 つと比べ、C0 の ADR で決める。
-  - **(a) 名前を小文字の `admin` にする**（`local`・`public` と同じ並び）。予約は大小無視なので、衝突する DB の範囲は
-    `Admin` のときと同じで、移行の口も fixture の改名も要るまま。加えて、最初の管理者が `admin` だった DB では、改名の前の
-    監査（人の `admin`。`actor_username` はスナップショットで、`actor_id` は NULL）と、改名の後の組み込みの `admin` が
-    **同じ綴りで並ぶ**。`Admin` なら大小で違って見える。#778 の動機（同名と見分けられない）が、過去の監査で戻ってくる。
-  - **(b) 表示は `Admin`、行の username はアカウントでは作れない内部名にする**（例 `builtin.admin`。表示は既にある
-    `display_name` の列に置く）。`Admin`・`admin` は予約しない。最初の管理者が `admin` の DB は**衝突せず、止まらない**。
-    移行の口も `admin` の fixture の改名も、この件では要らなくなる。
-    - 作れない形か: `validate_username`（`users.rs:134-156`）が断るのは、trim 後の長さ（1〜32）と `.` だけ。`.` は
-      **新規だけ**で断り、古いアカウントは `.` を含みうる（`users.rs:146-149` の注記）。通るのは初期設定（`:748`）と
-      作成（`:1091`）の 2 か所で、試験・seed・直接の SQL は通らない。つまり「文字で絶対に作れない」とは言えない。
-      守りは 2 段にする: 新規は `.` で作れない＋古い行は**内部名との完全一致だけ**を毎起動の検出で止める
-      （当たる DB は実際上ほぼ無い）。組み込みかどうかの判定は、どの案でも名前ではなく `kind`。
-    - 監査の actor: `actor_username` には内部名を書き、`actor_id` を入れる。名前しか出ない出力（CSV・ログ）でも
-      人のアカウントと同じ綴りにならない。画面（ユーザー一覧・監査）は `kind`・`actor_id` を見て `Admin` と印を出す。
-      人が `Admin`・`admin` という名前を持てても、表示の `Admin`（印つき）と行の内部名で見分けられる。
-      表示名だけを書く形（`actor_username = 'Admin'`）は、同名のアカウントと見分けられなくなるので採らない。
-    - 残るもの: grant の固定 id の予約（`public` など。決定 3 の後半）は別の話で、そちらに当たる DB のための
-      移行の口は小さく残す。画面に内部名 → 表示の対応（i18n を含む）が要る。名前で監査を絞る下流は内部名に直す。
-  - **推奨は (b)**。P1 の運用の問題（標準の `admin` の DB が全部止まる）を元から無くし、見分けを名前の予約ではなく
-    `kind` に置ける。(b) を採らないなら、(a) ではなく今の本文（`Admin`＋大小無視＋移行の口）を推奨する。
-    (a) は衝突を減らさず、過去の監査との見分けを悪くする。(b) を採る場合は、決定 3 の前半（`Admin` の予約）を変えることになる。
-- **復元との関係**（レビューで追加）: 現行の復元は、起動時に予約のファイルを検証してから DB のファイルを
-  置き換え（`backup.rs:711`・`731`・`784`）、その後で起動の検査に進む。予約名のアカウントを含むバックアップを
-  復元すると、置き換えた後で止まり、起動できない DB が残る。そこで**候補の DB を先に調べる**:
-  同じ検出を `validate_sqlite_file`（`backup.rs:269`）に足し、予約の時点（`stage_restore_from_*`）で拒む。
-  起動時の適用でも置き換えの前にもう一度調べ、当たれば壊れたファイルと同じ扱い（適用せずに外し、今の DB で起動）にする。
-  安全コピー（`pre-restore-*`）へ自動で戻す形は採らない（置き換えの前に止めれば要らない）。
-  検出は、`kind` の列が無い（0014 より前の）候補では全部の行、ある候補では `kind = 'account'` の行だけを見る
-  （組み込みの `Admin` の行を持つ正しいバックアップを拒まない）。
+    サービス層は axum / tauri を知らない、§2）。配線の層が `GrantSpec` の一覧から固定 id を集め、
+    サービス層へ渡す口（`UsersService` の構築時の引数など）を置く。形は C0 の ADR で決め、C2 で入れる。
+  - **起動時の検出**: 既存の `Admin` / `admin` を探して止める検査は**要らない**（新しい DB には居ない。作成は断る）。
+    残る穴は 1 つ: **grant を後から足した**とき、その固定 id と同名のアカウントが既に居る場合。これだけを、起動時の
+    1 文の検査（予約名の一覧と `kind = 'account'` の username を大小無視で照らす）で見て、当たれば名前と対処
+    （そのアカウントを作り直すか、grant の固定 id を変える）を書いたエラーで止める（推奨。§10 の N6）。改名の口は作らない。
+- `users` を数える所（ユーザー一覧・件数・CSV・バックアップの検証・最後の管理者のガード・今の `is_initialized`）を
+  `kind = 'account'` に直す。組み込みの行が migration で入るので、**C1 で**洗う（§5）。組み込みかどうかの判定は、
+  どこでも名前ではなく `kind`。
 
-**破壊的変更と移行**: ユーザー一覧に `Admin` が 1 行増える。`Admin`・`public` など予約名のアカウントは
-作れない。既にある DB は起動しない（上のエラー。移行の口で改名すれば起動する。標準の `admin` も当たる）。
-Tauri の認証なしの監査の actor が `local` から `Admin` に変わる。ADR-0017 §3（自己削除のガード）・監査の項を改訂する。
+**破壊的変更と移行**: 初回セットアップが無くなる（画面・REST の口・Tauri のコマンド・`AuthProvider.setup`・
+`BANTO_ALLOW_SETUP`）。新しい DB の既定がログインなしになる。ユーザー一覧に `admin` が 1 行居る。
+`admin`（大小無視）・`public` など予約名のアカウントは作れない。Tauri のログインなしの監査の actor が `local` から
+`admin` に変わる。ADR-0017 §3（自己削除のガード）・監査の項・ロックダウンの条件を改訂する。
 
-**リスク（認証）**: 組み込みの行が「ログインできる管理者」になる経路を作らないこと。パスワードの
-リセット・CSV の取り込み・リストア・権限の個別付与（0013）の各経路を C2 で 1 つずつ確かめ、試験に入れる。
+**リスク（認証）**: (1) 組み込みの行が「ログインできる管理者」になる経路を作らないこと。パスワードのリセット・
+CSV の取り込み・リストア・権限の個別付与（0013）・自動ログイン（`auth.autologin.username`）の各経路を C2 で
+1 つずつ確かめ、試験に入れる。(2) 既定がログインなしになるので、**LAN との組み合わせの規則が唯一の柵**になる。
+C2b で、起動時・保存の両側・`banto-serve`（listener は `BANTO_BIND` / `PORT` から来て、保存した設定を見ない、
+`banto-serve.rs:277`）の 3 か所で、ログインなしの間に REST から書き込めないことを試験で固定する。
 
-**試験**: 禁止の操作が REST・Tauri の両方で拒まれ、denied の監査も対称（§1）。組み込みの行ではログイン
-できない。最後の管理者のガードが人のアカウントだけを数える。新しい DB で初期設定ができる。予約名の大小無視。
-予約名のアカウントを含むバックアップは予約の時点で拒まれ、起動時の適用でも今の DB が置き換わらない。
-独立レビューで追加: 0014 済みの DB に後から入った予約名のアカウント（grant を後から足した場合を含む）で、次の起動が止まる。
-`kind = 'account'` の `Admin` が居ても、組み込みの行があるとは判定しない。組み込みの行の INSERT は 2 回目が入らない。
-移行の口: `admin` の DB が改名の後に起動し、`users.id`・監査・旧い `ui.*` が新しい名前で続く。予約名に当たらない行は改名できない。
-帰属の規則: 印つきの grant・印なしの grant・Tauri の認証なしの 3 通りで、監査の actor が REST と Tauri で同じになる（§1）。
-組み込みの行へのログインの失敗が、居ないユーザーと同じ経路（ダミーの検証）を通る。`change_password`・`reset_password` が
-組み込みの行を変えない（SQL を直接呼んでも 0 行）。
+**試験**: 禁止の操作が REST・Tauri の両方で拒まれ、denied の監査も対称（§1）。組み込みの行ではログインできず、
+失敗が居ないユーザーと同じ経路（ダミーの検証）を通る。`change_password`・`reset_password` が組み込みの行を変えない
+（SQL を直接呼んでも 0 行）。最後の管理者のガードが人のアカウントだけを数える。予約名の大小無視。
+grant を後から足して同名のアカウントに当たると、次の起動が止まる。
+帰属の規則: 印つきの grant・印なしの grant・Tauri のログインなしの 3 通りで、監査の actor が REST と Tauri で同じになる（§1）。
+C2b: 新しい DB がユーザーなしで起動してアプリに入れる。ユーザー管理からアカウントを作れ、監査の actor が `admin`。
+管理者が 0 のままのロックダウンは断られ、1 つ作れば通る。ロックダウンの後、ログインなしのセッションと grant が失効する。
+アカウントが 0 の間、REST のログイン・書き込みが全部拒まれる。ログインなしの間は LAN を（閲覧公開なしで）開けない。
 
 ### 4.4 #786 ui-settings の条件付きの書き込みと再送
 
 **設計（サーバー）**:
 
+- 保存先は新しい表 `ui_settings`（§4.1）。**2026-11-22 変更**: 旧い `settings` の `ui.{username}.{key}` からの
+  移し替えは無い。C4 で参照先を切り替え、旧い読み書きの関数（`settings.rs:428`・`:445`）を消す。
 - `ui_settings` の持ち主は文字列の列にする（§10 の 2）: アカウントは `acct:<users.id>`、
-  grant は `grant:<kind>`（決定 5）、Tauri の認証なしは `local`。主キーは（持ち主, key）。
-- **アカウントの行は外部キーで守る**（レビューで変更）: 別の列 `user_id`（NULL 可、
+  grant は `grant:<kind>`（決定 5）、Tauri のログインなしは `local`。主キーは（持ち主, key）。
+- **アカウントの行は外部キーで守る**: 別の列 `user_id`（NULL 可、
   `REFERENCES users(id) ON DELETE CASCADE`）を持ち、アカウントの行では必ず入れ、合成セッションの行では NULL
-  （CHECK で持ち主の列と食い違わせない。形は C4 で確定）。「削除と同じトランザクションで消す」だけでは、
+  （CHECK で持ち主の列と食い違わせない。形は C1 で確定）。「削除と同じトランザクションで消す」だけでは、
   削除の前に受け付けた PUT が削除の後に行を作れる（孤児の行。同じ `users.id` は再利用されないが、消えない）。
   外部キーなら、削除が先に確定すれば PUT が失敗し、PUT が先なら削除が一緒に消す。
   - 外部キーの違反は storage ではなく、セッションが無いときと同じ拒否にして返す。
   - SQLite は接続ごとに外部キーを有効にしていることを前提にせず、効いていることを試験で確かめる。
-- **revision は数ではなく、書き込みのたびにサービス層で作る乱数の文字列**（独立レビューで変更。§10 の 19）。
+- **revision は数ではなく、書き込みのたびにサービス層で作る乱数の文字列**（§10 の 19）。
   行が無いことは固定の `"0"` で表す。1 ずつ増やす数だと、バックアップの復元で巻き戻った後に、開いたままのタブの
   古い `ifRevision` が別の値の revision と偶然一致して上書きする。行を消すと 0 へ戻るのも同じ穴。乱数なら、
   復元の後・作り直しの後に書かれた行は別の値になる（取得の時点の値と revision は一緒に戻るので、それを見ていたタブは通ってよい）。
@@ -361,7 +385,7 @@ Tauri の認証なしの監査の actor が `local` から `Admin` に変わる�
 - GET は `{ value, revision }`（行が無ければ `value: null`・`revision: "0"`）。
 - PUT は `{ value, ifRevision? }`。`ifRevision` があり、今の revision と違えば `conflict`（REST は 409）と
   現在の `{ value, revision }` を返す。`ifRevision: "0"` は「まだ無いこと」。成功すれば新しい revision を返す。
-- **判定と書き込みは 1 文で行う**（レビューで変更）。PostgreSQL の既定の分離レベルでは、同じトランザクションで
+- **判定と書き込みは 1 文で行う**。PostgreSQL の既定の分離レベルでは、同じトランザクションで
   読んでから無条件に UPDATE しても、2 つが同じ revision を読んで両方通る。場合を分ける:
   - `ifRevision` が `"0"` 以外: `UPDATE ... SET revision = 新しい乱数 WHERE 持ち主・key・revision = ifRevision`。
     変わった行が 0 なら `conflict`。
@@ -370,10 +394,10 @@ Tauri の認証なしの監査の actor が `local` から `Admin` に変わる�
   - `conflict` のときだけ、後から現在の値を読んで返す（その間に消えていれば `value: null`・`revision: "0"`）。
 - `ifRevision` を省いた PUT は無条件（設定の画面のように、最後の値が勝ってよい使い方のため）。
   `INSERT ... ON CONFLICT DO UPDATE SET revision = 新しい乱数` の 1 文。
-- **消す口**（独立レビューで追加）: DELETE（`ifRevision?`。判定は PUT と同じく 1 文）。行を消し、以後の GET は
+- **消す口**: DELETE（`ifRevision?`。判定は PUT と同じく 1 文）。行を消し、以後の GET は
   `"0"` を返す。K4 の「reset で保存を消す」（§4.6）が使う。いまの provider には消す口が無い（`uiSettings.ts:46-51`）。
 - Tauri のコマンドも同じ引数・同じ応答にする（§1）。
-- **C4 に admin-core の http・tauri アダプタの最小の追従を含める**（独立レビューで変更）: C4 で Tauri の応答が
+- **C4 に admin-core の http・tauri アダプタの最小の追従を含める**: C4 で Tauri の応答が
   `Option<String>`（`lib.rs:3398-3404`）から `{ value, revision }` に、REST の PUT が 204
   （`routes/ui_settings.rs:49-56`）から本文つきに変わり、そのままでは旧い provider が C5 まで壊れる。
   アダプタだけが新しい応答を読み（revision は捨てる）、公開の `UiSettingsProvider` の形（`get` は文字列、`set` は `void`）は
@@ -389,7 +413,7 @@ Tauri の認証なしの監査の actor が `local` から `Admin` に変わる�
   形は C5 で確定）。条件付きの書き込みが「通った」と誤認されないことを試験にする。
 - `updateUiSetting(provider, key, apply)`: 読む → 当てる → 条件付きで書く → `conflict` なら返ってきた
   現在の値に当て直す（回数に上限）。industrial の回り道の置き換え先。
-  - **応答だけが失われた書き込み**（レビューで追加。#793 の後は、切断しても書き込みは終わる）: 結果が分からない
+  - **応答だけが失われた書き込み**（#793 の後は、切断しても書き込みは終わる）: 結果が分からない
     失敗の後は、同じ PUT を送り直さずに読み直す。値が送ったものと同じなら成功として終える（revision は乱数なので
     「1 つ進んだ」では見分けない。以後は読み直した revision を使う）。
     違えば現在の値に当て直す。この当て直しは、自分の書き込みが既に入った値に `apply` をもう一度当てることがある。
@@ -410,7 +434,7 @@ Tauri の認証なしの監査の actor が `local` から `Admin` に変わる�
 **片方だけ**が成功し、もう片方が `conflict`。`ifRevision: "0"` の INSERT 2 つでも片方だけ。アカウントの削除と
 PUT を競わせて、どちらの順でも行が残らない。居ない `users.id` の行は作れない（外部キーが効いている）。
 応答を捨てた後の `updateUiSetting` が、冪等な `apply` で値を二重に変えない（画面の単体）。
-独立レビューで追加: バックアップを取る → 書く → 復元、の後で、復元より後に得た `ifRevision` の PUT が `conflict` になる。
+バックアップを取る → 書く → 復元、の後で、復元より後に得た `ifRevision` の PUT が `conflict` になる。
 消して作り直した行に、消す前の `ifRevision` が通らない。C4 の時点で、旧い形の provider のまま REST・Tauri の読み書きが動く。
 
 ### 4.5 #793 書き込みを接続の切断から切り離す
@@ -675,15 +699,21 @@ W1 ウィジェットの登録の型と、固定部のカードの載せ替え �
 
 ## 5. 依存関係
 
-- C0（ADR の承認）→ C1（migration 0014、スキーマだけ）→ C2（#778）・C3（#790）→ C4（#786 サーバー）→ C5（provider）→
-  C6（`createSavedSetting`）。C2 と C3 は同じファイル（`users.rs`・`audit.rs`・Tauri の `lib.rs`）に触れるので直列。
-- 独立レビューで変更: 予約名の検出・移行の口・fixture の改名は C1 ではなく **C2**（§4.3）。C1 は 0014 と
-  部分一意インデックスだけ。C4 は admin-core の http・tauri アダプタの最小の追従を含み、C4 の後も画面が動く。
-  公開の provider の形が変わるのは C5（§4.4）。予約名の一覧と「固定 id → kind」の口は C0 で形を決め、C2 で入れ、C4 が使う。
+- C0（ADR の承認）→ C1（基準の作り直し）→ C2（#778 の保護と帰属）→ C2b（初回セットアップの撤去）→ C3（#790）→
+  C4（#786 サーバー）→ C5（provider）→ C6（`createSavedSetting`）。C1〜C4 は同じファイル（`users.rs`・`audit.rs`・
+  Tauri の `lib.rs`）に触れるので直列。
+- **2026-11-22 変更（互換不要・DB 作り直し）**: データの移行の手順（組み込みの行を起動時に入れる・`account_uid` の埋め込み・
+  旧い `ui.*` の移し替え）は無くなった。組み込みの行は C1 の migration が入れるので、**`users` の数え方の直しは C1 に入る**
+  （入れないと、新しい DB で初回セットアップが出なくなる）。初回セットアップそのものは C2b で外す。
+- 途中の main が壊れない条件: C1・C2 の後は今の初回セットアップで最初の管理者を作れる。C2b の後は、新しい DB が
+  ログインなしで起動し、ユーザー管理からアカウントを作れる。ui-settings は C4 まで旧い保存先（`settings` の `ui.*`）で読み書きでき、
+  C4 で `ui_settings` へ切り替える（移し替えは無い）。C4 は admin-core の http・tauri アダプタの最小の追従を含み、
+  公開の provider の形が変わるのは C5（§4.4）。どの PR も REST と Tauri を一緒に変える（conventions §1）。
 - S1（#793 の層）は C1 と並べられる（`server.rs` と新しいファイルだけ）。S2（handler の点検）は
   `routes/users.rs`・`ui_settings.rs` を読んで直すので、**C2 の前に済ませる**（C2〜C4 と同じファイル）。
 - K4（#791 後半）は C3（持ち主のキー）と C5（provider の形）の後。dock の中では PR7 の後（§6）。
 - T1（#794）・T2（#795）は誰とも重ならない。どちらも基準画像を変えるので、再生成は 1 回にまとめる。
+  C2b もログインの画面の基準画像を変える（初回セットアップの画面が無くなる）。
 - F1 → F2（#714）は誰とも重ならない（`packages/forms` とテンプレートの items）。早く始めてよい。
 - W0（#716 の判断）は C0 と同時に諮る。W1 は判断の後すぐ、W2 は **K4 と C5 の後**（保存の部品と provider の形）、
   ダッシュボードの保存を K4 が載せ替えた後に触る（同じ `+page.svelte`）。
@@ -710,15 +740,20 @@ K1・K2 は小さいので、#782 PR2 の着手と同時に出して先に入れ
 CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意」も）、この文書の状態行の更新。
 `src-tauri` はコンパイルできない環境があるので、Tauri 側はレビューで担保する。
 
+**2026-11-22 変更（互換不要・DB 作り直し）**: C1〜C4 から、データの移行（組み込みの行を起動時に入れる手順・
+`account_uid` の埋め込み・旧い `ui.*` の移し替えと削除・既存の `admin` の検出と改名の口・復元の候補の事前検査）を
+外した。代わりに、初回セットアップの撤去（決定 18）を C2b として足した。
+
 | PR | 範囲 | パッケージ・場所 | 破壊的 | モデル | 完了条件 |
 | --- | --- | --- | --- | --- | --- |
-| **C0** | ADR: 持ち主の識別と組み込み `Admin`（新規 ADR-0034、ADR-0017 の改訂）。`.en.md` も | `docs/adr` | — | fable | **オーナーの承認**。§10 の判断を含めて確定 |
+| **C0** | ADR: 持ち主の識別、組み込みの `admin`、初回セットアップの撤去とロックダウンの条件（新規 ADR-0034、ADR-0017 の改訂）。conventions §11 の「基準の作り直し」の注記。`.en.md` も | `docs/adr`・`docs/conventions` | — | fable | **オーナーの承認**。§10 の N2〜N6 を含めて確定 |
 | S1 | #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
 | S2 | #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
-| C1 | migration 0014（2 方言、**スキーマの追加だけ**。行を足さない・旧い `ui.*` を消さない。`kind = 'builtin'` の部分一意インデックスを含む） | テンプレートの `core`・`banto-admin-services` | **破壊的** | fable | 0014 の後も初期設定と ui-settings が今のまま動く試験（両方言）。`pnpm verify:architecture` rule 11 |
-| C2 | #778 組み込みの行を入れる手順（数え方の直しと**同じ PR**）・禁止・予約名（一覧を渡す口）・毎起動の検出・復元の候補の事前検査・移行の口（改名）・帰属の印と監査の actor・`admin` を使う試験 / fixture / e2e / demo / scaffold の改名 | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート・`scripts` | **破壊的** | fable | §4.3 の試験。新しい DB で初期設定ができる。予約名を含むバックアップが置き換わらない。`admin` の DB が改名の後に起動する。両経路の対称 |
-| C3 | #790 `account_uid` の埋め込みと作成時の採番・`accountId`・`sessionOwnerKey`・`actor_id` | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`・テンプレート | **破壊的** | fable | §4.2 の試験（復元の回帰試験を含む）。持ち主つきの記憶の利用箇所を全部確認 |
-| C4 | #786 サーバー（条件付きの PUT・DELETE・乱数の revision・外部キー・Tauri）。参照先の切り替えと、旧い `ui.*` の移し替え・**全部の**削除を**同じ PR** で。admin-core の http・tauri アダプタの最小の追従（公開の provider の形は据え置き） | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`（アダプタだけ） | **破壊的** | fable | §4.4 の競合の試験（両方言、片方だけ成功）。削除と PUT の競合で行が残らない。§4.1 の移し替えの試験（捨てた後に同名を作っても渡らない）。旧い形の provider のまま画面が動く |
+| C1 | 基準の作り直し（2 方言）: `0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | §4.1 の試験（両方言）。新しい DB で今の初回セットアップができ、ui-settings が今のまま読み書きできる。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
+| C2 | #778 組み込みの行の保護（禁止・verifier・SQL の `kind`）・予約名（一覧を渡す口）・grant を後から足したときの起動時の検査・帰属の印と監査の actor（`actor_id` を書く） | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート | **破壊的** | fable | §4.3 の試験（C2b の分を除く）。両経路の対称 |
+| C2b | 初回セットアップの撤去（決定 18）: `auth.disabled` の既定を on、ロックダウンの条件（管理者のアカウントが 1 つ以上）、`setup_first_user`・`is_initialized`・`/api/auth/setup`・`auth_setup`・bootstrap の窓・`AuthProvider.setup`・ログインの画面の分岐と文言を消す。ヘッドレスの最初のアカウント（N3）。e2e（`createFirstAdmin` の置き換え・smoke・add-resource）・`rename.mjs`・scaffold の seed・基準画像 | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`・テンプレート・`e2e`・`scripts` | **破壊的** | fable | §4.3 の C2b の試験。新しい DB がユーザーなしで起動し、ユーザー管理からアカウントを作れる。e2e が通る。scaffold の 4 プリセットの dry-run と template-acceptance。両経路の対称 |
+| C3 | #790 `accountId` を wire に載せる・`sessionOwnerKey` | `banto-server`・`src-tauri`・`admin-core`・テンプレート | **破壊的** | fable | §4.2 の試験（復元の回帰試験を含む）。持ち主つきの記憶の利用箇所を全部確認 |
+| C4 | #786 サーバー（条件付きの PUT・DELETE・乱数の revision・外部キー・Tauri）。参照先を `ui_settings` へ切り替える（移し替えなし）。admin-core の http・tauri アダプタの最小の追従（公開の provider の形は据え置き） | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`（アダプタだけ） | **破壊的** | fable | §4.4 の競合の試験（両方言、片方だけ成功）。削除と PUT の競合で行が残らない。旧い形の provider のまま画面が動く |
 | C5 | #786 provider の置き換え（`remove` を含む）・`updateUiSetting`・同梱の実装・呼び手の追従 | `admin-core`・テンプレート | **破壊的** | fable | #707 の直列化の試験が新しい形で通る |
 | C6 | `createSavedSetting` の再送・`merge`・`onSettled`・README | `admin-core` | 足すだけ | sonnet | 再送・停止・競合の単体テスト |
 | T1 | #794 Toast と浮かぶ面の tint | `ui`・`grid-svelte` | 見た目 | sonnet | ダークで透けない。基準画像の再生成 |
@@ -736,31 +771,35 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | D2 | D1 の結果のリファクタ（PR に分ける） | D1 による | D1 による | D1 による | D1 の所見が閉じる |
 | D3 | upgrading・CHANGELOG の「消費側への注意」・実機確認（#757 に #793 の切断と #794 のダークを足す）・版の判定 | `docs` | — | sonnet | リリースの準備の PR |
 
-並べ方: C0 の承認が最初。その後は 4 本の列を並べる — サーバー（S1 → S2 → C1 → C2 → C3 → C4）、
+並べ方: C0 の承認が最初。その後は 4 本の列を並べる — サーバー（S1 → S2 → C1 → C2 → C2b → C3 → C4）、
 画面（C5 → C6、C4 の後）、theme（T1・T2）、dock（§6）。S1 と C1 は並行できる。
 F1・F2 はいつでも。W0 は C0 と一緒に諮り、W1〜W3 は dock の列の後ろ（K4 の後）に付ける。
+C1 は「スキーマ・採番・数え方・fixture の改名」で大きいが、分けると途中の main が壊れる（組み込みの行が入った時点で、
+`admin` を作る試験と、全行を数える初回セットアップの判定が落ちる）。C1 のエージェントには、fixture の改名を
+機械的な置換として先に済ませる順を指示する。
 
 ## 8. CHANGELOG「消費側への注意」の要点
 
 D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく。
 
-- **DB**: migration 0014 を取り込む。`Admin`（大小無視）や予約名のアカウントがある DB は起動しない。
-  **最初の管理者を `admin` にした DB も当たる**（改名の口で名前を変えてから起動する。手順を書く）。
-  そのようなバックアップは復元の予約で拒まれる。検出は毎回の起動で走る（grant を後から足したときも当たる）。
-  - **0014 を当てた DB は旧い版へ戻せない**（旧い版は 0014 を知らず、移した後の `ui.*` は `settings` に無い）。
-    上げる前にバックアップを取る。戻すときは、そのバックアップを旧い版で復元する。
-  - 持ち主を決められない ui-settings は移らず、**捨てられる**（`local` という名前のアカウントがある DB の `ui.local.*`。
-    grant の固定 id と同名のアカウントがある DB の `ui.{固定 id}.*`。現行は `ui.public.*` を同名のアカウントと
-    閲覧公開が共有している、`routes/ui_settings.rs:31-36`）。移し替えは 1 回きりで、旧い `ui.*` の行は全部消える。
-  - 派生アプリが grant を足している場合は、**C4 を含む版の最初の起動の前に**「固定 id → kind」の対応を渡す
-    （予約名の一覧と同じ口。渡さないと、その grant の保存値は候補なしで捨てられる）。手順を upgrading に書く。
+- **DB を作り直す**（2026-11-22 変更: 互換不要）: この版は**旧版の DB を読めない**。旧版の DB で起動すると、
+  明示のエラーで止まる（スキーマは変えない）。**旧版のバックアップも復元できない**（予約の時点で拒む）。
+  データを移す口は無い。必要なデータは、旧版で CSV などに書き出してから、新しい DB に入れ直す。
+  旧版へ戻すときは、旧版のバイナリと旧版の DB（残しておく）をそのまま使う。
+  - 派生アプリは `0003_users.sql`・`0005_audit_log.sql` を差し替え、`0014_ui_settings.sql` を足す（両方言）。
+    自分の migration を 0014 以降で足していれば番号をずらす。`users` へ直接 INSERT している seed・試験は、
+    `account_uid` を入れる（入れないと CHECK で失敗する）。
+- **初回セットアップが無い**: 新しい DB はユーザーなし・ログインなしで起動する。ユーザー管理が要るときだけ、
+  ユーザー管理の画面からアカウントを作る。ログイン必須へ切り替えるには、管理者のアカウントが 1 つ以上要る。
+  `/api/auth/setup`・`auth_setup`・`AuthProvider.setup`・status の `initialized`・`BANTO_ALLOW_SETUP` は無くなる。
+  ログインなしの間は、LAN を開けない（閲覧公開だけは開ける。今の規則のまま）。ヘッドレスの最初のアカウントは CLI で作る。
 - **Identity**: `accountId`（`users.account_uid`）を載せる（Tauri の組み立て、REST の verifier）。載せないと
-  持ち主つきの記憶が働かない。古い `account:` のキーの記憶は読まれない（一覧の記憶・最近のコマンド・
-  ドックの配置は 1 回だけ既定に戻る）。
-- **ユーザー一覧**: 組み込みの `Admin` が居る。消せない・変えられない。監査の actor に `actor_id`。
-  `Admin` に帰属させる grant には `GrantSpec` の印を付ける（付けなければ今のまま固定 id）。Tauri の認証なしの
-  監査の actor は `local` から `Admin` に変わる（監査を名前で絞っている所を直す）。
-- **ui-settings**: `UiSettingsProvider` の `get` / `set` の形、REST・Tauri の応答の形が変わる。
+  持ち主つきの記憶が働かない。
+- **ユーザー一覧**: 組み込みの `admin` が居る。消せない・変えられない・ログインできない。`admin`（大小無視）と
+  grant の固定 id のアカウントは作れない。監査の actor に `actor_id`。`admin` に帰属させる grant には `GrantSpec` の印を
+  付ける（付けなければ今のまま固定 id）。Tauri のログインなしの監査の actor は `local` から `admin` に変わる
+  （監査を名前で絞っている所を直す）。grant を後から足して、固定 id と同名のアカウントがあると起動が止まる。
+- **ui-settings**: 保存先が新しい表に変わる。`UiSettingsProvider` の `get` / `set` の形、REST・Tauri の応答の形が変わる。
   条件付きの書き込みと `updateUiSetting`。`createSavedSetting` の再送は opt-in。revision は数ではなく不透明な文字列
   （大小を比べない・足さない。無い行は `"0"`）。消す口（DELETE・`remove`）が増える。
 - **サーバー**: 書き込みは接続が切れても最後まで走る。冪等ではない。自前の `run_detached` は外せる。
@@ -783,17 +822,20 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
   `axum::middleware::from_fn` の `Next` を spawn へ渡せるか（`Send + 'static`）、二重に包んだときの挙動（S1）。
 - #793: Issue が挙げる industrial の `local_grant.rs:678` は別リポジトリで、ここでは開いていない。
 - #793: 構成の「露出の向き」を比べる項目の全部（有効・bind・閲覧公開のほかにあるか）と、残った仕事を監査に書く形（S1）。
-- #778: ~~前の版で username を変えられるか~~（独立レビューで確認: `UsersService` に改名の口は無い。移行の口を新しい版に置く、§4.3）。
-  `users` を数える所の全部（C2）。`admin` を使う試験・fixture・e2e・demo の数と、改名後の名前（C2）。
-  移行の口を Tauri の初回画面にも置くか、監査を名前（`local`）で絞っている所が下流にあるか（C0・D1）。
-  内部名の案（§4.3 の b）を採る場合: `validate_username` を通らずに users の行を作る経路（CSV の取り込み・seed・派生アプリ）と、
-  username の長さの制限がいつからあるか、画面が username をそのまま出している所（C0・C2）。
-  固定値の `password_hash` がハッシュの検証で「不一致」になること、起動時の手順を派生アプリが呼び忘れない置き場（C2）。
-- #790・#786: grant セッションの旧い ui-settings がどの名前で保存されているか（移し替えの候補の一覧、C4）。
-  SQLite の外部キーが全部の接続で有効か（C4）。`ui.` で始まる全体設定が派生アプリにも無いか（下流は D1 で見る。C4）。
-  PostgreSQL の advisory lock の鍵の決め方、サービス層を通らない INSERT の行の遅延埋め（C3）。
+- 基準の作り直し（C1）: sqlx が、新しい migration を当てる**前に** checksum の不一致で止まること（両方言。試験で固定）。
+  `VersionMismatch` を明示の文言に写す所の形。下流が自分の migration を何番から足しているか（D1）。
+  `users` へ直接 INSERT している試験・seed・scaffold の生成物（`scripts/lib/add-resource-rust.mjs` ほか）の数。
+- #778: `users` を数える所の全部（C1）。`admin` を使う試験・fixture・e2e・demo の数と、改名後の名前（C1）。
+  監査を名前（`local`）で絞っている所が下流にあるか（D1）。組み込みの行に届きうる経路（CSV の取り込み・権限の個別付与・
+  自動ログイン）の全部（C2）。
+- 初回セットアップの撤去（C2b）: `auth.disabled` の既定を読んでいる所の全部（`settings.rs:180` のほか、画面・`banto-serve`・
+  scaffold の seed）。`banto-serve` がログインなしの設定をどう扱うか（listener は環境変数から来る、`banto-serve.rs:277`）。
+  Tauri のログインに試行の制限があるか（REST は `auth/policy.rs`。Tauri の `lib.rs` では見つけていない）。
+  `auth_status` の `initialized` を読んでいる画面・下流（D1）。ロックダウンで失効させるセッションの全部
+  （ログインなしの合成セッション・印つきの grant）。template-acceptance が C2b の変更で走る条件。
+- #786: SQLite の外部キーが全部の接続で有効か（C4）。
 - #790: TS の `Identity` を自分で組み立てている所、`identity.id` を持ち主として使っている所の残り（C3）。
-- #786: 「一時的な失敗」を見分ける kind（C6）。`settings` 表のバックアップ・リストアが `ui_settings` を含むか（C4）。
+- #786: 「一時的な失敗」を見分ける kind（C6）。バックアップ・リストアが `ui_settings` を含むか（C1）。
 - #791: テンプレートの `/tree/workspace-dock` で実際に確定前の保存が起きるか（K3 で再現の試験を先に書く）。
   `DockHost` の `onLayoutCommit` を `ThreePaneDock` の口が包む形で、確定の同期（§4.6 前半）が保てるか（K3）。
   `DockState` を直接呼んだ変更を、操作の途中と取り違えずに次の tick で拾えるか（K3）。
@@ -824,68 +866,75 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
 
 ## 10. この計画で新しく置いた判断（オーナーに確認する）
 
-C0 の ADR で確定する。推奨を書く。**クロスレビュー（PR #797）で変えた点**は 1・2・3・4・6・8 と、足した 10〜13。
-このうち 1 と 10 は §2 の決定（2・6 と 1）の形を変えているので、あらためて確認する。
-**独立レビュー（PR #797、2026-11-22）で変えた点**は、末尾に足した 14〜20（既存の 3・4・6 の形を変えるものは、
-その項目を指して書く）。14・16・19 は §2 の決定（3・4・9）に関わるので、あらためて確認する。
+C0 の ADR で確定する。推奨を書く。**2026-11-22 変更（互換不要・DB 作り直し）**: 先頭の N1〜N6 が、決定 16〜18 を
+受けて新しく置いた項目（N1 は解決済み、**確認が要るのは N2〜N6**）。その下の 1〜20 は、クロスレビュー・独立レビュー
+（PR #797）で置いた項目で、番号は本文からの参照のために変えていない。既存のデータにだけ関係していた項目は
+「解決（互換不要）」と印を付けて短くした。
 
-1. **（レビューで変更。決定 2・6）** 持ち主のキーは `acct:<accountId>`、`accountId` はアカウントの作成時の乱数
+- **N1. 解決（2026-11-22 オーナー。決定 18）: 組み込みの `admin` はログインできない**。比べた 2 案:
+  A「パスワードでログインできる。初回セットアップでこの `admin` のパスワードを決める」は、既知の名前 `admin` が
+  パスワードの的になり（ログイン試行の制限 `auth/policy.rs` だけが守り）、最後の管理者のガード・verifier・
+  `password_hash` に組み込みの行のための分岐が要る。B「ログインできない。ログインなしの操作の記録先だけ」は、
+  その分岐が全部要らない。採ったのは B を進めた形で、**初回セットアップそのものを無くす**（ユーザーもパスワードも作らない。
+  §4.3）。名前の案（`Admin`・内部名 `builtin.admin`）の比較も、決定 17 で不要になった。
+- **N2. migration の形**: 既存の `0003_users.sql`・`0005_audit_log.sql` を書き換えて基準を作り直し、
+  `0014_ui_settings.sql` を足す（推奨。§4.1 の (ii)）。旧版の DB を sqlx が自分で断り、列の制約を最初から正しく置ける。
+  代わりに conventions §11 の「リリース済みは追記のみ」を 1 回だけ破り、`pnpm verify:migrations` に今回かぎりの許可を足す。
+  別案は 0014 を足すだけ（(i)。規約は破らないが、旧版の DB を断る自前の検査と、NULL・固定値の扱いが残る）。
+- **N3. ヘッドレス（`banto-serve` だけ）の最初のアカウント**: Tauri のログインなしが無いので、DB に触れる人の CLI で作る
+  （推奨。ネットワーク越しの口は作らない。e2e もこれを使う）。別案は、ループバックだけに出す管理者相当の grant
+  （ADR-0017 の試運転の形）をテンプレートに入れる。プロキシの後ろではループバックの条件が守りにならない
+  （ADR-0017 が既に注意している）ので、既定では入れない。
+- **N4. ログイン必須なのに管理者のアカウントが 0 の DB**（アプリの操作では作れない。直接の編集だけ）: 起動時に
+  明示のエラーで止める（推奨）。黙ってログインなしへ戻すと、DB を書き換えられる人が認証を外せる形になる。
+  復旧の口（CLI でアカウントを作る = N3 と同じもの）を Tauri の実行ファイルにも持たせるかを諮る。
+- **N5. 最後の管理者のガードを、ログインなしの間も掛ける**（推奨。今のまま）。ロックダウンの判定との競合が無くなる。
+  代わりに、ログインなしの間に作った最後の管理者は消せない（アカウントを 0 に戻せない）。
+- **N6. 起動時の予約名の検査を、小さく残す**（推奨）: 既存の `admin` を探す検査は要らないが、grant を後から足したときに
+  固定 id と同名のアカウントが居る場合だけは、作成時の予約では防げない。1 文の検査で止め、改名の口は作らない
+  （対処は、アカウントの作り直しか、grant の固定 id の変更）。別案は検査を置かず、同名を許す（監査で見分けにくい）。
+
+レビューで置いた項目（番号は据え置き）:
+
+1. **（決定 2・6）** 持ち主のキーは `acct:<accountId>`、`accountId` はアカウントの作成時の乱数
    `users.account_uid`。`instance.id` と `Identity.instanceId` は置かない。理由: DB の中の `instance.id` は
-   バックアップの復元で採番と一緒に巻き戻り、復元後に作った別人が同じキーを得る（§4.1・§4.2）。
-   別案は「復元のたびに `instance.id` を替える」。全員の記憶が復元のたびに既定へ戻り、復元の経路ごとに
-   替え忘れの余地が残るので採らない。
-2. **（レビューで変更）** `ui_settings` の持ち主は文字列の列（`acct:<id>` / `grant:<kind>` / `local`）のまま、
-   アカウントの行は `user_id` の**外部キー（`ON DELETE CASCADE`）で守る**。当初の推奨（外部キーを張らず、
-   削除と同じトランザクションで消す）は、削除の前に受け付けた PUT が孤児の行を作れるのでやめる（§4.4）。
-3. 移行で、持ち主を一意に決められない ui-settings の行は捨てる（推奨）。**（レビューで変更）** 候補に合成セッション
-   （`local`・grant の固定 id）を入れる。同名のアカウントが居れば、個人にも端末共通にも渡さずに捨てる。居なければ
-   端末共通の値として残す（§4.1）。`local` を予約名に足すかも諮る（足すと、既存の `local` のアカウントがある DB は
-   起動時に止まる。推奨は足さない。新しい持ち主の表し方では衝突しない）。
+   バックアップの復元で採番と一緒に巻き戻り、復元後に作った別人が同じキーを得る（§4.2）。互換不要でも変わらない。
+2. `ui_settings` の持ち主は文字列の列（`acct:<id>` / `grant:<kind>` / `local`）のまま、
+   アカウントの行は `user_id` の**外部キー（`ON DELETE CASCADE`）で守る**（§4.4）。
+3. **解決（互換不要）**: 旧い ui-settings の移し替えは無い。持ち主を決められない行の扱いも要らない。
+   `local` を予約名に足すかは、足さない（新しい持ち主の表し方では衝突しない）。
 4. `onLayoutCommit` の理由は `'user' | 'reset' | 'narrow-switch'`。保存値の復元（`restoreLayout`）では呼ばない（推奨）。
-   **（レビューで変更）** `DockHost` にも置く（理由は `'user' | 'reset'`）。ダッシュボードの保存の移行（K4）に要る（§4.6）。
-5. `REQUIRED_TABLES` に `ui_settings` を足さない（推奨。古いバックアップを拒まない）。
-6. #793 の停止時に待つ上限と、panic の応答の kind（S1 の ADR-0035 で提案）。**（レビューで変更）** 上限を超えたら
-   成功にせず、Tauri の再設定は失敗にして前の構成へ戻す。停止の合図の後の書き込みは 503（§4.5）。
+   `DockHost` にも置く（理由は `'user' | 'reset'`）。ダッシュボードの保存の移行（K4）に要る（§4.6）。
+5. **解決（互換不要。向きが逆になった）**: `REQUIRED_TABLES` に `ui_settings` を**足す**。旧版のバックアップを
+   復元の予約で断るため（§4.1）。
+6. #793 の停止時に待つ上限と、panic の応答の kind（S1 の ADR-0035 で提案）。上限を超えたら成功にしない。
+   停止の合図の後の書き込みは 503。超えたときの再設定の扱いは 17（§4.5）。
 7. §9.2 の各候補（PR ごとに諮る）。
 8. #714: ファイルは列にせず既存の添付に揃える。新規は「作成の後にアップロード」で、サーバーの操作は足さない（推奨）。
-   **（レビューで変更）** 欄の必須・件数は画面だけの制約で、**業務上の必須はサーバーで保証しない**と明記する。
+   欄の必須・件数は画面だけの制約で、**業務上の必須はサーバーで保証しない**と明記する。
    保証が要るアプリは別のサーバーの契約を自分で置く。`file` 型は 1 つのフォームに 1 欄まで（§4.12）。
 9. #716: §4.13 の判断 1〜4（線引きは Issue の案、二重構造は案 C、既定の配置の配布は作らない、
    フィルタは期間の共有だけ）。**判断待ち**。
-10. **（レビューで追加。決定 1）** migration 0014 はスキーマの追加だけにする。組み込みの行（C2）・`account_uid` の
-    埋め込み（C3）・旧い `ui.*` の移し替えと削除（C4）は、呼び出し側を切り替えるのと同じ PR で、起動時の冪等な手順として
-    入れる（§4.1 の「段階」）。スキーマの migration が 1 回なのは変わらない。別案はデータ用の migration 0015 を足す
-    （あいまいさの判定を SQL の 2 方言で書くことになる）。
-11. **（レビューで追加）** 組み込みの行の `password_hash` は NULL にせず、資格情報ではない固定値を置く
-    （`NOT NULL` を外すには SQLite で表の作り直しが要る）。verifier は `kind` で先に拒む（§4.3）。
-12. **（レビューで追加）** `updateUiSetting` の `apply` は冪等であることを契約にし、サーバーに操作 ID は持たない（§4.4）。
-13. **（レビューで追加）** 予約名のアカウントを含むバックアップは、復元の予約と適用の前に候補の DB を調べて拒む。
-    安全コピーへの自動の復帰は作らない（§4.3）。
-14. **（独立レビューで変更。決定 3）** `Admin` の大小無視の予約は、最初の管理者を標準の `admin` にした DB を全部止める。
-    組み込みの行の名前と予約の形を、次から選ぶ（§4.3。本文は「現行」で書いてある）。
-    - 現行: `Admin`・大小無視の予約・起動時に止める（決定 3）＋**新しい版に改名の口**（起動の引数の CLI を基本に、Tauri の
-      初回画面を足すかも諮る。`users.id` は変わらず、旧い `ui.*` も付け替える）。`admin` の fixture・demo の改名が要る。
-    - 完全一致: 予約を `Admin` だけにする。既存の DB は止まらないが、`admin` と `Admin` が一覧と監査に並ぶ。
-    - (a) 名前を小文字の `admin` にする（オーナーの案）: 衝突の範囲は現行と同じで、改名の口も要るまま。改名の前の監査の
-      `admin`（人）と組み込みの `admin` が同じ綴りになる。
-    - (b) 表示は `Admin`、行の username はアカウントでは作れない内部名（例 `builtin.admin`）にし、`Admin`・`admin` を予約しない
-      （オーナーの案）: 最初の管理者が `admin` の DB は衝突せず止まらない。監査には内部名と `actor_id` を書き、画面は `kind` で
-      `Admin` と印を出す。`.` は新規だけで断られるので、古い行は内部名との完全一致を毎起動の検出で止める。
-    - **推奨は (b)**（決定 3 の前半を変える）。採らないなら現行。(a) は推奨しない。grant の固定 id の予約（決定 3 の後半）は
-      どの案でも残り、そのための改名の口は小さく残す。
-15. **（独立レビューで変更。10 の段階の形）** 予約名の検出は 0014 の前の 1 回ではなく**毎回の起動**で、`kind = 'account'` の行を見る。
-    組み込みの行の有無は `kind = 'builtin'` で判定し、部分一意インデックスを 0014 に入れる。検出・予約・移行の口・fixture の改名は
-    C1 ではなく C2 に置く。予約名の一覧（grant の固定 id → kind）を配線の層からサービス層へ渡す口を置く（推奨。§4.3）。
-16. **（独立レビューで追加。決定 4）** `Admin` に帰属させるセッションは、`GrantSpec` の明示の印で決める（id・name から推測しない）。
-    印なしの grant（`public` など）は今のまま。**Tauri の認証なし（`local`）も `Admin` に帰属させる**（推奨。監査の actor が `local` から
-    変わる。持ち主のキーは `local` のまま）。別案は `local` の監査を変えない（§4.3）。
-17. **（独立レビューで変更。6 の形）** 停止が上限を超えたときの巻き戻しは、広げる・同等の変更だけにする。狭める変更
+10. **解決（互換不要）**: 「0014 はスキーマだけ、行の追加・移し替えは起動時の手順で」は要らない。データの移行は無く、
+    組み込みの行は migration が入れる（§4.1。形は N2）。
+11. **解決（互換不要）**: 組み込みの行の `password_hash` は NULL にする（基準を作り直すので `NOT NULL` を外せる。
+    N2 で (i) を選ぶ場合だけ、資格情報ではない固定値に戻る）。verifier は `kind` で先に拒む（§4.3）。
+12. `updateUiSetting` の `apply` は冪等であることを契約にし、サーバーに操作 ID は持たない（§4.4）。
+13. **解決（互換不要）**: 予約名のアカウントを含むバックアップの事前検査は要らない。旧版のバックアップは
+    必須の表の検査で断る（5）。
+14. **解決（決定 16・17）**: 組み込みの行の名前は小文字の `admin`。既存の DB を止める・改名する口・内部名の案は要らない。
+    `admin` を使う試験・fixture・demo の改名だけは残る（組み込みの行と当たる。C1）。
+15. **解決（互換不要）**: 毎回の起動での `Admin` の検出は要らない。部分一意インデックスと、`kind` での判定、
+    予約名の一覧を配線の層から渡す口は残す。起動時の検査は N6 の形に縮める。
+16. **（決定 4・18）** `admin` に帰属させるセッションは、`GrantSpec` の明示の印で決める（id・name から推測しない）。
+    印なしの grant（`public` など）は今のまま。Tauri のログインなし（`local`）は `admin` に帰属させる（決定 18 で確定。
+    持ち主のキーは `local` のまま。§4.3）。
+17. **（6 の形）** 停止が上限を超えたときの巻き戻しは、広げる・同等の変更だけにする。狭める変更
     （無効化・閲覧公開の停止）は listener を戻さず、新しい構成を保存し、残った仕事を監査に残す（推奨。戻すと fail-open。§4.5）。
-18. **（独立レビューで変更。4 と決定 11）** `onLayoutCommit` は「確定点で `serialize()` が前回の通知から変わっていたら」呼ぶ。
+18. **（4 と決定 11）** `onLayoutCommit` は「確定点で `serialize()` が前回の通知から変わっていたら」呼ぶ。
     除外（復元・途中・拒否）だけを列挙し、`'user'` は API 経由の変更も含む。`'reset'` は reset を始めた口が `replaceLayout` に渡す（推奨。§4.6）。
-19. **（独立レビューで変更。決定 9）** ui-settings の revision は数ではなく、書き込みごとの乱数の文字列（無い行は `"0"`）にする。
+19. **（決定 9）** ui-settings の revision は数ではなく、書き込みごとの乱数の文字列（無い行は `"0"`）にする。
     復元と削除で revision が巻き戻り、古い `ifRevision` が偶然一致するのを防ぐ（推奨）。別案は墓石（値 NULL で revision を進める。
     復元には効かない）。あわせて消す口（DELETE・provider の `remove`）を足し、C4 に admin-core のアダプタの最小の追従を含める（§4.4）。
-20. **（独立レビューで変更。3 の形）** C4 の移し替えでは、`ui.` で始まる旧い行を、移した・捨てたを問わず同じトランザクションで
-    全部消す（推奨。残すと、後から作った同名のアカウントや端末共通へ渡る）。移し替えは 1 回きりになり、派生アプリは先に
-    「固定 id → kind」を渡す。0014 の後は旧い版へ戻せないことを注意に書く（§4.1・§8）。
+20. **解決（互換不要）**: 旧い `ui.*` の行を全部消す手順は要らない（移し替えが無い）。旧版へ戻せないことは、
+    「この版は旧版の DB を読めない」として §8 に書く。
