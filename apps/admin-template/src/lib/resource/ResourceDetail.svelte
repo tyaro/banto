@@ -46,6 +46,7 @@
 		conflictOf,
 		createFormResource,
 		currentSessionScope,
+		isCurrentSessionScope,
 		getDataProvider,
 		isProviderError,
 		notify,
@@ -78,7 +79,7 @@
 		type ConflictField
 	} from './conflict';
 	import { editableFieldNames } from './listState';
-	import { stashPendingUploads, takePendingUploads } from './pendingUploads';
+	import { hasPendingUploads, stashPendingUploads, takePendingUploads } from './pendingUploads';
 	import { resourcePermissions } from './permissions';
 	import type { AppResourceDefinition, ResourceRow } from './types';
 
@@ -94,8 +95,10 @@
 		 * Below the form panel (the attachments panel goes here). Rendered only
 		 * for an existing record that has loaded, so it never runs for a
 		 * not-found / errored / new record. `canWrite` is the `edit` permission.
+		 * `filesInForm`: the form itself lists the record's files (the retry
+		 * of a failed upload), so a panel of the same files should stay out.
 		 */
-		after?: Snippet<[{ id: number; canWrite: boolean }]>;
+		after?: Snippet<[{ id: number; canWrite: boolean; filesInForm: boolean }]>;
 		/** Extra buttons in the form's action row, before "back to list". */
 		actions?: Snippet;
 		/**
@@ -144,14 +147,17 @@
 	const idValid = !isNew && rawId !== '' && Number.isInteger(parsedId);
 
 	// Files that did not upload when this record was created (#714 F2): the edit
-	// form shows them with their reasons so they can be retried.
-	const leftovers = fileField && idValid ? takePendingUploads(def.name, parsedId) : null;
+	// form shows them with their reasons so they can be retried. Only peeked at
+	// here (to choose the schema); they are taken once the record has loaded.
+	const hasLeftovers = !!fileField && idValid && hasPendingUploads(def.name, parsedId);
+	let leftovers: ReturnType<typeof takePendingUploads> = null;
+	let filesInForm = $state(false);
 	// The create form and a form with leftovers carry the `file` field. An
 	// existing record's form leaves it out: the attachments panel (`after`)
 	// already lists, uploads and deletes that record's files, and the field
 	// would show the same list twice.
 	const schema: FormSchema =
-		fileField && !isNew && !leftovers
+		fileField && !isNew && !hasLeftovers
 			? { ...fullSchema, fields: fullSchema.fields.filter((field) => field.type !== 'file') }
 			: fullSchema;
 	const withLeftovers = (values: Record<string, unknown>): Record<string, unknown> =>
@@ -244,6 +250,9 @@
 		await formResource.load();
 		if (!isNew && formResource.initialValues) {
 			base = formResource.initialValues;
+			// Taken only now: the record is the one this session may edit.
+			leftovers ??= takePendingUploads(def.name, parsedId);
+			filesInForm = leftovers !== null;
 			store = createFormStore(
 				schema,
 				withLeftovers(formResource.initialValues),
@@ -384,7 +393,53 @@
 		// Defense in depth: the form is read-only for a role that may not save,
 		// and the backend rejects it anyway - this just avoids a round trip.
 		if (!formResource || !canSave || resolving) return;
-		const result = await formResource.submit(values);
+		// #714 F2: a create and the upload of its files are ONE save. While the
+		// files go up the record already exists and the form may look idle;
+		// a second save must neither create it again nor start over.
+		if (isNew && creating) return;
+		if (isNew && fileField) creating = true;
+		try {
+			await submitValues(formResource, values, retried);
+		} finally {
+			creating = false;
+		}
+	}
+
+	/** A create (with the upload of its files) is under way: further saves are turned away. */
+	let creating = $state(false);
+
+	/** `schema` whose file client refuses to upload once `scope`'s session has ended. */
+	function inSession(source: FormSchema): FormSchema {
+		return {
+			...source,
+			fields: source.fields.map((field) => {
+				const file = field.file;
+				if (field.type !== 'file' || !file) return field;
+				return {
+					...field,
+					file: {
+						...file,
+						client: {
+							...file.client,
+							upload: (...args: Parameters<typeof file.client.upload>) => {
+								if (!isCurrentSessionScope(scope)) {
+									return Promise.reject(new Error(m['connection.saveFailed']()));
+								}
+								return file.client.upload(...args);
+							}
+						}
+					}
+				};
+			})
+		};
+	}
+
+	async function submitValues(
+		resourceForm: NonNullable<typeof formResource>,
+		values: Record<string, unknown>,
+		retried: boolean
+	) {
+		const result = await resourceForm.submit(values);
 		if (!result.ok && result.conflict) {
 			await handleConflict(values, result.conflict.current, retried);
 			return;
@@ -434,10 +489,17 @@
 			// the new record opens with them, reasons shown, ready to retry.
 			if (isNew && fileField) {
 				const createdId = Number((result.row as { id?: unknown } | undefined)?.id);
-				if (Number.isInteger(createdId)) {
-					const outcome = await uploadPendingFiles(schema, store, createdId, fileFieldMessages());
-					if (outcome.failed.length > 0) {
-						stashPendingUploads(def.name, createdId, outcome.failed);
+				// Only the session that created the record sends its files, and
+				// stops sending when that session ends (checked before each file).
+				if (Number.isInteger(createdId) && isCurrentSessionScope(scope)) {
+					const outcome = await uploadPendingFiles(
+						inSession(schema),
+						store,
+						createdId,
+						fileFieldMessages()
+					);
+					if (outcome.failed.length > 0 && isCurrentSessionScope(scope)) {
+						stashPendingUploads(scope, def.name, createdId, outcome.failed);
 						// Handed over: nothing is left unsaved on this form.
 						store.values = { ...store.values, [fileField.name]: emptyFileValue() };
 						notify('error', m['resource.filesNotUploaded']({ count: outcome.failed.length }));
@@ -535,7 +597,7 @@
 			{schema}
 			{store}
 			onSubmit={handleSubmit}
-			submitting={(formResource?.saving ?? false) || resolving || !canSave}
+			submitting={(formResource?.saving ?? false) || creating || resolving || !canSave}
 			submitLabel={m['common.save']()}
 			referenceMessages={referenceFieldMessages()}
 			fileParentId={isNew ? null : parsedId}
@@ -568,7 +630,7 @@
 {/if}
 
 {#if after && idValid && storeReady}
-	{@render after({ id: parsedId, canWrite: perms.edit })}
+	{@render after({ id: parsedId, canWrite: perms.edit, filesInForm })}
 {/if}
 
 <style>

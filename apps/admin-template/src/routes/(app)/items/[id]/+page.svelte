@@ -21,8 +21,19 @@
 	<ResourceDetail resource={itemsResource} {id}>
 		<!-- [scaffold:attachments] begin -->
 		<!-- M20 demo wiring (ItemAttachments.svelte has the details). -->
-		{#snippet after({ id: recordId, canWrite }: { id: number; canWrite: boolean })}
-			<ItemAttachments id={recordId} {canWrite} />
+		{#snippet after({
+			id: recordId,
+			canWrite,
+			filesInForm
+		}: {
+			id: number;
+			canWrite: boolean;
+			filesInForm: boolean;
+		})}
+			<!-- The retry of a failed upload lists the files in the form itself: one list, not two. -->
+			{#if !filesInForm}
+				<ItemAttachments id={recordId} {canWrite} />
+			{/if}
 		{/snippet}
 		<!-- [scaffold:attachments] end -->
 	</ResourceDetail>

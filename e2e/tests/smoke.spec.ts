@@ -2391,6 +2391,42 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/items$/);
 	});
 
+	test('8c. items: a second save while the files of a create are still uploading does not create the record twice (#714)', async () => {
+		const name = `E2E二重保存商品-${Date.now()}`;
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => (release = resolve));
+		await page.route('**/api/attachments?*', async (route) => {
+			if (route.request().method() === 'POST') await held;
+			await route.continue();
+		});
+		await page.goto('/items/new');
+		await page.getByLabel('商品名').fill(name);
+		await page.getByLabel('価格').fill(String(ITEM_PRICE));
+		await page.getByLabel('在庫').fill(String(ITEM_STOCK));
+		await page
+			.getByRole('group', { name: '添付ファイル' })
+			.locator('input[type=file]')
+			.setInputFiles({ name: PNG_FILE_NAME, mimeType: 'image/png', buffer: minimalPngBuffer() });
+		await page.getByRole('button', { name: '保存' }).click();
+		// The record exists, the upload is held: Enter in a field must not save again.
+		await page.getByLabel('商品名').press('Enter');
+		await page.getByLabel('商品名').press('Enter');
+		release();
+		await expect(page).toHaveURL(/\/items$/);
+		await page.unroute('**/api/attachments?*');
+
+		await applyColumnFilter(page, '商品名', name);
+		await expect(rowWithText(page, name)).toHaveCount(1);
+		const id = await rowItemId(rowWithText(page, name));
+		await page.goto(`/items/${id}`);
+		await confirmInDialog(
+			page,
+			page.locator('.form-panel').getByRole('button', { name: '削除', exact: true }),
+			{ title: '削除の確認', confirm: '削除' }
+		);
+		await expect(page).toHaveURL(/\/items$/);
+	});
+
 	test('9. command palette: search and navigate to the audit log', async () => {
 		await page.goto('/items');
 		// The Ctrl+K listener lives on (app)/+layout.svelte's `<svelte:window>`,
