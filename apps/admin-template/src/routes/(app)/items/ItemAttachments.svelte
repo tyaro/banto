@@ -60,6 +60,7 @@
 		resource="items"
 		resourceId={String(id)}
 		{canWrite}
+		canSave={live}
 		confirmDelete={(message) =>
 			confirmAction({
 				title: m['common.deleteConfirmTitle'](),
