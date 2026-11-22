@@ -1103,10 +1103,14 @@
 	// the row selection and the cell range are left alone.
 	function handleCellContextMenu(event: MouseEvent, rowIndex: number, field: string, row: TRow) {
 		if (!onRowContextMenu) return;
+		// The whole injected editor (calendar buttons, popover) keeps its own menu,
+		// not just its text box.
+		const editorRoot = editorRootEl ?? editorEl;
 		if (
-			event.target instanceof HTMLElement &&
-			event.target.closest('input, select, textarea') &&
-			editing?.rowId === getRowId(row)
+			editing?.rowId === getRowId(row) &&
+			event.target instanceof Node &&
+			((editorRoot && editorRoot.contains(event.target)) ||
+				(event.target instanceof HTMLElement && event.target.closest('input, select, textarea')))
 		)
 			return;
 		event.preventDefault();
@@ -1137,6 +1141,55 @@
 	}
 
 	// --- Keyboard navigation (grid container; spec §4.5, §4.7) ---
+	const ENTER_CELL_KEYS = new Set([
+		'ArrowUp',
+		'ArrowDown',
+		'ArrowLeft',
+		'ArrowRight',
+		'Home',
+		'End',
+		'PageUp',
+		'PageDown'
+	]);
+
+	/**
+	 * No active cell yet (grid reached by Tab, no pointer): the first navigation
+	 * key only "enters" the grid - the first data row in view (else the first in
+	 * display order), first column - without moving further (#784). The
+	 * ContextMenu / Shift+F10 keys also open the row menu there, when wired.
+	 */
+	function enterFirstCellFromKeyboard(event: KeyboardEvent) {
+		const isMenuKey = event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey);
+		if (isMenuKey ? !onRowContextMenu : !ENTER_CELL_KEYS.has(event.key)) return;
+		const field = orderedFieldIds[0];
+		if (field === undefined) return;
+		const count = effectiveRowCount;
+		const firstInView = Math.min(
+			count,
+			Math.max(0, Math.floor(effectiveScrollTop / gridState.rowHeight))
+		);
+		let rowIndex = -1;
+		for (let i = firstInView; i < count && rowIndex === -1; i++) {
+			if (rowAtDisplayIndex(i)) rowIndex = i;
+		}
+		for (let i = 0; i < firstInView && rowIndex === -1; i++) {
+			if (rowAtDisplayIndex(i)) rowIndex = i;
+		}
+		if (rowIndex === -1) return;
+		event.preventDefault();
+		selection.setActive(rowIndex, field, false);
+		scrollActiveIntoView();
+		if (!isMenuKey) return;
+		const row = rowAtDisplayIndex(rowIndex)!;
+		void tick().then(() => {
+			const cellEl = containerEl?.querySelector<HTMLElement>(
+				`[data-cell-row="${rowIndex}"][data-cell-field="${CSS.escape(field)}"]`
+			);
+			const rect = cellEl?.getBoundingClientRect();
+			onRowContextMenu?.(row, { x: rect?.left ?? 0, y: rect?.bottom ?? 0 });
+		});
+	}
+
 	function handleContainerKeydown(event: KeyboardEvent) {
 		// Header controls, filter inputs and row links own their keyboard
 		// actions. A retained cell selection must not intercept bubbled keys.
@@ -1148,7 +1201,10 @@
 		// Outside an editor, Tab/Shift+Tab follow the browser's focus order,
 		// including header controls and row links, so focus can leave the grid.
 		if (event.key === 'Tab') return;
-		if (!selection.active) return;
+		if (!selection.active) {
+			enterFirstCellFromKeyboard(event);
+			return;
+		}
 
 		const rowCount = effectiveRowCount;
 		const activeColumn = gridState.orderedColumns.find((c) => c.id === selection.active!.field);

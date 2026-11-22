@@ -208,4 +208,71 @@ describe('BantoGrid onRowContextMenu (#784)', () => {
 		await fireEvent.keyDown(screen.getByRole('grid'), { key: 'ContextMenu' });
 		expect(onRowContextMenu).not.toHaveBeenCalled();
 	});
+
+	describe('without a pointer (no active cell yet)', () => {
+		it('the first arrow key enters the first cell without moving; Shift+F10 then opens the menu', async () => {
+			const onRowContextMenu = vi.fn();
+			const { container } = render(BantoGrid<Row>, { rows, columns, getRowId, onRowContextMenu });
+			const grid = screen.getByRole('grid');
+			grid.focus();
+			const down = createEvent.keyDown(grid, { key: 'ArrowDown' });
+			grid.dispatchEvent(down);
+			await tick();
+			expect(down.defaultPrevented).toBe(true);
+			expect(cellOf(container, 0, 'name').classList.contains('active')).toBe(true);
+			expect(onRowContextMenu).not.toHaveBeenCalled();
+			await fireEvent.keyDown(grid, { key: 'F10', shiftKey: true });
+			await tick();
+			expect(onRowContextMenu).toHaveBeenCalledTimes(1);
+			expect(onRowContextMenu.mock.calls[0][0]).toBe(rows[0]);
+		});
+
+		it('a grid without onRowContextMenu also enters the first cell on an arrow key', async () => {
+			const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
+			await fireEvent.keyDown(screen.getByRole('grid'), { key: 'ArrowRight' });
+			expect(cellOf(container, 0, 'name').classList.contains('active')).toBe(true);
+		});
+
+		it('the ContextMenu key straight away enters the first cell and opens the menu', async () => {
+			const onRowContextMenu = vi.fn();
+			const { container } = render(BantoGrid<Row>, { rows, columns, getRowId, onRowContextMenu });
+			await fireEvent.keyDown(screen.getByRole('grid'), { key: 'ContextMenu' });
+			await tick();
+			expect(onRowContextMenu).toHaveBeenCalledTimes(1);
+			expect(onRowContextMenu.mock.calls[0][0]).toBe(rows[0]);
+			expect(cellOf(container, 0, 'name').classList.contains('active')).toBe(true);
+		});
+
+		it('ContextMenu without onRowContextMenu does nothing and is not suppressed', async () => {
+			const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
+			const grid = screen.getByRole('grid');
+			const event = createEvent.keyDown(grid, { key: 'ContextMenu' });
+			grid.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+			expect(container.querySelector('.cell.active')).toBeNull();
+		});
+
+		it('skips the group header and lands on the first data row', async () => {
+			const gridState = new GridState<Row>(columns);
+			gridState.setGroupBy('name');
+			const onRowContextMenu = vi.fn();
+			render(BantoGrid<Row>, { rows, columns, getRowId, state: gridState, onRowContextMenu });
+			await fireEvent.keyDown(screen.getByRole('grid'), { key: 'ContextMenu' });
+			await tick();
+			expect(onRowContextMenu).toHaveBeenCalledTimes(1);
+			expect(onRowContextMenu.mock.calls[0][0]).toBe(rows[0]);
+		});
+
+		it('does nothing for an empty grid', async () => {
+			const onRowContextMenu = vi.fn();
+			render(BantoGrid<Row>, { rows: [] as Row[], columns, getRowId, onRowContextMenu });
+			const grid = screen.getByRole('grid');
+			const event = createEvent.keyDown(grid, { key: 'ArrowDown' });
+			grid.dispatchEvent(event);
+			await fireEvent.keyDown(grid, { key: 'ContextMenu' });
+			await tick();
+			expect(event.defaultPrevented).toBe(false);
+			expect(onRowContextMenu).not.toHaveBeenCalled();
+		});
+	});
 });
