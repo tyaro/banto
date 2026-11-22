@@ -53,6 +53,7 @@
  * not change while panes are only hidden and shown, and `inflateShadow(deflateShadow(S))` is S
  * again - as far as a slot can say it (see `deflateShadow`).
  */
+import { placeAtDefault } from './defaultPlace';
 import { MAX_SLOT_DEPTH } from './slot';
 import type {
 	DockEdge,
@@ -617,6 +618,41 @@ export function dockAtShadowEdge(
 	const rest = s ? removeNode(s, panel.id) : null;
 	if (rest === null) return panel;
 	return settleCollapsed(wrap(rest, panel, edge, EDGE_DOCK_RATIO, makeId))!;
+}
+
+// ----- the default place (#782 PR6) ------------------------------------------------------------
+
+/**
+ * S with the pane `panel` (not in it) at its place in the default layout `defaults`:
+ * `core/defaultPlace.ts#placeAtDefault` worked out ON S, so a tombstone is a pane that is there. The
+ * pane lands beside the place of a default sibling that is floated out as it would beside the
+ * sibling itself - `row[a, b, c]`, `b` hidden, `a` floated, `b` shown: `row[a†, b, c]`, and `a`
+ * comes back before `b` -, whole parts of the tree are taken with their tombstones ("beside what a
+ * default child is now", always wrapped when the split around is another default split), and a
+ * split / tab group of S that does not show keeps its id from being taken twice. `share` is the
+ * pane's share of what SHOWS of the split it lands in (`dockShareOf` of the docked tree, what a
+ * closed window keeps); the other children, tombstones too, give way in proportion - the reverse
+ * of `removeFromShadow`. `null`: no default place (the caller opens it floating).
+ */
+export function placeInShadowAtDefault(
+	s: ShadowNode | null,
+	defaults: DockNode | null,
+	panel: DockPanelNode,
+	share?: number,
+	makeId: () => string = defaultMakeId,
+	taken: ReadonlySet<string> = new Set()
+): ShadowNode | null {
+	// `tree.ts` moves the leaves of the tree it is given as they are, so the marks stay on them.
+	const placed: ShadowNode | null = placeAtDefault(
+		s,
+		defaults,
+		shownLeaf(panel),
+		share,
+		makeId,
+		taken,
+		new Set(shadowPanelIds(s, 'away'))
+	);
+	return placed === null ? null : settleCollapsed(placed);
 }
 
 // ----- sizes ---------------------------------------------------------------------------------

@@ -15,8 +15,9 @@
 // --filter @banto/dock-svelte test slot-properties`.
 //
 // Known failures are marked `it.fails` with the issue and the smallest case found; each also has
-// its case pinned as an ordinary `it.fails` below the property. When one starts to pass (#782
-// PR6), vitest reports it: take the mark off then.
+// its case pinned as an ordinary `it.fails` below the property. When one starts to pass, vitest
+// reports it: take the mark off then. Left: the edge bands (2 by hide / show, 2 by floats), for
+// #782 PR8. The 14 by floats that #782 PR6 passed are ordinary cases now.
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import { collectPanelIds, removePanel } from '../src/core/tree';
@@ -424,11 +425,12 @@ describe('saving and loading changes nothing (#782 property 5)', () => {
 	});
 });
 
-// ----- floated panes: the remembered place (`homeSlot`), until #782 PR6 ------------------------
+// ----- floated panes: the remembered place (`homeSlot`) -----------------------------------------
 //
 // The properties PR1 wrote for hide / show, for panes floated out (`~x`) and docked back to where
-// they were (`^x`). The known failures are the ones PR1 found, by the same steps with floats: PR6
-// (`dockExisting*`, drops and resizes on the shadow tree) is to pass them.
+// they were (`^x`). The place is the pane's tombstone in the shadow tree since #782 PR6 (floating
+// out, docking back, `dockExisting*`, drops and resizes are done on S), which passes the known
+// failures PR1 found - kept below as ordinary cases, each with what it was.
 
 /**
  * Float 2 to 4 panes (`out`), then run `moves` (steps of `moveKinds`), then dock the floated
@@ -478,44 +480,35 @@ describe('floated panes: the order they are docked back in does not matter (#782
 		fc.assert(sameInAnyBackOrder(splitTreeRecipe, ['float'], ['edge'], 2, false), params(300));
 	});
 
-	// KNOWN FAILURE (PR1's 1, by floats): when the panes next to the floated ones are all moved to
+	// Was a KNOWN FAILURE until #782 PR6 (PR1's 1, by floats): when the panes next to the floated ones are all moved to
 	// outer edges, their places are gone ("back" is not offered) - so the property above holds by
 	// every order being wrong the same way. Smallest case: the pinned one below.
-	it.fails('KNOWN FAILURE: the same, every pane back in the dock', () => {
+	it('the same, every pane back in the dock', () => {
 		fc.assert(sameInAnyBackOrder(splitTreeRecipe, ['float'], ['edge'], 2), params(300));
 	});
-	it.fails(
-		'KNOWN FAILURE (pinned): row[a, b, c, d, e], a, b and c floated, d moved to the right edge and e to the left',
-		() => {
-			const tree = row(['a', 'b', 'c', 'd', 'e']);
-			const dock = runSteps(tree, ['~a', '~b', '~c', 'd>>right', 'e>>left', '^a', '^b', '^c']);
-			expectAllDocked(dock, ['a', 'b', 'c', 'd', 'e'], tree, []);
-		}
-	);
+	it('pinned: row[a, b, c, d, e], a, b and c floated, d moved to the right edge and e to the left', () => {
+		const tree = row(['a', 'b', 'c', 'd', 'e']);
+		const dock = runSteps(tree, ['~a', '~b', '~c', 'd>>right', 'e>>left', '^a', '^b', '^c']);
+		expectAllDocked(dock, ['a', 'b', 'c', 'd', 'e'], tree, []);
+	});
 
-	// KNOWN FAILURE (PR1's 2, by floats): a pane moved out of its tab group to an outer edge is
+	// Was a KNOWN FAILURE until #782 PR6 (PR1's 2, by floats): a pane moved out of its tab group to an outer edge is
 	// still what its floated tab mate goes back to, when that mate is docked back before the panes
 	// of the split around. Smallest case: the pinned one below.
-	it.fails('KNOWN FAILURE: then docked panes moved to an outer edge, trees with tab groups', () => {
+	it('then docked panes moved to an outer edge, trees with tab groups', () => {
 		fc.assert(sameInAnyBackOrder(treeRecipe, ['float'], ['edge'], 2, false), params(300));
 	});
-	it.fails(
-		'KNOWN FAILURE (pinned): row[a, tabs[b, c], d], b and d floated, c moved to the left edge',
-		() => {
-			const tree = split('s1', 'row', even(3), [panel('a'), tabs('t1', ['b', 'c']), panel('d')]);
-			expect(inEveryBackOrder(tree, ['~b', '~d', 'c>>left'], ['b', 'd'])).toHaveLength(1);
-		}
-	);
+	it('pinned: row[a, tabs[b, c], d], b and d floated, c moved to the left edge', () => {
+		const tree = split('s1', 'row', even(3), [panel('a'), tabs('t1', ['b', 'c']), panel('d')]);
+		expect(inEveryBackOrder(tree, ['~b', '~d', 'c>>left'], ['b', 'd'])).toHaveLength(1);
+	});
 
-	// KNOWN FAILURE (#780, decided in #782: passes with PR6): a pane moved beside another docked
+	// Was a KNOWN FAILURE until #782 PR6 (#780, decided in #782: passes with PR6): a pane moved beside another docked
 	// pane with `dockExisting`. By hide / show this no longer arises (PR5); by floats it does.
-	it.fails(
-		'KNOWN FAILURE (#780): then docked panes moved beside another (dockExisting at a side)',
-		() => {
-			fc.assert(sameInAnyBackOrder(splitTreeRecipe, ['float'], ['move'], 2), params(300));
-		}
-	);
-	it.fails('KNOWN FAILURE (#780, pinned): the case of the issue', () => {
+	it('#780: then docked panes moved beside another (dockExisting at a side)', () => {
+		fc.assert(sameInAnyBackOrder(splitTreeRecipe, ['float'], ['move'], 2), params(300));
+	});
+	it('#780 (pinned): the case of the issue', () => {
 		const tree = split('s1', 'column', even(3), [
 			split('s2', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')]),
 			panel('d'),
@@ -535,53 +528,35 @@ describe('floated panes: the order they are docked back in does not matter (#782
 			if (diff) failCase(tree, all, diff);
 		}
 	});
-	it.fails(
-		'KNOWN FAILURE (#780, pinned): row[a, b, c, d], a and c floated, b moved to the left of d',
-		() => {
-			const tree = row(['a', 'b', 'c', 'd']);
-			expect(inEveryBackOrder(tree, ['~a', '~c', 'b>d:left'], ['a', 'c'])).toHaveLength(1);
-		}
-	);
+	it('#780 (pinned): row[a, b, c, d], a and c floated, b moved to the left of d', () => {
+		const tree = row(['a', 'b', 'c', 'd']);
+		expect(inEveryBackOrder(tree, ['~a', '~c', 'b>d:left'], ['a', 'c'])).toHaveLength(1);
+	});
 
-	// KNOWN FAILURE (PR1's, by floats): the pane between two floated ones moved into a tab group -
+	// Was a KNOWN FAILURE until #782 PR6 (PR1's, by floats): the pane between two floated ones moved into a tab group -
 	// the two come back in the order they are docked back.
-	it.fails(
-		"KNOWN FAILURE: then docked panes moved into another pane's tab group (dockExisting center)",
-		() => {
-			fc.assert(sameInAnyBackOrder(splitTreeRecipe, ['float'], ['tab'], 2), params(300));
-		}
-	);
-	it.fails(
-		"KNOWN FAILURE (pinned): row[a, b, c, d], a and c floated, b moved into d's tab group",
-		() => {
-			const tree = row(['a', 'b', 'c', 'd']);
-			expect(inEveryBackOrder(tree, ['~a', '~c', 'b>d:center'], ['a', 'c'])).toHaveLength(1);
-		}
-	);
+	it("then docked panes moved into another pane's tab group (dockExisting center)", () => {
+		fc.assert(sameInAnyBackOrder(splitTreeRecipe, ['float'], ['tab'], 2), params(300));
+	});
+	it("pinned: row[a, b, c, d], a and c floated, b moved into d's tab group", () => {
+		const tree = row(['a', 'b', 'c', 'd']);
+		expect(inEveryBackOrder(tree, ['~a', '~c', 'b>d:center'], ['a', 'c'])).toHaveLength(1);
+	});
 
-	// KNOWN FAILURE (PR1's, by floats): a pane moved to an outer edge and then floated itself, with
+	// Was a KNOWN FAILURE until #782 PR6 (PR1's, by floats): a pane moved to an outer edge and then floated itself, with
 	// a pane floated before the move.
-	it.fails(
-		'KNOWN FAILURE: edge moves between the floats (a moved pane may be floated after)',
-		() => {
-			fc.assert(
-				sameInAnyBackOrder(splitTreeRecipe, ['float', 'float', 'edge'], [], 0),
-				params(300)
-			);
-		}
-	);
-	it.fails(
-		'KNOWN FAILURE (pinned): row[a, b, c], a floated, b moved to the left edge, b floated',
-		() => {
-			const tree = row(['a', 'b', 'c']);
-			expect(inEveryBackOrder(tree, ['~a', 'b>>left', '~b'], ['a', 'b'])).toHaveLength(1);
-		}
-	);
+	it('edge moves between the floats (a moved pane may be floated after)', () => {
+		fc.assert(sameInAnyBackOrder(splitTreeRecipe, ['float', 'float', 'edge'], [], 0), params(300));
+	});
+	it('pinned: row[a, b, c], a floated, b moved to the left edge, b floated', () => {
+		const tree = row(['a', 'b', 'c']);
+		expect(inEveryBackOrder(tree, ['~a', 'b>>left', '~b'], ['a', 'b'])).toHaveLength(1);
+	});
 
-	// KNOWN FAILURE (PR1's, by floats): a slot's size is clamped to 5% (`core/slot.ts`'s
+	// Was a KNOWN FAILURE until #782 PR6 (PR1's, by floats): a slot's size is clamped to 5% (`core/slot.ts`'s
 	// `MIN_SHARE`), so a pane under 5% of its split comes back at 5% or at its own size by the order.
 	// A hidden pane's `dockShare` is not clamped (the reverse order is exact: property 1 above).
-	it.fails('KNOWN FAILURE (pinned): a pane under 5% of its split, floated with a sibling', () => {
+	it('pinned: a pane under 5% of its split, floated with a sibling', () => {
 		const weights = [1, 1, 3, 4, 4, 4, 4];
 		const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
 		const tree = split(
@@ -648,19 +623,100 @@ describe('floated panes: a pane moved to an outer edge stays there (#782 propert
 		fc.assert(staysAtEdge(splitTreeRecipe), params(300));
 	});
 
-	// KNOWN FAILURE (PR1's, by floats; the same case as property 1's with tab groups): the floated
+	// Was a KNOWN FAILURE until #782 PR6 (PR1's, by floats; the same case as property 1's with tab groups): the floated
 	// tab mate of the moved pane comes back to it at the edge, not to the place of their group.
-	it.fails('KNOWN FAILURE: the same with tab groups', () => {
+	it('the same with tab groups', () => {
 		fc.assert(staysAtEdge(treeRecipe), params(300));
 	});
-	it.fails(
-		'KNOWN FAILURE (pinned): row[a, tabs[b, c], d], a and b floated, c moved to the left edge',
-		() => {
-			const tree = split('s1', 'row', even(3), [panel('a'), tabs('t1', ['b', 'c']), panel('d')]);
-			const root = treeAfter(tree, ['~a', '~b', 'c>>left', '^a', '^b']);
-			expect(notAtEdge(root, 'c', 'left')).toBeNull();
+	it('pinned: row[a, tabs[b, c], d], a and b floated, c moved to the left edge', () => {
+		const tree = split('s1', 'row', even(3), [panel('a'), tabs('t1', ['b', 'c']), panel('d')]);
+		const root = treeAfter(tree, ['~a', '~b', 'c>>left', '^a', '^b']);
+		expect(notAtEdge(root, 'c', 'left')).toBeNull();
+	});
+});
+
+describe('hidden and floated panes together (#782 PR6)', () => {
+	/** Hide and float panes of a tree (2 to 4 out), and the steps that bring each back. */
+	const mixedOut = (recipe: TreeRecipe, out: OpRecipe[]) => {
+		const tree = buildTree(recipe);
+		const before = newDock(tree);
+		const steps = runOps(before, out, ['hide', 'float']);
+		const back = [
+			...hiddenIds(before).map((id) => `+${id}`),
+			...floatedIds(before).map((id) => `^${id}`)
+		];
+		return { tree, steps, back };
+	};
+
+	// The default place is worked out on the shadow tree: the place of a floated pane is a default
+	// sibling that is there, so a hidden pane shown first lands beside it, in default order.
+	it('shown and docked back in any order: the shape of the default tree', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(2, 5), (recipe, out) => {
+				const { tree, steps, back } = mixedOut(recipe, out);
+				fc.pre(back.length >= 2 && back.length <= 4);
+				for (const order of permutations(back)) {
+					const all = [...steps, ...order];
+					const got = treeAfter(tree, all);
+					if (shapeText(got) !== shapeText(tree)) failCase(tree, all, treeText(got));
+				}
+			}),
+			params(300)
+		);
+	});
+
+	// Review of PR #863: after floats, hides and shows are mixed, "back" gives the old order AND
+	// the old sizes. The tombstone of `a` gives way to `b` as it took from it (`removeFromShadow`
+	// and its reverse), so it holds what it held.
+	it('pinned: row[a .2, b .3, c .5], a floated, b hidden and shown, a docked back: the tree as it was, sizes too', () => {
+		const tree = split('s1', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')]);
+		const dock = runSteps(tree, ['~a', '-b', '+b']);
+		// While `a` is out, `b` and `c` are as they were to each other.
+		const shown = split('s1', 'row', [0.375, 0.625], [panel('b'), panel('c')]);
+		expect(treeDiff(dock.layout.docked, shown)).toBeNull();
+		runStep(dock, '^a');
+		expect(treeDiff(dock.layout.docked, tree)).toBeNull();
+	});
+
+	// The order PR5 pinned as row[b, a, c] (the float did not count the hidden pane): the default
+	// order now. The sizes are not the old ones: `b` was hidden at .3 of the row of three and is
+	// shown at .3 of what shows (`b` and `c`); `a` and `c` stay 2 : 5 to each other.
+	it('pinned: row[a .2, b .3, c .5], b hidden, a floated, b shown, a docked back: the old order', () => {
+		const tree = split('s1', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')]);
+		const dock = runSteps(tree, ['-b', '~a', '+b']);
+		const shown = split('s1', 'row', [0.3, 0.7], [panel('b'), panel('c')]);
+		expect(treeDiff(dock.layout.docked, shown)).toBeNull();
+		runStep(dock, '^a');
+		const back = split(
+			's1',
+			'row',
+			[14 / 64, 15 / 64, 35 / 64],
+			[panel('a'), panel('b'), panel('c')]
+		);
+		expect(treeDiff(dock.layout.docked, back)).toBeNull();
+	});
+
+	it('pinned: column[row[a, b, c], d, e], c moved beside d with a floated and b hidden: both back in the row they left, in either order', () => {
+		const tree = split('s1', 'column', even(3), [
+			split('s2', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')]),
+			panel('d'),
+			panel('e')
+		]);
+		// `b` was hidden at .375 of what showed of its row (`b` and `c`): what it takes of the row.
+		const expected = split('s1', 'column', even(3), [
+			split('s2', 'row', [0.625, 0.375], [panel('a'), panel('b')]),
+			split('gen-0', 'row', [0.5, 0.5], [panel('d'), panel('c')]),
+			panel('e')
+		]);
+		for (const back of [
+			['^a', '+b'],
+			['+b', '^a']
+		]) {
+			const all = ['~a', '-b', 'c>d:right', ...back];
+			const diff = treeDiff(treeAfter(tree, all), expected);
+			if (diff) failCase(tree, all, diff);
 		}
-	);
+	});
 });
 
 describe('floated panes: shares are kept (#782 property 4, floats)', () => {

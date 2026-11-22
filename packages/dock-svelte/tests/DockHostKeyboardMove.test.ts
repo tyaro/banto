@@ -874,15 +874,16 @@ describe('"back" and "show" for panes floated and hidden out of the same contain
 		expect(order(dock)).toEqual(['a', 'b', 'c']);
 	});
 
-	// a was floated from the left of c, with b hidden: it goes back there (`panel-visibility.test.ts`).
-	it('hide b, float a, show b, back a = [b, a, c] (a goes back to the left of c; b holds no place)', async () => {
+	// a was floated with b hidden; b is shown beside a's place, after it as in the default layout
+	// (#782 PR6, `panel-visibility.test.ts`; PR5 gave [b, a, c]).
+	it('hide b, float a, show b, back a = [a, b, c] (b comes back beside the place of a)', async () => {
 		const dock = row();
 		const { host } = mount({ dock });
 		expect(await host().hidePanel('b')).toBe('applied');
 		expect(await host().movePanel('a', { float: true })).toBe('applied');
 		expect(await host().showPanel('b')).toBe('applied');
 		expect(await host().movePanel('a', { back: true })).toBe('applied');
-		expect(order(dock)).toEqual(['b', 'a', 'c']);
+		expect(order(dock)).toEqual(['a', 'b', 'c']);
 	});
 });
 
