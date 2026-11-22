@@ -288,6 +288,45 @@ describe('split divider', () => {
 		expect(net).toBe(0);
 	});
 
+	// #782 PR6 (Codex P2 on #864): the cancel goes back to the session's snapshot, a CLONE of the
+	// layout. The shares of the panes floated out of the split go back with it: here the drag is a
+	// write to a split whose shown children hold 0 together, which moves the share of `a`'s place.
+	it('Esc puts the shares of a floated pane`s place back too: row[a 1, b 0, c 0], a floated', () => {
+		const { dock } = mountFloating({
+			version: 2,
+			floating: [],
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [1, 0, 0],
+				children: [
+					{ type: 'panel', id: 'a', title: 'A' },
+					{ type: 'panel', id: 'b', title: 'B' },
+					{ type: 'panel', id: 'c', title: 'C' }
+				]
+			}
+		});
+		dock.undockPanel('a');
+		flushSync();
+		expect(sizes(dock)).toEqual([0.5, 0.5]);
+		firePointer(screen.getByRole('separator'), 'pointerdown', 500, 100);
+		firePointer(window, 'pointermove', 600, 100);
+		expect(sizes(dock)[0]).toBeCloseTo(0.6);
+		expect(pressEscape().defaultPrevented).toBe(true);
+		expect(sizes(dock)).toEqual([0.5, 0.5]);
+		expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
+		expect(sizes(dock)).toEqual([1, 0, 0]);
+		// Committed instead, the write stays: the three share the row.
+		dock.undockPanel('a');
+		flushSync();
+		firePointer(screen.getByRole('separator'), 'pointerdown', 500, 100);
+		firePointer(window, 'pointermove', 600, 100);
+		firePointer(window, 'pointerup', 600, 100);
+		expect(dock.dockAtSlot('a', dock.homeSlot('a')!)).toBe(true);
+		expect(sizes(dock)[0]).toBeCloseTo(1 / 3);
+	});
+
 	it('commits on the owning pointerup, applying its last delta', () => {
 		const { dock } = mountFloating(split());
 		firePointer(screen.getByRole('separator'), 'pointerdown', 500, 100);

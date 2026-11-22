@@ -211,7 +211,14 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
     `isolation: isolate` で分けるが、モーダルが開いている間は外す（OverlayPanel はその場に fixed で描くため）。
 - 隠した pane の出し直し（#782 PR5）: 既定のレイアウトでの位置（`core/defaultPlace.ts`。`DockState.defaultLayout` は保存しない）。
   閉じた窓は `dockShare`（隠す直前の比率）だけを持ち、slot は持たない。下の slot の話は、浮かせた pane（`homeSlot`）と
-  端の帯（`autoHidden[].slot`）にだけ残る（#782 PR6〜PR8 で影の木へ）。
+  端の帯（`autoHidden[].slot`）にだけ残る。
+- 影の木 S が配置を決める（#782 PR6）: 浮かせる・元の場所へ戻す・移動・ドロップ・仕切りのドラッグ・隠す・出し直すは、
+  `DockState` が非公開の S（`core/shadow.ts`。浮かせた pane は墓石）の上で結果を作り、`layout.docked` にはその射影を入れる。
+  新しい配置の操作を足すときも「S の上で作って射影を入れる」（`#projected`）。`core/tree.ts` で見える木を直に組むと、
+  墓石の場所を知らない結果になり、S は組み直しになる。事前の問い合わせ（予告）も同じ S の関数を読む
+  （`shownTree`・`restoredAt`・`droppedTree`・`droppedAtEdgeTree`）。`homeSlot` の slot は「その場所の名前」として渡すだけで、
+  中身を読むのは S を組み直すとき（帯への出し入れ・丸ごとの置き換え・`homeSlot` 以外の slot での `dockAtSlot`）だけ。
+  帯を S に載せる（PR8）までは、setter の `share` の補正（`#withoutGoneShares` / `#withoutLeftShares`）もそのために残す。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:
   - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。5 段以上の slot を含むレイアウトだけ `version: 3` で保存する
     （`core/layoutVersion.ts`。`DockLayout['version']` は `2 | 3`）。回帰比較の fixture は `tests/fixtures/slot-main.ts`。

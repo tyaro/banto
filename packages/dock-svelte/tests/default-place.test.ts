@@ -3,6 +3,13 @@
 // what holds for every tree and every order is in `slot-properties.test.ts`.
 import { describe, expect, it } from 'vitest';
 import { dockShareOf, hasDefaultPlace, placeAtDefault } from '../src/core/defaultPlace';
+import {
+	markAway,
+	placeInShadowAtDefault,
+	projectShadow,
+	shadowPanelIds,
+	type ShadowNode
+} from '../src/core/shadow';
 import { dockPanelAtEdge, removePanel } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import { createDockState } from '../src/state.svelte';
@@ -23,7 +30,7 @@ const tabs = (id: string, ids: string[], activeIndex = 0): DockNode => ({
 	activeIndex,
 	children: ids.map(panel)
 });
-const sizesOf = (node: DockNode | null): number[] => (node?.type === 'split' ? node.sizes : []);
+const sizesOf = (node: ShadowNode | null): number[] => (node?.type === 'split' ? node.sizes : []);
 const close = (got: number[], want: number[]) => {
 	expect(got).toHaveLength(want.length);
 	want.forEach((v, i) => expect(got[i]).toBeCloseTo(v, 9));
@@ -418,6 +425,90 @@ describe('a default id in use out of the docked tree', () => {
 		).toMatchObject({
 			id: 'root'
 		});
+	});
+});
+
+// #782 PR6: the default place is worked out on the shadow tree S, where the place of a pane
+// floated out of the tree (a tombstone, `x†` below) is a pane that is there.
+describe('placeInShadowAtDefault: the default place on the shadow tree', () => {
+	const away = (s: ShadowNode | null, ...ids: string[]): ShadowNode | null =>
+		ids.reduce((tree, id) => markAway(tree, id), s);
+	const row3 = (): DockSplitNode =>
+		split('root', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')]);
+
+	it('with no tombstone it is `placeAtDefault`', () => {
+		const docked = without(row3(), 'b');
+		expect(placeInShadowAtDefault(docked, row3(), panel('b'), 0.3, never)).toEqual(
+			placeAtDefault(docked, row3(), panel('b'), 0.3, never)
+		);
+		expect(placeInShadowAtDefault(docked, null, panel('b'), 0.3, never)).toBeNull();
+		expect(placeInShadowAtDefault(null, row3(), panel('b'), 0.3, never)).toEqual(panel('b'));
+	});
+
+	it('beside the place of a floated default sibling, in default order: row[a†, c] takes b between them', () => {
+		// `b` hidden from row[a, b, c], then `a` floated: `a` and `c` are both as near to `b`; the
+		// one before is taken, and it is a place.
+		const s = away(without(row3(), 'b'), 'a');
+		const placed = placeInShadowAtDefault(s, row3(), panel('b'), 0.3, never);
+		expect(shadowPanelIds(placed)).toEqual(['a', 'b', 'c']);
+		expect(shadowPanelIds(placed, 'away')).toEqual(['a']);
+		expect(shapeOf(projectShadow(placed))).toEqual({ row: ['b', 'c'] });
+		// On the docked tree alone (PR5) it went beside `c`, and `a` came back between them.
+		expect(shapeOf(placeAtDefault(projectShadow(s), row3(), panel('b'), 0.3, never))).toEqual({
+			row: ['b', 'c']
+		});
+	});
+
+	it('the share is of what shows, and the place gives way as it took: row[a† .2, b .3, c .5] again', () => {
+		// `a` floated, then `b` hidden at .375 of what showed (`b` and `c`); its share went to `a†`
+		// and `c` in proportion.
+		const s = away(split('root', 'row', [2 / 7, 5 / 7], [panel('a'), panel('c')]), 'a');
+		const placed = placeInShadowAtDefault(s, row3(), panel('b'), 0.375, never);
+		close(sizesOf(placed), [0.2, 0.3, 0.5]);
+		close(sizesOf(projectShadow(placed)), [0.375, 0.625]);
+	});
+
+	it('among places only, the share is of the split: row[a†, c†] takes b at .3', () => {
+		const s = away(split('root', 'row', [2 / 7, 5 / 7], [panel('a'), panel('c')]), 'a', 'c');
+		const placed = placeInShadowAtDefault(s, row3(), panel('b'), 0.3, never);
+		close(sizesOf(placed), [0.2, 0.3, 0.5]);
+		expect(projectShadow(placed)).toEqual(panel('b'));
+	});
+
+	it('a part of the tree is taken with its tombstones: row[a, column[b, c]], a beside column[b†, c]', () => {
+		const defaults = split(
+			'root',
+			'row',
+			[0.3, 0.7],
+			[panel('a'), split('side', 'column', [0.4, 0.6], [panel('b'), panel('c')])]
+		);
+		// `a` hidden: the row folded into the column, which keeps the place of `b` (floated).
+		const s = away(split('side', 'column', [0.4, 0.6], [panel('b'), panel('c')]), 'b');
+		const placed = placeInShadowAtDefault(s, defaults, panel('a'), 0.3, never);
+		// Wrapped as a whole, with the default row's id: `a` is not put beside `c` inside the column.
+		expect(placed).toEqual(split('root', 'row', [0.3, 0.7], [panel('a'), s as DockNode]));
+		expect(shapeOf(projectShadow(placed))).toEqual({ row: ['a', 'c'] });
+	});
+
+	it('a tab group: beside the place of a floated tab, and the pane shown is the active one', () => {
+		const defaults = tabs('g', ['a', 'b', 'c']);
+		const s = away(tabs('g', ['a', 'c'], 1), 'a');
+		const placed = placeInShadowAtDefault(s, defaults, panel('b'), 1, never);
+		expect(shadowPanelIds(placed)).toEqual(['a', 'b', 'c']);
+		expect(placed?.type === 'tabs' && placed.children[placed.activeIndex].id).toBe('b');
+		// Both tabs show; the group keeps its id.
+		expect(shapeOf(projectShadow(placed))).toEqual({ tabs: ['b', 'c'] });
+	});
+
+	it('a tab group left with places only: the pane shows alone, at the group`s place', () => {
+		const defaults = split('root', 'row', [0.5, 0.5], [tabs('g', ['a', 'b']), panel('c')]);
+		const s = away(split('root', 'row', [0.5, 0.5], [panel('a'), panel('c')]), 'a');
+		const placed = placeInShadowAtDefault(s, defaults, panel('b'), 0.5, never);
+		expect(shapeOf(projectShadow(placed))).toEqual({ row: ['b', 'c'] });
+		// The group is made again around the place of `a`, with the default id.
+		const group = placed?.type === 'split' ? placed.children[0] : null;
+		expect(group?.id).toBe('g');
+		expect(shadowPanelIds(group ?? null, 'away')).toEqual(['a']);
 	});
 });
 

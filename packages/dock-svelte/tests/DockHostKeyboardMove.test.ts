@@ -21,6 +21,7 @@ import { EXHAUSTIVE } from './fixtures/exhaustive';
 import type { DockPanelChange } from '../src/core/lifecycle';
 import type { DockCapabilities } from '../src/core/policy';
 import { collectPanelIds, findParent } from '../src/core/tree';
+import { validateDockLayout } from '../src/core/validate';
 import { createDockState, type DockState } from '../src/state.svelte';
 import { dockWithDefault } from './fixtures/visibility-layouts';
 import type { DockLayout, DockNode, DockPanelNode } from '../src/types';
@@ -874,15 +875,50 @@ describe('"back" and "show" for panes floated and hidden out of the same contain
 		expect(order(dock)).toEqual(['a', 'b', 'c']);
 	});
 
-	// a was floated from the left of c, with b hidden: it goes back there (`panel-visibility.test.ts`).
-	it('hide b, float a, show b, back a = [b, a, c] (a goes back to the left of c; b holds no place)', async () => {
+	// a was floated with b hidden; b is shown beside a's place, after it as in the default layout
+	// (#782 PR6, `panel-visibility.test.ts`; PR5 gave [b, a, c]).
+	it('hide b, float a, show b, back a = [a, b, c] (b comes back beside the place of a)', async () => {
 		const dock = row();
 		const { host } = mount({ dock });
 		expect(await host().hidePanel('b')).toBe('applied');
 		expect(await host().movePanel('a', { float: true })).toBe('applied');
 		expect(await host().showPanel('b')).toBe('applied');
 		expect(await host().movePanel('a', { back: true })).toBe('applied');
-		expect(order(dock)).toEqual(['b', 'a', 'c']);
+		expect(order(dock)).toEqual(['a', 'b', 'c']);
+	});
+});
+
+// #782 PR6 (cross-review of PR #864): "back" from the menu docks with a fixed id for a split / tab
+// group it makes (`<pane>:restored`). A tab group the shadow tree kept out of sight whose id a
+// window took meanwhile gets another id - and one nothing has, also when a window has the fixed
+// one. The layout can be saved and loaded after.
+describe('"back" into a tab group whose id was taken meanwhile (#782 PR6)', () => {
+	it('row[x, tabs(T)[a, b]], b floated, windows T and b:restored added, back: no id twice', async () => {
+		const dock = createDockState({
+			version: 2,
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.5, 0.5],
+				children: [
+					panel('x'),
+					{ type: 'tabs', id: 'T', activeIndex: 0, children: [panel('a'), panel('b')] }
+				]
+			},
+			floating: []
+		});
+		const { host } = mount({ dock });
+		expect(await host().movePanel('b', { float: true })).toBe('applied');
+		dock.ensureWindow({ id: 'T', title: 'T' }, 800, 600);
+		dock.ensureWindow({ id: 'b:restored', title: 'other' }, 800, 600);
+		expect(await host().movePanel('b', { back: true })).toBe('applied');
+		const group = findParent(dock.layout.docked, 'b');
+		expect(group?.type === 'tabs' && group.children.map((c) => c.id)).toEqual(['a', 'b']);
+		expect(['T', 'b:restored']).not.toContain(group?.id);
+		const saved = dock.serialize();
+		expect(validateDockLayout(JSON.parse(saved))).toMatchObject({ ok: true });
+		expect(createDockState().hydrate(saved)).toBe(true);
 	});
 });
 

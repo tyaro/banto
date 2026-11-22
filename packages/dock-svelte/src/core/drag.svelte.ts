@@ -52,17 +52,9 @@ import { getContext, setContext, tick } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
 import type { DockPanelChange, DockPanelChangeOutcome, PanelLifecycle } from './lifecycle';
 import { resolveCapabilities, type DockPolicy } from './policy';
-import {
-	collectPanelIds,
-	dockPanelAtEdge,
-	EDGE_DOCK_RATIO,
-	dockPanelIntoTree,
-	findNode,
-	findParent,
-	removePanel
-} from './tree';
+import { collectPanelIds, EDGE_DOCK_RATIO, findNode, findParent } from './tree';
 import type { DockState } from '../state.svelte';
-import type { DockEdge, DockNode, DockPanelNode, DockSlot, DropRegion } from '../types';
+import type { DockEdge, DockNode, DockSlot, DropRegion } from '../types';
 import {
 	crossButtons,
 	hitGuideButton,
@@ -393,8 +385,8 @@ export class DragController {
 		const dock = this.#dock;
 		if (!this.#edgesOffered(panelId)) return null;
 		const target = { edge };
-		const wrap = (root: DockNode | null, node: DockPanelNode): DockNode =>
-			dockPanelAtEdge(root, node, edge, () => `${panelId}:dropped`);
+		// The tree the move makes: the one prediction of it (`DockState.droppedAtEdgeTree`, #782 PR6).
+		const after = () => dock.droppedAtEdgeTree(panelId, edge, () => `${panelId}:dropped`);
 		const hostEl = this.#getHostEl();
 		const withFocus = (apply: () => void) => () => {
 			const active = document.activeElement;
@@ -411,16 +403,8 @@ export class DragController {
 			return this.#placement(
 				panelId,
 				() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
-				() => {
-					const win = dock.layout.floating.find((w) => w.id === panelId);
-					if (!win) return undefined;
-					return wrap(dock.layout.docked, {
-						type: 'panel',
-						id: win.id,
-						title: win.title,
-						icon: win.icon
-					});
-				},
+				() =>
+					dock.layout.floating.some((w) => w.id === panelId) ? (after() ?? undefined) : undefined,
 				target,
 				withFocus(() => dock.dockPanelAtEdge(panelId, edge)),
 				guard
@@ -428,13 +412,10 @@ export class DragController {
 		return this.#placement(
 			panelId,
 			() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
-			() => {
-				const node = findNode(dock.layout.docked, panelId);
-				if (node?.type !== 'panel') return undefined;
-				const rest = removePanel(dock.layout.docked, panelId);
-				if (!rest) return undefined;
-				return wrap(rest, node);
-			},
+			() =>
+				findNode(dock.layout.docked, panelId)?.type === 'panel'
+					? (after() ?? undefined)
+					: undefined,
 			target,
 			withFocus(() => dock.dockExistingAtEdge(panelId, edge)),
 			guard
@@ -465,24 +446,16 @@ export class DragController {
 	): Promise<DockPanelChangeOutcome> {
 		const dock = this.#dock;
 		const target = { to: targetId, region };
-		// The tree the drop makes, for asking the panes it pushes out (#666). A fixed id for a
-		// new split / tab group keeps it stable across the re-checks.
-		const into = (root: DockNode | null, node: DockPanelNode): DockNode =>
-			dockPanelIntoTree(root, node, targetId, region, () => `${panelId}:dropped`);
+		// The tree the drop makes, for asking the panes it pushes out (#666): the one prediction
+		// of it (`DockState.droppedTree`, #782 PR6). A fixed id for a new split / tab group keeps it
+		// stable across the re-checks.
+		const after = () => dock.droppedTree(panelId, targetId, region, () => `${panelId}:dropped`);
 		if (source === 'floating')
 			return this.#placement(
 				panelId,
 				() => ({ kind: 'dock', panelId, remount: this.#remounts(panelId) }),
-				() => {
-					const win = dock.layout.floating.find((w) => w.id === panelId);
-					if (!win) return undefined;
-					return into(dock.layout.docked, {
-						type: 'panel',
-						id: win.id,
-						title: win.title,
-						icon: win.icon
-					});
-				},
+				() =>
+					dock.layout.floating.some((w) => w.id === panelId) ? (after() ?? undefined) : undefined,
 				target,
 				() => dock.dockPanel(panelId, targetId, region),
 				guard
@@ -490,11 +463,10 @@ export class DragController {
 		return this.#placement(
 			panelId,
 			() => ({ kind: 'move-docked', panelId, remount: this.#remounts(panelId) }),
-			() => {
-				const node = findNode(dock.layout.docked, panelId);
-				if (node?.type !== 'panel') return undefined;
-				return into(removePanel(dock.layout.docked, panelId), node);
-			},
+			() =>
+				findNode(dock.layout.docked, panelId)?.type === 'panel'
+					? (after() ?? undefined)
+					: undefined,
 			target,
 			() => dock.dockExisting(panelId, targetId, region),
 			guard

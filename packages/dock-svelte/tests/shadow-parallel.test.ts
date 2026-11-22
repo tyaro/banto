@@ -1,6 +1,12 @@
-// #782 PR4: `DockState` keeps the shadow tree S beside its layout. Nothing reads S yet - docking
-// back and moving still go by the slots - so what is checked here is that S FOLLOWS: after
-// every assignment of `layout`, `projectShadow(S)` is `layout.docked`, whatever was done.
+// #782 PR4: `DockState` keeps the shadow tree S beside its layout. What is checked here is that S
+// FOLLOWS: after every assignment of `layout`, `projectShadow(S)` is `layout.docked`, whatever was
+// done.
+//
+// #782 PR6: floating a pane out and docking it back, moving a docked pane, a drop, a divider drag
+// and showing a hidden pane are done ON S, and the docked tree assigned is its projection - so
+// those steps are `same` always (the cases pinned as "not yet" by PR4 / PR5 are now what S says).
+// What still goes by the slots (`core/slot.ts`) and makes S again: the edge bands (PR8), a layout
+// taken as a whole, and `dockAtSlot` with a slot that is not the pane's `homeSlot`.
 //
 // #782 PR5: a pane HIDDEN from the dock remembers no place, so it leaves S for good (no
 // tombstone) and is shown at its default place (`core/defaultPlace.ts`). The tombstones of S are
@@ -9,9 +15,7 @@
 //
 // `watchShadow` also tells HOW S followed each assignment (`ShadowFollow`): `same` - the step done
 // on S alone shows the tree the slots made -, `written` - only sizes / tabs / flags differed and
-// were written onto S -, `rebuilt` - S was made again from the docked tree and the slots. The
-// properties below say where the two already agree step by step (`same` always), and the pinned
-// cases where they do not are the ones #782 PR5 / PR6 change by letting S decide.
+// were written onto S -, `rebuilt` - S was made again from the docked tree and the slots.
 //
 // Seeds and counts are fixed as in `slot-properties.test.ts` (`DOCK_PROPERTY_SEED` /
 // `DOCK_PROPERTY_RUNS` to look for more).
@@ -27,6 +31,7 @@ import {
 	type ShadowNode
 } from '../src/core/shadow';
 import { findNode, removePanel } from '../src/core/tree';
+import { validateDockLayout } from '../src/core/validate';
 import {
 	createDockState,
 	shadowStateOf,
@@ -34,7 +39,7 @@ import {
 	type DockState,
 	type ShadowFollow
 } from '../src/state.svelte';
-import type { DockNode, DockSplitNode } from '../src/types';
+import type { DockEdge, DockNode, DockSplitNode, DropRegion } from '../src/types';
 import {
 	buildTree,
 	counterMakeId,
@@ -44,6 +49,7 @@ import {
 	opRecipe,
 	resolveStep,
 	runStep,
+	treeDiff,
 	treeRecipe,
 	treeText,
 	type OpKind,
@@ -267,6 +273,10 @@ describe('S follows the layout (#782 PR4)', () => {
 					const wrong = notFollowing(dock);
 					if (wrong) failCase(tree, steps, wrong);
 					if (follows.some((f) => f.result === 'failed')) failCase(tree, steps, 'failed');
+					// The layout can be saved and loaded at every step: no id twice (a split / tab group
+					// of S that does not show, or one in an edge band, keeps its id from being made again).
+					const saved = validateDockLayout(JSON.parse(dock.serialize()));
+					if (!saved.ok) failCase(tree, steps, `not a layout: ${JSON.stringify(saved.issues)}`);
 				});
 			}),
 			params(1500)
@@ -300,27 +310,98 @@ describe('S follows the layout (#782 PR4)', () => {
 	});
 });
 
-describe('where S and the slots agree step by step (#782 PR4)', () => {
-	it('panes floated and put back in any order: every step on S alone', () => {
-		fc.assert(followed(['float', 'back'], true), params(1500));
+describe('every step is done on S (#782 PR6)', () => {
+	// Before PR6 the docked tree was made by `core/tree.ts` / `core/slot.ts` and S followed: with a
+	// pane floated out, about one `dockExisting` / `show` / `dockAtSlot` in ten made S again
+	// (`rebuilt`) or differed in sizes (`written`). Now the step is done on S and the docked tree
+	// is what S shows.
+	it('panes hidden, shown, floated, docked back and moved (side, tab, outer edge) in any order: `same` always', () => {
+		fc.assert(followed(ALL, true), params(1500));
 	});
 
-	// A hidden pane leaves S, and is shown at its default place: with no pane floated out, S is the
-	// docked tree before and after.
-	it('panes hidden and shown in any order: every step on S alone', () => {
-		fc.assert(followed(['hide', 'show'], true), params(1500));
-	});
-
-	it('docked panes moved (side, tab, outer edge) with nothing out of the tree: every step on S alone', () => {
-		fc.assert(followed(['move', 'tab', 'edge'], true), params(1000));
-	});
-
-	it('panes hidden or floated and docked panes moved to an outer edge: every step on S alone', () => {
-		fc.assert(followed(['hide', 'float', 'edge'], true), params(1000));
+	it('a divider dragged between the steps: `same` too', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(1, 10), ops(10, 10), (recipe: TreeRecipe, recipes, others) => {
+				const tree = buildTree(recipe);
+				const { dock, follows } = watched(tree);
+				const steps: string[] = [];
+				recipes.forEach((op, i) => {
+					const step = resolveStep(dock, op, ALL);
+					if (step !== null) {
+						runStep(dock, step);
+						steps.push(step);
+					}
+					const other = runOther(dock, { ...others[i], kind: 0 });
+					if (other !== 'skip') steps.push(`(${other})`);
+					const wrong = notFollowing(dock);
+					if (wrong) failCase(tree, steps, wrong);
+					const off = follows.find((f) => f.result !== 'same');
+					if (off) failCase(tree, steps, `${off.step}: ${off.result}`);
+				});
+			}),
+			params(500)
+		);
 	});
 });
 
-describe('where they do not yet (pinned; #782 PR6 lets S decide)', () => {
+describe('the prediction of a drop is the drop (#782 PR6)', () => {
+	// `droppedTree` / `droppedAtEdgeTree` are what the drag controller asks the panes a drop pushes
+	// out by: made on S like the drop itself, so they cannot say another tree.
+	it('a docked pane moved (side, tab, outer edge), with panes hidden and floated around it', () => {
+		fc.assert(
+			fc.property(treeRecipe, ops(1, 12), (recipe: TreeRecipe, recipes) => {
+				const tree = buildTree(recipe);
+				const dock = newDock(tree);
+				const steps: string[] = [];
+				for (const op of recipes) {
+					const step = resolveStep(dock, op, ALL);
+					if (step === null) continue;
+					const edge = /^(\w+)>>(\w+)$/.exec(step);
+					const move = /^(\w+)>(\w+):(\w+)$/.exec(step);
+					const ids = counterMakeId(500);
+					const predicted = edge
+						? dock.droppedAtEdgeTree(edge[1], edge[2] as DockEdge, ids)
+						: move
+							? dock.droppedTree(move[1], move[2], move[3] as DropRegion, ids)
+							: undefined;
+					const before = dock.layout;
+					runStep(dock, step);
+					steps.push(step);
+					if (predicted === undefined) continue;
+					// `null`: nothing to do (the only docked pane to an edge) - and nothing was done.
+					const diff =
+						predicted === null
+							? dock.layout === before
+								? null
+								: 'predicted nothing'
+							: treeDiff(dock.layout.docked, predicted);
+					if (diff) failCase(tree, steps, diff);
+				}
+			}),
+			params(500)
+		);
+	});
+
+	it('a floating window dropped onto a pane / at an edge, and a pane that is neither', () => {
+		const { dock } = watched(
+			split('s', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')])
+		);
+		dock.undockPanel('a');
+		const onto = dock.droppedTree('a', 'c', 'bottom', counterMakeId(500));
+		const atEdge = dock.droppedAtEdgeTree('a', 'top', counterMakeId(500));
+		// Nothing changed by asking.
+		expect(treeText(dock.layout.docked)).toContain('{"row":["b","c"]}');
+		expect(dock.droppedTree('nope', 'c', 'bottom')).toBeNull();
+		expect(dock.droppedAtEdgeTree('nope', 'top')).toBeNull();
+		const other = createDockState(dock.serialize(), counterMakeId());
+		dock.dockPanel('a', 'c', 'bottom');
+		expect(treeDiff(dock.layout.docked, onto)).toBeNull();
+		other.dockPanelAtEdge('a', 'top');
+		expect(treeText(other.layout.docked)).toBe(treeText(atEdge));
+	});
+});
+
+describe('S decides (pinned; the cases PR4 found the slots and S apart in, #782 PR6)', () => {
 	const run = (tree: DockNode, steps: string[]): { dock: DockState; last: ShadowFollow[] } => {
 		const { dock, follows } = watched(tree);
 		for (const step of steps) {
@@ -331,9 +412,9 @@ describe('where they do not yet (pinned; #782 PR6 lets S decide)', () => {
 		return { dock, last: follows };
 	};
 
-	it('#780: a docked pane moved beside another while panes of its split are out - S is made again', () => {
-		// column[row[a, b, c], d, e], a b e floated, c to the right of d. The slots make
-		// `row[d, c]` in the tree that shows; S alone would keep `row[a†, b†]` above it.
+	it('#780: a docked pane moved beside another while panes of its split are out', () => {
+		// column[row[a, b, c], d, e], a b e floated, c to the right of d: `row[d, c]` is made around
+		// `d`, and S keeps `row[a†, b†]` above it.
 		const tree = split(
 			's',
 			'column',
@@ -355,23 +436,21 @@ describe('where they do not yet (pinned; #782 PR6 lets S decide)', () => {
 			alone = markPresent(alone, id);
 			expect(notFollowing(dock), id).toBe(null);
 		}
-		// `a` comes back beside `d` by its slot, above `row[d, c]` in S: S is made again there.
-		expect(follows.map((f) => f.result)).toEqual(['rebuilt', 'same', 'same']);
+		// Each comes back to its tombstone (before PR6 `a` went beside `d` by its slot, and S was
+		// made again: `row[column[row[a, b], d, e], c]`).
+		expect(follows.map((f) => f.result)).toEqual(['same', 'same', 'same']);
+		// The decision of #780, in every order.
 		expect(treeText(dock.layout.docked)).toContain(
-			'{"row":[{"column":[{"row":["a","b"]},"d","e"]},"c"]}'
-		);
-		// The decision of #780, which S alone gives in every order.
-		expect(treeText(projectShadow(alone))).toContain(
 			'{"column":[{"row":["a","b"]},{"row":["d","c"]},"e"]}'
 		);
-		// Made again from the slots, every pane out was still accounted for.
+		expect(sameDocked(projectShadow(alone), dock.layout.docked)).toBe(true);
 		expect(shadowPanelIds(shadowStateOf(dock).shadow, 'away')).toEqual([]);
 	});
 
-	it('#845: a pane docked back into a split with another still out - the sizes are written onto S', () => {
-		// See `split-sizes.test.ts` (KNOWN FAILURE #845), by floats since #782 PR5 (a hidden pane
-		// holds no slot). The slots dock `d` back at .6 of `row[a, d]`; S alone says .2 / .8 and, in
-		// the end, .15 / .6 / .25.
+	it('#845: a pane docked back into a split with another still out', () => {
+		// See `split-sizes.test.ts` (#845), by floats since #782 PR5 (a hidden pane holds no slot).
+		// The slots docked `d` back at .6 of `row[a, d]`; S says .2 / .8 and, in the end,
+		// .15 / .6 / .25.
 		const tree = split(
 			's',
 			'row',
@@ -405,14 +484,13 @@ describe('where they do not yet (pinned; #782 PR6 lets S decide)', () => {
 			'~e same',
 			'^e same',
 			'~e same',
-			'^d written',
-			'^e written',
+			'^d same',
+			'^e same',
 			'^c same'
 		]);
 		const sizes = (node: DockNode | null): number[] => (node?.type === 'split' ? node.sizes : []);
-		// By the slots: .15 / .225 / .625 (the column and `e` are off; by hide / show before PR5 it
-		// was `a` that ended at .3).
-		[0.15, 0.225, 0.625].forEach((v, i) => expect(sizes(dock.layout.docked)[i]).toBeCloseTo(v, 9));
+		// By the slots it was .15 / .225 / .625 (by hide / show before PR5, `a` ended at .3).
+		[0.15, 0.6, 0.25].forEach((v, i) => expect(sizes(dock.layout.docked)[i]).toBeCloseTo(v, 9));
 		const kept = sizes(projectShadow(alone));
 		expect(kept[0]).toBeCloseTo(0.15, 9);
 		expect(kept[1]).toBeCloseTo(0.6, 9);
@@ -433,7 +511,7 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		dock.undockPanel('a');
 		follows.length = 0;
 		dock.resizeSplit('s', 0, 0.1);
-		expect(follows).toEqual([{ step: null, result: 'written' }]);
+		expect(follows).toEqual([{ step: 'resizeSplit', result: 'same' }]);
 		expect(notFollowing(dock)).toBe(null);
 		const sizes = sizesOfRoot(dock);
 		expect(sizes[0]).toBeCloseTo(0.2, 9);
@@ -466,6 +544,14 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		const group = findNode(shadowStateOf(dock).shadow, 't');
 		expect(group?.type === 'tabs' && group.children.map((c) => c.id)).toEqual(['c', 'b', 'a', 'd']);
 		expect(group?.type === 'tabs' && group.children[group.activeIndex].id).toBe('d');
+		// And that is where the tab comes back (#782 PR6; the decision on PR #857's judgment 30): the
+		// second tab, as it was, whatever was moved around its place - and the active one.
+		follows.length = 0;
+		expect(dock.dockAtSlot('b', dock.homeSlot('b')!)).toBe(true);
+		expect(follows).toEqual([{ step: 'dockAtSlot', result: 'same' }]);
+		const back = findNode(dock.layout.docked, 't');
+		expect(back?.type === 'tabs' && back.children.map((c) => c.id)).toEqual(['c', 'b', 'a', 'd']);
+		expect(back?.type === 'tabs' && back.children[back.activeIndex].id).toBe('b');
 	});
 
 	it('a region collapsed to a band and expanded', () => {
@@ -494,8 +580,9 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		follows.length = 0;
 		dock.setDockedCollapsed('b', true);
 		expect(dock.isDockedCollapsed('b')).toBe(true);
-		// Not written: S is made again, and shows the tree without the flag.
-		expect(follows).toEqual([{ step: null, result: 'rebuilt' }]);
+		// Not written, and S stays as it is (#782 PR6: not made again from the slots): it shows the
+		// tree without the flag, which `DockState` keeps on the docked tree alone.
+		expect(follows).toEqual([{ step: null, result: 'same' }]);
 		const { shadow } = shadowStateOf(dock);
 		expect(sameDocked(projectShadow(shadow), dock.layout.docked)).toBe(false);
 		expect(notFollowing(dock)).toBe(null);
@@ -568,10 +655,11 @@ describe('what cannot change S does not look at it (review of PR #857)', () => {
 		expect(after.shadow).toBe(before.shadow);
 		expect(follows).toEqual([]);
 		expect(notFollowing(dock)).toBe(null);
-		// The next change of the tree is followed as ever (`a` at its default place; with `b`
-		// floated out, S is made again around the tree: PR6).
+		// The next change of the tree is followed as ever (`a` at its default place, worked out on S
+		// with the place of `b`, floated out, in it: #782 PR6).
 		dock.show('a');
-		expect(follows).toEqual([{ step: 'show', result: 'rebuilt' }]);
+		expect(follows).toEqual([{ step: 'show', result: 'same' }]);
+		expect(shadowPanelIds(shadowStateOf(dock).shadow)).toEqual(['a', 'b', 'c', 'd']);
 		expect(shadowStateOf(dock).follows).toBe(before.follows + 1);
 		expect(notFollowing(dock)).toBe(null);
 	});
@@ -622,6 +710,38 @@ describe('the panes S remembers (#782 PR4)', () => {
 		watchShadow(loaded, (follow) => follows.push(follow));
 		expect(loaded.show('a')).toBe('docked');
 		expect(follows).toEqual([{ step: 'show', result: 'same' }]);
+	});
+
+	it('a docked pane dropped by an assignment leaves S; the places S remembers stay (#743, #782 PR6)', () => {
+		// The case of #780: column[row[a, b, c], d, e], a and b floated, c moved to the right of d.
+		const tree = split(
+			's',
+			'column',
+			[0.4, 0.3, 0.3],
+			[
+				split('r', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')]),
+				panel('d'),
+				panel('e')
+			]
+		);
+		const { dock, follows } = watched(tree);
+		for (const step of ['~a', '~b', 'c>d:right']) runStep(dock, step);
+		follows.length = 0;
+		// `ThreePaneDock`'s `syncPanels`: a layout made from today's, without `e`.
+		dock.layout = { ...dock.layout, docked: removePanel(dock.layout.docked, 'e') };
+		// Not made again from the slots: `a` and `b` keep the row S holds for them.
+		expect(follows).toEqual([{ step: null, result: 'same' }]);
+		expect(notFollowing(dock)).toBe(null);
+		runStep(dock, '^b');
+		runStep(dock, '^a');
+		expect(treeText(dock.layout.docked)).toContain(
+			'{"column":[{"row":["a","b"]},{"row":["d","c"]}]}'
+		);
+		const top = dock.layout.docked?.type === 'split' ? dock.layout.docked.children[0] : null;
+		// `a` and `b` as they were to each other (.2 : .3); `e`'s .3 went to the two rows (4 : 3).
+		expect(top?.type === 'split' && top.sizes[0]).toBeCloseTo(0.4, 9);
+		const sizes = dock.layout.docked?.type === 'split' ? dock.layout.docked.sizes : [];
+		expect(sizes[0]).toBeCloseTo(4 / 7, 9);
 	});
 
 	it('a region auto-hidden to a band is not in S (#782 PR8); S is made again around it', () => {

@@ -1308,18 +1308,16 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 	// `row[a]` at `.6` of it - its share of the whole row, with `e` (out, `.25`) not counted - where
 	// `a .15 : d .6` is `.2 / .8`; so `a` ended at `.3`. By hide / show this no longer arises (#782
 	// PR5: a hidden pane holds no share of a split, it comes back at its default place). By floats -
-	// how `-x` / `+x` run in this file now - the sizes are still off (`.15 / .225 / .625`, where the
-	// shadow tree alone gives `.15 / .6 / .25`: `shadow-parallel.test.ts`): for #782 PR6.
-	it.fails(
-		'KNOWN FAILURE (#845, pinned, by floats): row[a,column[b,tabs[c,d]],e], the column floated, b taken out, the rest floated and docked back',
-		() => {
-			const make = L5['row[a,column[b,tabs[c,d]],e]'];
-			const dock = runSteps(make, '~d ^d ~c ~b !b -d -e +e -e +d +e ^c'.split(' '));
-			const old = removePanel(make(), 'b');
-			expect(JSON.stringify(shapeOf(dock.layout.docked))).toBe(JSON.stringify(shapeOf(old)));
-			expect(sameSizes(sizesOf(dock.layout.docked), sizesOf(old))).toBe(true);
-		}
-	);
+	// how `-x` / `+x` run in this file now - the sizes were still off (`.15 / .225 / .625`) until a
+	// floated pane went back to its tombstone in the shadow tree, which keeps its share (#782 PR6):
+	// `.15 / .6 / .25`. A KNOWN FAILURE until then.
+	it('#845 (pinned, by floats): row[a,column[b,tabs[c,d]],e], the column floated, b taken out, the rest floated and docked back', () => {
+		const make = L5['row[a,column[b,tabs[c,d]],e]'];
+		const dock = runSteps(make, '~d ^d ~c ~b !b -d -e +e -e +d +e ^c'.split(' '));
+		const old = removePanel(make(), 'b');
+		expect(JSON.stringify(shapeOf(dock.layout.docked))).toBe(JSON.stringify(shapeOf(old)));
+		expect(sameSizes(sizesOf(dock.layout.docked), sizesOf(old))).toBe(true);
+	});
 
 	// #741: one row, every step checked against what the shares mean. A pane out of the row
 	// (floated; hidden too before #782 PR5) holds its share of the whole row - the panes in it and

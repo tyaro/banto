@@ -872,8 +872,21 @@ function replaceNode(root: DockNode, id: string, replace: (node: DockNode) => Do
 	return changed ? { ...root, children } : root;
 }
 
-function freeId(root: DockNode, wanted: string, makeId: () => string): string {
-	return findNode(root, wanted) ? makeId() : wanted;
+/** No id of the layout the tree is part of, for `restoreDockSlot` / `restoreRegionSlot`'s `taken`. */
+const NONE_TAKEN: ReadonlySet<string> = new Set();
+
+/**
+ * The id a split / tab group made again takes: the one its slot names when it is free - no node of
+ * the docked tree has it, and nothing else of the layout (`taken`: a tab group in an edge band
+ * keeps its id, #782 PR6) -, else a new one.
+ */
+function freeId(
+	root: DockNode,
+	wanted: string,
+	makeId: () => string,
+	taken: ReadonlySet<string>
+): string {
+	return taken.has(wanted) || findNode(root, wanted) ? makeId() : wanted;
 }
 
 /** Insert into an existing split at `index`, giving the pane `share` and scaling the others. */
@@ -897,7 +910,8 @@ function restoreTab(
 	root: DockNode,
 	panel: DockPanelNode,
 	slot: Extract<DockSlot, { kind: 'tab' }>,
-	makeId: () => string
+	makeId: () => string,
+	taken: ReadonlySet<string>
 ): DockNode | null {
 	const insert = (group: DockTabGroupNode): DockNode => {
 		const at = tabIndex(
@@ -920,7 +934,7 @@ function restoreTab(
 		at === 0 ? [panel, target as DockPanelNode] : [target as DockPanelNode, panel];
 	const tabs: DockTabGroupNode = {
 		type: 'tabs',
-		id: freeId(root, slot.groupId, makeId),
+		id: freeId(root, slot.groupId, makeId, taken),
 		children,
 		activeIndex: at
 	};
@@ -943,6 +957,7 @@ function restoreSplit(
 	panel: DockPanelNode | DockTabGroupNode,
 	slot: Extract<DockSlot, { kind: 'split' }>,
 	makeId: () => string,
+	taken: ReadonlySet<string>,
 	size: number = slot.size
 ): DockNode | null {
 	const share = clampShare(size);
@@ -981,7 +996,7 @@ function restoreSplit(
 	// merge the gone split into it.
 	const split: DockSplitNode = {
 		type: 'split',
-		id: freeId(root, slot.splitId, makeId),
+		id: freeId(root, slot.splitId, makeId, taken),
 		direction: slot.direction,
 		children: before ? [panel, neighbor] : [neighbor, panel],
 		sizes: before ? [share, 1 - share] : [1 - share, share]
@@ -1324,13 +1339,17 @@ export function slotsWithoutLeft(
  * `hidden` are the other panes out of the tree that remember a place (as for
  * `captureDockSlot`): the share it takes of a split leaves theirs for them
  * (#733), so a split's sizes come back whatever order its panes are shown in.
+ *
+ * `taken`: the ids of the layout that are not in `root` - the regions in the edge bands with their
+ * panes, the floating windows. A split / tab group made again does not take one of them (#782 PR6).
  */
 export function restoreDockSlot(
 	root: DockNode | null,
 	panel: DockPanelNode,
 	slot: DockSlot,
 	makeId: () => string,
-	hidden: Iterable<HiddenDockSlot> = []
+	hidden: Iterable<HiddenDockSlot> = [],
+	taken: ReadonlySet<string> = NONE_TAKEN
 ): DockNode | null {
 	if (root === null) return panel;
 	if (findNode(root, panel.id)) return null;
@@ -1342,9 +1361,9 @@ export function restoreDockSlot(
 		mine.add(s.kind === 'tab' ? s.groupId : s.splitId);
 	const place = (s: DockSlot): DockNode | null =>
 		s.kind === 'tab'
-			? restoreTab(root, panel, s, makeId)
+			? restoreTab(root, panel, s, makeId, taken)
 			: s.kind === 'split'
-				? restoreSplit(root, panel, s, makeId, restoreShare(root, s, others, mine))
+				? restoreSplit(root, panel, s, makeId, taken, restoreShare(root, s, others, mine))
 				: null;
 	// The container's own place (#721) only after the container and the anchors; then the place of
 	// the container around it (#727: nested `outer`), and so on, at most `MAX_SLOT_DEPTH` deep.
@@ -1361,18 +1380,20 @@ export function restoreDockSlot(
  * `root` at a `split` / `root` slot from `captureRegionSlot`. An empty tree takes
  * it as its root. Returns `null` when the place is gone, the slot is a `tab` slot
  * or a `root` slot of a tree that is not empty, or one of the region's ids is in
- * `root` already - the caller then docks it elsewhere.
+ * `root` already - the caller then docks it elsewhere. `taken`: as for `restoreDockSlot` (the
+ * other bands' regions and the floating windows).
  */
 export function restoreRegionSlot(
 	root: DockNode | null,
 	region: DockPanelNode | DockTabGroupNode,
 	slot: DockSlot,
-	makeId: () => string
+	makeId: () => string,
+	taken: ReadonlySet<string> = NONE_TAKEN
 ): DockNode | null {
 	if (root === null) return region;
 	const ids =
 		region.type === 'tabs' ? [region.id, ...region.children.map((c) => c.id)] : [region.id];
 	if (ids.some((id) => findNode(root, id))) return null;
-	if (slot.kind === 'split') return restoreSplit(root, region, slot, makeId);
+	if (slot.kind === 'split') return restoreSplit(root, region, slot, makeId, taken);
 	return null;
 }

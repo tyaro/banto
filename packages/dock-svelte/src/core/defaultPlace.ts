@@ -140,7 +140,8 @@ function joinSplit(
 	panel: DockPanelNode,
 	share: number | undefined,
 	makeId: () => string,
-	taken: ReadonlySet<string>
+	taken: ReadonlySet<string>,
+	away: ReadonlySet<string>
 ): DockNode {
 	const before = beside.index > index;
 	const anchorId = before ? beside.ids[0] : beside.ids[beside.ids.length - 1];
@@ -162,15 +163,46 @@ function joinSplit(
 	const region =
 		split.direction === 'row' ? (before ? 'left' : 'right') : before ? 'top' : 'bottom';
 	const tree = splitInsert(docked, target, panel, region, () => splitId, flatten);
-	const held = usable(share) ? share : defaultShare(split, index, new Set(collectPanelIds(docked)));
+	// The children the pane joins, and which of them show. With places (`away`) AND panes that show
+	// among them, the share is a share of what shows; else of the whole split.
+	const joined = flatten && parent?.type === 'split' ? parent.children : [target];
+	const shows = joined.map((c) => collectPanelIds(c).some((id) => !away.has(id)));
 	const old = flatten && parent?.type === 'split' ? parent.sizes : [1];
+	const total = old.reduce((a, b) => a + b, 0);
+	const scaled = old.map((s) => (total > 0 ? s / total : 1 / old.length));
+	const shown = scaled.reduce((sum, s, i) => (shows[i] ? sum + s : sum), 0);
+	const mixed = shows.includes(false) && shows.includes(true);
+	const among = mixed && shown > 0;
+	// Without a share to take: the default share against the default siblings that show - or,
+	// when none of them shows (what shows beside the places is from elsewhere), against the places.
+	const all = collectPanelIds(docked);
+	const showing = new Set(all.filter((id) => !away.has(id)));
+	const siblingShows = split.children.some(
+		(child, i) => i !== index && collectPanelIds(child).some((id) => showing.has(id))
+	);
+	const there = mixed && siblingShows ? showing : new Set(all);
+	const held = usable(share) ? share : defaultShare(split, index, there);
 	return replaceNodeById(tree, splitId, (node) => {
 		if (node.type !== 'split') return node;
 		const at = node.children.findIndex((c) => c.id === panel.id);
 		if (at === -1 || node.children.length !== old.length + 1) return node;
-		const total = old.reduce((a, b) => a + b, 0);
-		const rest = old.map((s) => (total > 0 ? s / total : 1 / old.length) * (1 - held));
-		return { ...node, sizes: [...rest.slice(0, at), held, ...rest.slice(at)] };
+		if (mixed && !among) {
+			// The children that show hold 0 together ("Shares of 0", `core/shadow.ts`): they show
+			// evenly, and a share of what shows cannot be kept in a total of 0. As for any write to
+			// such a split, the ones that show - the pane too - take the even part of it, their count
+			// out of all its children, and the places share the rest in the proportion they had.
+			const count = shows.filter(Boolean).length;
+			const part = (count + 1) / (scaled.length + 1);
+			const rest = scaled.map((s, i) => (shows[i] ? ((1 - held) * part) / count : s * (1 - part)));
+			return { ...node, sizes: [...rest.slice(0, at), held * part, ...rest.slice(at)] };
+		}
+		// `held` of what shows, as a share of the whole split: every other child - a place too -
+		// gives way in proportion. This undoes what taking the pane out did (`removeFromShadow`,
+		// #743), so a place holds what it held before the pane was hidden.
+		const part = among ? shown : 1;
+		const own = (held * part) / (1 - held + held * part);
+		const rest = scaled.map((s) => s * (1 - own));
+		return { ...node, sizes: [...rest.slice(0, at), own, ...rest.slice(at)] };
 	});
 }
 
@@ -206,6 +238,13 @@ function defaultEdge(path: Step[]): DockEdge | null {
  * else of the layout the tree is part of - `taken`, the ids out of the docked tree (the regions in
  * the edge bands with their panes, the floating windows). A layout holds an id once
  * (`validateDockLayout`), so the caller that has a layout gives them (`DockState.shownTree` does).
+ *
+ * `away` (#782 PR6, `core/shadow.ts#placeInShadowAtDefault`): the panes of `docked` that are only
+ * the PLACE of a pane that is out of the tree. Such a pane is there like any other - the pane is
+ * put beside it, in default order -, but a `share` is a share of what SHOWS: in a split with both,
+ * the pane ends up with `share` of what the children that show have together, and every other
+ * child, a place too, gives way in proportion (so a pane hidden and shown again leaves the split,
+ * its places included, as it was).
  */
 export function placeAtDefault(
 	docked: DockNode | null,
@@ -213,7 +252,8 @@ export function placeAtDefault(
 	panel: DockPanelNode,
 	share?: number,
 	makeId: () => string = defaultMakeId,
-	taken: ReadonlySet<string> = new Set()
+	taken: ReadonlySet<string> = new Set(),
+	away: ReadonlySet<string> = new Set()
 ): DockNode | null {
 	if (defaults === null) return null;
 	const path = pathTo(defaults, panel.id);
@@ -226,7 +266,7 @@ export function placeAtDefault(
 		if (beside === null) continue;
 		return container.type === 'tabs'
 			? joinTabs(docked, container, index, beside.ids[0], panel, makeId, taken)
-			: joinSplit(docked, defaults, container, index, beside, panel, share, makeId, taken);
+			: joinSplit(docked, defaults, container, index, beside, panel, share, makeId, taken, away);
 	}
 	const edge = defaultEdge(path);
 	if (edge === null) return null;

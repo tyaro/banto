@@ -872,13 +872,15 @@ describe('floated and hidden panes out of the same container (#734, #782 PR5)', 
 		expect(shapeOf(runSteps(row3, steps).layout.docked)).toEqual(shapeOf(row3()));
 	});
 
-	// What PR5 changes: a was floated from "the left of c" (b was hidden, and holds no place), so
-	// it goes back there - between b, shown at its default place meanwhile, and c. Before PR5 the
-	// float counted the hidden pane and this was row[a,b,c]. For PR6: with the default place
-	// worked out on the shadow tree, a's tombstone would be the sibling b goes beside.
-	it('row[a,b,c]: -b ~a +b ^a -> row[b,a,c] (a floated pane goes back to where it was, which no longer counts a hidden one)', () => {
+	// b is hidden (it holds no place), then a floated: a's place - its tombstone in the shadow
+	// tree - is the default sibling b is shown beside, after it as in the default layout (#782 PR6:
+	// the default place is worked out on the shadow tree). So a goes back before b. With PR5 alone
+	// this was row[b,a,c]: b went beside c, and a back to "the left of c".
+	it('row[a,b,c]: -b ~a +b ^a -> row[a,b,c] (a hidden pane is shown beside the place of a floated one)', () => {
 		const steps = '-b ~a +b ^a'.split(' ');
-		expect(shapeOf(runSteps(row3, steps).layout.docked)).toEqual({ row: ['b', 'a', 'c'] });
+		const dock = runSteps(row3, '-b ~a +b'.split(' '));
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['b', 'c'] });
+		expect(shapeOf(runSteps(row3, steps).layout.docked)).toEqual(shapeOf(row3()));
 	});
 });
 

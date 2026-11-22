@@ -2,8 +2,9 @@
  * The shadow tree S of the docked layout (Issue #782 PR2; downstream-requests-2026-11-plan §4.11,
  * property tests per ADR-0033). Pure functions only, no Svelte imports, like `tree.ts`: every
  * function returns a NEW tree (or the same object when nothing changes) and never mutates its
- * input. `DockState` keeps an S beside its layout (#782 PR4, `#followShadow`) and reads nothing
- * from it yet: hiding, showing and moving go by S from PR5 / PR6 on.
+ * input. `DockState` keeps an S beside its layout (#782 PR4, `#followShadow`) and, since #782 PR6,
+ * makes its changes on it - floating a pane out and back, moves, drops, divider drags, showing a
+ * hidden pane at its default place: the docked tree it assigns is the projection of S.
  *
  * S is the docked tree with every pane that has a docked place in it: the panes that are docked
  * now, and the panes that are outside (hidden or floated) but go back to a place in the dock.
@@ -53,6 +54,7 @@
  * not change while panes are only hidden and shown, and `inflateShadow(deflateShadow(S))` is S
  * again - as far as a slot can say it (see `deflateShadow`).
  */
+import { placeAtDefault } from './defaultPlace';
 import { MAX_SLOT_DEPTH } from './slot';
 import type {
 	DockEdge,
@@ -619,6 +621,41 @@ export function dockAtShadowEdge(
 	return settleCollapsed(wrap(rest, panel, edge, EDGE_DOCK_RATIO, makeId))!;
 }
 
+// ----- the default place (#782 PR6) ------------------------------------------------------------
+
+/**
+ * S with the pane `panel` (not in it) at its place in the default layout `defaults`:
+ * `core/defaultPlace.ts#placeAtDefault` worked out ON S, so a tombstone is a pane that is there. The
+ * pane lands beside the place of a default sibling that is floated out as it would beside the
+ * sibling itself - `row[a, b, c]`, `b` hidden, `a` floated, `b` shown: `row[a†, b, c]`, and `a`
+ * comes back before `b` -, whole parts of the tree are taken with their tombstones ("beside what a
+ * default child is now", always wrapped when the split around is another default split), and a
+ * split / tab group of S that does not show keeps its id from being taken twice. `share` is the
+ * pane's share of what SHOWS of the split it lands in (`dockShareOf` of the docked tree, what a
+ * closed window keeps); the other children, tombstones too, give way in proportion - the reverse
+ * of `removeFromShadow`. `null`: no default place (the caller opens it floating).
+ */
+export function placeInShadowAtDefault(
+	s: ShadowNode | null,
+	defaults: DockNode | null,
+	panel: DockPanelNode,
+	share?: number,
+	makeId: () => string = defaultMakeId,
+	taken: ReadonlySet<string> = new Set()
+): ShadowNode | null {
+	// `tree.ts` moves the leaves of the tree it is given as they are, so the marks stay on them.
+	const placed: ShadowNode | null = placeAtDefault(
+		s,
+		defaults,
+		shownLeaf(panel),
+		share,
+		makeId,
+		taken,
+		new Set(shadowPanelIds(s, 'away'))
+	);
+	return placed === null ? null : settleCollapsed(placed);
+}
+
 // ----- sizes ---------------------------------------------------------------------------------
 
 /**
@@ -675,6 +712,82 @@ export function resizeShadowSplit(
 	const after = resizeSplit(before, splitId, dividerIndex, deltaFraction);
 	if (after === before || after?.type !== 'split') return s;
 	return writeShadowSizes(s, splitId, after.sizes);
+}
+
+/**
+ * S with the `sizes` of its split `splitId` as they are in `from`, an S of before (a cancelled
+ * divider drag, #782 PR6): the tombstones' shares too, which a write to a split whose shown
+ * children had 0 together changed ("Shares of 0" at the top). The same S when the sizes are the
+ * same already; `undefined` when the split is not in both with the same children in the same order
+ * (the caller then writes what shows only).
+ */
+export function copyShadowSizes(
+	s: ShadowNode | null,
+	splitId: string,
+	from: ShadowNode | null
+): ShadowNode | null | undefined {
+	const now = s ? pathTo(s, splitId)?.at(-1) : undefined;
+	const then = from ? pathTo(from, splitId)?.at(-1) : undefined;
+	if (!s || now?.type !== 'split' || then?.type !== 'split') return undefined;
+	if (now.children.length !== then.children.length) return undefined;
+	if (!now.children.every((child, i) => child.id === then.children[i].id)) return undefined;
+	if (
+		now.sizes.length === then.sizes.length &&
+		now.sizes.every((size, i) => size === then.sizes[i])
+	)
+		return s;
+	return replaceNode(s, splitId, () => ({ ...now, sizes: then.sizes.slice() }));
+}
+
+/**
+ * S with a new id (`makeId`) for every split / tab group whose id is in `taken` - the ids of the
+ * layout that are not in the docked tree (`core/autohide.ts#idsOutOfDocked`). S keeps a split / tab
+ * group that does not show, with its id; while it is out of sight the id is free for the layout (a
+ * floating window may take it), so it is checked when a step may show it again (#782 PR6: a layout
+ * holds an id once, `validateDockLayout`). The same S when no id is taken.
+ */
+export function withFreeShadowIds(
+	s: ShadowNode | null,
+	taken: ReadonlySet<string>,
+	makeId: () => string = defaultMakeId
+): ShadowNode | null {
+	if (s === null || taken.size === 0) return s;
+	const free = (node: ShadowNode): ShadowNode => {
+		if (node.type === 'panel') return node;
+		const base = taken.has(node.id) ? { ...node, id: makeId() } : node;
+		if (base.type === 'tabs') return base;
+		const children = base.children.map(free);
+		return children.some((c, i) => c !== base.children[i]) ? { ...base, children } : base;
+	};
+	return free(s);
+}
+
+/**
+ * `docked` without the `collapsed` flags S cannot hold (`writeShadowView`): the flag of a region
+ * that is the only child of a split of `s` that shows. `docked` itself when it has none. What
+ * `DockState` compares the projection of S with: such a flag lives on the docked tree alone, and
+ * is no reason to make S again (#782 PR6).
+ */
+export function withoutLoneFlags(docked: DockNode | null, s: ShadowNode | null): DockNode | null {
+	if (docked === null || s === null) return docked;
+	const lone = new Set<string>();
+	const visit = (node: ShadowNode): void => {
+		if (node.type !== 'split') return;
+		const shown = node.children.filter(isShown);
+		const only = shown.length === 1 ? projectNode(shown[0]) : null;
+		if (only && only.type !== 'split') lone.add(only.id);
+		node.children.forEach(visit);
+	};
+	visit(s);
+	if (lone.size === 0) return docked;
+	const strip = (node: DockNode): DockNode => {
+		if (node.type === 'split') {
+			const children = node.children.map(strip);
+			return children.some((c, i) => c !== node.children[i]) ? { ...node, children } : node;
+		}
+		return lone.has(node.id) ? withoutCollapsed(node) : node;
+	};
+	return strip(docked);
 }
 
 // ----- following the docked tree (#782 PR4) ----------------------------------------------------
@@ -832,9 +945,9 @@ function viewOnto(node: ShadowNode, seen: DockNode): ShadowNode | undefined {
  * One thing S cannot hold: the `collapsed` flag of a region that is the only shown child of a
  * split of S (the others are tombstones). `projectShadow` shows that child without its flag, as
  * `tree.ts#collapse` drops it when the split folds - but in the docked tree the region may be
- * collapsed AFTER the fold, beside its new siblings. `undefined` then (and `inflateShadow` makes an
- * S that shows the tree without that flag); where the flag goes is decided with the write-back of
- * `setRegionCollapsed` (#782 PR5 / PR6).
+ * collapsed AFTER the fold, beside its new siblings. `undefined` then. Such a flag lives on the
+ * docked tree alone (#782 PR6): `DockState` writes the tree without it (`withoutLoneFlags`), so S
+ * stays as it is, and carries the flag over the steps it makes on S.
  */
 export function writeShadowView(
 	s: ShadowNode | null,
@@ -1371,8 +1484,17 @@ function finishWork(work: Work, records: Map<string, Map<string, SlotRecord>>): 
  * over other containers, an id in use - is not guessed at ("beside the nearest anchor" in another
  * container, as `slot.ts#restoreDockSlot` does). An entry for a pane that is docked, or a second entry for a
  * pane, is ignored.
+ *
+ * `taken` (#782 PR6): the ids of the layout that are not in `docked` - the regions in the edge
+ * bands with their panes, the floating windows (`core/autohide.ts#idsOutOfDocked`). They are in
+ * use: a tab group that went to a band with its id is not made again in S around a tab left docked
+ * (the pane out of it is `unplaced`), or the layout would hold the id twice once that pane is back.
  */
-export function inflateShadow(docked: DockNode | null, away: Iterable<ShadowAway>): InflatedShadow {
+export function inflateShadow(
+	docked: DockNode | null,
+	away: Iterable<ShadowAway>,
+	taken: Iterable<string> = []
+): InflatedShadow {
 	const dockedIds = new Set(docked ? shadowPanelIds(docked) : []);
 	const entries: { leaf: WorkLeaf; levels: SlotLevel[] }[] = [];
 	const records = new Map<string, Map<string, SlotRecord>>();
@@ -1392,6 +1514,8 @@ export function inflateShadow(docked: DockNode | null, away: Iterable<ShadowAway
 		});
 	}
 	if (entries.length === 0) return { shadow: docked, unplaced: [] };
+	// In use by something else of the layout: a container is not made again with such an id.
+	for (const id of taken) reserved.add(id);
 	const state = { root: docked ? workOf(docked) : null };
 	// A slot may fit only once another pane is in (its chain was cut short, or the panes it names
 	// are away themselves).
