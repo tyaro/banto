@@ -233,6 +233,10 @@ lockfile に既にある版に揃え、新しいパッケージは `@types/node`
 `@banto/dock-svelte` の性質テスト（Issue #782）のために、そのパッケージの devDependencies へ `fast-check` を足す判断は
 [ADR-0033](adr/0033-dock-svelte-fast-check-devdep.md)（5 件目。テストだけで使い、`src/` からは import しない。
 lockfile に増えるのは `fast-check` と `pure-rand` の 2 つ）。
+`banto-serve create-admin` のパスワードの非表示入力（Issue #866）には `rpassword` を引かず、`admin-template-core` が
+`windows-sys`（Windows の `SetConsoleMode`）と `libc`（Unix の `termios`）を直接の依存にして、約 60 行の `unsafe` を
+`password_input.rs` 1 ファイルに閉じる（6 件目。どちらも `Cargo.lock` に既にある版で、ビルドに入る crate は増えない。
+`rpassword` は新しい crate 2 つと別版の `windows-sys` を足すため）。
 
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 

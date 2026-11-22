@@ -16,6 +16,7 @@ pub mod items;
 // `pnpm banto add resource` declares each new resource's module above this
 // line (docs/recipes/add-resource.md).
 // [banto:add-resource:core-mod]
+pub mod password_input;
 pub mod resources;
 pub mod rest;
 pub mod startup;

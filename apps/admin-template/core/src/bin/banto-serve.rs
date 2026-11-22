@@ -99,7 +99,8 @@ const USAGE: &str = "使い方:
       サーバーを起動します（環境変数: BANTO_DB / BANTO_BIND / PORT ほか）。
   banto-serve create-admin --username <名前> [--display-name <表示名>]
       BANTO_DB の DB に管理者のアカウントを作り、同時にログイン必須にします。
-      パスワードは標準入力の 1 行目から読みます（引数では受け取りません）。
+      パスワードは、端末からなら非表示で 2 回入力、パイプ・ファイルからなら標準入力の
+      1 行目から読みます（引数では受け取りません）。
       アプリとサーバーを止めてから実行してください。";
 
 /// `create-admin`'s arguments. The password is not among them on purpose.
@@ -129,6 +130,27 @@ fn parse_create_admin_args(args: &[String]) -> Result<CreateAdminArgs, String> {
     })
 }
 
+/// Reads the new admin's password (Issue #866). From a terminal: prompt, echo
+/// off, and ask twice (a typo here would lock the only admin out). From a pipe
+/// or a file: the first line of stdin, as before (CI and scripts).
+fn read_new_password() -> Result<String, String> {
+    use admin_template_core::password_input as pw;
+    if !pw::stdin_is_terminal() {
+        return pw::read_password_line(&mut std::io::stdin().lock())
+            .map_err(|err| format!("パスワードを読めませんでした: {err}"));
+    }
+    eprint!("パスワード（入力は表示されません）: ");
+    let first =
+        pw::read_password_hidden().map_err(|err| format!("パスワードを読めませんでした: {err}"))?;
+    eprint!("パスワード（確認のためもう一度）: ");
+    let second =
+        pw::read_password_hidden().map_err(|err| format!("パスワードを読めませんでした: {err}"))?;
+    if !pw::confirmation_matches(&first, &second) {
+        return Err("2 回の入力が一致しません".to_string());
+    }
+    Ok(first)
+}
+
 /// `banto-serve create-admin` (ADR-0034 §7): no socket, no router. Returns
 /// the process exit code.
 async fn create_admin(args: &[String], db_target: &str) -> i32 {
@@ -139,15 +161,14 @@ async fn create_admin(args: &[String], db_target: &str) -> i32 {
             return 2;
         }
     };
-    eprintln!(
-        "banto-serve: パスワードを標準入力から 1 行で読みます（端末から入力すると画面に表示されます。ファイルやパイプからも渡せます）"
-    );
-    let mut password = String::new();
-    if let Err(err) = std::io::stdin().read_line(&mut password) {
-        eprintln!("banto-serve: パスワードを読めませんでした: {err}。DB には触れていません");
-        return 1;
-    }
-    let password = password.trim_end_matches(['\r', '\n']);
+    let password = match read_new_password() {
+        Ok(password) => password,
+        Err(message) => {
+            eprintln!("banto-serve: {message}。DB には触れていません");
+            return 1;
+        }
+    };
+    let password = password.as_str();
     let display_name = parsed.display_name.as_deref().unwrap_or(&parsed.username);
     let created = create_admin_and_require_login(
         db_target,

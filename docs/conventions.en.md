@@ -269,6 +269,10 @@ The decision to add `fast-check` to the devDependencies of `@banto/dock-svelte` 
 its property tests (Issue #782) is
 [ADR-0033](adr/0033-dock-svelte-fast-check-devdep.en.md) (the fifth; tests only,
 nothing under `src/` imports it; the lockfile gains `fast-check` and `pure-rand`).
+For the hidden password entry of `banto-serve create-admin` (Issue #866) `rpassword` is not added; `admin-template-core`
+takes `windows-sys` (`SetConsoleMode` on Windows) and `libc` (`termios` on Unix) as direct dependencies and confines about
+60 lines of `unsafe` to the one file `password_input.rs` (the sixth; both are versions already in `Cargo.lock`, so no crate
+enters the build, whereas `rpassword` adds two new crates and a second `windows-sys` version).
 
 ## 4. No reverse dependency from core → options [machine-checked]
 

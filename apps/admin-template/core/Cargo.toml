@@ -69,6 +69,16 @@ futures-util = { workspace = true }
 # `items.updated_at` is stamped with the LOCAL date of the app process (items.rs `local_today`).
 chrono = { workspace = true, features = ["clock"] }
 
+# Echo-off password entry for `banto-serve create-admin` (Issue #866, ADR-0002):
+# `password_input.rs` calls the console (Windows) / termios (Unix) directly. Both
+# crates are already in Cargo.lock (windows-sys 0.61.2, libc 0.2.191), so no crate
+# is added to the build; keep the versions equal to the transitive ones.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Console"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "net", "io-util"] }
 tower = { workspace = true, features = ["util"] }

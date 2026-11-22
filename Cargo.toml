@@ -89,6 +89,10 @@ sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 # features it calls (see `apps/admin-template/elev/Cargo.toml`).
 windows-sys = "0.61"
 embed-resource = "3.0"
+# Issue #866 (ADR-0002): termios for the echo-off password entry of `banto-serve
+# create-admin` (admin-template-core, Unix only). Already in Cargo.lock as a
+# transitive dependency (0.2.191), so no crate is added; keep them equal.
+libc = "0.2"
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }
