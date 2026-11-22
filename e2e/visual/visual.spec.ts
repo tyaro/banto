@@ -18,7 +18,6 @@
 import { expect, test } from '@playwright/test';
 import {
 	DIAGONAL_MATRIX,
-	FULL_MATRIX,
 	VIEWPORTS,
 	comboLabel,
 	primeDensity,
@@ -34,8 +33,11 @@ import {
 /** Chart/dock layout settle after the data-dependent element becomes visible. */
 const SETTLE_MS = 300;
 
+// login / dashboard use the diagonal pair like every other screen (#798): the
+// theme/preset pairs are decided by tokens, and shooting all 4 cost ~12 extra
+// Linux-only baselines per change for little extra signal.
 test.describe('login', () => {
-	for (const combo of FULL_MATRIX) {
+	for (const combo of DIAGONAL_MATRIX) {
 		for (const viewport of VIEWPORTS) {
 			const label = `${comboLabel(combo)} ${viewport.width}x${viewport.height}`;
 			test(`login ${label}`, async ({ page }) => {
@@ -59,7 +61,7 @@ test.describe('login', () => {
 });
 
 test.describe('dashboard', () => {
-	for (const combo of FULL_MATRIX) {
+	for (const combo of DIAGONAL_MATRIX) {
 		for (const viewport of VIEWPORTS) {
 			const label = `${comboLabel(combo)} ${viewport.width}x${viewport.height}`;
 			test(`dashboard ${label}`, async ({ page }) => {
