@@ -1162,11 +1162,15 @@ mod tests {
 
         // Refused after the body arrived (the gate closed meanwhile).
         let (send, body) = tokio::sync::oneshot::channel::<Bytes>();
+        // Told when the layer first polls the body, i.e. has begun to wait
+        // for it (no sleep: the test does not depend on timing).
+        let (polled, layer_is_waiting) = tokio::sync::oneshot::channel::<()>();
         let late_body = axum::body::Body::from_stream(futures_util::stream::once(async move {
+            let _ = polled.send(());
             Ok::<_, std::io::Error>(body.await.unwrap_or_default())
         }));
         let waiting = tokio::spawn(post_with(late_body));
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        layer_is_waiting.await.expect("the layer polled the body");
         writes.close();
         send.send(Bytes::from("late")).expect("still waiting");
         let response = waiting.await.expect("join");

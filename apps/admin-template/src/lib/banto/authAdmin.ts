@@ -18,6 +18,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
+import type { Role } from '../permissions';
 
 /**
  * A per-user permission key (Issue #697, user-permissions-plan §8-1), e.g.
@@ -40,12 +41,10 @@ export interface PermissionEntry {
 	descriptionKey: string;
 }
 
-export type AuthDisabledRole = 'admin' | 'editor' | 'viewer';
-
 /** Mirrors src-tauri's `AuthSettings` (camelCase on the wire, spec M11). */
 export interface AuthSettings {
 	disabled: boolean;
-	disabledRole: AuthDisabledRole;
+	disabledRole: Role;
 	autologinEnabled: boolean;
 	autologinUsername: string | null;
 	/**
@@ -101,7 +100,7 @@ export function getAuthSettings(): Promise<AuthSettings> {
  */
 export function applyAuthSettings(
 	disabled: boolean,
-	disabledRole: AuthDisabledRole,
+	disabledRole: Role,
 	permissions?: UserPermission[]
 ): Promise<AuthSettings> {
 	return call<AuthSettings>('auth_config_apply', {

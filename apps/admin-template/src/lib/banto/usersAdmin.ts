@@ -26,8 +26,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getAuthProvider, isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 import { CSRF_HEADER, getBantoMode } from './setup';
-
-export type Role = 'admin' | 'editor' | 'viewer';
+import type { Role } from '../permissions';
 
 /**
  * The per-user permission types (Issue #697) live in `authAdmin.ts`, which
