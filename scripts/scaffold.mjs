@@ -913,6 +913,7 @@ function removeAttachments() {
 	// (2) フロント: アプリ側クライアント/アダプタ
 	removeFile(`${APP}/src/lib/banto/attachmentsClient.ts`, 'attachmentsClient.ts 削除');
 	removeFile(`${APP}/src/lib/banto/attachmentsAdmin.ts`, 'attachmentsAdmin.ts 削除');
+	removeFile(`${APP}/src/lib/banto/attachmentsAdmin.test.ts`, 'attachmentsAdmin.test.ts 削除');
 
 	// (3) バックエンド: REST ルータ + items からの delete_for_record / 依存
 	//   rest/mod.rs

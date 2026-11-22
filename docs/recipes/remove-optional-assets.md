@@ -183,7 +183,7 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とそ�
    `[scaffold:attachments]` の印で囲んである。欄の前のカンマも消す）。新規作成の保存のあとに
    ファイルを上げる配線（`ResourceDetail`）は、`file` 欄が無ければ何もしないので残してよい。
 2. `apps/admin-template/src/lib/banto/attachmentsClient.ts`・
-   `src/lib/banto/attachmentsAdmin.ts` を削除。
+   `src/lib/banto/attachmentsAdmin.ts`（と試験の `attachmentsAdmin.test.ts`）を削除。
 3. `apps/admin-template/core/src/rest/attachments.rs` **ファイルを削除**し、
    `rest/mod.rs` の `mod attachments;`・`use attachments::attachments_router;`・
    `use banto_attachments::{…}` を外す。あわせて、`attachments.rs` だけが
