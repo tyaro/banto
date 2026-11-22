@@ -202,10 +202,11 @@ jobs:
   # display は items デモ・users/audit-log 画面・ダッシュボードを外したうえで
   # `/monitor` と初回起動シードを**足す**唯一のプリセットなので、
   # 「引いた後もビルド緑」に加えて「足した後も型検査/テスト緑」がここで担保される。
-  # e2e（display 用の1シナリオ・スモーク）はここでは走らせない — banto-serve の
-  # ビルドと Playwright ブラウザの用意が要り、このジョブの目的（コピーが壊れて
-  # いないこと）に対して重すぎるため。ci.yml の e2e ジョブがテンプレート本体で
-  # 同じ結線（閲覧公開 + 合成 viewer）を毎 PR で検証している。
+  # e2e（display 用の1シナリオ・スモーク）はここでは走らせない — Playwright ブラウザの
+  # 用意が要り、このジョブの目的（コピーが壊れていないこと）に対して重すぎるため。
+  # ci.yml の e2e ジョブがテンプレート本体で同じ結線（閲覧公開 + 合成 viewer）を毎 PR で
+  # 検証している。display だけ、生成物の banto-serve を新しい DB で起動し、初回の seed で
+  # 公開閲覧が有効になることを curl で確かめる（ADR-0034 §10、下の step）。
   presets:
     name: Scaffold ${{ matrix.preset }} → check
     runs-on: ubuntu-latest
@@ -305,6 +306,71 @@ jobs:
       - name: Cargo test the scaffolded copy (core crates)
         working-directory: ${{ env.DEST }}
         run: cargo test -p banto-core -p banto-storage -p banto-server -p admin-template-core
+
+      # ADR-0034 §10（C1 の受け入れ）: display の生成物を、新しい SQLite の DB で実際に起動する。
+      # `BANTO_VIEWER_PUBLIC` は渡さない — 公開閲覧は、実 migration（0001〜0014）の後に走る
+      # 初回の seed（`FIRST_BOOT_SETTINGS`）だけで有効になっていなければならない。
+      # 見るもの: (1) ヘッダつきの `POST /api/auth/grant/publicViewer` が 200 でトークンを返し、
+      # そのトークンで identity が読める、(2) DB の `settings` に seed の値と seed 済みの印がある、
+      # (3) 止めて同じ DB でもう一度起動しても、変えた設定が seed で戻らない。
+      # 単体試験（first_boot.rs）は「seed が書かれる」までで、起動したサーバーがそれを読んで
+      # 公開閲覧を出すことはここでしか見ない。
+      - name: Launch the display copy on a fresh database (first-boot seed → public viewing)
+        if: matrix.preset == 'display'
+        working-directory: ${{ env.DEST }}
+        env:
+          PORT: '18799'
+          BANTO_BIND: 127.0.0.1
+        run: |
+          set -euo pipefail
+          cargo build -p admin-template-core --bin banto-serve
+          export BANTO_DB="$RUNNER_TEMP/display-first-boot.sqlite3"
+          rm -f "$BANTO_DB"
+          unset BANTO_VIEWER_PUBLIC
+          base="http://127.0.0.1:$PORT"
+          client='X-Banto-Client: banto'
+
+          start() {
+            ./target/debug/banto-serve > "$RUNNER_TEMP/display-serve.log" 2>&1 &
+            pid=$!
+            for _ in $(seq 1 60); do
+              if curl -s -o /dev/null -H "$client" "$base/api/auth/status"; then return 0; fi
+              if ! kill -0 "$pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            echo "banto-serve did not start"; cat "$RUNNER_TEMP/display-serve.log"; return 1
+          }
+          stop() { kill "$pid"; wait "$pid" 2>/dev/null || true; }
+          setting() { sqlite3 "$BANTO_DB" "SELECT value FROM settings WHERE key = '$1'"; }
+          expect() { # expect <label> <actual> <expected>
+            if [ "$2" != "$3" ]; then echo "NG $1: got '$2', want '$3'"; cat "$RUNNER_TEMP/display-serve.log"; exit 1; fi
+            echo "ok $1 = $2"
+          }
+
+          start
+          code=$(curl -s -o grant.json -w '%{http_code}' -X POST -H "$client" "$base/api/auth/grant/publicViewer")
+          expect 'grant status' "$code" 200
+          token=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('grant.json','utf8')).token ?? '')")
+          test -n "$token"
+          code=$(curl -s -o identity.json -w '%{http_code}' -H "$client" -H "Authorization: Bearer $token" "$base/api/auth/identity")
+          expect 'identity status' "$code" 200
+          cat identity.json; echo
+          stop
+
+          expect 'first_boot.seeded' "$(setting first_boot.seeded)" true
+          expect 'server.viewer_public' "$(setting server.viewer_public)" true
+          expect 'server.enabled' "$(setting server.enabled)" true
+          expect 'server.bind' "$(setting server.bind)" 0.0.0.0
+          expect 'auth.disabled' "$(setting auth.disabled)" true
+          expect 'builtin admin rows' "$(sqlite3 "$BANTO_DB" "SELECT COUNT(*) FROM users WHERE kind = 'builtin' AND username = 'admin'")" 1
+          expect 'accounts' "$(sqlite3 "$BANTO_DB" "SELECT COUNT(*) FROM users WHERE kind = 'account'")" 0
+
+          # 2 回目の起動は seed し直さない（利用者が変えた設定を戻さない）。
+          sqlite3 "$BANTO_DB" "UPDATE settings SET value = '127.0.0.1' WHERE key = 'server.bind'"
+          start
+          stop
+          expect 'server.bind after the second start' "$(setting server.bind)" 127.0.0.1
+          rm -f grant.json identity.json
 
   # リソース生成の受け入れ（#715、docs/recipes/add-resource.md の生成器の節）:
   # `pnpm banto add resource` が吐いたコードが、素のテンプレートに足した状態でビルド緑

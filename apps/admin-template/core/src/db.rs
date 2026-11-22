@@ -201,18 +201,76 @@ pub fn sqlite_migration_manifest() -> MigrationManifest {
 const PRE_V8_DATABASE_MESSAGE: &str =
     "この DB は v8.0.0 より前の版のものです。読めません。DB を作り直してください";
 
-/// sqlx compares the checksum of every applied migration with the embedded
-/// one, in version order, before it applies anything newer. v8.0.0 rewrote
-/// `0003`/`0005`, so a database from an earlier version stops there - before
-/// `0014` could touch it - with `VersionMismatch`, which this turns into the
-/// explicit refusal.
-fn migration_error(err: sqlx::migrate::MigrateError) -> BantoError {
-    match err {
-        sqlx::migrate::MigrateError::VersionMismatch(version) => BantoError::Storage(format!(
-            "{PRE_V8_DATABASE_MESSAGE}（migration {version} の内容が、このアプリのものと違います）"
-        )),
-        other => BantoError::Storage(other.to_string()),
+/// The migration v8.0.0 rewrote first in version order (`0003_users.sql`), and
+/// the checksum (sqlx: SHA-384 of the file, lowercase hex) of the text v7.11.0
+/// shipped, per dialect. A database that has exactly this recorded for
+/// version 3 is a known pre-v8 database.
+const V7_USERS_MIGRATION_VERSION: i64 = 3;
+const V7_USERS_CHECKSUM_SQLITE: &str =
+    "25f4a5973321cc81959ce2f2e211df45acdfa0d0e9db30db155dd3ac62a36b00b82edbf393ac250b4867e2a30e1b1240";
+#[cfg(feature = "postgres")]
+const V7_USERS_CHECKSUM_POSTGRES: &str =
+    "66855aa6c0a663fbec1ac2b749477b07655b094492e5f8481eb0ae708584ee350522777beacd8090738b40a4121ad477";
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The checksum the database recorded for the migration `version`, as hex.
+/// `None` when it cannot be read (the answer then is "cannot tell").
+async fn applied_checksum(db: &Db, version: i64) -> Option<String> {
+    let bytes: Option<Vec<u8>> = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
+                .bind(version)
+                .fetch_optional(pool)
+                .await
+        }
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => {
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = $1")
+                .bind(version)
+                .fetch_optional(pool)
+                .await
+        }
     }
+    .ok()
+    .flatten();
+    bytes.as_deref().map(hex)
+}
+
+/// Turn a failed migration run into what the operator reads.
+///
+/// sqlx compares the checksum of every applied migration with the embedded
+/// one, in version order, before it applies anything newer, and stops with
+/// `VersionMismatch` at the first difference - the database is not changed.
+/// Two cases are told apart (the remedy differs):
+///
+/// - **A known pre-v8 database**: the mismatch is at `0003` and the database
+///   recorded v7.11.0's checksum for it. v8.0.0 rewrote that file and has no
+///   data migration (ADR-0034 §9): the explicit "recreate the database".
+/// - **Anything else** (another build, a hand-edited migration file, a damaged
+///   history): cannot be told, so nothing here suggests discarding the
+///   database. The message names the migration and says the data is untouched.
+async fn migration_error(db: &Db, err: sqlx::migrate::MigrateError) -> BantoError {
+    let sqlx::migrate::MigrateError::VersionMismatch(version) = err else {
+        return BantoError::Storage(err.to_string());
+    };
+    let v7_checksum = match db {
+        Db::Sqlite(_) => V7_USERS_CHECKSUM_SQLITE,
+        #[cfg(feature = "postgres")]
+        Db::Postgres(_) => V7_USERS_CHECKSUM_POSTGRES,
+    };
+    let is_pre_v8 = version == V7_USERS_MIGRATION_VERSION
+        && applied_checksum(db, version).await.as_deref() == Some(v7_checksum);
+    if is_pre_v8 {
+        return BantoError::Storage(PRE_V8_DATABASE_MESSAGE.to_string());
+    }
+    BantoError::Storage(format!(
+        "migration {version} の内容が、この DB に適用済みのものと違います。DB は変更していません。\
+         別の版・別のビルドのアプリで作った DB か、migration のファイルが書き換えられています。\
+         DB は消さずに、この DB を作った版のアプリで開くか、migration {version} のファイルを元に戻してください"
+    ))
 }
 
 /// Run the embedded migrations matching the handle's backend. The two migration
@@ -220,16 +278,14 @@ fn migration_error(err: sqlx::migrate::MigrateError) -> BantoError {
 /// `migrations-postgres/` is the strict-typed Postgres port), so each backend
 /// embeds and runs its own.
 async fn run_migrations(db: &Db) -> Result<(), BantoError> {
-    match db {
-        Db::Sqlite(pool) => sqlx::migrate!("./migrations-sqlite")
-            .run(pool)
-            .await
-            .map_err(migration_error),
+    let result = match db {
+        Db::Sqlite(pool) => sqlx::migrate!("./migrations-sqlite").run(pool).await,
         #[cfg(feature = "postgres")]
-        Db::Postgres(pool) => sqlx::migrate!("./migrations-postgres")
-            .run(pool)
-            .await
-            .map_err(migration_error),
+        Db::Postgres(pool) => sqlx::migrate!("./migrations-postgres").run(pool).await,
+    };
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) => Err(migration_error(db, err).await),
     }
 }
 
@@ -936,6 +992,64 @@ mod tests {
             .unwrap();
         assert_eq!(users, ["existing"]);
         pool.close().await;
+    }
+
+    /// The constant in the startup check is the checksum sqlx computes for the
+    /// v7.11.0 text of `0003_users.sql`.
+    #[test]
+    fn the_known_v7_checksum_is_the_checksum_of_the_v7_users_migration() {
+        let v7 = v7_migrator();
+        let users = v7
+            .iter()
+            .find(|m| m.version == V7_USERS_MIGRATION_VERSION)
+            .unwrap();
+        assert_eq!(hex(&users.checksum), V7_USERS_CHECKSUM_SQLITE);
+    }
+
+    /// A checksum mismatch that is NOT the known v7 history (another build, an
+    /// edited file, a damaged history) does not tell the operator to recreate
+    /// the database: it names the migration and leaves the data alone.
+    #[tokio::test]
+    async fn an_unexplained_checksum_mismatch_does_not_suggest_recreating_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        for (version, checksum) in [(9_i64, "x'00'"), (V7_USERS_MIGRATION_VERSION, "x'00'")] {
+            let path = dir.path().join(format!("mismatch-{version}.sqlite3"));
+            let db = init_db(&path).await.unwrap();
+            let pool = db.as_sqlite().unwrap();
+            // `checksum` is a literal of this test.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE _sqlx_migrations SET checksum = {checksum} WHERE version = {version}"
+            )))
+            .execute(pool)
+            .await
+            .unwrap();
+            let users_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            pool.close().await;
+
+            let message = init_db(&path)
+                .await
+                .expect_err("a mismatch stops the start")
+                .to_string();
+            assert!(!message.contains("v8.0.0 より前"), "{message}");
+            assert!(!message.contains("作り直し"), "{message}");
+            assert!(
+                message.contains(&format!("migration {version} の内容")),
+                "{message}"
+            );
+            assert!(message.contains("DB は変更していません"), "{message}");
+
+            let db = Db::connect_sqlite(&path).await.unwrap();
+            let pool = db.as_sqlite().unwrap();
+            let users_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(users_after, users_before);
+            pool.close().await;
+        }
     }
 
     /// ADR-0034 §9 (regression): a candidate that has every required table and

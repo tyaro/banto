@@ -125,6 +125,34 @@ mod tests {
         assert_eq!(settings.get("auth.disabled").await.unwrap(), None);
     }
 
+    /// The marker is taken inside the caller's transaction: when what follows
+    /// the seed fails and the transaction rolls back, neither the seeded rows
+    /// nor the marker remain, and the next start seeds.
+    #[tokio::test]
+    async fn a_rolled_back_seed_leaves_no_marker_and_the_next_start_seeds() {
+        let db = crate::db::migrate_memory().await.expect("migrate");
+        let pool = db.as_sqlite().expect("sqlite");
+        let settings = SettingsService::new(db.clone());
+
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            crate::settings::seed_first_boot_sqlite(&mut tx, DISPLAY_SEED)
+                .await
+                .unwrap()
+        );
+        // The same transaction sees itself as seeded.
+        assert!(
+            !crate::settings::seed_first_boot_sqlite(&mut tx, DISPLAY_SEED)
+                .await
+                .unwrap()
+        );
+        tx.rollback().await.unwrap();
+        assert!(settings.is_empty().await.unwrap());
+
+        assert!(settings.seed_first_boot(DISPLAY_SEED).await.unwrap());
+        assert!(settings.server_config().await.unwrap().viewer_public);
+    }
+
     // `scripts/scaffold.mjs --preset display` swaps this test for one that
     // checks the display defaults; keep its text in step with that script.
     #[tokio::test]

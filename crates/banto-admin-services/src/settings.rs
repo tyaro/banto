@@ -40,11 +40,25 @@ const SEED_UPSERT_SQLITE: &str = "INSERT INTO settings (key, value) VALUES (?, ?
 #[cfg(feature = "postgres")]
 const SEED_UPSERT_POSTGRES: &str = "INSERT INTO settings (key, value) VALUES ($1, $2) \
      ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+/// Taking the marker: inserts it, or does nothing when it is already there.
+/// One row affected = this transaction is the one that seeds.
+const SEED_TAKE_MARKER_SQLITE: &str =
+    "INSERT INTO settings (key, value) VALUES (?, 'true') ON CONFLICT(key) DO NOTHING";
+#[cfg(feature = "postgres")]
+const SEED_TAKE_MARKER_POSTGRES: &str =
+    "INSERT INTO settings (key, value) VALUES ($1, 'true') ON CONFLICT(key) DO NOTHING";
 
 /// The first-boot seed on a SQLite connection that is inside the caller's
-/// transaction (ADR-0034 §5): if the marker row is absent, upsert every pair
-/// (a seeded value wins over a row a migration inserted) and the marker;
-/// otherwise write nothing. `Ok(true)` when it wrote.
+/// transaction (ADR-0034 §5): take the marker row first, and only the
+/// transaction that got it upserts the pairs (a seeded value wins over a row a
+/// migration inserted). `Ok(true)` when it wrote, `Ok(false)` when the
+/// database was already seeded.
+///
+/// The marker is taken with one conflict-free INSERT at the start, not read
+/// and written at the end: two starts on the same unseeded database cannot
+/// both seed. The second one waits on the first's row; when the first commits
+/// it sees the marker and writes nothing (settings changed in between stay),
+/// and when the first rolls back the marker goes with it and the second seeds.
 ///
 /// Takes the connection, not the service, so a caller that must write more in
 /// the same transaction (the headless first-account CLI, ADR-0034 §7) calls
@@ -54,22 +68,19 @@ pub async fn seed_first_boot_sqlite(
     conn: &mut sqlx::SqliteConnection,
     pairs: &[(&str, &str)],
 ) -> Result<bool, BantoError> {
-    let seeded: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+    let taken = sqlx::query(SEED_TAKE_MARKER_SQLITE)
         .bind(KEY_FIRST_BOOT_SEEDED)
-        .fetch_optional(&mut *conn)
+        .execute(&mut *conn)
         .await
-        .map_err(banto_storage::storage_error)?;
-    if seeded.is_some() {
+        .map_err(banto_storage::storage_error)?
+        .rows_affected();
+    if taken == 0 {
         return Ok(false);
     }
-    for (key, value) in pairs
-        .iter()
-        .copied()
-        .chain([(KEY_FIRST_BOOT_SEEDED, "true")])
-    {
+    for (key, value) in pairs {
         sqlx::query(SEED_UPSERT_SQLITE)
-            .bind(key)
-            .bind(value)
+            .bind(*key)
+            .bind(*value)
             .execute(&mut *conn)
             .await
             .map_err(banto_storage::storage_error)?;
@@ -77,28 +88,28 @@ pub async fn seed_first_boot_sqlite(
     Ok(true)
 }
 
-/// PostgreSQL twin of [`seed_first_boot_sqlite`] (same contract).
+/// PostgreSQL twin of [`seed_first_boot_sqlite`] (same contract). Under READ
+/// COMMITTED the `ON CONFLICT DO NOTHING` insert waits for a concurrent
+/// transaction that inserted the same key, then inserts nothing if that one
+/// committed.
 #[cfg(feature = "postgres")]
 pub async fn seed_first_boot_postgres(
     conn: &mut sqlx::PgConnection,
     pairs: &[(&str, &str)],
 ) -> Result<bool, BantoError> {
-    let seeded: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = $1")
+    let taken = sqlx::query(SEED_TAKE_MARKER_POSTGRES)
         .bind(KEY_FIRST_BOOT_SEEDED)
-        .fetch_optional(&mut *conn)
+        .execute(&mut *conn)
         .await
-        .map_err(banto_storage::storage_error)?;
-    if seeded.is_some() {
+        .map_err(banto_storage::storage_error)?
+        .rows_affected();
+    if taken == 0 {
         return Ok(false);
     }
-    for (key, value) in pairs
-        .iter()
-        .copied()
-        .chain([(KEY_FIRST_BOOT_SEEDED, "true")])
-    {
+    for (key, value) in pairs {
         sqlx::query(SEED_UPSERT_POSTGRES)
-            .bind(key)
-            .bind(value)
+            .bind(*key)
+            .bind(*value)
             .execute(&mut *conn)
             .await
             .map_err(banto_storage::storage_error)?;
@@ -487,7 +498,12 @@ impl SettingsService {
         }
         match &self.db {
             Db::Sqlite(pool) => {
-                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                // BEGIN IMMEDIATE: the seed is a write from its first statement,
+                // so take the write lock up front instead of upgrading later.
+                let mut tx = pool
+                    .begin_with("BEGIN IMMEDIATE")
+                    .await
+                    .map_err(banto_storage::storage_error)?;
                 let wrote = seed_first_boot_sqlite(&mut tx, pairs).await?;
                 tx.commit().await.map_err(banto_storage::storage_error)?;
                 Ok(wrote)

@@ -67,6 +67,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .await
         .expect("init_db_from_target should run migrations-postgres and seed");
     the_baseline_schema_holds_on_postgres(&db).await;
+    the_first_boot_seed_runs_once_on_postgres(&db).await;
     // ADR-0034 §2: with only the built-in row there, the first setup works.
     let existing = UsersService::new(db.clone())
         .setup_first_user("existing", "password123", "Existing")
@@ -955,6 +956,20 @@ async fn a_v7_database_is_refused_on_postgres(url: &str) {
         .await
         .unwrap();
     assert_eq!(applied, 13);
+
+    // A mismatch that is not the known v7 history is not called "pre-v8": it
+    // names the migration and does not suggest recreating the database.
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = '\\x00' WHERE version = 3")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let message = init_db_from_target(url)
+        .await
+        .expect_err("an unexplained mismatch stops the start")
+        .to_string();
+    assert!(!message.contains("v8.0.0 より前"), "{message}");
+    assert!(message.contains("migration 3 の内容"), "{message}");
+    assert!(message.contains("DB は変更していません"), "{message}");
     pool.close().await;
 }
 
@@ -1061,6 +1076,104 @@ async fn the_baseline_schema_holds_on_postgres(db: &banto_storage::Db) {
     assert_eq!(owners, ["local"]);
     sqlx::query("DELETE FROM ui_settings")
         .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// ADR-0034 §5 on PostgreSQL: the seed's marker is taken at the start of the
+/// transaction, so two starts on the same unseeded database cannot both seed.
+/// The second waits for the first; after the first's ROLLBACK it seeds, after
+/// the first's COMMIT it writes nothing - not even over a setting that was
+/// changed in between. Leaves `settings` empty.
+async fn the_first_boot_seed_runs_once_on_postgres(db: &banto_storage::Db) {
+    use admin_template_core::settings::seed_first_boot_postgres;
+    use std::time::Duration;
+
+    const SEED: &[(&str, &str)] = &[("server.viewer_public", "true")];
+    let pool = db.as_postgres().expect("postgres handle").clone();
+    let settings = SettingsService::new(db.clone());
+    assert!(settings.is_empty().await.unwrap());
+
+    // First start fails after the seed: the waiting second start then seeds.
+    let mut first = pool.begin().await.unwrap();
+    assert!(seed_first_boot_postgres(&mut first, SEED).await.unwrap());
+    let waiting = {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            let mut second = pool.begin().await.unwrap();
+            let wrote = seed_first_boot_postgres(&mut second, SEED).await.unwrap();
+            second.commit().await.unwrap();
+            wrote
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !waiting.is_finished(),
+        "the second start waits for the first"
+    );
+    first.rollback().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(10), waiting)
+            .await
+            .expect("the second start is released")
+            .unwrap(),
+        "after a rollback the marker is gone and the second start seeds"
+    );
+    assert_eq!(
+        settings
+            .get("server.viewer_public")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+
+    // Start over: the first start commits, the waiting one writes nothing.
+    sqlx::query("DELETE FROM settings")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut first = pool.begin().await.unwrap();
+    assert!(seed_first_boot_postgres(&mut first, SEED).await.unwrap());
+    sqlx::query("UPDATE settings SET value = 'false' WHERE key = 'server.viewer_public'")
+        .execute(&mut *first)
+        .await
+        .unwrap();
+    let waiting = {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            let mut second = pool.begin().await.unwrap();
+            let wrote = seed_first_boot_postgres(&mut second, SEED).await.unwrap();
+            second.commit().await.unwrap();
+            wrote
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !waiting.is_finished(),
+        "the second start waits for the first"
+    );
+    first.commit().await.unwrap();
+    assert!(
+        !tokio::time::timeout(Duration::from_secs(10), waiting)
+            .await
+            .expect("the second start is released")
+            .unwrap(),
+        "after a commit the second start does not seed"
+    );
+    assert_eq!(
+        settings
+            .get("server.viewer_public")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("false"),
+        "the committed settings are not written again"
+    );
+    assert!(!settings.seed_first_boot(SEED).await.unwrap());
+
+    sqlx::query("DELETE FROM settings")
+        .execute(&pool)
         .await
         .unwrap();
 }
