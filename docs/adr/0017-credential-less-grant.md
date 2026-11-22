@@ -576,3 +576,31 @@ chronogazer（tyaro/banto-industrial）:
 ② → 決定 §2「公開する部品は 2 つだけ」、③ → 決定 §6・案 E、④ → 決定 §2「kind の識別子」、
 ⑤ → 決定 §2「`/api/auth/status`」、⑥ → 決定 §3）。関数の命名（`delete_user` の新しい形、
 `extra_auth_router` の新シグネチャ）は実装 PR で決める（設計の未決ではない）。
+
+## 追記（2026-11-22、Issue #778・#790・#786）: 組み込みの `admin`・監査の帰属・ロックダウンの条件（ADR-0034）
+
+[ADR-0034](0034-owner-identity-builtin-admin.md) が、本文の 3 か所を v8.0.0 で改める。grant の仕組み
+（発行口・`GrantSpec` / `GrantRegistry`・発行と失効の直列化・決定 §6）は変えない。ADR-0034 が `Proposed` の間は
+本文のままで、`Accepted` になり実装が入った時点（計画書 §7 の C2・C2b・C4）からこの追記が効く。
+
+- **決定 §3（自己削除のガード）**: grant セッションが acting id 無しで `delete_user` を呼べる形は変えない
+  （印つきの grant も、自分のアカウントの行は持たない）。変わるのは 2 点。
+  - 「最後の admin は消せない」は、ログインできる管理者だけを数える（`role = 'admin' AND kind = 'account'`）。
+    組み込みの `admin` の行は数えない。
+  - 組み込みの行（`kind = 'builtin'`）の削除・改名・無効化・降格・パスワードの設定は、呼び手がアカウントでも
+    grant でも、サービス層が断る。
+- **セキュリティの「監査」の項**: grant セッションの actor は、`GrantSpec` の印 `audit_as_builtin_admin` で決まる。
+  - 印なし（閲覧公開の `public` など）: 本文のまま、固定 identity の id が actor。`actor_id` は NULL。
+  - 印つき（管理者相当の grant）: `actor_username = 'admin'`・`actor_id` = 組み込みの行の id。`actor_role` は
+    セッションの実際のロール。id・name からは推測しない（conventions §10）。
+  - ui-settings は `ui.<identity.id>.*` ではなく、表 `ui_settings` の持ち主 `grant:<kind>` に持つ
+    （同じ kind の端末で共有する性質は同じ）。
+  - grant の固定 id（`GrantSpec.identity.id`）は、アカウントの username の予約名になる（大小無視）。
+    grant を後から足して、同名のアカウントが既に居れば起動が止まる。
+- **ロックダウンの条件**（決定 §5・帰結の「条件の保存 → `revoke_grant_tokens(kind)`」）: テンプレートの
+  ロックダウン（`auth.disabled` を off にする）は、ログインできる管理者のアカウントが 1 つ以上あるときだけ許す。
+  判定は「保存 → 失効」の**手前**に、同じロックの中で置く。「保存 → 同じ関数の中で直後に失効」の順は変えない。
+  派生アプリの試運転のロックダウンも、同じ条件を保存の手前に置く（決定 §5 と同じく参考。banto の規約ではない）。
+- 初回セットアップ（`POST /api/auth/setup`・`BANTO_ALLOW_SETUP`）は無くなる。アカウントが 0 の間に REST から
+  届くのは、grant の口と閲覧公開の読み取りだけになる。管理者相当の grant の注意（`require_loopback_peer`・
+  小さい `max_sessions`・決定 §6）は、その分だけ重くなる。

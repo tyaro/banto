@@ -556,6 +556,11 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
   作業ツリーで不変なことは `pnpm verify:migrations`
   （`scripts/verify-migrations-frozen.mjs`）が CI で捕捉する**（#312 で docs の
   移動に伴いコメント内のパスを書き換えて起きかけた事故の再発防止）。
+  - **例外（1 回だけ）: v8.0.0 の基準の作り直し**（[ADR-0034](adr/0034-owner-identity-builtin-admin.md) 決定 §9）。
+    v8.0.0 は互換不要で DB を作り直すので、`0003_users.sql`・`0005_audit_log.sql` を両方言で書き換え、
+    `0014_ui_settings.sql` を足す。v7.11.0 以前の DB は `VersionMismatch` で止まるのが狙いで、明示のエラーに
+    写して断る（読まない・移行しない）。`pnpm verify:migrations` には、タグ `v7.11.0` と比べるときに
+    この 4 ファイルだけを許す今回かぎりの許可を置く。**v8.0.0 のタグの後は、また追記のみ**。
 - **テーブル定義はアプリが所有**。`banto-attachments` は自前マイグレーションを
   持たず、テスト内の `CREATE TABLE` を `0006_attachments.sql` と同期させる
   （「MUST be kept in sync」）。
