@@ -1926,6 +1926,11 @@ mod tests {
             .execute(db.as_sqlite().unwrap())
             .await
             .unwrap();
+        // The built-in row is there before the first setup (ADR-0034 §2).
+        sqlx::query(BUILTIN_ROW_SQL)
+            .execute(db.as_sqlite().unwrap())
+            .await
+            .unwrap();
 
         let n = 6;
         let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(n));
@@ -1948,10 +1953,12 @@ mod tests {
             }
         }
         assert_eq!(ok, 1, "exactly one setup may succeed");
-        let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-            .fetch_one(db.as_sqlite().unwrap())
-            .await
-            .unwrap();
+        let admins: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND kind = 'account'",
+        )
+        .fetch_one(db.as_sqlite().unwrap())
+        .await
+        .unwrap();
         assert_eq!(admins, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2029,10 +2036,12 @@ mod tests {
             }
         }
         assert_eq!(ok, 1, "exactly one setup may succeed");
-        let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-            .fetch_one(db.as_postgres().unwrap())
-            .await
-            .unwrap();
+        let admins: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND kind = 'account'",
+        )
+        .fetch_one(db.as_postgres().unwrap())
+        .await
+        .unwrap();
         assert_eq!(admins, 1);
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE"
