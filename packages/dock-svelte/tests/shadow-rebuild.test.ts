@@ -503,6 +503,32 @@ describe('regraftShadow (#782 PR7)', () => {
 		expect(regraftShadow(old, docked, ['r'])).toEqual({ shadow: docked, unplaced: ['a'] });
 	});
 
+	// Codex P2 on #870: a share of 0 is a share (`validate.ts` and S take it) - it does not send
+	// the split to the even parts, and the other floated panes keep theirs.
+	it('a tombstone with a share of 0 keeps it, and the others keep theirs', () => {
+		const old = row([gone('a'), gone('b'), panel('c'), panel('d')], [0, 0.2, 0.3, 0.5]);
+		const docked = split(
+			'col',
+			'column',
+			[0.75, 0.25],
+			[split('r', 'row', [0.375, 0.625], ['c', 'd'].map(panel)), panel('z')]
+		);
+		const { shadow, unplaced } = regraftShadow(old, docked);
+		expect(unplaced).toEqual([]);
+		const r = shadow?.type === 'split' ? shadow.children[0] : null;
+		close(r?.type === 'split' ? r.sizes : [], [0, 0.2, 0.3, 0.5]);
+	});
+
+	it('the same through `DockState`: row[a 0, b .2, c .3, d .5], a and b floated, z added below', () => {
+		const dock = dockOf(split('r', 'row', [0, 0.2, 0.3, 0.5], ['a', 'b', 'c', 'd'].map(panel)));
+		dock.undockPanel('a');
+		dock.undockPanel('b');
+		add(dock, 'z', 'bottom');
+		expect(back(dock, 'b')).toBe(true);
+		expect(back(dock, 'a')).toBe(true);
+		close(sizesIn(dock, 'r'), [0, 0.2, 0.3, 0.5]);
+	});
+
 	it('tombstones that held the whole split leave the panes that show an even part', () => {
 		const old = row([gone('a'), gone('b'), panel('c')], [0.5, 0.5, 0]);
 		const docked = split('r', 'row', [0.5, 0.5], ['c', 'd'].map(panel));

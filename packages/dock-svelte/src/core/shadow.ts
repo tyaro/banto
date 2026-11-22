@@ -1080,11 +1080,12 @@ export function regraftShadow(
 			continue;
 		}
 		// The tombstones keep the share they had; the children that show share the rest as they
-		// are. Shares that leave nothing (or are none) give every child an even part.
+		// are. Shares that leave nothing for them give every child an even part.
 		const said = fits.map((u) => (Number.isFinite(u.share) && u.share > 0 ? u.share : 0));
 		const total = said.reduce((a, b) => a + b, 0);
 		const count = host.children.length + fits.length;
-		const sound = total < 1 - 1e-9 && said.every((x) => x > 0);
+		// A share of 0 is one ("Shares of 0" at the top): it does not unsettle the others.
+		const sound = total < 1 - 1e-9;
 		const room = sound ? 1 - total : host.children.length / count;
 		const shares = sound
 			? said
