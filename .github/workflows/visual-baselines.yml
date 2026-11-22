@@ -12,9 +12,15 @@
 # change and it regenerates the `-linux` baselines on the same ubuntu-latest
 # image ci.yml uses.
 #
-# `commit` defaults to false: the run only uploads the regenerated PNGs as an
-# artifact so they can be eyeballed before anything is written to the branch.
-# Dispatch again with `commit: true` once the diff looks intentional.
+# `commit` defaults to true: ONE dispatch regenerates, proves the baselines
+# pass, and pushes them to the branch; review the change as the PNG diff on the
+# PR. Pass `-f commit=false` to only upload the PNGs as an artifact (a trial
+# run that writes nothing to the branch).
+#
+# Only e2e/visual/visual.spec.ts is run: it is the only spec that calls
+# `toHaveScreenshot` (the 64 baselines all live under
+# visual.spec.ts-snapshots/), and only the `vite preview` server is started
+# (BANTO_E2E_SERVERS=visual), so no Rust build is needed.
 #
 # Third-party actions are pinned to commit SHAs (see ci.yml's top-of-file
 # policy comment); Dependabot (.github/dependabot.yml) keeps them current.
@@ -26,7 +32,7 @@ on:
       commit:
         description: 'Commit the regenerated baselines back to the dispatched branch'
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: visual-baselines-${{ github.ref }}
@@ -60,19 +66,6 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-
-      # playwright.config.ts's `webServer` is an ARRAY and Playwright starts
-      # every entry regardless of which --project is selected, so even a
-      # visual-only run launches the banto-serve binary - it has to exist or
-      # the run dies on the 30s webServer timeout.
-      - name: Build banto-serve (embed-ui)
-        run: cargo build -p admin-template-core --bin banto-serve --features embed-ui
-
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
@@ -86,14 +79,25 @@ jobs:
       # passed within tolerance, and left those baselines showing a header
       # that no longer existed. `=all` rewrites every baseline from the
       # current build, so what is committed always depicts the real UI.
+      # Narrowed to visual.spec.ts, the only spec with `toHaveScreenshot`.
+      # BANTO_E2E_SERVERS=visual starts just `vite preview`
+      # (playwright.config.ts `selectWebServers`), not banto-serve.
       - name: Regenerate baselines
-        run: pnpm e2e:visual --update-snapshots=all
+        env:
+          BANTO_E2E_SERVERS: visual
+        run: pnpm e2e:visual visual/visual.spec.ts --update-snapshots=all
 
       # A regenerated baseline that does not then PASS a normal run would be a
       # broken baseline (non-deterministic rendering), so prove it here rather
       # than discovering it on the next PR.
+      #
+      # Also narrowed to visual.spec.ts: the other visual-project specs take no
+      # screenshots, so regenerated PNGs cannot affect them, and the PR's own
+      # ci.yml run executes all of them anyway.
       - name: Verify regenerated baselines pass
-        run: pnpm e2e:visual
+        env:
+          BANTO_E2E_SERVERS: visual
+        run: pnpm e2e:visual visual/visual.spec.ts
 
       - name: Summarize changed baselines
         run: |

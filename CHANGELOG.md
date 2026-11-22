@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **ci:** `visual-baselines.yml` を `visual.spec.ts` だけの再生成・確認にし、Rust のビルドをやめ、`commit` の既定を true にした。1 回の dispatch で済む（#798）。
+
 ## [7.11.0] - 2026-11-22
 
 **v7.11.0 — `pnpm banto add resource` による CRUD リソースの生成（#715 E-2）とテンプレートの `AppResources`・`rest::resources_router`、`@banto/grid-svelte` の行の右クリックの口 `onRowContextMenu`（#784）、`@banto/dock-svelte` の隠れたパネルを戻す位置・比率の修正（#743・#777・#781）と据え置き pane のスクロール位置の復元（#768）、`pnpm check` への `e2e/` の型検査の追加（#774）。** 版の種類: minor（新しい機能の追加が主）。`crates/*/src` の `pub` と `packages/*/src/index.ts` の export の削除・改名は無い（`v7.10.0` との差分で確認）。公開の union への種類の追加も無い。実行時に見た目や動きが変わるのは、グリッドの Tab で入った直後の矢印キー、dock の「元の場所」へ戻す配置・比率、据え置き pane のスクロール位置の 3 点（下の「消費側への注意」）で、いずれも直す方向の変更なので minor とする。migration なし。
