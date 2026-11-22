@@ -35,8 +35,10 @@ export type SessionScope = ControllerSessionScope;
  * its own (`publicViewer` for the LAN viewer-public session - a real account
  * may share its `id`, Issue #209 - or an app's kind such as `commissioning`;
  * the identity is fixed per kind, so the id adds nothing), `local` for the
- * Tauri auth-disabled session, `account:${id}` for an account, `null` when
- * there is no identity or it has no usable `id` (fail closed).
+ * Tauri auth-disabled session, `acct:${accountId}` for an account (its
+ * never-reused id, ADR-0034 §1 - not the login name `id`, which a new
+ * account can be given), `null` when there is no identity or an account
+ * identity has no usable `accountId` (fail closed).
  */
 export function sessionOwnerKey(
 	identity: Identity | null | undefined,

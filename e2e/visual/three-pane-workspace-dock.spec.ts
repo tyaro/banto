@@ -13,7 +13,7 @@ import { DIAGONAL_MATRIX, primeKiosk, primeThemeAndAuth } from './theme';
 
 const PATH = '/tree/workspace-dock';
 /** The demo's own localStorage copy of the layout (`${storageKey}:${owner}`, demo mode's admin). */
-const LAYOUT_KEY = 'banto.dock.threePane.workspace:account:admin';
+const LAYOUT_KEY = 'banto.dock.threePane.workspace:acct:demo';
 /** The `UiSettingsProvider` copy in demo mode (`createLocalUiSettings`, prefix `banto.ui.`): written 500ms after the last change. */
 const PROVIDER_KEY = 'banto.ui.dock.threePane.workspace';
 

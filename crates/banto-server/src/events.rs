@@ -323,6 +323,7 @@ mod tests {
                             id: "admin".to_string(),
                             name: "管理者".to_string(),
                             role: "admin".to_string(),
+                            account_id: None,
                         })
                     } else {
                         None
@@ -463,6 +464,7 @@ mod tests {
                         id: username.to_string(),
                         name: username.to_string(),
                         role: role.to_string(),
+                        account_id: None,
                     },
                     stamp: SessionStamp {
                         account_id,
@@ -793,6 +795,7 @@ mod tests {
                     id: "public".into(),
                     name: "public".into(),
                     role: "viewer".into(),
+                    account_id: None,
                 },
                 on.clone(),
             ),
@@ -802,6 +805,7 @@ mod tests {
                     id: "commissioning".into(),
                     name: "試運転".into(),
                     role: "admin".into(),
+                    account_id: None,
                 },
                 on,
             ),

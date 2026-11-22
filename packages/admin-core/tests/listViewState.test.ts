@@ -28,8 +28,8 @@ import {
 	type SessionScope
 } from '../src/sessionScope.svelte';
 
-const ALICE = { id: 'alice', name: 'Alice' };
-const BOB = { id: 'bob', name: 'Bob' };
+const ALICE = { id: 'alice', name: 'Alice', accountId: 'uid-alice' };
+const BOB = { id: 'bob', name: 'Bob', accountId: 'uid-bob' };
 
 /**
  * The default controller commits sessions only through provider answers
@@ -38,7 +38,7 @@ const BOB = { id: 'bob', name: 'Bob' };
  * credential change and wait for the confirmation - the controller's own
  * hygiene runs as in the app (`onActive` purges other owners' entries,
  * `onNone` clears everything, I-6). The owner key is the one a provider
- * answer gets (`account:${id}`, or the grant kind alone).
+ * answer gets (`acct:${accountId}`, or the grant kind alone).
  */
 let scripted: ResolvedAuth;
 let revisionCounter = 0;
@@ -503,18 +503,64 @@ describe('owner matching (#255 4th review)', () => {
 	});
 
 	it('a real account whose id is "public" and the synthetic public viewer never share state (#209)', async () => {
-		expect(sessionOwnerKey({ id: 'public', name: 'x' })).not.toBe(
-			sessionOwnerKey({ id: 'public', name: 'x' }, 'publicViewer')
-		);
+		const named = { id: 'public', name: 'admin named public', accountId: 'uid-public' };
+		expect(sessionOwnerKey(named)).toBe('acct:uid-public');
+		expect(sessionOwnerKey(named)).not.toBe(sessionOwnerKey(named, 'publicViewer'));
 		const storage = makeMemoryStorage();
-		await beginSession({ id: 'public', name: 'admin named public' });
+		await beginSession(named);
 		const account = currentSessionScope();
 		saveLastOpenedId(account, 'items', 1, storage);
+		expect(loadLastOpenedId(account, 'items', storage)).toBe(1);
 
 		await beginSession({ id: 'public', name: 'viewer', role: 'viewer' }, 'publicViewer');
 		const viewer = currentSessionScope();
 		expect(viewer.generation).not.toBe(account.generation);
 		expect(loadLastOpenedId(viewer, 'items', storage)).toBeNull();
+	});
+
+	// ADR-0034 §1 / Issue #790. Same URL, same browser: A's entries are still
+	// in the storage when B - a NEW account with A's login name (and, after a
+	// backup was restored, A's `users.id`) - signs in. B has its own accountId.
+	it('a re-created account with the same login name does not read the retired account’s state', async () => {
+		const storage = makeMemoryStorage();
+		const retired = { id: 'op', name: 'Operator', accountId: 'uid-a' };
+		const recreated = { id: 'op', name: 'Operator', accountId: 'uid-b' };
+		await beginSession(retired);
+		const a = currentSessionScope();
+		expect(a.owner).toBe('acct:uid-a');
+		saveListViewState(
+			a,
+			'items:server',
+			{ sort: [{ field: 'price', direction: 'asc' }], filters: [] },
+			storage
+		);
+		saveLastOpenedId(a, 'items', 7, storage);
+		expect(loadLastOpenedId(a, 'items', storage)).toBe(7);
+
+		// No logout in between (the tab slept; another tab signed in as B).
+		await beginSession(recreated);
+		const b = currentSessionScope();
+		expect(b.owner).toBe('acct:uid-b');
+		expect(b.generation).not.toBe(a.generation);
+		expect(loadListViewState(b, 'items:server', undefined, storage)).toBeNull();
+		expect(loadLastOpenedId(b, 'items', storage)).toBeNull();
+		// ...and A's scope is no longer current, so nothing of A's is written under B.
+		saveLastOpenedId(a, 'items', 9, storage);
+		expect(loadLastOpenedId(b, 'items', storage)).toBeNull();
+		// The hygiene on a confirmed owner drops A's entries from the storage.
+		purgeListViewStateNotOwnedBy(b.owner!, storage);
+		expect(storage.getItem('banto.listView.items:server')).toBeNull();
+		expect(storage.getItem('banto.listView.lastOpened.items')).toBeNull();
+	});
+
+	it('state saved under the pre-v8 key (`account:<login name>`) is never restored', async () => {
+		const storage = makeMemoryStorage();
+		await beginSession({ id: 'op', name: 'Operator', accountId: 'uid-b' });
+		const b = currentSessionScope();
+		storage.setItem('banto.listView.items:server', owned({ sort: [], filters: [] }, 'account:op'));
+		storage.setItem('banto.listView.lastOpened.items', owned(42, 'account:op'));
+		expect(loadListViewState(b, 'items:server', undefined, storage)).toBeNull();
+		expect(loadLastOpenedId(b, 'items', storage)).toBeNull();
 	});
 
 	it('an entry without an owner envelope (legacy/hand-written) is never restored', () => {
@@ -528,7 +574,10 @@ describe('owner matching (#255 4th review)', () => {
 	describe('no confirmed owner: nothing is saved or restored (fail closed)', () => {
 		it.each([
 			['after the session ended', async () => endSession()],
-			['identity without an id', async () => beginSession({ id: '', name: 'nobody' })]
+			[
+				'an account identity without an accountId (ADR-0034 §1)',
+				async () => beginSession({ id: 'nobody', name: 'nobody' })
+			]
 		])('%s', async (_label, enter) => {
 			const storage = makeMemoryStorage();
 			saveLastOpenedId(scope, 'items', 42, storage);
@@ -636,15 +685,18 @@ describe('purgeListViewStateNotOwnedBy', () => {
 	it("keeps only the given owner's entries (and never touches other namespaces)", () => {
 		const storage = makeMemoryStorage();
 		storage.setItem('banto.auth.token', 'token');
-		storage.setItem('banto.listView.items:server', owned({ sort: [], filters: [] }, 'account:bob'));
+		storage.setItem(
+			'banto.listView.items:server',
+			owned({ sort: [], filters: [] }, 'acct:uid-bob')
+		);
 		storage.setItem(
 			'banto.listView.items:client',
-			owned({ sort: [], filters: [] }, 'account:alice')
+			owned({ sort: [], filters: [] }, 'acct:uid-alice')
 		);
 		storage.setItem('banto.listView.lastOpened.items', JSON.stringify(42));
 		storage.setItem('banto.listView.mode.items', '{not json');
 
-		purgeListViewStateNotOwnedBy('account:alice', storage);
+		purgeListViewStateNotOwnedBy('acct:uid-alice', storage);
 
 		expect(storage.getItem('banto.listView.items:client')).not.toBeNull();
 		expect(storage.getItem('banto.listView.items:server')).toBeNull();
@@ -657,7 +709,7 @@ describe('purgeListViewStateNotOwnedBy', () => {
 		const storage = makeMemoryStorage();
 		storage.setItem(
 			'banto.listView.items:client',
-			owned({ sort: [], filters: [] }, 'account:alice')
+			owned({ sort: [], filters: [] }, 'acct:uid-alice')
 		);
 		purgeListViewStateNotOwnedBy(null, storage);
 		expect(storage.length).toBe(0);

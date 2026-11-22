@@ -251,6 +251,7 @@ impl GrantSpec {
                 id: PUBLIC_VIEWER_ID.to_string(),
                 name: PUBLIC_VIEWER_ID.to_string(),
                 role: "viewer".to_string(),
+                account_id: None,
             },
             Arc::new(move || {
                 let settings = settings.clone();
@@ -486,6 +487,7 @@ mod tests {
             id: "commissioning".to_string(),
             name: "試運転".to_string(),
             role: "admin".to_string(),
+            account_id: None,
         }
     }
 

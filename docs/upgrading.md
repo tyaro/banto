@@ -493,6 +493,29 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   e2e は `webServer` の `command` を `node e2e/serve-with-first-admin.mjs <banto-serve>` にし、最初のシナリオを
   「`create-admin` で作ったアカウントでログインする」にする（`e2e/first-admin.ts` の `loginAsFirstAdmin`）。
 
+**持ち主のキーを `accountId` から作る（C3、#790、ADR-0034 §1）**。DB の作り直しは要らない（`users.account_uid` は C1 で入っている）。
+
+- **何が変わるか**: 画面の `sessionOwnerKey` は、アカウントを `account:<ログイン名>` ではなく `acct:<accountId>` で識別する。
+  `accountId` は `users.account_uid`（作成時の乱数）で、同名で作り直したアカウントにも、バックアップの復元の後に同じ
+  `users.id` で作ったアカウントにも、**ブラウザーに保存した**前の人の記憶（一覧の記憶・最近のコマンド・最近開いたレコード・
+  ドックの配置の手元の控え）が渡らない。`Identity.id` はログイン名のまま。
+- **仕切れるのはブラウザーの保存だけ**: サーバーに保存する ui-settings（テンプレートではドックの配置の控え。手元の控えより
+  優先して読む）は、まだログイン名で持ち主を決めている（`ui.{username}.{key}`）。同名で作り直したアカウントには、前の人の
+  ドックの配置がサーバーから戻りうる。サーバー側の仕切りは #786（C4・C5）で入る。
+- **`Identity { .. }` を組み立てている Rust（A）**: `banto_server::Identity` に `account_id: Option<String>` が増えた。
+  アカウントの verifier・`SessionLookup` は `Some(users.account_uid)`、grant の固定 identity と試験の固定 identity は `None`。
+  `UsersService` の `UserIdentity` は `account_uid` を持っているので、`account_id: identity.account_uid` と書ける。
+  `user_auth_state` / `audited_credential_verifier` / `user_session_lookup` を使っていれば直す所は無い。
+- **`UserIdentity { .. }` を組み立てている Rust**: `account_uid: None` を足す（Tauri のログインなしの合成 identity、試験）。
+- **Tauri の `Identity`（B）**: `src-tauri/src/lib.rs` の構造体に
+  `#[serde(rename = "accountId", skip_serializing_if = "Option::is_none")] account_id: Option<String>` を足し、
+  `identity_from` で `account_id: user.account_uid.clone()` を入れる。`local_identity` は `account_uid: None`。
+- **自作の `AuthProvider`（A）**: アカウントの identity に `accountId`（文字列）を載せる。載せないと持ち主のキーが `null` になり、
+  ブラウザーに置く持ち主つきの記憶が保存も復元もされない（dev ビルドの console に 1 回だけ警告。`UiSettingsProvider` を通す
+  サーバー側の読み書きは止まらない）。grant と `local` には載せない（載せても使われない）。
+- **持ち主のキーの値に依存している所**: 試験・E2E・自前の保存のキーにある `account:<ログイン名>` は `acct:<accountId>` になる
+  （テンプレートの demo は `acct:demo`）。旧いキーで保存された記憶は読まれない。移す口は無い。
+
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に
 `restore-pending.sqlite3` という名前で置く → 起動する。起動は「予約の適用 → migration → 初回の seed → 設定の読み取り」の

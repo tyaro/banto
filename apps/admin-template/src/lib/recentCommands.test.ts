@@ -49,38 +49,38 @@ describe('recent command history (per owner)', () => {
 	it("A's history is invisible to B, and visible again once A is back", () => {
 		const storage = new FakeStorage();
 		const opts = { storage, isCurrent: live };
-		recordRecentCommand(scopeOf('account:alice'), 'nav./items', opts);
-		recordRecentCommand(scopeOf('account:alice'), 'nav./users', opts);
-		expect(loadRecentCommandIds(scopeOf('account:alice'), opts)).toEqual([
+		recordRecentCommand(scopeOf('acct:uid-alice'), 'nav./items', opts);
+		recordRecentCommand(scopeOf('acct:uid-alice'), 'nav./users', opts);
+		expect(loadRecentCommandIds(scopeOf('acct:uid-alice'), opts)).toEqual([
 			'nav./users',
 			'nav./items'
 		]);
-		expect(loadRecentCommandIds(scopeOf('account:bob'), opts)).toEqual([]);
+		expect(loadRecentCommandIds(scopeOf('acct:uid-bob'), opts)).toEqual([]);
 		// B reading does not erase A's entry...
-		expect(loadRecentCommandIds(scopeOf('account:alice'), opts)).toEqual([
+		expect(loadRecentCommandIds(scopeOf('acct:uid-alice'), opts)).toEqual([
 			'nav./users',
 			'nav./items'
 		]);
 		// ...but B recording replaces it (one owner's entry at a time, like the list view state purge).
-		recordRecentCommand(scopeOf('account:bob'), 'nav./settings', opts);
-		expect(loadRecentCommandIds(scopeOf('account:bob'), opts)).toEqual(['nav./settings']);
-		expect(loadRecentCommandIds(scopeOf('account:alice'), opts)).toEqual([]);
+		recordRecentCommand(scopeOf('acct:uid-bob'), 'nav./settings', opts);
+		expect(loadRecentCommandIds(scopeOf('acct:uid-bob'), opts)).toEqual(['nav./settings']);
+		expect(loadRecentCommandIds(scopeOf('acct:uid-alice'), opts)).toEqual([]);
 	});
 
 	it('discards the old ownerless format on read', () => {
 		const storage = new FakeStorage();
 		storage.setItem(RECENT_KEY, JSON.stringify(['nav./items', 'nav./users']));
-		expect(loadRecentCommandIds(scopeOf('account:alice'), { storage })).toEqual([]);
+		expect(loadRecentCommandIds(scopeOf('acct:uid-alice'), { storage })).toEqual([]);
 		expect(storage.getItem(RECENT_KEY)).toBeNull();
 	});
 
 	it('an ownerless scope neither reads nor writes', () => {
 		const storage = new FakeStorage();
 		const opts = { storage, isCurrent: live };
-		recordRecentCommand(scopeOf('account:alice'), 'nav./items', opts);
+		recordRecentCommand(scopeOf('acct:uid-alice'), 'nav./items', opts);
 		expect(loadRecentCommandIds(scopeOf(null), opts)).toEqual([]);
 		recordRecentCommand(scopeOf(null), 'nav./users', opts);
-		expect(loadRecentCommandIds(scopeOf('account:alice'), opts)).toEqual(['nav./items']);
+		expect(loadRecentCommandIds(scopeOf('acct:uid-alice'), opts)).toEqual(['nav./items']);
 	});
 
 	it('public-viewer and local are owners like any other key', () => {
@@ -93,7 +93,7 @@ describe('recent command history (per owner)', () => {
 
 	it('a scope that is no longer the live session cannot write', () => {
 		const storage = new FakeStorage();
-		recordRecentCommand(scopeOf('account:alice'), 'nav./items', {
+		recordRecentCommand(scopeOf('acct:uid-alice'), 'nav./items', {
 			storage,
 			isCurrent: () => false
 		});
@@ -103,7 +103,7 @@ describe('recent command history (per owner)', () => {
 	it('moves a repeated id to the front and caps the list at 10', () => {
 		const storage = new FakeStorage();
 		const opts = { storage, isCurrent: live };
-		const scope = scopeOf('account:alice');
+		const scope = scopeOf('acct:uid-alice');
 		for (let i = 0; i < 12; i++) recordRecentCommand(scope, `c${i}`, opts);
 		recordRecentCommand(scope, 'c5', opts);
 		const ids = loadRecentCommandIds(scope, opts);
@@ -112,15 +112,15 @@ describe('recent command history (per owner)', () => {
 	});
 
 	it('no storage at all is a silent no-op', () => {
-		expect(loadRecentCommandIds(scopeOf('account:alice'), { storage: null })).toEqual([]);
+		expect(loadRecentCommandIds(scopeOf('acct:uid-alice'), { storage: null })).toEqual([]);
 		expect(() =>
-			recordRecentCommand(scopeOf('account:alice'), 'x', { storage: null, isCurrent: live })
+			recordRecentCommand(scopeOf('acct:uid-alice'), 'x', { storage: null, isCurrent: live })
 		).not.toThrow();
 	});
 });
 
 describe('watchRecentCommandOwner (hygiene)', () => {
-	const ALICE: Identity = { id: 'alice', name: 'Alice' };
+	const ALICE: Identity = { id: 'alice', name: 'Alice', accountId: 'uid-alice' };
 
 	function provider(answers: ResolvedAuth[]) {
 		const rev = '1.0' as CredentialRevision;
@@ -144,7 +144,7 @@ describe('watchRecentCommandOwner (hygiene)', () => {
 	it("drops another owner's entry once an owner is confirmed, keeps the same owner's", async () => {
 		const storage = new FakeStorage();
 		const opts = { storage, isCurrent: live };
-		recordRecentCommand(scopeOf('account:bob'), 'nav./items', opts);
+		recordRecentCommand(scopeOf('acct:uid-bob'), 'nav./items', opts);
 		const controller = createSessionController(provider([active(ALICE)]), {
 			onNone: () => {},
 			onActive: () => {}
@@ -154,21 +154,21 @@ describe('watchRecentCommandOwner (hygiene)', () => {
 		expect(storage.getItem(RECENT_KEY)).toBeNull();
 		stop();
 
-		recordRecentCommand(scopeOf('account:alice'), 'nav./users', opts);
+		recordRecentCommand(scopeOf('acct:uid-alice'), 'nav./users', opts);
 		const again = createSessionController(provider([active(ALICE)]), {
 			onNone: () => {},
 			onActive: () => {}
 		});
 		const stop2 = watchRecentCommandOwner(again, opts);
 		await resolveSettled(again);
-		expect(loadRecentCommandIds(scopeOf('account:alice'), opts)).toEqual(['nav./users']);
+		expect(loadRecentCommandIds(scopeOf('acct:uid-alice'), opts)).toEqual(['nav./users']);
 		stop2();
 	});
 
 	it('drops the history when none is confirmed', async () => {
 		const storage = new FakeStorage();
 		const opts = { storage, isCurrent: live };
-		recordRecentCommand(scopeOf('account:alice'), 'nav./items', opts);
+		recordRecentCommand(scopeOf('acct:uid-alice'), 'nav./items', opts);
 		const controller = createSessionController(provider([]), {
 			onNone: () => {},
 			onActive: () => {}

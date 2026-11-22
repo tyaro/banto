@@ -45,7 +45,7 @@
   一意制約。改名・ロールの変更では変えない。**秘密ではない**（認証にも認可にも使わない。記憶を仕切る名前）。
   アカウントの行では列の制約で必須、組み込みの行には持たせない（§2）。
 - wire の `Identity`（`crates/banto-server/src/auth/session.rs:27`）に `accountId` を足す（REST の
-  `/api/auth/identity`・ログインの応答、Tauri のコマンド）。アカウントのセッションでは `account_uid`。
+  `/api/auth/identity`、Tauri の `auth_identity`・`auth_resolve`。ログインの応答は identity を持たないので変えない）。アカウントのセッションでは `account_uid`。
   grant セッションと Tauri のログインなし（`local`）には載せない。
 - 画面の `sessionOwnerKey`: `local` と grant の kind は今のまま。アカウントは **`acct:<accountId>`**。
   `accountId` が無ければ **`null`**（何とも一致しない。fail closed）。dev ビルドでは、account の kind で

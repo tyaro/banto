@@ -32,7 +32,13 @@ const AUTH_KEY = 'banto.auth.demo';
  * settings page), which should behave exactly as if a real admin were
  * logged in.
  */
-const DEMO_IDENTITY = { id: 'admin', name: '管理者', role: 'admin' } as const;
+/**
+ * `accountId` (ADR-0034 §1): the demo has one account that is never deleted
+ * or re-created, so a fixed value is "never reused" here. Without it the
+ * owner key would be `null` and no per-owner state (list state, recent
+ * commands, dock layout) would be kept.
+ */
+const DEMO_IDENTITY = { id: 'admin', name: '管理者', role: 'admin', accountId: 'demo' } as const;
 
 function isSessionAuthed(): boolean {
 	return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(AUTH_KEY) === '1';

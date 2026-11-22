@@ -107,7 +107,7 @@ function fakeServer(options: { viewerPublic: boolean }) {
 	return { state, fetchFn: fetchFn as unknown as typeof fetch };
 }
 
-const ALICE = { id: 'alice', name: 'Alice' };
+const ALICE = { id: 'alice', name: 'Alice', accountId: 'uid-alice' };
 const PUBLIC_VIEWER = { id: 'public', name: 'public', role: 'viewer', kind: 'publicViewer' };
 
 function storedTokens() {
@@ -240,7 +240,7 @@ describe('the guard ends the confirmed-invalid session (#215/#255, I-6)', () => 
 		state.validTokens.add('user-token');
 		await expect(route(auth)).resolves.toBe('session');
 		const scope = currentSessionScope();
-		expect(scope.owner).toBe('account:alice');
+		expect(scope.owner).toBe('acct:uid-alice');
 		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, sessionStorage);
 		return scope;
 	}

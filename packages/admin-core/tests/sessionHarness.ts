@@ -76,8 +76,13 @@ export function makeScheduler() {
 	};
 }
 
-export const ALICE: Identity = { id: 'alice', name: 'Alice', role: 'admin' };
-export const BOB: Identity = { id: 'bob', name: 'Bob', role: 'viewer' };
+export const ALICE: Identity = {
+	id: 'alice',
+	name: 'Alice',
+	accountId: 'uid-alice',
+	role: 'admin'
+};
+export const BOB: Identity = { id: 'bob', name: 'Bob', accountId: 'uid-bob', role: 'viewer' };
 export const PUBLIC: Identity = {
 	id: 'public',
 	name: 'public',

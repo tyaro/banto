@@ -50,7 +50,7 @@ describe('demo AuthProvider (standard contract)', () => {
 			status: 'active',
 			checked: after,
 			current: after,
-			identity: { id: 'admin', name: '管理者', role: 'admin' }
+			identity: { id: 'admin', name: '管理者', role: 'admin', accountId: 'demo' }
 		});
 	});
 

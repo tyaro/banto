@@ -23,11 +23,27 @@ use crate::grant::GrantKind;
 /// that need to make a decision based on it (`admin-template-core::rest`'s
 /// role-guard middleware, `src-tauri`'s `require_role`) parse it into their
 /// own `Role` type.
+///
+/// `account_id` (wire: `accountId`, ADR-0034 section 1, Issue #790) is the
+/// account's never-reused `users.account_uid`: the screen keys per-owner
+/// saved state on it (`sessionOwnerKey` = `acct:<accountId>`), because a
+/// username can be given to a new account and `users.id` rewinds when a
+/// backup is restored. `Some` for an account session, `None` for a grant
+/// session (its owner is its kind) - then the key is left out of the JSON.
+/// Not a secret and never an input to authentication or authorization. It is
+/// NOT [`SessionStamp::account_id`] (the numeric `users.id` a session is
+/// bound to, which never reaches the wire).
+///
+/// A credential verifier / session lookup that leaves it `None` for an
+/// account gets a session whose owner key is `null` on the screen: nothing
+/// per-owner is saved or restored (fail closed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
     pub id: String,
     pub name: String,
     pub role: String,
+    #[serde(rename = "accountId", default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
 }
 
 /// Verifies a `username`/`password` pair against whatever credential store

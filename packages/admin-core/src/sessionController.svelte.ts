@@ -12,7 +12,8 @@
  * - `commit()` is the only function that writes `status`/`owner`/
  *   `generation`/`identity`/`kind` (I-1). `epoch` advances on every commit
  *   (freshness), `generation` only when `(status, owner, kind)` changes
- *   (I-2, design §3.1).
+ *   (I-2, design §3.1) - or, between two actives without an owner, the
+ *   identity's `id` (ADR-0034 §1).
  * - `resolve()` asks the provider ONE question at a time (single-flight,
  *   I-9) and decides - in the continuation that received the answer, with
  *   no `await` in between - whether the answer may be applied (design §5.1
@@ -64,9 +65,9 @@ export type { SessionKind } from './provider';
 export interface SessionSnapshot {
 	/** `unknown` = right after start-up, or a credential switch is being confirmed (the hold, I-5). */
 	readonly status: 'unknown' | 'none' | 'active';
-	/** `sessionOwnerKey(identity, kind)`; `null` unless active with an identity that has an id. */
+	/** `sessionOwnerKey(identity, kind)`; `null` unless active with an identity that has an owner (an account needs `accountId`). */
 	readonly owner: string | null;
-	/** +1 only when `(status, owner, kind)` changes (I-2). Monotonic. */
+	/** +1 only when `(status, owner, kind)` changes (I-2), or the `id` of an active identity without an owner. Monotonic. */
 	readonly generation: number;
 	readonly identity: Identity | null;
 	readonly kind: SessionKind | null;
@@ -195,14 +196,29 @@ export const DEFAULT_SESSION_TIMEOUT_MS = 10_000;
 export const DEFAULT_MAX_STALE_RETRIES = 3;
 export const DEFAULT_SESSION_RETRY = { initialMs: 1_000, maxMs: 30_000 } as const;
 
+let warnedAccountWithoutId = false;
+
+/** A dev build (Vite's `import.meta.env.DEV`); `false` wherever that is not defined. */
+function isDevBuild(): boolean {
+	return (import.meta as { env?: { DEV?: unknown } }).env?.DEV === true;
+}
+
 /**
  * Stable owner key for `identity` under `kind` (design §5.4, 統合修正 13,
- * ADR-0017): the Tauri auth-disabled session is `local` (never
- * `account:0`), a grant kind is the kind on its own (`publicViewer`,
- * `commissioning`, ... - its identity is fixed per kind, so the id adds no
- * information), an account is `account:${id}`. `null` when there is no
- * identity or (for an account) it has no usable id (fail closed - unknown
- * owners never match anything).
+ * ADR-0017, ADR-0034 §1): the Tauri auth-disabled session is `local`, a
+ * grant kind is the kind on its own (`publicViewer`, `commissioning`, ... -
+ * its identity is fixed per kind, so nothing else adds information), an
+ * account is `acct:${identity.accountId}`.
+ *
+ * An account is keyed on its never-reused `accountId` and NOT on
+ * `identity.id` (Issue #790): `id` is the login name, and a name can be
+ * given to a new account after the old one is retired - the new person
+ * would get the old person's saved list state, recent commands and dock
+ * layout. `null` when there is no identity, or an account identity carries
+ * no usable `accountId` (fail closed - an unknown owner never matches
+ * anything, so nothing per-owner is saved or restored). A dev build warns
+ * once about the latter: the app's `AuthProvider` (or its server) builds
+ * `Identity` without `accountId`.
  */
 export function sessionOwnerKey(
 	identity: Identity | null | undefined,
@@ -211,9 +227,18 @@ export function sessionOwnerKey(
 	if (!identity) return null;
 	if (kind === 'local') return 'local';
 	if (kind && kind !== 'account') return kind;
-	const id: unknown = identity.id;
-	if ((typeof id !== 'string' && typeof id !== 'number') || id === '') return null;
-	return `account:${String(id)}`;
+	const accountId: unknown = identity.accountId;
+	if (typeof accountId === 'string' && accountId !== '') return `acct:${accountId}`;
+	if (!warnedAccountWithoutId && isDevBuild()) {
+		warnedAccountWithoutId = true;
+		console.warn(
+			'[banto] sessionOwnerKey: an account identity has no `accountId`, so its owner key is null ' +
+				'and nothing per-owner (list state, recent commands, dock layout) is saved or restored. ' +
+				'Put the never-reused account id on `Identity.accountId` (REST `/api/auth/identity`, ' +
+				'the Tauri identity) - see ADR-0034 and the v8.0.0 CHANGELOG.'
+		);
+	}
+	return null;
 }
 
 /**
@@ -475,8 +500,23 @@ function createCore(
 	): void {
 		epoch += 1;
 		const prev = snap;
+		// Two ownerless actives (account identities without `accountId`,
+		// ADR-0034 §1) cannot be told apart by `owner`. A different login name
+		// is still someone else for the in-flight guards (`isCurrent(scope)`):
+		// the generation advances, so work started for the first is not
+		// finished as the second (fail closed; before `accountId` the owner
+		// `account:<id>` did this).
+		const ownerlessIdentityChanged =
+			prev.status === 'active' &&
+			next.status === 'active' &&
+			prev.owner === null &&
+			next.owner === null &&
+			prev.identity?.id !== next.identity?.id;
 		const changed =
-			prev.status !== next.status || prev.owner !== next.owner || prev.kind !== next.kind;
+			prev.status !== next.status ||
+			prev.owner !== next.owner ||
+			prev.kind !== next.kind ||
+			ownerlessIdentityChanged;
 		const previousActiveOwner =
 			next.status === 'none' || options.forgetOwners
 				? null

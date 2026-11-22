@@ -86,8 +86,27 @@ export interface DataProvider {
 }
 
 export interface Identity {
+	/**
+	 * The login name (the REST / Tauri convention: the account's `username`;
+	 * a grant's fixed id). For display and for "which account" lookups. NOT
+	 * an owner key: a name can be given to a new account - use `accountId`.
+	 */
 	id: string;
 	name: string;
+	/**
+	 * The account's never-reused id (ADR-0034 §1, Issue #790; the server's
+	 * `users.account_uid`, a random value assigned when the account is
+	 * created). `sessionOwnerKey` keys an account on it (`acct:<accountId>`),
+	 * so a new account with a retired account's name - or with its row id
+	 * after a backup was restored - does not get the old one's saved state.
+	 * Not a secret, and never an input to authorization.
+	 *
+	 * Present for an account session; absent for a grant session and the
+	 * Tauri auth-disabled `local` session (their owner is the kind). An
+	 * `AuthProvider` whose account identities leave it out gets a `null`
+	 * owner: nothing per-owner is saved or restored (fail closed).
+	 */
+	accountId?: string;
 	/**
 	 * Spec M10 RBAC: the account's role (`'admin' | 'editor' | 'viewer'`,
 	 * lowercase, matching `admin_template_core::users::Role::as_str`/the

@@ -226,7 +226,7 @@ describe('createThreePaneLayoutTarget: a layout being applied is never a user ch
 });
 
 describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the provider', () => {
-	const SCOPE = { generation: 1, owner: 'account:1' } as SessionScope;
+	const SCOPE = { generation: 1, owner: 'acct:1' } as SessionScope;
 	const KEY = 'banto.dock.three-test';
 
 	function memoryStorage(): Storage {

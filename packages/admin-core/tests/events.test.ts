@@ -439,7 +439,7 @@ describe('connectEvents', () => {
 				expect(ended).not.toHaveBeenCalled();
 				expect(getSessionController().snapshot).toMatchObject({
 					status: 'active',
-					owner: 'account:alice'
+					owner: 'acct:uid-alice'
 				});
 				off();
 			});

@@ -681,7 +681,13 @@ impl AuthState {
         tokens.records.insert(
             token.clone(),
             TokenRecord {
-                identity: spec.identity.clone(),
+                // A grant session never carries an `accountId` (ADR-0034
+                // section 1): its owner on the screen is its kind, and there
+                // is no account row behind it.
+                identity: Identity {
+                    account_id: None,
+                    ..spec.identity.clone()
+                },
                 issued_at: now,
                 last_used: now,
                 remembered: false,
