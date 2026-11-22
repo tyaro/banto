@@ -377,7 +377,7 @@ export class DockState {
 		}
 	}
 
-	#panels: DockPanelInfo[] = $derived.by(() => this.#listPanels(this.#layout));
+	#panels: DockPanelInfo[] = $derived.by(() => this.#listPanels(this.#layout, this.#flyout));
 
 	/**
 	 * Every pane in the layout, for a View menu with a checkbox per pane (#663).
@@ -393,7 +393,8 @@ export class DockState {
 		return this.#panels;
 	}
 
-	#listPanels(layout: DockLayout): DockPanelInfo[] {
+	#listPanels(layout: DockLayout, flyout: string | null): DockPanelInfo[] {
+		const onScreen = onScreenPanelIds(layout, flyout);
 		const byId = new Map<string, DockPanelInfo>();
 		const visit = (node: DockNode): void => {
 			if (node.type === 'panel') {
@@ -402,7 +403,8 @@ export class DockState {
 					title: node.title,
 					icon: node.icon,
 					placement: 'docked',
-					visible: true
+					visible: true,
+					onScreen: onScreen.has(node.id)
 				});
 			} else node.children.forEach(visit);
 		};
@@ -416,6 +418,7 @@ export class DockState {
 					icon: p.icon,
 					placement: 'docked',
 					visible: true,
+					onScreen: onScreen.has(p.id),
 					autoHidden: true
 				});
 			}
@@ -426,7 +429,8 @@ export class DockState {
 				title: w.title,
 				icon: w.icon,
 				placement: !w.open && w.dockSlot ? 'docked' : 'floating',
-				visible: w.open
+				visible: w.open,
+				onScreen: onScreen.has(w.id)
 			});
 		}
 		const out: DockPanelInfo[] = [];
@@ -563,9 +567,25 @@ export class DockState {
 		this.layout = { ...this.layout, docked: next };
 	}
 
-	/** Is the pane on screen: in the docked tree (even as a background tab) or an open floating window (#663). */
+	/**
+	 * Is the pane NOT closed (#663): in the docked tree (even as a background tab or
+	 * inside a collapsed region), auto-hidden to a band, or an open floating window.
+	 * The View menu's checkbox. For "is it really on screen" use `isOnScreen`.
+	 */
 	isVisible(id: string): boolean {
 		return this.#isDocked(id) || this.isAutoHidden(id) || this.isOpen(id);
+	}
+
+	/**
+	 * Is the pane really on screen (#792, reactive)? False for a pane in a collapsed
+	 * region, a background tab, an auto-hidden pane that is not slid out (`flyoutPanel`),
+	 * a floating window collapsed to its title bar, a closed window and an unknown id.
+	 * True for the front tab of an uncollapsed docked region, an open uncollapsed
+	 * floating window and the pane slid out now. Not about the host's size or the
+	 * browser tab being hidden.
+	 */
+	isOnScreen(id: string): boolean {
+		return onScreenPanelIds(this.layout, this.#flyout).has(id);
 	}
 
 	// --- auto-hide (#694 PR-3, `core/autohide.ts`) ---
@@ -1258,4 +1278,22 @@ export class DockState {
  */
 export function createDockState(initial?: DockLayout | string, makeId?: () => string): DockState {
 	return new DockState(initial, makeId);
+}
+
+/** Ids of the panes really on screen (#792): see `DockState.isOnScreen`. */
+function onScreenPanelIds(layout: DockLayout, flyout: string | null): Set<string> {
+	const out = new Set<string>();
+	const visit = (node: DockNode): void => {
+		if (node.type === 'panel') {
+			if (!node.collapsed) out.add(node.id);
+		} else if (node.type === 'tabs') {
+			if (node.collapsed) return;
+			const front = node.children[node.activeIndex];
+			if (front) out.add(front.id);
+		} else node.children.forEach(visit);
+	};
+	if (layout.docked) visit(layout.docked);
+	for (const w of layout.floating) if (w.open && !w.collapsed) out.add(w.id);
+	if (flyout !== null && findAutoHidden(layout, flyout) !== null) out.add(flyout);
+	return out;
 }

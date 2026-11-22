@@ -24,13 +24,12 @@
 
 ### Added
 
+- **dock-svelte:** `DockState.isOnScreen(id)`（reactive）と `dock.panels[].onScreen` を足した。畳んだ区画の中・タブの裏・引き出していない帯の pane・タイトルバーへ畳んだ浮動・閉じた窓を偽にする。`isVisible` は「閉じていない」の意味のまま（doc を直しただけ、改名なし）。`DockPanelInfo` に `onScreen` が増える（#792）。 消費側への注意: `DockPanelInfo.onScreen` は必須の `boolean` なので、アプリ側で `DockPanelInfo` を自前で組み立てている箇所（テストのモックなど）は型エラーになる。`onScreen` を足す。また `dock.panels` は `flyoutPanel` の開閉でも作り直されるようになった（引き出した帯の pane の `onScreen` が変わるため。ほかの pane の行は値が同じでも参照が変わる）。
 - **dock-svelte:** `DockHost.cancelGesture(): boolean` を足した。進行中の操作（ドラッグ・リサイズ・仕切りの移動）を取り消し、対象を元に戻す。取り消したら `true`、無ければ `false` で何も起こらない。`onGestureEnd` へは `'cancel'` と理由 `'api'` で届く。`arrange` を一瞬 `false` にする回り道が要らなくなる（#796）。
 
 ### Changed
 
 - **dock-svelte（挙動の変化）:** `DockHost.replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout` を含む）は、不正でない置き換えなら、`beforePanelChange` に聞く前に進行中の操作を自動で取り消す。消費側への注意: 操作中に `replaceLayout` / `resetLayout` を呼ぶと、操作は確定せず `onGestureEnd(kind, 'cancel', 'api')` で閉じる。置き換えが拒否（`refused`）・`stale` になっても、取り消した操作は戻らない。`invalid` のときは取り消さない。さらに、`replaceLayout` が処理中（`beforePanelChange` の承認待ちを含む）の間は新しい操作（ドラッグ・リサイズ・仕切り）が始まらず、置き換えの結果が返るまで続く（承認待ちの間に始めた操作の pointerup や Esc が新しい配置を上書きしないため。並行して複数あれば最後の 1 件が返るまで）（#796）。
-
-### Changed
 
 - **ui:** `ToastHost` の success・error・warning の背景を、不透明な `--banto-surface-overlay` の上に tint を重ねる形にした。ダークの tint は半透明なので、下の画面が透けて通知が読みにくかった。theme のトークンは変えていない。`BantoGrid` の固定列（行・セルの状態色の層つき）は元から不透明で、`ConnectionBanner`・`UnsavedChangesNotice` は浮かぶ面でないので変更なし（#794、#808 の ToastHost の色の分）。
 
