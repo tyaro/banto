@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **dock-svelte:** `DockState.isOnScreen(id)`（reactive）と `dock.panels[].onScreen` を足した。畳んだ区画の中・タブの裏・引き出していない帯の pane・タイトルバーへ畳んだ浮動・閉じた窓を偽にする。`isVisible` は「閉じていない」の意味のまま（doc を直しただけ、改名なし）。`DockPanelInfo` に `onScreen` が増える（#792）。
+
 ### Changed
 
 - **ci:** `visual-baselines.yml` を `visual.spec.ts` だけの再生成・確認にし、Rust のビルドをやめ、`commit` の既定を true にした。1 回の dispatch で済む（#798）。

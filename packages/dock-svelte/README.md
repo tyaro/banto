@@ -458,9 +458,13 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
 {/each}
 ```
 
-- **`dock.panels`**（reactive）: layout にあるすべての pane の `{ id, title, icon?, placement, visible }`。
-  - `visible` — docked の木にある（裏のタブも含む）か、開いた浮動 window なら `true`。✕・`hidePanel`・ドラッグ・
-    `hydrate` に追従する。
+- **`dock.panels`**（reactive）: layout にあるすべての pane の `{ id, title, icon?, placement, visible, onScreen }`。
+  - `visible` — docked の木にある（裏のタブ・畳んだ区画の中も含む）か、帯にしまった pane か、開いた浮動 window なら
+    `true`（**「閉じていない」**の意味。メニューのチェック用）。✕・`hidePanel`・ドラッグ・`hydrate` に追従する。
+  - `onScreen`（#792）— **実際に画面に出ている**とき `true`。畳んだ区画の中・タブの組の裏のタブ・引き出していない
+    帯の pane・タイトルバーへ畳んだ浮動・閉じた浮動は `false`（そのとき `visible` は `true` のことがある）。
+    表のタブ、畳んでいない開いた浮動、今引き出している帯の pane（`flyoutPanel`）が `true`。ホストの大きさや
+    ブラウザのタブが隠れているかは見ない。「見えている間だけ購読する・読む」にはこちらを使う。
   - `placement` — `'docked'` は docked の木にあるか、ドックから隠した pane（戻す場所を覚えている）。`'floating'` は
     それ以外の浮動 window（開閉どちらも）。
   - 並び順は、その `DockState` が id を初めて見た順（最初の layout の docked の木を木の順に、続けて浮動 window を
@@ -506,7 +510,7 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
 - `DockState` だけで扱う口もある（`beforePanelChange` には聞かない）: `dock.dismiss(id)`（隠す。docked なら場所を
   覚える）・`dock.show(id)`（上の `showPanel` の layout の部分。戻り値は `'docked'` / `'floating'` / `null`）・
   `dock.showPlacement(id)`（`show` がどこに出すか）・`dock.showTabSwitch(id)`（`show` が選択中から外す pane）・
-  `dock.isVisible(id)`。
+  `dock.isVisible(id)`（閉じていないか）・`dock.isOnScreen(id)`（実際に画面に出ているか、#792。reactive）。
 - `dock.isOpen(id)` / `dock.open(id)` / `dock.close(id)` は従来どおり**浮動 window だけ**を見る（docked の id には
   `false` / 何もしない）。`dock.open(id)` でドックから隠した pane を開くと浮動で開き、覚えた場所は捨てる。
   `dock.ensureWindow` は docked の id を浮動として足さなくなった（id の重複を作っていた）。
@@ -683,7 +687,7 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 
   | メソッド                           | 中身                                                                                                         | 戻り値                                                 |
   | ---------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-  | `isVisible(id)`                    | 画面にあるか（reactive）                                                                                     | `boolean`                                              |
+  | `isVisible(id)`                    | 閉じていないか（reactive）                                                                                   | `boolean`                                              |
   | `setVisible(id, v)` / `toggle(id)` | 表示・非表示（`DockHost.setPanelVisible`）。中央を隠すのは `refused`。隠したパネルにあったフォーカスは中央へ | `DockPanelChangeOutcome \| 'unavailable'`              |
   | `float(id)` / `move(id, target)`   | 浮かせる・移す（`DockHost.movePanel`）                                                                       | `DockMoveOutcome`                                      |
   | `dockBack(id)`                     | 開いた浮動のパネルを戻す（下記）                                                                             | `DockMoveOutcome`                                      |
