@@ -223,11 +223,25 @@ describe("storage: 'memory' is one document's token (#838)", () => {
 		expect(second.getToken()).toBeNull();
 	});
 
-	it('an unknown storage value is refused instead of falling back to web storage', () => {
+	it.each([['Memory'], [null], [''], [0], [false]])(
+		'an unknown storage value (%j) is refused instead of falling back to web storage',
+		async (value) => {
+			const { calls, fetchFn } = server();
+			expect(() =>
+				createHttpAuthProvider({ fetchFn, storage: value as unknown as 'memory' })
+			).toThrow(/unknown storage/);
+			expect(calls).toHaveLength(0);
+			expect(localStorage.length + sessionStorage.length).toBe(0);
+		}
+	);
+
+	it('a missing storage (omitted, or undefined) is the default web storage', async () => {
 		const { fetchFn } = server();
-		expect(() =>
-			createHttpAuthProvider({ fetchFn, storage: 'Memory' as unknown as 'memory' })
-		).toThrow(/unknown storage/);
+		const auth = createHttpAuthProvider({ fetchFn, storage: undefined });
+
+		await auth.login({ username: 'a', password: 'pw' });
+
+		expect(sessionStorage.getItem(KEY)).toBe('tok-1');
 	});
 
 	describe('the login body', () => {

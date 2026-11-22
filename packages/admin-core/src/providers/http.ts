@@ -418,9 +418,10 @@ export function createHttpAuthProvider(
 	const baseUrl = options.baseUrl ?? '';
 	const fetchFn = options.fetchFn ?? fetch;
 	const storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
-	const storage = options.storage ?? 'web';
-	// A closed choice (Issue #838): a typo must not silently fall back to
-	// writing the token to web storage.
+	// A closed choice (Issue #838): only a missing `storage` means `'web'`. A
+	// typo or an explicit `null` (from JS or a JSON config) must not silently
+	// fall back to writing the token to web storage.
+	const storage: unknown = options.storage === undefined ? 'web' : options.storage;
 	if (storage !== 'web' && storage !== 'memory') {
 		throw new Error(`createHttpAuthProvider: unknown storage ${JSON.stringify(storage)}`);
 	}
