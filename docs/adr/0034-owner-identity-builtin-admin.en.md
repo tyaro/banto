@@ -854,7 +854,8 @@ the owner; once confirmed, this heading becomes "confirmed by the owner").
     is not checked. Startup, the restore candidate and the lock-down all ask
     this one function; a database whose only administrator rows have damaged
     hashes is treated like one with no administrator. "Can check" means:
-    an algorithm, version and parameters argon2 accepts, with a salt and an
+    an algorithm, version and parameters argon2 accepts, a salt that decodes
+    to at least its minimum length, and an
     output. The last-administrator guard (demotion, deletion) asks the same
     predicate (`can_log_in`) inside its write transaction: is there ANOTHER
     administrator that can log in.

@@ -100,8 +100,9 @@ fn verify_password(password: &str, hash: &str) -> bool {
 /// password? The name must be one it looks up (not empty, not longer than
 /// [`MAX_USERNAME_LEN`]) and the stored hash one [`verify_password`] can
 /// check: a PHC string whose algorithm, version and parameters argon2 accepts
-/// and which carries a salt and an output - everything `verify_password`
-/// needs before it compares. Nothing is verified here; this only tells a
+/// and which carries a salt that decodes to at least argon2's minimum length
+/// and an output of at least its minimum length - everything
+/// `verify_password` needs before it computes and compares. Nothing is verified here; this only tells a
 /// usable credential from a damaged one.
 ///
 /// The ONE definition of "an administrator that can log in": startup, the
@@ -122,8 +123,16 @@ fn can_log_in(username: &str, hash: Option<&str>) -> bool {
             .version
             .is_none_or(|version| argon2::Version::try_from(version).is_ok())
         && argon2::Params::try_from(&parsed).is_ok()
-        && parsed.salt.is_some()
-        && parsed.hash.is_some()
+        // The verifier decodes the salt and refuses one shorter than argon2's
+        // minimum; the output has a minimum length too.
+        && parsed.salt.is_some_and(|salt| {
+            let mut decoded = [0u8; password_hash::Salt::MAX_LENGTH];
+            salt.decode_b64(&mut decoded)
+                .is_ok_and(|bytes| bytes.len() >= argon2::MIN_SALT_LEN)
+        })
+        && parsed
+            .hash
+            .is_some_and(|output| output.len() >= argon2::Params::MIN_OUTPUT_LEN)
 }
 
 // Is there an administrator account OTHER than `$id` that can log in
@@ -1982,6 +1991,10 @@ mod tests {
             // An unknown version, parameters argon2 refuses, no salt.
             "$argon2id$v=99$m=65536,t=2,p=1$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno",
             "$argon2id$v=19$m=1,t=0,p=0$gZiV/M1gPc22ElAH/Jh1Hw$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno",
+            // A salt that decodes to fewer bytes than argon2 accepts ("salt"),
+            // and an output shorter than its minimum.
+            "$argon2id$v=19$m=65536,t=2,p=1$c2FsdA$CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno",
+            "$argon2id$v=19$m=65536,t=2,p=1$gZiV/M1gPc22ElAH/Jh1Hw$QUI",
             // Another scheme's PHC string: parses, but argon2 cannot verify it.
             "$pbkdf2-sha256$i=600000$c29tZXNhbHQ$QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo",
         ] {
