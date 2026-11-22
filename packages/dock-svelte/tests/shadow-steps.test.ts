@@ -240,6 +240,71 @@ describe('a `collapsed` flag S cannot hold stays (review of PR #864, 4)', () => 
 		expect(shadowStateOf(dock).shadow).toEqual(dock.layout.docked);
 	});
 
+	// Codex P2 on #864: the flag is carried for the regions a step does not touch. The pane the
+	// step moves shows where it lands, as before PR6 (`tree.ts#removePanel` drops its flag).
+	it('a itself moved: it shows where it lands (outer edge, beside a pane, as a tab; and the predictions)', () => {
+		const edge = collapsedA();
+		const atEdge = edge.droppedAtEdgeTree('a', 'top', counterMakeId(50));
+		edge.dockExistingAtEdge('a', 'top');
+		expect(edge.isDockedCollapsed('a')).toBe(false);
+		expect(JSON.stringify(atEdge)).not.toContain('"collapsed"');
+
+		const beside = collapsedA();
+		const onto = beside.droppedTree('a', 'd', 'bottom', counterMakeId(50));
+		beside.dockExisting('a', 'd', 'bottom');
+		expect(beside.isDockedCollapsed('a')).toBe(false);
+		expect(JSON.stringify(onto)).not.toContain('"collapsed"');
+
+		const tab = collapsedA();
+		tab.dockExisting('a', 'c', 'center');
+		expect(tab.isDockedCollapsed('a')).toBe(false);
+		expect(tab.isDockedCollapsed('c')).toBe(false);
+	});
+
+	it('a floated and dropped back, or docked back to its place: it shows', () => {
+		const dropped = collapsedA();
+		dropped.undockPanel('a');
+		dropped.dockPanel('a', 'c', 'left');
+		expect(dropped.isDockedCollapsed('a')).toBe(false);
+
+		const returned = collapsedA();
+		returned.undockPanel('a');
+		expect(back(returned, 'a')).toBe(true);
+		expect(returned.isDockedCollapsed('a')).toBe(false);
+
+		const atEdge = collapsedA();
+		atEdge.undockPanel('a');
+		atEdge.dockPanelAtEdge('a', 'bottom');
+		expect(atEdge.isDockedCollapsed('a')).toBe(false);
+	});
+
+	it('another pane moved while a tab group that is the only shown child is collapsed: the group stays, its own tab moved out expands it', () => {
+		const tree = split(
+			's',
+			'row',
+			[0.4, 0.3, 0.3],
+			[
+				split('k', 'column', [0.5, 0.5], [tabs('g', ['a', 'e']), panel('b')]),
+				panel('c'),
+				panel('d')
+			]
+		);
+		const make = (): DockState => {
+			const dock = dockOf(tree);
+			dock.undockPanel('b');
+			dock.setDockedCollapsed('g', true);
+			expect(dock.isDockedCollapsed('g')).toBe(true);
+			return dock;
+		};
+		const other = make();
+		other.dockExistingAtEdge('d', 'bottom');
+		expect(other.isDockedCollapsed('g')).toBe(true);
+		const own = make();
+		own.dockExistingAtEdge('e', 'bottom');
+		expect(own.isDockedCollapsed('a')).toBe(false);
+		expect(own.isDockedCollapsed('e')).toBe(false);
+	});
+
 	it('a pane joining a as a tab expands the region (the step touched it)', () => {
 		const tabbed = collapsedA();
 		tabbed.dockExisting('d', 'a', 'center');
