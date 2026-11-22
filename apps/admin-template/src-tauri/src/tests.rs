@@ -1894,6 +1894,7 @@ async fn a_desktop_session_rebound_while_its_check_was_in_flight_stays_valid() {
     match settle_session(&changer, &changer_before, fresh, changer_seq) {
         Settled::Stale {
             valid_now: Some(DesktopSession::Account(user)),
+            ..
         } => assert_eq!(user.auth_epoch, 1),
         other => panic!("the re-bound session must stay valid, got {other:?}"),
     }
@@ -2466,7 +2467,10 @@ async fn s77_a_settle_overtaken_by_a_rebind_writes_nothing() {
 
     assert!(matches!(
         settle_session(&state, &cached, fresh, seq_at_entry),
-        Settled::Stale { valid_now: None }
+        Settled::Stale {
+            valid_now: None,
+            ..
+        }
     ));
     assert_eq!(read_slot(&state), (None, seq_at_entry + 1));
 }
@@ -3060,11 +3064,16 @@ async fn s102_a_stale_settle_reports_the_slot_value_not_the_older_read() {
 
     let Settled::Stale {
         valid_now: Some(DesktopSession::AuthDisabledLocal(local)),
+        seq_now,
     } = settle_session(&state, &cached, fresh, seq_at_entry)
     else {
         panic!("expected Stale with the current Local session")
     };
     assert_eq!(local.role, Role::Viewer);
+    // The session and the `seq` are one snapshot of the slot (Codex review of
+    // PR #862): the `seq` of the write that put THIS session there.
+    assert_eq!(seq_now, read_slot(&state).1);
+    assert!(seq_now > seq_at_entry);
 }
 
 /// Hardening (freshness audit of #266, P2-2): `false -> true` advances
@@ -6101,4 +6110,596 @@ async fn the_builtin_row_and_reserved_names_are_protected_on_the_desktop() {
         .is_none());
     let rows = actor_rows(&state).await;
     assert!(rows.is_empty(), "a refused write records nothing: {rows:?}");
+}
+
+// --- ADR-0034 §6: the embedded server's account sessions follow the auth
+// mode, serialized with the switch ------------------------------------------
+//
+// The webview path was already serialized by the slot's `seq` and
+// `auth_config_lock` (S-94/S-95/S-99 above). These are the same promises for
+// the LAN path: `auth_config_apply` switches `rest_auth`'s mode in the step
+// that follows its save, so a LAN login or a LAN request that started in the
+// old mode cannot issue or use a token after the apply has returned.
+
+/// A `rest_auth` over `state`'s accounts (the production verifier and
+/// lookup) whose credential check and account lookup each pass through a
+/// gate. A gate holds its first caller once armed; unarmed, it lets
+/// everything through.
+fn gated_rest_auth(state: &AppState) -> (AuthState, GateSlot, GateSlot) {
+    use banto_server::routes::{audited_credential_verifier, user_session_lookup};
+    use banto_server::SessionValidation;
+
+    let verify_gate: GateSlot = Arc::new(Mutex::new(None));
+    let lookup_gate: GateSlot = Arc::new(Mutex::new(None));
+    let verify = Arc::new(audited_credential_verifier(
+        state.users.clone(),
+        state.audit.clone(),
+    ));
+    let lookup = Arc::new(user_session_lookup(state.users.clone()));
+    let (held_verify, held_lookup) = (verify_gate.clone(), lookup_gate.clone());
+    let auth = AuthState::new(
+        move |username: String, password: String| {
+            let (gate, verify) = (held_verify.clone(), verify.clone());
+            Box::pin(async move {
+                pass_gate(&gate).await;
+                verify(username, password).await
+            })
+        },
+        SessionValidation::lookup(move |username: String| {
+            let (gate, lookup) = (held_lookup.clone(), lookup.clone());
+            Box::pin(async move {
+                pass_gate(&gate).await;
+                lookup(username).await
+            })
+        }),
+    )
+    .with_builtin_admin_id(state.builtin_admin_id);
+    (auth, verify_gate, lookup_gate)
+}
+
+/// Arm `slot`: its next caller is held until the returned [`Hold`] releases.
+fn arm(slot: &GateSlot) -> Hold {
+    let (armed, hold) = gate();
+    *slot.lock().unwrap() = armed.lock().unwrap().take();
+    hold
+}
+
+/// Turning the mode on revokes every LAN account session in the same apply
+/// and the embedded server refuses account logins while it is on (the REST
+/// twin of S-95); turning it off advances the generation again, so the old
+/// tokens stay dead and a new login works. The 閲覧公開 grant is untouched.
+/// The count is in the `settings_change` detail.
+#[tokio::test]
+async fn adr0034_apply_switches_the_lan_auth_mode_and_revokes_lan_account_sessions() {
+    let state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let operator = rest_token(&state, "operator", false).await;
+    let bystander = rest_token(&state, "bystander", true).await;
+    let spec = GrantSpec::public_viewer(state.settings.clone());
+    let grant = state
+        .rest_auth
+        .issue_grant_token(&spec, state.rest_auth.grant_generation(&spec.kind))
+        .expect("issued");
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::NoLogin);
+    for token in [&operator, &bystander] {
+        assert!(state.rest_auth.authenticate(token).await.unwrap().is_none());
+    }
+    assert!(state
+        .rest_auth
+        .authenticate(&grant)
+        .await
+        .unwrap()
+        .is_some());
+    let logins = audit_action_count(&state, "login").await;
+    assert!(matches!(
+        state
+            .rest_auth
+            .login_rate_limited(None, "operator", REVOCATION_PASSWORD, false)
+            .await,
+        LoginOutcome::LoginDisabled
+    ));
+    assert_eq!(
+        audit_action_count(&state, "login").await,
+        logins,
+        "no credential was checked, so nothing is recorded (as on the desktop)"
+    );
+    assert_eq!(
+        settings_change_details(&state).await.last().unwrap(),
+        &serde_json::json!({ "authDisabled": true, "revokedSessions": 2 })
+    );
+
+    // Lock down again (the mode's own escape hatch authorizes it).
+    auth_config_apply_body(&state, false, "admin")
+        .await
+        .expect("apply false");
+
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+    for token in [&operator, &bystander] {
+        assert!(state.rest_auth.authenticate(token).await.unwrap().is_none());
+    }
+    assert!(state
+        .rest_auth
+        .authenticate(&grant)
+        .await
+        .unwrap()
+        .is_some());
+    let again = rest_token(&state, "operator", false).await;
+    assert!(state
+        .rest_auth
+        .authenticate(&again)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        settings_change_details(&state).await.last().unwrap(),
+        &serde_json::json!({ "authDisabled": false }),
+        "nothing was revoked: no count"
+    );
+}
+
+/// A LAN login passed its entry check and is verifying the password; an
+/// apply(true) completes meanwhile. The resumed check is right about the
+/// credentials and still issues nothing.
+#[tokio::test]
+async fn adr0034_a_lan_login_overtaken_by_apply_true_issues_no_token() {
+    let mut state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let (rest_auth, verify_gate, _) = gated_rest_auth(&state);
+    state.rest_auth = rest_auth;
+    let mut hold = arm(&verify_gate);
+
+    let login = state
+        .rest_auth
+        .login_rate_limited(None, "target", REVOCATION_PASSWORD, false);
+    tokio::pin!(login);
+    run_until_held!(login, hold);
+
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+    hold.release.send(()).unwrap();
+
+    assert!(matches!(login.await, LoginOutcome::LoginDisabled));
+    assert_eq!(state.rest_auth.session_count(), 0);
+}
+
+/// The same login overtaken by a full round trip (on, then off again): the
+/// mode is login-required when the check resumes, but the login belongs to a
+/// generation that ended.
+#[tokio::test]
+async fn adr0034_a_lan_login_overtaken_by_apply_true_then_false_issues_no_token() {
+    let mut state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let (rest_auth, verify_gate, _) = gated_rest_auth(&state);
+    state.rest_auth = rest_auth;
+    let mut hold = arm(&verify_gate);
+
+    let login = state
+        .rest_auth
+        .login_rate_limited(None, "target", REVOCATION_PASSWORD, false);
+    tokio::pin!(login);
+    run_until_held!(login, hold);
+
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+    auth_config_apply_body(&state, false, "admin")
+        .await
+        .expect("apply false");
+    hold.release.send(()).unwrap();
+
+    assert!(matches!(login.await, LoginOutcome::Unavailable));
+    assert_eq!(state.rest_auth.session_count(), 0);
+}
+
+/// A LAN request is being authorized (its account lookup is in flight) when
+/// an apply completes; the account is unchanged, and the request is still
+/// not authorized - with the mode on, and after a full round trip.
+#[tokio::test]
+async fn adr0034_a_lan_request_whose_lookup_is_overtaken_by_an_apply_is_not_authorized() {
+    for round_trip in [false, true] {
+        let mut state = app_state().await;
+        seed_revocation_accounts(&state).await;
+        desktop_login(&state, "operator").await;
+        let (rest_auth, _, lookup_gate) = gated_rest_auth(&state);
+        state.rest_auth = rest_auth;
+        let token = rest_token(&state, "target", false).await;
+        let mut hold = arm(&lookup_gate);
+
+        let check = state.rest_auth.authenticate(&token);
+        tokio::pin!(check);
+        run_until_held!(check, hold);
+
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("apply true");
+        if round_trip {
+            auth_config_apply_body(&state, false, "admin")
+                .await
+                .expect("apply false");
+        }
+        hold.release.send(()).unwrap();
+
+        assert!(
+            check.await.unwrap().is_none(),
+            "round_trip={round_trip}: authorized with a token of the ended generation"
+        );
+        assert!(!state.rest_auth.verify(&token));
+    }
+}
+
+/// The switch follows the save with no `.await` in between: while the apply
+/// is held right after its save, the LAN side is still in the old mode (the
+/// stored mode is not yet observable together with a switched state), and
+/// once it returns both moved.
+#[tokio::test]
+async fn adr0034_the_lan_auth_mode_switches_in_the_step_after_the_save() {
+    let mut state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let token = rest_token(&state, "operator", false).await;
+    let mut hold = hold_after_save(&mut state);
+
+    let apply = auth_config_apply_body(&state, true, "admin");
+    tokio::pin!(apply);
+    run_until_held!(apply, hold);
+    assert!(state.settings.auth_config().await.unwrap().disabled);
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+
+    hold.release.send(()).unwrap();
+    apply.await.expect("apply");
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::NoLogin);
+    assert!(!state.rest_auth.verify(&token));
+}
+
+/// A failed save changed nothing, so the LAN side keeps its mode and its
+/// sessions (the session follows what IS stored, S-104).
+#[tokio::test]
+async fn adr0034_a_failed_save_leaves_the_lan_auth_mode_and_sessions() {
+    let mut state = app_state().await;
+    seed_revocation_accounts(&state).await;
+    desktop_login(&state, "operator").await;
+    let token = rest_token(&state, "operator", false).await;
+    state.auth_io.save_auth_config = Arc::new(|_, _| {
+        Box::pin(async { Err(BantoError::Storage("disk full (test)".to_string())) })
+    });
+
+    let err = auth_config_apply_body(&state, true, "admin")
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, BantoError::Storage(_)), "{err:?}");
+    assert_eq!(state.rest_auth.auth_mode(), AuthMode::LoginRequired);
+    assert!(state
+        .rest_auth
+        .authenticate(&token)
+        .await
+        .unwrap()
+        .is_some());
+}
+
+/// Hold the first per-user permissions read of `state` (after the session
+/// was settled); the read itself is the production one.
+fn hold_permissions(state: &mut AppState) -> Hold {
+    let (slot, hold) = gate();
+    state.auth_io.permissions = Arc::new(move |users, settings, session| {
+        let slot = slot.clone();
+        Box::pin(async move {
+            pass_gate(&slot).await;
+            read_session_permissions(&users, &settings, &session).await
+        })
+    });
+    hold
+}
+
+/// Cross-review of PR #862: the webview's authorization awaits twice (the
+/// session check, then the permissions read). An apply that completes during
+/// the second await ended the account session, so `auth_identity` must not
+/// answer with it, and a permission-guarded command must not pass as it.
+/// `auth_identity` (display) reads again and shows the slot as it is now;
+/// the guard ends as unauthenticated.
+#[tokio::test]
+async fn adr0034_an_apply_during_the_permissions_read_does_not_authorize_the_ended_session() {
+    let (mut state, _op) = permission_app_state().await;
+    let ack = perm("alarm.ack");
+    let account = auth_identity_body(&state)
+        .await
+        .expect("identity")
+        .expect("the admin's account session");
+
+    // `auth_identity`.
+    {
+        let mut hold = hold_permissions(&mut state);
+        let identity = auth_identity_body(&state);
+        tokio::pin!(identity);
+        run_until_held!(identity, hold);
+        auth_config_apply_body(&state, true, "viewer")
+            .await
+            .expect("apply true");
+        hold.release.send(()).unwrap();
+        let identity = identity
+            .await
+            .expect("identity")
+            .expect("the local session");
+        assert_ne!(identity.id, account.id, "not the ended account session");
+        assert_eq!(identity.role, "viewer");
+    }
+
+    // A permission-guarded command, the other way round: the `local` session
+    // (holding the permission) is being authorized when the mode is turned
+    // off.
+    auth_config_apply_with_permissions_body(&state, true, "viewer", Some(&[ack.to_string()]))
+        .await
+        .expect("give the mode the permission");
+    assert!(require_permission(&state, &ack, "alarm").await.is_ok());
+    let mut hold = hold_permissions(&mut state);
+    let guarded = require_permission(&state, &ack, "alarm");
+    tokio::pin!(guarded);
+    run_until_held!(guarded, hold);
+    auth_config_apply_body(&state, false, "viewer")
+        .await
+        .expect("apply false");
+    hold.release.send(()).unwrap();
+    assert!(
+        matches!(guarded.await, Err(BantoError::Unauthorized)),
+        "the local session ended with its mode; there is no session now"
+    );
+}
+
+/// The same window for `auth_resolve`: it reports `stale` (nothing about the
+/// ended session), and the next resolve answers for the slot as it is.
+#[tokio::test]
+async fn adr0034_a_resolve_overtaken_during_its_permissions_read_is_stale() {
+    let (mut state, _op) = permission_app_state().await;
+    let (_, seq_before) = read_slot(&state);
+    let mut hold = hold_permissions(&mut state);
+
+    let resolve = resolve_body(&state);
+    tokio::pin!(resolve);
+    run_until_held!(resolve, hold);
+    auth_config_apply_body(&state, true, "viewer")
+        .await
+        .expect("apply true");
+    hold.release.send(()).unwrap();
+    let result = resolve.await.expect("resolve");
+
+    assert!(result.stale);
+    assert!(result.identity.is_none() && result.kind.is_none());
+    assert_eq!(result.checked, seq_before);
+    assert_eq!(result.current, read_slot(&state).1);
+    assert!(result.current > seq_before);
+
+    let again = resolve_body(&state).await.expect("resolve");
+    assert!(!again.stale);
+    assert_eq!(again.kind, Some("local"));
+}
+
+/// Codex review of PR #862: the `seq` an authorization compares after its
+/// permissions read must be the one its session was settled at - taken under
+/// the settle's lock, not read from the slot afterwards (a re-bind between
+/// the two would pair the old session with the new `seq`). So a slot that is
+/// re-bound right after the settle (before anything else is read) leaves the
+/// returned pair as it was: the settled session with ITS `seq`, which no
+/// longer equals the slot's - and that is what makes the authorization start
+/// over instead of answering for the ended session.
+#[tokio::test]
+async fn adr0034_the_session_and_its_seq_are_one_snapshot_of_the_slot() {
+    let (state, _op) = permission_app_state().await;
+    let (_, seq_before) = read_slot(&state);
+
+    let (session, settled_seq) = current_session_at(&state, OnStale::Adopt)
+        .await
+        .expect("session")
+        .expect("the admin's account session");
+    assert!(matches!(session, DesktopSession::Account(_)));
+    assert_eq!(settled_seq, seq_before, "a refresh does not move seq");
+
+    // The window Codex described: another command re-binds the slot after
+    // the settle released its lock.
+    auth_config_apply_body(&state, true, "viewer")
+        .await
+        .expect("apply true");
+    assert_ne!(
+        read_slot(&state).1,
+        settled_seq,
+        "the pair still names the settle's seq, so the comparison fails"
+    );
+
+    // And a check that settles as `Stale` reports the slot's value with the
+    // slot's seq, again as one pair.
+    let (cached, seq_at_entry) = read_slot(&state);
+    let cached = cached.expect("local");
+    let fresh = read_session_source(&state, &cached).await.unwrap();
+    auth_config_apply_body(&state, true, "editor")
+        .await
+        .expect("role change");
+    let Settled::Stale {
+        valid_now: Some(DesktopSession::AuthDisabledLocal(local)),
+        seq_now,
+    } = settle_session(&state, &cached, fresh, seq_at_entry)
+    else {
+        panic!("expected Stale with the current Local session")
+    };
+    assert_eq!(local.role, Role::Editor);
+    assert_eq!(seq_now, read_slot(&state).1);
+}
+
+/// Cross-review of PR #862 (re-review): a permission guard never authorizes
+/// a request as a subject it did not start from. The admin's command is
+/// being authorized (its permissions read is in flight) when an apply
+/// replaces the account session with the mode's `local` session - which
+/// holds the SAME permission. The command must not pass as `local` (it would
+/// run and be audited under another name): it ends `Unauthorized`, nothing
+/// is audited as a refusal, and the next command - a new request - is
+/// authorized as `local`.
+#[tokio::test]
+async fn adr0034_a_guard_overtaken_by_an_apply_does_not_pass_as_the_new_subject() {
+    let (mut state, _op) = permission_app_state().await;
+    let ack = perm("alarm.ack");
+    let admin = state
+        .users
+        .get_by_username("manager")
+        .await
+        .unwrap()
+        .unwrap();
+    state
+        .users
+        .set_permissions(admin.id, std::slice::from_ref(&ack), None, "manager")
+        .await
+        .unwrap();
+    assert_eq!(
+        require_permission(&state, &ack, "alarm")
+            .await
+            .expect("the admin holds it")
+            .username,
+        "manager"
+    );
+    let denied_before = audit_action_count(&state, "denied").await;
+
+    for finer in [false, true] {
+        desktop_login_as(&state, "manager").await;
+        auth_config_apply_body(&state, false, "admin")
+            .await
+            .expect("login required");
+        desktop_login_as(&state, "manager").await;
+        let mut hold = hold_permissions(&mut state);
+        let guarded = async {
+            if finer {
+                session_permissions(&state).await.map(|held| held.is_some())
+            } else {
+                require_permission(&state, &ack, "alarm")
+                    .await
+                    .map(|_| true)
+            }
+        };
+        tokio::pin!(guarded);
+        run_until_held!(guarded, hold);
+        auth_config_apply_with_permissions_body(&state, true, "admin", Some(&[ack.to_string()]))
+            .await
+            .expect("apply true, the mode holds the same permission");
+        hold.release.send(()).unwrap();
+
+        match guarded.await {
+            Err(BantoError::Unauthorized) if !finer => {}
+            Ok(false) if finer => {}
+            other => panic!("finer={finer}: passed as another subject: {other:?}"),
+        }
+        assert_eq!(audit_action_count(&state, "denied").await, denied_before);
+        // A NEW request is authorized as the session the slot holds now.
+        let local = require_permission(&state, &ack, "alarm")
+            .await
+            .expect("local holds it");
+        assert_eq!(local.username, "local");
+    }
+}
+
+/// The first settle of a guard cannot adopt another subject either: a check
+/// that started from the account session and is overtaken (during its store
+/// read) by an apply settles `Stale` with no session, not with `local`.
+#[tokio::test]
+async fn adr0034_a_stale_first_settle_does_not_hand_a_guard_another_subject() {
+    let state = admin_app_state().await;
+    let (cached, seq_at_entry) = read_slot(&state);
+    let cached = cached.expect("the admin's account session");
+    let fresh = read_session_source(&state, &cached).await.unwrap();
+    assert!(fresh.is_some(), "the account itself is unchanged");
+
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+    assert!(is_local(&read_slot(&state).0));
+
+    assert!(matches!(
+        settle_session(&state, &cached, fresh, seq_at_entry),
+        Settled::Stale {
+            valid_now: None,
+            ..
+        }
+    ));
+}
+
+/// Sign `username` in on the webview with its stored row (no password).
+async fn desktop_login_as(state: &AppState, username: &str) {
+    let user = state
+        .users
+        .get_by_username(username)
+        .await
+        .unwrap()
+        .expect("account");
+    state.set_session_for_test(Some(DesktopSession::Account(user)));
+}
+
+/// Cross-review of PR #862 (third round): a slot re-bound during a guard's
+/// FIRST store read is "no session" for the guard even when the slot holds
+/// the same binding again - the mode turned off and on (`local` anew), or
+/// the same account signed in again. The ordinary commands and the screen
+/// keep adopting the slot's session ([`OnStale::Adopt`]).
+#[tokio::test]
+async fn adr0034_a_guard_refuses_a_session_established_during_its_first_read() {
+    // `local`, then the mode off and on again while the read is in flight.
+    let state = admin_app_state().await;
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true");
+    let (cached, seq_at_entry) = read_slot(&state);
+    let cached = cached.expect("local");
+    let fresh = read_session_source(&state, &cached).await.unwrap();
+    auth_config_apply_body(&state, false, "admin")
+        .await
+        .expect("apply false");
+    desktop_login_as(&state, "manager").await;
+    auth_config_apply_body(&state, true, "admin")
+        .await
+        .expect("apply true again");
+    let settled = settle_session(&state, &cached, fresh.clone(), seq_at_entry);
+    assert!(
+        matches!(
+            settled,
+            Settled::Stale {
+                valid_now: Some(DesktopSession::AuthDisabledLocal(_)),
+                ..
+            }
+        ),
+        "the same binding again: {settled:?}"
+    );
+    assert!(settled_pair(settled, OnStale::Refuse).is_none());
+    let adopted = settle_session(&state, &cached, fresh, seq_at_entry);
+    assert!(settled_pair(adopted, OnStale::Adopt).is_some());
+
+    // The same account, signed in again while the read is in flight.
+    let state = admin_app_state().await;
+    let (cached, seq_at_entry) = read_slot(&state);
+    let cached = cached.expect("the admin's account session");
+    let fresh = read_session_source(&state, &cached).await.unwrap();
+    state.set_session_for_test(None);
+    desktop_login_as(&state, "manager").await;
+    let settled = settle_session(&state, &cached, fresh.clone(), seq_at_entry);
+    assert!(
+        matches!(
+            settled,
+            Settled::Stale {
+                valid_now: Some(DesktopSession::Account(_)),
+                ..
+            }
+        ),
+        "the same binding again: {settled:?}"
+    );
+    assert!(settled_pair(settled, OnStale::Refuse).is_none());
+    let adopted = settle_session(&state, &cached, fresh, seq_at_entry);
+    assert!(settled_pair(adopted, OnStale::Adopt).is_some());
+
+    // Undisturbed, the guard's settle is the ordinary one.
+    assert!(current_session_at(&state, OnStale::Refuse)
+        .await
+        .unwrap()
+        .is_some());
 }

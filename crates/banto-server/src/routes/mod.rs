@@ -392,8 +392,10 @@ fn guarded_actor(
 /// The session and its per-user permissions a permission guard decides on
 /// (Issue #697): the [`SessionPermissions`] `require_auth` put into THIS
 /// request's extensions, or - when that is missing - the ones read here
-/// for the session [`guarded_session`] found ([`AuthState::session_permissions`]).
-/// Never anything the client sent.
+/// from the request's bearer token as one authorization
+/// ([`AuthState::authenticate_with_permissions`], so a guard stacked without
+/// `require_auth` is held to the auth mode's generation to the end of the
+/// permissions read too, ADR-0034 section 6). Never anything the client sent.
 fn guarded_permissions(
     auth: &AuthState,
     req: &axum::extract::Request,
@@ -401,18 +403,21 @@ fn guarded_permissions(
     Output = Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError>,
 > + Send
        + 'static {
-    let cached = req.extensions().get::<SessionPermissions>().cloned();
-    let session = guarded_session(auth, req);
+    // Both, or neither: `require_auth` inserts the two together, after its
+    // authorization was complete.
+    let cached = req
+        .extensions()
+        .get::<AuthenticatedSession>()
+        .cloned()
+        .zip(req.extensions().get::<SessionPermissions>().cloned());
+    let token = bearer_token(req.headers()).map(str::to_owned);
     let auth = auth.clone();
     async move {
-        let Some(session) = session.await? else {
-            return Ok(None);
-        };
-        let permissions = match cached {
-            Some(permissions) => permissions,
-            None => auth.session_permissions(&session).await?,
-        };
-        Ok(Some((session, permissions)))
+        match (cached, token) {
+            (Some(cached), _) => Ok(Some(cached)),
+            (None, Some(token)) => auth.authenticate_with_permissions(&token).await,
+            (None, None) => Ok(None),
+        }
     }
 }
 
@@ -882,6 +887,72 @@ mod tests {
             actor_columns(&audit).await,
             vec![columns("editor-user", Some(3), "editor", "account", "ok")]
         );
+    }
+
+    // --- ADR-0034 section 6: a permission guard without `require_auth` ------
+
+    /// A `PermissionGuard` stacked WITHOUT `require_auth` authorizes by
+    /// itself (lookup, then the permissions read). A mode switch that
+    /// completes while the permissions are read ends that authorization:
+    /// the guard answers as for no session (`403`, its existing answer), the
+    /// handler does not run, and nothing is audited (there is no
+    /// session to attribute a refusal to).
+    #[tokio::test]
+    async fn a_standalone_permission_guard_is_held_to_the_auth_mode_generation() {
+        use crate::AuthMode;
+
+        let audit = service().await;
+        let slot: std::sync::Arc<std::sync::Mutex<Option<AuthState>>> = Default::default();
+        let reader_slot = slot.clone();
+        let auth = AuthState::new(
+            |_u: String, _p: String| Box::pin(async { None }),
+            SessionValidation::lookup(|_username: String| {
+                Box::pin(async { Ok(Some(account(1, "viewer"))) })
+            }),
+        )
+        .with_permission_reader(move |_account_id: i64| {
+            let switcher = reader_slot.lock().unwrap().clone();
+            Box::pin(async move {
+                if let Some(auth) = switcher {
+                    auth.switch_auth_mode(AuthMode::NoLogin);
+                    auth.switch_auth_mode(AuthMode::LoginRequired);
+                }
+                Ok(SessionPermissions::new(
+                    [key("equipment.operate")].into_iter().collect(),
+                ))
+            })
+        });
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handler_ran = ran.clone();
+        let router = Router::new()
+            .route(
+                "/api/equipment/{id}/start",
+                post(move || {
+                    let ran = handler_ran.clone();
+                    async move {
+                        ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        "started"
+                    }
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                PermissionGuard {
+                    auth: auth.clone(),
+                    permission: key("equipment.operate"),
+                    resource: "equipment",
+                    audit: audit.clone(),
+                },
+                require_permission,
+            ));
+
+        // Without a switch the guard passes on its own.
+        let token = auth.issue_account_token(account(1, "viewer"), false);
+        assert_eq!(call(&router, Some(&token)).await, StatusCode::OK);
+
+        *slot.lock().unwrap() = Some(auth.clone());
+        assert_eq!(call(&router, Some(&token)).await, StatusCode::FORBIDDEN);
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(rows(&audit).await.is_empty());
     }
 
     // --- Issue #697: PermissionGuard -----------------------------------------

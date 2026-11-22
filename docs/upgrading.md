@@ -432,6 +432,12 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   予約のときは `validation` ではないエラー（`other`）を返し、前の予約もバックアップも変えない（やり直せる）。
   起動時は適用も削除もせず、予約のファイルと元の DB を残して、次の起動で確かめ直す。
 - **組み込みの行への更新・削除・パスワードの設定の拒否**は、500（`other`）ではなく 403（`forbidden`）で返る。
+- **認証モードの切り替えとの直列化（ADR-0034 決定 §6）**: `LoginOutcome` に `LoginDisabled` が増えた（`match` を網羅している
+  所は腕を足す。`login_handler` は `200 {success:false, error}` で返す）。Tauri のテンプレート（B）は、`auth_config_apply` の
+  保存の直後（`apply_mode_to_session`）と起動時に `rest_auth.switch_auth_mode(..)` を呼ぶ。ログインなしのモードを自分の配線で
+  持つ派生アプリは同じ 2 か所を写す（写さなければ `AuthState` は既定のログイン必須のままで、今までと同じに動く）。
+  写した後は、ログインなしの間、組み込みサーバーがアカウントのログインを断り、切り替えた時点で LAN のアカウントの
+  セッションが切れる。
 - **`@banto/dock-svelte`: 消したパネルは既定の位置に出る（#782 PR5）**。ドックから隠した・閉じた pane を出し直すと、
   隠した場所ではなく既定のレイアウトでの位置に出る。`DockHost` を直に使う派生アプリは、`createDockState()` の直後に
   `dock.defaultLayout = <既定の DockLayout>` を入れる（入れないと浮動で開く。テンプレートの `/dashboard` を参照）。

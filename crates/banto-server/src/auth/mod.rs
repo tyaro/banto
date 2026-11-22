@@ -103,6 +103,33 @@
 //! downgrade). [`SessionValidation::DisabledNoRevocation`] keeps the pre-#204
 //! behavior of trusting the identity captured at login until the token
 //! expires, and exists only for states with no account store behind them.
+//!
+//! ## Auth mode and its generation (ADR-0034 section 6)
+//!
+//! The state also knows whether accounts may log in at all ([`AuthMode`]:
+//! login required, or no-login mode) and counts the switches between the two
+//! (the mode's *generation*). Both live under the token table's lock, and
+//! [`AuthState::switch_auth_mode`] advances the generation and revokes every
+//! account token in one step under it. Everything that awaits is held to the
+//! generation it started in:
+//!
+//! - **login**: the generation is read on entry; after the credential check,
+//!   the token is inserted only if - under that lock - the generation is
+//!   unchanged and the mode is login-required
+//!   ([`AuthState::login_rate_limited`]). No-login mode refuses on entry,
+//!   before the verifier runs ([`LoginOutcome::LoginDisabled`]);
+//! - **authorization**: an account token carries the generation it was issued
+//!   in and authorizes only while that is the current one, decided when the
+//!   account lookup has returned ([`AuthState::authenticate`]) and compared
+//!   once more when [`require_auth`] has finished reading the permissions;
+//! - **a request already authorized** keeps running to the end as the actor
+//!   it was authorized as; the switch neither interrupts nor waits for it
+//!   (the rule for every session end, conventions section 1 / Issue #793).
+//!
+//! So once a switch has returned, nothing of an earlier generation is issued
+//! or used. Grant sessions are outside the mode (their own per-kind
+//! generation guards them). A state nobody switched stays login-required,
+//! which is the behavior before this section existed.
 
 mod policy;
 mod routes;
@@ -112,9 +139,10 @@ mod state;
 mod tests;
 
 pub use policy::{
-    LoginOutcome, RateLimitPolicy, TokenPolicy, MAX_CONCURRENT_VERIFICATIONS, MAX_IN_FLIGHT_PER_IP,
+    AuthMode, LoginOutcome, RateLimitPolicy, TokenPolicy, MAX_CONCURRENT_VERIFICATIONS,
+    MAX_IN_FLIGHT_PER_IP,
 };
-pub use routes::{auth_routes, require_auth};
+pub use routes::{auth_routes, require_auth, LOGIN_DISABLED_MESSAGE};
 pub(crate) use routes::{bearer_token, unauthorized_response, MaybePeerAddr};
 pub use session::{
     AuthenticatedSession, CredentialVerifier, Identity, PermissionReader, SessionAccount,
@@ -126,7 +154,7 @@ pub use state::{ip_rate_limit_key, rate_limit_key, AuthState};
 // `use super::*`.
 use policy::SATURATED_RETRY_AFTER;
 use policy::{
-    FailureRecord, GrantQueue, IdleWindow, InFlight, InFlightGuard, Settled, StampedLogin,
-    TokenRecord,
+    FailureRecord, GrantQueue, IdleWindow, InFlight, InFlightGuard, IssueRefusal, Settled,
+    StampedLogin, TokenRecord, TokenTable,
 };
 use state::Inner;
