@@ -208,6 +208,17 @@ pub struct GrantSpec {
     pub policy: Option<TokenPolicy>,
     /// `true`: issue only to a loopback peer; an unknown peer is refused.
     pub require_loopback_peer: bool,
+    /// `true`: what a session of this kind does is recorded in the audit log
+    /// as the built-in `admin`'s (ADR-0034 section 3: `actor_username` =
+    /// `admin`, `actor_id` = the built-in row's id, `actor_kind` =
+    /// `grant:<kind>`, `actor_role` = this spec's role). Default `false`: the
+    /// fixed `identity.id` is recorded and `actor_id` is NULL.
+    ///
+    /// It decides the AUDIT ATTRIBUTION only - not authorization, not the
+    /// role, not the owner key of UI settings, and it never reaches the wire.
+    /// Which kinds count as the admin's own work is the app's decision; a
+    /// viewer-public kind should leave it off.
+    pub audit_as_builtin_admin: bool,
 }
 
 impl GrantSpec {
@@ -223,6 +234,7 @@ impl GrantSpec {
             max_sessions: DEFAULT_GRANT_MAX_SESSIONS,
             policy: None,
             require_loopback_peer: false,
+            audit_as_builtin_admin: false,
         }
     }
 
@@ -256,6 +268,7 @@ impl fmt::Debug for GrantSpec {
             .field("max_sessions", &self.max_sessions)
             .field("policy", &self.policy)
             .field("require_loopback_peer", &self.require_loopback_peer)
+            .field("audit_as_builtin_admin", &self.audit_as_builtin_admin)
             .finish_non_exhaustive()
     }
 }
@@ -319,6 +332,14 @@ impl GrantRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.specs.is_empty()
+    }
+
+    /// The fixed `identity.id` of every registered kind, in kind order
+    /// (ADR-0034 section 4). The wiring layer reserves them as account names
+    /// (`banto_admin_services::users::ReservedUsernames`), so an account
+    /// cannot be created under the label a grant's audit rows carry.
+    pub fn identity_ids(&self) -> impl Iterator<Item = &str> {
+        self.specs.values().map(|spec| spec.identity.id.as_str())
     }
 
     /// Whether each kind may be issued to `peer` RIGHT NOW: `enabled()` and,

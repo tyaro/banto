@@ -38,6 +38,7 @@ use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+pub use banto_admin_services::audit::AuditActor;
 use banto_admin_services::audit::{AuditEntry, AuditLogService};
 use banto_admin_services::backup::{BackupInfo, BackupService, PendingRestoreInfo};
 use banto_admin_services::permissions::{PermissionEntry, PermissionKey};
@@ -76,8 +77,8 @@ pub use users::{
 
 /// Extract the raw bearer token from an `Authorization: Bearer …` header.
 /// Every RBAC/audit helper below starts here; the app's own routers
-/// (`items`/`attachments`) reach for [`actor_identity`]/[`record_write`]
-/// instead, which wrap this.
+/// (`items`/`attachments`) take the guard's `Extension<AuditActor>` and call
+/// [`record_write`] instead.
 pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
@@ -85,119 +86,129 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|value| value.strip_prefix("Bearer "))
 }
 
-/// Resolve the caller's [`Identity`] from its bearer token, best-effort
-/// (spec M14): every audit-recording call site needs "who did this", and
-/// every one of them runs AFTER `require_auth`/[`require_role_at_least`] has
-/// already proven the token valid, so this normally resolves.
+/// The audit actor of a session the guards did NOT hand over (ADR-0034
+/// section 3): validates the request's bearer token NOW and attributes the
+/// session it finds ([`AuthState::audit_actor`]).
 ///
-/// **Known gap (Issue #793 S2):** this reads the token again, at the time it
-/// is called. Called AFTER a write (as [`record_write`] does), it returns
-/// `None` when the session ended while the write ran - a logout, the
-/// account's deletion or role change, the token's expiry - and the write's
-/// audit row then has no actor. Call it before the write, or better, take
-/// the session the guards validated (`Extension<AuthenticatedSession>`) and
-/// use [`record_write_as`]. C2 replaces this re-lookup with the guard's
-/// snapshot (ADR-0034 section 3). Shared
-/// by the users/backups write handlers here and by the app's own
-/// `items`/`attachments` write handlers; auth-flow events (login/setup/
-/// logout) resolve their own actor differently since they run before or
-/// without a caller session.
-pub fn actor_identity(headers: &HeaderMap, auth: &AuthState) -> Option<Identity> {
-    bearer_token(headers).and_then(|token| auth.identity_for(token))
+/// Almost nothing needs this. A handler behind [`require_auth`] takes the
+/// snapshot the guard made - `Extension<AuditActor>` - and passes it to
+/// [`record_write`]; that snapshot is the session that was AUTHORIZED, and it
+/// is still there after the session ended. This function is for the few
+/// places that run without a guard (the logout hook reads the actor BEFORE
+/// the handler drops the token). `None` when there is no valid session.
+pub fn actor_for_token(headers: &HeaderMap, auth: &AuthState) -> Option<AuditActor> {
+    let session = bearer_token(headers).and_then(|token| auth.session_for(token))?;
+    Some(auth.audit_actor(&session))
 }
 
-/// Who an audit row is attributed to: the `actor_username` / `actor_role`
-/// columns. [`record_write`] builds one from the session's [`Identity`]; a
-/// non-session principal (an API key, an MCP tool) builds its own and calls
-/// [`record_write_as`] / [`record_denied_as`] with the `origin` of its
-/// channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AuditActor<'a> {
-    pub username: &'a str,
-    pub role: &'a str,
-}
-
-impl<'a> From<&'a Identity> for AuditActor<'a> {
-    fn from(identity: &'a Identity) -> Self {
-        Self {
-            username: &identity.id,
-            role: &identity.role,
-        }
-    }
+/// Record one audit row attributed to `actor` (`None` = no actor: the four
+/// actor columns are NULL) through `origin` (`"rest"`, `"tauri"`, `"mcp"`,
+/// ...) with an explicit `result` (`"ok"`, `"denied"`, `"failed"`). The one
+/// builder behind [`record_write_as`] / [`record_denied_as`], and what a
+/// handler calls directly when its row fits neither (an import that failed, a
+/// refusal that is not a role decision). Every channel - REST, the desktop
+/// commands, an app's own - writes its rows through these, so the columns
+/// cannot drift (conventions section 1).
+#[allow(clippy::too_many_arguments)]
+pub async fn record_as(
+    audit: &AuditLogService,
+    actor: Option<&AuditActor>,
+    origin: &str,
+    action: &str,
+    resource: &str,
+    entity_id: Option<&str>,
+    detail: Option<serde_json::Value>,
+    result: &str,
+) {
+    audit
+        .record(AuditEntry::by(
+            actor, origin, action, resource, entity_id, detail, result,
+        ))
+        .await;
 }
 
 /// Record a successful write (spec M14) attributed to `actor` through
-/// `origin` (`"rest"`, `"mcp"`, `"tauri"`, ...). `result` is `"ok"`. `actor`
-/// is `None` for a write with no resolvable principal: both actor columns
-/// are then NULL, as [`record_write`] has always done. The shared builder
-/// behind [`record_write`] so every channel writes the same column values.
+/// `origin`. `result` is `"ok"`.
 pub async fn record_write_as(
     audit: &AuditLogService,
-    actor: Option<AuditActor<'_>>,
+    actor: Option<&AuditActor>,
     origin: &str,
     action: &str,
     resource: &str,
     entity_id: Option<&str>,
     detail: Option<serde_json::Value>,
 ) {
-    audit
-        .record(AuditEntry {
-            actor_username: actor.map(|a| a.username),
-            actor_role: actor.map(|a| a.role),
-            action,
-            resource,
-            entity_id,
-            detail,
-            origin,
-            result: "ok",
-        })
-        .await;
+    record_as(
+        audit, actor, origin, action, resource, entity_id, detail, "ok",
+    )
+    .await;
 }
 
 /// Record an RBAC denial (spec M14) in the shape [`require_role_at_least`]
 /// writes: `action` `"denied"`, no `entity_id`, `result` `"denied"`. The
-/// caller supplies the `detail` (REST: `{ "method", "path" }`).
+/// caller supplies the `detail` (REST: `{ "method", "path" }`; the desktop
+/// commands: none).
 pub async fn record_denied_as(
     audit: &AuditLogService,
-    actor: AuditActor<'_>,
+    actor: &AuditActor,
     origin: &str,
     resource: &str,
-    detail: serde_json::Value,
+    detail: Option<serde_json::Value>,
 ) {
+    record_as(
+        audit,
+        Some(actor),
+        origin,
+        "denied",
+        resource,
+        None,
+        detail,
+        "denied",
+    )
+    .await;
+}
+
+/// Record a failed login (spec M14): `action` `"login_failed"`, `result`
+/// `"failed"`. There is no session, so there is no actor - only the name
+/// that was TRIED goes into `actor_username` (bounded, Issue #278: it is
+/// attacker-supplied), with `actor_id` / `actor_role` / `actor_kind` NULL.
+/// `detail` says how it was tried when that is not the login form (the
+/// desktop autologin: `{ "via": "autologin" }`); never a password.
+pub async fn record_login_failed_as(
+    audit: &AuditLogService,
+    origin: &str,
+    username: &str,
+    detail: Option<serde_json::Value>,
+) {
+    let bounded = banto_admin_services::users::bound_username_for_audit(username);
     audit
         .record(AuditEntry {
-            actor_username: Some(actor.username),
-            actor_role: Some(actor.role),
-            action: "denied",
-            resource,
-            entity_id: None,
-            detail: Some(detail),
-            origin,
-            result: "denied",
+            actor_username: Some(&bounded),
+            ..AuditEntry::by(None, origin, "login_failed", "auth", None, detail, "failed")
         })
         .await;
 }
 
-/// Record a successful write (spec M14: create/update/delete/password_reset
-/// etc.) once the service call it follows has already succeeded. Resolves
-/// the actor from the same bearer token `require_auth`/[`require_role_at_least`]
-/// validated - see [`actor_identity`], including its known gap: the actor
-/// is looked up when this is called, i.e. after the write. `origin` is
-/// `"rest"`; a caller with another principal or channel uses
-/// [`record_write_as`].
+/// Record a successful REST write (spec M14: create/update/delete/
+/// password_reset etc.) once the service call it follows has succeeded.
+/// `actor` is the snapshot [`require_auth`] made when it authorized the
+/// request - a handler takes it with `Extension<AuditActor>` (ADR-0034
+/// section 3). `origin` is `"rest"`; another channel uses [`record_write_as`].
+///
+/// v8.0.0: this used to take the `AuthState` and the request headers and look
+/// the bearer token up again here, AFTER the write - a session that ended
+/// while the write ran left a row with no actor. It no longer reads anything.
 pub async fn record_write(
     audit: &AuditLogService,
-    auth: &AuthState,
-    headers: &HeaderMap,
+    actor: &AuditActor,
     action: &str,
     resource: &str,
     entity_id: Option<&str>,
     detail: Option<serde_json::Value>,
 ) {
-    let identity = actor_identity(headers, auth);
     record_write_as(
         audit,
-        identity.as_ref().map(AuditActor::from),
+        Some(actor),
         "rest",
         action,
         resource,
@@ -247,28 +258,22 @@ fn forbidden_response() -> Response {
 /// trusting the identity cached on it at login.
 pub async fn require_role_at_least(
     State(guard): State<RoleGuard>,
-    req: axum::extract::Request,
+    mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let identity = match guarded_identity(&guard.auth, &req).await {
-        Ok(identity) => identity,
+    let session = match guarded_session(&guard.auth, &req).await {
+        Ok(session) => session,
         Err(err) => return ApiError(err).into_response(),
     };
-    let role = identity
-        .as_ref()
-        .and_then(|identity| Role::from_str(&identity.role).ok());
-
-    match role {
-        Some(role) if role.at_least(guard.min) => next.run(req).await,
-        _ => {
-            deny(
-                &guard.audit,
-                guard.resource,
-                identity.as_ref(),
-                denied_detail(&req),
-            )
-            .await
-        }
+    let Some(session) = session else {
+        return forbidden_response();
+    };
+    // ADR-0034 section 3: one snapshot, for the denial row below and for the
+    // handler's success row alike.
+    let actor = guarded_actor(&guard.auth, &mut req, &session);
+    match Role::from_str(&session.identity.role) {
+        Ok(role) if role.at_least(guard.min) => next.run(req).await,
+        _ => deny(&guard.audit, guard.resource, &actor, denied_detail(&req)).await,
     }
 }
 
@@ -305,7 +310,8 @@ pub async fn require_role_at_least(
 /// `resource` with `detail` (REST: `{ method, path }`) and `Forbidden` (403);
 /// the account store failing to answer -> that error (the session is kept).
 /// `Ok` is the session as of NOW - attribute the write's audit row to its
-/// identity ([`record_write_as`]) rather than looking the token up once more.
+/// actor ([`AuthState::audit_actor`], then [`record_write`]) rather than
+/// looking the token up once more.
 ///
 /// The Tauri commands need no twin: a command receives its arguments (the
 /// file bytes included) before `require_role` runs, so there is no wait
@@ -330,10 +336,10 @@ pub async fn recheck_role_at_least(
     }
     record_denied_as(
         audit,
-        AuditActor::from(&session.identity),
+        &auth.audit_actor(&session),
         "rest",
         resource,
-        detail,
+        Some(detail),
     )
     .await;
     Err(BantoError::Forbidden)
@@ -365,13 +371,22 @@ fn guarded_session(
     }
 }
 
-/// [`guarded_session`]'s identity: what a role guard decides on.
-fn guarded_identity(
+/// The audit actor of the session a guard decided on (ADR-0034 section 3):
+/// the snapshot `require_auth` put into THIS request's extensions, or - when
+/// that is missing (the guard was stacked without `require_auth`) - the one
+/// made here from `session`, which is then put into the extensions so the
+/// handler behind the guard finds it too.
+fn guarded_actor(
     auth: &AuthState,
-    req: &axum::extract::Request,
-) -> impl std::future::Future<Output = Result<Option<Identity>, BantoError>> + Send + 'static {
-    let session = guarded_session(auth, req);
-    async move { Ok(session.await?.map(|session| session.identity)) }
+    req: &mut axum::extract::Request,
+    session: &AuthenticatedSession,
+) -> AuditActor {
+    if let Some(actor) = req.extensions().get::<AuditActor>() {
+        return actor.clone();
+    }
+    let actor = auth.audit_actor(session);
+    req.extensions_mut().insert(actor.clone());
+    actor
 }
 
 /// The session and its per-user permissions a permission guard decides on
@@ -382,8 +397,9 @@ fn guarded_identity(
 fn guarded_permissions(
     auth: &AuthState,
     req: &axum::extract::Request,
-) -> impl std::future::Future<Output = Result<Option<(Identity, SessionPermissions)>, BantoError>>
-       + Send
+) -> impl std::future::Future<
+    Output = Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError>,
+> + Send
        + 'static {
     let cached = req.extensions().get::<SessionPermissions>().cloned();
     let session = guarded_session(auth, req);
@@ -396,7 +412,7 @@ fn guarded_permissions(
             Some(permissions) => permissions,
             None => auth.session_permissions(&session).await?,
         };
-        Ok(Some((session.identity, permissions)))
+        Ok(Some((session, permissions)))
     }
 }
 
@@ -406,19 +422,18 @@ fn denied_detail(req: &axum::extract::Request) -> serde_json::Value {
     json!({ "method": req.method().as_str(), "path": req.uri().path() })
 }
 
-/// A guard's refusal: `403 forbidden`, and - when there IS an identity - the
-/// `denied` audit row (spec M14), `detail` `{ method, path }`. Shared by
-/// [`require_role_at_least`] and [`require_permission`] so a role refusal
-/// and a permission refusal record the same shape.
+/// A guard's refusal of a session: `403 forbidden` and the `denied` audit row
+/// (spec M14), `detail` `{ method, path }`, attributed to the snapshot the
+/// guard decided on. Shared by [`require_role_at_least`] and
+/// [`require_permission`] so a role refusal and a permission refusal record
+/// the same shape. (No session at all is refused without a row.)
 async fn deny(
     audit: &AuditLogService,
     resource: &str,
-    identity: Option<&Identity>,
+    actor: &AuditActor,
     detail: serde_json::Value,
 ) -> Response {
-    if let Some(identity) = identity {
-        record_denied_as(audit, AuditActor::from(identity), "rest", resource, detail).await;
-    }
+    record_denied_as(audit, actor, "rest", resource, Some(detail)).await;
     forbidden_response()
 }
 
@@ -451,24 +466,21 @@ pub struct PermissionGuard {
 /// `Extension<SessionPermissions>` and calls [`SessionPermissions::has`].
 pub async fn require_permission(
     State(guard): State<PermissionGuard>,
-    req: axum::extract::Request,
+    mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
     let session = match guarded_permissions(&guard.auth, &req).await {
         Ok(session) => session,
         Err(err) => return ApiError(err).into_response(),
     };
-    match session {
-        Some((_, permissions)) if permissions.has(&guard.permission) => next.run(req).await,
-        _ => {
-            deny(
-                &guard.audit,
-                guard.resource,
-                session.as_ref().map(|(identity, _)| identity),
-                denied_detail(&req),
-            )
-            .await
-        }
+    let Some((session, permissions)) = session else {
+        return forbidden_response();
+    };
+    let actor = guarded_actor(&guard.auth, &mut req, &session);
+    if permissions.has(&guard.permission) {
+        next.run(req).await
+    } else {
+        deny(&guard.audit, guard.resource, &actor, denied_detail(&req)).await
     }
 }
 
@@ -487,7 +499,7 @@ mod tests {
             "CREATE TABLE audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL DEFAULT (datetime('now')),
-                actor_username TEXT, actor_role TEXT,
+                actor_username TEXT, actor_id INTEGER, actor_role TEXT, actor_kind TEXT,
                 action TEXT NOT NULL, resource TEXT NOT NULL,
                 entity_id TEXT, detail TEXT,
                 origin TEXT NOT NULL, result TEXT NOT NULL DEFAULT 'ok'
@@ -511,16 +523,21 @@ mod tests {
             .rows
     }
 
+    fn api_key_actor() -> AuditActor {
+        AuditActor {
+            username: "ci-key（abc123）".to_string(),
+            id: None,
+            role: "api_key".to_string(),
+            kind: "apikey".to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn record_write_as_writes_the_given_actor_and_origin() {
         let audit = service().await;
-        let actor = AuditActor {
-            username: "ci-key（abc123）",
-            role: "api_key",
-        };
         record_write_as(
             &audit,
-            Some(actor),
+            Some(&api_key_actor()),
             "mcp",
             "update",
             "items",
@@ -532,7 +549,9 @@ mod tests {
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(r.actor_username.as_deref(), Some("ci-key（abc123）"));
+        assert_eq!(r.actor_id, None);
         assert_eq!(r.actor_role.as_deref(), Some("api_key"));
+        assert_eq!(r.actor_kind.as_deref(), Some("apikey"));
         assert_eq!(r.origin, "mcp");
         assert_eq!(r.result, "ok");
         assert_eq!(r.action, "update");
@@ -547,7 +566,9 @@ mod tests {
         record_write_as(&audit, None, "rest", "create", "items", None, None).await;
         let rows = rows(&audit).await;
         assert_eq!(rows[0].actor_username, None);
+        assert_eq!(rows[0].actor_id, None);
         assert_eq!(rows[0].actor_role, None);
+        assert_eq!(rows[0].actor_kind, None);
         assert_eq!(rows[0].origin, "rest");
         assert_eq!(rows[0].result, "ok");
     }
@@ -557,19 +578,18 @@ mod tests {
         let audit = service().await;
         record_denied_as(
             &audit,
-            AuditActor {
-                username: "bob",
-                role: "viewer",
-            },
+            &AuditActor::account("bob", 4, "viewer"),
             "mcp",
             "users",
-            json!({ "method": "POST", "path": "/api/users" }),
+            Some(json!({ "method": "POST", "path": "/api/users" })),
         )
         .await;
         let rows = rows(&audit).await;
         let r = &rows[0];
         assert_eq!(r.actor_username.as_deref(), Some("bob"));
+        assert_eq!(r.actor_id, Some(4));
         assert_eq!(r.actor_role.as_deref(), Some("viewer"));
+        assert_eq!(r.actor_kind.as_deref(), Some("account"));
         assert_eq!(r.action, "denied");
         assert_eq!(r.resource, "users");
         assert_eq!(r.entity_id, None);
@@ -581,43 +601,287 @@ mod tests {
         );
     }
 
+    /// A failed login has no actor: only the bounded name that was tried.
     #[tokio::test]
-    async fn record_write_resolves_the_session_actor_with_rest_origin() {
+    async fn record_login_failed_as_keeps_the_tried_name_and_no_actor() {
         let audit = service().await;
-        let auth = AuthState::new(
-            |_u: String, _p: String| Box::pin(async { None }),
-            SessionValidation::DisabledNoRevocation,
-        );
-        let token = auth.issue_token(Identity {
-            id: "alice".into(),
-            name: "Alice".into(),
-            role: "admin".into(),
-        });
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            format!("Bearer {token}").parse().unwrap(),
-        );
-        record_write(&audit, &auth, &headers, "delete", "items", Some("3"), None).await;
-        record_write(
-            &audit,
-            &auth,
-            &HeaderMap::new(),
-            "delete",
-            "items",
-            None,
-            None,
-        )
-        .await;
+        record_login_failed_as(&audit, "tauri", "mallory", None).await;
+        record_login_failed_as(&audit, "rest", &"x".repeat(500), None).await;
         let rows = rows(&audit).await;
-        assert_eq!(rows.len(), 2);
-        let with = rows.iter().find(|r| r.entity_id.is_some()).unwrap();
-        assert_eq!(with.actor_username.as_deref(), Some("alice"));
-        assert_eq!(with.actor_role.as_deref(), Some("admin"));
-        assert_eq!((with.origin.as_str(), with.result.as_str()), ("rest", "ok"));
-        let without = rows.iter().find(|r| r.entity_id.is_none()).unwrap();
-        assert_eq!(without.actor_username, None);
-        assert_eq!(without.actor_role, None);
+        let r = rows.iter().find(|r| r.origin == "tauri").unwrap();
+        assert_eq!(r.actor_username.as_deref(), Some("mallory"));
+        assert_eq!((r.actor_id, r.actor_role.clone()), (None, None));
+        assert_eq!(r.actor_kind, None);
+        assert_eq!(
+            (r.action.as_str(), r.resource.as_str(), r.result.as_str()),
+            ("login_failed", "auth", "failed")
+        );
+        let long = rows.iter().find(|r| r.origin == "rest").unwrap();
+        assert!(long.actor_username.as_ref().unwrap().chars().count() < 500);
+    }
+
+    // --- ADR-0034 section 3: the audit actor is the guard's snapshot ---------
+
+    const BUILTIN_ADMIN_ID: i64 = 1;
+
+    fn grant_spec(kind: &str, id: &str, role: &str, marked: bool) -> crate::grant::GrantSpec {
+        let mut spec = crate::grant::GrantSpec::new(
+            crate::grant::GrantKind::new(kind).unwrap(),
+            Identity {
+                id: id.to_string(),
+                name: id.to_string(),
+                role: role.to_string(),
+            },
+            std::sync::Arc::new(|| Box::pin(async { Ok(true) })),
+        );
+        spec.audit_as_builtin_admin = marked;
+        spec
+    }
+
+    fn issue_grant(auth: &AuthState, spec: &crate::grant::GrantSpec) -> String {
+        auth.issue_grant_token(spec, auth.grant_generation(&spec.kind))
+            .expect("grant token")
+    }
+
+    /// Account `editor-user` (id 3) plus whatever grants the test issues.
+    fn actor_auth() -> AuthState {
+        AuthState::new(
+            |_u: String, _p: String| Box::pin(async { None }),
+            SessionValidation::lookup(|username: String| {
+                Box::pin(async move {
+                    Ok(match username.as_str() {
+                        "editor-user" => Some(account(3, "editor")),
+                        "viewer-user" => Some(account(5, "viewer")),
+                        _ => None,
+                    })
+                })
+            }),
+        )
+        .with_builtin_admin_id(BUILTIN_ADMIN_ID)
+    }
+
+    /// A write route (`editor` floor) whose handler records with the
+    /// snapshot it was handed. `before_record` runs between the guard and the
+    /// audit write - where a real handler does its work.
+    fn actor_routes(
+        auth: &AuthState,
+        audit: &AuditLogService,
+        before_record: impl Fn() + Clone + Send + Sync + 'static,
+    ) -> Router {
+        let handler_audit = audit.clone();
+        Router::new()
+            .route(
+                "/api/equipment/{id}/start",
+                post(move |axum::Extension(actor): axum::Extension<AuditActor>| {
+                    let audit = handler_audit.clone();
+                    let before_record = before_record.clone();
+                    async move {
+                        before_record();
+                        record_write(&audit, &actor, "update", "equipment", Some("1"), None).await;
+                        "started"
+                    }
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                RoleGuard {
+                    auth: auth.clone(),
+                    min: Role::Editor,
+                    resource: "equipment",
+                    audit: audit.clone(),
+                },
+                require_role_at_least,
+            ))
+            .layer(middleware::from_fn_with_state(auth.clone(), require_auth))
+    }
+
+    /// `(actor_username, actor_id, actor_role, actor_kind, result)` per row.
+    type ActorColumns = (
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        String,
+    );
+
+    async fn actor_columns(audit: &AuditLogService) -> Vec<ActorColumns> {
+        let mut rows = rows(audit).await;
+        rows.sort_by_key(|r| r.id);
+        rows.into_iter()
+            .map(|r| {
+                (
+                    r.actor_username,
+                    r.actor_id,
+                    r.actor_role,
+                    r.actor_kind,
+                    r.result,
+                )
+            })
+            .collect()
+    }
+
+    fn columns(
+        username: &str,
+        id: Option<i64>,
+        role: &str,
+        kind: &str,
+        result: &str,
+    ) -> ActorColumns {
+        (
+            Some(username.to_string()),
+            id,
+            Some(role.to_string()),
+            Some(kind.to_string()),
+            result.to_string(),
+        )
+    }
+
+    /// The three attributions (ADR-0034 section 3), success and denial alike:
+    /// a marked grant is the built-in `admin` with the built-in row's id and
+    /// its OWN role; an unmarked grant keeps its fixed id and has no
+    /// `actor_id`; an account is itself. `actor_kind` tells two marked grants
+    /// apart, which the actor alone cannot.
+    #[tokio::test]
+    async fn the_audit_actor_follows_the_mark_for_success_and_denial() {
+        let audit = service().await;
+        let auth = actor_auth();
+        let router = actor_routes(&auth, &audit, || {});
+
+        let commissioning = grant_spec("commissioning", "commissioning", "admin", true);
+        let panel = grant_spec("panel", "panel", "editor", true);
+        let marked_viewer = grant_spec("kiosk", "kiosk", "viewer", true);
+        let public = grant_spec("publicViewer", "public", "viewer", false);
+
+        for spec in [&commissioning, &panel] {
+            let token = issue_grant(&auth, spec);
+            assert_eq!(call(&router, Some(&token)).await, StatusCode::OK);
+        }
+        for spec in [&marked_viewer, &public] {
+            let token = issue_grant(&auth, spec);
+            assert_eq!(call(&router, Some(&token)).await, StatusCode::FORBIDDEN);
+        }
+        let editor = auth.issue_account_token(account(3, "editor"), false);
+        assert_eq!(call(&router, Some(&editor)).await, StatusCode::OK);
+        let viewer = auth.issue_account_token(account(5, "viewer"), false);
+        assert_eq!(call(&router, Some(&viewer)).await, StatusCode::FORBIDDEN);
+
+        let admin = Some(BUILTIN_ADMIN_ID);
+        assert_eq!(
+            actor_columns(&audit).await,
+            vec![
+                columns("admin", admin, "admin", "grant:commissioning", "ok"),
+                columns("admin", admin, "editor", "grant:panel", "ok"),
+                columns("admin", admin, "viewer", "grant:kiosk", "denied"),
+                columns("public", None, "viewer", "grant:publicViewer", "denied"),
+                columns("editor-user", Some(3), "editor", "account", "ok"),
+                columns("viewer-user", Some(5), "viewer", "account", "denied"),
+            ]
+        );
+    }
+
+    /// The row is attributed to the session that was AUTHORIZED, even when
+    /// that session ends before the row is written (logout, or the grant
+    /// being revoked, while the handler worked). Nothing reads the token
+    /// again - and no row carries the token.
+    #[tokio::test]
+    async fn the_audit_actor_survives_the_session_ending_after_authorization() {
+        let audit = service().await;
+        let auth = actor_auth();
+
+        let editor = auth.issue_account_token(account(3, "editor"), false);
+        let commissioning = grant_spec("commissioning", "commissioning", "admin", true);
+        let grant = issue_grant(&auth, &commissioning);
+
+        let ending = auth.clone();
+        let (editor_token, kind) = (editor.clone(), commissioning.kind.clone());
+        let router = actor_routes(&auth, &audit, move || {
+            ending.logout(&editor_token);
+            ending.revoke_grant_tokens(&kind);
+        });
+
+        assert_eq!(call(&router, Some(&editor)).await, StatusCode::OK);
+        assert!(
+            !auth.verify(&editor),
+            "the session ended inside the handler"
+        );
+        // The grant was revoked by the first request already; issue a new one.
+        assert_eq!(call(&router, Some(&grant)).await, StatusCode::UNAUTHORIZED);
+        let grant = issue_grant(&auth, &commissioning);
+        assert_eq!(call(&router, Some(&grant)).await, StatusCode::OK);
+        assert!(!auth.verify(&grant));
+
+        assert_eq!(
+            actor_columns(&audit).await,
+            vec![
+                columns("editor-user", Some(3), "editor", "account", "ok"),
+                columns(
+                    "admin",
+                    Some(BUILTIN_ADMIN_ID),
+                    "admin",
+                    "grant:commissioning",
+                    "ok"
+                ),
+            ]
+        );
+        for row in rows(&audit).await {
+            let text = serde_json::to_string(&row).unwrap();
+            assert!(!text.contains(&editor) && !text.contains(&grant), "{text}");
+        }
+    }
+
+    /// The mark never reaches the wire: `identity` is `Identity & { kind }`.
+    #[tokio::test]
+    async fn the_mark_is_not_serialized() {
+        let auth = actor_auth();
+        let token = issue_grant(
+            &auth,
+            &grant_spec("commissioning", "commissioning", "admin", true),
+        );
+        let session = auth.authenticate(&token).await.unwrap().unwrap();
+        assert!(session.audit_as_builtin_admin);
+        assert_eq!(
+            serde_json::to_value(&session).unwrap(),
+            json!({
+                "id": "commissioning",
+                "name": "commissioning",
+                "role": "admin",
+                "kind": "commissioning"
+            })
+        );
+    }
+
+    /// A guard stacked without `require_auth` still hands the handler the
+    /// snapshot it decided on.
+    #[tokio::test]
+    async fn a_role_guard_without_require_auth_still_provides_the_actor() {
+        let audit = service().await;
+        let auth = actor_auth();
+        let handler_audit = audit.clone();
+        let router = Router::new()
+            .route(
+                "/api/equipment/{id}/start",
+                post(move |axum::Extension(actor): axum::Extension<AuditActor>| {
+                    let audit = handler_audit.clone();
+                    async move {
+                        record_write(&audit, &actor, "update", "equipment", None, None).await;
+                    }
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                RoleGuard {
+                    auth: auth.clone(),
+                    min: Role::Editor,
+                    resource: "equipment",
+                    audit: audit.clone(),
+                },
+                require_role_at_least,
+            ));
+        let editor = auth.issue_account_token(account(3, "editor"), false);
+        assert_eq!(call(&router, Some(&editor)).await, StatusCode::OK);
+        assert_eq!(call(&router, None).await, StatusCode::FORBIDDEN);
+        assert_eq!(
+            actor_columns(&audit).await,
+            vec![columns("editor-user", Some(3), "editor", "account", "ok")]
+        );
     }
 
     // --- Issue #697: PermissionGuard -----------------------------------------

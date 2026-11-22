@@ -77,6 +77,11 @@ pub async fn require_auth(State(auth): State<AuthState>, mut req: Request, next:
                 Ok(permissions) => permissions,
                 Err(err) => return crate::ApiError(err).into_response(),
             };
+            // ADR-0034 section 3: the audit actor is decided HERE, once, from
+            // the session that was just authorized. Handlers and guards hand
+            // this snapshot to the audit log; nothing looks the token up
+            // again when the row is written.
+            req.extensions_mut().insert(auth.audit_actor(&session));
             req.extensions_mut().insert(session);
             req.extensions_mut().insert(permissions);
             next.run(req).await

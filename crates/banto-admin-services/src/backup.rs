@@ -48,7 +48,10 @@
 //! startup only prints a warning (see `warn_legacy_shared_area`). They are left
 //! untouched for the operator to move by hand.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use banto_core::datetime::iso_datetime_from_system_time;
@@ -165,11 +168,163 @@ const REQUIRED_TABLES: [&str; 4] = ["settings", "users", "audit_log", "ui_settin
 /// applied. Versions after the baseline may be missing: the next startup's
 /// migration run adds them. Anything else would swap in a file the startup
 /// migration check then refuses, leaving a database that cannot boot.
+///
+/// [`MigrationManifest::with_candidate_check`] adds the app's own startup
+/// conditions on top of the history (ADR-0034 §9): the checks that would stop
+/// the startup AFTER the swap are run on the candidate BEFORE it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationManifest {
     migrations: Vec<(i64, Vec<u8>)>,
     baseline_version: i64,
+    candidate_check: Option<CandidateCheck>,
 }
+
+/// The app's startup conditions, run on a restore candidate (ADR-0034 §9).
+///
+/// A candidate whose migration history is fine can still be a database the
+/// app refuses to start on (no built-in `admin` row, an account whose name a
+/// grant's fixed id now reserves, ...). Swapping it in would replace a good
+/// database with one that cannot boot. The wiring layer therefore hands over
+/// the SAME function its startup runs, and the restore validation calls it at
+/// both moments a candidate is looked at: when the restore is staged, and
+/// right before the swap. The current database is not touched whatever the
+/// answer:
+///
+/// - `Ok(CandidateVerdict::Accepted)`: the candidate may be staged / applied;
+/// - `Ok(CandidateVerdict::Rejected(reason))`: the CANDIDATE is the problem.
+///   Staging is refused (`validation`), and a pending file found at startup
+///   is deleted;
+/// - `Err(_)`: the check could not be COMPLETED (no disk space for the
+///   working copy, a permission, a read that failed). That says nothing about
+///   the candidate: staging fails with that error and can be retried, and a
+///   pending file found at startup is KEPT - the restore is not applied this
+///   time and is looked at again on the next start.
+///
+/// The function receives the candidate's PATH and must not change that file:
+/// it opens it read-only, or - when the startup would first run migrations -
+/// works on a copy it deletes afterwards.
+#[derive(Clone)]
+pub struct CandidateCheck(Arc<CandidateCheckFn>);
+
+/// What a [`CandidateCheck`] found, when it could look.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CandidateVerdict {
+    Accepted,
+    /// The app would not start on this candidate; the reason, for the operator.
+    Rejected(String),
+}
+
+type CandidateCheckFn = dyn Fn(PathBuf) -> Pin<Box<dyn Future<Output = Result<CandidateVerdict, BantoError>> + Send>>
+    + Send
+    + Sync;
+
+/// Why a restore candidate is not used.
+#[derive(Debug)]
+enum CandidateRefusal {
+    /// The candidate itself is unusable (not SQLite, corrupt, another
+    /// version's history, a database the app would not start on).
+    Invalid(BantoError),
+    /// The check could not be completed; nothing is known about the candidate.
+    Unchecked(BantoError),
+}
+
+impl CandidateRefusal {
+    fn into_error(self) -> BantoError {
+        match self {
+            Self::Invalid(err) => err,
+            Self::Unchecked(err) => BantoError::Other(format!(
+                "リストアの候補を検査できませんでした（候補の内容の問題ではありません）。\
+                 空き容量や権限を確かめて、もう一度お試しください: {err}"
+            )),
+        }
+    }
+}
+
+/// Which failed reads still tell something about the candidate's CONTENT.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadOf {
+    /// Opening the file, the integrity check, `sqlite_master`: the statement
+    /// cannot fail because of what the candidate's schema looks like.
+    File,
+    /// A query over a table of the candidate. A column that is missing or of
+    /// another type is a finding about the candidate (it is arbitrary
+    /// operator-supplied input), not a failed read.
+    CandidateTable,
+}
+
+/// SQLite's primary result code of `err`, when SQLite reported one.
+fn sqlite_primary_code(err: &sqlx::Error) -> Option<i32> {
+    let sqlx::Error::Database(db_err) = err else {
+        return None;
+    };
+    // sqlx-sqlite reports the EXTENDED code; the low byte is the primary one.
+    db_err.code()?.parse::<i32>().ok().map(|code| code & 0xff)
+}
+
+/// Sort a read that failed while validating a candidate (cross-review of
+/// #858). Only an error in which SQLite CONFIRMS that the content is not a
+/// usable database is the candidate's fault: `SQLITE_CORRUPT` (11),
+/// `SQLITE_NOTADB` (26), and - for [`ReadOf::CandidateTable`] - a table of
+/// another shape. Everything else (`SQLITE_IOERR`, `SQLITE_CANTOPEN`,
+/// `SQLITE_BUSY`, a permission, an I/O error of the driver, ...) means the
+/// file could not be READ: nothing is known about it, so it must not be
+/// reported - or, at startup, deleted - as an invalid candidate.
+fn read_failure(context: &str, read: ReadOf, err: sqlx::Error) -> CandidateRefusal {
+    const SQLITE_ERROR: i32 = 1;
+    const SQLITE_CORRUPT: i32 = 11;
+    const SQLITE_NOTADB: i32 = 26;
+    let about_content = match sqlite_primary_code(&err) {
+        Some(SQLITE_CORRUPT | SQLITE_NOTADB) => true,
+        Some(SQLITE_ERROR) => read == ReadOf::CandidateTable,
+        Some(_) => false,
+        None => {
+            read == ReadOf::CandidateTable
+                && matches!(
+                    err,
+                    sqlx::Error::ColumnDecode { .. }
+                        | sqlx::Error::ColumnNotFound(_)
+                        | sqlx::Error::ColumnIndexOutOfBounds { .. }
+                        | sqlx::Error::Decode(_)
+                        | sqlx::Error::TypeNotFound { .. }
+                )
+        }
+    };
+    if about_content {
+        CandidateRefusal::Invalid(validation_err(format!(
+            "{context}（ファイルが破損しているか、Banto のSQLiteデータベースではありません）: {err}"
+        )))
+    } else {
+        CandidateRefusal::Unchecked(BantoError::Storage(format!("{context}: {err}")))
+    }
+}
+
+impl CandidateCheck {
+    pub fn new<F, Fut>(check: F) -> Self
+    where
+        F: Fn(PathBuf) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<CandidateVerdict, BantoError>> + Send + 'static,
+    {
+        Self(Arc::new(move |path| Box::pin(check(path))))
+    }
+
+    async fn run(&self, candidate: &Path) -> Result<CandidateVerdict, BantoError> {
+        (self.0)(candidate.to_path_buf()).await
+    }
+}
+
+impl std::fmt::Debug for CandidateCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CandidateCheck(..)")
+    }
+}
+
+impl PartialEq for CandidateCheck {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for CandidateCheck {}
 
 impl MigrationManifest {
     /// `migrations`: `(version, checksum)` of every embedded migration (for a
@@ -182,7 +337,15 @@ impl MigrationManifest {
         Self {
             migrations: migrations.into_iter().collect(),
             baseline_version,
+            candidate_check: None,
         }
+    }
+
+    /// Also run `check` - the app's startup conditions - on every restore
+    /// candidate, after the history check passed (see [`CandidateCheck`]).
+    pub fn with_candidate_check(mut self, check: CandidateCheck) -> Self {
+        self.candidate_check = Some(check);
+        self
     }
 
     fn checksum_of(&self, version: i64) -> Option<&[u8]> {
@@ -196,10 +359,10 @@ impl MigrationManifest {
 /// Error of a candidate whose migration history does not match this app
 /// (ADR-0034 §9). One wording for every mismatch: the operator's remedy is the
 /// same (use a backup taken by this version of the app).
-fn migration_history_err(reason: impl std::fmt::Display) -> BantoError {
-    validation_err(format!(
+fn migration_history_err(reason: impl std::fmt::Display) -> CandidateRefusal {
+    CandidateRefusal::Invalid(validation_err(format!(
         "このファイルは、このアプリの版のデータベースではありません（{reason}）。v8.0.0 より前の版や、より新しい版のバックアップは復元できません"
-    ))
+    )))
 }
 
 /// One backup file, as listed/created by [`BackupService::list`]/
@@ -321,17 +484,24 @@ fn unique_path(dir: &Path, base_stem: &str, ext: &str) -> PathBuf {
 ///
 /// `manifest` is the app's migration list (ADR-0034 §9): the candidate's
 /// `_sqlx_migrations` history must match it (see [`MigrationManifest`]).
-async fn validate_sqlite_file(path: &Path, manifest: &MigrationManifest) -> Result<(), BantoError> {
+async fn validate_sqlite_file(
+    path: &Path,
+    manifest: &MigrationManifest,
+) -> Result<(), CandidateRefusal> {
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(false)
         .read_only(true);
 
-    let mut conn = SqliteConnection::connect_with(&options).await.map_err(|err| {
-        validation_err(format!(
-            "SQLiteデータベースとして開けませんでした（ファイルが破損しているか、SQLiteデータベースではありません）: {err}"
-        ))
-    })?;
+    let mut conn = SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|err| {
+            read_failure(
+                "SQLiteデータベースとして開けませんでした",
+                ReadOf::File,
+                err,
+            )
+        })?;
 
     // Run the actual checks in a sub-function and close `conn` on EVERY exit
     // path (success or failure) before propagating the result - critically
@@ -341,21 +511,35 @@ async fn validate_sqlite_file(path: &Path, manifest: &MigrationManifest) -> Resu
     // rejected pending-restore file) once this returns.
     let result = run_validation_checks(&mut conn, manifest).await;
     let _ = conn.close().await;
-    result
+    result?;
+
+    // ADR-0034 §9: the app's startup conditions, on a file whose history is
+    // already known to be this app's. Run after `conn` is closed - the check
+    // opens the candidate itself.
+    let Some(check) = &manifest.candidate_check else {
+        return Ok(());
+    };
+    match check.run(path).await {
+        Ok(CandidateVerdict::Accepted) => Ok(()),
+        Ok(CandidateVerdict::Rejected(reason)) => Err(CandidateRefusal::Invalid(validation_err(
+            format!("このバックアップは、戻すとアプリを起動できなくなるため使えません: {reason}"),
+        ))),
+        Err(err) => Err(CandidateRefusal::Unchecked(err)),
+    }
 }
 
 async fn run_validation_checks(
     conn: &mut SqliteConnection,
     manifest: &MigrationManifest,
-) -> Result<(), BantoError> {
+) -> Result<(), CandidateRefusal> {
     let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&mut *conn)
         .await
-        .map_err(|err| validation_err(format!("整合性チェックの実行に失敗しました: {err}")))?;
+        .map_err(|err| read_failure("整合性チェックの実行に失敗しました", ReadOf::File, err))?;
     if integrity != "ok" {
-        return Err(validation_err(format!(
+        return Err(CandidateRefusal::Invalid(validation_err(format!(
             "整合性チェックでエラーが見つかりました: {integrity}"
-        )));
+        ))));
     }
 
     for table in REQUIRED_TABLES {
@@ -364,11 +548,13 @@ async fn run_validation_checks(
                 .bind(table)
                 .fetch_optional(&mut *conn)
                 .await
-                .map_err(banto_storage::storage_error)?;
+                .map_err(|err| {
+                    read_failure("テーブルの一覧を読めませんでした", ReadOf::File, err)
+                })?;
         if exists.is_none() {
-            return Err(validation_err(format!(
+            return Err(CandidateRefusal::Invalid(validation_err(format!(
                 "必須テーブル '{table}' が見つかりません。Banto のデータベースファイルではない可能性があります"
-            )));
+            ))));
         }
     }
 
@@ -380,23 +566,26 @@ async fn run_validation_checks(
 async fn check_migration_history(
     conn: &mut SqliteConnection,
     manifest: &MigrationManifest,
-) -> Result<(), BantoError> {
+) -> Result<(), CandidateRefusal> {
     let has_history: Option<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
     )
     .fetch_optional(&mut *conn)
     .await
-    .map_err(banto_storage::storage_error)?;
+    .map_err(|err| read_failure("テーブルの一覧を読めませんでした", ReadOf::File, err))?;
     if has_history.is_none() {
         return Err(migration_history_err("migration の履歴がありません"));
     }
-    // A history table of an unexpected shape is a refusal, not a storage
-    // failure: the candidate is arbitrary operator-supplied input.
+    // A history table of an unexpected shape is a refusal of the candidate
+    // (it is arbitrary operator-supplied input); a read that FAILED is not -
+    // `read_failure` tells the two apart.
     let applied: Vec<(i64, bool, Vec<u8>)> =
         sqlx::query_as("SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&mut *conn)
             .await
-            .map_err(|err| migration_history_err(format!("migration の履歴を読めません: {err}")))?;
+            .map_err(|err| {
+                read_failure("migration の履歴を読めません", ReadOf::CandidateTable, err)
+            })?;
     for (version, success, checksum) in &applied {
         if !success {
             return Err(migration_history_err(format!(
@@ -698,7 +887,9 @@ impl BackupService {
             });
         }
 
-        validate_sqlite_file(&source_path, manifest).await?;
+        validate_sqlite_file(&source_path, manifest)
+            .await
+            .map_err(CandidateRefusal::into_error)?;
 
         let dir = self.scope_dir()?;
         tokio::fs::create_dir_all(&dir)
@@ -740,9 +931,9 @@ impl BackupService {
             .await
             .map_err(|err| io_err("アップロードされたファイルの書き込みに失敗しました", err))?;
 
-        if let Err(err) = validate_sqlite_file(&temp_path, manifest).await {
+        if let Err(refusal) = validate_sqlite_file(&temp_path, manifest).await {
             let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(err);
+            return Err(refusal.into_error());
         }
 
         if let Err(err) = tokio::fs::rename(&temp_path, self.pending_restore_path()?).await {
@@ -817,7 +1008,10 @@ impl BackupService {
     ///    block the app from starting at all (it would retry-and-fail every
     ///    boot otherwise). Instead it is logged, the bad pending file is
     ///    deleted, and this returns `Ok(None)` - as if nothing had been
-    ///    staged.
+    ///    staged. When the app's own check ([`CandidateCheck`]) could not be
+    ///    COMPLETED (an I/O failure, not a verdict on the file), the pending
+    ///    file is kept instead: nothing is applied now, and the next start
+    ///    looks again.
     /// 3. If the CURRENT db file exists, checkpoint it (`PRAGMA
     ///    wal_checkpoint(TRUNCATE)`) via a short-lived one-off connection,
     ///    best-effort. JUDGMENT CALL (spec explicitly leaves this open,
@@ -867,12 +1061,24 @@ impl BackupService {
             return Ok(None);
         }
 
-        if let Err(err) = validate_sqlite_file(&pending_path, manifest).await {
-            eprintln!(
-                "banto: 起動時に検出したリストア予約ファイルが不正なため、適用をスキップして削除します: {err}"
-            );
-            let _ = tokio::fs::remove_file(&pending_path).await;
-            return Ok(None);
+        match validate_sqlite_file(&pending_path, manifest).await {
+            Ok(()) => {}
+            Err(CandidateRefusal::Invalid(err)) => {
+                eprintln!(
+                    "banto: 起動時に検出したリストア予約ファイルが不正なため、適用をスキップして削除します: {err}"
+                );
+                let _ = tokio::fs::remove_file(&pending_path).await;
+                return Ok(None);
+            }
+            // The check could not be completed: nothing is known about the
+            // candidate, so it is neither applied nor thrown away. The
+            // current database stays, and the next start looks again.
+            Err(CandidateRefusal::Unchecked(err)) => {
+                eprintln!(
+                    "banto: リストア予約ファイルを検査できなかったため、今回は適用しません（予約は残します。次の起動でもう一度確かめます）: {err}"
+                );
+                return Ok(None);
+            }
         }
 
         // Step 3: best-effort checkpoint of the CURRENT db (see doc comment
@@ -1640,5 +1846,265 @@ mod tests {
         assert!(applied.is_none());
         assert!(!pending.exists());
         assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+    }
+
+    // --- ADR-0034 §9: the app's candidate check ------------------------------
+
+    /// A manifest whose candidate check answers what `answer` holds NOW.
+    fn manifest_answering(
+        answer: Arc<std::sync::Mutex<Result<CandidateVerdict, String>>>,
+    ) -> MigrationManifest {
+        test_manifest().with_candidate_check(CandidateCheck::new(move |_candidate| {
+            let answer = answer.lock().unwrap().clone();
+            async move { answer.map_err(BantoError::Other) }
+        }))
+    }
+
+    /// A REJECTED candidate is the candidate's fault: staging is a
+    /// `validation` error and leaves no pending file; a pending file found at
+    /// startup is deleted and the database is not replaced.
+    #[tokio::test]
+    async fn a_rejected_candidate_is_refused_and_a_pending_one_is_deleted() {
+        let (svc, dir) = service().await;
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let answer = Arc::new(std::sync::Mutex::new(Ok(CandidateVerdict::Rejected(
+            "組み込みの行がありません".to_string(),
+        ))));
+        let manifest = manifest_answering(answer.clone());
+        let svc = svc.with_migrations(manifest.clone());
+        let backup = svc.create().await.unwrap();
+
+        let err = svc
+            .stage_restore_from_file(&backup.file_name)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+        assert!(svc.pending_restore().await.is_none());
+
+        // Staged while the check accepted it, rejected at the next start.
+        *answer.lock().unwrap() = Ok(CandidateVerdict::Accepted);
+        svc.stage_restore_from_file(&backup.file_name)
+            .await
+            .unwrap();
+        *answer.lock().unwrap() = Ok(CandidateVerdict::Rejected("x".to_string()));
+        let before = tokio::fs::read(&db_path).await.unwrap();
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .unwrap();
+        assert!(applied.is_none());
+        assert!(svc.pending_restore().await.is_none(), "deleted");
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+        drop(dir);
+    }
+
+    /// A check that could not be COMPLETED says nothing about the candidate
+    /// (cross-review of #858): staging fails with a retryable error that is
+    /// not `validation`, an earlier pending restore is left alone, and a
+    /// pending file found at startup is KEPT - not applied now, applied once
+    /// the check can run.
+    #[tokio::test]
+    async fn a_check_that_could_not_run_keeps_the_pending_restore_for_a_retry() {
+        let (svc, dir) = service().await;
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let answer = Arc::new(std::sync::Mutex::new(Ok(CandidateVerdict::Accepted)));
+        let manifest = manifest_answering(answer.clone());
+        let svc = svc.with_migrations(manifest.clone());
+        let backup = svc.create().await.unwrap();
+        svc.stage_restore_from_file(&backup.file_name)
+            .await
+            .unwrap();
+        let staged = svc.pending_restore().await.expect("staged");
+
+        *answer.lock().unwrap() = Err("no space left on device".to_string());
+        for err in [
+            svc.stage_restore_from_file(&backup.file_name)
+                .await
+                .unwrap_err(),
+            svc.stage_restore_from_bytes(&svc.read(&backup.file_name).await.unwrap())
+                .await
+                .unwrap_err(),
+        ] {
+            assert!(matches!(err, BantoError::Other(_)), "{err:?}");
+            assert!(err.to_string().contains("no space left"), "{err}");
+        }
+        assert_eq!(
+            svc.pending_restore().await,
+            Some(staged),
+            "the earlier pending restore is untouched"
+        );
+
+        let before = tokio::fs::read(&db_path).await.unwrap();
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .unwrap();
+        assert!(applied.is_none(), "not applied while it cannot be checked");
+        assert!(svc.pending_restore().await.is_some(), "kept for a retry");
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+
+        // The next start can check it: now it is applied. (The pool is
+        // closed first, as at a real restart - Windows cannot replace an
+        // open file.)
+        svc.sqlite_pool().unwrap().close().await;
+        *answer.lock().unwrap() = Ok(CandidateVerdict::Accepted);
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .unwrap();
+        assert!(applied.is_some());
+        drop(dir);
+    }
+
+    // --- cross-review of #858: a read that FAILED is not a bad candidate -----
+
+    /// Hold `path` the way another process would (a scanner, a copy still in
+    /// progress): an exclusive SQLite lock, so every read of it by somebody
+    /// else fails with `SQLITE_BUSY`. The content is not changed.
+    async fn lock_exclusively(path: &Path) -> SqliteConnection {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(false);
+        let mut conn = SqliteConnection::connect_with(&options)
+            .await
+            .expect("open the file to lock");
+        // `locking_mode` first: on a WAL file a plain exclusive transaction
+        // would not keep readers out.
+        for sql in ["PRAGMA locking_mode = EXCLUSIVE", "BEGIN EXCLUSIVE"] {
+            sqlx::query(sql).execute(&mut conn).await.expect(sql);
+        }
+        conn
+    }
+
+    async fn unlock(mut conn: SqliteConnection) {
+        sqlx::query("ROLLBACK").execute(&mut conn).await.unwrap();
+        conn.close().await.unwrap();
+    }
+
+    /// The built-in read checks (open, integrity, tables, history) run before
+    /// the app's candidate check. A pending file they could not READ is not a
+    /// bad candidate: it is kept, the database is not replaced, and the next
+    /// start - when it can be read - applies it.
+    #[tokio::test]
+    async fn a_pending_restore_that_cannot_be_read_is_kept_and_applied_later() {
+        let (svc, dir) = service().await;
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let manifest = test_manifest();
+        let backup = svc.create().await.unwrap();
+        svc.stage_restore_from_file(&backup.file_name)
+            .await
+            .unwrap();
+        let pending = svc.pending_restore_path().unwrap();
+        let staged = tokio::fs::read(&pending).await.unwrap();
+        let before = tokio::fs::read(&db_path).await.unwrap();
+
+        let lock = lock_exclusively(&pending).await;
+        let refusal = validate_sqlite_file(&pending, &manifest).await.unwrap_err();
+        assert!(
+            matches!(refusal, CandidateRefusal::Unchecked(_)),
+            "{refusal:?}"
+        );
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .expect("an unreadable pending file must not fail startup");
+        assert!(applied.is_none(), "not applied while it cannot be read");
+        assert!(pending.exists(), "kept for a retry");
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), before);
+        unlock(lock).await;
+        assert_eq!(
+            tokio::fs::read(&pending).await.unwrap(),
+            staged,
+            "the pending file itself is unchanged"
+        );
+
+        // The next start can read it: now it is applied. (The pool is closed
+        // first, as at a real restart.)
+        svc.sqlite_pool().unwrap().close().await;
+        let applied = BackupService::apply_pending_restore_at_startup(&db_path, &manifest)
+            .await
+            .unwrap();
+        assert!(applied.is_some());
+        assert!(!pending.exists());
+        assert_eq!(tokio::fs::read(&db_path).await.unwrap(), staged);
+        drop(dir);
+    }
+
+    /// The same split at the moment a restore is STAGED: a backup that cannot
+    /// be read right now is a retryable error (not `validation`), an earlier
+    /// pending restore is left alone, and the same backup is staged once it
+    /// can be read.
+    #[tokio::test]
+    async fn staging_a_backup_that_cannot_be_read_is_a_retryable_error() {
+        let (svc, dir) = service().await;
+        let first = svc.create().await.unwrap();
+        svc.stage_restore_from_file(&first.file_name).await.unwrap();
+        let staged = svc.pending_restore().await.expect("staged");
+        let second = svc
+            .create_at("2026-11-22 10:00:00")
+            .await
+            .expect("a second backup");
+        let second_path = svc.safe_backup_path(&second.file_name).unwrap();
+
+        let lock = lock_exclusively(&second_path).await;
+        let err = svc
+            .stage_restore_from_file(&second.file_name)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Other(_)), "{err:?}");
+        assert_eq!(
+            svc.pending_restore().await,
+            Some(staged),
+            "the earlier pending restore is untouched"
+        );
+        assert!(second_path.exists(), "the backup is not deleted either");
+        unlock(lock).await;
+
+        svc.stage_restore_from_file(&second.file_name)
+            .await
+            .expect("staged once it can be read");
+        drop(dir);
+    }
+
+    /// What the built-in checks answer for each kind of failure: a file that
+    /// cannot be opened is `Unchecked`; content SQLite itself calls not a
+    /// database, a missing table and a foreign history stay `Invalid`.
+    #[tokio::test]
+    async fn the_read_checks_tell_a_failed_read_from_a_bad_candidate() {
+        let dir = tempdir().unwrap();
+        let manifest = test_manifest();
+
+        let missing = dir.path().join("missing.sqlite3");
+        let refusal = validate_sqlite_file(&missing, &manifest).await.unwrap_err();
+        assert!(
+            matches!(refusal, CandidateRefusal::Unchecked(_)),
+            "{refusal:?}"
+        );
+
+        // Bigger than one page, so SQLite reads a full header and reports
+        // "file is not a database" rather than treating it as a short file.
+        let garbage = dir.path().join("garbage.sqlite3");
+        tokio::fs::write(&garbage, vec![b'x'; 8192]).await.unwrap();
+        let empty = dir.path().join("empty.sqlite3");
+        tokio::fs::write(&empty, b"").await.unwrap();
+        let foreign = dir.path().join("foreign.sqlite3");
+        tokio::fs::write(
+            &foreign,
+            candidate_bytes(
+                dir.path(),
+                "foreign-src.sqlite3",
+                "DROP TABLE _sqlx_migrations; CREATE TABLE _sqlx_migrations (version TEXT)",
+            )
+            .await,
+        )
+        .await
+        .unwrap();
+        for bad in [&garbage, &empty, &foreign] {
+            let refusal = validate_sqlite_file(bad, &manifest).await.unwrap_err();
+            assert!(
+                matches!(
+                    refusal,
+                    CandidateRefusal::Invalid(BantoError::Validation { .. })
+                ),
+                "{}: {refusal:?}",
+                bad.display()
+            );
+        }
     }
 }

@@ -55,29 +55,22 @@ struct ResetPasswordResponse {
 #[derive(Clone)]
 struct UsersAdminState {
     users: UsersService,
-    auth: AuthState,
     audit: AuditLogService,
 }
 
-/// Resolve the [`UserIdentity`] of the caller making this request, from its
-/// bearer token. `require_auth`/`require_role_at_least` have already proven
-/// the token is valid and `admin`-roled by the time a `/api/users/*` handler
+/// Resolve the [`UserIdentity`] of the account `session` belongs to - the
+/// session `require_auth` validated for this request, not a second look at
+/// the bearer token. `require_auth`/`require_role_at_least` have already
+/// proven it valid and `admin`-roled by the time a `/api/users/*` handler
 /// runs, so this should always succeed - `Unauthorized` here is a defensive
-/// fallback (e.g. the account was deleted by another admin between the
-/// token being issued and this request), not an expected path.
+/// fallback (e.g. the account was deleted by another admin between the guard
+/// and this read), not an expected path.
 async fn acting_user(
-    headers: &HeaderMap,
-    auth: &AuthState,
+    session: &AuthenticatedSession,
     users: &UsersService,
 ) -> Result<UserIdentity, BantoError> {
-    let username = bearer_token(headers)
-        .and_then(|token| auth.identity_for(token))
-        .map(|identity| identity.id);
-    let Some(username) = username else {
-        return Err(BantoError::Unauthorized);
-    };
     users
-        .get_by_username(&username)
+        .get_by_username(&session.identity.id)
         .await?
         .ok_or(BantoError::Unauthorized)
 }
@@ -137,7 +130,7 @@ async fn users_list(
 
 async fn users_create(
     State(state): State<UsersAdminState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Json(body): Json<CreateUserRequest>,
 ) -> Result<Json<UserIdentityView>, ApiError> {
     let identity = state
@@ -151,8 +144,7 @@ async fn users_create(
         .await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "create",
         "users",
         Some(&identity.id.to_string()),
@@ -166,13 +158,13 @@ async fn users_create(
 /// the same write as the display name and role (one version check, one
 /// bump); the response is the row with its permissions
 /// ([`UserWithPermissions`]). The granting admin recorded as `granted_by` is
-/// the caller of THIS request - the session `require_auth` validated - and
+/// the caller of THIS request - the audit actor of the session
+/// `require_auth` validated (ADR-0034 section 3) - and
 /// the permissions it writes are the account's stored state only: nothing
 /// here touches any session (it still needs the admin floor of this router).
 async fn users_update(
     State(state): State<UsersAdminState>,
-    session: Option<axum::Extension<AuthenticatedSession>>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(id): Path<i64>,
     Json(body): Json<UpdateUserRequest>,
 ) -> Result<Json<UserWithPermissions>, ApiError> {
@@ -181,10 +173,6 @@ async fn users_update(
         .as_deref()
         .map(PermissionKey::parse_all)
         .transpose()?;
-    let actor = session
-        .map(|axum::Extension(session)| session.identity.id)
-        .or_else(|| actor_identity(&headers, &state.auth).map(|identity| identity.id))
-        .unwrap_or_default();
     let outcome = state
         .users
         .update_user_with_permissions(
@@ -193,13 +181,12 @@ async fn users_update(
             body.role,
             permissions.as_deref(),
             body.version,
-            &actor,
+            &actor.username,
         )
         .await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "update",
         "users",
         Some(&id.to_string()),
@@ -220,15 +207,14 @@ async fn users_update(
 
 async fn users_reset_password(
     State(state): State<UsersAdminState>,
-    headers: HeaderMap,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(id): Path<i64>,
     Json(body): Json<ResetPasswordRequest>,
 ) -> Result<Json<ResetPasswordResponse>, ApiError> {
     state.users.reset_password(id, &body.new_password).await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "password_reset",
         "users",
         Some(&id.to_string()),
@@ -249,8 +235,8 @@ async fn users_reset_password(
 /// a grant session unchanged.
 async fn users_delete(
     State(state): State<UsersAdminState>,
-    session: Option<axum::Extension<AuthenticatedSession>>,
-    headers: HeaderMap,
+    axum::Extension(session): axum::Extension<AuthenticatedSession>,
+    axum::Extension(actor): axum::Extension<AuditActor>,
     Path(id): Path<i64>,
     query: Result<axum::extract::Query<UsersDeleteQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<StatusCode, ApiError> {
@@ -258,11 +244,10 @@ async fn users_delete(
     // (`bad_request`), not axum's plain-text rejection.
     let axum::extract::Query(query) =
         query.map_err(|err| BantoError::BadRequest(err.body_text()))?;
-    let is_grant = session.is_some_and(|axum::Extension(session)| session.grant.is_some());
-    let acting_id = if is_grant {
+    let acting_id = if session.grant.is_some() {
         None
     } else {
-        Some(acting_user(&headers, &state.auth, &state.users).await?.id)
+        Some(acting_user(&session, &state.users).await?.id)
     };
     let removed = state
         .users
@@ -270,8 +255,7 @@ async fn users_delete(
         .await?;
     record_write(
         &state.audit,
-        &state.auth,
-        &headers,
+        &actor,
         "delete",
         "users",
         Some(&id.to_string()),
@@ -297,7 +281,6 @@ async fn permissions_list(State(state): State<UsersAdminState>) -> Json<Vec<Perm
 pub fn users_router(users: UsersService, audit: AuditLogService, auth: AuthState) -> Router {
     let state = UsersAdminState {
         users,
-        auth: auth.clone(),
         audit: audit.clone(),
     };
     Router::new()

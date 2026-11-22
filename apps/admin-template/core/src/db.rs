@@ -289,6 +289,13 @@ async fn run_migrations(db: &Db) -> Result<(), BantoError> {
     }
 }
 
+/// Run the embedded migrations on `db` and nothing else (no demo seed).
+/// For the restore validation's working copy ([`crate::startup`]): the
+/// candidate is brought to the state the next startup would check.
+pub async fn migrate(db: &Db) -> Result<(), BantoError> {
+    run_migrations(db).await
+}
+
 async fn run_migrations_and_seed(db: &Db) -> Result<(), BantoError> {
     run_migrations(db).await?;
     // [scaffold:items] begin
@@ -919,7 +926,7 @@ mod tests {
                 vec!["kind", "account_uid"],
                 vec!["idx_users_single_builtin"],
             ),
-            ("audit_log", vec!["actor_id"], vec![]),
+            ("audit_log", vec!["actor_id", "actor_kind"], vec![]),
         ] {
             let old_columns = column_names(old_pool, table).await;
             let new_columns = column_names(new_pool, table).await;
