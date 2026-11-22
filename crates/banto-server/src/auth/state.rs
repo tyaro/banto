@@ -621,7 +621,10 @@ impl AuthState {
     ///
     /// - `Ok(Some(_))`: valid; the returned identity is the account's
     ///   CURRENT one (role included), and the token's cached identity is
-    ///   refreshed to it;
+    ///   refreshed to it. The token was still present, unexpired and bound to
+    ///   the stamp the store reported AFTER the lookup returned (decided
+    ///   under one lock, `AuthState::settle_lookup`) - a token logged out,
+    ///   expired or revoked while the lookup was in flight is `Ok(None)`;
     /// - `Ok(None)`: unknown/expired token, or the account is gone or its
     ///   stamp changed (or the token has no stamp) - the token is revoked;
     /// - `Err`: the store could not answer. The token is kept (a transient
@@ -640,7 +643,7 @@ impl AuthState {
     /// derived app's own stream, e.g. banto-industrial's `/api/tag-stream` /
     /// `/api/v1/stream`, banto-industrial#430, can do the same). Same
     /// verdicts - including the in-flight re-binding rule of
-    /// `AuthState::settle_stamp_mismatch` and "a store failure is `Err`,
+    /// `AuthState::settle_lookup` and "a store failure is `Err`,
     /// the token is kept" - but it does NOT slide the token's idle window:
     /// an open tab's stream must not keep an otherwise idle session alive
     /// (spec §11.2's `idle_ttl` would never lapse while a browser tab stays
@@ -682,90 +685,103 @@ impl AuthState {
         self.authenticate_with(token, IdleWindow::Keep).await
     }
 
+    /// The lookup awaits, so its result is settled against the token's state
+    /// after it returns (`AuthState::settle_lookup`), never against the
+    /// session read before it.
     async fn authenticate_with(
         &self,
         token: &str,
         idle: IdleWindow,
     ) -> Result<Option<AuthenticatedSession>, BantoError> {
-        let Some(session) = self.session_for_with(token, idle) else {
-            return Ok(None);
-        };
-        let Some(lookup) = self.session_lookup() else {
-            return Ok(Some(session));
-        };
-        if session.grant.is_some() {
-            // A grant session (ADR-0017): no account behind it, and its
-            // fixed identity cannot change, so there is nothing to re-check.
-            // It ends only through its token (expiry, `logout`,
-            // `revoke_grant_tokens`).
-            return Ok(Some(session));
-        }
-        let Some(stamp) = session.stamp else {
-            self.revoke_if_stamp(token, None);
-            return Ok(None);
-        };
-        match lookup(session.identity.id.clone()).await? {
-            Some(account) if account.stamp == stamp => {
-                self.refresh_identity(token, stamp, &account.identity);
-                Ok(Some(AuthenticatedSession {
-                    identity: account.identity,
-                    grant: None,
-                    stamp: Some(stamp),
-                }))
+        // One extra round only for a token that was re-bound while its lookup
+        // was in flight (see `settle_lookup`); every other case is decided in
+        // the first round.
+        for _ in 0..2 {
+            let Some(session) = self.session_for_with(token, idle) else {
+                return Ok(None);
+            };
+            let Some(lookup) = self.session_lookup() else {
+                return Ok(Some(session));
+            };
+            if session.grant.is_some() {
+                // A grant session (ADR-0017): no account behind it, and its
+                // fixed identity cannot change, so there is nothing to
+                // re-check. It ends only through its token (expiry, `logout`,
+                // `revoke_grant_tokens`).
+                return Ok(Some(session));
             }
-            account => {
-                // The stamp this lookup started from may be stale for a reason
-                // other than revocation: THIS token may have been re-bound
-                // meanwhile ([`AuthState::rotate_session_epoch`], its own
-                // password change). Decide on the token's CURRENT stamp.
-                let rebound = self.settle_stamp_mismatch(token, stamp, account.as_ref());
-                Ok(match (rebound, account) {
-                    (Some(rebound), Some(account)) => Some(AuthenticatedSession {
-                        identity: account.identity,
-                        grant: None,
-                        stamp: Some(rebound),
-                    }),
-                    _ => None,
-                })
+            let Some(stamp) = session.stamp else {
+                self.revoke_if_stamp(token, None);
+                return Ok(None);
+            };
+            let account = lookup(session.identity.id.clone()).await?;
+            match self.settle_lookup(token, stamp, account) {
+                Settled::Valid(session) => return Ok(Some(session)),
+                Settled::Invalid => return Ok(None),
+                Settled::Rebound => {}
             }
         }
+        Ok(None)
     }
 
-    /// Resolve a lookup whose result does not match the stamp the request
-    /// started from (`validated`), under one lock:
+    /// Decide a finished account lookup against the token's state AS IT IS
+    /// NOW, under one lock (Issue #793 S2 review): the lookup awaited, and the
+    /// token may have been logged out, expired, revoked or re-bound meanwhile.
+    /// A session is reported valid only if, at this instant, the token is
+    /// present, not expired, and bound to exactly the stamp the store
+    /// reported. `validated` is the stamp the lookup started from.
     ///
-    /// - the token is still bound to `validated` -> it really is stale:
-    ///   revoke it, `None`;
-    /// - the token was re-bound meanwhile to EXACTLY the stamp the store now
-    ///   reports -> it is valid under its new binding: refresh its identity
-    ///   and return that stamp. Only the token's own re-binding counts; this
-    ///   never adopts the store's newest epoch on a token's behalf, so the
-    ///   account's other sessions still end;
-    /// - anything else (re-bound to something the store no longer reports,
-    ///   or already gone) -> `None`, leaving the token for its next request
-    ///   to decide against a fresh lookup.
-    fn settle_stamp_mismatch(
+    /// - the token is gone or has expired -> `Invalid` (an expired one is
+    ///   evicted);
+    /// - the token is bound to the stamp the store reports -> `Valid`, with
+    ///   its identity refreshed (for the synchronous
+    ///   [`AuthState::identity_for`] readers behind [`require_auth`]). This
+    ///   covers both the ordinary case and a token re-bound meanwhile
+    ///   ([`AuthState::rotate_session_epoch`], its own password change) to
+    ///   EXACTLY the store's new stamp. Only the token's own re-binding
+    ///   counts; this never adopts the store's newest epoch on a token's
+    ///   behalf, so the account's other sessions still end;
+    /// - the token is still bound to `validated` but the store reports
+    ///   something else (or no account) -> it really is stale: revoke it,
+    ///   `Invalid`;
+    /// - the token was re-bound meanwhile to a stamp this lookup did not
+    ///   report (the lookup read the account before the change committed, or
+    ///   the account changed again) -> `Rebound`: this lookup cannot decide
+    ///   it. The token is left alone and the caller looks up once more.
+    fn settle_lookup(
         &self,
         token: &str,
         validated: SessionStamp,
-        account: Option<&SessionAccount>,
-    ) -> Option<SessionStamp> {
+        account: Option<SessionAccount>,
+    ) -> Settled {
+        let now = self.inner.clock.now();
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-        let current = tokens.get(token)?.stamp;
-        if current == Some(validated) {
-            tokens.remove(token);
-            return None;
-        }
-        let (Some(current), Some(account)) = (current, account) else {
-            return None;
+        let Some(record) = tokens.get(token) else {
+            return Settled::Invalid;
         };
-        if current != account.stamp {
-            return None;
+        if record.is_expired(now, &self.inner.policy_for(record)) {
+            tokens.remove(token);
+            return Settled::Invalid;
         }
-        if let Some(record) = tokens.get_mut(token) {
-            record.identity = account.identity.clone();
+        let current = record.stamp;
+        match account {
+            Some(account) if current == Some(account.stamp) => {
+                let record = tokens
+                    .get_mut(token)
+                    .expect("token was just confirmed present");
+                record.identity = account.identity.clone();
+                Settled::Valid(AuthenticatedSession {
+                    identity: account.identity,
+                    grant: None,
+                    stamp: Some(account.stamp),
+                })
+            }
+            _ if current == Some(validated) => {
+                tokens.remove(token);
+                Settled::Invalid
+            }
+            _ => Settled::Rebound,
         }
-        Some(current)
     }
 
     /// Keep `token` alive across its own account's password change (Issue
@@ -808,18 +824,6 @@ impl AuthState {
             .is_some_and(|record| record.stamp == stamp)
         {
             tokens.remove(token);
-        }
-    }
-
-    /// Store the account's current identity on `token` (for the synchronous
-    /// [`AuthState::identity_for`] readers behind [`require_auth`]), only if
-    /// the token is still bound to the stamp that identity was read under.
-    fn refresh_identity(&self, token: &str, stamp: SessionStamp, identity: &Identity) {
-        let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-        if let Some(record) = tokens.get_mut(token) {
-            if record.stamp == Some(stamp) {
-                record.identity = identity.clone();
-            }
         }
     }
 

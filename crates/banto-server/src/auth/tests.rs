@@ -1168,6 +1168,10 @@ struct FakeStore {
     /// Holds the NEXT lookup in flight: it signals the first sender on
     /// entry, then waits for the second channel before reading.
     lookup_gate: Arc<std::sync::Mutex<Option<LookupGate>>>,
+    /// What the lookup held by `lookup_gate` reports once released, instead
+    /// of the store's current state: a lookup that read the account BEFORE a
+    /// change committed.
+    stale_answer: Arc<std::sync::Mutex<Option<SessionAccount>>>,
 }
 
 type LookupGate = (
@@ -1212,6 +1216,10 @@ impl FakeStore {
                 if let Some((entered, release)) = gate {
                     let _ = entered.send(());
                     let _ = release.await;
+                    let stale = store.stale_answer.lock().unwrap().take();
+                    if let Some(stale) = stale {
+                        return Ok(Some(stale));
+                    }
                 }
                 if store.failing.load(Ordering::SeqCst) {
                     Err(BantoError::Other("store unavailable".to_string()))
@@ -1327,6 +1335,117 @@ async fn a_session_rebound_while_its_check_was_in_flight_stays_valid() {
     release_other.send(()).unwrap();
     assert!(other_check.await.unwrap().unwrap().is_none());
     assert!(!auth.verify(&other), "the stale session is revoked");
+    assert!(is_live(&auth, &changer).await);
+}
+
+// Issue #793 S2 review: `authenticate` settles the finished lookup against
+// the token's state at that instant. A verdict of "valid" means the token is
+// still there, unexpired and bound to the stamp the store reported - not
+// "it was when the lookup started".
+
+#[tokio::test]
+async fn a_session_logged_out_while_its_check_was_in_flight_is_not_valid() {
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+    let token = login_token(&auth, "alice", false).await;
+
+    let (check, release) = check_held_in_lookup(&store, &auth, &token).await;
+    auth.logout(&token);
+    release.send(()).unwrap();
+    assert!(
+        check.await.unwrap().unwrap().is_none(),
+        "the account still matches, but the token is gone"
+    );
+    assert!(!auth.verify(&token));
+}
+
+#[tokio::test]
+async fn a_session_that_expired_while_its_check_was_in_flight_is_not_valid() {
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+    let token = login_token(&auth, "alice", false).await;
+
+    let (check, release) = check_held_in_lookup(&store, &auth, &token).await;
+    // Past the absolute lifetime (default 8h) while the lookup is held.
+    auth.advance(Duration::from_secs(9 * 60 * 60));
+    release.send(()).unwrap();
+    assert!(check.await.unwrap().unwrap().is_none());
+    assert!(!auth.verify(&token), "the expired token is evicted");
+}
+
+#[tokio::test]
+async fn a_session_whose_stamp_changed_after_the_lookup_read_the_account_is_not_valid() {
+    // The lookup reports the account at epoch 0, which matches the stamp the
+    // check started from - but while it was in flight the token's stamp
+    // changed to one the store does not report. Before the fix this returned
+    // `Some` (the lookup "matched"); now the token is judged on the stamp it
+    // is bound to when the lookup returns, and that stamp is not the store's.
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+    let token = login_token(&auth, "alice", false).await;
+    let epoch0 = SessionStamp {
+        account_id: 1,
+        auth_epoch: 0,
+    };
+
+    let (check, release) = check_held_in_lookup(&store, &auth, &token).await;
+    assert!(auth.rotate_session_epoch(&token, epoch0, 7));
+    release.send(()).unwrap();
+    assert!(
+        check.await.unwrap().unwrap().is_none(),
+        "the lookup matched the old stamp, but the token is no longer bound to it"
+    );
+    assert!(!auth.verify(&token), "and the second lookup revoked it");
+}
+
+#[tokio::test]
+async fn a_session_rebound_after_the_lookup_read_the_old_account_stays_valid() {
+    // The other order of `a_session_rebound_while_its_check_was_in_flight_
+    // stays_valid`: the lookup read the account BEFORE the password change
+    // committed (epoch 0, role admin), then the change committed epoch 1 and
+    // re-bound this very token. The stale lookup cannot decide it, so the
+    // check looks up once more and judges the token on its new binding.
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let auth = store.auth();
+    let changer = login_token(&auth, "alice", false).await;
+    let epoch0 = SessionStamp {
+        account_id: 1,
+        auth_epoch: 0,
+    };
+    let stale = store.get("alice").expect("alice at epoch 0");
+
+    let (check, release) = check_held_in_lookup(&store, &auth, &changer).await;
+    // What the held lookup will report is the pre-change account.
+    *store.stale_answer.lock().unwrap() = Some(stale);
+    store.put("alice", "editor", 1, 1);
+    assert!(auth.rotate_session_epoch(&changer, epoch0, 1));
+    let before = store.lookups.load(Ordering::SeqCst);
+    release.send(()).unwrap();
+    let session = check
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("its own password change must not log the session out");
+    assert_eq!(
+        session.stamp,
+        Some(SessionStamp {
+            account_id: 1,
+            auth_epoch: 1
+        })
+    );
+    assert_eq!(
+        session.identity.role, "editor",
+        "the identity comes from the lookup that matched the current stamp"
+    );
+    assert_eq!(
+        store.lookups.load(Ordering::SeqCst),
+        before + 1,
+        "exactly one more lookup"
+    );
     assert!(is_live(&auth, &changer).await);
 }
 
