@@ -617,3 +617,42 @@ None (decided 2026-10-03; the six items of review tyaro/banto#313 landed as: (1)
 (4) → decision §2 "the kind identifier", (5) → decision §2 "`/api/auth/status`", (6) → decision
 §3). Function naming (the new shape of `delete_user`, the new signature of `extra_auth_router`)
 is settled in the implementation PR (not a design open point).
+
+## Addendum (2026-11-22, Issues #778, #790, #786): the built-in `admin`, audit attribution and the lockdown condition (ADR-0034)
+
+[ADR-0034](0034-owner-identity-builtin-admin.en.md) changes three places of the body in v8.0.0. The grant mechanism
+itself (the issuing route, `GrantSpec` / `GrantRegistry`, the serialization of issuance and revocation, decision §6)
+does not change. ADR-0034 became `Accepted` on 2026-11-22. This addendum takes effect once the implementation lands
+(C2, C2b and C4 in §7 of the plan); until then the body stands as written.
+
+- **Decision §3 (the self-deletion guard)**: a grant session still calls `delete_user` without an acting id (a
+  marked grant has no account row of its own either). Two things change.
+  - "The last admin cannot be deleted" counts only admins that can log in (`role = 'admin' AND kind = 'account'`).
+    The built-in `admin` row is not counted.
+  - Deleting, renaming, disabling, demoting or setting a password on the built-in row (`kind = 'builtin'`) is
+    refused by the service layer, whether the caller is an account or a grant.
+- **The "audit" item under Security**: the actor of a grant session is decided by the `GrantSpec` mark
+  `audit_as_builtin_admin`.
+  - Unmarked (viewer-public's `public` and the like): as in the body, the fixed identity's id is the actor.
+    `actor_id` is NULL.
+  - Marked (admin-equivalent grants): `actor_username = 'admin'`, `actor_id` = the id of the built-in row.
+    `actor_role` is the session's actual role. Nothing is inferred from id or name (conventions §10).
+  - The mark is kept on the `TokenRecord` at issuance, and the audit writer receives **the snapshot of the
+    principal used for authorization** (it does not re-resolve the bearer). The path is kept in `actor_kind`
+    (`grant:<kind>` for grants). It is never used for authorization, and token values are never recorded.
+  - ui-settings are no longer kept under `ui.<identity.id>.*` but under the owner `grant:<kind>` of the table
+    `ui_settings` (still shared by terminals of the same kind).
+  - A grant's fixed id (`GrantSpec.identity.id`) becomes a reserved account username (case-insensitive). If a
+    grant is added later and an account of the same name already exists, start-up stops.
+- **The lockdown condition** (decision §5 and the consequence "save the condition → `revoke_grant_tokens(kind)`"):
+  the template's lockdown (turning `auth.disabled` off) is allowed only when at least one admin account that can
+  log in exists. The judgment is placed **before** "save → revoke", under the same lock. The order "save → revoke
+  right after, in the same function" does not change. A derived app's commissioning lockdown places the same
+  condition before its save (for reference, like decision §5; not a banto rule).
+- **REST is read-only while login is off (`auth.disabled` = on)** (ADR-0034 decision §6): account login is
+  refused, and right after the save that switches to login-less, in the same function, account tokens are
+  revoked. Only viewer-public (reads and the ui-settings of its own kind) and explicitly registered grants get
+  through. `banto-serve` does not listen when login is off and viewer-public is off too.
+- First-run setup (`POST /api/auth/setup`, `BANTO_ALLOW_SETUP`) is removed. While there are zero accounts, only
+  the grant routes and viewer-public reads get through over REST. The cautions for admin-equivalent grants
+  (`require_loopback_peer`, a small `max_sessions`, decision §6) weigh correspondingly more.

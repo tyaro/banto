@@ -1,7 +1,7 @@
 # 下流の要望（2026-11）をまとめて入れる計画書
 
 作成日: 2026-11-22
-状態: **計画**（オーナー決定済み、§2。§10 の確認事項は 2026-11-22 に推奨どおりで確定、#716 の判断（§4.13）だけ待ち。**2026-11-22 変更: 互換不要・DB 作り直し**の前提で簡素化した。実装は未着手。最初の PR は C0 の ADR）
+状態: **計画**（オーナー決定済み、§2。§10 の確認事項は 2026-11-22 に推奨どおりで確定、#716 の判断（§4.13）だけ待ち。**2026-11-22 変更: 互換不要・DB 作り直し**の前提で簡素化した。実装は未着手。C0 の ADR-0034 は 2026-11-22 に Accepted。計画書との食い違いは ADR が正）
 トラック: 保守者向け（トラックA）
 Issue: [#778](https://github.com/tyaro/banto/issues/778)・[#786](https://github.com/tyaro/banto/issues/786)・[#790](https://github.com/tyaro/banto/issues/790)・[#791](https://github.com/tyaro/banto/issues/791)・[#792](https://github.com/tyaro/banto/issues/792)・[#793](https://github.com/tyaro/banto/issues/793)・[#794](https://github.com/tyaro/banto/issues/794)・[#795](https://github.com/tyaro/banto/issues/795)・[#796](https://github.com/tyaro/banto/issues/796)、
 洗練案の [#714](https://github.com/tyaro/banto/issues/714)（残りの 4 = ファイル型）・[#716](https://github.com/tyaro/banto/issues/716)（ウィジェット盤。**判断待ち**）、
@@ -317,11 +317,11 @@ Issue の「決めること」への答え:
     （`playwright.config.ts:267` の `BANTO_ALLOW_SETUP` も）。ログインの画面の基準画像と a11y の試験が変わる。
   - scaffold・rename: `scripts/rename.mjs:221` はログインの見出しの書き換え先に `e2e/first-run-setup.ts` を挙げている。
     置き換えたファイルへ直す。display プリセットが初回起動で入れる `auth.disabled = true`（`scripts/scaffold.mjs:2022`）は
-    既定と同じになる（`auth.disabled_role` などは残す）。**scaffold の 4 プリセットの dry-run と、template-acceptance の
+    既定と同じになる（`auth.disabled_role` などは残す。ADR-0034 §5: 既定は新しい DB だけ、0014 の migration が `auth.disabled = 'true'`・`auth.disabled_role = 'admin'` を明示して入れる。キーの欠落・破損は既定で埋めず起動を止める。`seed_first_boot_settings` の「表が空のときだけ seed」の条件は、0014 が `settings` に行を入れた時点で成り立たなくなり、display の生成物の `server.viewer_public`・`server.enabled`・bind が入らなくなるので、**C1 で 0014 と一緒に**「seed 済みの印が無いとき」に直す。ADR-0034 §5）。**scaffold の 4 プリセットの dry-run と、template-acceptance の
     実行が要る**（フロントだけの変更では template-acceptance が走らない）。
 - **ログインなしの操作の帰属**（決定 4・18）: id・name からは推測しない（conventions §10）。配線の層が付ける
   **明示の印**で決める。`GrantSpec` に「組み込みの actor に帰属する」フラグ（既定は off。名前は C0 の ADR で確定）を
-  足し、発行したセッションの `SessionStamp` に写す。監査を書く所は印だけを見る。
+  足し（名前は `audit_as_builtin_admin: bool`、ADR-0034 §3）、発行したセッションの `AuthenticatedSession`（`TokenRecord` 経由、`#[serde(skip)]`）に写す。`SessionStamp` はアカウントの `account_id`・`auth_epoch` の組で grant セッションでは `None` なので載せられない。監査の主体は認可時のスナップショットで、ガードが 1 回だけ作って成功・拒否の監査へ渡す（bearer から引き直さない）。経路は `actor_kind`（`account` / `local` / `grant:<kind>` / `cli`）に残す。監査を書く所は印だけを見る。
   - Tauri のログインなし（`local`。現行の監査は `local`、`lib.rs:5733`）: 同じ印を Tauri の配線で付け、
     `actor_username = 'admin'`・`actor_id = 組み込みの行の id` を書く。`actor_role` はそのセッションの実際のロール
     （viewer なら viewer）。行の `role` は一覧の表示だけで、認可の判定には使わない。
@@ -334,13 +334,13 @@ Issue の「決めること」への答え:
   推測しない」は変えない（予約は見分けやすさのためで、判定の根拠にしない）。
   - 予約名の一覧を知っているのは配線の層だけ（grant は派生アプリが足せる開いた集合、`grant.rs:89-94`・`:200`。
     サービス層は axum / tauri を知らない、§2）。配線の層が `GrantSpec` の一覧から固定 id を集め、
-    サービス層へ渡す口（`UsersService` の構築時の引数など）を置く。形は C0 の ADR で決め、C2 で入れる。
+    サービス層へ渡す口（`UsersService` の構築時の引数など）を置く。形は ADR-0034 §4 で決まった: `UsersService::with_reserved_usernames(ReservedUsernames)`（`admin` はサービス層が自前で必ず予約し、配線は grant の固定 id だけを渡す）。C2 で入れる。
   - **起動時の検出**: 既存の `Admin` / `admin` を探して止める検査は**要らない**（新しい DB には居ない。作成は断る）。
     残る穴は 1 つ: **grant を後から足した**とき、その固定 id と同名のアカウントが既に居る場合。これだけを、起動時の
-    1 文の検査（予約名の一覧と `kind = 'account'` の username を大小無視で照らす）で見て、当たれば名前と対処
+    1 文の検査（予約名の一覧と `kind = 'account'` の username を大小無視で照らす。REST と Tauri の配線が起動時に呼ぶ）で見て、当たれば名前と対処
     （そのアカウントを作り直すか、grant の固定 id を変える）を書いたエラーで止める（推奨。§10 の N6）。改名の口は作らない。
 - `users` を数える所（ユーザー一覧・件数・CSV・バックアップの検証・最後の管理者のガード・今の `is_initialized`）を
-  `kind = 'account'` に直す。組み込みの行が migration で入るので、**C1 で**洗う（§5）。組み込みかどうかの判定は、
+  `kind = 'account'` に直す。組み込みの行が migration で入るので、**C1 で**洗う（§5）。組み込みの行の最低限の保護（verifier を `kind = 'account'` に絞る、パスワード・更新・削除・CSV の取り込みが `kind = 'builtin'` を断る）も C1 に前倒しする（ADR-0034 §2）。管理のユーザー一覧だけが読み取り専用の 1 行として返す（`UserSummary` に `kind`）。組み込みかどうかの判定は、
   どこでも名前ではなく `kind`。
 - **C1 の途中の条件**: `setup_first_user` の INSERT（`users.rs:776`）の `WHERE NOT EXISTS (SELECT 1 FROM users)` も、
   `WHERE NOT EXISTS (SELECT 1 FROM users WHERE kind = 'account')` に直す（直さないと、組み込みの `admin` の行があるため
@@ -362,9 +362,15 @@ C2b で、起動時・保存の両側・`banto-serve`（listener は `BANTO_BIND
 （SQL を直接呼んでも 0 行）。最後の管理者のガードが人のアカウントだけを数える。予約名の大小無視。
 grant を後から足して同名のアカウントに当たると、次の起動が止まる。
 帰属の規則: 印つきの grant・印なしの grant・Tauri のログインなしの 3 通りで、監査の actor が REST と Tauri で同じになる（§1）。
+ログインなしの間の REST は読み取り専用（ADR-0034 §6）。アカウントが 0 の間に限らず、ログインなしの間ぜんぶで、次の 2 つを分けて試験する。
+(a) **拒否**: 全アカウントでログインとトークンの利用を拒否し（資格情報が正しくても。切り替えの前に発行したトークンも）、既定の業務・管理の更新を拒否する。
+(b) **例外は別に成功を確かめる**: 閲覧公開の viewer は自分の kind の UI 設定の PUT が通り、派生アプリが明示して登録した grant はその権限どおりに通る（ADR-0034 §6・§10）。
+**切り替えとの直列化（C2b の実装条件。ADR-0034 §6）**: ログインの許可・トークンの発行・既発行トークンでの認可を、モードの世代でモードの切り替えと直列にする（今は照合を await した後に発行する、`crates/banto-server/src/auth/state.rs:348-390`。認可も DB 照合の後に古いセッションを返しうる、`:690-714`・`:817-824`）。発行の直前と認可の完了時に世代と今のモードを確かめ、切り替えの後は旧い世代から発行も利用もできない。回帰試験: 照合を止めている間に切り替えを終わらせても、トークンが発行されない・その要求が通らない。進行中の書き込みは「世代の確認つきの認可が終わった時点」で許可済みとし、#793（§4.5）の切り離した仕事と同じ扱いにそろえる。
 C2b: 新しい DB がユーザーなしで起動してアプリに入れる。ユーザー管理からアカウントを作れ、監査の actor が `admin`。
 管理者が 0 のままのロックダウンは断られ、1 つ作れば通る。ロックダウンの後、ログインなしのセッションと grant が失効する。
-アカウントが 0 の間、REST のログイン・書き込みが全部拒まれる。ログインなしの間は LAN を（閲覧公開なしで）開けない。
+アカウントが 0 の間も上の (a)・(b) のとおり（ログインは必ず失敗し、既定の業務・管理の更新は拒否。例外の成功は別に確かめる）。ログインなしの間は LAN を（閲覧公開なしで）開けない。
+**復元前の検査（起動時の検査が入る PR の条件。ADR-0034 §9）**: 起動を止める検査（組み込みの行・予約名の当たり = C2、必須の設定・ログイン必須での管理者 ≥1 = C2b）を足す PR は、同じ関数を復元の入れ替えの前（予約のときと適用の直前。読み取り専用）にも掛ける。断ったら元の DB を保つ。基準より後の未適用の migration がある候補は、作業用のコピーで migration と検査を通してから交換する。復旧の CLI は、予約された復元があるとき、暗黙に適用も無視もせず、明示のエラーで止まる（C2b）。**待ち受けの可否も起動条件に含める**（C2b）: `banto-serve` の配線は「ログインなしで閲覧公開も off なら listen せず止まる」を復元前の検査にも掛ける（Tauri の配線は含めない。同じ候補を Tauri は許し、ヘッドレスは交換の前に断る）。判定は起動時に使う実効設定（migration と、seed 済みの印が無ければ初回の seed の後の値）で行い、未適用の migration か印の無い候補は作業用のコピーで確かめる。
+**CLI と初回の seed の順序（C2b の実装条件。ADR-0034 §5・§7）**: CLI は「予約の確認 → migration → 1 つのトランザクション（seed 済みの印が無ければ、起動と同じ関数で seed と印 → 管理者の作成 → ロックダウン → 監査）」の順で書く。seed をせずにロックダウンだけを書くと、次の通常の起動が同じキーを seed の値（display は `auth.disabled = true`、`scripts/scaffold.mjs:2026-2032`）で上書きし、ログインなしに戻る。回帰試験（SQLite と PostgreSQL。display の生成物）: 新しい DB で通常の起動を一度もせず、CLI → 起動 → 作ったアカウントでログインできる。
 
 ### 4.4 #786 ui-settings の条件付きの書き込みと再送
 
@@ -750,12 +756,12 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 
 | PR | 範囲 | パッケージ・場所 | 破壊的 | モデル | 完了条件 |
 | --- | --- | --- | --- | --- | --- |
-| **C0** | ADR: 持ち主の識別、組み込みの `admin`、初回セットアップの撤去とロックダウンの条件（新規 ADR-0034、ADR-0017 の改訂）。conventions §11 の「基準の作り直し」の注記。`.en.md` も | `docs/adr`・`docs/conventions` | — | fable | **オーナーの承認**。§10 の N2〜N6 を含めて確定 |
+| **C0** | ADR: 持ち主の識別、組み込みの `admin`、初回セットアップの撤去とロックダウンの条件（新規 ADR-0034、ADR-0017 の改訂）。conventions §11 の「基準の作り直し」の注記。`.en.md` も | `docs/adr`・`docs/conventions` | — | fable | **済み**（PR #804。2026-11-22 に Accepted。§10 の N2〜N6 を含めて確定） |
 | S1 | #793 の層・停止（受付を止めて待つ。超過は向きで分ける: 広げる変更は切り替えの失敗、狭める変更は止めたまま）・panic・切断の試験・ADR-0035 | `banto-server`・`src-tauri` | 挙動 | fable | 切断しても作成と監査が残る試験が通る。停止の試験（§4.5） |
 | S2 | #793 handler の順序の点検と直し | `banto-server/routes`・テンプレートの `rest`・`src-tauri` | 挙動 | fable | 点検の表を PR に載せ、直した所に試験 |
-| C1 | 基準の作り直し（2 方言）: `0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | §4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
-| C2 | #778 組み込みの行の保護（禁止・verifier・SQL の `kind`）・予約名（一覧を渡す口）・grant を後から足したときの起動時の検査・帰属の印と監査の actor（`actor_id` を書く） | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート | **破壊的** | fable | §4.3 の試験（C2b の分を除く）。両経路の対称 |
-| C2b | 初回セットアップの撤去（決定 18）: `auth.disabled` の既定を on、ロックダウンの条件（管理者のアカウントが 1 つ以上）、`setup_first_user`・`is_initialized`・`/api/auth/setup`・`auth_setup`・bootstrap の窓・`AuthProvider.setup`・ログインの画面の分岐と文言を消す。ヘッドレスの最初のアカウント（N3）。e2e（`createFirstAdmin` の置き換え・smoke・add-resource）・`rename.mjs`・scaffold の seed・基準画像 | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`・テンプレート・`e2e`・`scripts` | **破壊的** | fable | §4.3 の C2b の試験。新しい DB がユーザーなしで起動し、ユーザー管理からアカウントを作れる。e2e が通る。scaffold の 4 プリセットの dry-run と template-acceptance。両経路の対称 |
+| C1 | 基準の作り直し（2 方言）: `0003_users.sql`・`0005_audit_log.sql` の書き換え、`0014_ui_settings.sql`（表と組み込みの `admin` の行）。`verify-migrations-frozen.mjs` の今回かぎりの許可。旧版の DB を断る文言（`run_migrations`）、`REQUIRED_TABLES` に `ui_settings`。**組み込みの行の最低限の保護**（verifier を `kind = 'account'` に絞る・パスワード・更新・削除・CSV の取り込みが `kind = 'builtin'` を断る）と、**復元の検査**（`_sqlx_migrations` の版と checksum を予約と適用の直前に読み取り専用で確かめる。migrator は配線が `BackupService` に渡す。ADR-0034 §9）。**初回の seed の条件の直し**（`seed_first_boot_settings` を「表が空」から「seed 済みの印が無い」へ。0014 が `settings` に行を入れるので同じ PR で。ADR-0034 §5）。**同じ PR で**: 作成時の `account_uid` の採番、`users` の数え方を `kind = 'account'` に、`admin` を使う試験 / fixture / e2e / demo / scaffold の生成物の改名（組み込みの行と username が当たるため） | テンプレートの `core`・`banto-admin-services`・`scripts`・`e2e` | **破壊的** | fable | §4.1 の試験（両方言）。新しい DB（組み込みの行だけ）で今の初回セットアップができ（INSERT の条件は `kind = 'account'`）、ui-settings が今のまま読み書きできる。**C1 の実 migration（0001〜0014）を当てた DB で display の生成物を起動し、公開閲覧（`server.viewer_public`・`server.enabled`・bind の seed）を確かめる**。`pnpm verify:architecture` rule 11・`pnpm verify:migrations` |
+| C2 | #778 組み込みの行の保護（禁止・verifier・SQL の `kind`）・予約名（一覧を渡す口）・grant を後から足したときの起動時の検査・帰属の印（`audit_as_builtin_admin`）と認可時のスナップショット・監査の `actor_id` / `actor_kind`（列を足す。wire は `actorKind`） | `banto-admin-services`・`banto-server`・`src-tauri`・テンプレート | **破壊的** | fable | §4.3 の試験（C2b の分を除く）。両経路の対称。**この PR で足す起動時の検査（組み込みの行・予約名の当たり）を、同じ関数で復元前の検査にも掛ける**（断ったら元の DB を保つ。ADR-0034 §9） |
+| C2b | 初回セットアップの撤去（決定 18）: `auth.disabled` の既定を on、ロックダウンの条件（管理者のアカウントが 1 つ以上）、ログインなしの間の REST（読み取り専用。ログインの許可・トークンの発行・認可をモードの世代で切り替えと直列化。ADR-0034 §6）、設定の明示と異常時の停止（キーの欠落・破損。seed の条件の直しは C1 で済み）、`banto-serve` の listen の条件（ログインなしで閲覧公開も off なら listen せず止まる）、`setup_first_user`・`is_initialized`・`/api/auth/setup`・`auth_setup`・bootstrap の窓・`AuthProvider.setup`・ログインの画面の分岐と文言を消す。ヘッドレスの最初のアカウント（N3。CLI は予約された復元があれば明示のエラーで止まる）。e2e（`createFirstAdmin` の置き換え・smoke・add-resource）・`rename.mjs`・scaffold の seed・基準画像 | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`・テンプレート・`e2e`・`scripts` | **破壊的** | fable | §4.3 の C2b の試験。新しい DB がユーザーなしで起動し、ユーザー管理からアカウントを作れる。e2e が通る。scaffold の 4 プリセットの dry-run と template-acceptance。両経路の対称。**実装条件**: (1) この PR で足す起動時の検査（必須の設定・ログイン必須での管理者 ≥1）を、同じ関数で復元前の検査にも掛ける（断ったら元の DB を保つ。未適用の migration がある候補・seed 済みの印が無い候補は作業用のコピーで検査。`banto-serve` の配線は待ち受けの可否も含め、同じ候補を Tauri は許しヘッドレスは交換の前に断る試験を足す。ADR-0034 §9）。(2) 照合・認可の DB 照合を止めている間に切り替えを終わらせる回帰試験で、旧い世代から発行も利用もできない（進行中の書き込みの扱いは #793・§4.5 とそろえる。ADR-0034 §6）。(3) CLI は起動と同じ関数で初回の seed と印を書いてから、同じトランザクションでロックダウンを書く。新しい DB（SQLite・PostgreSQL、display の生成物）で通常の起動をせずに CLI → 起動 → ログインの回帰試験（ADR-0034 §5・§7） |
 | C3 | #790 `accountId` を wire に載せる・`sessionOwnerKey` | `banto-server`・`src-tauri`・`admin-core`・テンプレート | **破壊的** | fable | §4.2 の試験（復元の回帰試験を含む）。持ち主つきの記憶の利用箇所を全部確認 |
 | C4 | #786 サーバー（条件付きの PUT・DELETE・乱数の revision・外部キー・Tauri）。参照先を `ui_settings` へ切り替える（移し替えなし）。admin-core の http・tauri アダプタの最小の追従（公開の provider の形は据え置き） | `banto-admin-services`・`banto-server`・`src-tauri`・`admin-core`（アダプタだけ） | **破壊的** | fable | §4.4 の競合の試験（両方言、片方だけ成功）。削除と PUT の競合で行が残らない。旧い形の provider のまま画面が動く |
 | C5 | #786 provider の置き換え（`remove` を含む）・`updateUiSetting`・同梱の実装・呼び手の追従 | `admin-core`・テンプレート | **破壊的** | fable | #707 の直列化の試験が新しい形で通る |
@@ -870,7 +876,7 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
 
 ## 10. この計画で新しく置いた判断（2026-11-22 オーナー確定。#716 を除く）
 
-**2026-11-22 にオーナーが、推奨どおりで確定した（#716 の項目 9 だけは判断待ち）。C0 の ADR はこれを記録する。** 各項目の「推奨」は決定として読む。**2026-11-22 変更（互換不要・DB 作り直し）**: 先頭の N1〜N6 が、決定 16〜18 を
+**2026-11-22 にオーナーが、推奨どおりで確定した（#716 の項目 9 だけは判断待ち）。C0 の ADR-0034 はこれを記録し、同日 Accepted になった（PR #804 の「オーナーに確かめたい点」もすべて推奨どおり）。この計画書との食い違いは ADR が正。** 各項目の「推奨」は決定として読む。**2026-11-22 変更（互換不要・DB 作り直し）**: 先頭の N1〜N6 が、決定 16〜18 を
 受けて新しく置いた項目（N1 は解決済み、N2〜N6 は推奨どおりで確定）。その下の 1〜20 は、クロスレビュー・独立レビュー
 （PR #797）で置いた項目で、番号は本文からの参照のために変えていない。既存のデータにだけ関係していた項目は
 「解決（互換不要）」と印を付けて短くした。

@@ -589,6 +589,13 @@ ordinary sessions.
   `pnpm verify:migrations`** (`scripts/verify-migrations-frozen.mjs`; guards
   against the near-miss in #312, where moving docs rewrote a path inside a
   migration comment).
+  - **Exception (once only): rebuilding the baseline in v8.0.0**
+    ([ADR-0034](adr/0034-owner-identity-builtin-admin.en.md) decision §9). v8.0.0 needs no compatibility and
+    databases are recreated, so `0003_users.sql` and `0005_audit_log.sql` are rewritten in both dialects and
+    `0014_ui_settings.sql` is added. Databases from v7.11.0 or earlier are meant to stop with
+    `VersionMismatch`, which is mapped to an explicit error (not read, not migrated).
+    `pnpm verify:migrations` gets a one-time allowance for these 4 files only when comparing against tag
+    `v7.11.0`. **After the v8.0.0 tag it is append-only again.**
 - **The app owns the table definitions.** `banto-attachments` has no migrations
   of its own and keeps its in-test `CREATE TABLE` in sync with
   `0006_attachments.sql` ("MUST be kept in sync").
