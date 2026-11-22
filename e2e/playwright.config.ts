@@ -114,10 +114,12 @@ function selectWebServers(servers: WebServer[]): WebServer[] {
 		process.env.BANTO_E2E_SERVERS ||
 		(process.argv.includes('--project=add-resource') ? 'add-resource' : undefined);
 	if (wanted === undefined || wanted === '') return servers;
-	// Comma-separated names: `visual` (vite preview), `demo` (vite dev, Issue #553) and/or `add-resource` (banto-serve, Issue #715).
+	// Comma-separated names: `visual` (vite preview), `demo` (vite dev, Issue #553), `public-viewer` (2 本目の banto-serve, :8798), `smoke` (banto-serve, :8799 = chromium project) and/or `add-resource` (smoke と同じ banto-serve, Issue #715).
 	const urls: Record<string, string> = {
 		visual: VISUAL_BASE_URL,
 		demo: DEMO_BASE_URL,
+		'public-viewer': PUBLIC_VIEWER_BASE_URL,
+		smoke: BASE_URL,
 		'add-resource': BASE_URL
 	};
 	return wanted.split(',').map((name) => {
