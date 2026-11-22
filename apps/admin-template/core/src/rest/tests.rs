@@ -4775,11 +4775,16 @@ async fn the_builtin_row_and_reserved_names_are_protected_over_rest() {
     let id = builtin["id"].as_i64().unwrap();
 
     let refused = [
-        put_json_auth(
-            &format!("/api/users/{id}"),
-            &manager,
-            json!({ "displayName": "renamed", "role": "viewer" }),
-        ),
+        // Built here, not with `put_json_auth`: that helper lives in the
+        // items block, which a scaffold preset cuts.
+        HttpRequest::put(format!("/api/users/{id}"))
+            .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+            .header("Authorization", format!("Bearer {manager}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "displayName": "renamed", "role": "viewer" }).to_string(),
+            ))
+            .unwrap(),
         post_json_auth(
             &format!("/api/users/{id}/reset-password"),
             &manager,
