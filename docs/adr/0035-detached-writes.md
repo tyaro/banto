@@ -2,9 +2,9 @@
 
 > English: [0035-detached-writes.en.md](0035-detached-writes.en.md)
 
-- 状態: Proposed（2026-11-22 起草。方針は同日のオーナー決定 8 と計画書 §10 の 6・17 で確定済み。
+- 状態: Accepted（2026-11-22。方針は同日のオーナー決定 8 と計画書 §10 の 6・17。
   この ADR で新しく決めた細目 — 停止時に待つ上限、panic と停止中の応答の形、新規の受付の数の上限、
-  デスクトップの終了の扱い — は「オーナーに確かめたい点」に挙げる）
+  デスクトップの終了の扱い — は同日にオーナーが「オーナーの確定」の 5 点を推奨どおりで確定）
 - 日付: 2026-11-22
 - 関連: Issue #793 / tyaro/banto-industrial#600 /
   [design/downstream-requests-2026-11-plan](../design/downstream-requests-2026-11-plan.md) §4.5・§7（S1・S2）・§10 の 6・8・17 /
@@ -164,7 +164,7 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
   `apps/admin-template/core/src/rest/tests/detach.rs`（実物の `POST /api/users` で、切断しても作成と監査が残る）、
   `apps/admin-template/src-tauri/src/tests/server_writes.rs`（再設定の 2 方向）。
 
-## オーナーに確かめたい点
+## オーナーの確定（2026-11-22、5 点とも推奨どおり）
 
 1. 停止時に待つ上限 **10 秒**（接続の 5 秒と並行）。バックアップの作成のような長い書き込みの最中に LAN 設定を
    変えると、広げる変更は失敗して「もう一度」になる。

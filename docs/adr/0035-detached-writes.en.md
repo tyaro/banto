@@ -2,10 +2,10 @@
 
 > 日本語: [0035-detached-writes.md](0035-detached-writes.md)
 
-- Status: Proposed (drafted 2026-11-22. The direction is settled by the owner's decision 8 of the same day and by
-  items 6 and 17 in §10 of the plan. The details this ADR newly fixes - the upper bound of the wait at a stop, the
-  shape of the panic and stopping responses, the bound on accepting new writes, and what the desktop does at
-  exit - are listed under "Points to confirm with the owner")
+- Status: Accepted (2026-11-22. The direction is the owner's decision 8 of the same day and items 6 and 17 in §10
+  of the plan. The details this ADR newly fixes - the upper bound of the wait at a stop, the shape of the panic and
+  stopping responses, the bound on accepting new writes, and what the desktop does at exit - were confirmed by the
+  owner the same day as recommended; see "Owner decisions")
 - Date: 2026-11-22
 - Related: Issue #793 / tyaro/banto-industrial#600 /
   [design/downstream-requests-2026-11-plan](../design/downstream-requests-2026-11-plan.md) §4.5, §7 (S1, S2), §10 items 6, 8, 17 /
@@ -180,7 +180,7 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
   `POST /api/users`: account and audit row survive the disconnect),
   `apps/admin-template/src-tauri/src/tests/server_writes.rs` (both directions of a reconfiguration).
 
-## Points to confirm with the owner
+## Owner decisions (2026-11-22, all five as recommended)
 
 1. The **10 second** bound at a stop (alongside the 5 seconds for connections). Changing LAN settings during a long
    write such as a backup makes a widening change fail with "apply again".
