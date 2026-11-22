@@ -133,7 +133,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
 
       # 軽量ガード: rename/scaffold が約束どおりの書き換えを行い、--dry-run が無変更なこと。
       - name: rename / scaffold integration tests
@@ -227,7 +227,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
 
       - name: Copy repo to a scratch dir and scaffold the preset
         run: |
@@ -419,7 +419,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
 
       - name: Copy repo to a scratch dir and generate the fixture resource
         run: |
