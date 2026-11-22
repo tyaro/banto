@@ -8,8 +8,8 @@
  *  - views the definition ships (`list.views`, `ResourceListView`), e.g. items'
  *    `low-stock` that the dashboard's KPI card opens with `?view=low-stock`;
  *  - the user's own saved views, stored as ONE value per resource in the
- *    per-user UI settings (`UiSettingsProvider`, spec M12: `ui.{username}.{key}`
- *    on the server, localStorage in the demo build). Personal only - a view
+ *    per-user UI settings (`UiSettingsProvider`, spec M12: the account's own
+ *    rows of `ui_settings` on the server, localStorage in the demo build). Personal only - a view
  *    shared with everyone is a later issue.
  */
 import { isListViewSnapshot } from '@banto/admin-core';

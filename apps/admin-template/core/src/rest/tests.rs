@@ -1990,24 +1990,8 @@ async fn login_notice_is_public_but_only_admin_can_change_it() {
         .unwrap();
     assert_eq!(body_json(public).await["notice"], "Service tonight");
 
-    // The only generic REST settings route is per-user UI state. Even using
-    // the same key suffix cannot overwrite this global, public notice.
-    let ui_write = router
-        .clone()
-        .oneshot(put_json(
-            "/api/ui-settings/login.notice",
-            &editor,
-            json!({ "value": "unvalidated\ntext" }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(ui_write.status(), StatusCode::NO_CONTENT);
-    let still_public = router
-        .clone()
-        .oneshot(get("/api/login-notice"))
-        .await
-        .unwrap();
-    assert_eq!(body_json(still_public).await["notice"], "Service tonight");
+    // (That the per-owner `/api/ui-settings/login.notice` cannot overwrite
+    // this notice is `ui_settings_cannot_overwrite_the_public_login_notice`.)
 
     let audit = body_json(
         router
@@ -2041,86 +2025,266 @@ fn put_ui_setting(key: &str, token: &str, value: &str) -> HttpRequest<Body> {
     )
 }
 
+/// One request, answered: status + JSON body.
+async fn ui_call(router: &Router, request: HttpRequest<Body>) -> (StatusCode, serde_json::Value) {
+    let response = router.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    (status, body_json(response).await)
+}
+
 #[tokio::test]
 async fn ui_settings_round_trip_via_rest() {
-    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+    let (router, _users) = router_with_user_sessions().await;
+    let editor = rest_login(&router, "bystander", REVOCATION_PASSWORD, false).await;
 
-    // Unset key reads back as {"value": null}.
-    let response = router
-        .clone()
-        .oneshot(get_auth("/api/ui-settings/theme", &viewer))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(body_json(response).await["value"].is_null());
+    // Unset key reads back as {"value": null, "revision": "0"}.
+    let (status, body) = ui_call(&router, get_auth("/api/ui-settings/theme", &editor)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "value": null, "revision": "0" }));
 
-    // PUT then GET round-trips - and note this is the VIEWER role:
-    // writing your own UI settings needs no role floor (unlike
-    // `settings_set`/`/api/users`).
-    let put_response = router
-        .clone()
-        .oneshot(put_ui_setting("theme", &viewer, "glass"))
-        .await
-        .unwrap();
-    assert_eq!(put_response.status(), StatusCode::NO_CONTENT);
+    // PUT then GET round-trips - no role floor: writing your own UI settings
+    // needs no admin (unlike `settings_set`/`/api/users`). The body of the
+    // PUT is the old one (`{value}`): no `ifRevision` = last write wins.
+    let (status, put) = ui_call(&router, put_ui_setting("theme", &editor, "glass")).await;
+    assert_eq!(status, StatusCode::OK);
+    let revision = put["revision"].as_str().expect("revision").to_string();
+    assert_ne!(revision, "0");
 
-    let response = router
-        .oneshot(get_auth("/api/ui-settings/theme", &viewer))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(body_json(response).await["value"], "glass");
+    let (status, body) = ui_call(&router, get_auth("/api/ui-settings/theme", &editor)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "value": "glass", "revision": revision }));
+}
+
+/// Issue #786 / plan §4.4: `ifRevision` over the wire - a revision passes
+/// once, a stale one is `409` with the stored `{ value, revision }` in the
+/// `conflict` body's `current`, `"0"` means "nothing stored yet".
+#[tokio::test]
+async fn ui_settings_conditional_put_and_delete_via_rest() {
+    let (router, _users) = router_with_user_sessions().await;
+    let token = rest_login(&router, "bystander", REVOCATION_PASSWORD, false).await;
+    let path = "/api/ui-settings/dashboard.memo";
+    let put = |value: &str, if_revision: &str| {
+        put_json(
+            path,
+            &token,
+            json!({ "value": value, "ifRevision": if_revision }),
+        )
+    };
+
+    // "0": creates the row once.
+    let (status, created) = ui_call(&router, put("v1", "0")).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let first = created["revision"].as_str().unwrap().to_string();
+    let (status, conflict) = ui_call(&router, put("other", "0")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(conflict["kind"], "conflict");
+    assert_eq!(
+        conflict["current"],
+        json!({ "value": "v1", "revision": first })
+    );
+
+    // A revision passes once.
+    let (status, updated) = ui_call(&router, put("v2", &first)).await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    let second = updated["revision"].as_str().unwrap().to_string();
+    assert_ne!(second, first);
+    let (status, conflict) = ui_call(&router, put("v3", &first)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        conflict["current"],
+        json!({ "value": "v2", "revision": second })
+    );
+
+    // DELETE: a stale revision conflicts, the current one deletes.
+    let (status, conflict) = ui_call(
+        &router,
+        delete_auth(&format!("{path}?ifRevision={first}"), &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(conflict["current"]["value"], "v2");
+    let (status, deleted) = ui_call(
+        &router,
+        delete_auth(&format!("{path}?ifRevision={second}"), &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{deleted}");
+    assert_eq!(deleted, json!({ "revision": "0" }));
+    let (_, body) = ui_call(&router, get_auth(path, &token)).await;
+    assert_eq!(body, json!({ "value": null, "revision": "0" }));
+
+    // Written again: a revision from before the delete does not pass.
+    let (status, _) = ui_call(&router, put("v4", "0")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, conflict) = ui_call(&router, put("stale", &second)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(conflict["current"]["value"], "v4");
+    // An unconditional DELETE removes whatever is there, twice over.
+    for _ in 0..2 {
+        let (status, deleted) = ui_call(&router, delete_auth(path, &token)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(deleted, json!({ "revision": "0" }));
+    }
+}
+
+/// The only generic REST settings route is per-owner UI state, kept in its
+/// own table. Even with the same key it cannot overwrite the global, public
+/// login notice (`settings`' `login.notice`).
+#[tokio::test]
+async fn ui_settings_cannot_overwrite_the_public_login_notice() {
+    let (router, _users) = router_with_user_sessions().await;
+    let operator = rest_login(&router, "operator", REVOCATION_PASSWORD, false).await;
+    let editor = rest_login(&router, "bystander", REVOCATION_PASSWORD, false).await;
+    let (status, saved) = ui_call(
+        &router,
+        put_json(
+            "/api/login-notice",
+            &operator,
+            json!({ "notice": "Service tonight" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+
+    let (status, _) = ui_call(
+        &router,
+        put_json(
+            "/api/ui-settings/login.notice",
+            &editor,
+            json!({ "value": "unvalidated\ntext" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, still_public) = ui_call(&router, get("/api/login-notice")).await;
+    assert_eq!(still_public["notice"], "Service tonight");
 }
 
 #[tokio::test]
 async fn ui_settings_are_isolated_per_user() {
-    let (router, admin, editor, _viewer) = router_with_role_tokens().await;
+    let (router, _users) = router_with_user_sessions().await;
+    let operator = rest_login(&router, "operator", REVOCATION_PASSWORD, false).await;
+    let bystander = rest_login(&router, "bystander", REVOCATION_PASSWORD, false).await;
 
-    let put_response = router
-        .clone()
-        .oneshot(put_ui_setting("theme", &admin, "glass"))
-        .await
-        .unwrap();
-    assert_eq!(put_response.status(), StatusCode::NO_CONTENT);
+    let (status, _) = ui_call(&router, put_ui_setting("theme", &operator, "glass")).await;
+    assert_eq!(status, StatusCode::OK);
 
-    // The admin's value must NOT be visible to the editor's session -
-    // each account reads its own `ui.{username}.*` namespace.
-    let response = router
-        .clone()
-        .oneshot(get_auth("/api/ui-settings/theme", &editor))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(body_json(response).await["value"].is_null());
+    // The operator's value must NOT be visible to the other session - each
+    // account reads its own rows (`acct:<users.id>`), and cannot delete the
+    // other's either.
+    let (status, body) = ui_call(&router, get_auth("/api/ui-settings/theme", &bystander)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["value"].is_null());
+    let (status, _) = ui_call(&router, delete_auth("/api/ui-settings/theme", &bystander)).await;
+    assert_eq!(status, StatusCode::OK);
 
-    // And the admin still sees their own value.
-    let response = router
-        .oneshot(get_auth("/api/ui-settings/theme", &admin))
-        .await
-        .unwrap();
-    assert_eq!(body_json(response).await["value"], "glass");
+    // And the operator still sees their own value.
+    let (_, body) = ui_call(&router, get_auth("/api/ui-settings/theme", &operator)).await;
+    assert_eq!(body["value"], "glass");
+}
+
+/// Handed over from #790 C3 (PR #869): the server used to keep UI settings
+/// under `ui.{username}.{key}`, so an account created again under the SAME
+/// username read the deleted account's values back from the API. The owner
+/// is now the account's `users.id`, and the foreign key removes the rows with
+/// the account.
+#[tokio::test]
+async fn ui_settings_of_a_deleted_account_are_not_read_by_a_same_named_new_account() {
+    let (router, users) = router_with_user_sessions().await;
+    let operator = rest_login(&router, "operator", REVOCATION_PASSWORD, false).await;
+    let old_token = rest_login(&router, "target", REVOCATION_PASSWORD, false).await;
+    let (status, _) = ui_call(
+        &router,
+        put_ui_setting("dock.dashboard", &old_token, "old layout"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Delete `target`, then create a new account with the same username.
+    let old_id = users.get_by_username("target").await.unwrap().unwrap().id;
+    let deleted = status_of(
+        &router,
+        delete_auth(&format!("/api/users/{old_id}"), &operator),
+    )
+    .await;
+    assert!(deleted.is_success(), "{deleted}");
+    let (status, created) = ui_call(
+        &router,
+        post_json_auth(
+            "/api/users",
+            &operator,
+            json!({
+                "username": "target",
+                "password": REVOCATION_PASSWORD,
+                "displayName": "new target",
+                "role": "editor"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let new_id = users.get_by_username("target").await.unwrap().unwrap().id;
+    assert_ne!(new_id, old_id);
+
+    // The new account reads nothing of the old one...
+    let new_token = rest_login(&router, "target", REVOCATION_PASSWORD, false).await;
+    let (status, body) = ui_call(
+        &router,
+        get_auth("/api/ui-settings/dock.dashboard", &new_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "value": null, "revision": "0" }));
+    // ...and the deleted account's token writes nothing either.
+    let (status, _) = ui_call(
+        &router,
+        put_ui_setting("dock.dashboard", &old_token, "late write"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (_, body) = ui_call(
+        &router,
+        get_auth("/api/ui-settings/dock.dashboard", &new_token),
+    )
+    .await;
+    assert!(body["value"].is_null(), "{body}");
+}
+
+/// An account session that is not bound to a `users` row (an `AuthState`
+/// built with `SessionValidation::DisabledNoRevocation`) has no row to own a
+/// value: refused like a request without a session, not keyed by its name.
+#[tokio::test]
+async fn ui_settings_refuse_an_account_session_without_an_account_row() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+    for request in [
+        get_auth("/api/ui-settings/theme", &viewer),
+        put_ui_setting("theme", &viewer, "glass"),
+        delete_auth("/api/ui-settings/theme", &viewer),
+    ] {
+        assert_eq!(status_of(&router, request).await, StatusCode::UNAUTHORIZED);
+    }
 }
 
 #[tokio::test]
 async fn ui_settings_reject_an_invalid_key_with_422_validation() {
-    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+    let (router, _users) = router_with_user_sessions().await;
+    let token = rest_login(&router, "bystander", REVOCATION_PASSWORD, false).await;
 
     // `%20` decodes to a space in the path param - an invalid key char.
-    let response = router
-        .clone()
-        .oneshot(put_ui_setting("bad%20key!", &viewer, "x"))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let json = body_json(response).await;
+    let (status, json) = ui_call(&router, put_ui_setting("bad%20key!", &token, "x")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(json["kind"], "validation");
     assert_eq!(json["field_errors"][0]["field"], "key");
 
-    let response = router
-        .oneshot(get_auth("/api/ui-settings/bad%20key!", &viewer))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    for request in [
+        get_auth("/api/ui-settings/bad%20key!", &token),
+        delete_auth("/api/ui-settings/bad%20key!", &token),
+    ] {
+        assert_eq!(
+            status_of(&router, request).await,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
 }
 
 #[tokio::test]

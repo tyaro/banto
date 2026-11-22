@@ -369,6 +369,24 @@ without a runtime guard are **upheld by reviewing every call site**.
   their own namespace). "Do not create an asymmetry of privilege within the same
   store." **[machine-checked: `settings_get`/`settings_set` share the same Admin
   gate (rule 9)]**
+- **The owner of a UI setting is made by the wiring from the kind of the session
+  it authorized (Issue #786, [ADR-0034](adr/0034-owner-identity-builtin-admin.en.md)
+  decision §8).** The values live in the `ui_settings` table and the owner is a
+  `UiSettingsOwner` (an account by its `users.id`, a grant by its kind, the
+  desktop's no-login session as `local`). REST builds it from the
+  `AuthenticatedSession` that `require_auth` attached (the grant, or the stamp's
+  `users.id`); Tauri from the `DesktopSession` variant. **Never from a name
+  (username, `Identity.id`) and never from the request.** An account session that
+  is not bound to an account row is refused (401). The audit-attribution mark
+  (`audit_as_builtin_admin`) is not looked at (the values of a marked grant or of
+  the no-login session are not the `admin`'s). **A conditional write
+  (`ifRevision`) checks and writes in ONE statement** (never read-then-write:
+  `UPDATE ... WHERE revision = ?` / `INSERT ... ON CONFLICT DO NOTHING`). The
+  revision is a random string the service layer makes on every write, not a
+  counter (so an old revision never matches after a restore or a delete). An
+  account's rows are tied to `users` by the foreign key, so no orphan row is
+  created. Tests: `apps/admin-template/core/tests/ui_settings_cases` (the same
+  cases on both dialects, from two separate pools).
 - **SQL columns only through the whitelist.** Field names originating from the
   frontend must always be resolved to SQL columns via `ColumnMap`
   (`list_query.rs`), and values must always be bound (never string-interpolated).

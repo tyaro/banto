@@ -132,7 +132,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 			});
 			await monitor.route('**/api/ui-settings/shell.navLayout', (route) =>
 				route.request().method() === 'GET'
-					? route.fulfill({ json: { value: 'launcher' } })
+					? route.fulfill({ json: { value: 'launcher', revision: 'e2e' } })
 					: route.continue()
 			);
 			await monitor.goto('/dashboard');

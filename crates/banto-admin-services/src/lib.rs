@@ -46,6 +46,7 @@ pub mod rbac;
 pub mod settings;
 pub mod system_info;
 pub mod system_metrics;
+pub mod ui_settings;
 pub mod users;
 
 pub use permissions::{

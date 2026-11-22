@@ -331,6 +331,16 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   権限）。UI 設定だけは別コマンド `ui_settings_get`（viewer 可・自名前空間限定）に
   分離する。「同一ストアでも権限の非対称を作らない」。**[機械検査済み:
   `settings_get`/`settings_set` が同一 Admin ゲート（rule 9）]**
+- **ui-settings の持ち主は、認可したセッションの種類から配線が作る（Issue #786、
+  [ADR-0034](adr/0034-owner-identity-builtin-admin.md) 決定 §8）。** 保存先は表 `ui_settings` で、持ち主は
+  `UiSettingsOwner`（アカウントは `users.id`、grant は kind、Tauri のログインなしは `local`）。REST は `require_auth` が
+  付けた `AuthenticatedSession`（grant か、stamp の `users.id`）から、Tauri は `DesktopSession` の種類から作る。
+  **名前（username・`Identity.id`）からも、要求の中身からも作らない**。アカウントに結び付かないアカウントのセッションは
+  断る（401）。監査の帰属の印（`audit_as_builtin_admin`）は見ない（印つきの grant・ログインなしの値は `admin` の物ではない）。
+  **条件付きの書き込み（`ifRevision`）は、判定と書き込みを 1 文で行う**（読んでから書かない。`UPDATE ... WHERE revision = ?` /
+  `INSERT ... ON CONFLICT DO NOTHING`）。revision は書き込みのたびにサービス層が作る乱数で、数にしない（復元・削除の後に
+  古い revision が一致しないため）。アカウントの行は外部キーで `users` に結び、孤児の行を作らない。試験は
+  `apps/admin-template/core/tests/ui_settings_cases`（両方言で同じ場合を、別々のプール 2 つから）。
 - **SQL 列はホワイトリスト経由のみ。** フロント由来のフィールド名は必ず
   `ColumnMap`（`list_query.rs`）で SQL 列に解決し、値は必ずバインドする（文字列
   補間しない）。未知フィールドの sort は無視、filter は hard error。

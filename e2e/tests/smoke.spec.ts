@@ -3711,7 +3711,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await tab.goto('/settings');
 			let saved = savedLayout();
 			await layoutGroup().getByText('ドック', { exact: true }).click();
-			expect((await saved).status()).toBe(204);
+			expect((await saved).status()).toBe(200);
 			await expect(tab.locator('.launcher')).toBeVisible();
 			await expect(tab.locator('aside')).toHaveCount(0);
 			await expect(tab.locator('html')).toHaveAttribute('data-banto-shell-nav', 'launcher');
@@ -3748,7 +3748,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await tab.goto('/settings');
 			saved = savedLayout();
 			await layoutGroup().getByText('サイドバー', { exact: true }).click();
-			expect((await saved).status()).toBe(204);
+			expect((await saved).status()).toBe(200);
 			await expect(tab.locator('aside')).toBeVisible();
 		} finally {
 			await context.close();

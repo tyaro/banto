@@ -27,6 +27,8 @@ use admin_template_core::users::{Role, UserKind, UsersService};
 use banto_core::ListParams;
 use std::path::PathBuf;
 
+mod ui_settings_cases;
+
 /// Drop every table and helper function this app owns (plus sqlx's migration
 /// bookkeeping) so the smoke test starts from a clean schema even if a
 /// previous run left state behind. `CASCADE` also drops the identity sequences. Uses the public
@@ -550,6 +552,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
     audit_related_record_history_on_postgres(&audit, &db).await;
 
     concurrent_admin_removals_on_postgres(&url).await;
+    ui_settings_conditional_writes_on_postgres(&url).await;
 
     // --- backup: SQLite-only, so every op must Err (never panic) on Postgres --
     // V2 owner decision D3 (PR4): backup/restore is a SQLite-only feature.
@@ -1332,6 +1335,40 @@ async fn the_first_admin_cli_on_postgres(
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
     created.user
+}
+
+/// Issue #786 / plan §4.4 on PostgreSQL: the shared conditional-write cases
+/// (`ui_settings_cases`, also run on SQLite by `ui_settings_sqlite.rs`) on two
+/// SEPARATE pools - under the default READ COMMITTED level a read followed by
+/// an unconditional write would let both of two writers through, so this is
+/// what shows the check and the write are one statement. Kept in this smoke
+/// test for the same reason as the case below (the schema is shared). Leaves
+/// no account and no `ui_settings` row behind.
+async fn ui_settings_conditional_writes_on_postgres(url: &str) {
+    use banto_storage::Db;
+
+    let first = Db::connect_postgres(url).await.unwrap();
+    let second = Db::connect_postgres(url).await.unwrap();
+    let a = SettingsService::new(first.clone());
+    let b = SettingsService::new(second.clone());
+    let users = UsersService::new(first.clone());
+
+    ui_settings_cases::run_all(&a, &b, &users).await;
+
+    let pool = first.as_postgres().unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ui_settings")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "a ui_settings row was left behind");
+    let accounts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username LIKE 'uicase%'")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(accounts, 0);
+    pool.close().await;
+    second.as_postgres().unwrap().close().await;
 }
 
 // Issue #207 / roadmap M10: keep this in the existing smoke test so no other
