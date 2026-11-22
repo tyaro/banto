@@ -28,7 +28,7 @@
 
 ### Changed
 
-- **dock-svelte（挙動の変化）:** `DockHost.replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout` を含む）は、不正でない置き換えなら、`beforePanelChange` に聞く前に進行中の操作を自動で取り消す。消費側への注意: 操作中に `replaceLayout` / `resetLayout` を呼ぶと、操作は確定せず `onGestureEnd(kind, 'cancel', 'api')` で閉じる。置き換えが拒否（`refused`）・`stale` になっても、取り消した操作は戻らない。`invalid` のときは取り消さない（#796）。
+- **dock-svelte（挙動の変化）:** `DockHost.replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout` を含む）は、不正でない置き換えなら、`beforePanelChange` に聞く前に進行中の操作を自動で取り消す。消費側への注意: 操作中に `replaceLayout` / `resetLayout` を呼ぶと、操作は確定せず `onGestureEnd(kind, 'cancel', 'api')` で閉じる。置き換えが拒否（`refused`）・`stale` になっても、取り消した操作は戻らない。`invalid` のときは取り消さない。さらに、`replaceLayout` が処理中（`beforePanelChange` の承認待ちを含む）の間は新しい操作（ドラッグ・リサイズ・仕切り）が始まらず、置き換えの結果が返るまで続く（承認待ちの間に始めた操作の pointerup や Esc が新しい配置を上書きしないため。並行して複数あれば最後の 1 件が返るまで）（#796）。
 
 ### Changed
 

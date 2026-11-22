@@ -753,6 +753,7 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 無ければ `false` で何も起こらない。`onGestureEnd` へは `('cancel', 'api')` で 1 回届く。`replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout`
 を含む）は、不正でない値なら `beforePanelChange` に聞く前にこれを呼ぶ（操作中の配置ではなく、元に戻った配置に対して聞く）。拒否・`stale` になっても
 取り消した操作は戻らない。`invalid` のときは取り消さない。
+`replaceLayout` が処理中（`beforePanelChange` の承認待ちを含む）の間は、新しい操作も始まらない（`canStartGesture` を呼ぶ前に止める）。並行して複数あれば、最後の 1 件が返るまで続く。
 
 ## 保存の約束（serialize / hydrate と書き込みは別）
 

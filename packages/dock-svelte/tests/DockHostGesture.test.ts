@@ -383,4 +383,79 @@ describe('cancelGesture / replaceLayout during a gesture (#796)', () => {
 		firePointer(window, 'pointerup', 430, 240);
 		expect(widthOf(dock)).toBe(390);
 	});
+
+	describe('no new gesture while a replaceLayout is pending', () => {
+		const withB = (): DockLayout => ({
+			version: 2,
+			floating: [{ id: 'a', title: 'A', x: 40, y: 40, width: 320, height: 200, open: true }],
+			docked: { type: 'panel', id: 'b', title: 'B' }
+		});
+		const without = (width = 500): DockLayout => ({
+			version: 2,
+			floating: [{ id: 'a', title: 'A', x: 10, y: 10, width, height: 200, open: true }],
+			docked: null
+		});
+		const gate = () => {
+			const pending: ((ok: boolean) => void)[] = [];
+			return {
+				pending,
+				ask: () => new Promise<boolean>((resolve) => pending.push(resolve))
+			};
+		};
+		const mountGated = (beforePanelChange: () => Promise<boolean>) => {
+			const dock = createDockState(withB());
+			const onGestureEnd = vi.fn();
+			const view = render(DockHostHarness, { dock, onGestureEnd, beforePanelChange });
+			return { dock, onGestureEnd, host: () => view.component.host() };
+		};
+		const tryResize = () => {
+			firePointer(
+				screen.getByRole('dialog', { name: 'A' }).querySelector('.handle-se')!,
+				'pointerdown',
+				360,
+				240
+			);
+			firePointer(window, 'pointermove', 430, 240);
+		};
+		const settle = () => new Promise((r) => setTimeout(r, 0));
+
+		it('a resize started while the request is asked does not start, so it cannot overwrite', async () => {
+			const g = gate();
+			const { dock, onGestureEnd, host } = mountGated(g.ask);
+			const result = host().replaceLayout(without());
+			await settle();
+			expect(g.pending.length).toBe(1);
+			tryResize();
+			expect(widthOf(dock)).toBe(320);
+			g.pending[0](true);
+			expect(await result).toBe('applied');
+			expect(widthOf(dock)).toBe(500);
+			firePointer(window, 'pointermove', 600, 240);
+			firePointer(window, 'pointerup', 600, 240);
+			pressEscape();
+			expect(widthOf(dock)).toBe(500);
+			expect(onGestureEnd).not.toHaveBeenCalled();
+			expect(net).toBe(0);
+		});
+
+		it('with two in flight, the guard stays until the last one returns', async () => {
+			const g = gate();
+			const { dock, host } = mountGated(g.ask);
+			const first = host().replaceLayout(without());
+			await settle();
+			const second = host().replaceLayout(without(450));
+			await settle();
+			expect(g.pending.length).toBe(2);
+			g.pending[0](false);
+			expect(await first).not.toBe('applied');
+			tryResize();
+			expect(widthOf(dock)).toBe(320);
+			firePointer(window, 'pointerup', 430, 240);
+			while (g.pending.length) g.pending.shift()!(false);
+			await second;
+			tryResize();
+			expect(widthOf(dock)).toBe(390);
+			firePointer(window, 'pointerup', 430, 240);
+		});
+	});
 });

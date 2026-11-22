@@ -392,12 +392,17 @@
 	setPanelMover(mover);
 
 	// svelte-ignore state_referenced_locally
+	// Number of `replaceLayout` calls in flight (#796): while > 0 no gesture starts, or its late
+	// commit / restore could overwrite the replacement. A count, so one finishing early does not
+	// release the others.
+	let replacing = 0;
 	const gesture = new GestureOwner(
 		dock,
 		() => hostEl,
 		() => ({
 			// A `drag` may end in dock / undock: not started while structure changes are held (IME).
 			canStart: (kind, panelId) =>
+				replacing === 0 &&
 				!(kind === 'drag' && lifecycle.isDeferred()) &&
 				(canStartGesture ? canStartGesture(kind, panelId) : true),
 			isEscapeBlocked,
@@ -586,7 +591,8 @@
 	 * A gesture in progress is cancelled first (`cancelGesture`, #796), once `next` passed the
 	 * check: the panes are asked about the layout the gesture restored, and the replacement is
 	 * not overwritten by the gesture's later commit / restore. A refused replacement still leaves
-	 * the gesture cancelled.
+	 * the gesture cancelled. No new gesture starts while a `replaceLayout` is in flight (including
+	 * while `beforePanelChange` is pending), until the last one in flight has returned.
 	 */
 	export async function replaceLayout(
 		next: DockLayout,
@@ -596,27 +602,32 @@
 		if (!checked.ok) return 'invalid';
 		const layout = checked.layout;
 		cancelGesture();
-		const active = document.activeElement;
-		const focusWasInHost = !!hostEl && !!active && hostEl.contains(active);
-		const outcome = await lifecycle.guarded(options.isCurrent, () =>
-			lifecycle.requestReplace(
-				() => layout,
-				(l) => {
-					if (options.saved) {
-						forgetHomeSlots(dock);
-						adoptLayout(dock, l);
-					} else dock.layout = l;
-				}
-			)
-		);
-		if (outcome !== 'applied' || !focusWasInHost) return outcome;
-		await tick();
-		const now = document.activeElement;
-		if (hostEl?.isConnected && (!now || now === document.body)) {
-			const to = options.focusPanel ?? collectPanelIds(dock.layout.docked)[0];
-			if (to) titleBarFocusTarget(hostEl, to)?.focus();
+		replacing++;
+		try {
+			const active = document.activeElement;
+			const focusWasInHost = !!hostEl && !!active && hostEl.contains(active);
+			const outcome = await lifecycle.guarded(options.isCurrent, () =>
+				lifecycle.requestReplace(
+					() => layout,
+					(l) => {
+						if (options.saved) {
+							forgetHomeSlots(dock);
+							adoptLayout(dock, l);
+						} else dock.layout = l;
+					}
+				)
+			);
+			if (outcome !== 'applied' || !focusWasInHost) return outcome;
+			await tick();
+			const now = document.activeElement;
+			if (hostEl?.isConnected && (!now || now === document.body)) {
+				const to = options.focusPanel ?? collectPanelIds(dock.layout.docked)[0];
+				if (to) titleBarFocusTarget(hostEl, to)?.focus();
+			}
+			return outcome;
+		} finally {
+			replacing--;
 		}
-		return outcome;
 	}
 
 	/** Retry a change held by `isStructureChangeDeferred` now (a custom predicate turned false without a composition / focus event). */
