@@ -24,7 +24,7 @@
 
 ### Added
 
-- **dock-svelte:** `DockState.isOnScreen(id)`（reactive）と `dock.panels[].onScreen` を足した。畳んだ区画の中・タブの裏・引き出していない帯の pane・タイトルバーへ畳んだ浮動・閉じた窓を偽にする。`isVisible` は「閉じていない」の意味のまま（doc を直しただけ、改名なし）。`DockPanelInfo` に `onScreen` が増える（#792）。
+- **dock-svelte:** `DockState.isOnScreen(id)`（reactive）と `dock.panels[].onScreen` を足した。畳んだ区画の中・タブの裏・引き出していない帯の pane・タイトルバーへ畳んだ浮動・閉じた窓を偽にする。`isVisible` は「閉じていない」の意味のまま（doc を直しただけ、改名なし）。`DockPanelInfo` に `onScreen` が増える（#792）。 消費側への注意: `DockPanelInfo.onScreen` は必須の `boolean` なので、アプリ側で `DockPanelInfo` を自前で組み立てている箇所（テストのモックなど）は型エラーになる。`onScreen` を足す。また `dock.panels` は `flyoutPanel` の開閉でも作り直されるようになった（引き出した帯の pane の `onScreen` が変わるため。参照が変わるだけで内容は同じ）。
 
 ### Changed
 
