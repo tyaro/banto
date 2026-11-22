@@ -53,7 +53,7 @@ ADR records those decisions and the details the plan left "to be fixed in the C0
   secret** (it is used for neither authentication nor authorization; it is a name that partitions memory). The
   column constraints make it mandatory on account rows; the built-in row has none (§2).
 - `accountId` is added to the wire `Identity` (`crates/banto-server/src/auth/session.rs:27`; REST
-  `/api/auth/identity`, the login response, and the Tauri commands). For an account session it is `account_uid`.
+  `/api/auth/identity`, and Tauri's `auth_identity` / `auth_resolve`; the login responses carry no identity and are unchanged). For an account session it is `account_uid`.
   Grant sessions and the Tauri login-less session (`local`) do not carry it.
 - The screen's `sessionOwnerKey`: `local` and grant kinds stay as they are. An account is **`acct:<accountId>`**.
   Without an `accountId` it is **`null`** (matches nothing; fail closed). A dev build warns once when it returns

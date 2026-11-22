@@ -207,7 +207,7 @@ v7.11.0 の形のバックアップは復元の予約で拒まれる。
   - DB を作り直した場合・別の DB の同じ `users.id` も一致しない（決定 16 で、作り直しは全部の利用者に起きる）。
   - **2026-11-22 変更**: 既存の行への埋め込みは無い。アカウントの行では列の制約で必須（§4.1）。
     列が必須なので、作成時の採番は C1 に入る（wire に載せるのは C3）。
-- wire の `Identity` に `accountId` を足す（REST の `/api/auth/identity`・ログインの応答、Tauri のコマンド）。
+- wire の `Identity` に `accountId` を足す（REST の `/api/auth/identity`、Tauri の `auth_identity`・`auth_resolve`。ログインの応答は identity を持たないので変えない）。
   アカウントのセッションでは `account_uid`。grant セッション・Tauri のログインなし（`local`）には載せない。
   `instanceId` は足さない。
 - `sessionOwnerKey`（`sessionController.svelte.ts:207-217`）: `local` と grant の kind は今のまま。
