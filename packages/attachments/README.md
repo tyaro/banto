@@ -19,6 +19,10 @@ Banto の添付ファイル/画像管理 UI パッケージ（M20、オプショ
 <AttachmentsPanel resource="items" resourceId="1" client={attachmentsClient} canWrite={true} />
 ```
 
+## props（任意のもの）
+
+- `canSave?: () => boolean` — ダウンロードの保存を始める直前（`client.downloadUrl` が解決した後）に呼ぶ。`false` を返すと保存せず、object URL を解放する。既定は常に保存。取得の間にセッションが終わった場合などに、保存だけを止めたいときに使う。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

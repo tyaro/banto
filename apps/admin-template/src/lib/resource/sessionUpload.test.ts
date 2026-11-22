@@ -1,6 +1,8 @@
 import type { FileFieldClient, FileFieldMeta, FormSchema } from '@banto/forms';
 import { describe, expect, it, vi } from 'vitest';
 import {
+	guardUpload,
+	whileLive,
 	sendingWhile,
 	UNGUARDED_CLIENT_MESSAGE,
 	type SessionGuardedUpload,
@@ -182,5 +184,89 @@ describe('sendingWhile (#714 F2)', () => {
 				() => 'refused'
 			)
 		).toBe(schema);
+	});
+});
+
+describe('guardUpload (the attachments panel of an existing record)', () => {
+	it('sends through `uploadWhile` while the session is live', async () => {
+		const uploadWhile = vi.fn<UploadWhile>(async () => meta);
+		const { client, upload } = guardedClient(uploadWhile);
+		const send = guardUpload(
+			client,
+			() => true,
+			() => 'refused'
+		);
+		await expect(send('items', '7', aFile())).resolves.toBe(meta);
+		expect(uploadWhile).toHaveBeenCalledTimes(1);
+		expect(upload).not.toHaveBeenCalled();
+	});
+
+	it('sends nothing when the session already ended', async () => {
+		const uploadWhile = vi.fn<UploadWhile>(async () => meta);
+		const send = guardUpload(
+			guardedClient(uploadWhile).client,
+			() => false,
+			() => 'refused'
+		);
+		await expect(send('items', '7', aFile())).rejects.toThrow('refused');
+		expect(uploadWhile).not.toHaveBeenCalled();
+	});
+
+	it("drops the result in the app's words when the session changes during the send", async () => {
+		let live = true;
+		const uploadWhile: UploadWhile = async (_resource, _id, _file, guard) => {
+			live = false; // logout / another user while the bytes are read
+			if (!guard.canSend()) throw new Error("client's refusal");
+			return meta;
+		};
+		const send = guardUpload(
+			guardedClient(uploadWhile).client,
+			() => live,
+			() => 'refused'
+		);
+		await expect(send('items', '7', aFile())).rejects.toThrow('refused');
+	});
+
+	it('refuses a client without `uploadWhile`', async () => {
+		const upload = vi.fn(async () => meta);
+		const send = guardUpload(
+			{ upload },
+			() => true,
+			() => 'refused'
+		);
+		await expect(send('items', '7', aFile())).rejects.toThrow(UNGUARDED_CLIENT_MESSAGE);
+		expect(upload).not.toHaveBeenCalled();
+	});
+});
+
+describe('whileLive (follow-up calls of a panel whose session ended)', () => {
+	it('calls through while the session is live', async () => {
+		const fn = vi.fn(async (id: number) => id + 1);
+		await expect(
+			whileLive(
+				fn,
+				() => true,
+				() => 'refused'
+			)(1)
+		).resolves.toBe(2);
+	});
+
+	it('does not start the call once the session changed (e.g. the reload after an upload already sent)', async () => {
+		let live = true;
+		const list = vi.fn(async () => []);
+		const send = guardUpload(
+			guardedClient(async () => meta).client,
+			() => live,
+			() => 'refused'
+		);
+		const reload = whileLive(
+			list,
+			() => live,
+			() => 'refused'
+		);
+		await send('items', '7', aFile()); // sent while live
+		live = false; // the switch comes before the panel reloads
+		await expect(reload()).rejects.toThrow('refused');
+		expect(list).not.toHaveBeenCalled();
 	});
 });

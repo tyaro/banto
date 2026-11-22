@@ -40,6 +40,7 @@
 
 ### Added
 
+- **attachments:** `AttachmentsPanel` に任意の props `canSave?: () => boolean` を足した（足すだけの変更。#714）。ダウンロードの保存を始める直前に呼び、`false` なら保存せず object URL を解放する。テンプレートの `ItemAttachments` は、マウント時のセッションが生きているかを渡す。
 - **template:** items の新規作成にファイル欄（`file` 型）を配線した（#714 の 4、F2。`Closes #714`）。選んだファイルは保存のあとで新しいレコードの添付へ上がり、上がらなかったものは編集画面に理由つきで引き継いで「再試行」できる（`ResourceDetail` が `uploadPendingFiles` を呼ぶ。引き継ぎは `lib/resource/pendingUploads.ts`）。既存レコードの編集は従来どおり添付パネル。添付を外すプリセットでは欄と import が `[scaffold:attachments]` の印で消える。
 - **charts:** `@banto/charts/testing` を足す（#852）。jsdom に無い幅・`ResizeObserver` の差し替えを入れて戻す `installChartDom()` と、描画の待ち合わせ `flushChart()`。試験ランナーを import しない。charts 自身の DOM の試験を載せ替え、外部利用 fixture が Git 依存の経路でサブパスを読む試験を足した。README に vitest の設定と例。`installChartDom()` は入れている間の 2 回目の呼び出しを明示のエラーで断る（重ねると戻す順で差し替えが残るため）。足すだけ。
 - **forms:** `file` 型を足した（#714 の 4、[計画 §4.12](docs/design/downstream-requests-2026-11-plan.md) の F1）。ファイルはレコードの列にせず、フィールド定義の `file.client`（`list`・`upload`・`remove`。`@banto/attachments` の `AttachmentsClient` をそのまま渡せる構造的な型）だけを通す。forms は通信の契約を持たず、新しい mutating 操作も足さない。`BantoForm` の `fileParentId` があれば（編集）選んだらすぐアップロード・削除もすぐ、無ければ（新規）選んだファイルを値の中で保留し、作成の成功の後に `uploadPendingFiles(schema, store, id)` で順に送る（断られたファイルは理由つきで欄に残り、再試行できる）。`file` 型の値は送信値（`submitValues`・`submitValuesOf`）に入らない。保留がある間は `isDirty` が真。`required`・`accept`・`maxFileSize`・`maxFiles` は**画面だけ**の確認で、業務上の必須は保証しない（README）。1 つのフォームに `file` は 1 欄までで、2 欄目は `createFormStore` が例外を投げる。`FormDraft` は `file` 欄を受けない。`FormStore.messages`、`ValidationMessages` の `fileTooLarge`・`fileTypeNotAccepted`・`fileTooMany`、`FileField`・`FileFieldMessages`・`assertFormSchema` などを公開。ui-demo に見本。テンプレートの items への配線は次の PR（F2）。 消費側への注意: 公開の union `FieldType`（と grid-svelte の鏡 `SchemaFieldType`）に `'file'` が増えるので、網羅 switch をしている利用側は型エラーになる。`columnsFromSchema` は `file` 欄を列にしない。`ValidationMessages`・`FileFieldMessages` を自前の辞書で組んでいるアプリは、新しいキー（テンプレートの `validation.file*`・`fileField.*`）を足すと文言を差し替えられる（足さなければ日本語の既定）。
@@ -70,6 +71,10 @@
 - E2E（#798）: `BANTO_E2E_SERVERS` に `smoke`（:8799）と `public-viewer`（:8798）を足し、CI の E2E ジョブの smoke・viewer-public の各 step で必要な banto-serve だけを立てる（使わない 2 本目を立てない）。smoke の固定 wait は、時間経過そのものを見る scenario 13b の 7 秒（「その後は何も起きない」の確認）と、同じ性質の 500ms・300ms を例外として残した。
 - **ci:** `visual.spec.ts` のログインとダッシュボードの基準画像を、ほかの画面と同じ対角の 2 組（light-standard と dark-glass）にした。24 枚から 12 枚になり、visual の実行が短くなる（#798）。
 - **CI: `@banto/dock-svelte` の総当たりテストを別ファイルに分け、深さを環境変数 `DOCK_EXHAUSTIVE` で切り替えるようにした（#798 PR-d）。** `panel-visibility.test.ts` の総当たり（隠す順 × 戻す順・手順の全列挙・乱数の手順）を `panel-visibility-exhaustive-*.test.ts` に移し（共有の道具は `tests/fixtures/`）、`DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走る。未設定（手元の既定）は浅く、CI は dock-svelte を触る PR と main の push で全部、触らない PR は浅い既定（`ci.yml` の `changes` の出力 `dock`）。テストと CI だけの変更で、`src/`・公開 API・保存形式の変更なし。
+
+### Fixed
+
+- **template:** items の添付パネル（`ItemAttachments`）のアップロードも、`ResourceDetail` の `file` 欄と同じセッションの確認（`uploadWhile` / `guardUpload`）を通すようにした（#714）。送信の途中でログアウトや別ユーザーへの切り替えが起きても、古いセッションの資格では送らない。
 
 ## [7.11.0] - 2026-11-22
 
