@@ -49,7 +49,31 @@ afterAll(() => {
 
 afterEach(() => {
 	cleanup();
+	vi.unstubAllGlobals();
 });
+
+/** A `beforePanelChange` that waits: every question is held until `drain` answers it `true`. */
+function heldHook() {
+	const asks: ((ok: boolean) => void)[] = [];
+	return {
+		asks,
+		hook: () => new Promise<boolean>((resolve) => asks.push(resolve)),
+		/** Approve everything, the oldest (`first`) or the newest (`last`) question each time. */
+		async drain(pick: 'first' | 'last'): Promise<void> {
+			while (asks.length > 0) {
+				(pick === 'first' ? asks.shift() : asks.pop())!(true);
+				await settle();
+			}
+		}
+	};
+}
+
+/** `reportError` replaced by a spy: what a callback threw is reported there, not thrown. */
+function reported() {
+	const spy = vi.fn();
+	vi.stubGlobal('reportError', spy);
+	return spy;
+}
 
 function firePointer(target: EventTarget, type: string, x: number, y: number): Event {
 	const ev = new Event(type, { bubbles: true, cancelable: true });
@@ -99,17 +123,20 @@ function mount(
 	const commits: [string, DockLayoutCommitReason][] = [];
 	/** `onLayoutCommit` and `onGestureEnd`, in the order they were called. */
 	const order: string[] = [];
+	/** `on`: `onLayoutCommit` throws after recording the call. */
+	const failing = { on: false };
 	const view = render(DockHostHarness, {
 		dock,
 		...props,
 		onLayoutCommit: (l: DockLayout, reason: DockLayoutCommitReason) => {
 			commits.push([JSON.stringify(l), reason]);
 			order.push(`commit:${reason}`);
+			if (failing.on) throw new Error('commit failed');
 		},
 		onGestureEnd: (kind: string, outcome: string) => order.push(`${kind}:${outcome}`)
 	});
 	flushSync();
-	return { dock, view, commits, order, host: () => view.component.host() };
+	return { dock, view, commits, order, failing, host: () => view.component.host() };
 }
 
 const sizes = (dock: ReturnType<typeof createDockState>) =>
@@ -343,5 +370,204 @@ describe('DockHost onLayoutCommit: replaceLayout', () => {
 		await settle();
 		expect(commits.map((c) => c[1])).toEqual(['reset']);
 		expect(order).toEqual(['divider:cancel', 'commit:reset']);
+	});
+});
+
+describe('DockHost onLayoutCommit: replacements asked at the same time (PR #842 review)', () => {
+	const other = (): DockLayout => ({
+		version: 2,
+		floating: [{ id: 'g', title: 'G', x: 10, y: 10, width: 300, height: 200, open: true }],
+		docked: { type: 'panel', id: 'l', title: 'L' }
+	});
+
+	it('a reset asked while a restore to the same layout is pending is asked apart: approved first, it is applied and reported', async () => {
+		const held = heldHook();
+		const { dock, commits, host } = mount({ beforePanelChange: held.hook });
+		const applied = vi.fn();
+		const restore = host().replaceLayout(other(), { saved: true });
+		await settle();
+		const asked = held.asks.length;
+		expect(asked).toBeGreaterThan(0);
+		const reset = host().replaceLayout(other(), { saved: true, commit: 'reset', applied });
+		await settle();
+		// Not the pending restore's promise: the reset has its own question.
+		expect(held.asks.length).toBe(asked + 1);
+		await held.drain('last');
+		expect(await reset).toBe('applied');
+		expect(await restore).toBe('stale');
+		expect(applied).toHaveBeenCalledTimes(1);
+		expect(commits).toEqual([[dock.serialize(), 'reset']]);
+	});
+
+	it('... and when the restore is approved first, the reset is `stale`: no `applied`, no report', async () => {
+		const held = heldHook();
+		const { commits, host } = mount({ beforePanelChange: held.hook });
+		const applied = vi.fn();
+		const restore = host().replaceLayout(other(), { saved: true });
+		const reset = host().replaceLayout(other(), { saved: true, commit: 'reset', applied });
+		await settle();
+		await held.drain('first');
+		expect(await restore).toBe('applied');
+		expect(await reset).toBe('stale');
+		expect(applied).not.toHaveBeenCalled();
+		expect(commits).toEqual([]);
+	});
+
+	it('two calls with their own `applied` never share: only the one applied runs its `applied`', async () => {
+		const held = heldHook();
+		const { host } = mount({ beforePanelChange: held.hook });
+		const first = vi.fn();
+		const second = vi.fn();
+		const a = host().replaceLayout(other(), { saved: true, applied: first });
+		const b = host().replaceLayout(other(), { saved: true, applied: second });
+		await settle();
+		await held.drain('last');
+		expect([await a, await b]).toEqual(['stale', 'applied']);
+		expect(first).not.toHaveBeenCalled();
+		expect(second).toHaveBeenCalledTimes(1);
+	});
+
+	it('the same replacement with the same effects still shares the pending one (one question, one report)', async () => {
+		const held = heldHook();
+		const { commits, host } = mount({ beforePanelChange: held.hook });
+		const a = host().replaceLayout(other(), { saved: true, commit: 'reset' });
+		await settle();
+		const asked = held.asks.length;
+		const b = host().replaceLayout(other(), { saved: true, commit: 'reset' });
+		await settle();
+		expect(held.asks.length).toBe(asked);
+		await held.drain('first');
+		expect([await a, await b]).toEqual(['applied', 'applied']);
+		expect(commits.map((c) => c[1])).toEqual(['reset']);
+	});
+
+	it('a change settled while a restore is being asked is reported, and stays the last report', async () => {
+		const held = heldHook();
+		const { dock, commits, host } = mount({ beforePanelChange: held.hook });
+		const restore = host().replaceLayout(other(), { saved: true });
+		await settle();
+		// The app's own change while the panes are still being asked.
+		const root = dock.layout.docked as { sizes: number[] };
+		dock.layout = { ...dock.layout, docked: { ...root, sizes: [0.3, 0.7] } as never };
+		await settle();
+		const changed = dock.serialize();
+		expect(commits).toEqual([[changed, 'user']]);
+		await held.drain('first');
+		const outcome = await restore;
+		await settle();
+		// Applied or not, the restore itself reports nothing.
+		expect(commits).toEqual([[changed, 'user']]);
+		expect(outcome).toBe(dock.serialize() === changed ? 'stale' : 'applied');
+	});
+});
+
+describe("DockHost onLayoutCommit: replaceLayout with commit: 'user'", () => {
+	it('reports only when the layout differs from the one last settled', async () => {
+		const { dock, commits, host } = mount();
+		expect(await host().replaceLayout(JSON.parse(dock.serialize()), { commit: 'user' })).toBe(
+			'applied'
+		);
+		await settle();
+		expect(commits).toEqual([]);
+		const next: DockLayout = {
+			version: 2,
+			floating: [],
+			docked: { type: 'panel', id: 'l', title: 'L' }
+		};
+		expect(await host().replaceLayout(next, { saved: true, commit: 'user' })).toBe('applied');
+		expect(commits).toEqual([[dock.serialize(), 'user']]);
+		await settle();
+		expect(commits).toHaveLength(1);
+	});
+});
+
+describe('DockHost onLayoutCommit: a callback that throws (PR #842 review)', () => {
+	/** `l | x`: the tab `y` goes off the screen, so the panes are asked. */
+	const twoPanes = (): DockLayout => ({
+		version: 2,
+		floating: [],
+		docked: {
+			type: 'split',
+			id: 's',
+			direction: 'row',
+			sizes: [0.5, 0.5],
+			children: [
+				{ type: 'panel', id: 'l', title: 'L' },
+				{ type: 'panel', id: 'x', title: 'X' }
+			]
+		}
+	});
+
+	function drag(dock: ReturnType<typeof createDockState>): number {
+		firePointer(screen.getByRole('separator'), 'pointerdown', 500, 100);
+		firePointer(window, 'pointermove', 600, 100);
+		firePointer(window, 'pointerup', 600, 100);
+		flushSync();
+		return sizes(dock)[0];
+	}
+
+	it('at the end of a gesture: onGestureEnd is still called, and the exception is reported', async () => {
+		const errors = reported();
+		const { dock, order, failing } = mount();
+		failing.on = true;
+		expect(drag(dock)).toBeCloseTo(0.6);
+		expect(order).toEqual(['commit:user', 'divider:commit']);
+		expect(errors).toHaveBeenCalledTimes(1);
+		expect((errors.mock.calls[0][0] as Error).message).toBe('commit failed');
+		// The layout counts as reported: the next settle point does not report it again.
+		await settle();
+		expect(order).toEqual(['commit:user', 'divider:commit']);
+	});
+
+	it('in the tick after a change: reported, and later changes are still followed', async () => {
+		const errors = reported();
+		const { dock, commits, failing } = mount();
+		failing.on = true;
+		dock.close('f');
+		await settle();
+		expect(errors).toHaveBeenCalledTimes(1);
+		failing.on = false;
+		dock.open('f');
+		await settle();
+		expect(commits.map((c) => c[1])).toEqual(['user', 'user']);
+		expect(errors).toHaveBeenCalledTimes(1);
+	});
+
+	it('after an async approval: replaceLayout resolves `applied` and the next gesture starts', async () => {
+		const errors = reported();
+		const held = heldHook();
+		const { dock, commits, failing, host } = mount({ beforePanelChange: held.hook });
+		failing.on = true;
+		const reset = host().replaceLayout(twoPanes(), { saved: true, commit: 'reset' });
+		await settle();
+		expect(held.asks.length).toBeGreaterThan(0);
+		await held.drain('first');
+		expect(await reset).toBe('applied');
+		expect(commits.map((c) => c[1])).toEqual(['reset']);
+		expect(errors).toHaveBeenCalledTimes(1);
+		await settle();
+		failing.on = false;
+		expect(drag(dock)).toBeCloseTo(0.6);
+		expect(commits.map((c) => c[1])).toEqual(['reset', 'user']);
+	});
+
+	it('`applied` throwing: the report still goes out, the outcome is `applied`, the next gesture starts', async () => {
+		const errors = reported();
+		const held = heldHook();
+		const { dock, commits, host } = mount({ beforePanelChange: held.hook });
+		const reset = host().replaceLayout(twoPanes(), {
+			saved: true,
+			commit: 'reset',
+			applied: () => {
+				throw new Error('applied failed');
+			}
+		});
+		await settle();
+		await held.drain('first');
+		expect(await reset).toBe('applied');
+		expect(commits).toEqual([[dock.serialize(), 'reset']]);
+		expect((errors.mock.calls[0][0] as Error).message).toBe('applied failed');
+		await settle();
+		expect(drag(dock)).toBeCloseTo(0.6);
 	});
 });

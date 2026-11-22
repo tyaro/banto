@@ -759,8 +759,13 @@
 
 	/**
 	 * Show `next` as the wide layout (`resetLayout` / `restoreLayout`): replaced through
-	 * `replaceLayout`, or - narrow - kept for later, with the narrow display built from it.
+	 * `replaceLayout`, or - narrow - kept for later, with the narrow display built from it. The
+	 * newest one asked wins (PR #842 review): an older one still being asked is `stale` when it
+	 * would be applied - also when both show the same layout (a restore, then a reset to the same
+	 * default; narrow, two wide layouts with the same narrow display), where each has its own
+	 * report and kept layout.
 	 */
+	let installGen = 0;
 	async function install(
 		next: DockLayout,
 		isDefault: boolean,
@@ -769,10 +774,11 @@
 		if (!host) return 'unavailable';
 		const wasNarrow = narrowShown;
 		const shown = wasNarrow ? threePaneNarrowLayout(next, narrowOptions()) : next;
+		const gen = ++installGen;
 		const outcome = await host.replaceLayout(shown, {
 			focusPanel: CENTER,
 			// The display switched while it was asked: what it was built for is gone.
-			isCurrent: () => narrowShown === wasNarrow,
+			isCurrent: () => gen === installGen && narrowShown === wasNarrow,
 			// A saved (or default) layout, not today's: the floated panes' places go in the same step
 			// (#739 review). A live replacement (`syncPanels`) keeps them.
 			saved: true,

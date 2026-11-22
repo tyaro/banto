@@ -13,7 +13,7 @@
 // ResizeObserver's callbacks are called by `resize`).
 import { cleanup, render } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import ThreePaneDockHarness from './ThreePaneDockHarness.svelte';
 import type { DockPanelChange } from '../src/core/lifecycle';
 import { collectPanelIds } from '../src/core/tree';
@@ -68,6 +68,7 @@ beforeEach(() => {
 afterEach(() => {
 	cleanup();
 	observers.clear();
+	vi.unstubAllGlobals();
 });
 
 async function settle(): Promise<void> {
@@ -94,12 +95,16 @@ function mount(
 ) {
 	const dock = props.dock ?? createDockState();
 	const commits: [string, ThreePaneLayoutCommitReason][] = [];
+	/** `on`: `onLayoutCommit` throws after recording the call. */
+	const failing = { on: false };
 	const view = render(ThreePaneDockHarness, {
 		props: {
 			...props,
 			dock,
-			onLayoutCommit: (value: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason) =>
-				commits.push([JSON.stringify(value), reason])
+			onLayoutCommit: (value: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason) => {
+				commits.push([JSON.stringify(value), reason]);
+				if (failing.on) throw new Error('commit failed');
+			}
 		}
 	});
 	flushSync();
@@ -108,10 +113,39 @@ function mount(
 		dock,
 		view,
 		commits,
+		failing,
 		api,
 		harness: view.component,
 		snapshot: () => JSON.stringify(api().layoutSnapshot())
 	};
+}
+
+/**
+ * A `beforePanelChange` that answers `true` until `hold` is set; then every question waits until
+ * `drain` approves it, the oldest one first.
+ */
+function heldHook() {
+	const asks: ((ok: boolean) => void)[] = [];
+	const state = {
+		hold: false,
+		asks,
+		hook: (): boolean | Promise<boolean> =>
+			state.hold ? new Promise<boolean>((resolve) => asks.push(resolve)) : true,
+		async drain(): Promise<void> {
+			while (asks.length > 0) {
+				asks.shift()!(true);
+				await settle();
+			}
+		}
+	};
+	return state;
+}
+
+/** Give the first pane of the root split `share` (the app's own `DockState` change). */
+function resizeFirst(dock: DockState, share: number): void {
+	const root = dock.layout.docked as DockSplitNode;
+	const sizes = root.sizes.map((_, i) => (i === 0 ? share : (1 - share) / (root.sizes.length - 1)));
+	dock.layout = { ...dock.layout, docked: { ...root, sizes } };
 }
 
 /** Give the left pane 40% (the app's own `DockState` change). */
@@ -341,5 +375,123 @@ describe('ThreePaneDock onLayoutCommit', () => {
 		expect(await view.component.api().setVisible('right', false)).toBe('applied');
 		await settle();
 		expect(commits).toEqual([[snapshot(), 'user']]);
+	});
+});
+
+describe('ThreePaneDock: restores and resets asked at the same time (PR #842 review)', () => {
+	it('a reset asked while a restore of the default is pending wins: the restore is `stale`, the reset is reported', async () => {
+		const held = heldHook();
+		const { api, commits, snapshot } = mount({ beforePanelChange: held.hook });
+		await settle();
+		const fresh = snapshot();
+		expect(await api().float('left')).toBe('applied');
+		await settle();
+		commits.length = 0;
+		held.hold = true;
+		// Both show the same layout (the default): the left pane is asked about docking again.
+		const restore = api().restoreLayout(fresh);
+		await settle();
+		expect(held.asks.length).toBe(1);
+		const reset = api().resetLayout();
+		await settle();
+		expect(held.asks.length).toBe(2);
+		// The restore's approval arrives first: it is not applied in the reset's place.
+		await held.drain();
+		expect((await restore).outcome).toBe('stale');
+		expect(await reset).toBe('applied');
+		await settle();
+		expect(commits).toEqual([[fresh, 'reset']]);
+		expect(snapshot()).toBe(fresh);
+	});
+
+	it('narrow: two restores with the same narrow display - the later wide layout is the one kept', async () => {
+		const held = heldHook();
+		const { api, dock, commits, snapshot, harness } = mount({ beforePanelChange: held.hook });
+		await settle();
+		// Two wide layouts without the left pane, with other shares: one narrow display.
+		expect(await api().setVisible('left', false)).toBe('applied');
+		await settle();
+		const first = snapshot();
+		resizeFirst(dock, 0.7);
+		await settle();
+		const second = snapshot();
+		expect(second).not.toBe(first);
+		expect(await api().resetLayout()).toBe('applied');
+		await resize(800);
+		expect(harness.isNarrow()).toBe(true);
+		// The left drawer is open: taking the pane away is asked.
+		expect(await api().setVisible('left', true)).toBe('applied');
+		await settle();
+		commits.length = 0;
+		held.hold = true;
+		const a = api().restoreLayout(first);
+		await settle();
+		expect(held.asks.length).toBe(1);
+		const b = api().restoreLayout(second);
+		await settle();
+		expect(held.asks.length).toBe(2);
+		await held.drain();
+		expect((await a).outcome).toBe('stale');
+		expect((await b).outcome).toBe('applied');
+		expect(snapshot()).toBe(second);
+		await resize(1000);
+		expect(harness.isNarrow()).toBe(false);
+		expect(snapshot()).toBe(second);
+		// Restores: nothing to save.
+		expect(commits).toEqual([]);
+	});
+
+	it('a change settled while a restore is being asked is reported with its own value, and stays the last report', async () => {
+		const held = heldHook();
+		const { api, dock, commits, snapshot } = mount({ beforePanelChange: held.hook });
+		await settle();
+		const fresh = snapshot();
+		expect(await api().float('left')).toBe('applied');
+		await settle();
+		commits.length = 0;
+		held.hold = true;
+		const restore = api().restoreLayout(fresh);
+		await settle();
+		expect(held.asks.length).toBe(1);
+		// The app's own change while the pane is still being asked.
+		resizeFirst(dock, 0.7);
+		await settle();
+		const changed = snapshot();
+		expect(changed).not.toBe(fresh);
+		expect(commits).toEqual([[changed, 'user']]);
+		await held.drain();
+		const { outcome } = await restore;
+		await settle();
+		// The restore reports nothing, applied or not: the change is the last value reported.
+		expect(commits).toEqual([[changed, 'user']]);
+		expect(snapshot()).toBe(outcome === 'applied' ? fresh : changed);
+	});
+});
+
+describe('ThreePaneDock onLayoutCommit: a callback that throws (PR #842 review)', () => {
+	it('a reset approved later still resolves `applied`; the exception is reported and later changes are followed', async () => {
+		const errors = vi.fn();
+		vi.stubGlobal('reportError', errors);
+		const held = heldHook();
+		const { api, commits, failing, snapshot } = mount({ beforePanelChange: held.hook });
+		await settle();
+		expect(await api().float('left')).toBe('applied');
+		await settle();
+		commits.length = 0;
+		held.hold = true;
+		failing.on = true;
+		const reset = api().resetLayout();
+		await settle();
+		expect(held.asks.length).toBe(1);
+		await held.drain();
+		expect(await reset).toBe('applied');
+		expect(commits.map((c) => c[1])).toEqual(['reset']);
+		expect(errors).toHaveBeenCalledTimes(1);
+		expect((errors.mock.calls[0][0] as Error).message).toBe('commit failed');
+		failing.on = false;
+		held.hold = false;
+		expect(await api().setVisible('right', false)).toBe('applied');
+		await settle();
+		expect(commits.slice(1)).toEqual([[snapshot(), 'user']]);
 	});
 });

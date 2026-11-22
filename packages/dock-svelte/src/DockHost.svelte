@@ -72,6 +72,7 @@
 	 */
 	import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte';
 	import { createDragController, setDragController } from './core/drag.svelte';
+	import { notify } from './core/report';
 	import {
 		GestureOwner,
 		setGestureOwner,
@@ -252,8 +253,10 @@
 		 * or the app's own `DockState` call (`hydrate` included). All of those say `'user'`. Not called
 		 * for the steps of a gesture in progress, nor for a change that was refused, `stale` or
 		 * cancelled (the layout is the same). `replaceLayout(next, { commit })` reports its own reason
-		 * (`'reset'`) in the step that puts `next` in, changed or not; without `commit` it reports
-		 * nothing. A change not yet reported when the host unmounts is reported then.
+		 * in the step that puts `next` in (`'reset'`: changed or not; `'user'`: when changed); without
+		 * `commit` it reports nothing. A change not yet reported when the host unmounts is reported
+		 * then. An exception this callback throws is reported as an uncaught error (`reportError`); it
+		 * does not stop `onGestureEnd` or a pending `replaceLayout`.
 		 */
 		onLayoutCommit?: (layout: DockLayout, reason: DockLayoutCommitReason) => void;
 	}
@@ -441,8 +444,19 @@
 		const now = dock.serialize();
 		if (now === settledLayout) return;
 		settledLayout = now;
-		onLayoutCommit?.(JSON.parse(now) as DockLayout, 'user');
+		reportCommit(now, 'user');
 	}
+	/**
+	 * Call `onLayoutCommit`. The layout is already settled: an exception of the app's callback is
+	 * reported (`notify`) and does not stop the caller (`onGestureEnd`, a pending `replaceLayout`).
+	 */
+	function reportCommit(serialized: string, reason: DockLayoutCommitReason): void {
+		if (!onLayoutCommit) return;
+		const report = onLayoutCommit;
+		notify(() => report(JSON.parse(serialized) as DockLayout, reason));
+	}
+	/** Identity of a `replaceLayout` call whose `applied` only that call can run (never shared). */
+	let replaceCalls = 0;
 	// Changes outside a gesture are compared in the tick after them. While a gesture is in progress
 	// only its session is tracked (its steps are not serialized); its end runs this again, which
 	// also covers a session that closes without `onEnd` (a refused drag).
@@ -638,9 +652,17 @@
 	 * `options.commit` (#791): the reason `onLayoutCommit` is called with, in the same step that puts
 	 * `next` in (`'reset'` for a "back to the default" the user asked for). Left off, the replacement
 	 * is a restore: nothing is reported, and `next` becomes the layout later changes are compared
-	 * with. `options.applied` runs in that same step, right after `next` went in and before the
-	 * report: a caller that keeps state beside the layout (`ThreePaneDock`'s narrow display) settles
-	 * it there, so nothing reads the new layout with the old state.
+	 * with. `'reset'` is reported even when the layout is the same; `'user'` only when it differs
+	 * from the one last settled, like every other `'user'`. `options.applied` runs in that same
+	 * step, right after `next` went in and before the report: a caller that keeps state beside the
+	 * layout (`ThreePaneDock`'s narrow display) settles it there, so nothing reads the new layout
+	 * with the old state.
+	 * The same replacement asked again while it is pending shares the pending one only when it does
+	 * the same besides (`commit`, `saved`, and no `applied`): otherwise each call is asked on its
+	 * own, the first one applied wins and the other is `stale` - a call resolves `applied` only when
+	 * its own `applied` / report ran (PR #842 review). An exception from `applied` or
+	 * `onLayoutCommit` is reported as an uncaught error (`reportError`) and does not change the
+	 * outcome: the layout is in, and the next gesture can start.
 	 */
 	export async function replaceLayout(
 		next: DockLayout,
@@ -655,6 +677,12 @@
 		const checked = validateDockLayout(next);
 		if (!checked.ok) return 'invalid';
 		const layout = checked.layout;
+		// What this call does besides putting `next` in is part of its identity (PR #842 review): a
+		// call that is asked while the same replacement is pending shares it only when it would do
+		// the same - `applied` is the caller's own closure, so such a call is never shared.
+		const effects = options.applied
+			? ['call', ++replaceCalls]
+			: [options.commit ?? null, !!options.saved];
 		// Counted before the cancel: an `onGestureEnd` that starts another gesture is stopped too.
 		replacing++;
 		try {
@@ -669,11 +697,16 @@
 							forgetHomeSlots(dock);
 							adoptLayout(dock, l);
 						} else dock.layout = l;
-						options.applied?.();
-						settledLayout = dock.serialize();
-						if (options.commit)
-							onLayoutCommit?.(JSON.parse(settledLayout) as DockLayout, options.commit);
-					}
+						// The layout is in: what the callbacks throw is reported apart (`notify`), so
+						// the request still resolves and the next gesture is released.
+						if (options.applied) notify(options.applied);
+						const now = dock.serialize();
+						const changed = now !== settledLayout;
+						settledLayout = now;
+						if (options.commit === 'reset' || (options.commit && changed))
+							reportCommit(now, options.commit);
+					},
+					effects
 				)
 			);
 			if (outcome !== 'applied' || !focusWasInHost) return outcome;

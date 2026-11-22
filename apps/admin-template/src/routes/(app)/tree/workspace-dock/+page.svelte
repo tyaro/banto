@@ -283,12 +283,13 @@
 	 * step in between. The local copy saves at once; the provider gets one write 500ms after the
 	 * last report. `'reset'` ("reset layout" was applied; the dock installed the default itself) is
 	 * saved as a user's change even when the default was already shown. A layout the store applied
-	 * (the provider's copy, `restoreLayout`) is not reported. The text comes from `layoutTarget`: it
-	 * is the reported value, except while a stored layout is still being installed.
+	 * (the provider's copy, `restoreLayout`) is not reported. The text saved is the reported value,
+	 * not `layoutTarget.serialize()`: that one keeps answering the earlier text while a stored
+	 * layout is still being installed, and a change settled meanwhile would not be saved.
 	 */
-	function saveLayout(_saved: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason): void {
+	function saveLayout(saved: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason): void {
 		if (reason === 'reset') layoutTarget.withoutApplying(() => layoutStore.reset());
-		else layoutStore.changed(layoutTarget.serialize());
+		else layoutStore.changed(JSON.stringify(saved));
 	}
 
 	// Unmount: flush (not drop) a pending provider save - unless the session changed.

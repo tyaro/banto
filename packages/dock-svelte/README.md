@@ -778,7 +778,8 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   複数の変更は 1 回にまとまる。部品が外れるときにまだ通知していない変更があれば、そこで通知する。
 - **理由**: `'user'` は「復元でも reset でもない確定」（API 経由の変更も含む）。`'reset'` は
   `ThreePaneDock.resetLayout()` が適用されたとき（`DockHost` では `replaceLayout(next, { commit: 'reset' })`）で、
-  **値が同じでも毎回 1 回**届く。消費側は既定を保存するか、保存を消すかを選べる。`'narrow-switch'` は狭い ⇄ 広いの
+  **値が同じでも毎回 1 回**届く。消費側は既定を保存するか、保存を消すかを選べる（値が同じでも届くのは `'reset'` だけ。
+  `replaceLayout(next, { commit: 'user' })` は、ほかの `'user'` と同じく値が変わっていたときだけ届く）。`'narrow-switch'` は狭い ⇄ 広いの
   切り替えで保存する値が変わったとき（控えが既定で、戻った幅で測り直したとき。値が同じなら呼ばない）。
 - **呼ばれない場合**: 操作の途中（ドラッグ中の 1 歩ごと）、取り消し・`beforePanelChange` の拒否・`stale`（配置が
   変わらない）、復元（`initialLayout`・`restoreLayout`、`DockHost` では `commit` なしの `replaceLayout`。その値が次の
@@ -789,6 +790,15 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 - `replaceLayout` の `applied`（`options.applied?: () => void`）は、配置を入れたのと同じステップで、通知の前に呼ばれる。
   配置の横に状態を持つ呼び出し側（`ThreePaneDock` の狭い表示の控え）が、新しい配置と古い状態の組を誰にも読ませない
   ために使う。
+- **同じ配置への `replaceLayout` が重なったとき**: 承認待ちの間に同じ配置をもう一度頼んだ呼び出しが、待っている 1 件を
+  共有するのは、配置を入れる以外にすることも同じ（`commit`・`saved` が同じで、`applied` を渡していない）ときだけ。
+  違えば別々に聞き、先に適用されたほうが勝って、もう一方は `stale` になる（自分の `applied`・通知が走っていない
+  呼び出しに `applied` は返らない）。`ThreePaneDock` の `resetLayout`・`restoreLayout` は後から頼んだほうを残す
+  （承認待ちの復元に reset を重ねると、復元が `stale`、reset が適用されて `'reset'` が届く。狭い表示で、同じ表示に写る
+  別々の広い配置を続けて復元したときも、控えに残るのは後のほう）。
+- **`onLayoutCommit`・`applied` が例外を投げたとき**: 配置はもう入っているので、結果は変えない。例外は握りつぶさず、
+  捕まえられなかった例外として報告する（`reportError`。`window` の `error` イベントとコンソールに出る）。
+  `onGestureEnd` は続けて呼ばれ、`replaceLayout` は `applied` で返り、次の操作を始められる。
 
 ```svelte
 <ThreePaneDock
