@@ -31,8 +31,6 @@
 
 - **dock-svelte（挙動の変化）:** `DockHost.replaceLayout`（`ThreePaneDock` の `resetLayout` / `restoreLayout` を含む）は、不正でない置き換えなら、`beforePanelChange` に聞く前に進行中の操作を自動で取り消す。消費側への注意: 操作中に `replaceLayout` / `resetLayout` を呼ぶと、操作は確定せず `onGestureEnd(kind, 'cancel', 'api')` で閉じる。置き換えが拒否（`refused`）・`stale` になっても、取り消した操作は戻らない。`invalid` のときは取り消さない。さらに、`replaceLayout` が処理中（`beforePanelChange` の承認待ちを含む）の間は新しい操作（ドラッグ・リサイズ・仕切り）が始まらず、置き換えの結果が返るまで続く（承認待ちの間に始めた操作の pointerup や Esc が新しい配置を上書きしないため。並行して複数あれば最後の 1 件が返るまで）（#796）。
 
-### Changed
-
 - **ci:** `visual-baselines.yml` を `visual.spec.ts` だけの再生成・確認にし、Rust のビルドをやめ、`commit` の既定を true にした。1 回の dispatch で済む（#798）。
 - **ci:** e2e の visual を、画像を撮る spec だけの project `visual`（workers 2）と、残りの機能・axe の project `visual-ui`（並列 workers 4、`pnpm e2e:visual-ui`）に分け、CI の E2E (visual + axe-core) を速くした。撮る spec は `playwright.config.ts` の `SNAPSHOT_SPECS` に足す（#798）。
 - E2E（#798）: `BANTO_E2E_SERVERS` に `smoke`（:8799）と `public-viewer`（:8798）を足し、CI の E2E ジョブの smoke・viewer-public の各 step で必要な banto-serve だけを立てる（使わない 2 本目を立てない）。smoke の固定 wait は、時間経過そのものを見る scenario 13b の 7 秒（「その後は何も起きない」の確認）と、同じ性質の 500ms・300ms を例外として残した。
