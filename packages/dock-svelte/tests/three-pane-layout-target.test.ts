@@ -28,9 +28,9 @@ function make() {
 	const target = createThreePaneLayoutTarget({ layout: EMPTY, autoHidden: [] }, () => current);
 	return {
 		target,
-		mount(api: ThreePaneLayoutApi) {
+		mount(api: ThreePaneLayoutApi, status?: string) {
 			current = api;
-			target.attach();
+			target.attach(status);
 		}
 	};
 }
@@ -393,5 +393,57 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 		expect(beforeBaseline).toHaveBeenCalledTimes(2);
 		await vi.advanceTimersByTimeAsync(2000);
 		expect(stored.provider.set).not.toHaveBeenCalled();
+	});
+
+	it('beforeBaseline also runs when the dock could not use a stored value and fell back to the default (PR #881 review)', async () => {
+		const beforeBaseline = vi.fn();
+		// At mount: the page tells `attach` what `onRestore` reported for the held value.
+		const storage = memoryStorage();
+		storage.setItem(`${KEY}:${SCOPE.owner}`, '{"schema":99}');
+		const mounted = make();
+		createDockLayoutStore({
+			dock: mounted.target,
+			storageKey: KEY,
+			settingKey: 'dock.three-test',
+			provider: () => ({ get: () => new Promise(() => {}), set: async () => {} }),
+			defaultLayout: () => mounted.target.defaultLayout,
+			beforeBaseline,
+			storage,
+			scope: SCOPE,
+			isCurrent: () => true
+		});
+		expect(mounted.target.initialLayout).toBe('{"schema":99}');
+		mounted.mount(fakeDock().api, 'default');
+		expect(beforeBaseline).toHaveBeenCalledTimes(1);
+
+		// After mount: `restoreLayout` answers `status: 'default'` for the provider's value.
+		const { state, api } = fakeDock();
+		const later = make();
+		const provider = {
+			get: vi.fn(async () => ({ value: '{"schema":99}' })),
+			set: vi.fn(async () => {})
+		};
+		const store = createDockLayoutStore({
+			dock: later.target,
+			settingKey: 'dock.three-test',
+			provider: () => provider,
+			defaultLayout: () => later.target.defaultLayout,
+			beforeBaseline
+		});
+		later.mount({
+			layoutSnapshot: api.layoutSnapshot,
+			restoreLayout: async () => {
+				state.shown = DEFAULT;
+				return { status: 'default', outcome: 'applied' };
+			}
+		});
+		expect(beforeBaseline).toHaveBeenCalledTimes(2);
+		// The dock starts from a custom layout the user made; the read then falls back.
+		state.shown = { schema: 1, name: 'custom' };
+		await store.load();
+		await flushAsync();
+		expect(beforeBaseline).toHaveBeenCalledTimes(3);
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(provider.set).not.toHaveBeenCalled();
 	});
 });

@@ -548,6 +548,11 @@ function removeDock() {
 	removeFile(`${APP}/src/lib/banto/dockTitles.test.ts`, 'dockTitles.test.ts 削除');
 	// dock の文言 / 3 ペイン dock の visual は dock が無いと成り立たない。
 	removeFile('e2e/visual/dock-i18n.spec.ts', 'e2e/visual/dock-i18n.spec.ts 削除');
+	// #791 K4: ダッシュボードの dock（`[data-dock-host]`）の保存を見る demo の spec。dock と一緒に消える。
+	removeFile(
+		'e2e/demo/dashboard-layout-commit.spec.ts',
+		'e2e/demo/dashboard-layout-commit.spec.ts 削除'
+	);
 	for (const [file, label] of [
 		[MSG_JA, 'messages/ja'],
 		[MSG_EN, 'messages/en']

@@ -19,12 +19,15 @@
  *   so one user's layout is never shown to, or saved as the base for, another user.
  *
  * Without `scope` (an app with one key and no accounts, #791 decision 12) the local copy lives
- * at the bare `storageKey`. Without `isCurrent`, the provider's own `sessionGuard()` (taken when
- * the store is created) answers "still the same session?"; a provider without one is always
- * current.
+ * at the bare `storageKey`. Without `isCurrent`, the provider's own `sessionGuard()` answers
+ * "still the same session?": one is taken when the store is created (the session the store works
+ * for), and one from the provider in use when a read starts and when a write is armed (so a
+ * provider swapped in later still binds what waits to its session). A provider without one is
+ * always current.
  *
- * The provider read wins over the first paint (and over a move made before it answered). A
- * `null`, an error or a rejected value restores the default; the local copy is never kept as a
+ * The provider read wins over the first paint (and over a move made before it answered) - but
+ * not over a `'reset'` reported meanwhile: an explicit reset is kept and the answer is dropped.
+ * A `null`, an error or a rejected value restores the default; the local copy is never kept as a
  * substitute.
  *
  * What gets saved: a layout APPLIED by the store (the local copy, the provider value, a seeded
@@ -32,6 +35,8 @@
  * from it is, 500ms after the last one, plus a flush on `dispose`. `'reset'` is always saved -
  * as the reported default, or (`reset: 'remove'`) by deleting what was saved. Writes are
  * unconditional (no `ifRevision`): a layout is "the last arrangement wins", also across tabs.
+ * The store sends its own writes one at a time, in the order they were armed (a provider need
+ * not order them).
  */
 import { collectPanelIds } from './core/tree';
 import type { ThreePaneLayoutCommitReason } from './threePane';
@@ -49,9 +54,11 @@ export interface DockLayoutTarget {
 	 * listener once, and the target calls it when what it applied is in place - `serialize()` then
 	 * answers the layout really shown, and the store takes that as its baseline (unless a user's
 	 * change came in meanwhile). Until then `serialize()` must keep answering what it answered right
-	 * after the assignment. `DockState` applies synchronously and omits it.
+	 * after the assignment. `isDefault` says whether what landed is the default (`true`: also a
+	 * stored value the target could not use) or a stored layout (`false`); left out, the store goes
+	 * by what it asked for. `DockState` applies synchronously and omits `onApplied`.
 	 */
-	onApplied?(listener: () => void): void;
+	onApplied?(listener: (isDefault?: boolean) => void): void;
 }
 
 /**
@@ -78,7 +85,10 @@ export interface DockLayoutStoreOptions<S extends DockLayoutScope = DockLayoutSc
 	dock: DockLayoutTarget;
 	/** Provider key (`[A-Za-z0-9._-]{1,64}` for admin-core's providers), e.g. `dock.dashboard`. */
 	settingKey: string;
-	/** The provider, read at each use (an app may swap it in once wired). */
+	/**
+	 * The provider, read at each use (an app may swap it in once wired). A read and a write stay
+	 * with the provider - and, by its `sessionGuard()`, the session - they started with.
+	 */
 	provider: () => DockLayoutSettings;
 	/** The default layout, or `null` while it cannot be built yet (the host is not measured). */
 	defaultLayout: () => DockLayout | null;
@@ -95,7 +105,9 @@ export interface DockLayoutStoreOptions<S extends DockLayoutScope = DockLayoutSc
 	scope?: S;
 	/**
 	 * Whether `scope` is still the live session (admin-core: `isCurrentSessionScope`). Used only
-	 * with a `scope`. Left out (or no `scope`): the provider's `sessionGuard()`, else always.
+	 * with a `scope`. Left out (or no `scope`): the provider's `sessionGuard()` - the one taken at
+	 * creation, and the one taken from the provider in use when a read starts / a write is armed -
+	 * else always.
 	 */
 	isCurrent?: (scope: S) => boolean;
 	/**
@@ -149,6 +161,18 @@ const EMPTY_LAYOUT: DockLayout = { version: 4, floating: [], docked: null };
 interface PendingWrite {
 	json: string;
 	remove: boolean;
+	/** The provider it was armed for, and that provider's session then. */
+	provider: DockLayoutSettings;
+	sameSession: () => boolean;
+}
+
+/** `provider.sessionGuard()`, or "always" for a provider without one. */
+function guardOf(provider: DockLayoutSettings): () => boolean {
+	try {
+		return provider.sessionGuard?.() ?? (() => true);
+	} catch {
+		return () => true;
+	}
 }
 
 function resolveStorage(storage: Storage | null | undefined): Storage | null {
@@ -186,17 +210,21 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 				: scope.owner === null
 					? null
 					: `${storageKey}:${scope.owner}`;
-	const isCurrent: () => boolean = (() => {
-		const check = options.isCurrent;
-		if (scope !== undefined && check) return () => check(scope);
-		let guard: (() => boolean) | undefined;
-		try {
-			guard = options.provider().sessionGuard?.();
-		} catch {
-			guard = undefined;
-		}
-		return guard ?? (() => true);
-	})();
+	const ownerCheck = options.isCurrent;
+	/** The app says who is current (`scope` + `isCurrent`): the providers' guards are not asked. */
+	const explicitOwner = scope !== undefined && ownerCheck !== undefined;
+	const isCurrent: () => boolean = explicitOwner
+		? () => ownerCheck(scope)
+		: (() => {
+				try {
+					return guardOf(options.provider());
+				} catch {
+					return () => true;
+				}
+			})();
+	/** The session of the provider in use now (always, when the app gave its own check). */
+	const guardNow = (provider: DockLayoutSettings): (() => boolean) =>
+		explicitOwner ? () => true : guardOf(provider);
 
 	/** The serialized layout the store applied last (not a user change). */
 	let baseline: string | null = null;
@@ -204,6 +232,10 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 	let applyingDefault = false;
 	let pending: PendingWrite | null = null;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	/** The store's writes go out one at a time, in order: the last one sent (settled or not). */
+	let sending: Promise<void> | null = null;
+	/** Counts the `'reset'` reports: one made while a read is pending wins over its answer. */
+	let resets = 0;
 	let seeded = false;
 	let loading = false;
 	let disposed = false;
@@ -245,22 +277,57 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 		pending = null;
 	}
 
-	function flush(): void {
-		const write = pending;
-		dropPending();
-		// A write armed for a session that is gone is dropped, not sent.
-		if (write === null || !isCurrent()) return;
+	/** A write armed for a session that is gone is dropped, not sent. */
+	function stillWanted(write: PendingWrite): boolean {
+		return isCurrent() && write.sameSession();
+	}
+
+	function send(write: PendingWrite): Promise<void> {
+		if (!stillWanted(write)) return Promise.resolve();
 		let sent: Promise<unknown>;
 		try {
-			const provider = options.provider();
+			const { provider } = write;
 			sent =
 				write.remove && typeof provider.remove === 'function'
 					? provider.remove(settingKey)
 					: provider.set(settingKey, write.json);
 		} catch {
+			return Promise.resolve();
+		}
+		return Promise.resolve(sent).then(
+			() => {},
+			() => {}
+		);
+	}
+
+	function flush(): void {
+		const write = pending;
+		dropPending();
+		if (write === null || !stillWanted(write)) return;
+		// One at a time: an earlier write still on its way must not land after this one (a `set`
+		// finishing after the `remove` that followed it would bring the old value back).
+		const previous = sending;
+		const mine: Promise<void> = previous === null ? send(write) : previous.then(() => send(write));
+		sending = mine;
+		void mine.then(() => {
+			if (sending === mine) sending = null;
+		});
+	}
+
+	function arm(json: string, wantRemove: boolean): void {
+		let provider: DockLayoutSettings;
+		try {
+			provider = options.provider();
+		} catch {
 			return;
 		}
-		void Promise.resolve(sent).catch(() => {});
+		const remove = wantRemove && typeof provider.remove === 'function';
+		baseline = null;
+		pending = { json, remove, provider, sameSession: guardNow(provider) };
+		clearTimeout(timer);
+		// After `dispose` nothing would flush a timer's write: send it now.
+		if (disposed) flush();
+		else timer = setTimeout(flush, debounceMs);
 	}
 
 	function canRemove(): boolean {
@@ -269,15 +336,6 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 		} catch {
 			return false;
 		}
-	}
-
-	function arm(write: PendingWrite): void {
-		baseline = null;
-		pending = write;
-		clearTimeout(timer);
-		// After `dispose` nothing would flush a timer's write: send it now.
-		if (disposed) flush();
-		else timer = setTimeout(flush, debounceMs);
 	}
 
 	/** Take what the dock shows as the baseline (the default: after the app's `beforeBaseline`). */
@@ -341,8 +399,9 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 	baseline = dock.serialize();
 	// A target that finishes applying later: what it shows once done is still the applied layout,
 	// not a user change - unless one came in meanwhile (`commit` cleared the baseline).
-	dock.onApplied?.(() => {
+	dock.onApplied?.((isDefault) => {
 		if (baseline === null || !live()) return;
+		if (isDefault !== undefined) applyingDefault = isDefault;
 		takeBaseline();
 		writeLocal(baseline);
 	});
@@ -351,14 +410,21 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 		async load() {
 			if (loading || !live()) return;
 			loading = true;
+			const resetsBefore = resets;
 			let remote: string | null;
+			let sameSession: () => boolean = () => true;
 			try {
-				remote = (await options.provider().get(settingKey)).value;
+				const provider = options.provider();
+				sameSession = guardNow(provider);
+				remote = (await provider.get(settingKey)).value;
 			} catch {
 				remote = null;
 			}
 			// Read for a session that is gone (or a page already unmounted): drop it.
-			if (!live()) return;
+			if (!live() || !sameSession()) return;
+			// An explicit reset made while the read was pending stays: the answer is the layout the
+			// user just asked to drop, and the reset's write (or deletion) is still to be sent.
+			if (resets !== resetsBefore) return;
 			// The read wins over the first paint and over a move made meanwhile.
 			dropPending();
 			if (remote !== null && applyStored(remote)) {
@@ -389,10 +455,10 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 				// An explicit reset is saved even when the default is what is shown already (e.g. the
 				// read failed and the default was drawn): otherwise the next good read brings the old
 				// layout back.
-				const remove = removeOnReset && canRemove();
-				if (remove) removeKey(localKey);
+				resets++;
+				if (removeOnReset && canRemove()) removeKey(localKey);
 				else writeLocal(json);
-				arm({ json, remove });
+				arm(json, removeOnReset);
 				return;
 			}
 			writeLocal(json);
@@ -401,7 +467,7 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 				dropPending();
 				return;
 			}
-			arm({ json, remove: false });
+			arm(json, false);
 		},
 
 		dispose() {

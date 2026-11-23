@@ -885,6 +885,8 @@ $effect(() => () => store.dispose()); // 残りの書き込みを flush
   報告から 500ms（`debounceMs`）後に 1 回書く。`dispose()` は残りを flush する。`dispose()` の後に届いた報告
   （ページの後始末の後で `DockHost` が unmount の報告をする）は、その場で書く。
 - **読み込み**: `load()` は 1 回だけ。provider の値が、最初の描画にも、答えが届く前の利用者の操作にも勝つ。
+  ただし、答えを待つ間に届いた `'reset'`（利用者の「既定に戻す」）には勝たない: 答えを捨て、reset の書き込み
+  （または削除）をそのまま送る。
   `null`・エラー・検証に通らない値は既定に戻す（localStorage の写しで代用しない）。`validate(json)` で保存値を
   直す・断ることができる（その後に dock 自身の `hydrate` の検証が走る）。
 - **`'reset'`**（`replaceLayout(既定, { saved: true, commit: 'reset' })`、`ThreePaneDock` の `resetLayout()`）:
@@ -894,8 +896,10 @@ $effect(() => () => store.dispose()); // 残りの書き込みを flush
 - **持ち主（`scope`・`isCurrent`）**: 省くと「キー 1 つ、持ち主なし」。渡すと（`@banto/admin-core` なら
   `scope: currentSessionScope()`・`isCurrent: isCurrentSessionScope`）、読み込みの結果・待っている書き込み・
   `dispose()` の flush は `isCurrent(scope)` が真の間だけ使い、セッションが替わった後のものは捨てる（前の利用者の
-  配置を、次の利用者に見せない・基準にしない）。`isCurrent` を省いたときは、部品を作った時点の provider の
-  `sessionGuard()` で見る（無ければ常に同じセッション）。
+  配置を、次の利用者に見せない・基準にしない）。`isCurrent` を省いたときは provider の `sessionGuard()` で見る
+  （無ければ常に同じセッション）: 部品を作った時点のものに加えて、読み込みを始めた時点・書き込みを待たせた時点の
+  provider からも取り、その読み込み・書き込みはその provider とセッションに結び付ける（`provider` を後から
+  差し替えるアプリでも、待っている間にセッションが替わった分は捨てる。書き込みは、待たせた時点の provider へ送る）。
 - **localStorage の写し（`storageKey`）**: provider の答えを待たずに最初の描画へ使う写し。省くと持たない
   （localStorage から答える provider なら要らない）。`scope` があるときのキーは `${storageKey}:${scope.owner}` で、
   `owner` が `null`（持ち主が確かめられない）なら読み書きしない。素の `storageKey` は誰のものでもないので、読まずに
@@ -906,9 +910,14 @@ $effect(() => () => store.dispose()); // 残りの書き込みを flush
   「既定に戻す」では呼ばない。
 - **別のタブとの競合**: 書き込みは無条件（`ifRevision` を使わない）。配置は最後の操作が勝つ。別のタブの変更は、
   次の読み込み（ページを開き直す）まで見えない。
+- **書き込みの順序**: 1 つの部品の書き込み（`set`・`remove`）は、前のものが終わって（失敗も含む）から次を送る。
+  provider に順序の保証は求めない（遅い `set` が、後の `remove` より後に届いて古い値が戻ることはない）。
 - **`ThreePaneDock`** は `createThreePaneLayoutTarget(dock, () => three)` を `dock` に渡す（保存する値が
   `layoutSnapshot()` になり、復元は `restoreLayout` を通る）。`initialLayout={target.initialLayout}`、マウント後に
-  `target.attach()` → `store.load()`、`defaultLayout: () => target.defaultLayout`。配線の全体は
+  `target.attach(status)` → `store.load()`、`defaultLayout: () => target.defaultLayout`。`status` は `ThreePaneDock` の
+  `onRestore` が知らせた値で、省略できる（`beforeBaseline` を使うときは渡す: 最初の描画の写しが使えず、部品が
+  既定で始めたことが伝わる。マウント後の復元が既定になったこと（`restoreLayout` の `status: 'default'`）は、
+  渡さなくても伝わる）。配線の全体は
   [docs/recipes/three-pane-dock.md](../../docs/recipes/three-pane-dock.md)「レイアウトの保存」。
 
 ## 保存の約束（serialize / hydrate と書き込みは別）

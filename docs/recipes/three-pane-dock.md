@@ -95,15 +95,17 @@
   	isCurrent: isCurrentSessionScope,
   	defaultLayout: () => layoutTarget.defaultLayout
   });
+  let restoreStatus: string | undefined; // `onRestore` が知らせた値（`beforeBaseline` を使わないなら省いてよい）
   $effect(() => {
   	if (!three) return;
   	untrack(() => {
-  		layoutTarget.attach();
+  		layoutTarget.attach(restoreStatus);
   		void layoutStore.load();
   	});
   });
   $effect(() => () => layoutStore.dispose());
-  // <ThreePaneDock bind:this={three} {dock} initialLayout={layoutTarget.initialLayout} onLayoutCommit={layoutStore.commit} ... />
+  // <ThreePaneDock bind:this={three} {dock} initialLayout={layoutTarget.initialLayout}
+  //   onLayoutCommit={layoutStore.commit} onRestore={(status) => (restoreStatus = status)} ... />
   ```
 
 - 保存のきっかけは `ThreePaneDock` の `onLayoutCommit(saved, reason)`（#791）。保存してよい配置が確定したときだけ

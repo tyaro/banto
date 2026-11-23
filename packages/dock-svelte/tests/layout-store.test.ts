@@ -593,3 +593,162 @@ describe('without a scope (one key, no owner)', () => {
 		expect(provider.get).not.toHaveBeenCalled();
 	});
 });
+
+describe('a reset while the first read is pending (PR #881 review)', () => {
+	it.each(['save', 'remove'] as const)(
+		'the read does not bring the old layout back, and the reset is still sent (%s)',
+		async (mode) => {
+			const read = deferred<string | null>();
+			const provider = fakeProvider(() => read.promise);
+			const { dock, store, reset } = setup({ provider, reset: mode });
+			const loading = store.load();
+			reset();
+			read.resolve(json(floating('old')));
+			await loading;
+			expect(dock.layout.floating.map((w) => w.id)).toEqual(['default']);
+			vi.advanceTimersByTime(500);
+			if (mode === 'remove') {
+				expect(provider.remove).toHaveBeenCalledTimes(1);
+				expect(provider.set).not.toHaveBeenCalled();
+			} else {
+				expect(provider.set).toHaveBeenCalledTimes(1);
+				expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(DEFAULT));
+			}
+		}
+	);
+
+	it('a plain move made meanwhile still loses to the read', async () => {
+		const read = deferred<string | null>();
+		const provider = fakeProvider(() => read.promise);
+		const { dock, store, report } = setup({ provider });
+		const loading = store.load();
+		dock.layout = floating('moved');
+		report();
+		read.resolve(json(floating('remote')));
+		await loading;
+		vi.runAllTimers();
+		expect(dock.layout.floating.map((w) => w.id)).toEqual(['remote']);
+		expect(provider.set).not.toHaveBeenCalled();
+	});
+});
+
+describe('a provider swapped in later (PR #881 review)', () => {
+	function swapping() {
+		let session = 1;
+		const plain = fakeProvider();
+		const guarded = {
+			...fakeProvider(async () => json(floating('remote'))),
+			sessionGuard: () => {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		let current: DockLayoutSettings = plain;
+		const dock = createDockState();
+		const store = createDockLayoutStore({
+			dock,
+			settingKey: SETTING_KEY,
+			provider: () => current,
+			defaultLayout: () => DEFAULT
+		});
+		return {
+			plain,
+			guarded,
+			dock,
+			store,
+			wire: () => (current = guarded),
+			switchSession: () => session++,
+			report: () => store.commit(JSON.parse(dock.serialize()), 'user')
+		};
+	}
+
+	it('a write armed with it is dropped when its session changes', () => {
+		const t = swapping();
+		t.wire();
+		t.dock.layout = floating('moved');
+		t.report();
+		t.switchSession();
+		vi.runAllTimers();
+		expect(t.guarded.set).not.toHaveBeenCalled();
+		expect(t.plain.set).not.toHaveBeenCalled();
+	});
+
+	it('a read started with it is dropped when its session changes', async () => {
+		const t = swapping();
+		t.wire();
+		const loading = t.store.load();
+		t.switchSession();
+		await loading;
+		expect(t.dock.layout.floating).toEqual([]);
+	});
+
+	it('a write goes to the provider it was armed for', () => {
+		const t = swapping();
+		t.dock.layout = floating('moved');
+		t.report();
+		t.wire();
+		vi.runAllTimers();
+		expect(t.plain.set).toHaveBeenCalledTimes(1);
+		expect(t.guarded.set).not.toHaveBeenCalled();
+	});
+});
+
+describe('the order of writes (PR #881 review)', () => {
+	it('a write waits for the one before it: a slow set never lands after the remove that followed', async () => {
+		const first = deferred<void>();
+		const calls: string[] = [];
+		const provider = {
+			get: vi.fn(async () => ({ value: null })),
+			set: vi.fn((_key: string, value: string) => {
+				calls.push(`set:${value}`);
+				return first.promise;
+			}),
+			remove: vi.fn(async () => {
+				calls.push('remove');
+			})
+		};
+		const dock = createDockState();
+		const store = createDockLayoutStore({
+			dock,
+			settingKey: SETTING_KEY,
+			provider: () => provider,
+			defaultLayout: () => DEFAULT,
+			reset: 'remove'
+		});
+		dock.layout = floating('moved');
+		store.commit(JSON.parse(dock.serialize()), 'user');
+		vi.advanceTimersByTime(500);
+		dock.layout = DEFAULT;
+		store.commit(JSON.parse(dock.serialize()), 'reset');
+		vi.advanceTimersByTime(500);
+		await Promise.resolve();
+		expect(calls).toEqual([`set:${json(floating('moved'))}`]);
+		first.resolve();
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(calls).toEqual([`set:${json(floating('moved'))}`, 'remove']);
+	});
+
+	it('a failed write does not hold the next one back', async () => {
+		const provider = {
+			get: vi.fn(async () => ({ value: null })),
+			set: vi
+				.fn<(key: string, value: string) => Promise<void>>()
+				.mockRejectedValueOnce(new Error('offline'))
+				.mockResolvedValue(undefined)
+		};
+		const dock = createDockState();
+		const store = createDockLayoutStore({
+			dock,
+			settingKey: SETTING_KEY,
+			provider: () => provider,
+			defaultLayout: () => DEFAULT
+		});
+		store.commit(json(floating('a')), 'user');
+		vi.advanceTimersByTime(500);
+		store.commit(json(floating('b')), 'user');
+		vi.advanceTimersByTime(500);
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(provider.set).toHaveBeenCalledTimes(2);
+		expect(provider.set).toHaveBeenLastCalledWith(SETTING_KEY, json(floating('b')));
+	});
+});

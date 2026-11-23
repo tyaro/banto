@@ -16,13 +16,16 @@
  *   while a layout is being applied (until `attach`, or until the last `restoreLayout` settles,
  *   resolved or rejected) it keeps answering what it answered right after the assignment, and the
  *   end is reported with `onApplied` so the store re-takes its baseline from what is really shown
- *   (a swap is never saved as a user's change);
+ *   (a swap is never saved as a user's change) - with whether what landed is the default (asked
+ *   for, or a stored value the dock could not use: `restoreLayout`'s `status: 'default'`);
  * - the store's "default" is a sentinel layout: assigning it means `restoreLayout(undefined)` (the
  *   dock's own measured default), skipped when the dock still shows the default it started with.
  *
  * Wiring: `initialLayout={target.initialLayout}`, `onLayoutCommit={store.commit}`, and once the
- * dock is mounted `target.attach()` then `store.load()`. "Reset layout" is the dock's own
- * `resetLayout()` (reported as `'reset'`).
+ * dock is mounted `target.attach(status)` then `store.load()` - `status` is what the dock's
+ * `onRestore` reported for `initialLayout` (optional: without it a held value counts as stored,
+ * so the store's `beforeBaseline` is not run when the dock fell back to the default at mount).
+ * "Reset layout" is the dock's own `resetLayout()` (reported as `'reset'`).
  */
 import type { DockLayoutTarget } from './layoutStore';
 import type { DockLayout } from './types';
@@ -44,8 +47,11 @@ export interface ThreePaneLayoutTarget extends DockLayoutTarget {
 	readonly initialLayout: string | undefined;
 	/** Return it from the store's `defaultLayout`. Never a real layout. */
 	readonly defaultLayout: DockLayout;
-	/** Call once the dock is mounted: remembers what it shows first. */
-	attach(): void;
+	/**
+	 * Call once the dock is mounted: remembers what it shows first. `status` is `ThreePaneDock`'s
+	 * `onRestore` answer for `initialLayout` (`'default'` / `'fresh'` = the default is shown).
+	 */
+	attach(status?: string): void;
 }
 
 export function createThreePaneLayoutTarget(
@@ -64,7 +70,7 @@ export function createThreePaneLayoutTarget(
 	let inFlight: Promise<void> | null = null;
 	let attached = false;
 	let firstSnapshot: string | null = null;
-	let onApplied: (() => void) | undefined;
+	let onApplied: ((isDefault?: boolean) => void) | undefined;
 
 	const snapshot = (api: ThreePaneLayoutApi): string => JSON.stringify(api.layoutSnapshot());
 
@@ -91,14 +97,19 @@ export function createThreePaneLayoutTarget(
 		// A rejected restore still ends the freeze: whatever is shown then is what was applied.
 		const run: Promise<void> = started
 			.then(
-				() => {},
-				() => {}
+				// The default: asked for, or the dock could not use the stored value.
+				(result) =>
+					saved === undefined ||
+					(typeof result === 'object' &&
+						result !== null &&
+						(result as { status?: unknown }).status === 'default'),
+				() => undefined
 			)
-			.then(() => {
+			.then((isDefault) => {
 				if (inFlight !== run) return;
 				inFlight = null;
 				frozen = null;
-				onApplied?.();
+				onApplied?.(isDefault);
 			});
 		inFlight = run;
 	}
@@ -149,16 +160,23 @@ export function createThreePaneLayoutTarget(
 			if (!api || !attached) return initial ?? '';
 			return current(api);
 		},
-		attach() {
+		attach(status) {
 			const api = getApi();
 			if (!api || attached) return;
 			attached = true;
 			firstSnapshot = snapshot(api);
 			// The dock reconciled `initialLayout` (or measured its default) at mount: that is what was
 			// applied - unless an install started before `attach` is still running.
-			if (inFlight === null) onApplied?.();
+			if (inFlight === null)
+				onApplied?.(
+					initial === undefined || status === 'default' || status === 'fresh'
+						? true
+						: status === undefined
+							? undefined
+							: false
+				);
 		},
-		onApplied(listener: () => void) {
+		onApplied(listener: (isDefault?: boolean) => void) {
 			onApplied = listener;
 		}
 	};

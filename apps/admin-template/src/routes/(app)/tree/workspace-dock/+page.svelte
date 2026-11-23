@@ -256,6 +256,8 @@
 	let narrow = $state(false);
 
 	const layoutTarget = createThreePaneLayoutTarget(dock, () => three);
+	/** What the dock made of `initialLayout` at mount (`onRestore`): told to the target with `attach`. */
+	let restoreStatus: string | undefined;
 	const layoutStore = createDockLayoutStore({
 		dock: layoutTarget,
 		storageKey: DOCK_STORAGE_KEY,
@@ -274,7 +276,7 @@
 	$effect(() => {
 		if (!three) return;
 		untrack(() => {
-			layoutTarget.attach();
+			layoutTarget.attach(restoreStatus);
 			void layoutStore.load();
 		});
 	});
@@ -376,6 +378,7 @@
 			{dock}
 			initialLayout={layoutTarget.initialLayout}
 			onLayoutCommit={layoutStore.commit}
+			onRestore={(status) => (restoreStatus = status)}
 			{arrange}
 			messages={paneDockMessages}
 			isEscapeBlocked={isDockEscapeBlocked}

@@ -630,7 +630,9 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
 **dock の配置の保存をパッケージの口へ載せ替える（K4、#791 の後半、計画 §4.6）**。DB の作り直しは要らない。
 テンプレートの `src/lib/banto/dockLayoutStore.svelte.ts`・`routes/(app)/tree/workspace-dock/threePaneLayoutTarget.ts`
 （とそれぞれの `.test.ts`）は消え、同じものが `@banto/dock-svelte` の `createDockLayoutStore`・`createThreePaneLayoutTarget` に
-なった。写して持っている派生アプリ（B）は次の順で載せ替える（保存済みの値・キーはそのまま読める）。
+なった。写して持っている派生アプリ（B）は次の順で載せ替える。キーと値の形は変えていないので、**v8 の保存先
+（表 `ui_settings`・localStorage）にあり、形が `version: 4` の値**は載せ替えの後もそのまま読める（v7 以前のサーバーの
+設定や `version` 1〜3 の配置は、この載せ替えでは読めるようにならない。上の C4・#782 PR8b のとおり）。
 
 1. **import を替え、写したファイルを消す**: `createDockLayoutStore`・`createThreePaneLayoutTarget`・型
    （`DockLayoutTarget`・`DockLayoutStore` など）は `@banto/dock-svelte` から取る。写した 2 ファイルとその試験を消す。
