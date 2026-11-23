@@ -235,7 +235,7 @@ onDestroy(() => layout.dispose());
   打ち切って最新の値をすぐ送る。
 - **`merge`（競合の解決）**: `merge: (server, current) => T` を渡すと、書き込みが `ifRevision` つきになる（直近の `load()`・書き込みの
   revision を使う。読んでいなければ `"0"`＝「何も無いときだけ」なので、既にある値は黙って上書きされず、`merge` に渡る）。
-  `conflict` になったら、今の保存値を `parse` して `merge(server, current)` を呼び、結果を返ってきた revision で書く
+  `conflict` になったら、今の保存値を `parse` して `merge(server, current)` を呼び（`current` は送信を始めた時点の編集。競合が続いても、前回の統合結果ではなく元の編集）、結果を返ってきた revision で書く
   （最大 `MAX_CONFLICT_ATTEMPTS` = 5 回）。壊れた値・消された値は `merge` せず snapshot をそのまま書く。保存後、保存中に編集していなければ
   `current` も統合後の値になる。`merge` は何度も呼ばれうるので純粋に保つ。投げれば保存は失敗（`error` にその例外）。
   応答だけが失われた書き込みの送り直しは `conflict`（保存値が送った値と同じ）になり、「保存された」と数える。

@@ -1313,3 +1313,30 @@ describe('callbacks that re-enter while a send is committed (#786 C6)', () => {
 		expect(s.calls.map((c) => c.value)).toEqual([raw(1), raw(8)]);
 	});
 });
+
+describe('repeated conflicts (#786 C6)', () => {
+	it('every merge gets the original edit, not the previous merge candidate', async () => {
+		const s = fakeServer(raw(1));
+		const seen: [number, number][] = [];
+		let round = 0;
+		const setting = createSavedSetting(
+			options(s.provider, {
+				merge: (server, current) => {
+					seen.push([server.x, current.x]);
+					// somebody else writes again before our merged candidate is sent
+					if (++round === 1) s.external(raw(20));
+					return { x: server.x + current.x };
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(seen).toEqual([
+			[10, 5],
+			[20, 5]
+		]);
+		expect(s.stored()).toBe(raw(25));
+	});
+});

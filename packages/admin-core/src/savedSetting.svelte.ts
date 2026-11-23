@@ -375,7 +375,10 @@ class Impl<T> implements SavedSetting<T> {
 		const isTransient = retry?.isTransient ?? isNetworkError;
 		const editVersion = this.#editVersion;
 		let target = { value: this.#value, raw: this.#raw };
-		const sentRaw = target.raw;
+		// The snapshot as the user edited it: every conflict is merged against this,
+		// never against an earlier merge candidate (`target`).
+		const original = target;
+		const sentRaw = original.raw;
 		this.#inflight = true;
 		this.#saving = true;
 		this.#owner.invalidate('load');
@@ -428,7 +431,7 @@ class Impl<T> implements SavedSetting<T> {
 							const server = this.#parseSafe(conflict.value);
 							if (server !== undefined) {
 								try {
-									const value = mergeFn(server, this.#independent(target.raw, target.value));
+									const value = mergeFn(server, this.#independent(original.raw, original.value));
 									merged = { value, raw: options.serialize(value) };
 								} catch (mergeError) {
 									failure = mergeError;
