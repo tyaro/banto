@@ -192,7 +192,7 @@ const { value, revision } = await updateUiSetting(provider, 'items.pinned', (cur
 ## UI 設定の現在値と保存済みの値を分ける（`createSavedSetting`）
 
 `UiSettingsProvider`（Local / Tauri / HTTP）の上に乗る helper。provider は置き換えない
-（shared-primitives-upstream-plan §3.4）。書き込みは無条件で、revision は使わない（再送・`merge` は次の変更）。「今編集している値（`current`）」と「保存に成功した最後の値
+（shared-primitives-upstream-plan §3.4）。書き込みは既定で無条件（`merge` を渡したときだけ revision で条件付きにする）。「今編集している値（`current`）」と「保存に成功した最後の値
 （`saved`）」を分け、保存が失敗しても編集中の値と前の保存値を守る。通知の文言・適用対象・標準値は
 アプリの責務（`error` / `save()` の結果を見て出す）。
 
@@ -227,6 +227,20 @@ onDestroy(() => layout.dispose());
 - `load()` は読み込み中の編集を上書きしない（保存値は `saved` に入る）。新しい `load()`・保存・`dispose()` で
   古い読み込みの結果は捨てる（`'stale'`）。古い応答の破棄は `createRequestOwner` で行う。
 - 破損・未知の version は `parse` に任せる（`'invalid'` で `current` は `fallback()`、例外は外へ出さない）。
+- **再送（`retry`）**: 「一時的な失敗」だけ、同じ snapshot を間隔を延ばしながら送り直す（既定は計 3 回・待ちは 500ms →
+  1s、上限 5s）。既定の「一時的」は `isNetworkError`（サーバーに届かない・タイムアウト）だけ。サーバーの 4xx/5xx、Tauri の
+  失敗、`conflict` は送り直さない（Tauri は一時的かどうかを見分けられず、5xx は繰り返して無害とは限らない）。見分け方は
+  `retry: { isTransient }` で差し替え、`retry: false` で止める。送り始めたときのセッション（`provider.sessionGuard()`）が待ちの間に
+  替われば、送らずに `unauthorized` で止める（別のアカウントの設定に書かない）。待っている間に `save()` が来たら、待ちを
+  打ち切って最新の値をすぐ送る。
+- **`merge`（競合の解決）**: `merge: (server, current) => T` を渡すと、書き込みが `ifRevision` つきになる（直近の `load()`・書き込みの
+  revision を使う。読んでいなければ `"0"`＝「何も無いときだけ」なので、既にある値は黙って上書きされず、`merge` に渡る）。
+  `conflict` になったら、今の保存値を `parse` して `merge(server, current)` を呼び、結果を返ってきた revision で書く
+  （最大 `MAX_CONFLICT_ATTEMPTS` = 5 回）。壊れた値・消された値は `merge` せず snapshot をそのまま書く。保存後、保存中に編集していなければ
+  `current` も統合後の値になる。`merge` は何度も呼ばれうるので純粋に保つ。投げれば保存は失敗（`error` にその例外）。
+  応答だけが失われた書き込みの送り直しは `conflict`（保存値が送った値と同じ）になり、「保存された」と数える。
+- **`onSettled`**: 送信が終わるたび（再送のあと・状態の更新のあと）に `{ ok, value, error, attempts }` で呼ぶ。rune の外
+  （通知・ログ）へ結果を渡す口。`dispose()` 後は呼ばない。投げても握りつぶす。
 - 即時保存のテーマ設定など既存の画面は載せ替えていない。
 
 ## 切断を見分ける（`isNetworkError`・`createConnectionMonitor`）
