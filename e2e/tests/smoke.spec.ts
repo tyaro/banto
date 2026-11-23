@@ -3817,6 +3817,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 	test('13k4. dashboard: the cards, the docked panels and a panel shown later draw from that one read', async () => {
 		await page.goto('/dashboard');
+		// Only where the dashboard has both the chart cards and the dock: a copy scaffolded without
+		// `charts` or `dock` keeps this file, and 13k3 above is its check. Asked of the page itself
+		// (once the read has settled, the cards are drawn if any are registered), not of the scaffold.
+		await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+		const hasCards = (await page.locator('.chart-grid').count()) > 0;
+		const hasDock = (await page.locator('.dock-wrapper').count()) > 0;
+		test.skip(!hasCards || !hasDock, 'needs the chart cards and the dock (removed by scaffold)');
 		await resetDashboardLayout(page);
 		const counter = countItemsReads();
 		try {
