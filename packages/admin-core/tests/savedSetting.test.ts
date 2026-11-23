@@ -1221,3 +1221,95 @@ describe('PR #877 re-review 2 (#786 C6)', () => {
 		expect(s.stored()).toBe(raw(17)); // merged with the 15 just protected, not overwritten by 2
 	});
 });
+
+describe('callbacks that re-enter while a send is committed (#786 C6)', () => {
+	const merge = (server: Pos, current: Pos): Pos => ({ x: server.x + current.x });
+
+	it('parse re-entering with set() during the commit keeps the new edit', async () => {
+		const s = fakeServer(raw(1));
+		let seen15 = 0;
+		const base = options(s.provider, { merge });
+		const setting: SavedSetting<Pos> = createSavedSetting({
+			...base,
+			parse: (r) => {
+				if (r === raw(15) && ++seen15 === 2) setting.set({ x: 99 });
+				return base.parse(r);
+			}
+		});
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(seen15).toBeGreaterThanOrEqual(2);
+		expect(setting.current).toEqual({ x: 99 });
+		expect(setting.dirty).toBe(true);
+	});
+
+	it('merge re-entering with set() keeps that edit and the next save goes through merge', async () => {
+		const s = fakeServer(raw(1));
+		let reenter = true;
+		const setting: SavedSetting<Pos> = createSavedSetting(
+			options(s.provider, {
+				merge: (server, current) => {
+					if (reenter) {
+						reenter = false;
+						setting.set({ x: 2 });
+					}
+					return merge(server, current);
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(setting.current).toEqual({ x: 2 });
+		expect(await setting.save()).toBe(true);
+		expect(s.stored()).toBe(raw(17));
+	});
+
+	it('isTransient re-entering with set() does not lose the edit', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer();
+			s.script.push({ error: netError() });
+			const setting: SavedSetting<Pos> = createSavedSetting(
+				options(s.provider, {
+					retry: {
+						isTransient: () => {
+							setting.set({ x: 7 });
+							return true;
+						}
+					}
+				})
+			);
+			setting.set({ x: 1 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(await result).toBe(true);
+			expect(setting.current).toEqual({ x: 7 });
+			expect(setting.dirty).toBe(true);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('onSettled re-entering with set() in immediate mode joins the queue', async () => {
+		const s = fakeServer();
+		let once = true;
+		const setting: SavedSetting<Pos> = createSavedSetting(
+			options(s.provider, {
+				mode: 'immediate',
+				onSettled: () => {
+					if (!once) return;
+					once = false;
+					setting.set({ x: 8 });
+				}
+			})
+		);
+		setting.set({ x: 1 });
+		await vi.waitFor(() => expect(s.stored()).toBe(raw(8)));
+		expect(setting.current).toEqual({ x: 8 });
+		expect(s.calls.map((c) => c.value)).toEqual([raw(1), raw(8)]);
+	});
+});

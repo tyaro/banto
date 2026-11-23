@@ -479,9 +479,12 @@ class Impl<T> implements SavedSetting<T> {
 			if (ok && request.isCurrent()) {
 				// Expose what was actually sent, not the caller's object: a mutable
 				// value may have been changed while the provider call was pending.
-				// The copy runs the consumer's parse, which may re-enter (dispose):
-				// make it first, then check the request right before committing.
+				// Every copy runs the consumer's parse, which may re-enter (set /
+				// save / dispose): make all of them first, then check the request,
+				// the session and the edit version right before writing state.
 				const sent = this.#independent(target.raw, target.value);
+				const mergedCurrent =
+					target.raw !== sentRaw ? this.#independent(target.raw, target.value) : null;
 				if (!request.isCurrent()) {
 					ok = false;
 				} else if (guard && !guard()) {
@@ -492,9 +495,9 @@ class Impl<T> implements SavedSetting<T> {
 					this.#saved = sent;
 					this.#hasSaved = true;
 					this.#baseRaw = target.raw;
-					if (this.#editVersion === editVersion && target.raw !== this.#raw) {
+					if (mergedCurrent !== null && this.#editVersion === editVersion) {
 						// A merge changed what was saved and the user has not edited since.
-						this.#value = this.#independent(target.raw, target.value);
+						this.#value = mergedCurrent;
 						this.#raw = target.raw;
 					}
 					// The user edited during a send whose value `merge` changed: their
