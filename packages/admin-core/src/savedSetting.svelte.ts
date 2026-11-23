@@ -315,10 +315,15 @@ class Impl<T> implements SavedSetting<T> {
 	save(): Promise<boolean> {
 		if (this.#owner.disposed) return Promise.resolve(false);
 		if (this.#inflight) {
-			this.#queued ??= deferred();
-			// The follow-up belongs to the session it was accepted under; a later
-			// accept under a newer session takes the queue over.
-			if (!this.#queuedGuard || !this.#queuedGuard()) {
+			// The follow-up belongs to the session it was accepted under. A save
+			// accepted under a newer session does not share its result: the older
+			// callers are told `false` and the queue starts over for the new one.
+			if (this.#queued && this.#queuedGuard && !this.#queuedGuard()) {
+				this.#queued.resolve(false);
+				this.#queued = null;
+			}
+			if (!this.#queued) {
+				this.#queued = deferred();
 				this.#queuedGuard = this.#options.provider.sessionGuard?.() ?? null;
 			}
 			this.#wake?.();
@@ -403,6 +408,11 @@ class Impl<T> implements SavedSetting<T> {
 				} catch (error) {
 					failure = error;
 					if (!request.isCurrent()) break;
+					if (guard && !guard()) {
+						// The answer belongs to a session that has ended: never hand it to the caller.
+						failure = new ProviderError({ kind: 'unauthorized' });
+						break;
+					}
 					const conflict = mergeFn ? uiSettingConflict(error) : null;
 					if (mergeFn && conflict) {
 						if (conflict.value === target.raw) {
@@ -471,7 +481,13 @@ class Impl<T> implements SavedSetting<T> {
 				// The copy runs the consumer's parse, which may re-enter (dispose):
 				// make it first, then check the request right before committing.
 				const sent = this.#independent(target.raw, target.value);
-				if (request.isCurrent()) {
+				if (!request.isCurrent()) {
+					ok = false;
+				} else if (guard && !guard()) {
+					ok = false;
+					failure = new ProviderError({ kind: 'unauthorized' });
+					this.#error = failure;
+				} else {
 					this.#saved = sent;
 					this.#hasSaved = true;
 					this.#baseRaw = target.raw;
@@ -486,8 +502,6 @@ class Impl<T> implements SavedSetting<T> {
 					}
 					this.#error = null;
 					failure = null;
-				} else {
-					ok = false;
 				}
 			} else {
 				ok = false;
@@ -552,6 +566,7 @@ class Impl<T> implements SavedSetting<T> {
 				revision = snapshot.revision;
 			} catch (error) {
 				if (!request.isCurrent()) return 'stale';
+				if (guard && !guard()) return 'stale';
 				this.#error = error;
 				this.#bump();
 				return 'failed';

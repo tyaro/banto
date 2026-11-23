@@ -1113,3 +1113,93 @@ describe('PR #877 review (#786 C6)', () => {
 		expect(setting.current).toEqual({ x: 0 });
 	});
 });
+
+describe('PR #877 re-review (#786 C6)', () => {
+	function sessionProvider(onSet: (value: string, resolve: () => void) => void) {
+		let session = 'a';
+		const provider: UiSettingsProvider = {
+			get: async () => ({ value: null, revision: '0' }),
+			set: (_k, v) => new Promise((resolve) => onSet(v, () => resolve({ revision: 'r' }))),
+			remove: async () => ({ revision: '0' }),
+			sessionGuard() {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		return { provider, switchSession: () => (session += 'x') };
+	}
+
+	it('a save accepted under the new session does not share the old session follow-up result', async () => {
+		const sets: { value: string; resolve: () => void }[] = [];
+		const { provider, switchSession } = sessionProvider((value, resolve) =>
+			sets.push({ value, resolve })
+		);
+		const setting = createSavedSetting(options(provider));
+		setting.set({ x: 1 });
+		const first = setting.save();
+		setting.set({ x: 2 });
+		const oldCaller = setting.save(); // queued under session a
+		switchSession();
+		setting.set({ x: 3 });
+		const newCaller = setting.save(); // accepted under session b
+		expect(await oldCaller).toBe(false);
+		sets[0]!.resolve();
+		expect(await first).toBe(false);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(sets).toHaveLength(2);
+		expect(sets[1]!.value).toBe(raw(3));
+		sets[1]!.resolve();
+		expect(await newCaller).toBe(true);
+	});
+
+	it('a conflict answered after the session changed is not handed to merge', async () => {
+		const s = fakeServer(raw(1));
+		const merged: Pos[] = [];
+		const base = s.provider;
+		const provider: UiSettingsProvider = {
+			...base,
+			set: async (k, v, o) => {
+				try {
+					return await base.set(k, v, o);
+				} finally {
+					s.switchSession(); // the account changes while the answer is on its way
+				}
+			}
+		};
+		const setting = createSavedSetting(
+			options(provider, {
+				merge: (server, current) => {
+					merged.push(server);
+					return current;
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(false);
+		expect(merged).toEqual([]);
+		expect((setting.error as ProviderError).body.kind).toBe('unauthorized');
+	});
+
+	it('a load failure answered after the session changed does not set error', async () => {
+		let session = 'a';
+		let fail!: (e: unknown) => void;
+		const provider: UiSettingsProvider = {
+			get: () => new Promise((_, reject) => (fail = reject)),
+			set: async () => ({ revision: 'r' }),
+			remove: async () => ({ revision: '0' }),
+			sessionGuard() {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		const setting = createSavedSetting(options(provider));
+		const loading = setting.load();
+		session = 'b';
+		fail(new Error('old'));
+		expect(await loading).toBe('stale');
+		expect(setting.error).toBeNull();
+	});
+});
