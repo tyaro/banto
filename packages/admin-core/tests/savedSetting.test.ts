@@ -6,10 +6,11 @@
  * environment runs Svelte's server build where effects do not run, so it is
  * not asserted here.)
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ProviderError } from '../src/errors';
 import {
 	createHttpUiSettings,
+	uiSettingConflict,
 	type UiSettingSnapshot,
 	type UiSettingsProvider,
 	type UiSettingWriteResult
@@ -593,5 +594,888 @@ describe('PR #442 re-review', () => {
 		m.sets[0].resolve();
 		expect(await done).toBe(false);
 		expect(s.saved).toBeUndefined();
+	});
+});
+
+// --- #786 C6: re-sending, merge, onSettled ---------------------------------
+
+/** A tiny in-memory ui-settings server with revisions, failure scripting and a session switch. */
+function fakeServer(initial: string | null = null) {
+	let value = initial;
+	let rev = initial === null ? 0 : 1;
+	let session = 'a';
+	const calls: { value: string; ifRevision: string | undefined }[] = [];
+	/** Errors to throw for the next writes; `landed` = the write is applied, then the answer fails. */
+	const script: { error: unknown; landed?: boolean }[] = [];
+	const snapshot = (): UiSettingSnapshot => ({
+		value,
+		revision: value === null ? '0' : `r${rev}`
+	});
+	const provider: UiSettingsProvider = {
+		get: async () => snapshot(),
+		set: async (_key, next, opts) => {
+			calls.push({ value: next, ifRevision: opts?.ifRevision });
+			const step = script.shift();
+			const conflict = opts?.ifRevision !== undefined && opts.ifRevision !== snapshot().revision;
+			if (step && !step.landed) throw step.error;
+			if (conflict) {
+				throw new ProviderError({ kind: 'conflict', current: snapshot() } as never);
+			}
+			value = next;
+			rev++;
+			if (step) throw step.error;
+			return { revision: `r${rev}` };
+		},
+		remove: async () => ({ revision: '0' }),
+		sessionGuard() {
+			const captured = session;
+			return () => session === captured;
+		}
+	};
+	return {
+		provider,
+		calls,
+		script,
+		/** Another writer changes the stored value. */
+		external(next: string | null) {
+			value = next;
+			rev++;
+		},
+		stored: () => value,
+		switchSession() {
+			session = session + 'x';
+		}
+	};
+}
+
+const netError = () =>
+	new ProviderError({ kind: 'other', message: 'x' }, { networkFailure: 'network' });
+
+describe('re-sending a transient failure (#786 C6)', () => {
+	it('re-sends after a network failure with a growing delay, then saves', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer();
+			s.script.push({ error: netError() }, { error: netError() });
+			const settled: unknown[] = [];
+			const setting = createSavedSetting(
+				options(s.provider, { retry: {}, onSettled: (r) => settled.push(r) })
+			);
+			setting.set({ x: 5 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(s.calls).toHaveLength(1);
+			await vi.advanceTimersByTimeAsync(499);
+			expect(s.calls).toHaveLength(1);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(s.calls).toHaveLength(2);
+			await vi.advanceTimersByTimeAsync(999);
+			expect(s.calls).toHaveLength(2);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(await result).toBe(true);
+			expect(s.calls).toHaveLength(3);
+			expect(setting.saved).toEqual({ x: 5 });
+			expect(setting.error).toBeNull();
+			expect(settled).toEqual([{ ok: true, value: { x: 5 }, error: null, attempts: 3 }]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('gives up after maxAttempts and keeps current and the previous saved', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer();
+			const err = netError();
+			s.script.push({ error: err }, { error: err }, { error: err }, { error: err });
+			const settled: { ok: boolean; attempts: number }[] = [];
+			const setting = createSavedSetting(
+				options(s.provider, { retry: {}, onSettled: (r) => settled.push(r) })
+			);
+			setting.set({ x: 5 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(await result).toBe(false);
+			expect(s.calls).toHaveLength(3);
+			expect(setting.error).toBe(err);
+			expect(setting.saved).toBeUndefined();
+			expect(setting.current).toEqual({ x: 5 });
+			expect(settled).toMatchObject([{ ok: false, attempts: 3 }]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('does not re-send what is not transient, or when retry is off', async () => {
+		const cases: [ProviderError, Partial<SavedSettingOptions<Pos>>][] = [
+			[new ProviderError({ kind: 'validation', field_errors: [] }), { retry: {} }],
+			[new ProviderError({ kind: 'storage', message: 'db' }), { retry: {} }],
+			[new ProviderError({ kind: 'other', message: 'HTTP 503' }), { retry: {} }],
+			[netError(), {}],
+			[netError(), { retry: false }],
+			[netError(), { retry: { maxAttempts: 1 } }]
+		];
+		for (const [error, extra] of cases) {
+			const s = fakeServer();
+			s.script.push({ error });
+			const setting = createSavedSetting(options(s.provider, extra));
+			setting.set({ x: 5 });
+			expect(await setting.save()).toBe(false);
+			expect(s.calls).toHaveLength(1);
+		}
+	});
+
+	it('isTransient decides what is re-sent', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer();
+			s.script.push({ error: new ProviderError({ kind: 'storage', message: 'busy' }) });
+			const setting = createSavedSetting(
+				options(s.provider, { retry: { isTransient: (e) => e instanceof ProviderError } })
+			);
+			setting.set({ x: 5 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(await result).toBe(true);
+			expect(s.calls).toHaveLength(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('stops when the session changed during the wait (nothing is written for the new session)', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer();
+			s.script.push({ error: netError() });
+			const setting = createSavedSetting(options(s.provider, { retry: {} }));
+			setting.set({ x: 5 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(100);
+			s.switchSession();
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(await result).toBe(false);
+			expect(s.calls).toHaveLength(1);
+			expect(s.stored()).toBeNull();
+			expect((setting.error as ProviderError).body.kind).toBe('unauthorized');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('a save() made during the wait ends it and sends the latest value at once', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer();
+			s.script.push({ error: netError() });
+			const setting = createSavedSetting(options(s.provider, { retry: {} }));
+			setting.set({ x: 1 });
+			const first = setting.save();
+			await vi.advanceTimersByTimeAsync(100);
+			setting.set({ x: 2 });
+			const second = setting.save();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(await first).toBe(false);
+			expect(await second).toBe(true);
+			expect(s.calls.map((c) => c.value)).toEqual([raw(1), raw(2)]);
+			expect(setting.saved).toEqual({ x: 2 });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('dispose() during the wait stops the re-send and does not call onSettled', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer();
+			s.script.push({ error: netError() });
+			const settled: unknown[] = [];
+			const setting = createSavedSetting(
+				options(s.provider, { retry: {}, onSettled: (r) => settled.push(r) })
+			);
+			setting.set({ x: 1 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(100);
+			setting.dispose();
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(await result).toBe(false);
+			expect(s.calls).toHaveLength(1);
+			expect(settled).toEqual([]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('a throwing onSettled does not break the queue', async () => {
+		const s = fakeServer();
+		const setting = createSavedSetting(
+			options(s.provider, {
+				onSettled: () => {
+					throw new Error('observer');
+				}
+			})
+		);
+		setting.set({ x: 1 });
+		const a = setting.save();
+		setting.set({ x: 2 });
+		const b = setting.save();
+		expect(await a).toBe(true);
+		expect(await b).toBe(true);
+	});
+});
+
+describe('merge (#786 C6)', () => {
+	const merge = (server: Pos, current: Pos): Pos => ({ x: server.x + current.x });
+
+	it('without merge the write stays unconditional', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(options(s.provider));
+		await setting.load();
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(s.calls).toEqual([{ value: raw(5), ifRevision: undefined }]);
+	});
+
+	it('writes with the revision of the last read, and the one of the last write', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(options(s.provider, { merge }));
+		await setting.load();
+		setting.set({ x: 2 });
+		await setting.save();
+		setting.set({ x: 3 });
+		await setting.save();
+		expect(s.calls.map((c) => c.ifRevision)).toEqual(['r1', 'r2']);
+	});
+
+	it('a conflict is merged with the stored value and written from the returned revision', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(options(s.provider, { merge }));
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(s.calls.map((c) => [c.value, c.ifRevision])).toEqual([
+			[raw(5), 'r1'],
+			[raw(15), 'r2']
+		]);
+		expect(s.stored()).toBe(raw(15));
+		expect(setting.saved).toEqual({ x: 15 });
+		// untouched since the send started: the editing value shows the merge
+		expect(setting.current).toEqual({ x: 15 });
+		expect(setting.dirty).toBe(false);
+	});
+
+	it('an edit made during the send keeps current as the user has it', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(options(s.provider, { merge }));
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		const p = setting.save();
+		setting.set({ x: 9 });
+		expect(await p).toBe(true);
+		expect(setting.current).toEqual({ x: 9 });
+		expect(setting.saved).toEqual({ x: 15 });
+		expect(setting.dirty).toBe(true);
+	});
+
+	it('a first save over an existing value (nothing read) conflicts and is merged, not overwritten', async () => {
+		const s = fakeServer(raw(10));
+		const setting = createSavedSetting(options(s.provider, { merge }));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(s.calls[0]!.ifRevision).toBe('0');
+		expect(s.stored()).toBe(raw(15));
+	});
+
+	it('an unusable stored value is not merged: the snapshot is written over it', async () => {
+		const s = fakeServer('not json');
+		const seen: Pos[] = [];
+		const setting = createSavedSetting(
+			options(s.provider, {
+				merge: (server, current) => {
+					seen.push(server);
+					return current;
+				}
+			})
+		);
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(seen).toEqual([]);
+		expect(s.stored()).toBe(raw(5));
+	});
+
+	it('gives up after MAX_CONFLICT_ATTEMPTS rounds with the conflict as the error', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(
+			options(s.provider, {
+				merge: (server, current) => {
+					s.external(raw(server.x + 1)); // somebody wins again every time
+					return { x: server.x + current.x };
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(2));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(false);
+		expect(s.calls).toHaveLength(5);
+		expect(uiSettingConflict(setting.error)).not.toBeNull();
+	});
+
+	it('a throwing merge fails the save with that error and keeps current', async () => {
+		const s = fakeServer(raw(1));
+		const boom = new Error('merge');
+		const setting = createSavedSetting(
+			options(s.provider, {
+				merge: () => {
+					throw boom;
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(2));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(false);
+		expect(setting.error).toBe(boom);
+		expect(setting.current).toEqual({ x: 5 });
+		expect(s.stored()).toBe(raw(2));
+	});
+
+	it('a lost answer: the re-send conflicts with the value just sent, which counts as saved (no merge)', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer(raw(1));
+			s.script.push({ error: netError(), landed: true });
+			const merged: Pos[] = [];
+			const setting = createSavedSetting(
+				options(s.provider, {
+					retry: {},
+					merge: (server, current) => {
+						merged.push(server);
+						return current;
+					}
+				})
+			);
+			await setting.load();
+			setting.set({ x: 5 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(await result).toBe(true);
+			expect(merged).toEqual([]);
+			expect(s.stored()).toBe(raw(5));
+			expect(setting.saved).toEqual({ x: 5 });
+			// the next save continues from the revision the conflict returned
+			setting.set({ x: 6 });
+			expect(await setting.save()).toBe(true);
+			expect(s.calls[s.calls.length - 1]!.ifRevision).toBe('r2');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('a revision read in another session is not used ("0" instead)', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(options(s.provider, { merge }));
+		await setting.load();
+		s.switchSession();
+		setting.set({ x: 5 });
+		await setting.save();
+		expect(s.calls[0]!.ifRevision).toBe('0');
+	});
+
+	it('stops merging when the session changed meanwhile', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(
+			options(s.provider, {
+				merge: (server, current) => {
+					s.switchSession();
+					return { x: server.x + current.x };
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(false);
+		expect(s.calls).toHaveLength(1);
+		expect((setting.error as ProviderError).body.kind).toBe('unauthorized');
+	});
+});
+
+describe('PR #877 review (#786 C6)', () => {
+	it('a throwing isTransient fails the send normally and the queued follow-up still runs', async () => {
+		const s = fakeServer();
+		s.script.push({ error: netError() });
+		const setting = createSavedSetting(
+			options(s.provider, {
+				retry: {
+					isTransient: () => {
+						throw new Error('classifier');
+					}
+				}
+			})
+		);
+		setting.set({ x: 1 });
+		const first = setting.save();
+		setting.set({ x: 2 });
+		const second = setting.save();
+		expect(await first).toBe(false);
+		expect(await second).toBe(true);
+		expect(s.stored()).toBe(raw(2));
+	});
+
+	it('a save() made from onSettled joins the queue instead of overlapping the follow-up', async () => {
+		const { provider, sets } = manualProvider();
+		let again = false;
+		const setting = createSavedSetting(
+			options(provider, {
+				onSettled: () => {
+					if (again) return;
+					again = true;
+					setting.set({ x: 3 });
+					void setting.save();
+				}
+			})
+		);
+		setting.set({ x: 1 });
+		const first = setting.save();
+		setting.set({ x: 2 });
+		const second = setting.save();
+		sets[0]!.resolve();
+		await first;
+		// one follow-up (carrying the latest value), not two overlapping sends
+		await Promise.resolve();
+		expect(sets).toHaveLength(2);
+		expect(setting.saving).toBe(true);
+		sets[1]!.resolve();
+		expect(await second).toBe(true);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(sets).toHaveLength(2);
+		expect(setting.saved).toEqual({ x: 3 });
+	});
+
+	it('a follow-up accepted under another session is not sent', async () => {
+		const sets: { resolve: () => void }[] = [];
+		let session = 'a';
+		const stored: string[] = [];
+		const provider: UiSettingsProvider = {
+			get: async () => ({ value: null, revision: '0' }),
+			set: (_k, v) =>
+				new Promise((resolve) => {
+					sets.push({
+						resolve: () => {
+							stored.push(v);
+							resolve({ revision: 'r' });
+						}
+					});
+				}),
+			remove: async () => ({ revision: '0' }),
+			sessionGuard() {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		const setting = createSavedSetting(options(provider));
+		setting.set({ x: 1 });
+		const first = setting.save();
+		setting.set({ x: 2 });
+		const second = setting.save(); // accepted under session a
+		session = 'b';
+		sets[0]!.resolve();
+		expect(await first).toBe(false); // saved for a session that ended: not applied
+		expect(await second).toBe(false);
+		expect(sets).toHaveLength(1);
+		expect(stored).toEqual([raw(1)]);
+		expect(setting.saved).toBeUndefined();
+		expect((setting.error as ProviderError).body.kind).toBe('unauthorized');
+	});
+
+	it('a load answered after the session changed is not applied', async () => {
+		let session = 'a';
+		let answer!: (v: UiSettingSnapshot) => void;
+		const provider: UiSettingsProvider = {
+			get: () => new Promise((resolve) => (answer = resolve)),
+			set: async () => ({ revision: 'r' }),
+			remove: async () => ({ revision: '0' }),
+			sessionGuard() {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		const setting = createSavedSetting(options(provider));
+		const loading = setting.load();
+		session = 'b';
+		answer({ value: raw(7), revision: 'r1' });
+		expect(await loading).toBe('stale');
+		expect(setting.saved).toBeUndefined();
+		expect(setting.current).toEqual({ x: 0 });
+	});
+});
+
+describe('PR #877 re-review (#786 C6)', () => {
+	function sessionProvider(onSet: (value: string, resolve: () => void) => void) {
+		let session = 'a';
+		const provider: UiSettingsProvider = {
+			get: async () => ({ value: null, revision: '0' }),
+			set: (_k, v) => new Promise((resolve) => onSet(v, () => resolve({ revision: 'r' }))),
+			remove: async () => ({ revision: '0' }),
+			sessionGuard() {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		return { provider, switchSession: () => (session += 'x') };
+	}
+
+	it('a save accepted under the new session does not share the old session follow-up result', async () => {
+		const sets: { value: string; resolve: () => void }[] = [];
+		const { provider, switchSession } = sessionProvider((value, resolve) =>
+			sets.push({ value, resolve })
+		);
+		const setting = createSavedSetting(options(provider));
+		setting.set({ x: 1 });
+		const first = setting.save();
+		setting.set({ x: 2 });
+		const oldCaller = setting.save(); // queued under session a
+		switchSession();
+		setting.set({ x: 3 });
+		const newCaller = setting.save(); // accepted under session b
+		expect(await oldCaller).toBe(false);
+		sets[0]!.resolve();
+		expect(await first).toBe(false);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(sets).toHaveLength(2);
+		expect(sets[1]!.value).toBe(raw(3));
+		sets[1]!.resolve();
+		expect(await newCaller).toBe(true);
+	});
+
+	it('a conflict answered after the session changed is not handed to merge', async () => {
+		const s = fakeServer(raw(1));
+		const merged: Pos[] = [];
+		const base = s.provider;
+		const provider: UiSettingsProvider = {
+			...base,
+			set: async (k, v, o) => {
+				try {
+					return await base.set(k, v, o);
+				} finally {
+					s.switchSession(); // the account changes while the answer is on its way
+				}
+			}
+		};
+		const setting = createSavedSetting(
+			options(provider, {
+				merge: (server, current) => {
+					merged.push(server);
+					return current;
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(false);
+		expect(merged).toEqual([]);
+		expect((setting.error as ProviderError).body.kind).toBe('unauthorized');
+	});
+
+	it('a load failure answered after the session changed does not set error', async () => {
+		let session = 'a';
+		let fail!: (e: unknown) => void;
+		const provider: UiSettingsProvider = {
+			get: () => new Promise((_, reject) => (fail = reject)),
+			set: async () => ({ revision: 'r' }),
+			remove: async () => ({ revision: '0' }),
+			sessionGuard() {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		const setting = createSavedSetting(options(provider));
+		const loading = setting.load();
+		session = 'b';
+		fail(new Error('old'));
+		expect(await loading).toBe('stale');
+		expect(setting.error).toBeNull();
+	});
+});
+
+describe('PR #877 re-review 2 (#786 C6)', () => {
+	it('an edit made while a merged write is sent still goes through merge on the next save', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(
+			options(s.provider, { merge: (server, current) => ({ x: server.x + current.x }) })
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		const first = setting.save(); // conflicts, merged to 15
+		setting.set({ x: 2 }); // edited while it is in flight
+		expect(await first).toBe(true);
+		expect(setting.current).toEqual({ x: 2 });
+		expect(await setting.save()).toBe(true);
+		expect(s.stored()).toBe(raw(17)); // merged with the 15 just protected, not overwritten by 2
+	});
+});
+
+describe('callbacks that re-enter while a send is committed (#786 C6)', () => {
+	const merge = (server: Pos, current: Pos): Pos => ({ x: server.x + current.x });
+
+	it('parse re-entering with set() during the commit keeps the new edit', async () => {
+		const s = fakeServer(raw(1));
+		let seen15 = 0;
+		const base = options(s.provider, { merge });
+		const setting: SavedSetting<Pos> = createSavedSetting({
+			...base,
+			parse: (r) => {
+				if (r === raw(15) && ++seen15 === 2) setting.set({ x: 99 });
+				return base.parse(r);
+			}
+		});
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(seen15).toBeGreaterThanOrEqual(2);
+		expect(setting.current).toEqual({ x: 99 });
+		expect(setting.dirty).toBe(true);
+	});
+
+	it('merge re-entering with set() keeps that edit and the next save goes through merge', async () => {
+		const s = fakeServer(raw(1));
+		let reenter = true;
+		const setting: SavedSetting<Pos> = createSavedSetting(
+			options(s.provider, {
+				merge: (server, current) => {
+					if (reenter) {
+						reenter = false;
+						setting.set({ x: 2 });
+					}
+					return merge(server, current);
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(setting.current).toEqual({ x: 2 });
+		expect(await setting.save()).toBe(true);
+		expect(s.stored()).toBe(raw(17));
+	});
+
+	it('isTransient re-entering with set() does not lose the edit', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer();
+			s.script.push({ error: netError() });
+			const setting: SavedSetting<Pos> = createSavedSetting(
+				options(s.provider, {
+					retry: {
+						isTransient: () => {
+							setting.set({ x: 7 });
+							return true;
+						}
+					}
+				})
+			);
+			setting.set({ x: 1 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(await result).toBe(true);
+			expect(setting.current).toEqual({ x: 7 });
+			expect(setting.dirty).toBe(true);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('onSettled re-entering with set() in immediate mode joins the queue', async () => {
+		const s = fakeServer();
+		let once = true;
+		const setting: SavedSetting<Pos> = createSavedSetting(
+			options(s.provider, {
+				mode: 'immediate',
+				onSettled: () => {
+					if (!once) return;
+					once = false;
+					setting.set({ x: 8 });
+				}
+			})
+		);
+		setting.set({ x: 1 });
+		await vi.waitFor(() => expect(s.stored()).toBe(raw(8)));
+		expect(setting.current).toEqual({ x: 8 });
+		expect(s.calls.map((c) => c.value)).toEqual([raw(1), raw(8)]);
+	});
+});
+
+describe('repeated conflicts (#786 C6)', () => {
+	it('every merge gets the original edit, not the previous merge candidate', async () => {
+		const s = fakeServer(raw(1));
+		const seen: [number, number][] = [];
+		let round = 0;
+		const setting = createSavedSetting(
+			options(s.provider, {
+				merge: (server, current) => {
+					seen.push([server.x, current.x]);
+					// somebody else writes again before our merged candidate is sent
+					if (++round === 1) s.external(raw(20));
+					return { x: server.x + current.x };
+				}
+			})
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(seen).toEqual([
+			[10, 5],
+			[20, 5]
+		]);
+		expect(s.stored()).toBe(raw(25));
+	});
+
+	it.each([
+		['deleted', null],
+		['unparsable', 'not json']
+	])(
+		'a value that turns %s on a later round is written from the original edit, not the previous candidate',
+		async (_name, replacement) => {
+			const s = fakeServer(raw(1));
+			const seen: [number, number][] = [];
+			let round = 0;
+			const setting = createSavedSetting(
+				options(s.provider, {
+					merge: (server, current) => {
+						seen.push([server.x, current.x]);
+						// before the merged candidate (15) is sent, the setting is deleted / broken
+						if (++round === 1) s.external(replacement);
+						return { x: server.x + current.x };
+					}
+				})
+			);
+			await setting.load();
+			s.external(raw(10));
+			setting.set({ x: 5 });
+			expect(await setting.save()).toBe(true);
+			expect(seen).toEqual([[10, 5]]);
+			expect(s.stored()).toBe(raw(5));
+		}
+	);
+});
+
+describe('nullable values (#786 C6)', () => {
+	it('a merge result of null becomes current as well as saved', async () => {
+		const s = fakeServer(JSON.stringify({ v: 1, x: 1 }));
+		const setting = createSavedSetting<Pos | null>({
+			provider: s.provider,
+			key: 'layout',
+			parse: (r) => {
+				const o = JSON.parse(r) as { x: number | null };
+				return o.x === null ? null : { x: o.x };
+			},
+			serialize: (v) => JSON.stringify({ v: 1, x: v === null ? null : v.x }),
+			fallback: () => ({ x: 0 }),
+			merge: () => null
+		});
+		await setting.load();
+		s.external(JSON.stringify({ v: 1, x: 10 }));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(setting.saved).toBeNull();
+		expect(setting.current).toBeNull();
+		expect(setting.dirty).toBe(false);
+	});
+});
+
+describe('dispose re-entering during notification (#786 C6)', () => {
+	it('onSettled is not called when parse disposes while its value is copied', async () => {
+		const s = fakeServer();
+		const settled: unknown[] = [];
+		let n = 0;
+		const base = options(s.provider);
+		const setting: SavedSetting<Pos> = createSavedSetting({
+			...base,
+			// 1st parse of the sent text: the saved copy; 2nd: the notification's copy
+			parse: (r) => {
+				if (++n === 2) setting.dispose();
+				return base.parse(r);
+			},
+			onSettled: (r) => settled.push(r)
+		});
+		setting.set({ x: 1 });
+		await setting.save();
+		expect(n).toBe(2);
+		expect(settled).toEqual([]);
+	});
+});
+
+describe('an edit made while a revision is on its way (#786 C6)', () => {
+	const merge = (server: Pos, current: Pos): Pos => ({ x: server.x + current.x });
+
+	it('load: an edit made while it waits does not adopt the loaded revision; the next save merges', async () => {
+		const s = fakeServer(raw(1));
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		const provider: UiSettingsProvider = {
+			...s.provider,
+			get: async (k) => {
+				const answer = await s.provider.get(k);
+				await gate;
+				return answer;
+			}
+		};
+		const merged: [number, number][] = [];
+		const setting = createSavedSetting(
+			options(provider, {
+				merge: (server, current) => {
+					merged.push([server.x, current.x]);
+					return merge(server, current);
+				}
+			})
+		);
+		const loading = setting.load();
+		setting.set({ x: 2 }); // edited while the load is in flight
+		release();
+		await loading;
+		expect(setting.current).toEqual({ x: 2 });
+		expect(await setting.save()).toBe(true);
+		expect(merged).toEqual([[1, 2]]);
+		expect(s.stored()).toBe(raw(3));
+	});
+
+	it('a lost answer: an edit made while waiting to re-send keeps working (no data lost, no merge)', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer(raw(1));
+			s.script.push({ error: netError(), landed: true });
+			const merged: number[] = [];
+			const setting = createSavedSetting(
+				options(s.provider, {
+					retry: {},
+					merge: (server, current) => {
+						merged.push(server.x);
+						return merge(server, current);
+					}
+				})
+			);
+			await setting.load();
+			setting.set({ x: 5 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(100);
+			setting.set({ x: 6 }); // edited while the re-send waits
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(await result).toBe(true);
+			expect(merged).toEqual([]);
+			expect(await setting.save()).toBe(true);
+			expect(s.stored()).toBe(raw(6));
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

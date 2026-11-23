@@ -131,7 +131,10 @@ export {
 	type SavedSetting,
 	type SavedSettingOptions,
 	type SavedSettingMode,
-	type SavedSettingLoad
+	type SavedSettingLoad,
+	type SavedSettingRetry,
+	type SavedSettingSettled,
+	MAX_CONFLICT_ATTEMPTS
 } from './savedSetting.svelte';
 
 export {
