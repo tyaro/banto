@@ -6,7 +6,7 @@
  * for the focus repair, and `layoutSnapshot()` used to answer with the narrow display meanwhile).
  * "Reset layout" (reason `'reset'`) saves the default.
  *
- * The page writes two copies to localStorage in demo mode (`dockLayoutStore.svelte.ts`): its own
+ * The page writes two copies to localStorage in demo mode (dock-svelte's `createDockLayoutStore`): its own
  * first-paint copy at once, and the `UiSettingsProvider` copy 500ms after the last report. Every
  * write of either is recorded by an init script, so a wrong value written and overwritten right
  * after is still seen.

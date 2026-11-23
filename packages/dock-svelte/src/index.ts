@@ -58,6 +58,25 @@ export {
 	type ThreePaneViewMenuItem,
 	type ThreePaneViewMenuLabels
 } from './threePane';
+/**
+ * Saving a layout (#791 K4): `createDockLayoutStore` takes what `onLayoutCommit` reports and a
+ * settings provider by its shape; `createThreePaneLayoutTarget` adapts a `ThreePaneDock` to it.
+ */
+export {
+	createDockLayoutStore,
+	DOCK_LAYOUT_SAVE_DEBOUNCE_MS,
+	type DockLayoutScope,
+	type DockLayoutSettings,
+	type DockLayoutStore,
+	type DockLayoutStoreOptions,
+	type DockLayoutTarget
+} from './layoutStore';
+export {
+	createThreePaneLayoutTarget,
+	type ThreePaneDockStateLike,
+	type ThreePaneLayoutApi,
+	type ThreePaneLayoutTarget
+} from './threePaneLayoutTarget';
 export { defaultDockMessages, type DockMessages } from './messages';
 /**
  * `DockHost.movePanel(panelId, target)` (#663 ④): re-dock a pane without a drag, through the

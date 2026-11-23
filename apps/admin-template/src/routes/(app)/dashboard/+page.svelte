@@ -11,6 +11,7 @@
 	import {
 		DockHost,
 		clampWindowToHost,
+		createDockLayoutStore,
 		createDockState,
 		type DockLayout,
 		type PanelContent
@@ -40,7 +41,8 @@
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import { dockMessages } from '#lib/banto/dockMessages.js';
 	import { refreshPanelTitles } from '#lib/banto/dockTitles.js';
-	import { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';
+	// Its own line: scaffold.mjs's dock remover drops it by text (the layout save's owner, #791).
+	import { currentSessionScope, isCurrentSessionScope } from '@banto/admin-core';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
 	import {
@@ -149,8 +151,8 @@
 	// (settings DB via Tauri/REST; localStorage in demo mode). A per-user
 	// localStorage copy (`${DOCK_STORAGE_KEY}:<owner>`) is the synchronous
 	// first-paint source; the provider copy is reconciled once after mount.
-	// Both are bound to the signed-in user and session (dockLayoutStore.svelte.ts,
-	// three-pane-dock-plan §4.4).
+	// Both are bound to the signed-in user and session (`scope` / `isCurrent` of
+	// dock-svelte's `createDockLayoutStore`, three-pane-dock-plan §4.4).
 	const DOCK_SETTING_KEY = 'dock.dashboard';
 
 	const dock = createDockState();
@@ -163,6 +165,8 @@
 		storageKey: DOCK_STORAGE_KEY,
 		settingKey: DOCK_SETTING_KEY,
 		provider: getUiSettings,
+		scope: currentSessionScope(),
+		isCurrent: isCurrentSessionScope,
 		// A layout saved in another locale: today's titles by panel id (dockTitles.ts, #729 review).
 		validate: (json) => refreshPanelTitles(json, (id) => findPanelDef(id)?.title),
 		// Not before the host is measured: the floating メモ is clamped into it.
@@ -268,22 +272,26 @@
 	// default. A read for a session that has ended is dropped.
 	$effect(() => untrack(() => void dockLayout.load()));
 
-	// Autosave the whole layout on every change (reading dock.serialize() ties
-	// this effect to every move/resize/dock/undock/tab/close). The local copy
-	// saves immediately; the provider gets one write 500ms after the layout
-	// stops changing (a drag serializes on every pointermove).
-	$effect(() => {
-		const json = dock.serialize();
-		untrack(() => dockLayout.changed(json));
-	});
+	// Autosave (#791): `DockHost` reports a settled layout to `dockLayout.commit`
+	// (`onLayoutCommit` below) - the end of a move / resize, a dock / undock / tab /
+	// close, a View menu choice, the page's own `dock.*` call - never a step of a
+	// drag. The local copy saves immediately; the provider gets one write 500ms
+	// after the last report. A layout the store applied is not written back.
 
 	// Unmount: flush (not drop) a pending provider save, so navigating away
 	// right after a drag still persists the final layout - unless the session
 	// changed (that is what unmounts the page on a user switch).
 	$effect(() => () => dockLayout.dispose());
 
+	// "Reset layout": the host puts the default in (asked through
+	// `beforePanelChange` like any replacement) and reports it as `'reset'`,
+	// which the store saves as a user's change even when the default was shown.
 	function resetDockLayout() {
-		dockLayout.reset();
+		if (dockHostW === 0 || dockHostH === 0) return;
+		void dockHost?.replaceLayout(defaultLayout(dockHostW, dockHostH), {
+			saved: true,
+			commit: 'reset'
+		});
 	}
 
 	// Each docked pane / floating window body measures its own height so the
@@ -530,6 +538,7 @@
 					{beforePanelChange}
 					isEscapeBlocked={isDockEscapeBlocked}
 					messages={dockMessages()}
+					onLayoutCommit={dockLayout.commit}
 				/>
 			</div>
 			<DraftSettleDialog

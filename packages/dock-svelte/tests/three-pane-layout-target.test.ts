@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionScope, UiSettingsProvider } from '@banto/admin-core';
-import type { DockLayout } from '@banto/dock-svelte';
-import { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';
-import { createThreePaneLayoutTarget, type ThreePaneLayoutApi } from './threePaneLayoutTarget.js';
+import {
+	createDockLayoutStore,
+	createThreePaneLayoutTarget,
+	type DockLayout,
+	type DockLayoutSettings,
+	type ThreePaneLayoutApi
+} from '../src/index';
 
 const EMPTY: DockLayout = { version: 4, floating: [], docked: null };
 const DEFAULT = { schema: 1, name: 'default' };
@@ -25,9 +28,9 @@ function make() {
 	const target = createThreePaneLayoutTarget({ layout: EMPTY, autoHidden: [] }, () => current);
 	return {
 		target,
-		mount(api: ThreePaneLayoutApi) {
+		mount(api: ThreePaneLayoutApi, status?: string) {
 			current = api;
-			target.attach();
+			target.attach(status);
 		}
 	};
 }
@@ -63,21 +66,6 @@ describe('createThreePaneLayoutTarget', () => {
 		expect(target.serialize()).toBe('{"schema":1,"name":"saved"}');
 	});
 
-	it('serialize() still reads layoutSnapshot() while a stored value is being installed (keeps the effect dependency)', () => {
-		const { api } = fakeDock();
-		let reads = 0;
-		const counting: ThreePaneLayoutApi = {
-			layoutSnapshot: () => (reads++, api.layoutSnapshot()),
-			restoreLayout: () => new Promise(() => {})
-		};
-		const { target, mount } = make();
-		mount(counting);
-		target.hydrate('{"schema":1,"name":"saved"}');
-		reads = 0;
-		expect(target.serialize()).toBe('{"schema":1,"name":"saved"}');
-		expect(reads).toBe(1);
-	});
-
 	it('does not install a stored value that is already what is shown', () => {
 		const { state, api } = fakeDock({ schema: 1, name: 'same' });
 		const { target, mount } = make();
@@ -106,14 +94,11 @@ describe('createThreePaneLayoutTarget', () => {
 		expect(state.restored).toEqual([undefined]);
 	});
 
-	it('ignores assignments while withoutApplying runs, and any layout that is not the default', () => {
+	it('ignores the assignment of any layout that is not the default', () => {
 		const { state, api } = fakeDock();
 		const { target, mount } = make();
 		mount(api);
 		state.shown = { schema: 1, name: 'moved' };
-		target.withoutApplying(() => {
-			target.layout = target.defaultLayout;
-		});
 		target.layout = EMPTY;
 		expect(state.restored).toEqual([]);
 	});
@@ -213,20 +198,10 @@ describe('createThreePaneLayoutTarget: a layout being applied is never a user ch
 		expect(applied).toHaveBeenCalledTimes(1);
 		expect(target.serialize()).toBe(JSON.stringify({ schema: 1, name: 'reconciled' }));
 	});
-
-	it('withoutApplying answers what is shown, and keeps the freeze of an install still running', () => {
-		const { state, api } = asyncDock({ schema: 1, name: 'custom' });
-		const { target, mount } = make();
-		mount(api);
-		target.hydrate('{"schema":1,"name":"a"}');
-		state.shown = DEFAULT;
-		expect(target.withoutApplying(() => target.serialize())).toBe(JSON.stringify(DEFAULT));
-		expect(target.serialize()).toBe('{"schema":1,"name":"a"}');
-	});
 });
 
 describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the provider', () => {
-	const SCOPE = { generation: 1, owner: 'acct:1' } as SessionScope;
+	const SCOPE = { generation: 1, owner: 'acct:1' };
 	const KEY = 'banto.dock.three-test';
 
 	function memoryStorage(): Storage {
@@ -243,7 +218,12 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 		};
 	}
 
-	function wire(opts: { local?: object; shown: object; get: () => Promise<string | null> }) {
+	function wire(opts: {
+		local?: object;
+		shown: object;
+		get: () => Promise<string | null>;
+		beforeBaseline?: (state: { shown: object }) => void;
+	}) {
 		const storage = memoryStorage();
 		if (opts.local) storage.setItem(`${KEY}:${SCOPE.owner}`, JSON.stringify(opts.local));
 		// The provider's #786 shape: `{ value, revision }` / `{ revision }`.
@@ -254,7 +234,7 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 			}),
 			set: vi.fn(async (_key: string, _value: string) => ({ revision: 'rev' })),
 			remove: vi.fn(async (_key: string) => ({ revision: '0' }))
-		} satisfies UiSettingsProvider;
+		} satisfies DockLayoutSettings;
 		const dock = asyncDock(opts.shown);
 		const { target, mount } = make();
 		const store = createDockLayoutStore({
@@ -263,20 +243,25 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 			settingKey: 'dock.three-test',
 			provider: () => provider,
 			defaultLayout: () => target.defaultLayout,
+			beforeBaseline: opts.beforeBaseline && (() => opts.beforeBaseline!(dock.state)),
 			storage,
 			scope: SCOPE,
 			isCurrent: () => true
 		});
-		/** The page's `onLayoutCommit` handler (a reason other than `'reset'`). */
-		const report = () => store.changed(target.serialize());
-		/** The page's mount effect (what is shown at mount is mirrored into the local copy). */
+		/** The dock's `onLayoutCommit` (a settled value to save; never while a restore is running). */
+		const report = () => store.commit(dock.state.shown, 'user');
+		/** The dock's `onLayoutCommit` after its own `resetLayout()`. */
+		const reset = () => {
+			dock.state.shown = DEFAULT;
+			store.commit(DEFAULT, 'reset');
+		};
+		/** The page's mount effect. */
 		const start = () => {
 			mount(dock.api);
 			void store.load();
-			report();
 		};
 		const local = () => storage.getItem(`${KEY}:${SCOPE.owner}`);
-		return { ...dock, target, store, provider, report, start, local };
+		return { ...dock, target, store, provider, report, reset, start, local };
 	}
 
 	beforeEach(() => {
@@ -318,7 +303,7 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 		const w = wire({ shown: DEFAULT, get: async () => '{"schema":1,"name":"remote"}' });
 		w.start();
 		await flushAsync();
-		w.report();
+		// The dock reports nothing while a restore is running.
 		w.queue[0].finish();
 		await flushAsync();
 		w.report();
@@ -361,9 +346,8 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 			'dock.three-test',
 			'{"schema":1,"name":"moved"}'
 		);
-		// "Reset layout": the page installed the default itself, then the store saves it.
-		w.state.shown = DEFAULT;
-		w.target.withoutApplying(() => w.store.reset());
+		// "Reset layout": the dock installed the default itself and reports it; the store saves it.
+		w.reset();
 		await vi.advanceTimersByTimeAsync(600);
 		expect(w.provider.set).toHaveBeenLastCalledWith('dock.three-test', JSON.stringify(DEFAULT));
 		expect(w.state.restored).toEqual([undefined]);
@@ -374,12 +358,134 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 		const w = wire({ local: custom, shown: custom, get: async () => null });
 		w.start();
 		await flushAsync();
-		w.state.shown = DEFAULT;
-		w.target.withoutApplying(() => w.store.reset());
+		w.reset();
 		w.queue[0].finish();
 		await flushAsync();
 		w.report();
 		await vi.advanceTimersByTimeAsync(600);
 		expect(w.provider.set).toHaveBeenCalled();
 	});
+
+	it('beforeBaseline adjusts the default the dock mounted with, and again a default installed later - never a stored layout', async () => {
+		const adjusted = { schema: 1, name: 'default', log: 'band' };
+		const beforeBaseline = vi.fn((state: { shown: object }) => {
+			state.shown = adjusted;
+		});
+		const fresh = wire({ shown: DEFAULT, get: async () => null, beforeBaseline });
+		expect(beforeBaseline).not.toHaveBeenCalled();
+		fresh.start();
+		expect(beforeBaseline).toHaveBeenCalledTimes(1);
+		await flushAsync();
+		// What the app adjusted is the baseline: the dock's report of it is not a change to save.
+		fresh.report();
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(fresh.provider.set).not.toHaveBeenCalled();
+		expect(fresh.local()).toBe(JSON.stringify(adjusted));
+
+		const custom = { schema: 1, name: 'custom' };
+		const stored = wire({ local: custom, shown: custom, get: async () => null, beforeBaseline });
+		stored.start();
+		expect(beforeBaseline).toHaveBeenCalledTimes(1);
+		await flushAsync();
+		// Nothing saved on the provider: the default is installed, then adjusted.
+		stored.queue[0].finish();
+		await flushAsync();
+		expect(beforeBaseline).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(stored.provider.set).not.toHaveBeenCalled();
+	});
+
+	it('beforeBaseline also runs when the dock could not use a stored value and fell back to the default (PR #881 review)', async () => {
+		const beforeBaseline = vi.fn();
+		// At mount: the page tells `attach` what `onRestore` reported for the held value.
+		const storage = memoryStorage();
+		storage.setItem(`${KEY}:${SCOPE.owner}`, '{"schema":99}');
+		const mounted = make();
+		createDockLayoutStore({
+			dock: mounted.target,
+			storageKey: KEY,
+			settingKey: 'dock.three-test',
+			provider: () => ({ get: () => new Promise(() => {}), set: async () => {} }),
+			defaultLayout: () => mounted.target.defaultLayout,
+			beforeBaseline,
+			storage,
+			scope: SCOPE,
+			isCurrent: () => true
+		});
+		expect(mounted.target.initialLayout).toBe('{"schema":99}');
+		mounted.mount(fakeDock().api, 'default');
+		expect(beforeBaseline).toHaveBeenCalledTimes(1);
+
+		// After mount: `restoreLayout` answers `status: 'default'` for the provider's value.
+		const { state, api } = fakeDock();
+		const later = make();
+		const provider = {
+			get: vi.fn(async () => ({ value: '{"schema":99}' })),
+			set: vi.fn(async () => {})
+		};
+		const store = createDockLayoutStore({
+			dock: later.target,
+			settingKey: 'dock.three-test',
+			provider: () => provider,
+			defaultLayout: () => later.target.defaultLayout,
+			beforeBaseline
+		});
+		later.mount({
+			layoutSnapshot: api.layoutSnapshot,
+			restoreLayout: async () => {
+				state.shown = DEFAULT;
+				return { status: 'default', outcome: 'applied' };
+			}
+		});
+		expect(beforeBaseline).toHaveBeenCalledTimes(2);
+		// The dock starts from a custom layout the user made; the read then falls back.
+		state.shown = { schema: 1, name: 'custom' };
+		await store.load();
+		await flushAsync();
+		expect(beforeBaseline).toHaveBeenCalledTimes(3);
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(provider.set).not.toHaveBeenCalled();
+	});
+
+	it.each(['refused', 'stale', 'invalid', 'unavailable', 'throws'])(
+		'beforeBaseline does not run when the default was not put in (%s): the earlier layout stays (PR #881 review)',
+		async (outcome) => {
+			const beforeBaseline = vi.fn();
+			const custom = { schema: 1, name: 'custom' };
+			for (const value of [null, '{"schema":99}']) {
+				beforeBaseline.mockClear();
+				const { api } = fakeDock(custom);
+				const { target, mount } = make();
+				const provider = {
+					get: vi.fn(async () => ({ value })),
+					set: vi.fn(async () => {})
+				};
+				const storage = memoryStorage();
+				storage.setItem(`${KEY}:${SCOPE.owner}`, JSON.stringify(custom));
+				const store = createDockLayoutStore({
+					dock: target,
+					storageKey: KEY,
+					settingKey: 'dock.three-test',
+					provider: () => provider,
+					defaultLayout: () => target.defaultLayout,
+					beforeBaseline,
+					storage,
+					scope: SCOPE,
+					isCurrent: () => true
+				});
+				const restoreLayout = vi.fn(async () => {
+					if (outcome === 'throws') throw new Error('restore failed');
+					// The dock's guard said no: `custom` is still what is shown.
+					return { status: 'default', outcome };
+				});
+				mount({ layoutSnapshot: api.layoutSnapshot, restoreLayout }, 'restored');
+				await store.load();
+				await flushAsync();
+				expect(restoreLayout).toHaveBeenCalledTimes(1);
+				expect(beforeBaseline).not.toHaveBeenCalled();
+				await vi.advanceTimersByTimeAsync(2000);
+				expect(provider.set).not.toHaveBeenCalled();
+			}
+		}
+	);
 });

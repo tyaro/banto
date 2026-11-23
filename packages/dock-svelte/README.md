@@ -853,10 +853,79 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 />
 ```
 
+まとめ書き・読み込みとの順序・利用者の切り替えまで含めて任せたいときは、下の `createDockLayoutStore` に
+`onLayoutCommit={store.commit}` と渡す。
+
+### 配置の保存（`createDockLayoutStore`、#791）
+
+`onLayoutCommit` が届ける配置を、アプリが渡す設定の provider に保存する部品。保存先そのものは持たない
+（provider は形で受ける。`@banto/admin-core` を import しない）。
+
+```ts
+import { createDockLayoutStore, createDockState } from '@banto/dock-svelte';
+
+const dock = createDockState();
+const store = createDockLayoutStore({
+	dock,
+	settingKey: 'dock.dashboard',
+	provider: () => settings, // { get(key) → { value }, set(key, value), remove?(key), sessionGuard?() }
+	defaultLayout: () => (hostWidth === 0 ? null : defaultLayout(hostWidth, hostHeight))
+});
+$effect(() => store.seedIfEmpty()); // 既定を作れるようになったら 1 回だけ入れる
+$effect(() => untrack(() => void store.load())); // provider の値を読む（最初の描画より優先）
+$effect(() => () => store.dispose()); // 残りの書き込みを flush
+// <DockHost {dock} onLayoutCommit={store.commit} ... />
+```
+
+- **provider（`DockLayoutSettings`）**: `get(key)` は `{ value: string | null }` を解決する Promise、`set(key, value)` は
+  Promise。`remove(key)` と `sessionGuard()` は省略できる。`@banto/admin-core` の `UiSettingsProvider`
+  （`getUiSettings` の戻り値）・`createLocalUiSettings()` はそのまま渡せる。`provider` は関数で、使うたびに呼ぶ。
+- **何を書くか**: 部品が自分で入れた配置（最初の描画の写し・provider の値・入れた既定）は基準で、書き戻さない
+  （`DockHost` はそれも `'user'` で報告するが、基準と同じ文字列なので書かない）。基準と違う `commit` を、最後の
+  報告から 500ms（`debounceMs`）後に 1 回書く。`dispose()` は残りを flush する。`dispose()` の後に届いた報告
+  （ページの後始末の後で `DockHost` が unmount の報告をする）は、その場で書く。
+- **読み込み**: `load()` は 1 回だけ。provider の値が、最初の描画にも、答えが届く前の利用者の操作にも勝つ。
+  ただし、答えを待つ間に届いた `'reset'`（利用者の「既定に戻す」）には勝たない: 答えを捨て、reset の書き込み
+  （または削除）をそのまま送る。
+  `null`・エラー・検証に通らない値は既定に戻す（localStorage の写しで代用しない）。`validate(json)` で保存値を
+  直す・断ることができる（その後に dock 自身の `hydrate` の検証が走る）。
+- **`'reset'`**（`replaceLayout(既定, { saved: true, commit: 'reset' })`、`ThreePaneDock` の `resetLayout()`）:
+  既定（`reset: 'save'`）では、届いた配置を利用者の変更として書く（既定が出ている間でも書く。書かないと、次に
+  読めたときに古い配置が戻る）。`reset: 'remove'` は provider の `remove(settingKey)` と localStorage の写しの削除に
+  なる（provider に `remove` が無ければ既定を書く）。`'reset'` は 1 回だけ届く（`'user'` と重ならない）。
+- **持ち主（`scope`・`isCurrent`）**: 省くと「キー 1 つ、持ち主なし」。渡すと（`@banto/admin-core` なら
+  `scope: currentSessionScope()`・`isCurrent: isCurrentSessionScope`）、読み込みの結果・待っている書き込み・
+  `dispose()` の flush は `isCurrent(scope)` が真の間だけ使い、セッションが替わった後のものは捨てる（前の利用者の
+  配置を、次の利用者に見せない・基準にしない）。`isCurrent` を省いたときは provider の `sessionGuard()` で見る
+  （無ければ常に同じセッション）: 部品を作った時点のものに加えて、読み込みを始めた時点・書き込みを待たせた時点の
+  provider からも取り、その読み込み・書き込みはその provider とセッションに結び付ける（`provider` を後から
+  差し替えるアプリでも、待っている間にセッションが替わった分は捨てる。書き込みは、待たせた時点の provider へ送る）。
+- **localStorage の写し（`storageKey`）**: provider の答えを待たずに最初の描画へ使う写し。省くと持たない
+  （localStorage から答える provider なら要らない）。`scope` があるときのキーは `${storageKey}:${scope.owner}` で、
+  `owner` が `null`（持ち主が確かめられない）なら読み書きしない。素の `storageKey` は誰のものでもないので、読まずに
+  消す。`scope` が無いときは素の `storageKey` を使う。
+- **`beforeBaseline`**: 部品が既定を入れた直後（`seedIfEmpty`、保存が無い・使えないときの `load`。
+  `ThreePaneDock` では既定が実際に入った後）、基準を取る直前に呼ぶ。ここで同期に直した配置（低い画面ではログの
+  pane を帯で始める、など）は基準に含まれ、利用者の変更として書かれない。保存した配置を入れたときと、利用者の
+  「既定に戻す」では呼ばない。
+- **別のタブとの競合**: 書き込みは無条件（`ifRevision` を使わない）。配置は最後の操作が勝つ。別のタブの変更は、
+  次の読み込み（ページを開き直す）まで見えない。
+- **書き込みの順序**: 1 つの部品の書き込み（`set`・`remove`）は、前のものが終わって（失敗も含む）から次を送る。
+  provider に順序の保証は求めない（遅い `set` が、後の `remove` より後に届いて古い値が戻ることはない）。
+- **`ThreePaneDock`** は `createThreePaneLayoutTarget(dock, () => three)` を `dock` に渡す（保存する値が
+  `layoutSnapshot()` になり、復元は `restoreLayout` を通る）。`initialLayout={target.initialLayout}`、マウント後に
+  `target.attach(status)` → `store.load()`、`defaultLayout: () => target.defaultLayout`。`status` は `ThreePaneDock` の
+  `onRestore` が知らせた値で、省略できる（`beforeBaseline` を使うときは渡す: 最初の描画の写しが使えず、部品が
+  既定で始めたことが伝わる。マウント後の復元が既定になったこと（`restoreLayout` の `status: 'default'`）は、
+  渡さなくても伝わる。どちらも、置き換えが実際に入った（`outcome: 'applied'`）ときだけ: `beforePanelChange` に
+  断られた・`stale` になった復元では、前の配置が残るので `beforeBaseline` は呼ばない）。配線の全体は
+  [docs/recipes/three-pane-dock.md](../../docs/recipes/three-pane-dock.md)「レイアウトの保存」。
+
 ## 保存の約束（serialize / hydrate と書き込みは別）
 
 `serialize()` は文字列を返すだけで、`hydrate(json)` は文字列を検証して layout に採るだけ。**実ストレージへの書き込み
-（localStorage・設定 DB など）はアプリの責任**で、このパッケージは永続化を持たない。
+（localStorage・設定 DB など）はアプリの責任**で、このパッケージは保存先を持たない（`createDockLayoutStore` も、
+アプリが渡す provider へ書く）。自分で保存を書くときの約束:
 
 - 書き込みが失敗したら「保存済み」の印（最後に成功した snapshot）を更新しない。失敗した内容を保存済みとして
   扱うと、次の起動や再試行で古い内容を新しいものと取り違える。
