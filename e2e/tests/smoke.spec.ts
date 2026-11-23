@@ -26,7 +26,15 @@
  * `window.confirm`). The exception is scenario 13b's "the event
  * stream sends nothing more" check, which can only be observed over a window.
  */
-import { expect, test, type Dialog, type Locator, type Page, type Route } from '@playwright/test';
+import {
+	expect,
+	test,
+	type Dialog,
+	type Locator,
+	type Page,
+	type Request,
+	type Route
+} from '@playwright/test';
 import fs from 'node:fs';
 import { E2E_ADMIN, loginAsFirstAdmin } from '../first-admin';
 import {
@@ -3773,6 +3781,67 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto('/settings/appearance');
 		await densityGroup().getByText('標準', { exact: true }).click();
 		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'standard');
+	});
+
+	// #716 W1 (downstream-requests-2026-11-plan §4.13.3): the dashboard reads `items` ONCE per
+	// page load and hands the rows to the KPI strip, the fixed cards and the dock's panels. Before
+	// W1 the page read it and every dock panel read its own copy (3 requests with the default
+	// layout, one more for each panel shown later).
+	//
+	// Two tests, so the first holds in any scaffolded copy that keeps the dashboard (it needs
+	// neither the charts nor the dock: the KPI strip is always there); the second needs both.
+	function countItemsReads(): { reads: string[]; stop: () => void } {
+		const reads: string[] = [];
+		const onRequest = (request: Request) => {
+			if (new URL(request.url()).pathname === '/api/items/list' && request.method() === 'POST')
+				reads.push(request.url());
+		};
+		page.on('request', onRequest);
+		return { reads, stop: () => page.off('request', onRequest) };
+	}
+
+	test('13k3. dashboard: opening the page reads items once', async () => {
+		await page.goto('/dashboard');
+		const counter = countItemsReads();
+		try {
+			await page.reload();
+			// The KPI strip's first tile (商品数) shows the count once the read has settled.
+			await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+			// No late read either (REST mode keeps an SSE stream open, so there is no network idle to wait for).
+			await page.waitForTimeout(500);
+			expect(counter.reads).toHaveLength(1);
+		} finally {
+			counter.stop();
+		}
+	});
+
+	test('13k4. dashboard: the cards, the docked panels and a panel shown later draw from that one read', async () => {
+		await page.goto('/dashboard');
+		// Only where the dashboard has both the chart cards and the dock: a copy scaffolded without
+		// `charts` or `dock` keeps this file, and 13k3 above is its check. Asked of the page itself
+		// (once the read has settled, the cards are drawn if any are registered), not of the scaffold.
+		await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+		const hasCards = (await page.locator('.chart-grid').count()) > 0;
+		const hasDock = (await page.locator('.dock-wrapper').count()) > 0;
+		test.skip(!hasCards || !hasDock, 'needs the chart cards and the dock (removed by scaffold)');
+		await resetDashboardLayout(page);
+		const counter = countItemsReads();
+		try {
+			await page.reload();
+			// The same widget twice: the fixed card and the docked panel of the default layout.
+			await expect(page.getByRole('img', { name: '月別更新件数の面グラフ' })).toHaveCount(2);
+			await expect(page.getByRole('img', { name: '価格帯分布のドーナツグラフ' })).toHaveCount(2);
+			// A panel shown later draws from the rows already read.
+			await toggleDashboardPanel(page, 'SPC');
+			await expect(
+				page.getByRole('img', { name: '価格分布のヒストグラム（正規分布カーブ重ね描き）' })
+			).toBeVisible();
+			await page.waitForTimeout(500);
+			expect(counter.reads).toHaveLength(1);
+		} finally {
+			counter.stop();
+			await resetDashboardLayout(page);
+		}
 	});
 
 	// Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the dashboard

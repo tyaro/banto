@@ -698,6 +698,8 @@ PR5（hide / show / float / dockBack）→ PR6（`dockExisting*`・ドロップ�
 
 #### 4.13.2 いまの形
 
+W0 の時点（W1 の前）の形。画面に並ぶものと置き場所は W1 の後も同じで、持ち方だけが変わった（4.13.8）。
+
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte`（795 行）に、上から 3 つが並ぶ。
 
 | 部分 | 中身 | 持ち方 |
@@ -821,7 +823,7 @@ interface DashboardWidgetProps {
 | PR | 範囲 | 完了条件 |
 | --- | --- | --- |
 | W0 | 線引きを template-scope §4.2 に書く。この節を設計に書き直す。#882 の起票（文書だけ） | `pnpm format:check`。**済み** |
-| W1 | 登録の型（`DashboardWidgetDef`・`DashboardWidgetProps`）、KPI の定義と帯の部品、データを 1 回読む関数。固定のカード 5 枚と dock のパネル 5 つを、登録 1 件 + 部品 1 ファイルへ分ける（`DashboardPanel.svelte` の分岐を解体）。**置き場所はまだ変えない**（固定のカードは今の格子に、登録から描く）。切り離した窓のルートを新しい登録へ載せ替える。scaffold の `removeCharts`・`removeDock` を「登録の行と部品のファイルを消す」形へ直す | **基準画像が 1 枚も変わらない**（変わったら載せ替えの誤り）。登録の単体テスト（id の重複なし、title・icon・部品がそろう、KPI の値）。items の読み込みがページで 1 回になる。scaffold の 4 プリセットと、charts だけ・dock だけを外す組み合わせの `--dry-run`（`--list-touched` を含む）が通り、外した後に `@banto/charts`・`@banto/dock-svelte` の参照が残らない。`pnpm check`・`pnpm lint`・`pnpm format:check`・単体テスト・`pnpm e2e`。固定のカードが dock のパネルとして成り立つ最小の大きさを測り、この節に書く（§9） |
+| W1 | 登録の型（`DashboardWidgetDef`・`DashboardWidgetProps`）、KPI の定義と帯の部品、データを 1 回読む関数。固定のカード 5 枚と dock のパネル 5 つを、登録 1 件 + 部品 1 ファイルへ分ける（`DashboardPanel.svelte` の分岐を解体）。**置き場所はまだ変えない**（固定のカードは今の格子に、登録から描く）。切り離した窓のルートを新しい登録へ載せ替える。scaffold の `removeCharts`・`removeDock` を「登録の行と部品のファイルを消す」形へ直す | **基準画像が 1 枚も変わらない**（変わったら載せ替えの誤り）。登録の単体テスト（id の重複なし、title・icon・部品がそろう、KPI の値）。items の読み込みがページで 1 回になる。scaffold の 4 プリセットと、charts だけ・dock だけを外す組み合わせの `--dry-run`（`--list-touched` を含む）が通り、外した後に `@banto/charts`・`@banto/dock-svelte` の参照が残らない。`pnpm check`・`pnpm lint`・`pnpm format:check`・単体テスト・`pnpm e2e`。固定のカードが dock のパネルとして成り立つ最小の大きさを測り、この節に書く（§9）。**済み**（PR #884。決めた形と測った値は 4.13.8） |
 | W2 | 固定のカードの格子と「分析ワークスペース」の枠を消し、1 つの `DockHost` へ寄せる。既定の配置。重複（`monthly`・`priceBuckets`）の統合。新しい保存キーと `reset: 'remove'`。表示メニュー（追加・表示 / 非表示・既定へ戻す）。キオスクの `arrange={false}`。狭い幅と dock を外したときの「積む」部品（4.13.7 の a の確認の後）。使わなくなる文言キー（`dashboard.workspaceHeading` など。ja・en）を消す。CHANGELOG「消費側への注意」・upgrading.md・`docs/recipes/remove-optional-assets.md`・maintainers.md の基準画像の注意 | e2e: 追加・非表示・並べ替えが再読み込みの後も残る／「既定の配置へ戻す」で保存した値が消える／旧いキー（`dock.dashboard`）に値があっても読まない／キオスクでは組み替えられず、表示メニューが出ない／別の利用者の配置を読まない（今の `dashboard-layout-commit.spec.ts` を新しいキーへ直す）。キーボードだけで追加・移動・非表示ができる。狭い幅の 1 列の表示を採る場合（4.13.7 の a）: 幅を狭めて戻しても、保存した幅の広い配置が変わらない／メモの編集中に表示が切り替わっても下書きが残る。**基準画像の再生成**（`/dashboard` を写すもの全部: dashboard の各組み合わせ・kiosk・compact・touch・menubar と、背景に写る **command-palette**。`visual-baselines.yml` を dispatch）。scaffold の 4 プリセットと、charts だけ・dock だけを外す組み合わせの `--dry-run` と template-acceptance。charts を外すとメモだけの dock、dock を外すと「積む」表示で壊れない。a11y の spec（axe）が通る |
 | W3 | 期間の状態と操作、`createDashboardData()` の絞り込み、KPI の帯と `usesPeriod` のウィジェットへの配線。README / recipe に「ウィジェットを足す」「期間を使う」の手順 | 単体: 期間を変えると、KPI と `usesPeriod` のウィジェットが同じ行で描き直り、ほかは描き直らない。期間が配置の保存値に入らない。e2e: 期間を変えて KPI とチャートが変わる。charts を外すプリセットでも期間の操作が壊れない（KPI だけに効く）。基準画像の再生成（見出しに操作が増える。command-palette も）。CHANGELOG [Unreleased]。**#716 を閉じる** |
 
@@ -856,6 +858,100 @@ interface DashboardWidgetProps {
 - **c. 一覧のウィジェットの見本**: Issue は「KPI・チャート・一覧・メモ」を挙げるが、今のダッシュボードに一覧は無い。
   推奨は、W2 で見本を 1 つ足す（在庫の少ない品目の上位。`@banto/grid-svelte` はコアなので、どのプリセットでも残る）。
   別案: 足さない（登録の型は部品を選ばないので、作者は自分で足せる）。
+
+#### 4.13.8 W1 で決めた形と、測った値（2026-11-23）
+
+見た目・挙動・保存の形は変えていない（基準画像は 1 枚も変わらない）。4.13.3 の「見込み」から変えた点は、理由と合わせてここに書く。
+
+**ファイル**（どれも `apps/admin-template/src/lib/`）
+
+| ファイル | 中身 |
+| --- | --- |
+| `banto/dashboardData.svelte.ts` | `createDashboardData()`。items を 1 回読み、`DashboardData`（`rows`・`loading`・`totalCount`・`stats`）を渡す。`stats` は KPI の数字で、`rows` が変わるたびに 1 回だけ計算する（タイルごとに計算しない）。期間で絞った行は W3 でここに足す |
+| `banto/dashboardKpis.ts` | `DASHBOARD_KPIS`（配列 1 つ）。1 件は `id`・`label`（getter）・`icon`・`value(data)`・任意の `link`・任意の `sparkline(data)` |
+| `components/DashboardKpiStrip.svelte` | KPI の帯。ページの `.stat-row` の markup と CSS（キオスクの `:global(.shell.kiosk)` と 600px 以下の調整を含む）をそのまま移した |
+| `banto/dashboardWidgets.ts` | 登録。`DashboardWidgetDef`・`DashboardWidgetProps`・`DASHBOARD_WIDGETS`（8 件: `monthly`・`categoryStock`・`stackedBar`・`priceBuckets`・`scatter`・`spc`・`trend`・`memo`）・`findDashboardWidget`。W1 だけの置き場所の一覧 `DASHBOARD_CARDS`（固定のカード 5 枚。W2 で消す） |
+| `components/dashboard/charts/*.svelte` | チャートのウィジェットの部品 7 つ（1 ウィジェット 1 ファイル） |
+| `components/dashboard/MemoWidget.svelte` | メモのウィジェット |
+
+消したもの: `banto/panels.ts`（`PANEL_DEFS`）と `components/DashboardPanel.svelte`（id の分岐）。
+
+**登録の型**
+
+```ts
+interface DashboardWidgetProps {
+	data: DashboardData; // ページが 1 回読んだデータ（W3 から、共有の期間で絞った行も）
+	height: number; // 中身の高さ（px）。呼び手が自分の入れ物を測って渡す
+}
+
+interface DashboardWidgetDef {
+	id: string; // 保存した配置に入るので、あとから変えない
+	readonly title: string; // getter（読むときに今の言語で引く）
+	icon?: string;
+	width?: number; // 浮動の窓の大きさ
+	height?: number;
+	component: Component<DashboardWidgetProps>;
+	usesPeriod?: boolean; // W3
+}
+```
+
+- **`extends FloatingWindowDef` にしていない**。同じ欄（`id`・`title`・`icon`・`width`・`height`）を書き並べた。登録のファイルが
+  `@banto/dock-svelte` を import すると、dock を外すプリセットで登録ごと消すしかなくなる（固定のカードも、W2 の「積む」部品も登録を使う）。
+  ページが def を `dock.ensureWindow` に渡すので、2 つの形がずれれば型検査で落ちる。
+- **登録の行は文言の「キー」を書く**（`titleKey: 'panels.monthly'`。`navigation.ts` の `labelKey` と同じ形）。公開する
+  `DASHBOARD_WIDGETS` がそれを `title` の getter に直す。行に `get title() { return m['…'](); }` を書く形だと、charts と dock を
+  両方外したときに登録のファイルの `m` の import だけが残り、lint で落ちる（remover 同士の文字列の領域を独立に保つため）。
+- **メモは props ではなく context で受け取る**（`provideDashboardMemoPane` / `dashboardMemoPane`、`dashboardMemo.svelte.ts`）。
+  下書きと保存はページが持つ（4.13.3）。ウィジェットの props は全部同じ（`data`・`height`）にしたいので、ページのメモは context で渡す。
+  context が無い所（切り離した窓。別の文書）では、今までと同じ静的な文を出す。
+- **切り離した窓**（`routes/panel/[id]`）は、同じ `createDashboardData()` で自分の分を 1 回読み、登録から部品を引いて描く。
+- **固定のカードの見出しは、ウィジェットの `title`** を使う（`panels.monthly` と `dashboard.monthlyTitle`、`panels.priceBuckets` と
+  `dashboard.priceBucketTitle` は ja・en とも同じ文言）。`dashboard.monthlyTitle`・`dashboard.priceBucketTitle` はどこからも
+  引かれなくなった。W2 で、ほかの使わなくなるキーと一緒に消す。
+
+**読み込みの回数**: ページを開いたときの items の読み込みは 1 回（W1 の前は、ページ 1 回 + dock のパネル 1 枚ごとに 1 回。
+既定の配置で 3 回）。単体テスト（`dashboardData.svelte.test.ts`）と e2e（`smoke.spec.ts` の 13k3・13k4。`/api/items/list` の回数）で確かめる。
+
+**scaffold**
+
+- ページ（`dashboard/+page.svelte`）は `@banto/charts` を import しない。`removeCharts` はページを触らず、登録の
+  `[scaffold:charts]` の領域（部品の import と行）と `components/dashboard/charts/`、KPI の Sparkline（`dashboardKpis.ts`・
+  `DashboardKpiStrip.svelte` の同じ印の領域）を消す。
+- `removeDock` は、ページの `[scaffold:dock]` の領域 5 つ（import・script・表示メニュー・ワークスペース・snippet）と、登録のメモの
+  行、`MemoWidget.svelte` を消す。ページの中身を文字列で当てるのをやめた（W2 でページを書き換えても、印を保てば型紙はずれない）。
+- 領域は `cutEveryMarked(ファイル, 印, 数)` で 1 回に全部切り、**見つかった数を突き合わせる**。`--dry-run` は書き込まないので、
+  領域の数だけ `cutMarked` を呼ぶ形だと、領域が 1 つ減っていても気付けない。
+- 登録の単体テスト（`dashboardWidgets.test.ts`）は、どのプリセットの生成物でも走る（template-acceptance の `pnpm --filter admin-template test`）。
+  オプションのウィジェットを名指しする検査は、同じ印の領域に入れてある。
+- **charts だけを外す組み合わせ**（対話の個別指定）は、W1 の前は壊れていた（dock の snippet と切り離した窓のルートに
+  `DashboardPanel` の参照が残り、型検査で落ちる。基点の 98ed039d で確かめた）。
+  W1 で通る: dock にはメモだけが残り、既定の配置は登録に在るものだけで組む。**dock だけを外す**と、固定のカードと登録（チャート 7 件）が残る
+  （`spc`・`trend` は置き場所が無いので出ない。W2 の「積む」部品で出る）。
+
+**固定のカードが dock のパネルとして成り立つ最小の大きさ**（§9 の未確認の答え）
+
+測り方: 切り離した窓のルート（`/panel/<id>`）は、タイトルバー（32px）+ パネルと同じ余白（12px）の本体なので、ビューポートを
+dock の 1 区画に見立てて縮め、(a) SVG の文字どうしが重ならない、(b) SVG の文字が端で切れない、(c) 凡例とチャートが縦に収まる、
+の 3 つを見た（ライト・標準の密度・デモのデータ・ja、Chromium）。値はタイトルバーを含む区画の大きさ。
+
+| ウィジェット | 幅の下限 | 高さの下限 | 下回ると起きること |
+| --- | --- | --- | --- |
+| `monthly`（面グラフ） | 文字の重なりは 120px まで起きない（目盛りの数が幅に追随） | 200px | 高さ: チャートの下限（140px）を割り、区画がスクロールする |
+| `categoryStock`（横棒） | 同上 | 210px | 高さ: 8 カテゴリの名前が上下に重なる（SVG が 152px 未満） |
+| `stackedBar`（積み上げ棒） | 300px | 220px | 幅: 右端のカテゴリ名が切れる。高さ: 凡例 1 行ぶん（約 20px）が要る |
+| `priceBuckets`（ドーナツ） | 320px（凡例が 1 行に収まる幅） | 220px（320px 未満の幅では凡例が 2 行になり 240px） | 幅: 凡例が折り返して高さを使う |
+| `scatter`（散布図） | 200px | 200px | 幅: 横軸の目盛りの文字が重なる |
+
+- **5 枚とも成り立つ下限は、幅 320px × 高さ 220px**（タイトルバー込みの 1 区画）。今の固定のカードは、1440px の画面で補助の 1 枚が
+  幅 約 360px・チャートの高さ 280px なので、これより小さくできる。dock の区画の下限（`MIN_PANE_FRACTION` = 親の 10%）と浮動の窓の
+  下限（160×120）は、これより小さい。W2 で既定の配置を決めるとき、1 区画が 320×220 を下回らないようにする（1440px の画面で dock の幅は
+  約 1100px なので、横に並べるのは 3 列までが目安）。
+- 参考（固定のカードではない 2 枚）: `spc` はパレート図のカテゴリ名が重ならないのに幅 480px が要る（縦は中でスクロールする作り）。
+  `trend` は幅 180px まで文字が重ならない。
+- **W2 で直すこと（測っていて見つけた。今の dock でも同じ）**: 呼び手が渡す高さは「区画の中身の高さ − 16px」（`chartHeight`）だが、
+  余白は上下で 24px あり、凡例（1 行 約 20px、2 行 約 42px）は SVG の外に積まれる。凡例のあるウィジェット（`stackedBar`・`priceBuckets`・
+  `trend`）は、区画より 約 28px 以上はみ出して下が切れる（スクロールで見える）。凡例の無いものも 8px はみ出す。W2 で、渡す高さから
+  余白と凡例の高さを引く（または部品が自分の入れ物を測る）形に直す。W1 は見た目を変えないので、そのままにしてある。
 
 ### 4.14 追加の 4 件（#838・#850・#851・#852。2026-11-22、banto-industrial）
 
@@ -1031,7 +1127,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | F1 | #714 `file` 型（保留の持ち方・画面の検証・送信値から除く・1 欄まで・ui-demo の見本）。**状態: 済み（PR #844、2026-11-22）。親の id は `BantoForm` の `fileParentId`、作成後の送信は `uploadPendingFiles`、`FormDraft` は `file` 欄を受けない** | `forms`・ui-demo | union に追加 | fable | §4.12 の単体テスト。forms がほかのパッケージを import しない |
 | F2 | #714 テンプレートの配線（items の新規・編集、作成後のアップロード、失敗の再試行）・README・片付け。**状態: PR 作成済み（2026-11-22）。`ResourceDetail` が作成後に `uploadPendingFiles`、失敗は `pendingUploads` で編集画面へ引き継ぐ。既存レコードの編集は添付パネルのまま（欄は出さない）** | テンプレート・scaffold | 足すだけ | sonnet | e2e。添付を外すプリセットの dry-run。#714 を閉じる |
 | W0 | #716 の判断（§4.13 の 1〜4）と template-scope §4.2 の 1 文。**状態: 済み（2026-11-23。判断は 4 つとも推奨どおり。§4.13 を設計に書き直し、クロスフィルタとドリルダウンを #882 に分けた）** | `docs` | — | fable | **オーナーの判断** |
-| W1 | #716 ウィジェットの登録の型・KPI の定義と帯の部品・データを 1 回読む関数。固定のカードと dock のパネルを「登録 1 件 + 部品 1 ファイル」へ分ける（置き場所は変えない）。scaffold の `removeCharts`・`removeDock` を登録の形へ直す。§4.13.5 | テンプレート・scaffold | なし（見た目も保存も同じ） | fable | 基準画像が 1 枚も変わらない。登録の単体テスト。items の読み込みがページで 1 回。scaffold の 4 プリセットと charts だけ・dock だけの dry-run。最小の大きさを §4.13 に書く |
+| W1 | #716 ウィジェットの登録の型・KPI の定義と帯の部品・データを 1 回読む関数。固定のカードと dock のパネルを「登録 1 件 + 部品 1 ファイル」へ分ける（置き場所は変えない）。scaffold の `removeCharts`・`removeDock` を登録の形へ直す。§4.13.5 | テンプレート・scaffold | なし（見た目も保存も同じ） | fable | 基準画像が 1 枚も変わらない。登録の単体テスト。items の読み込みがページで 1 回。scaffold の 4 プリセットと charts だけ・dock だけの dry-run。最小の大きさを §4.13 に書く。**状態: 済み**（PR #884、2026-11-23。§4.13.8） |
 | W2 | #716 1 つの dock への一本化（固定のカードの格子と「分析ワークスペース」の枠を消す）・既定の配置・新しい保存キーと `reset: 'remove'`・表示メニューでの追加と表示 / 非表示・キオスクの `arrange={false}`・狭い幅と dock を外したときの表示（§4.13.7 の a の確認の後）。§4.13.5 | テンプレート・scaffold・e2e・docs | **見た目・保存**（配置が既定へ戻る。旧いキーは読まない） | fable | e2e（追加・非表示・並べ替えが残る、既定へ戻すで保存値が消える、旧いキーを読まない、キオスクで組み替え不可）。基準画像の再生成（command-palette を含む）。scaffold の dry-run と template-acceptance。CHANGELOG・upgrading.md |
 | W3 | #716 期間フィルタの共有（ページが期間を 1 つ持ち、KPI の帯と `usesPeriod` のウィジェットへ同じ行を渡す。持ち方は §4.13.7 の b の確認の後）・「ウィジェットを足す」手順の文書。§4.13.5 | テンプレート・docs | 見た目（見出しに操作が増える） | fable | 単体（期間で描き直る範囲、保存値に入らない）・e2e。charts を外しても壊れない。基準画像の再生成。**#716 を閉じる**（クロスフィルタとドリルダウンは #882、この版に入れない） |
 | C7 | **状態: 済み（PR #871、2026-11-23。計画に無い点が 1 つ: `'web'`・`'memory'` 以外の値は作成時に例外にした）。** #838 `createHttpAuthProvider` に `storage: 'web' \| 'memory'`（既定は `'web'`）。`'memory'` はトークンを provider の中だけに持ち、web storage を読まず・書かず、`storage` イベントを購読しない。`remember` は覚えず、送る本文でも `false` にして通常の期限を使う。README（Tauri には対の口が無いことを含む）。口の形は §10 の B1（確定）。§4.14 | `admin-core`（`providers/http.ts`・README） | 足すだけ | fable | `'memory'` で web storage に一度も触れず、`storage` の購読も無い試験。追い越しの試験（`sessionRaces`・`httpRevision`）が両方の保存先で通る。`'memory'` で `remember: true` を渡しても、送る本文は `remember: false`。既定の挙動と送る本文が変わらない。#838 を閉じる |
@@ -1138,7 +1234,7 @@ D3 でまとめる。各 PR は自分の分を `[Unreleased]` に書いておく
 - #795: 今の色差の実測値と、下限の数値（T2）。
 - #714: 参照選択（3）で採った注入の形に `file` 型をそろえられるか、ResourcePage のフォーム定義から渡せるか（F1）。
   #756 に外す項目があるか（F2）。
-- #716: 固定部のカードが dock のパネルとして成り立つ最小の大きさ（W1 で測る）。dock の高さ（今は 520px 固定）と
+- #716: 固定部のカードが dock のパネルとして成り立つ最小の大きさ（**W1 で測った**: 5 枚そろって、タイトルバー込みの 1 区画で幅 320px × 高さ 220px。§4.13.8）。dock の高さ（今は 520px 固定）と
   キオスクの見え方、登録から消えた id を含む保存値の扱い（W2）。狭い幅・期間の持ち方・一覧の見本は §4.13.7（2026-11-23 に確定）。
 
 ### 9.2 #782 で「壊して正しくできる所」の検討候補（決定 14）

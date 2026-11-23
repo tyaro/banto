@@ -301,20 +301,24 @@ function runIn(dir, args) {
 test('削除パターンがずれていると、--strict なしの --dry-run でも失敗する', () => {
 	const dir = copyRepo();
 	try {
-		// DashboardPanel の import を、scaffold が知らない書き方に変える
-		// （SvelteKit 3 の移行で `$lib` → `#lib` になったのと同じ種類のずれ）。
-		const dash = path.join(dir, 'apps/admin-template/src/routes/(app)/dashboard/+page.svelte');
-		const before = fs.readFileSync(dash, 'utf8');
-		const from = `\timport DashboardPanel from '#lib/components/DashboardPanel.svelte';\n`;
-		assert.ok(before.includes(from), 'テストの前提（DashboardPanel の import）が見つからない');
-		fs.writeFileSync(
-			dash,
-			before.replace(from, `\timport DashboardPanel from '../DashboardPanel.svelte';\n`)
+		// ダッシュボードの登録の `[scaffold:charts]` の領域を 1 つ、scaffold が知らない書き方に変える
+		// （SvelteKit 3 の移行で `$lib` → `#lib` になったのと同じ種類のずれ）。領域は 2 つあるので、
+		// 「1 つでも当たれば成功」だと見逃す。数の突き合わせ（cutEveryMarked）で落ちること。
+		const widgets = path.join(dir, 'apps/admin-template/src/lib/banto/dashboardWidgets.ts');
+		const before = fs.readFileSync(widgets, 'utf8');
+		const from = `// [scaffold:charts] begin\nimport `;
+		assert.ok(
+			before.includes(from),
+			'テストの前提（登録の charts の import の領域）が見つからない'
 		);
+		fs.writeFileSync(widgets, before.replace(from, `// [scaffold:chart] begin\nimport `));
 
 		const res = runIn(dir, ['--preset', 'minimal', '--dry-run']);
 		assert.notEqual(res.status, 0, `ずれを見逃して成功した:\n${res.stdout}\n${res.stderr}`);
-		assert.match(res.stderr, /DashboardPanel import 除去 — 期待したパターンが見つかりません/);
+		assert.match(
+			res.stderr,
+			/登録: チャートのウィジェット（import と行）除去 — 期待したパターンが見つかりません/
+		);
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
@@ -452,24 +456,55 @@ test('--list-banto-only は removeBantoReleaseOnly の消す path と一致す�
 	for (const p of listed) assert.ok(plan.includes(p), `計画に ${p} が無い`);
 });
 
-test('チャートを外す minimal では dashboard にチャート専用の集計（未使用警告の元）が残らない', () => {
+test('チャートと dock を外す minimal では、ダッシュボードの登録・KPI・ページにその参照（未使用警告の元）が残らない', () => {
+	// #716 W1: ページはチャートを import しない。チャートは登録の行 + 部品のファイルで、
+	// scaffold は `[scaffold:charts]` / `[scaffold:dock]` の領域と部品を消す。
 	const dir = copyRepo();
 	try {
 		const res = runIn(dir, ['--preset', 'minimal', '--strict']);
 		assert.equal(res.status, 0, `minimal が失敗:\n${res.stdout}\n${res.stderr}`);
-		const src = fs.readFileSync(
-			path.join(dir, 'apps/admin-template/src/routes/(app)/dashboard/+page.svelte'),
-			'utf8'
+		const app = path.join(dir, 'apps/admin-template/src');
+		const read = (rel) => fs.readFileSync(path.join(app, rel), 'utf8');
+		const files = {
+			page: read('routes/(app)/dashboard/+page.svelte'),
+			widgets: read('lib/banto/dashboardWidgets.ts'),
+			widgetsTest: read('lib/banto/dashboardWidgets.test.ts'),
+			kpis: read('lib/banto/dashboardKpis.ts'),
+			strip: read('lib/components/DashboardKpiStrip.svelte')
+		};
+		for (const [name, src] of Object.entries(files)) {
+			for (const gone of [
+				'@banto/charts',
+				'@banto/dock-svelte',
+				'components/dashboard/',
+				'] begin',
+				'] end'
+			])
+				assert.ok(!src.includes(gone), `${name} に ${gone} が残っている`);
+		}
+		for (const gone of ['DockHost', 'PageViewMenu', 'dockPanel', 'provideDashboardMemoPane'])
+			assert.ok(!files.page.includes(gone), `ページに ${gone} が残っている`);
+		for (const gone of ['MonthlyWidget', 'MemoWidget', "id: '"])
+			assert.ok(!files.widgets.includes(gone), `登録に ${gone} が残っている`);
+		for (const gone of ['updatesByMonth', 'sparkline: '])
+			assert.ok(!files.kpis.includes(gone), `KPI の定義に ${gone} が残っている`);
+		assert.ok(!files.strip.includes('<Sparkline'), 'KPI の帯に Sparkline の描画が残っている');
+		assert.ok(
+			!fs.existsSync(path.join(app, 'lib/components/dashboard/charts')),
+			'部品が残っている'
 		);
-		for (const unused of [
-			'categoryStock',
-			'monthCounts',
-			'scatterRows',
-			'countLabel',
-			'byCategory'
-		])
-			assert.ok(!src.includes(unused), `dashboard に ${unused} が残っている`);
-		assert.ok(src.includes('computeStatTiles'), 'stat タイルの computeStatTiles は残る');
+		assert.ok(
+			!fs.existsSync(path.join(app, 'lib/components/dashboard/MemoWidget.svelte')),
+			'メモの部品が残っている'
+		);
+		// 残るもの: 空の登録（ページが引く）、KPI の帯と値、データの読み込み。
+		assert.ok(files.widgets.includes('export const DASHBOARD_WIDGETS'), '登録の公開が消えた');
+		assert.ok(files.page.includes('<DashboardKpiStrip {data} />'), 'KPI の帯が消えた');
+		assert.ok(files.kpis.includes('data.stats.stockTotal'), 'KPI の値が消えた');
+		assert.ok(
+			fs.existsSync(path.join(app, 'lib/banto/dashboardData.svelte.ts')),
+			'読み込みが消えた'
+		);
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}

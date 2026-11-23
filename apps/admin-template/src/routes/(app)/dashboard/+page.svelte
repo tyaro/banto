@@ -1,55 +1,45 @@
 <script lang="ts">
 	/**
 	 * M4 dashboard (spec §6): real charts built from the `items` data, in
-	 * place of the M1-M3 placeholder cards. Same "load once, whole dataset"
-	 * pattern as the items page ($effect load/dispose around
-	 * createListResource) since the dashboard needs the full set to
-	 * aggregate, not a paginated window.
+	 * place of the M1-M3 placeholder cards.
+	 *
+	 * #716 W1 (downstream-requests-2026-11-plan §4.13): the page no longer draws
+	 * a chart itself. It reads the data ONCE (`createDashboardData`) and hands
+	 * it to the KPI strip (`DashboardKpiStrip`, defined by `dashboardKpis.ts`)
+	 * and to the widgets registered in `dashboardWidgets.ts` - one registration
+	 * + one component file per widget. The two places of today stay: the fixed
+	 * cards (`DASHBOARD_CARDS`) and the dock below them (W2 makes them one dock).
+	 *
+	 * scaffold: everything the dock needs sits between `[scaffold:dock]` marks
+	 * (the imports, the script, the View menu, the workspace, the snippets);
+	 * `scripts/scaffold.mjs` (`removeDock`) cuts those regions. Nothing here
+	 * imports the charts package: `removeCharts` does not touch this file.
 	 */
-	import { BarChart, LineChart, PieChart, ScatterChart, Sparkline } from '@banto/charts';
-	import { createListResource } from '@banto/admin-core';
+	// [scaffold:dock] begin
 	import {
 		DockHost,
 		clampWindowToHost,
 		createDockLayoutStore,
 		createDockState,
 		type DockLayout,
+		type DockNode,
 		type PanelContent
 	} from '@banto/dock-svelte';
-	import { LayoutGrid, JapaneseYen, Package, TriangleAlert, Warehouse } from '@lucide/svelte';
-	// Its own line: scaffold.mjs's dock remover rewrites the line above by text.
-	import { ChevronRight } from '@lucide/svelte';
-	import { resolveAppPath } from '#lib/appPath.js';
-	import {
-		LOW_STOCK_THRESHOLD,
-		LOW_STOCK_VIEW_ID,
-		itemsResource
-	} from '#lib/banto/resources/items.js';
-	import * as m from '#lib/paraglide/messages.js';
-	import type { Item } from '#lib/banto/sampleData.js';
-	import {
-		byCategory,
-		computeStatTiles,
-		priceBuckets,
-		scatterSample,
-		stockByCategoryPriceBand,
-		updatesByMonth
-	} from '#lib/banto/dashboard.js';
-	import { PANEL_DEFS, findPanelDef } from '#lib/banto/panels.js';
+	import { LayoutGrid } from '@lucide/svelte';
 	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import { dockMessages } from '#lib/banto/dockMessages.js';
 	import { refreshPanelTitles } from '#lib/banto/dockTitles.js';
-	// Its own line: scaffold.mjs's dock remover drops it by text (the layout save's owner, #791).
+	// The layout save's owner (#791).
 	import { currentSessionScope, isCurrentSessionScope } from '@banto/admin-core';
-	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
 	import {
 		MEMO_PANEL_ID,
 		createDashboardMemo,
 		createPanelChangeHandler,
-		memoSaveCommand
+		memoSaveCommand,
+		provideDashboardMemoPane
 	} from '#lib/banto/dashboardMemo.svelte.js';
 	import { appShortcuts, firstPressOnly, SAVE_SHORTCUT } from '#lib/shortcuts.js';
 	import { createSettlePrompt } from '#lib/banto/settlePrompt.svelte.js';
@@ -57,35 +47,30 @@
 	import { formValidationMessages } from '#lib/banto/i18n.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import type { DraftSettleResult } from '@banto/forms';
-	import DashboardMemoField from '#lib/components/DashboardMemoField.svelte';
 	import DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';
-	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import PageViewMenu, { type PageViewMenuItem } from '#lib/components/PageViewMenu.svelte';
+	// [scaffold:dock] end
+	import * as m from '#lib/paraglide/messages.js';
+	import { createDashboardData } from '#lib/banto/dashboardData.svelte.js';
+	import { DASHBOARD_CARDS, findDashboardWidget } from '#lib/banto/dashboardWidgets.js';
+	import DashboardKpiStrip from '#lib/components/DashboardKpiStrip.svelte';
+	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { PageHeader, LoadingState } from '@banto/ui';
 
-	const list = createListResource<Item>('items', {
-		initialParams: { pagination: { offset: 0, limit: 20_000 } }
-	});
-
-	// #555 (4): the 在庫僅少 tile opens this list view (ResourceListPage reads `?view=`).
-	const lowStockHref = `${resolveAppPath(itemsResource.path)}?view=${LOW_STOCK_VIEW_ID}`;
+	// The one read of `items` for this document (same "load once, whole dataset" pattern as the
+	// items page: the dashboard aggregates over the full set, not a paginated window). The KPI
+	// strip and every widget get it as a prop; none of them reads `items` itself.
+	const data = createDashboardData();
 
 	$effect(() => {
-		void list.load();
-		return () => list.dispose();
+		void data.load();
+		return () => data.dispose();
 	});
 
-	const stats = $derived(computeStatTiles(list.rows));
-	const categoryStock = $derived(byCategory(list.rows));
-	const categoryPriceBand = $derived(stockByCategoryPriceBand(list.rows));
-	const buckets = $derived(priceBuckets(list.rows));
-	const monthCounts = $derived(updatesByMonth(list.rows));
-	const scatterRows = $derived(scatterSample(list.rows));
-
-	const yen = (n: number) => `¥${n.toLocaleString()}`;
-	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
-
+	/** The chart height of a fixed card (W1: the cards keep today's grid; W2 moves them into the dock). */
+	const CARD_CHART_HEIGHT = 280;
+	// [scaffold:dock] begin
 	/**
 	 * M8 dock demo (spec §5, @banto/dock-svelte): the default layout docks the
 	 * two chart panels side by side (a row split) with the メモ panel
@@ -97,54 +82,47 @@
 	 */
 	const DOCK_STORAGE_KEY = 'banto.dock.dashboard';
 
-	// Panel id/title/icon defs moved to #lib/banto/panels.ts (spec §5.3 v2):
-	// shared with the standalone routes/panel/[id] route a popped-out panel
-	// renders as, which has no access to this page's own locals.
-	const PANEL_META: Record<string, { title: string; icon: string }> = Object.fromEntries(
-		PANEL_DEFS.map((d) => [d.id, { title: d.title, icon: d.icon! }])
-	);
+	// W1 (#716): the widgets the dock offers as panels (= the View menu's rows), in this order.
+	// A widget that is not registered (its package was removed by scaffold) is skipped. W2 puts
+	// every registered widget into the dock and removes this list.
+	const DOCK_PANELS = ['monthly', 'priceBuckets', 'spc', 'trend', 'memo']
+		.map(findDashboardWidget)
+		.filter((def) => def !== undefined);
+	/** Docked side by side in the default layout (those of them that are registered). */
+	const DEFAULT_DOCKED_IDS = ['monthly', 'priceBuckets'];
 
 	/** The seeded default: monthly | priceBuckets docked side by side, メモ floating. `hostW/H` clamp the floating window into view. */
 	function defaultLayout(hostW: number, hostH: number): DockLayout {
-		const memoDef = PANEL_DEFS.find((d) => d.id === 'memo')!;
-		const memo = clampWindowToHost(
-			{
-				id: 'memo',
-				title: memoDef.title,
-				icon: memoDef.icon,
-				x: hostW - (memoDef.width ?? 320) - 24,
-				y: hostH - (memoDef.height ?? 220) - 24,
-				width: memoDef.width ?? 320,
-				height: memoDef.height ?? 220,
-				open: true
-			},
-			hostW,
-			hostH
+		const floating = DOCK_PANELS.filter((def) => def.id === MEMO_PANEL_ID).map((memoDef) =>
+			clampWindowToHost(
+				{
+					id: memoDef.id,
+					title: memoDef.title,
+					icon: memoDef.icon,
+					x: hostW - (memoDef.width ?? 320) - 24,
+					y: hostH - (memoDef.height ?? 220) - 24,
+					width: memoDef.width ?? 320,
+					height: memoDef.height ?? 220,
+					open: true
+				},
+				hostW,
+				hostH
+			)
 		);
-		return {
-			version: 4,
-			floating: [memo],
-			docked: {
-				type: 'split',
-				id: 'root',
-				direction: 'row',
-				children: [
-					{
-						type: 'panel',
-						id: 'monthly',
-						title: PANEL_META.monthly.title,
-						icon: PANEL_META.monthly.icon
-					},
-					{
-						type: 'panel',
-						id: 'priceBuckets',
-						title: PANEL_META.priceBuckets.title,
-						icon: PANEL_META.priceBuckets.icon
+		const panels = DOCK_PANELS.filter((def) => DEFAULT_DOCKED_IDS.includes(def.id)).map(
+			(def): DockNode => ({ type: 'panel', id: def.id, title: def.title, icon: def.icon })
+		);
+		const docked: DockNode | null =
+			panels.length > 1
+				? {
+						type: 'split',
+						id: 'root',
+						direction: 'row',
+						children: panels,
+						sizes: panels.map(() => 1 / panels.length)
 					}
-				],
-				sizes: [0.5, 0.5]
-			}
-		};
+				: (panels[0] ?? null);
+		return { version: 4, floating, docked };
 	}
 
 	// M12 (spec §12.1): the UiSettingsProvider key the layout is saved under
@@ -168,7 +146,7 @@
 		scope: currentSessionScope(),
 		isCurrent: isCurrentSessionScope,
 		// A layout saved in another locale: today's titles by panel id (dockTitles.ts, #729 review).
-		validate: (json) => refreshPanelTitles(json, (id) => findPanelDef(id)?.title),
+		validate: (json) => refreshPanelTitles(json, (id) => findDashboardWidget(id)?.title),
 		// Not before the host is measured: the floating メモ is clamped into it.
 		defaultLayout: () =>
 			dockHostW === 0 || dockHostH === 0 ? null : defaultLayout(dockHostW, dockHostH)
@@ -238,6 +216,16 @@
 			appShortcuts.register('dashboard', [firstPressOnly(memoSave, appShortcuts.isRepeat)])
 		)
 	);
+	// The memo widget (MemoWidget.svelte) draws this: every widget takes the same props, so the
+	// page's memo reaches it through context. Getters: the draft is one object, `status` changes.
+	provideDashboardMemoPane({
+		draft: memo.draft,
+		save: memoSave,
+		saveTitle: memoSaveTitle,
+		get status() {
+			return memoStatus;
+		}
+	});
 
 	// Page lifetime: register the draft's source, read the stored memo once, and
 	// drop everything (an open question answers 'cancel') on unmount.
@@ -304,7 +292,7 @@
 	/**
 	 * #663 ①-C: the View menu (PageViewMenu - the menu bar's "表示" when the
 	 * bar is on screen, else a button in this page's header) replaces the old
-	 * dock toolbar. One checkbox per panel in PANEL_DEFS order, checked = on
+	 * dock toolbar. One checkbox per panel in DOCK_PANELS order, checked = on
 	 * screen (docked, a background tab included, or an open floating window),
 	 * read from `dock.panels` so a refused / stale change shows the real state.
 	 */
@@ -315,7 +303,7 @@
 			// or-open floating window first (a no-op for an id already docked or
 			// floating), then show it - a pane hidden from the dock goes back to
 			// its former slot.
-			const def = PANEL_DEFS.find((d) => d.id === id);
+			const def = DOCK_PANELS.find((d) => d.id === id);
 			if (def) dock.ensureWindow(def, dockHostW, dockHostH);
 		}
 		// Hiding goes through the dock lifecycle like ✕ (closing discards the
@@ -326,7 +314,7 @@
 	const viewMenuItems: PageViewMenuItem[] = $derived.by(() => {
 		const visible = new Map(dock.panels.map((row) => [row.id, row.visible]));
 		return [
-			...PANEL_DEFS.map((def): PageViewMenuItem => {
+			...DOCK_PANELS.map((def): PageViewMenuItem => {
 				const checked = visible.get(def.id) ?? false;
 				return {
 					kind: 'checkbox',
@@ -365,7 +353,7 @@
 				// unapplied input, and a structure change made while that waits makes
 				// it `stale`). Only an applied close pops out; the close already
 				// undocked + closed the pane with its geometry kept. (The pop-out
-				// window shows DashboardPanel's static memo text, not this page's draft.)
+				// window shows MemoWidget's static memo text, not this page's draft.)
 				if ((await dockHost?.closePanel(content.id)) !== 'applied') return;
 				void openPanelWindow(content);
 			}
@@ -384,16 +372,19 @@
 		if (!isTauri()) return;
 		return listenPanelClosed((id) => dock.open(id));
 	});
+	// [scaffold:dock] end
 </script>
 
 <div class="page">
 	<PageHeader
 		hideTitle
 		title={m['nav.dashboard']()}
-		description={m['dashboard.summary']({ count: list.totalCount.toLocaleString() })}
+		description={m['dashboard.summary']({ count: data.totalCount.toLocaleString() })}
 	>
 		{#snippet actions()}
+			<!-- [scaffold:dock] begin -->
 			<PageViewMenu label={m['dashboard.viewMenu']()} items={viewMenuItems} />
+			<!-- [scaffold:dock] end -->
 			<AnnotationButton />
 		{/snippet}
 	</PageHeader>
@@ -401,128 +392,29 @@
 	<!-- At the page root, not in PageHeader's actions: the header is a
 	     containing block for fixed descendants (annotation.svelte.ts). -->
 	<AnnotationDrawer>
-		<p>{m['dashboard.aboutNote']({ count: list.totalCount.toLocaleString() })}</p>
+		<p>{m['dashboard.aboutNote']({ count: data.totalCount.toLocaleString() })}</p>
 	</AnnotationDrawer>
 
-	<div class="stat-row">
-		<section class="stat-tile">
-			<span class="stat-icon" aria-hidden="true"><Package size={18} /></span>
-			<div class="stat-body">
-				<span class="stat-label">{m['dashboard.statCount']()}</span>
-				<span class="stat-value">{stats.count.toLocaleString()}</span>
-			</div>
-		</section>
-		<section class="stat-tile">
-			<span class="stat-icon" aria-hidden="true"><Warehouse size={18} /></span>
-			<div class="stat-body">
-				<span class="stat-label">{m['dashboard.statStockTotal']()}</span>
-				<div class="stat-value-row">
-					<span class="stat-value">{stats.stockTotal.toLocaleString()}</span>
-					<Sparkline values={monthCounts.map((mc) => mc.count)} width={72} height={24} />
-				</div>
-			</div>
-		</section>
-		<section class="stat-tile">
-			<span class="stat-icon" aria-hidden="true"><JapaneseYen size={18} /></span>
-			<div class="stat-body">
-				<span class="stat-label">{m['dashboard.statAvgPrice']()}</span>
-				<span class="stat-value">{yen(stats.avgPrice)}</span>
-			</div>
-		</section>
-		<!-- #555 (4): the tile opens the items list on its `low-stock` view
-		     (same LOW_STOCK_THRESHOLD as the count). -->
-		<a class="stat-tile stat-link" href={lowStockHref} title={m['dashboard.statLowStockOpen']()}>
-			<span class="stat-icon" aria-hidden="true"><TriangleAlert size={18} /></span>
-			<div class="stat-body">
-				<span class="stat-label">
-					{m['dashboard.statLowStock']({ threshold: LOW_STOCK_THRESHOLD })}
-				</span>
-				<span class="stat-value">{stats.lowStockCount.toLocaleString()}</span>
-			</div>
-			<ChevronRight class="stat-link-icon" size={16} aria-hidden="true" />
-		</a>
-	</div>
+	<DashboardKpiStrip {data} />
 
-	{#if list.loading && list.rows.length === 0}
+	{#if data.loading && data.rows.length === 0}
 		<LoadingState label={m['items.loadingData']()} />
 	{:else}
-		<div class="chart-grid">
-			<section class="card primary">
-				<h2>{m['dashboard.monthlyTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.monthlyCaption']()}</p>
-				<LineChart
-					data={monthCounts}
-					x={(row) => row.month}
-					series={[{ id: 'count', label: m['dashboard.seriesUpdates'](), y: (row) => row.count }]}
-					area
-					label={m['dashboard.monthlyAria']()}
-					height={280}
-					formatY={(n) => n.toLocaleString()}
-				/>
-			</section>
-
-			<section class="card secondary">
-				<h2>{m['dashboard.categoryStockTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.categoryStockCaption']()}</p>
-				<BarChart
-					data={categoryStock}
-					category={(row) => row.category}
-					series={[{ id: 'stock', label: m['dashboard.seriesStock'](), value: (row) => row.stock }]}
-					horizontal
-					label={m['dashboard.categoryStockAria']()}
-					height={280}
-					formatValue={(n) => n.toLocaleString()}
-				/>
-			</section>
-
-			<section class="card secondary">
-				<h2>{m['dashboard.stackedBarTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.stackedBarCaption']()}</p>
-				<BarChart
-					data={categoryPriceBand}
-					category={(row) => row.category}
-					series={[
-						{ id: 'low', label: m['dashboard.priceBandLow'](), value: (row) => row.low },
-						{ id: 'mid', label: m['dashboard.priceBandMid'](), value: (row) => row.mid },
-						{ id: 'high', label: m['dashboard.priceBandHigh'](), value: (row) => row.high }
-					]}
-					stacked
-					label={m['dashboard.stackedBarAria']()}
-					height={280}
-					formatValue={(n) => n.toLocaleString()}
-				/>
-			</section>
-
-			<section class="card secondary">
-				<h2>{m['dashboard.priceBucketTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.priceBucketCaption']()}</p>
-				<PieChart
-					data={buckets}
-					category={(row) => row.bucket}
-					value={(row) => row.count}
-					donut
-					label={m['dashboard.priceBucketAria']()}
-					height={280}
-					formatValue={countLabel}
-				/>
-			</section>
-
-			<section class="card secondary">
-				<h2>{m['dashboard.scatterTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.scatterCaption']()}</p>
-				<ScatterChart
-					data={scatterRows}
-					x={(row) => row.price}
-					y={(row) => row.stock}
-					pointLabel={(row) => row.name}
-					label={m['dashboard.scatterAria']()}
-					height={280}
-					formatX={(v) => yen(Number(v))}
-					formatY={(v) => countLabel(Number(v))}
-				/>
-			</section>
-		</div>
-
+		{#if DASHBOARD_CARDS.length > 0}
+			<div class="chart-grid">
+				{#each DASHBOARD_CARDS as card (card.id)}
+					{@const widget = findDashboardWidget(card.id)}
+					{#if widget}
+						<section class="card {card.tier}">
+							<h2>{widget.title}</h2>
+							<p class="card-caption">{card.caption}</p>
+							<widget.component {data} height={CARD_CHART_HEIGHT} />
+						</section>
+					{/if}
+				{/each}
+			</div>
+		{/if}
+		<!-- [scaffold:dock] begin -->
 		<section class="workspace">
 			<h2 class="workspace-heading">
 				<LayoutGrid size={18} aria-hidden="true" />{m['dashboard.workspaceHeading']()}
@@ -549,8 +441,10 @@
 				discardLabel={m['dashboard.memoCloseDiscard']()}
 			/>
 		</section>
+		<!-- [scaffold:dock] end -->
 	{/if}
 </div>
+<!-- [scaffold:dock] begin -->
 
 {#snippet dockIcon(icon: string)}
 	<PanelIcon {icon} />
@@ -558,25 +452,23 @@
 
 {#snippet dockPanel(content: PanelContent)}
 	<!--
-		Body extracted to DashboardPanel.svelte (spec §5.3 v2 pop-out): the
+		The body is the registered widget's component (dashboardWidgets.ts). The
 		SAME component renders this panel's content standalone at
-		routes/panel/[id] once popped out into a real Tauri window, so the
-		markup can't depend on anything from this page beyond the measured
-		height below.
+		routes/panel/[id] once popped out into a real Tauri window, so it can't
+		depend on anything from this page beyond its props: the data read once
+		above, and the measured height below.
 	-->
+	{@const widget = findDashboardWidget(content.id)}
 	<div class="dock-panel" bind:clientHeight={panelHeights[content.id]}>
-		{#if content.id === MEMO_PANEL_ID}
-			<DashboardMemoField
-				draft={memo.draft}
-				save={memoSave}
-				saveTitle={memoSaveTitle}
-				status={memoStatus}
-			/>
+		{#if widget}
+			<widget.component {data} height={chartHeight(content.id)} />
 		{:else}
-			<DashboardPanel id={content.id} height={chartHeight(content.id)} />
+			<p class="dock-status">{m['dashboard.unknownPanel']()}</p>
 		{/if}
 	</div>
 {/snippet}
+
+<!-- [scaffold:dock] end -->
 
 <style>
 	.page {
@@ -585,132 +477,7 @@
 		gap: var(--banto-space-4);
 	}
 
-	/* "About this demo" collapsible (design.md §10): the long technical note
-	   used to sit at the top of the page, ahead of the KPIs/charts it
-	   describes. Closed by default. */
-	/* KPI tiles (design.md §10): icon + label + tabular-nums value. Tile-only
-	   card (not SurfaceCard, spec §K3): same face/border/radius/shadow tokens
-	   without SurfaceCard's optional title/description header. */
-	.stat-row {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-		gap: var(--banto-space-4);
-	}
-
-	/* Card tiers (#623): KPI row = subtle (flat), the main chart = primary,
-	   the other charts = default. Tokens in banto.css (--banto-card-*). */
-	.stat-tile {
-		background: var(--banto-card-subtle-bg);
-		border: var(--banto-border-width) solid var(--banto-border);
-		border-radius: var(--banto-radius-lg);
-		box-shadow: var(--banto-card-subtle-shadow);
-		padding: var(--banto-space-4) var(--banto-space-5);
-		display: flex;
-		align-items: center;
-		gap: var(--banto-space-3);
-	}
-
-	/* #555 (4): a tile that opens a list view (the 在庫僅少 tile). */
-	.stat-link {
-		color: inherit;
-		text-decoration: none;
-		transition: border-color var(--banto-duration-fast) var(--banto-ease-out);
-	}
-
-	.stat-link:hover {
-		border-color: var(--banto-primary);
-	}
-
-	.stat-link:focus-visible {
-		outline: none;
-		box-shadow: var(--banto-focus-ring);
-	}
-
-	.stat-link :global(.stat-link-icon) {
-		margin-left: auto;
-		flex: none;
-		color: var(--banto-text-muted);
-	}
-
-	.stat-icon {
-		flex: 0 0 auto;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border-radius: var(--banto-radius-md);
-		background: color-mix(in srgb, var(--banto-primary) 12%, transparent);
-		color: var(--banto-primary);
-	}
-
-	.stat-body {
-		display: flex;
-		flex-direction: column;
-		gap: var(--banto-space-1);
-		min-width: 0;
-	}
-
-	.stat-label {
-		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
-	}
-
-	.stat-value {
-		font-size: var(--banto-font-size-2xl);
-		font-weight: 650;
-		color: var(--banto-text);
-		font-variant-numeric: tabular-nums;
-	}
-
-	/* Kiosk (#624 PR-2): KPIs readable from across the room. Keyed on the
-	   shell's .kiosk class (settings.kiosk), not on density. The number never
-	   wraps; its size shrinks with the width of the text column (.stat-body is
-	   an inline-size container), not the viewport. 15cqi fits ~9 bold
-	   tabular digits (about 5.8em). The sparkline drops below the number so it
-	   does not eat that width. */
-	:global(.shell.kiosk) .stat-row {
-		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-	}
-
-	:global(.shell.kiosk) .stat-icon {
-		width: 56px;
-		height: 56px;
-	}
-
-	:global(.shell.kiosk) .stat-label {
-		font-size: var(--banto-font-size-lg);
-	}
-
-	:global(.shell.kiosk) .stat-body {
-		flex: 1 1 0;
-		container-type: inline-size;
-	}
-
-	:global(.shell.kiosk) .stat-value {
-		font-size: min(var(--banto-font-size-3xl), 15cqi);
-		line-height: 1.1;
-		white-space: nowrap;
-	}
-
-	:global(.shell.kiosk) .stat-value-row {
-		flex-direction: column;
-		align-items: flex-start;
-		gap: var(--banto-space-1);
-	}
-
-	@media (max-width: 600px) {
-		:global(.shell.kiosk) .stat-icon {
-			width: 36px;
-			height: 36px;
-		}
-	}
-
-	.stat-value-row {
-		display: flex;
-		align-items: center;
-		gap: var(--banto-space-3);
-	}
+	/* The KPI strip's rules live in DashboardKpiStrip.svelte. */
 
 	/* Asymmetric 12-column chart grid (design.md §10, plan Phase 3): the
 	   primary (monthly-trend) chart spans 8/12, secondary charts 4/12 each,
@@ -791,5 +558,13 @@
 		height: 100%;
 		box-sizing: border-box;
 		padding: var(--banto-space-3);
+	}
+
+	/* A panel id the registry does not know (a stale saved layout). Caption-style, like .card-caption. */
+	.dock-status {
+		margin: 0;
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-sm);
+		text-wrap: pretty;
 	}
 </style>

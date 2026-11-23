@@ -1,10 +1,13 @@
 <script lang="ts">
 	import type { Component } from 'svelte';
 	import {
+		ChartBar,
 		ChartColumn,
+		ChartColumnStacked,
 		ChartLine,
 		ChartNoAxesCombined,
 		ChartPie,
+		ChartScatter,
 		NotepadText
 	} from '@lucide/svelte';
 
@@ -15,8 +18,11 @@
 	const ICONS: Record<string, Component> = {
 		monthly: ChartLine,
 		'📈': ChartLine,
+		categoryStock: ChartBar,
+		stackedBar: ChartColumnStacked,
 		priceBuckets: ChartPie,
 		'🥧': ChartPie,
+		scatter: ChartScatter,
 		spc: ChartColumn,
 		'📊': ChartColumn,
 		trend: ChartNoAxesCombined,
