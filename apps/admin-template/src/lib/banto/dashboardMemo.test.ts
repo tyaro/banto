@@ -18,6 +18,7 @@ import {
 	canDiscardAfterSettle,
 	canSaveMemo,
 	createDashboardMemo,
+	trackClosePending,
 	createPanelChangeHandler,
 	memoSaveCommand,
 	memoText
@@ -451,5 +452,50 @@ describe('memoSaveCommand', () => {
 		expect(ask).not.toHaveBeenCalled();
 		expect(memoText(memo.draft.baseline)).toBe('ctrl+s');
 		memo.dispose();
+	});
+});
+
+describe('trackClosePending (#886 review: the swap waits for the close to be decided)', () => {
+	const close = { kind: 'close', panelId: MEMO_PANEL_ID } as never;
+
+	it('is pending from the ask until the answer, and released after it', async () => {
+		let answer!: (v: boolean) => void;
+		const events: boolean[] = [];
+		const handler = trackClosePending(
+			() => new Promise<boolean>((r) => (answer = r)),
+			(p) => events.push(p)
+		);
+		const result = handler(close);
+		expect(events).toEqual([true]);
+		answer(true);
+		await expect(result).resolves.toBe(true);
+		expect(events).toEqual([true, false]);
+	});
+
+	it('is released when the close rejects or throws', async () => {
+		const events: boolean[] = [];
+		const rejecting = trackClosePending(
+			() => Promise.reject(new Error('save failed')),
+			(p) => events.push(p)
+		);
+		await expect(rejecting(close)).rejects.toThrow('save failed');
+		expect(events).toEqual([true, false]);
+
+		events.length = 0;
+		const throwing = trackClosePending(
+			() => {
+				throw new Error('boom');
+			},
+			(p) => events.push(p)
+		);
+		expect(() => throwing(close)).toThrow('boom');
+		expect(events).toEqual([true, false]);
+	});
+
+	it('ignores the changes that answer at once', () => {
+		const onPending = vi.fn();
+		const handler = trackClosePending(() => true, onPending);
+		expect(handler({ kind: 'dock', panelId: MEMO_PANEL_ID, remount: true } as never)).toBe(true);
+		expect(onPending).not.toHaveBeenCalled();
 	});
 });

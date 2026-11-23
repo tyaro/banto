@@ -498,6 +498,46 @@ test("the memo's close question holds the switch: discarding closes the pane as 
 	await expect(memoInput).toHaveValue('');
 });
 
+test('"save and close" holds the switch until the save is back: the pane closes first, then the stack takes over', async ({
+	page
+}) => {
+	await openDashboard(page);
+	const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
+	const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
+	await memoInput.fill('kept');
+	await dockHost(page)
+		.getByRole('button', { name: `${MEMO}を閉じる` })
+		.click();
+	await expect(settleDialog).toBeVisible();
+
+	// Hold the memo's save: the local provider writes under this Web Lock (the REST / Tauri
+	// providers wait on the server instead).
+	await page.evaluate(() => {
+		const w = window as unknown as { __releaseSave: () => void };
+		void navigator.locks.request(
+			'banto.ui.dashboard.memo',
+			() => new Promise<void>((resolve) => (w.__releaseSave = resolve))
+		);
+	});
+
+	await settleDialog.getByRole('button', { name: '保存して閉じる' }).click();
+	// The dialog is gone, but the save is still running: narrowing now must not swap yet.
+	await expect(settleDialog).toHaveCount(0);
+	await page.setViewportSize({ width: 700, height: 900 });
+	await page.waitForTimeout(400);
+	await expect(dockHost(page)).toBeVisible();
+	await expect(stack(page)).toHaveCount(0);
+	await expect(memoInput).toBeVisible();
+
+	// The save comes back: the pane closes, and only then the stack takes over.
+	await page.evaluate(() => (window as unknown as { __releaseSave: () => void }).__releaseSave());
+	await expect(stack(page)).toBeVisible();
+	await expect(dockHost(page)).toHaveCount(0);
+	await expect(stack(page).getByRole('heading', { name: MEMO, exact: true })).toHaveCount(0);
+	await expect(memoInput).toHaveCount(0);
+	expect(await stored(page, 'banto.ui.dashboard.memo')).toBe('kept');
+});
+
 test('keyboard only: add a widget, move it, hide it', async ({ page }) => {
 	await openDashboard(page);
 	const host = dockHost(page);

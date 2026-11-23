@@ -53,6 +53,7 @@
 	import {
 		createDashboardMemo,
 		createPanelChangeHandler,
+		trackClosePending,
 		memoSaveCommand,
 		provideDashboardMemoPane
 	} from '#lib/banto/dashboardMemo.svelte.js';
@@ -165,6 +166,8 @@
 	});
 	const memoPrompt = createSettlePrompt();
 	let memoStatus = $state<string | null>(null);
+	/** Memo closes being decided (the prompt, then the save / discard it chose). */
+	let closing = $state(0);
 
 	// An IME composition open somewhere in the document (`compositionstart` without its end; a
 	// composition abandoned by moving the focus away ends with `focusout`). The same rule the dock
@@ -189,16 +192,18 @@
 	 * would lose something (#886 review):
 	 *  - an IME composition is open: the text being converted lives in the textarea, not yet in
 	 *    the draft. The swap happens once the composition has ended and its text was taken;
-	 *  - the memo's close question is open: the host that asked would be gone, its pending close
-	 *    stale, and "discard and close" would discard the text without closing the pane. The swap
-	 *    happens once the question is answered (and the close applied or refused).
+	 *  - a close of the memo is being decided (`closing`): from the host's ask until the answer
+	 *    is back - the question, and the save / discard chosen in it (the dialog is gone by then,
+	 *    but the save may still be running). The host that asked would be gone, its pending close
+	 *    stale: the text saved or dropped without the pane closing. The swap happens once the
+	 *    close was applied or refused, on every way out.
 	 * Taken over in the NEXT frame in any case: the measurement arrives from a ResizeObserver, and
 	 * swapping other observed boxes within the same delivery is reported as a "ResizeObserver
 	 * loop" error. (After `compositionend` this also lets the composition's last input land.)
 	 */
 	$effect(() => {
 		const width = measuredWidth;
-		if (composing || memoPrompt.open) return;
+		if (composing || closing > 0) return;
 		const frame = requestAnimationFrame(() => {
 			pageWidth = width;
 		});
@@ -218,12 +223,15 @@
 	// Transition by transition (plan §3.5's table): dock / undock / move /
 	// tab switch / hide only capture (no prompt); a close - which discards the
 	// pane's content - settles first and closes only when the draft is clean.
-	const beforePanelChange = createPanelChangeHandler({
-		// Serialized: a close waits for a save already in flight (PR #449 review).
-		coordinator: memo.serial,
-		ask: (dirtyKeys) => memoPrompt.ask(dirtyKeys),
-		onSettled: (_panelId, result) => noteMemoSettled(result)
-	});
+	const beforePanelChange = trackClosePending(
+		createPanelChangeHandler({
+			// Serialized: a close waits for a save already in flight (PR #449 review).
+			coordinator: memo.serial,
+			ask: (dirtyKeys) => memoPrompt.ask(dirtyKeys),
+			onSettled: (_panelId, result) => noteMemoSettled(result)
+		}),
+		(pending) => (closing += pending ? 1 : -1)
+	);
 
 	async function saveMemo(): Promise<void> {
 		noteMemoSettled(await memo.save());
