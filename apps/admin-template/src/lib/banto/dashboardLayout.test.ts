@@ -16,6 +16,7 @@ import {
 	validateDashboardLayout
 } from './dashboardLayout';
 import { DASHBOARD_WIDGETS, findDashboardWidget } from './dashboardWidgets';
+import { refreshPanelTitles } from './dockTitles';
 
 function panelIds(node: DockNode | null): string[] {
 	if (node === null) return [];
@@ -175,6 +176,63 @@ describe('validateDashboardLayout', () => {
 				})
 			)
 		).toBeNull();
+	});
+
+	it('keeps what the dock itself writes: floated, closed, tabbed and auto-hidden panes, a tab group in a band', () => {
+		// The saved value also holds ids that are NOT panels (splits, tab groups - a tab group in
+		// an edge band is kept by its own id in the tree of the bands' places). None of them may
+		// read as "a widget the registry does not have".
+		const [first, second] = DASHBOARD_WIDGETS;
+		if (!first || !second) throw new Error('needs two registered widgets');
+		const tabbed = (): DockNode => ({
+			type: 'split',
+			id: 'root',
+			direction: 'row',
+			sizes: [0.5, 0.5],
+			children: [
+				{
+					type: 'tabs',
+					id: 'tabs-1',
+					activeIndex: 0,
+					children: [
+						{ type: 'panel', id: first.id, title: first.title },
+						{ type: 'panel', id: second.id, title: second.title }
+					]
+				},
+				// Not a widget: only here so that the tab group has a neighbour. Checked apart.
+				{ type: 'panel', id: 'neighbour', title: 'Neighbour' }
+			]
+		});
+		const accepts = (dock: ReturnType<typeof createDockState>): void => {
+			// Without the neighbour's own id, every id left must pass.
+			const saved = dock.serialize();
+			const unknown: string[] = [];
+			refreshPanelTitles(saved, (id) => {
+				if (id !== 'neighbour' && !findDashboardWidget(id)) unknown.push(id);
+				return undefined;
+			});
+			expect(unknown, saved).toEqual([]);
+		};
+
+		// The whole tab group to an edge band.
+		const banded = createDockState();
+		expect(banded.hydrate(withDocked(tabbed()))).toBe(true);
+		expect(banded.autoHideRegion('tabs-1')).toBe(true);
+		accepts(banded);
+
+		// One pane floated, then closed.
+		const floated = createDockState();
+		expect(floated.hydrate(withDocked(tabbed()))).toBe(true);
+		floated.undockPanel(first.id, { x: 10, y: 10, width: 300, height: 200 });
+		accepts(floated);
+		floated.close(first.id);
+		accepts(floated);
+
+		// The default itself, with a pane in a band: accepted as a whole.
+		const fromDefault = createDockState();
+		expect(fromDefault.hydrate(JSON.stringify(defaultDashboardLayout()))).toBe(true);
+		if (fromDefault.autoHideRegion(first.id))
+			expect(validateDashboardLayout(fromDefault.serialize())).not.toBeNull();
 	});
 
 	it('leaves a value that is not JSON to the dock (which refuses it)', () => {
