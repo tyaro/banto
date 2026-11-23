@@ -227,10 +227,10 @@ onDestroy(() => layout.dispose());
 - `load()` は読み込み中の編集を上書きしない（保存値は `saved` に入る）。新しい `load()`・保存・`dispose()` で
   古い読み込みの結果は捨てる（`'stale'`）。古い応答の破棄は `createRequestOwner` で行う。
 - 破損・未知の version は `parse` に任せる（`'invalid'` で `current` は `fallback()`、例外は外へ出さない）。
-- **再送（`retry`）**: 「一時的な失敗」だけ、同じ snapshot を間隔を延ばしながら送り直す（既定は計 3 回・待ちは 500ms →
-  1s、上限 5s）。既定の「一時的」は `isNetworkError`（サーバーに届かない・タイムアウト）だけ。サーバーの 4xx/5xx、Tauri の
+- **再送（`retry`、既定は無効。`retry: {}` で有効）**: 「一時的な失敗」だけ、同じ snapshot を間隔を延ばしながら送り直す（計 3 回・待ちは 500ms →
+  1s、上限 5s）。無条件の書き込みの再送は古い snapshot の繰り返しなので、別のタブが後から保存した値を上書きしうる（`merge` を渡せば条件付きになる）。既定の「一時的」は `isNetworkError`（サーバーに届かない・タイムアウト）だけ。サーバーの 4xx/5xx、Tauri の
   失敗、`conflict` は送り直さない（Tauri は一時的かどうかを見分けられず、5xx は繰り返して無害とは限らない）。見分け方は
-  `retry: { isTransient }` で差し替え、`retry: false` で止める。送り始めたときのセッション（`provider.sessionGuard()`）が待ちの間に
+  `retry: { isTransient }` で差し替える（投げれば「一時的でない」）。送り始めたときのセッション（`provider.sessionGuard()`）が待ちの間に
   替われば、送らずに `unauthorized` で止める（別のアカウントの設定に書かない）。待っている間に `save()` が来たら、待ちを
   打ち切って最新の値をすぐ送る。
 - **`merge`（競合の解決）**: `merge: (server, current) => T` を渡すと、書き込みが `ifRevision` つきになる（直近の `load()`・書き込みの
@@ -240,7 +240,9 @@ onDestroy(() => layout.dispose());
   `current` も統合後の値になる。`merge` は何度も呼ばれうるので純粋に保つ。投げれば保存は失敗（`error` にその例外）。
   応答だけが失われた書き込みの送り直しは `conflict`（保存値が送った値と同じ）になり、「保存された」と数える。
 - **`onSettled`**: 送信が終わるたび（再送のあと・状態の更新のあと）に `{ ok, value, error, attempts }` で呼ぶ。rune の外
-  （通知・ログ）へ結果を渡す口。`dispose()` 後は呼ばない。投げても握りつぶす。
+  （通知・ログ）へ結果を渡す口。`dispose()` 後は呼ばない。投げても握りつぶす。中から `save()` / `set()` しても、後続と重ならず待ち行列に入る。
+- セッション: 待ち行列の後続は、受理したときのセッションに紐づく（替わっていれば送らず `unauthorized`）。保存の成功・`load()` の結果も、
+  セッションが替わっていれば反映しない。
 - 即時保存のテーマ設定など既存の画面は載せ替えていない。
 
 ## 切断を見分ける（`isNetworkError`・`createConnectionMonitor`）

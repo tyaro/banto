@@ -28,7 +28,7 @@
  * stored"), so a first save over an existing value conflicts and is merged
  * instead of overwriting it.
  *
- * Re-sending (`retry`): a send that failed *transiently* (by default: the
+ * Re-sending (`retry`, opt-in: `retry: {}`): a send that failed *transiently* (by default: the
  * server never answered, `networkFailure`; see {@link SavedSettingRetry})
  * is sent again with a growing delay, up to a limit. Only the same snapshot
  * is re-sent (a `conflict` is never re-sent unmerged). The session is
@@ -165,7 +165,13 @@ export interface SavedSettingOptions<T> {
 	 * Throwing fails the save with that error.
 	 */
 	merge?: (server: T, current: T) => T;
-	/** Re-send after a transient failure. Default on (see {@link SavedSettingRetry}); `false` turns it off. */
+	/**
+	 * Re-send after a transient failure (see {@link SavedSettingRetry}). Off
+	 * unless given: `retry: {}` turns it on with the defaults. A re-sent
+	 * unconditional write is a plain repeat of the old snapshot, so a caller
+	 * chooses it knowing another writer's newer value may be overwritten
+	 * (give `merge` to make the re-sent write conditional).
+	 */
 	retry?: SavedSettingRetry | false;
 	/**
 	 * Called after every send settles (saved or not, after its retries, after
@@ -230,6 +236,8 @@ class Impl<T> implements SavedSetting<T> {
 	#editVersion = 0;
 	#inflight = false;
 	#queued: Deferred | null = null;
+	/** The session the queued follow-up was accepted under (`null` = none / no sessions). */
+	#queuedGuard: (() => boolean) | null = null;
 	/** Revision of the stored value as last read / written (merge mode). */
 	#revision = UI_SETTING_ABSENT_REVISION;
 	/** Session `#revision` was obtained in (`null` = the provider has no sessions). */
@@ -308,10 +316,15 @@ class Impl<T> implements SavedSetting<T> {
 		if (this.#owner.disposed) return Promise.resolve(false);
 		if (this.#inflight) {
 			this.#queued ??= deferred();
+			// The follow-up belongs to the session it was accepted under; a later
+			// accept under a newer session takes the queue over.
+			if (!this.#queuedGuard || !this.#queuedGuard()) {
+				this.#queuedGuard = this.#options.provider.sessionGuard?.() ?? null;
+			}
 			this.#wake?.();
 			return this.#queued.promise;
 		}
-		return this.#send();
+		return this.#send(this.#options.provider.sessionGuard?.() ?? null);
 	}
 
 	/** A copy of the sent value that the caller cannot mutate: parse the sent text again. */
@@ -344,13 +357,13 @@ class Impl<T> implements SavedSetting<T> {
 		}
 	}
 
-	async #send(): Promise<boolean> {
+	async #send(guard: (() => boolean) | null): Promise<boolean> {
 		// Everything below up to the first `await` is synchronous: the snapshot
 		// and the in-flight flag are fixed before the provider can re-enter.
 		const options = this.#options;
 		const provider = options.provider;
 		const mergeFn = options.merge;
-		const retry = options.retry === false ? null : (options.retry ?? {});
+		const retry = options.retry ? options.retry : null;
 		const maxAttempts = Math.max(1, Math.floor(retry?.maxAttempts ?? 3));
 		const baseDelay = Math.max(0, retry?.baseDelayMs ?? 500);
 		const maxDelay = Math.max(baseDelay, retry?.maxDelayMs ?? 5000);
@@ -362,8 +375,7 @@ class Impl<T> implements SavedSetting<T> {
 		this.#owner.invalidate('load');
 		const request = this.#owner.begin('save');
 		this.#bump();
-		// The session this send belongs to, captured with the snapshot.
-		const guard = provider.sessionGuard?.() ?? null;
+		// `guard` is the session this send was accepted under (see `save()`).
 		if (mergeFn && this.#revisionGuard && !this.#revisionGuard()) {
 			// The revision was read for another session ("0" is the same for every account).
 			this.#revision = UI_SETTING_ABSENT_REVISION;
@@ -375,6 +387,7 @@ class Impl<T> implements SavedSetting<T> {
 		let transientFailures = 0;
 		let conflicts = 0;
 		let newRevision: string | null = null;
+		let completed = false;
 		try {
 			for (;;) {
 				attempts++;
@@ -427,7 +440,13 @@ class Impl<T> implements SavedSetting<T> {
 						}
 						continue;
 					}
-					if (!retry || !isTransient(error) || ++transientFailures >= maxAttempts) break;
+					let transient = false;
+					try {
+						transient = retry !== null && isTransient(error);
+					} catch {
+						transient = false; // a throwing classifier means "not transient"
+					}
+					if (!transient || ++transientFailures >= maxAttempts) break;
 					if (this.#queued === null) {
 						await this.#wait(Math.min(maxDelay, baseDelay * 2 ** (transientFailures - 1)));
 					}
@@ -439,6 +458,12 @@ class Impl<T> implements SavedSetting<T> {
 					}
 					// No `await` between the check above and the next `provider.set`.
 				}
+			}
+			completed = true;
+			if (ok && guard && !guard()) {
+				// Saved for a session that has since ended: its value is not this session's.
+				ok = false;
+				failure = new ProviderError({ kind: 'unauthorized' });
 			}
 			if (ok && request.isCurrent()) {
 				// Expose what was actually sent, not the caller's object: a mutable
@@ -470,17 +495,31 @@ class Impl<T> implements SavedSetting<T> {
 			}
 		} finally {
 			request.finish();
-			this.#inflight = false;
+			if (!completed) this.#inflight = false;
 			this.#saving = false;
 			this.#owner.invalidate('load');
 			this.#bump();
 		}
-		const queued = this.#queued;
-		this.#queued = null;
+		// `#inflight` stays set while `onSettled` runs, so a `save()` / `set()`
+		// it makes joins the queue like any other instead of starting a send
+		// that would overlap the follow-up below.
 		if (!this.#owner.disposed) this.#notify(ok, target, failure, attempts);
+		const queued = this.#queued;
+		const queuedGuard = this.#queuedGuard;
+		this.#queued = null;
+		this.#queuedGuard = null;
+		this.#inflight = false;
 		if (queued) {
-			if (this.#owner.disposed) queued.resolve(false);
-			else void this.#send().then(queued.resolve);
+			if (this.#owner.disposed) {
+				queued.resolve(false);
+			} else if (queuedGuard && !queuedGuard()) {
+				// Accepted under another session: not sent (nothing is written for the new one).
+				this.#error = new ProviderError({ kind: 'unauthorized' });
+				this.#bump();
+				queued.resolve(false);
+			} else {
+				void this.#send(queuedGuard).then(queued.resolve);
+			}
 		}
 		return ok;
 	}
@@ -518,6 +557,7 @@ class Impl<T> implements SavedSetting<T> {
 				return 'failed';
 			}
 			if (!request.isCurrent()) return 'stale';
+			if (guard && !guard()) return 'stale'; // read for a session that has ended
 
 			let parsed: { value: T; raw: string; current: T } | undefined;
 			if (stored !== null) {
@@ -539,6 +579,7 @@ class Impl<T> implements SavedSetting<T> {
 			}
 			// Callbacks above may have re-entered (set / save / dispose): decide now.
 			if (!request.isCurrent()) return 'stale';
+			if (guard && !guard()) return 'stale';
 			const untouched = this.#editVersion === editVersion;
 			this.#error = null;
 			this.#revision = revision;

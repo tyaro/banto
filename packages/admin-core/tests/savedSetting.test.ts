@@ -659,7 +659,7 @@ describe('re-sending a transient failure (#786 C6)', () => {
 			s.script.push({ error: netError() }, { error: netError() });
 			const settled: unknown[] = [];
 			const setting = createSavedSetting(
-				options(s.provider, { onSettled: (r) => settled.push(r) })
+				options(s.provider, { retry: {}, onSettled: (r) => settled.push(r) })
 			);
 			setting.set({ x: 5 });
 			const result = setting.save();
@@ -690,7 +690,7 @@ describe('re-sending a transient failure (#786 C6)', () => {
 			s.script.push({ error: err }, { error: err }, { error: err }, { error: err });
 			const settled: { ok: boolean; attempts: number }[] = [];
 			const setting = createSavedSetting(
-				options(s.provider, { onSettled: (r) => settled.push(r) })
+				options(s.provider, { retry: {}, onSettled: (r) => settled.push(r) })
 			);
 			setting.set({ x: 5 });
 			const result = setting.save();
@@ -708,9 +708,10 @@ describe('re-sending a transient failure (#786 C6)', () => {
 
 	it('does not re-send what is not transient, or when retry is off', async () => {
 		const cases: [ProviderError, Partial<SavedSettingOptions<Pos>>][] = [
-			[new ProviderError({ kind: 'validation', field_errors: [] }), {}],
-			[new ProviderError({ kind: 'storage', message: 'db' }), {}],
-			[new ProviderError({ kind: 'other', message: 'HTTP 503' }), {}],
+			[new ProviderError({ kind: 'validation', field_errors: [] }), { retry: {} }],
+			[new ProviderError({ kind: 'storage', message: 'db' }), { retry: {} }],
+			[new ProviderError({ kind: 'other', message: 'HTTP 503' }), { retry: {} }],
+			[netError(), {}],
 			[netError(), { retry: false }],
 			[netError(), { retry: { maxAttempts: 1 } }]
 		];
@@ -747,7 +748,7 @@ describe('re-sending a transient failure (#786 C6)', () => {
 		try {
 			const s = fakeServer();
 			s.script.push({ error: netError() });
-			const setting = createSavedSetting(options(s.provider));
+			const setting = createSavedSetting(options(s.provider, { retry: {} }));
 			setting.set({ x: 5 });
 			const result = setting.save();
 			await vi.advanceTimersByTimeAsync(100);
@@ -767,7 +768,7 @@ describe('re-sending a transient failure (#786 C6)', () => {
 		try {
 			const s = fakeServer();
 			s.script.push({ error: netError() });
-			const setting = createSavedSetting(options(s.provider));
+			const setting = createSavedSetting(options(s.provider, { retry: {} }));
 			setting.set({ x: 1 });
 			const first = setting.save();
 			await vi.advanceTimersByTimeAsync(100);
@@ -790,7 +791,7 @@ describe('re-sending a transient failure (#786 C6)', () => {
 			s.script.push({ error: netError() });
 			const settled: unknown[] = [];
 			const setting = createSavedSetting(
-				options(s.provider, { onSettled: (r) => settled.push(r) })
+				options(s.provider, { retry: {}, onSettled: (r) => settled.push(r) })
 			);
 			setting.set({ x: 1 });
 			const result = setting.save();
@@ -949,6 +950,7 @@ describe('merge (#786 C6)', () => {
 			const merged: Pos[] = [];
 			const setting = createSavedSetting(
 				options(s.provider, {
+					retry: {},
 					merge: (server, current) => {
 						merged.push(server);
 						return current;
@@ -998,5 +1000,116 @@ describe('merge (#786 C6)', () => {
 		expect(await setting.save()).toBe(false);
 		expect(s.calls).toHaveLength(1);
 		expect((setting.error as ProviderError).body.kind).toBe('unauthorized');
+	});
+});
+
+describe('PR #877 review (#786 C6)', () => {
+	it('a throwing isTransient fails the send normally and the queued follow-up still runs', async () => {
+		const s = fakeServer();
+		s.script.push({ error: netError() });
+		const setting = createSavedSetting(
+			options(s.provider, {
+				retry: {
+					isTransient: () => {
+						throw new Error('classifier');
+					}
+				}
+			})
+		);
+		setting.set({ x: 1 });
+		const first = setting.save();
+		setting.set({ x: 2 });
+		const second = setting.save();
+		expect(await first).toBe(false);
+		expect(await second).toBe(true);
+		expect(s.stored()).toBe(raw(2));
+	});
+
+	it('a save() made from onSettled joins the queue instead of overlapping the follow-up', async () => {
+		const { provider, sets } = manualProvider();
+		let again = false;
+		const setting = createSavedSetting(
+			options(provider, {
+				onSettled: () => {
+					if (again) return;
+					again = true;
+					setting.set({ x: 3 });
+					void setting.save();
+				}
+			})
+		);
+		setting.set({ x: 1 });
+		const first = setting.save();
+		setting.set({ x: 2 });
+		const second = setting.save();
+		sets[0]!.resolve();
+		await first;
+		// one follow-up (carrying the latest value), not two overlapping sends
+		await Promise.resolve();
+		expect(sets).toHaveLength(2);
+		expect(setting.saving).toBe(true);
+		sets[1]!.resolve();
+		expect(await second).toBe(true);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(sets).toHaveLength(2);
+		expect(setting.saved).toEqual({ x: 3 });
+	});
+
+	it('a follow-up accepted under another session is not sent', async () => {
+		const sets: { resolve: () => void }[] = [];
+		let session = 'a';
+		const stored: string[] = [];
+		const provider: UiSettingsProvider = {
+			get: async () => ({ value: null, revision: '0' }),
+			set: (_k, v) =>
+				new Promise((resolve) => {
+					sets.push({
+						resolve: () => {
+							stored.push(v);
+							resolve({ revision: 'r' });
+						}
+					});
+				}),
+			remove: async () => ({ revision: '0' }),
+			sessionGuard() {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		const setting = createSavedSetting(options(provider));
+		setting.set({ x: 1 });
+		const first = setting.save();
+		setting.set({ x: 2 });
+		const second = setting.save(); // accepted under session a
+		session = 'b';
+		sets[0]!.resolve();
+		expect(await first).toBe(false); // saved for a session that ended: not applied
+		expect(await second).toBe(false);
+		expect(sets).toHaveLength(1);
+		expect(stored).toEqual([raw(1)]);
+		expect(setting.saved).toBeUndefined();
+		expect((setting.error as ProviderError).body.kind).toBe('unauthorized');
+	});
+
+	it('a load answered after the session changed is not applied', async () => {
+		let session = 'a';
+		let answer!: (v: UiSettingSnapshot) => void;
+		const provider: UiSettingsProvider = {
+			get: () => new Promise((resolve) => (answer = resolve)),
+			set: async () => ({ revision: 'r' }),
+			remove: async () => ({ revision: '0' }),
+			sessionGuard() {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		const setting = createSavedSetting(options(provider));
+		const loading = setting.load();
+		session = 'b';
+		answer({ value: raw(7), revision: 'r1' });
+		expect(await loading).toBe('stale');
+		expect(setting.saved).toBeUndefined();
+		expect(setting.current).toEqual({ x: 0 });
 	});
 });
