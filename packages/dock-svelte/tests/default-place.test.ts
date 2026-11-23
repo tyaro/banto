@@ -382,8 +382,11 @@ describe('DockState: hide and show by the default layout', () => {
 	});
 });
 
-// Codex P2 on #863: a tab group in an edge band keeps the default group's id. A group made again
-// in the docked tree must not take it, or the layout holds the id twice and cannot be loaded.
+// Codex P2 on #863: a tab group in an edge band and a group of the docked tree must not have one
+// id, or the layout holds the id twice and cannot be loaded. Since #782 PR8b the band's group
+// stays in the shadow tree and the panes shown join it there: the group of the tree has the
+// default id, and the band is given another (`<id>:band`) while both are in the layout - so the
+// id the group ends with does not depend on what comes back first (cross-review of PR #876).
 describe('a default id in use out of the docked tree', () => {
 	it('row[tabs[a, b, c, d], p], the group to its band, a and b hidden and shown: no id twice, the layout loads', () => {
 		const tree = split('s', 'row', [0.6, 0.4], [tabs('t', ['a', 'b', 'c', 'd']), panel('p')]);
@@ -395,17 +398,19 @@ describe('a default id in use out of the docked tree', () => {
 		expect(dock.show('a')).toBe('docked');
 		dock.dismiss('b');
 		expect(dock.show('b')).toBe('docked');
-		// c and d are still in the band, in the group `t`; a and b are a group of another id.
-		expect(dock.autoHidden.map((e) => e.node.id)).toEqual(['t']);
+		// c and d are still in the band, under another id; a and b are the group `t` of the tree.
+		expect(dock.autoHidden.map((e) => e.node.id)).toEqual(['t:band']);
 		const made = dock.layout.docked?.type === 'split' ? dock.layout.docked.children[0] : null;
-		expect(made).toMatchObject({ type: 'tabs', children: [{ id: 'a' }, { id: 'b' }] });
-		expect(made?.id).not.toBe('t');
+		expect(made).toMatchObject({ type: 'tabs', id: 't', children: [{ id: 'a' }, { id: 'b' }] });
 		const checked = validateDockLayout(JSON.parse(dock.serialize()));
 		expect(checked.ok ? [] : checked.issues).toEqual([]);
 		expect(createDockState().hydrate(dock.serialize())).toBe(true);
 		// And the group in the band goes back into the tree (cross-review of PR #863).
 		expect(dock.restoreAutoHidden('c')).toBe(true);
 		expect(dock.autoHidden).toEqual([]);
+		expect(dock.layout.docked).toMatchObject({
+			children: [{ type: 'tabs', id: 't', children: [{}, {}, {}, {}] }, { id: 'p' }]
+		});
 		const after = validateDockLayout(JSON.parse(dock.serialize()));
 		expect(after.ok ? [] : after.issues).toEqual([]);
 	});

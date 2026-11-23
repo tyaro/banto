@@ -624,7 +624,8 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
   戻る（浮かせた pane の「元の場所に戻す」と同じ規則）。帯に居る間にほかの pane を動かす・隠す・浮かせる・戻す、仕切りを
   ドラッグする（見えている pane どうしの比だけが変わる）をはさんでも、何をどの順で戻しても同じ木・同じ比率になる。タブの組は
   組ごと帯へ入り、同じ id の組として戻る（帯の間に、その組の既定の位置へほかの pane を出すと、その pane は帯の組の場所の隣に
-  入り、帯の区画を戻すと 1 つの組になる）。元の分割・タブの組が外からの代入（`dock.layout = ...`）で無くなったとき、場所の
+  入り、帯の区画を戻すと 1 つの組になる。帯のものでない pane が 2 枚そろって木に組として出ている間は、木の組が id を持ち、
+  `dock.autoHidden[].node.id` は `<id>:band` になる。帯の区画は pane の id で引く: `restoreAutoHidden(paneId)`）。元の分割・タブの組が外からの代入（`dock.layout = ...`）で無くなったとき、場所の
   無い配置を読んだときは、区画の pane を 1 枚ずつ既定の位置（`dock.defaultLayout`）へ入れ、既定の位置の無い pane はまとめて
   帯の縁（`edge`）に沿って入れる（比率は入れた先で配り直す）。
 - 保存: `DockLayout.autoHidden?: DockAutoHidden[]`（`{ node, edge, size? }`）。空なら書き出さない。`validateDockLayout` は

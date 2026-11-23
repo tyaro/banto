@@ -372,6 +372,8 @@ export class DockState {
 			next = { ...next };
 			delete next.autoHidden;
 		}
+		// A tab group of the tree and one in an edge band never share an id.
+		next = untrack(() => this.#withBandIdsApart(next));
 		// Whatever put a floated pane back in the tree (#735): its remembered place is spent ...
 		const spent =
 			this.#homeSlots.size > 0
@@ -476,23 +478,38 @@ export class DockState {
 	}
 
 	/**
-	 * `s`, made from S by a step that put a pane into it, with a new id for a tab group that now
-	 * shows as a group under the id of a region in an edge band (`bands`, the list after the step).
-	 * A group in a band stays in S with its id (`#taken`); once two panes that are not of that
-	 * region show in it - put back from floating, or shown at their default place beside its tabs -
-	 * the docked tree would hold the band's id. The group gets another, the band keeps its own; the
-	 * region comes back into that group all the same (its place is its panes').
+	 * `next` with another id for a tab group in an edge band whose id its docked tree holds (#782
+	 * PR8b). A group in a band stays in S with its id (`#taken`); once two panes that are not of
+	 * that region show in it - put back from floating, or shown at their default place beside its
+	 * tabs - the group shows in the docked tree under that id, and a layout holds an id once
+	 * (`validateDockLayout`). The group of the tree keeps its id and the BAND gets another
+	 * (`<id>:band`, numbered when taken): the id the group ends with, once every region is back,
+	 * is then the one S has - whatever order they come back in (cross-review of PR #876; an id
+	 * given to the group of S instead made the last id depend on that order). The region goes back
+	 * into that group all the same: its place is its panes'. The same object when no id is twice.
 	 */
-	#clear(
-		s: ShadowNode | null,
-		makeId: () => string,
-		bands: readonly DockAutoHidden[] = this.autoHidden
-	): ShadowNode | null {
-		const ids = bands.filter((e) => e.node.type === 'tabs').map((e) => e.node.id);
-		if (s === null || ids.length === 0) return s;
-		const shown = projectShadow(s);
-		const clash = new Set(ids.filter((id) => findNode(shown, id) !== null));
-		return clash.size === 0 ? s : withFreeShadowIds(s, clash, makeId);
+	#withBandIdsApart(next: DockLayout): DockLayout {
+		const bands = next.autoHidden;
+		if (bands === undefined || next.docked === null) return next;
+		if (!bands.some((e) => e.node.type === 'tabs' && findNode(next.docked, e.node.id) !== null))
+			return next;
+		const used = idsOutOfDocked(next);
+		const add = (node: ShadowNode | null): void => {
+			if (node === null) return;
+			used.add(node.id);
+			if (node.type !== 'panel') node.children.forEach(add);
+		};
+		add(next.docked);
+		add(this.#shadow);
+		const autoHidden = bands.map((entry) => {
+			const region = entry.node;
+			if (region.type !== 'tabs' || findNode(next.docked, region.id) === null) return entry;
+			let id = `${region.id}:band`;
+			for (let n = 2; used.has(id); n++) id = `${region.id}:band-${n}`;
+			used.add(id);
+			return { ...entry, node: { ...region, id } };
+		});
+		return { ...next, autoHidden };
 	}
 
 	/** Does S hold a place for the region of `entry` (every pane of it a tombstone marked `band`)? */
@@ -1031,7 +1048,7 @@ export class DockState {
 			// pane placed became the active tab of its group in turn (Codex P2 on #876).
 			s = activateInShadow(s, active);
 		}
-		return { shadow: this.#clear(s, ids, bands), bands, moved: panes[0].id };
+		return { shadow: s, bands, moved: panes[0].id };
 	}
 
 	/** The auto-hidden pane slid out over the docked tree, or `null` (not saved). */
@@ -1321,7 +1338,7 @@ export class DockState {
 			ids,
 			taken
 		);
-		return placed === null ? null : this.#clear(placed, ids, layout.autoHidden ?? []);
+		return placed;
 	}
 
 	/**
@@ -1423,7 +1440,7 @@ export class DockState {
 		if (!win) return null;
 		const ids = this.#unused(makeId);
 		if (findShadowPanel(this.#shadow, id)?.away === true)
-			return this.#clear(this.#freed(markPresent(this.#shadow, id, win), ids), ids);
+			return this.#freed(markPresent(this.#shadow, id, win), ids);
 		if (!this.#shadowLost.has(id)) return null;
 		// Its place went with a change that was not made on S (an assignment from outside): the
 		// default place, as for a pane hidden from the dock (#782 PR7, owner's decision).
@@ -1437,7 +1454,7 @@ export class DockState {
 			ids,
 			taken
 		);
-		return placed === null ? null : this.#clear(placed, ids);
+		return placed;
 	}
 
 	/** S with the pane `node` (docked, or a floating window's) dropped at `region` of `targetId`. */
@@ -1451,7 +1468,7 @@ export class DockState {
 		// twice; what the step makes anew takes its ids from `makeId`.
 		const ids = this.#unused(makeId, node.id);
 		const s = this.#freed(this.#shadow, ids, node.id);
-		return this.#clear(dockIntoShadow(s, node, targetId, region, ids), ids);
+		return dockIntoShadow(s, node, targetId, region, ids);
 	}
 
 	/** S with the pane `node` (docked, or a floating window's) along the outer edge `edge`. */

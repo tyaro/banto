@@ -237,9 +237,10 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
     （`$state` の proxy 越しでは自分が書いた木かどうかを見分けられないため）。
   - **id**: 帯のタブの組が S に居る間、その id は `idsOutOfDocked` から外して数える（`#taken`。外さないと
     `withFreeShadowIds` が S の組の id を振り直し、戻したときに別の id の組になる）。逆に、帯の組に帯のものでない pane が
-    2 枚見えて「組として」射影に出るときは、S の組の id を振り直す（`#clear`。帯の entry の id と木の id が重なると
-    `validateDockLayout` に断られる）。pane を S へ入れる手（`#backInShadow`・`#shownShadow`・`#droppedOnto`・
-    `#restoredFromBand`）は必ず `#clear` を通す。
+    2 枚見えて「組として」木に出るときは、**木の組が id を保ち、帯の entry の id を `<id>:band` に替える**（setter の
+    `#withBandIdsApart`。同じ id が 2 度あると `validateDockLayout` に断られる）。S の組の側を振り直さない: 1 つの組から
+    帯が 2 つできたとき、全部戻した後の組の id が戻す順で変わる（PR #876 のクロスレビュー）。帯の区画は pane の id でも
+    引けるので（`restoreAutoHidden(paneId)`）、区画の id を控えておくコードを書かない。
   - `markAway` に引数を足さない（`ids.reduce(markAway, s)` の形で呼ばれるので、3 つ目の引数に添字が入る）。帯の印は
     `markInBand`。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:

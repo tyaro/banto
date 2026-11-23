@@ -355,18 +355,78 @@ describe('a tab group in an edge band (#782 PR8b)', () => {
 		expect(dock.show('x')).toBe('docked');
 		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['x', 'c'] });
 		expect(dock.show('y')).toBe('docked');
-		// Two panes show in the group S keeps for the band: it shows under another id.
+		// Two panes show in the group S keeps for the band: the group keeps its id, the band gets
+		// another (the id the group ends with does not depend on what comes back first).
 		const shown = findParent(dock.layout.docked, 'x') as DockTabGroupNode;
 		expect(shown.type).toBe('tabs');
-		expect(shown.id).not.toBe('g');
-		expect(dock.autoHidden[0].node.id).toBe('g');
+		expect(shown.id).toBe('g');
+		expect(dock.autoHidden[0].node.id).toBe('g:band');
+		expect(dock.isAutoHidden('a')).toBe(true);
 		expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
 		// The region comes back into that group, in default order.
-		expect(dock.restoreAutoHidden('g')).toBe(true);
+		expect(dock.restoreAutoHidden('a')).toBe(true);
+		expect(findParent(dock.layout.docked, 'a')?.id).toBe('g');
 		expect(shapeOf(dock.layout.docked)).toEqual({ row: [{ tabs: ['a', 'b', 'x', 'y'] }, 'c'] });
 		close(sizesOf(dock, 'r'), [0.5, 0.5]);
 		expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
 	});
+});
+
+// Cross-review of PR #876: two bands made of one tab group share that group of S. The id the
+// group has once both are back must not depend on which comes back first.
+describe('two bands out of one tab group (#782 PR8b)', () => {
+	const tree = (): DockNode =>
+		split('r', 'row', [0.6, 0.4], [tabs('T', ['a', 'b', 'c', 'd']), panel('z')]);
+	const twoBands = (): DockState => {
+		const dock = newDock(tree());
+		dock.undockPanel('a');
+		dock.undockPanel('b');
+		expect(dock.autoHideRegion('c')).toBe(true);
+		expect(dock.dockBack('a')).toBe(true);
+		expect(dock.dockBack('b')).toBe(true);
+		expect(dock.autoHideRegion('a')).toBe(true);
+		expect(dock.autoHidden).toHaveLength(2);
+		return dock;
+	};
+	const ids = (dock: DockState): string[] => {
+		const out: string[] = [];
+		const visit = (node: DockNode | null): void => {
+			if (!node) return;
+			out.push(node.id);
+			if (node.type !== 'panel') node.children.forEach(visit);
+		};
+		visit(dock.layout.docked);
+		for (const entry of dock.autoHidden) visit(entry.node);
+		return out;
+	};
+
+	it.each([
+		[['a', 'c'], false],
+		[['c', 'a'], false],
+		[['a', 'c'], true],
+		[['c', 'a'], true]
+	] as [string[], boolean][])(
+		'back in the order %j (saved and loaded: %s): the group is T again',
+		(order, reload) => {
+			let dock = twoBands();
+			const load = (): void => {
+				if (reload) dock = loadedFresh(dock);
+			};
+			load();
+			for (const id of order) {
+				expect(new Set(ids(dock)).size).toBe(ids(dock).length);
+				expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
+				expect(dock.restoreAutoHidden(id)).toBe(true);
+				load();
+			}
+			const group = findParent(dock.layout.docked, 'a') as DockTabGroupNode;
+			expect(group.id).toBe('T');
+			expect(group.children.map((c) => c.id)).toEqual(['a', 'b', 'c', 'd']);
+			expect((dock.layout.docked as DockSplitNode).children.map((c) => c.id)).toEqual(['T', 'z']);
+			close(sizesOf(dock, 'r'), [0.6, 0.4]);
+			expect(dock.autoHidden).toEqual([]);
+		}
+	);
 });
 
 describe('a region whose place is gone: the default place, else the edge (#782 PR8b)', () => {
