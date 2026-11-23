@@ -11,7 +11,6 @@
 import { autoHiddenPanelIds, autoHideRegionInLayout } from './core/autohide';
 import { cascadePosition, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH } from './core/geometry';
 import { dockShareOf } from './core/defaultPlace';
-import { withLayoutVersion } from './core/layoutVersion';
 import {
 	collectPanelIds,
 	dockPanelAtEdge,
@@ -21,7 +20,7 @@ import {
 	normalizeSizes,
 	removePanel
 } from './core/tree';
-import { validateDockLayout } from './core/validate';
+import { validateDockLayout, withLayoutVersion } from './core/validate';
 import type { DockMessages } from './messages';
 import type {
 	DockAutoHidden,

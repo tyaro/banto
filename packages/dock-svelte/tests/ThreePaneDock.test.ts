@@ -655,7 +655,7 @@ describe('ThreePaneDock: a pane out of the tree and a replacement (#741, #782 PR
 		expect(sizes(dock)[1]).toBeGreaterThan(0);
 	});
 
-	it('the same when right is floated (its homeSlot) and put back', async () => {
+	it('the same when right is floated (its remembered place) and put back', async () => {
 		const { dock, view } = start();
 		dock.dismiss('log');
 		dock.undockPanel('right');

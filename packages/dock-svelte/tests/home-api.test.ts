@@ -1,5 +1,5 @@
-// `hasHome` / `dockBack` / `backTree` / `homeMark` (#782 PR8a): the ways to go "back" that take no
-// slot. They answer as `homeSlot` / `dockAtSlot` / `restoredAt` do for the pane's own place.
+// `hasHome` / `dockBack` / `backTree` / `homeMark` (#782 PR8a, PR8c): the ways to go "back", by
+// the pane's id alone - the place is the pane's tombstone in the shadow tree.
 import { describe, expect, it } from 'vitest';
 import { createDockState, homeMark, type DockState } from '../src/state.svelte';
 import type { DockNode, DockPanelNode } from '../src/types';
@@ -35,15 +35,13 @@ describe('hasHome / dockBack / backTree / homeMark', () => {
 		expect(homeMark(dock, 'nope')).toBeUndefined();
 	});
 
-	it('a floated pane: backTree is what restoredAt gives, and dockBack docks it there', () => {
+	it('a floated pane: backTree gives the tree it goes back to, and dockBack docks it there', () => {
 		const dock = dockOf(row());
 		dock.undockPanel('b');
 		expect(dock.hasHome('b')).toBe(true);
-		expect(homeMark(dock, 'b')).toBe(dock.homeSlot('b'));
-		const viaSlot = dock.restoredAt('b', dock.homeSlot('b')!, () => 'x');
+		expect(homeMark(dock, 'b')).toBeDefined();
 		const viaId = dock.backTree('b', () => 'x');
-		expect(viaId).not.toBeNull();
-		expect(viaId).toEqual(viaSlot);
+		expect(viaId).toEqual(row());
 		// Pure: the layout does not change.
 		const before = dock.layout;
 		dock.backTree('b');
@@ -52,15 +50,6 @@ describe('hasHome / dockBack / backTree / homeMark', () => {
 		expect(dock.layout.docked).toEqual(viaId);
 		expect(dock.hasHome('b')).toBe(false);
 		expect(homeMark(dock, 'b')).toBeUndefined();
-	});
-
-	it('dockBack gives the same layout as dockAtSlot with the homeSlot', () => {
-		const a = dockOf(row());
-		const b = dockOf(row());
-		a.undockPanel('a');
-		b.undockPanel('a');
-		expect(a.dockBack('a')).toBe(b.dockAtSlot('a', b.homeSlot('a')!));
-		expect(a.layout).toEqual(b.layout);
 	});
 
 	it('a closed floating window: backTree answers, dockBack does not dock it', () => {

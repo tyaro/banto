@@ -468,11 +468,15 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   5. 帯から戻した区画の幅は「帯へ送ったときの分割の中の取り分」になった（前は戻す時点で見えている兄弟に対する割合）。
      見た目の基準画像・E2E で幅を見ていれば確かめ直す。詳細は CHANGELOG と `packages/dock-svelte/README.md` の
      「自動で隠す」。
-- **`@banto/dock-svelte`: `dock.homeSlot(id)` の slot は場所の名前で、中身は書き換わらない（#782 PR7）**。
-  `dock.dockBack(id)`・`dock.backTree(id)`（slot を受けない新しい口。#782 PR8a。戻れるかは `backTree(id) !== null`）・
-  `movePanel(id, { back: true })` を使う（旧い `dockAtSlot(id, dock.homeSlot(id))`・`restoredAt(..)` も PR8c で消すまで動く）。
-  `homeSlot` の slot を自分で `restoreDockSlot` に渡している・`share` を読んでいる所だけ、`dock.backTree` /
-  `dock.dockBack` に替える（slot の `share` は浮かせた時点の値のままになる）。
+- **`@banto/dock-svelte`: `dock.homeSlot(id)`・`dockAtSlot`・`restoredAt`・`DockSlot`・`captureDockSlot` / `restoreDockSlot` /
+  `captureRegionSlot` / `restoreRegionSlot` は消えた（#782 PR8c、破壊的）**。浮かせた pane を戻すのは `dock.dockBack(id)`・
+  `dock.backTree(id)`（戻る先の木の予告。戻れるかは `backTree(id) !== null`）・`dock.hasHome(id)`・`movePanel(id, { back: true })`。
+  `hasHome(id)` と `layout.floating` で分かるのは「今」の状態で、同じ id が「ドックされてまた浮かされた」ことは区別できない
+  （「同じ浮動か」の同一性に公開の直接の代わりは無い。#782 の決定）。ユーザーの「元の場所に戻す」は、確認（`beforePanelChange`）と
+  「待っている間に変わっていたら `stale`」の守りを持つ `movePanel(id, { back: true })` を使う。`backTree(id)` は閉じた浮動にも
+  戻り先を返すので、実際に戻す `dockBack` / `movePanel` には窓が開いていることも要る。自分で `captureDockSlot` した
+  slot で戻していた所は、`undockPanel` で浮かせて `dockBack` で戻す形に替える（戻る場所は浮かせた時の位置の影の木の墓石）。
+  テンプレート・e2e・下流には使用が無かった。
 
 **初回セットアップの撤去（C2b、ADR-0034 §5〜§7・§9）**。C1・C2 の後に作った DB は作り直さなくてよい
 （`0015_auth_mode_defaults.sql` が足されるだけ）。

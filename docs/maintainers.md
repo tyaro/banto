@@ -197,7 +197,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   `slot-properties.test.ts`）は、
   環境変数 `DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走り、未設定（手元の既定）は浅い（#798）。
   CI は dock-svelte を触る PR と main の push で `1` にし、触らない PR は浅い既定（ci.yml の `changes` の出力 `dock`）。
-  切り替えは `packages/dock-svelte/tests/fixtures/exhaustive.ts` の 1 か所。slot / lifecycle の変更は、手元でも
+  切り替えは `packages/dock-svelte/tests/fixtures/exhaustive.ts` の 1 か所。影の木・lifecycle の変更は、手元でも
   `DOCK_EXHAUSTIVE=1 pnpm --filter @banto/dock-svelte test` を 1 回通す。
 - #694（オーナー決定、Visual Studio・GX Works3 に寄せる）:
   - ドッキングは、ボタンの上で離したときだけ（十字 32px・外周ボタン）。ボタンの外で離すと、区画の上でも浮動。
@@ -211,16 +211,16 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   - 引き出しの中で開いたモーダル（`aria-modal`）と背景では引っ込めない。ドッキングの層と引き出しの層は
     `isolation: isolate` で分けるが、モーダルが開いている間は外す（OverlayPanel はその場に fixed で描くため）。
 - 隠した pane の出し直し（#782 PR5）: 既定のレイアウトでの位置（`core/defaultPlace.ts`。`DockState.defaultLayout` は保存しない）。
-  閉じた窓は `dockShare`（隠す直前の比率）だけを持ち、slot は持たない。下の slot の話は、浮かせた pane（`homeSlot` / `hasHome`）に
-  だけ残る（端の帯の `slot` は #782 PR8b で消えた。PR8c で slot ごと消す）。`dockShare` は帯の区画を「居る」ものとして数える
+  閉じた窓は `dockShare`（隠す直前の比率）だけを持ち、slot は持たない。浮かせた pane の元の場所（`hasHome`）も、端の帯の区画の
+  場所も、S の墓石で、slot は #782 PR8c で全部消えた。`dockShare` は帯の区画を「居る」ものとして数える
   （`#shareOf`。`placeInShadowAtDefault` も帯の墓石を見えている子として比率を取る。浮動の墓石は数えない）。
 - 影の木 S が配置を決める（#782 PR6）: 浮かせる・元の場所へ戻す・移動・ドロップ・仕切りのドラッグ・隠す・出し直すは、
   `DockState` が非公開の S（`core/shadow.ts`。浮かせた pane は墓石）の上で結果を作り、`layout.docked` にはその射影を入れる。
   新しい配置の操作を足すときも「S の上で作って射影を入れる」（`#projected`）。`core/tree.ts` で見える木を直に組むと、
   墓石の場所を知らない結果になり、S は組み直しになる。事前の問い合わせ（予告）も同じ S の関数を読む
-  （`shownTree`・`backTree`・`droppedTree`・`droppedAtEdgeTree`）。`homeSlot` の slot は「その場所の名前」として渡すだけ。
+  （`shownTree`・`backTree`・`droppedTree`・`droppedAtEdgeTree`）。浮かせた pane が覚えるのは「印」（内部の `homeMark`）だけで、場所そのものは S の墓石。
 - S の上で作らない変化（#782 PR7、2026-11-23 オーナー決定）: 外からの代入（`dock.layout = ...`・`syncPanels`・`saved` なしの
-  `replaceLayout`）・丸ごとの置き換え・`homeSlot` 以外の slot での `dockAtSlot`（PR8c で経路ごと消す）では、**代入が何を動かしたかを推し量らない**。
+  `replaceLayout`）・丸ごとの置き換えでは、**代入が何を動かしたかを推し量らない**。
   `regraftShadow`（`core/shadow.ts`）が、後の木に前の S の墓石を「元いた入れ物（id）の、元の添字」へ入れ直すだけ。
   入れ物が無ければ S に場所を持たず、「元の場所に戻す」は既定の位置に出す（`#shadowLost` → `placeInShadowAtDefault`）。
   代入をまたぐ比率の再現（#741・#743 の補正、`#withoutGoneShares` / `#withoutLeftShares` / `slotsWithoutLeft`）は消した。
@@ -243,21 +243,18 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
     引けるので（`restoreAutoHidden(paneId)`）、区画の id を控えておくコードを書かない。
   - `markAway` に引数を足さない（`ids.reduce(markAway, s)` の形で呼ばれるので、3 つ目の引数に添字が入る）。帯の印は
     `markInBand`。
-- split の slot と元の場所（#721・#727・#733〜#736・#741）:
-  - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。保存する配置の `version` は 4 だけ（#782 PR8b。配置は slot を持たない。
-    `core/layoutVersion.ts` は 4 を書くだけになり、PR8c で `core/slot.ts` と一緒に消す）。旧実装の複製
-    `tests/fixtures/slot-main.ts` は #782 PR7 で削った。
+- 浮かせた pane の元の場所（#721・#727・#733〜#736・#741。slot は #782 PR8c で消えた）:
+  - 保存する配置の `version` は 4 だけ（#782 PR8b。配置は slot を持たない）。`core/validate.ts` が `DOCK_LAYOUT_VERSION`・
+    `withLayoutVersion` を持つ。旧実装の複製 `tests/fixtures/slot-main.ts` は #782 PR7 で削った。
   - validate は `version` 1〜3 を断る。`version: 4` の中の浮動 window の `dockSlot`・帯の `slot` は読まずに捨てる。
-  - 外したパネルの元の場所は `DockState` の非公開 Map（公開は `hasHome(id)`・`dockBack(id)`・`backTree(id)`、README 未記載。旧 `homeSlot(id)` は PR8c で消す）。足すのは `undockPanel` だけ。
-    消すのは、setter（浮動でなくなった id）・`hydrate`・`reset`・`forgetHomeSlots`。
-  - slot の `share` は「外したパネルも数えた split 全体の割合」（`size` は旧来の意味、`version` 不変）。
-    `homeSlot` の slot は浮かせた時に S から 1 回書き、書き換えない（#782 PR7。比率の正は S）。
+  - 外したパネルの元の場所は `DockState` の非公開 Map（`#homes`: 印だけを持つ。公開は `hasHome(id)`・`dockBack(id)`・`backTree(id)`、
+    README 未記載）。足すのは `undockPanel` だけ（S に墓石が立ったときだけ）。消すのは、setter（浮動でなくなった id）・`hydrate`・
+    `reset`・`forgetHomes`。印は浮かせるたびに作り直す（`homeMark` が「同じ浮動か」を見る）。比率の正は S。
   - ライブの置き換え（`syncPanels`・`saved` なしの `replaceLayout`）は setter で入れる（上の `regraftShadow` の規則）。保存値は
-    `reconcileThreePaneLayout` で合わせて `forgetHomeSlots` → `adoptLayout` で入れる（#742）。隠れたパネルは slot を
+    `reconcileThreePaneLayout` で合わせて `forgetHomes` → `adoptLayout` で入れる（#742）。隠れたパネルは場所を
     持たないので（#782 PR5）、`reconcileThreePaneLayout` は今の layout を合わせるのにも使う（`fitThreePaneLayout` は消した）。
-  - 公開 API: `DockState.restoredAt`・`DockState.savedLayout()`・`restoreDockSlot` の第 5 引数 `hidden`・
-    `DockHost.replaceLayout` の `saved` オプション。保存値は `saved: true` で入れる（`forgetHomeSlots` → `adoptLayout`）。
-    3 ペインの保存は `layoutSnapshot()`（`savedLayout()`）を `dockLayoutStore` に渡す。
+  - 公開 API: `DockState.savedLayout()`・`DockHost.replaceLayout` の `saved` オプション。保存値は `saved: true` で入れる
+    （`forgetHomes` → `adoptLayout`）。3 ペインの保存は `layoutSnapshot()`（`savedLayout()`）を `dockLayoutStore` に渡す。
 
 ### 5.5 環境の分岐
 
@@ -268,7 +265,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
 
 ### 6.1 設計・委譲
 
-- **保存されない内部状態に依存する値を保存値に入れない**。homeSlot がその例で、保存・読み込み・丸ごと置き換え・
+- **保存されない内部状態に依存する値を保存値に入れない**。かつての homeSlot（浮かせた pane の元の場所。今は S の墓石と印）がその例で、保存・読み込み・丸ごと置き換え・
   ライブの置き換えの各経路で食い違いが出た（#739 で Codex の P2 が 8 件、うち 1 件は自分の修正が入れた回帰）。
   設計の段階で「保存値とライブ値の境目」と全経路を洗い出してから委譲する。直すときは、ライブの置き換えと
   保存値の適用を区別できているかを先に確かめる。

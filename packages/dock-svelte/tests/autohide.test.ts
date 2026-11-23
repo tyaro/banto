@@ -2,20 +2,13 @@
 //
 // Auto-hide (#694 PR-3): a docked region (a panel or a tab group) leaves the
 // tree for a band on the host's edge and goes back to its place. Covers the pure
-// helpers (`core/autohide.ts`, the region slot of `core/slot.ts`), `DockState`
+// helpers (`core/autohide.ts`), `DockState`
 // (layout JSON, panels, flyout, dismiss), `validateDockLayout` (older JSON, bad
 // entries), and the order / refusal / stale rules of `PanelLifecycle.autoHide` /
 // `restoreAutoHidden`.
 import { describe, expect, it } from 'vitest';
-import {
-	autoHideEdge,
-	mainRegionId,
-	regionOf,
-	regionRects,
-	removeRegion
-} from '../src/core/autohide';
+import { autoHideEdge, mainRegionId, regionOf, regionRects } from '../src/core/autohide';
 import { PanelLifecycle, type DockPanelChange } from '../src/core/lifecycle';
-import { captureRegionSlot, restoreRegionSlot } from '../src/core/slot';
 import { collectPanelIds, findNode, structureKey } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import { createDockState } from '../src/state.svelte';
@@ -53,9 +46,6 @@ const tree = (): DockNode => ({
 
 const layout = (): DockLayout => ({ version: 4, floating: [], docked: tree() });
 
-let n = 0;
-const makeId = () => `n${++n}`;
-
 describe('core/autohide: edge and main region', () => {
 	it('picks the side seen from the main region, or from the middle', () => {
 		const root = tree();
@@ -86,37 +76,6 @@ describe('core/autohide: edge and main region', () => {
 	it('regionOf lifts a tab to its group', () => {
 		expect(regionOf(tree(), 'B2')?.id).toBe('T');
 		expect(regionOf(tree(), 'mid')).toBeNull();
-	});
-});
-
-describe('core/slot: a whole region', () => {
-	it('captures a split slot and restores the same tree', () => {
-		const root = tree();
-		const slot = captureRegionSlot(root, 'T')!;
-		expect(slot).toMatchObject({ kind: 'split', splitId: 'mid', neighborId: 'M', side: 'after' });
-		const without = removeRegion(root, 'T');
-		expect(JSON.stringify(without)).not.toContain('B1');
-		const group = regionOf(root, 'T')!;
-		const back = restoreRegionSlot(without, group, slot, makeId);
-		expect(back).toEqual(root);
-	});
-
-	it('is null for a tab, a split, an id already in the tree and a tab slot', () => {
-		const root = tree();
-		expect(captureRegionSlot(root, 'B1')).toBeNull();
-		expect(captureRegionSlot(root, 'mid')).toBeNull();
-		const slot = captureRegionSlot(root, 'L')!;
-		expect(
-			restoreRegionSlot(root, { type: 'panel', id: 'L', title: 'L' }, slot, makeId)
-		).toBeNull();
-		expect(
-			restoreRegionSlot(
-				root,
-				{ type: 'panel', id: 'Z', title: 'Z' },
-				{ kind: 'tab', groupId: 'T', index: 0, anchors: [] },
-				makeId
-			)
-		).toBeNull();
 	});
 });
 

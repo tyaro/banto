@@ -639,7 +639,7 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 - API: `dock.autoHidden` / `dock.isAutoHidden(id)` / `dock.autoHideRegion(id, { edge?, size?, mainId? })` / `dock.restoreAutoHidden(id)`
   （どちらも聞かない）、`dock.flyoutPanel` / `dock.openFlyout(id)` / `dock.closeFlyout()`、`host.autoHidePanel(id)` / `host.pinPanel(id)`
   （`beforePanelChange` を通す）。`dock.panels` の行は `autoHidden: true`（`placement: 'docked'`・`visible: true`）。純関数 `autoHideEdge` /
-  `mainRegionId` / `regionOf` / `removeRegion` / `captureRegionSlot` / `restoreRegionSlot` と定数 `AUTO_HIDE_FLYOUT_RATIO`（引き出す幅の既定 0.3）。
+  `mainRegionId` / `regionOf` / `removeRegion` と定数 `AUTO_HIDE_FLYOUT_RATIO`（引き出す幅の既定 0.3）。
 - 文言: `messages.autoHidePane(title)` / `pinPane(title)` / `autoHideBand(edge)`。
 - 狭い幅・キオスク・Tauri の pop-out では特別な扱いをしない（帯と引き出しはそのまま。pop-out 中の pane は木にいないのでピンも出ない）。
   引き出した pane の幅は、隠したときの区画の幅（無ければ既定）で、ドラッグでは変えられない。

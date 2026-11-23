@@ -82,7 +82,7 @@ export function buildTree(recipe: TreeRecipe): DockNode {
 			} as DockNode;
 		});
 		// Weights 2 to 5: the smallest share of 7 children is 2/32, above the 5% a slot's size is
-		// clamped to (`core/slot.ts`'s `MIN_SHARE` - below it the show order shows, pinned in
+		// clamped to (the old slot's minimum share - below it the show order shows, pinned in
 		// `slot-properties.test.ts`).
 		const weights = children.map(() => next(4) + 2);
 		const total = weights.reduce((a, b) => a + b, 0);
@@ -193,7 +193,7 @@ export function expectAllDocked(
 /** The panes hidden from the dock (`dockShare`), in the order they were hidden. */
 export const hiddenIds = (dock: DockState): string[] =>
 	dock.layout.floating.filter((w) => !w.open && w.dockShare !== undefined).map((w) => w.id);
-/** The floated panes that remember a docked place (`homeSlot`). */
+/** The floated panes that remember a docked place (`hasHome`). */
 export const floatedIds = (dock: DockState): string[] =>
 	dock.layout.floating.filter((w) => w.open && dock.hasHome(w.id)).map((w) => w.id);
 

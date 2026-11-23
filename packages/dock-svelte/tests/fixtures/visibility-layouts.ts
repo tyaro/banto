@@ -74,7 +74,7 @@ export const dockWithDefault = (initial: DockLayout | string, makeId?: () => str
 };
 /**
  * `-x` hides x, `+x` shows it, `~x` floats it (`undockPanel`, #734), `^x` puts it back where it
- * was (`dockAtSlot` with its `homeSlot`, the panel menu's "back"), with `createDockState`.
+ * was (`dockBack`, the panel menu's "back"), with `createDockState`.
  */
 export const runSteps = (make: () => DockNode, steps: string[]): DockState => {
 	const dock = dockWithDefault({ version: 4, floating: [], docked: make() }, counterMakeId());

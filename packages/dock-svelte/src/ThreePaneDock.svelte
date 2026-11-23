@@ -60,7 +60,7 @@
 	import type { DockCapabilities } from './core/policy';
 	import { autoHiddenPanelIds } from './core/autohide';
 	import { collectPanelIds, structureKey } from './core/tree';
-	import { adoptLayout, createDockState, forgetHomeSlots, type DockState } from './state.svelte';
+	import { adoptLayout, createDockState, forgetHomes, type DockState } from './state.svelte';
 	import {
 		assertExtraPanelIds,
 		defaultThreePaneDockMessages,
@@ -312,7 +312,7 @@
 				: reconcileThreePaneLayout(initialLayout, options);
 			if (live && result.status !== 'default') dock.layout = result.layout;
 			else {
-				forgetHomeSlots(dock);
+				forgetHomes(dock);
 				adoptLayout(dock, result.layout);
 			}
 			status = result.status;
@@ -346,7 +346,7 @@
 		// As saved (#739 review): the floated panes' places do not outlive the narrow display.
 		wideLayout = dock.savedLayout();
 		// ... nor a closed one's, which the narrow display keeps floating (its place is in the wide tree).
-		forgetHomeSlots(dock);
+		forgetHomes(dock);
 		installedDefault = null;
 		adoptLayout(dock, threePaneNarrowLayout(wideLayout, narrowOptions()));
 		narrowShown = true;
@@ -373,14 +373,14 @@
 		let outcome: DockPanelChangeOutcome | 'invalid';
 		if (want) {
 			const base = dock.layout;
-			// Kept as saved (#739 review): the floated panes' `homeSlot`s are dropped by the narrow
+			// Kept as saved (#739 review): the floated panes' remembered places are dropped by the narrow
 			// display; the kept wide layout - saved by `layoutSnapshot` and shown again - is the
 			// layout as it is saved. Taken before the switch.
 			const kept = dock.savedLayout();
 			outcome = await host.replaceLayout(threePaneNarrowLayout(base, narrowOptions()), {
 				focusPanel: CENTER,
 				isCurrent: () => current() && dock.layout === base,
-				// A closed floated pane stays floating in the narrow display, so its `homeSlot` would
+				// A closed floated pane stays floating in the narrow display, so its remembered place would
 				// survive and name a place of the wide tree (#739 review): dropped in the same step.
 				saved: true,
 				// Settled in the step that puts the narrow display in (#791): `replaceLayout` goes on

@@ -847,7 +847,7 @@ describe('"back" for every float order x every back order (up to every pane of t
 	}
 });
 
-// #734 made the place a floated pane remembers (`DockState.homeSlot`) and the place of a hidden
+// #734 made the place a floated pane remembers (`DockState.hasHome`) and the place of a hidden
 // pane count each other. Since #782 PR5 a hidden pane remembers none: it is shown at its default
 // place (the layout the state starts with, here), and "back" goes by the tree as it is then.
 describe('"back" and "show" for panes floated and hidden out of the same container (#734, #782 PR5)', () => {
@@ -962,5 +962,37 @@ describe('"back" after the pane was docked through the API (#735)', () => {
 		resolve(true);
 		expect(await pending).toBe('stale');
 		expect(JSON.stringify(dock.layout)).toBe(before);
+	});
+
+	// Review of #878: the mark of a place is in the target of the request, and tells another float of
+	// the same pane apart where requests are compared as JSON. The same float asked twice shares one
+	// answer; a pane docked and floated again is asked on its own.
+	it('"back" of the same float while it waits shares the answer; after docked and floated again it is asked anew', async () => {
+		let asked = 0;
+		const resolvers: ((ok: boolean) => void)[] = [];
+		const { dock, host } = mount({
+			beforePanelChange: (c) =>
+				c.kind === 'dock' && c.panelId === 'tree'
+					? new Promise<boolean>((r) => {
+							asked++;
+							resolvers.push(r);
+						})
+					: true
+		});
+		expect(await host().movePanel('tree', { float: true })).toBe('applied');
+		const first = host().movePanel('tree', { back: true });
+		const again = host().movePanel('tree', { back: true });
+		await settle();
+		expect(asked).toBe(1);
+		dock.dockPanel('tree', 'detail', 'right');
+		dock.undockPanel('tree');
+		const second = host().movePanel('tree', { back: true });
+		await settle();
+		expect(asked).toBe(2);
+		resolvers.forEach((r) => r(true));
+		expect(await first).toBe('stale');
+		expect(await again).toBe('stale');
+		expect(await second).toBe('applied');
+		expect(dock.hasHome('tree')).toBe(false);
 	});
 });

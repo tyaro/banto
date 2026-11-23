@@ -66,52 +66,6 @@ export interface FloatingWindow {
 }
 
 /**
- * A remembered docked place (#663, `core/slot.ts`). Named by ids that survive
- * the pane's removal; `anchors` are panel ids next to it, nearest first, used
- * when the container ids are gone.
- *  - `tab`: a tab of the group `groupId`, at `index`.
- *  - `split`: child `index` of the split `splitId` (`direction`), on `side` of
- *    the node `neighborId`, with `size` (0-1) of the split's space when it
- *    was taken. `share` (optional, #733, in (0, 1]): its share of the whole
- *    split, the panes hidden out of it then counted - put back while some of
- *    those are still out, it leaves their shares for them, so the split's
- *    sizes come back whatever order its panes are shown in. A slot without it
- *    (taken before #733, or beside one that was) comes back by `size` as
- *    before; a release before it reads `size` and ignores `share`. `anchors`
- *    are the panels on the neighbour's side, `otherAnchors` (optional, #720
- *    review) the ones on the other side, both nearest first; `index` counts
- *    the panes hidden out of the same split before it among the children.
- *  - `root`: the whole docked tree (it was the only docked pane).
- *
- * `outer` (optional, #721) on a `tab` / `split` slot: where the container itself
- * (the tab group / split) was, as a `split` / `root` slot - tried, with the pane
- * placed as a bare pane, when the container and every anchor are gone (all of
- * its panes were taken out). It may have an `outer` of its own (#727): the place
- * of the container around that one, tried next (the slot and its `outer` chain at
- * most `MAX_SLOT_DEPTH` (8) deep).
- *
- * No layout holds a slot since #782 PR8b (a closed window's went in PR5, an edge
- * band's here): it is the name `DockState.homeSlot` hands out for a floated pane's
- * place, and what `core/slot.ts` works on. Removed with those in #782 PR8c.
- */
-export type DockSlot =
-	| { kind: 'tab'; groupId: string; index: number; anchors: string[]; outer?: DockSlot }
-	| {
-			kind: 'split';
-			splitId: string;
-			direction: 'row' | 'column';
-			index: number;
-			neighborId: string;
-			side: 'before' | 'after';
-			size: number;
-			share?: number;
-			anchors: string[];
-			otherAnchors?: string[];
-			outer?: DockSlot;
-	  }
-	| { kind: 'root' };
-
-/**
  * One row of `DockState.panels` (#663): every pane the layout knows, for a
  * View menu with a checkbox per pane.
  */

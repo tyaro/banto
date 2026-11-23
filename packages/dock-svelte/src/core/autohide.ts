@@ -224,8 +224,7 @@ export function autoHideRegionInLayout(
 /**
  * The ids of `layout` that are not in its docked tree: the floating windows, and the regions in
  * the edge bands with their panes. A layout holds an id once (`validateDockLayout`), so a split /
- * tab group made in the docked tree takes none of them (`core/defaultPlace.ts`'s and
- * `core/slot.ts`'s `taken`).
+ * tab group made in the docked tree takes none of them (`core/defaultPlace.ts`'s `taken`).
  */
 export function idsOutOfDocked(layout: DockLayout): Set<string> {
 	const taken = new Set<string>(layout.floating.map((w) => w.id));
