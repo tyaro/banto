@@ -375,6 +375,7 @@ class Impl<T> implements SavedSetting<T> {
 		const isTransient = retry?.isTransient ?? isNetworkError;
 		const editVersion = this.#editVersion;
 		let target = { value: this.#value, raw: this.#raw };
+		const sentRaw = target.raw;
 		this.#inflight = true;
 		this.#saving = true;
 		this.#owner.invalidate('load');
@@ -496,7 +497,12 @@ class Impl<T> implements SavedSetting<T> {
 						this.#value = this.#independent(target.raw, target.value);
 						this.#raw = target.raw;
 					}
-					if (mergeFn && newRevision !== null) {
+					// The user edited during a send whose value `merge` changed: their
+					// edit does not contain what the merge kept from the server, so the
+					// revision stays the old one. The next save conflicts and goes
+					// through `merge` instead of silently dropping that data.
+					const unmergedEdit = target.raw !== sentRaw && this.#editVersion !== editVersion;
+					if (mergeFn && newRevision !== null && !unmergedEdit) {
 						this.#revision = newRevision;
 						this.#revisionGuard = guard;
 					}

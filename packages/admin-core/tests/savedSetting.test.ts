@@ -1203,3 +1203,21 @@ describe('PR #877 re-review (#786 C6)', () => {
 		expect(setting.error).toBeNull();
 	});
 });
+
+describe('PR #877 re-review 2 (#786 C6)', () => {
+	it('an edit made while a merged write is sent still goes through merge on the next save', async () => {
+		const s = fakeServer(raw(1));
+		const setting = createSavedSetting(
+			options(s.provider, { merge: (server, current) => ({ x: server.x + current.x }) })
+		);
+		await setting.load();
+		s.external(raw(10));
+		setting.set({ x: 5 });
+		const first = setting.save(); // conflicts, merged to 15
+		setting.set({ x: 2 }); // edited while it is in flight
+		expect(await first).toBe(true);
+		expect(setting.current).toEqual({ x: 2 });
+		expect(await setting.save()).toBe(true);
+		expect(s.stored()).toBe(raw(17)); // merged with the 15 just protected, not overwritten by 2
+	});
+});
