@@ -128,17 +128,11 @@ test('add, hide and move are saved and survive a reload; reset deletes the saved
 	const defaultBox = await pane(page, 'lowStock').boundingBox();
 	if (!defaultBox) throw new Error('list pane not visible');
 
-	// Hide: uncheck the memo (its text is untouched, so the close has nothing to settle).
-	await toggleWidget(page, MEMO);
-	await expect(pane(page, 'memo')).toHaveCount(0);
-	await expect.poll(() => stored(page, LAYOUT_KEY)).not.toBe(seeded);
-	const hidden = await stored(page, LAYOUT_KEY);
-	await expect.poll(() => stored(page, PROVIDER_KEY)).toBe(hidden);
-	await page.waitForTimeout(AFTER_DEBOUNCE_MS);
-	expect(await ops(page, PROVIDER_KEY)).toEqual([{ op: 'set', key: PROVIDER_KEY, value: hidden! }]);
-
-	// Move: the list to the dock's left edge (the first item of its panel menu).
+	// Move: the list to the dock's left edge (the first item of its panel menu). First, while the
+	// memo is docked next to it: a copy without the charts has only these two panes, and the only
+	// pane of a dock has nowhere to move.
 	const hostBox = await dockHost(page).boundingBox();
+	if (!hostBox) throw new Error('dock not visible');
 	await dockHost(page)
 		.getByRole('button', { name: `${LIST}のパネルの操作`, exact: true })
 		.click();
@@ -146,10 +140,27 @@ test('add, hide and move are saved and survive a reload; reset deletes the saved
 		.getByRole('menu', { name: `${LIST}のパネルの操作`, exact: true })
 		.getByRole('menuitem', { name: '左端にドッキング', exact: true })
 		.click();
+	// The left quarter of the dock, at its full height.
 	await expect
-		.poll(async () => (await pane(page, 'lowStock').boundingBox())?.height ?? 0)
-		.toBeGreaterThan((hostBox?.height ?? 0) - 16);
-	await expect.poll(() => stored(page, PROVIDER_KEY)).not.toBe(hidden);
+		.poll(async () => (await pane(page, 'lowStock').boundingBox())?.width ?? 9999)
+		.toBeLessThan(hostBox.width * 0.3);
+	const edgeBox = await pane(page, 'lowStock').boundingBox();
+	if (!edgeBox) throw new Error('list pane not visible');
+	expect(Math.abs(edgeBox.x - hostBox.x)).toBeLessThan(8);
+	expect(edgeBox.height).toBeGreaterThan(hostBox.height - 16);
+	await expect.poll(() => stored(page, LAYOUT_KEY)).not.toBe(seeded);
+	const movedOnly = await stored(page, LAYOUT_KEY);
+	await expect.poll(() => stored(page, PROVIDER_KEY)).toBe(movedOnly);
+	await page.waitForTimeout(AFTER_DEBOUNCE_MS);
+	// One change, one write.
+	expect(await ops(page, PROVIDER_KEY)).toEqual([
+		{ op: 'set', key: PROVIDER_KEY, value: movedOnly! }
+	]);
+
+	// Hide: uncheck the memo (its text is untouched, so the close has nothing to settle).
+	await toggleWidget(page, MEMO);
+	await expect(pane(page, 'memo')).toHaveCount(0);
+	await expect.poll(() => stored(page, PROVIDER_KEY)).not.toBe(movedOnly);
 	await page.waitForTimeout(AFTER_DEBOUNCE_MS);
 	const moved = await stored(page, PROVIDER_KEY);
 	expect(await stored(page, LAYOUT_KEY)).toBe(moved);
@@ -163,9 +174,7 @@ test('add, hide and move are saved and survive a reload; reset deletes the saved
 	// Applying the saved layout is not a change to save.
 	expect(await ops(page, PROVIDER_KEY)).toEqual([]);
 	await expect(pane(page, 'memo')).toHaveCount(0);
-	const reloadedBox = await pane(page, 'lowStock').boundingBox();
-	expect(Math.abs((reloadedBox?.x ?? 0) - (movedBox?.x ?? -99))).toBeLessThan(2);
-	expect(Math.abs((reloadedBox?.height ?? 0) - (movedBox?.height ?? -99))).toBeLessThan(2);
+	await expect.poll(() => pane(page, 'lowStock').boundingBox()).toEqual(movedBox);
 
 	// Add: the memo again. A widget hidden from the default goes back to its place there.
 	await toggleWidget(page, MEMO);
