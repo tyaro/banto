@@ -1,13 +1,22 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createDockState, type DockLayout } from '@banto/dock-svelte';
-import { findDashboardWidget } from '#lib/banto/dashboardWidgets.js';
 import { refreshPanelTitles } from '#lib/banto/dockTitles.js';
 import { dockMessages } from '#lib/banto/dockMessages.js';
 import { overwriteGetLocale, type Locale } from '#lib/paraglide/runtime.js';
 
 const use = (l: Locale) => overwriteGetLocale(() => l);
 const JA = /[\u3040-\u30ff\u4e00-\u9fff]/;
-const lookup = (id: string) => findDashboardWidget(id)?.title;
+// The test's own table, not the dashboard's registry: the registry changes with what the scaffold
+// keeps (charts removed leaves only the list and the memo), and this test is about how titles are
+// re-resolved, not about which widgets exist. The ids are the ones a saved layout may carry.
+const EN: Record<string, string> = {
+	memo: 'Memo',
+	spc: 'Process control',
+	monthly: 'Monthly',
+	priceBuckets: 'Price buckets',
+	trend: 'Trend'
+};
+const lookup = (id: string) => EN[id];
 
 const win = (id: string, title: string, extra: object = {}) => ({
 	id,
@@ -79,7 +88,7 @@ describe('refreshPanelTitles (#729 review)', () => {
 		const layout = dock.layout;
 
 		const memo = layout.floating.find((w) => w.id === 'memo')!;
-		expect(memo.title).toBe(findDashboardWidget('memo')!.title);
+		expect(memo.title).toBe(EN.memo);
 		expect(memo.title).not.toMatch(JA);
 		expect(memo.x).toBe(77); // geometry kept
 		const closed = layout.floating.find((w) => w.id === 'spc')!;
