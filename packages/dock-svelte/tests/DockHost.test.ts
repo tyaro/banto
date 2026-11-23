@@ -70,7 +70,7 @@ function firePointer(target: EventTarget, type: string, x: number, y: number) {
 describe('DockHost drag interactions', () => {
 	it('drag-moving a floating window titlebar repositions it via dock.move', () => {
 		const layout: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [{ id: 'a', title: 'A', x: 0, y: 0, width: 300, height: 200, open: true }],
 			docked: null
 		};
@@ -98,7 +98,7 @@ describe('DockHost drag interactions', () => {
 
 	it('dragging a docked pane titlebar into floating space undocks it', () => {
 		const layout: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: { type: 'panel', id: 'a', title: 'A' }
 		};

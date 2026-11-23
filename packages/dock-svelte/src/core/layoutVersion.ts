@@ -1,16 +1,17 @@
 /**
- * Which `DockLayout.version` a layout is written with (#727 / PR #732 review).
+ * Which `DockLayout.version` a layout is written with.
  *
- * A slot's `outer` chain may be up to `MAX_SLOT_DEPTH` (8) deep, but a version 2 reader (the
- * releases before #727) rejects a whole layout whose slot is deeper than `V2_MAX_SLOT_DEPTH` (4).
- * So a layout is written as version 3 only when it holds such a deep slot, and as version 2
- * otherwise - an older release still reads every layout it could read before, and one it cannot
- * read says so by its `version`. Decided from the content every time it is written: a v3 layout
- * whose deep slots are gone goes back to 2.
+ * Since #782 PR8b there is one: 4. The edge bands hold no slot any more (their places are a tree,
+ * `DockLayout.dockedWithAutoHidden`), so the content has nothing left to choose between (#727:
+ * 3 for a slot deeper than `V2_MAX_SLOT_DEPTH`, else 2), and a layout of versions 1 - 3 is not
+ * read (`validateDockLayout`). What is left here goes with `core/slot.ts` (#782 PR8c).
  */
 import type { DockLayout, DockSlot } from '../types';
 
-/** The deepest slot (itself and its `outer` chain) a version 1 / 2 layout may hold. */
+/** The one version read and written. */
+export const DOCK_LAYOUT_VERSION = 4;
+
+/** The deepest slot (itself and its `outer` chain) a version 1 / 2 layout could hold. */
 export const V2_MAX_SLOT_DEPTH = 4;
 
 /** How deep `slot` is: 1 for a slot without `outer`, plus one per `outer`. */
@@ -21,16 +22,9 @@ export function slotDepth(slot: DockSlot): number {
 	return depth;
 }
 
-/** The `version` `layout` is to be written with: 3 when it holds a slot deeper than `V2_MAX_SLOT_DEPTH`, else 2. */
-export function layoutVersionFor(layout: Omit<DockLayout, 'version'>): 2 | 3 {
-	const deep = (slot: DockSlot | undefined): boolean =>
-		slot !== undefined && slotDepth(slot) > V2_MAX_SLOT_DEPTH;
-	if ((layout.autoHidden ?? []).some((e) => deep(e.slot))) return 3;
-	return 2;
-}
-
-/** `layout` with the `version` its content asks for (the same object when it already has it). */
+/** `layout` with the version written today (the same object when it already has it). */
 export function withLayoutVersion(layout: DockLayout): DockLayout {
-	const version = layoutVersionFor(layout);
-	return layout.version === version ? layout : { ...layout, version };
+	return layout.version === DOCK_LAYOUT_VERSION
+		? layout
+		: { ...layout, version: DOCK_LAYOUT_VERSION };
 }

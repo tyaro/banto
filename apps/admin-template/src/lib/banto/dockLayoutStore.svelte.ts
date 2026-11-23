@@ -107,7 +107,7 @@ export interface DockLayoutStore {
 
 export const DOCK_LAYOUT_SAVE_DEBOUNCE_MS = 500;
 
-const EMPTY_LAYOUT: DockLayout = { version: 2, floating: [], docked: null };
+const EMPTY_LAYOUT: DockLayout = { version: 4, floating: [], docked: null };
 
 function resolveStorage(storage: Storage | null | undefined): Storage | null {
 	if (storage !== undefined) return storage;

@@ -103,7 +103,7 @@ const settle = async () => {
 
 /** A tab group (x, y) next to a plain pane (p), plus one floating window (f). */
 const mixed = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 	docked: {
 		type: 'split',
@@ -704,7 +704,7 @@ describe('focus and scroll after a move', () => {
 
 	it('auto-hide and pin back: same DOM; a focus inside stays there (the host does not move it to the pin)', async () => {
 		const layout: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: {
 				type: 'split',
@@ -954,9 +954,7 @@ describe('an update that keeps every receptacle moves nothing (#763 review)', ()
 		expect(key(moved)).toBe(key(base));
 		const withBand: DockLayout = {
 			...base,
-			autoHidden: [
-				{ node: { type: 'panel', id: 'q', title: 'Q' }, edge: 'left', slot: { kind: 'root' } }
-			]
+			autoHidden: [{ node: { type: 'panel', id: 'q', title: 'Q' }, edge: 'left' }]
 		};
 		const widerBand: DockLayout = {
 			...withBand,

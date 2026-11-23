@@ -41,7 +41,7 @@ const tree = (): DockNode => ({
 
 describe('an id made again by a slot is free of the whole layout (#782 PR6)', () => {
 	it('a tab group in an edge band keeps its id: the group made again around an anchor takes another', () => {
-		const dock = createDockState({ version: 2, floating: [], docked: tree() }, counterMakeId());
+		const dock = createDockState({ version: 4, floating: [], docked: tree() }, counterMakeId());
 		// A slot of `b` in the group t1 taken by the caller (`dockAtSlot` with a slot of one's own).
 		const slot = captureDockSlot(dock.layout.docked, 'b')!;
 		dock.undockPanel('b');
@@ -56,7 +56,7 @@ describe('an id made again by a slot is free of the whole layout (#782 PR6)', ()
 	});
 
 	it('the same by "back" (the pane`s `homeSlot`): its place in the shadow tree is made again around the band', () => {
-		const dock = createDockState({ version: 2, floating: [], docked: tree() }, counterMakeId());
+		const dock = createDockState({ version: 4, floating: [], docked: tree() }, counterMakeId());
 		dock.undockPanel('b');
 		dock.dockExistingAtEdge('c', 'left');
 		expect(dock.autoHideRegion('d')).toBe(true);

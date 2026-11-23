@@ -13,7 +13,7 @@ const SETTING_KEY = 'dock.test';
 
 function floating(id: string, x = 10): DockLayout {
 	return {
-		version: 2,
+		version: 4,
 		floating: [{ id, title: id, x, y: 10, width: 100, height: 80, open: true }],
 		docked: null
 	};
@@ -286,7 +286,7 @@ describe('saving', () => {
 	it('seeds only once: a panel the user removed stays removed', () => {
 		const { dock, store } = setup();
 		store.seedIfEmpty();
-		dock.layout = { version: 2, floating: [], docked: null };
+		dock.layout = { version: 4, floating: [], docked: null };
 		store.seedIfEmpty();
 		expect(dock.layout.floating).toEqual([]);
 	});

@@ -139,7 +139,7 @@ function addLayer(attrs: Record<string, string>): HTMLElement {
 }
 
 const floating = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [
 		{ id: 'a', title: 'A', x: 40, y: 40, width: 320, height: 200, open: true },
 		{ id: 'b', title: 'B', x: 500, y: 300, width: 300, height: 200, open: true }
@@ -148,7 +148,7 @@ const floating = (): DockLayout => ({
 });
 
 const split = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 	docked: {
 		type: 'split',
@@ -163,7 +163,7 @@ const split = (): DockLayout => ({
 });
 
 const tabs = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [],
 	docked: {
 		type: 'tabs',

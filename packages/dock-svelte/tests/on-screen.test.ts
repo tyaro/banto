@@ -17,14 +17,13 @@ const win = (id: string, extra: Partial<FloatingWindow> = {}): FloatingWindow =>
 
 const hidden = (id: string): DockAutoHidden => ({
 	node: { type: 'panel', id, title: id },
-	edge: 'left',
-	slot: { kind: 'root', side: 'left' } as never
+	edge: 'left'
 });
 
 function make() {
 	const dock = createDockState();
 	dock.layout = {
-		version: 2,
+		version: 4,
 		floating: [win('fo'), win('fc', { collapsed: true }), win('fx', { open: false })],
 		docked: {
 			type: 'split',

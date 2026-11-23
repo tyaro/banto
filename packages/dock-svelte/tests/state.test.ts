@@ -149,7 +149,7 @@ describe('DockState serialize/hydrate', () => {
 		dock.hydrate('not json{{{');
 		expect(dock.layout).toEqual(before);
 
-		dock.hydrate(JSON.stringify({ version: 2, floating: [] }));
+		dock.hydrate(JSON.stringify({ version: 4, floating: [] }));
 		expect(dock.layout).toEqual(before);
 
 		dock.hydrate(JSON.stringify({ version: 1, floating: [{ id: 'a' }] }));
@@ -161,7 +161,7 @@ describe('DockState serialize/hydrate', () => {
 
 	it('hydrate keeps unknown ids as-is (pruning is the host component job)', () => {
 		const layout: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [{ id: 'ghost', title: 'Ghost', x: 0, y: 0, width: 200, height: 150, open: true }],
 			docked: null
 		};
@@ -179,19 +179,19 @@ describe('DockState serialize/hydrate', () => {
 	});
 
 	it('the constructor accepts a DockLayout object directly', () => {
-		const layout: DockLayout = { version: 2, floating: [], docked: null };
+		const layout: DockLayout = { version: 4, floating: [], docked: null };
 		const dock = createDockState(layout);
 		expect(dock.layout).toEqual(layout);
 	});
 
-	it('hydrate migrates a v1 (M7) payload to v2 with docked: null', () => {
+	it('hydrate does not read a v1 (M7) payload: the layout stays (#782 PR8b)', () => {
 		const v1 = {
 			version: 1,
 			floating: [{ id: 'a', title: 'A', x: 1, y: 2, width: 300, height: 200, open: true }]
 		};
 		const dock = createDockState();
-		dock.hydrate(JSON.stringify(v1));
-		expect(dock.layout).toEqual({ version: 2, floating: v1.floating, docked: null });
+		expect(dock.hydrate(JSON.stringify(v1))).toBe(false);
+		expect(dock.layout).toEqual({ version: 4, floating: [], docked: null });
 	});
 });
 
@@ -425,7 +425,7 @@ describe('DockState serialize/hydrate round-trip with a nested docked tree', () 
 		restored.hydrate(json);
 
 		expect(restored.layout).toEqual(dock.layout);
-		expect(restored.layout.version).toBe(2);
+		expect(restored.layout.version).toBe(4);
 		const split = restored.layout.docked as DockSplitNode;
 		expect(split.type).toBe('split');
 		expect((split.children[0] as DockTabGroupNode).type).toBe('tabs');

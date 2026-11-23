@@ -14,10 +14,11 @@
 // the steps as text. To look for more cases: `DOCK_PROPERTY_RUNS=5000 DOCK_PROPERTY_SEED=1 pnpm
 // --filter @banto/dock-svelte test slot-properties`.
 //
-// Known failures are marked `it.fails` with the issue and the smallest case found; each also has
-// its case pinned as an ordinary `it.fails` below the property. When one starts to pass, vitest
-// reports it: take the mark off then. Left: the edge bands (2 by hide / show, 2 by floats), for
-// #782 PR8. The 14 by floats that #782 PR6 passed are ordinary cases now.
+// A known failure is marked `it.fails` with the issue and the smallest case found, and has its
+// case pinned as an ordinary `it.fails` below the property. When one starts to pass, vitest
+// reports it: take the mark off then. None is left: the 4 of the edge bands (2 by hide / show, 2
+// by floats) pass since #782 PR8b put the bands on the shadow tree, and the 14 by floats that
+// #782 PR6 passed are ordinary cases too.
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import { autoHiddenPanelIds } from '../src/core/autohide';
@@ -330,31 +331,25 @@ describe('a region in an edge band and hidden panes (#739, #782 PR5 property 4)'
 		fc.assert(bandRoundTrip(false), params(300));
 	});
 
-	// KNOWN FAILURE (for PR8, the bands on the shadow tree): the hidden panes shown while the region
-	// is in its band. The band's slot is the place the region had when it went there - beside the
-	// panes docked then -, not its default place: the region comes back there, whatever was shown
-	// at its default place meanwhile. Smallest case: the pinned one below.
-	it.fails(
-		'KNOWN FAILURE: the hidden panes shown first, then the region put back from its band',
-		() => {
-			fc.assert(bandRoundTrip(true), params(300));
-		}
-	);
-	it.fails(
-		'KNOWN FAILURE (pinned): row[column[a, b], c], a hidden, b to its band, a shown, b put back',
-		() => {
-			const tree = split('s1', 'row', even(2), [
-				split('s2', 'column', even(2), [panel('a'), panel('b')]),
-				panel('c')
-			]);
-			const dock = runSteps(tree, ['-a']);
-			expect(dock.autoHideRegion('b')).toBe(true);
-			runStep(dock, '+a');
-			expect(dock.restoreAutoHidden('b')).toBe(true);
-			// row[a, b, c]: b goes back beside c (where it was when a was hidden), not below a.
-			expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(tree));
-		}
-	);
+	// Was a KNOWN FAILURE until #782 PR8b: the hidden panes shown while the region is in its band.
+	// The region's place is its tombstone in the shadow tree now - a hidden pane shown meanwhile
+	// lands beside it, in default order -, and a share counts the region in its band as there.
+	// Smallest case: the pinned one below.
+	it('the hidden panes shown first, then the region put back from its band', () => {
+		fc.assert(bandRoundTrip(true), params(300));
+	});
+	it('(pinned) row[column[a, b], c], a hidden, b to its band, a shown, b put back', () => {
+		const tree = split('s1', 'row', even(2), [
+			split('s2', 'column', even(2), [panel('a'), panel('b')]),
+			panel('c')
+		]);
+		const dock = runSteps(tree, ['-a']);
+		expect(dock.autoHideRegion('b')).toBe(true);
+		runStep(dock, '+a');
+		expect(dock.restoreAutoHidden('b')).toBe(true);
+		// row[a, b, c]: b goes back beside c (where it was when a was hidden), not below a.
+		expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(tree));
+	});
 });
 
 describe('saving and loading changes nothing (#782 property 5)', () => {
@@ -802,26 +797,20 @@ describe('floated panes: shares are kept (#782 property 4, floats)', () => {
 		fc.assert(bandRoundTrip(false), params(300));
 	});
 
-	// KNOWN FAILURE (PR1's, by floats; for PR8): the floated panes docked back while the region is
-	// in its band. The band's slot has no `share` (#739), so the region comes back by `size` into a
-	// split that has changed.
-	it.fails(
-		'KNOWN FAILURE: the floated panes docked back first, then the region put back from its band',
-		() => {
-			fc.assert(bandRoundTrip(true), params(300));
-		}
-	);
-	it.fails(
-		'KNOWN FAILURE (pinned): row[a, b, c], a floated, b to its band, a docked back, b put back',
-		() => {
-			const tree = row(['a', 'b', 'c']);
-			const dock = runSteps(tree, ['~a']);
-			expect(dock.autoHideRegion('b')).toBe(true);
-			runStep(dock, '^a');
-			expect(dock.restoreAutoHidden('b')).toBe(true);
-			expect(treeDiff(dock.layout.docked, tree)).toBeNull();
-		}
-	);
+	// Was a KNOWN FAILURE until #782 PR8b (PR1's, by floats): the floated panes docked back while
+	// the region is in its band. The region comes back at the share its tombstone holds in the
+	// shadow tree, not by the `size` of a slot (#739).
+	it('the floated panes docked back first, then the region put back from its band', () => {
+		fc.assert(bandRoundTrip(true), params(300));
+	});
+	it('(pinned) row[a, b, c], a floated, b to its band, a docked back, b put back', () => {
+		const tree = row(['a', 'b', 'c']);
+		const dock = runSteps(tree, ['~a']);
+		expect(dock.autoHideRegion('b')).toBe(true);
+		runStep(dock, '^a');
+		expect(dock.restoreAutoHidden('b')).toBe(true);
+		expect(treeDiff(dock.layout.docked, tree)).toBeNull();
+	});
 });
 
 describe('the generators (#782 PR1)', () => {

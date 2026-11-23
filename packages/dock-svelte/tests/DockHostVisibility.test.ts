@@ -27,7 +27,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 const layout = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [],
 	docked: {
 		type: 'split',
@@ -139,7 +139,7 @@ describe('a View menu built on dock.panels', () => {
 // pane the active tab, which unmounts the active one - asked like a tab click.
 describe('showPanel into a tab group', () => {
 	const tabsLayout = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [],
 		docked: {
 			type: 'tabs',
@@ -219,7 +219,7 @@ describe('showPanel of an open floating window', () => {
 describe('replaceLayout with { saved: true } (#739 review)', () => {
 	const panel = (id: string) => ({ type: 'panel' as const, id, title: id });
 	const initial = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [],
 		docked: {
 			type: 'split',

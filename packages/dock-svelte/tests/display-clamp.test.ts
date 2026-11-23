@@ -93,7 +93,7 @@ describe('applyDrag with clamp options', () => {
 
 describe('DockState keeps the saved preference when the host shrinks', () => {
 	const layout = {
-		version: 2 as const,
+		version: 4 as const,
 		floating: [win({ x: 452, y: 40, width: 300, height: 200 })],
 		docked: null
 	};

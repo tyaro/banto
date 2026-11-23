@@ -454,6 +454,20 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   既定の位置（`dock.defaultLayout`）へ戻る。代入で消えた・動いた pane の取り分を配り直す比率の再現（#741・#743）はしない。
   直す所: 代入のたびに分割・タブの組の id を振り直しているなら、そのまま渡す。`DockHost` を直に使い、代入の後も戻したいなら
   `dock.defaultLayout` を入れる。ドラッグ・浮かせる・閉じる・`dockExisting*`・端の帯の結果は変わらない。
+- **`@banto/dock-svelte`: 保存する配置は `version: 4` だけ。端の帯の `slot` は無くなった（#782 PR8b）**。派生アプリの作業:
+  1. コードに直書きした `version: 2`（と 3）を `version: 4` に替える（既定の配置、試験の fixture、e2e が `localStorage` に
+     入れる JSON）。型の付いた所は `pnpm check` で止まる。JSON の文字列は `rg "version\"?: ?[23]\b"` で探す。
+  2. fixture の `autoHidden[]` から `slot: { kind: 'root' }` などを消す（`DockAutoHidden` は `{ node, edge, size? }`）。
+  3. 保存済みの配置（`version` 1〜3）は読まれず、利用者の配置は既定に戻る。データの移行は無い。読み込みに失敗したら
+     既定を出す、という今までの処理があれば足す所は無い（`hydrate` が `false`、`reconcileThreePaneLayout` が `default`）。
+  4. 配置の保存・読み込みは今までどおり `serialize()` / `hydrate()`（`ThreePaneDock` は `layoutSnapshot()` / `saved`）を
+     通す。配置に欄 `dockedWithAutoHidden`（帯の区画が戻る場所の木）が増えるが、`DockState` が書くので触らない。配置を
+     自分で組み替えてから保存している場合（pane を足す・落とす）は、その欄は読み込み時に捨てられ、帯の区画は既定の位置
+     （無ければ帯の端）へ戻る。保存した配置を `dock.layout = JSON.parse(..)` で入れている所は `dock.hydrate(..)` か
+     `replaceLayout(layout, { saved: true })` に替える（代入では欄を読まない）。
+  5. 帯から戻した区画の幅は「帯へ送ったときの分割の中の取り分」になった（前は戻す時点で見えている兄弟に対する割合）。
+     見た目の基準画像・E2E で幅を見ていれば確かめ直す。詳細は CHANGELOG と `packages/dock-svelte/README.md` の
+     「自動で隠す」。
 - **`@banto/dock-svelte`: `dock.homeSlot(id)` の slot は場所の名前で、中身は書き換わらない（#782 PR7）**。
   `dock.dockBack(id)`・`dock.backTree(id)`（slot を受けない新しい口。#782 PR8a。戻れるかは `backTree(id) !== null`）・
   `movePanel(id, { back: true })` を使う（旧い `dockAtSlot(id, dock.homeSlot(id))`・`restoredAt(..)` も PR8c で消すまで動く）。

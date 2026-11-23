@@ -7,7 +7,7 @@ import { structureKey } from '../src/core/lifecycle';
 import type { DockLayout } from '../src/types';
 
 const base = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [
 		{ id: 'a', title: 'A', x: 0, y: 0, width: 300, height: 200, open: true },
 		{ id: 'b', title: 'B', x: 50, y: 50, width: 300, height: 200, open: true }
@@ -73,9 +73,9 @@ describe('structureKey', () => {
 
 	it('does not confuse floating ids that contain delimiters', () => {
 		const win = (id: string) => ({ id, title: id, x: 0, y: 0, width: 10, height: 10, open: true });
-		const two: DockLayout = { version: 2, floating: [win('t'), win('a:1,b')], docked: null };
+		const two: DockLayout = { version: 4, floating: [win('t'), win('a:1,b')], docked: null };
 		const three: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [win('t'), win('a'), win('b')],
 			docked: null
 		};

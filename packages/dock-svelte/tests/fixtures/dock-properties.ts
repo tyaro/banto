@@ -141,8 +141,8 @@ export const counterMakeId = (start = 0): (() => string) => {
 
 /** A state docked as `tree`, which is also its default layout (where a hidden pane comes back). */
 export const newDock = (tree: DockNode): DockState => {
-	const dock = createDockState({ version: 2, floating: [], docked: tree }, counterMakeId());
-	dock.defaultLayout = { version: 2, floating: [], docked: tree };
+	const dock = createDockState({ version: 4, floating: [], docked: tree }, counterMakeId());
+	dock.defaultLayout = { version: 4, floating: [], docked: tree };
 	return dock;
 };
 

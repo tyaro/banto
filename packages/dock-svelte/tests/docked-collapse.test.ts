@@ -108,7 +108,7 @@ const split = (
 	children,
 	sizes: sizes ?? children.map(() => 1 / children.length)
 });
-const layoutOf = (docked: DockNode | null): DockLayout => ({ version: 2, floating: [], docked });
+const layoutOf = (docked: DockNode | null): DockLayout => ({ version: 4, floating: [], docked });
 
 describe('tree: collapsed rules', () => {
 	it('keeps the flag only on a split child that has an open sibling', () => {
@@ -263,7 +263,7 @@ describe('DockState: docked collapse', () => {
 
 	it('does not confuse the floating collapse with the docked one', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [{ id: 'f', title: 'F', x: 0, y: 0, width: 100, height: 100, open: true }],
 			docked: split('s', 'row', [panel('a'), panel('b')])
 		});

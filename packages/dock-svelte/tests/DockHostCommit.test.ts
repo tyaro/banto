@@ -94,7 +94,7 @@ async function settle(): Promise<void> {
 
 /** A row split `l | (x, y tabs)` and an open floating window `f`. */
 const layout = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 	docked: {
 		type: 'split',
@@ -296,7 +296,7 @@ describe('DockHost onLayoutCommit: changes outside a gesture', () => {
 
 describe('DockHost onLayoutCommit: replaceLayout', () => {
 	const other = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [{ id: 'g', title: 'G', x: 10, y: 10, width: 300, height: 200, open: true }],
 		docked: { type: 'panel', id: 'l', title: 'L' }
 	});
@@ -352,7 +352,7 @@ describe('DockHost onLayoutCommit: replaceLayout', () => {
 			await host().replaceLayout(other(), { commit: 'reset', applied, isCurrent: () => false })
 		).toBe('stale');
 		expect(
-			await host().replaceLayout({ version: 2 } as unknown as DockLayout, {
+			await host().replaceLayout({ version: 4 } as unknown as DockLayout, {
 				commit: 'reset',
 				applied
 			})
@@ -375,7 +375,7 @@ describe('DockHost onLayoutCommit: replaceLayout', () => {
 
 describe('DockHost onLayoutCommit: replacements asked at the same time (PR #842 review)', () => {
 	const other = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [{ id: 'g', title: 'G', x: 10, y: 10, width: 300, height: 200, open: true }],
 		docked: { type: 'panel', id: 'l', title: 'L' }
 	});
@@ -514,7 +514,7 @@ describe("DockHost onLayoutCommit: replaceLayout with commit: 'user'", () => {
 		await settle();
 		expect(commits).toEqual([]);
 		const next: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: { type: 'panel', id: 'l', title: 'L' }
 		};
@@ -528,7 +528,7 @@ describe("DockHost onLayoutCommit: replaceLayout with commit: 'user'", () => {
 describe('DockHost onLayoutCommit: a callback that throws (PR #842 review)', () => {
 	/** `l | x`: the tab `y` goes off the screen, so the panes are asked. */
 	const twoPanes = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [],
 		docked: {
 			type: 'split',

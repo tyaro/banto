@@ -32,16 +32,18 @@ export interface FloatingWindow {
 	 * #782): `DockState.show` docks the pane at its default place (`DockState.defaultLayout`,
 	 * `core/defaultPlace.ts`) - not where it was hidden from - and `DockState.open` opens it
 	 * floating and drops this. The value is the share (`0 <= n <= 1`) it held of its split when it
-	 * was hidden, which it takes again (`1` = none to speak of: its default share). A closed
-	 * window without it opens floating.
+	 * was hidden, which it takes again (`1` = none to speak of: its default share). The regions in
+	 * the edge bands count as there for it (#782 PR8b; the floated panes do not), so it means the
+	 * same whether a region beside the pane went to its band before the pane was hidden or after.
+	 * A closed window without it opens floating.
 	 */
 	dockShare?: number;
 	/**
 	 * Locked by the user (#663 ②, renamed from `pinned` in #694 PR-3): the window's
 	 * position and size are fixed - no title-bar drag, no resize, no keyboard move /
 	 * resize. Tabs can still be dragged in and out and the window can be closed or
-	 * raised. Optional and written only when `true`: a layout without it (older JSON)
-	 * reads as not locked, so the layout `version` stays 2. Lives on the window, so it
+	 * raised. Optional and written only when `true`: a layout without it
+	 * reads as not locked. Lives on the window, so it
 	 * is gone when the window docks (a pane pulled out later starts unlocked).
 	 */
 	locked?: boolean;
@@ -56,7 +58,7 @@ export interface FloatingWindow {
 	 * Collapsed by the user (#663 ③-A): the window shows only its title bar. The
 	 * saved `height` is untouched (expanding restores it); the body stays mounted
 	 * but hidden. Optional and written only when `true`: a layout without it
-	 * (older JSON) reads as expanded, so the layout `version` stays 2. Lives on
+	 * reads as expanded. Lives on
 	 * the window, so it is gone when the window docks (a pane pulled out later
 	 * starts expanded); closing and reopening keeps it.
 	 */
@@ -86,10 +88,11 @@ export interface FloatingWindow {
  * placed as a bare pane, when the container and every anchor are gone (all of
  * its panes were taken out). It may have an `outer` of its own (#727): the place
  * of the container around that one, tried next (the slot and its `outer` chain at
- * most `MAX_SLOT_DEPTH` (8) deep). A layout without it (older JSON) works as before,
- * so the layout `version` stays 2 - and so does one whose slots are at most 4 deep;
- * a deeper slot makes it `version: 3` (`core/layoutVersion.ts`), which the releases
- * before #727 do not read.
+ * most `MAX_SLOT_DEPTH` (8) deep).
+ *
+ * No layout holds a slot since #782 PR8b (a closed window's went in PR5, an edge
+ * band's here): it is the name `DockState.homeSlot` hands out for a floated pane's
+ * place, and what `core/slot.ts` works on. Removed with those in #782 PR8c.
  */
 export type DockSlot =
 	| { kind: 'tab'; groupId: string; index: number; anchors: string[]; outer?: DockSlot }
@@ -146,7 +149,7 @@ export interface DockPanelNode {
 	 * Collapsed to a band by the user (#663 ③-B): a child of a split that shows only
 	 * a band (icon, title, expand button). Meaningful only on a direct child of a
 	 * `split` that has another open child; anywhere else `DockState` clears it. Written
-	 * only when `true` (older JSON reads as expanded, `version` stays 2). Gone when the
+	 * only when `true` (a layout without it reads as expanded). Gone when the
 	 * pane leaves the docked tree; the split's `sizes` are never touched.
 	 */
 	collapsed?: boolean;
@@ -209,38 +212,74 @@ export type DockLayoutCommitReason = 'user' | 'reset';
  * A docked region (a panel, or a tab group) auto-hidden to a band on the host's
  * edge (#694 PR-3, "unpinned" in Visual Studio's words): it is out of the docked
  * tree, its tabs sit in the band, and pressing one slides the pane out over the
- * docked tree. The pin button on the slid-out pane puts the region back at `slot`.
+ * docked tree. The pin button on the slid-out pane puts the region back where it
+ * was: its place is kept in `DockLayout.dockedWithAutoHidden` (#782 PR8b; a slot
+ * of its own until then).
  */
 export interface DockAutoHidden {
 	/** The region as it was in the tree (never `collapsed`). Its ids share the layout's id space. */
 	node: DockPanelNode | DockTabGroupNode;
-	/** The band it sits in. */
+	/** The band it sits in. Where it docks when its place is gone and it has no default place. */
 	edge: DockEdge;
-	/** Where it goes back (a `split` / `root` slot of `core/slot.ts`). When that place is gone it docks at `edge` instead. */
-	slot: DockSlot;
 	/** Size of the slid-out pane along the edge's axis, as a share (0-1] of the docked area. Omitted = `AUTO_HIDE_FLYOUT_RATIO`. */
 	size?: number;
 }
 
+/**
+ * A leaf of the shadow tree (`core/shadow.ts`, #782): a docked pane, or - with `away` - the place
+ * of a pane that is out of the docked tree (a tombstone). `band` (#782 PR8b, only with `away`):
+ * the pane is in an edge band (`DockLayout.autoHidden`), not a floating window.
+ */
+export interface ShadowPanelNode extends DockPanelNode {
+	/** Written only when `true`. A tombstone is never `collapsed`. */
+	away?: true;
+	/** Written only when `true`, and only with `away`. */
+	band?: true;
+}
+
+/** A tab group of the shadow tree. `activeIndex` counts every child and points at a shown one whenever one shows. */
+export interface ShadowTabGroupNode extends Omit<DockTabGroupNode, 'children'> {
+	children: ShadowPanelNode[];
+}
+
+/** A split of the shadow tree. `sizes` has one share per child (tombstones included) and adds up to 1. */
+export interface ShadowSplitNode extends Omit<DockSplitNode, 'children'> {
+	children: ShadowNode[];
+}
+
+/** A node of the shadow tree. A `DockNode` is a `ShadowNode` with no tombstone in it. */
+export type ShadowNode = ShadowPanelNode | ShadowTabGroupNode | ShadowSplitNode;
+
 /** Full serializable dock layout (spec §5.1: "レイアウト全体をJSONにシリアライズ/デシリアライズ可能に"). */
 export interface DockLayout {
 	/**
-	 * Bump on breaking changes. v1 (M7) had no `docked` field; `DockState.hydrate` migrates it to
-	 * `docked: null`. v3 (#727) is v2 with a slot more than 4 deep (`DockSlot.outer`), which the
-	 * releases before it reject: a layout is written as 3 only then, as 2 otherwise - decided from the
-	 * content each time (`DockState` sets it on every assignment; a `{ version: 2, ... }` you build is fine).
+	 * The one version read and written (#782 PR8b): a layout of an earlier version (1 - 3) is not
+	 * read - `validateDockLayout` refuses it, `DockState.hydrate` returns `false`, and the app shows
+	 * its default layout. `DockState` writes 4 on every assignment.
 	 */
-	version: 2 | 3;
+	version: 4;
 	/** Render order = z-order; last entry is frontmost. */
 	floating: FloatingWindow[];
 	/** The docked tree, or `null` when nothing is docked (host shows only floating windows). */
 	docked: DockNode | null;
 	/**
 	 * Regions auto-hidden to the host's edge bands (#694 PR-3), in band order.
-	 * Optional and written only when not empty: a layout without it (older JSON)
-	 * reads as "nothing auto-hidden", so the layout `version` stays 2.
+	 * Optional and written only when not empty.
 	 */
 	autoHidden?: DockAutoHidden[];
+	/**
+	 * Where the regions of `autoHidden` go back (#782 PR8b): the docked tree with the panes of
+	 * those regions at their places, each a leaf marked `away` and `band` - a tab group with the
+	 * group itself and its id -, and every split with a share for them too. So a region comes back
+	 * into the split / tab group it left, at the share it held there, whatever was moved, shown or
+	 * hidden meanwhile. Without its marked leaves it is `docked` (the same shape and ids).
+	 *
+	 * Written by `DockState` on every assignment, only while a region in a band has a place; never
+	 * build or edit it. A layout whose tree does not show `docked` (say `docked` was edited by
+	 * hand) is read without it: a region then docks at its default place (`DockState.defaultLayout`),
+	 * else along its `edge`. The places of floating windows are not saved.
+	 */
+	dockedWithAutoHidden?: ShadowNode;
 }
 
 /** Definition passed to `DockState.ensureWindow` / `reset` for a window that may not exist in the layout yet. */

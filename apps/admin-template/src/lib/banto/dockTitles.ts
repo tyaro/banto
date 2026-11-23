@@ -10,8 +10,9 @@
  * dock's own `hydrate` validation to reject.
  *
  * Titles live in: `floating[]` (also a closed window hidden from the dock, `dockShare`), the docked tree's
- * panel nodes and tab-group children, and `autoHidden[].node` (a panel or a tab group). Slots
- * hold ids only.
+ * panel nodes and tab-group children, `autoHidden[].node` (a panel or a tab group), and the tree
+ * of the places of the regions in the edge bands (`dockedWithAutoHidden`: the docked tree again,
+ * with those regions' panes in it).
  *
  * App layer only. Removed together with the dock by `scripts/scaffold.mjs` (`removeDock`).
  */
@@ -46,5 +47,6 @@ export function refreshPanelTitles(
 	if (Array.isArray(layout.autoHidden)) {
 		for (const entry of layout.autoHidden) if (isObject(entry)) fix(entry.node);
 	}
+	fix(layout.dockedWithAutoHidden);
 	return JSON.stringify(layout);
 }

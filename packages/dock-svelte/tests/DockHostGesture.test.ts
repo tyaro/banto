@@ -105,7 +105,7 @@ function pressEscape(): KeyboardEvent {
 }
 
 const floatingA = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [{ id: 'a', title: 'A', x: 40, y: 40, width: 320, height: 200, open: true }],
 	docked: null
 });
@@ -172,7 +172,7 @@ describe('Issue #433 observations (regressions)', () => {
 
 	it('4. focusin on an input of a back window raises it, keeping focus and the DOM order', () => {
 		const { dock, dialog } = mountFloating({
-			version: 2,
+			version: 4,
 			floating: [
 				{ id: 'a', title: 'A', x: 40, y: 40, width: 320, height: 200, open: true },
 				{ id: 'd', title: 'D', x: 100, y: 80, width: 320, height: 200, open: true }
@@ -261,7 +261,7 @@ describe('commit re-measures the host', () => {
 
 describe('split divider', () => {
 	const split = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 		docked: {
 			type: 'split',
@@ -293,7 +293,7 @@ describe('split divider', () => {
 	// write to a split whose shown children hold 0 together, which moves the share of `a`'s place.
 	it('Esc puts the shares of a floated pane`s place back too: row[a 1, b 0, c 0], a floated', () => {
 		const { dock } = mountFloating({
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: {
 				type: 'split',
@@ -394,7 +394,7 @@ describe('cancelGesture / replaceLayout during a gesture (#796)', () => {
 		);
 		firePointer(window, 'pointermove', 430, 240);
 		const next: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [{ id: 'a', title: 'A', x: 10, y: 10, width: 500, height: 200, open: true }],
 			docked: null
 		};
@@ -425,12 +425,12 @@ describe('cancelGesture / replaceLayout during a gesture (#796)', () => {
 
 	describe('no new gesture while a replaceLayout is pending', () => {
 		const withB = (): DockLayout => ({
-			version: 2,
+			version: 4,
 			floating: [{ id: 'a', title: 'A', x: 40, y: 40, width: 320, height: 200, open: true }],
 			docked: { type: 'panel', id: 'b', title: 'B' }
 		});
 		const without = (width = 500): DockLayout => ({
-			version: 2,
+			version: 4,
 			floating: [{ id: 'a', title: 'A', x: 10, y: 10, width, height: 200, open: true }],
 			docked: null
 		});

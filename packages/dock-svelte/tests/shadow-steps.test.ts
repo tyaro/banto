@@ -32,8 +32,8 @@ const tabs = (id: string, ids: string[]): DockNode => ({
 
 /** A state docked as `tree`, which is also its default layout. */
 function dockOf(tree: DockNode): DockState {
-	const dock = createDockState({ version: 2, floating: [], docked: tree }, counterMakeId());
-	dock.defaultLayout = { version: 2, floating: [], docked: tree };
+	const dock = createDockState({ version: 4, floating: [], docked: tree }, counterMakeId());
+	dock.defaultLayout = { version: 4, floating: [], docked: tree };
 	return dock;
 }
 const back = (dock: DockState, id: string): boolean => dock.dockBack(id);
@@ -171,8 +171,8 @@ describe('an id S keeps out of sight is not shown twice (review of PR #864, 3)',
 	// that says `G` too.
 	it('a default id taken by the place, and the same id given instead to another group: not twice', () => {
 		const tree = split('s', 'row', [0.5, 0.5], [tabs('G', ['a', 'b']), tabs('T', ['c', 'd'])]);
-		const dock = createDockState({ version: 2, floating: [], docked: tree }, () => 'G');
-		dock.defaultLayout = { version: 2, floating: [], docked: tree };
+		const dock = createDockState({ version: 4, floating: [], docked: tree }, () => 'G');
+		dock.defaultLayout = { version: 4, floating: [], docked: tree };
 		dock.dismiss('a');
 		dock.undockPanel('d');
 		dock.ensureWindow({ id: 'T', title: 'T' }, 800, 600);

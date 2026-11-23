@@ -12,7 +12,7 @@ Banto のフローティングウィンドウ/ドッキングレイアウト（s
 	import { DockHost, createDockState } from '@banto/dock-svelte';
 
 	const dock = createDockState({
-		version: 2,
+		version: 4,
 		floating: [
 			{ id: 'trend', title: 'トレンド', x: 40, y: 40, width: 360, height: 240, open: true }
 		],
@@ -528,11 +528,10 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   なし」）を持つ。これが「ドックから隠した」印で、`serialize()` / `hydrate()` を通る。`dockShare` の無い閉じた
   window は浮動で開く。**前の版の `dockSlot`（戻す場所）は廃止**（破壊的変更）: 型から消え、古い JSON にあっても
   読まずに捨てる（その pane は浮動で開く。layout 全体は読める）。
-- 端の帯（自動で隠す）の `slot` は今までどおり場所を覚える。入れ子の入れ物からしまうと、外側の入れ物の場所を
-  `outer` で入れ子に覚える（#727。slot 自身を含めて最大 8 段）。**5 段以上の slot を 1 つでも含む layout は
-  `version: 3`** になり、#727 より前の版では読めない。4 段までなら `version: 2`。版は中身から毎回決まる
-  （`dock.layout` に入れるたび・`serialize()`・`layoutSnapshot()`）。読むときは `version: 2`（と 1）の slot は
-  4 段まで、`version: 3` だけ 8 段まで受ける。`DockLayout['version']` の型は `2 | 3`。
+- **保存する配置の `version` は 4 だけ**（#782 PR8b、破壊的変更）。`DockLayout['version']` の型は `4` で、`dock.layout` に
+  入れるたび・`serialize()`・`layoutSnapshot()` は 4 を書く。`validateDockLayout` は 1〜3 を `version` の issue で断る
+  （`hydrate` は `false`、`createDockState(layout)` は空の配置）。前の版で保存した配置は読まれず、既定に戻る。
+  端の帯（自動で隠す）の区画は slot を持たない: 戻る場所は配置の欄 `dockedWithAutoHidden` に入る（下の「自動で隠す」）。
 - `DockState` だけで扱う口もある（`beforePanelChange` には聞かない）: `dock.dismiss(id)`（隠す。docked・帯の pane なら
   `dockShare` を残す）・`dock.show(id)`（上の `showPanel` の layout の部分。戻り値は `'docked'` / `'floating'` / `null`）・
   `dock.showPlacement(id)`（`show` がどこに出すか）・`dock.showTabSwitch(id)`（`show` が選択中から外す pane）・
@@ -550,7 +549,7 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
 ピンは「自動で隠す」（ドッキング中の区画、下の節）の意味に変わったので、錠に替えた。
 
 - `dock.isLocked(id)` / `dock.setLocked(id, locked)`。`FloatingWindow.locked?: boolean` は `true` のときだけ書き出す
-  （`false` は項目ごと消す）。無い古い JSON は「固定なし」で読め、layout の `version` は 2 のまま。
+  （`false` は項目ごと消す）。無い古い JSON は「固定なし」で読める。
 - 固定中の `dock.move` / `dock.resize` は何もしない。ドラッグ・リサイズの最中に固定されたら、その操作は取り消して
   操作前の位置と大きさに戻る。window がドックに入ると `locked` は消え、あとで引き出した pane は固定なしで始まる。
 - ボタンのラベルは `messages.lockWindow(title)` / `messages.unlockWindow(title)`。
@@ -564,7 +563,7 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
 もう一度押すと元の大きさに戻る。錠とは独立で、固定したまま畳める・畳んだまま固定できる。ドック中の領域の折りたたみは次の節。
 
 - `dock.isCollapsed(id)` / `dock.setCollapsed(id, collapsed)`。`FloatingWindow.collapsed?: boolean` は `true` のときだけ書き出す
-  （`false` は項目ごと消す）。無い古い JSON は「展開」で読め、layout の `version` は 2 のまま。保存の `height` は畳んでも変えない。
+  （`false` は項目ごと消す）。無い古い JSON は「展開」で読める。保存の `height` は畳んでも変えない。
 - 畳んでいる間、本体は破棄せず `hidden` + `inert` で隠す（中の状態は保たれ、`beforePanelChange` / `keepMounted` は関係しない: 畳むのは閉じるではない）。
   リサイズのハンドルとキーボードのサイズ変更ボタンは出ず、`dock.resize` も何もしない。移動・閉じる・前面に出す・別ウィンドウで開くは効く。
   中のタブ帯を使う外へのドラッグは、本体が隠れているあいだはできない。
@@ -588,7 +587,7 @@ dock-svelte は一覧と操作だけを出す（`@banto/ui` に依存しない�
   隣が閉じるなどで畳んだ区画が開いている兄弟を失う、または親が split でなくなったときは、`collapsed` を自動で外す（`layout` を代入するたびに整える）。
 - `dock.isDockedCollapsed(nodeId)` / `dock.canCollapseDocked(nodeId)` / `dock.setDockedCollapsed(nodeId, collapsed)`（浮動の `isCollapsed` / `setCollapsed` とは別）。
   `nodeId` は panel または tab グループの id。畳めないときの `setDockedCollapsed(…, true)` は何もしない。`DockPanelNode.collapsed?` / `DockTabGroupNode.collapsed?: boolean` は
-  `true` のときだけ書き出す（古い JSON は「展開」で読め、`version` は 2 のまま）。
+  `true` のときだけ書き出す（無い配置は「展開」で読める）。
 - 畳んでいる間、中身は破棄せず `hidden` + `inert`（`beforePanelChange` / `keepMounted` は関係しない）。中にあった DOM のフォーカスは折りたたみのボタンへ移る
   （API から畳んでも同じ。ほかのフォーカスは奪わない）。divider の操作の最中にそれに接する区画が畳まれたら、その操作は取り消して元の比に戻る。
 - 帯はドロップ先にならず（そこへのドロップは何も起きない）、帯からのドラッグもできない。畳んでいる間はタブが見えないので、中のタブは引き出せない。
@@ -621,9 +620,21 @@ Visual Studio・GX Works3 の「自動的に隠す」と同じ。ドッキング
 - ドラッグ: 帯と引き出した pane はドラッグ元にならず、ドロップ先にもならない（`data-dock-no-drop`。そこへのドロップは何も起きない）。
   外周のボタン・ほかの区画の十字はそのまま使える（ドラッグを始める押下で、引き出した pane は引っ込む）。帯の pane を動かすときは、
   ピンで戻してからドラッグする。引き出した pane に pop-out のボタンは出さない。
-- 保存: `DockLayout.autoHidden?: DockAutoHidden[]`（`{ node, edge, slot, size? }`）。空なら書き出さない。古い JSON はそのまま読める
-  （`version` は 2 のまま）。`validateDockLayout` は区画の形・縁・slot・`size`（0 より大きく 1 以下）と、木・浮動と id が重ならないことを確かめる。
-  引き出しているかどうかは保存しない。
+- 戻る場所と比率（#782 PR8b）: ピンで戻すと、区画は帯へ送ったときの分割・タブの組へ、**その分割の中で持っていた取り分**で
+  戻る（浮かせた pane の「元の場所に戻す」と同じ規則）。帯に居る間にほかの pane を動かす・隠す・浮かせる・戻す、仕切りを
+  ドラッグする（見えている pane どうしの比だけが変わる）をはさんでも、何をどの順で戻しても同じ木・同じ比率になる。タブの組は
+  組ごと帯へ入り、同じ id の組として戻る（帯の間に、その組の既定の位置へほかの pane を出すと、その pane は帯の組の場所の隣に
+  入り、帯の区画を戻すと 1 つの組になる）。元の分割・タブの組が外からの代入（`dock.layout = ...`）で無くなったとき、場所の
+  無い配置を読んだときは、区画の pane を 1 枚ずつ既定の位置（`dock.defaultLayout`）へ入れ、既定の位置の無い pane はまとめて
+  帯の縁（`edge`）に沿って入れる（比率は入れた先で配り直す）。
+- 保存: `DockLayout.autoHidden?: DockAutoHidden[]`（`{ node, edge, size? }`）。空なら書き出さない。`validateDockLayout` は
+  区画の形・縁・`size`（0 より大きく 1 以下）と、木・浮動と id が重ならないことを確かめる。引き出しているかどうかは保存しない。
+  戻る場所は、配置の欄 `dockedWithAutoHidden?`（ドッキングの木に、帯の区画の pane を `away: true`・`band: true` の葉として
+  元の場所に入れた木。分割の `sizes` はその葉の取り分も含む。浮かせた pane の場所は入らない）。`DockState` が代入のたびに
+  書き、帯に場所のある区画が無ければ書かない。**アプリは組み立てない・書き換えない**（`serialize()` の値をそのまま保存する）。
+  `hydrate`・`createDockState(saved)`・`replaceLayout(layout, { saved: true })` は、この木から印の付いた葉を除くと `docked` と
+  同じ形（id と入れ子）になるときだけ読み、違えばこの欄だけを捨てる（区画は既定の位置 → 帯の縁へ戻る）。`dock.layout = ...`
+  の代入では読まない。
 - API: `dock.autoHidden` / `dock.isAutoHidden(id)` / `dock.autoHideRegion(id, { edge?, size?, mainId? })` / `dock.restoreAutoHidden(id)`
   （どちらも聞かない）、`dock.flyoutPanel` / `dock.openFlyout(id)` / `dock.closeFlyout()`、`host.autoHidePanel(id)` / `host.pinPanel(id)`
   （`beforePanelChange` を通す）。`dock.panels` の行は `autoHidden: true`（`placement: 'docked'`・`visible: true`）。純関数 `autoHideEdge` /

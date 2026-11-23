@@ -24,7 +24,7 @@ afterEach(cleanup);
 describe('messages can be swapped after mount', () => {
 	it('DockedTree: the titlebar close label follows', async () => {
 		const layout: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: { type: 'panel', id: 'a', title: 'A' }
 		};
@@ -38,7 +38,7 @@ describe('messages can be swapped after mount', () => {
 
 	it('DockedTree: the split divider label follows', async () => {
 		const layout: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: {
 				type: 'split',
@@ -60,7 +60,7 @@ describe('messages can be swapped after mount', () => {
 
 	it('DockWindow: the titlebar close label follows', async () => {
 		const layout: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [{ id: 'w', title: 'W', x: 0, y: 0, width: 300, height: 200, open: true }],
 			docked: null
 		};

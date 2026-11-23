@@ -46,7 +46,7 @@ function firePointer(target: EventTarget, type: string, x: number, y: number) {
 }
 
 const layout = (locked?: boolean, key: 'locked' | 'pinned' = 'locked'): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [
 		{
 			id: 'a',
@@ -98,7 +98,7 @@ describe('DockState lock', () => {
 
 	it('ignores unknown and docked ids', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: { type: 'panel', id: 'd', title: 'D' }
 		});
@@ -131,7 +131,7 @@ describe('DockState lock', () => {
 
 	it('is dropped when the window docks, and a pane pulled out again starts unlocked', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [
 				{ id: 'a', title: 'A', x: 0, y: 0, width: 300, height: 200, open: true, locked: true }
 			],

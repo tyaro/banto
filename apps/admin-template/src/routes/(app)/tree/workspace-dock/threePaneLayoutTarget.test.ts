@@ -4,7 +4,7 @@ import type { DockLayout } from '@banto/dock-svelte';
 import { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';
 import { createThreePaneLayoutTarget, type ThreePaneLayoutApi } from './threePaneLayoutTarget.js';
 
-const EMPTY: DockLayout = { version: 2, floating: [], docked: null };
+const EMPTY: DockLayout = { version: 4, floating: [], docked: null };
 const DEFAULT = { schema: 1, name: 'default' };
 
 function fakeDock(shown: object = DEFAULT) {

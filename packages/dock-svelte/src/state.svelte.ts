@@ -22,16 +22,18 @@ import {
 } from './core/geometry';
 import { untrack } from 'svelte';
 import {
+	activePanelOf,
 	autoHiddenPanelIds,
 	autoHideRegionInLayout,
 	findAutoHidden,
 	idsOutOfDocked,
 	regionOf,
+	regionPanelIds,
 	removeAutoHiddenPane,
-	restoreAutoHiddenInLayout,
 	setAutoHiddenActive,
 	type AutoHideOptions
 } from './core/autohide';
+import { bandTreeOf, readBandTree, shadowBandIds } from './core/bandTree';
 import { restoreDockSlot, type HiddenDockSlot } from './core/slot';
 import { dockShareOf } from './core/defaultPlace';
 import { withLayoutVersion } from './core/layoutVersion';
@@ -41,11 +43,12 @@ import {
 	copyShadowSizes,
 	deflateShadow,
 	dockIntoShadow,
+	dockRegionAtShadowEdge,
 	findShadowPanel,
 	markAway,
+	markInBand,
 	markPresent,
 	placeInShadowAtDefault,
-	inflateShadow,
 	projectShadow,
 	regraftShadow,
 	removeFromShadow,
@@ -55,7 +58,6 @@ import {
 	withFreeShadowIds,
 	withoutLoneFlags,
 	writeShadowView,
-	type ShadowAway,
 	type ShadowNode
 } from './core/shadow';
 import { validateDockLayout } from './core/validate';
@@ -90,11 +92,6 @@ import type {
 /** For a prediction that only asks whether a pane docks: the ids of the tree it makes are not used. */
 const NO_ID = (): string => '';
 
-/** A share to keep as `dockShare` (`1` when it says nothing). */
-function shareOr1(share: number): number {
-	return Number.isFinite(share) && share >= 0 && share < 1 ? share : 1;
-}
-
 /** The collapsed regions of a docked tree (a split's child that is a pane or a tab group), by id. */
 function collapsedRegions(
 	node: DockNode | null,
@@ -116,7 +113,7 @@ function sameRegion(a: DockNode, b: DockNode): boolean {
 }
 
 function emptyLayout(): DockLayout {
-	return { version: 2, floating: [], docked: null };
+	return { version: 4, floating: [], docked: null };
 }
 
 function placeNew(
@@ -207,11 +204,11 @@ export function forgetHomeSlots(dock: DockState): void {
  *  - `written`: it does once the sizes, active tabs, tab order, `collapsed` flags and titles of
  *    the docked tree are written onto S (what a tab click changes; a `collapsed` flag S cannot
  *    hold - `DockState`'s `#shows` - leaves a step made on S `written` too).
- *  - `rebuilt`: S was made again around the docked tree: for a change no step described (an
+ *  - `rebuilt`: S was made again around the docked tree, for a change no step described (an
  *    assignment from outside, a layout taken as a whole, a pane docked by a slot that is not its
- *    place in S) with the floated panes put back by the container each was in
- *    (`regraftShadow`, #782 PR7); for a region moved to or from an edge band (PR8) from the
- *    places S itself said (`deflateShadow` -> `inflateShadow`).
+ *    place in S): with the panes out of the tree - floated, or in an edge band - put back by the
+ *    container each was in (`regraftShadow`, #782 PR7); a layout taken as a whole brings the
+ *    places of its edge bands with it (`DockLayout.dockedWithAutoHidden`, #782 PR8b).
  *  - `failed`: following threw; S is the docked tree with no pane remembered.
  */
 export interface ShadowFollow {
@@ -247,44 +244,12 @@ export function watchShadow(dock: DockState, watch: ((follow: ShadowFollow) => v
 	watchShadowImpl(dock, watch);
 }
 
-/**
- * The slot `place` with the `share` / `size` of every split level that `now` - the slot S says for
- * the same pane now - has too (the same split, by id and direction): where the pane is among its
- * neighbours as `place` says, how much it holds as S has it now. Not for a level that names one
- * of `banded` (the panes and regions in the edge bands): S does not hold them, so its shares of
- * that split are of what is left of it - the share `place` says counts them.
- */
-function withSharesOf(place: DockSlot, now: DockSlot, banded: Set<string>): DockSlot {
-	const held = new Map<string, Extract<DockSlot, { kind: 'split' }>>();
-	for (let s: DockSlot | undefined = now; s && s.kind !== 'root'; s = s.outer)
-		if (s.kind === 'split') held.set(s.splitId, s);
-	const walk = (slot: DockSlot): DockSlot => {
-		if (slot.kind === 'root') return slot;
-		const outer = slot.outer ? { outer: walk(slot.outer) } : {};
-		if (slot.kind === 'tab') return { ...slot, ...outer };
-		const of = held.get(slot.splitId);
-		const names = [slot.neighborId, ...slot.anchors, ...(slot.otherAnchors ?? [])];
-		if (of === undefined || of.direction !== slot.direction || names.some((n) => banded.has(n)))
-			return { ...slot, ...outer };
-		const { share: _, ...rest } = slot;
-		return {
-			...rest,
-			size: of.size,
-			...(of.share === undefined ? {} : { share: of.share }),
-			...outer
-		};
-	};
-	return walk(place);
-}
-
 /** What a `DockState` holds beside its layout at one moment (`rememberShadow`). */
 interface HeldShadow {
 	shadow: ShadowNode | null;
 	homes: Map<string, DockSlot>;
 	unplaced: Set<string>;
 	lost: Set<string>;
-	/** `#placeSaid` of each `homeSlot` (`undefined`: none). */
-	said: Map<DockSlot, DockSlot | undefined>;
 }
 
 export class DockState {
@@ -324,13 +289,6 @@ export class DockState {
 	 */
 	#homeSlots = new Map<string, DockSlot>();
 	/**
-	 * The place S last said for a floated pane when a region went to or came from an edge band
-	 * (`#followShadow`), by the pane's `homeSlot`: what S is made again from while a region is in a
-	 * band, and what `core/slot.ts` puts a pane back by once S has no place for it. Gone with the
-	 * `homeSlot`. Goes when the bands are on S (PR8).
-	 */
-	#placeSaid = new WeakMap<DockSlot, DockSlot>();
-	/**
 	 * The floated panes whose place went with a change that was not made on S (an assignment from
 	 * outside): S holds none for them, and "back" docks them at their default place (#782 PR7).
 	 */
@@ -343,8 +301,16 @@ export class DockState {
 	 * dropping a floating one (`dockExisting*`, `dockPanel*`, `ensurePanel`), a divider drag
 	 * (`resizeSplit`), and showing and hiding (`show` works the default place out on S, `dismiss`)
 	 * are done on S, and the docked tree assigned is its projection. After every assignment its
-	 * projection is `layout.docked` (`#followShadow`, which follows the changes not made on S: the
-	 * edge bands, tabs, flags, an assignment from outside). Plain, not saved.
+	 * projection is `layout.docked` (`#followShadow`, which follows the changes not made on S: tabs,
+	 * flags, an assignment from outside). Plain.
+	 *
+	 * A region auto-hidden to an edge band is in S too (#782 PR8b): its panes are tombstones marked
+	 * `band`, a tab group with the group itself and its id. `autoHideRegion`, `restoreAutoHidden` and
+	 * hiding a pane of a band are steps on S like the others, so a region comes back into the split /
+	 * tab group it left at the share it held, whatever came back before it. A region has a place
+	 * while S holds every pane of it so (`#bandPlaced`); else it docks at its default place, or along
+	 * its edge. These tombstones are saved with the layout (`dockedWithAutoHidden`, `#bandTree`);
+	 * the ones of the floating windows are not.
 	 */
 	#shadow: ShadowNode | null = null;
 	/** The `docked` tree `#shadow` was last made to show. */
@@ -357,8 +323,8 @@ export class DockState {
 	#shadowAt = new WeakMap<DockNode, ShadowNode>();
 	/**
 	 * What this state held beside a layout it was told a copy of (`rememberShadow`: a gesture's
-	 * snapshot), by that copy: S (also `null`, nothing docked), the floated panes' `homeSlot`s, the
-	 * ones S had no place for and what `#placeSaid` held for them. `adoptLayout` of the copy puts
+	 * snapshot), by that copy: S (also `null`, nothing docked), the floated panes' `homeSlot`s and
+	 * the ones S had no place for. `adoptLayout` of the copy puts
 	 * all of it back as it was (#782 PR7) - S is taken as it is, whatever happened since: a pane
 	 * that was floating then remembers its place again, also when it was docked meanwhile, and
 	 * holds the share it held then. Weak: gone with the copy.
@@ -366,7 +332,7 @@ export class DockState {
 	#heldAt = new WeakMap<DockLayout, HeldShadow>();
 	/** What `#heldAt` has for the layout `#adopt` is putting back; `undefined` = not such a layout. */
 	#adoptHeld: HeldShadow | undefined = undefined;
-	/** The panes out of the tree that remember a place S has no room for (`inflateShadow`'s `unplaced`). */
+	/** The floated panes that remember a place S does not hold (`regraftShadow`'s `unplaced`). */
 	#shadowUnplaced = new Set<string>();
 	/** What the method assigning `layout` next does to S (`#mirror`); taken by the setter. */
 	#shadowStep: ShadowStep | null = null;
@@ -376,6 +342,13 @@ export class DockState {
 	 * floating window moved, resized or brought to the front - without walking S.
 	 */
 	#shadowPending = new Map<string, DockSlot>();
+	/** `autoHidden` of the layout S last followed (by identity, like `#shadowSeen`). */
+	#bandsSeen: DockAutoHidden[] | undefined = undefined;
+	/** `bandTreeOf(#shadow)` and the S it was made of (`#bandTree`). */
+	#bandTreeOf: { shadow: ShadowNode | null; tree: ShadowNode | null } = {
+		shadow: null,
+		tree: null
+	};
 	#shadowFollows = 0;
 	#shadowWatch: ((follow: ShadowFollow) => void) | null = null;
 
@@ -385,21 +358,20 @@ export class DockState {
 	}
 
 	set layout(next: DockLayout) {
-		// The version follows the content (#727, `core/layoutVersion.ts`): 3 only while a slot is
-		// deeper than a version 2 reader takes, so `layout` / `serialize()` are always safe to save.
 		const step = this.#shadowStep;
 		this.#shadowStep = null;
+		// One version is written (#782 PR8b), whatever the object assigned says.
 		next = withLayoutVersion(next);
 		// Collapsed regions (#663 ③-B) are kept valid on EVERY assignment (a close, a drop,
 		// `hydrate`, a restore ...): a flag that no longer fits the tree is dropped here.
 		const docked = normalizeCollapsed(next.docked);
 		if (docked !== next.docked) next = { ...next, docked };
-		// An empty band list is not written (#694 PR-3: older JSON has none).
+		// An empty band list is not written (#694 PR-3).
 		if (next.autoHidden !== undefined && next.autoHidden.length === 0) {
 			next = { ...next };
 			delete next.autoHidden;
 		}
-		// Whatever put a floated pane back in the tree (#735): its remembered place is spent.
+		// Whatever put a floated pane back in the tree (#735): its remembered place is spent ...
 		const spent =
 			this.#homeSlots.size > 0
 				? untrack(() => {
@@ -407,27 +379,38 @@ export class DockState {
 						return [...this.#homeSlots.keys()].filter((id) => !floating.has(id));
 					})
 				: [];
-		// The panes and regions in the edge bands before this assignment (`#followShadow`).
-		const banded = untrack(() => {
-			const bands = this.#layout.autoHidden ?? [];
-			return new Set([...autoHiddenPanelIds(this.#layout), ...bands.map((e) => e.node.id)]);
-		});
-		this.#noteStructure(next);
-		this.#layout = next;
 		// ... and with it that the place of that float was lost (review of #870): the next time the
 		// pane is floated it has a place of its own.
 		for (const id of spent) {
 			this.#homeSlots.delete(id);
 			this.#shadowLost.delete(id);
 		}
-		untrack(() => {
+		// S follows before the layout is assigned (#782 PR8b): the places of the regions in the edge
+		// bands are part of the layout (`dockedWithAutoHidden`), read off S as it is for `next`.
+		// Whatever the object assigned holds there is replaced - only a layout taken as a whole
+		// (`#adopt`) is read for it, in `#followShadow`.
+		const places = untrack(() => {
+			let upToDate = false;
 			try {
-				if (step === null && !this.#adopting && this.#shadowUpToDate(next)) return;
+				upToDate = step === null && !this.#adopting && this.#shadowUpToDate(next);
 			} catch {
 				// Not known to be up to date: followed below, which keeps its own faults in.
 			}
-			this.#followShadow(next, step, banded);
+			if (!upToDate) this.#followShadow(next, step);
+			return this.#bandTree();
 		});
+		// Written without a look at what `next` holds there: a layout made from `this.layout` holds
+		// the reactive proxy of the tree written last, which is not that tree by identity.
+		if (places !== null) next = { ...next, dockedWithAutoHidden: places };
+		else if (next.dockedWithAutoHidden !== undefined) {
+			next = { ...next };
+			delete next.dockedWithAutoHidden;
+		}
+		this.#noteStructure(next);
+		this.#layout = next;
+		// As the layout hands it out from now on (its proxy): what the next layout made from this
+		// one holds, so `#shadowUpToDate` knows it by identity.
+		this.#bandsSeen = untrack(() => this.#layout.autoHidden);
 		// The slid-out pane is no longer auto-hidden: it is not slid out any more.
 		const flyout = untrack(() => this.#flyout);
 		if (flyout !== null && findAutoHidden(next, flyout) === null) this.#flyout = null;
@@ -437,12 +420,14 @@ export class DockState {
 	#adopting = false;
 
 	/**
-	 * Is S certainly as it should be for `next`: the docked tree is the one S shows, and the panes
-	 * out of it remember the very slots they did? True for every change of a floating window's
-	 * geometry, flags and z-order - nothing of S is walked for those (review of PR #857).
+	 * Is S certainly as it should be for `next`: the docked tree is the one S shows, the edge bands
+	 * are the ones it followed, and the panes out of the tree remember the very slots they did? True
+	 * for every change of a floating window's geometry, flags and z-order - nothing of S is walked
+	 * for those (review of PR #857).
 	 */
 	#shadowUpToDate(next: DockLayout): boolean {
 		if (next.docked !== this.#shadowSeen) return false;
+		if (next.autoHidden !== this.#bandsSeen) return false;
 		let count = 0;
 		for (const w of next.floating) {
 			const slot = this.#homeSlots.get(w.id);
@@ -459,37 +444,113 @@ export class DockState {
 	}
 
 	/**
-	 * Keep the shadow tree with the layout just assigned (#782 PR4). The step the assigning method
-	 * named is done on S; a tombstone whose pane no longer remembers a docked place leaves S; what
-	 * the docked tree shows otherwise (sizes, tabs, flags) is written onto S. When the projection of
-	 * S is then not `next.docked` - or `next` is a layout taken as a whole, or a pane remembers a
-	 * place S does not know - S is made again around `next.docked` (#782 PR7): with the floated
-	 * panes put back by the container each was in (`regraftShadow` - no guess of what the change
-	 * did to the tree), or, for a region moved to or from an edge band, from the places S itself
-	 * says. `banded`: the panes and regions in the edge bands before the assignment. Never changes
-	 * the layout, and never throws: a fault is reported (`core/report.ts`) and S becomes the docked
-	 * tree with no pane remembered.
+	 * What the layout is saved with for the regions in its edge bands (`dockedWithAutoHidden`,
+	 * `core/bandTree.ts`): S without the tombstones of the floating windows, or `null` when no
+	 * region in a band has a place. The same object for as long as S is.
 	 */
-	#followShadow(next: DockLayout, step: ShadowStep | null, banded: Set<string>): void {
+	#bandTree(): ShadowNode | null {
+		if (this.#bandTreeOf.shadow !== this.#shadow)
+			this.#bandTreeOf = { shadow: this.#shadow, tree: bandTreeOf(this.#shadow) };
+		return this.#bandTreeOf.tree;
+	}
+
+	/**
+	 * The ids of `layout` a split / tab group of S must not have (`withFreeShadowIds`, the `taken`
+	 * of `regraftShadow` and of a default place): the ones out of its docked tree
+	 * (`idsOutOfDocked`), but for a tab group in an edge band that `s` holds itself - with every
+	 * tab of it as a tombstone marked `band`. That group and the band's are the same one: it keeps
+	 * its id, and shows with it when the region is back (#782 PR8b).
+	 */
+	#taken(layout: DockLayout, s: ShadowNode | null): Set<string> {
+		const taken = idsOutOfDocked(layout);
+		for (const entry of layout.autoHidden ?? []) {
+			const region = entry.node;
+			if (region.type !== 'tabs') continue;
+			const group = findNode(s, region.id) as ShadowNode | null;
+			if (group?.type !== 'tabs') continue;
+			const held = new Set(group.children.filter((c) => c.band === true).map((c) => c.id));
+			if (region.children.every((tab) => held.has(tab.id))) taken.delete(region.id);
+		}
+		return taken;
+	}
+
+	/**
+	 * `s`, made from S by a step that put a pane into it, with a new id for a tab group that now
+	 * shows as a group under the id of a region in an edge band (`bands`, the list after the step).
+	 * A group in a band stays in S with its id (`#taken`); once two panes that are not of that
+	 * region show in it - put back from floating, or shown at their default place beside its tabs -
+	 * the docked tree would hold the band's id. The group gets another, the band keeps its own; the
+	 * region comes back into that group all the same (its place is its panes').
+	 */
+	#clear(
+		s: ShadowNode | null,
+		makeId: () => string,
+		bands: readonly DockAutoHidden[] = this.autoHidden
+	): ShadowNode | null {
+		const ids = bands.filter((e) => e.node.type === 'tabs').map((e) => e.node.id);
+		if (s === null || ids.length === 0) return s;
+		const shown = projectShadow(s);
+		const clash = new Set(ids.filter((id) => findNode(shown, id) !== null));
+		return clash.size === 0 ? s : withFreeShadowIds(s, clash, makeId);
+	}
+
+	/** Does S hold a place for the region of `entry` (every pane of it a tombstone marked `band`)? */
+	#bandPlaced(entry: DockAutoHidden): boolean {
+		return regionPanelIds(entry.node).every(
+			(id) => findShadowPanel(this.#shadow, id)?.band === true
+		);
+	}
+
+	/**
+	 * Keep the shadow tree with the layout `next`, which is assigned right after (#782 PR4). The
+	 * step the assigning method named is done on S; a tombstone whose pane no longer remembers a
+	 * docked place - a floated pane docked or closed for good, a pane no longer in an edge band -
+	 * leaves S; what the docked tree shows otherwise (sizes, tabs, flags) is written onto S. When the
+	 * projection of S is then not `next.docked` - or `next` is a layout taken as a whole, or a pane
+	 * remembers a place S does not know - S is made again around `next.docked` (#782 PR7): with the
+	 * panes out of the tree put back by the container each was in (`regraftShadow` - no guess of
+	 * what the change did to the tree). A layout taken as a whole brings the places of its edge
+	 * bands itself (`dockedWithAutoHidden`, read by `readBandTree`: a tree that does not show
+	 * `next.docked` is not used); the ones S held for the layout replaced go. Reads `next` only,
+	 * never changes it, and never throws: a fault is reported (`core/report.ts`) and S becomes the
+	 * docked tree with no pane remembered.
+	 */
+	#followShadow(next: DockLayout, step: ShadowStep | null): void {
 		const pending = this.#pendingById(next);
 		this.#shadowPending = pending;
 		this.#shadowFollows++;
 		const label = this.#adopting ? 'adopt' : (step?.label ?? null);
 		try {
+			const regions = (next.autoHidden ?? []).map((entry) => regionPanelIds(entry.node));
+			const banded = new Set(regions.flat());
+			// `s` without the tombstones whose pane no longer remembers its place, and without what
+			// is left of a region in a band that S does not hold as a whole (it has no place then).
+			const settled = (s: ShadowNode | null): ShadowNode | null => {
+				const inBand = new Set(shadowBandIds(s));
+				for (const id of shadowPanelIds(s, 'away')) {
+					if (inBand.has(id) ? banded.has(id) : pending.has(id)) continue;
+					s = removeFromShadow(s, id);
+					inBand.delete(id);
+				}
+				for (const ids of regions) {
+					const held = ids.filter((id) => inBand.has(id));
+					if (held.length > 0 && held.length < ids.length)
+						for (const id of held) s = removeFromShadow(s, id);
+				}
+				return s;
+			};
 			// What S is made again from, when it has to be: the S before this assignment (for a layout
 			// put back as it was - a cancelled gesture's snapshot -, the S that showed it then).
 			const held = this.#adopting ? this.#adoptHeld : undefined;
-			let from = this.#adopting
-				? held
-					? held.shadow
-					: this.#shadow
-				: step
-					? step.run(this.#shadow)
-					: this.#shadow;
-			// A tombstone whose pane no longer remembers its place leaves S.
-			for (const id of shadowPanelIds(from, 'away')) {
-				if (!pending.has(id)) from = removeFromShadow(from, id);
-			}
+			let from = settled(
+				this.#adopting
+					? held
+						? held.shadow
+						: this.#shadow
+					: step
+						? step.run(this.#shadow)
+						: this.#shadow
+			);
 			if (held) {
 				// A layout put back as it was: S is the one held with it, as it is (review of #870) -
 				// nothing of now is read, not the edge bands of now either.
@@ -518,7 +579,7 @@ export class DockState {
 					let written = same ? tree : writeShadowView(tree, next.docked);
 					if (written === undefined) {
 						// But for a `collapsed` flag S cannot hold (`#shows` keeps it on the docked
-						// tree): S is as it should be, and is not made again from the slots.
+						// tree): S is as it should be, and is not made again.
 						const held = withoutLoneFlags(next.docked, tree);
 						if (held === next.docked) return false;
 						same = sameDocked(shown, held);
@@ -537,132 +598,33 @@ export class DockState {
 					if (fits(s)) return;
 				}
 			}
-			// A change that was not made on S (an assignment from outside, a layout taken as a whole,
-			// a region moved to or from an edge band): no guess is made of what it did to the tree
-			// (owner's decision of 2026-11-23, #782). A floated pane keeps its place when the split /
-			// tab group it was in is still there, at the index it had; else it has none in S any more
-			// and goes back to its default place (`#backAtDefault`).
+			// A change that was not made on S (an assignment from outside, a layout taken as a whole):
+			// no guess is made of what it did to the tree (owner's decision of 2026-11-23, #782). A
+			// pane out of the tree keeps its place when the split / tab group it was in is still
+			// there, at the index it had; else it has none in S any more: a floated pane goes back to
+			// its default place (`#backInShadow`), and so does a region in an edge band
+			// (`#restoredFromBand`).
 			for (const id of this.#shadowLost) if (!pending.has(id)) this.#shadowLost.delete(id);
-			const bandsNow = new Set(autoHiddenPanelIds(next));
-			const bandsBefore = new Set([...banded].filter((id) => !bandsNow.has(id)));
-			const toOrFromBand =
-				!held &&
-				([...bandsNow].some((id) => !banded.has(id)) ||
-					[...bandsBefore].some((id) => collectPanelIds(next.docked).includes(id)));
-			if (toOrFromBand) {
-				// A region to or from an edge band (PR8 puts the bands on S). Only the places beside
-				// that region are made again (`inflateShadow`) from the slots S says (`deflateShadow`):
-				// the ones in the split / tab group the region leaves or comes back into, and the ones
-				// whose own container names a pane of it. While a region is in a band S does not hold
-				// its panes, so such a place is named as S said it when it last held them - beside a
-				// pane in a band, it is still beside it when that pane is back (#739) - with the shares
-				// S has now. Every other place stays as S has it, position and share (Codex P2 on #870).
-				const dockedNow = new Set(collectPanelIds(next.docked));
-				const moving = new Set([
-					...[...bandsNow].filter((id) => !banded.has(id)),
-					...[...bandsBefore].filter((id) => dockedNow.has(id))
-				]);
-				const touched = new Set<string>();
-				const parents = new Map<string, string>();
-				// The container a pane's place is in: for a subtree with no pane showing, the one the
-				// whole subtree is in (it is put back as a whole).
-				const walk = (node: ShadowNode | null): void => {
-					if (!node || node.type === 'panel') return;
-					for (const child of node.children) {
-						if (child.type === 'panel') parents.set(child.id, node.id);
-						else if (shadowPanelIds(child, 'shown').length === 0) {
-							for (const id of shadowPanelIds(child)) parents.set(id, node.id);
-							continue;
-						}
-						walk(child);
-					}
-				};
-				// Nothing shows: the whole of S is places, in no container.
-				if (shadowPanelIds(from, 'shown').length > 0) walk(from);
-				// Every container around a pane of the region, before (in S) and after (in the tree).
-				const around = (node: ShadowNode | DockNode | null, id: string): boolean => {
-					if (!node) return false;
-					if (node.type === 'panel') return node.id === id;
-					if (!node.children.some((child) => around(child, id))) return false;
-					touched.add(node.id);
-					return true;
-				};
-				for (const id of moving) {
-					around(from, id);
-					around(next.docked, id);
-				}
-				// Does the slot name a pane of the region, up to the level of the container `upTo`
-				// (every level when the place is in none: nothing but places is left of S)?
-				const near = (slot: DockSlot, upTo: string | undefined): boolean => {
-					for (let level: DockSlot | undefined = slot; level && level.kind !== 'root';) {
-						const names =
-							level.kind === 'tab'
-								? level.anchors
-								: [level.neighborId, ...level.anchors, ...(level.otherAnchors ?? [])];
-						if (names.some((name) => moving.has(name) || banded.has(name))) return true;
-						const here = level.kind === 'tab' ? level.groupId : level.splitId;
-						if (here === upTo) return false;
-						level = level.outer;
-					}
-					return false;
-				};
-				const said = new Map(deflateShadow(from).away.map((a) => [a.panel.id, a.slot]));
-				const away: ShadowAway[] = [];
-				let rest = from;
-				const beside = (id: string, home: DockSlot): void => {
-					const fresh = said.get(id);
-					const kept = this.#placeOf(home);
-					const now =
-						fresh === undefined
-							? undefined
-							: near(kept, parents.get(id))
-								? withSharesOf(kept, fresh, banded)
-								: fresh;
-					if (now !== undefined) this.#placeSaid.set(home, now);
-					const win = next.floating.find((w) => w.id === id);
-					if (win)
-						away.push({
-							panel: { type: 'panel', id, title: win.title, icon: win.icon },
-							slot: now ?? kept
-						});
-					rest = removeFromShadow(rest, id);
-				};
-				for (const [id, home] of pending) {
-					if (this.#shadowLost.has(id)) continue;
-					const parent = parents.get(id);
-					if (
-						!said.has(id) ||
-						(parent !== undefined && touched.has(parent)) ||
-						near(this.#placeOf(home), parent)
-					)
-						beside(id, home);
-				}
-				const taken = idsOutOfDocked(next);
-				// A place that is not beside the region but whose container went with it all the same
-				// is read from its slot too.
-				for (const id of regraftShadow(rest, next.docked, taken).unplaced) {
-					const home = pending.get(id);
-					if (home !== undefined && !this.#shadowLost.has(id)) beside(id, home);
-				}
-				const made = inflateShadow(next.docked, away, taken);
-				const kept = regraftShadow(rest, made.shadow, taken);
-				this.#shadowIs(kept.shadow, next.docked);
-				this.#shadowUnplaced = new Set([...made.unplaced, ...kept.unplaced, ...this.#shadowLost]);
-				this.#shadowWatch?.({ step: label, result: 'rebuilt' });
-				return;
+			let around: ShadowNode | null = next.docked;
+			if (this.#adopting) {
+				// The edge bands of a layout taken as a whole have the places it was saved with, or
+				// none: the ones S held belong to the layout replaced.
+				for (const id of shadowBandIds(from)) from = removeFromShadow(from, id);
+				around = readBandTree(next.dockedWithAutoHidden, next.docked, regions) ?? next.docked;
 			}
-			const { shadow, unplaced } = regraftShadow(from, next.docked, idsOutOfDocked(next));
-			this.#shadowIs(shadow, next.docked);
-			// What had no place before has none now; what lost it here goes to its default place.
 			const before = new Set(shadowPanelIds(from, 'away'));
-			for (const id of unplaced) this.#shadowLost.add(id);
+			const taken = this.#taken(next, this.#adopting ? around : from);
+			const { shadow, unplaced } = regraftShadow(from, around, taken);
+			this.#shadowIs(settled(shadow), next.docked);
+			// What had no place before has none now; what lost it here goes to its default place.
+			for (const id of unplaced) if (pending.has(id)) this.#shadowLost.add(id);
 			this.#shadowUnplaced = new Set(
 				[...pending.keys()].filter((id) => !before.has(id) || unplaced.includes(id))
 			);
 			this.#shadowWatch?.({ step: label, result: 'rebuilt' });
 		} catch (error) {
-			// A step made on S threw before anything was assigned (the layout is as it was). Here the
-			// layout is assigned already and S only follows it: a fault does not undo it. It is not
+			// A step made on S threw before anything was assigned (the layout is as it was). Here S
+			// only follows the layout being assigned: a fault does not stop the assignment. It is not
 			// swallowed either (#782 PR5): reported like an exception nobody caught.
 			this.#shadowIs(next.docked, next.docked);
 			this.#shadowUnplaced = new Set(pending.keys());
@@ -972,20 +934,35 @@ export class DockState {
 	autoHideRegion(regionId: string, options: AutoHideOptions = {}): boolean {
 		const region = regionOf(this.layout.docked, regionId);
 		if (!region) return false;
+		// The band it goes to and its entry there, as for a layout (`core/autohide.ts`); the docked
+		// tree is what S shows with the panes of the region marked (#782 PR8b): nothing of S moves.
 		const next = autoHideRegionInLayout(this.layout, region.id, options);
 		if (!next) return false;
-		this.layout = next;
+		let s = this.#shadow;
+		for (const id of regionPanelIds(region)) s = markInBand(s, id);
+		this.layout = { ...next, docked: this.#projected('autoHideRegion', s) };
 		return true;
 	}
 
 	/**
 	 * Put the auto-hidden region that holds `id` (its region id or one of its
-	 * panes) back into the docked tree: at its remembered place, else at its edge.
+	 * panes) back into the docked tree: into the split / tab group it left, at the
+	 * share it held there (#782 PR8b: its place in the shadow tree, like a floated
+	 * pane's - whatever was moved, shown or hidden meanwhile). When that place is
+	 * gone (the layout was assigned from outside, or read without
+	 * `dockedWithAutoHidden`) every pane of it docks at its default place
+	 * (`defaultLayout`), and the ones that have none together along the band's edge.
 	 * Asks nothing. Returns whether it moved.
 	 */
 	restoreAutoHidden(id: string): boolean {
-		const next = restoreAutoHiddenInLayout(this.layout, id, this.#makeId);
-		if (!next) return false;
+		const back = this.#restoredFromBand(id, this.#makeId);
+		if (!back) return false;
+		const next: DockLayout = {
+			...this.layout,
+			docked: this.#projected('restoreAutoHidden', back.shadow, back.moved)
+		};
+		if (back.bands.length > 0) next.autoHidden = back.bands;
+		else delete next.autoHidden;
 		this.layout = next;
 		return true;
 	}
@@ -994,12 +971,63 @@ export class DockState {
 	previewRestoreAutoHidden(id: string): DockNode | null | undefined {
 		const found = findAutoHidden(this.layout, id);
 		if (!found) return undefined;
-		const next = restoreAutoHiddenInLayout(
-			this.layout,
-			id,
-			() => `${found.entry.node.id}:restored-split`
-		);
-		return next ? next.docked : undefined;
+		const back = this.#restoredFromBand(id, () => `${found.entry.node.id}:restored-split`);
+		return back ? this.#shows(back.shadow, back.moved) : undefined;
+	}
+
+	/**
+	 * S with the region in an edge band that holds `id` back in the tree (`restoreAutoHidden`), the
+	 * bands left, and a pane of the region (for `#shows`). `null`: `id` is not auto-hidden, or one of
+	 * the region's ids is in the docked tree already. Pure: nothing changes.
+	 */
+	#restoredFromBand(
+		id: string,
+		makeId: () => string
+	): { shadow: ShadowNode | null; bands: DockAutoHidden[]; moved: string } | null {
+		const found = findAutoHidden(this.layout, id);
+		if (!found) return null;
+		const { entry, index } = found;
+		const region = entry.node;
+		const panes = region.type === 'tabs' ? region.children : [region];
+		const docked = this.layout.docked;
+		if ([region.id, ...panes.map((p) => p.id)].some((x) => findNode(docked, x))) return null;
+		const bands = this.autoHidden.filter((_, i) => i !== index);
+		// The layout without the band: the ids of the region are free for what comes back.
+		const after: DockLayout = { ...this.layout, autoHidden: bands };
+		const ids = this.#unused(makeId);
+		const active = activePanelOf(region).id;
+		let s = this.#shadow;
+		if (this.#bandPlaced(entry)) {
+			// Its place: the marks are cleared, the active tab last (a tab back is the active one).
+			for (const pane of panes) if (pane.id !== active) s = markPresent(s, pane.id, pane);
+			s = markPresent(s, active, activePanelOf(region));
+			s = withFreeShadowIds(s, this.#taken(after, s), ids);
+		} else {
+			// No place in S (module doc of `core/autohide.ts`): the default place of each pane, in
+			// tab order; the ones without one stay together, along the band's edge.
+			const taken = this.#taken(after, s);
+			const defaults = this.defaultLayout?.docked ?? null;
+			s = withFreeShadowIds(s, taken, ids);
+			const rest: DockPanelNode[] = [];
+			for (const pane of panes) {
+				const placed = placeInShadowAtDefault(s, defaults, pane, undefined, ids, taken);
+				if (placed === null) rest.push(pane);
+				else s = placed;
+			}
+			if (rest.length === 1) s = dockRegionAtShadowEdge(s, rest[0], entry.edge, ids);
+			else if (rest.length > 1 && region.type === 'tabs') {
+				const at = rest.findIndex((pane) => pane.id === active);
+				// The group keeps its id, unless something of S has it by now.
+				const groupId = findNode(s, region.id) === null ? region.id : ids();
+				s = dockRegionAtShadowEdge(
+					s,
+					{ ...region, id: groupId, children: rest, activeIndex: Math.max(at, 0) },
+					entry.edge,
+					ids
+				);
+			}
+		}
+		return { shadow: this.#clear(s, ids, bands), bands, moved: panes[0].id };
 	}
 
 	/** The auto-hidden pane slid out over the docked tree, or `null` (not saved). */
@@ -1147,9 +1175,14 @@ export class DockState {
 	dismiss(id: string): void {
 		const fromBand = removeAutoHiddenPane(this.layout, id);
 		if (fromBand) {
-			// Auto-hidden (#694 PR-3): out of its band. The share its region held when it went there.
+			// Auto-hidden (#694 PR-3): out of its band, and out of S for good (#782 PR8b: its
+			// tombstone goes, the rest of its region keeps its place). The share is the one the pane
+			// holds at its place (`1`: its region has none).
 			const index = fromBand.layout.floating.length;
 			const { pane, entry } = fromBand;
+			const share = this.#bandPlaced(entry) ? this.#shareOf(pane.id) : 1;
+			const s = removeFromShadow(this.#shadow, id);
+			this.#mirror('dismiss', () => s);
 			const win: FloatingWindow = {
 				id: pane.id,
 				title: pane.title,
@@ -1159,7 +1192,7 @@ export class DockState {
 				width: DEFAULT_WINDOW_WIDTH,
 				height: DEFAULT_WINDOW_HEIGHT,
 				open: false,
-				dockShare: entry.slot.kind === 'split' ? shareOr1(entry.slot.size) : 1
+				dockShare: share
 			};
 			this.layout = { ...fromBand.layout, floating: [...fromBand.layout.floating, win] };
 			return;
@@ -1180,7 +1213,7 @@ export class DockState {
 			width: DEFAULT_WINDOW_WIDTH,
 			height: DEFAULT_WINDOW_HEIGHT,
 			open: false,
-			dockShare: dockShareOf(this.layout.docked, id)
+			dockShare: this.#shareOf(id)
 		};
 		// Out of S for good: no tombstone (so a flag on the last child left is dropped now, PR #857's 34).
 		this.layout = {
@@ -1191,21 +1224,33 @@ export class DockState {
 	}
 
 	/**
+	 * The share the pane `id` - docked, or in an edge band with a place - holds of its split, for
+	 * `FloatingWindow.dockShare` (`dockShareOf`): of the docked tree with the regions in the edge
+	 * bands counted as there (#782 PR8b). They are part of the layout and have their places saved,
+	 * so the share means the same whether a region beside the pane went to its band before the pane
+	 * was hidden or after (`placeInShadowAtDefault` counts them too). The floated panes are not
+	 * counted, as before: a share of what shows.
+	 */
+	#shareOf(id: string): number {
+		let s = this.#shadow;
+		const inBands = shadowBandIds(s);
+		if (inBands.length === 0) return dockShareOf(this.layout.docked, id);
+		for (const paneId of inBands) s = markPresent(s, paneId);
+		return dockShareOf(projectShadow(s), id);
+	}
+
+	/**
 	 * The other panes out of the tree that remember a docked place, with the slot of each, for
 	 * `restoreDockSlot`'s `hidden` (#734) - in the order they left. The slot is the place S says
 	 * (`deflateShadow`: every share as S has it now); for a pane S has no place for, the one it holds.
+	 * Only for a slot that is not the pane's own (`restoredAt`; goes with it in #782 PR8c).
 	 */
 	#awaySlots(except: string): HiddenDockSlot[] {
 		const said = new Map(deflateShadow(this.#shadow).away.map((a) => [a.panel.id, a.slot]));
 		const out: HiddenDockSlot[] = [];
 		for (const [id, home] of this.#homeSlots)
-			if (id !== except) out.push({ id, slot: said.get(id) ?? this.#placeOf(home) });
+			if (id !== except) out.push({ id, slot: said.get(id) ?? home });
 		return out;
-	}
-
-	/** The place the `homeSlot` `home` stands for, as a slot `core/slot.ts` reads: the last one S said. */
-	#placeOf(home: DockSlot): DockSlot {
-		return this.#placeSaid.get(home) ?? home;
 	}
 
 	/**
@@ -1257,13 +1302,14 @@ export class DockState {
 		if (!win || win.open || win.dockShare === undefined) return null;
 		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
 		// The ids out of the docked tree: a split / tab group made again does not take one of them
-		// (a group in an edge band keeps the default group's id; Codex P2 on #863), and one S kept
-		// out of sight gets another.
+		// (Codex P2 on #863), and one S kept out of sight gets another. A tab group in an edge band
+		// that S holds is not one of them (`#taken`): the pane joins it beside its tabs, as it does
+		// beside a floated pane's place.
 		// Freed before the pane is placed, as for a drop: an id given instead is then in S when the
 		// place takes a default id that is free (cross-review of PR #864).
-		const taken = idsOutOfDocked(layout);
+		const taken = this.#taken(layout, this.#shadow);
 		const ids = this.#unused(makeId);
-		return placeInShadowAtDefault(
+		const placed = placeInShadowAtDefault(
 			withFreeShadowIds(this.#shadow, taken, ids),
 			this.defaultLayout?.docked ?? null,
 			panel,
@@ -1271,6 +1317,7 @@ export class DockState {
 			ids,
 			taken
 		);
+		return placed === null ? null : this.#clear(placed, ids, layout.autoHidden ?? []);
 	}
 
 	/**
@@ -1308,8 +1355,9 @@ export class DockState {
 	 * id for one whose id the layout took meanwhile (`withFreeShadowIds`: a floating window, a region
 	 * in an edge band) or the pane `incoming` has. The one place the ids of S are checked against
 	 * the rest of the layout: every step that puts a pane into S goes through it (`#backInShadow`,
-	 * `#shownShadow`'s own call, `#droppedOnto`, `#droppedAtEdge`). An assignment from outside that
-	 * docks a pane makes S again (`inflateShadow`, which is given the same ids).
+	 * `#shownShadow`'s own call, `#droppedOnto`, `#droppedAtEdge`, `#restoredFromBand`). An
+	 * assignment from outside that docks a pane makes S again (`regraftShadow`, which is given the
+	 * same ids).
 	 */
 	/**
 	 * `makeId`, made to give ids nothing has (cross-review of PR #864): not a node of S - shown or
@@ -1340,7 +1388,7 @@ export class DockState {
 	}
 
 	#freed(s: ShadowNode | null, makeId: () => string, incoming?: string): ShadowNode | null {
-		const taken = idsOutOfDocked(this.layout);
+		const taken = this.#taken(this.layout, s);
 		// The pane a step brings in: a new one (`ensurePanel`) is in no list of the layout yet.
 		if (incoming !== undefined) taken.add(incoming);
 		return withFreeShadowIds(s, taken, makeId);
@@ -1369,15 +1417,15 @@ export class DockState {
 		if (slot !== this.#homeSlots.get(id)) return null;
 		const win = this.layout.floating.find((w) => w.id === id);
 		if (!win) return null;
+		const ids = this.#unused(makeId);
 		if (findShadowPanel(this.#shadow, id)?.away === true)
-			return this.#freed(markPresent(this.#shadow, id, win), this.#unused(makeId));
+			return this.#clear(this.#freed(markPresent(this.#shadow, id, win), ids), ids);
 		if (!this.#shadowLost.has(id)) return null;
 		// Its place went with a change that was not made on S (an assignment from outside): the
 		// default place, as for a pane hidden from the dock (#782 PR7, owner's decision).
 		const panel: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
-		const taken = idsOutOfDocked(this.layout);
-		const ids = this.#unused(makeId);
-		return placeInShadowAtDefault(
+		const taken = this.#taken(this.layout, this.#shadow);
+		const placed = placeInShadowAtDefault(
 			withFreeShadowIds(this.#shadow, taken, ids),
 			this.defaultLayout?.docked ?? null,
 			panel,
@@ -1385,6 +1433,7 @@ export class DockState {
 			ids,
 			taken
 		);
+		return placed === null ? null : this.#clear(placed, ids);
 	}
 
 	/** S with the pane `node` (docked, or a floating window's) dropped at `region` of `targetId`. */
@@ -1398,7 +1447,7 @@ export class DockState {
 		// twice; what the step makes anew takes its ids from `makeId`.
 		const ids = this.#unused(makeId, node.id);
 		const s = this.#freed(this.#shadow, ids, node.id);
-		return dockIntoShadow(s, node, targetId, region, ids);
+		return this.#clear(dockIntoShadow(s, node, targetId, region, ids), ids);
 	}
 
 	/** S with the pane `node` (docked, or a floating window's) along the outer edge `edge`. */
@@ -1432,7 +1481,7 @@ export class DockState {
 		return restoreDockSlot(
 			this.layout.docked,
 			panel,
-			slot === this.#homeSlots.get(id) ? this.#placeOf(slot) : slot,
+			slot,
 			this.#unused(makeId),
 			this.#awaySlots(id),
 			idsOutOfDocked(this.layout)
@@ -1855,7 +1904,10 @@ export class DockState {
 	/**
 	 * The layout as `serialize` writes it: `layout` itself since #782 PR5 (a closed window holds no
 	 * slot whose shares would be taken without the floated panes). Kept as the one thing to save
-	 * when the layout is saved as an object (`ThreePaneDock`'s `layoutSnapshot` does).
+	 * when the layout is saved as an object (`ThreePaneDock`'s `layoutSnapshot` does). It holds the
+	 * places of the regions in the edge bands (`dockedWithAutoHidden`, #782 PR8b): read back by
+	 * `hydrate`, the constructor and a layout taken as a whole (`adoptLayout`), not by an assignment
+	 * to `layout` - there the places are the ones this state holds.
 	 */
 	savedLayout(): DockLayout {
 		return this.layout;
@@ -1867,12 +1919,16 @@ export class DockState {
 	 * The payload is validated as a whole by `validateDockLayout` (version,
 	 * structure, unique ids, finite coordinates, positive sizes, valid
 	 * split/tabs); malformed JSON or any issue returns `false` and leaves the
-	 * current layout untouched (never partially applied). A v1 payload (M7, no
-	 * `docked` field) is migrated to v2 with `docked: null`. Ids that no longer
+	 * current layout untouched (never partially applied). Only version 4 is
+	 * read (#782 PR8b): a payload of versions 1 - 3 returns `false` like any
+	 * other issue, and the app shows its default layout. Ids that no longer
 	 * correspond to a known window definition are deliberately kept as-is -
 	 * pruning them is the host component's job at render time
-	 * (`ensureWindow`/`ensurePanel` never remove anything). A v2 payload's
-	 * `docked` tree has its `sizes` repaired via `normalizeSizes`.
+	 * (`ensureWindow`/`ensurePanel` never remove anything). The `docked` tree
+	 * has its `sizes` repaired via `normalizeSizes`. The one part read on its
+	 * own is `dockedWithAutoHidden` (the places of the regions in the edge
+	 * bands): a tree that does not show `docked` is left out, and those regions
+	 * dock at their default place, else along their edge.
 	 *
 	 * `serialize()`/`hydrate()` only convert to/from a string; writing to real
 	 * storage is the app's job. Consumer contract: if that write fails, do not
@@ -1899,7 +1955,7 @@ export class DockState {
 		// Same as `hydrate`: the remembered places belong to the discarded tree.
 		this.#homeSlots.clear();
 		this.#adopt({
-			version: 2,
+			version: 4,
 			floating: defs.map((def, index) => placeNew(def, index, hostW, hostH)),
 			docked: null
 		});
@@ -1917,10 +1973,6 @@ export class DockState {
 			const floating = new Set(layout.floating.map((w) => w.id));
 			this.#homeSlots = new Map([...held.homes].filter(([id]) => floating.has(id)));
 			this.#shadowLost = new Set([...held.lost].filter((id) => floating.has(id)));
-			for (const [home, said] of held.said) {
-				if (said === undefined) this.#placeSaid.delete(home);
-				else this.#placeSaid.set(home, said);
-			}
 		}
 		this.#adopting = true;
 		this.#adoptHeld = held;
@@ -1944,8 +1996,7 @@ export class DockState {
 				shadow: dock.#shadow,
 				homes: new Map(dock.#homeSlots),
 				unplaced: new Set(dock.#shadowUnplaced),
-				lost: new Set(dock.#shadowLost),
-				said: new Map([...dock.#homeSlots.values()].map((h) => [h, dock.#placeSaid.get(h)]))
+				lost: new Set(dock.#shadowLost)
 			});
 			if (snapshot.docked !== null && dock.#shadow !== null)
 				dock.#shadowAt.set(snapshot.docked, dock.#shadow);

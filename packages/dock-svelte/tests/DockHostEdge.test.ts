@@ -126,7 +126,7 @@ describe('DockState.dockPanelAtEdge / dockExistingAtEdge', () => {
 			direction: 'column',
 			children: [{ id: 'p' }, { id: 't' }]
 		});
-		const single = createDockState({ version: 2, floating: [], docked: panel('p') });
+		const single = createDockState({ version: 4, floating: [], docked: panel('p') });
 		single.dockExistingAtEdge('p', 'left');
 		expect(single.layout.docked).toEqual(panel('p'));
 	});
@@ -207,7 +207,7 @@ const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 /** A tab group (x, y; X active) next to a plain pane (p), plus one floating window (f). */
 function mixed(): DockLayout {
 	return {
-		version: 2,
+		version: 4,
 		floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 		docked: {
 			type: 'split',
@@ -369,7 +369,7 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 
 	it('an empty tree: no buttons, a drop near the border moves the floating window as before', () => {
 		const layout: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 			docked: null
 		};
@@ -382,7 +382,7 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 	});
 
 	it('the only docked pane is not offered the edges (nothing to wrap)', () => {
-		const layout: DockLayout = { version: 2, floating: [], docked: panel('p') };
+		const layout: DockLayout = { version: 4, floating: [], docked: panel('p') };
 		const { dock } = mount(layout);
 		hit = () => document.querySelector('[data-dock-drop-id="p"]');
 		dragTo(document.querySelector('[data-dock-drop-id="p"] [role="toolbar"]')!, 24, 300);

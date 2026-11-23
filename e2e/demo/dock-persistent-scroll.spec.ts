@@ -77,7 +77,7 @@ async function mountHarness(
 				const state = dockMod.createDockState(
 					tabbed
 						? {
-								version: 2,
+								version: 4,
 								floating: [],
 								docked: {
 									type: 'split',

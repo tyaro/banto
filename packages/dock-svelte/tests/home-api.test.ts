@@ -16,7 +16,7 @@ const row = (): DockNode => ({
 });
 
 const dockOf = (docked: DockNode): DockState =>
-	createDockState({ version: 2, floating: [], docked }, counterMakeId());
+	createDockState({ version: 4, floating: [], docked }, counterMakeId());
 
 describe('hasHome / dockBack / backTree / homeMark', () => {
 	it('a pane that never left the tree has no home: false / null / undefined', () => {
