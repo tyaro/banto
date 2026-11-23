@@ -136,20 +136,12 @@
 	 * The page's own width (the sidebar is outside it), measured by a zero-height element. At
 	 * `STACK_MAX_WIDTH` or less the dock is not drawn and the stack is; `0` = not measured yet
 	 * (the first frame draws neither, so a wide page never flashes the stack).
+	 * `measuredWidth` is what the element reports; `pageWidth` is the width the display follows
+	 * (taken over by the effect below the memo's wiring, which can hold the switch).
 	 */
 	const STACK_MAX_WIDTH = 900;
 	let measuredWidth = $state(0);
 	let pageWidth = $state(0);
-	// Taken over in the next frame: the measurement arrives from a ResizeObserver, and swapping
-	// the dock for the stack (other observed boxes) within the same delivery is reported as a
-	// "ResizeObserver loop" error.
-	$effect(() => {
-		const width = measuredWidth;
-		const frame = requestAnimationFrame(() => {
-			pageWidth = width;
-		});
-		return () => cancelAnimationFrame(frame);
-	});
 	const dockShown = $derived(pageWidth > STACK_MAX_WIDTH);
 	stackView.shown = () => pageWidth > 0 && pageWidth <= STACK_MAX_WIDTH;
 	// What the arrangement shows (docked, a background tab included, or an open floating window),
@@ -173,6 +165,45 @@
 	});
 	const memoPrompt = createSettlePrompt();
 	let memoStatus = $state<string | null>(null);
+
+	// An IME composition open somewhere in the document (`compositionstart` without its end; a
+	// composition abandoned by moving the focus away ends with `focusout`). The same rule the dock
+	// uses for its own structure changes (dock-svelte `core/lifecycle.ts`).
+	let composing = $state(false);
+	$effect(() => {
+		const start = () => (composing = true);
+		const end = () => (composing = false);
+		document.addEventListener('compositionstart', start, true);
+		document.addEventListener('compositionend', end, true);
+		document.addEventListener('focusout', end, true);
+		return () => {
+			document.removeEventListener('compositionstart', start, true);
+			document.removeEventListener('compositionend', end, true);
+			document.removeEventListener('focusout', end, true);
+		};
+	});
+
+	/**
+	 * The display follows the measured width - but swapping the dock for the stack (or back)
+	 * re-creates the memo's textarea and unmounts the `DockHost`, so the swap WAITS while that
+	 * would lose something (#886 review):
+	 *  - an IME composition is open: the text being converted lives in the textarea, not yet in
+	 *    the draft. The swap happens once the composition has ended and its text was taken;
+	 *  - the memo's close question is open: the host that asked would be gone, its pending close
+	 *    stale, and "discard and close" would discard the text without closing the pane. The swap
+	 *    happens once the question is answered (and the close applied or refused).
+	 * Taken over in the NEXT frame in any case: the measurement arrives from a ResizeObserver, and
+	 * swapping other observed boxes within the same delivery is reported as a "ResizeObserver
+	 * loop" error. (After `compositionend` this also lets the composition's last input land.)
+	 */
+	$effect(() => {
+		const width = measuredWidth;
+		if (composing || memoPrompt.open) return;
+		const frame = requestAnimationFrame(() => {
+			pageWidth = width;
+		});
+		return () => cancelAnimationFrame(frame);
+	});
 
 	/** What to tell the user after a save / close settle of the memo. */
 	function noteMemoSettled(result: DraftSettleResult): void {

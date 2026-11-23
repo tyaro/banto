@@ -12,7 +12,8 @@
  *    have falls back to the default.
  *  - Kiosk: nothing can be rearranged, no View menu.
  *  - A narrow page: the widgets the arrangement shows, stacked in one column - the saved
- *    arrangement is not written, and the memo's draft survives the switch.
+ *    arrangement is not written, and the memo's draft survives the switch. The switch waits for
+ *    an IME composition in the memo to end, and for the memo's close question to be answered.
  *  - Keyboard only: add, move, hide.
  *
  * In demo mode both copies are in localStorage: the store's first-paint copy (written at once)
@@ -124,6 +125,8 @@ test('add, hide and move are saved and survive a reload; reset deletes the saved
 	// The default docks both; the memo sits right of the list.
 	await expect(pane(page, 'memo')).toBeVisible();
 	await expect(pane(page, 'lowStock')).toBeVisible();
+	const defaultBox = await pane(page, 'lowStock').boundingBox();
+	if (!defaultBox) throw new Error('list pane not visible');
 
 	// Hide: uncheck the memo (its text is untouched, so the close has nothing to settle).
 	await toggleWidget(page, MEMO);
@@ -182,10 +185,10 @@ test('add, hide and move are saved and survive a reload; reset deletes the saved
 	await expect.poll(() => stored(page, PROVIDER_KEY)).toBeNull();
 	await page.waitForTimeout(AFTER_DEBOUNCE_MS);
 	expect(await ops(page, PROVIDER_KEY)).toEqual([{ op: 'remove', key: PROVIDER_KEY }]);
-	// The list is back in its default place (not the full-height left edge).
-	await expect
-		.poll(async () => (await pane(page, 'lowStock').boundingBox())?.height ?? 9999)
-		.toBeLessThan((hostBox?.height ?? 0) / 2);
+	// The list is back in its default place, at its default size (whatever this copy's default
+	// is: with the charts it is the third row, without them the only one).
+	await expect.poll(() => pane(page, 'lowStock').boundingBox()).toEqual(defaultBox);
+	await expect(pane(page, 'memo')).toBeVisible();
 
 	// Nothing saved: a reload shows the default again, and still writes nothing.
 	await page.reload();
@@ -365,6 +368,125 @@ test('a narrow page stacks the shown widgets in one column: the saved arrangemen
 	await page.waitForTimeout(AFTER_DEBOUNCE_MS);
 	expect(await stored(page, PROVIDER_KEY)).toBe(saved);
 	expect(await ops(page, PROVIDER_KEY)).toEqual([]);
+});
+
+/** The viewport width at which the dashboard's own box (`.page`) is `pageWidth` px wide. */
+async function viewportWidthFor(page: Page, pageWidth: number): Promise<number> {
+	const current = await page.locator('.page').evaluate((el) => el.clientWidth);
+	return page.viewportSize()!.width - current + pageWidth;
+}
+
+const pageBoxWidth = (page: Page): Promise<number> =>
+	page.locator('.page').evaluate((el) => el.clientWidth);
+
+test('an IME composition in the memo holds the switch at the 900px boundary, both ways', async ({
+	page
+}) => {
+	await openDashboard(page);
+	const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
+	const unsaved = page.getByText('未保存の変更があります');
+	// A real composition (Chromium's IME protocol), not `fill`: the text being converted is in the
+	// textarea only, and reaches the page's draft when it is committed.
+	const cdp = await page.context().newCDPSession(page);
+	const compose = (text: string) =>
+		cdp.send('Input.imeSetComposition', {
+			text,
+			selectionStart: text.length,
+			selectionEnd: text.length
+		});
+	const commit = (text: string) => cdp.send('Input.insertText', { text });
+
+	// The narrowest dock: the page 901px wide.
+	const wide = await viewportWidthFor(page, 901);
+	await page.setViewportSize({ width: wide, height: 900 });
+	await expect.poll(() => pageBoxWidth(page)).toBe(901);
+	await expect(dockHost(page)).toBeVisible();
+
+	// 901 -> 900 while converting: the dock, and the very textarea, stay.
+	await memoInput.click();
+	await compose('にほんご');
+	await memoInput.evaluate((el) => el.setAttribute('data-composing-here', ''));
+	await page.setViewportSize({ width: wide - 1, height: 900 });
+	await expect.poll(() => pageBoxWidth(page)).toBe(900);
+	await page.waitForTimeout(400);
+	await expect(dockHost(page)).toBeVisible();
+	await expect(stack(page)).toHaveCount(0);
+	await expect(page.locator('textarea[data-composing-here]')).toHaveCount(1);
+	// Committed: the text is taken, then the display switches.
+	await commit('日本語');
+	await expect(stack(page)).toBeVisible();
+	await expect(dockHost(page)).toHaveCount(0);
+	await expect(memoInput).toHaveValue('日本語');
+	await expect(unsaved).toBeVisible();
+
+	// 900 -> 901 while converting: the stack, and its textarea, stay.
+	await memoInput.focus();
+	await page.keyboard.press('Control+End');
+	await compose('です');
+	await memoInput.evaluate((el) => el.setAttribute('data-composing-here', ''));
+	await page.setViewportSize({ width: wide, height: 900 });
+	await expect.poll(() => pageBoxWidth(page)).toBe(901);
+	await page.waitForTimeout(400);
+	await expect(stack(page)).toBeVisible();
+	await expect(dockHost(page)).toHaveCount(0);
+	await expect(page.locator('textarea[data-composing-here]')).toHaveCount(1);
+	await commit('です');
+	await expect(dockHost(page)).toBeVisible();
+	await expect(stack(page)).toHaveCount(0);
+	await expect(memoInput).toHaveValue('日本語です');
+	await expect(unsaved).toBeVisible();
+	// The narrowest dock holds the default's panes side by side (three in the second row with
+	// the charts; the list and the memo in any copy).
+	const list = await pane(page, 'lowStock').boundingBox();
+	const memo = await pane(page, 'memo').boundingBox();
+	if (!list || !memo) throw new Error('not visible');
+	expect(memo.x).toBeGreaterThan(list.x + list.width - 1);
+	expect(memo.width).toBeGreaterThan(250);
+	// With the charts: each pane of the second row is at least as wide as its chart needs (W1's
+	// measurements, plan §4.13.8) - the weights of `dashboardLayout.ts`, not equal thirds.
+	for (const [id, minWidth] of [
+		['stackedBar', 300],
+		['priceBuckets', 320],
+		['scatter', 200]
+	] as const) {
+		if ((await pane(page, id).count()) === 0) continue; // a copy without the charts
+		expect((await pane(page, id).boundingBox())?.width ?? 0, id).toBeGreaterThanOrEqual(minWidth);
+	}
+});
+
+test("the memo's close question holds the switch: discarding closes the pane as well", async ({
+	page
+}) => {
+	await openDashboard(page);
+	const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
+	const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
+	await memoInput.fill('not saved');
+	await dockHost(page)
+		.getByRole('button', { name: `${MEMO}を閉じる` })
+		.click();
+	await expect(settleDialog).toBeVisible();
+
+	// Narrow while the question is open: the dock that asked stays until it is answered.
+	await page.setViewportSize({ width: 700, height: 900 });
+	await page.waitForTimeout(400);
+	await expect(settleDialog).toBeVisible();
+	await expect(dockHost(page)).toBeVisible();
+	await expect(stack(page)).toHaveCount(0);
+
+	// Discard: the text is dropped AND the pane is closed; only then the stack takes over.
+	await settleDialog.getByRole('button', { name: '破棄して閉じる' }).click();
+	await expect(settleDialog).toHaveCount(0);
+	await expect(stack(page)).toBeVisible();
+	await expect(dockHost(page)).toHaveCount(0);
+	await expect(stack(page).getByRole('heading', { name: MEMO, exact: true })).toHaveCount(0);
+	await expect(memoInput).toHaveCount(0);
+
+	// Wide again: the memo is closed in the arrangement, and reopening it shows no leftover text.
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await expect(dockHost(page)).toBeVisible();
+	await expect(pane(page, 'memo')).toHaveCount(0);
+	await toggleWidget(page, MEMO);
+	await expect(memoInput).toHaveValue('');
 });
 
 test('keyboard only: add a widget, move it, hide it', async ({ page }) => {

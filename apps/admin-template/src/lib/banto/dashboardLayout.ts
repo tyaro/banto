@@ -39,10 +39,15 @@ interface DefaultCell {
  * The default arrangement, row by row. The first row keeps the 8 : 4 split the fixed cards had
  * (the monthly trend is the primary chart). `spc` and `trend` are not in it: they are added from
  * the View menu, as before W2.
+ *
+ * The second row's weights follow what each chart needs (measured in W1, §4.13.8: the stacked
+ * bar 300px for its last category name, the donut 320px for a one-line legend, the scatter
+ * 200px), so that all three hold at the narrowest dock - a page 901px wide, about 889px of panes:
+ * 309 / 333 / 247px. Equal thirds (296px) would cut the stacked bar's last label there.
  */
 const DEFAULT_ROWS: readonly (readonly DefaultCell[])[] = [
 	[{ id: 'monthly', weight: 2 }, { id: 'categoryStock' }],
-	[{ id: 'stackedBar' }, { id: 'priceBuckets' }, { id: 'scatter' }],
+	[{ id: 'stackedBar', weight: 1.25 }, { id: 'priceBuckets', weight: 1.35 }, { id: 'scatter' }],
 	[{ id: 'lowStock', weight: 2 }, { id: 'memo' }]
 ];
 
