@@ -1370,9 +1370,8 @@ describe('dispose re-entering during notification (#786 C6)', () => {
 		const s = fakeServer();
 		const settled: unknown[] = [];
 		let n = 0;
-		let setting!: SavedSetting<Pos>;
 		const base = options(s.provider);
-		setting = createSavedSetting({
+		const setting: SavedSetting<Pos> = createSavedSetting({
 			...base,
 			// 1st parse of the sent text: the saved copy; 2nd: the notification's copy
 			parse: (r) => {
