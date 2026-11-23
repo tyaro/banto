@@ -358,18 +358,20 @@ class Settings {
 	 */
 	async syncFromProvider(): Promise<void> {
 		const ui = getUiSettings();
+		// Only the value matters here: these writes are unconditional (last one wins).
+		const read = async (key: string) => (await ui.get(key)).value;
 		const generation = ++this.#syncGeneration;
 		this.#changedSinceSync.clear();
 		try {
 			const [mode, preset, density, kiosk, navLayout, launcherPosition, launcherOpacity] =
 				await Promise.all([
-					ui.get(MODE_SETTING),
-					ui.get(PRESET_SETTING),
-					ui.get(DENSITY_SETTING),
-					ui.get(KIOSK_SETTING),
-					ui.get(NAV_LAYOUT_SETTING),
-					ui.get(LAUNCHER_POSITION_SETTING),
-					ui.get(LAUNCHER_OPACITY_SETTING)
+					read(MODE_SETTING),
+					read(PRESET_SETTING),
+					read(DENSITY_SETTING),
+					read(KIOSK_SETTING),
+					read(NAV_LAYOUT_SETTING),
+					read(LAUNCHER_POSITION_SETTING),
+					read(LAUNCHER_OPACITY_SETTING)
 				]);
 			if (generation !== this.#syncGeneration) return;
 			const fresh = (key: string): boolean => !this.#changedSinceSync.has(key);

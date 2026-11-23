@@ -1,18 +1,33 @@
 /**
- * `UiSettingsProvider` (spec §12.1, M12): a tiny string key/value abstraction
- * for UI settings (theme mode/preset, dock layout, ...), so their
- * persistence can move from localStorage to the backend `settings` table
+ * `UiSettingsProvider` (spec §12.1, M12; Issue #786): a tiny string key/value
+ * abstraction for UI settings (theme mode/preset, dock layout, ...), so their
+ * persistence can move from localStorage to the backend `ui_settings` table
  * without the UI caring which one is active.
+ *
+ * Shape (v8.0.0, Issue #786 - it replaced the old `get -> string | null` /
+ * `set -> void` interface):
+ * - `get(key)` -> `{ value, revision }`. Nothing stored: `value: null`,
+ *   `revision: "0"` ({@link UI_SETTING_ABSENT_REVISION}).
+ * - `set(key, value, { ifRevision? })` -> `{ revision }` (the new revision).
+ *   Without `ifRevision` the write is unconditional (last write wins). With
+ *   it, the write happens only while the stored revision is still that one
+ *   (`"0"` = only while nothing is stored); otherwise it rejects with a
+ *   `ProviderError` of kind `conflict` whose `current` is the value as it is
+ *   now - read it with {@link uiSettingConflict}.
+ * - `remove(key, { ifRevision? })` -> `{ revision: "0" }`. Same condition.
+ * A revision is an opaque string that changes on every write. Never compute
+ * with it or compare it for order; only hand it back as `ifRevision`.
  *
  * Three implementations, matching the app's three environments (spec §11.1):
  * - `createLocalUiSettings()`  - localStorage, key prefix `banto.ui.`
  *   (plain-browser demo mode, and the offline fallback).
- * - `createTauriUiSettings()`  - `ui_settings_get`/`ui_settings_set` Tauri
- *   commands (session required, any role). Same injected-`invoke` convention
- *   as `providers/tauri.ts` - no `@tauri-apps/api` dependency here.
- * - `createHttpUiSettings()`   - `GET/PUT /api/ui-settings/{key}` REST routes
- *   (authenticated, any role). Same CSRF header + bearer-token conventions
- *   as `providers/http.ts`.
+ * - `createTauriUiSettings()`  - `ui_settings_get` / `ui_settings_set` /
+ *   `ui_settings_delete` Tauri commands (session required, any role). Same
+ *   injected-`invoke` convention as `providers/tauri.ts` - no
+ *   `@tauri-apps/api` dependency here.
+ * - `createHttpUiSettings()`   - `GET/PUT/DELETE /api/ui-settings/{key}` REST
+ *   routes (authenticated, any role). Same CSRF header + bearer-token
+ *   conventions as `providers/http.ts`.
  *
  * Keys are `[A-Za-z0-9._-]{1,64}` (the backend validates too; validating
  * here as well turns a typo into an immediate, local error instead of a
@@ -20,42 +35,118 @@
  * other provider - callers that treat settings persistence as best-effort
  * (the app's settings store) simply catch and ignore.
  *
- * Wire shape (Issue #786, v8.0.0): the backend answers a read with
- * `{ value, revision }` and a write with `{ revision }` (REST and the Tauri
- * commands alike), and takes an optional `ifRevision` for conditional writes
- * plus a delete. The Tauri and HTTP adapters below read that shape and DROP
- * the revision: this interface is still the old one (`get` -> string | null,
- * `set` -> void, unconditional), so existing callers keep working. The
- * revision-aware interface (and `remove`) replaces it in a later change.
- *
- * Write ordering (#707; Tauri and HTTP providers): writes are serialized per
- * key so a late-arriving older write can never overwrite a newer one.
- * - At most one write per key is in flight. A value arriving meanwhile is held
- *   (only the latest one); when the in-flight write finishes (success or
- *   failure) the held value is sent. Intermediate values are never sent.
- *   Different keys do not wait for each other.
- * - Session check: a session key is captured when `set` is called. If it
- *   differs right before sending (logout / another user), the held write is
+ * Write ordering (#707; Tauri and HTTP providers): writes (`set` and
+ * `remove`) are serialized per key so a late-arriving older write can never
+ * overwrite a newer one.
+ * - At most one write per key is in flight; the others wait in a queue and are
+ *   sent in the order they were accepted. Different keys do not wait for each
+ *   other.
+ * - Only an UNCONDITIONAL `set` that is still waiting can be superseded: when
+ *   the next write accepted for that key is also unconditional (a `set` or a
+ *   `remove`), the waiting value is never sent and its `set` resolves to
+ *   `{ revision: null, superseded: true }` - "not sent", told apart from a
+ *   real revision by the type (`revision` is `null`, so it cannot be passed
+ *   on as an `ifRevision` by mistake).
+ * - A CONDITIONAL write (`ifRevision` given) is never superseded and never
+ *   supersedes: it is always sent, in order, and resolves only with the
+ *   server's own answer (a revision or a `conflict`). A `remove` is never
+ *   superseded either.
+ * - Session check: a session key is captured when the write is accepted. If
+ *   it differs right before sending (logout / another user), the write is
  *   dropped, not sent. HTTP uses the bearer token (no token = dropped too).
  *   Tauri uses the optional `getSessionRevision` (normally
  *   `authProvider.credentialRevision()`); without it the session is not
- *   checked (as before) and the Tauri command saves for whoever is logged in.
- * - `get(key)` waits until that key's writes (the in-flight one and the held
- *   one) are done, then reads. A failed write never makes `get` reject.
- * - `set` resolves when its write was sent and succeeded, or was superseded by
- *   a later value (an intermediate value, never sent). It rejects when its own
- *   write was sent and failed, or was dropped for a session difference / no
- *   token (`ProviderError` kind `unauthorized`, same outcome as the old 401), so
- *   callers never treat an unsent value as saved.
- * - Key validation still fails immediately, at the `set`/`get` call.
+ *   checked and the Tauri command saves for whoever is logged in.
+ * - `get(key)` waits until that key's writes (the in-flight one and the
+ *   queued ones) are done, then reads. A failed write never makes `get` reject.
+ * - A write rejects when it was sent and failed, or was dropped for a session
+ *   difference / no token (`ProviderError` kind `unauthorized`, same outcome
+ *   as a 401), so callers never treat an unsent value as saved.
+ * - Key validation still fails immediately, at the call.
+ *
+ * - `get` is not session-checked by itself (it sends with whatever session is
+ *   current when it is sent). A caller that carries a read into a later write
+ *   must check the session in between - `sessionGuard()` is that check, and
+ *   `updateUiSetting` does it.
+ *
+ * `updateUiSetting(provider, key, apply)` is the read-apply-conditional-write
+ * loop on top of this (see its doc: `apply` must be idempotent).
  */
 import { ProviderError, type ErrorBody } from '../errors';
 
+/** The revision of "nothing is stored" (a `get` of an unset key, the answer of `remove`). */
+export const UI_SETTING_ABSENT_REVISION = '0';
+
+/** A stored UI setting as it is now: the answer of `get`, and the `current` of a `conflict`. */
+export interface UiSettingSnapshot {
+	/** The stored string, or `null` when nothing is stored. */
+	value: string | null;
+	/** Opaque; changes on every write. `"0"` when nothing is stored. */
+	revision: string;
+}
+
+export interface UiSettingWriteOptions {
+	/**
+	 * Write only while the stored revision is still this one (`"0"` = only
+	 * while nothing is stored). Left out = unconditional (last write wins).
+	 */
+	ifRevision?: string;
+}
+
+/**
+ * The answer of `set`. Either the write was sent and stored (`revision` is the
+ * new revision), or - for an unconditional `set` only - it was superseded by
+ * a later unconditional write before it was sent (`revision: null`,
+ * `superseded: true`; nothing was sent for this call, the later write carries
+ * the outcome). A conditional `set` never answers `superseded`.
+ */
+export type UiSettingWriteResult =
+	{ revision: string; superseded?: false } | { revision: null; superseded: true };
+
+/** The answer of `remove`: the revision of "nothing is stored" (`"0"`). */
+export interface UiSettingRemoveResult {
+	revision: string;
+}
+
 export interface UiSettingsProvider {
-	/** Resolve the stored value for `key`, or `null` when nothing is stored yet. */
-	get(key: string): Promise<string | null>;
-	/** Store `value` under `key` (upsert). */
-	set(key: string, value: string): Promise<void>;
+	/** The stored value and its revision (`{ value: null, revision: "0" }` when nothing is stored). */
+	get(key: string): Promise<UiSettingSnapshot>;
+	/**
+	 * Store `value` under `key`. Unconditional without `ifRevision`; with it,
+	 * rejects with a `conflict` `ProviderError` when the stored revision differs
+	 * ({@link uiSettingConflict} reads the current value from the error).
+	 */
+	set(key: string, value: string, options?: UiSettingWriteOptions): Promise<UiSettingWriteResult>;
+	/** Delete what is stored under `key` (same `ifRevision` condition as `set`). Deleting nothing succeeds. */
+	remove(key: string, options?: UiSettingWriteOptions): Promise<UiSettingRemoveResult>;
+	/**
+	 * Optional. Captures the session the provider would write for right now and
+	 * returns a function answering "is it still that session?". `updateUiSetting`
+	 * uses it to stop when the session changes between its read and its writes
+	 * (logout, another account): one account's value must never be applied to
+	 * another's setting. A provider without sessions (localStorage) leaves it
+	 * out. The bundled Tauri / HTTP providers implement it with the same session
+	 * key their writes are checked against.
+	 */
+	sessionGuard?(): () => boolean;
+}
+
+function isSnapshot(value: unknown): value is UiSettingSnapshot {
+	if (typeof value !== 'object' || value === null) return false;
+	const { value: stored, revision } = value as { value?: unknown; revision?: unknown };
+	return (stored === null || typeof stored === 'string') && typeof revision === 'string';
+}
+
+/**
+ * Tell a failed conditional write apart: when `error` is the `conflict` of a
+ * `set` / `remove` whose `ifRevision` did not match, returns the setting as it
+ * is now (`{ value, revision }`; `value: null` / `"0"` when it was deleted),
+ * otherwise `null`.
+ */
+export function uiSettingConflict(error: unknown): UiSettingSnapshot | null {
+	if (!(error instanceof ProviderError) || error.body.kind !== 'conflict') return null;
+	const current = error.body.current;
+	return isSnapshot(current) ? { value: current.value, revision: current.revision } : null;
 }
 
 /** Wire contract for keys (matches the backend's `[A-Za-z0-9._-]{1,64}`). */
@@ -92,65 +183,130 @@ function toProviderError(err: unknown): ProviderError {
 	return new ProviderError({ kind: 'other', message });
 }
 
+const UNEXPECTED_RESPONSE_MESSAGE = 'unexpected ui-settings response';
+
+/** Reads an adapter answer, refusing anything that is not the #786 wire shape (e.g. a pre-v8 backend). */
+function asSnapshot(body: unknown): UiSettingSnapshot {
+	if (isSnapshot(body)) return { value: body.value, revision: body.revision };
+	throw new ProviderError({ kind: 'other', message: UNEXPECTED_RESPONSE_MESSAGE });
+}
+
+function asRevision(body: unknown): { revision: string } {
+	const revision =
+		typeof body === 'object' && body !== null ? (body as { revision?: unknown }).revision : null;
+	if (typeof revision === 'string') return { revision };
+	throw new ProviderError({ kind: 'other', message: UNEXPECTED_RESPONSE_MESSAGE });
+}
+
 // --- per-key write serialization (#707) ------------------------------------
 
-interface PendingWrite {
-	value: string;
-	/** Session key captured at `set` time (`null` = none). */
+/** What an adapter sends, one call per request (no ordering of its own). */
+interface RawUiSettings {
+	get(key: string): Promise<UiSettingSnapshot>;
+	set(key: string, value: string, ifRevision: string | undefined): Promise<{ revision: string }>;
+	remove(key: string, ifRevision: string | undefined): Promise<{ revision: string }>;
+}
+
+interface QueuedWrite {
+	/** `null` = remove. */
+	value: string | null;
+	ifRevision: string | undefined;
+	/** Session key captured when the write was accepted (`null` = none). */
 	token: string | null;
-	settle: Array<{ resolve: () => void; reject: (reason: unknown) => void }>;
+	resolve: (result: UiSettingWriteResult) => void;
+	reject: (reason: unknown) => void;
 }
 
 /**
- * Wraps a raw (unserialized) provider with the per-key write serialization
+ * Wraps a raw (unserialized) adapter with the per-key write serialization
  * described in the file header. Module-private; shared by the Tauri and HTTP
  * providers. `getSessionKey` identifies the session (HTTP: token, Tauri:
  * credential revision); when omitted nothing is dropped for a session change.
- * A write dropped for a session difference is rejected with `unauthorized`. `requireKey` additionally drops writes whose key was
- * empty/null at accept time (HTTP: no token).
+ * A write dropped for a session difference is rejected with `unauthorized`.
+ * `requireKey` additionally drops writes whose key was empty/null at accept
+ * time (HTTP: no token).
  */
 function serializeWrites(
-	inner: UiSettingsProvider,
+	inner: RawUiSettings,
 	getSessionKey?: () => string | null,
 	requireKey = false
 ): UiSettingsProvider {
-	/** Keys with a write in flight -> the latest value held meanwhile (or null). */
-	const held = new Map<string, PendingWrite | null>();
+	/** Keys with a write in flight -> the writes accepted meanwhile, in order. */
+	const queues = new Map<string, QueuedWrite[]>();
 	/** Keys with a write in flight -> the drain promise `get` waits on (never rejects). */
 	const drains = new Map<string, Promise<void>>();
 
-	function shouldDrop(write: PendingWrite): boolean {
+	function shouldDrop(write: QueuedWrite): boolean {
 		if (!getSessionKey) return false;
 		if (requireKey && (write.token === null || write.token === '')) return true;
 		return getSessionKey() !== write.token;
 	}
 
-	async function drain(key: string, first: PendingWrite): Promise<void> {
-		let item: PendingWrite | null = first;
-		while (item) {
-			const current: PendingWrite = item;
-			if (shouldDrop(current)) {
+	async function drain(key: string, first: QueuedWrite, queue: QueuedWrite[]): Promise<void> {
+		for (let item: QueuedWrite | undefined = first; item; item = queue.shift()) {
+			if (shouldDrop(item)) {
 				// Session changed (or none) since the write was accepted: drop it, and
 				// reject so the caller does not treat an unsent value as saved.
-				const dropped = new ProviderError({ kind: 'unauthorized' });
-				current.settle.forEach((s) => s.reject(dropped));
-			} else {
-				try {
-					await inner.set(key, current.value);
-					current.settle.forEach((s) => s.resolve());
-				} catch (error) {
-					current.settle.forEach((s) => s.reject(error));
-				}
+				item.reject(new ProviderError({ kind: 'unauthorized' }));
+				continue;
 			}
-			item = held.get(key) ?? null;
-			held.set(key, null);
+			try {
+				const sent =
+					item.value === null
+						? await inner.remove(key, item.ifRevision)
+						: await inner.set(key, item.value, item.ifRevision);
+				item.resolve({ revision: sent.revision });
+			} catch (error) {
+				item.reject(error);
+			}
 		}
-		held.delete(key);
+		queues.delete(key);
 		drains.delete(key);
 	}
 
+	function accept(
+		key: string,
+		value: string | null,
+		options: UiSettingWriteOptions | undefined
+	): Promise<UiSettingWriteResult> {
+		try {
+			assertValidKey(key);
+		} catch (err) {
+			return Promise.reject(err);
+		}
+		const ifRevision = options?.ifRevision;
+		const token = getSessionKey ? getSessionKey() : null;
+		return new Promise<UiSettingWriteResult>((resolve, reject) => {
+			const entry: QueuedWrite = { value, ifRevision, token, resolve, reject };
+			const waiting = queues.get(key);
+			if (!waiting) {
+				const queue: QueuedWrite[] = [];
+				queues.set(key, queue);
+				// drain() runs synchronously up to its first await, so register it
+				// only if it is still in flight (a dropped write ends without awaiting).
+				const d = drain(key, entry, queue);
+				if (queues.has(key)) drains.set(key, d);
+				return;
+			}
+			// In flight. Only a waiting unconditional `set`, directly followed by
+			// another unconditional write, is superseded (never sent). Anything
+			// conditional keeps its place and is sent in order.
+			const last = waiting[waiting.length - 1];
+			if (
+				ifRevision === undefined &&
+				last !== undefined &&
+				last.value !== null &&
+				last.ifRevision === undefined
+			) {
+				waiting.pop();
+				last.resolve({ revision: null, superseded: true });
+			}
+			waiting.push(entry);
+		});
+	}
+
 	return {
-		async get(key: string): Promise<string | null> {
+		async get(key) {
 			assertValidKey(key);
 			// Wait while writes remain; a write accepted while waiting is awaited too.
 			for (let d = drains.get(key); d; d = drains.get(key)) {
@@ -159,27 +315,20 @@ function serializeWrites(
 			return inner.get(key);
 		},
 
-		set(key: string, value: string): Promise<void> {
-			try {
-				assertValidKey(key);
-			} catch (err) {
-				return Promise.reject(err);
-			}
-			const token = getSessionKey ? getSessionKey() : null;
-			return new Promise<void>((resolve, reject) => {
-				const entry: PendingWrite = { value, token, settle: [{ resolve, reject }] };
-				if (!held.has(key)) {
-					held.set(key, null);
-					// drain() runs synchronously up to its first await, so register it
-					// only if it is still in flight (a dropped write ends without awaiting).
-					const d = drain(key, entry);
-					if (held.has(key)) drains.set(key, d);
-					return;
-				}
-				// In flight: the held intermediate value is superseded (resolved as dropped).
-				held.get(key)?.settle.forEach((s) => s.resolve());
-				held.set(key, entry);
-			});
+		set(key, value, options) {
+			return accept(key, value, options);
+		},
+
+		async remove(key, options) {
+			// A remove is never superseded, so its answer always carries a revision.
+			const result = await accept(key, null, options);
+			return { revision: result.revision ?? UI_SETTING_ABSENT_REVISION };
+		},
+
+		sessionGuard() {
+			if (!getSessionKey) return () => true;
+			const captured = getSessionKey();
+			return () => getSessionKey() === captured;
 		}
 	};
 }
@@ -187,40 +336,170 @@ function serializeWrites(
 // --- localStorage ----------------------------------------------------------
 
 const LOCAL_PREFIX = 'banto.ui.';
+/** Where the revision of `banto.ui.<key>` lives (not under `banto.ui.`, so it cannot collide with a key). */
+const LOCAL_REVISION_PREFIX = 'banto.ui-rev.';
+
+/** The part of the Web Locks API (`navigator.locks`) the localStorage provider uses. */
+export interface UiSettingsLocks {
+	request<T>(name: string, callback: () => T | Promise<T>): Promise<T>;
+}
 
 export interface LocalUiSettingsOptions {
 	/** Injected for tests; defaults to the global `localStorage`. */
 	storage?: Storage;
+	/**
+	 * The cross-tab lock every write is made under. Defaults to
+	 * `navigator.locks` (Web Locks API) when the environment has it; `null`
+	 * turns locking off. Without a lock, a conditional write is only checked
+	 * against writes of the same document (see `createLocalUiSettings`).
+	 */
+	locks?: UiSettingsLocks | null;
+}
+
+function defaultLocks(): UiSettingsLocks | null {
+	const nav = (globalThis as { navigator?: { locks?: UiSettingsLocks } }).navigator;
+	return nav?.locks ?? null;
+}
+
+/** FNV-1a (32 bit) of the value: ties a stored revision to the value it was minted for. */
+function fingerprint(value: string): string {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < value.length; i++) {
+		hash ^= value.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0).toString(16);
+}
+
+/** A random revision (never `"0"`). `getRandomValues` also exists on plain-http pages, unlike `randomUUID`. */
+function newLocalRevision(): string {
+	const bytes = new Uint8Array(12);
+	const source = (globalThis as { crypto?: Crypto }).crypto;
+	if (source?.getRandomValues) source.getRandomValues(bytes);
+	else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+	return 'l' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
  * localStorage-backed `UiSettingsProvider` (demo mode / offline fallback).
  * Keys are prefixed `banto.ui.` so they never collide with the app's other
- * localStorage entries (`banto.theme`, `banto.dock.dashboard`, ...).
+ * localStorage entries (`banto.theme`, `banto.dock.dashboard`, ...). The value
+ * is stored as is under `banto.ui.<key>`; its revision lives beside it under
+ * `banto.ui-rev.<key>` as `<revision>:<fingerprint of the value>`. A value
+ * written by something else (a test priming `banto.ui.<key>`, another tool)
+ * has no matching revision entry: it reads with a revision derived from the
+ * value (`f<fingerprint>`), so a revision handed out before that change stops
+ * matching, as it should, and `get` never writes.
+ *
+ * Conditional writes across tabs: localStorage has no compare-and-set, and
+ * browsers do not lock it across processes, so "check the revision, then
+ * write" in one tab can interleave with another tab's write. Every write
+ * (`set` and `remove`, conditional or not) therefore runs under a Web Lock
+ * named after the key (`navigator.locks`, shared by the tabs of the origin
+ * like localStorage itself). When there is a lock manager but the lock is
+ * not granted, the write is refused (`storage` error, nothing is written) -
+ * it never goes around the lock. **Where the Web Locks API is missing** (a
+ * page that is not a secure context, an old browser) or turned off
+ * (`locks: null`), the check and the write are still one synchronous step,
+ * which is only guaranteed against writes from the same document: there, do
+ * not rely on `ifRevision` / `updateUiSetting` to keep two tabs from
+ * overwriting each other. (The demo and offline fallback this provider is for
+ * run on https or localhost, where the API exists.) `get` takes no lock. `set`
+ * never answers `superseded`.
  */
 export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiSettingsProvider {
 	function storage(): Storage {
 		return options.storage ?? localStorage;
 	}
 
+	function mint(key: string, value: string): string {
+		const revision = newLocalRevision();
+		storage().setItem(`${LOCAL_REVISION_PREFIX}${key}`, `${revision}:${fingerprint(value)}`);
+		return revision;
+	}
+
+	function read(key: string): UiSettingSnapshot {
+		const value = storage().getItem(`${LOCAL_PREFIX}${key}`);
+		if (value === null) return { value: null, revision: UI_SETTING_ABSENT_REVISION };
+		const entry = storage().getItem(`${LOCAL_REVISION_PREFIX}${key}`);
+		const split = entry ? entry.lastIndexOf(':') : -1;
+		if (entry && split > 0 && entry.slice(split + 1) === fingerprint(value)) {
+			return { value, revision: entry.slice(0, split) };
+		}
+		// Not written through this provider: a revision derived from the value, so a
+		// read never writes and stays stable until the value changes again.
+		return { value, revision: `f${fingerprint(value)}` };
+	}
+
+	function check(key: string, ifRevision: string | undefined): void {
+		if (ifRevision === undefined) return;
+		const current = read(key);
+		if (current.revision !== ifRevision) {
+			throw new ProviderError({
+				kind: 'conflict',
+				message: `ui setting changed: ${key}`,
+				current
+			});
+		}
+	}
+
+	/** Run one check-and-write step under the key's cross-tab lock (when there is one). */
+	async function locked<T>(key: string, step: () => T): Promise<T> {
+		const locks = options.locks === undefined ? defaultLocks() : options.locks;
+		if (!locks) return step();
+		// The step never throws inside the lock callback: its outcome (a value, or
+		// its own error - a conflict, a full storage) is carried out and settled
+		// here, so the lock is released the same way on every implementation.
+		let outcome: { value: T } | { error: unknown } | undefined;
+		try {
+			await locks.request(`${LOCAL_PREFIX}${key}`, () => {
+				try {
+					outcome = { value: step() };
+				} catch (error) {
+					outcome = { error };
+				}
+			});
+		} catch {
+			// Settled below: what matters is whether the step ran under the lock.
+		}
+		if (outcome === undefined) {
+			// There is a lock manager but the lock was not granted (e.g. refused in
+			// a sandboxed frame). Writing anyway would bypass the lock other tabs'
+			// conditional writes rely on, so nothing is written.
+			throw new ProviderError({
+				kind: 'storage',
+				message: `ui-settings lock unavailable: ${key}`
+			});
+		}
+		if ('error' in outcome) throw outcome.error;
+		return outcome.value;
+	}
+
 	return {
-		async get(key: string): Promise<string | null> {
+		async get(key) {
 			assertValidKey(key);
-			return storage().getItem(`${LOCAL_PREFIX}${key}`);
+			return read(key);
 		},
 
-		async set(key: string, value: string): Promise<void> {
+		async set(key, value, writeOptions) {
 			assertValidKey(key);
-			storage().setItem(`${LOCAL_PREFIX}${key}`, value);
+			return locked(key, () => {
+				check(key, writeOptions?.ifRevision);
+				storage().setItem(`${LOCAL_PREFIX}${key}`, value);
+				return { revision: mint(key, value) };
+			});
+		},
+
+		async remove(key, writeOptions) {
+			assertValidKey(key);
+			return locked(key, () => {
+				check(key, writeOptions?.ifRevision);
+				storage().removeItem(`${LOCAL_PREFIX}${key}`);
+				storage().removeItem(`${LOCAL_REVISION_PREFIX}${key}`);
+				return { revision: UI_SETTING_ABSENT_REVISION };
+			});
 		}
 	};
-}
-
-/** What the backend answers a read with (REST body and Tauri command alike, #786). */
-interface UiSettingWire {
-	value: string | null;
-	/** Changes on every write; `"0"` when nothing is stored. Not used by this interface yet. */
-	revision: string;
 }
 
 // --- Tauri invoke ----------------------------------------------------------
@@ -236,35 +515,47 @@ export interface TauriUiSettingsOptions {
 }
 
 /**
- * `UiSettingsProvider` over the `ui_settings_get`/`ui_settings_set` Tauri
- * commands (spec M12: session required, any role).
- * - `get` -> `ui_settings_get { key }` -> `{ value: string | null, revision }`
- * - `set` -> `ui_settings_set { key, value }` -> `{ revision }` (no
- *   `ifRevision`: unconditional)
- * The revision is not used yet (see the file header, #786).
+ * `UiSettingsProvider` over the `ui_settings_get` / `ui_settings_set` /
+ * `ui_settings_delete` Tauri commands (spec M12: session required, any role).
+ * - `get`    -> `ui_settings_get { key }` -> `{ value: string | null, revision }`
+ * - `set`    -> `ui_settings_set { key, value, ifRevision? }` -> `{ revision }`
+ * - `remove` -> `ui_settings_delete { key, ifRevision? }` -> `{ revision: "0" }`
+ * A failed condition is the command's `conflict` error (`current` = `{ value, revision }`).
+ * Writes are serialized per key (see the file header, #707).
  */
 export function createTauriUiSettings(options: TauriUiSettingsOptions): UiSettingsProvider {
-	async function call<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
+	async function call(cmd: string, args: Record<string, unknown>): Promise<unknown> {
 		try {
-			return (await options.invoke(cmd, args)) as T;
+			return await options.invoke(cmd, args);
 		} catch (err) {
 			throw toProviderError(err);
 		}
 	}
 
+	/** `ifRevision` is left out of the arguments when the write is unconditional. */
+	function withCondition(
+		args: Record<string, unknown>,
+		ifRevision: string | undefined
+	): Record<string, unknown> {
+		return ifRevision === undefined ? args : { ...args, ifRevision };
+	}
+
 	const { getSessionRevision } = options;
 	return serializeWrites(
 		{
-			async get(key: string): Promise<string | null> {
+			async get(key) {
 				assertValidKey(key);
-				const stored = await call<UiSettingWire>('ui_settings_get', { key });
-				return stored.value ?? null;
+				return asSnapshot(await call('ui_settings_get', { key }));
 			},
 
-			async set(key: string, value: string): Promise<void> {
+			async set(key, value, ifRevision) {
 				assertValidKey(key);
-				// Answers `{ revision }`; dropped until the provider carries it (#786).
-				await call<unknown>('ui_settings_set', { key, value });
+				return asRevision(await call('ui_settings_set', withCondition({ key, value }, ifRevision)));
+			},
+
+			async remove(key, ifRevision) {
+				assertValidKey(key);
+				return asRevision(await call('ui_settings_delete', withCondition({ key }, ifRevision)));
 			}
 		},
 		getSessionRevision ? () => getSessionRevision() : undefined
@@ -286,14 +577,16 @@ export interface HttpUiSettingsOptions {
 }
 
 /**
- * `UiSettingsProvider` over the embedded REST server (spec M12):
- * - `get` -> `GET {base}/api/ui-settings/{key}` -> `{"value": string | null, "revision": string}`
- * - `set` -> `PUT {base}/api/ui-settings/{key}` with `{"value": string}` -> `200 {"revision": string}`
- *   (no `ifRevision`: unconditional)
- * The revision is not used yet (see the file header, #786).
+ * `UiSettingsProvider` over the embedded REST server (spec M12, Issue #786):
+ * - `get`    -> `GET {base}/api/ui-settings/{key}` -> `{"value": string | null, "revision": string}`
+ * - `set`    -> `PUT {base}/api/ui-settings/{key}` with `{"value", "ifRevision"?}` -> `200 {"revision"}`
+ * - `remove` -> `DELETE {base}/api/ui-settings/{key}[?ifRevision=...]` -> `200 {"revision": "0"}`
+ * A failed condition is `409` with the `conflict` error body (`current` = `{ value, revision }`).
  * Same CSRF header (`X-Banto-Client: banto`) + `Authorization: Bearer`
  * conventions as `createHttpDataProvider`. Writes are serialized per key and
- * dropped on a token change / no token (see the file header, #707).
+ * dropped on a token change / no token (see the file header, #707). A `fetch`
+ * that never got an answer is a `ProviderError` with `networkFailure: 'network'`
+ * (`isNetworkError`) - for a write, it may or may not have been stored.
  */
 export function createHttpUiSettings(options: HttpUiSettingsOptions): UiSettingsProvider {
 	const baseUrl = options.baseUrl ?? '';
@@ -324,40 +617,192 @@ export function createHttpUiSettings(options: HttpUiSettingsOptions): UiSettings
 		});
 	}
 
+	async function request(
+		method: 'GET' | 'PUT' | 'DELETE',
+		path: string,
+		body?: unknown
+	): Promise<unknown> {
+		let response: Response;
+		try {
+			response = await fetchFn(`${baseUrl}${path}`, {
+				method,
+				headers: headers(body !== undefined),
+				...(body !== undefined ? { body: JSON.stringify(body) } : {})
+			});
+		} catch {
+			throw new ProviderError(
+				{ kind: 'other', message: NETWORK_ERROR_MESSAGE },
+				{ networkFailure: 'network' }
+			);
+		}
+		if (!response.ok) throw await errorFromResponse(response);
+		try {
+			return await response.json();
+		} catch {
+			throw new ProviderError({ kind: 'other', message: UNEXPECTED_RESPONSE_MESSAGE });
+		}
+	}
+
 	return serializeWrites(
 		{
-			async get(key: string): Promise<string | null> {
+			async get(key) {
 				assertValidKey(key);
-				let response: Response;
-				try {
-					response = await fetchFn(`${baseUrl}/api/ui-settings/${key}`, {
-						method: 'GET',
-						headers: headers(false)
-					});
-				} catch {
-					throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
-				}
-				if (!response.ok) throw await errorFromResponse(response);
-				const body = (await response.json()) as UiSettingWire;
-				return body.value ?? null;
+				return asSnapshot(await request('GET', `/api/ui-settings/${key}`));
 			},
 
-			async set(key: string, value: string): Promise<void> {
+			async set(key, value, ifRevision) {
 				assertValidKey(key);
-				let response: Response;
-				try {
-					response = await fetchFn(`${baseUrl}/api/ui-settings/${key}`, {
-						method: 'PUT',
-						headers: headers(true),
-						body: JSON.stringify({ value })
-					});
-				} catch {
-					throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
-				}
-				if (!response.ok) throw await errorFromResponse(response);
+				return asRevision(
+					await request(
+						'PUT',
+						`/api/ui-settings/${key}`,
+						ifRevision === undefined ? { value } : { value, ifRevision }
+					)
+				);
+			},
+
+			async remove(key, ifRevision) {
+				assertValidKey(key);
+				const query =
+					ifRevision === undefined ? '' : `?ifRevision=${encodeURIComponent(ifRevision)}`;
+				return asRevision(await request('DELETE', `/api/ui-settings/${key}${query}`));
 			}
 		},
 		options.getToken,
 		true
 	);
+}
+
+// --- read -> apply -> conditional write ------------------------------------
+
+export interface UpdateUiSettingOptions {
+	/**
+	 * How many conditional writes may be tried (the first one included) before
+	 * giving up with the last error. Default 5.
+	 */
+	maxAttempts?: number;
+}
+
+/** What `updateUiSetting` stored (or found already stored). */
+export interface UpdatedUiSetting {
+	value: string;
+	revision: string;
+}
+
+const DEFAULT_UPDATE_ATTEMPTS = 5;
+
+/** Was the write refused for sure, so nothing was stored? (`conflict` is handled apart.) */
+function isDefiniteRefusal(error: unknown): boolean {
+	if (!(error instanceof ProviderError) || error.networkFailure !== undefined) return false;
+	switch (error.body.kind) {
+		case 'validation':
+		case 'bad_request':
+		case 'unauthorized':
+		case 'forbidden':
+		case 'not_found':
+			return true;
+		default:
+			// `storage` / `other` (a 5xx, a lost answer): unknown whether it was stored.
+			return false;
+	}
+}
+
+/**
+ * Change one UI setting without overwriting somebody else's change (Issue
+ * #786): read -> `apply(current)` -> conditional write (`ifRevision` = the
+ * revision just read) -> on `conflict`, apply again to the value the conflict
+ * returned. `apply` receives the stored string (`null` when nothing is
+ * stored) and returns the string to store. When it returns the value it was
+ * given, nothing is written.
+ *
+ * **`apply` MUST be idempotent**: applying it to a value it was already
+ * applied to must give that same value (set a key, add to a set, replace a
+ * field - not "add 1", not "append"). It can run on its own result:
+ * - A write whose answer was lost (network failure, 5xx) is NOT sent again.
+ *   The setting is read again instead: if it holds exactly what was sent, the
+ *   update is done (with the revision just read). If not, `apply` runs on that
+ *   value - which may already contain this very change (the write was stored,
+ *   then somebody else wrote on top of it).
+ * - A `conflict` re-applies to the current value in the same way.
+ * A change that cannot be made idempotent must carry its own operation id in
+ * the value and drop the duplicate itself; the server keeps no operation log.
+ *
+ * Gives up after `maxAttempts` conditional writes (default 5) and rejects with
+ * the last error (a `conflict` `ProviderError` when it kept losing). A refusal
+ * (`validation`, `unauthorized`, `forbidden`, ...) and a failed read reject at
+ * once. `apply` is called with nothing locked: keep it pure and synchronous.
+ *
+ * The whole update belongs to the session it started in: when the provider
+ * has a `sessionGuard` (the bundled Tauri / HTTP providers do) and the session
+ * changes at any point - while the read, a write or a re-read is pending - the
+ * update stops with `unauthorized`. Nothing read for one account is applied
+ * to, written for, or returned to another (`"0"`, "nothing stored", is the
+ * same revision for every account, so the condition alone would not stop it).
+ * A write already sent for the old session may have been stored for it.
+ */
+export async function updateUiSetting(
+	provider: UiSettingsProvider,
+	key: string,
+	apply: (current: string | null) => string,
+	options: UpdateUiSettingOptions = {}
+): Promise<UpdatedUiSetting> {
+	const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? DEFAULT_UPDATE_ATTEMPTS));
+	// Captured before the first read.
+	//
+	// INVARIANT: every `await` in this function is followed, in the SAME
+	// synchronous step (no helper function, no extra `await` in between), by
+	// `assertSameSession()`; and from the last check to the next
+	// `provider.set(...)` call or `return` there is no `await` either. The
+	// provider captures the session for a write synchronously when `set` is
+	// called, so the session a write is accepted for is the one just checked.
+	// Do not move these reads into an `async` helper: awaiting the helper adds
+	// a microtask between its check and the code that goes on to write.
+	const sameSession = provider.sessionGuard?.() ?? (() => true);
+	const assertSameSession = (): void => {
+		if (!sameSession()) throw new ProviderError({ kind: 'unauthorized' });
+	};
+
+	let current = await provider.get(key);
+	assertSameSession();
+	let lastError: unknown;
+	for (let attempt = 0; attempt < maxAttempts; attempt++) {
+		const next = apply(current.value);
+		// `apply` is the caller's code: check again right before acting on it.
+		assertSameSession();
+		if (next === current.value) return { value: next, revision: current.revision };
+		let written: UiSettingWriteResult;
+		try {
+			written = await provider.set(key, next, { ifRevision: current.revision });
+		} catch (error) {
+			assertSameSession();
+			lastError = error;
+			if (error instanceof ProviderError && error.body.kind === 'conflict') {
+				// Somebody else wrote first: go again from the value it returned.
+				const returned = uiSettingConflict(error);
+				if (returned) {
+					current = returned;
+				} else {
+					current = await provider.get(key);
+					assertSameSession();
+				}
+				continue;
+			}
+			if (isDefiniteRefusal(error)) throw error;
+			// Unknown outcome: never send the same PUT again. Read instead.
+			current = await provider.get(key);
+			assertSameSession();
+			if (current.value === next) return { value: next, revision: current.revision };
+			continue;
+		}
+		assertSameSession();
+		if (written.revision === null) {
+			// A conditional write is never superseded (provider contract).
+			throw new ProviderError({
+				kind: 'other',
+				message: 'ui-settings provider superseded a conditional write'
+			});
+		}
+		return { value: next, revision: written.revision };
+	}
+	throw lastError;
 }

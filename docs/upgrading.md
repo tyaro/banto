@@ -554,11 +554,60 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
 - **`SettingsService` を直に呼んでいる Rust（A）**: `ui_get(username, key)` / `ui_set(username, key, value)` は無い。
   `ui_get(&owner, key)`（`UiSetting { value, revision }`）・`ui_put(&owner, key, value, if_revision)`・
   `ui_delete(&owner, key, if_revision)` にする。持ち主は、認可したセッションの種類から作る（名前からは作らない）。
-- **画面（A）**: 同梱の `createHttpUiSettings` / `createTauriUiSettings` を使っていれば直す所は無い（公開の `UiSettingsProvider` の
-  形は据え置き。revision つきの形への置き換えは C5）。`@banto/admin-core` とサーバーは同じ版に揃える。`/api/ui-settings/*` を
-  自分で叩いている所と、`PUT` の `204` を待っている試験・E2E は直す。
+- **画面（A）**: 公開の `UiSettingsProvider` の形も変わる（下の「`UiSettingsProvider` を revision つきの形に置き換える」、C5）。
+  `@banto/admin-core` とサーバーは同じ版に揃える。`/api/ui-settings/*` を自分で叩いている所と、`PUT` の `204` を待っている
+  試験・E2E は直す。
 - **アカウントに結び付かないアカウントのセッション**（`SessionValidation::DisabledNoRevocation` の `AuthState` でログインさせた
   もの）は、ui-settings が 401 になる。`user_auth_state` で組み立てる。
+
+**`UiSettingsProvider` を revision つきの形に置き換える（C5、#786、計画 §4.4）**。DB の作り直しは要らない（画面の側だけの変更）。
+`@banto/admin-core` の `UiSettingsProvider` を**実装している**所と、`get` / `set` を**直に呼んでいる**所を全部直す。
+`createSavedSetting` だけを通して使っている画面は直す所が無い。
+
+- **読む所（A）**: `get(key)` は `{ value, revision }`（無ければ `value: null`・`revision: "0"`）。値だけ要る所は
+  `const saved = (await provider.get(key)).value;` にする。
+- **書く所（A）**: `set(key, value)` は `{ revision }` を返す。戻り値を見ていなければ、呼び方はそのままでよい（無条件）。
+  送信中に同じキーへ続けて書いたときに送られなかった値は、`{ revision: null, superseded: true }` で resolve する
+  （「保存された」と扱っていたなら、`superseded` を見て分ける）。
+- **別のタブの変更を上書きしたくない所（A）**: 自前の「読んで比べて書く」は `updateUiSetting(provider, key, apply)` に置き換える。
+  **`apply` は冪等にする**（同じ変更を 2 回当てても結果が同じ）。冪等にできない変更は、値の中に操作の id を持って重複を落とす。
+  自分で条件付きに書くなら `set(key, value, { ifRevision })` と `uiSettingConflict(error)`（`conflict` なら今の `{ value, revision }`、
+  でなければ `null`）。`revision` は中身の決まっていない文字列で、大小を比べない。`ifRevision` に返すだけにする。
+  **読んだ値を後の書き込みに持ち込むときは、間にセッションが替わっていないことを確かめる**（`get` はセッションを見ない。
+  `"0"` はどのアカウントでも同じ revision なので、条件だけでは別のアカウントへの書き込みを止められない）。`updateUiSetting` は
+  これを行う（替わったら `unauthorized` で止まる）。自分で書くなら、読む前に `const same = provider.sessionGuard?.()` を取り、
+  書く直前（同じ同期の 1 歩の中）に `same?.() === false` なら止める。
+
+  ```ts
+  import { updateUiSetting } from '@banto/admin-core';
+
+  // 冪等: 何回当てても pinned に id が 1 つ入るだけ。
+  await updateUiSetting(provider, 'items.pinned', (current) => {
+  	const pinned: string[] = current === null ? [] : JSON.parse(current);
+  	return pinned.includes(id) ? (current as string) : JSON.stringify([...pinned, id]);
+  });
+  ```
+
+- **消す所（A）**: `remove(key, { ifRevision? })` が増えた（`{ revision: "0" }`）。空文字を書いて「無い」を表していた所は、
+  これに置き換えられる。
+- **`UiSettingsProvider` を自分で実装している所（A）**: 3 つのメソッドを新しい形にする。`get` は `{ value, revision }`、
+  `set` は条件を確かめてから書いて `{ revision }`（合わなければ
+  `new ProviderError({ kind: 'conflict', message, current: { value, revision } })` を投げる）、`remove` を足す。
+  revision は書き込みのたびに変える（同じ値を書いても変える）。条件付きの `set` に `superseded` を返さない。
+  セッション（ログインしている相手）を持つ実装は、省略可の `sessionGuard()`（今のセッションを覚えて、「まだ同じか」を返す
+  関数を返す）も実装する。無いと、`updateUiSetting` はセッションの切り替えを検出できない。
+  試験のモックは `get: async () => ({ value: null, revision: '0' })`・`set: async () => ({ revision: 'r1' })`・
+  `remove: async () => ({ revision: '0' })` の形にする。
+- **テンプレート（B）**: `apps/admin-template/src/lib/settings.svelte.ts`・`src/lib/banto/locale.ts`・
+  `src/lib/banto/dockLayoutStore.svelte.ts` の読み取りが `.value` を取るようになった。コピーしているなら取り込む
+  （ほかの呼び手は `createSavedSetting` 経由で、変更なし）。
+- **ブラウザーの保存（`createLocalUiSettings`）**: 値の置き場所（`banto.ui.<key>`）は変わらない。revision を置くキー
+  `banto.ui-rev.<key>` が増える。`banto.ui.*` を直に書いている試験（E2E の初期値など）はそのままでよい
+  （次の読み取りで新しい revision が付く）。書き込みは Web Locks API（`navigator.locks`）のロックの下で行うので、
+  値が localStorage に入るのは `set` を呼んだ同期の間ではなく少し後（`set` の Promise を待てば入っている）。`set` の直後に
+  同期で `localStorage` を読んでいる試験は、待つ形にする。Web Locks API の無い環境（secure context でないページなど）では、
+  条件付きの書き込みはタブをまたいだ上書きを防げない（同じ文書の中だけ）。ロックの仕組みはあるのに取れなかったときは、
+  書かずに `storage` のエラーになる（ロックを迂回しない）。
 
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に

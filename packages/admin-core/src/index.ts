@@ -176,8 +176,18 @@ export {
 	createLocalUiSettings,
 	createTauriUiSettings,
 	createHttpUiSettings,
+	updateUiSetting,
+	uiSettingConflict,
+	UI_SETTING_ABSENT_REVISION,
 	type UiSettingsProvider,
+	type UiSettingSnapshot,
+	type UiSettingWriteOptions,
+	type UiSettingWriteResult,
+	type UiSettingRemoveResult,
+	type UpdateUiSettingOptions,
+	type UpdatedUiSetting,
 	type LocalUiSettingsOptions,
+	type UiSettingsLocks,
 	type TauriUiSettingsOptions,
 	type HttpUiSettingsOptions
 } from './providers/uiSettings';

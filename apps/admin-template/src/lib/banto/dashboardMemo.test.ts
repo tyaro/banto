@@ -56,12 +56,16 @@ function heldProvider(stored: string | null = null) {
 	const sets: { key: string; value: string; done: Deferred<void> }[] = [];
 	const get = deferred<string | null>();
 	const provider: UiSettingsProvider = {
-		get: vi.fn(() => get.promise),
+		// The provider's #786 shape: `{ value, revision }` / `{ revision }`.
+		get: vi.fn(() =>
+			get.promise.then((value) => ({ value, revision: value === null ? '0' : 'rev' }))
+		),
 		set: vi.fn((key: string, value: string) => {
 			const done = deferred<void>();
 			sets.push({ key, value, done });
-			return done.promise;
-		})
+			return done.promise.then(() => ({ revision: 'rev' }));
+		}),
+		remove: vi.fn(async () => ({ revision: '0' }))
 	};
 	return { provider, sets, resolveGet: () => get.resolve(stored) };
 }

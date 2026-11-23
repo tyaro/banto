@@ -105,7 +105,7 @@ export function initLocale(): void {
  */
 export async function syncLocaleFromProvider(): Promise<void> {
 	try {
-		const saved = await getUiSettings().get(LOCALE_SETTING);
+		const saved = (await getUiSettings().get(LOCALE_SETTING)).value;
 		if (isLocale(saved) && typeof localStorage !== 'undefined') {
 			localStorage.setItem(LOCALE_KEY, saved);
 			applyHtmlLang(saved);

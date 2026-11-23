@@ -61,9 +61,14 @@ function deferred<T>(): Deferred<T> {
 }
 
 function fakeProvider(get: () => Promise<string | null> = async () => null) {
+	// The provider's #786 shape: `{ value, revision }` / `{ revision }`.
 	return {
-		get: vi.fn(get),
-		set: vi.fn(async (_key: string, _value: string) => {})
+		get: vi.fn(async (_key: string) => {
+			const value = await get();
+			return { value, revision: value === null ? '0' : 'rev' };
+		}),
+		set: vi.fn(async (_key: string, _value: string) => ({ revision: 'rev' })),
+		remove: vi.fn(async (_key: string) => ({ revision: '0' }))
 	} satisfies UiSettingsProvider;
 }
 
