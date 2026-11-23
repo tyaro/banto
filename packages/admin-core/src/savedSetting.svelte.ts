@@ -556,7 +556,11 @@ class Impl<T> implements SavedSetting<T> {
 		const onSettled = this.#options.onSettled;
 		if (!onSettled) return;
 		try {
-			onSettled({ ok, value: this.#independent(target.raw, target.value), error, attempts });
+			// The copy runs `parse`, which may re-enter (dispose): copy first, then
+			// check, right before calling the observer.
+			const value = this.#independent(target.raw, target.value);
+			if (this.#owner.disposed) return;
+			onSettled({ ok, value, error, attempts });
 		} catch {
 			// A throwing observer must not break the queue.
 		}

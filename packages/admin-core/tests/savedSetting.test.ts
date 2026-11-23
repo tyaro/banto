@@ -1364,3 +1364,26 @@ describe('nullable values (#786 C6)', () => {
 		expect(setting.dirty).toBe(false);
 	});
 });
+
+describe('dispose re-entering during notification (#786 C6)', () => {
+	it('onSettled is not called when parse disposes while its value is copied', async () => {
+		const s = fakeServer();
+		const settled: unknown[] = [];
+		let n = 0;
+		let setting!: SavedSetting<Pos>;
+		const base = options(s.provider);
+		setting = createSavedSetting({
+			...base,
+			// 1st parse of the sent text: the saved copy; 2nd: the notification's copy
+			parse: (r) => {
+				if (++n === 2) setting.dispose();
+				return base.parse(r);
+			},
+			onSettled: (r) => settled.push(r)
+		});
+		setting.set({ x: 1 });
+		await setting.save();
+		expect(n).toBe(2);
+		expect(settled).toEqual([]);
+	});
+});
