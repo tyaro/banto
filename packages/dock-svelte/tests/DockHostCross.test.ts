@@ -130,7 +130,7 @@ function release(x: number, y: number): void {
 /** A tab group (x, y; X active) next to a plain pane (p), plus one floating window (f). */
 function mixed(): DockLayout {
 	return {
-		version: 2,
+		version: 4,
 		floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 		docked: {
 			type: 'split',

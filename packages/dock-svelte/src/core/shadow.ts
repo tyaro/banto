@@ -45,9 +45,14 @@
  *
  * Ids of new split / tab group nodes come from an injected `makeId`, as in `tree.ts`.
  *
- * The saved form (#782 PR3). A layout is saved as it always was - the docked tree the user sees,
- * and a `DockSlot` for every pane that is out of it - so S is turned into that and back at the
- * edge only: `deflateShadow` (S -> the projection and one slot per tombstone) and `inflateShadow`
+ * The saved form. Since #782 PR8b a layout is saved with S itself, for the regions in its edge
+ * bands: the tree without the tombstones of the floating windows (`DockLayout.dockedWithAutoHidden`,
+ * `core/bandTree.ts`). No layout holds a slot any more, and `DockState` no longer makes S from
+ * slots; what follows is left for the name of a floated pane's place (`DockState.homeSlot`) and
+ * goes with it in #782 PR8c.
+ *
+ * The slots (#782 PR3): the docked tree the user sees, and a `DockSlot` for every pane that is out
+ * of it - `deflateShadow` (S -> the projection and one slot per tombstone) and `inflateShadow`
  * (the docked tree and the slots -> S). A slot written here names every split / tab group above
  * the tombstone by id, with the tombstone's place and share IN S (`index`, `share`) and every
  * other pane of that container (`anchors` / `otherAnchors`, the ones away included), so it does
@@ -63,7 +68,11 @@ import type {
 	DockSlot,
 	DockSplitNode,
 	DockTabGroupNode,
-	DropRegion
+	DropRegion,
+	ShadowNode,
+	ShadowPanelNode,
+	ShadowSplitNode,
+	ShadowTabGroupNode
 } from '../types';
 import {
 	EDGE_DOCK_RATIO,
@@ -74,24 +83,11 @@ import {
 	resizeSplit
 } from './tree';
 
-/** A leaf of S: a docked pane, or - with `away` - the place of a pane that is hidden or floated (a tombstone). */
-export interface ShadowPanelNode extends DockPanelNode {
-	/** Written only when `true`. A tombstone is never `collapsed`. */
-	away?: true;
-}
-
-/** A tab group of S. `activeIndex` counts every child of S and points at a shown one whenever one shows. */
-export interface ShadowTabGroupNode extends Omit<DockTabGroupNode, 'children'> {
-	children: ShadowPanelNode[];
-}
-
-/** A split of S. `sizes` has one share per child of S (tombstones included) and adds up to 1. */
-export interface ShadowSplitNode extends Omit<DockSplitNode, 'children'> {
-	children: ShadowNode[];
-}
-
-/** A node of the shadow tree. A `DockNode` is a `ShadowNode` with no tombstone in it. */
-export type ShadowNode = ShadowPanelNode | ShadowTabGroupNode | ShadowSplitNode;
+// The nodes of S are in `types.ts` since #782 PR8b: a saved layout holds a tree of them
+// (`DockLayout.dockedWithAutoHidden`, `core/bandTree.ts`). A tombstone marked `band` is a pane in
+// an edge band (`DockState.autoHideRegion`): a tombstone like any other here - only `markAway`
+// sets the mark, and a leaf put into S anew has none.
+export type { ShadowNode, ShadowPanelNode, ShadowSplitNode, ShadowTabGroupNode } from '../types';
 
 // ----- small helpers -------------------------------------------------------------------------
 
@@ -117,6 +113,7 @@ function shownLeaf(panel: DockPanelNode): ShadowPanelNode {
 	const next: ShadowPanelNode = { ...panel };
 	delete next.collapsed;
 	delete next.away;
+	delete next.band;
 	return next;
 }
 
@@ -288,11 +285,25 @@ function settleCollapsed(s: ShadowNode | null): ShadowNode | null {
  * away already.
  */
 export function markAway(s: ShadowNode | null, panelId: string): ShadowNode | null {
+	return marked(s, panelId, false);
+}
+
+/**
+ * `markAway` for a pane that goes to an edge band (#782 PR8b, `DockState.autoHideRegion`): its
+ * tombstone is marked `band` too. The mark only says where the pane is - S treats the tombstone
+ * as any other.
+ */
+export function markInBand(s: ShadowNode | null, panelId: string): ShadowNode | null {
+	return marked(s, panelId, true);
+}
+
+function marked(s: ShadowNode | null, panelId: string, band: boolean): ShadowNode | null {
 	if (!s) return s;
 	const path = pathTo(s, panelId);
 	const leaf = path?.at(-1);
 	if (!path || leaf?.type !== 'panel' || leaf.away === true) return s;
 	const gone: ShadowPanelNode = { ...withoutCollapsed(leaf), away: true };
+	if (band) gone.band = true;
 	const group = path.at(-2);
 	if (group?.type !== 'tabs') return settleCollapsed(replaceNode(s, panelId, () => gone));
 	const children = group.children.map((c) => (c.id === panelId ? gone : c));
@@ -326,6 +337,23 @@ export function markPresent(
 	const children = group.children.map((c) => (c.id === panelId ? back : c));
 	const activeIndex = children.indexOf(back);
 	return settleCollapsed(replaceNode(s, group.id, () => ({ ...group, children, activeIndex })));
+}
+
+/**
+ * S with the shown pane `panelId` as the active tab of its tab group (#782 PR8b: the tab that was
+ * in front of a region in an edge band, once its panes are back at their default places - each
+ * pane put into a group becomes its active tab, so the last one put would stay in front). The
+ * same S when the pane is not a shown tab, or is the active one already.
+ */
+export function activateInShadow(s: ShadowNode | null, panelId: string): ShadowNode | null {
+	if (!s) return s;
+	const path = pathTo(s, panelId);
+	const leaf = path?.at(-1);
+	const group = path?.at(-2);
+	if (leaf?.type !== 'panel' || leaf.away === true || group?.type !== 'tabs') return s;
+	const activeIndex = group.children.findIndex((c) => c.id === panelId);
+	if (activeIndex === group.activeIndex) return s;
+	return replaceNode(s, group.id, () => ({ ...group, activeIndex }));
 }
 
 // ----- taking out ----------------------------------------------------------------------------
@@ -436,7 +464,7 @@ function anchorOf(
 
 function wrap(
 	target: ShadowNode,
-	panel: ShadowPanelNode,
+	panel: ShadowPanelNode | ShadowTabGroupNode,
 	side: DockEdge,
 	ratio: number,
 	makeId: () => string
@@ -621,6 +649,29 @@ export function dockAtShadowEdge(
 	return settleCollapsed(wrap(rest, panel, edge, EDGE_DOCK_RATIO, makeId))!;
 }
 
+/**
+ * `dockAtShadowEdge` for a whole region - a pane, or a tab group with its id and active tab
+ * (#782 PR8b: a region back from an edge band whose place is gone and that has no default place):
+ * the leaves S has for its panes are taken out first, then all of S is wrapped with the region at
+ * `edge`. The region shows, not collapsed.
+ */
+export function dockRegionAtShadowEdge(
+	s: ShadowNode | null,
+	region: DockPanelNode | DockTabGroupNode,
+	edge: DockEdge,
+	makeId: () => string = defaultMakeId
+): ShadowNode {
+	if (region.type === 'panel') return dockAtShadowEdge(s, region, edge, makeId);
+	const group: ShadowTabGroupNode = {
+		...withoutCollapsed(region),
+		children: region.children.map(shownLeaf)
+	};
+	let rest = s;
+	for (const tab of group.children) rest = rest ? removeNode(rest, tab.id) : null;
+	if (rest === null) return group;
+	return settleCollapsed(wrap(rest, group, edge, EDGE_DOCK_RATIO, makeId))!;
+}
+
 // ----- the default place (#782 PR6) ------------------------------------------------------------
 
 /**
@@ -634,6 +685,11 @@ export function dockAtShadowEdge(
  * pane's share of what SHOWS of the split it lands in (`dockShareOf` of the docked tree, what a
  * closed window keeps); the other children, tombstones too, give way in proportion - the reverse
  * of `removeFromShadow`. `null`: no default place (the caller opens it floating).
+ *
+ * A pane in an edge band (a tombstone marked `band`, #782 PR8b) counts as one that shows for the
+ * share: `DockState.dismiss` takes the share with the regions in the bands counted (they are part
+ * of the layout, and saved with their places - unlike a floated pane's), so a pane hidden and
+ * shown again holds what it held whether a region beside it went to its band before or after.
  */
 export function placeInShadowAtDefault(
 	s: ShadowNode | null,
@@ -651,7 +707,7 @@ export function placeInShadowAtDefault(
 		share,
 		makeId,
 		taken,
-		new Set(shadowPanelIds(s, 'away'))
+		new Set(shadowPanelIds(s, 'away').filter((id) => findShadowPanel(s, id)?.band !== true))
 	);
 	return placed === null ? null : settleCollapsed(placed);
 }
@@ -983,10 +1039,14 @@ export function writeShadowView(
  * A subtree of `old` with no pane showing is put back as a whole, by the container it was in.
  * `taken`: the ids of the layout that are not in `docked` (an edge band's, a floating window's) -
  * a container is not made again with one of them. The projection of the result is `docked`.
+ *
+ * `docked` may hold tombstones of its own (#782 PR8b: the tree a layout taken as a whole was saved
+ * with, `core/bandTree.ts` - the places of its edge bands): a container of it that does not show
+ * takes the tombstones of `old` too, and the result shows what `docked` shows.
  */
 export function regraftShadow(
 	old: ShadowNode | null,
-	docked: DockNode | null,
+	docked: ShadowNode | null,
 	taken: Iterable<string> = []
 ): InflatedShadow {
 	const away = shadowPanelIds(old, 'away');

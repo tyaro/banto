@@ -234,7 +234,7 @@ describe('applyResize', () => {
 
 describe('bringToFront', () => {
 	function layoutOf(ids: string[]): DockLayout {
-		return { version: 2, floating: ids.map((id) => win({ id })), docked: null };
+		return { version: 4, floating: ids.map((id) => win({ id })), docked: null };
 	}
 
 	it('moves the target window to the end of the array', () => {

@@ -5,8 +5,9 @@
 // #782 PR6: floating a pane out and docking it back, moving a docked pane, a drop, a divider drag
 // and showing a hidden pane are done ON S, and the docked tree assigned is its projection - so
 // those steps are `same` always (the cases pinned as "not yet" by PR4 / PR5 are now what S says).
-// What still goes by the slots (`core/slot.ts`) and makes S again: the edge bands (PR8), a layout
-// taken as a whole, and `dockAtSlot` with a slot that is not the pane's `homeSlot`.
+// A region to and from an edge band is a step on S too since #782 PR8b (its panes stay in S as
+// tombstones marked `band`). What still makes S again: a layout taken as a whole, an assignment
+// from outside, and `dockAtSlot` with a slot that is not the pane's `homeSlot` (`core/slot.ts`).
 //
 // #782 PR5: a pane HIDDEN from the dock remembers no place, so it leaves S for good (no
 // tombstone) and is shown at its default place (`core/defaultPlace.ts`). The tombstones of S are
@@ -30,6 +31,8 @@ import {
 	writeShadowView,
 	type ShadowNode
 } from '../src/core/shadow';
+import { regionPanelIds } from '../src/core/autohide';
+import { bandTreeOf, readBandTree, shadowBandIds } from '../src/core/bandTree';
 import { findNode, removePanel } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import {
@@ -137,8 +140,10 @@ const pendingIds = (dock: DockState): string[] =>
 
 /**
  * What does not hold of S after a step, or `null`: its projection is the docked tree, it is a
- * well-formed tree, and its tombstones are the panes that remember a docked place (but the ones
- * it has no place for).
+ * well-formed tree, its tombstones are the panes that remember a docked place (but the ones it
+ * has no place for) and - marked `band` - the panes of the regions in the edge bands, a region
+ * as a whole or not at all (#782 PR8b), and the layout holds S without the floated panes' places
+ * as `dockedWithAutoHidden`, which reads back as that tree.
  */
 function notFollowing(dock: DockState): string | null {
 	const { shadow, unplaced } = shadowStateOf(dock);
@@ -148,9 +153,27 @@ function notFollowing(dock: DockState): string | null {
 	}
 	const bad = badShadow(shadow);
 	if (bad.length > 0) return `S is not a tree: ${bad.join('; ')}`;
-	const away = [...shadowPanelIds(shadow, 'away'), ...unplaced].sort();
-	if (JSON.stringify(away) !== JSON.stringify(pendingIds(dock))) {
+	const inBand = new Set(shadowBandIds(shadow));
+	const away = [...shadowPanelIds(shadow, 'away').filter((id) => !inBand.has(id)), ...unplaced];
+	if (JSON.stringify(away.sort()) !== JSON.stringify(pendingIds(dock))) {
 		return `S remembers ${away.join(',')} of ${pendingIds(dock).join(',')}`;
+	}
+	const regions = dock.autoHidden.map((entry) => regionPanelIds(entry.node));
+	const banded = new Set(regions.flat());
+	for (const id of inBand) if (!banded.has(id)) return `S holds ${id} as in a band`;
+	for (const ids of regions) {
+		const held = ids.filter((id) => inBand.has(id));
+		if (held.length > 0 && held.length < ids.length) return `S holds part of the band of ${ids}`;
+	}
+	const saved = dock.layout.dockedWithAutoHidden;
+	if (inBand.size === 0) return saved === undefined ? null : 'a tree is saved for no band';
+	if (saved === undefined) return 'no tree is saved for the bands';
+	if (JSON.stringify(saved) !== JSON.stringify(bandTreeOf(shadow)))
+		return 'the tree saved is not S';
+	const read = readBandTree(JSON.parse(JSON.stringify(saved)), dock.layout.docked, regions);
+	if (read === undefined) return 'the tree saved does not read back';
+	if (JSON.stringify(shadowBandIds(read)) !== JSON.stringify(shadowBandIds(saved))) {
+		return 'the tree saved reads back with other places';
 	}
 	return null;
 }
@@ -287,7 +310,7 @@ describe('S follows the layout (#782 PR4)', () => {
 		let calls = 0;
 		const dock = createDockState(
 			{
-				version: 2,
+				version: 4,
 				floating: [],
 				docked: split('s', 'row', [0.2, 0.3, 0.5], [panel('a'), panel('b'), panel('c')])
 			},
@@ -742,15 +765,20 @@ describe('the panes S remembers (#782 PR4)', () => {
 		expect(notFollowing(dock)).toBe(null);
 	});
 
-	it('a region auto-hidden to a band is not in S (#782 PR8); S is made again around it', () => {
+	it('a region auto-hidden to a band stays in S, marked `band` (#782 PR8b): both ways are steps on S', () => {
 		const { dock, follows } = watched(row());
 		dock.undockPanel('a');
 		follows.length = 0;
 		expect(dock.autoHideRegion('b')).toBe(true);
-		expect(follows).toEqual([{ step: null, result: 'rebuilt' }]);
+		expect(follows).toEqual([{ step: 'autoHideRegion', result: 'same' }]);
 		expect(notFollowing(dock)).toBe(null);
+		expect(shadowBandIds(shadowStateOf(dock).shadow)).toEqual(['b']);
+		expect(shadowPanelIds(shadowStateOf(dock).shadow, 'away')).toEqual(['a', 'b']);
+		follows.length = 0;
 		expect(dock.restoreAutoHidden('b')).toBe(true);
+		expect(follows).toEqual([{ step: 'restoreAutoHidden', result: 'same' }]);
 		expect(notFollowing(dock)).toBe(null);
+		expect(shadowBandIds(shadowStateOf(dock).shadow)).toEqual([]);
 	});
 });
 

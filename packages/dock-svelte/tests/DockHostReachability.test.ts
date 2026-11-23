@@ -79,7 +79,7 @@ function firePointer(target: EventTarget, type: string, x: number, y: number) {
 }
 
 const floatingLayout = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [{ id: 'd', title: 'D', x: 452, y: 40, width: 300, height: 200, open: true }],
 	docked: null
 });
@@ -127,7 +127,7 @@ describe('DockHost host shrink (Issue #434: 1000px -> 400px, x=452)', () => {
 describe('DockHost capabilities', () => {
 	it('hides the close button of a pane whose capabilities say close: false', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [
 				{ id: 'keep', title: 'Keep', x: 0, y: 0, width: 300, height: 200, open: true },
 				{ id: 'other', title: 'Other', x: 50, y: 50, width: 300, height: 200, open: true }
@@ -146,7 +146,7 @@ describe('DockHost capabilities', () => {
 
 	it('hides the close button of a docked pane with close: false', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: { type: 'panel', id: 'canvas', title: 'Canvas' }
 		});
@@ -156,7 +156,7 @@ describe('DockHost capabilities', () => {
 
 	it('a floating window with move: false does not move when its title bar is dragged', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [{ id: 'a', title: 'A', x: 0, y: 0, width: 300, height: 200, open: true }],
 			docked: null
 		});
@@ -172,7 +172,7 @@ describe('DockHost capabilities', () => {
 	it('a docked pane with move: false cannot be dragged out; with undock: false it stays docked', () => {
 		for (const caps of [{ move: false }, { undock: false }]) {
 			const dock = createDockState({
-				version: 2,
+				version: 4,
 				floating: [],
 				docked: { type: 'panel', id: 'a', title: 'A' }
 			});
@@ -190,7 +190,7 @@ describe('DockHost capabilities', () => {
 
 	it('defaults allow everything (a docked pane can still be floated)', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: { type: 'panel', id: 'a', title: 'A' }
 		});

@@ -531,7 +531,7 @@ describe('shares of 0 (a layout the saved format allows)', () => {
 	const zero = (): DockSplitNode => row('s1', [p('a'), p('b'), p('c')], [0, 0, 1]) as DockSplitNode;
 
 	it('the fixture passes the validation of a saved layout as it is', () => {
-		const result = validateDockLayout({ version: 2, docked: zero(), floating: [] });
+		const result = validateDockLayout({ version: 4, docked: zero(), floating: [] });
 		expect(result.ok).toBe(true);
 		expect(sizesOfSplit(result.ok ? result.layout.docked : null, 's1')).toEqual([0, 0, 1]);
 	});
@@ -908,7 +908,7 @@ const roundTrip = (s: ShadowNode | null, order?: string[]) => {
 const layoutOf = (s: ShadowNode | null) => {
 	const { docked, away: list } = deflateShadow(s);
 	return {
-		version: 3,
+		version: 4,
 		docked,
 		floating: list.map(({ panel, slot }) => ({
 			id: panel.id,

@@ -168,5 +168,9 @@ export type {
 	FloatingWindow,
 	FloatingWindowDef,
 	PanelContent,
-	ResizeEdge
+	ResizeEdge,
+	ShadowNode,
+	ShadowPanelNode,
+	ShadowSplitNode,
+	ShadowTabGroupNode
 } from './types';

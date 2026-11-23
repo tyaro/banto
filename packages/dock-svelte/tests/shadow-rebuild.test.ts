@@ -10,7 +10,7 @@
 //    the dock does), or not at all when it has none.
 //
 // The shares a pane held are not worked out across an assignment. What is made on S (drags, floats,
-// `dockExisting*`, closing) is as before, and so are the edge bands (PR8).
+// `dockExisting*`, closing, the edge bands since #782 PR8b) is as before.
 // A layout put back as it was (a cancelled gesture) gets the S that was held with it.
 import { describe, expect, it } from 'vitest';
 import { markPresent, projectShadow, regraftShadow, type ShadowNode } from '../src/core/shadow';
@@ -46,8 +46,8 @@ const tabs = (id: string, ids: string[]): DockNode => ({
 
 /** A state docked as `tree`; with `defaults`, `tree` is its default layout too. */
 const dockOf = (tree: DockNode, defaults = false): DockState => {
-	const dock = createDockState({ version: 2, floating: [], docked: tree }, counterMakeId());
-	if (defaults) dock.defaultLayout = { version: 2, floating: [], docked: tree };
+	const dock = createDockState({ version: 4, floating: [], docked: tree }, counterMakeId());
+	if (defaults) dock.defaultLayout = { version: 4, floating: [], docked: tree };
 	return dock;
 };
 const back = (dock: DockState, id: string): boolean => dock.dockBack(id);
@@ -482,7 +482,7 @@ describe('a layout put back as it was (a cancelled gesture) (#782 PR7)', () => {
 	});
 });
 
-describe('a region to and from an edge band is as before (#739, PR8)', () => {
+describe('a region to and from an edge band (#739; a step on S since #782 PR8b)', () => {
 	it('a floated pane stays beside the pane that was in the band', () => {
 		const dock = dockOf(split('r', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)));
 		dock.undockPanel('a');
@@ -494,28 +494,24 @@ describe('a region to and from an edge band is as before (#739, PR8)', () => {
 	});
 });
 
-// KNOWN FAILURE (Codex P2 on #870, 8c7cc0e1; left as it is until the owner decides how the edge bands
-// are handled before PR8 puts them on S): a pane floated while a sibling is in a band, and another
-// sibling closed - the pane in the band comes back in front of the floated pane's place. The slot
-// S says for `b` cannot name `c` (S does not hold the panes in a band), and with `d` gone it names
-// `e`: `c` is put back before `e`'s neighbour `b`... and ends before `b`.
-describe('known failure: floated while a sibling is in an edge band, another sibling closed (#782 PR8)', () => {
-	it.fails(
-		'row[a, b, c, d, e]: c to its band, b floated, d closed, c back, b back -> row[a, b, c, e]',
-		() => {
-			const dock = dockOf(
-				split('s', 'row', [0.2, 0.2, 0.2, 0.2, 0.2], ['a', 'b', 'c', 'd', 'e'].map(panel)),
-				true
-			);
-			expect(dock.autoHideRegion('c')).toBe(true);
-			dock.undockPanel('b');
-			dock.dismiss('d');
-			expect(dock.restoreAutoHidden('c')).toBe(true);
-			expect(back(dock, 'b')).toBe(true);
-			// Today: row[a, c, b, e].
-			expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c', 'e'] });
-		}
-	);
+// Was a KNOWN FAILURE until #782 PR8b (Codex P2 on #870, 8c7cc0e1): a pane floated while a sibling
+// is in a band, and another sibling closed - the pane in the band came back in front of the floated
+// pane's place (the slot S said for `b` could not name `c`: S did not hold the panes in a band).
+// The band's pane is a tombstone of S now, so `b`'s place stays before it.
+describe('floated while a sibling is in an edge band, another sibling closed (#782 PR8b)', () => {
+	it('row[a, b, c, d, e]: c to its band, b floated, d closed, c back, b back -> row[a, b, c, e]', () => {
+		const dock = dockOf(
+			split('s', 'row', [0.2, 0.2, 0.2, 0.2, 0.2], ['a', 'b', 'c', 'd', 'e'].map(panel)),
+			true
+		);
+		expect(dock.autoHideRegion('c')).toBe(true);
+		dock.undockPanel('b');
+		dock.dismiss('d');
+		expect(dock.restoreAutoHidden('c')).toBe(true);
+		expect(back(dock, 'b')).toBe(true);
+		// Until #782 PR8b: row[a, c, b, e].
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c', 'e'] });
+	});
 });
 
 // Codex P2 on #870: a region that is not beside a floated pane's place, back from its band, leaves

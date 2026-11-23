@@ -109,7 +109,7 @@ function deferred<T>() {
 }
 
 const floating = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [
 		{ id: 'a', title: 'A', x: 40, y: 40, width: 320, height: 200, open: true },
 		{ id: 'b', title: 'B', x: 500, y: 300, width: 300, height: 200, open: true }
@@ -119,7 +119,7 @@ const floating = (): DockLayout => ({
 
 /** A tab group (x, y) next to a plain pane (p), plus one floating window (f). */
 const mixed = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [{ id: 'f', title: 'F', x: 600, y: 300, width: 300, height: 200, open: true }],
 	docked: {
 		type: 'split',

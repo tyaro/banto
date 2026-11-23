@@ -211,8 +211,9 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   - 引き出しの中で開いたモーダル（`aria-modal`）と背景では引っ込めない。ドッキングの層と引き出しの層は
     `isolation: isolate` で分けるが、モーダルが開いている間は外す（OverlayPanel はその場に fixed で描くため）。
 - 隠した pane の出し直し（#782 PR5）: 既定のレイアウトでの位置（`core/defaultPlace.ts`。`DockState.defaultLayout` は保存しない）。
-  閉じた窓は `dockShare`（隠す直前の比率）だけを持ち、slot は持たない。下の slot の話は、浮かせた pane（`homeSlot` / `hasHome`）と
-  端の帯（`autoHidden[].slot`）にだけ残る。
+  閉じた窓は `dockShare`（隠す直前の比率）だけを持ち、slot は持たない。下の slot の話は、浮かせた pane（`homeSlot` / `hasHome`）に
+  だけ残る（端の帯の `slot` は #782 PR8b で消えた。PR8c で slot ごと消す）。`dockShare` は帯の区画を「居る」ものとして数える
+  （`#shareOf`。`placeInShadowAtDefault` も帯の墓石を見えている子として比率を取る。浮動の墓石は数えない）。
 - 影の木 S が配置を決める（#782 PR6）: 浮かせる・元の場所へ戻す・移動・ドロップ・仕切りのドラッグ・隠す・出し直すは、
   `DockState` が非公開の S（`core/shadow.ts`。浮かせた pane は墓石）の上で結果を作り、`layout.docked` にはその射影を入れる。
   新しい配置の操作を足すときも「S の上で作って射影を入れる」（`#projected`）。`core/tree.ts` で見える木を直に組むと、
@@ -224,12 +225,29 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   入れ物が無ければ S に場所を持たず、「元の場所に戻す」は既定の位置に出す（`#shadowLost` → `placeInShadowAtDefault`）。
   代入をまたぐ比率の再現（#741・#743 の補正、`#withoutGoneShares` / `#withoutLeftShares` / `slotsWithoutLeft`）は消した。
   **木の差分から「動いた pane」を当てる処理を足し直さない**（PR #870 で 5 回塞いで収束せず、オーナーが規則ごと変えた）。
-  端の帯への出し入れだけは、その領域の隣の場所に限って、S 自身が言う場所から組み直す（`deflateShadow` → `inflateShadow`、`#placeSaid`・`withSharesOf`。ほかの場所は今の S のまま）。
-  PR8 で帯を S に載せたら、この経路ごと消す。
+- 端の帯も S の上（#782 PR8b）: 帯へ送った区画の pane は、S の中に `away` と `band` の印の付いた墓石として残る
+  （タブの組は組ごと・id も S が持つ）。`autoHideRegion`・`restoreAutoHidden`・帯の pane の `dismiss` は S の上の 1 手で、
+  `core/autohide.ts` は帯の一覧（`autoHidden[]`）と縁の計算だけを持つ。守ること:
+  - **帯の区画の場所は「その区画の pane が全部、S に `band` の墓石として居る」こと**（`#bandPlaced`）。一部だけ残った墓石は
+    `#followShadow` の `settled` が落とす。場所が無い区画は、戻すときに既定の位置 → 帯の端（`#restoredFromBand`）。
+  - **保存**: `DockLayout.dockedWithAutoHidden` = S から浮動の墓石を除いた木（`core/bandTree.ts` の `bandTreeOf`）。setter が
+    S を追従させた後に `layout` へ書く（だから setter は「S の追従 → `#layout` への代入」の順。`#followShadow` は `next` だけを
+    読み、`this.layout` を読まない）。読むのは丸ごと受け取る配置（`#adopt`: `hydrate`・コンストラクタ・`adoptLayout`）だけで、
+    `readBandTree` が形（`shapeOf`）と「射影が `docked` と同じ形か」（`writeShadowView`）を確かめる。外からの代入では読まない
+    （`$state` の proxy 越しでは自分が書いた木かどうかを見分けられないため）。
+  - **id**: 帯のタブの組が S に居る間、その id は `idsOutOfDocked` から外して数える（`#taken`。外さないと
+    `withFreeShadowIds` が S の組の id を振り直し、戻したときに別の id の組になる）。逆に、帯の組に帯のものでない pane が
+    2 枚見えて「組として」木に出るときは、**木の組が id を保ち、帯の entry の id を `<id>:band` に替える**（setter の
+    `#withBandIdsApart`。同じ id が 2 度あると `validateDockLayout` に断られる）。S の組の側を振り直さない: 1 つの組から
+    帯が 2 つできたとき、全部戻した後の組の id が戻す順で変わる（PR #876 のクロスレビュー）。帯の区画は pane の id でも
+    引けるので（`restoreAutoHidden(paneId)`）、区画の id を控えておくコードを書かない。
+  - `markAway` に引数を足さない（`ids.reduce(markAway, s)` の形で呼ばれるので、3 つ目の引数に添字が入る）。帯の印は
+    `markInBand`。
 - split の slot と元の場所（#721・#727・#733〜#736・#741）:
-  - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。5 段以上の slot を含むレイアウトだけ `version: 3` で保存する
-    （`core/layoutVersion.ts`。`DockLayout['version']` は `2 | 3`）。旧実装の複製 `tests/fixtures/slot-main.ts` は #782 PR7 で削った。
-  - validate は、帯の矛盾した slot だけ root にして読む。浮動 window の `dockSlot`（#782 PR5 より前の保存値）は読まずに捨てる。
+  - 入れ子の `outer` の深さ上限は `MAX_SLOT_DEPTH`=8。保存する配置の `version` は 4 だけ（#782 PR8b。配置は slot を持たない。
+    `core/layoutVersion.ts` は 4 を書くだけになり、PR8c で `core/slot.ts` と一緒に消す）。旧実装の複製
+    `tests/fixtures/slot-main.ts` は #782 PR7 で削った。
+  - validate は `version` 1〜3 を断る。`version: 4` の中の浮動 window の `dockSlot`・帯の `slot` は読まずに捨てる。
   - 外したパネルの元の場所は `DockState` の非公開 Map（公開は `hasHome(id)`・`dockBack(id)`・`backTree(id)`、README 未記載。旧 `homeSlot(id)` は PR8c で消す）。足すのは `undockPanel` だけ。
     消すのは、setter（浮動でなくなった id）・`hydrate`・`reset`・`forgetHomeSlots`。
   - slot の `share` は「外したパネルも数えた split 全体の割合」（`size` は旧来の意味、`version` 不変）。

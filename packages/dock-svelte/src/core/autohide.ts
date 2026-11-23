@@ -5,19 +5,25 @@
  * A docked REGION - a panel that is not a tab, or a whole tab group - can be
  * auto-hidden: it leaves the docked tree (`removeRegion`, the split it leaves
  * shrinks as for a close) and goes to `DockLayout.autoHidden` with the edge band
- * it sits in and the place it came from (`captureRegionSlot`). Its panes show as
- * tabs in that band; pressing one slides the pane out over the docked tree
- * (`DockState.openFlyout`, not saved). Pinning it again puts the region back at
- * its place (`restoreRegionSlot`), or at its edge (`dockPanelAtEdge`) when that
- * place is gone.
+ * it sits in. Its panes show as tabs in that band; pressing one slides the pane
+ * out over the docked tree (`DockState.openFlyout`, not saved). Pinning it again
+ * puts the region back at its place.
+ *
+ * The place is not here (#782 PR8b): `DockState` keeps the region in its shadow
+ * tree as tombstones marked `band` (`core/shadow.ts`, saved as
+ * `DockLayout.dockedWithAutoHidden`, `core/bandTree.ts`), so it comes back into
+ * the split / tab group it left at the share it held there, whatever order panes
+ * come back in. A region with no place left (the layout was assigned from
+ * outside, or read without its tree) docks at its default place, else along its
+ * edge. `autoHideRegionInLayout` only makes the layout: for one built as a whole
+ * (`threePane.ts`'s narrow display).
  *
  * The band is chosen by where the region is relative to the MAIN region (the one
  * the app protects with `capabilities`, see `mainRegionId`), or to the middle of
  * the docked tree when there is none: the side of the larger offset of the two
  * centres, measured on the tree's own split shares (`regionRects`; no DOM).
  */
-import { captureRegionSlot, restoreRegionSlot } from './slot';
-import { collectPanelIds, dockPanelAtEdge, findNode, findParent, removePanel } from './tree';
+import { collectPanelIds, findNode, findParent, removePanel } from './tree';
 import type {
 	DockAutoHidden,
 	DockEdge,
@@ -194,7 +200,8 @@ export interface AutoHideOptions {
 /**
  * `layout` with the region `regionId` moved from the docked tree to its band
  * (module doc). `null` when `regionId` is not a region of the tree (a tab inside
- * a group, a split, an unknown id).
+ * a group, a split, an unknown id). The layout holds no place for the region
+ * (`dockedWithAutoHidden` is not written here): `DockState.autoHideRegion` keeps one.
  */
 export function autoHideRegionInLayout(
 	layout: DockLayout,
@@ -204,10 +211,8 @@ export function autoHideRegionInLayout(
 	const root = layout.docked;
 	const region = regionOf(root, regionId);
 	if (!region || region.id !== regionId) return null;
-	const slot = captureRegionSlot(root, regionId);
-	if (!slot) return null;
 	const edge = options.edge ?? autoHideEdge(root, regionId, options.mainId);
-	const entry: DockAutoHidden = { node: bare(region), edge, slot };
+	const entry: DockAutoHidden = { node: bare(region), edge };
 	if (options.size !== undefined && Number.isFinite(options.size) && options.size > 0)
 		entry.size = clampFlyoutSize(options.size);
 	return withAutoHidden({ ...layout, docked: removeRegion(root, regionId) }, [
@@ -232,35 +237,10 @@ export function idsOutOfDocked(layout: DockLayout): Set<string> {
 }
 
 /**
- * `layout` with the auto-hidden region that holds `id` back in the docked tree:
- * at its remembered place, else at its edge. `null` when `id` is not
- * auto-hidden, or one of its ids is in the tree already.
- */
-export function restoreAutoHiddenInLayout(
-	layout: DockLayout,
-	id: string,
-	makeId: () => string
-): DockLayout | null {
-	const found = findAutoHidden(layout, id);
-	if (!found) return null;
-	const { entry, index } = found;
-	const root = layout.docked;
-	const ids = [entry.node.id, ...regionPanelIds(entry.node)];
-	if (ids.some((x) => findNode(root, x))) return null;
-	const list = (layout.autoHidden ?? []).filter((_, i) => i !== index);
-	// A split made again does not take an id the rest of the layout holds (#782 PR6).
-	const taken = idsOutOfDocked({ ...layout, autoHidden: list });
-	const docked =
-		restoreRegionSlot(root, entry.node, entry.slot, makeId, taken) ??
-		dockPanelAtEdge(root, entry.node, entry.edge, makeId);
-	return withAutoHidden({ ...layout, docked }, list);
-}
-
-/**
  * `layout` with the pane `panelId` taken out of its band (for a close / hide of
  * an auto-hidden pane). A group that is left with one pane keeps it as a bare
- * panel; an emptied entry is dropped. The entry's `slot` is returned for the
- * pane's remembered docked place. `null` when the pane is not auto-hidden.
+ * panel; an emptied entry is dropped. The entry it was in is returned too.
+ * `null` when the pane is not auto-hidden.
  */
 export function removeAutoHiddenPane(
 	layout: DockLayout,

@@ -334,7 +334,7 @@ test.describe('three-pane workspace on a dock', () => {
 						schema: 1,
 						panels: ['left', 'center', 'right', 'ghost'],
 						layout: {
-							version: 2,
+							version: 4,
 							floating: [],
 							docked: {
 								type: 'split',

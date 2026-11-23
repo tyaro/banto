@@ -439,7 +439,7 @@ describe('ThreePaneDock: arrange={false} (plan §4.5 table)', () => {
 describe('ThreePaneDock: the kept wide layout and the shares (#741)', () => {
 	const LOG: ThreePaneExtraPanelDef = { id: 'log', title: 'Log' };
 	const row = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [],
 		docked: {
 			type: 'split',

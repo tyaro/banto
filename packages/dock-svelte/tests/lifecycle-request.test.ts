@@ -22,7 +22,7 @@ function deferred<T>() {
 const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 const layout = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [
 		{ id: 'a', title: 'A', x: 40, y: 40, width: 320, height: 200, open: true },
 		{ id: 'b', title: 'B', x: 500, y: 300, width: 300, height: 200, open: true }
@@ -361,7 +361,7 @@ describe('a late approval does not push out a newer held request (PR #448 re-rev
 // first (`reparent`, cause = the leaving pane), then the leaving pane itself.
 describe('a pane leaving the docked tree asks the pane that is left (#682)', () => {
 	const shrinking = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [],
 		docked: {
 			type: 'split',
@@ -483,7 +483,7 @@ describe('a pane leaving the docked tree asks the pane that is left (#682)', () 
 
 		it('a split of three or more: nobody is mounted again, only the leaving pane is asked', async () => {
 			const three: DockLayout = {
-				version: 2,
+				version: 4,
 				floating: [],
 				docked: {
 					type: 'split',
@@ -506,7 +506,7 @@ describe('a pane leaving the docked tree asks the pane that is left (#682)', () 
 
 		it('a tab group of three or more: asked only about the leaving pane', async () => {
 			const tabs: DockLayout = {
-				version: 2,
+				version: 4,
 				floating: [],
 				docked: {
 					type: 'tabs',
@@ -530,7 +530,7 @@ describe('a pane leaving the docked tree asks the pane that is left (#682)', () 
 
 		it('a tab group of two shrinks to a bare pane: a keepMounted left tab is asked, one that is not mounted is not', async () => {
 			const pair: DockLayout = {
-				version: 2,
+				version: 4,
 				floating: [],
 				docked: {
 					type: 'tabs',
@@ -557,7 +557,7 @@ describe('a pane leaving the docked tree asks the pane that is left (#682)', () 
 	it('a pane that is not docked keeps the old single request', async () => {
 		const calls: string[] = [];
 		const floatingOnly: DockLayout = {
-			version: 2,
+			version: 4,
 			floating: [{ id: 'a', title: 'A', x: 0, y: 0, width: 100, height: 100, open: true }],
 			docked: null
 		};
@@ -573,7 +573,7 @@ describe('replacements to different layouts are told apart (PR #723 review)', ()
 		const a = { type: 'panel' as const, id: 'a', title: 'A' };
 		const t = layout().docked!;
 		return {
-			version: 2,
+			version: 4,
 			floating: layout().floating.filter((w) => w.id !== 'a'),
 			docked: {
 				type: 'split',

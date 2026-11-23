@@ -100,7 +100,7 @@ describe('ThreePaneDock: the starting layout', () => {
 	it('repairs a saved layout that hides the centre, and writes the restored visibility back', () => {
 		const statuses: string[] = [];
 		const behind: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'tabs',
 				id: 'g',
@@ -127,7 +127,7 @@ describe('ThreePaneDock: the starting layout', () => {
 		const statuses: string[] = [];
 		const { dock } = mount({
 			initialLayout: {
-				version: 2,
+				version: 4,
 				docked: { type: 'panel', id: 'left', title: 'L' },
 				floating: [{ id: 'center', title: 'C', x: 0, y: 0, width: 100, height: 100, open: true }]
 			},
@@ -295,7 +295,7 @@ describe('ThreePaneDock: the API', () => {
 	it('leaves an extra panel without a home edge floating when its place is unknown', async () => {
 		const { api, dock } = mount({
 			initialLayout: {
-				version: 2,
+				version: 4,
 				docked: {
 					type: 'split',
 					id: 's',
@@ -483,7 +483,7 @@ describe('ThreePaneDock: a change of panels that changes the structure (PR #723 
 describe('ThreePaneDock: a restored centre never sits in a tab group (PR #723 review)', () => {
 	it('splits the centre out of a saved tab group, so no tab can hide it', async () => {
 		const tabbed: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -590,7 +590,7 @@ describe('ThreePaneDock: floated panes places across whole-layout replacements (
 describe('ThreePaneDock: a pane out of the tree and a replacement (#741, #782 PR5)', () => {
 	const LOG: ThreePaneExtraPanelDef = { id: 'log', title: 'Log' };
 	const row = (): DockLayout => ({
-		version: 2,
+		version: 4,
 		floating: [],
 		docked: {
 			type: 'split',

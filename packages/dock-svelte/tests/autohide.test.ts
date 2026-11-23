@@ -51,7 +51,7 @@ const tree = (): DockNode => ({
 	]
 });
 
-const layout = (): DockLayout => ({ version: 2, floating: [], docked: tree() });
+const layout = (): DockLayout => ({ version: 4, floating: [], docked: tree() });
 
 let n = 0;
 const makeId = () => `n${++n}`;
@@ -223,7 +223,7 @@ describe('DockState auto-hide', () => {
 
 describe('validateDockLayout autoHidden', () => {
 	const withBand = (entry: unknown): unknown => ({
-		version: 2,
+		version: 4,
 		floating: [],
 		docked: { type: 'panel', id: 'M', title: 'M' },
 		autoHidden: [entry]
@@ -231,7 +231,6 @@ describe('validateDockLayout autoHidden', () => {
 	const good = {
 		node: { type: 'panel', id: 'L', title: 'L', collapsed: true },
 		edge: 'left',
-		slot: { kind: 'root' },
 		size: 0.3
 	};
 
@@ -249,7 +248,6 @@ describe('validateDockLayout autoHidden', () => {
 	it('rejects bad entries and ids that collide with the tree', () => {
 		const cases: [unknown, string][] = [
 			[{ ...good, edge: 'middle' }, 'autoHidden[0].edge'],
-			[{ ...good, slot: { kind: 'nope' } }, 'autoHidden[0].slot'],
 			[{ ...good, size: 0 }, 'autoHidden[0].size'],
 			[{ ...good, size: 'x' }, 'autoHidden[0].size'],
 			[

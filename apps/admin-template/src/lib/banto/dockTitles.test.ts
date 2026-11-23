@@ -23,7 +23,7 @@ const win = (id: string, title: string, extra: object = {}) => ({
 /** A layout saved in ja: every place a title is stored. */
 function savedInJa(): DockLayout {
 	return {
-		version: 2,
+		version: 4,
 		floating: [
 			win('memo', '\u30e1\u30e2', { x: 77 }),
 			win('spc', '\u5de5\u7a0b\u7ba1\u7406', {
@@ -53,8 +53,7 @@ function savedInJa(): DockLayout {
 		autoHidden: [
 			{
 				node: { type: 'panel', id: 'paretoLike', title: '\u30d1\u30ec\u30fc\u30c8' },
-				edge: 'left',
-				slot: { kind: 'root' }
+				edge: 'left'
 			},
 			{
 				node: {
@@ -63,8 +62,7 @@ function savedInJa(): DockLayout {
 					activeIndex: 0,
 					children: [{ type: 'panel', id: 'trend', title: 'トレンド' }]
 				},
-				edge: 'right',
-				slot: { kind: 'root' }
+				edge: 'right'
 			}
 		]
 	} as unknown as DockLayout;
@@ -117,6 +115,43 @@ describe('refreshPanelTitles (#729 review)', () => {
 		layout.autoHidden![0].node = { type: 'panel', id: 'spc', title: '\u5de5\u7a0b' };
 		const out = JSON.parse(refreshPanelTitles(JSON.stringify(layout), lookup)) as DockLayout;
 		expect((out.autoHidden![0].node as { title: string }).title).not.toMatch(JA);
+	});
+
+	// #782 PR8b: the places of the regions in the edge bands are saved as a tree of their own.
+	it('resolves the titles in the tree of the edge bands` places, and the layout still reads with it', () => {
+		const dock = createDockState();
+		use('ja');
+		expect(
+			dock.hydrate(
+				JSON.stringify({
+					version: 4,
+					floating: [],
+					docked: {
+						type: 'split',
+						id: 'root',
+						direction: 'row',
+						sizes: [0.3, 0.7],
+						children: [
+							{ type: 'panel', id: 'monthly', title: '\u6708\u5225' },
+							{ type: 'panel', id: 'spc', title: '\u5de5\u7a0b\u7ba1\u7406' }
+						]
+					}
+				})
+			)
+		).toBe(true);
+		expect(dock.autoHideRegion('spc')).toBe(true);
+		const saved = dock.serialize();
+		expect(saved).toMatch(JA);
+
+		use('en');
+		const out = refreshPanelTitles(saved, lookup);
+		expect(out).not.toMatch(JA);
+		const restored = createDockState(out);
+		expect(restored.layout.dockedWithAutoHidden).toBeDefined();
+		expect(restored.restoreAutoHidden('spc')).toBe(true);
+		const root = restored.layout.docked as { sizes: number[]; children: { id: string }[] };
+		expect(root.children.map((c) => c.id)).toEqual(['monthly', 'spc']);
+		expect(root.sizes).toEqual([0.3, 0.7]);
 	});
 
 	it('leaves non-JSON for hydrate to reject', () => {

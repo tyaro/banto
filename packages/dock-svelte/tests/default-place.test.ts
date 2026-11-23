@@ -277,14 +277,14 @@ describe('dockShareOf', () => {
 
 describe('DockState: hide and show by the default layout', () => {
 	const state = () => {
-		const dock = createDockState({ version: 2, floating: [], docked: three() }, never);
-		dock.defaultLayout = { version: 2, floating: [], docked: three() };
+		const dock = createDockState({ version: 4, floating: [], docked: three() }, never);
+		dock.defaultLayout = { version: 4, floating: [], docked: three() };
 		return dock;
 	};
 
 	it('a pane moved and then hidden comes back at its default place, not where it was hidden from', () => {
-		const dock = createDockState({ version: 2, floating: [], docked: three() }, () => 'moved');
-		dock.defaultLayout = { version: 2, floating: [], docked: three() };
+		const dock = createDockState({ version: 4, floating: [], docked: three() }, () => 'moved');
+		dock.defaultLayout = { version: 4, floating: [], docked: three() };
 		dock.dockExisting('left', 'right', 'bottom');
 		expect(shapeOf(dock.layout.docked)).toEqual({ row: ['center', { column: ['right', 'left'] }] });
 		dock.dismiss('left');
@@ -306,8 +306,8 @@ describe('DockState: hide and show by the default layout', () => {
 
 	it('`showPlacement`, `showTabSwitch` and `shownTree` say what `show` then does', () => {
 		const tree = split('s', 'row', [0.6, 0.4], [tabs('t', ['a', 'b']), panel('p')]);
-		const dock = createDockState({ version: 2, floating: [], docked: tree }, never);
-		dock.defaultLayout = { version: 2, floating: [], docked: tree };
+		const dock = createDockState({ version: 4, floating: [], docked: tree }, never);
+		dock.defaultLayout = { version: 4, floating: [], docked: tree };
 		dock.dismiss('b');
 		expect(dock.showPlacement('b')).toBe('docked');
 		// The group collapsed to the bare pane `a`: it is made again around it (re-mounted).
@@ -332,8 +332,8 @@ describe('DockState: hide and show by the default layout', () => {
 	it('row[a 0, b 1]: either pane hidden and shown again, and both in the reverse order: [0, 1] again', () => {
 		const tree = split('root', 'row', [0, 1], [panel('a'), panel('b')]);
 		for (const steps of [['a'], ['b'], ['a', 'b'], ['b', 'a']]) {
-			const dock = createDockState({ version: 2, floating: [], docked: tree }, never);
-			dock.defaultLayout = { version: 2, floating: [], docked: tree };
+			const dock = createDockState({ version: 4, floating: [], docked: tree }, never);
+			dock.defaultLayout = { version: 4, floating: [], docked: tree };
 			for (const id of steps) dock.dismiss(id);
 			for (const id of [...steps].reverse()) expect(dock.show(id)).toBe('docked');
 			expect(dock.layout.docked, steps.join()).toEqual(tree);
@@ -346,13 +346,13 @@ describe('DockState: hide and show by the default layout', () => {
 		let asked = 0;
 		const dock = createDockState(
 			{
-				version: 2,
+				version: 4,
 				floating: [{ id: 'x', title: 'X', x: 0, y: 0, width: 300, height: 200, open: true }],
 				docked: three()
 			},
 			() => `new-${asked++}`
 		);
-		dock.defaultLayout = { version: 2, floating: [], docked: three() };
+		dock.defaultLayout = { version: 4, floating: [], docked: three() };
 		const placement = (id: string) => dock.panels.find((p) => p.id === id)?.placement;
 		for (const id of ['left', 'center', 'right']) dock.dismiss(id);
 		dock.dockPanel('x', 'x', 'center');
@@ -382,30 +382,35 @@ describe('DockState: hide and show by the default layout', () => {
 	});
 });
 
-// Codex P2 on #863: a tab group in an edge band keeps the default group's id. A group made again
-// in the docked tree must not take it, or the layout holds the id twice and cannot be loaded.
+// Codex P2 on #863: a tab group in an edge band and a group of the docked tree must not have one
+// id, or the layout holds the id twice and cannot be loaded. Since #782 PR8b the band's group
+// stays in the shadow tree and the panes shown join it there: the group of the tree has the
+// default id, and the band is given another (`<id>:band`) while both are in the layout - so the
+// id the group ends with does not depend on what comes back first (cross-review of PR #876).
 describe('a default id in use out of the docked tree', () => {
 	it('row[tabs[a, b, c, d], p], the group to its band, a and b hidden and shown: no id twice, the layout loads', () => {
 		const tree = split('s', 'row', [0.6, 0.4], [tabs('t', ['a', 'b', 'c', 'd']), panel('p')]);
 		let n = 0;
-		const dock = createDockState({ version: 2, floating: [], docked: tree }, () => `new-${n++}`);
-		dock.defaultLayout = { version: 2, floating: [], docked: tree };
+		const dock = createDockState({ version: 4, floating: [], docked: tree }, () => `new-${n++}`);
+		dock.defaultLayout = { version: 4, floating: [], docked: tree };
 		expect(dock.autoHideRegion('t')).toBe(true);
 		dock.dismiss('a');
 		expect(dock.show('a')).toBe('docked');
 		dock.dismiss('b');
 		expect(dock.show('b')).toBe('docked');
-		// c and d are still in the band, in the group `t`; a and b are a group of another id.
-		expect(dock.autoHidden.map((e) => e.node.id)).toEqual(['t']);
+		// c and d are still in the band, under another id; a and b are the group `t` of the tree.
+		expect(dock.autoHidden.map((e) => e.node.id)).toEqual(['t:band']);
 		const made = dock.layout.docked?.type === 'split' ? dock.layout.docked.children[0] : null;
-		expect(made).toMatchObject({ type: 'tabs', children: [{ id: 'a' }, { id: 'b' }] });
-		expect(made?.id).not.toBe('t');
+		expect(made).toMatchObject({ type: 'tabs', id: 't', children: [{ id: 'a' }, { id: 'b' }] });
 		const checked = validateDockLayout(JSON.parse(dock.serialize()));
 		expect(checked.ok ? [] : checked.issues).toEqual([]);
 		expect(createDockState().hydrate(dock.serialize())).toBe(true);
 		// And the group in the band goes back into the tree (cross-review of PR #863).
 		expect(dock.restoreAutoHidden('c')).toBe(true);
 		expect(dock.autoHidden).toEqual([]);
+		expect(dock.layout.docked).toMatchObject({
+			children: [{ type: 'tabs', id: 't', children: [{}, {}, {}, {}] }, { id: 'p' }]
+		});
 		const after = validateDockLayout(JSON.parse(dock.serialize()));
 		expect(after.ok ? [] : after.issues).toEqual([]);
 	});

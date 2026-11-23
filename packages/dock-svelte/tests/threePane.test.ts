@@ -142,7 +142,7 @@ describe('reconcileThreePaneLayout', () => {
 
 	it('drops unknown panes everywhere and adds missing ones', () => {
 		const saved: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -159,8 +159,7 @@ describe('reconcileThreePaneLayout', () => {
 						id: 'g',
 						activeIndex: 1,
 						children: [panel('left'), panel('ghost')]
-					},
-					slot: { kind: 'root' }
+					}
 				}
 			]
 		};
@@ -181,7 +180,7 @@ describe('reconcileThreePaneLayout', () => {
 
 	it('puts a collapsed centre or a centre behind another tab back on screen', () => {
 		const collapsed: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -196,7 +195,7 @@ describe('reconcileThreePaneLayout', () => {
 		expect(findNode(a.layout.docked, 'center')).not.toHaveProperty('collapsed');
 
 		const behind: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -224,7 +223,7 @@ describe('reconcileThreePaneLayout', () => {
 
 	it('takes the centre out of a tab group even when it is the active tab', () => {
 		const tabbed: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -262,7 +261,7 @@ describe('reconcileThreePaneLayout', () => {
 
 	it('turns a tab group of the centre alone into the centre, at the root or nested', () => {
 		const group = { type: 'tabs' as const, id: 'g', activeIndex: 0, children: [panel('center')] };
-		const atRoot: DockLayout = { version: 2, docked: group, floating: [] };
+		const atRoot: DockLayout = { version: 4, docked: group, floating: [] };
 		const a = reconcileThreePaneLayout(atRoot, base);
 		expect(a.status).toBe('repaired');
 		expect(findNode(a.layout.docked, 'g')).toBeNull();
@@ -271,7 +270,7 @@ describe('reconcileThreePaneLayout', () => {
 		expect(validateDockLayout(a.layout).ok).toBe(true);
 
 		const nested: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -293,22 +292,22 @@ describe('reconcileThreePaneLayout', () => {
 		const win = { title: 'Work', x: 0, y: 0, width: 100, height: 100 };
 		const cases: DockLayout[] = [
 			{
-				version: 2,
+				version: 4,
 				docked: panel('left'),
 				floating: [{ id: 'center', ...win, open: true }]
 			},
 			{
-				version: 2,
+				version: 4,
 				docked: panel('left'),
 				floating: [{ id: 'center', ...win, open: false }]
 			},
 			{
-				version: 2,
+				version: 4,
 				docked: panel('left'),
 				floating: [],
-				autoHidden: [{ edge: 'right', node: panel('center'), slot: { kind: 'root' } }]
+				autoHidden: [{ edge: 'right', node: panel('center') }]
 			},
-			{ version: 2, docked: panel('left'), floating: [] }
+			{ version: 4, docked: panel('left'), floating: [] }
 		];
 		for (const saved of cases) {
 			const result = reconcileThreePaneLayout(saved, base);
@@ -328,7 +327,7 @@ describe('layoutChanges (DockHost.replaceLayout)', () => {
 
 	it('describes panes taken off the screen, re-docked and floated', () => {
 		const before: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -365,12 +364,12 @@ describe('layoutChanges (DockHost.replaceLayout)', () => {
 			open
 		});
 		const before: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: panel('center'),
 			floating: [win('kept', true), win('gone', true), win('closed', false)]
 		};
 		const after: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: panel('center'),
 			floating: [win('kept', false), win('closed', false)]
 		};
@@ -380,7 +379,7 @@ describe('layoutChanges (DockHost.replaceLayout)', () => {
 			{ kind: 'close', panelId: 'gone' }
 		]);
 		// Left out while closed (mounted, not shown): discarded too.
-		const empty: DockLayout = { version: 2, docked: panel('center'), floating: [] };
+		const empty: DockLayout = { version: 4, docked: panel('center'), floating: [] };
 		expect(layoutChanges(after, empty, keepNone, persistent)).toEqual([
 			{ kind: 'close', panelId: 'kept' },
 			{ kind: 'close', panelId: 'closed' }
@@ -390,7 +389,7 @@ describe('layoutChanges (DockHost.replaceLayout)', () => {
 	it('says a kept pane that ends behind a tab or hidden is not re-mounted', () => {
 		const before = threePaneDockLayout(base);
 		const after: DockLayout = {
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 'three-pane:root',
@@ -420,7 +419,7 @@ describe('reconcileThreePaneLayout: a hidden pane it drops (#741, #782 PR5)', ()
 	const without: ThreePanePanels = { center: PANES.center, right: PANES.right };
 	const saved = (): DockLayout => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: {
 				type: 'split',

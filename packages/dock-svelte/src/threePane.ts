@@ -237,7 +237,7 @@ export function threePaneDockLayout(options: ThreePaneDockLayoutOptions): DockLa
 			floating.push(extraWindow(def, floating.length, width, height, initial === 'floating'));
 		}
 	}
-	return { version: 2, floating, docked };
+	return { version: 4, floating, docked };
 }
 
 /** What a saved three-pane layout is stored as (plan §4.4). `layout` is `DockState`'s layout object. */
@@ -484,11 +484,17 @@ function reconcile(
 		changed = true;
 	}
 
+	// The places of the regions in the edge bands go with the layout as they were saved
+	// (`dockedWithAutoHidden`, #782 PR8b): `validateDockLayout` keeps the tree while it still shows
+	// the docked tree - not when a pane was dropped from or added to it above (the regions then
+	// dock at their default place).
+	const places = checked.layout.dockedWithAutoHidden;
 	layout = withLayoutVersion({
-		version: 2,
+		version: 4,
 		floating: floatingTitled,
 		docked,
-		...(autoHiddenTitled.length > 0 ? { autoHidden: autoHiddenTitled } : {})
+		...(autoHiddenTitled.length > 0 ? { autoHidden: autoHiddenTitled } : {}),
+		...(autoHiddenTitled.length > 0 && places !== undefined ? { dockedWithAutoHidden: places } : {})
 	});
 	// The result went through the same checks as any restored layout.
 	const final = validateDockLayout(layout);
@@ -595,7 +601,7 @@ export function threePaneNarrowLayout(
 	);
 
 	let layout: DockLayout = {
-		version: 2,
+		version: 4,
 		floating: [],
 		docked: paneNode(THREE_PANE_IDS.center, panels.center)
 	};

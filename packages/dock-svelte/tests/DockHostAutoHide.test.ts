@@ -23,7 +23,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 const layout = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [],
 	docked: {
 		type: 'split',

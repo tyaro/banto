@@ -252,7 +252,7 @@ const runSteps = (
 	each?: (dock: DockState) => void
 ): DockState => {
 	const dock = outByFloat(
-		createDockState({ version: 2, floating: [], docked: make() }, counterMakeId())
+		createDockState({ version: 4, floating: [], docked: make() }, counterMakeId())
 	);
 	for (const step of steps) {
 		each?.(dock);
@@ -813,9 +813,8 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			unchanged(four, (d) => (d.undockPanel('a'), d.dockPanel('a', 'd', 'right')), 'elsewhere');
 		});
 
-		// The band remembers the pane's place and it comes back by `size` (a region's slot has no
-		// `share`, #739 review): taking it out of the others' shares would not be undone when it
-		// comes back, so the round trip below would not give the old sizes.
+		// The region keeps its place and its share in the shadow tree while it is in its band (#782
+		// PR8b; by `size` until then, #739 review).
 		it('a sibling auto-hidden to a band (autoHideRegion), and put back', () => {
 			unchanged(four, (d) => void d.autoHideRegion('a'), 'auto-hidden');
 			const dock = unchanged(
@@ -826,11 +825,16 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 			dock.show('b');
 			expect(shapeOf(dock.layout.docked)).toEqual({ row: ['a', 'b', 'c', 'd'] });
 			expect(sameSizes(sizesOf(dock.layout.docked), [[0.1, 0.2, 0.3, 0.4]])).toBe(true);
-			// Shown while the sibling is in its band: its share of the whole row (as before #743).
+			// Shown while the sibling is in its band: its share of the whole row, the sibling's place
+			// counted (#782 PR8b) - so of what shows it holds 0.2 of 0.9, and the row is as it was
+			// once the sibling is back.
 			const banded = runSteps(four, ['-b']);
 			banded.autoHideRegion('a');
 			banded.show('b');
-			expect(around(banded, 'b').b).toBeCloseTo(0.2, 9);
+			expect(around(banded, 'b').b).toBeCloseTo(0.2 / 0.9, 9);
+			expect(banded.restoreAutoHidden('a')).toBe(true);
+			expect(shapeOf(banded.layout.docked)).toEqual({ row: ['a', 'b', 'c', 'd'] });
+			expect(sameSizes(sizesOf(banded.layout.docked), [[0.1, 0.2, 0.3, 0.4]])).toBe(true);
 		});
 	});
 
@@ -1143,7 +1147,7 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 			const pick = <T>(xs: T[]): T => xs[Math.floor(random() * xs.length)];
 			const count = { back: 0, removed: 0, redocked: 0, reloads: 0, afterRedock: 0 };
 			for (let n = 0; n < ROWS; n++) {
-				const dock = createDockState({ version: 2, floating: [], docked: make() }, counterMakeId());
+				const dock = createDockState({ version: 4, floating: [], docked: make() }, counterMakeId());
 				/** The panes out (floated) that hold a share of the row. */
 				const out = new Map<string, { share: number }>();
 				const steps: string[] = [];

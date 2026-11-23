@@ -120,7 +120,7 @@
 			hostH
 		);
 		return {
-			version: 2,
+			version: 4,
 			floating: [memo],
 			docked: {
 				type: 'split',

@@ -16,7 +16,7 @@ import { createDockState } from '../src/state.svelte';
 import type { DockLayout } from '../src/types';
 
 const layout = (): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [{ id: 'a', title: 'A', x: 40, y: 40, width: 320, height: 200, open: true }],
 	docked: null
 });
@@ -346,7 +346,7 @@ describe('cancel undoes only the gesture target (PR #445)', () => {
 
 	it('restoreSplitSizes puts back one split and leaves the rest of the tree as it is now', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [{ id: 'f', title: 'F', x: 0, y: 0, width: 100, height: 100, open: true }],
 			docked: {
 				type: 'split',

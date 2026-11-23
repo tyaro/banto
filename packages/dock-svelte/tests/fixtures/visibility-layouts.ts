@@ -77,7 +77,7 @@ export const dockWithDefault = (initial: DockLayout | string, makeId?: () => str
  * was (`dockAtSlot` with its `homeSlot`, the panel menu's "back"), with `createDockState`.
  */
 export const runSteps = (make: () => DockNode, steps: string[]): DockState => {
-	const dock = dockWithDefault({ version: 2, floating: [], docked: make() }, counterMakeId());
+	const dock = dockWithDefault({ version: 4, floating: [], docked: make() }, counterMakeId());
 	for (const step of steps) {
 		const id = step.slice(1);
 		if (step[0] === '-') dock.dismiss(id);

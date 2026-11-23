@@ -44,7 +44,7 @@ function firePointer(target: EventTarget, type: string, x: number, y: number) {
 }
 
 const layout = (collapsed?: boolean): DockLayout => ({
-	version: 2,
+	version: 4,
 	floating: [
 		{
 			id: 'a',
@@ -75,7 +75,7 @@ describe('DockState collapse', () => {
 
 	it('ignores unknown and docked ids', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [],
 			docked: { type: 'panel', id: 'd', title: 'D' }
 		});
@@ -109,7 +109,7 @@ describe('DockState collapse', () => {
 
 	it('is dropped when the window docks, and a pane pulled out again starts expanded', () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			floating: [
 				{ id: 'a', title: 'A', x: 0, y: 0, width: 300, height: 200, open: true, collapsed: true }
 			],

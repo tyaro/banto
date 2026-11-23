@@ -60,7 +60,7 @@ const panel = (id: string): DockPanelNode => ({ type: 'panel', id, title: id.toU
 /** tree | main | detail in a row, plus a floating window `w`. */
 function layout(): DockLayout {
 	return {
-		version: 2,
+		version: 4,
 		docked: {
 			type: 'split',
 			id: 's',
@@ -199,7 +199,7 @@ describe('the panel actions menu (WAI-ARIA menu button)', () => {
 
 	it('keys inside the menu do not reach the tab strip around the button', async () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -246,7 +246,7 @@ describe('movePanel through the menu: every target', () => {
 	// focus on the group left behind; from the menu, the mover alone places it (on the moved pane).
 	it('outer edge from a tab group: the focus is on the moved tab, not on the group left behind', async () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -408,7 +408,7 @@ describe('refused / unavailable: nothing changes', () => {
 
 	it('no "back" for a pane that was never floated here; joining its own group is not offered', async () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -435,7 +435,7 @@ describe('"back" keeps the drop rules of the drag at the place it goes back to',
 	/** a | b as tabs, next to c; `caps` is read on every check (it may change meanwhile). */
 	function tabsLayout(): DockState {
 		return createDockState({
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -700,7 +700,7 @@ describe('"back" for several panes floated out of the same place', () => {
 	const order = (dock: DockState) => collectPanelIds(dock.layout.docked);
 	function tabs(): DockState {
 		return createDockState({
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -721,7 +721,7 @@ describe('"back" for several panes floated out of the same place', () => {
 	}
 	function row(): DockState {
 		return createDockState({
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -830,7 +830,7 @@ describe('"back" for every float order x every back order (up to every pane of t
 							const want = JSON.stringify(shapeOf(make(ids)));
 							const failures: string[] = [];
 							for (const backOrder of permutations(floated)) {
-								const dock = createDockState({ version: 2, docked: make(ids), floating: [] });
+								const dock = createDockState({ version: 4, docked: make(ids), floating: [] });
 								const { host } = mount({ dock });
 								for (const id of floatOrder) await host().movePanel(id, { float: true });
 								for (const id of backOrder) await host().movePanel(id, { back: true });
@@ -853,7 +853,7 @@ describe('"back" for every float order x every back order (up to every pane of t
 describe('"back" and "show" for panes floated and hidden out of the same container (#734, #782 PR5)', () => {
 	const row = () =>
 		dockWithDefault({
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',
@@ -895,7 +895,7 @@ describe('"back" and "show" for panes floated and hidden out of the same contain
 describe('"back" into a tab group whose id was taken meanwhile (#782 PR6)', () => {
 	it('row[x, tabs(T)[a, b]], b floated, windows T and b:restored added, back: no id twice', async () => {
 		const dock = createDockState({
-			version: 2,
+			version: 4,
 			docked: {
 				type: 'split',
 				id: 's',

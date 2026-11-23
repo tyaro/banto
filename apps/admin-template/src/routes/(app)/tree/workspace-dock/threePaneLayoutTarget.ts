@@ -49,7 +49,7 @@ export function createThreePaneLayoutTarget(
 	dockState: ThreePaneDockStateLike,
 	getApi: () => ThreePaneLayoutApi | undefined
 ): ThreePaneLayoutTarget {
-	const defaultLayout: DockLayout = { version: 2, floating: [], docked: null };
+	const defaultLayout: DockLayout = { version: 4, floating: [], docked: null };
 	let initial: string | undefined;
 	/**
 	 * While a layout is being applied (installed with `restoreLayout`, or held for the mount):
