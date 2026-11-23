@@ -698,6 +698,8 @@ PR5（hide / show / float / dockBack）→ PR6（`dockExisting*`・ドロップ�
 
 #### 4.13.2 いまの形
 
+W0 の時点（W1 の前）の形。画面に並ぶものと置き場所は W1 の後も同じで、持ち方だけが変わった（4.13.8）。
+
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte`（795 行）に、上から 3 つが並ぶ。
 
 | 部分 | 中身 | 持ち方 |
@@ -856,6 +858,100 @@ interface DashboardWidgetProps {
 - **c. 一覧のウィジェットの見本**: Issue は「KPI・チャート・一覧・メモ」を挙げるが、今のダッシュボードに一覧は無い。
   推奨は、W2 で見本を 1 つ足す（在庫の少ない品目の上位。`@banto/grid-svelte` はコアなので、どのプリセットでも残る）。
   別案: 足さない（登録の型は部品を選ばないので、作者は自分で足せる）。
+
+#### 4.13.8 W1 で決めた形と、測った値（2026-11-23）
+
+見た目・挙動・保存の形は変えていない（基準画像は 1 枚も変わらない）。4.13.3 の「見込み」から変えた点は、理由と合わせてここに書く。
+
+**ファイル**（どれも `apps/admin-template/src/lib/`）
+
+| ファイル | 中身 |
+| --- | --- |
+| `banto/dashboardData.svelte.ts` | `createDashboardData()`。items を 1 回読み、`DashboardData`（`rows`・`loading`・`totalCount`・`stats`）を渡す。`stats` は KPI の数字で、`rows` が変わるたびに 1 回だけ計算する（タイルごとに計算しない）。期間で絞った行は W3 でここに足す |
+| `banto/dashboardKpis.ts` | `DASHBOARD_KPIS`（配列 1 つ）。1 件は `id`・`label`（getter）・`icon`・`value(data)`・任意の `link`・任意の `sparkline(data)` |
+| `components/DashboardKpiStrip.svelte` | KPI の帯。ページの `.stat-row` の markup と CSS（キオスクの `:global(.shell.kiosk)` と 600px 以下の調整を含む）をそのまま移した |
+| `banto/dashboardWidgets.ts` | 登録。`DashboardWidgetDef`・`DashboardWidgetProps`・`DASHBOARD_WIDGETS`（8 件: `monthly`・`categoryStock`・`stackedBar`・`priceBuckets`・`scatter`・`spc`・`trend`・`memo`）・`findDashboardWidget`。W1 だけの置き場所の一覧 `DASHBOARD_CARDS`（固定のカード 5 枚。W2 で消す） |
+| `components/dashboard/charts/*.svelte` | チャートのウィジェットの部品 7 つ（1 ウィジェット 1 ファイル） |
+| `components/dashboard/MemoWidget.svelte` | メモのウィジェット |
+
+消したもの: `banto/panels.ts`（`PANEL_DEFS`）と `components/DashboardPanel.svelte`（id の分岐）。
+
+**登録の型**
+
+```ts
+interface DashboardWidgetProps {
+	data: DashboardData; // ページが 1 回読んだデータ（W3 から、共有の期間で絞った行も）
+	height: number; // 中身の高さ（px）。呼び手が自分の入れ物を測って渡す
+}
+
+interface DashboardWidgetDef {
+	id: string; // 保存した配置に入るので、あとから変えない
+	readonly title: string; // getter（読むときに今の言語で引く）
+	icon?: string;
+	width?: number; // 浮動の窓の大きさ
+	height?: number;
+	component: Component<DashboardWidgetProps>;
+	usesPeriod?: boolean; // W3
+}
+```
+
+- **`extends FloatingWindowDef` にしていない**。同じ欄（`id`・`title`・`icon`・`width`・`height`）を書き並べた。登録のファイルが
+  `@banto/dock-svelte` を import すると、dock を外すプリセットで登録ごと消すしかなくなる（固定のカードも、W2 の「積む」部品も登録を使う）。
+  ページが def を `dock.ensureWindow` に渡すので、2 つの形がずれれば型検査で落ちる。
+- **登録の行は文言の「キー」を書く**（`titleKey: 'panels.monthly'`。`navigation.ts` の `labelKey` と同じ形）。公開する
+  `DASHBOARD_WIDGETS` がそれを `title` の getter に直す。行に `get title() { return m['…'](); }` を書く形だと、charts と dock を
+  両方外したときに登録のファイルの `m` の import だけが残り、lint で落ちる（remover 同士の文字列の領域を独立に保つため）。
+- **メモは props ではなく context で受け取る**（`provideDashboardMemoPane` / `dashboardMemoPane`、`dashboardMemo.svelte.ts`）。
+  下書きと保存はページが持つ（4.13.3）。ウィジェットの props は全部同じ（`data`・`height`）にしたいので、ページのメモは context で渡す。
+  context が無い所（切り離した窓。別の文書）では、今までと同じ静的な文を出す。
+- **切り離した窓**（`routes/panel/[id]`）は、同じ `createDashboardData()` で自分の分を 1 回読み、登録から部品を引いて描く。
+- **固定のカードの見出しは、ウィジェットの `title`** を使う（`panels.monthly` と `dashboard.monthlyTitle`、`panels.priceBuckets` と
+  `dashboard.priceBucketTitle` は ja・en とも同じ文言）。`dashboard.monthlyTitle`・`dashboard.priceBucketTitle` はどこからも
+  引かれなくなった。W2 で、ほかの使わなくなるキーと一緒に消す。
+
+**読み込みの回数**: ページを開いたときの items の読み込みは 1 回（W1 の前は、ページ 1 回 + dock のパネル 1 枚ごとに 1 回。
+既定の配置で 3 回）。単体テスト（`dashboardData.svelte.test.ts`）と e2e（`smoke.spec.ts` の 13k3。`/api/items/list` の回数）で確かめる。
+
+**scaffold**
+
+- ページ（`dashboard/+page.svelte`）は `@banto/charts` を import しない。`removeCharts` はページを触らず、登録の
+  `[scaffold:charts]` の領域（部品の import と行）と `components/dashboard/charts/`、KPI の Sparkline（`dashboardKpis.ts`・
+  `DashboardKpiStrip.svelte` の同じ印の領域）を消す。
+- `removeDock` は、ページの `[scaffold:dock]` の領域 5 つ（import・script・表示メニュー・ワークスペース・snippet）と、登録のメモの
+  行、`MemoWidget.svelte` を消す。ページの中身を文字列で当てるのをやめた（W2 でページを書き換えても、印を保てば型紙はずれない）。
+- 領域は `cutEveryMarked(ファイル, 印, 数)` で 1 回に全部切り、**見つかった数を突き合わせる**。`--dry-run` は書き込まないので、
+  領域の数だけ `cutMarked` を呼ぶ形だと、領域が 1 つ減っていても気付けない。
+- 登録の単体テスト（`dashboardWidgets.test.ts`）は、どのプリセットの生成物でも走る（template-acceptance の `pnpm --filter admin-template test`）。
+  オプションのウィジェットを名指しする検査は、同じ印の領域に入れてある。
+- **charts だけを外す組み合わせ**（対話の個別指定）は、W1 の前は壊れていた（dock の snippet と切り離した窓のルートに
+  `DashboardPanel` の参照が残り、型検査で落ちる。基点の 98ed039d で確かめた）。
+  W1 で通る: dock にはメモだけが残り、既定の配置は登録に在るものだけで組む。**dock だけを外す**と、固定のカードと登録（チャート 7 件）が残る
+  （`spc`・`trend` は置き場所が無いので出ない。W2 の「積む」部品で出る）。
+
+**固定のカードが dock のパネルとして成り立つ最小の大きさ**（§9 の未確認の答え）
+
+測り方: 切り離した窓のルート（`/panel/<id>`）は、タイトルバー（32px）+ パネルと同じ余白（12px）の本体なので、ビューポートを
+dock の 1 区画に見立てて縮め、(a) SVG の文字どうしが重ならない、(b) SVG の文字が端で切れない、(c) 凡例とチャートが縦に収まる、
+の 3 つを見た（ライト・標準の密度・デモのデータ・ja、Chromium）。値はタイトルバーを含む区画の大きさ。
+
+| ウィジェット | 幅の下限 | 高さの下限 | 下回ると起きること |
+| --- | --- | --- | --- |
+| `monthly`（面グラフ） | 文字の重なりは 120px まで起きない（目盛りの数が幅に追随） | 200px | 高さ: チャートの下限（140px）を割り、区画がスクロールする |
+| `categoryStock`（横棒） | 同上 | 210px | 高さ: 8 カテゴリの名前が上下に重なる（SVG が 152px 未満） |
+| `stackedBar`（積み上げ棒） | 300px | 220px | 幅: 右端のカテゴリ名が切れる。高さ: 凡例 1 行ぶん（約 20px）が要る |
+| `priceBuckets`（ドーナツ） | 320px（凡例が 1 行に収まる幅） | 220px（320px 未満の幅では凡例が 2 行になり 240px） | 幅: 凡例が折り返して高さを使う |
+| `scatter`（散布図） | 200px | 200px | 幅: 横軸の目盛りの文字が重なる |
+
+- **5 枚とも成り立つ下限は、幅 320px × 高さ 220px**（タイトルバー込みの 1 区画）。今の固定のカードは、1440px の画面で補助の 1 枚が
+  幅 約 360px・チャートの高さ 280px なので、これより小さくできる。dock の区画の下限（`MIN_PANE_FRACTION` = 親の 10%）と浮動の窓の
+  下限（160×120）は、これより小さい。W2 で既定の配置を決めるとき、1 区画が 320×220 を下回らないようにする（1440px の画面で dock の幅は
+  約 1100px なので、横に並べるのは 3 列までが目安）。
+- 参考（固定のカードではない 2 枚）: `spc` はパレート図のカテゴリ名が重ならないのに幅 480px が要る（縦は中でスクロールする作り）。
+  `trend` は幅 180px まで文字が重ならない。
+- **W2 で直すこと（測っていて見つけた。今の dock でも同じ）**: 呼び手が渡す高さは「区画の中身の高さ − 16px」（`chartHeight`）だが、
+  余白は上下で 24px あり、凡例（1 行 約 20px、2 行 約 42px）は SVG の外に積まれる。凡例のあるウィジェット（`stackedBar`・`priceBuckets`・
+  `trend`）は、区画より 約 28px 以上はみ出して下が切れる（スクロールで見える）。凡例の無いものも 8px はみ出す。W2 で、渡す高さから
+  余白と凡例の高さを引く（または部品が自分の入れ物を測る）形に直す。W1 は見た目を変えないので、そのままにしてある。
 
 ### 4.14 追加の 4 件（#838・#850・#851・#852。2026-11-22、banto-industrial）
 

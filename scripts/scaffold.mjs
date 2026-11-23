@@ -223,6 +223,30 @@ function cutMarked(rel, label, tag, indent = '') {
 }
 
 /**
+ * ファイルの中の `[scaffold:<tag>]` の領域を**全部**、1 回の編集で削除する（#716 W1）。
+ * 印は script の `// [scaffold:<tag>] begin` … `// [scaffold:<tag>] end` と、markup の
+ * `<!-- [scaffold:<tag>] begin -->` … `<!-- [scaffold:<tag>] end -->` のどちらでもよく、インデントも問わない。
+ *
+ * `cutMarked` を領域の数だけ呼ぶ形との違いは、**見つかった領域の数を `expected` と突き合わせる**こと。
+ * `--dry-run` は書き込まないので、`cutMarked` を 2 回呼んでも 2 回とも同じ（最初の）領域に当たり、
+ * 領域が 1 つ減っていても気付けない。こちらは数が合わなければ「期待したパターンが見つかりません」で落ちる
+ * （領域を足した・消した・印を書き換えたのに scaffold を直していない、というずれを拾う）。
+ * 1 つも無ければ `null`（再実行なら適用済み / 初回適用・`--strict` では失敗）。
+ * 削除後に空行が重ならないよう、印の直前の改行から end の印までを消す（`cutMarked` と同じ）。
+ * 領域の直前に空行を置かないこと（置くと、前後の空行が 2 行つながって prettier が落ちる）。
+ */
+function cutEveryMarked(rel, label, tag, expected) {
+	const mark = `(?://|<!--) \\[scaffold:${tag}\\]`;
+	const region = new RegExp(`\\n[\\t ]*${mark} begin[\\s\\S]*?${mark} end(?: -->)?`, 'g');
+	editRemoval(rel, label, (s) => {
+		const found = s.match(region)?.length ?? 0;
+		if (found === 0) return null;
+		if (found !== expected) return undefined;
+		return s.replace(region, '');
+	});
+}
+
+/**
  * `messages/{ja,en}.json` から**キー接頭辞**でメッセージを取り除く
  * （`prefix` そのもの、または `prefix + '.'` で始まるキー）。
  *
@@ -295,6 +319,12 @@ const APP_PKG = `${APP}/package.json`;
 const VITE = `${APP}/vite.config.ts`;
 const DASH = `${APP}/src/routes/(app)/dashboard/+page.svelte`;
 const DASH_LIB = `${APP}/src/lib/banto/dashboard.ts`;
+// #716 W1: ダッシュボードの登録（ウィジェット・KPI）と、それを描く部品。
+const DASH_WIDGETS = `${APP}/src/lib/banto/dashboardWidgets.ts`;
+const DASH_WIDGETS_TEST = `${APP}/src/lib/banto/dashboardWidgets.test.ts`;
+const DASH_KPIS = `${APP}/src/lib/banto/dashboardKpis.ts`;
+const DASH_KPI_STRIP = `${APP}/src/lib/components/DashboardKpiStrip.svelte`;
+const DASH_WIDGET_DIR = `${APP}/src/lib/components/dashboard`;
 const TREE_PAGE = `${APP}/src/routes/(app)/tree/+page.svelte`;
 const LAYOUT = `${APP}/src/routes/(app)/+layout.svelte`;
 const HEADER = `${APP}/src/lib/components/Header.svelte`;
@@ -341,74 +371,37 @@ const CI_WORKFLOW = '.github/workflows/ci.yml';
 
 /**
  * `@banto/charts`（SVGチャート）。remove-optional-assets.md「`@banto/charts`」。
- * ダッシュボードのチャートデモ配線・DashboardPanel・@banto/charts 依存を外す。
- * `dashboard.ts` はスタットタイルが `computeStatTiles` を使うため残す（未使用の
- * 集計エクスポートはビルドを壊さない）。stat タイルの Sparkline のみ外す。
+ * ダッシュボードのチャートのウィジェット（登録の行と部品のファイル）・KPI の Sparkline・
+ * @banto/charts 依存を外す。`dashboard.ts` は KPI の帯が `computeStatTiles` を使うため残す
+ * （未使用の集計エクスポートはビルドを壊さない）。
  *
- * ドリフト注意: dashboard/+page.svelte のチャート markup・import 行・Sparkline を
- * 変えたら（i18n キー化で可視文言が `m['...']()` になった箇所を含む）このパターンも
- * 更新すること。積立エリア/ガントなどの見本は dashboard ではなく `/chart-gallery`
+ * #716 W1（downstream-requests-2026-11-plan §4.13）: ダッシュボードのページ（+page.svelte）は
+ * `@banto/charts` を import しない。チャートは `dashboardWidgets.ts` の登録（1 ウィジェット =
+ * 登録 1 件 + 部品 1 ファイル）で、ここは「登録の行と部品のファイルを消す」だけ:
+ *   - `dashboardWidgets.ts` の `[scaffold:charts]` の領域（部品の import と、ウィジェット・固定カードの行）
+ *   - `components/dashboard/charts/`（チャートのウィジェットの部品。ディレクトリごと）
+ *   - KPI の Sparkline（`dashboardKpis.ts` の値の欄と集計の import、`DashboardKpiStrip.svelte` の
+ *     import と描画。どれも `[scaffold:charts]` の領域）
+ * ページの markup を文字列で切り取らないので、ページを変えても型紙はずれない。チャートの
+ * ウィジェットを足すときは、登録の行を `[scaffold:charts]` の領域の中に、部品を
+ * `components/dashboard/charts/` に置くこと（領域の外に置くと、外した後に参照が残る）。
+ * dock を残して charts だけ外すと、dock にはメモだけが残る（既定の配置は登録に在るものだけで組む）。
+ *
+ * 積立エリア/ガントなどの見本は dashboard ではなく `/chart-gallery`
  * （デモ専用ルート。navigation.ts / navIcons.ts / messages の `chartGallery.*` 込み）に
  * あり、ここで丸ごと外す。
- * charts 除去後に dashboard/+page.svelte と dashboard.ts に `@banto/charts` 参照が
- * 一切残らないことが不変条件（残ると `Cannot find module '@banto/charts'` /
- * 未定義コンポーネント / 暗黙 any でチェックが赤くなる）。
+ * charts 除去後に `@banto/charts` 参照が一切残らないことが不変条件（残ると
+ * `Cannot find module '@banto/charts'` / 未定義コンポーネント / 暗黙 any でチェックが赤くなる）。
  */
 function removeCharts() {
-	drop(
-		DASH,
-		'charts import 除去',
-		`	import { BarChart, LineChart, PieChart, ScatterChart, Sparkline } from '@banto/charts';
-`
-	);
-	drop(
-		DASH,
-		'DashboardPanel import 除去',
-		`	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
-`
-	);
-	drop(
-		DASH,
-		'stat タイルの Sparkline 除去',
-		`					<Sparkline values={monthCounts.map((mc) => mc.count)} width={72} height={24} />
-`
-	);
-	// /dashboard に残るチャートは最初の chart-grid だけ（積立エリア/ガントなどの見本は
-	// /chart-gallery にある。下の removeDir で丸ごと外す）。
-	cutRegion(DASH, 'チャートグリッド除去', `		<div class="chart-grid">`, `		</div>`);
-	// チャートグリッド（と Sparkline）だけが使っていた集計の import と $derived/ラベル関数。
-	// 残ると生成物の `pnpm lint`（--max-warnings=0）が未使用警告で落ちる（computeStatTiles は
-	// stat タイルが使うので残す）。ドリフト注意: dashboard/+page.svelte のこの並びを
-	// 変えたらここも更新すること。
-	swapText(
-		DASH,
-		'dashboard: チャート専用の集計 import 除去',
-		`		byCategory,
-		computeStatTiles,
-		priceBuckets,
-		scatterSample,
-		stockByCategoryPriceBand,
-		updatesByMonth
-`,
-		`		computeStatTiles
-`
-	);
-	drop(
-		DASH,
-		'dashboard: チャート専用の $derived 除去',
-		`	const categoryStock = $derived(byCategory(list.rows));
-	const categoryPriceBand = $derived(stockByCategoryPriceBand(list.rows));
-	const buckets = $derived(priceBuckets(list.rows));
-	const monthCounts = $derived(updatesByMonth(list.rows));
-	const scatterRows = $derived(scatterSample(list.rows));
-`
-	);
-	drop(
-		DASH,
-		'dashboard: countLabel 除去',
-		`	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
-`
-	);
+	// 登録: 部品の import と、ウィジェット・固定カードの行。
+	cutEveryMarked(DASH_WIDGETS, '登録: チャートのウィジェット（import と行）除去', 'charts', 2);
+	removeDir(`${DASH_WIDGET_DIR}/charts`, 'チャートのウィジェットの部品 削除');
+	// 登録の単体テストのうち、チャートのウィジェット・固定カード・Sparkline を名指しするもの。
+	cutEveryMarked(DASH_WIDGETS_TEST, '登録のテスト: チャートのウィジェットの検査 除去', 'charts', 3);
+	// KPI の帯の Sparkline（在庫の合計の横の小さな線）。値の欄ごと消すので、帯は数字だけを描く。
+	cutEveryMarked(DASH_KPIS, 'KPI: Sparkline の値の欄と集計 import 除去', 'charts', 2);
+	cutEveryMarked(DASH_KPI_STRIP, 'KPI の帯: Sparkline の import と描画 除去', 'charts', 2);
 	// /chart-gallery（チャート見本。デモ専用ルート）: ルート・ナビ行・union の語・
 	// アイコン・文言キーを外す。`@banto/charts` と dashboard.ts の M24 集計に依存するので
 	// charts と運命を共にする（display は charts も外すので /chart-gallery は常に先に消える）。
@@ -482,68 +475,33 @@ function removeCharts() {
 `
 	);
 	cutEnd(DASH_LIB, 'dashboard.ts: M24 集計セクション(EOFまで)除去', `// --- M24 chart demo data`);
-	removeFile(`${APP}/src/lib/components/DashboardPanel.svelte`, 'DashboardPanel.svelte 削除');
 	removeAppDep('@banto/charts');
 }
 
 /**
  * `@banto/dock-svelte`（ダッシュボードのドッキング）。remove-optional-assets.md「`@banto/dock-svelte`」。
- * ダッシュボードの Dock 配線一式・panels.ts・popout.ts・@banto/dock-svelte 依存に
- * 加え、pop-out 先の `routes/panel/[id]`（panels.ts / DashboardPanel に依存）も削除。
+ * ダッシュボードの Dock 配線一式・メモのウィジェット・popout.ts・@banto/dock-svelte 依存に
+ * 加え、pop-out 先の `routes/panel/[id]`（登録と dock のアイコンに依存）も削除。
+ *
+ * #716 W1（downstream-requests-2026-11-plan §4.13）: ダッシュボードのページ（+page.svelte）は、dock に
+ * 要るものを `[scaffold:dock]` の印で挟んである（import・script・表示メニュー・ワークスペース・snippet）。
+ * ここはその領域を切り取るだけで、ページの中身を文字列で当てない。登録（`dashboardWidgets.ts`）からは
+ * メモのウィジェット（部品の import と行）を消す。チャートのウィジェットの登録と固定のカードは残る
+ * （`DashboardWidgetDef` は dock-svelte を import しない）。
+ * ページの CSS（`.workspace`・`.dock-wrapper`・`.dock-panel`）は残る（未使用のセレクタは害が無い）。
  */
 function removeDock() {
-	cutRegion(DASH, 'dock import 除去', `\timport {\n\t\tDockHost,`, `} from '@banto/dock-svelte';`);
-	swapText(DASH, 'lucide から LayoutGrid 除去', `LayoutGrid, JapaneseYen`, `JapaneseYen`);
-	drop(
-		DASH,
-		'panels import 除去',
-		`\timport { PANEL_DEFS, findPanelDef } from '#lib/banto/panels.js';\n`
-	);
-	drop(
-		DASH,
-		'PanelIcon import 除去',
-		`\timport PanelIcon from '#lib/components/PanelIcon.svelte';\n`
-	);
-	drop(
-		DASH,
-		'setup(getUiSettings/isTauri) import 除去',
-		`\timport { getUiSettings, isTauri } from '#lib/banto/setup.js';\n`
-	);
-	drop(
-		DASH,
-		'popout import 除去',
-		`\timport { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';\n`
-	);
-	// #433-b（#446）: dock の gesture の Esc をどの層に譲るか。dock と一緒に消える。
-	drop(
-		DASH,
-		'dockEscape import 除去',
-		`\timport { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';\n`
-	);
-	// #791 K4: dock のレイアウトの保存は `@banto/dock-svelte` の `createDockLayoutStore`（上の dock import の
-	// 範囲）。保存を利用者・セッションに結び付けるための admin-core の import だけ、ここで外す。
-	drop(
-		DASH,
-		'レイアウト保存の持ち主（session scope）import 除去',
-		`\t// Its own line: scaffold.mjs's dock remover drops it by text (the layout save's owner, #791).\n` +
-			`\timport { currentSessionScope, isCurrentSessionScope } from '@banto/admin-core';\n`
-	);
+	// ページ: script の 2 領域（import / 本体）と markup の 3 領域（表示メニュー / ワークスペース / snippet）。
+	cutEveryMarked(DASH, 'dashboard: dock の配線（import・script・markup）除去', 'dock', 5);
+	// 登録: メモのウィジェット（下書きと保存はページの dock の配線が持つので、dock と一緒に消える）。
+	cutEveryMarked(DASH_WIDGETS, '登録: メモのウィジェット（import と行）除去', 'dock', 2);
+	removeFile(`${DASH_WIDGET_DIR}/MemoWidget.svelte`, 'MemoWidget.svelte 削除');
+	cutEveryMarked(DASH_WIDGETS_TEST, '登録のテスト: メモのウィジェットの検査 除去', 'dock', 1);
 	// #729: dock の文言（DockMessages）を paraglide の `dock.*` から作る橋。dock と一緒に消える
 	// （/tree/workspace-dock も同じ関数を使うが、そのルートは下で消える）。
-	drop(
-		DASH,
-		'dockMessages import 除去',
-		`\timport { dockMessages } from '#lib/banto/dockMessages.js';\n`
-	);
 	removeFile(`${APP}/src/lib/banto/dockMessages.ts`, 'dockMessages.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockMessages.test.ts`, 'dockMessages.test.ts 削除');
 	// 保存済みレイアウトの title を今の言語で解決し直す（dock の validate フック）。
-	drop(
-		DASH,
-		'dockTitles import 除去',
-		`	import { refreshPanelTitles } from '#lib/banto/dockTitles.js';
-`
-	);
 	removeFile(`${APP}/src/lib/banto/dockTitles.ts`, 'dockTitles.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockTitles.test.ts`, 'dockTitles.test.ts 削除');
 	// dock の文言 / 3 ペイン dock の visual は dock が無いと成り立たない。
@@ -558,57 +516,9 @@ function removeDock() {
 		[MSG_EN, 'messages/en']
 	])
 		removeMessageKeys(file, `${label}: dock.* キー除去`, ['dock']);
-	// #432 PR-10: メモ pane の draft と dock の lifecycle の配線（中身は下の「dock スクリプト
-	// 一式」・ワークスペース markup・dockPanel snippet の範囲に収めてある）。
-	drop(
-		DASH,
-		'メモ pane（draft・確認ダイアログ）import 除去',
-		`\timport {\n\t\tMEMO_PANEL_ID,\n\t\tcreateDashboardMemo,\n\t\tcreatePanelChangeHandler,\n\t\tmemoSaveCommand\n\t} from '#lib/banto/dashboardMemo.svelte.js';\n` +
-			// #435 PR-11: メモの Ctrl+S（登録は下の「dock スクリプト一式」の範囲）。
-			// shortcuts.ts 自体はアプリの dispatcher としてコアに残る。
-			`\timport { appShortcuts, firstPressOnly, SAVE_SHORTCUT } from '#lib/shortcuts.js';\n` +
-			`\timport { createSettlePrompt } from '#lib/banto/settlePrompt.svelte.js';\n` +
-			`\timport { untrack } from 'svelte';\n` +
-			`\timport { formValidationMessages } from '#lib/banto/i18n.js';\n` +
-			`\timport { guardUnsavedChanges } from '#lib/unsavedChanges.js';\n` +
-			`\timport type { DraftSettleResult } from '@banto/forms';\n` +
-			`\timport DashboardMemoField from '#lib/components/DashboardMemoField.svelte';\n` +
-			`\timport DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';\n`
-	);
-	cutRegion(
-		DASH,
-		'dock スクリプト一式除去',
-		`\t/**\n\t * M8 dock demo (spec §5, @banto/dock-svelte):`,
-		`\t\treturn listenPanelClosed((id) => dock.open(id));\n\t});`
-	);
-	// #663 ①-C: dock の pane の「表示」メニュー（中身の viewMenuItems は上の「dock スクリプト
-	// 一式」の範囲）。PageViewMenu 自体はシェルの汎用の口としてコアに残る。
-	drop(
-		DASH,
-		'表示メニュー import 除去',
-		`	import PageViewMenu, { type PageViewMenuItem } from '#lib/components/PageViewMenu.svelte';
-`
-	);
-	drop(
-		DASH,
-		'表示メニュー markup 除去',
-		`			<PageViewMenu label={m['dashboard.viewMenu']()} items={viewMenuItems} />
-`
-	);
-	cutRegion(
-		DASH,
-		'分析ワークスペース(dock)markup 除去',
-		`\t\t<section class="workspace">`,
-		`\t\t</section>`
-	);
-	cutRegion(DASH, 'dockIcon snippet 除去', `{#snippet dockIcon(icon: string)}`, `{/snippet}`);
-	cutRegion(
-		DASH,
-		'dockPanel snippet 除去',
-		`{#snippet dockPanel(content: PanelContent)}`,
-		`{/snippet}`
-	);
-	removeFile(`${APP}/src/lib/banto/panels.ts`, 'panels.ts 削除');
+	// #432 PR-10 / #435 PR-11 / #663 ①-C: メモ pane の draft・Ctrl+S・表示メニューの配線は、ページの
+	// `[scaffold:dock]` の領域に入っている（上で切り取り済み）。shortcuts.ts・PageViewMenu 自体は
+	// シェルの汎用の口としてコアに残る。
 	removeFile(`${APP}/src/lib/components/PanelIcon.svelte`, 'PanelIcon.svelte 削除');
 	removeFile(`${APP}/src/lib/banto/popout.ts`, 'popout.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockEscape.ts`, 'dockEscape.ts 削除');
@@ -2023,6 +1933,18 @@ function removeAdminPages() {
 
 function removeDashboard() {
 	removeDir(`${APP}/src/routes/(app)/dashboard`, 'dashboard 画面削除');
+	// #716 W1: ページだけが使う登録（ウィジェット・KPI）・データの読み込み・部品。items の集計
+	// （dashboard.ts、removeItems が消す）に依存するので、ページと一緒に外す。
+	for (const name of [
+		'dashboardWidgets.ts',
+		'dashboardWidgets.test.ts',
+		'dashboardKpis.ts',
+		'dashboardData.svelte.ts',
+		'dashboardData.svelte.test.ts'
+	])
+		removeFile(`${APP}/src/lib/banto/${name}`, `${name} 削除`);
+	removeFile(DASH_KPI_STRIP, 'DashboardKpiStrip.svelte 削除');
+	removeDir(DASH_WIDGET_DIR, 'ダッシュボードのウィジェットの部品 削除');
 	swapText(
 		ROOT_PAGE_TS,
 		'routes/+page.ts: ルートのリダイレクト先を /monitor に',
@@ -2226,8 +2148,8 @@ const ORDER = [
  * 削除系が要るようになったら、その工程が消す印をここに足すこと。
  */
 const STEP_MARKERS = {
-	charts: `${APP}/src/lib/components/DashboardPanel.svelte`,
-	dock: `${APP}/src/lib/banto/panels.ts`,
+	charts: `${APP}/src/lib/components/dashboard/charts`,
+	dock: `${APP}/src/lib/components/dashboard/MemoWidget.svelte`,
 	glass: 'packages/theme/src/css/banto-glass.css',
 	commandPalette: `${APP}/src/lib/components/CommandPalette.svelte`,
 	attachments: 'crates/banto-attachments',

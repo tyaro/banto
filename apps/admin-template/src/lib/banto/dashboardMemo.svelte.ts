@@ -37,6 +37,7 @@ import {
 } from '@banto/forms';
 import type { DockPanelChange } from '@banto/dock-svelte';
 import type { CommandSpec } from '@banto/ui';
+import { getContext, setContext } from 'svelte';
 
 /** The dock panel id; also the draft's key (one draft per pane). */
 export const MEMO_PANEL_ID = 'memo';
@@ -266,4 +267,32 @@ export function createDashboardMemo(options: DashboardMemoOptions): DashboardMem
 			setting.dispose();
 		}
 	};
+}
+
+/**
+ * What the memo widget draws (#716 W1): the page-owned draft, the save command (button and
+ * Ctrl+S are one command), the button's tooltip, and why the last save / close did not finish.
+ * `status` changes, so the page provides an object with getters.
+ */
+export interface DashboardMemoPane {
+	readonly draft: FormDraft;
+	readonly save: CommandSpec;
+	readonly saveTitle: string;
+	readonly status: string | null;
+}
+
+const MEMO_PANE_CONTEXT = Symbol('banto.dashboard.memoPane');
+
+/**
+ * The page hands its memo to the memo widget through context, not props: every widget takes the
+ * same props (`DashboardWidgetProps`), and the memo is the page's, not the data's. Call during
+ * the page's initialization.
+ */
+export function provideDashboardMemoPane(pane: DashboardMemoPane): void {
+	setContext(MEMO_PANE_CONTEXT, pane);
+}
+
+/** The memo the page provided; `undefined` where there is none (the popped-out window). */
+export function dashboardMemoPane(): DashboardMemoPane | undefined {
+	return getContext<DashboardMemoPane | undefined>(MEMO_PANE_CONTEXT);
 }

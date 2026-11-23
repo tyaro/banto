@@ -95,8 +95,10 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 ### `@banto/dock-svelte`（ダッシュボードのドッキングレイアウト）
 
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
-`DockHost`/`dock`/`onPopOut` 関連コード（pane を開閉する「表示」メニュー `PageViewMenu` の
-import と配置も。`PageViewMenu.svelte`・`src/lib/pageViewMenu.svelte.ts` 自体はシェルの汎用の口なので残す。#663）、`src/lib/banto/panels.ts`・
+`DockHost`/`dock`/`onPopOut` 関連コード（`[scaffold:dock]` の印で挟んだ 5 つの領域: import・script・pane を開閉する「表示」メニュー `PageViewMenu` の
+配置・分析ワークスペース・snippet。`PageViewMenu.svelte`・`src/lib/pageViewMenu.svelte.ts` 自体はシェルの汎用の口なので残す。#663）、ダッシュボードの登録 `src/lib/banto/dashboardWidgets.ts` の `[scaffold:dock]` の領域
+（メモのウィジェットの import と登録の行。チャートのウィジェットの登録と固定のカードは残る）と、その単体テスト `dashboardWidgets.test.ts` の同じ印の領域、
+`src/lib/components/dashboard/MemoWidget.svelte`・`src/lib/components/PanelIcon.svelte`（#716）・
 `src/lib/banto/popout.ts`・`src/lib/banto/dockEscape.ts` とその `.test.ts`（dock の gesture の
 Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とその `.test.ts`（dock の文言を `dock.*` から作る。`messages/{ja,en}.json` の `dock.*` キーも外す。#729）・`src/lib/banto/dockTitles.ts` とその `.test.ts`（保存済みレイアウトの title を今の言語で引き直す。#729）（レイアウトの保存の部品は `@banto/dock-svelte` の中にあるので、パッケージと一緒に外れる。ダッシュボードの `currentSessionScope`・`isCurrentSessionScope` の import と、ダッシュボードの dock の保存を見る `e2e/demo/dashboard-layout-commit.spec.ts` も外す。#791）・`src/routes/panel/[id]/`（ポップアウト先の
 スタンドアロンウィンドウ用ルート）、メモ pane の draft と確認ダイアログ
@@ -124,10 +126,15 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とそ�
 
 ### `@banto/charts`（SVGチャート）
 
-`apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
-チャートのカード（最初の `chart-grid`）とスタットタイルの `Sparkline`、
-`src/lib/components/DashboardPanel.svelte`・`src/lib/banto/dashboard.ts` の
+ダッシュボードのチャートは「登録 1 件 + 部品 1 ファイル」のウィジェットなので（#716）、ページ
+（`dashboard/+page.svelte`）は触らず、登録の行と部品のファイルを消す:
+`apps/admin-template/src/lib/banto/dashboardWidgets.ts` の `[scaffold:charts]` の領域（部品の import と、
+ウィジェット・固定のカードの行）と、その単体テスト `dashboardWidgets.test.ts` の同じ印の領域、
+`src/lib/components/dashboard/charts/`（チャートのウィジェットの部品。ディレクトリごと）、
+KPI の帯の `Sparkline`（`src/lib/banto/dashboardKpis.ts` と `src/lib/components/DashboardKpiStrip.svelte` の
+`[scaffold:charts]` の領域）、`src/lib/banto/dashboard.ts` の
 `@banto/charts` に依存する集計処理（`// --- M24 chart demo data` 以降と `GanttTask` の import）を削除。
+dock を残すなら、dock にはメモのパネルだけが残る。
 チャート見本のデモ専用ルート `src/routes/(app)/chart-gallery/` も丸ごと削除し、あわせて
 `src/lib/navigation.ts` の `allNavItems` の `/chart-gallery` 行と
 `DemoNavIconKey`（`'chart-gallery'`）・`DemoNavLabelKey`（`'nav.chartGallery'`）の語、

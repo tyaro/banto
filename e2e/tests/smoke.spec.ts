@@ -26,7 +26,15 @@
  * `window.confirm`). The exception is scenario 13b's "the event
  * stream sends nothing more" check, which can only be observed over a window.
  */
-import { expect, test, type Dialog, type Locator, type Page, type Route } from '@playwright/test';
+import {
+	expect,
+	test,
+	type Dialog,
+	type Locator,
+	type Page,
+	type Request,
+	type Route
+} from '@playwright/test';
 import fs from 'node:fs';
 import { E2E_ADMIN, loginAsFirstAdmin } from '../first-admin';
 import {
@@ -3773,6 +3781,38 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto('/settings/appearance');
 		await densityGroup().getByText('標準', { exact: true }).click();
 		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'standard');
+	});
+
+	// #716 W1 (downstream-requests-2026-11-plan §4.13.3): the dashboard reads `items` ONCE per
+	// page load and hands the rows to the KPI strip, the fixed cards and the dock's panels. Before
+	// W1 the page read it and every dock panel read its own copy (3 requests with the default
+	// layout, one more for each panel shown later).
+	test('13k3. dashboard: one read of items feeds the KPI strip, the cards and the dock panels', async () => {
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		const reads: string[] = [];
+		const countRead = (request: Request) => {
+			if (new URL(request.url()).pathname === '/api/items/list' && request.method() === 'POST')
+				reads.push(request.url());
+		};
+		page.on('request', countRead);
+		try {
+			await page.reload();
+			// The same widget twice: the fixed card and the docked panel of the default layout.
+			await expect(page.getByRole('img', { name: '月別更新件数の面グラフ' })).toHaveCount(2);
+			await expect(page.getByRole('img', { name: '価格帯分布のドーナツグラフ' })).toHaveCount(2);
+			// A panel shown later draws from the rows already read.
+			await toggleDashboardPanel(page, 'SPC');
+			await expect(
+				page.getByRole('img', { name: '価格分布のヒストグラム（正規分布カーブ重ね描き）' })
+			).toBeVisible();
+			// No late read either (REST mode keeps an SSE stream open, so there is no network idle to wait for).
+			await page.waitForTimeout(500);
+			expect(reads).toHaveLength(1);
+		} finally {
+			page.off('request', countRead);
+			await resetDashboardLayout(page);
+		}
 	});
 
 	// Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the dashboard

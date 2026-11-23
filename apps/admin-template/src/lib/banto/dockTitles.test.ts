@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createDockState, type DockLayout } from '@banto/dock-svelte';
-import { findPanelDef } from '#lib/banto/panels.js';
+import { findDashboardWidget } from '#lib/banto/dashboardWidgets.js';
 import { refreshPanelTitles } from '#lib/banto/dockTitles.js';
 import { dockMessages } from '#lib/banto/dockMessages.js';
 import { overwriteGetLocale, type Locale } from '#lib/paraglide/runtime.js';
 
 const use = (l: Locale) => overwriteGetLocale(() => l);
 const JA = /[\u3040-\u30ff\u4e00-\u9fff]/;
-const lookup = (id: string) => findPanelDef(id)?.title;
+const lookup = (id: string) => findDashboardWidget(id)?.title;
 
 const win = (id: string, title: string, extra: object = {}) => ({
 	id,
@@ -79,7 +79,7 @@ describe('refreshPanelTitles (#729 review)', () => {
 		const layout = dock.layout;
 
 		const memo = layout.floating.find((w) => w.id === 'memo')!;
-		expect(memo.title).toBe(findPanelDef('memo')!.title);
+		expect(memo.title).toBe(findDashboardWidget('memo')!.title);
 		expect(memo.title).not.toMatch(JA);
 		expect(memo.x).toBe(77); // geometry kept
 		const closed = layout.floating.find((w) => w.id === 'spc')!;

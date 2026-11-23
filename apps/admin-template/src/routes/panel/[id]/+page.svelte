@@ -21,12 +21,12 @@
 	import { getSessionController, resolveSettled } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
 	import { bantoReady } from '#lib/banto/setup.js';
-	import { findPanelDef } from '#lib/banto/panels.js';
-	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
+	import { createDashboardData } from '#lib/banto/dashboardData.svelte.js';
+	import { findDashboardWidget } from '#lib/banto/dashboardWidgets.js';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
 
 	const id = $derived(page.params.id ?? '');
-	const def = $derived(findPanelDef(id));
+	const def = $derived(findDashboardWidget(id));
 
 	// 'unverified' (Issue #204): the server could not check the session (a
 	// 500 / unreachable). Not the same as logged out - say so, and keep the
@@ -44,6 +44,16 @@
 			else authState = result.snapshot.status === 'active' ? 'ok' : 'unauthenticated';
 		})();
 	});
+
+	// This window is its own document (its own JS heap, no cache shared with the main window), so
+	// it reads its own copy of the data - once, and only once the session is confirmed. The
+	// widget gets it as a prop, like on the dashboard page (dashboardData.svelte.ts, #716 W1).
+	const data = createDashboardData();
+	$effect(() => {
+		if (authState !== 'ok') return;
+		void data.load();
+	});
+	$effect(() => () => data.dispose());
 
 	// The route's own viewport is the chart's height budget (no dashboard
 	// grid/card chrome around it here) - measured the same
@@ -69,7 +79,13 @@
 			<span class="title">{def?.title ?? id}</span>
 		</header>
 		<div class="panel-body" bind:clientHeight={bodyHeight}>
-			<DashboardPanel {id} height={chartHeight} />
+			{#if data.loading && data.rows.length === 0}
+				<p class="panel-status">{m['common.loading']()}</p>
+			{:else if def}
+				<def.component {data} height={chartHeight} />
+			{:else}
+				<p class="panel-status">{m['dashboard.unknownPanel']()}</p>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -83,6 +99,14 @@
 		padding: var(--banto-space-4);
 		text-align: center;
 		color: var(--banto-text-muted);
+	}
+
+	/* Caption-style status text (dashboard page's .card-caption, spec §10). */
+	.panel-status {
+		margin: 0;
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-sm);
+		text-wrap: pretty;
 	}
 
 	.panel-window {
