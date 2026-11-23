@@ -487,7 +487,9 @@ class Impl<T> implements SavedSetting<T> {
 				// the session and the edit version right before writing state.
 				const sent = this.#independent(target.raw, target.value);
 				const mergedCurrent =
-					target.raw !== sentRaw ? this.#independent(target.raw, target.value) : null;
+					target.raw !== sentRaw
+						? { value: this.#independent(target.raw, target.value) }
+						: undefined;
 				if (!request.isCurrent()) {
 					ok = false;
 				} else if (guard && !guard()) {
@@ -498,9 +500,9 @@ class Impl<T> implements SavedSetting<T> {
 					this.#saved = sent;
 					this.#hasSaved = true;
 					this.#baseRaw = target.raw;
-					if (mergedCurrent !== null && this.#editVersion === editVersion) {
+					if (mergedCurrent !== undefined && this.#editVersion === editVersion) {
 						// A merge changed what was saved and the user has not edited since.
-						this.#value = mergedCurrent;
+						this.#value = mergedCurrent.value;
 						this.#raw = target.raw;
 					}
 					// The user edited during a send whose value `merge` changed: their

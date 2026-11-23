@@ -1340,3 +1340,27 @@ describe('repeated conflicts (#786 C6)', () => {
 		expect(s.stored()).toBe(raw(25));
 	});
 });
+
+describe('nullable values (#786 C6)', () => {
+	it('a merge result of null becomes current as well as saved', async () => {
+		const s = fakeServer(JSON.stringify({ v: 1, x: 1 }));
+		const setting = createSavedSetting<Pos | null>({
+			provider: s.provider,
+			key: 'layout',
+			parse: (r) => {
+				const o = JSON.parse(r) as { x: number | null };
+				return o.x === null ? null : { x: o.x };
+			},
+			serialize: (v) => JSON.stringify({ v: 1, x: v === null ? null : v.x }),
+			fallback: () => ({ x: 0 }),
+			merge: () => null
+		});
+		await setting.load();
+		s.external(JSON.stringify({ v: 1, x: 10 }));
+		setting.set({ x: 5 });
+		expect(await setting.save()).toBe(true);
+		expect(setting.saved).toBeNull();
+		expect(setting.current).toBeNull();
+		expect(setting.dirty).toBe(false);
+	});
+});
