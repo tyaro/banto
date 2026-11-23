@@ -243,9 +243,15 @@ export function watchShadow(dock: DockState, watch: ((follow: ShadowFollow) => v
 /**
  * What a floated pane remembers of its place: a mark and nothing else - the place itself is the
  * pane's tombstone in S. A new one every time the pane is floated (#735), so that two marks are the
- * same only for the same floating window (`homeMark`).
+ * same only for the same floating window (`homeMark`). `n` tells two marks apart where they are
+ * written as JSON - `PanelLifecycle` takes a request for the same changes and target as one already
+ * waiting (`drag.svelte.ts#placeBack` puts the mark in the target; Codex review of #878).
  */
-type HomeMark = object;
+interface HomeMark {
+	readonly n: number;
+}
+
+let homeMarks = 0;
 
 /** What a `DockState` holds beside its layout at one moment (`rememberShadow`). */
 interface HeldShadow {
@@ -1650,7 +1656,7 @@ export class DockState {
 		};
 		// Before the assignment: the setter takes a docked pane gone from the tree with no place
 		// remembered as one that left for good.
-		if (placed) this.#homes.set(panelId, {});
+		if (placed) this.#homes.set(panelId, { n: ++homeMarks });
 		else this.#homes.delete(panelId);
 		this.#shadowLost.delete(panelId);
 		const docked = this.#projected(

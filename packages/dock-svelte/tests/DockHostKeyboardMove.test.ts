@@ -963,4 +963,36 @@ describe('"back" after the pane was docked through the API (#735)', () => {
 		expect(await pending).toBe('stale');
 		expect(JSON.stringify(dock.layout)).toBe(before);
 	});
+
+	// Review of #878: the mark of a place is in the target of the request, and tells another float of
+	// the same pane apart where requests are compared as JSON. The same float asked twice shares one
+	// answer; a pane docked and floated again is asked on its own.
+	it('"back" of the same float while it waits shares the answer; after docked and floated again it is asked anew', async () => {
+		let asked = 0;
+		const resolvers: ((ok: boolean) => void)[] = [];
+		const { dock, host } = mount({
+			beforePanelChange: (c) =>
+				c.kind === 'dock' && c.panelId === 'tree'
+					? new Promise<boolean>((r) => {
+							asked++;
+							resolvers.push(r);
+						})
+					: true
+		});
+		expect(await host().movePanel('tree', { float: true })).toBe('applied');
+		const first = host().movePanel('tree', { back: true });
+		const again = host().movePanel('tree', { back: true });
+		await settle();
+		expect(asked).toBe(1);
+		dock.dockPanel('tree', 'detail', 'right');
+		dock.undockPanel('tree');
+		const second = host().movePanel('tree', { back: true });
+		await settle();
+		expect(asked).toBe(2);
+		resolvers.forEach((r) => r(true));
+		expect(await first).toBe('stale');
+		expect(await again).toBe('stale');
+		expect(await second).toBe('applied');
+		expect(dock.hasHome('tree')).toBe(false);
+	});
 });

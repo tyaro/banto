@@ -471,7 +471,10 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
 - **`@banto/dock-svelte`: `dock.homeSlot(id)`・`dockAtSlot`・`restoredAt`・`DockSlot`・`captureDockSlot` / `restoreDockSlot` /
   `captureRegionSlot` / `restoreRegionSlot` は消えた（#782 PR8c、破壊的）**。浮かせた pane を戻すのは `dock.dockBack(id)`・
   `dock.backTree(id)`（戻る先の木の予告。戻れるかは `backTree(id) !== null`）・`dock.hasHome(id)`・`movePanel(id, { back: true })`。
-  「同じ浮動のままか」を見ていた所は、内部の印ではなく `hasHome(id)` と `layout.floating` で見る。自分で `captureDockSlot` した
+  `hasHome(id)` と `layout.floating` で分かるのは「今」の状態で、同じ id が「ドックされてまた浮かされた」ことは区別できない
+  （「同じ浮動か」の同一性に公開の直接の代わりは無い。#782 の決定）。ユーザーの「元の場所に戻す」は、確認（`beforePanelChange`）と
+  「待っている間に変わっていたら `stale`」の守りを持つ `movePanel(id, { back: true })` を使う。`backTree(id)` は閉じた浮動にも
+  戻り先を返すので、実際に戻す `dockBack` / `movePanel` には窓が開いていることも要る。自分で `captureDockSlot` した
   slot で戻していた所は、`undockPanel` で浮かせて `dockBack` で戻す形に替える（戻る場所は浮かせた時の位置の影の木の墓石）。
   テンプレート・e2e・下流には使用が無かった。
 
