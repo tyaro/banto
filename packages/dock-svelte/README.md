@@ -917,7 +917,8 @@ $effect(() => () => store.dispose()); // 残りの書き込みを flush
   `target.attach(status)` → `store.load()`、`defaultLayout: () => target.defaultLayout`。`status` は `ThreePaneDock` の
   `onRestore` が知らせた値で、省略できる（`beforeBaseline` を使うときは渡す: 最初の描画の写しが使えず、部品が
   既定で始めたことが伝わる。マウント後の復元が既定になったこと（`restoreLayout` の `status: 'default'`）は、
-  渡さなくても伝わる）。配線の全体は
+  渡さなくても伝わる。どちらも、置き換えが実際に入った（`outcome: 'applied'`）ときだけ: `beforePanelChange` に
+  断られた・`stale` になった復元では、前の配置が残るので `beforeBaseline` は呼ばない）。配線の全体は
   [docs/recipes/three-pane-dock.md](../../docs/recipes/three-pane-dock.md)「レイアウトの保存」。
 
 ## 保存の約束（serialize / hydrate と書き込みは別）

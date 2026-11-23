@@ -446,4 +446,46 @@ describe('ThreePaneDock + dockLayoutStore: applying a layout never writes to the
 		await vi.advanceTimersByTimeAsync(2000);
 		expect(provider.set).not.toHaveBeenCalled();
 	});
+
+	it.each(['refused', 'stale', 'invalid', 'unavailable', 'throws'])(
+		'beforeBaseline does not run when the default was not put in (%s): the earlier layout stays (PR #881 review)',
+		async (outcome) => {
+			const beforeBaseline = vi.fn();
+			const custom = { schema: 1, name: 'custom' };
+			for (const value of [null, '{"schema":99}']) {
+				beforeBaseline.mockClear();
+				const { api } = fakeDock(custom);
+				const { target, mount } = make();
+				const provider = {
+					get: vi.fn(async () => ({ value })),
+					set: vi.fn(async () => {})
+				};
+				const storage = memoryStorage();
+				storage.setItem(`${KEY}:${SCOPE.owner}`, JSON.stringify(custom));
+				const store = createDockLayoutStore({
+					dock: target,
+					storageKey: KEY,
+					settingKey: 'dock.three-test',
+					provider: () => provider,
+					defaultLayout: () => target.defaultLayout,
+					beforeBaseline,
+					storage,
+					scope: SCOPE,
+					isCurrent: () => true
+				});
+				const restoreLayout = vi.fn(async () => {
+					if (outcome === 'throws') throw new Error('restore failed');
+					// The dock's guard said no: `custom` is still what is shown.
+					return { status: 'default', outcome };
+				});
+				mount({ layoutSnapshot: api.layoutSnapshot, restoreLayout }, 'restored');
+				await store.load();
+				await flushAsync();
+				expect(restoreLayout).toHaveBeenCalledTimes(1);
+				expect(beforeBaseline).not.toHaveBeenCalled();
+				await vi.advanceTimersByTimeAsync(2000);
+				expect(provider.set).not.toHaveBeenCalled();
+			}
+		}
+	);
 });

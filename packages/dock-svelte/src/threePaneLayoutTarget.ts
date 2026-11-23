@@ -17,7 +17,8 @@
  *   resolved or rejected) it keeps answering what it answered right after the assignment, and the
  *   end is reported with `onApplied` so the store re-takes its baseline from what is really shown
  *   (a swap is never saved as a user's change) - with whether what landed is the default (asked
- *   for, or a stored value the dock could not use: `restoreLayout`'s `status: 'default'`);
+ *   for, or a stored value the dock could not use: `restoreLayout`'s `status: 'default'` - and
+ *   only when the replacement went in, `outcome: 'applied'`);
  * - the store's "default" is a sentinel layout: assigning it means `restoreLayout(undefined)` (the
  *   dock's own measured default), skipped when the dock still shows the default it started with.
  *
@@ -52,6 +53,21 @@ export interface ThreePaneLayoutTarget extends DockLayoutTarget {
 	 * `onRestore` answer for `initialLayout` (`'default'` / `'fresh'` = the default is shown).
 	 */
 	attach(status?: string): void;
+}
+
+/**
+ * Whether a finished `restoreLayout(saved)` put the default in: it was asked for (`undefined`) or
+ * the dock could not use the stored value (`status: 'default'`) - and the replacement really went
+ * in. `status` only says how the value was reconciled; a replacement that was `refused`, `stale`,
+ * `invalid` or `unavailable` (`outcome`) leaves the earlier layout on screen (PR #881 review).
+ */
+function landedDefault(saved: unknown, result: unknown): boolean {
+	const { status, outcome } =
+		typeof result === 'object' && result !== null
+			? (result as { status?: unknown; outcome?: unknown })
+			: {};
+	if (outcome !== undefined && outcome !== 'applied') return false;
+	return saved === undefined || status === 'default';
 }
 
 export function createThreePaneLayoutTarget(
@@ -97,13 +113,9 @@ export function createThreePaneLayoutTarget(
 		// A rejected restore still ends the freeze: whatever is shown then is what was applied.
 		const run: Promise<void> = started
 			.then(
-				// The default: asked for, or the dock could not use the stored value.
-				(result) =>
-					saved === undefined ||
-					(typeof result === 'object' &&
-						result !== null &&
-						(result as { status?: unknown }).status === 'default'),
-				() => undefined
+				(result) => landedDefault(saved, result),
+				// A restore that threw put nothing in: what is shown is not the default it asked for.
+				() => false
 			)
 			.then((isDefault) => {
 				if (inFlight !== run) return;
