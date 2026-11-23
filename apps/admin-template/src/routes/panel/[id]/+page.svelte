@@ -24,6 +24,7 @@
 	import { createDashboardData } from '#lib/banto/dashboardData.svelte.js';
 	import { findDashboardWidget } from '#lib/banto/dashboardWidgets.js';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
+	import DashboardWidgetFrame from '#lib/components/dashboard/DashboardWidgetFrame.svelte';
 
 	const id = $derived(page.params.id ?? '');
 	const def = $derived(findDashboardWidget(id));
@@ -55,11 +56,8 @@
 	});
 	$effect(() => () => data.dispose());
 
-	// The route's own viewport is the chart's height budget (no dashboard
-	// grid/card chrome around it here) - measured the same
-	// bind:clientHeight pattern as the dashboard's dock panes use.
-	let bodyHeight: number = $state(0);
-	const chartHeight = $derived(Math.max(140, bodyHeight - 16));
+	// The route's own viewport is the widget's height budget (no dashboard chrome around it
+	// here): `DashboardWidgetFrame` measures the body's content box, as in a pane of the dock.
 </script>
 
 <svelte:head>
@@ -78,11 +76,11 @@
 			{#if def?.icon}<span class="icon" aria-hidden="true"><PanelIcon icon={def.icon} /></span>{/if}
 			<span class="title">{def?.title ?? id}</span>
 		</header>
-		<div class="panel-body" bind:clientHeight={bodyHeight}>
+		<div class="panel-body">
 			{#if data.loading && data.rows.length === 0}
 				<p class="panel-status">{m['common.loading']()}</p>
 			{:else if def}
-				<def.component {data} height={chartHeight} />
+				<DashboardWidgetFrame widget={def} {data} />
 			{:else}
 				<p class="panel-status">{m['dashboard.unknownPanel']()}</p>
 			{/if}

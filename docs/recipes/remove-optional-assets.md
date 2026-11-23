@@ -95,17 +95,20 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 ### `@banto/dock-svelte`（ダッシュボードのドッキングレイアウト）
 
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
-`DockHost`/`dock`/`onPopOut` 関連コード（`[scaffold:dock]` の印で挟んだ 5 つの領域: import・script・pane を開閉する「表示」メニュー `PageViewMenu` の
-配置・分析ワークスペース・snippet。`PageViewMenu.svelte`・`src/lib/pageViewMenu.svelte.ts` 自体はシェルの汎用の口なので残す。#663）、ダッシュボードの登録 `src/lib/banto/dashboardWidgets.ts` の `[scaffold:dock]` の領域
-（メモのウィジェットの import と登録の行。チャートのウィジェットの登録と固定のカードは残る）と、その単体テスト `dashboardWidgets.test.ts` の同じ印の領域、
+`DockHost`/`dock`/`onPopOut` 関連コード（`[scaffold:dock]` の印で挟んだ 7 つの領域: import・script・pane を開閉する「表示」メニュー `PageViewMenu` の
+配置・ページの幅の計測・dock・メモを閉じるときの確認・snippet。`PageViewMenu.svelte`・`src/lib/pageViewMenu.svelte.ts` 自体はシェルの汎用の口なので残す。#663）、ダッシュボードの登録 `src/lib/banto/dashboardWidgets.ts` の `[scaffold:dock]` の領域
+（メモのウィジェットの import と登録の行。チャートと一覧のウィジェットの登録は残る）と、その単体テスト `dashboardWidgets.test.ts` の同じ印の領域、
+`src/lib/banto/dashboardLayout.ts` とその `.test.ts`（既定の配置・dock の高さ・保存キー・保存値の確かめ。#716）・
 `src/lib/components/dashboard/MemoWidget.svelte`・`src/lib/components/PanelIcon.svelte`（#716）・
 `src/lib/banto/popout.ts`・`src/lib/banto/dockEscape.ts` とその `.test.ts`（dock の gesture の
 Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とその `.test.ts`（dock の文言を `dock.*` から作る。`messages/{ja,en}.json` の `dock.*` キーも外す。#729）・`src/lib/banto/dockTitles.ts` とその `.test.ts`（保存済みレイアウトの title を今の言語で引き直す。#729）（レイアウトの保存の部品は `@banto/dock-svelte` の中にあるので、パッケージと一緒に外れる。ダッシュボードの `currentSessionScope`・`isCurrentSessionScope` の import と、ダッシュボードの dock の保存を見る `e2e/demo/dashboard-layout-commit.spec.ts` も外す。#791）・`src/routes/panel/[id]/`（ポップアウト先の
 スタンドアロンウィンドウ用ルート）、メモ pane の draft と確認ダイアログ
 （`src/lib/banto/dashboardMemo.svelte.ts`・`src/lib/banto/settlePrompt.svelte.ts` と
 それぞれの `.test.ts`、`src/lib/components/DashboardMemoField.svelte`・
-`src/lib/components/DraftSettleDialog.svelte`。#432。メモの Ctrl+S の登録もここ。#435）を削除し、ダッシュボードページを固定
-レイアウトのパネル羅列に置き換える。3 ペインの dock 版の見本（`ThreePaneDock`、#663 ④）
+`src/lib/components/DraftSettleDialog.svelte`。#432。メモの Ctrl+S の登録もここ。#435）を削除する。印の領域を切った後の
+ダッシュボードは、KPI の帯の下に、登録に残ったウィジェット（チャートと一覧）を登録の順に 1 列で積む
+（`src/lib/components/dashboard/DashboardWidgetStack.svelte`。配置の編集と保存は無い。dock があるときも、ページの幅が 900px 以下なら
+同じ表示になる。#716）。ページの `stackView` は、領域を切った後の既定（いつも積む・登録を全部出す）のまま残る。3 ペインの dock 版の見本（`ThreePaneDock`、#663 ④）
 `src/routes/(app)/tree/workspace-dock/`（ルート丸ごと。固定版の見本 `tree/workspace/` は残る）も削除し、
 `/tree` の索引（`src/routes/(app)/tree/+page.svelte`）の「dock 版」のリンクカードと
 `messages/{ja,en}.json` の `tree.workspaceDock.*` キーを外す（ツリーデモごと消すなら、これらはツリーの削除に含まれる）。
@@ -129,12 +132,13 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とそ�
 ダッシュボードのチャートは「登録 1 件 + 部品 1 ファイル」のウィジェットなので（#716）、ページ
 （`dashboard/+page.svelte`）は触らず、登録の行と部品のファイルを消す:
 `apps/admin-template/src/lib/banto/dashboardWidgets.ts` の `[scaffold:charts]` の領域（部品の import と、
-ウィジェット・固定のカードの行）と、その単体テスト `dashboardWidgets.test.ts` の同じ印の領域、
+ウィジェットの行）と、その単体テスト `dashboardWidgets.test.ts` の同じ印の領域、
 `src/lib/components/dashboard/charts/`（チャートのウィジェットの部品。ディレクトリごと）、
 KPI の帯の `Sparkline`（`src/lib/banto/dashboardKpis.ts` と `src/lib/components/DashboardKpiStrip.svelte` の
 `[scaffold:charts]` の領域）、`src/lib/banto/dashboard.ts` の
 `@banto/charts` に依存する集計処理（`// --- M24 chart demo data` 以降と `GanttTask` の import）を削除。
-dock を残すなら、dock にはメモのパネルだけが残る。
+dock を残すなら、dock には一覧（在庫の少ない商品）とメモのパネルが残る（既定の配置は登録に在るものだけで組まれ、
+dock の高さも 1 行ぶん = 300px になる。`dashboardLayout.ts`）。dock も外すなら、一覧だけを積む。
 チャート見本のデモ専用ルート `src/routes/(app)/chart-gallery/` も丸ごと削除し、あわせて
 `src/lib/navigation.ts` の `allNavItems` の `/chart-gallery` 行と
 `DemoNavIconKey`（`'chart-gallery'`）・`DemoNavLabelKey`（`'nav.chartGallery'`）の語、

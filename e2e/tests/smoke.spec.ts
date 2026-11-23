@@ -134,6 +134,43 @@ async function toggleDashboardPanel(page: Page, name: string): Promise<void> {
 	await expect(menu).toHaveCount(0);
 }
 
+/**
+ * The dashboard's dock docks the memo in its default arrangement (#716 W2). The scenarios below
+ * that start from a FLOATING memo float it first: the last item of its "panel actions" menu.
+ */
+async function floatDashboardMemo(page: Page): Promise<void> {
+	const host = page.locator('.dock-wrapper [data-dock-host]');
+	await host.getByRole('button', { name: 'メモのパネルの操作', exact: true }).click();
+	await page
+		.getByRole('menu', { name: 'メモのパネルの操作', exact: true })
+		.getByRole('menuitem', { name: '浮かせる', exact: true })
+		.click();
+	await expect(page.getByRole('dialog', { name: 'メモ' })).toBeVisible();
+}
+
+/**
+ * The dashboard's dock is 900px high (three rows, #716 W2) - taller than what is left of the
+ * suite's 1440x900 viewport. A scenario that drags across the dock makes the viewport tall enough
+ * to show all of it, and puts it back when done.
+ */
+const DOCK_VIEWPORT = { width: 1440, height: 1300 };
+const SUITE_VIEWPORT = { width: 1440, height: 900 };
+
+/**
+ * What this copy of the template is meant to have, read from the app's dependencies - NOT from
+ * the page. A scenario that needs an optional package skips by this, and then asserts the DOM:
+ * asking the page instead ("is there a dock?") would also skip when a regression removed the
+ * dock from a copy that should have it (#884 cross review).
+ */
+const APP_DEPENDENCIES: Record<string, string> =
+	(
+		JSON.parse(
+			fs.readFileSync(new URL('../../apps/admin-template/package.json', import.meta.url), 'utf8')
+		) as { dependencies?: Record<string, string> }
+	).dependencies ?? {};
+const HAS_CHARTS = '@banto/charts' in APP_DEPENDENCIES;
+const HAS_DOCK = '@banto/dock-svelte' in APP_DEPENDENCIES;
+
 function minimalPngBuffer(): Buffer {
 	return Buffer.from(MIN_PNG_BASE64, 'base64');
 }
@@ -3784,9 +3821,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	// #716 W1 (downstream-requests-2026-11-plan §4.13.3): the dashboard reads `items` ONCE per
-	// page load and hands the rows to the KPI strip, the fixed cards and the dock's panels. Before
-	// W1 the page read it and every dock panel read its own copy (3 requests with the default
-	// layout, one more for each panel shown later).
+	// page load and hands the rows to the KPI strip and to every widget of the dock. Before W1 the
+	// page read it and every dock panel read its own copy (3 requests with the default layout, one
+	// more for each panel shown later).
 	//
 	// Two tests, so the first holds in any scaffolded copy that keeps the dashboard (it needs
 	// neither the charts nor the dock: the KPI strip is always there); the second needs both.
@@ -3815,23 +3852,38 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
-	test('13k4. dashboard: the cards, the docked panels and a panel shown later draw from that one read', async () => {
+	test('13k4. dashboard: the docked widgets and a widget added later draw from that one read', async () => {
+		// Only where the dashboard has both the charts and the dock. Decided by what this copy is
+		// meant to have (its dependencies), not by the page: below, the DOM is then REQUIRED.
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
 		await page.goto('/dashboard');
-		// Only where the dashboard has both the chart cards and the dock: a copy scaffolded without
-		// `charts` or `dock` keeps this file, and 13k3 above is its check. Asked of the page itself
-		// (once the read has settled, the cards are drawn if any are registered), not of the scaffold.
 		await expect(page.locator('.stat-value').first()).not.toHaveText('0');
-		const hasCards = (await page.locator('.chart-grid').count()) > 0;
-		const hasDock = (await page.locator('.dock-wrapper').count()) > 0;
-		test.skip(!hasCards || !hasDock, 'needs the chart cards and the dock (removed by scaffold)');
+		// #716 W2: one dock holds every widget - no fixed grid of cards, no second place.
+		await expect(page.locator('.dock-wrapper [data-dock-host]')).toHaveCount(1);
+		await expect(page.locator('.chart-grid, .workspace')).toHaveCount(0);
 		await resetDashboardLayout(page);
 		const counter = countItemsReads();
 		try {
 			await page.reload();
-			// The same widget twice: the fixed card and the docked panel of the default layout.
-			await expect(page.getByRole('img', { name: '月別更新件数の面グラフ' })).toHaveCount(2);
-			await expect(page.getByRole('img', { name: '価格帯分布のドーナツグラフ' })).toHaveCount(2);
-			// A panel shown later draws from the rows already read.
+			// The default arrangement: the five charts, the list and the memo, each ONCE (before W2
+			// 月別更新件数 and 価格帯分布 were drawn twice, as a card and as a panel).
+			for (const id of [
+				'monthly',
+				'categoryStock',
+				'stackedBar',
+				'priceBuckets',
+				'scatter',
+				'lowStock',
+				'memo'
+			])
+				await expect(page.locator(`.dock-wrapper [data-dock-drop-id="${id}"]`)).toHaveCount(1);
+			await expect(page.getByRole('img', { name: '月別更新件数の面グラフ' })).toHaveCount(1);
+			await expect(page.getByRole('img', { name: '価格帯分布のドーナツグラフ' })).toHaveCount(1);
+			// The list shows rows of the same read.
+			await expect(
+				page.locator('.dock-wrapper [data-dock-drop-id="lowStock"]').getByRole('row').nth(1)
+			).toBeVisible();
+			// A widget added later (not in the default) draws from the rows already read.
 			await toggleDashboardPanel(page, 'SPC');
 			await expect(
 				page.getByRole('img', { name: '価格分布のヒストグラム（正規分布カーブ重ね描き）' })
@@ -3841,6 +3893,34 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		} finally {
 			counter.stop();
 			await resetDashboardLayout(page);
+		}
+	});
+
+	// #716 W2: a chart with a legend fits its pane. The legend is drawn below the chart's SVG; the
+	// widget used to be handed the pane's height for the SVG alone, so the legend (and the bottom
+	// of the chart) was cut off by about 28px.
+	test('13k5. dashboard: a chart and its legend fit inside the pane', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		// 価格帯分布 (a donut with a four-item legend) and the stacked bar (three items).
+		for (const id of ['priceBuckets', 'stackedBar']) {
+			const paneBody = page.locator(`.dock-wrapper [data-dock-drop-id="${id}"] .dock-panel`);
+			await expect(paneBody.locator('svg').first()).toBeVisible();
+			await expect
+				.poll(() =>
+					paneBody.evaluate((body) => {
+						const fit = body.querySelector('.chart-fit');
+						if (!fit) return 'no chart';
+						const style = getComputedStyle(body);
+						const room =
+							body.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+						// Fits (a pixel of rounding), and uses the room it has.
+						const used = fit.getBoundingClientRect().height;
+						return used <= room + 1 && used >= room - 4 ? 'fits' : `${used} of ${room}`;
+					})
+				)
+				.toBe('fits');
 		}
 	});
 
@@ -3856,7 +3936,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
 		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
 		const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
-		const workspace = page.locator('.workspace');
+		const workspace = page.locator('.dock-wrapper');
 		const unsaved = workspace.getByText('未保存の変更があります');
 		const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
 
@@ -3889,10 +3969,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		};
 
 		try {
+			await page.setViewportSize(DOCK_VIEWPORT);
 			await page.goto('/dashboard');
 			await resetDashboardLayout(page);
 			await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
-			await expect(memoWindow).toBeVisible();
+			await floatDashboardMemo(page);
 			await expect(unsaved).toHaveCount(0);
 
 			await memoInput.fill('unsaved');
@@ -3972,17 +4053,19 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(unsaved).toBeVisible();
 			await page.unroute(`**${memoPath}`, holdPut);
 
-			// close -> discard: closes, and the reopened memo shows what was saved.
+			// close -> discard: closes, and the reopened memo shows what was saved. (Reopened, it is
+			// docked again: a pane floated from the default arrangement goes back to its place there.)
 			await memoWindow.getByRole('button', { name: 'メモを閉じる' }).click();
 			await settleDialog.getByRole('button', { name: '破棄して閉じる' }).click();
 			await expect(memoWindow).toHaveCount(0);
+			await expect(memoInput).toHaveCount(0);
 			const viewMenu = await dashboardViewMenu(page).open();
 			const memoCheckbox = viewMenu.getByRole('menuitemcheckbox', { name: 'メモ', exact: true });
 			await expect(memoCheckbox).toHaveAttribute('aria-checked', 'false');
 			await memoCheckbox.click();
 			await expect(memoCheckbox).toHaveAttribute('aria-checked', 'true');
 			await page.keyboard.press('Escape');
-			await expect(memoWindow).toBeVisible();
+			await expect(memoInput).toBeVisible();
 			await expect(memoInput).toHaveValue('unsaved');
 			await expect(unsaved).toHaveCount(0);
 			expect(putBodies).toHaveLength(1);
@@ -4005,7 +4088,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(
 				page.getByRole('main').getByRole('button', { name: '表示', exact: true })
 			).toBeFocused();
-			await expect(memoWindow).toBeVisible();
+			await expect(memoInput).toBeVisible();
 			await expect(memoInput).toHaveValue('menu check');
 
 			// Leaving with unapplied input asks (the router guard): stay, then leave.
@@ -4023,6 +4106,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			dialogs.stop();
 			await page.unroute(`**${memoPath}`, holdPut);
 			releasePut();
+			await page.setViewportSize(SUITE_VIEWPORT);
 		}
 	});
 
@@ -4034,18 +4118,19 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await resetDashboardLayout(page);
 		const wrapper = page.locator('.dock-wrapper');
 		await wrapper.scrollIntoViewIfNeeded();
-		const pane = wrapper.locator('[data-dock-drop-id="priceBuckets"]');
+		// The right-hand pane of the default arrangement's first row (#716 W2): its band is the right one.
+		const pane = wrapper.locator('[data-dock-drop-id="categoryStock"]');
 		await expect(pane).toBeVisible();
 
-		await wrapper.getByRole('button', { name: '価格帯分布を自動で隠す（ピンを外す）' }).click();
+		await wrapper.getByRole('button', { name: 'カテゴリ別在庫を自動で隠す（ピンを外す）' }).click();
 		await expect(pane).toHaveCount(0);
 		const band = wrapper.getByRole('group', { name: '右に自動で隠したパネル' });
-		const tab = band.getByRole('button', { name: '価格帯分布' });
+		const tab = band.getByRole('button', { name: 'カテゴリ別在庫', exact: true });
 		await expect(tab).toBeVisible();
 		await expect(tab).toBeFocused();
 
 		await tab.click();
-		const flyout = wrapper.locator('[data-dock-flyout="priceBuckets"]');
+		const flyout = wrapper.locator('[data-dock-flyout="categoryStock"]');
 		await expect(flyout).toBeVisible();
 		await expect(tab).toHaveAttribute('aria-expanded', 'true');
 
@@ -4056,7 +4141,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await tab.click();
 		await expect(flyout).toBeVisible();
 		await flyout
-			.getByRole('button', { name: '価格帯分布を元の場所に固定（ピンを留める）' })
+			.getByRole('button', { name: 'カテゴリ別在庫を元の場所に固定（ピンを留める）' })
 			.click();
 		await expect(pane).toBeVisible();
 		await expect(band).toHaveCount(0);
@@ -4073,7 +4158,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	test('13m. dashboard memo: Ctrl+S saves from the textarea; Ctrl+K does not open over the close prompt', async () => {
 		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
 		const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
-		const workspace = page.locator('.workspace');
+		const workspace = page.locator('.dock-wrapper');
 		const unsaved = workspace.getByText('未保存の変更があります');
 		const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
 		const palette = page.getByRole('dialog', { name: 'コマンドパレット' });
@@ -4104,7 +4189,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await page.goto('/dashboard');
 			await resetDashboardLayout(page);
 			await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
-			await expect(memoWindow).toBeVisible();
+			await floatDashboardMemo(page);
 			await memoInput.fill('saved with ctrl+s');
 			await expect(unsaved).toBeVisible();
 
@@ -4160,10 +4245,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// docked tree and the pane spans that side (full height, a quarter of the width).
 	test('13m2. dock: a floating pane dropped on the outer left edge spans the full height', async () => {
 		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
+		await page.setViewportSize(DOCK_VIEWPORT);
 		await page.goto('/dashboard');
 		await resetDashboardLayout(page);
 		await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
-		await expect(memoWindow).toBeVisible();
+		await floatDashboardMemo(page);
 		const host = page.locator('.dock-wrapper [data-dock-host]');
 		const hostBox = await host.boundingBox();
 		const barBox = await memoWindow.locator('.titlebar').boundingBox();
@@ -4197,6 +4283,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			expect(paneBox.width).toBeLessThan(hostBox.width * 0.3);
 		} finally {
 			await resetDashboardLayout(page);
+			await page.setViewportSize(SUITE_VIEWPORT);
 		}
 	});
 
@@ -4208,7 +4295,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto('/dashboard');
 		await resetDashboardLayout(page);
 		await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
-		await expect(memoWindow).toBeVisible();
+		await floatDashboardMemo(page);
 		const host = page.locator('.dock-wrapper [data-dock-host]');
 		const live = host.locator('[aria-live="polite"]');
 		const menuButton = host.getByRole('button', { name: 'メモのパネルの操作', exact: true });

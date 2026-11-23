@@ -4,6 +4,7 @@
 	import { priceBuckets } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
+	import ChartFit from './ChartFit.svelte';
 
 	let { data, height }: DashboardWidgetProps = $props();
 
@@ -11,12 +12,16 @@
 	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
 </script>
 
-<PieChart
-	data={buckets}
-	category={(row) => row.bucket}
-	value={(row) => row.count}
-	donut
-	label={m['dashboard.priceBucketAria']()}
-	{height}
-	formatValue={countLabel}
-/>
+<ChartFit {height}>
+	{#snippet children(chartHeight)}
+		<PieChart
+			data={buckets}
+			category={(row) => row.bucket}
+			value={(row) => row.count}
+			donut
+			label={m['dashboard.priceBucketAria']()}
+			height={chartHeight}
+			formatValue={countLabel}
+		/>
+	{/snippet}
+</ChartFit>

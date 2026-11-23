@@ -4,18 +4,23 @@
 	import { updatesByMonth } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
+	import ChartFit from './ChartFit.svelte';
 
 	let { data, height }: DashboardWidgetProps = $props();
 
 	const monthCounts = $derived(updatesByMonth(data.rows));
 </script>
 
-<LineChart
-	data={monthCounts}
-	x={(row) => row.month}
-	series={[{ id: 'count', label: m['dashboard.seriesUpdates'](), y: (row) => row.count }]}
-	area
-	label={m['dashboard.monthlyAria']()}
-	{height}
-	formatY={(n) => n.toLocaleString()}
-/>
+<ChartFit {height}>
+	{#snippet children(chartHeight)}
+		<LineChart
+			data={monthCounts}
+			x={(row) => row.month}
+			series={[{ id: 'count', label: m['dashboard.seriesUpdates'](), y: (row) => row.count }]}
+			area
+			label={m['dashboard.monthlyAria']()}
+			height={chartHeight}
+			formatY={(n) => n.toLocaleString()}
+		/>
+	{/snippet}
+</ChartFit>

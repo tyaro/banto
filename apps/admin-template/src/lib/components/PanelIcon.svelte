@@ -8,6 +8,7 @@
 		ChartNoAxesCombined,
 		ChartPie,
 		ChartScatter,
+		ListOrdered,
 		NotepadText
 	} from '@lucide/svelte';
 
@@ -27,6 +28,7 @@
 		'📊': ChartColumn,
 		trend: ChartNoAxesCombined,
 		'📉': ChartNoAxesCombined,
+		lowStock: ListOrdered,
 		memo: NotepadText,
 		'📝': NotepadText
 	};

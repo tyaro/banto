@@ -1,7 +1,8 @@
 /**
  * The dashboard's registrations (dashboardWidgets.ts / dashboardKpis.ts,
- * downstream-requests-2026-11-plan §4.13.3, #716 W1): one entry per widget with everything the
- * dock, the View menu and the pop-out route read from it, and the KPI strip's values.
+ * downstream-requests-2026-11-plan §4.13.3, #716 W1・W2): one entry per widget with everything the
+ * dock, the View menu, the one-column display and the pop-out route read from it, and the KPI
+ * strip's values.
  *
  * scaffold: this file stays in every preset that keeps the dashboard, so what it says about the
  * widgets of an optional package sits between the same `[scaffold:charts]` / `[scaffold:dock]`
@@ -9,10 +10,10 @@
  * registrations, an empty one included.
  */
 import { describe, expect, it } from 'vitest';
-import { computeStatTiles } from './dashboard';
+import { computeStatTiles, lowestStockItems } from './dashboard';
 import type { DashboardData } from './dashboardData.svelte';
 import { DASHBOARD_KPIS } from './dashboardKpis';
-import { DASHBOARD_CARDS, DASHBOARD_WIDGETS, findDashboardWidget } from './dashboardWidgets';
+import { DASHBOARD_WIDGETS, findDashboardWidget } from './dashboardWidgets';
 import { LOW_STOCK_THRESHOLD, LOW_STOCK_VIEW_ID } from './resources/items';
 import type { Item } from './sampleData';
 
@@ -62,7 +63,7 @@ describe('DASHBOARD_WIDGETS (#716 W1)', () => {
 
 	it('registers the chart widgets in the order the View menu lists them', () => {
 		// An id goes into the saved arrangement: renaming one here is a breaking change.
-		expect(ids.filter((id) => id !== 'memo')).toEqual([
+		expect(ids.filter((id) => id !== 'memo' && id !== 'lowStock')).toEqual([
 			'monthly',
 			'categoryStock',
 			'stackedBar',
@@ -76,16 +77,21 @@ describe('DASHBOARD_WIDGETS (#716 W1)', () => {
 	it('marks which chart widgets follow the shared period (W3)', () => {
 		// The streaming trend makes its own points.
 		expect(findDashboardWidget('trend')?.usesPeriod ?? false).toBe(false);
-		expect(DASHBOARD_WIDGETS.filter((def) => def.usesPeriod).map((def) => def.id)).toEqual([
-			'monthly',
-			'categoryStock',
-			'stackedBar',
-			'priceBuckets',
-			'scatter',
-			'spc'
-		]);
+		expect(
+			DASHBOARD_WIDGETS.filter((def) => def.usesPeriod && def.id !== 'lowStock').map(
+				(def) => def.id
+			)
+		).toEqual(['monthly', 'categoryStock', 'stackedBar', 'priceBuckets', 'scatter', 'spc']);
 	});
 	// [scaffold:charts] end
+
+	it('registers the list (W2): in every preset, after the charts, following the shared period', () => {
+		// `@banto/grid-svelte` is a core package: the entry sits outside the scaffold regions.
+		const index = ids.indexOf('lowStock');
+		expect(index).toBeGreaterThanOrEqual(0);
+		expect(ids.slice(index + 1).filter((id) => id !== 'memo')).toEqual([]);
+		expect(findDashboardWidget('lowStock')?.usesPeriod).toBe(true);
+	});
 	// [scaffold:dock] begin
 
 	it('registers the memo last, and it does not follow the shared period', () => {
@@ -95,28 +101,25 @@ describe('DASHBOARD_WIDGETS (#716 W1)', () => {
 	// [scaffold:dock] end
 });
 
-describe('DASHBOARD_CARDS (#716 W1; W2 removes the list)', () => {
-	it('points every card at a registered widget and gives it a caption', () => {
-		for (const card of DASHBOARD_CARDS) {
-			expect(findDashboardWidget(card.id), card.id).toBeDefined();
-			expect(card.caption.trim(), card.id).not.toBe('');
-			expect(typeof Object.getOwnPropertyDescriptor(card, 'caption')?.get, card.id).toBe(
-				'function'
-			);
-		}
-	});
-	// [scaffold:charts] begin
+describe('lowestStockItems (#716 W2: the list widget)', () => {
+	const rows = [
+		item(1, 100, 30, '2026-01-01'),
+		item(2, 100, 5, '2026-01-01'),
+		item(3, 100, 0, '2026-01-01'),
+		item(4, 100, 5, '2026-01-01')
+	];
 
-	it('lists the fixed cards in the grid order, the first as the primary one', () => {
-		expect(DASHBOARD_CARDS.map((card) => [card.id, card.tier])).toEqual([
-			['monthly', 'primary'],
-			['categoryStock', 'secondary'],
-			['stackedBar', 'secondary'],
-			['priceBuckets', 'secondary'],
-			['scatter', 'secondary']
-		]);
+	it('orders by stock, fewest first, ties by id, without changing the input', () => {
+		const before = rows.map((row) => row.id);
+		expect(lowestStockItems(rows).map((row) => row.id)).toEqual([3, 2, 4, 1]);
+		expect(rows.map((row) => row.id)).toEqual(before);
 	});
-	// [scaffold:charts] end
+
+	it('keeps at most `limit` rows, and none of an empty set', () => {
+		expect(lowestStockItems(rows, 2).map((row) => row.id)).toEqual([3, 2]);
+		expect(lowestStockItems(rows, 0)).toEqual([]);
+		expect(lowestStockItems([])).toEqual([]);
+	});
 });
 
 describe('DASHBOARD_KPIS (#716 W1)', () => {
