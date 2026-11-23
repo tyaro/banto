@@ -354,6 +354,20 @@ class Impl<T> implements SavedSetting<T> {
 		});
 	}
 
+	/**
+	 * The ONLY place `#revision` moves forward (merge mode). A revision stands
+	 * for "the stored value as of then"; a write with it is allowed only if
+	 * `current` has taken that value in (loaded it, or written it / merged
+	 * it). When an edit made meanwhile has not (`absorbed` false) the old
+	 * revision stays, so the next save conflicts and goes through `merge`
+	 * instead of silently overwriting what the revision stands for.
+	 */
+	#adoptRevision(revision: string, guard: (() => boolean) | null, absorbed: boolean): void {
+		if (!absorbed) return;
+		this.#revision = revision;
+		this.#revisionGuard = guard;
+	}
+
 	#parseSafe(raw: string): T | undefined {
 		try {
 			return this.#options.parse(raw);
@@ -505,14 +519,11 @@ class Impl<T> implements SavedSetting<T> {
 						this.#value = mergedCurrent.value;
 						this.#raw = target.raw;
 					}
-					// The user edited during a send whose value `merge` changed: their
-					// edit does not contain what the merge kept from the server, so the
-					// revision stays the old one. The next save conflicts and goes
-					// through `merge` instead of silently dropping that data.
-					const unmergedEdit = target.raw !== sentRaw && this.#editVersion !== editVersion;
-					if (mergeFn && newRevision !== null && !unmergedEdit) {
-						this.#revision = newRevision;
-						this.#revisionGuard = guard;
+					// An edit made during a send whose value `merge` changed has not
+					// absorbed what the merge kept from the server (see `#adoptRevision`).
+					if (mergeFn && newRevision !== null) {
+						const unmergedEdit = target.raw !== sentRaw && this.#editVersion !== editVersion;
+						this.#adoptRevision(newRevision, guard, !unmergedEdit);
 					}
 					this.#error = null;
 					failure = null;
@@ -615,8 +626,7 @@ class Impl<T> implements SavedSetting<T> {
 			if (guard && !guard()) return 'stale';
 			const untouched = this.#editVersion === editVersion;
 			this.#error = null;
-			this.#revision = revision;
-			this.#revisionGuard = guard;
+			this.#adoptRevision(revision, guard, untouched);
 			if (parsed) {
 				this.#saved = parsed.value;
 				this.#hasSaved = true;

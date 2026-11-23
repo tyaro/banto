@@ -1386,3 +1386,68 @@ describe('dispose re-entering during notification (#786 C6)', () => {
 		expect(settled).toEqual([]);
 	});
 });
+
+describe('an edit made while a revision is on its way (#786 C6)', () => {
+	const merge = (server: Pos, current: Pos): Pos => ({ x: server.x + current.x });
+
+	it('load: an edit made while it waits does not adopt the loaded revision; the next save merges', async () => {
+		const s = fakeServer(raw(1));
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		const provider: UiSettingsProvider = {
+			...s.provider,
+			get: async (k) => {
+				const answer = await s.provider.get(k);
+				await gate;
+				return answer;
+			}
+		};
+		const merged: [number, number][] = [];
+		const setting = createSavedSetting(
+			options(provider, {
+				merge: (server, current) => {
+					merged.push([server.x, current.x]);
+					return merge(server, current);
+				}
+			})
+		);
+		const loading = setting.load();
+		setting.set({ x: 2 }); // edited while the load is in flight
+		release();
+		await loading;
+		expect(setting.current).toEqual({ x: 2 });
+		expect(await setting.save()).toBe(true);
+		expect(merged).toEqual([[1, 2]]);
+		expect(s.stored()).toBe(raw(3));
+	});
+
+	it('a lost answer: an edit made while waiting to re-send keeps working (no data lost, no merge)', async () => {
+		vi.useFakeTimers();
+		try {
+			const s = fakeServer(raw(1));
+			s.script.push({ error: netError(), landed: true });
+			const merged: number[] = [];
+			const setting = createSavedSetting(
+				options(s.provider, {
+					retry: {},
+					merge: (server, current) => {
+						merged.push(server.x);
+						return merge(server, current);
+					}
+				})
+			);
+			await setting.load();
+			setting.set({ x: 5 });
+			const result = setting.save();
+			await vi.advanceTimersByTimeAsync(100);
+			setting.set({ x: 6 }); // edited while the re-send waits
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(await result).toBe(true);
+			expect(merged).toEqual([]);
+			expect(await setting.save()).toBe(true);
+			expect(s.stored()).toBe(raw(6));
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
