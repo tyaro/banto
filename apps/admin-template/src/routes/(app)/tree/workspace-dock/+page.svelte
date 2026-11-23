@@ -16,8 +16,9 @@
 	 *   `leftOpen` / `rightOpen` (no strip of toggles, plan §4.8).
 	 * - The layout is saved per user and screen (plan §4.4): what `onLayoutCommit` reports (#791:
 	 *   a settled `layoutSnapshot()`, never a step of a drag or of the narrow switch) goes to
-	 *   `dockLayoutStore` through `threePaneLayoutTarget.ts`; "reset layout" (reason `'reset'`)
-	 *   saves the default as a user's change.
+	 *   dock-svelte's `createDockLayoutStore` (`commit`), which drives the dock through
+	 *   `createThreePaneLayoutTarget`; "reset layout" (reason `'reset'`) saves the default as a
+	 *   user's change.
 	 * - Narrow (<= 900px of the component) is the dock's own narrow display (the panes are edge bands
 	 *   whose flyout is the drawer); kiosk (`settings.kiosk`) is `arrange={false}` (plan §4.5): the
 	 *   saved layout is shown, nothing can be rearranged, no View menu or toolbar. Touch needs no
@@ -27,17 +28,17 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { guardUnsavedChanges } from '@banto/forms';
+	import { currentSessionScope, isCurrentSessionScope } from '@banto/admin-core';
 	import {
+		createDockLayoutStore,
 		createDockState,
-		ThreePaneDock,
-		type ThreePaneLayoutCommitReason,
-		type ThreePaneSavedLayout
+		createThreePaneLayoutTarget,
+		ThreePaneDock
 	} from '@banto/dock-svelte';
 	import { EmptyState, PageHeader, Tabs } from '@banto/ui';
 	import { tick, untrack } from 'svelte';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import { dockMessages } from '#lib/banto/dockMessages.js';
-	import { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';
 	import { getUiSettings } from '#lib/banto/setup.js';
 	import { confirmAction, confirmStore } from '#lib/confirm.svelte.js';
 	import PageViewMenu, { type PageViewMenuItem } from '#lib/components/PageViewMenu.svelte';
@@ -66,7 +67,6 @@
 		type WorkspaceTab,
 		type WorkspaceView
 	} from '../workspace/workspaceUrl.js';
-	import { createThreePaneLayoutTarget } from './threePaneLayoutTarget.js';
 
 	const lookup = { hasTarget: hasWorkspaceTarget, hasRow: hasWorkspaceRow };
 	const parse = (url: { searchParams: { get(name: string): string | null } }): WorkspaceView =>
@@ -261,36 +261,31 @@
 		storageKey: DOCK_STORAGE_KEY,
 		settingKey: DOCK_SETTING_KEY,
 		provider: getUiSettings,
+		// The copies belong to the signed-in user and this session (three-pane-dock-plan §4.4).
+		scope: currentSessionScope(),
+		isCurrent: isCurrentSessionScope,
 		defaultLayout: () => layoutTarget.defaultLayout
 	});
 
-	// Once mounted: remember what the dock started with, then read the provider's copy once - it
-	// wins (also over a move made meanwhile); nothing saved or a failure restores the default. A
-	// read for a session that has ended is dropped (dockLayoutStore.svelte.ts). What is shown at
-	// mount is mirrored into the local copy (it is the store's baseline: nothing goes to the provider).
+	// Once mounted: remember what the dock started with (it is the store's baseline: mirrored into
+	// the local copy, nothing goes to the provider), then read the provider's copy once - it wins
+	// (also over a move made meanwhile); nothing saved or a failure restores the default. A read
+	// for a session that has ended is dropped.
 	$effect(() => {
 		if (!three) return;
 		untrack(() => {
 			layoutTarget.attach();
 			void layoutStore.load();
-			layoutStore.changed(layoutTarget.serialize());
 		});
 	});
 
-	/**
-	 * Autosave (#791): the dock reports a settled layout to save - the end of a move / resize, a
-	 * dock / float / tab / close, a View menu choice; the kept wide layout while narrow - never a
-	 * step in between. The local copy saves at once; the provider gets one write 500ms after the
-	 * last report. `'reset'` ("reset layout" was applied; the dock installed the default itself) is
-	 * saved as a user's change even when the default was already shown. A layout the store applied
-	 * (the provider's copy, `restoreLayout`) is not reported. The text saved is the reported value,
-	 * not `layoutTarget.serialize()`: that one keeps answering the earlier text while a stored
-	 * layout is still being installed, and a change settled meanwhile would not be saved.
-	 */
-	function saveLayout(saved: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason): void {
-		if (reason === 'reset') layoutTarget.withoutApplying(() => layoutStore.reset());
-		else layoutStore.changed(JSON.stringify(saved));
-	}
+	// Autosave (#791): the dock reports a settled value to save to `layoutStore.commit`
+	// (`onLayoutCommit` below) - the end of a move / resize, a dock / float / tab / close, a View
+	// menu choice; the kept wide layout while narrow - never a step in between. The local copy
+	// saves at once; the provider gets one write 500ms after the last report. `'reset'` ("reset
+	// layout" was applied; the dock installed the default itself) is saved as a user's change even
+	// when the default was already shown. A layout the store applied (the provider's copy,
+	// `restoreLayout`) is not reported.
 
 	// Unmount: flush (not drop) a pending provider save - unless the session changed.
 	$effect(() => () => layoutStore.dispose());
@@ -380,7 +375,7 @@
 			bind:narrow
 			{dock}
 			initialLayout={layoutTarget.initialLayout}
-			onLayoutCommit={saveLayout}
+			onLayoutCommit={layoutStore.commit}
 			{arrange}
 			messages={paneDockMessages}
 			isEscapeBlocked={isDockEscapeBlocked}

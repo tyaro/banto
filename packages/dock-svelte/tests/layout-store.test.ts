@@ -1,12 +1,20 @@
 /**
- * dockLayoutStore.svelte.ts (three-pane-dock-plan §4.4, #663 段階 ④ PR-5): the
- * dashboard's layout save, bound to the signed-in user and the session. The page
- * wiring (effects) is covered by the dashboard e2e.
+ * layoutStore.ts (three-pane-dock-plan §4.4; downstream-requests-2026-11-plan §4.6, #791 K4):
+ * saving a layout from what `onLayoutCommit` reports - bound to the signed-in user and the
+ * session when the app gives a `scope`, one key with no owner when it does not. The wiring to a
+ * real `DockHost` is in `DockHostLayoutStore.test.ts`; the pages' in the dashboard e2e.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionScope, UiSettingsProvider } from '@banto/admin-core';
-import { createDockState, type DockLayout } from '@banto/dock-svelte';
-import { createDockLayoutStore, type DockLayoutStoreOptions } from './dockLayoutStore.svelte';
+import {
+	createDockLayoutStore,
+	createDockState,
+	type DockLayout,
+	type DockLayoutSettings,
+	type DockLayoutStoreOptions
+} from '../src/index';
+
+/** admin-core's `SessionScope`, by shape. */
+type SessionScope = { readonly generation: number; readonly owner: string | null };
 
 const STORAGE_KEY = 'banto.dock.test';
 const SETTING_KEY = 'dock.test';
@@ -69,7 +77,7 @@ function fakeProvider(get: () => Promise<string | null> = async () => null) {
 		}),
 		set: vi.fn(async (_key: string, _value: string) => ({ revision: 'rev' })),
 		remove: vi.fn(async (_key: string) => ({ revision: '0' }))
-	} satisfies UiSettingsProvider;
+	} satisfies DockLayoutSettings;
 }
 
 /** A session whose owner/generation the test can switch. */
@@ -92,6 +100,8 @@ function setup(
 		provider?: ReturnType<typeof fakeProvider>;
 		defaultLayout?: () => DockLayout | null;
 		validate?: DockLayoutStoreOptions['validate'];
+		reset?: DockLayoutStoreOptions['reset'];
+		beforeBaseline?: (dock: ReturnType<typeof createDockState>) => void;
 	} = {}
 ) {
 	const storage = opts.storage ?? new MemoryStorage();
@@ -105,13 +115,20 @@ function setup(
 		provider: () => provider,
 		defaultLayout: opts.defaultLayout ?? (() => DEFAULT),
 		validate: opts.validate,
+		reset: opts.reset,
+		beforeBaseline: opts.beforeBaseline && (() => opts.beforeBaseline!(dock)),
 		storage,
 		scope: session.scope(),
 		isCurrent: session.isCurrent
 	});
-	/** What the page's autosave effect does on every layout change. */
-	const report = () => store.changed(dock.serialize());
-	return { storage, provider, session, dock, store, report };
+	/** What a `DockHost` reports at a settle point (`onLayoutCommit`, `'user'`). */
+	const report = () => store.commit(JSON.parse(dock.serialize()), 'user');
+	/** "Reset layout": the host put the default in (`replaceLayout`, `commit: 'reset'`) and reports it. */
+	const reset = () => {
+		dock.layout = DEFAULT;
+		store.commit(JSON.parse(dock.serialize()), 'reset');
+	};
+	return { storage, provider, session, dock, store, report, reset };
 }
 
 beforeEach(() => {
@@ -333,32 +350,246 @@ describe('saving', () => {
 		expect(storage.length).toBe(0);
 	});
 
-	it('reset restores the default and saves it', () => {
+	it("a reported 'reset' saves the default, once", () => {
 		const storage = new MemoryStorage();
 		storage.setItem(`${STORAGE_KEY}:acct:1`, json(floating('mine')));
-		const { dock, store, provider, report } = setup({ storage });
+		const { provider, report, reset } = setup({ storage });
 		report();
-		store.reset();
-		report();
-		expect(dock.layout.floating.map((w) => w.id)).toEqual(['default']);
+		reset();
+		expect(storage.getItem(`${STORAGE_KEY}:acct:1`)).toBe(json(DEFAULT));
 		vi.advanceTimersByTime(500);
+		expect(provider.set).toHaveBeenCalledTimes(1);
 		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(DEFAULT));
+		expect(provider.remove).not.toHaveBeenCalled();
 	});
 
 	it('saves an explicit reset even when the default is already shown (read failed)', async () => {
 		const provider = fakeProvider(async () => {
 			throw new Error('offline');
 		});
-		const { dock, store, report } = setup({ provider });
+		const { dock, store, report, reset } = setup({ provider });
 		await store.load();
 		report();
 		expect(dock.layout.floating.map((w) => w.id)).toEqual(['default']);
 		vi.runAllTimers();
 		expect(provider.set).not.toHaveBeenCalled();
-		store.reset();
-		report();
+		reset();
 		vi.advanceTimersByTime(500);
 		expect(provider.set).toHaveBeenCalledTimes(1);
 		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(DEFAULT));
+	});
+});
+
+describe("reset: 'remove'", () => {
+	it('deletes the saved value and the local copy instead of saving the default', () => {
+		const storage = new MemoryStorage();
+		storage.setItem(`${STORAGE_KEY}:acct:1`, json(floating('mine')));
+		const { dock, provider, report, reset } = setup({ storage, reset: 'remove' });
+		dock.layout = floating('moved');
+		report();
+		// The reset replaces the write still pending.
+		reset();
+		expect(storage.getItem(`${STORAGE_KEY}:acct:1`)).toBeNull();
+		expect(provider.remove).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(500);
+		expect(provider.remove).toHaveBeenCalledTimes(1);
+		expect(provider.remove).toHaveBeenCalledWith(SETTING_KEY);
+		expect(provider.set).not.toHaveBeenCalled();
+	});
+
+	it('a change after the reset is saved again (and replaces a deletion not sent yet)', () => {
+		const { dock, provider, report, reset } = setup({ reset: 'remove' });
+		reset();
+		dock.layout = floating('after');
+		report();
+		vi.advanceTimersByTime(500);
+		expect(provider.remove).not.toHaveBeenCalled();
+		expect(provider.set).toHaveBeenCalledTimes(1);
+		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(floating('after')));
+	});
+
+	it('is flushed on unmount, and dropped when the session changed', () => {
+		const first = setup({ reset: 'remove' });
+		first.reset();
+		first.store.dispose();
+		expect(first.provider.remove).toHaveBeenCalledTimes(1);
+		const second = setup({ reset: 'remove' });
+		second.reset();
+		second.session.switchTo('acct:2');
+		second.store.dispose();
+		vi.runAllTimers();
+		expect(second.provider.remove).not.toHaveBeenCalled();
+	});
+
+	it('saves the default when the provider has no remove', () => {
+		const provider = fakeProvider();
+		const dock = createDockState();
+		const storage = new MemoryStorage();
+		const store = createDockLayoutStore({
+			dock,
+			storageKey: STORAGE_KEY,
+			settingKey: SETTING_KEY,
+			provider: () => ({ get: provider.get, set: provider.set }),
+			defaultLayout: () => DEFAULT,
+			reset: 'remove',
+			storage
+		});
+		dock.layout = DEFAULT;
+		store.commit(JSON.parse(dock.serialize()), 'reset');
+		expect(storage.getItem(STORAGE_KEY)).toBe(json(DEFAULT));
+		vi.advanceTimersByTime(500);
+		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(DEFAULT));
+	});
+});
+
+describe('commit', () => {
+	it('works unbound (passed as `onLayoutCommit`) and takes the JSON text as is', () => {
+		const { provider, store } = setup();
+		const { commit } = store;
+		commit(json(floating('text')), 'user');
+		vi.advanceTimersByTime(500);
+		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(floating('text')));
+	});
+
+	it("saves a 'narrow-switch' like a user's change", () => {
+		const { provider, store } = setup();
+		store.commit({ schema: 1, panels: [], layout: DEFAULT }, 'narrow-switch');
+		vi.advanceTimersByTime(500);
+		expect(provider.set).toHaveBeenCalledWith(
+			SETTING_KEY,
+			JSON.stringify({ schema: 1, panels: [], layout: DEFAULT })
+		);
+	});
+
+	it('a report after dispose (the host unmounts after the page) is sent at once', () => {
+		const { dock, provider, store, report } = setup();
+		store.dispose();
+		dock.layout = floating('last');
+		report();
+		expect(provider.set).toHaveBeenCalledTimes(1);
+		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(floating('last')));
+		vi.runAllTimers();
+		expect(provider.set).toHaveBeenCalledTimes(1);
+	});
+
+	it('... but not for a session that is gone', () => {
+		const { dock, provider, store, session, report } = setup();
+		store.dispose();
+		session.switchTo('acct:2');
+		dock.layout = floating('last');
+		report();
+		vi.runAllTimers();
+		expect(provider.set).not.toHaveBeenCalled();
+	});
+});
+
+describe('beforeBaseline', () => {
+	it('adjusts the seeded default: the adjusted layout is the baseline, not a change to save', () => {
+		const beforeBaseline = vi.fn((dock: ReturnType<typeof createDockState>) => {
+			dock.layout = floating('adjusted');
+		});
+		const { dock, store, provider, report } = setup({ beforeBaseline });
+		expect(beforeBaseline).not.toHaveBeenCalled();
+		store.seedIfEmpty();
+		expect(beforeBaseline).toHaveBeenCalledTimes(1);
+		report();
+		vi.runAllTimers();
+		expect(provider.set).not.toHaveBeenCalled();
+		dock.layout = floating('moved');
+		report();
+		vi.advanceTimersByTime(500);
+		expect(provider.set).toHaveBeenCalledTimes(1);
+	});
+
+	it('runs for the default restored by a read with nothing saved, not for a stored layout', async () => {
+		const beforeBaseline = vi.fn();
+		const empty = setup({ beforeBaseline });
+		await empty.store.load();
+		expect(beforeBaseline).toHaveBeenCalledTimes(1);
+		const stored = setup({
+			beforeBaseline,
+			provider: fakeProvider(async () => json(floating('remote')))
+		});
+		await stored.store.load();
+		expect(beforeBaseline).toHaveBeenCalledTimes(1);
+	});
+
+	it('is not called for a reset', () => {
+		const beforeBaseline = vi.fn();
+		const { reset } = setup({ beforeBaseline });
+		reset();
+		expect(beforeBaseline).not.toHaveBeenCalled();
+	});
+});
+
+describe('without a scope (one key, no owner)', () => {
+	function ownerless(
+		opts: { provider?: DockLayoutSettings; storage?: Storage; storageKey?: string | null } = {}
+	) {
+		const storage = opts.storage ?? new MemoryStorage();
+		const provider = opts.provider ?? fakeProvider();
+		const dock = createDockState();
+		const store = createDockLayoutStore({
+			dock,
+			...(opts.storageKey === null ? {} : { storageKey: opts.storageKey ?? STORAGE_KEY }),
+			settingKey: SETTING_KEY,
+			provider: () => provider,
+			defaultLayout: () => DEFAULT,
+			storage
+		});
+		const report = () => store.commit(JSON.parse(dock.serialize()), 'user');
+		return { storage, provider, dock, store, report };
+	}
+
+	it('draws and mirrors the copy at the bare key (it is not removed)', () => {
+		const storage = new MemoryStorage();
+		storage.setItem(STORAGE_KEY, json(floating('mine')));
+		const { dock, report } = ownerless({ storage });
+		expect(dock.layout.floating.map((w) => w.id)).toEqual(['mine']);
+		dock.layout = floating('moved');
+		report();
+		expect(storage.getItem(STORAGE_KEY)).toBe(json(floating('moved')));
+	});
+
+	it('reads the provider, and saves a change debounced', async () => {
+		const provider = fakeProvider(async () => json(floating('remote')));
+		const { dock, store, report } = ownerless({ provider });
+		await store.load();
+		report();
+		expect(dock.layout.floating.map((w) => w.id)).toEqual(['remote']);
+		dock.layout = floating('moved');
+		report();
+		vi.advanceTimersByTime(500);
+		expect(provider.set).toHaveBeenCalledTimes(1);
+		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(floating('moved')));
+	});
+
+	it('uses no local copy without a storageKey', async () => {
+		const storage = new MemoryStorage();
+		const { dock, store, report } = ownerless({ storage, storageKey: null });
+		await store.load();
+		dock.layout = floating('moved');
+		report();
+		expect(storage.length).toBe(0);
+	});
+
+	it("asks the provider's sessionGuard (taken at creation) instead of isCurrent", async () => {
+		let session = 1;
+		const base = fakeProvider(async () => json(floating('remote')));
+		const provider = {
+			...base,
+			sessionGuard: () => {
+				const captured = session;
+				return () => session === captured;
+			}
+		};
+		const { dock, store, report } = ownerless({ provider });
+		dock.layout = floating('moved');
+		report();
+		session = 2;
+		vi.runAllTimers();
+		expect(provider.set).not.toHaveBeenCalled();
+		await store.load();
+		expect(provider.get).not.toHaveBeenCalled();
 	});
 });

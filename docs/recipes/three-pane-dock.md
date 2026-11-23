@@ -77,16 +77,40 @@
 
 - 最初の描画の値は `initialLayout` に渡す（マウント時に 1 回だけ読む）。マウント後に届いた値（設定 DB の読み込み後）は
   `three.restoreLayout(saved)`。どちらも今のパネルの集合と照らされ、壊れた値は既定、知らない id は捨てる。
-- 見本は `lib/banto/dockLayoutStore.svelte.ts` の `createDockLayoutStore`（ダッシュボードと共有）に
-  `workspace-dock/threePaneLayoutTarget.ts` の薄い変換（`createThreePaneLayoutTarget`）を挟んで保存している:
+- 保存の部品は `@banto/dock-svelte` にある（#791）。見本は `createDockLayoutStore`（ダッシュボードと同じ部品）に
+  `createThreePaneLayoutTarget`（`ThreePaneDock` を載せる薄い変換）を挟んで保存している:
   設定のキーは `dock.threePane.<画面キー>`（利用者ごと・画面ごとに 1 つ）、500ms の debounce、localStorage の写しは
-  最初の描画だけに使う。**写しと provider の結果は利用者（セッション）に結び付く**: ログアウト・別の利用者に替わったあとに
-  届いた読み込みや書き込みは捨てるので、前の利用者の配置が別の人に出ない。そのままコピーして画面キーだけ替える。
+  最初の描画だけに使う。**`scope: currentSessionScope()`・`isCurrent: isCurrentSessionScope` を渡すと、写しと provider の
+  結果が利用者（セッション）に結び付く**: ログアウト・別の利用者に替わったあとに届いた読み込みや書き込みは捨てるので、
+  前の利用者の配置が別の人に出ない（ログインの無いアプリは渡さなくてよい）。見本の配線を写して画面キーだけ替える。
+
+  ```ts
+  const layoutTarget = createThreePaneLayoutTarget(dock, () => three);
+  const layoutStore = createDockLayoutStore({
+  	dock: layoutTarget,
+  	storageKey: 'banto.dock.threePane.<画面キー>',
+  	settingKey: 'dock.threePane.<画面キー>',
+  	provider: getUiSettings,
+  	scope: currentSessionScope(),
+  	isCurrent: isCurrentSessionScope,
+  	defaultLayout: () => layoutTarget.defaultLayout
+  });
+  $effect(() => {
+  	if (!three) return;
+  	untrack(() => {
+  		layoutTarget.attach();
+  		void layoutStore.load();
+  	});
+  });
+  $effect(() => () => layoutStore.dispose());
+  // <ThreePaneDock bind:this={three} {dock} initialLayout={layoutTarget.initialLayout} onLayoutCommit={layoutStore.commit} ... />
+  ```
+
 - 保存のきっかけは `ThreePaneDock` の `onLayoutCommit(saved, reason)`（#791）。保存してよい配置が確定したときだけ
-  届く（ドラッグの途中・狭い ⇄ 広いの切り替えの途中・復元では届かない）。見本は、`'reset'`（「レイアウトを既定に戻す」が
-  適用された）なら `layoutStore.reset()`、ほかは `layoutStore.changed(layoutTarget.serialize())` を呼ぶ。
+  届く（ドラッグの途中・狭い ⇄ 広いの切り替えの途中・復元では届かない）。`layoutStore.commit` をそのまま渡す。
+  `'reset'`（「レイアウトを既定に戻す」が適用された）は既定を保存する（`reset: 'remove'` を渡すと保存を消す）。
   `$effect` で `layoutSnapshot()` を読む形は要らない。細かい約束は `@banto/dock-svelte` の README
-  「保存してよい配置の確定」。
+  「保存してよい配置の確定」「配置の保存」。
 - 一覧の「ビュー」（絞り込み・並び）には入れない。ビューは何を見るか、レイアウトはどう並べるか。
 
 ## 狭い表示・`arrange={false}`・touch
@@ -139,8 +163,8 @@ Esc で閉じる。結果は `aria-live` で読み上げられる。移動のシ
 ## scaffold で外す・自分のアプリへ
 
 - `pnpm scaffold` でツリーを外す（`minimal` / `standard`）とルートごと消える。dock だけ外すときは、`removeDock` が
-  `workspace-dock/` と `lib/banto/dockLayoutStore.svelte.ts`、`/tree` の索引の「dock 版」リンクとその文言を外す
+  `workspace-dock/` と、`/tree` の索引の「dock 版」リンクとその文言を外す
   （手順は [remove-optional-assets.md](remove-optional-assets.md)）。固定版の `/tree/workspace` は残る。
-- 自分のアプリへは、`workspace-dock/` と `lib/banto/dockLayoutStore.svelte.ts` を手本にコピーし、`Workspace*.svelte` を
+- 自分のアプリへは、`workspace-dock/` を手本にコピーし、`Workspace*.svelte` を
   自分の部品に、画面キー（`DOCK_STORAGE_KEY`・`DOCK_SETTING_KEY`）と文言キーを置き換える。依存は
   `"@banto/dock-svelte": "workspace:*"`（外部リポジトリなら [consume-as-git-dependency.md](consume-as-git-dependency.md)）。

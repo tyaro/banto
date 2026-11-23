@@ -520,11 +520,13 @@ function removeDock() {
 		'dockEscape import 除去',
 		`\timport { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';\n`
 	);
-	// #663 ④ PR-5: dock のレイアウトの保存（利用者・セッションに結び付ける）。dock と一緒に消える。
+	// #791 K4: dock のレイアウトの保存は `@banto/dock-svelte` の `createDockLayoutStore`（上の dock import の
+	// 範囲）。保存を利用者・セッションに結び付けるための admin-core の import だけ、ここで外す。
 	drop(
 		DASH,
-		'dockLayoutStore import 除去',
-		`\timport { createDockLayoutStore } from '#lib/banto/dockLayoutStore.svelte.js';\n`
+		'レイアウト保存の持ち主（session scope）import 除去',
+		`\t// Its own line: scaffold.mjs's dock remover drops it by text (the layout save's owner, #791).\n` +
+			`\timport { currentSessionScope, isCurrentSessionScope } from '@banto/admin-core';\n`
 	);
 	// #729: dock の文言（DockMessages）を paraglide の `dock.*` から作る橋。dock と一緒に消える
 	// （/tree/workspace-dock も同じ関数を使うが、そのルートは下で消える）。
@@ -606,8 +608,6 @@ function removeDock() {
 	removeFile(`${APP}/src/lib/banto/popout.ts`, 'popout.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockEscape.ts`, 'dockEscape.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockEscape.test.ts`, 'dockEscape.test.ts 削除');
-	removeFile(`${APP}/src/lib/banto/dockLayoutStore.svelte.ts`, 'dockLayoutStore.svelte.ts 削除');
-	removeFile(`${APP}/src/lib/banto/dockLayoutStore.test.ts`, 'dockLayoutStore.test.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dashboardMemo.svelte.ts`, 'dashboardMemo.svelte.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dashboardMemo.test.ts`, 'dashboardMemo.test.ts 削除');
 	removeFile(`${APP}/src/lib/banto/settlePrompt.svelte.ts`, 'settlePrompt.svelte.ts 削除');

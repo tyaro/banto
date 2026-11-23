@@ -264,7 +264,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
     `reconcileThreePaneLayout` で合わせて `forgetHomes` → `adoptLayout` で入れる（#742）。隠れたパネルは場所を
     持たないので（#782 PR5）、`reconcileThreePaneLayout` は今の layout を合わせるのにも使う（`fitThreePaneLayout` は消した）。
   - 公開 API: `DockState.savedLayout()`・`DockHost.replaceLayout` の `saved` オプション。保存値は `saved: true` で入れる
-    （`forgetHomes` → `adoptLayout`）。3 ペインの保存は `layoutSnapshot()`（`savedLayout()`）を `dockLayoutStore` に渡す。
+    （`forgetHomes` → `adoptLayout`）。3 ペインの保存は `onLayoutCommit` が届ける `layoutSnapshot()`（`savedLayout()`）を `createDockLayoutStore`（`packages/dock-svelte/src/layoutStore.ts`、#791 K4）の `commit` に渡す。
 
 ### 5.5 環境の分岐
 

@@ -616,9 +616,9 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   関数を返す）も実装する。無いと、`updateUiSetting` はセッションの切り替えを検出できない。
   試験のモックは `get: async () => ({ value: null, revision: '0' })`・`set: async () => ({ revision: 'r1' })`・
   `remove: async () => ({ revision: '0' })` の形にする。
-- **テンプレート（B）**: `apps/admin-template/src/lib/settings.svelte.ts`・`src/lib/banto/locale.ts`・
-  `src/lib/banto/dockLayoutStore.svelte.ts` の読み取りが `.value` を取るようになった。コピーしているなら取り込む
-  （ほかの呼び手は `createSavedSetting` 経由で、変更なし）。
+- **テンプレート（B）**: `apps/admin-template/src/lib/settings.svelte.ts`・`src/lib/banto/locale.ts` の読み取りが
+  `.value` を取るようになった。コピーしているなら取り込む（ほかの呼び手は `createSavedSetting` 経由で、変更なし。
+  `src/lib/banto/dockLayoutStore.svelte.ts` は下の K4 で消えるので、取り込まずにパッケージの口へ載せ替える）。
 - **ブラウザーの保存（`createLocalUiSettings`）**: 値の置き場所（`banto.ui.<key>`）は変わらない。revision を置くキー
   `banto.ui-rev.<key>` が増える。`banto.ui.*` を直に書いている試験（E2E の初期値など）はそのままでよい
   （次の読み取りで新しい revision が付く）。書き込みは Web Locks API（`navigator.locks`）のロックの下で行うので、
@@ -626,6 +626,36 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   同期で `localStorage` を読んでいる試験は、待つ形にする。Web Locks API の無い環境（secure context でないページなど）では、
   条件付きの書き込みはタブをまたいだ上書きを防げない（同じ文書の中だけ）。ロックの仕組みはあるのに取れなかったときは、
   書かずに `storage` のエラーになる（ロックを迂回しない）。
+
+**dock の配置の保存をパッケージの口へ載せ替える（K4、#791 の後半、計画 §4.6）**。DB の作り直しは要らない。
+テンプレートの `src/lib/banto/dockLayoutStore.svelte.ts`・`routes/(app)/tree/workspace-dock/threePaneLayoutTarget.ts`
+（とそれぞれの `.test.ts`）は消え、同じものが `@banto/dock-svelte` の `createDockLayoutStore`・`createThreePaneLayoutTarget` に
+なった。写して持っている派生アプリ（B）は次の順で載せ替える（保存済みの値・キーはそのまま読める）。
+
+1. **import を替え、写したファイルを消す**: `createDockLayoutStore`・`createThreePaneLayoutTarget`・型
+   （`DockLayoutTarget`・`DockLayoutStore` など）は `@banto/dock-svelte` から取る。写した 2 ファイルとその試験を消す。
+2. **持ち主を渡す**: `createDockLayoutStore({ ..., scope: currentSessionScope(), isCurrent: isCurrentSessionScope })`
+   （どちらも `@banto/admin-core`）。前は既定で入っていたが、パッケージは admin-core を import しない。**渡し忘れると
+   「持ち主なし」になる**（localStorage の写しが `storageKey` そのままのキーになり、利用者ごとに分かれない。provider の
+   読み書きを止めるのは provider の `sessionGuard()` だけになる）。ログインの無いアプリ（キー 1 つ）は渡さなくてよい。
+3. **保存のきっかけを `onLayoutCommit` にする**: `$effect(() => { const json = dock.serialize(); untrack(() => store.changed(json)); })`
+   のような「読んで知らせる」effect を消し、`<DockHost {dock} onLayoutCommit={store.commit} />`
+   （`ThreePaneDock` も同じ prop）にする。`store.changed`・`store.reset`・`store.scope` は無い。
+   `ThreePaneDock` で `reason === 'reset'` を分けて `target.withoutApplying(() => store.reset())` を呼んでいた所は、
+   `onLayoutCommit={store.commit}` だけでよい（`withoutApplying` は無い）。マウント時の
+   `store.changed(target.serialize())` も要らない（`target.attach()` → `store.load()` だけ）。
+4. **「既定に戻す」を dock の側で行う**: `DockHost` は
+   `host.replaceLayout(既定のレイアウト, { saved: true, commit: 'reset' })`、`ThreePaneDock` は `three.resetLayout()`。
+   `'reset'` が `store.commit` に届き、既定が利用者の変更として保存される（既定が出ている間でも書く）。保存した値を
+   消したいアプリは `reset: 'remove'` を渡す（provider の `remove(key)` と localStorage の写しを消す）。`DockHost` の
+   `replaceLayout` は `beforePanelChange` を通るので、表示から外れる pane に下書きの確認を出しているアプリでは、
+   「既定に戻す」でも確認が出るようになる。
+5. **`unmount` の flush はそのまま**: `$effect(() => () => store.dispose())`。
+6. **確かめる**: ドラッグ以外の変更（「表示」メニューの切り替え・キーボードでの仕切りの移動・タブの切り替え・自分の
+   `dock.*` の呼び出し）の後に 1 回保存されること、「既定に戻す」の保存が 1 回であること、再読み込みで配置が戻ること。
+   E2E で `localStorage` の書き込みの回数を数えている所は、ドラッグの途中の書き込みが無くなる（確定の後に 1 回）。
+
+`dock.serialize()` を自分で保存しているだけのアプリ（この部品を使っていない）は、何もしなくてよい。
 
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に

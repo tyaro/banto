@@ -1,7 +1,8 @@
 /**
- * Bridges `ThreePaneDock` to `createDockLayoutStore` (three-pane-dock-plan §4.4, #663 ④ PR-6).
+ * Bridges `ThreePaneDock` to `createDockLayoutStore` (three-pane-dock-plan §4.4, #663 ④ PR-6;
+ * in this package since #791 K4).
  *
- * The store was written for the dashboard's `DockHost`, where the saved text is `DockState.serialize()`
+ * The store drives a `DockState` as is (`DockHost`): the saved text is `DockState.serialize()`
  * and applying a saved layout is `DockState.hydrate()`. A `ThreePaneDock` saves
  * `layoutSnapshot()` (`{ schema: 1, panels, layout }`; while narrow, the kept wide layout - never the
  * narrow display) and restores through `restoreLayout()` (reconciled with today's panes, the centre
@@ -10,17 +11,21 @@
  * - before the dock is mounted a stored value only becomes `initialLayout` (the dock reconciles it at
  *   mount, so nothing is mounted twice);
  * - after it, a stored value is installed with `restoreLayout` (not when it is already what is shown);
- * - `serialize()` is the text of `layoutSnapshot()` - what the page reports with `changed()` when
- *   the dock's `onLayoutCommit` says a layout to save is settled (#791);
+ * - `serialize()` is the text of `layoutSnapshot()` - the store's baseline (what is saved is the
+ *   value the dock's `onLayoutCommit` reports, passed to the store's `commit` - #791);
  *   while a layout is being applied (until `attach`, or until the last `restoreLayout` settles,
  *   resolved or rejected) it keeps answering what it answered right after the assignment, and the
  *   end is reported with `onApplied` so the store re-takes its baseline from what is really shown
  *   (a swap is never saved as a user's change);
  * - the store's "default" is a sentinel layout: assigning it means `restoreLayout(undefined)` (the
  *   dock's own measured default), skipped when the dock still shows the default it started with.
+ *
+ * Wiring: `initialLayout={target.initialLayout}`, `onLayoutCommit={store.commit}`, and once the
+ * dock is mounted `target.attach()` then `store.load()`. "Reset layout" is the dock's own
+ * `resetLayout()` (reported as `'reset'`).
  */
-import type { DockLayout } from '@banto/dock-svelte';
-import type { DockLayoutTarget } from '#lib/banto/dockLayoutStore.svelte.js';
+import type { DockLayoutTarget } from './layoutStore';
+import type { DockLayout } from './types';
 
 /** The part of a mounted `ThreePaneDock` the adapter calls. */
 export interface ThreePaneLayoutApi {
@@ -41,8 +46,6 @@ export interface ThreePaneLayoutTarget extends DockLayoutTarget {
 	readonly defaultLayout: DockLayout;
 	/** Call once the dock is mounted: remembers what it shows first. */
 	attach(): void;
-	/** Run `fn` with layout assignments ignored (the page already installed the layout, e.g. after `resetLayout()`). */
-	withoutApplying<T>(fn: () => T): T;
 }
 
 export function createThreePaneLayoutTarget(
@@ -60,7 +63,6 @@ export function createThreePaneLayoutTarget(
 	/** The latest `restoreLayout` in flight (an earlier one finishing does not end the freeze). */
 	let inFlight: Promise<void> | null = null;
 	let attached = false;
-	let suppress = false;
 	let firstSnapshot: string | null = null;
 	let onApplied: (() => void) | undefined;
 
@@ -110,7 +112,7 @@ export function createThreePaneLayoutTarget(
 			return dockState.layout;
 		},
 		set layout(next: DockLayout) {
-			if (suppress || next !== defaultLayout) return;
+			if (next !== defaultLayout) return;
 			const api = getApi();
 			if (!api || !attached) {
 				// Not mounted yet: the dock starts from its default (`attach` reports it as applied).
@@ -143,14 +145,8 @@ export function createThreePaneLayoutTarget(
 		},
 		serialize(): string {
 			const api = getApi();
-			// Read the snapshot even while a layout is being applied: a caller reading this from an
-			// effect (the page did, before `onLayoutCommit` - #791) keeps its reactive dependency on
-			// the layout; `frozen` is a plain variable. Until `attach` the held value is the answer.
-			if (!api) return initial ?? '';
-			if (!attached) {
-				snapshot(api);
-				return initial ?? '';
-			}
+			// Until `attach` the held value is the answer.
+			if (!api || !attached) return initial ?? '';
 			return current(api);
 		},
 		attach() {
@@ -161,18 +157,6 @@ export function createThreePaneLayoutTarget(
 			// The dock reconciled `initialLayout` (or measured its default) at mount: that is what was
 			// applied - unless an install started before `attach` is still running.
 			if (inFlight === null) onApplied?.();
-		},
-		withoutApplying<T>(fn: () => T): T {
-			// The page installed the layout itself: `serialize()` inside answers what is shown.
-			const held = frozen;
-			suppress = true;
-			frozen = null;
-			try {
-				return fn();
-			} finally {
-				suppress = false;
-				if (inFlight !== null) frozen = held;
-			}
 		},
 		onApplied(listener: () => void) {
 			onApplied = listener;
