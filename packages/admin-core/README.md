@@ -156,7 +156,7 @@ interface UiSettingsProvider {
     Tauri・HTTP の実装が持つ）で間の切り替えを確かめる。`updateUiSetting` はこれを行う。
 - **`createLocalUiSettings` とタブ**: 書き込みは Web Locks API（`navigator.locks`）のロックの下で、判定と書き込みをまとめて行う。
   Web Locks API の無い環境（secure context でないページ・古いブラウザー）では、条件付きの書き込みは同じ文書の中だけで確かで、
-  タブをまたいだ上書きの防止には使えない。
+  タブをまたいだ上書きの防止には使えない。ロックの仕組みはあるのに取れなかったときは、書かずに `storage` のエラーで断る。
 
 ### 別のタブの変更を上書きしない: `updateUiSetting`
 

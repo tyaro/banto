@@ -396,13 +396,16 @@ function newLocalRevision(): string {
  * write" in one tab can interleave with another tab's write. Every write
  * (`set` and `remove`, conditional or not) therefore runs under a Web Lock
  * named after the key (`navigator.locks`, shared by the tabs of the origin
- * like localStorage itself). **Where the Web Locks API is missing** (a page
- * that is not a secure context, an old browser, `locks: null`) the check and
- * the write are still one synchronous step, which is only guaranteed against
- * writes from the same document: there, do not rely on `ifRevision` /
- * `updateUiSetting` to keep two tabs from overwriting each other. (The demo
- * and offline fallback this provider is for run on https or localhost, where
- * the API exists.) `get` takes no lock. `set` never answers `superseded`.
+ * like localStorage itself). When there is a lock manager but the lock is
+ * not granted, the write is refused (`storage` error, nothing is written) -
+ * it never goes around the lock. **Where the Web Locks API is missing** (a
+ * page that is not a secure context, an old browser) or turned off
+ * (`locks: null`), the check and the write are still one synchronous step,
+ * which is only guaranteed against writes from the same document: there, do
+ * not rely on `ifRevision` / `updateUiSetting` to keep two tabs from
+ * overwriting each other. (The demo and offline fallback this provider is for
+ * run on https or localhost, where the API exists.) `get` takes no lock. `set`
+ * never answers `superseded`.
  */
 export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiSettingsProvider {
 	function storage(): Storage {
@@ -457,10 +460,17 @@ export function createLocalUiSettings(options: LocalUiSettingsOptions = {}): UiS
 				}
 			});
 		} catch {
-			// The lock could not be taken at all (e.g. refused in a sandboxed
-			// frame): fall back to the unlocked step below, unless it already ran.
+			// Settled below: what matters is whether the step ran under the lock.
 		}
-		if (outcome === undefined) return step();
+		if (outcome === undefined) {
+			// There is a lock manager but the lock was not granted (e.g. refused in
+			// a sandboxed frame). Writing anyway would bypass the lock other tabs'
+			// conditional writes rely on, so nothing is written.
+			throw new ProviderError({
+				kind: 'storage',
+				message: `ui-settings lock unavailable: ${key}`
+			});
+		}
 		if ('error' in outcome) throw outcome.error;
 		return outcome.value;
 	}
@@ -737,23 +747,28 @@ export async function updateUiSetting(
 	options: UpdateUiSettingOptions = {}
 ): Promise<UpdatedUiSetting> {
 	const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? DEFAULT_UPDATE_ATTEMPTS));
-	// Captured before the first read. Checked after every await, and each write
-	// is handed to the provider in the same synchronous step as the last check
-	// (the provider captures the session for that write right there).
+	// Captured before the first read.
+	//
+	// INVARIANT: every `await` in this function is followed, in the SAME
+	// synchronous step (no helper function, no extra `await` in between), by
+	// `assertSameSession()`; and from the last check to the next
+	// `provider.set(...)` call or `return` there is no `await` either. The
+	// provider captures the session for a write synchronously when `set` is
+	// called, so the session a write is accepted for is the one just checked.
+	// Do not move these reads into an `async` helper: awaiting the helper adds
+	// a microtask between its check and the code that goes on to write.
 	const sameSession = provider.sessionGuard?.() ?? (() => true);
 	const assertSameSession = (): void => {
 		if (!sameSession()) throw new ProviderError({ kind: 'unauthorized' });
 	};
-	const read = async (): Promise<UiSettingSnapshot> => {
-		const snapshot = await provider.get(key);
-		assertSameSession();
-		return snapshot;
-	};
 
-	let current = await read();
+	let current = await provider.get(key);
+	assertSameSession();
 	let lastError: unknown;
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
 		const next = apply(current.value);
+		// `apply` is the caller's code: check again right before acting on it.
+		assertSameSession();
 		if (next === current.value) return { value: next, revision: current.revision };
 		let written: UiSettingWriteResult;
 		try {
@@ -763,12 +778,19 @@ export async function updateUiSetting(
 			lastError = error;
 			if (error instanceof ProviderError && error.body.kind === 'conflict') {
 				// Somebody else wrote first: go again from the value it returned.
-				current = uiSettingConflict(error) ?? (await read());
+				const returned = uiSettingConflict(error);
+				if (returned) {
+					current = returned;
+				} else {
+					current = await provider.get(key);
+					assertSameSession();
+				}
 				continue;
 			}
 			if (isDefiniteRefusal(error)) throw error;
 			// Unknown outcome: never send the same PUT again. Read instead.
-			current = await read();
+			current = await provider.get(key);
+			assertSameSession();
 			if (current.value === next) return { value: next, revision: current.revision };
 			continue;
 		}

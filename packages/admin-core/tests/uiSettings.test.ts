@@ -1259,6 +1259,101 @@ describe('updateUiSetting and a session change (the update belongs to the sessio
 		}
 	});
 
+	// The switch lands in a microtask that runs right after the provider's
+	// promise settled - between two promise continuations, not while a request
+	// is pending. The write must still be accepted for the session that was
+	// checked: the check and `provider.set(...)` are one synchronous step.
+	describe('a switch between promise continuations', () => {
+		/** A Tauri provider whose `get` / `set` answers schedule `onSettled` as a microtask. */
+		function microtaskWorld(answers: Array<() => unknown>) {
+			const session = { revision: 'rev-alice' };
+			const calls: Array<{ cmd: string; session: string }> = [];
+			const invoke = vi.fn(async (cmd: string) => {
+				calls.push({ cmd, session: session.revision });
+				return (answers.shift() as () => unknown)();
+			});
+			const inner = createTauriUiSettings({ invoke, getSessionRevision: () => session.revision });
+			const hooks: { afterGet?: () => void; afterSetFailed?: () => void } = {};
+			const provider: UiSettingsProvider = {
+				...inner,
+				get(key) {
+					const answer = inner.get(key);
+					// Registered before the caller's own continuation, so the
+					// microtask it queues runs right after that continuation's
+					// predecessors - the gap an `async` read helper would open.
+					void answer.then(() => queueMicrotask(() => hooks.afterGet?.()));
+					return answer;
+				},
+				set(key, value, options) {
+					const answer = inner.set(key, value, options);
+					void answer.catch(() => queueMicrotask(() => hooks.afterSetFailed?.()));
+					return answer;
+				}
+			};
+			return { provider, session, calls, hooks };
+		}
+
+		it('after the first read: the write is accepted for the session that was checked, and the result is withheld', async () => {
+			const w = microtaskWorld([
+				() => ({ value: null, revision: '0' }),
+				() => ({ revision: 'r1' })
+			]);
+			w.hooks.afterGet = () => (w.session.revision = 'rev-bob');
+
+			await expect(updateUiSetting(w.provider, 'tags', addTag('b'))).rejects.toMatchObject(
+				unauthorized
+			);
+			// Never a write under bob's session with alice's value.
+			expect(w.calls.every((c) => c.session === 'rev-alice')).toBe(true);
+		});
+
+		it('after the re-read that follows a lost answer: same', async () => {
+			let reads = 0;
+			const w = microtaskWorld([
+				() => ({ value: null, revision: '0' }),
+				() => {
+					throw new Error('ipc closed');
+				},
+				() => ({ value: null, revision: '0' }),
+				() => ({ revision: 'r1' })
+			]);
+			w.hooks.afterGet = () => {
+				if (++reads === 2) w.session.revision = 'rev-bob';
+			};
+
+			await expect(updateUiSetting(w.provider, 'tags', addTag('b'))).rejects.toMatchObject(
+				unauthorized
+			);
+			expect(w.calls.every((c) => c.session === 'rev-alice')).toBe(true);
+		});
+
+		it('after a conflict: the retry is accepted for the session that was checked', async () => {
+			const w = microtaskWorld([
+				() => ({ value: '["a"]', revision: 'r0' }),
+				() => {
+					throw conflictBody({ value: '["x"]', revision: 'r1' });
+				},
+				() => ({ revision: 'r2' })
+			]);
+			w.hooks.afterSetFailed = () => (w.session.revision = 'rev-bob');
+
+			await expect(updateUiSetting(w.provider, 'tags', addTag('b'))).rejects.toMatchObject(
+				unauthorized
+			);
+			expect(w.calls.every((c) => c.session === 'rev-alice')).toBe(true);
+		});
+
+		it('a switch made by apply itself stops before the write', async () => {
+			const w = microtaskWorld([() => ({ value: null, revision: '0' })]);
+			const apply = (current: string | null) => {
+				w.session.revision = 'rev-bob';
+				return addTag('b')(current);
+			};
+			await expect(updateUiSetting(w.provider, 'tags', apply)).rejects.toMatchObject(unauthorized);
+			expect(w.calls.map((c) => c.cmd)).toEqual(['ui_settings_get']);
+		});
+	});
+
 	it('Tauri without getSessionRevision: the session is not checked (the guard always holds)', async () => {
 		const provider = createTauriUiSettings({ invoke: vi.fn() });
 		const guard = provider.sessionGuard?.();
@@ -1336,15 +1431,52 @@ describe('createLocalUiSettings cross-tab lock', () => {
 		});
 	});
 
-	it('works without a lock manager (locks: null), and when the lock cannot be taken', async () => {
+	it('works without a lock manager (locks: null): the documented same-document mode', async () => {
 		const unlocked = createLocalUiSettings({ storage: makeMemoryStorage(), locks: null });
-		await expect(unlocked.set('k', 'a')).resolves.toMatchObject({ revision: expect.any(String) });
+		const written = await unlocked.set('k', 'a');
+		await expect(unlocked.get('k')).resolves.toEqual({ value: 'a', revision: written.revision });
+		await expect(unlocked.set('k', 'b', { ifRevision: '0' })).rejects.toMatchObject({
+			body: { kind: 'conflict' }
+		});
+	});
+
+	it('a lock that exists but is not granted refuses the write: nothing is stored or deleted', async () => {
+		const storage = makeMemoryStorage();
+		const seeded = createLocalUiSettings({ storage, locks: null });
+		const before = await seeded.set('k', 'a');
+		const snapshot = () => [storage.getItem('banto.ui.k'), storage.getItem('banto.ui-rev.k')];
+		const stored = snapshot();
 
 		const refused = createLocalUiSettings({
-			storage: makeMemoryStorage(),
+			storage,
 			locks: { request: () => Promise.reject(new Error('SecurityError')) }
 		});
-		const written = await refused.set('k', 'a');
-		await expect(refused.get('k')).resolves.toEqual({ value: 'a', revision: written.revision });
+		const storageError = { body: { kind: 'storage' } };
+		await expect(refused.set('k', 'b')).rejects.toMatchObject(storageError);
+		await expect(
+			refused.set('k', 'b', { ifRevision: before.revision as string })
+		).rejects.toMatchObject(storageError);
+		await expect(refused.remove('k')).rejects.toMatchObject(storageError);
+		await expect(
+			refused.remove('k', { ifRevision: before.revision as string })
+		).rejects.toMatchObject(storageError);
+		await expect(refused.set('new', 'x', { ifRevision: '0' })).rejects.toMatchObject(storageError);
+
+		expect(snapshot()).toEqual(stored);
+		expect(storage.getItem('banto.ui.new')).toBeNull();
+		// Reads take no lock and still work.
+		await expect(refused.get('k')).resolves.toEqual({ value: 'a', revision: before.revision });
+	});
+
+	it('updateUiSetting gives up with the lock error instead of writing around the lock', async () => {
+		const storage = makeMemoryStorage();
+		const refused = createLocalUiSettings({
+			storage,
+			locks: { request: () => Promise.reject(new Error('SecurityError')) }
+		});
+		await expect(
+			updateUiSetting(refused, 'tags', addTag('b'), { maxAttempts: 2 })
+		).rejects.toMatchObject({ body: { kind: 'storage' } });
+		expect(storage.getItem('banto.ui.tags')).toBeNull();
 	});
 });
