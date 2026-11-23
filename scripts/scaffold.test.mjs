@@ -459,6 +459,7 @@ test('--list-banto-only は removeBantoReleaseOnly の消す path と一致す�
 test('チャートと dock を外す minimal では、ダッシュボードの登録・KPI・ページにその参照（未使用警告の元）が残らない', () => {
 	// #716 W1: ページはチャートを import しない。チャートは登録の行 + 部品のファイルで、
 	// scaffold は `[scaffold:charts]` / `[scaffold:dock]` の領域と部品を消す。
+	// W2: 残るのは、登録の順に 1 列で積む表示（DashboardWidgetStack）と、コアだけで描く一覧のウィジェット。
 	const dir = copyRepo();
 	try {
 		const res = runIn(dir, ['--preset', 'minimal', '--strict']);
@@ -476,16 +477,47 @@ test('チャートと dock を外す minimal では、ダッシュボードの�
 			for (const gone of [
 				'@banto/charts',
 				'@banto/dock-svelte',
-				'components/dashboard/',
+				'components/dashboard/charts',
 				'] begin',
 				'] end'
 			])
 				assert.ok(!src.includes(gone), `${name} に ${gone} が残っている`);
 		}
-		for (const gone of ['DockHost', 'PageViewMenu', 'dockPanel', 'provideDashboardMemoPane'])
+		for (const gone of [
+			'<DockHost',
+			'<PageViewMenu',
+			'dockPanel',
+			'provideDashboardMemoPane',
+			'dashboardLayout.js',
+			'DashboardWidgetFrame',
+			'DraftSettleDialog',
+			'page-measure"',
+			'dockShown'
+		])
 			assert.ok(!files.page.includes(gone), `ページに ${gone} が残っている`);
-		for (const gone of ['MonthlyWidget', 'MemoWidget', "id: '"])
+		for (const gone of ['MonthlyWidget', 'MemoWidget', "id: 'monthly'", "id: 'memo'"])
 			assert.ok(!files.widgets.includes(gone), `登録に ${gone} が残っている`);
+		// W2: 残る登録は一覧（grid-svelte = コア）だけ。ページはそれを 1 列で積む。
+		assert.deepEqual(
+			[...files.widgets.matchAll(/\bid: '([^']+)'/g)].map((found) => found[1]),
+			['lowStock'],
+			'登録に残る id が一覧だけでない'
+		);
+		assert.ok(
+			files.page.includes('<DashboardWidgetStack widgets={stackWidgets} {data} />'),
+			'「積む」表示が消えた'
+		);
+		for (const kept of [
+			'DashboardWidgetStack.svelte',
+			'DashboardWidgetFrame.svelte',
+			'LowStockWidget.svelte'
+		])
+			assert.ok(
+				fs.existsSync(path.join(app, 'lib/components/dashboard', kept)),
+				`${kept} が消えた`
+			);
+		for (const gone of ['dashboardLayout.ts', 'dashboardLayout.test.ts'])
+			assert.ok(!fs.existsSync(path.join(app, 'lib/banto', gone)), `${gone} が残っている`);
 		for (const gone of ['updatesByMonth', 'sparkline: '])
 			assert.ok(!files.kpis.includes(gone), `KPI の定義に ${gone} が残っている`);
 		assert.ok(!files.strip.includes('<Sparkline'), 'KPI の帯に Sparkline の描画が残っている');
@@ -497,7 +529,7 @@ test('チャートと dock を外す minimal では、ダッシュボードの�
 			!fs.existsSync(path.join(app, 'lib/components/dashboard/MemoWidget.svelte')),
 			'メモの部品が残っている'
 		);
-		// 残るもの: 空の登録（ページが引く）、KPI の帯と値、データの読み込み。
+		// 残るもの: 登録（ページが引く）、KPI の帯と値、データの読み込み。
 		assert.ok(files.widgets.includes('export const DASHBOARD_WIDGETS'), '登録の公開が消えた');
 		assert.ok(files.page.includes('<DashboardKpiStrip {data} />'), 'KPI の帯が消えた');
 		assert.ok(files.kpis.includes('data.stats.stockTotal'), 'KPI の値が消えた');
