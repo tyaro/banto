@@ -39,6 +39,7 @@ import { dockShareOf } from './core/defaultPlace';
 import { withLayoutVersion } from './core/layoutVersion';
 import { notify } from './core/report';
 import {
+	activateInShadow,
 	dockAtShadowEdge,
 	copyShadowSizes,
 	deflateShadow,
@@ -1026,6 +1027,9 @@ export class DockState {
 					ids
 				);
 			}
+			// The tab that was in front in the band is in front of the group it lands in: every
+			// pane placed became the active tab of its group in turn (Codex P2 on #876).
+			s = activateInShadow(s, active);
 		}
 		return { shadow: this.#clear(s, ids, bands), bands, moved: panes[0].id };
 	}

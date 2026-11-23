@@ -43,25 +43,36 @@ export function bandTreeOf(s: ShadowNode | null): ShadowNode | null {
 	return any ? out : null;
 }
 
+/** The tab group each tab of `s` is in, by the tab's id (a pane that is not a tab has no entry). */
+function tabGroupsByTab(
+	s: ShadowNode,
+	into = new Map<string, ShadowNode>()
+): Map<string, ShadowNode> {
+	if (s.type === 'tabs') for (const tab of s.children) into.set(tab.id, s);
+	else if (s.type === 'split') for (const child of s.children) tabGroupsByTab(child, into);
+	return into;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Deeper than any tree a dock shows: a value that contains itself ends here. */
-const MAX_DEPTH = 64;
-
 /**
  * `raw` as a shadow tree whose only tombstones are marked `band`, with every split's `sizes`
  * scaled to add up to 1; `undefined` when it is not one (the shape of a node, an id twice, a
- * tombstone without `band` or a `band` that is not a tombstone). Never throws.
+ * tombstone without `band` or a `band` that is not a tombstone). A value that contains itself
+ * ends at the node met twice (`visited`, as `validateDockLayout` ends the docked tree): the tree
+ * may be as deep as the docked tree it is saved with - no depth of its own is refused (Codex
+ * cross-review of PR #876).
  */
 function shapeOf(
 	raw: unknown,
 	seen: Set<string>,
-	inTabs: boolean,
-	depth: number
+	visited: WeakSet<object>,
+	inTabs: boolean
 ): ShadowNode | undefined {
-	if (!isRecord(raw) || depth > MAX_DEPTH) return undefined;
+	if (!isRecord(raw) || visited.has(raw)) return undefined;
+	visited.add(raw);
 	if (typeof raw.id !== 'string' || raw.id === '' || seen.has(raw.id)) return undefined;
 	seen.add(raw.id);
 	if (raw.collapsed !== undefined && typeof raw.collapsed !== 'boolean') return undefined;
@@ -82,7 +93,7 @@ function shapeOf(
 	if (inTabs || !Array.isArray(raw.children)) return undefined;
 	const children: ShadowNode[] = [];
 	for (let i = 0; i < raw.children.length; i++) {
-		const child = shapeOf(raw.children[i], seen, raw.type === 'tabs', depth + 1);
+		const child = shapeOf(raw.children[i], seen, visited, raw.type === 'tabs');
 		if (child === undefined) return undefined;
 		children.push(child);
 	}
@@ -136,8 +147,13 @@ function shapeOf(
  *    order of the tabs, titles, icons and `collapsed` flags. The tombstones keep their share.
  *  - Every tombstone is marked `away` and `band`, and is a pane of one of `regions`.
  *  - A region with only some of its panes in the tree has no place: those are taken out.
+ *  - A region of several panes is a tab group: its tombstones are tabs of ONE tab group of the
+ *    tree (whatever its id - S gives a group another id when the band's would show twice). A tree
+ *    that holds them apart - in two splits, or one as a bare pane - is not read at all: pinned
+ *    back, the tabs would come out in different places (cross-review of PR #876).
  *
- * Never throws, and never changes `raw` (the result shares no node with it).
+ * Never throws (a tree too deep for the stack is not read either), and never changes `raw` (the
+ * result shares no node with it).
  */
 export function readBandTree(
 	raw: unknown,
@@ -146,14 +162,20 @@ export function readBandTree(
 ): ShadowNode | undefined {
 	if (raw === undefined || raw === null) return undefined;
 	try {
-		let s: ShadowNode | null = shapeOf(raw, new Set(), false, 0) ?? null;
+		let s: ShadowNode | null = shapeOf(raw, new Set(), new WeakSet(), false) ?? null;
 		if (s === null) return undefined;
 		const band = new Set(shadowBandIds(s));
 		const known = new Set(regions.flat());
 		for (const id of band) if (!known.has(id)) return undefined;
+		const groups = tabGroupsByTab(s);
 		for (const ids of regions) {
 			const held = ids.filter((id) => band.has(id));
-			if (held.length === ids.length) continue;
+			if (held.length === ids.length) {
+				const group = groups.get(ids[0]);
+				if (ids.length > 1 && (group === undefined || ids.some((id) => groups.get(id) !== group)))
+					return undefined;
+				continue;
+			}
 			for (const id of held) s = removeFromShadow(s, id);
 		}
 		if (s === null || shadowBandIds(s).length === 0) return undefined;

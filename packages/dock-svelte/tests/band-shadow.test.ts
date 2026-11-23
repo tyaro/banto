@@ -392,7 +392,60 @@ describe('a region whose place is gone: the default place, else the edge (#782 P
 		// The default group's id is free again, and the band's active tab shows.
 		const group = findNode(dock.layout.docked, 'g') as DockTabGroupNode;
 		expect(group.type).toBe('tabs');
+		expect(group.activeIndex).toBe(1);
 		expect(dock.autoHidden).toEqual([]);
+	});
+
+	// Codex P2 / cross-review of PR #876: every pane put at its default place becomes the active
+	// tab of its group in turn, so the last one put was left in front.
+	it.each([
+		[['b', 'c'], 0],
+		[['b', 'c'], 1],
+		[['b', 'c', 'e'], 0],
+		[['b', 'c', 'e'], 1],
+		[['b', 'c', 'e'], 2]
+	] as [string[], number][])(
+		'back at the default places of tabs %j, tab %i in front: the tabs in default order, that tab in front',
+		(ids, active) => {
+			const defaults = (): DockNode =>
+				split('r', 'row', [0.2, 0.3, 0.5], [panel('a'), tabs('g', ids, active), panel('d')]);
+			const from = createDockState(layoutOf(defaults()), counterMakeId());
+			expect(from.autoHideRegion('g')).toBe(true);
+			const { dockedWithAutoHidden: _, ...bare } = JSON.parse(from.serialize()) as DockLayout;
+			const dock = createDockState(JSON.stringify(bare), counterMakeId());
+			dock.defaultLayout = layoutOf(defaults());
+			const preview = dock.previewRestoreAutoHidden('g') ?? null;
+			expect(dock.restoreAutoHidden('g')).toBe(true);
+			const group = findParent(dock.layout.docked, ids[0]) as DockTabGroupNode;
+			expect(group.children.map((c) => c.id)).toEqual(ids);
+			expect(group.activeIndex).toBe(active);
+			// The preview says the same tree.
+			expect(shapeOf(preview)).toEqual(shapeOf(dock.layout.docked));
+			expect((findParent(preview, ids[0]) as DockTabGroupNode).activeIndex).toBe(active);
+		}
+	);
+
+	it('panes of the region whose default places are apart: the tab in front shows where it lands', () => {
+		// By default `b` and `c` are in different places; the user had made a group of them.
+		const defaults = (): DockNode =>
+			split(
+				'r',
+				'row',
+				[0.25, 0.25, 0.25, 0.25],
+				[tabs('g', ['a', 'b']), panel('m'), panel('c'), panel('d')]
+			);
+		const made = (): DockNode =>
+			split('r', 'row', [0.4, 0.2, 0.4], [panel('a'), panel('m'), tabs('u', ['b', 'c'], 0)]);
+		const from = createDockState(layoutOf(made()), counterMakeId());
+		expect(from.autoHideRegion('u')).toBe(true);
+		const { dockedWithAutoHidden: _, ...bare } = JSON.parse(from.serialize()) as DockLayout;
+		const dock = createDockState(JSON.stringify(bare), counterMakeId());
+		dock.defaultLayout = layoutOf(defaults());
+		expect(dock.restoreAutoHidden('u')).toBe(true);
+		expect(shapeOf(dock.layout.docked)).toEqual({ row: [{ tabs: ['a', 'b'] }, 'm', 'c'] });
+		// `b` was in front in the band: it is in front of the group it joined.
+		const group = findParent(dock.layout.docked, 'b') as DockTabGroupNode;
+		expect(group.children[group.activeIndex].id).toBe('b');
 	});
 
 	it('no default layout: the region docks along its edge as it is, the group with its id and active tab', () => {
@@ -515,6 +568,87 @@ describe('readBandTree / bandTreeOf (#782 PR8b)', () => {
 			expect(readBandTree(raw, tree, regions), name).toBeUndefined();
 		expect(readBandTree(undefined, docked(), [['b']])).toBeUndefined();
 		expect(readBandTree(null, docked(), [['b']])).toBeUndefined();
+	});
+
+	// Cross-review of PR #876: a tab group in a band goes back as one group.
+	it('a tab group`s tombstones must be tabs of one group of the tree, whatever its id', () => {
+		const group = (id: string): ShadowNode => ({
+			type: 'tabs',
+			id,
+			activeIndex: 0,
+			children: [away('a') as never, away('b') as never]
+		});
+		const within = (first: ShadowNode, ...rest: ShadowNode[]): ShadowNode => ({
+			type: 'split',
+			id: 'r',
+			direction: 'row',
+			sizes: [first, ...rest, 0].map(() => 1),
+			children: [first, ...rest, panel('c')]
+		});
+		const shown = panel('c');
+		expect(shadowBandIds(readBandTree(within(group('g')), shown, [['a', 'b']]) ?? null)).toEqual([
+			'a',
+			'b'
+		]);
+		// S gave the group another id (the band's showed twice): still one group.
+		expect(readBandTree(within(group('g-2')), shown, [['a', 'b']])).toBeDefined();
+		// Apart: two bare panes of a split, in two splits, or in two tab groups.
+		expect(readBandTree(within(away('a'), away('b')), shown, [['a', 'b']])).toBeUndefined();
+		const apart = within(away('a'), {
+			type: 'split',
+			id: 'inner',
+			direction: 'column',
+			sizes: [0.5, 0.5],
+			children: [away('b'), panel('d')]
+		});
+		expect(
+			readBandTree(apart, split('r', 'row', [0.5, 0.5], [panel('d'), panel('c')]), [['a', 'b']])
+		).toBeUndefined();
+		const two = within(
+			{
+				type: 'tabs',
+				id: 'g1',
+				activeIndex: 0,
+				children: [away('a') as never, away('x') as never]
+			},
+			{ type: 'tabs', id: 'g2', activeIndex: 0, children: [away('b') as never, away('y') as never] }
+		);
+		expect(readBandTree(two, shown, [['a', 'b'], ['x'], ['y']])).toBeUndefined();
+		// ... while the same panes as regions of their own are fine where they are.
+		expect(readBandTree(within(away('a'), away('b')), shown, [['a'], ['b']])).toBeDefined();
+	});
+
+	it('reads a tree as deep as the docked tree it is saved with', () => {
+		// 80 splits deep, the band's pane at the bottom.
+		let deep: ShadowNode = {
+			type: 'split',
+			id: 's0',
+			direction: 'row',
+			sizes: [0.5, 0.5],
+			children: [away('b'), panel('p0')]
+		};
+		let seen: DockNode = panel('p0');
+		for (let i = 1; i < 80; i++) {
+			const direction = i % 2 ? 'column' : 'row';
+			deep = {
+				type: 'split',
+				id: `s${i}`,
+				direction,
+				sizes: [0.5, 0.5],
+				children: [deep, panel(`p${i}`)]
+			};
+			seen = split(`s${i}`, direction, [0.5, 0.5], [seen, panel(`p${i}`)]);
+		}
+		const raw = JSON.parse(JSON.stringify(deep)) as unknown;
+		expect(shadowBandIds(readBandTree(raw, seen, [['b']]) ?? null)).toEqual(['b']);
+		const checked = validateDockLayout({
+			version: 4,
+			floating: [],
+			docked: seen,
+			autoHidden: [{ node: panel('b'), edge: 'left' }],
+			dockedWithAutoHidden: raw
+		});
+		expect(checked.ok && checked.layout.dockedWithAutoHidden !== undefined).toBe(true);
 	});
 
 	it('does not throw on a value that contains itself', () => {

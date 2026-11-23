@@ -339,6 +339,23 @@ export function markPresent(
 	return settleCollapsed(replaceNode(s, group.id, () => ({ ...group, children, activeIndex })));
 }
 
+/**
+ * S with the shown pane `panelId` as the active tab of its tab group (#782 PR8b: the tab that was
+ * in front of a region in an edge band, once its panes are back at their default places - each
+ * pane put into a group becomes its active tab, so the last one put would stay in front). The
+ * same S when the pane is not a shown tab, or is the active one already.
+ */
+export function activateInShadow(s: ShadowNode | null, panelId: string): ShadowNode | null {
+	if (!s) return s;
+	const path = pathTo(s, panelId);
+	const leaf = path?.at(-1);
+	const group = path?.at(-2);
+	if (leaf?.type !== 'panel' || leaf.away === true || group?.type !== 'tabs') return s;
+	const activeIndex = group.children.findIndex((c) => c.id === panelId);
+	if (activeIndex === group.activeIndex) return s;
+	return replaceNode(s, group.id, () => ({ ...group, activeIndex }));
+}
+
 // ----- taking out ----------------------------------------------------------------------------
 
 /** A split / tab group of S with no child is gone, with one child it is that child (`tree.ts#collapse`, over S). */
