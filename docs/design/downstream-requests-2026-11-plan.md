@@ -910,7 +910,7 @@ interface DashboardWidgetDef {
   引かれなくなった。W2 で、ほかの使わなくなるキーと一緒に消す。
 
 **読み込みの回数**: ページを開いたときの items の読み込みは 1 回（W1 の前は、ページ 1 回 + dock のパネル 1 枚ごとに 1 回。
-既定の配置で 3 回）。単体テスト（`dashboardData.svelte.test.ts`）と e2e（`smoke.spec.ts` の 13k3。`/api/items/list` の回数）で確かめる。
+既定の配置で 3 回）。単体テスト（`dashboardData.svelte.test.ts`）と e2e（`smoke.spec.ts` の 13k3・13k4。`/api/items/list` の回数）で確かめる。
 
 **scaffold**
 

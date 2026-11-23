@@ -3787,15 +3787,38 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// page load and hands the rows to the KPI strip, the fixed cards and the dock's panels. Before
 	// W1 the page read it and every dock panel read its own copy (3 requests with the default
 	// layout, one more for each panel shown later).
-	test('13k3. dashboard: one read of items feeds the KPI strip, the cards and the dock panels', async () => {
-		await page.goto('/dashboard');
-		await resetDashboardLayout(page);
+	//
+	// Two tests, so the first holds in any scaffolded copy that keeps the dashboard (it needs
+	// neither the charts nor the dock: the KPI strip is always there); the second needs both.
+	function countItemsReads(): { reads: string[]; stop: () => void } {
 		const reads: string[] = [];
-		const countRead = (request: Request) => {
+		const onRequest = (request: Request) => {
 			if (new URL(request.url()).pathname === '/api/items/list' && request.method() === 'POST')
 				reads.push(request.url());
 		};
-		page.on('request', countRead);
+		page.on('request', onRequest);
+		return { reads, stop: () => page.off('request', onRequest) };
+	}
+
+	test('13k3. dashboard: opening the page reads items once', async () => {
+		await page.goto('/dashboard');
+		const counter = countItemsReads();
+		try {
+			await page.reload();
+			// The KPI strip's first tile (商品数) shows the count once the read has settled.
+			await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+			// No late read either (REST mode keeps an SSE stream open, so there is no network idle to wait for).
+			await page.waitForTimeout(500);
+			expect(counter.reads).toHaveLength(1);
+		} finally {
+			counter.stop();
+		}
+	});
+
+	test('13k4. dashboard: the cards, the docked panels and a panel shown later draw from that one read', async () => {
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		const counter = countItemsReads();
 		try {
 			await page.reload();
 			// The same widget twice: the fixed card and the docked panel of the default layout.
@@ -3806,11 +3829,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(
 				page.getByRole('img', { name: '価格分布のヒストグラム（正規分布カーブ重ね描き）' })
 			).toBeVisible();
-			// No late read either (REST mode keeps an SSE stream open, so there is no network idle to wait for).
 			await page.waitForTimeout(500);
-			expect(reads).toHaveLength(1);
+			expect(counter.reads).toHaveLength(1);
 		} finally {
-			page.off('request', countRead);
+			counter.stop();
 			await resetDashboardLayout(page);
 		}
 	});

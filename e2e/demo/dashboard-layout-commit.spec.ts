@@ -15,7 +15,9 @@ import { primeThemeAndAuth } from '../visual/theme';
 
 const LAYOUT_KEY = 'banto.dock.dashboard:acct:demo';
 const PROVIDER_KEY = 'banto.ui.dock.dashboard';
-const PANEL = 'トレンド';
+// The memo: the one panel that does not need `@banto/charts`, so this spec also holds in a copy
+// scaffolded without the charts (#716 W1). The default layout shows it (a floating window).
+const PANEL = 'メモ';
 
 async function writes(page: Page, key: string): Promise<string[]> {
 	return page.evaluate(
@@ -67,10 +69,11 @@ test('the seeded default is not saved; a View menu change and a reset are one wr
 	await page.waitForTimeout(800);
 	expect(await stored(page, PROVIDER_KEY)).toBeNull();
 
-	// Show one more pane from the View menu (`setPanelVisible`, not a gesture): the default has it closed.
+	// Hide a pane from the View menu (`setPanelVisible`, not a gesture): the default has it open.
+	// Its text is untouched, so the close has nothing to settle and applies at once.
 	const menu = await openViewMenu(page);
 	const checkbox = menu.getByRole('menuitemcheckbox', { name: PANEL, exact: true });
-	await expect(checkbox).toHaveAttribute('aria-checked', 'false');
+	await expect(checkbox).toHaveAttribute('aria-checked', 'true');
 	await checkbox.click();
 	await page.keyboard.press('Escape');
 	await expect(menu).toHaveCount(0);
@@ -90,7 +93,7 @@ test('the seeded default is not saved; a View menu change and a reset are one wr
 	const again = await openViewMenu(page);
 	await expect(again.getByRole('menuitemcheckbox', { name: PANEL, exact: true })).toHaveAttribute(
 		'aria-checked',
-		'true'
+		'false'
 	);
 
 	// "Reset layout": one write of the default (`'reset'`), not followed by a `'user'` one.
@@ -104,6 +107,6 @@ test('the seeded default is not saved; a View menu change and a reset are one wr
 	const after = await openViewMenu(page);
 	await expect(after.getByRole('menuitemcheckbox', { name: PANEL, exact: true })).toHaveAttribute(
 		'aria-checked',
-		'false'
+		'true'
 	);
 });
