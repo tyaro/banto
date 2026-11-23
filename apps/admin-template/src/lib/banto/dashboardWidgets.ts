@@ -8,8 +8,10 @@
  * compose a widget.
  *
  * Used from:
- *  - the dashboard page (`routes/(app)/dashboard/+page.svelte`): the fixed cards and the dock's
- *    panels are both drawn from here;
+ *  - the dashboard page (`routes/(app)/dashboard/+page.svelte`): every widget is a panel of its
+ *    ONE dock (#716 W2; the default arrangement is `dashboardLayout.ts`), and the View menu lists
+ *    them in this order. On a narrow page, and in a copy without the dock, the same widgets are
+ *    stacked in one column in this order (`DashboardWidgetStack.svelte`);
  *  - the standalone `routes/panel/[id]` route a panel renders as once popped out into a real
  *    Tauri `WebviewWindow` (spec §5.3 v2) - it has no access to the page's locals, so it looks
  *    the widget up by id.
@@ -19,14 +21,11 @@
  * dock: the registrations stay when `scripts/scaffold.mjs` removes the dock (`removeDock`). The
  * page hands a def to `dock.ensureWindow`, which type-checks that the two shapes still agree.
  *
- * W1 keeps the two PLACES of today: `DASHBOARD_CARDS` says which widgets are the fixed cards, and
- * the page lists the ids its dock offers as panels. W2 moves everything into one dock and removes
- * both lists.
- *
  * scaffold: the entries are grouped by the optional package their component needs.
  * `removeCharts` / `removeDock` cut the `[scaffold:charts]` / `[scaffold:dock]` regions (the
  * imports and the entries) and delete the component files. Keep an entry inside the region of the
- * package its component imports; an entry that needs neither goes outside the regions.
+ * package its component imports; an entry that needs neither (the list, `lowStock`) goes outside
+ * the regions and stays in every preset that keeps the dashboard.
  *
  * To give a new icon id a line icon, add it to PanelIcon.svelte's lookup. Unknown ids still
  * render as their original text for adopters.
@@ -43,6 +42,7 @@ import SpcWidget from '#lib/components/dashboard/charts/SpcWidget.svelte';
 import StackedBarWidget from '#lib/components/dashboard/charts/StackedBarWidget.svelte';
 import TrendWidget from '#lib/components/dashboard/charts/TrendWidget.svelte';
 // [scaffold:charts] end
+import LowStockWidget from '#lib/components/dashboard/LowStockWidget.svelte';
 // [scaffold:dock] begin
 import MemoWidget from '#lib/components/dashboard/MemoWidget.svelte';
 // [scaffold:dock] end
@@ -77,19 +77,9 @@ export interface DashboardWidgetDef {
 	usesPeriod?: boolean;
 }
 
-/** W1 only (W2 removes it): a widget shown as a fixed card above the dock. */
-export interface DashboardCardDef {
-	/** A registered widget's id. The card's heading is the widget's title. */
-	id: string;
-	/** `primary` spans 8 of the 12 columns, `secondary` 4 (one column under 900px). */
-	tier: 'primary' | 'secondary';
-	/** The line under the heading (a getter, like `title`). */
-	readonly caption: string;
-}
-
 /**
- * A message that takes no input: a widget's title, a card's caption. A registration names the
- * KEY (the same form as `navigation.ts`'s `labelKey`); the exported lists turn it into the getter.
+ * A message that takes no input: a widget's title. A registration names the KEY (the same form as
+ * `navigation.ts`'s `labelKey`); the exported list turns it into the getter.
  */
 type PlainMessageKey = {
 	[K in keyof typeof m]: (typeof m)[K] extends () => string ? K : never;
@@ -97,10 +87,8 @@ type PlainMessageKey = {
 
 /** What a registration below writes: a `DashboardWidgetDef` with `titleKey` in place of `title`. */
 type WidgetEntry = Omit<DashboardWidgetDef, 'title'> & { titleKey: PlainMessageKey };
-type CardEntry = Omit<DashboardCardDef, 'caption'> & { captionKey: PlainMessageKey };
 
 const widgets: WidgetEntry[] = [];
-const cards: CardEntry[] = [];
 // [scaffold:charts] begin
 // Widgets drawn with `@banto/charts`. `spc` (histogram + Pareto + box plot, one SVG export
 // button) and `trend` (streaming, zoom / pan, bands, markers, second y-axis) are roadmap M13.
@@ -168,17 +156,21 @@ widgets.push(
 		component: TrendWidget
 	}
 );
-cards.push(
-	{ id: 'monthly', tier: 'primary', captionKey: 'dashboard.monthlyCaption' },
-	{ id: 'categoryStock', tier: 'secondary', captionKey: 'dashboard.categoryStockCaption' },
-	{ id: 'stackedBar', tier: 'secondary', captionKey: 'dashboard.stackedBarCaption' },
-	{ id: 'priceBuckets', tier: 'secondary', captionKey: 'dashboard.priceBucketCaption' },
-	{ id: 'scatter', tier: 'secondary', captionKey: 'dashboard.scatterCaption' }
-);
 // [scaffold:charts] end
+// The list: the items with the least stock (`@banto/grid-svelte`, a core package).
+widgets.push({
+	id: 'lowStock',
+	titleKey: 'panels.lowStock',
+	icon: 'lowStock',
+	width: 420,
+	height: 320,
+	component: LowStockWidget,
+	usesPeriod: true
+});
 // [scaffold:dock] begin
-// The memo: its draft and its save belong to the page (`dashboardMemo.svelte.ts`), so it is
-// only editable where the page provides them - that is, in the dock.
+// The memo: its draft and its save belong to the page (`dashboardMemo.svelte.ts`, wired in the
+// page's `[scaffold:dock]` region - a close in the dock has to settle the draft), so it goes
+// with the dock.
 widgets.push({
 	id: 'memo',
 	titleKey: 'panels.memo',
@@ -189,22 +181,12 @@ widgets.push({
 });
 // [scaffold:dock] end
 
-/** Every registered widget, in the order the View menu lists them. */
+/** Every registered widget, in the order the View menu lists them and the one-column display stacks them. */
 export const DASHBOARD_WIDGETS: readonly DashboardWidgetDef[] = widgets.map(
 	({ titleKey, ...rest }): DashboardWidgetDef => ({
 		...rest,
 		get title() {
 			return m[titleKey]();
-		}
-	})
-);
-
-/** W1 only (W2 removes it): the fixed cards, in the grid's order. */
-export const DASHBOARD_CARDS: readonly DashboardCardDef[] = cards.map(
-	({ captionKey, ...rest }): DashboardCardDef => ({
-		...rest,
-		get caption() {
-			return m[captionKey]();
 		}
 	})
 );

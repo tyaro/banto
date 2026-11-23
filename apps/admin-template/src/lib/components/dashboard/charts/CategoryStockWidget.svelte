@@ -4,18 +4,23 @@
 	import { byCategory } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
+	import ChartFit from './ChartFit.svelte';
 
 	let { data, height }: DashboardWidgetProps = $props();
 
 	const categoryStock = $derived(byCategory(data.rows));
 </script>
 
-<BarChart
-	data={categoryStock}
-	category={(row) => row.category}
-	series={[{ id: 'stock', label: m['dashboard.seriesStock'](), value: (row) => row.stock }]}
-	horizontal
-	label={m['dashboard.categoryStockAria']()}
-	{height}
-	formatValue={(n) => n.toLocaleString()}
-/>
+<ChartFit {height}>
+	{#snippet children(chartHeight)}
+		<BarChart
+			data={categoryStock}
+			category={(row) => row.category}
+			series={[{ id: 'stock', label: m['dashboard.seriesStock'](), value: (row) => row.stock }]}
+			horizontal
+			label={m['dashboard.categoryStockAria']()}
+			height={chartHeight}
+			formatValue={(n) => n.toLocaleString()}
+		/>
+	{/snippet}
+</ChartFit>

@@ -378,14 +378,15 @@ const CI_WORKFLOW = '.github/workflows/ci.yml';
  * #716 W1（downstream-requests-2026-11-plan §4.13）: ダッシュボードのページ（+page.svelte）は
  * `@banto/charts` を import しない。チャートは `dashboardWidgets.ts` の登録（1 ウィジェット =
  * 登録 1 件 + 部品 1 ファイル）で、ここは「登録の行と部品のファイルを消す」だけ:
- *   - `dashboardWidgets.ts` の `[scaffold:charts]` の領域（部品の import と、ウィジェット・固定カードの行）
+ *   - `dashboardWidgets.ts` の `[scaffold:charts]` の領域（部品の import と、ウィジェットの行）
  *   - `components/dashboard/charts/`（チャートのウィジェットの部品。ディレクトリごと）
  *   - KPI の Sparkline（`dashboardKpis.ts` の値の欄と集計の import、`DashboardKpiStrip.svelte` の
  *     import と描画。どれも `[scaffold:charts]` の領域）
  * ページの markup を文字列で切り取らないので、ページを変えても型紙はずれない。チャートの
  * ウィジェットを足すときは、登録の行を `[scaffold:charts]` の領域の中に、部品を
  * `components/dashboard/charts/` に置くこと（領域の外に置くと、外した後に参照が残る）。
- * dock を残して charts だけ外すと、dock にはメモだけが残る（既定の配置は登録に在るものだけで組む）。
+ * dock を残して charts だけ外すと、dock には一覧（在庫の少ない商品）とメモが残る（既定の配置は登録に
+ * 在るものだけで組み、dock の高さも 1 行ぶんになる。`dashboardLayout.ts`）。
  *
  * 積立エリア/ガントなどの見本は dashboard ではなく `/chart-gallery`
  * （デモ専用ルート。navigation.ts / navIcons.ts / messages の `chartGallery.*` 込み）に
@@ -394,11 +395,11 @@ const CI_WORKFLOW = '.github/workflows/ci.yml';
  * `Cannot find module '@banto/charts'` / 未定義コンポーネント / 暗黙 any でチェックが赤くなる）。
  */
 function removeCharts() {
-	// 登録: 部品の import と、ウィジェット・固定カードの行。
+	// 登録: 部品の import と、ウィジェットの行。
 	cutEveryMarked(DASH_WIDGETS, '登録: チャートのウィジェット（import と行）除去', 'charts', 2);
 	removeDir(`${DASH_WIDGET_DIR}/charts`, 'チャートのウィジェットの部品 削除');
-	// 登録の単体テストのうち、チャートのウィジェット・固定カード・Sparkline を名指しするもの。
-	cutEveryMarked(DASH_WIDGETS_TEST, '登録のテスト: チャートのウィジェットの検査 除去', 'charts', 3);
+	// 登録の単体テストのうち、チャートのウィジェット・Sparkline を名指しするもの。
+	cutEveryMarked(DASH_WIDGETS_TEST, '登録のテスト: チャートのウィジェットの検査 除去', 'charts', 2);
 	// KPI の帯の Sparkline（在庫の合計の横の小さな線）。値の欄ごと消すので、帯は数字だけを描く。
 	cutEveryMarked(DASH_KPIS, 'KPI: Sparkline の値の欄と集計 import 除去', 'charts', 2);
 	cutEveryMarked(DASH_KPI_STRIP, 'KPI の帯: Sparkline の import と描画 除去', 'charts', 2);
@@ -483,16 +484,23 @@ function removeCharts() {
  * ダッシュボードの Dock 配線一式・メモのウィジェット・popout.ts・@banto/dock-svelte 依存に
  * 加え、pop-out 先の `routes/panel/[id]`（登録と dock のアイコンに依存）も削除。
  *
- * #716 W1（downstream-requests-2026-11-plan §4.13）: ダッシュボードのページ（+page.svelte）は、dock に
- * 要るものを `[scaffold:dock]` の印で挟んである（import・script・表示メニュー・ワークスペース・snippet）。
- * ここはその領域を切り取るだけで、ページの中身を文字列で当てない。登録（`dashboardWidgets.ts`）からは
- * メモのウィジェット（部品の import と行）を消す。チャートのウィジェットの登録と固定のカードは残る
- * （`DashboardWidgetDef` は dock-svelte を import しない）。
- * ページの CSS（`.workspace`・`.dock-wrapper`・`.dock-panel`）は残る（未使用のセレクタは害が無い）。
+ * #716 W1・W2（downstream-requests-2026-11-plan §4.13）: ダッシュボードのページ（+page.svelte）は、dock に
+ * 要るものを `[scaffold:dock]` の印で挟んである（import・script・表示メニュー・幅の計測・dock・
+ * メモを閉じるときの確認・snippet）。ここはその領域を切り取るだけで、ページの中身を文字列で当てない。
+ * 切り取った後に残るのは、登録の順に 1 列で積む表示（`DashboardWidgetStack.svelte`。W2、§4.13.7 の a）で、
+ * 登録に残ったウィジェット（チャートと一覧）を全部出す。登録（`dashboardWidgets.ts`）からは
+ * メモのウィジェット（部品の import と行）を消す（下書きと保存の配線がページの dock の領域にあるため）。
+ * 既定の配置・dock の高さ・保存値の確かめ（`dashboardLayout.ts`）は dock と一緒に消える。
+ * ページの CSS（`.page-measure`・`.dock-wrapper`・`.dock-panel`）は残る（未使用のセレクタは害が無い）。
  */
 function removeDock() {
-	// ページ: script の 2 領域（import / 本体）と markup の 3 領域（表示メニュー / ワークスペース / snippet）。
-	cutEveryMarked(DASH, 'dashboard: dock の配線（import・script・markup）除去', 'dock', 5);
+	// ページ: script の 2 領域（import / 本体）と markup の 5 領域
+	// （表示メニュー / 幅の計測 / dock / メモを閉じるときの確認 / snippet）。
+	cutEveryMarked(DASH, 'dashboard: dock の配線（import・script・markup）除去', 'dock', 7);
+	// W2: 既定の配置・dock の高さ・保存キー・保存値の確かめ。dock の型を import する。
+	removeFile(`${APP}/src/lib/banto/dashboardLayout.ts`, 'dashboardLayout.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dashboardLayout.test.ts`, 'dashboardLayout.test.ts 削除');
+	// ペインの中身を描く枠（`DashboardWidgetFrame.svelte`）は「積む」表示も使うので残す。
 	// 登録: メモのウィジェット（下書きと保存はページの dock の配線が持つので、dock と一緒に消える）。
 	cutEveryMarked(DASH_WIDGETS, '登録: メモのウィジェット（import と行）除去', 'dock', 2);
 	removeFile(`${DASH_WIDGET_DIR}/MemoWidget.svelte`, 'MemoWidget.svelte 削除');

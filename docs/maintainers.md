@@ -84,7 +84,11 @@
   よく揺らぐ。意図した変化でないものは main の版に戻す。
   - 揺らぎと決める前に、**run をまたいで画素数を比べる**。run の中の試行ごとに数が違っても、
     run をまたいで同じなら本当の差分（#674・#700 の kiosk 375x812）。差分の画像で意図した変化かを見る。
-  - dock-svelte の見た目を変えた PR では、dashboard（分析ワークスペース）と command-palette が変わる。
+  - `/dashboard` を変えた PR（ウィジェットの登録・既定の配置 `dashboardLayout.ts`・KPI の帯。#716）では、`/dashboard` を写す画像が
+    全部変わる: `dashboard-*`（各組み合わせ・kiosk・compact・touch・menubar・launcher）と command-palette。幅 900px 以下
+    （375x812、サイドバーのある 1024x768）は dock ではなく 1 列で積む表示が写る。再生成の版を採り、戻すのは `/dashboard` を
+    写さない画像（chart-gallery・ui-demo など）だけにする。
+  - dock-svelte の見た目を変えた PR では、dashboard（ウィジェットの dock）と command-palette が変わる。
     command-palette は背景に dashboard が写るので、dashboard を変えた PR では本当の差分
     （戻さず、再生成の版を採る）。
   - ui-demo の見本を足すと、date/time/datetime picker の画像も変わる（同じページを撮るため）。

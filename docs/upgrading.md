@@ -659,6 +659,26 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
 
 `dock.serialize()` を自分で保存しているだけのアプリ（この部品を使っていない）は、何もしなくてよい。
 
+**ダッシュボードを 1 つの dock のウィジェット盤にした（#716 の W1・W2、B のみ。取り込みは任意）**。共通パッケージの口は
+変わらない。ダッシュボードのページ（`routes/(app)/dashboard/+page.svelte`）をコピーして使っているアプリが、新しい形を取り込むときの手順。
+
+- **何が変わるか**: KPI の帯は固定のまま。その下の固定のカードの格子と「分析ワークスペース」の枠が無くなり、チャート・一覧・メモが
+  1 つの `DockHost` に載る。配置の保存キーが変わる（設定 `dock.dashboard` → `dashboard.widgets`、localStorage
+  `banto.dock.dashboard:<owner>` → `banto.dashboard.widgets:<owner>`）ので、**利用者が保存した配置は既定へ戻る**（旧い値は読まず、
+  変換もしない。v8 は DB ごと新しくなるので、サーバーの側には旧い値がそもそも無い）。
+- **無くなったファイル**: `src/lib/banto/panels.ts`（`PANEL_DEFS`）と `src/lib/components/DashboardPanel.svelte`。
+- **取り込むファイル**（どれも `apps/admin-template/src/lib/`）: `banto/dashboardWidgets.ts`（登録）・`banto/dashboardData.svelte.ts`
+  （items を 1 回読む）・`banto/dashboardKpis.ts` と `components/DashboardKpiStrip.svelte`（KPI の帯）・`banto/dashboardLayout.ts`
+  （既定の配置・dock の高さ・保存キー・保存値の確かめ）・`components/dashboard/`（ウィジェットの部品、枠 `DashboardWidgetFrame.svelte`、
+  1 列で積む `DashboardWidgetStack.svelte`、チャートの高さを合わせる `charts/ChartFit.svelte`）と、ページ・`routes/panel/[id]/+page.svelte`・
+  `components/PanelIcon.svelte`・`messages/{ja,en}.json` の差分。
+- **自分のパネルを移す**: `PANEL_DEFS` の 1 行 + `DashboardPanel.svelte` の分岐 1 つ → `dashboardWidgets.ts` の登録 1 件
+  （`id`・`titleKey`・`icon`・`width`・`height`・`component`）+ 部品 1 ファイル（props は `DashboardWidgetProps` = `data`・`height`）。
+  既定の配置に置くなら `dashboardLayout.ts` の `DEFAULT_ROWS` に id を足す（置かなければ「表示」メニューから足せる）。
+  **`id` は保存値に入るので、あとから変えない**（登録に無い id を含む保存値は捨てられ、既定の配置が出る）。
+- **確かめる**: 追加・非表示・並べ替えが再読み込みの後も残ること、「レイアウトを既定に戻す」で保存した値が消えること、
+  キオスクで組み替えられないこと、幅を狭めると 1 列になり、戻すと配置がそのままであること（`e2e/demo/dashboard-layout-commit.spec.ts`）。
+
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に
 `restore-pending.sqlite3` という名前で置く → 起動する。起動は「予約の適用 → migration → 初回の seed → 設定の読み取り」の

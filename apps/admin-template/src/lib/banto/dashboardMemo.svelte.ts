@@ -110,6 +110,31 @@ export function createPanelChangeHandler(
 }
 
 /**
+ * Tell `onPending(true / false)` while a `close` change is being decided - from the moment
+ * the host asks until the answer is back (the prompt, the save or discard behind it, and the
+ * cancel). Released on every way out, a rejection and a throw included. Only a `close` is
+ * tracked: the other changes answer at once. (#886 review: `memoPrompt.open` is false while
+ * the save chosen in the prompt is still running, so it cannot stand for "closing".)
+ */
+export function trackClosePending(
+	handler: (change: DockPanelChange) => boolean | Promise<boolean>,
+	onPending: (pending: boolean) => void
+): (change: DockPanelChange) => boolean | Promise<boolean> {
+	return (change) => {
+		if (change.kind !== 'close') return handler(change);
+		onPending(true);
+		let result: boolean | Promise<boolean>;
+		try {
+			result = handler(change);
+		} catch (error) {
+			onPending(false);
+			throw error;
+		}
+		return Promise.resolve(result).finally(() => onPending(false));
+	};
+}
+
+/**
  * Make a stored value the draft's baseline. An untouched draft also shows it;
  * a draft the user already edited keeps the edit, now dirty against the
  * STORED value (so a later discard goes back to what is stored, not to the

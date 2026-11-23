@@ -3,41 +3,57 @@
 	 * M4 dashboard (spec §6): real charts built from the `items` data, in
 	 * place of the M1-M3 placeholder cards.
 	 *
-	 * #716 W1 (downstream-requests-2026-11-plan §4.13): the page no longer draws
-	 * a chart itself. It reads the data ONCE (`createDashboardData`) and hands
-	 * it to the KPI strip (`DashboardKpiStrip`, defined by `dashboardKpis.ts`)
-	 * and to the widgets registered in `dashboardWidgets.ts` - one registration
-	 * + one component file per widget. The two places of today stay: the fixed
-	 * cards (`DASHBOARD_CARDS`) and the dock below them (W2 makes them one dock).
+	 * #716 (downstream-requests-2026-11-plan §4.13): the page draws no chart
+	 * itself. It reads the data ONCE (`createDashboardData`) and hands it to the
+	 * KPI strip (`DashboardKpiStrip`, defined by `dashboardKpis.ts`; fixed) and
+	 * to the widgets registered in `dashboardWidgets.ts` - one registration + one
+	 * component file per widget.
+	 *
+	 * W2: the widgets are the panels of ONE dock (the fixed grid of cards and
+	 * the separate "analysis workspace" are gone). The user edits the
+	 * ARRANGEMENT - add / show / hide from the View menu, move / resize / tab /
+	 * float with the dock's own gestures and keyboard menu - and it is saved per
+	 * user (`dashboard.widgets`). The default arrangement, the dock's height
+	 * and the check of a saved value are `dashboardLayout.ts`.
+	 *  - Kiosk (`settings.kiosk`): the saved arrangement is shown, nothing can
+	 *    be rearranged (`arrange={false}`), no View menu.
+	 *  - A page 900px wide or less: no dock (`DockHost` has no narrow display);
+	 *    the widgets the arrangement shows are stacked in one column, in the
+	 *    order they are registered (`DashboardWidgetStack`). Nothing can be
+	 *    rearranged there and the saved arrangement is not written.
 	 *
 	 * scaffold: everything the dock needs sits between `[scaffold:dock]` marks
-	 * (the imports, the script, the View menu, the workspace, the snippets);
-	 * `scripts/scaffold.mjs` (`removeDock`) cuts those regions. Nothing here
+	 * (the imports, the script, the View menu, the dock, the snippets);
+	 * `scripts/scaffold.mjs` (`removeDock`) cuts those regions, and what is left
+	 * is the one-column display with every registered widget. Nothing here
 	 * imports the charts package: `removeCharts` does not touch this file.
 	 */
 	// [scaffold:dock] begin
 	import {
 		DockHost,
-		clampWindowToHost,
 		createDockLayoutStore,
 		createDockState,
-		type DockLayout,
-		type DockNode,
 		type PanelContent
 	} from '@banto/dock-svelte';
-	import { LayoutGrid } from '@lucide/svelte';
 	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import { dockMessages } from '#lib/banto/dockMessages.js';
-	import { refreshPanelTitles } from '#lib/banto/dockTitles.js';
+	import {
+		DASHBOARD_LAYOUT_SETTING_KEY,
+		DASHBOARD_LAYOUT_STORAGE_KEY,
+		dashboardDockHeight,
+		defaultDashboardLayout,
+		validateDashboardLayout
+	} from '#lib/banto/dashboardLayout.js';
+	import { settings } from '#lib/settings.svelte.js';
 	// The layout save's owner (#791).
 	import { currentSessionScope, isCurrentSessionScope } from '@banto/admin-core';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
 	import {
-		MEMO_PANEL_ID,
 		createDashboardMemo,
 		createPanelChangeHandler,
+		trackClosePending,
 		memoSaveCommand,
 		provideDashboardMemoPane
 	} from '#lib/banto/dashboardMemo.svelte.js';
@@ -49,10 +65,12 @@
 	import type { DraftSettleResult } from '@banto/forms';
 	import DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';
 	import PageViewMenu, { type PageViewMenuItem } from '#lib/components/PageViewMenu.svelte';
+	import DashboardWidgetFrame from '#lib/components/dashboard/DashboardWidgetFrame.svelte';
 	// [scaffold:dock] end
 	import * as m from '#lib/paraglide/messages.js';
 	import { createDashboardData } from '#lib/banto/dashboardData.svelte.js';
-	import { DASHBOARD_CARDS, findDashboardWidget } from '#lib/banto/dashboardWidgets.js';
+	import { DASHBOARD_WIDGETS } from '#lib/banto/dashboardWidgets.js';
+	import DashboardWidgetStack from '#lib/components/dashboard/DashboardWidgetStack.svelte';
 	import DashboardKpiStrip from '#lib/components/DashboardKpiStrip.svelte';
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
@@ -68,90 +86,68 @@
 		return () => data.dispose();
 	});
 
-	/** The chart height of a fixed card (W1: the cards keep today's grid; W2 moves them into the dock). */
-	const CARD_CHART_HEIGHT = 280;
+	/**
+	 * The one-column display (`DashboardWidgetStack`, §4.13.7 a). On its own - a copy without the
+	 * dock - it is the page's only display: always shown, every registered widget. The dock's
+	 * region below narrows both: shown only while the page is too narrow for the dock, and only
+	 * the widgets the arrangement shows.
+	 */
+	const stackView: { shown: () => boolean; shows: (id: string) => boolean } = {
+		shown: () => true,
+		shows: () => true
+	};
+	const stacked = $derived(stackView.shown());
+	const stackWidgets = $derived(DASHBOARD_WIDGETS.filter((def) => stackView.shows(def.id)));
 	// [scaffold:dock] begin
 	/**
-	 * M8 dock demo (spec §5, @banto/dock-svelte): the default layout docks the
-	 * two chart panels side by side (a row split) with the メモ panel
-	 * floating over them, so docked + floating coexist out of the box. Panels
-	 * can be dragged to re-split, tabbed (drop on a pane center), undocked
-	 * (drag a tab out to floating), and the split divider resizes live. The
-	 * whole layout auto-saves; a stored M7 (v1, floating-only) value migrates
-	 * cleanly via hydrate.
+	 * The dock (spec §5, @banto/dock-svelte) every widget is a panel of. Panels can be dragged to
+	 * re-split, tabbed (drop on a pane's centre), floated (drag a tab out), auto-hidden to an edge
+	 * band, and the dividers resize; the same from the keyboard (each title bar's "panel actions"
+	 * menu). The whole arrangement auto-saves per user.
 	 */
-	const DOCK_STORAGE_KEY = 'banto.dock.dashboard';
-
-	// W1 (#716): the widgets the dock offers as panels (= the View menu's rows), in this order.
-	// A widget that is not registered (its package was removed by scaffold) is skipped. W2 puts
-	// every registered widget into the dock and removes this list.
-	const DOCK_PANELS = ['monthly', 'priceBuckets', 'spc', 'trend', 'memo']
-		.map(findDashboardWidget)
-		.filter((def) => def !== undefined);
-	/** Docked side by side in the default layout (those of them that are registered). */
-	const DEFAULT_DOCKED_IDS = ['monthly', 'priceBuckets'];
-
-	/** The seeded default: monthly | priceBuckets docked side by side, メモ floating. `hostW/H` clamp the floating window into view. */
-	function defaultLayout(hostW: number, hostH: number): DockLayout {
-		const floating = DOCK_PANELS.filter((def) => def.id === MEMO_PANEL_ID).map((memoDef) =>
-			clampWindowToHost(
-				{
-					id: memoDef.id,
-					title: memoDef.title,
-					icon: memoDef.icon,
-					x: hostW - (memoDef.width ?? 320) - 24,
-					y: hostH - (memoDef.height ?? 220) - 24,
-					width: memoDef.width ?? 320,
-					height: memoDef.height ?? 220,
-					open: true
-				},
-				hostW,
-				hostH
-			)
-		);
-		const panels = DOCK_PANELS.filter((def) => DEFAULT_DOCKED_IDS.includes(def.id)).map(
-			(def): DockNode => ({ type: 'panel', id: def.id, title: def.title, icon: def.icon })
-		);
-		const docked: DockNode | null =
-			panels.length > 1
-				? {
-						type: 'split',
-						id: 'root',
-						direction: 'row',
-						children: panels,
-						sizes: panels.map(() => 1 / panels.length)
-					}
-				: (panels[0] ?? null);
-		return { version: 4, floating, docked };
-	}
-
-	// M12 (spec §12.1): the UiSettingsProvider key the layout is saved under
-	// (settings DB via Tauri/REST; localStorage in demo mode). A per-user
-	// localStorage copy (`${DOCK_STORAGE_KEY}:<owner>`) is the synchronous
-	// first-paint source; the provider copy is reconciled once after mount.
-	// Both are bound to the signed-in user and session (`scope` / `isCurrent` of
-	// dock-svelte's `createDockLayoutStore`, three-pane-dock-plan §4.4).
-	const DOCK_SETTING_KEY = 'dock.dashboard';
-
 	const dock = createDockState();
 	// Where a docked pane closed with its ✕ / unchecked in the View menu is shown again: its place
-	// in the default layout (dock-svelte reads only `docked`, so the host size does not matter).
-	// Not saved with the layout: given at every mount. Without it such a pane opens floating.
-	dock.defaultLayout = defaultLayout(1280, 800);
+	// in the default layout. Not saved with the layout: given at every mount. A widget that is not
+	// in the default opens floating.
+	dock.defaultLayout = defaultDashboardLayout();
+	// M12 (spec §12.1): saved under a UiSettingsProvider key (settings DB via Tauri/REST;
+	// localStorage in demo mode). A per-user localStorage copy (`<storage key>:<owner>`) is the
+	// synchronous first-paint source; the provider copy is reconciled once after mount. Both are
+	// bound to the signed-in user and session (`scope` / `isCurrent`, three-pane-dock-plan §4.4).
 	const dockLayout = createDockLayoutStore({
 		dock,
-		storageKey: DOCK_STORAGE_KEY,
-		settingKey: DOCK_SETTING_KEY,
+		storageKey: DASHBOARD_LAYOUT_STORAGE_KEY,
+		settingKey: DASHBOARD_LAYOUT_SETTING_KEY,
 		provider: getUiSettings,
 		scope: currentSessionScope(),
 		isCurrent: isCurrentSessionScope,
-		// A layout saved in another locale: today's titles by panel id (dockTitles.ts, #729 review).
-		validate: (json) => refreshPanelTitles(json, (id) => findDashboardWidget(id)?.title),
-		// Not before the host is measured: the floating メモ is clamped into it.
-		defaultLayout: () =>
-			dockHostW === 0 || dockHostH === 0 ? null : defaultLayout(dockHostW, dockHostH)
+		// "Reset layout" deletes what was saved: a default the author changes later reaches this user.
+		reset: 'remove',
+		// Only registered widgets; today's titles by id (dashboardLayout.ts).
+		validate: validateDashboardLayout,
+		// Nothing floats in the default, so it does not wait for the host to be measured.
+		defaultLayout: defaultDashboardLayout
 	});
 	let dockHost: ReturnType<typeof DockHost> | undefined = $state();
+
+	/** Kiosk: the saved arrangement is shown and nothing can be rearranged (three-pane-dock-plan §4.5). */
+	const arrange = $derived(!settings.kiosk);
+
+	/**
+	 * The page's own width (the sidebar is outside it), measured by a zero-height element. At
+	 * `STACK_MAX_WIDTH` or less the dock is not drawn and the stack is; `0` = not measured yet
+	 * (the first frame draws neither, so a wide page never flashes the stack).
+	 * `measuredWidth` is what the element reports; `pageWidth` is the width the display follows
+	 * (taken over by the effect below the memo's wiring, which can hold the switch).
+	 */
+	const STACK_MAX_WIDTH = 900;
+	let measuredWidth = $state(0);
+	let pageWidth = $state(0);
+	const dockShown = $derived(pageWidth > STACK_MAX_WIDTH);
+	stackView.shown = () => pageWidth > 0 && pageWidth <= STACK_MAX_WIDTH;
+	// What the arrangement shows (docked, a background tab included, or an open floating window),
+	// read only: the stack never changes `dock`, so a narrow visit leaves the saved value as it is.
+	stackView.shows = (id) => dock.panels.some((row) => row.id === id && row.visible);
 
 	/**
 	 * Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the メモ
@@ -170,6 +166,49 @@
 	});
 	const memoPrompt = createSettlePrompt();
 	let memoStatus = $state<string | null>(null);
+	/** Memo closes being decided (the prompt, then the save / discard it chose). */
+	let closing = $state(0);
+
+	// An IME composition open somewhere in the document (`compositionstart` without its end; a
+	// composition abandoned by moving the focus away ends with `focusout`). The same rule the dock
+	// uses for its own structure changes (dock-svelte `core/lifecycle.ts`).
+	let composing = $state(false);
+	$effect(() => {
+		const start = () => (composing = true);
+		const end = () => (composing = false);
+		document.addEventListener('compositionstart', start, true);
+		document.addEventListener('compositionend', end, true);
+		document.addEventListener('focusout', end, true);
+		return () => {
+			document.removeEventListener('compositionstart', start, true);
+			document.removeEventListener('compositionend', end, true);
+			document.removeEventListener('focusout', end, true);
+		};
+	});
+
+	/**
+	 * The display follows the measured width - but swapping the dock for the stack (or back)
+	 * re-creates the memo's textarea and unmounts the `DockHost`, so the swap WAITS while that
+	 * would lose something (#886 review):
+	 *  - an IME composition is open: the text being converted lives in the textarea, not yet in
+	 *    the draft. The swap happens once the composition has ended and its text was taken;
+	 *  - a close of the memo is being decided (`closing`): from the host's ask until the answer
+	 *    is back - the question, and the save / discard chosen in it (the dialog is gone by then,
+	 *    but the save may still be running). The host that asked would be gone, its pending close
+	 *    stale: the text saved or dropped without the pane closing. The swap happens once the
+	 *    close was applied or refused, on every way out.
+	 * Taken over in the NEXT frame in any case: the measurement arrives from a ResizeObserver, and
+	 * swapping other observed boxes within the same delivery is reported as a "ResizeObserver
+	 * loop" error. (After `compositionend` this also lets the composition's last input land.)
+	 */
+	$effect(() => {
+		const width = measuredWidth;
+		if (composing || closing > 0) return;
+		const frame = requestAnimationFrame(() => {
+			pageWidth = width;
+		});
+		return () => cancelAnimationFrame(frame);
+	});
 
 	/** What to tell the user after a save / close settle of the memo. */
 	function noteMemoSettled(result: DraftSettleResult): void {
@@ -184,12 +223,15 @@
 	// Transition by transition (plan §3.5's table): dock / undock / move /
 	// tab switch / hide only capture (no prompt); a close - which discards the
 	// pane's content - settles first and closes only when the draft is clean.
-	const beforePanelChange = createPanelChangeHandler({
-		// Serialized: a close waits for a save already in flight (PR #449 review).
-		coordinator: memo.serial,
-		ask: (dirtyKeys) => memoPrompt.ask(dirtyKeys),
-		onSettled: (_panelId, result) => noteMemoSettled(result)
-	});
+	const beforePanelChange = trackClosePending(
+		createPanelChangeHandler({
+			// Serialized: a close waits for a save already in flight (PR #449 review).
+			coordinator: memo.serial,
+			ask: (dirtyKeys) => memoPrompt.ask(dirtyKeys),
+			onSettled: (_panelId, result) => noteMemoSettled(result)
+		}),
+		(pending) => (closing += pending ? 1 : -1)
+	);
 
 	async function saveMemo(): Promise<void> {
 		noteMemoSettled(await memo.save());
@@ -248,9 +290,8 @@
 	let dockHostW = $state(0);
 	let dockHostH = $state(0);
 
-	// Seed the docked default once the host has a real measured size, but only
-	// if nothing was restored from storage (an empty layout = fresh visit).
-	// After seeding, a panel the user fully removed stays removed.
+	// Seed the default if nothing was restored from storage (an empty layout =
+	// fresh visit). After seeding, a panel the user fully removed stays removed.
 	$effect(() => {
 		dockLayout.seedIfEmpty();
 	});
@@ -273,28 +314,26 @@
 
 	// "Reset layout": the host puts the default in (asked through
 	// `beforePanelChange` like any replacement) and reports it as `'reset'`,
-	// which the store saves as a user's change even when the default was shown.
+	// for which the store DELETES the saved value (`reset: 'remove'`).
 	function resetDockLayout() {
-		if (dockHostW === 0 || dockHostH === 0) return;
-		void dockHost?.replaceLayout(defaultLayout(dockHostW, dockHostH), {
+		void dockHost?.replaceLayout(defaultDashboardLayout(), {
 			saved: true,
 			commit: 'reset'
 		});
 	}
 
-	// Each docked pane / floating window body measures its own height so the
-	// chart fills it (charts ResizeObserver their own width). Keyed by panel id.
-	let panelHeights = $state<Record<string, number>>({});
-	function chartHeight(id: string): number {
-		return Math.max(140, (panelHeights[id] ?? 240) - 16);
-	}
+	const widgetOf = (id: string) => DASHBOARD_WIDGETS.find((def) => def.id === id);
 
 	/**
 	 * #663 ①-C: the View menu (PageViewMenu - the menu bar's "表示" when the
 	 * bar is on screen, else a button in this page's header) replaces the old
-	 * dock toolbar. One checkbox per panel in DOCK_PANELS order, checked = on
-	 * screen (docked, a background tab included, or an open floating window),
-	 * read from `dock.panels` so a refused / stale change shows the real state.
+	 * dock toolbar. One checkbox per registered widget, in the registry's
+	 * order, checked = on screen (docked, a background tab included, or an open
+	 * floating window), read from `dock.panels` so a refused / stale change
+	 * shows the real state. Checking a widget that is not in the arrangement is
+	 * how one is ADDED (§4.13.3): it opens as a floating window, to be docked
+	 * where the user wants it. Not offered in kiosk mode, nor while the page
+	 * shows the one-column display (nothing can be rearranged there).
 	 */
 	function setPanelVisible(id: string, visible: boolean): void {
 		if (!dockHost) return;
@@ -303,7 +342,7 @@
 			// or-open floating window first (a no-op for an id already docked or
 			// floating), then show it - a pane hidden from the dock goes back to
 			// its former slot.
-			const def = DOCK_PANELS.find((d) => d.id === id);
+			const def = widgetOf(id);
 			if (def) dock.ensureWindow(def, dockHostW, dockHostH);
 		}
 		// Hiding goes through the dock lifecycle like ✕ (closing discards the
@@ -314,7 +353,7 @@
 	const viewMenuItems: PageViewMenuItem[] = $derived.by(() => {
 		const visible = new Map(dock.panels.map((row) => [row.id, row.visible]));
 		return [
-			...DOCK_PANELS.map((def): PageViewMenuItem => {
+			...DASHBOARD_WIDGETS.map((def): PageViewMenuItem => {
 				const checked = visible.get(def.id) ?? false;
 				return {
 					kind: 'checkbox',
@@ -383,7 +422,9 @@
 	>
 		{#snippet actions()}
 			<!-- [scaffold:dock] begin -->
-			<PageViewMenu label={m['dashboard.viewMenu']()} items={viewMenuItems} />
+			{#if arrange && dockShown}
+				<PageViewMenu label={m['dashboard.viewMenu']()} items={viewMenuItems} />
+			{/if}
 			<!-- [scaffold:dock] end -->
 			<AnnotationButton />
 		{/snippet}
@@ -397,33 +438,24 @@
 
 	<DashboardKpiStrip {data} />
 
+	<!-- [scaffold:dock] begin -->
+	<div class="page-measure" bind:clientWidth={measuredWidth}></div>
+	<!-- [scaffold:dock] end -->
 	{#if data.loading && data.rows.length === 0}
 		<LoadingState label={m['items.loadingData']()} />
 	{:else}
-		{#if DASHBOARD_CARDS.length > 0}
-			<div class="chart-grid">
-				{#each DASHBOARD_CARDS as card (card.id)}
-					{@const widget = findDashboardWidget(card.id)}
-					{#if widget}
-						<section class="card {card.tier}">
-							<h2>{widget.title}</h2>
-							<p class="card-caption">{card.caption}</p>
-							<widget.component {data} height={CARD_CHART_HEIGHT} />
-						</section>
-					{/if}
-				{/each}
-			</div>
-		{/if}
 		<!-- [scaffold:dock] begin -->
-		<section class="workspace">
-			<h2 class="workspace-heading">
-				<LayoutGrid size={18} aria-hidden="true" />{m['dashboard.workspaceHeading']()}
-			</h2>
-			<p class="workspace-caption">{m['dashboard.workspaceCaption']()}</p>
-			<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
+		{#if dockShown}
+			<div
+				class="dock-wrapper"
+				style:height="{dashboardDockHeight()}px"
+				bind:clientWidth={dockHostW}
+				bind:clientHeight={dockHostH}
+			>
 				<DockHost
 					bind:this={dockHost}
 					{dock}
+					{arrange}
 					panel={dockPanel}
 					iconContent={dockIcon}
 					{onPopOut}
@@ -433,16 +465,23 @@
 					onLayoutCommit={dockLayout.commit}
 				/>
 			</div>
-			<DraftSettleDialog
-				prompt={memoPrompt}
-				title={m['dashboard.memoCloseTitle']()}
-				body={m['dashboard.memoCloseBody']()}
-				applyLabel={m['dashboard.memoCloseApply']()}
-				discardLabel={m['dashboard.memoCloseDiscard']()}
-			/>
-		</section>
+		{/if}
 		<!-- [scaffold:dock] end -->
+		{#if stacked}
+			<DashboardWidgetStack widgets={stackWidgets} {data} />
+		{/if}
 	{/if}
+	<!-- [scaffold:dock] begin -->
+	<!-- Outside the dock: the memo is editable in the one-column display too, and a close asked in
+	     the dock is answered here whichever display is on screen by then. -->
+	<DraftSettleDialog
+		prompt={memoPrompt}
+		title={m['dashboard.memoCloseTitle']()}
+		body={m['dashboard.memoCloseBody']()}
+		applyLabel={m['dashboard.memoCloseApply']()}
+		discardLabel={m['dashboard.memoCloseDiscard']()}
+	/>
+	<!-- [scaffold:dock] end -->
 </div>
 <!-- [scaffold:dock] begin -->
 
@@ -452,16 +491,16 @@
 
 {#snippet dockPanel(content: PanelContent)}
 	<!--
-		The body is the registered widget's component (dashboardWidgets.ts). The
+		The body is the registered widget's component (dashboardWidgets.ts), drawn
+		by the frame that measures the pane and hands the widget its height. The
 		SAME component renders this panel's content standalone at
 		routes/panel/[id] once popped out into a real Tauri window, so it can't
-		depend on anything from this page beyond its props: the data read once
-		above, and the measured height below.
+		depend on anything from this page beyond its props.
 	-->
-	{@const widget = findDashboardWidget(content.id)}
-	<div class="dock-panel" bind:clientHeight={panelHeights[content.id]}>
+	{@const widget = widgetOf(content.id)}
+	<div class="dock-panel">
 		{#if widget}
-			<widget.component {data} height={chartHeight(content.id)} />
+			<DashboardWidgetFrame {widget} {data} />
 		{:else}
 			<p class="dock-status">{m['dashboard.unknownPanel']()}</p>
 		{/if}
@@ -472,86 +511,30 @@
 
 <style>
 	.page {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		gap: var(--banto-space-4);
 	}
 
-	/* The KPI strip's rules live in DashboardKpiStrip.svelte. */
+	/* The KPI strip's rules live in DashboardKpiStrip.svelte; the one-column display's in
+	   DashboardWidgetStack.svelte. */
 
-	/* Asymmetric 12-column chart grid (design.md §10, plan Phase 3): the
-	   primary (monthly-trend) chart spans 8/12, secondary charts 4/12 each,
-	   collapsing to a single column under 900px. */
-	.chart-grid {
-		display: grid;
-		grid-template-columns: repeat(12, 1fr);
-		gap: var(--banto-space-4);
+	/* Measures the page's width for the dock / one-column switch. Out of the flow (no gap of the
+	   column goes to it) and never seen. */
+	.page-measure {
+		position: absolute;
+		inset-inline: 0;
+		top: 0;
+		height: 0;
+		visibility: hidden;
+		pointer-events: none;
 	}
 
-	.card {
-		background: var(--banto-surface);
-		border: var(--banto-border-width) solid var(--banto-border);
-		border-radius: var(--banto-radius-lg);
-		box-shadow: var(--banto-card-default-shadow);
-		padding: var(--banto-space-4) var(--banto-space-5);
-		min-width: 0;
-		grid-column: span 12;
-	}
-
-	.card.primary {
-		box-shadow: var(--banto-card-primary-shadow);
-	}
-
-	@media (min-width: 901px) {
-		.card.primary {
-			grid-column: span 8;
-		}
-
-		.card.secondary {
-			grid-column: span 4;
-		}
-	}
-
-	h2 {
-		margin: 0 0 var(--banto-space-1);
-		font-size: var(--banto-font-size-base);
-		font-feature-settings: 'palt';
-	}
-
-	.card-caption {
-		margin: 0 0 var(--banto-space-2);
-		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
-		text-wrap: pretty;
-	}
-
-	/* Docking area (design.md §10): separated from the regular chart cards
-	   as an "analysis workspace" section on the subtle surface tone. */
-	.workspace {
-		background: var(--banto-surface-subtle);
-		border-radius: var(--banto-radius-lg);
-		padding: var(--banto-space-5);
-	}
-
-	.workspace-heading {
-		display: flex;
-		align-items: center;
-		gap: var(--banto-space-2);
-		margin: 0 0 var(--banto-space-2);
-		font-size: var(--banto-font-size-base);
-		font-feature-settings: 'palt';
-	}
-
-	.workspace-caption {
-		margin: 0;
-		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-md);
-		text-wrap: pretty;
-	}
-
+	/* The dock's box. Its height is the rows of the default arrangement (dashboardLayout.ts), set
+	   inline; the page scrolls. */
 	.dock-wrapper {
-		height: 520px;
-		margin-top: var(--banto-space-3);
+		min-width: 0;
 	}
 
 	.dock-panel {
@@ -560,7 +543,7 @@
 		padding: var(--banto-space-3);
 	}
 
-	/* A panel id the registry does not know (a stale saved layout). Caption-style, like .card-caption. */
+	/* A panel id the registry does not know. Caption-style. */
 	.dock-status {
 		margin: 0;
 		color: var(--banto-text-muted);

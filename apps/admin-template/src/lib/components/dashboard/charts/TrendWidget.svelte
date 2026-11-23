@@ -11,6 +11,7 @@
 	import { nextTrendPoint, seedTrendPoints, type TrendPoint } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
+	import ChartFit from './ChartFit.svelte';
 
 	let { height }: DashboardWidgetProps = $props();
 
@@ -36,24 +37,28 @@
 	];
 </script>
 
-<LineChart
-	data={trendData}
-	x={(row) => row.t}
-	series={[
-		{ id: 'temperature', label: m['dashboard.trendTemp'](), y: (row) => row.temperature },
-		{
-			id: 'pressure',
-			label: m['dashboard.trendPressure'](),
-			y: (row) => row.pressure,
-			axis: 'right'
-		}
-	]}
-	label={m['dashboard.trendAria']()}
-	{height}
-	zoomable
-	bands={trendBands}
-	markers={trendMarkers}
-	formatX={(v) => `#${v}`}
-	formatY={(n) => `${n.toFixed(1)}℃`}
-	formatYRight={(n) => `${n.toFixed(2)}MPa`}
-/>
+<ChartFit {height}>
+	{#snippet children(chartHeight)}
+		<LineChart
+			data={trendData}
+			x={(row) => row.t}
+			series={[
+				{ id: 'temperature', label: m['dashboard.trendTemp'](), y: (row) => row.temperature },
+				{
+					id: 'pressure',
+					label: m['dashboard.trendPressure'](),
+					y: (row) => row.pressure,
+					axis: 'right'
+				}
+			]}
+			label={m['dashboard.trendAria']()}
+			height={chartHeight}
+			zoomable
+			bands={trendBands}
+			markers={trendMarkers}
+			formatX={(v) => `#${v}`}
+			formatY={(n) => `${n.toFixed(1)}℃`}
+			formatYRight={(n) => `${n.toFixed(2)}MPa`}
+		/>
+	{/snippet}
+</ChartFit>

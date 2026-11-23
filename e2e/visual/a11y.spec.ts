@@ -83,6 +83,24 @@ for (const combo of DIAGONAL_MATRIX) {
 	});
 }
 
+// #716 W2 (downstream-requests-2026-11-plan §4.13.7 a): the dashboard above is the ONE dock of
+// widgets; on a narrow page (and in a copy scaffolded without the dock) the same widgets are
+// stacked in one column instead. Both combos: the cards have their own surface and headings.
+for (const combo of DIAGONAL_MATRIX) {
+	test(`a11y ${comboLabel(combo)} dashboard stacked in one column has no wcag2a/wcag2aa violations`, async ({
+		page
+	}) => {
+		await page.setViewportSize({ width: 375, height: 812 });
+		await primeThemeAndAuth(page, combo);
+		await gotoScanned(page, PAGES[0]);
+		await expect(page.locator('[data-dashboard-stack] section').first()).toBeVisible();
+
+		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+
+		expect(results.violations, formatViolations(results.violations)).toEqual([]);
+	});
+}
+
 // Dock layout (nav-launcher-plan.md §4.8/§7.3): the shell's other navigation.
 for (const combo of DIAGONAL_MATRIX) {
 	test(`a11y ${comboLabel(combo)} dashboard with the dock has no wcag2a/wcag2aa violations`, async ({

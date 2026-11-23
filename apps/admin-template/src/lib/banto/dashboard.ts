@@ -32,6 +32,18 @@ export function computeStatTiles(items: Item[]): StatTiles {
 	return { count, stockTotal, avgPrice, lowStockCount };
 }
 
+/** How many rows the low-stock list widget shows (`LowStockWidget.svelte`). */
+export const LOW_STOCK_LIST_SIZE = 20;
+
+/**
+ * The items with the least stock, fewest first (ties by id, so the order is stable), at most
+ * `limit` - the dashboard's list widget (#716 W2). Not narrowed by `LOW_STOCK_THRESHOLD`: the
+ * list is "the lowest N", so it is never empty while there are items.
+ */
+export function lowestStockItems(items: Item[], limit: number = LOW_STOCK_LIST_SIZE): Item[] {
+	return [...items].sort((a, b) => a.stock - b.stock || a.id - b.id).slice(0, Math.max(0, limit));
+}
+
 export interface CategoryStock {
 	category: string;
 	stock: number;

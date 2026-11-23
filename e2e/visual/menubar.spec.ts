@@ -252,9 +252,9 @@ test.describe('menu bar layout (primed)', () => {
 		await page.setViewportSize({ width: 1200, height: 800 });
 		await gotoDashboard(page);
 		const barButton = pageMenuNav(page).getByRole('button', { name: '表示' });
-		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
-		// The default layout (メモ floating) is in place once the dock has measured.
-		await expect(memoWindow).toBeVisible();
+		const memoPane = page.locator('.dock-wrapper [data-dock-drop-id="memo"]');
+		// The default arrangement (メモ docked, #716 W2) is in place.
+		await expect(memoPane).toBeVisible();
 		await expect(barButton).toBeVisible();
 		await expect(pageHeaderViewButton(page)).toHaveCount(0);
 
@@ -265,33 +265,26 @@ test.describe('menu bar layout (primed)', () => {
 		await expect(memo).toHaveAttribute('aria-checked', 'true');
 		await memo.click();
 		await expect(memo).toHaveAttribute('aria-checked', 'false');
-		await expect(memoWindow).toHaveCount(0);
+		await expect(memoPane).toHaveCount(0);
 		await page.keyboard.press('Escape');
 		await expect(barButton).toBeFocused();
 
-		// <=900px: no bar, the page header carries it. Focus on the bar's
-		// trigger follows the menu (not the drawer button the nav goes to).
+		// <=900px: no bar - and no View menu at all. The page is too narrow for the dock, so the
+		// dashboard stacks its widgets in one column, where nothing can be rearranged (#716 W2).
 		await page.setViewportSize({ width: 768, height: 1024 });
-		await expect(pageHeaderViewButton(page)).toBeVisible();
+		await expect(page.locator('[data-dashboard-stack]')).toBeVisible();
 		await expect(pageMenuNav(page)).toHaveCount(0);
-		await expect(async () => {
-			await expect(pageHeaderViewButton(page)).toBeFocused({ timeout: 500 });
-		}).toPass();
+		await expect(pageHeaderViewButton(page)).toHaveCount(0);
 
-		// Back above 900px with the page header's menu open: focus goes to the
-		// bar's trigger, and the menu is not reopened there.
-		await pageHeaderViewButton(page).click();
-		await expect(menu).toBeVisible();
-		await page.setViewportSize({ width: 1000, height: 800 });
+		// Back above 900px: the dock and the bar's entry are back.
+		await page.setViewportSize({ width: 1200, height: 800 });
 		await expect(barButton).toBeVisible();
 		await expect(pageHeaderViewButton(page)).toHaveCount(0);
-		await expect(async () => {
-			await expect(barButton).toBeFocused({ timeout: 500 });
-		}).toPass();
-		await expect(menu).toBeHidden();
+		await barButton.focus();
 
 		// Too narrow even for "その他": the hidden bar keeps its entry (out of
-		// the accessibility tree), the header has it - and the focus.
+		// the accessibility tree), the header has it - and the focus (the bar's
+		// trigger had it; not the drawer button the nav goes to).
 		await page.evaluate(() => (document.documentElement.style.fontSize = '250%'));
 		await expect(drawerButton(page)).toBeVisible();
 		await expect(pageMenuNav(page)).toHaveCount(0);
@@ -299,6 +292,11 @@ test.describe('menu bar layout (primed)', () => {
 		await expect(async () => {
 			await expect(pageHeaderViewButton(page)).toBeFocused({ timeout: 500 });
 		}).toPass();
+
+		// The bar comes back with the page header's menu open: focus goes to the
+		// bar's trigger, and the menu is not reopened there.
+		await pageHeaderViewButton(page).click();
+		await expect(menu).toBeVisible();
 		await page.evaluate(() => (document.documentElement.style.fontSize = ''));
 		await expect(drawerButton(page)).toHaveCount(0);
 		await expect(barButton).toBeVisible();
@@ -306,11 +304,13 @@ test.describe('menu bar layout (primed)', () => {
 		await expect(async () => {
 			await expect(barButton).toBeFocused({ timeout: 500 });
 		}).toPass();
+		await expect(menu).toBeHidden();
 
 		// Focus elsewhere at the switch is left alone.
 		await mainNav(page).getByRole('link', { name: 'ダッシュボード' }).focus();
-		await page.setViewportSize({ width: 768, height: 1024 });
+		await page.evaluate(() => (document.documentElement.style.fontSize = '250%'));
 		await expect(drawerButton(page)).toBeFocused();
+		await expect(pageHeaderViewButton(page)).toBeVisible();
 		await expect(pageHeaderViewButton(page)).not.toBeFocused();
 	});
 
