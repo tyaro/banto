@@ -637,7 +637,7 @@ function fakeServer(initial: string | null = null) {
 		calls,
 		script,
 		/** Another writer changes the stored value. */
-		external(next: string) {
+		external(next: string | null) {
 			value = next;
 			rev++;
 		},
@@ -1339,6 +1339,34 @@ describe('repeated conflicts (#786 C6)', () => {
 		]);
 		expect(s.stored()).toBe(raw(25));
 	});
+
+	it.each([
+		['deleted', null],
+		['unparsable', 'not json']
+	])(
+		'a value that turns %s on a later round is written from the original edit, not the previous candidate',
+		async (_name, replacement) => {
+			const s = fakeServer(raw(1));
+			const seen: [number, number][] = [];
+			let round = 0;
+			const setting = createSavedSetting(
+				options(s.provider, {
+					merge: (server, current) => {
+						seen.push([server.x, current.x]);
+						// before the merged candidate (15) is sent, the setting is deleted / broken
+						if (++round === 1) s.external(replacement);
+						return { x: server.x + current.x };
+					}
+				})
+			);
+			await setting.load();
+			s.external(raw(10));
+			setting.set({ x: 5 });
+			expect(await setting.save()).toBe(true);
+			expect(seen).toEqual([[10, 5]]);
+			expect(s.stored()).toBe(raw(5));
+		}
+	);
 });
 
 describe('nullable values (#786 C6)', () => {

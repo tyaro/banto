@@ -440,7 +440,9 @@ class Impl<T> implements SavedSetting<T> {
 							break;
 						}
 						if (++conflicts >= MAX_CONFLICT_ATTEMPTS) break;
-						let merged = target;
+						// Start from the original edit: a deleted or unparsable value is not merged,
+						// so an earlier merge candidate must not leak into this write.
+						let merged = original;
 						if (conflict.value !== null) {
 							const server = this.#parseSafe(conflict.value);
 							if (server !== undefined) {
