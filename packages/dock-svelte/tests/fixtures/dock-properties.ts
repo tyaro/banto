@@ -1,4 +1,4 @@
-// #782 PR1: the generators and helpers of the property tests (`slot-properties.test.ts`).
+// #782 PR1: the generators and helpers of the property tests (`place-properties.test.ts`).
 //
 // A case is plain numbers - `TreeRecipe` and `OpRecipe[]` - turned into a tree and into steps
 // against the state as it is when the step runs (the n-th docked pane, the n-th hidden one), so
@@ -83,7 +83,7 @@ export function buildTree(recipe: TreeRecipe): DockNode {
 		});
 		// Weights 2 to 5: the smallest share of 7 children is 2/32, above the 5% a slot's size is
 		// clamped to (the old slot's minimum share - below it the show order shows, pinned in
-		// `slot-properties.test.ts`).
+		// `place-properties.test.ts`).
 		const weights = children.map(() => next(4) + 2);
 		const total = weights.reduce((a, b) => a + b, 0);
 		return {

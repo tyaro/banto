@@ -809,7 +809,7 @@ describe('"back" for every float order x every back order (up to every pane of t
 	const cases: [string[], string[]][] = [
 		[['a', 'b', 'c'], Object.keys(layouts)],
 		// 浅い既定（#798）: 4 枚の件は DOCK_EXHAUSTIVE=1 のときだけ（同じ性質は state の側
-		// `slot-properties.test.ts` の「floated panes」が 7 枚まで見ている）。
+		// `place-properties.test.ts` の「floated panes」が 7 枚まで見ている）。
 		...(EXHAUSTIVE
 			? [
 					[

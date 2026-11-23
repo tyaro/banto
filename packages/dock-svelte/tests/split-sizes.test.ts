@@ -3,7 +3,7 @@
 // are still out, it leaves their shares for them.
 //
 // #782 PR5: a pane HIDDEN from the dock (`dismiss`) no longer remembers a place - `show` docks it
-// at its default place (`default-place.test.ts`, `slot-properties.test.ts`). The rules here about
+// at its default place (`default-place.test.ts`, `place-properties.test.ts`). The rules here about
 // shares were the same for hidden and floated panes (#734), so the cases below are kept and run
 // through floats: with `createDockState`, "hide" / `-x` / `dismiss` of a docked pane is
 // `undockPanel`, and "show" / `+x` / `show` of it is `dockBack` (`outByFloat`). What a closed

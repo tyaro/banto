@@ -1,6 +1,6 @@
 // #782 PR5 (the decision of 2026-11-22 on the issue): a pane hidden from the dock is shown at its
 // place in the DEFAULT layout, not where it was hidden from. `core/defaultPlace.ts`, case by case;
-// what holds for every tree and every order is in `slot-properties.test.ts`.
+// what holds for every tree and every order is in `place-properties.test.ts`.
 import { describe, expect, it } from 'vitest';
 import { dockShareOf, hasDefaultPlace, placeAtDefault } from '../src/core/defaultPlace';
 import {

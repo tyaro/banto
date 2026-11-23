@@ -11,13 +11,7 @@
  * regions then dock at their default place, or along their edge (`DockState.restoreAutoHidden`).
  */
 import type { DockNode, ShadowNode, ShadowPanelNode } from '../types';
-import {
-	findShadowPanel,
-	removeFromShadow,
-	shadowPanelIds,
-	withoutLoneFlags,
-	writeShadowView
-} from './shadow';
+import { findShadowPanel, removeFromShadow, shadowPanelIds, writeShadowView } from './shadow';
 
 /** The panes of S that are in an edge band (the tombstones marked `band`), in tree order. */
 export function shadowBandIds(s: ShadowNode | null): string[] {
@@ -179,9 +173,7 @@ export function readBandTree(
 			for (const id of held) s = removeFromShadow(s, id);
 		}
 		if (s === null || shadowBandIds(s).length === 0) return undefined;
-		const written =
-			writeShadowView(s, docked) ?? writeShadowView(s, withoutLoneFlags(docked, s)) ?? undefined;
-		return written ?? undefined;
+		return writeShadowView(s, docked) ?? undefined;
 	} catch {
 		return undefined;
 	}

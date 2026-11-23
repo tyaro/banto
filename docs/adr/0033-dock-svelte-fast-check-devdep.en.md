@@ -5,7 +5,7 @@
 - Status: Accepted
 - Date: 2026-11-22 (the direction was decided on 2026-11-21, Issue #782)
 - Related: conventions §3 / [ADR-0002](0002-minimal-dependencies.en.md) / Issue #782 /
-  `packages/dock-svelte/tests/slot-properties.test.ts` /
+  `packages/dock-svelte/tests/place-properties.test.ts` /
   `packages/dock-svelte/tests/fixtures/dock-properties.ts`
 
 ## Context

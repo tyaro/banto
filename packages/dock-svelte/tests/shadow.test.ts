@@ -6,7 +6,7 @@
 // of S after a step is that answer (`tree.ts` on the projection before the step). And what the
 // slots could not give: every order of coming back ends in the same S.
 //
-// Fixed seed and number of cases, as in `slot-properties.test.ts` (`DOCK_PROPERTY_SEED` /
+// Fixed seed and number of cases, as in `place-properties.test.ts` (`DOCK_PROPERTY_SEED` /
 // `DOCK_PROPERTY_RUNS` to look further).
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
@@ -142,13 +142,44 @@ describe('projectShadow', () => {
 		expect(text(projectShadow(tabs('t1', [gone('a'), p('b')], 1)))).toBe('b');
 	});
 
-	it('collapsed: a collapsed group with one shown tab shows as a collapsed pane; a lone child is expanded', () => {
+	it('collapsed: a collapsed group with one shown tab shows as a collapsed pane; the root is expanded', () => {
 		const group: ShadowNode = { ...tabs('t1', [p('a'), gone('b')]), collapsed: true };
 		expect(projectShadow(row('s1', [group, p('c')]))).toEqual(
 			row('s1', [{ ...p('a'), collapsed: true }, p('c')])
 		);
 		const lone = row('s1', [{ ...p('a'), collapsed: true }, gone('b')]);
 		expect(projectShadow(lone)).toEqual(p('a'));
+	});
+
+	// #782 PR8d: S holds the flag of a region that is the only child of its split that shows.
+	it('collapsed: the only shown child of a split keeps its flag beside the siblings it shows with', () => {
+		const flagged = { ...p('a'), collapsed: true };
+		const s = row('s1', [column('s2', [flagged, gone('b')]), p('c')]);
+		expect(projectShadow(s)).toEqual(row('s1', [flagged, p('c')]));
+		// The pane that comes back finds it collapsed beside it.
+		expect(projectShadow(markPresent(s, 'b'))).toEqual(
+			row('s1', [column('s2', [flagged, p('b')]), p('c')])
+		);
+		// A tombstone taken out for good does not expand it either.
+		expect(projectShadow(removeFromShadow(s, 'b'))).toEqual(row('s1', [flagged, p('c')]));
+		// Its last sibling showing gone: nothing is left to show beside the band.
+		expect(projectShadow(markAway(s, 'c'))).toEqual(p('a'));
+		expect(text(projectShadow(markPresent(markAway(s, 'c'), 'c')))).toBe('row[a, c]');
+	});
+
+	it('collapsed: a region left as the only shown child of its split is expanded, as when the split folds', () => {
+		const flagged = { ...p('a'), collapsed: true };
+		const s = row('s1', [column('s2', [flagged, p('b'), gone('x')]), p('c')]);
+		const left = markAway(s, 'b');
+		expect(projectShadow(left)).toEqual(row('s1', [p('a'), p('c')]));
+		expect(projectShadow(markPresent(left, 'b'))).toEqual(
+			row('s1', [column('s2', [p('a'), p('b')]), p('c')])
+		);
+		expect(projectShadow(removeFromShadow(s, 'b'))).toEqual(row('s1', [p('a'), p('c')]));
+		// Through a split that shows one child itself, and a tab group.
+		const group: ShadowNode = { ...tabs('t1', [p('a'), p('e')]), collapsed: true };
+		const deep = row('s1', [column('s2', [column('s3', [group, gone('x')]), p('b')]), p('c')]);
+		expect(JSON.stringify(projectShadow(markAway(deep, 'b')))).not.toContain('collapsed');
 	});
 });
 

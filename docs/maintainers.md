@@ -194,7 +194,7 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
   `persistent` の pane は木の外で 1 回だけ描き、DOM ごと移すので作り直さない。
 - 総当たりのテスト（`DockHostKeyboardMove.test.ts` の float × back。hide × show の総当たりと旧実装との比較の 6 本は
   #782 PR5 で、旧実装の slot と並べる `panel-visibility-exhaustive-shadow.test.ts` は #782 PR7 で削った。性質は
-  `slot-properties.test.ts`）は、
+  `place-properties.test.ts`）は、
   環境変数 `DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走り、未設定（手元の既定）は浅い（#798）。
   CI は dock-svelte を触る PR と main の push で `1` にし、触らない PR は浅い既定（ci.yml の `changes` の出力 `dock`）。
   切り替えは `packages/dock-svelte/tests/fixtures/exhaustive.ts` の 1 か所。影の木・lifecycle の変更は、手元でも
@@ -243,6 +243,16 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
     引けるので（`restoreAutoHidden(paneId)`）、区画の id を控えておくコードを書かない。
   - `markAway` に引数を足さない（`ids.reduce(markAway, s)` の形で呼ばれるので、3 つ目の引数に添字が入る）。帯の印は
     `markInBand`。
+- 畳み（`collapsed`）の印も S が持つ（#782 PR8d）: `layout.docked` の印は、いつも S の射影の印と同じ。split の中で見えている子が
+  1 つだけの区画（ほかは墓石）を、射影で並ぶ兄弟の横で畳んだ印も、S のその区画に載る（前は docked の木だけが持ち、
+  `DockState` が手ごとに引き継いでいた）。守ること:
+  - **「1 人になったら畳みを外す」は、pane が場所を出る手の終わりに行う**（`markAway`・`removeFromShadow`・`dockIntoShadow`・
+    `dockAtShadowEdge`。`core/shadow.ts` の `settleCollapsed(next, before)` → `settleAlone`）。手の前に子が 2 つ以上見えていて、
+    手の終わりに 1 つだけ見えている split の、その子の印を外す。射影（`projectShadow`）では外さない: 射影で外すと、墓石の横で
+    後から畳んだ印と区別できない。**pane を取り出した時点（`removeNode` の途中）でも外さない**: 同じ split の中の並べ替えは
+    「取り出して入れ直す」ので、途中だけ 1 人になる（PR #879 のクロスレビュー）。畳まれて消える split の最後の子だけは `removeNode` が外す。
+  - S に載っている印は「今の射影の兄弟の横で畳んである」の意味。墓石が戻っても外さない（戻った pane の横で畳んだまま）。
+  - 射影に出ない印（根・全員が畳み・墓石・タブの中）は、手の終わりの `settleCollapsed` が S から落とす。
 - 浮かせた pane の元の場所（#721・#727・#733〜#736・#741。slot は #782 PR8c で消えた）:
   - 保存する配置の `version` は 4 だけ（#782 PR8b。配置は slot を持たない）。`core/validate.ts` が `DOCK_LAYOUT_VERSION`・
     `withLayoutVersion` を持つ。旧実装の複製 `tests/fixtures/slot-main.ts` は #782 PR7 で削った。

@@ -18,7 +18,7 @@
 // on S alone shows the tree the slots made -, `written` - only sizes / tabs / flags differed and
 // were written onto S -, `rebuilt` - S was made again from the docked tree and the slots.
 //
-// Seeds and counts are fixed as in `slot-properties.test.ts` (`DOCK_PROPERTY_SEED` /
+// Seeds and counts are fixed as in `place-properties.test.ts` (`DOCK_PROPERTY_SEED` /
 // `DOCK_PROPERTY_RUNS` to look for more).
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
@@ -107,30 +107,6 @@ function badShadow(s: ShadowNode | null): string[] {
 	return out;
 }
 
-/**
- * The one thing S cannot show (`writeShadowView`): the `collapsed` flag of a region that is the
- * only shown child of a split of S. `docked` without those flags.
- */
-function withoutLoneFlags(docked: DockNode | null, s: ShadowNode | null): DockNode | null {
-	const lone = new Set<string>();
-	const visit = (node: ShadowNode): void => {
-		if (node.type !== 'split') return;
-		const shown = node.children.filter((c) => shadowPanelIds(c, 'shown').length > 0);
-		const only = shown.length === 1 ? projectShadow(shown[0]) : null;
-		if (only) lone.add(only.id);
-		node.children.forEach(visit);
-	};
-	if (s) visit(s);
-	const strip = (node: DockNode): DockNode => {
-		if (node.type === 'split') return { ...node, children: node.children.map(strip) };
-		if (!lone.has(node.id) || node.collapsed !== true) return node;
-		const next = { ...node };
-		delete next.collapsed;
-		return next;
-	};
-	return docked && lone.size > 0 ? strip(docked) : docked;
-}
-
 /** The panes out of the tree that remember a docked place: floated (`hasHome`), open or closed since. */
 const pendingIds = (dock: DockState): string[] =>
 	dock.layout.floating
@@ -148,7 +124,7 @@ const pendingIds = (dock: DockState): string[] =>
 function notFollowing(dock: DockState): string | null {
 	const { shadow, unplaced } = shadowStateOf(dock);
 	const seen = projectShadow(shadow);
-	if (!sameDocked(seen, withoutLoneFlags(dock.layout.docked, shadow))) {
+	if (!sameDocked(seen, dock.layout.docked)) {
 		return `S shows ${treeText(seen)}`;
 	}
 	const bad = badShadow(shadow);
@@ -589,7 +565,8 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		expect(notFollowing(dock)).toBe(null);
 	});
 
-	it('what S cannot hold: the flag of a region that is the only shown child of a split of S', () => {
+	// #782 PR8d: S holds this flag too (before, the docked tree alone had it).
+	it('the flag of a region that is the only shown child of a split of S is written onto S', () => {
 		// row[x, column[a, b]], a floated: `b` shows beside `x`, and is collapsed there.
 		const { dock, follows } = watched(
 			split(
@@ -603,11 +580,10 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		follows.length = 0;
 		dock.setDockedCollapsed('b', true);
 		expect(dock.isDockedCollapsed('b')).toBe(true);
-		// Not written, and S stays as it is (#782 PR6: not made again from the slots): it shows the
-		// tree without the flag, which `DockState` keeps on the docked tree alone.
-		expect(follows).toEqual([{ step: null, result: 'same' }]);
+		// Written, not made again: S shows the docked tree, flag and all.
+		expect(follows).toEqual([{ step: null, result: 'written' }]);
 		const { shadow } = shadowStateOf(dock);
-		expect(sameDocked(projectShadow(shadow), dock.layout.docked)).toBe(false);
+		expect(sameDocked(projectShadow(shadow), dock.layout.docked)).toBe(true);
 		expect(notFollowing(dock)).toBe(null);
 		expect(shadowPanelIds(shadow, 'away')).toEqual(['a']);
 		dock.setDockedCollapsed('b', false);
