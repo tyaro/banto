@@ -995,9 +995,21 @@ describe('collapsed regions over floats, edge bands and hidden panes (#782 PR8d)
 		const group = findParent(docked, id);
 		return group?.type === 'tabs' ? [id, group.id, ...group.children.map((c) => c.id)] : [id];
 	};
-	type Kind = 'float' | 'back' | 'hide' | 'show' | 'band' | 'restore' | 'collapse' | 'save';
-	const KINDS: Kind[] = ['float', 'back', 'hide', 'show', 'band', 'restore', 'collapse', 'save'];
-	const OUT: Kind[] = ['float', 'hide', 'band'];
+	type Kind =
+		'float' | 'back' | 'hide' | 'show' | 'band' | 'restore' | 'collapse' | 'save' | 'move';
+	const KINDS: Kind[] = [
+		'float',
+		'back',
+		'hide',
+		'show',
+		'band',
+		'restore',
+		'collapse',
+		'save',
+		'move'
+	];
+	// The steps that take a pane out of its place (a move does, and puts it somewhere else).
+	const OUT: Kind[] = ['float', 'hide', 'band', 'move'];
 
 	/** One step of `kinds` on `dock`: its text, what it is, and the ids it is about; `null` when none can run. */
 	const step = (
@@ -1008,7 +1020,7 @@ describe('collapsed regions over floats, edge bands and hidden panes (#782 PR8d)
 		const docked = dockedIds(dock);
 		const regions = regionsOf(dock.layout.docked);
 		const able = kinds.filter((kind) =>
-			kind === 'float' || kind === 'hide' || kind === 'band'
+			kind === 'float' || kind === 'hide' || kind === 'band' || kind === 'move'
 				? docked.length > 1
 				: kind === 'back'
 					? floatedIds(dock).length > 0
@@ -1029,6 +1041,15 @@ describe('collapsed regions over floats, edge bands and hidden panes (#782 PR8d)
 			const text = `${kind === 'float' ? '~' : '-'}${id}`;
 			runStep(dock, text);
 			return { text, kind, ids: about(before, id) };
+		}
+		if (kind === 'move') {
+			// To a side of another pane that shows (the pane of a band is no target of a drop).
+			const id = pick(docked);
+			const others = docked.filter((d) => d !== id);
+			const target = others[op.j % others.length];
+			const text = `${id}>${target}:${EDGES[op.r % EDGES.length]}`;
+			runStep(dock, text);
+			return { text, kind, ids: [...about(before, id), ...about(dock.layout.docked, id)] };
 		}
 		if (kind === 'band') {
 			const id = pick(docked);
@@ -1207,5 +1228,39 @@ describe('collapsed regions over floats, edge bands and hidden panes (#782 PR8d)
 		expect(fresh.restoreAutoHidden('b')).toBe(true);
 		expect(shapeOf(fresh.layout.docked)).toEqual({ row: [{ column: ['a', 'b'] }, 'c', 'd'] });
 		expect(fresh.isDockedCollapsed('a')).toBe(true);
+	});
+
+	// Cross-review of PR #879: what #782 PR8b / PR8c saved - `version: 4`, the flag on `docked`
+	// only, not in the tree of the bands - reads the same.
+	it('a layout saved before PR8d (no flag in the tree of the bands) loads with the band, the place and the shares', () => {
+		const dock = newDock(
+			split('s', 'row', even(3), [
+				split('k', 'column', [0.38, 0.62], [panel('a'), panel('b')]),
+				panel('c'),
+				panel('d')
+			])
+		);
+		expect(dock.autoHideRegion('b')).toBe(true);
+		dock.setDockedCollapsed('a', true);
+		const saved = JSON.parse(dock.serialize()) as Record<string, unknown>;
+		const strip = (node: unknown): unknown => {
+			if (Array.isArray(node)) return node.map(strip);
+			if (typeof node !== 'object' || node === null) return node;
+			const out: Record<string, unknown> = {};
+			for (const [key, value] of Object.entries(node))
+				if (key !== 'collapsed') out[key] = strip(value);
+			return out;
+		};
+		expect(JSON.stringify(saved.dockedWithAutoHidden)).toContain('"collapsed":true');
+		const old = { ...saved, dockedWithAutoHidden: strip(saved.dockedWithAutoHidden) };
+		expect(JSON.stringify(saved.docked)).toContain('"collapsed":true');
+		const fresh = newDock(panel('z'));
+		expect(fresh.hydrate(JSON.stringify(old))).toBe(true);
+		expect(fresh.isDockedCollapsed('a')).toBe(true);
+		expect(fresh.restoreAutoHidden('b')).toBe(true);
+		expect(shapeOf(fresh.layout.docked)).toEqual({ row: [{ column: ['a', 'b'] }, 'c', 'd'] });
+		expect(fresh.isDockedCollapsed('a')).toBe(true);
+		const column = findNode(fresh.layout.docked, 'k');
+		expect(column?.type === 'split' && column.sizes[0]).toBeCloseTo(0.38, 9);
 	});
 });

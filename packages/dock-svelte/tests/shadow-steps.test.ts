@@ -360,6 +360,30 @@ describe('the `collapsed` flag of an only shown child stays (review of PR #864, 
 		expect(beside.isDockedCollapsed('a')).toBe(true);
 	});
 
+	// Cross-review of PR #879: a new order inside one split is a move in S - the pane is taken
+	// out and put back, and at the end the band still has its siblings.
+	it('a pane put elsewhere in the split of a band, beside a place: the band stays (the prediction too)', () => {
+		const make = (): DockState => {
+			const dock = dockOf(split('s', 'row', [0.4, 0.3, 0.3], [panel('a'), panel('b'), panel('x')]));
+			dock.undockPanel('x');
+			dock.setDockedCollapsed('a', true);
+			expect(dock.isDockedCollapsed('a')).toBe(true);
+			return dock;
+		};
+		const dock = make();
+		const predicted = dock.droppedTree('b', 'a', 'left', counterMakeId(50));
+		expect(JSON.stringify(predicted)).toContain('"collapsed":true');
+		dock.dockExisting('b', 'a', 'left');
+		expect(dock.isDockedCollapsed('a')).toBe(true);
+		expect(JSON.stringify(dock.layout.docked)).toBe(JSON.stringify(predicted));
+		expect(back(dock, 'x')).toBe(true);
+		expect(dock.isDockedCollapsed('a')).toBe(true);
+		// Moved out of the split, to an outer edge: `a` is the only child of its row that shows.
+		const edge = make();
+		edge.dockExistingAtEdge('b', 'top');
+		expect(edge.isDockedCollapsed('a')).toBe(false);
+	});
+
 	it('a pane joining a as a tab expands the region (the step touched it)', () => {
 		const tabbed = collapsedA();
 		tabbed.dockExisting('d', 'a', 'center');

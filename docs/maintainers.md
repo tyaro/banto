@@ -246,8 +246,11 @@ packages の CSS に生の色を書くと raw-colors で Frontend と Scaffold 4
 - 畳み（`collapsed`）の印も S が持つ（#782 PR8d）: `layout.docked` の印は、いつも S の射影の印と同じ。split の中で見えている子が
   1 つだけの区画（ほかは墓石）を、射影で並ぶ兄弟の横で畳んだ印も、S のその区画に載る（前は docked の木だけが持ち、
   `DockState` が手ごとに引き継いでいた）。守ること:
-  - **「1 人になったら畳みを外す」は、pane が出ていく手（`markAway`・`removeFromShadow`。`core/shadow.ts` の `alone`）で行う**。
-    射影（`projectShadow`）では外さない: 射影で外すと、墓石の横で後から畳んだ印と区別できない。
+  - **「1 人になったら畳みを外す」は、pane が場所を出る手の終わりに行う**（`markAway`・`removeFromShadow`・`dockIntoShadow`・
+    `dockAtShadowEdge`。`core/shadow.ts` の `settleCollapsed(next, before)` → `settleAlone`）。手の前に子が 2 つ以上見えていて、
+    手の終わりに 1 つだけ見えている split の、その子の印を外す。射影（`projectShadow`）では外さない: 射影で外すと、墓石の横で
+    後から畳んだ印と区別できない。**pane を取り出した時点（`removeNode` の途中）でも外さない**: 同じ split の中の並べ替えは
+    「取り出して入れ直す」ので、途中だけ 1 人になる（PR #879 のクロスレビュー）。畳まれて消える split の最後の子だけは `removeNode` が外す。
   - S に載っている印は「今の射影の兄弟の横で畳んである」の意味。墓石が戻っても外さない（戻った pane の横で畳んだまま）。
   - 射影に出ない印（根・全員が畳み・墓石・タブの中）は、手の終わりの `settleCollapsed` が S から落とす。
 - 浮かせた pane の元の場所（#721・#727・#733〜#736・#741。slot は #782 PR8c で消えた）:

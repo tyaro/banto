@@ -237,10 +237,13 @@ export function projectShadow(s: ShadowNode | null): DockNode | null {
 /**
  * Drop the `collapsed` flags of S that its projection does not show (the root, every child of a
  * split collapsed, a tombstone, a tab inside a group): `DockState` clears those for good, so
- * they must not come back when a sibling does. Called at the end of every change.
+ * they must not come back when a sibling does. Called at the end of every change. With `before` -
+ * the S the change was made on, for a change that takes a pane out of its place - the regions
+ * the change left alone are expanded first (`settleAlone`).
  */
-function settleCollapsed(s: ShadowNode | null): ShadowNode | null {
+function settleCollapsed(s: ShadowNode | null, before?: ShadowNode | null): ShadowNode | null {
 	if (s === null) return null;
+	if (before) s = settleAlone(before, s);
 	const flagged = new Set<string>();
 	const collect = (node: DockNode | null): void => {
 		if (node === null) return;
@@ -284,8 +287,8 @@ function expanded(node: ShadowNode): ShadowNode {
 /**
  * The children of a split of S that showed `was` children, once a pane has left: a region left
  * as the only one showing is no longer collapsed (`tree.ts#collapse` drops the flag when the
- * split folds; in S the split may stay, around its tombstones). The rule is applied here, when
- * the pane leaves - not by the projection (#782 PR8d): a flag S holds on such a region was set
+ * split folds; in S the split may stay, around its tombstones). The rule is applied when the
+ * pane leaves - not by the projection (#782 PR8d): a flag S holds on such a region was set
  * afterwards, beside the siblings the projection gives it, and stays when a tombstone comes back.
  */
 function alone(children: ShadowNode[], was: number): ShadowNode[] {
@@ -296,7 +299,13 @@ function alone(children: ShadowNode[], was: number): ShadowNode[] {
 	return only === shown[0] ? children : children.map((c) => (c === shown[0] ? only : c));
 }
 
-/** `after` - S once a pane of `before` became a tombstone - with `alone` applied to every split (ids as in `before`). */
+/**
+ * `after` - S at the end of a change that took a pane of `before` out of its place - with `alone`
+ * applied to every split that is still there (by id). At the END of the change, not when the pane
+ * is taken out: a pane put back into the split it was in (a new order inside one split) has not
+ * left the regions beside it alone (cross-review of PR #879). A split that folded for good is
+ * `removeNode`'s.
+ */
 function settleAlone(before: ShadowNode, after: ShadowNode): ShadowNode {
 	const counts = new Map<string, number>();
 	const count = (node: ShadowNode): void => {
@@ -345,15 +354,13 @@ function marked(s: ShadowNode | null, panelId: string, band: boolean): ShadowNod
 	const group = path.at(-2);
 	if (group?.type !== 'tabs')
 		return settleCollapsed(
-			settleAlone(
-				s,
-				replaceNode(s, panelId, () => gone)
-			)
+			replaceNode(s, panelId, () => gone),
+			s
 		);
 	const children = group.children.map((c) => (c.id === panelId ? gone : c));
 	const activeIndex = shownActive(children, group.activeIndex);
 	const next = replaceNode(s, group.id, () => ({ ...group, children, activeIndex }));
-	return settleCollapsed(settleAlone(s, next));
+	return settleCollapsed(next, s);
 }
 
 /**
@@ -435,7 +442,9 @@ function removeNode(node: ShadowNode, panelId: string): ShadowNode | null {
 		left.push(r);
 		sizes.push(node.sizes[i] ?? 0);
 	});
-	const kept = alone(left, node.children.filter(isShown).length);
+	// A split that folds is gone at the end of the change: its last child is expanded here. One
+	// that stays (a tombstone holds it) is looked at then (`settleAlone`).
+	const kept = left.length === 1 ? alone(left, node.children.filter(isShown).length) : left;
 	return fold({
 		...node,
 		children: kept,
@@ -453,7 +462,7 @@ function removeNode(node: ShadowNode, panelId: string): ShadowNode | null {
 export function removeFromShadow(s: ShadowNode | null, panelId: string): ShadowNode | null {
 	if (!s) return null;
 	const next = removeNode(s, panelId);
-	return next === s ? s : settleCollapsed(next);
+	return next === s ? s : settleCollapsed(next, s);
 }
 
 // ----- putting in / moving -------------------------------------------------------------------
@@ -596,7 +605,10 @@ export function dockIntoShadow(
 		if (group?.type === 'tabs') {
 			const children = [...group.children, panel];
 			const next = { ...withoutCollapsed(group), children, activeIndex: children.length - 1 };
-			return settleCollapsed(replaceNode(rest, group.id, () => next))!;
+			return settleCollapsed(
+				replaceNode(rest, group.id, () => next),
+				s
+			)!;
 		}
 		const tabs: ShadowTabGroupNode = {
 			type: 'tabs',
@@ -604,7 +616,10 @@ export function dockIntoShadow(
 			children: [withoutCollapsed(path[leaf] as ShadowPanelNode), panel],
 			activeIndex: 1
 		};
-		return settleCollapsed(replaceNode(rest, anchor.rep, () => tabs))!;
+		return settleCollapsed(
+			replaceNode(rest, anchor.rep, () => tabs),
+			s
+		)!;
 	}
 
 	// What is left of the node found before the removal: outwards from the target's leaf while the
@@ -629,10 +644,16 @@ export function dockIntoShadow(
 			sizes.splice(index, 0, 0);
 		}
 		const next = { ...parent, children, sizes: evenAmongShown(children, sizes) };
-		return settleCollapsed(replaceNode(rest, parent.id, () => next))!;
+		return settleCollapsed(
+			replaceNode(rest, parent.id, () => next),
+			s
+		)!;
 	}
 	const split = wrap(target, panel, region, 0.5, makeId);
-	return settleCollapsed(replaceNode(rest, target.id, () => split))!;
+	return settleCollapsed(
+		replaceNode(rest, target.id, () => split),
+		s
+	)!;
 }
 
 /** The split the pane `panelId` is a direct child of, with the share of each child by id; else `null`. */
@@ -692,7 +713,7 @@ export function dockAtShadowEdge(
 	const panel = shownLeaf(dropped);
 	const rest = s ? removeNode(s, panel.id) : null;
 	if (rest === null) return panel;
-	return settleCollapsed(wrap(rest, panel, edge, EDGE_DOCK_RATIO, makeId))!;
+	return settleCollapsed(wrap(rest, panel, edge, EDGE_DOCK_RATIO, makeId), s)!;
 }
 
 /**
@@ -715,7 +736,7 @@ export function dockRegionAtShadowEdge(
 	let rest = s;
 	for (const tab of group.children) rest = rest ? removeNode(rest, tab.id) : null;
 	if (rest === null) return group;
-	return settleCollapsed(wrap(rest, group, edge, EDGE_DOCK_RATIO, makeId))!;
+	return settleCollapsed(wrap(rest, group, edge, EDGE_DOCK_RATIO, makeId), s)!;
 }
 
 // ----- the default place (#782 PR6) ------------------------------------------------------------
