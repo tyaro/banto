@@ -5,7 +5,7 @@
 - 状態: Accepted
 - 日付: 2026-11-22（方針の決定は 2026-11-21、Issue #782）
 - 関連: conventions §3 / [ADR-0002](0002-minimal-dependencies.md) / Issue #782 /
-  `packages/dock-svelte/tests/slot-properties.test.ts` /
+  `packages/dock-svelte/tests/place-properties.test.ts` /
   `packages/dock-svelte/tests/fixtures/dock-properties.ts`
 
 ## コンテキスト

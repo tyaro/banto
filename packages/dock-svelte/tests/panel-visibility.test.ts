@@ -1,5 +1,5 @@
 // 隠す順 × 戻す順の総当たりと旧実装（`fixtures/slot-main.ts`）との比較は #782 PR5 で削った（Issue #782 の
-// 2026-11-22 の方針変更の 9）。性質は `default-place.test.ts` と `slot-properties.test.ts`。ここには事例を残す。
+// 2026-11-22 の方針変更の 9）。性質は `default-place.test.ts` と `place-properties.test.ts`。ここには事例を残す。
 // Hiding and showing a docked pane, and the View-menu API (#663 ①-A, #782 PR5): a docked pane that
 // is hidden / closed (`DockState.dismiss`) remembers no place; `show` docks it at its DEFAULT place
 // (`DockState.defaultLayout`, `core/defaultPlace.ts`), with the share it held. The docks here take

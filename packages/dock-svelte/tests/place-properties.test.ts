@@ -12,7 +12,7 @@
 // Each property runs with a fixed seed (`SEED`) and a fixed number of cases, so a run is the same
 // every time. A failure prints the seed, the shrunk recipe, and - from `failCase` - the tree and
 // the steps as text. To look for more cases: `DOCK_PROPERTY_RUNS=5000 DOCK_PROPERTY_SEED=1 pnpm
-// --filter @banto/dock-svelte test slot-properties`.
+// --filter @banto/dock-svelte test place-properties`.
 //
 // A known failure is marked `it.fails` with the issue and the smallest case found, and has its
 // case pinned as an ordinary `it.fails` below the property. When one starts to pass, vitest
@@ -21,10 +21,10 @@
 // #782 PR6 passed are ordinary cases too.
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
-import { autoHiddenPanelIds } from '../src/core/autohide';
+import { autoHiddenPanelIds, regionPanelIds } from '../src/core/autohide';
 import { collectPanelIds, findNode, findParent, removePanel } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
-import type { ShadowNode } from '../src/core/shadow';
+import { projectShadow, sameDocked, type ShadowNode } from '../src/core/shadow';
 import { shadowStateOf, type DockState } from '../src/state.svelte';
 import type { DockNode } from '../src/types';
 import {
@@ -965,5 +965,247 @@ describe('floated panes: assignments from outside in between (#782 PR7)', () => 
 		// Both happen: the container still there, and gone (the default place).
 		expect(seen.there).toBeGreaterThan(50);
 		expect(seen.gone).toBeGreaterThan(20);
+	});
+});
+
+// #782 PR8d: the `collapsed` flag of a docked region (a band, #663 ③-B) is held by the shadow
+// tree S - the one of a region that is the only child of its split of S that shows too. What
+// holds for every tree and every order of steps: the docked tree is what S shows, flags and all,
+// and a step changes the flag of the regions it is about only.
+describe('collapsed regions over floats, edge bands and hidden panes (#782 PR8d)', () => {
+	type Flags = Map<string, string | null>;
+	/** The collapsed regions of a docked tree: id -> the id of the split each is a child of. */
+	const flagsOf = (
+		node: DockNode | null,
+		parent: string | null = null,
+		into: Flags = new Map()
+	): Flags => {
+		if (node === null) return into;
+		if (node.type === 'split') node.children.forEach((c) => flagsOf(c, node.id, into));
+		else if (node.collapsed === true) into.set(node.id, parent);
+		return into;
+	};
+	/** The regions of a docked tree that can be collapsed (a pane or a tab group that is a split's child), by id. */
+	const regionsOf = (node: DockNode | null): string[] =>
+		node?.type === 'split'
+			? node.children.flatMap((c) => (c.type === 'split' ? regionsOf(c) : [c.id]))
+			: [];
+	/** The ids a step on the pane `id` is about in `docked`: the pane, and its tab group with its tabs. */
+	const about = (docked: DockNode | null, id: string): string[] => {
+		const group = findParent(docked, id);
+		return group?.type === 'tabs' ? [id, group.id, ...group.children.map((c) => c.id)] : [id];
+	};
+	type Kind = 'float' | 'back' | 'hide' | 'show' | 'band' | 'restore' | 'collapse' | 'save';
+	const KINDS: Kind[] = ['float', 'back', 'hide', 'show', 'band', 'restore', 'collapse', 'save'];
+	const OUT: Kind[] = ['float', 'hide', 'band'];
+
+	/** One step of `kinds` on `dock`: its text, what it is, and the ids it is about; `null` when none can run. */
+	const step = (
+		dock: DockState,
+		op: OpRecipe,
+		kinds: Kind[]
+	): { text: string; kind: Kind; ids: string[] } | null => {
+		const docked = dockedIds(dock);
+		const regions = regionsOf(dock.layout.docked);
+		const able = kinds.filter((kind) =>
+			kind === 'float' || kind === 'hide' || kind === 'band'
+				? docked.length > 1
+				: kind === 'back'
+					? floatedIds(dock).length > 0
+					: kind === 'show'
+						? hiddenIds(dock).length > 0
+						: kind === 'restore'
+							? dock.autoHidden.length > 0
+							: kind === 'collapse'
+								? regions.length > 0
+								: true
+		);
+		if (able.length === 0) return null;
+		const kind = able[op.kind % able.length];
+		const pick = (ids: string[]): string => ids[op.i % ids.length];
+		const before = dock.layout.docked;
+		if (kind === 'float' || kind === 'hide') {
+			const id = pick(docked);
+			const text = `${kind === 'float' ? '~' : '-'}${id}`;
+			runStep(dock, text);
+			return { text, kind, ids: about(before, id) };
+		}
+		if (kind === 'band') {
+			const id = pick(docked);
+			const done = dock.autoHideRegion(id);
+			return { text: `band ${id}${done ? '' : ' (refused)'}`, kind, ids: about(before, id) };
+		}
+		if (kind === 'back' || kind === 'show') {
+			const id = pick(kind === 'back' ? floatedIds(dock) : hiddenIds(dock));
+			const text = `${kind === 'back' ? '^' : '+'}${id}`;
+			runStep(dock, text);
+			return { text, kind, ids: about(dock.layout.docked, id) };
+		}
+		if (kind === 'restore') {
+			const entry = dock.autoHidden[op.i % dock.autoHidden.length];
+			const panes = regionPanelIds(entry.node);
+			dock.restoreAutoHidden(entry.node.id);
+			return {
+				text: `restore ${entry.node.id}`,
+				kind,
+				ids: [entry.node.id, ...panes.flatMap((id) => about(dock.layout.docked, id))]
+			};
+		}
+		if (kind === 'collapse') {
+			const id = pick(regions);
+			const to = !dock.isDockedCollapsed(id);
+			dock.setDockedCollapsed(id, to);
+			return { text: `${to ? 'collapse' : 'expand'} ${id}`, kind, ids: [id] };
+		}
+		runStep(dock, '@');
+		return { text: '@', kind, ids: [] };
+	};
+
+	/** Why the flags `after` a step are not what the flags `before` it and the step say, or `null`. */
+	const wrongFlags = (
+		before: Flags,
+		after: Flags,
+		docked: DockNode | null,
+		kind: Kind,
+		ids: string[]
+	): string | null => {
+		const mine = new Set(ids);
+		for (const id of after.keys()) {
+			if (!before.has(id) && !mine.has(id)) return `${id} is collapsed by a step on ${ids[0]}`;
+		}
+		for (const [id, parent] of before) {
+			if (after.has(id) || mine.has(id)) continue;
+			// A pane that leaves may leave a band with nothing open beside it: the region is in
+			// another split now (its own showed one child and folded, or shows it alone), or every
+			// region left beside it was a band (`normalizeCollapsed`). Nothing else expands a band.
+			const now = findParent(docked, id);
+			const beside = now?.type === 'split' ? now.children.filter((c) => c.id !== id) : [];
+			const left =
+				OUT.includes(kind) &&
+				((now?.id ?? null) !== parent || beside.every((c) => before.has(c.id)));
+			if (!left) return `${id} is expanded by a step on ${ids[0] ?? 'nothing'}`;
+		}
+		return null;
+	};
+
+	/** Does S hold a band on the only child showing of one of its splits (what the docked tree alone held before PR8d)? */
+	const holdsLone = (node: ShadowNode | null, flags: Flags): boolean => {
+		if (node?.type !== 'split') return false;
+		const shown = node.children.filter((c) => projectShadow(c) !== null);
+		const only = shown.length === 1 ? projectShadow(shown[0]) : null;
+		if (only && flags.has(only.id)) return true;
+		return node.children.some((c) => holdsLone(c, flags));
+	};
+
+	it('S shows the docked tree with its flags, and a step changes the flags of its own regions only', () => {
+		const seen = { kept: 0, alone: 0, held: 0 };
+		fc.assert(
+			fc.property(treeRecipe, ops(4, 24), (recipe, recipes) => {
+				const tree = buildTree(recipe);
+				const dock = newDock(tree);
+				const steps: string[] = [];
+				for (const op of recipes) {
+					const before = flagsOf(dock.layout.docked);
+					const done = step(dock, op, KINDS);
+					if (done === null) continue;
+					steps.push(done.text);
+					const { shadow } = shadowStateOf(dock);
+					if (!sameDocked(projectShadow(shadow), dock.layout.docked)) {
+						failCase(tree, steps, `S shows ${JSON.stringify(projectShadow(shadow))}`);
+					}
+					const after = flagsOf(dock.layout.docked);
+					const wrong = wrongFlags(before, after, dock.layout.docked, done.kind, done.ids);
+					if (wrong) failCase(tree, steps, wrong);
+					for (const id of before.keys()) if (after.has(id)) seen.kept++;
+					if (before.size > after.size && OUT.includes(done.kind)) seen.alone++;
+					if (holdsLone(shadow, after)) seen.held++;
+				}
+			}),
+			params(1000)
+		);
+		// All of it happens: bands kept over the steps, bands left alone, and bands beside a place.
+		if (!RUNS) {
+			expect(seen.kept).toBeGreaterThan(500);
+			expect(seen.alone).toBeGreaterThan(20);
+			expect(seen.held).toBeGreaterThan(50);
+		}
+	});
+
+	it('panes out and back in any order: the bands of the regions they were not in are as they were', () => {
+		let cases = 0;
+		fc.assert(
+			fc.property(
+				treeRecipe,
+				ops(1, 4),
+				ops(1, 4),
+				ops(0, 3),
+				ops(8, 8),
+				(recipe, first, out, then, back) => {
+					const tree = buildTree(recipe);
+					const dock = newDock(tree);
+					const steps: string[] = [];
+					const run = (recipes: OpRecipe[], kinds: Kind[]): string[] =>
+						recipes.flatMap((op) => {
+							const done = step(dock, op, kinds);
+							if (done === null) return [];
+							steps.push(done.text);
+							return done.ids;
+						});
+					run(first, ['collapse']);
+					const start = dock.layout.docked;
+					const moved = new Set(run(out, ['float', 'band']));
+					// Bands made while panes are out: beside a place, some of them.
+					run(then, ['collapse']);
+					const held = flagsOf(dock.layout.docked);
+					for (const id of run(back, ['back', 'restore'])) moved.add(id);
+					for (const id of floatedIds(dock)) {
+						runStep(dock, `^${id}`);
+						steps.push(`^${id}`);
+						for (const x of about(dock.layout.docked, id)) moved.add(x);
+					}
+					for (const entry of [...dock.autoHidden]) {
+						dock.restoreAutoHidden(entry.node.id);
+						steps.push(`restore ${entry.node.id}`);
+						for (const id of regionPanelIds(entry.node))
+							for (const x of about(dock.layout.docked, id)) moved.add(x);
+					}
+					// Every pane is back where it was (the order does not matter) ...
+					const diff = treeDiff(dock.layout.docked, start);
+					if (diff) failCase(tree, steps, diff);
+					// ... and a region no pane left or came back into is a band exactly when it was
+					// one while they were out.
+					const now = flagsOf(dock.layout.docked);
+					for (const id of regionsOf(dock.layout.docked)) {
+						if (moved.has(id)) continue;
+						if (now.has(id) !== held.has(id)) {
+							failCase(tree, steps, `${id}: ${held.has(id) ? 'was' : 'was not'} a band while out`);
+						}
+					}
+					if (held.size > 0) cases++;
+				}
+			),
+			params(500)
+		);
+		if (!RUNS) expect(cases).toBeGreaterThan(100);
+	});
+
+	it('saved and loaded with a band beside the place of a pane in an edge band: the band and the place are kept', () => {
+		// row[column[a, b], c, d]: `b` to an edge band, then `a` - the only child of its column
+		// that shows - collapsed beside `c` and `d`. The saved tree holds the flag and the place.
+		const dock = newDock(
+			split('s', 'row', even(3), [
+				split('k', 'column', even(2), [panel('a'), panel('b')]),
+				panel('c'),
+				panel('d')
+			])
+		);
+		expect(dock.autoHideRegion('b')).toBe(true);
+		dock.setDockedCollapsed('a', true);
+		const fresh = loadedFresh(dock);
+		expect(fresh.isDockedCollapsed('a')).toBe(true);
+		expect(sameDocked(projectShadow(shadowStateOf(fresh).shadow), fresh.layout.docked)).toBe(true);
+		expect(fresh.restoreAutoHidden('b')).toBe(true);
+		expect(shapeOf(fresh.layout.docked)).toEqual({ row: [{ column: ['a', 'b'] }, 'c', 'd'] });
+		expect(fresh.isDockedCollapsed('a')).toBe(true);
 	});
 });

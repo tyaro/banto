@@ -1,7 +1,8 @@
 // #782 PR6: `DockState` makes its steps on the shadow tree S and assigns what S shows. The cases
 // here are the ones the review of PR #864 found, where that differs from making the step on the
-// docked tree: shares of 0, a cancelled divider drag, an id S keeps out of sight, and a `collapsed`
-// flag S cannot hold.
+// docked tree: shares of 0, a cancelled divider drag, an id S keeps out of sight, and the
+// `collapsed` flag of a region that is the only child of its split of S that shows (S holds it
+// since #782 PR8d; before, `DockState` carried it on the docked tree).
 import { describe, expect, it } from 'vitest';
 import { validateDockLayout } from '../src/core/validate';
 import { shadowPanelIds } from '../src/core/shadow';
@@ -233,7 +234,7 @@ describe('a new pane with the id of a group S keeps out of sight (Codex P2 on #8
 	});
 });
 
-describe('a `collapsed` flag S cannot hold stays (review of PR #864, 4)', () => {
+describe('the `collapsed` flag of an only shown child stays (review of PR #864, 4; in S since #782 PR8d)', () => {
 	// row[column[a, b], c, d], `b` floated: `a` shows as a child of the row and can be collapsed
 	// there, but in S it is the only child of its column that shows.
 	const nested = (): DockNode =>
@@ -326,7 +327,7 @@ describe('a `collapsed` flag S cannot hold stays (review of PR #864, 4)', () => 
 		expect(atEdge.isDockedCollapsed('a')).toBe(false);
 	});
 
-	it('another pane moved while a tab group that is the only shown child is collapsed: the group stays, its own tab moved out expands it', () => {
+	it('another pane moved while a tab group that is the only shown child is collapsed: the group stays; its own tab moved out leaves the band to the tab left', () => {
 		const tree = split(
 			's',
 			'row',
@@ -347,10 +348,16 @@ describe('a `collapsed` flag S cannot hold stays (review of PR #864, 4)', () => 
 		const other = make();
 		other.dockExistingAtEdge('d', 'bottom');
 		expect(other.isDockedCollapsed('g')).toBe(true);
+		// #782 PR8d: as for a collapsed group with a sibling showing (`tree.ts#removePanel`: the
+		// band of a group left with one tab is that tab's). Before, this one case expanded.
 		const own = make();
 		own.dockExistingAtEdge('e', 'bottom');
-		expect(own.isDockedCollapsed('a')).toBe(false);
+		expect(own.isDockedCollapsed('a')).toBe(true);
 		expect(own.isDockedCollapsed('e')).toBe(false);
+		const beside = dockOf(tree);
+		beside.setDockedCollapsed('g', true);
+		beside.dockExistingAtEdge('e', 'bottom');
+		expect(beside.isDockedCollapsed('a')).toBe(true);
 	});
 
 	it('a pane joining a as a tab expands the region (the step touched it)', () => {

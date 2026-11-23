@@ -211,7 +211,9 @@ function projectNode(node: ShadowNode): DockNode | null {
 		sizes.push(node.sizes[i] ?? 0);
 	});
 	if (kept.length === 0) return null;
-	if (kept.length === 1) return kept[0].type === 'split' ? kept[0] : withoutCollapsed(kept[0]);
+	// The one child that shows, as it is - its `collapsed` flag too: the flag was set after the
+	// split came to show one child (the step that left it alone dropped the flag it had, `alone`).
+	if (kept.length === 1) return kept[0];
 	if (kept.length === node.children.length) {
 		return kept.every((k, i) => k === node.children[i]) ? node : { ...node, children: kept };
 	}
@@ -224,15 +226,17 @@ function projectNode(node: ShadowNode): DockNode | null {
  * layout may hold one), a split with one shown child as that child (not flattened into a split around it,
  * exactly like `tree.ts#collapse`), and a split's `sizes` are the shares of its shown children,
  * scaled to add up to 1. A split / tab group that shows keeps its id of S. `collapsed` flags follow
- * `tree.ts#normalizeCollapsed`. An S without tombstones projects to itself (the same object).
+ * `tree.ts#normalizeCollapsed`: S holds every flag the docked tree has (#782 PR8d) - the one of a
+ * region that is the only child of its split of S that shows too, collapsed beside the siblings
+ * the projection gives it. An S without tombstones projects to itself (the same object).
  */
 export function projectShadow(s: ShadowNode | null): DockNode | null {
 	return s === null ? null : normalizeCollapsed(projectNode(s));
 }
 
 /**
- * Drop the `collapsed` flags of S that its projection does not show (a region that became the
- * only shown child, a tombstone, a tab inside a group): `DockState` clears those for good, so
+ * Drop the `collapsed` flags of S that its projection does not show (the root, every child of a
+ * split collapsed, a tombstone, a tab inside a group): `DockState` clears those for good, so
  * they must not come back when a sibling does. Called at the end of every change.
  */
 function settleCollapsed(s: ShadowNode | null): ShadowNode | null {
@@ -264,6 +268,52 @@ function settleCollapsed(s: ShadowNode | null): ShadowNode | null {
 	return settle(s, false);
 }
 
+/**
+ * `node` - the one child of a split of S that shows - without the `collapsed` flag of the region
+ * it shows: the leaf's or the tab group's, through the splits that show one child themselves.
+ */
+function expanded(node: ShadowNode): ShadowNode {
+	if (node.type !== 'split') return withoutCollapsed(node);
+	const shown = node.children.filter(isShown);
+	if (shown.length !== 1) return node;
+	const child = expanded(shown[0]);
+	if (child === shown[0]) return node;
+	return { ...node, children: node.children.map((c) => (c === shown[0] ? child : c)) };
+}
+
+/**
+ * The children of a split of S that showed `was` children, once a pane has left: a region left
+ * as the only one showing is no longer collapsed (`tree.ts#collapse` drops the flag when the
+ * split folds; in S the split may stay, around its tombstones). The rule is applied here, when
+ * the pane leaves - not by the projection (#782 PR8d): a flag S holds on such a region was set
+ * afterwards, beside the siblings the projection gives it, and stays when a tombstone comes back.
+ */
+function alone(children: ShadowNode[], was: number): ShadowNode[] {
+	if (was < 2) return children;
+	const shown = children.filter(isShown);
+	if (shown.length !== 1) return children;
+	const only = expanded(shown[0]);
+	return only === shown[0] ? children : children.map((c) => (c === shown[0] ? only : c));
+}
+
+/** `after` - S once a pane of `before` became a tombstone - with `alone` applied to every split (ids as in `before`). */
+function settleAlone(before: ShadowNode, after: ShadowNode): ShadowNode {
+	const counts = new Map<string, number>();
+	const count = (node: ShadowNode): void => {
+		if (node.type !== 'split') return;
+		counts.set(node.id, node.children.filter(isShown).length);
+		node.children.forEach(count);
+	};
+	count(before);
+	const visit = (node: ShadowNode): ShadowNode => {
+		if (node.type !== 'split') return node;
+		const inner = node.children.map(visit);
+		const children = alone(inner, counts.get(node.id) ?? 0);
+		return children.some((c, i) => c !== node.children[i]) ? { ...node, children } : node;
+	};
+	return visit(after);
+}
+
 // ----- the mark ------------------------------------------------------------------------------
 
 /**
@@ -293,10 +343,17 @@ function marked(s: ShadowNode | null, panelId: string, band: boolean): ShadowNod
 	const gone: ShadowPanelNode = { ...withoutCollapsed(leaf), away: true };
 	if (band) gone.band = true;
 	const group = path.at(-2);
-	if (group?.type !== 'tabs') return settleCollapsed(replaceNode(s, panelId, () => gone));
+	if (group?.type !== 'tabs')
+		return settleCollapsed(
+			settleAlone(
+				s,
+				replaceNode(s, panelId, () => gone)
+			)
+		);
 	const children = group.children.map((c) => (c.id === panelId ? gone : c));
 	const activeIndex = shownActive(children, group.activeIndex);
-	return settleCollapsed(replaceNode(s, group.id, () => ({ ...group, children, activeIndex })));
+	const next = replaceNode(s, group.id, () => ({ ...group, children, activeIndex }));
+	return settleCollapsed(settleAlone(s, next));
 }
 
 /**
@@ -346,14 +403,14 @@ export function activateInShadow(s: ShadowNode | null, panelId: string): ShadowN
 
 // ----- taking out ----------------------------------------------------------------------------
 
-/** A split / tab group of S with no child is gone, with one child it is that child (`tree.ts#collapse`, over S). */
+/**
+ * A split / tab group of S with no child is gone, with one child it is that child
+ * (`tree.ts#collapse`, over S). The `collapsed` flag of a split's last child is `alone`'s to drop.
+ */
 function fold(node: ShadowSplitNode | ShadowTabGroupNode): ShadowNode | null {
 	if (node.children.length === 0) return null;
 	if (node.children.length > 1) return node;
-	if (node.type === 'split') {
-		const only = node.children[0];
-		return only.type === 'split' ? only : withoutCollapsed(only);
-	}
+	if (node.type === 'split') return node.children[0];
 	return node.collapsed === true ? { ...node.children[0], collapsed: true } : node.children[0];
 }
 
@@ -371,13 +428,14 @@ function removeNode(node: ShadowNode, panelId: string): ShadowNode | null {
 	}
 	const results = node.children.map((c) => removeNode(c, panelId));
 	if (results.every((r, i) => r === node.children[i])) return node;
-	const kept: ShadowNode[] = [];
+	const left: ShadowNode[] = [];
 	const sizes: number[] = [];
 	results.forEach((r, i) => {
 		if (r === null) return;
-		kept.push(r);
+		left.push(r);
 		sizes.push(node.sizes[i] ?? 0);
 	});
+	const kept = alone(left, node.children.filter(isShown).length);
 	return fold({
 		...node,
 		children: kept,
@@ -806,34 +864,6 @@ export function withFreeShadowIds(
 	return free(s);
 }
 
-/**
- * `docked` without the `collapsed` flags S cannot hold (`writeShadowView`): the flag of a region
- * that is the only child of a split of `s` that shows. `docked` itself when it has none. What
- * `DockState` compares the projection of S with: such a flag lives on the docked tree alone, and
- * is no reason to make S again (#782 PR6).
- */
-export function withoutLoneFlags(docked: DockNode | null, s: ShadowNode | null): DockNode | null {
-	if (docked === null || s === null) return docked;
-	const lone = new Set<string>();
-	const visit = (node: ShadowNode): void => {
-		if (node.type !== 'split') return;
-		const shown = node.children.filter(isShown);
-		const only = shown.length === 1 ? projectNode(shown[0]) : null;
-		if (only && only.type !== 'split') lone.add(only.id);
-		node.children.forEach(visit);
-	};
-	visit(s);
-	if (lone.size === 0) return docked;
-	const strip = (node: DockNode): DockNode => {
-		if (node.type === 'split') {
-			const children = node.children.map(strip);
-			return children.some((c, i) => c !== node.children[i]) ? { ...node, children } : node;
-		}
-		return lone.has(node.id) ? withoutCollapsed(node) : node;
-	};
-	return strip(docked);
-}
-
 // ----- following the docked tree (#782 PR4) ----------------------------------------------------
 
 /** Two shares that are the same but for the last digits (a projection scales `sizes` to add up to 1). */
@@ -986,12 +1016,9 @@ function viewOnto(node: ShadowNode, seen: DockNode): ShadowNode | undefined {
  * "Shares of 0" exception included) and their index in a tab group - the tabs that show are put,
  * in the order seen, in the places of the tabs that show. The same S when nothing differs.
  *
- * One thing S cannot hold: the `collapsed` flag of a region that is the only shown child of a
- * split of S (the others are tombstones). `projectShadow` shows that child without its flag, as
- * `tree.ts#collapse` drops it when the split folds - but in the docked tree the region may be
- * collapsed AFTER the fold, beside its new siblings. `undefined` then. Such a flag lives on the
- * docked tree alone (#782 PR6): `DockState` writes the tree without it (`withoutLoneFlags`), so S
- * stays as it is, and carries the flag over the steps it makes on S.
+ * Every `collapsed` flag of `docked` is written (#782 PR8d): the one of a region that is the only
+ * shown child of a split of S (the others are tombstones) too - S holds it on that region, and
+ * `projectShadow` shows it. `undefined` for a flag no docked tree keeps (`normalizeCollapsed`).
  */
 export function writeShadowView(
 	s: ShadowNode | null,
@@ -1092,8 +1119,7 @@ export function regraftShadow(
 			// A tab of a group cannot hold a container: the group would not be one any more.
 			if (now && (parent.type === 'split' || now.type === 'panel') && !tabOf(s, now.id)) {
 				// A tab group shows as its one tab: the band flag of that tab is the group's then. A
-				// split has no flag (`settleCollapsed` drops the one of its only child showing: S cannot
-				// hold it, and `DockState` keeps it on the docked tree).
+				// split has no flag: the child keeps its own (S shows it on the only child showing).
 				const bare = { ...parent };
 				delete (bare as { collapsed?: boolean }).collapsed;
 				const around: ShadowNode =
