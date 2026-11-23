@@ -53,7 +53,8 @@ Banto（番頭）は **PC1台から始めて、必要に応じて LAN 内へ共�
   リネーム → プリセット選択 → 実装 → 配信）、手順の全量は `docs/recipes/` の各レシピ
   （rename / add-resource / remove-optional-assets / consume-as-git-dependency /
   lan-access / database-backup / windows-setup / no-login-app / scan-wedge /
-  notifications / tree-svelte / three-pane-screen / image-assets / add-role）。
+  notifications / tree-svelte / three-pane-screen / image-assets / add-role /
+  dashboard-widgets）。
 
 ## タスク別の入り口
 

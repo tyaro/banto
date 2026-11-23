@@ -3924,6 +3924,70 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// #716 W3 (downstream-requests-2026-11-plan §4.13.3): the page holds ONE period. The KPI strip
+	// and the widgets registered with `usesPeriod` draw the rows it leaves - narrowed in the page,
+	// from the one read. The period is the page's state only: nothing is written, a reload starts
+	// at 全期間. Runs in every preset that keeps the dashboard: without the charts the period still
+	// works, on the KPI strip (and the list) alone.
+	test('13k6. dashboard: the period narrows the KPI strip and the charts, reads nothing again and is not saved', async () => {
+		await page.goto('/dashboard');
+		const count = page.locator('.stat-value').first();
+		await expect(count).not.toHaveText('0');
+		const number = async () => Number(((await count.textContent()) ?? '').replace(/[^\d]/g, ''));
+		const allCount = await number();
+		// A segment is chosen by its label: the radio is invisible and takes no pointer events.
+		const period = page.getByRole('radiogroup', { name: '期間（更新日）' });
+		await expect(period.getByRole('radio')).toHaveCount(4);
+		await expect(period.getByRole('radio', { name: '全期間' })).toBeChecked();
+
+		const monthly = page.getByRole('img', { name: '月別更新件数の面グラフ' });
+		const chartBefore = HAS_CHARTS ? await monthly.innerHTML() : '';
+
+		const counter = countItemsReads();
+		const writes: string[] = [];
+		const onRequest = (request: Request) => {
+			if (
+				request.method() !== 'GET' &&
+				new URL(request.url()).pathname.startsWith('/api/ui-settings/')
+			)
+				writes.push(request.url());
+		};
+		page.on('request', onRequest);
+		try {
+			// The sample data covers about 2.5 years, so the last 12 months leave a part of it.
+			await period.getByText('直近12か月', { exact: true }).click();
+			await expect.poll(number).toBeLessThan(allCount);
+			expect(await number()).toBeGreaterThan(0);
+			if (HAS_CHARTS) {
+				// The chart is drawn again from the same narrowed rows (fewer months).
+				await expect.poll(() => monthly.innerHTML()).not.toBe(chartBefore);
+			}
+			const twelveMonths = await number();
+			// A shorter period leaves no more rows than a longer one.
+			await period.getByText('直近30日', { exact: true }).click();
+			await expect.poll(number).toBeLessThanOrEqual(twelveMonths);
+			// Back to everything: the same numbers and the same chart as before.
+			await period.getByText('全期間', { exact: true }).click();
+			await expect.poll(number).toBe(allCount);
+			if (HAS_CHARTS) await expect.poll(() => monthly.innerHTML()).toBe(chartBefore);
+
+			await period.getByText('直近12か月', { exact: true }).click();
+			await expect.poll(number).toBe(twelveMonths);
+			// Narrowed in the page: no second read. Not saved: no setting written (the arrangement's
+			// autosave would come 500ms after a change, so this also shows the period is not part of it).
+			await page.waitForTimeout(800);
+			expect(counter.reads).toHaveLength(0);
+			expect(writes).toEqual([]);
+		} finally {
+			counter.stop();
+			page.off('request', onRequest);
+		}
+		// A reload starts at 全期間 again.
+		await page.reload();
+		await expect(period.getByRole('radio', { name: '全期間' })).toBeChecked();
+		await expect.poll(number).toBe(allCount);
+	});
+
 	// Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the dashboard
 	// メモ pane keeps unapplied input across the dock's structure changes (the
 	// draft is owned by the page, the pane is re-created), a close settles it
