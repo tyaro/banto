@@ -1,9 +1,8 @@
-// A split / tab group made again by `core/slot.ts` takes the id its slot names when that id is
-// free. Free of the whole layout - the regions in the edge bands and the floating windows too -,
+// A split / tab group made again when a floated pane goes back (`dockBack`) takes the id of its
+// place when that id is free. Free of the whole layout - the regions in the edge bands and the floating windows too -,
 // not only of the docked tree (#782 PR6; the same rule as `DockState.shownTree`'s `taken`): a
 // layout that holds an id twice is refused by `validateDockLayout`, so it could not be loaded again.
 import { describe, expect, it } from 'vitest';
-import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
 import { validateDockLayout } from '../src/core/validate';
 import { createDockState } from '../src/state.svelte';
 import type { DockLayout, DockNode, DockPanelNode } from '../src/types';
@@ -39,23 +38,8 @@ const tree = (): DockNode => ({
 	]
 });
 
-describe('an id made again by a slot is free of the whole layout (#782 PR6)', () => {
-	it('a tab group in an edge band keeps its id: the group made again around an anchor takes another', () => {
-		const dock = createDockState({ version: 4, floating: [], docked: tree() }, counterMakeId());
-		// A slot of `b` in the group t1 taken by the caller (`dockAtSlot` with a slot of one's own).
-		const slot = captureDockSlot(dock.layout.docked, 'b')!;
-		dock.undockPanel('b');
-		// `c` leaves the group and stays docked; what is left of the group goes to a band as `t1`.
-		dock.dockExistingAtEdge('c', 'left');
-		expect(dock.autoHideRegion('d')).toBe(true);
-		expect(dock.layout.autoHidden?.[0].node.id).toBe('t1');
-		// `b` goes back beside its anchor `c`: the group is made again - not as `t1`.
-		expect(dock.dockAtSlot('b', slot)).toBe(true);
-		expect(twice(allIds(dock.layout))).toEqual([]);
-		expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
-	});
-
-	it('the same by "back" (the pane`s `homeSlot`): its place in the shadow tree is made again around the band', () => {
+describe('an id made again by "back" is free of the whole layout (#782 PR6)', () => {
+	it('a tab group in an edge band keeps its id: the place of the pane in the shadow tree is made again around the band', () => {
 		const dock = createDockState({ version: 4, floating: [], docked: tree() }, counterMakeId());
 		dock.undockPanel('b');
 		dock.dockExistingAtEdge('c', 'left');
@@ -67,21 +51,5 @@ describe('an id made again by a slot is free of the whole layout (#782 PR6)', ()
 		expect(dock.restoreAutoHidden('d')).toBe(true);
 		expect(twice(allIds(dock.layout))).toEqual([]);
 		expect(validateDockLayout(JSON.parse(dock.serialize())).ok).toBe(true);
-	});
-
-	it('restoreDockSlot: an id in `taken` is not used again', () => {
-		const root: DockNode = {
-			type: 'split',
-			id: 's1',
-			direction: 'row',
-			sizes: [0.5, 0.5],
-			children: [panel('x'), panel('c')]
-		};
-		const slot = captureDockSlot(tree(), 'b')!;
-		const made = restoreDockSlot(root, panel('b'), slot, () => 'new', [], new Set(['t1']));
-		expect(JSON.stringify(made)).not.toContain('"t1"');
-		expect(JSON.stringify(made)).toContain('"new"');
-		// Without it the slot's own id is taken, as before.
-		expect(JSON.stringify(restoreDockSlot(root, panel('b'), slot, () => 'new'))).toContain('"t1"');
 	});
 });

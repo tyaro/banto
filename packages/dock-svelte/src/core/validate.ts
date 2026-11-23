@@ -21,9 +21,18 @@
  */
 import { regionPanelIds } from './autohide';
 import { readBandTree } from './bandTree';
-import { DOCK_LAYOUT_VERSION } from './layoutVersion';
 import { normalizeCollapsed, normalizeSizes } from './tree';
 import type { DockAutoHidden, DockLayout, DockNode, FloatingWindow } from '../types';
+
+/** The one `DockLayout.version` read and written (#782 PR8b: the layout holds no slot any more). */
+export const DOCK_LAYOUT_VERSION = 4;
+
+/** `layout` with the version written today (the same object when it already has it). */
+export function withLayoutVersion(layout: DockLayout): DockLayout {
+	return layout.version === DOCK_LAYOUT_VERSION
+		? layout
+		: { ...layout, version: DOCK_LAYOUT_VERSION };
+}
 
 export type DockLayoutIssueCode =
 	| 'version'

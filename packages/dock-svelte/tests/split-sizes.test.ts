@@ -1,27 +1,23 @@
-// #733: a split's sizes come back whatever order its panes are taken out and put back in. A split
-// slot's `size` is the pane's share of the whole split (the panes out of it counted), and
-// `restoreDockSlot` scales it up by the share of the ones still out. The walks below run the slot
-// functions through the model of `fixtures/visibility-sim.ts`.
+// #733: a split's sizes come back whatever order its panes are taken out and put back in. The
+// share a pane holds is of the whole split (the panes out of it counted); put back while others
+// are still out, it leaves their shares for them.
 //
 // #782 PR5: a pane HIDDEN from the dock (`dismiss`) no longer remembers a place - `show` docks it
-// at its default place (`default-place.test.ts`, `slot-properties.test.ts`). The slots, and
-// every rule here about their shares, now live on only for a pane FLOATED out of the tree
-// (`undockPanel` / `dockAtSlot`, its `homeSlot`) and for the edge bands, until #782 PR6 - PR8
-// replace them. The rules were the same for hidden and floated panes (#734), so the cases below
-// are kept and run through floats: with `createDockState`, "hide" / `-x` / `dismiss` of a docked
-// pane is `undockPanel`, and "show" / `+x` / `show` of it is `dockAtSlot` with its `homeSlot`
-// (`outByFloat`). What a closed window's saved `dockSlot` did (a reload between the steps, an
-// assignment that drops it, old JSON without `share`) has no counterpart - a `homeSlot` is not
-// saved - and those cases are gone.
+// at its default place (`default-place.test.ts`, `slot-properties.test.ts`). The rules here about
+// shares were the same for hidden and floated panes (#734), so the cases below are kept and run
+// through floats: with `createDockState`, "hide" / `-x` / `dismiss` of a docked pane is
+// `undockPanel`, and "show" / `+x` / `show` of it is `dockBack` (`outByFloat`). What a closed
+// window's saved `dockSlot` did (a reload between the steps, an assignment that drops it, old JSON
+// without `share`) has no counterpart - the place of a floated pane is not saved - and those cases
+// are gone. The model of the slots (`core/slot.ts`) that walked every sequence went with #782 PR8c:
+// the walks run `createDockState` itself.
 import { describe, expect, it } from 'vitest';
-import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
 import { collectPanelIds, findNode, removePanel } from '../src/core/tree';
-import { deflateShadow } from '../src/core/shadow';
+import type { ShadowNode } from '../src/core/shadow';
 import { createDockState, shadowStateOf, type DockState } from '../src/state.svelte';
-import type { DockNode, DockSlot, DropRegion } from '../src/types';
-import { keyOf, shapeOf, simStep, type Sim, type SlotImpl } from './fixtures/visibility-sim';
+import type { DockNode, DropRegion } from '../src/types';
+import { shapeOf } from './fixtures/visibility-sim';
 
-const nowSlot: SlotImpl = { capture: captureDockSlot, restore: restoreDockSlot };
 const EPS = 1e-9;
 
 /** A place in the shadow tree: the containers around it, nearest first, and the share held in each split. */
@@ -30,25 +26,39 @@ type Place =
 	| { kind: 'tab'; groupId: string; outer?: Place }
 	| { kind: 'split'; splitId: string; share?: number; outer?: Place };
 
-const placeFrom = (slot: DockSlot): Place => {
-	if (slot.kind === 'root') return { kind: 'root' };
-	const outer = slot.outer ? { outer: placeFrom(slot.outer) } : {};
-	if (slot.kind === 'tab') return { kind: 'tab', groupId: slot.groupId, ...outer };
-	const share = slot.share === undefined ? {} : { share: slot.share };
-	return { kind: 'split', splitId: slot.splitId, ...share, ...outer };
-};
-
 /**
  * The place the pane `id`, floated out of the tree, goes back to (#782 PR7): read off the shadow
- * tree, which holds it - `homeSlot(id)` names that place and is not rewritten when the shares
- * around it change. What the rules of #733 - #743 are about: the split / tab group it is in, and
- * the share of the whole split it holds (the panes out of it counted). `undefined`: the pane
- * remembers no place.
+ * tree, which holds it as a tombstone. What the rules of #733 - #743 are about: the split / tab
+ * group it is in, and the share of the whole split it holds (the panes out of it counted).
+ * `undefined`: the pane remembers no place.
  */
 const placeOf = (dock: DockState, id: string): Place | undefined => {
 	if (!dock.hasHome(id)) return undefined;
-	const slot = deflateShadow(shadowStateOf(dock).shadow).away.find((a) => a.panel.id === id)?.slot;
-	return slot && placeFrom(slot);
+	const find = (node: ShadowNode, path: ShadowNode[]): ShadowNode[] | null => {
+		if (node.type === 'panel') return node.id === id && node.away === true ? [...path, node] : null;
+		for (const child of node.children) {
+			const found = find(child, [...path, node]);
+			if (found) return found;
+		}
+		return null;
+	};
+	const s = shadowStateOf(dock).shadow;
+	const path = s === null ? null : find(s, []);
+	if (path === null) return undefined;
+	// From the outermost container down, so that the nearest one comes out as the place itself.
+	let place: Place = { kind: 'root' };
+	for (let k = 1; k < path.length; k++) {
+		const parent = path[k - 1];
+		if (parent.type === 'panel') continue;
+		const outer: { outer?: Place } = k > 1 ? { outer: place } : {};
+		if (parent.type === 'tabs') place = { kind: 'tab', groupId: parent.id, ...outer };
+		else {
+			const own = parent.sizes[(parent.children as ShadowNode[]).indexOf(path[k])] ?? 0;
+			const share = own > 0 ? { share: Math.min(own, 1) } : {};
+			place = { kind: 'split', splitId: parent.id, ...share, ...outer };
+		}
+	}
+	return place;
 };
 
 const panel = (id: string): DockNode => ({ type: 'panel', id, title: id.toUpperCase() });
@@ -150,72 +160,9 @@ const L5: Record<string, () => DockNode> = {
 		split('s', 'row', [0.05, 0.15, 0.2, 0.25, 0.35], ['a', 'b', 'c', 'd', 'e'].map(panel))
 };
 
-interface WalkResult {
-	/** Sequences that put every pane back. */
-	back: number;
-	/** ... in the old shape (their sizes are compared). */
-	sameShape: number;
-	/** Back in the old shape with other sizes (the first few). */
-	wrong: string[];
-	/** A step that left a split's sizes broken (the first few). */
-	broken: string[];
-}
-
 /**
- * Every sequence of hide / show steps (with `mixed`, float / back too) up to `maxSteps` steps on
- * `make()`, equal states at the same depth walked once (sizes count in the state here).
- */
-function walk(make: () => DockNode, maxSteps: number, mixed = false): WalkResult {
-	const ids = collectPanelIds(make());
-	const shape = JSON.stringify(shapeOf(make()));
-	const sizes = sizesOf(make());
-	const key = (sim: Sim) =>
-		keyOf(sim) + JSON.stringify(sizesOf(sim.docked).map((s) => s.map((x) => x.toFixed(9))));
-	const result: WalkResult = { back: 0, sameShape: 0, wrong: [], broken: [] };
-	let level = new Map<string, { sim: Sim; steps: string[] }>([
-		['', { sim: { docked: make(), hidden: [], floating: [] }, steps: [] }]
-	]);
-	for (let depth = 1; depth <= maxSteps; depth++) {
-		const next = new Map<string, { sim: Sim; steps: string[] }>();
-		for (const { sim, steps } of level.values()) {
-			for (const id of ids) {
-				const kinds =
-					findNode(sim.docked, id)?.type === 'panel'
-						? mixed
-							? ['-', '~']
-							: ['-']
-						: sim.hidden.some((h) => h.id === id)
-							? ['+']
-							: sim.floated?.some((h) => h.id === id)
-								? ['^']
-								: [];
-				for (const kind of kinds) {
-					const s = simStep(nowSlot, sim, `${kind}${id}`);
-					if (s.floating.length > 0) continue;
-					const k = key(s);
-					if (next.has(k)) continue;
-					const e = { sim: s, steps: [...steps, `${kind}${id}`] };
-					next.set(k, e);
-					const bad = badSizes(s.docked);
-					if (bad.length > 0 && result.broken.length < 5)
-						result.broken.push(`${e.steps.join(' ')}: ${bad.join(', ')}`);
-					if (s.hidden.length > 0 || (s.floated?.length ?? 0) > 0) continue;
-					result.back++;
-					if (JSON.stringify(shapeOf(s.docked)) !== shape) continue;
-					result.sameShape++;
-					if (!sameSizes(sizesOf(s.docked), sizes) && result.wrong.length < 5)
-						result.wrong.push(`${e.steps.join(' ')} -> ${JSON.stringify(sizesOf(s.docked))}`);
-				}
-			}
-		}
-		level = next;
-	}
-	return result;
-}
-
-/**
- * `dock` with `dismiss` / `show` of a docked pane done as float / back (`undockPanel`, `dockAtSlot`
- * with its `homeSlot`): see the top of this file.
+ * `dock` with `dismiss` / `show` of a docked pane done as float / back (`undockPanel`, `dockBack`):
+ * see the top of this file.
  */
 const outByFloat = (dock: DockState): DockState => {
 	const dismiss = dock.dismiss.bind(dock);
@@ -240,7 +187,7 @@ const counterMakeId = (): (() => string) => {
  * `-x` hide, `+x` show, `~x` float, `^x` back, `>x:y` dock the floating `x` into `y`'s tabs
  * (`dockPanel`, not back to its place), `*x` open the closed `x` floating (`open`: it forgets its
  * docked place), `@` save and load (`serialize` / `hydrate`: the floated
- * panes' `homeSlot`s are not saved, so they stay floating), with `createDockState`.
+ * panes' remembered places are not saved, so they stay floating), with `createDockState`.
  * #741: `>x:y:region` docks the floating `x` at that side of `y` (`left` / `right` / `top` /
  * `bottom`: into `y`'s split when it runs that way), and `!x` takes the floating or hidden `x`
  * out of the layout with an assignment made from today's layout (what `ThreePaneDock`'s
@@ -295,7 +242,7 @@ describe('split sizes come back in any show order (#733)', () => {
 		expect(root?.type === 'split' && root.sizes[0] / root.sizes[1]).toBeCloseTo(0.2 / 0.5, 9);
 	});
 
-	it('the same through float and back (`undockPanel` / `dockAtSlot`), and float and hide mixed', () => {
+	it('the same through float and back (`undockPanel` / `dockBack`), and float and hide mixed', () => {
 		const make = L['row[a,b,c] uneven'];
 		for (const steps of ['~a ~b ^a ^b', '~a -b ^a +b', '-a ~b +a ^b', '-b ~a ^a +b']) {
 			const dock = runSteps(make, steps.split(' '));
@@ -313,21 +260,19 @@ describe('split sizes come back in any show order (#733)', () => {
 		}
 	});
 
-	it('a slot taken alone (no other pane out) keeps the size it had: the share of the split', () => {
+	it('a place taken alone (no other pane out) keeps the share it had: the share of the split', () => {
 		const dock = runSteps(L['row[a,b,c] uneven'], ['-b']);
-		const slot = dock.homeSlot('b');
-		expect(slot?.kind === 'split' && slot.size).toBeCloseTo(0.3, 9);
-		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.3, 9);
+		const place = placeOf(dock, 'b');
+		expect(place?.kind === 'split' && place.share).toBeCloseTo(0.3, 9);
 	});
 
-	it('`size` keeps its old meaning (the share of the split then), `share` is of the whole split', () => {
+	it('the share is of the whole split, the panes out of it counted', () => {
 		const dock = runSteps(L['row[a,b,c] uneven'], ['-a', '-b']);
-		const slot = dock.homeSlot('b');
-		expect(slot?.kind === 'split' && slot.size).toBeCloseTo(0.375, 9);
-		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.3, 9);
+		const place = placeOf(dock, 'b');
+		expect(place?.kind === 'split' && place.share).toBeCloseTo(0.3, 9);
 	});
 
-	// Codex P2 on #739: the floated pane's `homeSlot` is not saved, so the hidden pane's `share` is
+	// Codex P2 on #739: the floated pane's place is not saved, so the hidden pane's `share` is
 	// saved without it - shown after a reload it comes back as it would have before #733.
 	it('row[a .2, b .3, c .5]: float a, hide b, show b -> b : c = 3 : 5', () => {
 		for (const steps of ['~a -b +b']) {
@@ -335,10 +280,10 @@ describe('split sizes come back in any show order (#733)', () => {
 			expect(shapeOf(dock.layout.docked), steps).toEqual({ row: ['b', 'c'] });
 			expect(sameSizes(sizesOf(dock.layout.docked), [[0.375, 0.625]]), steps).toBe(true);
 		}
-		// The slot keeps the share of the whole row, `a` still counted.
+		// The place keeps the share of the whole row, `a` still counted.
 		const dock = runSteps(L['row[a,b,c] uneven'], ['~a', '-b']);
-		const slot = dock.homeSlot('b');
-		expect(slot?.kind === 'split' && slot.share).toBeCloseTo(0.3, 9);
+		const place = placeOf(dock, 'b');
+		expect(place?.kind === 'split' && place.share).toBeCloseTo(0.3, 9);
 		// Nothing of it is saved (#782 PR5): what is saved is the layout itself.
 		expect(dock.savedLayout()).toEqual(JSON.parse(dock.serialize()));
 		expect(dock.savedLayout()).toBe(dock.layout);
@@ -353,7 +298,7 @@ describe('split sizes come back in any show order (#733)', () => {
 			expect(root?.type === 'split' && root.children.map((c) => c.id)[0], steps).toBe('b');
 			expect(sameSizes(sizesOf(root), [[0.375, 0.625]]), steps).toBe(true);
 		}
-		// The hidden pane's slot itself: the share of `row[b,c]` now, the rest of it as it was.
+		// The hidden pane's place itself: the share of `row[b,c]` now, the rest of it as it was.
 		const before = runSteps(L['row[a,b,c] uneven'], ['~a', '-b']);
 		const after = runSteps(L['row[a,b,c] uneven'], ['~a', '-b', '>a:c']);
 		const slotOf = (d: DockState) => placeOf(d, 'b');
@@ -361,14 +306,14 @@ describe('split sizes come back in any show order (#733)', () => {
 		expect(after.hasHome('a')).toBe(false);
 	});
 
-	it('a floated pane put back in its place (`dockAtSlot`) keeps its share counted: the old sizes', () => {
+	it('a floated pane put back in its place (`dockBack`) keeps its share counted: the old sizes', () => {
 		const make = L['row[a,b,c] uneven'];
 		for (const steps of ['~a -b ^a +b', '~b -a ^b +a', '-c ~a ^a +c']) {
 			const dock = runSteps(make, steps.split(' '));
 			expect(shapeOf(dock.layout.docked), steps).toEqual(shapeOf(make()));
 			expect(sameSizes(sizesOf(dock.layout.docked), sizesOf(make())), steps).toBe(true);
 		}
-		// The slot is not touched.
+		// The place is not touched.
 		const before = runSteps(make, ['~a', '-b']);
 		const after = runSteps(make, ['~a', '-b', '^a']);
 		const slotOf = (d: DockState) => placeOf(d, 'b');
@@ -408,7 +353,7 @@ describe('a pane out of the tree that leaves the layout, or goes back into its s
 	});
 
 	// The second item: a floated pane docked again into the split it left, at another place
-	// (`dockPanel`, a drop on a side of a pane of that split - not `dockAtSlot`). A `share` is of the
+	// (`dockPanel`, a drop on a side of a pane of that split - not `dockBack`). A `share` is of the
 	// whole split, the panes out of it counted. The split has the pane again - at the size
 	// `dockPanel` gives it (it evens the split), not the share it left with - so the shares of the
 	// panes still out are still of the whole split: each comes back at its own share, the panes in
@@ -463,7 +408,7 @@ describe('a pane out of the tree that leaves the layout, or goes back into its s
 // (the container that is still there, at the index it had; else the default place). The cases
 // below are the moves made on the shadow tree (`dockExisting*`).
 // #743: a DOCKED pane that leaves a split panes are out of (hidden: a closed window's `dockSlot`;
-// floated: a `homeSlot`). A `share` is of the whole split, the panes out of it counted (#733): the
+// floated: a place). A `share` is of the whole split, the panes out of it counted (#733): the
 // one that left is no longer counted, so the panes still out come back at their share of what is
 // left - its part goes to all the others (docked and out) in proportion.
 describe('a docked pane that leaves a split panes are out of (#743)', () => {
@@ -875,29 +820,6 @@ describe('a docked pane that leaves a split panes are out of (#743)', () => {
 	});
 });
 
-// Every sequence: once every pane is back in the old shape, the sizes are the old ones too; on the
-// way, every split's sizes stay above 0 and add up to 1. As many steps as fit in about a second
-// per layout.
-describe('split sizes: every sequence (#733)', () => {
-	for (const [name, make] of Object.entries(L)) {
-		const n = collectPanelIds(make()).length;
-		const steps = n <= 3 ? 10 : 8;
-		it(`${name}: every hide / show sequence up to ${steps} steps`, { timeout: 60_000 }, () => {
-			const result = walk(make, steps);
-			expect(result.sameShape).toBeGreaterThan(0);
-			expect(result.broken).toEqual([]);
-			expect(result.wrong).toEqual([]);
-		});
-		const mixedSteps = n <= 3 ? 8 : 6;
-		it(`${name}: every mixed sequence up to ${mixedSteps} steps`, { timeout: 60_000 }, () => {
-			const result = walk(make, mixedSteps, true);
-			expect(result.sameShape).toBeGreaterThan(0);
-			expect(result.broken).toEqual([]);
-			expect(result.wrong).toEqual([]);
-		});
-	}
-});
-
 // Longer sequences at random (fixed seed) on five panes, with `createDockState`.
 describe('split sizes: random sequences with createDockState (#733)', () => {
 	const rng = (seed: number) => () => {
@@ -1008,7 +930,7 @@ describe('split sizes: random sequences with createDockState (#733)', () => {
 		});
 	}
 	// With a save and load on the way (Codex P2 on #739): the panes floating then are not put back
-	// (their `homeSlot` is not saved), so what comes back is the old tree without them (as
+	// (their place is not saved), so what comes back is the old tree without them (as
 	// `removePanel` leaves it).
 	const RELOADS = 150;
 	for (const [name, make] of Object.entries(L5)) {

@@ -5,7 +5,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateDockLayout } from '../src/core/validate';
 import { shadowPanelIds } from '../src/core/shadow';
-import { captureDockSlot } from '../src/core/slot';
 import {
 	createDockState,
 	shadowStateOf,
@@ -151,18 +150,6 @@ describe('an id S keeps out of sight is not shown twice (review of PR #864, 3)',
 		expect(dock.layout.docked).toEqual(predicted);
 		const group = dock.layout.docked?.type === 'split' ? dock.layout.docked.children[1] : null;
 		expect(group?.id).toBe('b:restored-2');
-		expectLoads(dock);
-	});
-
-	it('a slot of one`s own (the slot path): the split made again takes an id nothing has', () => {
-		const dock = dockOf(split('s', 'row', [0.5, 0.5], [panel('x'), panel('y')]));
-		const slot = captureDockSlot(dock.layout.docked, 'y')!;
-		dock.undockPanel('y');
-		// The row folded into `x`; its id `s` and the fixed id are both a window's now.
-		dock.ensureWindow({ id: 's', title: 'S' }, 800, 600);
-		dock.ensureWindow({ id: 'y:restored', title: 'other' }, 800, 600);
-		expect(dock.dockAtSlot('y', slot, () => 'y:restored')).toBe(true);
-		expect(dock.layout.docked?.id).toBe('y:restored-2');
 		expectLoads(dock);
 	});
 

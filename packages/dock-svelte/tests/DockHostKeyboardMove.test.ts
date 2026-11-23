@@ -847,7 +847,7 @@ describe('"back" for every float order x every back order (up to every pane of t
 	}
 });
 
-// #734 made the place a floated pane remembers (`DockState.homeSlot`) and the place of a hidden
+// #734 made the place a floated pane remembers (`DockState.hasHome`) and the place of a hidden
 // pane count each other. Since #782 PR5 a hidden pane remembers none: it is shown at its default
 // place (the layout the state starts with, here), and "back" goes by the tree as it is then.
 describe('"back" and "show" for panes floated and hidden out of the same container (#734, #782 PR5)', () => {

@@ -7,11 +7,11 @@
 // those steps are `same` always (the cases pinned as "not yet" by PR4 / PR5 are now what S says).
 // A region to and from an edge band is a step on S too since #782 PR8b (its panes stay in S as
 // tombstones marked `band`). What still makes S again: a layout taken as a whole, an assignment
-// from outside, and `dockAtSlot` with a slot that is not the pane's `homeSlot` (`core/slot.ts`).
+// from outside.
 //
 // #782 PR5: a pane HIDDEN from the dock remembers no place, so it leaves S for good (no
 // tombstone) and is shown at its default place (`core/defaultPlace.ts`). The tombstones of S are
-// the panes FLOATED out of the tree (`undockPanel`, their `homeSlot`): the cases below that need
+// the panes FLOATED out of the tree (`undockPanel`, their remembered place): the cases below that need
 // one float a pane.
 //
 // `watchShadow` also tells HOW S followed each assignment (`ShadowFollow`): `same` - the step done
@@ -131,7 +131,7 @@ function withoutLoneFlags(docked: DockNode | null, s: ShadowNode | null): DockNo
 	return docked && lone.size > 0 ? strip(docked) : docked;
 }
 
-/** The panes out of the tree that remember a docked place: floated (`homeSlot`), open or closed since. */
+/** The panes out of the tree that remember a docked place: floated (`hasHome`), open or closed since. */
 const pendingIds = (dock: DockState): string[] =>
 	dock.layout.floating
 		.filter((w) => dock.hasHome(w.id))
@@ -335,7 +335,7 @@ describe('S follows the layout (#782 PR4)', () => {
 
 describe('every step is done on S (#782 PR6)', () => {
 	// Before PR6 the docked tree was made by `core/tree.ts` / `core/slot.ts` and S followed: with a
-	// pane floated out, about one `dockExisting` / `show` / `dockAtSlot` in ten made S again
+	// pane floated out, about one `dockExisting` / `show` / `dockBack` in ten made S again
 	// (`rebuilt`) or differed in sizes (`written`). Now the step is done on S and the docked tree
 	// is what S shows.
 	it('panes hidden, shown, floated, docked back and moved (side, tab, outer edge) in any order: `same` always', () => {
@@ -571,7 +571,7 @@ describe('changes that move no pane are written onto S (#782 PR4)', () => {
 		// second tab, as it was, whatever was moved around its place - and the active one.
 		follows.length = 0;
 		expect(dock.dockBack('b')).toBe(true);
-		expect(follows).toEqual([{ step: 'dockAtSlot', result: 'same' }]);
+		expect(follows).toEqual([{ step: 'dockBack', result: 'same' }]);
 		const back = findNode(dock.layout.docked, 't');
 		expect(back?.type === 'tabs' && back.children.map((c) => c.id)).toEqual(['c', 'b', 'a', 'd']);
 		expect(back?.type === 'tabs' && back.children[back.activeIndex].id).toBe('b');
@@ -687,7 +687,7 @@ describe('what cannot change S does not look at it (review of PR #857)', () => {
 		expect(notFollowing(dock)).toBe(null);
 	});
 
-	it('a floated pane closed and opened again keeps its place (its `homeSlot`)', () => {
+	it('a floated pane closed and opened again keeps its place (its remembered place)', () => {
 		const { dock } = watched(split('s', 'row', [0.5, 0.5], [panel('a'), panel('b')]));
 		dock.undockPanel('a');
 		const before = shadowStateOf(dock).follows;
@@ -726,7 +726,7 @@ describe('the panes S remembers (#782 PR4)', () => {
 		expect(shadowPanelIds(shadowStateOf(dock).shadow, 'away')).toEqual(['b']);
 		const loaded = createDockState(dock.serialize(), counterMakeId(100));
 		loaded.defaultLayout = dock.defaultLayout;
-		// Neither is saved with a place: the floated pane's `homeSlot` is not saved, the hidden one has none.
+		// Neither is saved with a place: the floated pane's remembered place is not saved, the hidden one has none.
 		expect(shadowPanelIds(shadowStateOf(loaded).shadow, 'away')).toEqual([]);
 		expect(notFollowing(loaded)).toBe(null);
 		const follows: ShadowFollow[] = [];

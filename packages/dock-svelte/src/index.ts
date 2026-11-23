@@ -132,14 +132,6 @@ export { computeEdgeDrop, edgeButtons } from './core/edges';
 /** The default place of a pane hidden from the dock (#782 PR5; `DockState.dismiss` / `show` use these). */
 export { dockShareOf, hasDefaultPlace, placeAtDefault } from './core/defaultPlace';
 
-/** The remembered docked place of a pane floated out of the tree (#663 ④; `DockState.undockPanel` / `dockAtSlot` use these), and of a whole region (#694 PR-3, auto-hide). */
-export {
-	captureDockSlot,
-	captureRegionSlot,
-	restoreDockSlot,
-	restoreRegionSlot
-} from './core/slot';
-
 /** Auto-hide of a docked region to an edge band (#694 PR-3; `DockState.autoHideRegion` / `restoreAutoHidden` use these). */
 export {
 	AUTO_HIDE_FLYOUT_RATIO,
@@ -161,7 +153,6 @@ export type {
 	DockNode,
 	DockPanelInfo,
 	DockPanelNode,
-	DockSlot,
 	DockSplitNode,
 	DockTabGroupNode,
 	DropRegion,

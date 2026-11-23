@@ -6,14 +6,13 @@
 // the layout they start with as the default (`dockWithDefault`), so "the old shape" below is the
 // default shape. Without a default place the pane opens floating; `dockShare` survives
 // `serialize` / `hydrate`; `panels` lists every pane in a stable order with visible flags.
-// A pane floated out of the tree still goes back to where it was (`homeSlot`, `core/slot.ts`).
+// A pane floated out of the tree still goes back to where it was (`hasHome` / `dockBack`, its tombstone in the shadow tree).
 import { describe, expect, it, vi } from 'vitest';
 import { PanelLifecycle, type DockPanelChange } from '../src/core/lifecycle';
 import { collectPanelIds, findNode } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import { createDockState, type DockState } from '../src/state.svelte';
 import type { DockLayout, DockNode, DockSplitNode, DockTabGroupNode } from '../src/types';
-import { captureDockSlot, restoreDockSlot } from '../src/core/slot';
 import {
 	L,
 	counterMakeId,
@@ -265,12 +264,6 @@ describe('no default pane is docked, or no default place', () => {
 		dock.ensurePanel({ id: 'g', title: 'G' }, 800, 600, 'center', 'any');
 		expect(dock.show('only')).toBe('floating');
 	});
-
-	it('restoreDockSlot returns null instead of duplicating an id', () => {
-		const root = tabsLayout().docked;
-		const slot = captureDockSlot(root, 'y')!;
-		expect(restoreDockSlot(root, panel('y'), slot, counterMakeId())).toBeNull();
-	});
 });
 
 describe('open / close keep their floating-only meaning', () => {
@@ -342,21 +335,6 @@ describe('serialize / hydrate', () => {
 		const s = splitOf(dock.layout.docked);
 		expect(s.children.map((c) => c.type)).toEqual(['tabs', 'panel']);
 		expect(collectPanelIds(dock.layout.docked)).toEqual(['x', 'y', 'z', 'p']);
-	});
-
-	it('a hidden pane that is docked again (a stale entry) does not make a last pane of it (#721)', () => {
-		const root: DockNode = {
-			type: 'split',
-			id: 's',
-			direction: 'row',
-			sizes: [0.5, 0.5],
-			children: [panel('a'), panel('b')]
-		};
-		const stale = {
-			id: 'a',
-			slot: { kind: 'tab' as const, groupId: 'gone', index: 0, anchors: ['b'] }
-		};
-		expect(captureDockSlot(root, 'b', [stale])).toMatchObject({ kind: 'split', splitId: 's' });
 	});
 
 	it('JSON of an earlier version (1 - 3) is not read (#782 PR8b); a closed window without `dockShare` opens floating', () => {
@@ -861,9 +839,9 @@ it('row[b,c,column[tabs[d,e],tabs[f,g]]]: -g -d -e -f -b -c +f +b +c +d +g +e ->
 	expect(shapeOf(dock.layout.docked)).toEqual(shapeOf(make()));
 });
 
-// #734 made a pane floated out of the tree (`undockPanel`, its `homeSlot`) and a pane hidden from
+// #734 made a pane floated out of the tree (`undockPanel`, its remembered place) and a pane hidden from
 // it count each other. Since #782 PR5 a hidden pane holds no place: it comes back at its default
-// place, and a floated pane's `homeSlot` no longer counts it.
+// place, and a floated pane's remembered place no longer counts it.
 describe('floated and hidden panes out of the same container (#734, #782 PR5)', () => {
 	const row3 = () => splitNode('s', 'row', ['a', 'b', 'c'].map(panel));
 
@@ -884,9 +862,9 @@ describe('floated and hidden panes out of the same container (#734, #782 PR5)', 
 	});
 });
 
-// #735: a floated pane's `homeSlot` is dropped once the pane is not a floating window any more,
+// #735: a floated pane's remembered place is dropped once the pane is not a floating window any more,
 // whichever path docked it (before, only a drop through the `DragController` did).
-describe('homeSlot follows the layout, not the path (#735)', () => {
+describe('the remembered place follows the layout, not the path (#735)', () => {
 	const make = () => splitNode('s', 'row', ['a', 'b', 'c'].map(panel));
 	const fresh = () =>
 		dockWithDefault({ version: 4, floating: [], docked: make() }, counterMakeId());

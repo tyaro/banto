@@ -158,7 +158,7 @@ describe('an assignment from outside: the container a floated pane was in is sti
 		}
 	});
 
-	it('the `homeSlot` is the same object all along: it names the place, nothing rewrites it', () => {
+	it('the `homeMark` is the same object all along: it names the place, nothing rewrites it', () => {
 		const dock = dockOf(split('s', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel)));
 		dock.undockPanel('a');
 		const home = homeMark(dock, 'a');

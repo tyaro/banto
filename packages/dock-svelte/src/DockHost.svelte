@@ -96,7 +96,7 @@
 		type DockCapabilities,
 		type DockPolicy
 	} from './core/policy';
-	import { adoptLayout, forgetHomeSlots, type DockState } from './state.svelte';
+	import { adoptLayout, forgetHomes, type DockState } from './state.svelte';
 	import type { DockLayout, DockLayoutCommitReason, DockNode, PanelContent } from './types';
 	import { validateDockLayout } from './core/validate';
 	import DockAutoHide from './DockAutoHide.svelte';
@@ -698,7 +698,7 @@
 					() => layout,
 					(l) => {
 						if (options.saved) {
-							forgetHomeSlots(dock);
+							forgetHomes(dock);
 							adoptLayout(dock, l);
 						} else dock.layout = l;
 						// The layout is in: what the callbacks throw is reported apart (`notify`), so

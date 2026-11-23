@@ -6,7 +6,7 @@
 // default layout of a state is the tree it starts with, `newDock`). The properties of "the
 // remembered docked place" of PR1 that were about hide / show are rewritten as properties of the
 // default place (the first four `describe`s). A pane FLOATED out of the tree (`undockPanel`)
-// still goes back to where it was (`homeSlot`, `core/slot.ts`) until PR6: the properties and the
+// still goes back to where it was (`hasHome` / `dockBack`) until PR6: the properties and the
 // known failures of the slots are kept for floats in the last `describe`s.
 //
 // Each property runs with a fixed seed (`SEED`) and a fixed number of cases, so a run is the same
@@ -358,7 +358,7 @@ describe('saving and loading changes nothing (#782 property 5)', () => {
 			fc.property(treeRecipe, ops(1, 8), fc.nat({ max: 8 }), (recipe, recipes, cut) => {
 				const tree = buildTree(recipe);
 				const plain = newDock(tree);
-				// Not `float`: a floated pane's `homeSlot` is not saved, by design.
+				// Not `float`: a floated pane's remembered place is not saved, by design.
 				const steps = runOps(plain, recipes, ['hide', 'hide', 'show', 'move', 'tab', 'edge']);
 				const at = cut % (steps.length + 1);
 				// Two ways to save and load: back into the same state (`@`), and into a new state
@@ -423,7 +423,7 @@ describe('saving and loading changes nothing (#782 property 5)', () => {
 	});
 });
 
-// ----- floated panes: the remembered place (`homeSlot`) -----------------------------------------
+// ----- floated panes: the remembered place (`hasHome`) -----------------------------------------
 //
 // The properties PR1 wrote for hide / show, for panes floated out (`~x`) and docked back to where
 // they were (`^x`). The place is the pane's tombstone in the shadow tree since #782 PR6 (floating
