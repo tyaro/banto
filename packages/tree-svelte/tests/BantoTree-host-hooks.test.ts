@@ -33,8 +33,13 @@ afterEach(() => {
 const row = (name: string) => screen.getByRole('treeitem', { name });
 const rowNames = () => screen.getAllByRole('treeitem').map((el) => el.getAttribute('aria-label'));
 const shown = () => screen.getAllByRole('treeitem').map((el) => el.getAttribute('data-node-id'));
-const keyOn = (el: Element, name: string) => {
-	const event = new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true });
+const keyOn = (el: Element, name: string, shiftKey = false) => {
+	const event = new KeyboardEvent('keydown', {
+		key: name,
+		shiftKey,
+		bubbles: true,
+		cancelable: true
+	});
 	el.dispatchEvent(event);
 	return event;
 };
@@ -217,6 +222,46 @@ describe('rowActions', () => {
 		expect(document.activeElement).toBe(row('Alpha'));
 		before.remove();
 		after.remove();
+	});
+
+	it('a Tab from the rename input shuts the other rows out too', async () => {
+		render(BantoTree, { nodes: forest(), rowActions: actions, editable: true });
+		row('Bravo').focus();
+		await fireEvent.dblClick(row('Bravo'));
+		const input = screen.getByRole('textbox');
+		input.focus();
+		keyOn(input, 'Tab');
+		expect(inertRows()).toEqual(['a', 'c']);
+		await nextTask();
+		expect(inertRows()).toEqual([]);
+	});
+
+	it("a Tab that still lands on another row's control (from inside) goes back to the tab-stop row", async () => {
+		render(BantoTree, { nodes: forest(), rowActions: actions });
+		row('Alpha').focus();
+		keyOn(row('Alpha'), 'Tab');
+		screen.getByTestId('act-b').focus(); // e.g. a browser that ignores the shield
+		expect(document.activeElement).toBe(row('Alpha'));
+		expect(row('Bravo').tabIndex).toBe(-1);
+		await nextTask();
+		// Shift+Tab: the tab-stop row's last control
+		screen.getByTestId('act-a').focus();
+		keyOn(screen.getByTestId('act-a'), 'Tab', true);
+		screen.getByTestId('more-c').focus();
+		expect(document.activeElement).toBe(screen.getByTestId('more-a'));
+		await nextTask();
+	});
+
+	it("a click on another row's control makes that row the tab-stop row", async () => {
+		render(BantoTree, { nodes: forest(), rowActions: actions });
+		const button = screen.getByTestId('act-b');
+		await fireEvent.pointerDown(button);
+		button.focus();
+		await fireEvent.click(button);
+		await tick();
+		expect(document.activeElement).toBe(button);
+		expect(row('Bravo').tabIndex).toBe(0);
+		expect(row('Alpha').tabIndex).toBe(-1);
 	});
 
 	it('focusing a control moves the tab stop to its row', async () => {

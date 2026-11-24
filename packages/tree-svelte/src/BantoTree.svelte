@@ -462,29 +462,38 @@
 		});
 	}
 	// A Tab key is under way (set on the window, cleared once its focus move is done).
-	let tabbing = false;
+	let tabbing: 'forward' | 'back' | null = null;
+	/**
+	 * Every Tab on the page (capture, so no handler can hide it - the rename input's included):
+	 * remembers its direction for `onActionsFocusIn`, and when it starts inside this tree,
+	 * shuts the other rows' controls out for that key.
+	 */
 	function onWindowKeydown(event: KeyboardEvent): void {
-		if (event.key !== 'Tab') return;
-		tabbing = true;
-		setTimeout(() => (tabbing = false));
+		if (event.key !== 'Tab' || event.ctrlKey || event.altKey || event.metaKey) return;
+		tabbing = event.shiftKey ? 'back' : 'forward';
+		setTimeout(() => (tabbing = null));
+		if (!(event.target instanceof Element) || !containerEl?.contains(event.target)) return;
+		// The row the Tab starts from (e.g. the rename input's) is the tab-stop row from now on.
+		const rowId = event.target.closest('[data-node-id]')?.getAttribute('data-node-id');
+		if (rowId != null && elements.has(rowId) && tabStopId !== rowId) tree.focusedId = rowId;
+		shieldOtherRowsForOneKey();
 	}
 	/**
-	 * Focus entered a row's controls. From a Tab outside the tree onto another row's controls:
-	 * sent to the tab-stop row. Otherwise (a click, a host's `focus()`): that row takes the tab stop.
+	 * Focus reached a row's controls. Whatever it came from, a row other than the tab-stop row
+	 * never keeps a keyboard (Tab) focus: it goes to the tab-stop row (Shift+Tab: that row's last
+	 * control that takes the focus, else the row). A click or a host's `focus()` instead makes
+	 * that row the tab-stop row (the user picked it).
 	 */
-	function onActionsFocusIn(event: FocusEvent, id: NodeId): void {
-		const from = event.relatedTarget;
-		const fromInside = from instanceof Node && !!containerEl?.contains(from);
-		if (tabbing && !fromInside && tabStopId !== null && tabStopId !== id) {
+	function onActionsFocusIn(id: NodeId): void {
+		if (tabbing && tabStopId !== null && tabStopId !== id) {
 			const rowEl = elements.get(tabStopId);
-			// Shift+Tab from after the tree: the row's last control, else the row itself.
-			const fromAfter =
-				from instanceof Node &&
-				!!containerEl &&
-				(containerEl.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-			const controls = fromAfter
-				? [...(rowEl?.querySelectorAll<HTMLElement>(`[data-tree-actions] :is(${TABBABLE})`) ?? [])]
-				: [];
+			const controls =
+				tabbing === 'back'
+					? [
+							...(rowEl?.querySelectorAll<HTMLElement>(`[data-tree-actions] :is(${TABBABLE})`) ??
+								[])
+						]
+					: [];
 			focusFirstOf(controls.reverse(), rowEl);
 			return;
 		}
@@ -622,18 +631,8 @@
 
 	function onKeydown(event: KeyboardEvent): void {
 		if (editing) return;
-		// With trailing controls, the browser's Tab skips the other rows' controls (see `shieldOtherRowsForOneKey`).
-		if (
-			rowActions &&
-			event.key === 'Tab' &&
-			!event.defaultPrevented &&
-			!event.ctrlKey &&
-			!event.altKey &&
-			!event.metaKey
-		) {
-			shieldOtherRowsForOneKey();
-			return;
-		}
+		// A Tab is the browser's own (the other rows are shut out in `onWindowKeydown`).
+		if (rowActions && event.key === 'Tab') return;
 		// Inside a row's trailing controls the keys belong to the control (Enter / Space press
 		// the button, arrows may drive a host widget). Only Escape is ours: back to the row.
 		const actions = actionsOf(event.target);
@@ -1005,7 +1004,7 @@
 						class="row-actions"
 						data-tree-control
 						data-tree-actions
-						onfocusin={(e) => onActionsFocusIn(e, node.id)}
+						onfocusin={() => onActionsFocusIn(node.id)}
 					>
 						{@render rowActions(node, rowContext)}
 					</span>
