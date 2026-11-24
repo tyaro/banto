@@ -34,6 +34,12 @@ const PAGES: ScannedPage[] = [
 	{ name: 'dashboard', path: '/dashboard', heading: 'ダッシュボード', authed: true },
 	{ name: 'items', path: '/items', heading: '商品', authed: true },
 	{ name: 'chart-gallery', path: '/chart-gallery', heading: 'チャート見本', authed: true },
+	{
+		name: 'chart-marks',
+		path: '/chart-gallery/marks',
+		heading: '印を選べるチャート',
+		authed: true
+	},
 	// settings-routes step 2 (choiapp-feedback-2026-09 §3.2): categories are
 	// now separate routes, so axe scans each one individually instead of
 	// relying on a single page showing everything at once.
@@ -59,7 +65,11 @@ async function gotoScanned(page: Page, target: ScannedPage): Promise<void> {
 	// Chart-heavy pages (dashboard) render async off the seeded dataset -
 	// same rationale as visual.spec.ts: wait for a concrete element, not a
 	// network signal.
-	if (target.name === 'dashboard' || target.name === 'chart-gallery') {
+	if (
+		target.name === 'dashboard' ||
+		target.name === 'chart-gallery' ||
+		target.name === 'chart-marks'
+	) {
 		await expect(page.locator('svg').first()).toBeVisible();
 	}
 }

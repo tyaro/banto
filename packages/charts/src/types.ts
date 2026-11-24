@@ -21,6 +21,32 @@ export function toNumber(value: unknown): number {
 	return Number(value);
 }
 
+/**
+ * A selected mark, handed to `onMarkActivate` / `markLabel` of `BarChart` and
+ * `PieChart` (docs/design/crossfilter-drilldown-design.md §4.3). `TRow` is the
+ * type of the rows given to the chart.
+ */
+export interface ChartMark<TRow> {
+	/** The row the mark was drawn from (an element of `data`). */
+	row: TRow;
+	/** Position of `row` in `data`. */
+	index: number;
+	/** What the `category` accessor returned for the row, as a string. */
+	category: string;
+	/** Id of the series (`BarChart`'s `series[].id`). Absent for `PieChart`. */
+	seriesId?: string;
+	/** The mark's value (before `formatValue`). A stacked bar gives its own segment's value, not the running total. */
+	value: number;
+}
+
+/** Props `BarChart` and `PieChart` add for selectable marks. Both are optional; without `onMarkActivate` the chart is unchanged (no interaction, `role="img"`). */
+export interface MarkProps<TRow> {
+	/** Makes the marks selectable (click, Enter, Space; one Tab stop with arrow keys inside). */
+	onMarkActivate?: (mark: ChartMark<TRow>) => void;
+	/** Accessible name of a mark. Default: `<category>: <formatValue(value)>` (the series is named too for a multi-series bar chart). */
+	markLabel?: (mark: ChartMark<TRow>) => string;
+}
+
 /** One data series shared across chart types that plot more than one value per category/x. */
 export interface SeriesBase {
 	/** Stable identifier; also used as the Svelte `#each` key. */
