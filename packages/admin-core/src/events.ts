@@ -19,7 +19,7 @@
 import { invalidate, invalidateAll } from './invalidate';
 import { notify } from './registry.svelte';
 import type { NotificationKind } from './provider';
-import { createSseParser } from './sse-parser';
+import { createSseStream } from './sse-stream';
 import { getSessionController } from './sessionController.svelte';
 
 export type AppEvent =
@@ -150,192 +150,82 @@ export interface SseEventProviderOptions {
 	tokenWaitDelayMs?: number;
 }
 
-const DEFAULT_RECONNECT_DELAY_MS = 3000;
-const DEFAULT_TOKEN_WAIT_DELAY_MS = 500;
-const SSE_HEADERS = { 'X-Banto-Client': 'banto' } as const;
-
 /**
- * `EventProvider` for a LAN browser client: connects to `GET /api/events`
- * (spec §11.3) via `fetch` + a `ReadableStream` reader (not `EventSource`,
- * see sse-parser.ts's doc comment for why), auto-reconnecting on
- * disconnect/error. While `getToken()` returns `null` (not logged in yet),
- * connecting is skipped and retried after `tokenWaitDelayMs` instead of
- * failing loudly - the same token is shared with `HttpDataProvider`/
- * `HttpAuthProvider`.
+ * `EventProvider` for a LAN browser client: reads `GET /api/events`
+ * (spec §11.3) with `createSseStream` (sse-stream.ts, Issue #936) - `fetch`
+ * + a `ReadableStream` reader (not `EventSource`, see sse-parser.ts's doc
+ * comment for why), auto-reconnecting on disconnect/error. While
+ * `getToken()` returns `null` (not logged in yet), connecting is skipped and
+ * retried after `tokenWaitDelayMs` instead of failing loudly - the same
+ * token is shared with `HttpDataProvider`/`HttpAuthProvider`.
  *
- * Reconnect policy (Issue #241). Because this reads the stream with `fetch`,
- * the HTTP status of every (re)connect is visible:
- * - `401`: the server's `require_auth` CONFIRMED the session invalid (a
- *   revoked, expired or logged-out token - a failed account lookup is a
- *   `500`, never a `401`, ADR-0014). Retrying with the same token can never
- *   succeed, so the provider stops using it: no more requests until
- *   `getToken()` returns a different token (a new login; the check is a
- *   local read, same as the not-logged-in wait). `hooks.onUnauthorized` is
- *   called once so the app can run its route guard.
- * - the token it had been using is gone from storage at the next
- *   (re)connect, without a `401` here: another tab sharing the "Remember
- *   me" token already confirmed the revocation and cleared it.
- *   `hooks.onTokenCleared` is called once so this tab confirms too (review
- *   of #242). Never for the wait before the first login.
- * - any other failure (`500`, `503`, a network error, the stream ending -
- *   e.g. the server's periodic revalidation closing it): the session could
- *   not be verified or the stream simply ended, so reconnect after
- *   `reconnectDelayMs` as before. A revoked session's stream ends on the
- *   server's next revalidation, and the reconnect then gets the `401`.
- * - `getToken()` returns a different non-null token while a stream is open
- *   (a login in this tab, e.g. from the public viewer's synthetic session,
- *   Issue #591): the stream is reopened at once with the new token, so the
- *   new session's revocation reaches it like any other (the server keeps a
- *   stream open as long as its OWN token stays valid).
+ * The reconnect policy (Issue #241: `401`, a cleared token, any other
+ * failure; Issue #591: a new login's token while a stream is open) is
+ * `createSseStream`'s - see its doc comment. It was moved there unchanged:
+ * the hooks are called at the same moments and the same number of times as
+ * before. What `createSseStream` adds on top (design §5.2.1) also applies
+ * here: an answer or a frame that arrives after the token changed is
+ * dropped instead of being handed to the next session. This provider passes
+ * neither `onSessionChange`, `onForbidden` nor the stale options
+ * (`/api/events` carries "something changed" notices, not displayed values,
+ * and never answers `403`).
  */
 export function createSseEventProvider(options: SseEventProviderOptions): EventProvider {
-	const baseUrl = options.baseUrl ?? '';
 	const fetchFn = options.fetchFn ?? fetch;
-	const reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
-	const tokenWaitDelayMs = options.tokenWaitDelayMs ?? DEFAULT_TOKEN_WAIT_DELAY_MS;
 
 	return {
 		subscribe(handler: (event: AppEvent) => void, hooks?: EventSubscriptionHooks): () => void {
-			let stopped = false;
-			let controller: AbortController | null = null;
-			let timer: ReturnType<typeof setTimeout> | null = null;
-			// The last token the server answered `401` for (see the doc comment
-			// above): never sent again.
-			let rejectedToken: string | null = null;
-			// The token this stream last connected with, while it is still the
-			// one to watch for disappearing (`onTokenCleared`). Reset on a `401`,
-			// whose own path (`onUnauthorized`) already covers that token.
-			let usedToken: string | null = null;
-			// A stream of the current session has been established before, so the
-			// next successful connect is a reconnect (Issue #289). Reset whenever
-			// the session ends or changes (401, cleared token, different token).
-			let hasConnected = false;
-			// Issue #591: the open stream's watch for a new login's token, and
-			// whether it aborted the stream for that (reconnect at once).
-			let tokenWatch: ReturnType<typeof setInterval> | null = null;
-			let switchedToken = false;
-
-			function dispatch(payload: string): void {
-				try {
-					const parsed: unknown = JSON.parse(payload);
-					if (isAppEvent(parsed)) handler(parsed);
-				} catch {
-					// Malformed payload (should not happen against banto-server):
-					// ignore rather than tear down the whole connection over it.
-				}
-			}
-
-			function scheduleReconnect(delayMs: number = reconnectDelayMs): void {
-				if (stopped) return;
-				timer = setTimeout(() => void connectOnce(), delayMs);
-			}
-
-			async function connectOnce(): Promise<void> {
-				const token = options.getToken();
-				if (token === null && usedToken !== null) {
-					usedToken = null;
-					hasConnected = false;
-					if (!stopped) hooks?.onTokenCleared?.();
-				}
-				if (token === null || token === rejectedToken) {
-					scheduleReconnect(tokenWaitDelayMs);
-					return;
-				}
-				if (usedToken !== null && usedToken !== token) hasConnected = false; // a new login
-				usedToken = token;
-
-				controller = new AbortController();
-				// Issue #637: this attempt opened a stream (so its end is a loss).
-				let established = false;
-				try {
-					const response = await fetchFn(`${baseUrl}/api/events`, {
-						headers: { ...SSE_HEADERS, Authorization: `Bearer ${token}` },
-						signal: controller.signal
-					});
-					if (response.status === 401) {
-						void response.body?.cancel().catch(() => {});
-						rejectedToken = token;
-						usedToken = null;
-						hasConnected = false;
-						if (!stopped) hooks?.onUnauthorized?.();
-						scheduleReconnect(tokenWaitDelayMs);
-						return;
-					}
-					if (!response.ok || !response.body) {
-						scheduleReconnect();
-						return;
-					}
-
-					// Reconnected: re-sync once, only while this token is still the live
-					// one (a logout/user switch during the fetch must not refresh the old
-					// session's view). Failed attempts never reach here, so repeated
-					// failures cause no requests; one successful connect = one re-sync.
-					const wasReconnect = hasConnected;
-					hasConnected = true;
-					established = true;
-					if (wasReconnect && !stopped && options.getToken() === token) {
-						hooks?.onReconnected?.();
-					}
-
-					// Issue #591: a login in this tab while the stream is open (the
-					// public viewer's synthetic session -> a real account) replaces
-					// the token without ending the stream, and the server never ends
-					// a stream whose own token is still valid. Left alone, the stream
-					// would stay on the previous token - the new session's
-					// revocation would never reach it (no `401`). So while streaming,
-					// watch for a DIFFERENT non-null token and reopen with it at once.
-					// A cleared token (`null`) is left to the existing paths: the
-					// server ends a logged-out token's stream at its next re-check,
-					// and the reconnect then reports `onTokenCleared`.
-					tokenWatch = setInterval(() => {
-						const current = options.getToken();
-						if (current !== null && current !== token) {
-							switchedToken = true;
-							controller?.abort();
-						}
-					}, tokenWaitDelayMs);
-
-					const parser = createSseParser();
-					const reader = response.body.getReader();
-					const decoder = new TextDecoder();
-					while (!stopped) {
-						const { done, value } = await reader.read();
-						if (done) break;
-						for (const payload of parser.push(decoder.decode(value, { stream: true }))) {
-							dispatch(payload);
-						}
-					}
-				} catch {
-					// Network failure or abort() from unsubscribe / a token switch -
-					// fall through to the reconnect scheduling below (a no-op if
-					// stopped).
-				} finally {
-					if (tokenWatch !== null) clearInterval(tokenWatch);
-					tokenWatch = null;
-				}
-				if (switchedToken) {
-					switchedToken = false;
-					scheduleReconnect(0);
-					return;
-				}
-				// Issue #637: report the loss of an open stream once, unless this
-				// provider ended it (stopped) or the session it belonged to is gone
-				// (a logout clears the token; the server then ends the stream).
-				if (established && !stopped && options.getToken() === token) {
-					hooks?.onDisconnected?.();
-				}
-				scheduleReconnect();
-			}
-
-			void connectOnce();
-
-			return () => {
-				stopped = true;
-				if (timer !== null) clearTimeout(timer);
-				if (tokenWatch !== null) clearInterval(tokenWatch);
-				controller?.abort();
-			};
+			return createSseStream<AppEvent>({
+				path: '/api/events',
+				baseUrl: options.baseUrl,
+				fetchFn,
+				getToken: () => options.getToken(),
+				reconnectDelayMs: options.reconnectDelayMs,
+				tokenWaitDelayMs: options.tokenWaitDelayMs,
+				// `/api/events` names no events; a name would be ignored as before.
+				parse: (data) => {
+					const parsed: unknown = JSON.parse(data);
+					return isAppEvent(parsed) ? parsed : null;
+				},
+				onEvent: handler,
+				onUnauthorized: () => hooks?.onUnauthorized?.(),
+				onTokenCleared: () => hooks?.onTokenCleared?.(),
+				onReconnected: () => hooks?.onReconnected?.(),
+				onDisconnected: () => hooks?.onDisconnected?.()
+			});
 		}
+	};
+}
+
+/**
+ * The two hooks that tell the default `SessionController` that a stream's
+ * session is over (Issue #936, design §5.4): spread them into
+ * `createSseStream`'s options.
+ *
+ * ```ts
+ * createSseStream({ path: '/api/app/values', ..., ...sessionStreamHooks() });
+ * ```
+ *
+ * They are the same two signals `connectEvents` sends for `/api/events`
+ * (`signal('unauthorized')` / `signal('credentialCleared')`; the controller
+ * then confirms with a probe, ADR-0014). A screen that reads an app stream
+ * WITHOUT `/api/events` open must pass them, or a revoked session goes
+ * unnoticed; passing them next to `/api/events` is harmless. The contract
+ * when two streams report the same revocation: at most ONE confirmation is
+ * in flight and the session ends ONCE - not "one request in total". A signal
+ * means "an answer that started before now may be out of date", so the
+ * second signal aborts the confirmation the first one started and starts
+ * its own: N streams cost up to N `GET /api/auth/identity` in a row, of
+ * which only the last is used. `createSseStream` itself stays unaware of
+ * the controller (conventions §4/§5).
+ */
+export function sessionStreamHooks(): Pick<
+	EventSubscriptionHooks,
+	'onUnauthorized' | 'onTokenCleared'
+> {
+	return {
+		onUnauthorized: () => getSessionController().signal('unauthorized'),
+		onTokenCleared: () => getSessionController().signal('credentialCleared')
 	};
 }
 
@@ -381,8 +271,7 @@ export function connectEvents(
 			}
 		},
 		{
-			onUnauthorized: () => getSessionController().signal('unauthorized'),
-			onTokenCleared: () => getSessionController().signal('credentialCleared'),
+			...sessionStreamHooks(),
 			// Issue #289: a reconnect cannot recover what was broadcast while
 			// the stream was down, so re-read every subscribed resource once
 			// (same path as `resource_changed`). Not for an ended session.

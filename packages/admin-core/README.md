@@ -282,6 +282,60 @@ connection.onRecovered(() => invalidateAll()); // 切断から戻ったとき 1 
 - 自分では再接続もポーリングもしない（SSE の再接続・セッション確認のバックオフ・利用者の操作で戻る）。
 - SSE の再接続は `connectEvents` が既に `invalidateAll()` するので、`onRecovered` で読み直すと二重になりうる。
 
+## アプリ独自の SSE を読む（`createSseStream`）
+
+`/api/events`（変更の知らせ）とは別に、アプリが自分で出す配信（現在値など。server 側は
+`banto_server::sse` の `sse_response`、#935）を読む汎用の読み口（#936。
+[設計書 §5](../../docs/design/sse-stream-design.md)）。つなぎ直し・401・token の消去と入れ替わりの規則は
+`createSseEventProvider` と同じもの（`createSseEventProvider` はこの上に載っている）。
+
+```ts
+import { createSseStream, sessionStreamHooks } from '@banto/admin-core';
+
+type Reading = { value: number; at: number }; // at = 作る側が入れた時刻（印）
+
+const stop = createSseStream<Reading>({
+	path: '/api/app/values', // token などの秘密を query に載せない
+	getToken: auth.getToken,
+	parse: (data, event) => (event === 'reading' ? (JSON.parse(data) as Reading) : null),
+	onEvent: (reading) => show(reading),
+	onSessionChange: () => clearShown(), // 前のセッションの値を消す
+	onForbidden: () => clearShown(), // 見る権限が外れた値を消す
+	forbiddenRetryDelayMs: 30_000,
+	staleAfterMs: 15_000, // 作る側の周期の 3 倍ほど
+	valueStamp: (reading) => reading.at,
+	onStale: (stale) => markStale(stale),
+	...sessionStreamHooks() // 401・消えた token をセッションの制御へ
+});
+// 画面を離れるとき: stop()
+```
+
+- **前のセッションの値を次のセッションに渡さない。** 応答・フレームを受け取るたび（1 回の読み取りに複数の値が
+  あれば値ごと）に「止められていない・自分の試行・token が同じ」を照合し、違えば捨てる。遅れて届いた 401 は
+  いまの token のものとして扱わない（`onUnauthorized` を呼ばない）。
+- **`onSessionChange`**（401・token が消えた・別の token になった。変わるたびに 1 回、次のセッションの最初の
+  `onEvent` より前）と **`onForbidden`**（同じ token のまま 403。断られた状態に入るたびに 1 回）では、
+  呼ぶ側が**この配信から受けて表示・保持している値を消す**。読み口が止められるのは「これから届く値」だけで、
+  もう画面に出ている値は消せない。権限つきの配信を `onForbidden` なしで読まない。権限が戻れば値は `onEvent` に届き直す。
+- **`onStale`** は「通信が戻った」と「値が新しくなった」を分ける。`valueStamp` を渡すと、印が前（同じ `event` 名）と
+  変わった値だけを新しい値と数えるので、作る側が止まったままつなぎ直して同じ値が送り直されても解けない。
+  渡さないときの `onStale` は**受信が止まったこと**だけの指標（送り直しで解ける）。時計は切断・セッションの
+  切り替え・403 でも止めない。作った後の最初の 1 件は比べる印が無いので新しいと数える。
+- `parse` が `null` を返す・例外を投げた 1 件は捨てる（接続は保つ）。`event:` の名前は `parse` の第 2 引数
+  （`createSseMessageParser` が `{ data, event? }` を返す。`createSseParser` の形は変わらない）。
+- 文言は持たない（「配信が止まった」「権限が無い」の表示はアプリの Paraglide のキー）。`getSessionController` も
+  `createConnectionMonitor` も知らない。`/api/events` を開かない画面では `sessionStreamHooks()` を**必ず**渡す
+  （渡さないと失効に気づかない。`/api/events` と並べて渡してもよい: 同じ失効を 2 本が知らせると、先の確かめを
+  中断して確かめ直すので、同時に走る確かめは 1 件・セッションの終わりは 1 回。確かめの要求そのものは配信の本数まで
+  続けて出る）。切断の帯は `/api/events` の 1 本に任せ、アプリの配信からは既定では知らせない。
+- `path` は `/` 1 つで始まり、`baseUrl + path` を URL として解決した先が `baseUrl`（空ならページ）の origin に
+  留まるもの以外は `TypeError`（要求を 1 つも出さない。`Authorization` を別のホストへ送らない。タブ・改行を挟んで
+  `//host` になる path もここで断る）。`fetchFn` には、確かめた解決後の絶対 URL を渡す（`<base href>` で解決し直させない）。
+  origin を取れないページ（`location.origin` が `"null"`）では、絶対 URL の `baseUrl` が要る（無ければ `TypeError`）。
+- `parse`・`valueStamp`・`onEvent`・各フックの中で配信を止める・ログインし直す・ログアウトするのは構わない。
+  読み口は呼ぶ側のコードから戻るたびに照合し直し、旧いセッションの分は値・印・鮮度の時計・`onUnauthorized` を
+  それ以上進めずに、いまの token で開き直す。配信が終わった時点で token が変わっていれば、そこで `onSessionChange` を呼ぶ。
+
 ## トークンを web storage に置かない（`createHttpAuthProvider` の `storage: 'memory'`）
 
 `createHttpAuthProvider` は、既定（`storage: 'web'`）ではトークンを `sessionStorage`（Remember me のときは

@@ -1,7 +1,7 @@
 # アプリ独自の SSE の配信と読み口 設計書 — Issue #935・#936
 
 作成日: 2026-11-25
-状態: **§10 の 1〜16 は推奨どおりで決定（2026-11-25、オーナー）。S1（server の土台、#935）は実装済み。S2（admin-core の読み口、#936）→ S3（レシピ）は別 PR**
+状態: **§10 の 1〜16 は推奨どおりで決定（2026-11-25、オーナー）。S1（server の土台、#935）・S2（admin-core の読み口、#936）は実装済み。S3（レシピ）は別 PR**
 トラック: 保守者向け（トラックA）
 関連: Issue #935（server の配信の部品）、Issue #936（admin-core の読み口）、
 #231 / [ADR-0014](../adr/0014-account-bound-session-revocation.md)（開いた配信の確かめ直し）、#239（`AuthState::revalidate` の公開）、
@@ -10,7 +10,7 @@ conventions §3 / §4 / §5 / §6 / §12 / §13
 
 この文書の `path` と型の名前は、2026-11-25 の main（`dc73f4c0`）で開いて確かめた。
 **新しく足す型・関数・ファイルの名前は見込み**で、各 PR で決める（決めた形はこの文書へ書き戻す）。
-server 側（§4）の名前は S1 で決まった（下の「S1 で決まった形」）。S2・S3 の分は見込みのまま。
+server 側（§4）の名前は S1 で、admin-core 側（§5）の名前は S2 で決まった（下の「S1 で決まった形」「S2 で決まった形」）。S3 の分は見込みのまま。
 
 ### S1 で決まった形（設計とのずれと、未確定だった点）
 
@@ -54,6 +54,68 @@ server 側（§4）の名前は S1 で決まった（下の「S1 で決まった
 - **設計から足したもの**: `events::sse_route_with` を `pub(crate)` にした（`/api/events` の経路でも「確かめ直し中の停止」を
   `sse` の試験から見るため。名前・引数・意味は同じ）。`SseContext` に `Debug`（token は出さない）。
 - **入れなかったもの**: `verify-architecture` での `require_permission` の付け忘れの検査（§9。S3 までに確かめる、のまま）。
+
+### S2 で決まった形（設計とのずれと、未確定だった点）
+
+- 公開したもの（`@banto/admin-core` の `index.ts`）は §5 のとおり: `createSseStream`・`SseStreamOptions`（`sse-stream.ts`）、
+  `createSseMessageParser`・`SseMessage`・`SseMessageParser`（`sse-parser.ts`。`createSseParser` はこの上に載せ、形は変えていない）、
+  `sessionStreamHooks`（**置き場は `events.ts`**。`getSessionController` を読むのはここで、`sse-stream.ts` は制御を知らない。
+  `connectEvents` も同じ関数を使う）。
+- **`createSseEventProvider` は `createSseStream` の上に載せた。** `packages/admin-core/tests` の既存のファイルは 1 行も変えずに
+  全部通った（§10 の 14 の「既存の試験が継ぎ目を固定していた」は起きなかった）。持ち主の照合は `/api/events` にも効く
+  （token が変わった後に届いた応答・フレームは捨てる）。`onSessionChange`・`onForbidden`・stale は渡していない。
+- **`onSessionChange` を呼ぶ時点**（§5.2.1 の中身を決めた）: 読み口が「使っている token」を覚え、それが終わった・入れ替わったと
+  分かった時点で 1 回呼ぶ。分かるのは ① 401（`onUnauthorized` の直前）、② つなぎに行くときに token が消えていた
+  （`onTokenCleared` の直前）・別の token だった、③ 開いている間の 500ms の見張り（別の token だけでなく、**消えた token でも呼ぶ**。
+  配信そのものは今までどおり閉じない）、④ 照合で応答・フレームを捨てたとき。値をまだ 1 件も届けていない token でも呼ぶ
+  （最初の接続が 401 のときなど。消すものが無いだけで害は無い）。見張りが「消えた」を知らせた後に同じ token が戻って
+  値が届いたら、その値は新しいセッションの値として数え、次の変化でもう 1 回呼ぶ。
+  **開いていない間（つなぎ直しの待ち・応答を待っている `fetch`）は見張りが無い**ので、変化を知らせるのは次の試行のとき
+  （最大で `reconnectDelayMs`。403 の後は `forbiddenRetryDelayMs` だが、そのときは `onForbidden` で値はもう消えている）。
+  時計を足さない（§5.3）ことを優先した。
+- **照合で捨てた後のつなぎ直し**: 別の token になっていれば、見張りと同じくすぐ（0ms）新しい token でつなぐ。token が消えていれば
+  `tokenWaitDelayMs` の待ちに入り、次の回が `onTokenCleared` を出す。遅れた 401 は、前の token も「拒否済み」にしない
+  （拒否済みは 1 つしか覚えないので、前の token で上書きしない）。開いている間に token が消え、そこへフレームが届いたときは、
+  フレームを捨てて配信を cancel する（その後は上と同じ待ち）。
+- **403 の細部**: 断られた状態は、開けた・401・token が消えた・別の token、で出る（§5.2.2 の表のとおり）。断られている間の
+  500・ネットワークの失敗では出ない（続く 403 で `onForbidden` を呼び直さない。間隔はその失敗の分だけ `reconnectDelayMs`）。
+- **コールバックの順**: 開いたとき `onConnection(true)` → `onReconnected`。失ったとき `onConnection(false)` → `onDisconnected`。
+  `onSessionChange` → `onUnauthorized` / `onTokenCleared`。新しい値は `onEvent` → `onStale(false)`。
+  `onEvent` が投げた例外は握りつぶす（今の provider の `handler` と同じ。接続は保つ）。
+- **`valueStamp`** は `staleAfterMs` を渡したときだけ呼ぶ。印は `Object.is` で比べる。`valueStamp` が例外を投げた 1 件は捨てる
+  （`parse` の例外と同じ扱い）。
+- **設計から足したもの**: `path` の検査。`/` 1 つで始まらない path（`//host/…`・`/\host/…`・絶対 URL・空）は `TypeError`
+  （`baseUrl` とつないだ URL が別のホストを指すと、`Authorization` をそこへ送ってしまうため）。
+  文字列の先頭だけでは足りない（#945 のレビュー）: URL の解析はタブ・改行・CR を除き、`\` を `/` と読むので、`"/<タブ>/host/x"` は
+  `//host/x` になる。そこで **`baseUrl + path` を `new URL` で解決し、送ってよい origin（`baseUrl` の origin。空なら `location.origin`）と
+  scheme・host（port を含む）が一致し、userinfo が無いこと**を、最初の要求より前に 1 回確かめる。一致しなければ `TypeError`
+  （`fetchFn` を 1 度も呼ばない）。`location` の無い環境（試験・SSR）では仮の origin に対して解決する（path だけの参照がどこへ解決されるかは、
+  http(s) の基準がどれでも同じ）。**`fetchFn` に渡すのは、照合した解決後の絶対 URL そのもの**（#945 の再レビュー）。相対のまま渡すと、
+  `fetch` は文書の基準 URL（`<base href>`）で解決し直し、それは `location.origin` と違い得るので、確かめた先と送る先がずれる。
+  ブラウザーが無いとき（`location` が無く、`baseUrl` も絶対 URL でない。試験・SSR）だけ、文字列のまま渡す（ずれる相手の文書が無い）。
+  **ブラウザーはあるが origin を取れないページ**（`location.origin` が `"null"`。sandbox の iframe・`file:` など）はこれと分ける:
+  文書はあって `fetch` はそれで解決するのに、照合する相手が無いので、絶対 URL の `baseUrl` が無ければ `TypeError`（要求を出さない）。
+- **アプリ側のコードから戻るたびの照合**（#945 のレビュー。§5.2.1 の「コールバックの直前に必ず照合する」を、コールバックの**後**にも広げた）:
+  `parse`・`valueStamp`・`onEvent`・各フックは呼ぶ側のコードで、その中で停止・ログイン・ログアウトが起こり得る。戻るたびに
+  「いまも自分の番か」を確かめ、違えば旧い試行の分はそれ以上なにも更新しない。
+  - `parse`・`valueStamp` の中で変わった → その値は渡さない・印も覚えない。
+  - `onEvent` の中で変わった → その値は渡し終えているが、印を覚えず、鮮度の時計も掛け直さず、`onStale(false)` も呼ばない
+    （同じ値が次のセッションへ送り直されたら、そこで「新しい値」と数える）。
+  - 401 の `onSessionChange` の中で変わった → `onUnauthorized` を呼ばない（旧いセッションの 401 を、新しいセッションのものとして
+    セッションの制御へ知らせない）。別の token ならすぐつなぎ直し、消えていたら次の回が `onTokenCleared` を出す。
+  - 403 の `onForbidden`・開いたときの `onConnection(true)` / `onReconnected`・見張りや つなぎに行くときの `onSessionChange` の中で
+    変わった → その応答・配信は読まず、いまの token で開き直す（403 の長い待ちを旧いセッションの答えで過ごさない）。
+- **配信が終わったときの照合**（同）: `read()` が EOF・例外で終わったとき、`fetch` が失敗したときも、token が自分のものでなくなっていれば、
+  その場で `onSessionChange` を呼び、別の token ならすぐ（0ms）、消えていれば `tokenWaitDelayMs` でつなぎ直す
+  （前は見張りを外したまま `reconnectDelayMs` 待ち、表示中の旧い値が次の試行まで残った）。上の「開いていない間は見張りが無い」は、
+  **つなぎ直しの待ちの間と、応答を待っている `fetch` の間**だけに狭まる。
+- **2 本の配信から同じ失効を受けたときの確かめ**（#945 のレビュー。§5.4）: 「同時に走るのは 1 件・終わりは 1 回・やり直しは許す」に
+  文言と試験を揃え、**確かめの共有はしなかった**。`SessionController.signal()` は引数を持たず、「これより前に始めた確かめは古いかもしれない」
+  としか言わない（`latestSignalAt` を進め、それより前に始めた確かめを使わない。I-22）。2 本目の合図が 1 本目と同じ失効のものか、
+  確かめを始めた後に起きた別の失効のものかを、制御は区別できない。まとめるには合図に資格情報の世代を載せる必要があり、
+  それは `signal()` の公開の形と、`/api/events`・HTTP の 401 を含む全部の出し手を変える（世代の取り違えは「失効を見逃す」側に倒れる）。
+  得るものは、失効のたびに 1〜2 回の `GET /api/auth/identity`（中断済みで、答えは使わない）だけなので、見合わない。
+- **e2e**: 足していない（§6 のとおり）。`/api/events` の経路は CI の e2e が載せ替えの後も通ることで確かめる。
 
 ## 1. 用語
 
@@ -564,7 +626,11 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 
 - `createSseStream` は `getSessionController` も `createConnectionMonitor` も知らない（§4・§5 の規約。試験もしやすい）。配線は呼ぶ側。
 - **401・消えた token**: `/api/events` の `connectEvents` が既に `signal('unauthorized')` / `signal('credentialCleared')` を出す。
-  アプリの配信も同じ 2 行を渡してよい（2 本から重ねて出たときに確かめが増えないことは、S2 の試験で確かめる）。`/api/events` を開かない画面では**必ず渡す**。
+  アプリの配信も同じ 2 行を渡してよい。2 本から同じ失効が重ねて出たときの決まりは **「同時に走る確かめは 1 件、セッションの終わりは 1 回。
+  確かめのやり直しは許す」**（「要求が全部で 1 回」ではない。#945 のレビューで文言を実装に合わせた）。`signal()` は「これより前に始めた
+  確かめの答えは古いかもしれない」という合図なので、2 本目の合図は 1 本目が始めた確かめを中断して、自分の確かめを始める。配信が N 本なら
+  `GET /api/auth/identity` は最大 N 回続けて出て、使うのは最後の 1 回だけ（S2 の試験は、中断された分も含めた回数を数える）。
+  合図を「同じ資格情報の世代ならまとめる」ようにしない理由は「S2 で決まった形」に書く。`/api/events` を開かない画面では**必ず渡す**。
   毎回書かずに済むよう、`{ onUnauthorized, onTokenCleared }` を返す小さな関数（`sessionStreamHooks()`）を足すかは §10 の 7。
 - **切断の帯**: 帯は `/api/events` の `onDisconnected` / `onReconnected` から出る。アプリの配信は**既定では帯へ知らせない**。
   `ConnectionState.streamLost` は 1 つの真偽なので、2 本の配信が別々に知らせると、片方が戻っただけで「戻った」になる。
