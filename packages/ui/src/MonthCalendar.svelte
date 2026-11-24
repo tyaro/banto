@@ -14,22 +14,40 @@
 	 *   so they run before the dialog's own native keydown listener (which
 	 *   stops every key, §5.8 promise 1). Enter / Space and a click pick a
 	 *   selectable day through `onPick`; what picking means is the parent's.
+	 * - Month and year views (Issue #908): the heading's year and month are
+	 *   buttons. The month button shows the year's 12 months, the year button
+	 *   12 years (`CalendarPeriodView`); picking a year shows its months,
+	 *   picking a month shows its days (moving `focusDate` there). Escape in
+	 *   the month / year view goes back one view (year -> month -> day) and is
+	 *   consumed (`defaultPrevented`), so the dialog stays open; in the day
+	 *   view it is left to the parent (closes the dialog, as before). The view
+	 *   is not kept: the dialog opens on the day view.
+	 * - A view switch removes the focused element (a heading button, a cell),
+	 *   so focus is parked on this component's wrapper first: it never drops
+	 *   to <body>, which the parent would read as "focus left" and close.
 	 */
 	import { flushSync } from 'svelte';
 	import { revealInPopover } from './anchoredPopover';
+	import CalendarNavButton from './CalendarNavButton.svelte';
+	import CalendarPeriodView from './CalendarPeriodView.svelte';
 	import {
 		addDays,
 		addMonths,
 		addYears,
 		clampDate,
+		clampPeriod,
 		endOfWeek,
 		formatFullDate,
-		formatMonthYear,
 		isOutOfRange,
 		isSameMonth,
 		monthGrid,
+		monthOfPeriod,
+		monthYearParts,
+		periodOf,
+		periodPageStart,
 		startOfWeek,
 		weekdayNames,
+		withYearMonth,
 		type Weekday
 	} from './datetime';
 	import ChevronLeft from './icons/ChevronLeft.svelte';
@@ -78,10 +96,22 @@
 	const uid = $props.id();
 	const headingId = `${uid}-heading`;
 
+	let rootEl: HTMLDivElement | undefined = $state();
 	let gridEl: HTMLTableElement | undefined = $state();
+	let periodView: ReturnType<typeof CalendarPeriodView> | undefined = $state();
+
+	/** Which view is shown: the days of a month, the months of a year, or 12 years. */
+	let view = $state<'day' | 'month' | 'year'>('day');
+	/** The month view's tracked month and first month (periods, `datetime.ts`). */
+	let monthFocus = $state(0);
+	let monthPage = $state(0);
+	/** The year view's tracked year and first year. */
+	let yearFocus = $state(0);
+	let yearPage = $state(0);
 
 	const weekdays = $derived(weekdayNames(locale, weekStart));
 	const weeks = $derived(focusDate ? monthGrid(focusDate, weekStart) : []);
+	const heading = $derived(monthYearParts(focusDate, locale));
 
 	export function isSelectable(date: string): boolean {
 		return !isOutOfRange(date, min, max) && !isDateDisabled?.(date);
@@ -136,7 +166,75 @@
 		focusDate = navTarget(months);
 	}
 
+	// --- month / year views (Issue #908) -------------------------------------
+
+	function setMonthView(period: number): void {
+		monthFocus = clampPeriod(period, 'month', min, max);
+		monthPage = periodPageStart(monthFocus, 'month');
+	}
+
+	function setYearView(year: number): void {
+		yearFocus = clampPeriod(year, 'year', min, max);
+		yearPage = periodPageStart(yearFocus, 'year');
+	}
+
+	/**
+	 * Show `next` and focus its tracked cell. Focus is parked on the wrapper
+	 * first: the element that has it (a heading button, a cell) is removed
+	 * with the old view, and a focus drop to <body> would close the dialog.
+	 */
+	function showView(next: 'day' | 'month' | 'year'): void {
+		if (rootEl?.contains(document.activeElement)) rootEl.focus({ preventScroll: true });
+		view = next;
+		flushSync();
+		if (next === 'day') focusCell();
+		else periodView?.focusCell();
+	}
+
+	function openMonthView(): void {
+		setMonthView(periodOf(focusDate, 'month'));
+		showView('month');
+	}
+
+	function openYearView(): void {
+		// Escape from the year view lands on the month view: give it the
+		// tracked day's month when the year view is entered from the days.
+		if (view === 'day') setMonthView(periodOf(focusDate, 'month'));
+		setYearView(view === 'month' ? Math.floor(monthPage / 12) : periodOf(focusDate, 'year'));
+		showView('year');
+	}
+
+	function pickYear(year: number): void {
+		const month = monthOfPeriod(monthFocus).month;
+		setMonthView(year * 12 + (month - 1));
+		showView('month');
+	}
+
+	function pickMonth(period: number): void {
+		const { year, month } = monthOfPeriod(period);
+		focusDate = withYearMonth(focusDate, year, month, min, max);
+		showView('day');
+	}
+
+	// Escape goes back one view; in the day view it is the parent's (closes).
+	function handleRootKey(event: KeyboardEvent): void {
+		if (event.key !== 'Escape' || view === 'day') return;
+		// IME 変換中の Escape は変換の取消。表示を戻さない（#907 と同じ判定）。
+		if (event.isComposing || event.keyCode === 229) return;
+		event.preventDefault();
+		showView(view === 'year' ? 'month' : 'day');
+	}
+
+	$effect(() => {
+		const root = rootEl;
+		if (!root) return;
+		root.addEventListener('keydown', handleRootKey);
+		return () => root.removeEventListener('keydown', handleRootKey);
+	});
+
 	function handleGridKey(event: KeyboardEvent): void {
+		// IME 変換中のキーは変換のもの。日を動かさない（#907 と同じ判定）。
+		if (event.isComposing || event.keyCode === 229) return;
 		const target = event.target;
 		if (!(target instanceof HTMLElement) || !target.dataset.date) return;
 		let next: string | undefined;
@@ -188,96 +286,146 @@
 	});
 </script>
 
-<div class="date-picker-header">
-	<button
+{#snippet yearButton()}<button
 		type="button"
-		class="date-picker-nav"
-		aria-label={t.datePickerPrevYear()}
-		title={t.datePickerPrevYear()}
-		aria-disabled={navDisabled(-12) ? 'true' : undefined}
-		onclick={() => navigate(-12)}
+		class="date-picker-heading-button"
+		title={t.datePickerChooseYear()}
+		onclick={openYearView}
 	>
-		<ChevronsLeft size={16} aria-hidden="true" />
-	</button>
-	<button
+		{heading.year}
+	</button>{/snippet}
+{#snippet monthButton()}<button
 		type="button"
-		class="date-picker-nav"
-		aria-label={t.datePickerPrevMonth()}
-		title={t.datePickerPrevMonth()}
-		aria-disabled={navDisabled(-1) ? 'true' : undefined}
-		onclick={() => navigate(-1)}
+		class="date-picker-heading-button"
+		title={t.datePickerChooseMonth()}
+		onclick={openMonthView}
 	>
-		<ChevronLeft size={16} aria-hidden="true" />
-	</button>
-	<h2 id={headingId} class="date-picker-heading" aria-live="polite">
-		{formatMonthYear(focusDate, locale)}
-	</h2>
-	<button
-		type="button"
-		class="date-picker-nav"
-		aria-label={t.datePickerNextMonth()}
-		title={t.datePickerNextMonth()}
-		aria-disabled={navDisabled(1) ? 'true' : undefined}
-		onclick={() => navigate(1)}
-	>
-		<ChevronRight size={16} aria-hidden="true" />
-	</button>
-	<button
-		type="button"
-		class="date-picker-nav"
-		aria-label={t.datePickerNextYear()}
-		title={t.datePickerNextYear()}
-		aria-disabled={navDisabled(12) ? 'true' : undefined}
-		onclick={() => navigate(12)}
-	>
-		<ChevronsRight size={16} aria-hidden="true" />
-	</button>
+		{heading.month}
+	</button>{/snippet}
+
+<!-- The wrapper takes focus only for a moment, while a view switch removes the focused element. -->
+<div class="date-picker-calendar" tabindex="-1" bind:this={rootEl}>
+	{#if view === 'day'}
+		<div class="date-picker-header">
+			<CalendarNavButton
+				label={t.datePickerPrevYear()}
+				disabled={navDisabled(-12)}
+				onclick={() => navigate(-12)}
+			>
+				<ChevronsLeft size={16} aria-hidden="true" />
+			</CalendarNavButton>
+			<CalendarNavButton
+				label={t.datePickerPrevMonth()}
+				disabled={navDisabled(-1)}
+				onclick={() => navigate(-1)}
+			>
+				<ChevronLeft size={16} aria-hidden="true" />
+			</CalendarNavButton>
+			<!-- The year and the month in the locale's order ("2026年11月", "November 2026"). -->
+			<h2 id={headingId} class="date-picker-heading" aria-live="polite">
+				{#if heading.yearFirst}{@render yearButton()}{heading.separator}{@render monthButton()}{:else}{@render monthButton()}{heading.separator}{@render yearButton()}{/if}
+			</h2>
+			<CalendarNavButton
+				label={t.datePickerNextMonth()}
+				disabled={navDisabled(1)}
+				onclick={() => navigate(1)}
+			>
+				<ChevronRight size={16} aria-hidden="true" />
+			</CalendarNavButton>
+			<CalendarNavButton
+				label={t.datePickerNextYear()}
+				disabled={navDisabled(12)}
+				onclick={() => navigate(12)}
+			>
+				<ChevronsRight size={16} aria-hidden="true" />
+			</CalendarNavButton>
+		</div>
+
+		{@render dayGrid()}
+	{:else if view === 'month'}
+		<CalendarPeriodView
+			bind:this={periodView}
+			unit="month"
+			bind:focus={monthFocus}
+			bind:pageStart={monthPage}
+			{selectedDate}
+			{today}
+			{min}
+			{max}
+			{locale}
+			{t}
+			{scroller}
+			onPick={pickMonth}
+			onHeading={openYearView}
+		/>
+	{:else}
+		<CalendarPeriodView
+			bind:this={periodView}
+			unit="year"
+			bind:focus={yearFocus}
+			bind:pageStart={yearPage}
+			{selectedDate}
+			{today}
+			{min}
+			{max}
+			{locale}
+			{t}
+			{scroller}
+			onPick={pickYear}
+		/>
+	{/if}
 </div>
 
-<table class="date-picker-grid" role="grid" aria-labelledby={headingId} bind:this={gridEl}>
-	<thead>
-		<tr>
-			{#each weekdays as day (day.weekday)}
-				<th scope="col" abbr={day.long}>{day.short}</th>
-			{/each}
-		</tr>
-	</thead>
-	<tbody>
-		<!-- Keyed by position on purpose: the cells are reused across months,
-		     so the focused one is never removed mid-move (a removed focus target
-		     would read as "focus left the component"). -->
-		{#each weeks as week, w (w)}
+{#snippet dayGrid()}
+	<table class="date-picker-grid" role="grid" aria-labelledby={headingId} bind:this={gridEl}>
+		<thead>
 			<tr>
-				{#each week as date, d (d)}
-					<!-- One <td> per position whether it holds a day or an empty slot
-					     (before 0001-01-01 / after 9999-12-31), so a month change never
-					     replaces the element that has focus. -->
-					<td
-						data-date={date ?? undefined}
-						tabindex={date === null ? undefined : date === focusDate ? 0 : -1}
-						aria-label={date === null ? undefined : formatFullDate(date, locale)}
-						aria-selected={date === null ? undefined : date === selectedDate ? 'true' : 'false'}
-						aria-current={date !== null && date === today ? 'date' : undefined}
-						aria-disabled={date === null || isSelectable(date) ? undefined : 'true'}
-						class:date-picker-day--outside={date !== null && !isSameMonth(date, focusDate)}
-						class:date-picker-day--empty={date === null}
-						onmousedown={(event) => {
-							// An empty slot or a day outside [min, max] cannot be focused:
-							// keep focus on the tracked day, so focusDate and the focused
-							// cell never part ways.
-							if (date === null || isOutOfRange(date, min, max)) event.preventDefault();
-						}}
-						onclick={() => handleDayClick(date)}
-					>
-						{date === null ? '' : Number(date.slice(8))}
-					</td>
+				{#each weekdays as day (day.weekday)}
+					<th scope="col" abbr={day.long}>{day.short}</th>
 				{/each}
 			</tr>
-		{/each}
-	</tbody>
-</table>
+		</thead>
+		<tbody>
+			<!-- Keyed by position on purpose: the cells are reused across months,
+		     so the focused one is never removed mid-move (a removed focus target
+		     would read as "focus left the component"). -->
+			{#each weeks as week, w (w)}
+				<tr>
+					{#each week as date, d (d)}
+						<!-- One <td> per position whether it holds a day or an empty slot
+					     (before 0001-01-01 / after 9999-12-31), so a month change never
+					     replaces the element that has focus. -->
+						<td
+							data-date={date ?? undefined}
+							tabindex={date === null ? undefined : date === focusDate ? 0 : -1}
+							aria-label={date === null ? undefined : formatFullDate(date, locale)}
+							aria-selected={date === null ? undefined : date === selectedDate ? 'true' : 'false'}
+							aria-current={date !== null && date === today ? 'date' : undefined}
+							aria-disabled={date === null || isSelectable(date) ? undefined : 'true'}
+							class:date-picker-day--outside={date !== null && !isSameMonth(date, focusDate)}
+							class:date-picker-day--empty={date === null}
+							onmousedown={(event) => {
+								// An empty slot or a day outside [min, max] cannot be focused:
+								// keep focus on the tracked day, so focusDate and the focused
+								// cell never part ways.
+								if (date === null || isOutOfRange(date, min, max)) event.preventDefault();
+							}}
+							onclick={() => handleDayClick(date)}
+						>
+							{date === null ? '' : Number(date.slice(8))}
+						</td>
+					{/each}
+				</tr>
+			{/each}
+		</tbody>
+	</table>
+{/snippet}
 
 <style>
+	.date-picker-calendar:focus {
+		outline: none;
+	}
+
 	.date-picker-header {
 		display: flex;
 		align-items: center;
@@ -297,33 +445,26 @@
 		overflow-wrap: break-word;
 	}
 
-	.date-picker-nav {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		inline-size: var(--banto-control-height-sm);
-		block-size: var(--banto-control-height-sm);
-		padding: 0;
+	/* The heading's year and month: they read as the heading, and show they
+	   can be pressed on hover / focus (Issue #908). */
+	.date-picker-heading-button {
+		max-inline-size: 100%;
+		padding-block: 0;
+		padding-inline: var(--banto-space-1);
 		border: none;
 		border-radius: var(--banto-radius-sm);
 		background: transparent;
-		color: var(--banto-text-muted);
+		color: inherit;
 		font: inherit;
+		overflow-wrap: inherit;
 		cursor: pointer;
 	}
 
-	.date-picker-nav:hover:not([aria-disabled='true']) {
+	.date-picker-heading-button:hover {
 		background: var(--banto-surface-hover);
-		color: var(--banto-text);
 	}
 
-	.date-picker-nav[aria-disabled='true'] {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
-	.date-picker-nav:focus-visible {
+	.date-picker-heading-button:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
 	}
@@ -415,7 +556,7 @@
 		}
 
 		.date-picker-grid td:focus,
-		.date-picker-nav:focus-visible {
+		.date-picker-heading-button:focus-visible {
 			outline: var(--banto-border-width-strong) solid Highlight;
 			outline-offset: calc(-1 * var(--banto-border-width-strong));
 		}

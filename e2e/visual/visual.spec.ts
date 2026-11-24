@@ -365,6 +365,41 @@ test.describe('date picker', () => {
 			await page.waitForTimeout(SETTLE_MS);
 			await expect(page).toHaveScreenshot(`ui-demo-date-picker-${comboLabel(combo)}-1440x900.png`);
 		});
+
+		// The month and year views (#908), reached from the keyboard so no pointer
+		// hovers a cell: Shift+Tab from the day goes back over the next-year and
+		// next-month buttons to the heading's month button.
+		test(`ui-demo-date-picker-views ${comboLabel(combo)} 1440x900`, async ({ page }) => {
+			await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+			await primeThemeAndAuth(page, combo);
+			await page.goto('/ui-demo');
+			await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+			const opener = page.getByRole('button', { name: '日付を変更、2026年11月7日土曜日' });
+			await opener.scrollIntoViewIfNeeded();
+			await page.waitForTimeout(SETTLE_MS);
+			await opener.click();
+			const dialog = page.getByRole('dialog', { name: '日付の選択' });
+			await expect(dialog).toBeVisible();
+			await page.keyboard.press('Shift+Tab');
+			await page.keyboard.press('Shift+Tab');
+			await page.keyboard.press('Shift+Tab');
+			await expect(dialog.getByRole('button', { name: '11月' })).toBeFocused();
+			await page.keyboard.press('Enter');
+			await expect(dialog.getByRole('gridcell', { name: '2026年11月' })).toBeFocused();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(
+				`ui-demo-date-picker-months-${comboLabel(combo)}-1440x900.png`
+			);
+			await page.keyboard.press('Shift+Tab');
+			await page.keyboard.press('Shift+Tab');
+			await expect(dialog.getByRole('button', { name: '2026年' })).toBeFocused();
+			await page.keyboard.press('Enter');
+			await expect(dialog.getByRole('gridcell', { name: '2026年' })).toBeFocused();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(
+				`ui-demo-date-picker-years-${comboLabel(combo)}-1440x900.png`
+			);
+		});
 	}
 });
 
