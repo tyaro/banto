@@ -695,6 +695,7 @@ PR5（hide / show / float / dockBack）→ PR6（`dockExisting*`・ドロップ�
    管理者が既定の配置を配る口は**作らない**（要望が出たら起票。既定は作者がコードで決める）。
 4. **範囲**: 期間フィルタの共有だけ、この版に入れる（W3）。チャート間のクロスフィルタと、チャートから該当レコードの
    一覧へのドリルダウンは [#882](https://github.com/tyaro/banto/issues/882) に分けた（この版には入れない）。
+   #882 の設計の草案は [crossfilter-drilldown-design.md](crossfilter-drilldown-design.md)（2026-11-24。オーナーの判断待ち）。
 
 #### 4.13.2 いまの形
 
