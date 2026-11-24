@@ -167,6 +167,7 @@
 - **CI: `@banto/dock-svelte` の総当たりテストを別ファイルに分け、深さを環境変数 `DOCK_EXHAUSTIVE` で切り替えるようにした（#798 PR-d）。** `panel-visibility.test.ts` の総当たり（隠す順 × 戻す順・手順の全列挙・乱数の手順）を `panel-visibility-exhaustive-*.test.ts` に移し（共有の道具は `tests/fixtures/`）、`DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走る。未設定（手元の既定）は浅く、CI は dock-svelte を触る PR と main の push で全部、触らない PR は浅い既定（`ci.yml` の `changes` の出力 `dock`）。テストと CI だけの変更で、`src/`・公開 API・保存形式の変更なし。
 - **`@banto/grid-svelte`: `BantoGrid` のインライン編集の状態遷移を `EditController`（`src/edit.svelte.ts`）に分けた（#822）。** 挙動と公開の口（`onCellEdit`・`onRangePaste`・`CellEdit`・列の `editable`）は変わらない。編集の開始・下書き・確定・保存中・失敗・取り消しと、フォーカスを取り戻してよいかの判定を DOM なしで試験できる形にし、遷移の単体試験（`tests/edit-controller.test.ts`）を足した。コントローラは列を持たず、呼び出しのたびに今の列を受け取る（`columns` を後から変える #890 の前段）。
 - refactor(ui / forms / grid-svelte): 日付・時刻の文字列の決まり（正準形の判定・入力の解析・表示の形式・時刻の刻み）の 3 か所の手書きの複製を、1 つの原本（packages/ui/src/datetime-core.ts）とその生成した写し（forms・grid-svelte の datetime-core.ts）に置き換えた（#811。#813・#815 を含む）。パッケージ間の import は増やさない（conventions §4）。写しは scripts/sync-datetime-core.mjs が書き（pnpm sync:datetime-core）、原本と違えば CI が落とす（pnpm check:datetime-core）。挙動と各パッケージの index の export は変えない。
+- refactor(ui): DateInput・TimeInput・DateTimeInput に複製されていた入力欄の文字と外からの値の同期（`ownText`・`mirroredValue`）を、小さな部品 `packages/ui/src/textMirror.svelte.ts`（`createTextMirror`）に統合した（#816）。挙動と index の export は変えない。
 
 ### Fixed
 
