@@ -302,9 +302,16 @@ async fn main() {
     // backend-agnostic `banto_storage::Db`; every service constructor takes
     // `Db`. (The staged-restore step above is SQLite-file-only; against a
     // Postgres target `db_path_buf` simply names no pending-restore file.)
-    let db = init_db_from_target(&db_path)
-        .await
-        .expect("init_db should succeed");
+    // A database that cannot be opened (a pre-v8 one among them) stops the
+    // start with one message and exit code 1, like the checks below - not a
+    // panic (Issue: v8 pre-release check, #757).
+    let db = match init_db_from_target(&db_path).await {
+        Ok(db) => db,
+        Err(err) => {
+            eprintln!("banto-serve: 起動できません: {err}");
+            std::process::exit(1);
+        }
+    };
 
     let events = event_channel();
     // The resources added by `pnpm banto add resource` (none in the template).
