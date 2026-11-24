@@ -311,6 +311,36 @@ test.describe('ui-demo context menu', () => {
 		await expect(page.getByTestId('ui-demo-menu-selected')).toContainText('編集');
 	});
 
+	test('Tab / Shift+Tab go on from the right-clicked area, not from returnFocus', async ({
+		page
+	}) => {
+		await pickReturn(page, '別の要素');
+		const other = page.getByTestId('ui-demo-context-other');
+		const { area, menu } = await openAtArea(page);
+		await page.keyboard.press('Tab');
+		await expect(menu).toBeHidden();
+		// Next after the area is the segmented control (its checked radio).
+		await expect(
+			page.getByRole('radiogroup', { name: '閉じたときのフォーカス' }).getByRole('radio', {
+				checked: true
+			})
+		).toBeFocused();
+		await openAtArea(page);
+		await page.keyboard.press('Shift+Tab');
+		await expect(menu).toBeHidden();
+		await expect(other).not.toBeFocused();
+		await expect(area).not.toBeFocused();
+		// Somewhere before the area in document order.
+		expect(
+			await area.evaluate(
+				(el) =>
+					document.activeElement !== null &&
+					document.activeElement !== document.body &&
+					!!(document.activeElement.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
+			)
+		).toBe(true);
+	});
+
 	test('returnFocus: null leaves focus nowhere (not back on the area)', async ({ page }) => {
 		await pickReturn(page, '戻さない');
 		const { area, menu } = await openAtArea(page);

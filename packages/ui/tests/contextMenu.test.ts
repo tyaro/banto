@@ -181,6 +181,18 @@ describe('Menu.openAt (context menu, #889)', () => {
 		expect(document.activeElement).toBe(other);
 	});
 
+	it('Tab leaves focus to the browser (back where it opened from), not to `returnFocus`', async () => {
+		const { menu, openAt } = setup();
+		const row = screen.getByTestId('row');
+		row.focus();
+		openAt({ x: 10, y: 10 }, { returnFocus: screen.getByTestId('other') });
+		await flush();
+		await fireEvent.keyDown(menu, { key: 'Tab' });
+		await flush();
+		expect(menu.dataset.popoverOpen).toBeUndefined();
+		expect(document.activeElement).toBe(row);
+	});
+
 	it('returnFocus: null leaves focus nowhere, not on the element focused at open', async () => {
 		const { menu, openAt } = setup();
 		screen.getByTestId('row').focus();

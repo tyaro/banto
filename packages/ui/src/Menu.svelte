@@ -226,7 +226,10 @@
 	 * to return to (`returnFocus: null`, the row gone) drops focus instead of
 	 * letting the browser put it back.
 	 */
+	let tabbingOut = false;
+
 	function returnFocusFromInside(): void {
+		if (tabbingOut) return;
 		const active = document.activeElement;
 		if (!(active instanceof HTMLElement) || !popoverEl?.contains(active)) return;
 		if (anchorPoint && !pointReturnEl?.isConnected) active.blur();
@@ -324,8 +327,16 @@
 				break;
 			case 'Tab':
 				// Let the browser continue its normal tab traversal; just
-				// drop out of the menu instead of trapping focus in it.
-				closeMenu();
+				// drop out of the menu instead of trapping focus in it. The
+				// browser's own hide puts focus back where the menu was opened
+				// from (the trigger, the row), so Tab goes on from there - not
+				// from a `returnFocus` elsewhere (#889 review).
+				tabbingOut = true;
+				try {
+					closeMenu();
+				} finally {
+					tabbingOut = false;
+				}
 				break;
 		}
 	}
