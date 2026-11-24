@@ -46,8 +46,15 @@
 //! account store.
 //!
 //! - The re-check runs against the [`AuthState`] that authorized the opening
-//!   request: [`require_auth`] binds it to the request and [`SseContext`]
-//!   takes it from there. A handler cannot hand in another one.
+//!   request, for the token it validated: [`require_auth`] binds both to the
+//!   request - together with the session, the permissions and the moment
+//!   the authorization finished - and [`SseContext`] takes them from there.
+//!   A handler cannot hand in another state, and the `Authorization` header
+//!   is not read a second time.
+//! - The first re-check is due one interval after [`require_auth`]
+//!   authorized the opening request - NOT after the handler got around to
+//!   building its response. A handler that awaited something else for longer
+//!   than that gets its stream re-checked before the first frame is taken.
 //! - One deadline per stream, owned by the stream itself (no spawned task,
 //!   no second timer): when the client disconnects, axum drops the stream,
 //!   and the deadline and any re-check in flight are dropped with it.
@@ -68,9 +75,16 @@
 //! - Public viewer sessions and `SessionValidation::DisabledNoRevocation`
 //!   never look anything up, so the re-check is an in-memory token check:
 //!   those streams end only when the token itself does.
-//! - The server stopping ends the stream at once (Issue #283), also while a
-//!   re-check is waiting for the store: `RunningServer::stop` never waits
-//!   for a stream's check.
+//! - The server stopping ends the stream the next time the stream is
+//!   polled (Issue #283), also while a re-check is waiting for the store:
+//!   `RunningServer::stop` never waits for a stream's check. That is what
+//!   this module guarantees, and it reaches as far as the response body is
+//!   polled: a stream whose client does not read (the send is held by
+//!   backpressure, which arbitrarily large frames make possible) is not
+//!   polled, so it does not get to see the stop signal. Such a connection is
+//!   ended by the server-wide cap of `RunningServer::stop` (`STOP_TIMEOUT`,
+//!   after which the server task is aborted), like any other connection
+//!   that does not finish.
 //!
 //! ## Streams with an authorization condition (design §4.3.1)
 //!
@@ -89,7 +103,10 @@
 //!   timeout, of the session check or of the permission read): it only
 //!   streams on an authorization that was confirmed. So such a stream is,
 //!   at most [`REVALIDATE_INTERVAL`] + [`REVALIDATE_TIMEOUT`] after its
-//!   authorization was last confirmed, either confirmed again or closed.
+//!   authorization was last confirmed, either confirmed again or closed -
+//!   counted from [`require_auth`]'s authorization for the first check
+//!   (above), and a token that ended while its permissions were being read
+//!   does not count as confirmed (`AuthState::authenticate_with_permissions`).
 //!
 //! A stream without a condition (`/api/events` included) never reads the
 //! permissions and keeps the #230 rule above.
@@ -100,7 +117,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::FromRequestParts;
-use axum::http::header;
 use axum::http::request::Parts;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -113,7 +129,7 @@ use tokio::time::Instant;
 
 #[cfg(doc)]
 use crate::auth::require_auth;
-use crate::auth::{unauthorized_response, AuthState, AuthenticatedSession, SessionPermissions};
+use crate::auth::{AuthState, AuthenticatedSession, SessionPermissions};
 use crate::server::{ShutdownSignal, SseConnectionGuard, SseConnections};
 use crate::ApiError;
 
@@ -141,9 +157,9 @@ const _: () = assert!(REVALIDATE_TIMEOUT.as_nanos() < REVALIDATE_INTERVAL.as_nan
 
 /// When one stream's re-checks are due.
 pub(crate) enum Schedule {
-    /// Production: due `period` after the stream opened (the open itself
-    /// was just checked by [`require_auth`]), then `period` after the END of
-    /// each check ([`Schedule::rearm`]).
+    /// Production: due `period` after [`require_auth`] authorized the
+    /// opening request (`Schedule::count_from`), then `period` after the
+    /// END of each check (`Schedule::rearm`).
     Every { period: Duration, next: Instant },
     /// Tests: due whenever the test sends a tick; ends when it drops the
     /// sender.
@@ -156,6 +172,18 @@ impl Schedule {
         Self::Every {
             period,
             next: Instant::now() + period,
+        }
+    }
+
+    /// Count the first deadline from `confirmed`, the moment the opening
+    /// request's authorization finished - not from when the schedule was
+    /// made (the handler may have awaited in between). A deadline already
+    /// in the past is due at once.
+    fn count_from(&mut self, confirmed: Instant) {
+        match self {
+            Self::Every { period, next } => *next = confirmed + *period,
+            #[cfg(test)]
+            Self::Manual(_) => {}
         }
     }
 
@@ -204,17 +232,42 @@ impl SseTiming {
     }
 }
 
-/// The [`AuthState`] that authorized a request, as [`require_auth`] binds it
-/// to that request (design §4.3). Crate-private and constructible only here
-/// and in `require_auth`, so no app code can put one into a request: its
-/// presence is what "behind `require_auth`" means to [`SseContext`], and the
-/// state inside is the only one a stream's re-checks ever use.
+/// ONE authorization of a request, as [`require_auth`] binds it to that
+/// request (design §4.3): the [`AuthState`] that made it, the token it
+/// validated, the session and permissions it returned, and the moment it
+/// finished. Crate-private and constructible only here and in
+/// `require_auth`, so no app code can put one into a request: its presence
+/// is what "behind `require_auth`" means to [`SseContext`], and what is
+/// inside is all a stream is opened and re-checked with - the state, the
+/// token (never the `Authorization` header read again, which a middleware
+/// inside the route could have changed) and the clock of its first re-check.
+///
+/// No `Debug`: it holds the token.
 #[derive(Clone)]
-pub(crate) struct SseAuthBinding(AuthState);
+pub(crate) struct SseAuthBinding {
+    auth: AuthState,
+    token: String,
+    session: AuthenticatedSession,
+    permissions: SessionPermissions,
+    confirmed: Instant,
+}
 
 impl SseAuthBinding {
-    pub(crate) fn new(auth: AuthState) -> Self {
-        Self(auth)
+    /// Call right after the authorization returned, with what it was asked
+    /// and what it answered: "now" is taken as the moment it was confirmed.
+    pub(crate) fn new(
+        auth: AuthState,
+        token: String,
+        session: AuthenticatedSession,
+        permissions: SessionPermissions,
+    ) -> Self {
+        Self {
+            auth,
+            token,
+            session,
+            permissions,
+            confirmed: Instant::now(),
+        }
     }
 }
 
@@ -223,19 +276,22 @@ impl SseAuthBinding {
 type Condition = Arc<dyn Fn(&AuthenticatedSession, &SessionPermissions) -> bool + Send + Sync>;
 
 /// What one SSE stream takes from the request that opens it (Issue #935):
-/// the bearer token, the [`AuthState`] that authorized the request, the
-/// session and permissions it was authorized with, and the server's stop
-/// signal and stream count. Hand it to [`sse_response`].
+/// the authorization [`require_auth`] made for it - the [`AuthState`], the
+/// token it validated, the session and permissions it returned and when -
+/// and the server's stop signal and stream count. Hand it to
+/// [`sse_response`].
 ///
 /// An extractor that only works behind [`require_auth`], and it cannot be
-/// built any other way:
-///
-/// - a route WITHOUT `require_auth` answers `500` (fail closed - a stream
-///   must never open on a token nobody checked);
-/// - without `Authorization: Bearer` it answers `401`.
+/// built any other way: a route WITHOUT `require_auth` answers `500` (fail
+/// closed - a stream must never open on a token nobody checked). Behind it,
+/// a request without a valid `Authorization: Bearer` never reaches the
+/// handler (`require_auth` answers `401`).
 ///
 /// The stream's re-checks run against the `AuthState` given to that
-/// `require_auth`; a handler has no way to supply another one.
+/// `require_auth`, for the token it validated; a handler has no way to
+/// supply another state or token. The first re-check is due
+/// [`REVALIDATE_INTERVAL`] after that authorization, however long the
+/// handler takes before it calls [`sse_response`].
 ///
 /// See the [module doc](crate::sse) for the rules of the stream, and
 /// `docs/design/sse-stream-design.md` §4 / ADR-0014 for the reasons.
@@ -244,6 +300,8 @@ pub struct SseContext {
     token: String,
     session: AuthenticatedSession,
     permissions: SessionPermissions,
+    /// When `require_auth` finished authorizing the opening request.
+    confirmed: Instant,
     shutdown: Option<ShutdownSignal>,
     connections: Option<SseConnections>,
     timing: Option<SseTiming>,
@@ -274,35 +332,27 @@ impl<S: Send + Sync> FromRequestParts<S> for SseContext {
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // `require_auth` inserts the three together, after its authorization
-        // was complete. Without the binding nothing is trusted, whatever else
-        // the request carries.
-        let Some(SseAuthBinding(auth)) = parts.extensions.get::<SseAuthBinding>().cloned() else {
-            return Err(not_behind_require_auth());
-        };
-        let Some((session, permissions)) = parts
-            .extensions
-            .get::<AuthenticatedSession>()
-            .cloned()
-            .zip(parts.extensions.get::<SessionPermissions>().cloned())
+        // `require_auth` inserts the binding after its authorization was
+        // complete. Everything the stream is opened and re-checked with
+        // comes from it, as one bundle: nothing else the request carries is
+        // trusted - not a session or permissions in its extensions, and not
+        // its `Authorization` header (not read again).
+        let Some(SseAuthBinding {
+            auth,
+            token,
+            session,
+            permissions,
+            confirmed,
+        }) = parts.extensions.get::<SseAuthBinding>().cloned()
         else {
             return Err(not_behind_require_auth());
-        };
-        // Always present behind `require_auth`, which just validated it.
-        let Some(token) = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .map(str::to_owned)
-        else {
-            return Err(unauthorized_response());
         };
         Ok(Self {
             auth,
             token,
             session,
             permissions,
+            confirmed,
             shutdown: parts.extensions.get::<ShutdownSignal>().cloned(),
             connections: parts.extensions.get::<SseConnections>().cloned(),
             timing: parts.extensions.get::<SseTiming>().cloned(),
@@ -543,8 +593,14 @@ where
 /// - the conditions put on `context` ([`SseContext::require_permission`],
 ///   [`SseContext::reauthorize_with`]) are judged HERE, before the first
 ///   frame - `403` when one does not hold - and again at every re-check;
-/// - the stream ends at once when the server stops (`RunningServer::stop`
-///   does not wait for it), and when `frames` ends (the client reconnects);
+/// - the first of those re-checks is due one interval after `require_auth`
+///   authorized the opening request; when the handler took longer than that
+///   to get here, it runs before the first frame is taken;
+/// - the stream ends when the server stops - the next time it is polled,
+///   also in the middle of a re-check (`RunningServer::stop` does not wait
+///   for a check) - and when `frames` ends (the client reconnects). A
+///   stream that is not polled because its client does not read is ended by
+///   `RunningServer::stop`'s own cap, not by this;
 /// - a keepalive comment is sent every 15 seconds.
 ///
 /// The response is `text/event-stream`; frames are written as
@@ -558,6 +614,7 @@ where
         token,
         session,
         permissions,
+        confirmed,
         shutdown,
         connections,
         timing,
@@ -565,17 +622,23 @@ where
         conditions,
     } = context;
     // Fail closed at the open: judged before anything is streamed, with the
-    // session and permissions `require_auth` just authorized.
+    // session and permissions `require_auth` authorized.
     if !conditions.iter().all(|allow| allow(&session, &permissions)) {
         return ApiError(BantoError::Forbidden).into_response();
     }
     let timing = timing.unwrap_or_else(SseTiming::production);
+    // The handler may have awaited between `require_auth` and here: the
+    // first deadline belongs to the authorization, not to this call. If it
+    // has passed already, the loop re-checks before it takes a frame (it is
+    // `biased` towards a due re-check).
+    let mut schedule = (timing.schedule)();
+    schedule.count_from(confirmed);
     let stream = guarded_stream(
         Guard {
             auth,
             token,
             conditions,
-            schedule: (timing.schedule)(),
+            schedule,
             timeout: timing.timeout,
             shutdown,
             // A refused open is never counted; an open one is counted from

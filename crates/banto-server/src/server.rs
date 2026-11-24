@@ -45,7 +45,9 @@ pub const DETACHED_WRITES_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 /// [`start`]. Long-lived handlers (every SSE stream - `/api/events` and an
 /// app's own, all served by [`crate::sse`]) watch it and end on their own
 /// when the server is asked to stop - hyper's graceful shutdown otherwise
-/// waits for them forever (Issue #283). Absent when a
+/// waits for them forever (Issue #283). A stream sees it when it is polled;
+/// one that is not (its client does not read) is left to
+/// [`RunningServer::stop`]'s cap. Absent when a
 /// router is served some other way (e.g. `oneshot` in tests); handlers treat
 /// that as "never signalled".
 #[derive(Clone)]
@@ -139,11 +141,18 @@ impl RunningServer {
     /// Signal graceful shutdown and wait for the server task to finish.
     ///
     /// Open SSE streams - `/api/events` and every app stream served through
-    /// [`crate::sse::sse_response`] - are told to end ([`ShutdownSignal`]) and
-    /// do, also while one of their session re-checks is waiting for the
-    /// store (Issue #935). As a safety net
-    /// for any other connection that does not finish, the wait is capped at
-    /// [`STOP_TIMEOUT`], after which the server task is aborted (Issue #283).
+    /// [`crate::sse::sse_response`] - are told to end ([`ShutdownSignal`]).
+    /// Two separate guarantees:
+    ///
+    /// - a stream that is being polled ends on the signal, also while one of
+    ///   its session re-checks is waiting for the store (Issue #935): this
+    ///   never waits for a check;
+    /// - everything else is covered only by the cap. A connection that does
+    ///   not finish - any other long response, and also an SSE stream whose
+    ///   body is not polled because its client does not read (the send is
+    ///   held by backpressure, so the stream never gets to see the signal) -
+    ///   makes this wait up to [`STOP_TIMEOUT`], after which the server task
+    ///   is aborted (Issue #283).
     ///
     /// Writes (Issue #793, ADR-0035, [`crate::detach`]): from the first
     /// moment of the stop, a write that arrives - also on a connection that

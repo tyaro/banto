@@ -142,8 +142,8 @@ pub use policy::{
     AuthMode, LoginOutcome, RateLimitPolicy, TokenPolicy, MAX_CONCURRENT_VERIFICATIONS,
     MAX_IN_FLIGHT_PER_IP,
 };
+pub(crate) use routes::MaybePeerAddr;
 pub use routes::{auth_routes, require_auth, LOGIN_DISABLED_MESSAGE};
-pub(crate) use routes::{unauthorized_response, MaybePeerAddr};
 pub use session::{
     AuthenticatedSession, CredentialVerifier, Identity, PermissionReader, SessionAccount,
     SessionLookup, SessionPermissions, SessionStamp, SessionValidation,

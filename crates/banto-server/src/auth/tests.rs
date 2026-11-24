@@ -2387,3 +2387,110 @@ async fn revalidate_with_permissions_reads_the_permissions_without_sliding_the_i
         .unwrap()
         .is_none());
 }
+
+/// An auth state whose permission read says it started (`entered`) and then
+/// waits for `release` - once; later reads answer at once.
+fn auth_with_a_held_back_permission_read(
+    store: &FakeStore,
+) -> (
+    AuthState,
+    Arc<tokio::sync::Notify>,
+    Arc<tokio::sync::Notify>,
+    Arc<AtomicUsize>,
+) {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let reads = Arc::new(AtomicUsize::new(0));
+    let (reader_entered, reader_release, reader_reads) =
+        (entered.clone(), release.clone(), reads.clone());
+    let auth = store
+        .auth()
+        .with_permission_reader(move |_account_id: i64| {
+            let (entered, release, reads) = (
+                reader_entered.clone(),
+                reader_release.clone(),
+                reader_reads.clone(),
+            );
+            Box::pin(async move {
+                if reads.fetch_add(1, Ordering::SeqCst) == 0 {
+                    entered.notify_one();
+                    release.notified().await;
+                }
+                Ok(SessionPermissions::none())
+            })
+        });
+    (auth, entered, release, reads)
+}
+
+#[tokio::test]
+async fn a_token_that_ended_during_its_permissions_read_is_not_authorized() {
+    // Review of #943: a logout or an expiry does not advance the auth mode's
+    // generation, so the generation compare alone would authorize a token
+    // that ended while its permissions were being read. Both the request's
+    // authorization and the stream's re-check go through the same function.
+    for ended_by in ["logout", "expiry"] {
+        for recheck in [false, true] {
+            let store = FakeStore::default();
+            store.put("alice", "admin", 1, 0);
+            let (auth, entered, release, _reads) = auth_with_a_held_back_permission_read(&store);
+            let token = login_token(&auth, "alice", false).await;
+
+            let authorization = async {
+                if recheck {
+                    auth.revalidate_with_permissions(&token).await
+                } else {
+                    auth.authenticate_with_permissions(&token).await
+                }
+            };
+            let end_during_the_read = async {
+                entered.notified().await;
+                match ended_by {
+                    "logout" => auth.logout(&token),
+                    // Past the absolute lifetime, whatever was slid.
+                    _ => auth.advance(Duration::from_secs(400 * 24 * 60 * 60)),
+                }
+                release.notify_one();
+            };
+            let (authorized, ()) = tokio::join!(authorization, end_during_the_read);
+            assert!(
+                authorized.unwrap().is_none(),
+                "{ended_by} during the read (recheck: {recheck})"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_token_rebound_during_its_permissions_read_is_authorized_on_its_new_binding() {
+    // The session's own password change must not read as an end: the token
+    // is authorized once more, from the start, on its current binding.
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let (auth, entered, release, reads) = auth_with_a_held_back_permission_read(&store);
+    let token = login_token(&auth, "alice", false).await;
+    let previous = SessionStamp {
+        account_id: 1,
+        auth_epoch: 0,
+    };
+
+    let rebind_during_the_read = async {
+        entered.notified().await;
+        store.put("alice", "admin", 1, 1);
+        assert!(auth.rotate_session_epoch(&token, previous, 1));
+        release.notify_one();
+    };
+    let (authorized, ()) = tokio::join!(
+        auth.authenticate_with_permissions(&token),
+        rebind_during_the_read
+    );
+    let (session, _permissions) = authorized.unwrap().expect("still authorized");
+    assert_eq!(
+        session.stamp,
+        Some(SessionStamp {
+            account_id: 1,
+            auth_epoch: 1
+        }),
+        "the binding as it is now"
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 2, "read again for it");
+}

@@ -240,6 +240,10 @@ struct Store {
     permissions_failing: Arc<AtomicBool>,
     lookup_hanging: Arc<AtomicBool>,
     permissions_hanging: Arc<AtomicBool>,
+    /// The permission read waits (and says so on `waiting`) until
+    /// `permissions_release` is notified, then answers as usual.
+    permissions_held_back: Arc<AtomicBool>,
+    permissions_release: Arc<tokio::sync::Notify>,
     waiting: Arc<Mutex<Option<mpsc::UnboundedSender<&'static str>>>>,
 }
 
@@ -306,11 +310,22 @@ impl Store {
         rx
     }
 
-    async fn hang(&self, what: &'static str) {
+    fn say_waiting(&self, what: &'static str) {
         if let Some(waiting) = self.waiting.lock().unwrap().as_ref() {
             let _ = waiting.send(what);
         }
+    }
+
+    async fn hang(&self, what: &'static str) {
+        self.say_waiting(what);
         std::future::pending::<()>().await;
+    }
+
+    /// Lets the one permission read that is held back answer, and the
+    /// later ones answer at once.
+    fn release_permissions(&self) {
+        self.permissions_held_back.store(false, Ordering::SeqCst);
+        self.permissions_release.notify_one();
     }
 
     fn auth(&self) -> AuthState {
@@ -347,6 +362,10 @@ impl Store {
                 store.permission_reads.fetch_add(1, Ordering::SeqCst);
                 if store.permissions_hanging.load(Ordering::SeqCst) {
                     store.hang("permissions").await;
+                }
+                if store.permissions_held_back.load(Ordering::SeqCst) {
+                    store.say_waiting("permissions");
+                    store.permissions_release.notified().await;
                 }
                 if store.permissions_failing.load(Ordering::SeqCst) {
                     return Err(BantoError::Other("store unavailable".to_string()));
@@ -1125,6 +1144,177 @@ async fn a_guarded_stream_is_closed_within_one_interval_and_one_timeout() {
     // (No tight upper bound on a wall clock: "by the first check" above is
     // what says no later check was waited for.)
     assert!(took < Duration::from_secs(5), "{took:?}");
+}
+
+#[tokio::test]
+async fn a_token_that_ended_while_its_permissions_were_read_does_not_keep_the_stream() {
+    // Review of #943: a logout does not advance the auth mode's generation.
+    // The re-check validated the token, then waited for the permission read;
+    // the token was logged out meanwhile. The account and the permission are
+    // untouched, so only the look at the token AFTER the read can tell - the
+    // check must not count as confirmed and buy another interval.
+    let store = Store::with_alice();
+    let (auth, token) = alice(&store).await;
+    let mut open = open_plant(&auth, Plant::new().guarded(), &token).await;
+    let mut waiting = store.watch_waiting();
+    store.permissions_held_back.store(true, Ordering::SeqCst);
+    let reads = store.permission_reads();
+
+    open.ticks.send(()).unwrap();
+    open.plant.values.send_replace(999);
+    let logout_during_the_read = async {
+        // Synchronized: the read is in flight (the token was valid when the
+        // check began), THEN the logout, THEN the read answers "held".
+        assert_eq!(waiting.recv().await, Some("permissions"));
+        auth.logout(&token);
+        store.release_permissions();
+    };
+    let (frame, ()) = tokio::join!(next_frame(&mut open.body), logout_during_the_read);
+    assert_eq!(
+        frame, None,
+        "the stream must end at this check, before the next frame"
+    );
+    assert_eq!(store.permission_reads(), reads + 1, "decided by this check");
+}
+
+#[tokio::test]
+async fn a_token_rebound_while_its_permissions_were_read_keeps_the_stream() {
+    // The other side of the same look: the session's OWN password change
+    // (`rotate_session_epoch`) re-binds the token while the read is in
+    // flight. That is not an end - the check is run once more on the current
+    // binding, as `authenticate` does for its lookup.
+    let store = Store::with_alice();
+    let (auth, token) = alice(&store).await;
+    let mut open = open_plant(&auth, Plant::new().guarded(), &token).await;
+    let mut waiting = store.watch_waiting();
+    store.permissions_held_back.store(true, Ordering::SeqCst);
+    let reads = store.permission_reads();
+
+    open.ticks.send(()).unwrap();
+    open.plant.values.send_replace(7);
+    let rebind_during_the_read = async {
+        assert_eq!(waiting.recv().await, Some("permissions"));
+        store.put("alice", "admin", 1, 1);
+        let previous = SessionStamp {
+            account_id: 1,
+            auth_epoch: 0,
+        };
+        assert!(auth.rotate_session_epoch(&token, previous, 1));
+        store.release_permissions();
+    };
+    let (frame, ()) = tokio::join!(next_frame(&mut open.body), rebind_during_the_read);
+    assert_eq!(frame.as_deref(), Some("event: values\ndata: 7\n\n"));
+    assert_eq!(
+        store.permission_reads(),
+        reads + 2,
+        "read again for the current binding"
+    );
+}
+
+#[tokio::test]
+async fn the_first_recheck_is_counted_from_require_auth_not_from_the_response() {
+    // Review of #943, the bound of design §4.3.1 ("at most one interval and
+    // one timeout after the authorization was last confirmed") at the open:
+    // `require_auth` authorizes, then the handler waits for something of its
+    // own for longer than the interval, and the permission is taken away
+    // meanwhile. The first deadline belongs to `require_auth`'s
+    // authorization, so it has passed when the response is built: the stream
+    // is re-checked BEFORE its first frame, and not one frame is made on the
+    // permissions read back then.
+    let period = Duration::from_millis(80);
+    let store = Store::with_alice();
+    let (auth, token) = alice(&store).await;
+    let plant = Plant::new().guarded();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let slow_open = {
+        let (entered, release) = (entered.clone(), release.clone());
+        move |context: SseContext, plant: Extension<Plant>| {
+            let (entered, release) = (entered.clone(), release.clone());
+            async move {
+                entered.notify_one();
+                release.notified().await;
+                plant_stream(context, plant).await
+            }
+        }
+    };
+    let router = Router::new()
+        .route(PLANT_PATH, get(slow_open))
+        .layer(Extension(plant.clone()))
+        .layer(Extension(SseTiming {
+            schedule: every(period),
+            timeout: REVALIDATE_TIMEOUT,
+        }))
+        .layer(middleware::from_fn_with_state(auth.clone(), require_auth));
+    let request = tokio::spawn({
+        let token = token.clone();
+        async move { get_with(router, PLANT_PATH, Some(&token)).await }
+    });
+
+    // The handler is past `require_auth` (authorized WITH the permission).
+    entered.notified().await;
+    store.take_away(&plant_view());
+    let reads = store.permission_reads();
+    tokio::time::sleep(period * 2).await;
+    release.notify_one();
+
+    let response = request.await.unwrap();
+    // The open itself was judged on `require_auth`'s authorization ...
+    assert_eq!(response.status(), StatusCode::OK);
+    // ... and the overdue re-check comes before any frame.
+    let mut body = response.into_body();
+    assert_eq!(next_frame(&mut body).await, None, "closed, no frame");
+    assert_eq!(plant.encoded(), 0, "not one frame was made");
+    assert_eq!(store.permission_reads(), reads + 1, "re-read at the open");
+}
+
+#[tokio::test]
+async fn the_recheck_uses_the_token_require_auth_validated_not_the_header() {
+    // Review of #943: the token is part of the binding. A middleware INSIDE
+    // the route that rewrites `Authorization` (here: to another live
+    // session's token) changes nothing - the stream is opened and re-checked
+    // for the token `require_auth` validated.
+    let store = Store::with_alice();
+    store.put("bob", "admin", 2, 0);
+    let (auth, token) = alice(&store).await;
+    let bobs = auth.login("bob", "pw").await.expect("bob logs in");
+
+    let plant = Plant::new();
+    let (schedule, ticks) = manual_ticks();
+    let rewrite = {
+        let bobs = bobs.clone();
+        move |mut request: axum::extract::Request, next: middleware::Next| {
+            let value = format!("Bearer {bobs}").parse().unwrap();
+            async move {
+                request.headers_mut().insert("Authorization", value);
+                next.run(request).await
+            }
+        }
+    };
+    let router = Router::new()
+        .route(PLANT_PATH, get(plant_stream))
+        .layer(Extension(plant.clone()))
+        .layer(Extension(SseTiming {
+            schedule,
+            timeout: REVALIDATE_TIMEOUT,
+        }))
+        .layer(middleware::from_fn(rewrite))
+        .layer(middleware::from_fn_with_state(auth.clone(), require_auth));
+    let response = get_with(router, PLANT_PATH, Some(&token)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut open = Open {
+        body: response.into_body(),
+        ticks,
+        plant,
+    };
+    assert!(open.next_frame().await.is_some());
+
+    // Bob's token ending does not reach alice's stream ...
+    auth.logout(&bobs);
+    open.recheck_keeps_open(1).await;
+    // ... alice's does.
+    auth.logout(&token);
+    open.recheck_closes().await;
 }
 
 // ---- the server stopping (design §4.4) ----
