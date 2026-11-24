@@ -104,7 +104,10 @@ export class GridState<TRow = unknown> {
 		return this.#rowHeightFixed;
 	}
 
-	#columns: GridColumn<TRow>[];
+	// Reactive (#890): `setColumns` swaps the definitions, and every getter
+	// that reads them (`orderedColumns`, `allColumns`, ...) follows. Raw, so
+	// the caller's column objects are never wrapped in a proxy.
+	#columns: GridColumn<TRow>[] = $state.raw([]);
 
 	constructor(columns: GridColumn<TRow>[], options: GridStateOptions = {}) {
 		this.#columns = columns;
@@ -118,6 +121,78 @@ export class GridState<TRow = unknown> {
 		);
 		this.#rowHeightFixed = options.rowHeight !== undefined;
 		this.#rowHeight = options.rowHeight ?? DEFAULT_ROW_HEIGHT;
+	}
+
+	/**
+	 * Replace the column definitions and keep what the user did (#890). An app
+	 * whose columns change after mount (an edit mode flipping `editable`, a
+	 * column that only exists for some data) calls this - or just passes the
+	 * new array to `<BantoGrid columns>`, which calls it - instead of building
+	 * a new `GridState`, which would lose the widths, sort, filters and so on.
+	 * Columns are matched by `id`:
+	 *
+	 * - A column in both sets keeps its width, its place in `order`, and its
+	 *   hidden / pinned / sort / filter / group state. Its definition is the
+	 *   new one (`editable`, `header`, `renderer`, ...). `width`, `hidden` and
+	 *   `pinned` of a definition stay what they always were - initial values -
+	 *   so changing them on an existing column changes nothing here.
+	 * - A new column is seeded from its definition (`width`, `hidden`,
+	 *   `pinned`) like in the constructor, and takes the place its definition
+	 *   has: right after the column that precedes it in `columns` (first when
+	 *   it is the first definition). A column that was here before and comes
+	 *   back gets its last width again; the rest of its state starts over.
+	 * - A column that is gone loses its place in `order` and its hidden /
+	 *   pinned / sort / filter entries; a `groupBy` on it is cleared. Its width
+	 *   is remembered (see above). The "never hide every column" rule is
+	 *   applied again afterwards (the first column in display order is shown).
+	 *
+	 * Pass a NEW array to change the set: the same array instance is a no-op.
+	 */
+	setColumns(columns: GridColumn<TRow>[]): void {
+		if (columns === this.#columns) return;
+		const previous = new Set(this.#columns.map((column) => column.id));
+		this.#columns = columns;
+		const known = new Set(columns.map((column) => column.id));
+		const added = columns.filter((column) => !previous.has(column.id));
+		const removed = [...previous].some((id) => !known.has(id));
+		// The usual case - same ids, new definitions - touches nothing else.
+		if (added.length === 0 && !removed) return;
+
+		const order = this.order.filter((id) => known.has(id));
+		columns.forEach((column, index) => {
+			if (order.includes(column.id)) return;
+			// Every earlier definition is in `order` by now, so its neighbour is too.
+			const after = index === 0 ? -1 : order.indexOf(columns[index - 1].id);
+			order.splice(after + 1, 0, column.id);
+		});
+		this.order = order;
+
+		const seeded = added.filter((column) => this.widths[column.id] === undefined);
+		if (seeded.length > 0) {
+			this.widths = {
+				...this.widths,
+				...Object.fromEntries(
+					seeded.map((column) => [column.id, column.width ?? DEFAULT_COLUMN_WIDTH])
+				)
+			};
+		}
+		this.hidden = this.#clampHidden([
+			...this.hidden,
+			...added.filter((column) => column.hidden).map((column) => column.id)
+		]);
+		this.pinned = [
+			...this.pinned.filter((id) => known.has(id)),
+			...added.filter((column) => column.pinned === 'left').map((column) => column.id)
+		];
+		if (removed) {
+			if (this.sort.some((entry) => !known.has(entry.field))) {
+				this.sort = this.sort.filter((entry) => known.has(entry.field));
+			}
+			if (this.filters.some((entry) => !known.has(entry.field))) {
+				this.filters = this.filters.filter((entry) => known.has(entry.field));
+			}
+			if (this.groupBy !== null && !known.has(this.groupBy)) this.setGroupBy(null);
+		}
 	}
 
 	/**
@@ -157,6 +232,17 @@ export class GridState<TRow = unknown> {
 	 */
 	get allColumns(): GridColumn<TRow>[] {
 		return this.#partition(this.#inOrder()).ordered;
+	}
+
+	/**
+	 * The column definitions as given - to the constructor or the latest
+	 * `setColumns` (#890) - in definition order, hidden ones included. Unlike
+	 * `allColumns` it changes only when the definitions are swapped, not on a
+	 * reorder / hide / pin: read it to look a definition up by id (sorting,
+	 * filtering, grouping).
+	 */
+	get columns(): GridColumn<TRow>[] {
+		return this.#columns;
 	}
 
 	#visiblePartition(): { ordered: GridColumn<TRow>[]; pinnedCount: number } {

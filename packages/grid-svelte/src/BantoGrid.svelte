@@ -243,6 +243,22 @@
 	// svelte-ignore state_referenced_locally
 	const gridState: GridState<TRow> = externalState ?? new GridState(columns, { rowHeight });
 
+	// #890: a `columns` prop that changes AFTER mount is handed to the state,
+	// which keeps the user's widths / order / sort / filters / pins
+	// (`GridState.setColumns`). The array given at mount is not pushed: a
+	// caller's own `state` stays the source of truth for what it was built
+	// with, as before. `$effect.pre` so the header and the cells never render
+	// one frame with the old definitions; only `columns` is tracked
+	// (conventions §8).
+	// svelte-ignore state_referenced_locally
+	let appliedColumns = columns;
+	$effect.pre(() => {
+		const next = columns;
+		if (next === appliedColumns) return;
+		appliedColumns = next;
+		untrack(() => gridState.setColumns(next));
+	});
+
 	const OVERSCAN = 8;
 
 	let containerEl: HTMLDivElement | undefined = $state();
@@ -381,9 +397,9 @@
 		mode === 'server'
 			? rows
 			: sortRows(
-					filterRows(rows as TRow[], gridState.filters, columns),
+					filterRows(rows as TRow[], gridState.filters, gridState.columns),
 					gridState.sort,
-					columns,
+					gridState.columns,
 					getRowId
 				)
 	);
@@ -394,7 +410,7 @@
 	// rendering exactly as before M5 Phase B.
 	const groupedEntries: FlatEntry<TRow>[] | null = $derived(
 		mode === 'client' && gridState.groupBy
-			? buildGroupedView(sorted as TRow[], columns, gridState.groupBy, (key) =>
+			? buildGroupedView(sorted as TRow[], gridState.columns, gridState.groupBy, (key) =>
 					gridState.collapsedGroups.has(key)
 				)
 			: null
@@ -886,6 +902,29 @@
 				}
 			}
 			if (editing && !visible.has(editing.field)) edit.cancel();
+		});
+	});
+
+	/**
+	 * #890: the definition of the column being edited can change under the
+	 * open editor (`columns` swapped: an edit mode switched off). When the
+	 * cell is no longer editable the edit is cancelled - the draft is dropped,
+	 * the same as when the column is hidden or removed (the effect above); a
+	 * save already on its way is not waited for. Only the DEFINITION is
+	 * tracked: a row whose own values change during an edit does not close it.
+	 */
+	const editingColumn = $derived.by(() => {
+		const field = editingField;
+		return field === undefined
+			? undefined
+			: gridState.orderedColumns.find((candidate) => candidate.id === field);
+	});
+	$effect(() => {
+		const column = editingColumn;
+		if (!column) return;
+		untrack(() => {
+			const row = rowAtDisplayIndex(editingRowIndex);
+			if (row !== undefined && !isColumnEditable(column, row)) edit.cancel();
 		});
 	});
 
@@ -2081,7 +2120,8 @@
 			errorId={editErrorId}
 			message={editing.error}
 			label={t.inlineEditErrorLabel(
-				columns.find((column) => column.id === editing?.field)?.header.trim() || editing.field
+				gridState.columns.find((column) => column.id === editing?.field)?.header.trim() ||
+					editing.field
 			)}
 			hint={t.inlineEditErrorHint()}
 			onReturn={returnFromEditError}
