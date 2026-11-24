@@ -202,12 +202,12 @@ describe('DateTimeInput dialog', () => {
 	it('the month view (Issue #908): Esc goes back to the days, the dialog stays open', () => {
 		const { button, onblur, onValueChange } = setup({ value: '2026-11-07T09:30' });
 		fireEvent.click(button);
-		fireEvent.click(screen.getByRole('button', { name: '11月' }));
+		fireEvent.click(screen.getByRole('button', { name: '2026年11月' }));
 		expect((document.activeElement as HTMLElement).getAttribute('aria-label')).toBe('2026年11月');
 		fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
 		fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
 		expect(focusedDate()).toBe('2026-12-07');
-		fireEvent.click(screen.getByRole('button', { name: '12月' }));
+		fireEvent.click(screen.getByRole('button', { name: '2026年12月' }));
 		fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
 		expect(isOpen()).toBe(true);
 		expect(focusedDate()).toBe('2026-12-07');
@@ -219,6 +219,7 @@ describe('DateTimeInput dialog', () => {
 	it('Esc from the time list goes back one view first (year -> month -> day -> closed)', () => {
 		const { button } = setup({ value: '2026-11-07T09:30' });
 		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '2026年11月' }));
 		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
 		const heading = () => screen.getByRole('heading').textContent?.replace(/\s+/g, '');
 		expect(heading()).toBe('2020年～2031年');
