@@ -145,6 +145,8 @@ export class GridState<TRow = unknown> {
 	 *   pinned / sort / filter entries; a `groupBy` on it is cleared. Its width
 	 *   is remembered (see above). The "never hide every column" rule is
 	 *   applied again afterwards (the first column in display order is shown).
+	 *   A sort / filter on a field that was never a column stays. Dropping one
+	 *   moves `prunedRevision` on.
 	 *
 	 * Pass a NEW array to change the set: the same array instance is a no-op.
 	 */
@@ -185,14 +187,45 @@ export class GridState<TRow = unknown> {
 			...added.filter((column) => column.pinned === 'left').map((column) => column.id)
 		];
 		if (removed) {
-			if (this.sort.some((entry) => !known.has(entry.field))) {
-				this.sort = this.sort.filter((entry) => known.has(entry.field));
-			}
-			if (this.filters.some((entry) => !known.has(entry.field))) {
-				this.filters = this.filters.filter((entry) => known.has(entry.field));
-			}
-			if (this.groupBy !== null && !known.has(this.groupBy)) this.setGroupBy(null);
+			const gone = new Set([...previous].filter((id) => !known.has(id)));
+			this.#dropConditionsOn(gone);
 		}
+	}
+
+	/**
+	 * Drop the sort / filter entries and the `groupBy` on the columns in `gone`
+	 * (#890). Only those: a condition the app set on a field that never was a
+	 * column (a server-side condition) stays. When anything is dropped,
+	 * `prunedRevision` moves on - BantoGrid reports the new sort / filters to
+	 * `onParamsChange` (server mode) and re-anchors the cell selection, since
+	 * the displayed rows change under it.
+	 */
+	#dropConditionsOn(gone: Set<string>): void {
+		let params = false;
+		if (this.sort.some((entry) => gone.has(entry.field))) {
+			this.sort = this.sort.filter((entry) => !gone.has(entry.field));
+			params = true;
+		}
+		if (this.filters.some((entry) => gone.has(entry.field))) {
+			this.filters = this.filters.filter((entry) => !gone.has(entry.field));
+			params = true;
+		}
+		const grouped = this.groupBy !== null && gone.has(this.groupBy);
+		if (grouped) this.setGroupBy(null);
+		if (params || grouped) this.#pruned = { revision: this.#pruned.revision + 1, params };
+	}
+
+	#pruned = $state.raw({ revision: 0, params: false });
+
+	/**
+	 * Moves on each time `setColumns` drops a sort / filter / group-by because
+	 * its column went away (#890); `params` tells whether the sort or the
+	 * filters (what a server is asked for) changed. For BantoGrid, which
+	 * reacts to it; an app that calls `setColumns` itself and fetches rows with
+	 * `sort` / `filters` can watch it too.
+	 */
+	get prunedRevision(): { readonly revision: number; readonly params: boolean } {
+		return this.#pruned;
 	}
 
 	/**
@@ -466,6 +499,16 @@ export class GridState<TRow = unknown> {
 		// preserve the persisted order for those that do; append any new
 		// columns (added since the state was saved) at the end.
 		const knownIds = new Set(this.#columns.map((column) => column.id));
+		// A column that was in the saved set but is not in this one takes its
+		// sort / filter / group-by with it (#890: the same rule as
+		// `setColumns`) - a filter nobody can see or clear would hide rows.
+		// Fields that were never columns (an app's own server condition) stay.
+		const gone = new Set(parsed.order.filter((id) => !knownIds.has(id)));
+		if (gone.size > 0) {
+			this.sort = this.sort.filter((entry) => !gone.has(entry.field));
+			this.filters = this.filters.filter((entry) => !gone.has(entry.field));
+			if (this.groupBy !== null && gone.has(this.groupBy)) this.groupBy = null;
+		}
 		const restoredOrder = parsed.order.filter((id) => knownIds.has(id));
 		const missing = this.order.filter((id) => !restoredOrder.includes(id));
 		this.order = [...restoredOrder, ...missing];

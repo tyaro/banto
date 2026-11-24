@@ -448,3 +448,148 @@ describe('BantoGrid follows a changed `columns` prop (#890)', () => {
 		});
 	});
 });
+
+describe('conditions on a column that goes away (#890 review)', () => {
+	it('setColumns keeps a condition on a field that was never a column', () => {
+		const state = new GridState<Tag>(tagColumns({ analog: true }));
+		state.setFilter({ field: 'site', op: 'eq', value: 'A' });
+		state.setFilter({ field: 'unit', op: 'eq', value: 'kPa' });
+		state.toggleSort('site', false);
+		state.setColumns(tagColumns());
+		expect(state.filters).toEqual([{ field: 'site', op: 'eq', value: 'A' }]);
+		expect(state.sort).toEqual([{ field: 'site', direction: 'asc' }]);
+		expect(state.prunedRevision).toEqual({ revision: 1, params: true });
+	});
+
+	it('prunedRevision stays when nothing is dropped, and says when only a group-by went', () => {
+		const state = new GridState<Tag>(tagColumns({ analog: true }));
+		state.setColumns(tagColumns({ analog: true, edit: true }));
+		state.setColumns(tagColumns());
+		expect(state.prunedRevision.revision).toBe(0);
+		state.setColumns(tagColumns({ analog: true }));
+		state.setGroupBy('unit');
+		state.setColumns(tagColumns());
+		expect(state.prunedRevision).toEqual({ revision: 1, params: false });
+	});
+
+	it('hydrate drops the conditions on a saved column this set lacks; its width comes back with it', () => {
+		const saved = new GridState<Tag>(tagColumns({ analog: true }));
+		saved.setFilter({ field: 'unit', op: 'eq', value: 'kPa' });
+		saved.setFilter({ field: 'site', op: 'eq', value: 'A' });
+		saved.toggleSort('decimals', false);
+		saved.setGroupBy('unit');
+		saved.resizeColumn('unit', 99);
+
+		const restored = GridState.hydrate(saved.serialize(), tagColumns());
+		expect(restored.filters).toEqual([{ field: 'site', op: 'eq', value: 'A' }]);
+		expect(restored.sort).toEqual([]);
+		expect(restored.groupBy).toBeNull();
+
+		restored.setColumns(tagColumns({ analog: true }));
+		expect(restored.widths.unit).toBe(99);
+		expect(restored.filters).toEqual([{ field: 'site', op: 'eq', value: 'A' }]);
+		expect(restored.sort).toEqual([]);
+	});
+
+	describe('server mode: the new sort / filters are reported once', () => {
+		function serverSetup(columns: GridColumn<Tag>[], state: GridState<Tag>) {
+			const calls: { sort: unknown; filters: unknown }[] = [];
+			const view = render(BantoGrid<Tag>, {
+				rows,
+				columns,
+				state,
+				mode: 'server',
+				totalRows: rows.length,
+				getRowId: (row: Tag) => row.id,
+				onParamsChange: (params: { sort: unknown; filters: unknown }) => {
+					calls.push(params);
+				}
+			});
+			return { ...view, calls };
+		}
+
+		it('through the `columns` prop', async () => {
+			const state = new GridState<Tag>(tagColumns({ analog: true }));
+			state.setFilter({ field: 'unit', op: 'eq', value: 'kPa' });
+			state.setFilter({ field: 'site', op: 'eq', value: 'A' });
+			const { rerender, calls } = serverSetup(tagColumns({ analog: true }), state);
+
+			// Definitions only: nothing to report.
+			await rerender({ columns: tagColumns({ analog: true, edit: true }) });
+			expect(calls).toEqual([]);
+
+			await rerender({ columns: tagColumns() });
+			expect(calls).toEqual([{ sort: [], filters: [{ field: 'site', op: 'eq', value: 'A' }] }]);
+		});
+
+		it('through `state.setColumns` called by the caller', () => {
+			const columns = tagColumns({ analog: true });
+			const state = new GridState<Tag>(columns);
+			state.toggleSort('unit', false);
+			const { calls } = serverSetup(columns, state);
+
+			flushSync(() => state.setColumns(tagColumns({ analog: true, edit: true })));
+			expect(calls).toEqual([]);
+			flushSync(() => state.setColumns(tagColumns()));
+			expect(calls).toEqual([{ sort: [], filters: [] }]);
+		});
+	});
+
+	describe('the cell selection follows the record when the rows re-sort', () => {
+		function grid(columns: GridColumn<Tag>[], state: GridState<Tag>) {
+			return render(BantoGrid<Tag>, {
+				rows,
+				columns,
+				state,
+				getRowId: (row: Tag) => row.id
+			});
+		}
+		const activeCell = (container: HTMLElement) =>
+			container.querySelector<HTMLElement>('.cell.active');
+
+		it('the active cell stays on its tag; a range collapses to it', async () => {
+			// The Hub: sorted by decimals, a name selected, edit mode off drops decimals.
+			const state = new GridState<Tag>(tagColumns({ analog: true }));
+			state.toggleSort('decimals', false); // Delta(0), Beta(1), Alpha(2)
+			const { container, rerender } = grid(tagColumns({ analog: true }), state);
+			const at = (row: number, field: string) =>
+				container.querySelector<HTMLElement>(
+					`[data-cell-row="${row}"][data-cell-field="${field}"]`
+				)!;
+			await fireEvent.pointerDown(at(1, 'name'));
+			await fireEvent.pointerDown(at(2, 'name'), { shiftKey: true });
+			expect(container.querySelectorAll('.cell.in-range, .cell.active').length).toBeGreaterThan(1);
+			expect(activeCell(container)?.textContent?.trim()).toBe('Alpha');
+
+			await rerender({ columns: tagColumns() }); // unsorted again: Beta, Alpha, Delta
+
+			const active = activeCell(container)!;
+			expect(active.textContent?.trim()).toBe('Alpha');
+			expect(active.getAttribute('data-cell-row')).toBe('1');
+			expect(container.querySelectorAll('.cell.in-range').length).toBe(0);
+		});
+
+		it('with no record to follow (the caller set the columns) the selection is cleared', async () => {
+			const columns = tagColumns({ analog: true });
+			const state = new GridState<Tag>(columns);
+			state.toggleSort('decimals', false);
+			const { container } = grid(columns, state);
+			await fireEvent.pointerDown(
+				container.querySelector<HTMLElement>('[data-cell-row="0"][data-cell-field="name"]')!
+			);
+			flushSync(() => state.setColumns(tagColumns()));
+			expect(activeCell(container)).toBeNull();
+		});
+
+		it('is left alone when no condition changed', async () => {
+			const state = new GridState<Tag>(tagColumns({ analog: true }));
+			state.toggleSort('value', false);
+			const { container, rerender } = grid(tagColumns({ analog: true }), state);
+			await fireEvent.pointerDown(
+				container.querySelector<HTMLElement>('[data-cell-row="2"][data-cell-field="name"]')!
+			);
+			await rerender({ columns: tagColumns() });
+			expect(activeCell(container)?.getAttribute('data-cell-row')).toBe('2');
+		});
+	});
+});

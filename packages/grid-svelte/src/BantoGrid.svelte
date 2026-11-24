@@ -252,11 +252,26 @@
 	// (conventions §8).
 	// svelte-ignore state_referenced_locally
 	let appliedColumns = columns;
+	// The last `prunedRevision` handled (see `afterConditionsPruned`). Declared
+	// here: a pre-effect runs during this script, before the code below.
+	let handledPruneRevision = untrack(() => gridState.prunedRevision.revision);
 	$effect.pre(() => {
 		const next = columns;
 		if (next === appliedColumns) return;
 		appliedColumns = next;
-		untrack(() => gridState.setColumns(next));
+		untrack(() => {
+			// Which record the active cell is on, read before the swap can
+			// re-sort or re-filter the rows under it.
+			const anchor = cellSelectionRecord();
+			gridState.setColumns(next);
+			afterConditionsPruned(anchor);
+		});
+	});
+	// The same when the caller calls `state.setColumns` itself (no record to
+	// follow then: the cell selection is cleared instead).
+	$effect.pre(() => {
+		void gridState.prunedRevision;
+		untrack(() => afterConditionsPruned(null));
 	});
 
 	const OVERSCAN = 8;
@@ -904,6 +919,41 @@
 			if (editing && !visible.has(editing.field)) edit.cancel();
 		});
 	});
+
+	/**
+	 * #890: `setColumns` dropped a sort / filter / group-by whose column went
+	 * away. The server is asked for the new sort / filters (as after a header
+	 * change), and the cell selection - display indices - moves with the
+	 * record it was on: the active cell follows that row id, a range (which
+	 * cannot be kept over re-ordered rows) collapses to it, and with no record
+	 * to follow (server mode, the caller's own `setColumns`, a row no longer
+	 * shown) the selection is cleared.
+	 */
+	function afterConditionsPruned(anchor: { rowId: string | number; field: string } | null) {
+		const pruned = gridState.prunedRevision;
+		if (pruned.revision === handledPruneRevision) return;
+		handledPruneRevision = pruned.revision;
+		if (pruned.params) notifyParamsChange();
+		if (!selection.active) return;
+		const rowIndex = anchor && mode === 'client' ? displayIndexOfRowId(anchor.rowId) : -1;
+		if (anchor && rowIndex >= 0) selection.setActive(rowIndex, anchor.field, false);
+		else selection.clear();
+	}
+
+	function cellSelectionRecord(): { rowId: string | number; field: string } | null {
+		const active = selection.active;
+		if (!active) return null;
+		const row = rowAtDisplayIndex(active.rowIndex);
+		return row === undefined ? null : { rowId: getRowId(row), field: active.field };
+	}
+
+	/** Client mode: the display index of the row with `rowId`, or -1. */
+	function displayIndexOfRowId(rowId: string | number): number {
+		const index = groupedEntries
+			? groupedEntries.findIndex((entry) => entry.kind === 'row' && getRowId(entry.row) === rowId)
+			: sorted.findIndex((row) => row !== undefined && getRowId(row) === rowId);
+		return index < effectiveRowCount ? index : -1;
+	}
 
 	/**
 	 * #890: the definition of the column being edited can change under the
