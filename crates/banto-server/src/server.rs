@@ -46,8 +46,8 @@ pub const DETACHED_WRITES_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 /// app's own, all served by [`crate::sse`]) watch it and end on their own
 /// when the server is asked to stop - hyper's graceful shutdown otherwise
 /// waits for them forever (Issue #283). A stream sees it when it is polled;
-/// one that is not (its client does not read) is left to
-/// [`RunningServer::stop`]'s cap. Absent when a
+/// for one that is not (its client does not read), [`RunningServer::stop`]
+/// only stops waiting at its cap. Absent when a
 /// router is served some other way (e.g. `oneshot` in tests); handlers treat
 /// that as "never signalled".
 #[derive(Clone)]
@@ -147,12 +147,16 @@ impl RunningServer {
     /// - a stream that is being polled ends on the signal, also while one of
     ///   its session re-checks is waiting for the store (Issue #935): this
     ///   never waits for a check;
-    /// - everything else is covered only by the cap. A connection that does
-    ///   not finish - any other long response, and also an SSE stream whose
-    ///   body is not polled because its client does not read (the send is
-    ///   held by backpressure, so the stream never gets to see the signal) -
-    ///   makes this wait up to [`STOP_TIMEOUT`], after which the server task
-    ///   is aborted (Issue #283).
+    /// - everything else is covered only by the cap, which is a cap on this
+    ///   WAIT. A connection that does not finish - any other long response,
+    ///   and also an SSE stream whose body is not polled because its client
+    ///   does not read (the send is held by backpressure, so the stream
+    ///   never gets to see the signal) - makes this wait up to
+    ///   [`STOP_TIMEOUT`]; then the wait is given up and the task that runs
+    ///   the server is aborted (Issue #283). That task is the one around
+    ///   `axum::serve`: axum runs each connection on a task of its own, so
+    ///   closing the socket of a connection that did not finish within the
+    ///   cap is NOT guaranteed.
     ///
     /// Writes (Issue #793, ADR-0035, [`crate::detach`]): from the first
     /// moment of the stop, a write that arrives - also on a connection that

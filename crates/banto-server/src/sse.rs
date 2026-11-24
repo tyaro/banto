@@ -81,10 +81,12 @@
 //!   this module guarantees, and it reaches as far as the response body is
 //!   polled: a stream whose client does not read (the send is held by
 //!   backpressure, which arbitrarily large frames make possible) is not
-//!   polled, so it does not get to see the stop signal. Such a connection is
-//!   ended by the server-wide cap of `RunningServer::stop` (`STOP_TIMEOUT`,
-//!   after which the server task is aborted), like any other connection
-//!   that does not finish.
+//!   polled, so it does not get to see the stop signal. For such a
+//!   connection only the server-wide cap of `RunningServer::stop` applies
+//!   (`STOP_TIMEOUT`), and that is a cap on the WAIT: `stop` stops waiting
+//!   and aborts the task that runs the server. axum serves each connection
+//!   on a task of its own, so this does not promise that the socket of a
+//!   connection that does not finish is closed within the cap.
 //!
 //! ## Streams with an authorization condition (design §4.3.1)
 //!
@@ -599,8 +601,9 @@ where
 /// - the stream ends when the server stops - the next time it is polled,
 ///   also in the middle of a re-check (`RunningServer::stop` does not wait
 ///   for a check) - and when `frames` ends (the client reconnects). A
-///   stream that is not polled because its client does not read is ended by
-///   `RunningServer::stop`'s own cap, not by this;
+///   stream that is not polled because its client does not read does not
+///   get there: `RunningServer::stop` only stops waiting for it at its own
+///   cap (its socket is not promised to be closed by then);
 /// - a keepalive comment is sent every 15 seconds.
 ///
 /// The response is `text/event-stream`; frames are written as
