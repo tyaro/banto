@@ -865,11 +865,18 @@ impl UsersService {
             }
         };
         if !collisions.is_empty() {
+            let joined = collisions.join(", ");
+            // `admin` (any case) is reserved for the built-in user and cannot be
+            // freed by changing a grant, so an account with that name only
+            // exists after a direct edit of the database.
+            let is_admin = |n: &String| n.eq_ignore_ascii_case(BUILTIN_ADMIN_USERNAME);
+            let guidance = if collisions.iter().all(is_admin) {
+                "組み込みのユーザー admin と同じ名前のアカウントがあります。                 これは DB を直接書き換えたときだけ起きます。バックアップから戻すか、DB を作り直してください"
+            } else {
+                "この名前はログインなしのセッション（grant）の固定 id に使われています。                 grant の固定 id を別の値に変えて起動し直してください。                 そのアカウントを残したまま固定 id を戻したい場合は、いったん固定 id を変えて起動し、                 そのアカウントを別の名前で作り直して（または削除して）から戻してください"
+            };
             return Err(BantoError::Other(format!(
-                "予約されたユーザー名と同じ名前のアカウントがあります: {}。\
-                 この名前は組み込みのユーザーか、ログインなしのセッション（grant）の固定 id に使われています。\
-                 そのアカウントを別の名前で作り直すか、grant の固定 id を変えてください",
-                collisions.join(", ")
+                "予約されたユーザー名と同じ名前のアカウントがあります: {joined}。{guidance}"
             )));
         }
         Ok(StartupUsers { builtin_admin_id })
