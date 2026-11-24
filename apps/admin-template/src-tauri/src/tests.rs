@@ -1280,6 +1280,235 @@ async fn autologin_enable_is_recorded_as_settings_change() {
     );
 }
 
+/// Makes `set_auth_config` fail (auth-disabled + LAN without viewer-public is
+/// refused), leaving the autologin settings as they were.
+async fn make_settings_save_fail(state: &AppState) {
+    for (k, v) in [
+        ("server.enabled", "true"),
+        ("server.viewer_public", "false"),
+        ("auth.disabled", "true"),
+    ] {
+        state.settings.set(k, v).await.expect("set");
+    }
+}
+
+async fn admin_state_with_fake_keyring() -> AppState {
+    keyring_store::fake::install();
+    let state = app_state().await;
+    let admin = state
+        .users
+        .create_user("manager", "password123", "管理者", Role::Admin)
+        .await
+        .expect("create admin");
+    state.set_session_for_test(Some(DesktopSession::Account(admin)));
+    state
+}
+
+/// S2 D: a failed settings save must not leave the credential in the keyring.
+#[tokio::test]
+async fn autologin_enable_removes_the_credential_when_the_settings_save_fails() {
+    let state = admin_state_with_fake_keyring().await;
+    make_settings_save_fail(&state).await;
+
+    let err = autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect_err("the save must fail");
+    assert!(format!("{err}").contains("LAN"), "{err}");
+    assert_eq!(keyring_store::fake::stored("manager"), None);
+    assert!(
+        !state
+            .settings
+            .auth_config()
+            .await
+            .unwrap()
+            .autologin_enabled
+    );
+}
+
+/// S2 D: when the take-back itself fails, the error says so (and names the
+/// account to clean up by hand).
+#[tokio::test]
+async fn autologin_enable_reports_a_failed_take_back() {
+    let state = admin_state_with_fake_keyring().await;
+    make_settings_save_fail(&state).await;
+    keyring_store::fake::fail_delete(true);
+
+    let err = autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect_err("the save must fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("LAN") && msg.contains("取り消しにも失敗"),
+        "{msg}"
+    );
+    assert!(msg.contains("manager"), "{msg}");
+}
+
+/// S2 D: switching the account removes the previous account's credential.
+#[tokio::test]
+async fn autologin_enable_for_another_account_removes_the_previous_credential() {
+    let state = admin_state_with_fake_keyring().await;
+    state
+        .users
+        .create_user("second", "password456", "二人目", Role::Admin)
+        .await
+        .expect("create second");
+
+    autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect("enable manager");
+    assert!(keyring_store::fake::stored("manager").is_some());
+    autologin_enable_body(&state, "second", "password456")
+        .await
+        .expect("enable second");
+
+    assert_eq!(keyring_store::fake::stored("manager"), None);
+    assert_eq!(
+        keyring_store::fake::stored("second").as_deref(),
+        Some("password456")
+    );
+}
+
+/// Review of #924: the previous account's credential is deleted while the
+/// auth-config lock is still held (a concurrent switch back must not have its
+/// fresh entry deleted by this call).
+#[tokio::test]
+async fn autologin_enable_deletes_the_previous_credential_under_the_lock() {
+    let state = admin_state_with_fake_keyring().await;
+    state
+        .users
+        .create_user("second", "password456", "二人目", Role::Admin)
+        .await
+        .expect("create second");
+    autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect("enable manager");
+
+    let lock_addr = &state.auth_config_lock as *const AsyncMutex<()> as usize;
+    let held = std::rc::Rc::new(std::cell::Cell::new(None));
+    let seen = held.clone();
+    keyring_store::fake::on_delete(move || {
+        // SAFETY: `state` outlives the call below, which runs the hook.
+        let lock = unsafe { &*(lock_addr as *const AsyncMutex<()>) };
+        seen.set(Some(lock.try_lock().is_err()));
+    });
+    autologin_enable_body(&state, "second", "password456")
+        .await
+        .expect("enable second");
+    assert_eq!(held.get(), Some(true), "delete must run under the lock");
+}
+
+/// Review of #924: names differing only in case may share one OS keyring
+/// entry (Windows), so switching between them is refused before the keyring is
+/// written: the saved settings and their credential stay usable.
+#[tokio::test]
+async fn autologin_enable_refuses_a_case_only_switch_and_keeps_the_old_setup() {
+    keyring_store::fake::install_case_insensitive();
+    let state = app_state().await;
+    let admin = state
+        .users
+        .create_user("manager", "password123", "管理者", Role::Admin)
+        .await
+        .expect("create admin");
+    state.set_session_for_test(Some(DesktopSession::Account(admin)));
+    state
+        .users
+        .create_user("Manager", "other-pass-1", "別人", Role::Admin)
+        .await
+        .expect("create case variant");
+    // The previous setup: `Manager` with its own password in the shared entry.
+    let mut config = state.settings.auth_config().await.unwrap();
+    config.autologin_enabled = true;
+    config.autologin_username = Some("Manager".to_string());
+    state.settings.set_auth_config(&config).await.unwrap();
+    keyring_store::set_password("Manager", "other-pass-1").unwrap();
+    keyring_store::fake::on_delete(|| panic!("must not delete anything"));
+
+    let err = autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect_err("a case-only switch");
+    assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+    let config = state.settings.auth_config().await.unwrap();
+    assert!(config.autologin_enabled);
+    assert_eq!(config.autologin_username.as_deref(), Some("Manager"));
+    assert_eq!(
+        keyring_store::get_password("Manager").unwrap(),
+        "other-pass-1"
+    );
+}
+
+/// The case comparison is Unicode-aware (not ASCII only).
+#[tokio::test]
+async fn autologin_enable_refuses_a_non_ascii_case_only_switch() {
+    keyring_store::fake::install_case_insensitive();
+    let state = app_state().await;
+    let admin = state
+        .users
+        .create_user("manager", "password123", "管理者", Role::Admin)
+        .await
+        .expect("create admin");
+    state.set_session_for_test(Some(DesktopSession::Account(admin)));
+    state
+        .users
+        .create_user("ÉCOLE", "password123", "学校", Role::Admin)
+        .await
+        .expect("create");
+    let mut config = state.settings.auth_config().await.unwrap();
+    config.autologin_enabled = true;
+    config.autologin_username = Some("école".to_string());
+    state.settings.set_auth_config(&config).await.unwrap();
+
+    let err = autologin_enable_body(&state, "ÉCOLE", "password123")
+        .await
+        .expect_err("a case-only switch");
+    assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+    assert_eq!(keyring_store::fake::stored("école"), None);
+}
+
+/// Windows compares names with uppercase folding: `σ` and `ς` differ when
+/// lowercased but are both `Σ`, so they are refused too.
+#[tokio::test]
+async fn autologin_enable_refuses_a_sigma_variant_switch() {
+    keyring_store::fake::install_case_insensitive();
+    let state = app_state().await;
+    let admin = state
+        .users
+        .create_user("manager", "password123", "管理者", Role::Admin)
+        .await
+        .expect("create admin");
+    state.set_session_for_test(Some(DesktopSession::Account(admin)));
+    state
+        .users
+        .create_user("ας", "password123", "シグマ", Role::Admin)
+        .await
+        .expect("create");
+    let mut config = state.settings.auth_config().await.unwrap();
+    config.autologin_enabled = true;
+    config.autologin_username = Some("ασ".to_string());
+    state.settings.set_auth_config(&config).await.unwrap();
+    keyring_store::set_password("ασ", "old-value").unwrap();
+
+    let err = autologin_enable_body(&state, "ας", "password123")
+        .await
+        .expect_err("a sigma variant");
+    assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+    assert_eq!(keyring_store::get_password("ασ").unwrap(), "old-value");
+}
+
+/// Re-enabling the same (exactly equal) name just refreshes the entry.
+#[tokio::test]
+async fn autologin_enable_for_the_same_account_keeps_the_entry() {
+    let state = admin_state_with_fake_keyring().await;
+    autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect("first");
+    keyring_store::fake::on_delete(|| panic!("must not delete the same entry"));
+    autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect("second");
+    assert!(keyring_store::fake::stored("manager").is_some());
+}
+
 /// [`autologin_disable_body`] records a `settings_change`/`settings` entry
 /// with an `{autologinEnabled:false}` detail (M-review 2026-08 M-5). No
 /// keyring is touched: with `autologin_username` unset the delete is

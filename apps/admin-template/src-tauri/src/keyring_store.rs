@@ -40,9 +40,22 @@ fn entry(username: &str) -> Result<keyring::Entry, BantoError> {
         .map_err(|err| degrade("OSキーリングへのアクセスに失敗しました", err))
 }
 
+/// Whether two different usernames could address one OS keyring entry.
+/// Windows compares credential names ignoring case with its own (uppercase
+/// based) rules, others compare exactly. Both the lowercase and the uppercase
+/// folding are checked (`σ` and `ς` differ lowercased, both are `Σ` uppercased):
+/// refusing too many names is the safe side, the saved setup stays untouched.
+pub fn names_may_share_an_entry(a: &str, b: &str) -> bool {
+    a != b && (a.to_lowercase() == b.to_lowercase() || a.to_uppercase() == b.to_uppercase())
+}
+
 /// Store `password` in the OS keyring under `username`, overwriting any
 /// existing entry for that username.
 pub fn set_password(username: &str, password: &str) -> Result<(), BantoError> {
+    #[cfg(test)]
+    if let Some(result) = fake::set(username, password) {
+        return result;
+    }
     entry(username)?
         .set_password(password)
         .map_err(|err| degrade("OSキーリングへの資格情報の保存に失敗しました", err))
@@ -51,6 +64,10 @@ pub fn set_password(username: &str, password: &str) -> Result<(), BantoError> {
 /// Retrieve the password previously stored for `username`, or an error if
 /// there is none (or the backend is unavailable).
 pub fn get_password(username: &str) -> Result<String, BantoError> {
+    #[cfg(test)]
+    if let Some(result) = fake::get(username) {
+        return result;
+    }
     entry(username)?
         .get_password()
         .map_err(|err| degrade("OSキーリングからの資格情報の取得に失敗しました", err))
@@ -61,7 +78,120 @@ pub fn get_password(username: &str) -> Result<String, BantoError> {
 /// `autologin_disable` in `lib.rs`, which logs and proceeds rather than
 /// failing the whole command on a keyring delete error).
 pub fn delete_password(username: &str) -> Result<(), BantoError> {
+    #[cfg(test)]
+    if let Some(result) = fake::delete(username) {
+        return result;
+    }
     entry(username)?
         .delete_credential()
         .map_err(|err| degrade("OSキーリングからの資格情報の削除に失敗しました", err))
+}
+
+/// Test-only seam: a per-thread fake store that tests can read back and make
+/// fail. `keyring`'s own mock gives every `Entry` a private value, so a test
+/// cannot see whether a credential was stored or removed through it. Off
+/// (None) unless a test calls [`fake::install`]; tokio tests run on one
+/// thread, so a thread-local is isolated per test.
+#[cfg(test)]
+pub(crate) mod fake {
+    use banto_core::BantoError;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct Fake {
+        entries: HashMap<String, String>,
+        /// Mimics the Windows credential store: names differing only in
+        /// (Unicode) case address one entry.
+        case_insensitive: bool,
+        fail_delete: bool,
+        on_delete: Option<Box<dyn Fn()>>,
+    }
+
+    thread_local! {
+        static FAKE: RefCell<Option<Fake>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn install() {
+        FAKE.with(|f| *f.borrow_mut() = Some(Fake::default()));
+    }
+
+    /// Like [`install`], but names differing only in case share one entry.
+    pub(crate) fn install_case_insensitive() {
+        FAKE.with(|f| {
+            *f.borrow_mut() = Some(Fake {
+                case_insensitive: true,
+                ..Fake::default()
+            });
+        });
+    }
+
+    /// The stored key `username` addresses (the case-insensitive mode folds
+    /// names with [`super::names_may_share_an_entry`]).
+    fn key(f: &Fake, username: &str) -> String {
+        if f.case_insensitive {
+            if let Some(k) = f
+                .entries
+                .keys()
+                .find(|k| super::names_may_share_an_entry(k, username))
+            {
+                return k.clone();
+            }
+        }
+        username.to_string()
+    }
+
+    pub(crate) fn fail_delete(on: bool) {
+        FAKE.with(|f| f.borrow_mut().as_mut().expect("installed").fail_delete = on);
+    }
+
+    /// Runs `hook` at every delete (before it applies).
+    pub(crate) fn on_delete(hook: impl Fn() + 'static) {
+        FAKE.with(|f| f.borrow_mut().as_mut().expect("installed").on_delete = Some(Box::new(hook)));
+    }
+
+    pub(crate) fn stored(username: &str) -> Option<String> {
+        FAKE.with(|f| {
+            f.borrow()
+                .as_ref()
+                .and_then(|f| f.entries.get(&key(f, username)).cloned())
+        })
+    }
+
+    pub(super) fn set(username: &str, password: &str) -> Option<Result<(), BantoError>> {
+        FAKE.with(|f| {
+            f.borrow_mut().as_mut().map(|f| {
+                let k = key(f, username);
+                f.entries.insert(k, password.to_string());
+                Ok(())
+            })
+        })
+    }
+
+    pub(super) fn get(username: &str) -> Option<Result<String, BantoError>> {
+        FAKE.with(|f| {
+            f.borrow().as_ref().map(|f| {
+                f.entries
+                    .get(&key(f, username))
+                    .cloned()
+                    .ok_or_else(|| BantoError::Other("no entry".to_string()))
+            })
+        })
+    }
+
+    pub(super) fn delete(username: &str) -> Option<Result<(), BantoError>> {
+        FAKE.with(|f| {
+            f.borrow_mut().as_mut().map(|f| {
+                if let Some(hook) = &f.on_delete {
+                    hook();
+                }
+                if f.fail_delete {
+                    return Err(BantoError::Other("delete failed".to_string()));
+                }
+                let k = key(f, username);
+                f.entries.remove(&k);
+                Ok(())
+            })
+        })
+    }
 }
