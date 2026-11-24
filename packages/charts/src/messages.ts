@@ -52,6 +52,15 @@ export interface ChartMessages {
 	lineResetZoomTitle?: () => string;
 	/** LineChart's zoom-reset button label. */
 	lineReset?: () => string;
+
+	/**
+	 * Accessible name of a selectable mark (`onMarkActivate` given) when the
+	 * chart has a single series (and for `PieChart`): `<category>: <value>`.
+	 * The value is already passed through the chart's `formatValue`.
+	 */
+	markLabel?: (category: string, value: string) => string;
+	/** Same, for a multi-series `BarChart` (grouped or stacked): the series is named too. */
+	markLabelWithSeries?: (category: string, series: string, value: string) => string;
 }
 
 export const defaultChartMessages: Required<ChartMessages> = {
@@ -79,5 +88,8 @@ export const defaultChartMessages: Required<ChartMessages> = {
 	gaugeNoValue: () => '—',
 
 	lineResetZoomTitle: () => 'ズームをリセット',
-	lineReset: () => 'リセット'
+	lineReset: () => 'リセット',
+
+	markLabel: (category, value) => `${category}: ${value}`,
+	markLabelWithSeries: (category, series, value) => `${category}（${series}）: ${value}`
 };

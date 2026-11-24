@@ -25,11 +25,21 @@
 		truncateLabel
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
-	import { getValue, toNumber, type Accessor, type ChartMargin, type TooltipRow } from './types';
+	import { clampMarkIndex } from './core/mark-nav';
+	import { handleMarkKeydown } from './internal/mark-keys';
+	import {
+		getValue,
+		toNumber,
+		type Accessor,
+		type ChartMargin,
+		type ChartMark,
+		type MarkProps,
+		type TooltipRow
+	} from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
-	import type { ChartMessages } from './messages';
+	import { defaultChartMessages, type ChartMessages } from './messages';
 
 	interface BarSeries {
 		id: string;
@@ -37,7 +47,7 @@
 		value: Accessor<TRow>;
 	}
 
-	interface Props {
+	interface Props extends MarkProps<TRow> {
 		data: TRow[];
 		category: Accessor<TRow>;
 		series: BarSeries[];
@@ -62,13 +72,16 @@
 		height = 240,
 		formatValue,
 		margins,
-		messages = {}
+		messages = {},
+		onMarkActivate,
+		markLabel
 	}: Props = $props();
 
 	const RADIUS = 4;
 	const CATEGORY_PADDING = 0.3;
 
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
+	const t = $derived({ ...defaultChartMessages, ...messages });
 
 	const categories = $derived(data.map((row) => getValue(row, category)));
 	const matrix = $derived(data.map((row) => series.map((s) => toNumber(getValue(row, s.value)))));
@@ -275,6 +288,49 @@
 		);
 	}
 
+	// Selectable marks (only when `onMarkActivate` is given; otherwise none of
+	// this runs and the DOM is exactly what it was). Marks are one linear order,
+	// category-major then series, which is also the order `computeBars` pushes
+	// them in. Roving tabindex: exactly one mark is a Tab stop.
+	let tabStop = $state(0);
+	const markCount = $derived(data.length * series.length);
+	const activeMark = $derived(clampMarkIndex(tabStop, markCount));
+
+	function markIndexOf(bar: BarRect): number {
+		return bar.catIndex * series.length + bar.seriesIndex;
+	}
+
+	function markFor(bar: BarRect): ChartMark<TRow> {
+		return {
+			row: data[bar.catIndex],
+			index: bar.catIndex,
+			category: String(categories[bar.catIndex] ?? ''),
+			seriesId: series[bar.seriesIndex].id,
+			value: bar.value
+		};
+	}
+
+	function markName(bar: BarRect): string {
+		const mark = markFor(bar);
+		if (markLabel) return markLabel(mark);
+		const value = formatValueDisplay(bar.value);
+		return series.length > 1
+			? t.markLabelWithSeries(mark.category, series[bar.seriesIndex].label, value)
+			: t.markLabel(mark.category, value);
+	}
+
+	/**
+	 * Pointer / focus area of a mark, wider than the drawn bar so a thin bar is
+	 * easy to hit: a grouped bar takes its whole slot along the value axis; a
+	 * stacked segment keeps its own extent (its neighbours share the column).
+	 */
+	function hitRect(bar: BarRect, m: ReturnType<typeof plotMetrics>) {
+		if (stacked) return { x: bar.x, y: bar.y, w: bar.w, h: bar.h };
+		return horizontal
+			? { x: m.innerLeft, y: bar.y, w: m.innerWidth, h: bar.h }
+			: { x: bar.x, y: m.innerTop, w: bar.w, h: m.innerHeight };
+	}
+
 	function tooltipFor(bar: BarRect): { title: string; rows: TooltipRow[] } {
 		return {
 			title: String(categories[bar.catIndex] ?? ''),
@@ -291,7 +347,14 @@
 
 <div class="banto-barchart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth} {messages}>
+	<ChartContainer
+		{label}
+		{height}
+		empty={isEmpty}
+		interactive={onMarkActivate !== undefined}
+		bind:width={plotWidth}
+		{messages}
+	>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const bars = computeBars(width, plotHeight)}
@@ -417,19 +480,58 @@
 			{/if}
 
 			{#each bars as bar (`${bar.catIndex}-${bar.seriesIndex}`)}
-				<!-- Per-mark hover highlight/tooltip (rule 6); pointer-only, see LineChart's hover-surface comment for rationale. -->
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<path
-					d={roundedTopBarPath(bar.x, bar.y, bar.w, bar.h, bar.radius, horizontal)}
-					fill={seriesColorVar(bar.seriesIndex)}
-					stroke="var(--banto-surface)"
-					stroke-width="2"
-					class="bar"
-					class:hovered={isHovered(bar)}
-					onpointerenter={() =>
-						(hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
-					onpointerleave={() => (hovered = null)}
-				/>
+				{#if onMarkActivate}
+					{@const hit = hitRect(bar, m)}
+					{@const idx = markIndexOf(bar)}
+					<g
+						class="mark"
+						role="button"
+						tabindex={idx === activeMark ? 0 : -1}
+						aria-label={markName(bar)}
+						data-mark-index={idx}
+						onclick={() => onMarkActivate(markFor(bar))}
+						onkeydown={(e) =>
+							handleMarkKeydown(
+								e,
+								idx,
+								markCount,
+								() => onMarkActivate(markFor(bar)),
+								(next) => (tabStop = next)
+							)}
+						onfocus={() => {
+							tabStop = idx;
+							hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex };
+						}}
+						onblur={() => (hovered = null)}
+						onpointerenter={() =>
+							(hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
+						onpointerleave={() => (hovered = null)}
+					>
+						<path
+							d={roundedTopBarPath(bar.x, bar.y, bar.w, bar.h, bar.radius, horizontal)}
+							fill={seriesColorVar(bar.seriesIndex)}
+							stroke="var(--banto-surface)"
+							stroke-width="2"
+							class="bar"
+							class:hovered={isHovered(bar)}
+						/>
+						<rect class="hit" x={hit.x} y={hit.y} width={hit.w} height={hit.h} />
+					</g>
+				{:else}
+					<!-- Per-mark hover highlight/tooltip (rule 6); pointer-only, see LineChart's hover-surface comment for rationale. -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<path
+						d={roundedTopBarPath(bar.x, bar.y, bar.w, bar.h, bar.radius, horizontal)}
+						fill={seriesColorVar(bar.seriesIndex)}
+						stroke="var(--banto-surface)"
+						stroke-width="2"
+						class="bar"
+						class:hovered={isHovered(bar)}
+						onpointerenter={() =>
+							(hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
+						onpointerleave={() => (hovered = null)}
+					/>
+				{/if}
 			{/each}
 		{/snippet}
 		{#snippet overlay({ width, height: plotHeight })}
@@ -482,5 +584,21 @@
 
 	.bar.hovered {
 		opacity: 0.85;
+	}
+
+	/* Selectable marks (onMarkActivate): the group is the button; the focus ring is drawn on the bar itself (an SVG group's own outline would be its bounding box). */
+	.mark {
+		cursor: pointer;
+		outline: none;
+	}
+
+	.mark:focus-visible .bar {
+		stroke: var(--banto-text);
+		stroke-width: 3;
+	}
+
+	.hit {
+		fill: none;
+		pointer-events: all;
 	}
 </style>

@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- `@banto/charts`: `BarChart`・`PieChart` に `onMarkActivate`・`markLabel`（追加。渡さなければ DOM も見た目も変わらない。渡すと入れ物が `role="group"`・印が `role="button"` になり、Tab は 1 か所・矢印 / Home / End で移動・Enter / Space / クリックで選ぶ）、`ChartMark`・`MarkProps`・`nextMarkIndex` の export、`messages` に `markLabel`・`markLabelWithSeries`。見本は `/chart-gallery/marks`（#882 の D2）
 - CI: e2e の設定画面の表示言語の切り替え（`settings-controls.spec.ts`）と長いメニュー（`ui-overlays.spec.ts`）がハイドレーション前の操作で落ちる揺らぎを、操作と確認をまとめて `toPass()` で再試行する形に直した（#810）。
 - fix(theme): ダークでネイティブ `<select>` の選択肢（option）の背景が白・文字が薄くて読めない問題を直した（`.banto-field-control` と grid のフィルタの select の option を `--banto-surface-overlay` / `--banto-text` で明示、#928）
 
