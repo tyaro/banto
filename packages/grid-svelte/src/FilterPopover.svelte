@@ -350,6 +350,11 @@
 		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
+	select option {
+		background-color: var(--banto-surface-overlay);
+		color: var(--banto-text);
+	}
+
 	select:focus-visible,
 	input:focus-visible,
 	button:focus-visible {

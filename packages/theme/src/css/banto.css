@@ -759,6 +759,19 @@ html[data-theme='dark'] {
 	transition: border-color var(--banto-duration-fast) var(--banto-ease-out);
 }
 
+/* The control is transparent, but the native option popup paints its own
+   surface: pin an OPAQUE token (surface-overlay stays opaque under glass) and
+   the text colour so dark never shows a white popup with pale text (#928). */
+.banto-field-control option,
+.banto-field-control optgroup {
+	background-color: var(--banto-surface-overlay);
+	color: var(--banto-text);
+}
+
+.banto-field-control option:disabled {
+	color: var(--banto-text-muted);
+}
+
 .banto-field > .banto-field-control:hover:not(:disabled),
 .banto-field > .banto-affix > .banto-field-control:hover:not(:disabled) {
 	border-bottom-color: var(--banto-primary-hover);

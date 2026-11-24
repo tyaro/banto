@@ -102,6 +102,28 @@ for (const combo of FULL_MATRIX) {
 				const box = await labelBox(control);
 				expect(box.bottom).toBeLessThan(box.valueTop);
 			}
+			// #928: the native option popup must use opaque theme tokens (not the
+			// UA white), so dark shows readable options. Popup can't be shot; check computed.
+			const optionColors = await connection.evaluate((element: HTMLSelectElement) => {
+				const probe = document.createElement('div');
+				const read = (token: string) => {
+					probe.style.color = `var(${token})`;
+					document.body.append(probe);
+					const value = getComputedStyle(probe).color;
+					probe.remove();
+					return value;
+				};
+				const option = element.options[1];
+				const style = getComputedStyle(option);
+				return {
+					background: style.backgroundColor,
+					color: style.color,
+					overlay: read('--banto-surface-overlay'),
+					text: read('--banto-text')
+				};
+			});
+			expect(optionColors.background).toBe(optionColors.overlay);
+			expect(optionColors.color).toBe(optionColors.text);
 			await connection.selectOption('local');
 			await expect(connection).toHaveValue('local');
 			await expect(connection).toHaveCSS('appearance', 'auto');
