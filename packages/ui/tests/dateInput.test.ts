@@ -759,10 +759,9 @@ describe('DateInput month and year views (Issue #908)', () => {
 		const { button, input, onHostKeydown } = setup({ value: '2026-11-07' });
 		fireEvent.click(button);
 		fireEvent.click(screen.getByRole('button', { name: '2026年11月' }));
-		// The month view's year moves on before the year view opens.
+		// The month view's year moves on (2027) before the year view opens.
 		fireEvent.click(screen.getByRole('button', { name: '次の年' }));
-		fireEvent.click(screen.getByRole('button', { name: '前の年' }));
-		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
+		fireEvent.click(screen.getByRole('button', { name: '2027年' }));
 		fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
 		fireEvent.keyDown(document.activeElement!, { key: 'Escape', isComposing: true });
 		fireEvent.keyDown(document.activeElement!, { key: 'Escape', keyCode: 229 });
@@ -770,9 +769,9 @@ describe('DateInput month and year views (Issue #908)', () => {
 		const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
 		document.activeElement!.dispatchEvent(esc);
 		expect(esc.defaultPrevented).toBe(true);
-		// Back to the month view it came from, on the tracked month.
-		expect(headingText()).toBe('2026年');
-		expect(focusedLabel()).toBe('2026年11月');
+		// Back to the month view it came from (2027, not the tracked day's year).
+		expect(headingText()).toBe('2027年');
+		expect(focusedLabel()).toBe('2027年11月');
 		fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
 		expect(headingText()).toBe('2026年11月');
 		expect(focusedDate()).toBe('2026-11-07');
