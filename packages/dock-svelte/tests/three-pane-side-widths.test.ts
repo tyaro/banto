@@ -7,6 +7,7 @@
 // px and the width only). And the saved value is the same version-4 layout of shares.
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
+import { resizeSplit } from '../src/core/tree';
 import { validateDockLayout } from '../src/core/validate';
 import {
 	fitThreePaneSideWidths,
@@ -212,5 +213,74 @@ describe('fitThreePaneSideWidths / followThreePaneSideWidths (#892)', () => {
 		expect(Object.keys(rootOf(saved.layout)).sort()).toEqual(
 			Object.keys(rootOf(start(1280, 280, 360))).sort()
 		);
+	});
+});
+
+describe('the drawn px and the divider (#892 review)', () => {
+	const start = (width: number, leftWidth: number, rightWidth: number) =>
+		threePaneDockLayout({ hostWidth: width, leftWidth, rightWidth, panels: panes });
+	const frame = { band: 32, divider: 6 };
+
+	/**
+	 * The px `DockedTree` draws the root row's regions at (its flex: a collapsed region is a band,
+	 * the open ones grow by `share / open shares` in the room the bands and dividers leave).
+	 */
+	const drawn = (layout: DockLayout, width: number) => {
+		const row = rootOf(layout);
+		const shut = row.children.map((c) => c.type !== 'split' && c.collapsed === true);
+		const room =
+			width - frame.divider * (row.children.length - 1) - frame.band * shut.filter(Boolean).length;
+		const open = row.sizes.reduce((sum, s, i) => (shut[i] ? sum : sum + s), 0);
+		const grows = row.sizes.map((s, i) => (shut[i] ? 0 : s / open));
+		const total = grows.reduce((a, b) => a + b, 0);
+		return grows.map((g, i) => (shut[i] ? frame.band : room * (total < 1 ? g : g / total)));
+	};
+
+	it('draws the open side at its px beside a side collapsed to a band, at any width, and reads the px back', () => {
+		fc.assert(
+			fc.property(
+				fc.integer({ min: 120, max: 500 }),
+				fc.integer({ min: 120, max: 500 }),
+				fc.boolean(),
+				fc.array(fc.integer({ min: 1400, max: 3840 }), { minLength: 1, maxLength: 8 }),
+				(leftWidth, rightWidth, shutLeft, widths) => {
+					const first = start(1280, leftWidth, rightWidth);
+					const root = rootOf(first);
+					const shut = shutLeft ? 0 : 2;
+					let layout: DockLayout = {
+						...first,
+						docked: {
+							...root,
+							children: root.children.map((c, i) => (i === shut ? { ...c, collapsed: true } : c))
+						}
+					};
+					const kept = new Map([
+						['left', leftWidth],
+						['right', rightWidth]
+					]);
+					for (const width of widths) {
+						layout = fitThreePaneSideWidths(layout, kept, width, frame);
+						expect(validateDockLayout(layout).ok).toBe(true);
+						const px = drawn(layout, width);
+						const open = shutLeft ? 2 : 0;
+						expect(px[open]).toBeCloseTo(open === 0 ? leftWidth : rightWidth, 6);
+						expect(px[1]).toBeCloseTo(width - 2 * frame.divider - frame.band - px[open], 6);
+						const read = followThreePaneSideWidths(null, null, layout, width, undefined, frame);
+						expect(read.widths.get('left')).toBeCloseTo(leftWidth, 6);
+						expect(read.widths.get('right')).toBeCloseTo(rightWidth, 6);
+					}
+				}
+			),
+			params(200)
+		);
+	});
+
+	it('does not push a side under the dock minimum share up to it on a small divider move', () => {
+		// 120 px of 2000: a share of 0.06, under `MIN_PANE_FRACTION` (0.1 = 200 px).
+		const layout = start(2000, 120, 360);
+		const shrunk = resizeSplit(layout.docked, 'three-pane:root', 0, -1 / 2000) as DockSplitNode;
+		expect(shrunk.sizes[0] * 2000).toBeCloseTo(120, 6);
+		const grown = resizeSplit(layout.docked, 'three-pane:root', 0, 1 / 2000) as DockSplitNode;
+		expect(grown.sizes[0] * 2000).toBeCloseTo(121, 6);
 	});
 });

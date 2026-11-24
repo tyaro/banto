@@ -448,7 +448,8 @@ export function moveTabWithinGroup(
 /**
  * Resize a split's two adjacent panes around `dividerIndex` (between
  * `sizes[dividerIndex]` and `sizes[dividerIndex + 1]`) by `deltaFraction`,
- * keeping the pair's sum constant and clamping each to `MIN_PANE_FRACTION`.
+ * keeping the pair's sum constant and clamping each to `MIN_PANE_FRACTION`
+ * (a pane already under it stays where it is rather than jumping up to it).
  * An out-of-range `dividerIndex`, unknown `splitId`, or `null` tree is a
  * no-op.
  */
@@ -477,8 +478,11 @@ export function resizeSplit(
 			return { ...node, sizes };
 		}
 
-		let a = node.sizes[i] + deltaFraction;
-		a = Math.min(Math.max(a, min), pairSum - min);
+		// A pane already under the minimum (a side kept at its px, #892) is not pushed up to it:
+		// the clamp never moves a share the other way from the drag.
+		const from = node.sizes[i];
+		let a = from + deltaFraction;
+		a = Math.min(Math.max(a, Math.min(min, from)), Math.max(pairSum - min, from));
 		const b = pairSum - a;
 
 		const sizes = node.sizes.slice();

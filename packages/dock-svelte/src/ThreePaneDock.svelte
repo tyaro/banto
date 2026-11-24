@@ -77,6 +77,7 @@
 		reconcileThreePaneLayout,
 		fitThreePaneSideWidths,
 		followThreePaneSideWidths,
+		isThreePaneRowAsIn,
 		THREE_PANE_DEFAULTS,
 		THREE_PANE_IDS,
 		THREE_PANE_NARROW_BREAKPOINT,
@@ -90,6 +91,7 @@
 		type ThreePanePanels,
 		type ThreePaneRestoreStatus,
 		type ThreePaneSavedLayout,
+		type ThreePaneRowFrame,
 		type ThreePaneSideWidthUnit,
 		type ThreePaneViewMenuItem,
 		type ThreePaneViewMenuLabels
@@ -115,7 +117,9 @@
 		 * `'px'` (#892): when the component's width changes, the regions beside the centre's in the
 		 * outermost row on the way to it keep their px and the centre's takes the rest (it keeps at
 		 * least 320 px; the sides shrink in proportion when there is not room, none below 120 px or
-		 * its own width). A divider the user moves sets the new px. `'share'` (default): every region keeps its share. The saved
+		 * its own width). A divider the user moves sets the new px (a cancelled drag goes back to the
+		 * px of its press). A px is the width drawn: the dividers and the bands (a region collapsed,
+		 * an auto-hidden one's edge band) taken off, so the open side beside a band keeps it. `'share'` (default): every region keeps its share. The saved
 		 * value is the same either way (shares, read as px at the width it is shown at).
 		 */
 		sideWidthUnit?: ThreePaneSideWidthUnit;
@@ -292,6 +296,15 @@
 	 * hidden in it gives its room to the others, which are not at their px then.
 	 */
 	let sidesDefault = false;
+	/**
+	 * A divider drag (or key) running, or cancelled and not followed yet: the layout and the px at
+	 * its press. Its cancel puts the press's shares back; those are the press's px at the width of
+	 * then, so they are fitted again (not taken as new px at today's width).
+	 */
+	let sidesPress: { layout: DockLayout; widths: Map<string, number>; ended: boolean } | null = null;
+	/** Probes of what the docked tree takes off a row (`ThreePaneRowFrame`), in the markup. */
+	let bandProbe: HTMLDivElement | undefined = $state();
+	let dividerProbe: HTMLDivElement | undefined = $state();
 
 	// --- `onLayoutCommit` (#791, the prop's doc) ---
 	/** `layoutSnapshot()` (JSON) as last reported, restored or followed. `null` until mounted: nothing is reported before. */
@@ -402,9 +415,25 @@
 		}
 		const kept = reconcileThreePaneLayout(wideLayout, options).layout;
 		// `sideWidthUnit="px"` (#892): the kept layout's sides at their px of before, at today's width.
-		return sideWidthUnit === 'px' && sideWidths !== null && !sidesFresh && width > 0
-			? fitThreePaneSideWidths(kept, sideWidths, width)
-			: kept;
+		if (sideWidthUnit !== 'px' || sideWidths === null || sidesFresh || !(width > 0)) return kept;
+		const row = rowGeometry(width);
+		return fitThreePaneSideWidths(kept, sideWidths, row.width, row.frame);
+	}
+
+	/**
+	 * `sideWidthUnit="px"` (#892): the docked area's width (inside `DockHost`'s border; `width`, the
+	 * component's, until it is measured) and what the docked tree takes off a row (the probes in the
+	 * markup: 0 where nothing is laid out, as in jsdom).
+	 */
+	function rowGeometry(width: number): { width: number; frame: ThreePaneRowFrame } {
+		const inner = rootEl?.querySelector<HTMLElement>('[data-dock-host]')?.clientWidth ?? 0;
+		return {
+			width: inner > 0 ? inner : width,
+			frame: {
+				band: bandProbe?.getBoundingClientRect().width ?? 0,
+				divider: dividerProbe?.getBoundingClientRect().width ?? 0
+			}
+		};
 	}
 
 	/** A side seen for the first time: the left / right pane at its default width (hidden at mount, say). */
@@ -426,9 +455,15 @@
 		if (narrowShown || wantNarrow) {
 			// The narrow display is not the wide row: the px stay as they were, compared afresh after.
 			sidesSeen = null;
+			if (sidesPress?.ended) sidesPress = null;
 			return;
 		}
+		const row = rowGeometry(width);
 		const fresh = sidesFresh || sideWidths === null;
+		// A divider drag cancelled (its press's shares put back): the press's px, at today's width.
+		const press = sidesPress;
+		if (press?.ended) sidesPress = null;
+		const cancelled = !fresh && press !== null && isThreePaneRowAsIn(press.layout, layout);
 		const preset = fresh && sidesDefault;
 		sidesFresh = false;
 		sidesDefault = false;
@@ -439,17 +474,20 @@
 				if (px !== undefined) defaults.set(id, px);
 			}
 		const { widths, resized } = followThreePaneSideWidths(
-			fresh ? null : sidesSeen,
-			fresh ? defaults : sideWidths,
+			fresh ? null : cancelled ? layout : sidesSeen,
+			fresh ? defaults : cancelled ? press.widths : sideWidths,
 			layout,
-			width,
-			fresh ? undefined : defaultSidePx
+			row.width,
+			fresh ? undefined : defaultSidePx,
+			row.frame
 		);
 		sideWidths = widths;
 		// A divider moved: the user's shares are the new px as they are (a fit now would fight the drag).
 		// Taken afresh from a layout that is not the default: its shares are its px already.
 		const next =
-			resized || (fresh && !preset) ? layout : fitThreePaneSideWidths(layout, widths, width);
+			resized || (fresh && !preset)
+				? layout
+				: fitThreePaneSideWidths(layout, widths, row.width, row.frame);
 		// Without a report of its own: a change not reported yet (the user's, which this follows) stays
 		// unsettled and is reported fitted (`hostCommitted` fits before it reports).
 		if (next !== layout)
@@ -457,6 +495,25 @@
 				dock.layout = next;
 			});
 		sidesSeen = dock.layout;
+	}
+
+	/** `DockHost`'s gesture hooks, passed through; a divider's press is noted for its cancel (`sidesPress`). */
+	function gestureCanStart(kind: GestureKind, panelId: string | null): boolean {
+		if (canStartGesture && !canStartGesture(kind, panelId)) return false;
+		if (kind === 'divider' && sideWidthUnit === 'px' && sideWidths !== null)
+			sidesPress = { layout: dock.layout, widths: new Map(sideWidths), ended: false };
+		return true;
+	}
+	function gestureEnded(
+		kind: GestureKind,
+		outcome: 'commit' | 'cancel',
+		reason?: GestureCancelReason
+	): void {
+		// A cancel's shares are followed after it (in the effect, or before its report).
+		if (kind === 'divider' && sidesPress)
+			if (outcome === 'commit') sidesPress = null;
+			else sidesPress.ended = true;
+		onGestureEnd?.(kind, outcome, reason);
 	}
 
 	$effect(() => {
@@ -981,8 +1038,8 @@
 		messages={t}
 		{clamp}
 		capabilities={paneCaps}
-		{canStartGesture}
-		{onGestureEnd}
+		canStartGesture={gestureCanStart}
+		onGestureEnd={gestureEnded}
 		{isEscapeBlocked}
 		{beforePanelChange}
 		{keepMounted}
@@ -991,6 +1048,13 @@
 		{arrange}
 		onLayoutCommit={hostCommitted}
 	/>
+	{#if sideWidthUnit === 'px'}
+		<!-- `sideWidthUnit="px"` (#892): what the docked tree takes off a row, measured (`rowGeometry`). -->
+		<div class="row-probe" aria-hidden="true">
+			<div class="band-probe" bind:this={bandProbe}></div>
+			<div class="divider-probe" bind:this={dividerProbe}></div>
+		</div>
+	{/if}
 </div>
 
 {#snippet panel(content: PanelContent)}
@@ -1013,5 +1077,26 @@
 		height: 100%;
 		min-width: 0;
 		min-height: 0;
+	}
+
+	/* Not seen, not in the way: only measured. */
+	.row-probe {
+		position: absolute;
+		top: 0;
+		left: 0;
+		height: 0;
+		overflow: hidden;
+		visibility: hidden;
+		pointer-events: none;
+	}
+
+	/* A collapsed region's band and an auto-hide edge band (`DockedTree` / `DockHost`). */
+	.band-probe {
+		width: var(--banto-dock-titlebar-height);
+	}
+
+	/* The same width as `DockedTree`'s `.divider.row`. */
+	.divider-probe {
+		width: 6px;
 	}
 </style>
