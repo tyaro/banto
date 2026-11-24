@@ -26,6 +26,14 @@
  * The size: `share` (what the pane held of its split when it was hidden, `dockShareOf`) of the
  * split it lands in, the others keeping their ratio; without one (`1`, not finite, out of `[0, 1)`)
  * its default share against the default siblings docked now.
+ *
+ * Several panes of one default split hidden together (#939): each kept its share of what was left
+ * of the split when it was hidden, so taken as they are the shares only give the sizes back when
+ * the panes are shown last-hidden first (in another order the later ones take too much and the
+ * earlier ones shrink). `shareAmongHidden` reads them in the order the panes were hidden in (the
+ * order of the closed windows) and gives the share to show a pane with while its default siblings
+ * are still hidden, and the shares those keep from then on: hidden one after the other and shown
+ * in any order, every pane has the share it had before the first was hidden.
  */
 import type { DockEdge, DockNode, DockPanelNode, DockSplitNode, DockTabGroupNode } from '../types';
 import {
@@ -76,6 +84,98 @@ export function dockShareOf(docked: DockNode | null, panelId: string): number {
 	const total = split.sizes.reduce((a, b) => a + b, 0);
 	const share = (split.sizes[index] ?? 0) / total;
 	return usable(share) ? share : 1;
+}
+
+/**
+ * The share to show the hidden pane `panelId` with among its default siblings that are hidden too
+ * (#939, the top of this file), and what those keep once it is shown. `hidden`: the panes hidden
+ * from the dock with the share each keeps (`FloatingWindow.dockShare`), in the order they were
+ * hidden in - `panelId` among them; `present`: the panes of the tree (places included).
+ *
+ * The split is the one `placeAtDefault` puts the pane into: the innermost container around its
+ * default place with another child that holds a pane of `present`. A child of it none of whose
+ * panes is in `present` is hidden as a whole: it left the split when the last of its panes was
+ * hidden, with the share that pane keeps - a share of the split without the children hidden
+ * before it. From these the share every hidden child had of the split with all of them there
+ * follows, and from that:
+ *  - `share`: the pane's share of the split without the children still hidden;
+ *  - `others`: for the panes of the children hidden after it, the share of the split with the
+ *    pane back (they were hidden when it was out; unchanged ones are left out). Only the shares
+ *    that are shares of this split: of a child that is a split itself, the one of the pane hidden
+ *    last - the others are shares of the splits inside it.
+ * The pane's own child counts with the share of the tab of it hidden last when it is a tab group
+ * (every tab keeps the group's share, the last one the share the group left the split with).
+ * `null`: nothing to work out - the pane keeps no usable share, has no default place, joins a tab
+ * group, goes to an edge, or no default sibling hidden after it is still hidden and the share it
+ * keeps is the one its child left with (right as it is, exactly).
+ */
+export function shareAmongHidden(
+	defaults: DockNode | null,
+	panelId: string,
+	present: ReadonlySet<string>,
+	hidden: readonly { id: string; share: number }[]
+): { share: number; others: Map<string, number> } | null {
+	if (defaults === null || hidden.length < 2) return null;
+	const own = hidden.find((h) => h.id === panelId);
+	if (!own || !usable(own.share)) return null;
+	const path = pathTo(defaults, panelId);
+	if (path === null) return null;
+	const step = [...path]
+		.reverse()
+		.find(({ container, index }) => nearestDocked(container, index, present) !== null);
+	if (!step || step.container.type !== 'split') return null;
+	// The children hidden as a whole, in the order they left the split.
+	const regions: { mine: boolean; at: number; raw: number; members: number[] }[] = [];
+	step.container.children.forEach((child, i) => {
+		const ids = new Set(collectPanelIds(child));
+		if ([...ids].some((id) => present.has(id))) return;
+		const members = hidden
+			.map((h, at) => (ids.has(h.id) && usable(h.share) ? at : -1))
+			.filter((at) => at !== -1);
+		if (members.length === 0) return;
+		const at = Math.max(...members);
+		const mine = i === step.index;
+		// Whose share is a share of THIS split: every tab of a hidden tab group keeps the group's;
+		// of a nested split only the pane hidden last does - the ones hidden before it keep their
+		// share of a split inside, which stays as it is (Codex P2 on #940).
+		const outer = child.type === 'split' ? [at] : members;
+		// The pane's own child: a tab group left the split with its LAST tab, so that tab's share is
+		// the group's - a tab hidden while the group was still there keeps what the group had then,
+		// before a sibling hidden in between went (cross-review of #940). A nested split: the pane's
+		// own (it may be a share of a split inside; the top of this file).
+		const raw = mine && child.type === 'split' ? own.share : hidden[at].share;
+		regions.push({ mine, at, raw, members: outer });
+	});
+	regions.sort((a, b) => a.at - b.at);
+	const me = regions.findIndex((r) => r.mine);
+	if (me === -1) return null;
+	if (me === regions.length - 1) {
+		// Nothing hidden after it: the share it left with is right as it is - the pane's own, or
+		// the one of the tab of its group hidden last.
+		const { raw } = regions[me];
+		return raw === own.share ? null : { share: raw, others: new Map() };
+	}
+	// Of the split with every hidden child there: a child's share, and what the ones before it hold.
+	const whole: number[] = [];
+	const before: number[] = [];
+	let sum = 0;
+	for (const region of regions) {
+		before.push(sum);
+		whole.push(region.raw * (1 - sum));
+		sum += whole[whole.length - 1];
+	}
+	const share = whole[me] / (1 - (sum - whole[me]));
+	if (!usable(share)) return null;
+	const others = new Map<string, number>();
+	for (let k = me + 1; k < regions.length; k++) {
+		// Its share was of the split without the children before it; now the pane is not one of them.
+		const factor = (1 - before[k]) / (1 - (before[k] - whole[me]));
+		for (const at of regions[k].members) {
+			const next = hidden[at].share * factor;
+			if (usable(next) && next !== hidden[at].share) others.set(hidden[at].id, next);
+		}
+	}
+	return { share, others };
 }
 
 /** Is the panel `panelId` docked in the default tree `defaults` (so `placeAtDefault` may dock it)? */

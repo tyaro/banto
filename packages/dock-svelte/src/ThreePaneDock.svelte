@@ -136,6 +136,16 @@
 		 * Omitted = `dock`'s layout when it has one, else the default layout.
 		 */
 		initialLayout?: unknown;
+		/**
+		 * Where a pane hidden from the dock comes back (#939; `DockState.defaultLayout`, #782 PR5):
+		 * the app's own default places, in `initialLayout`'s forms - e.g. the layout the app starts
+		 * with, an extra panel as a tab beside the left pane. Only its docked tree is read: a hidden
+		 * pane shown again goes beside its nearest sibling of this tree (back into its tab group), a
+		 * pane the tree does not hold opens floating. Reactive. Omitted (or not a usable layout
+		 * with the centre docked outside a tab group) = this component's own: left | centre | right, the extra panels
+		 * along their `initial` edge. It is not what `resetLayout` installs, and it is not saved.
+		 */
+		defaultPlaces?: unknown;
 		/** Called once at mount with how the starting layout was obtained. */
 		onRestore?: (status: ThreePaneRestoreStatus | 'fresh') => void;
 		/** i18n layer 1 (conventions §13): `DockMessages` plus the panes' names. */
@@ -192,6 +202,7 @@
 		panels = [],
 		dock: dockProp,
 		initialLayout,
+		defaultPlaces,
 		onRestore,
 		messages = {},
 		iconContent,
@@ -351,7 +362,7 @@
 	untrack(() => {
 		const options = layoutOptions(0);
 		// Where a pane hidden from the dock comes back (#782 PR5): kept with today's panes below.
-		dock.defaultLayout = threePaneDefaultPlaces(options);
+		dock.defaultLayout = threePaneDefaultPlaces(options, defaultPlaces);
 		let status: ThreePaneRestoreStatus | 'fresh';
 		if (initialLayout === undefined && isEmpty(dock.layout)) {
 			adoptLayout(dock, threePaneDockLayout(options));
@@ -648,8 +659,9 @@
 	// Today's panes and titles (a locale change renames them; an extra panel added / removed).
 	$effect(() => {
 		const options = layoutOptions(0);
+		const places = defaultPlaces;
 		untrack(() => {
-			dock.defaultLayout = threePaneDefaultPlaces(options);
+			dock.defaultLayout = threePaneDefaultPlaces(options, places);
 			void syncPanels(options);
 		});
 	});
