@@ -1831,7 +1831,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(menu).toBeVisible();
 		const menuBox = (await menu.boundingBox())!;
 		expect(Math.abs(menuBox.x - point.x)).toBeLessThanOrEqual(1);
-		expect(menuBox.y).toBeGreaterThanOrEqual(point.y);
+		// Below the point, or flipped above it when there is no room below (the
+		// grid runs past the bottom of the viewport here).
+		expect(menuBox.y >= point.y || menuBox.y + menuBox.height <= point.y).toBe(true);
 		await expect(menu.getByRole('menuitem').first()).toBeFocused();
 		await page.keyboard.press('Escape');
 		await expect(menu).toBeHidden();

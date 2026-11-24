@@ -252,6 +252,83 @@ async function openConfirm(page: Page, testId: string, title: string) {
 	return { opener, dialog };
 }
 
+// Context menu (#889): `Menu.openAt` at the pointer. Where focus goes on close
+// is checked in a real browser because the browser's own hide of a
+// `popover="auto"` puts focus back on the element focused when it was shown -
+// jsdom does not, so the unit tests cannot see a `returnFocus` it overrides.
+test.describe('ui-demo context menu', () => {
+	test.beforeEach(async ({ page }) => {
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+	});
+
+	async function openAtArea(page: Page) {
+		const area = page.getByTestId('ui-demo-context-area');
+		await area.scrollIntoViewIfNeeded();
+		const box = (await area.boundingBox())!;
+		const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+		// A real right-click (press, release): on Linux `contextmenu` fires on
+		// the press, so the menu must wait for the release to stay open.
+		await page.mouse.click(point.x, point.y, { button: 'right' });
+		const menu = page.getByRole('menu', { name: '見本の文脈メニュー' });
+		await expect(menu).toBeVisible();
+		await expect(menu.getByRole('menuitem').first()).toBeFocused();
+		return { area, menu, point };
+	}
+
+	async function pickReturn(page: Page, name: string) {
+		await page.getByRole('radiogroup', { name: '閉じたときのフォーカス' }).getByText(name).click();
+	}
+
+	test('opens beside the pointer; Esc returns focus to the right-clicked area', async ({
+		page
+	}) => {
+		const { area, menu, point } = await openAtArea(page);
+		const box = (await menu.boundingBox())!;
+		expect(Math.abs(box.x - point.x)).toBeLessThanOrEqual(1);
+		// Below the point, or flipped above it when there is no room below.
+		expect(box.y >= point.y || box.y + box.height <= point.y).toBe(true);
+		await page.keyboard.press('ArrowDown');
+		await expect(menu.getByRole('menuitem').nth(1)).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(menu).toBeHidden();
+		await expect(area).toBeFocused();
+	});
+
+	test('returnFocus: another element gets focus on Esc and on an item, not the area', async ({
+		page
+	}) => {
+		await pickReturn(page, '別の要素');
+		const other = page.getByTestId('ui-demo-context-other');
+		let { menu } = await openAtArea(page);
+		await page.keyboard.press('Escape');
+		await expect(menu).toBeHidden();
+		await expect(other).toBeFocused();
+		({ menu } = await openAtArea(page));
+		await page.keyboard.press('Enter');
+		await expect(menu).toBeHidden();
+		await expect(other).toBeFocused();
+		await expect(page.getByTestId('ui-demo-menu-selected')).toContainText('編集');
+	});
+
+	test('returnFocus: null leaves focus nowhere (not back on the area)', async ({ page }) => {
+		await pickReturn(page, '戻さない');
+		const { area, menu } = await openAtArea(page);
+		await page.keyboard.press('Escape');
+		await expect(menu).toBeHidden();
+		await expect(area).not.toBeFocused();
+		expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+	});
+
+	test('an outside click closes it and keeps the focus the click gave', async ({ page }) => {
+		const { menu } = await openAtArea(page);
+		const other = page.getByTestId('ui-demo-context-other');
+		await other.click();
+		await expect(menu).toBeHidden();
+		await expect(other).toBeFocused();
+	});
+});
+
 test.describe('ui-demo ConfirmDialog', () => {
 	test.beforeEach(async ({ page }) => {
 		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);

@@ -8,7 +8,11 @@
  * (`pointerGesture.ts`). Real placement and light dismiss are browser
  * behaviour (e2e: the users list's row menu in e2e/tests/smoke.spec.ts).
  *
- * Same Popover API stand-in as menu.test.ts (jsdom has none).
+ * Same Popover API stand-in as menu.test.ts (jsdom has none), plus what the
+ * browser's hide does before `toggle`: a synchronous `beforetoggle`, then focus
+ * still inside goes back to the element focused when the popover was shown
+ * (the HTML hide-popover steps) - the move that would otherwise beat a
+ * `returnFocus` to it (#889 review; the real browser: e2e/visual/ui-overlays.spec.ts).
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -27,16 +31,25 @@ function fireToggle(el: HTMLElement, newState: 'open' | 'closed'): void {
 
 beforeAll(() => {
 	const proto = HTMLElement.prototype as unknown as PopoverElement;
+	const shownFrom = new WeakMap<HTMLElement, Element | null>();
 	proto.showPopover = function (this: HTMLElement) {
 		if (this.dataset.popoverOpen === 'true') throw new Error('already open');
+		shownFrom.set(this, document.activeElement);
 		this.dataset.popoverOpen = 'true';
 		this.style.display = 'block';
 		fireToggle(this, 'open');
 	};
 	proto.hidePopover = function (this: HTMLElement) {
 		if (this.dataset.popoverOpen !== 'true') return;
+		const before = new Event('beforetoggle');
+		Object.defineProperty(before, 'newState', { value: 'closed' });
+		this.dispatchEvent(before);
 		delete this.dataset.popoverOpen;
 		this.style.removeProperty('display');
+		const previous = shownFrom.get(this);
+		if (this.contains(document.activeElement) && previous instanceof HTMLElement) {
+			previous.focus();
+		}
 		fireToggle(this, 'closed');
 	};
 });
@@ -57,8 +70,12 @@ function setup(props: { showRow?: boolean } = {}) {
 	const onDelete = vi.fn();
 	const view = render(ContextMenuHarness, { onEdit, onDelete, ...props });
 	const menu = screen.getByRole('menu', { hidden: true });
-	const openAt = (point: { x: number; y: number }) =>
-		(view.component as unknown as { openAt(p: { x: number; y: number }): void }).openAt(point);
+	type OpenAt = (
+		p: { x: number; y: number },
+		options?: { returnFocus?: HTMLElement | null }
+	) => void;
+	const openAt: OpenAt = (point, options) =>
+		(view.component as unknown as { openAt: OpenAt }).openAt(point, options);
 	return { ...view, menu, openAt, onEdit, onDelete };
 }
 
@@ -146,6 +163,46 @@ describe('Menu.openAt (context menu, #889)', () => {
 		expect(document.activeElement).toBe(row);
 	});
 
+	it('returns focus to `returnFocus`, not to the element focused at open (Escape, an item)', async () => {
+		const { menu, openAt } = setup();
+		const row = screen.getByTestId('row');
+		const other = screen.getByTestId('other');
+		row.focus();
+		openAt({ x: 10, y: 10 }, { returnFocus: other });
+		await flush();
+		(menu as PopoverElement).hidePopover();
+		await flush();
+		expect(document.activeElement).toBe(other);
+		row.focus();
+		openAt({ x: 10, y: 10 }, { returnFocus: other });
+		await flush();
+		await fireEvent.click(item('Edit'));
+		await flush();
+		expect(document.activeElement).toBe(other);
+	});
+
+	it('returnFocus: null leaves focus nowhere, not on the element focused at open', async () => {
+		const { menu, openAt } = setup();
+		screen.getByTestId('row').focus();
+		openAt({ x: 10, y: 10 }, { returnFocus: null });
+		await flush();
+		(menu as PopoverElement).hidePopover();
+		await flush();
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('keeps a focus move made outside the menu before it closes', async () => {
+		const { menu, openAt } = setup();
+		screen.getByTestId('row').focus();
+		openAt({ x: 10, y: 10 });
+		await flush();
+		const other = screen.getByTestId('other');
+		other.focus(); // an outside click focuses before the light dismiss
+		(menu as PopoverElement).hidePopover();
+		await flush();
+		expect(document.activeElement).toBe(other);
+	});
+
 	it('leaves focus alone when the row is gone by the time it closes', async () => {
 		const { menu, openAt, rerender } = setup();
 		screen.getByTestId('row').focus();
@@ -197,6 +254,28 @@ describe('Menu.openAt (context menu, #889)', () => {
 		await flush();
 		expect(menu.dataset.popoverOpen).toBe('true');
 	});
+
+	for (const [name, end] of [
+		['pointercancel', () => window.dispatchEvent(new Event('pointercancel'))],
+		['a window blur', () => window.dispatchEvent(new Event('blur'))]
+	] as const) {
+		it(`never opens when the press ends in ${name} (and moves no focus)`, async () => {
+			const { menu, openAt } = setup();
+			const row = screen.getByTestId('row');
+			row.focus();
+			window.dispatchEvent(new Event('pointerdown'));
+			openAt({ x: 10, y: 10 });
+			end();
+			await flush();
+			// A later release (of a new press) does not run the dropped open either.
+			window.dispatchEvent(new Event('pointerdown'));
+			window.dispatchEvent(new Event('pointerup'));
+			await flush();
+			await flush();
+			expect(menu.dataset.popoverOpen).toBeUndefined();
+			expect(document.activeElement).toBe(row);
+		});
+	}
 
 	it('drops an open superseded by a later one during the same press', async () => {
 		const { menu, openAt } = setup();

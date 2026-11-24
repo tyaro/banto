@@ -12,8 +12,11 @@
 
 	let menu: ReturnType<typeof Menu> | undefined = $state();
 
-	export function openAt(point: { x: number; y: number }): void {
-		menu?.openAt(point);
+	export function openAt(
+		point: { x: number; y: number },
+		options?: { returnFocus?: HTMLElement | null }
+	): void {
+		menu?.openAt(point, options);
 	}
 </script>
 

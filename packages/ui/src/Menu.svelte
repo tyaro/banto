@@ -212,9 +212,29 @@
 	// before that event) then records the trigger / row as its opener instead
 	// of the hidden item, and gets focus back there on close (#889).
 	function closeFromItem(): void {
-		const active = document.activeElement;
-		if (active && popoverEl?.contains(active)) returnFocus();
+		returnFocusFromInside();
 		closeMenu();
+	}
+
+	/**
+	 * Hands focus over while it is still in the menu, before it hides. The
+	 * browser's own hide moves focus left in a `popover="auto"` back to the
+	 * element focused when it was shown - for a menu opened at a point that is
+	 * not necessarily `returnFocus` - and afterwards a native move cannot be
+	 * told from the user's own (#889 review). Focus already outside (an outside
+	 * click, a focus move by the app) is left alone. A point menu with nowhere
+	 * to return to (`returnFocus: null`, the row gone) drops focus instead of
+	 * letting the browser put it back.
+	 */
+	function returnFocusFromInside(): void {
+		const active = document.activeElement;
+		if (!(active instanceof HTMLElement) || !popoverEl?.contains(active)) return;
+		if (anchorPoint && !pointReturnEl?.isConnected) active.blur();
+		else returnFocus();
+	}
+
+	function handleBeforeToggle(event: ToggleEvent): void {
+		if (event.newState === 'closed') returnFocusFromInside();
 	}
 
 	setMenuContext({
@@ -238,12 +258,11 @@
 		} else {
 			coords = undefined;
 			popoverEl?.style.removeProperty('max-height');
-			// Return focus to the trigger only when it would otherwise be
-			// dropped (Escape / item selection leave it on a menu item; the
-			// browser then moves it to <body> once the popover hides). An
-			// outside click or Tab has already focused something else by the
-			// time this queued event fires - stealing it back would fight
-			// the user's own focus move.
+			// Normally done already in `beforetoggle`. Kept for an engine
+			// without it: return focus only when it would otherwise be dropped
+			// (left on a menu item, or on <body>). An outside click or Tab has
+			// already focused something else by the time this queued event
+			// fires - stealing it back would fight the user's own focus move.
 			const active = document.activeElement;
 			if (active === null || active === document.body || popoverEl?.contains(active)) {
 				returnFocus();
@@ -336,6 +355,7 @@
 	style:top={coords ? `${coords.top}px` : undefined}
 	style:left={coords ? `${coords.left}px` : undefined}
 	style:visibility={coords ? 'visible' : 'hidden'}
+	onbeforetoggle={handleBeforeToggle}
 	ontoggle={handleToggle}
 	onkeydown={handlePopoverKeydown}
 >

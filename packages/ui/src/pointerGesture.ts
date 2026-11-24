@@ -9,10 +9,12 @@
  * the release. Keyboard opens (Shift+F10, the Menu key) have no gesture and
  * open at once.
  *
- * One set of window listeners for every menu, installed on first use. A
- * release the page never sees (the browser's own context menu took it, the
- * pointer left the window) would leave the flag stuck, so a button-less
- * `pointermove`, a `keydown` and a window `blur` also clear it.
+ * One set of window listeners for every menu, installed on first use. Only a
+ * `pointerup` runs what waited for the release. A gesture that ends any other
+ * way - `pointercancel`, the window losing focus (another window took the
+ * press), a key, or a button-less `pointermove` (the release went somewhere
+ * the page never saw) - **drops** it: a menu must not appear late, after the
+ * user has moved on (#889 review).
  *
  * Package-internal (not exported from `index.ts`).
  */
@@ -33,6 +35,11 @@ function release(): void {
 	}, 0);
 }
 
+function cancel(): void {
+	held = false;
+	waiting = [];
+}
+
 function install(): void {
 	if (installed || typeof window === 'undefined') return;
 	installed = true;
@@ -44,16 +51,16 @@ function install(): void {
 		true
 	);
 	window.addEventListener('pointerup', release, true);
-	window.addEventListener('pointercancel', release, true);
+	window.addEventListener('pointercancel', cancel, true);
 	window.addEventListener(
 		'pointermove',
 		(event) => {
-			if (held && event.buttons === 0) release();
+			if (held && event.buttons === 0) cancel();
 		},
 		true
 	);
-	window.addEventListener('keydown', release, true);
-	window.addEventListener('blur', release);
+	window.addEventListener('keydown', cancel, true);
+	window.addEventListener('blur', cancel);
 }
 
 /** Starts watching (idempotent; a no-op without a DOM). Call on mount, before any gesture. */
@@ -63,7 +70,8 @@ export function trackPointerGesture(): void {
 
 /**
  * Runs `callback` now when no pointer button is held, otherwise once the
- * current gesture has ended (after its `pointerup` has been dispatched).
+ * current gesture has been released (after its `pointerup` has been
+ * dispatched). A cancelled gesture never runs it.
  */
 export function afterPointerRelease(callback: () => void): void {
 	install();
