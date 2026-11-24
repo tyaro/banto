@@ -667,3 +667,179 @@ describe('DateInput inside a Modal (§8, PR-3: a form in a dialog)', () => {
 		expect(onclose).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe('DateInput month and year views (Issue #908)', () => {
+	const focusedLabel = () =>
+		(document.activeElement as HTMLElement | null)?.getAttribute('aria-label');
+	const headingText = () => screen.getByRole('heading').textContent?.replace(/\s+/g, '');
+	const periodCell = (label: string) =>
+		screen.getByRole('grid').querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
+
+	it('the heading is a year button and a month button', () => {
+		const { button } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		const heading = screen.getByRole('heading');
+		const [year, month] = Array.from(heading.querySelectorAll('button'));
+		expect(year.textContent?.trim()).toBe('2026年');
+		expect(year.getAttribute('title')).toBe('年を選ぶ');
+		expect(month.textContent?.trim()).toBe('11月');
+		expect(month.getAttribute('title')).toBe('月を選ぶ');
+	});
+
+	it('month button -> the 12 months; picking one shows its days with the same day', () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2026, 5, 20, 10, 0));
+		const { button, onValueChange, onblur } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		const monthButton = screen.getByRole('button', { name: '11月' });
+		monthButton.focus();
+		fireEvent.click(monthButton);
+		const grid = screen.getByRole('grid');
+		expect(grid.querySelectorAll('td[data-period]')).toHaveLength(12);
+		expect(headingText()).toBe('2026年');
+		expect(screen.getByRole('heading').getAttribute('aria-live')).toBe('polite');
+		expect(focusedLabel()).toBe('2026年11月');
+		expect(document.activeElement?.getAttribute('aria-selected')).toBe('true');
+		expect(document.activeElement?.getAttribute('tabindex')).toBe('0');
+		expect(periodCell('2026年6月').getAttribute('aria-current')).toBe('true');
+		expect(periodCell('2026年6月').textContent?.trim()).toBe('6月');
+		// Arrows: left 1, up a row of 3; PageDown a year.
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+		expect(focusedLabel()).toBe('2026年7月');
+		fireEvent.keyDown(document.activeElement!, { key: 'PageDown' });
+		expect(focusedLabel()).toBe('2027年7月');
+		expect(headingText()).toBe('2027年');
+		fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
+		expect(headingText()).toBe('2027年7月');
+		expect(focusedDate()).toBe('2027-07-07');
+		expect(isOpen()).toBe(true);
+		expect(onValueChange).not.toHaveBeenCalled();
+		expect(onblur).not.toHaveBeenCalled();
+	});
+
+	it('year button -> 12 years from the decade; picking a year shows its months', () => {
+		const { button } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
+		expect(headingText()).toBe('2020年～2031年');
+		const cells = screen.getByRole('grid').querySelectorAll<HTMLElement>('td[data-period]');
+		expect(Array.from(cells, (c) => c.textContent?.trim())).toEqual(
+			Array.from({ length: 12 }, (_, i) => `${2020 + i}年`)
+		);
+		expect(focusedLabel()).toBe('2026年');
+		expect(document.activeElement?.getAttribute('aria-selected')).toBe('true');
+		// Past the page's end turns the page by 12 years.
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+		expect(focusedLabel()).toBe('2032年');
+		expect(headingText()).toBe('2032年～2043年');
+		fireEvent.click(screen.getByRole('button', { name: '前の 12 年' }));
+		expect(headingText()).toBe('2020年～2031年');
+		fireEvent.click(periodCell('2029年'));
+		expect(headingText()).toBe('2029年');
+		expect(focusedLabel()).toBe('2029年11月');
+		// The month view's heading opens the year view again.
+		fireEvent.click(screen.getByRole('button', { name: '2029年' }));
+		expect(focusedLabel()).toBe('2029年');
+		fireEvent.keyDown(document.activeElement!, { key: ' ' });
+		fireEvent.click(periodCell('2029年2月'));
+		expect(focusedDate()).toBe('2029-02-07');
+	});
+
+	it('Esc goes back one view (year -> month -> day) and then closes; not during IME', () => {
+		const { button, input, onHostKeydown } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+		fireEvent.keyDown(document.activeElement!, { key: 'Escape', isComposing: true });
+		fireEvent.keyDown(document.activeElement!, { key: 'Escape', keyCode: 229 });
+		expect(headingText()).toBe('2020年～2031年');
+		const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+		document.activeElement!.dispatchEvent(esc);
+		expect(esc.defaultPrevented).toBe(true);
+		// The month view entered from the day view: the tracked day's month.
+		expect(headingText()).toBe('2026年');
+		expect(focusedLabel()).toBe('2026年11月');
+		fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+		expect(headingText()).toBe('2026年11月');
+		expect(focusedDate()).toBe('2026-11-07');
+		expect(isOpen()).toBe(true);
+		fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+		expect(isOpen()).toBe(false);
+		expect(document.activeElement).toBe(input);
+		expect(onHostKeydown).not.toHaveBeenCalled();
+	});
+
+	it('Esc from the footer also goes back one view; focus stays on the footer', () => {
+		const { button } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
+		const today = screen.getByRole('button', { name: '今日' });
+		today.focus();
+		fireEvent.keyDown(today, { key: 'Escape', isComposing: true });
+		expect(headingText()).toBe('2020年～2031年');
+		fireEvent.keyDown(today, { key: 'Escape' });
+		expect(headingText()).toBe('2026年');
+		expect(document.activeElement).toBe(today);
+		fireEvent.keyDown(today, { key: 'Escape' });
+		expect(headingText()).toBe('2026年11月');
+		expect(isOpen()).toBe(true);
+		fireEvent.keyDown(today, { key: 'Escape' });
+		expect(isOpen()).toBe(false);
+	});
+
+	it('months / years outside [min, max] are aria-disabled and cannot be reached', () => {
+		const { button } = setup({ value: '2026-03-20', min: '2026-03-15', max: '2027-02-10' });
+		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '3月' }));
+		expect(periodCell('2026年2月').getAttribute('aria-disabled')).toBe('true');
+		expect(periodCell('2026年3月').hasAttribute('aria-disabled')).toBe(false);
+		expect(screen.getByRole('button', { name: '前の年' }).getAttribute('aria-disabled')).toBe(
+			'true'
+		);
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+		expect(focusedLabel()).toBe('2026年3月');
+		// A click on a disabled month keeps focus (and the view) where it is.
+		fireEvent.click(periodCell('2026年1月'));
+		expect(focusedLabel()).toBe('2026年3月');
+		fireEvent.click(screen.getByRole('button', { name: '次の年' }));
+		expect(headingText()).toBe('2027年');
+		expect(periodCell('2027年3月').getAttribute('aria-disabled')).toBe('true');
+		expect(screen.getByRole('button', { name: '次の年' }).getAttribute('aria-disabled')).toBe(
+			'true'
+		);
+		fireEvent.click(screen.getByRole('button', { name: '2027年' }));
+		expect(periodCell('2025年').getAttribute('aria-disabled')).toBe('true');
+		expect(periodCell('2028年').getAttribute('aria-disabled')).toBe('true');
+		expect(screen.getByRole('button', { name: '次の 12 年' }).getAttribute('aria-disabled')).toBe(
+			'true'
+		);
+		// Picking a month clamps the day into range.
+		fireEvent.click(periodCell('2027年'));
+		fireEvent.click(periodCell('2027年2月'));
+		expect(focusedDate()).toBe('2027-02-10');
+	});
+
+	it('the year view at 0001 shows an empty slot for year 0', () => {
+		const { button } = setup({ value: '0005-06-01' });
+		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '5年' }));
+		const cells = screen.getByRole('grid').querySelectorAll('td');
+		expect(cells[0].hasAttribute('data-period')).toBe(false);
+		expect(cells[0].hasAttribute('tabindex')).toBe(false);
+		expect(focusedLabel()).toBe('5年');
+		fireEvent.keyDown(document.activeElement!, { key: 'Home' });
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+		expect(focusedLabel()).toBe('1年');
+	});
+
+	it('en-US: the heading reads "November 2026"; the views use Intl names', () => {
+		const { button } = setup({ value: '2026-11-07', locale: 'en-US' });
+		fireEvent.click(button);
+		expect(screen.getByRole('heading').textContent?.trim()).toBe('November 2026');
+		fireEvent.click(screen.getByRole('button', { name: 'November' }));
+		expect(periodCell('January 2026').textContent?.trim()).toBe('Jan');
+	});
+});

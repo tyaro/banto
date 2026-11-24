@@ -297,6 +297,8 @@
 		if (event.isComposing || event.keyCode === 229) return;
 		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panelEl })) return;
 		event.preventDefault();
+		// The month / year view (#908) goes back one view first, even from the time list.
+		if (calendar?.back()) return;
 		closePicker(true);
 	}
 

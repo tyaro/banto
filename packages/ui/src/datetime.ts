@@ -286,6 +286,165 @@ export function weekdayNames(
 	});
 }
 
+// --- Month and year views (Issue #908) ---------------------------------------
+//
+// The calendar's month view (the 12 months of a year) and year view (12
+// years) share one numbering: a "period" is an integer - for months
+// `year * 12 + (month - 1)`, for years the year itself - so both views page
+// by 12 periods, move by 1 / 3 (a row of three) and clamp the same way.
+
+/** What one cell of a period view is: a month or a year. */
+export type PeriodUnit = 'month' | 'year';
+
+/** Periods per page of a period view (3 columns x 4 rows). */
+export const PERIODS_PER_PAGE = 12;
+
+/** Cells per row of a period view. */
+export const PERIODS_PER_ROW = 3;
+
+/** The period of `date` (canonical) in `unit`. */
+export function periodOf(date: string, unit: PeriodUnit): number {
+	const { year, month } = requireDate(date);
+	return unit === 'year' ? year : year * 12 + (month - 1);
+}
+
+/** Year and month (1-12) of a month period. */
+export function monthOfPeriod(period: number): { year: number; month: number } {
+	return { year: Math.floor(period / 12), month: (((period % 12) + 12) % 12) + 1 };
+}
+
+/** The first / last day of a period, or `null` outside years 0001-9999. */
+function periodBounds(period: number, unit: PeriodUnit): [string, string] | null {
+	const { year, month } = unit === 'year' ? { year: period, month: 0 } : monthOfPeriod(period);
+	if (year < MIN_YEAR || year > MAX_YEAR) return null;
+	if (unit === 'year') {
+		return [formatDate({ year, month: 1, day: 1 }), formatDate({ year, month: 12, day: 31 })];
+	}
+	return [
+		formatDate({ year, month, day: 1 }),
+		formatDate({ year, month, day: daysInMonth(year, month) })
+	];
+}
+
+/** Does the period exist (a year 0001-9999)? Other positions are empty slots. */
+export function isPeriodValid(period: number, unit: PeriodUnit): boolean {
+	return periodBounds(period, unit) !== null;
+}
+
+/** Is the whole period outside `[min, max]` (or outside years 0001-9999)? */
+export function isPeriodOutOfRange(
+	period: number,
+	unit: PeriodUnit,
+	min?: string | null,
+	max?: string | null
+): boolean {
+	const bounds = periodBounds(period, unit);
+	if (!bounds) return true;
+	return (!!min && bounds[1] < min) || (!!max && bounds[0] > max);
+}
+
+/** `period` moved into the periods that touch `[min, max]` (and years 0001-9999). */
+export function clampPeriod(
+	period: number,
+	unit: PeriodUnit,
+	min?: string | null,
+	max?: string | null
+): number {
+	const lo = periodOf(min || formatDate({ year: MIN_YEAR, month: 1, day: 1 }), unit);
+	const hi = periodOf(max || formatDate({ year: MAX_YEAR, month: 12, day: 31 }), unit);
+	return Math.min(Math.max(period, lo), hi);
+}
+
+/**
+ * The first period of the page that shows `period`. A month view shows one
+ * year (January first); a year view starts at the decade (2026 -> 2020-2031),
+ * so a page reads from a round year.
+ */
+export function periodPageStart(period: number, unit: PeriodUnit): number {
+	return unit === 'year' ? Math.floor(period / 10) * 10 : Math.floor(period / 12) * 12;
+}
+
+/**
+ * `date` moved to `year` / `month` (1-12), keeping the day where it exists
+ * (31 Jan -> 28 / 29 Feb), then into `[min, max]`.
+ */
+export function withYearMonth(
+	date: string,
+	year: number,
+	month: number,
+	min?: string | null,
+	max?: string | null
+): string {
+	const { day } = requireDate(date);
+	const y = Math.min(Math.max(year, MIN_YEAR), MAX_YEAR);
+	const moved = formatDate({ year: y, month, day: Math.min(day, daysInMonth(y, month)) });
+	return clampDate(moved, min, max);
+}
+
+/** A year as the locale writes it alone ("2026年", "2026"). */
+export function formatYear(year: number, locale: string): string {
+	return formatter(locale, { year: 'numeric' }).format(utcDate({ year, month: 1, day: 1 }));
+}
+
+/** A month's name alone: `long` ("11月", "November") or `short` ("11月", "Nov"). */
+export function formatMonthName(
+	month: number,
+	locale: string,
+	style: 'long' | 'short' = 'long'
+): string {
+	return formatter(locale, { month: style }).format(utcDate({ year: 2001, month, day: 1 }));
+}
+
+/**
+ * The day view's heading split into its year and month (each becomes a
+ * button), cut from the same combined format as `formatMonthYear`, so
+ * `first + separator + second` is exactly that string in every locale:
+ * "2026年" + "" + "11月" (ja), "November" + " " + "2026" (en), "noviembre" +
+ * " de " + "2026" (es), "2026년" + " " + "11월" (ko).
+ *
+ * The literal between the two fields is split at its first whitespace: the
+ * characters before it stay with the first field ("年", "년" - its unit),
+ * the rest is the `separator` (" ", " de "). Literals before the first
+ * field / after the second stay with that field ("月" after "11").
+ */
+export function monthYearParts(
+	date: string,
+	locale: string
+): { yearFirst: boolean; year: string; month: string; separator: string } {
+	const { year, month } = requireDate(date);
+	const parts = formatter(locale, { year: 'numeric', month: 'long' }).formatToParts(
+		utcDate({ year, month, day: 1 })
+	);
+	const yearAt = parts.findIndex((p) => p.type === 'year');
+	const monthAt = parts.findIndex((p) => p.type === 'month');
+	if (yearAt < 0 || monthAt < 0) {
+		// Not expected from Intl; keep the heading readable.
+		return {
+			yearFirst: true,
+			year: formatYear(year, locale),
+			month: formatMonthName(month, locale),
+			separator: ' '
+		};
+	}
+	const [i1, i2] = yearAt < monthAt ? [yearAt, monthAt] : [monthAt, yearAt];
+	const join = (from: number, to: number) =>
+		parts
+			.slice(from, to)
+			.map((p) => p.value)
+			.join('');
+	const middle = join(i1 + 1, i2);
+	const unit = /^\S*/.exec(middle)?.[0] ?? '';
+	const first = join(0, i1 + 1) + unit;
+	const second = join(i2, parts.length);
+	const yearFirst = yearAt < monthAt;
+	return {
+		yearFirst,
+		year: yearFirst ? first : second,
+		month: yearFirst ? second : first,
+		separator: middle.slice(unit.length)
+	};
+}
+
 // --- Times (date-time-pickers §5.1 / §5.3 / §5.6, D7 / D8) ------------------
 //
 // A time is the canonical string `HH:mm` (00:00-23:59, 24-hour, no seconds),

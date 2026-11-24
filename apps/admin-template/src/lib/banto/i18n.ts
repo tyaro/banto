@@ -149,6 +149,11 @@ export function dateInputMessages(): UiMessages {
 		datePickerNextMonth: () => m['datePicker.nextMonth'](),
 		datePickerPrevYear: () => m['datePicker.prevYear'](),
 		datePickerNextYear: () => m['datePicker.nextYear'](),
+		datePickerChooseMonth: () => m['datePicker.chooseMonth'](),
+		datePickerChooseYear: () => m['datePicker.chooseYear'](),
+		datePickerPrevYears: () => m['datePicker.prevYears'](),
+		datePickerNextYears: () => m['datePicker.nextYears'](),
+		datePickerYearRange: (start, end) => m['datePicker.yearRange']({ start, end }),
 		datePickerToday: () => m['datePicker.today'](),
 		datePickerClear: () => m['datePicker.clear'](),
 		dateFormatHint: () => m['datePicker.formatHint']()

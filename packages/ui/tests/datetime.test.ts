@@ -27,8 +27,118 @@ import {
 	resolveWeekStart,
 	startOfWeek,
 	todayDate,
-	weekdayNames
+	weekdayNames,
+	clampPeriod,
+	formatMonthName,
+	formatYear,
+	isPeriodOutOfRange,
+	isPeriodValid,
+	monthOfPeriod,
+	monthYearParts,
+	periodOf,
+	periodPageStart,
+	withYearMonth
 } from '../src/datetime';
+
+describe('month / year periods (Issue #908)', () => {
+	it('numbers months and years as periods and back', () => {
+		expect(periodOf('2026-11-07', 'month')).toBe(2026 * 12 + 10);
+		expect(periodOf('2026-11-07', 'year')).toBe(2026);
+		expect(monthOfPeriod(2026 * 12 + 10)).toEqual({ year: 2026, month: 11 });
+		expect(monthOfPeriod(2027 * 12)).toEqual({ year: 2027, month: 1 });
+	});
+
+	it('pages start on January / the decade', () => {
+		expect(periodPageStart(2026 * 12 + 10, 'month')).toBe(2026 * 12);
+		expect(periodPageStart(2026, 'year')).toBe(2020);
+		expect(periodPageStart(5, 'year')).toBe(0);
+	});
+
+	it('a period is out of range only when all of it is', () => {
+		const min = '2026-03-15';
+		const max = '2027-02-10';
+		expect(isPeriodOutOfRange(2026 * 12 + 1, 'month', min, max)).toBe(true); // Feb 2026
+		expect(isPeriodOutOfRange(2026 * 12 + 2, 'month', min, max)).toBe(false); // Mar 2026
+		expect(isPeriodOutOfRange(2027 * 12 + 1, 'month', min, max)).toBe(false); // Feb 2027
+		expect(isPeriodOutOfRange(2027 * 12 + 2, 'month', min, max)).toBe(true); // Mar 2027
+		expect(isPeriodOutOfRange(2025, 'year', min, max)).toBe(true);
+		expect(isPeriodOutOfRange(2027, 'year', min, max)).toBe(false);
+		expect(isPeriodOutOfRange(2028, 'year', min, max)).toBe(true);
+		// Years 0 and 10000 do not exist.
+		expect(isPeriodValid(0, 'year')).toBe(false);
+		expect(isPeriodValid(10000, 'year')).toBe(false);
+		expect(isPeriodOutOfRange(0, 'year')).toBe(true);
+		expect(isPeriodValid(1, 'year')).toBe(true);
+	});
+
+	it('clamps into the range (and years 0001-9999)', () => {
+		expect(clampPeriod(2020, 'year', '2026-03-15', '2027-02-10')).toBe(2026);
+		expect(clampPeriod(2030, 'year', '2026-03-15', '2027-02-10')).toBe(2027);
+		expect(clampPeriod(0, 'year')).toBe(1);
+		expect(clampPeriod(10005, 'year')).toBe(9999);
+		expect(clampPeriod(2026 * 12, 'month', '2026-03-15')).toBe(2026 * 12 + 2);
+	});
+
+	it('withYearMonth keeps the day where it exists, then clamps', () => {
+		expect(withYearMonth('2026-01-31', 2026, 2)).toBe('2026-02-28');
+		expect(withYearMonth('2026-01-31', 2028, 2)).toBe('2028-02-29');
+		expect(withYearMonth('2026-11-07', 2030, 5)).toBe('2030-05-07');
+		expect(withYearMonth('2026-11-07', 2026, 3, '2026-03-15')).toBe('2026-03-15');
+	});
+
+	it('Intl names for the views and the split heading', () => {
+		expect(formatYear(2026, 'ja-JP')).toBe('2026年');
+		expect(formatYear(2026, 'en-US')).toBe('2026');
+		expect(formatMonthName(11, 'ja-JP')).toBe('11月');
+		expect(formatMonthName(11, 'en-US', 'short')).toBe('Nov');
+		expect(monthYearParts('2026-11-07', 'ja-JP')).toEqual({
+			yearFirst: true,
+			year: '2026年',
+			month: '11月',
+			separator: ''
+		});
+		expect(monthYearParts('2026-11-07', 'en-US')).toEqual({
+			yearFirst: false,
+			year: '2026',
+			month: 'November',
+			separator: ' '
+		});
+		// The locale's own separator is kept ("noviembre de 2026", not "noviembre 2026").
+		expect(monthYearParts('2026-11-07', 'es-ES')).toEqual({
+			yearFirst: false,
+			year: '2026',
+			month: 'noviembre',
+			separator: ' de '
+		});
+	});
+
+	it('the split heading joins back to formatMonthYear in every locale', () => {
+		for (const locale of [
+			'ja-JP',
+			'en-US',
+			'es-ES',
+			'de-DE',
+			'fr-FR',
+			'zh-CN',
+			'ko-KR',
+			'pt-BR',
+			'ru-RU',
+			'fi-FI'
+		]) {
+			for (const date of ['2026-01-15', '2026-11-07', '0005-06-01']) {
+				const p = monthYearParts(date, locale);
+				const [first, second] = p.yearFirst ? [p.year, p.month] : [p.month, p.year];
+				// Spaces compared as one kind: V8's ICU sometimes gives ru's " г." a
+				// narrow no-break space in one call and a plain one in another.
+				const spaces = (s: string) => s.replace(/\s/g, ' ');
+				expect(spaces(first + p.separator + second), `${locale} ${date}`).toBe(
+					spaces(formatMonthYear(date, locale))
+				);
+				expect(p.year.length > 0 && p.month.length > 0).toBe(true);
+			}
+		}
+	});
+});
 
 describe('parseDateText (D7)', () => {
 	it.each([

@@ -470,6 +470,38 @@ test.describe('ui-demo DateInput', () => {
 		await expect(page.getByTestId('ui-demo-due-date-value')).toContainText('2026-12-01');
 	});
 
+	test('month and year views (#908): the heading opens them, Esc goes back one view', async ({
+		page
+	}) => {
+		const input = page.getByRole('textbox', { name: '納期' });
+		await openDueDate(page);
+		const dialog = page.getByRole('dialog', { name: '日付の選択' });
+		await expect(dialog).toBeVisible();
+		const before = await dialog.boundingBox();
+		await dialog.getByRole('button', { name: '11月' }).click();
+		await expect(dialog.getByRole('gridcell', { name: '2026年11月' })).toBeFocused();
+		await expect(dialog.getByRole('gridcell')).toHaveCount(12);
+		// The view keeps the dialog's size (the grid is the day grid's box).
+		const after = await dialog.boundingBox();
+		expect(Math.abs((after?.height ?? 0) - (before?.height ?? 0))).toBeLessThanOrEqual(2);
+		await page.keyboard.press('ArrowRight');
+		await page.keyboard.press('Enter');
+		await expect(dialog.getByRole('gridcell', { name: '2026年12月7日月曜日' })).toBeFocused();
+
+		await dialog.getByRole('button', { name: '2026年' }).click();
+		await expect(dialog.getByRole('heading')).toHaveText('2020年～2031年');
+		await expect(dialog.getByRole('gridcell', { name: '2026年' })).toBeFocused();
+		await page.keyboard.press('ArrowDown');
+		await page.keyboard.press('Enter');
+		await expect(dialog.getByRole('gridcell', { name: '2029年12月' })).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(dialog.getByRole('gridcell', { name: '2026年12月7日月曜日' })).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveValue('2026-11-07');
+	});
+
 	test('a click outside closes it and the calendar stays inside the viewport', async ({ page }) => {
 		await openDueDate(page);
 		const dialog = page.getByRole('dialog', { name: '日付の選択' });
@@ -505,6 +537,15 @@ for (const combo of DIAGONAL_MATRIX) {
 		}).toPass();
 		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 		expect(results.violations, formatViolations(results.violations)).toEqual([]);
+		// The month and year views (#908), with months / years out of range.
+		await dialog.getByRole('button', { name: '11月' }).click();
+		await expect(dialog.getByRole('gridcell', { name: '2026年11月' })).toBeFocused();
+		const months = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(months.violations, formatViolations(months.violations)).toEqual([]);
+		await dialog.getByRole('button', { name: '2026年' }).click();
+		await expect(dialog.getByRole('gridcell', { name: '2026年' })).toBeFocused();
+		const years = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(years.violations, formatViolations(years.violations)).toEqual([]);
 	});
 }
 

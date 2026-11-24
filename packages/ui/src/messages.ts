@@ -48,6 +48,16 @@ export interface UiMessages {
 	datePickerPrevYear?: () => string;
 	/** DateInput: the next-year button. */
 	datePickerNextYear?: () => string;
+	/** DateInput: the heading's month button (its tooltip / description): opens the month view. */
+	datePickerChooseMonth?: () => string;
+	/** DateInput: the heading's year button (its tooltip / description): opens the year view. */
+	datePickerChooseYear?: () => string;
+	/** DateInput: the year view's previous-page button (12 years back). */
+	datePickerPrevYears?: () => string;
+	/** DateInput: the year view's next-page button (12 years on). */
+	datePickerNextYears?: () => string;
+	/** DateInput: the year view's heading; `start` / `end` are the locale's years ("2020年", "2031年"). */
+	datePickerYearRange?: (start: string, end: string) => string;
 	/** DateInput: the button that picks today. */
 	datePickerToday?: () => string;
 	/** DateInput: the button that empties the value. */
@@ -101,6 +111,11 @@ export const defaultUiMessages: Required<UiMessages> = {
 	datePickerNextMonth: () => '次の月',
 	datePickerPrevYear: () => '前の年',
 	datePickerNextYear: () => '次の年',
+	datePickerChooseMonth: () => '月を選ぶ',
+	datePickerChooseYear: () => '年を選ぶ',
+	datePickerPrevYears: () => '前の 12 年',
+	datePickerNextYears: () => '次の 12 年',
+	datePickerYearRange: (start, end) => `${start}～${end}`,
 	datePickerToday: () => '今日',
 	datePickerClear: () => 'クリア',
 	dateFormatHint: () => 'YYYY-MM-DD の形で入力（例: 2026-11-07）',
