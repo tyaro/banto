@@ -43,6 +43,7 @@
 	 * §13); times are always `HH:mm`.
 	 */
 	import { flushSync, untrack } from 'svelte';
+	import { createTextMirror } from './textMirror.svelte.js';
 	import {
 		computeAnchoredPosition,
 		revealInPopover,
@@ -140,33 +141,24 @@
 
 	// --- text and value --------------------------------------------------
 
-	let ownText = $state(untrack(() => formatDateTimeText(value)));
-	// The value last mirrored into `ownText`, so a parent's change of `value`
-	// rewrites the box but the component's own commit does not run twice.
-	let mirroredValue: string | null | undefined = untrack(() => value);
-	$effect(() => {
-		const current = value;
-		if (current === mirroredValue) return;
-		mirroredValue = current;
-		// A parent that echoes the typed text back as the value (forms'
-		// FormStore path) gets the box left as typed: rewriting
-		// `2026-11-07T09:30` to the shown form mid-typing would move the caret.
-		if (current === untrack(() => ownText)) return;
-		ownText = formatDateTimeText(current);
+	const mirror = createTextMirror({
+		value: () => value,
+		toText: formatDateTimeText,
+		keepTypedEcho: true
 	});
 
-	const shownText = $derived(text ?? ownText);
+	const shownText = $derived(text ?? mirror.text);
 	const selected = $derived(value ? parseIsoDateTime(value) : null);
 
 	function setText(next: string): void {
-		ownText = next;
+		mirror.setText(next);
 		onTextInput?.(next);
 	}
 
 	function setValue(next: string | null): void {
 		const current = isBlankDateText(value) ? null : value;
 		if (next === current) return;
-		mirroredValue = next;
+		mirror.committed(next);
 		value = next;
 		onValueChange?.(next);
 	}
