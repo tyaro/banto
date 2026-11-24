@@ -147,6 +147,52 @@ describe('rowActions', () => {
 		before.remove();
 	});
 
+	it('at the edge of the page, the browser Tab runs with the other rows shut out for that key', async () => {
+		render(BantoTree, { nodes: forest(), rowActions: actions }); // nothing tabbable after it
+		screen.getByTestId('more-a').focus();
+		const event = keyOn(screen.getByTestId('more-a'), 'Tab');
+		expect(event.defaultPrevented).toBe(false);
+		const boxes = [...document.querySelectorAll<HTMLElement>('[data-tree-actions]')];
+		expect(boxes.map((b) => b.hasAttribute('inert'))).toEqual([false, true, true]);
+		await new Promise((r) => setTimeout(r, 0));
+		expect(boxes.map((b) => b.hasAttribute('inert'))).toEqual([false, false, false]);
+
+		// Shift+Tab from the row with nothing before the tree: the same.
+		row('Alpha').focus();
+		expect(
+			screen
+				.getByRole('tree')
+				.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'Tab',
+						shiftKey: true,
+						bubbles: true,
+						cancelable: true
+					})
+				)
+		).toBe(true);
+		expect(boxes.map((b) => b.hasAttribute('inert'))).toEqual([false, true, true]);
+	});
+
+	it('skips a control in a disabled fieldset (it cannot take the focus)', async () => {
+		const { before, after } = framed({ nodes: forest(), rowActions: actions });
+		const fieldset = document.createElement('fieldset');
+		fieldset.disabled = true;
+		const locked = document.createElement('button');
+		locked.textContent = 'locked';
+		fieldset.append(locked);
+		after.before(fieldset);
+		screen.getByTestId('more-a').focus();
+		tab();
+		expect(document.activeElement).toBe(after);
+		// With nothing that can take the focus after it, the key is left to the browser.
+		after.remove();
+		screen.getByTestId('more-a').focus();
+		expect(keyOn(screen.getByTestId('more-a'), 'Tab').defaultPrevented).toBe(false);
+		fieldset.remove();
+		before.remove();
+	});
+
 	it("never writes to the host's controls", async () => {
 		const toolbar = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
 			render: () =>

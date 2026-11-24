@@ -431,7 +431,8 @@
 	}
 	function isTabbable(el: HTMLElement): boolean {
 		if (tabOrderOf(el) < 0) return false;
-		if ((el as HTMLButtonElement).disabled) return false;
+		// `:disabled` also covers controls inside a disabled `<fieldset>`
+		if (el.matches(':disabled')) return false;
 		if (el.closest('[inert], [hidden]')) return false;
 		return typeof el.checkVisibility === 'function' ? el.checkVisibility() : true;
 	}
@@ -442,7 +443,11 @@
 		if (!row || tabStopId === null || row.dataset.nodeId !== String(tabStopId)) return false;
 		return el === row || actionsOf(el)?.closest('[data-node-id]') === row;
 	}
-	/** Moves the focus to the next / previous allowed Tab stop; `false` = leave it to the browser. */
+	/**
+	 * Moves the focus to the next / previous allowed Tab stop. `false` = no such stop on the
+	 * page (the tree is at its edge): the browser's own Tab then runs, with the other rows'
+	 * controls made `inert` for that one key so it leaves the page instead of landing on them.
+	 */
 	function tabFromTree(back: boolean): boolean {
 		const active = document.activeElement;
 		const all = [...document.querySelectorAll<HTMLElement>(TABBABLE)].filter(
@@ -452,11 +457,29 @@
 		positive.sort((a, b) => tabOrderOf(a) - tabOrderOf(b));
 		const order = [...positive, ...all.filter((el) => !positive.includes(el))];
 		const index = order.findIndex((el) => el === active);
-		if (index < 0) return false;
-		const next = order[back ? index - 1 : index + 1];
-		if (!next) return false;
-		next.focus();
-		return true;
+		if (index >= 0) {
+			const step = back ? -1 : 1;
+			for (let i = index + step; i >= 0 && i < order.length; i += step) {
+				const next = order[i]!;
+				next.focus();
+				// A stop that would not take the focus: try the one after it.
+				if (document.activeElement === next) return true;
+			}
+		}
+		shieldOtherRowsForOneKey();
+		return false;
+	}
+	/** The other rows' control boxes (the tree's own spans) are `inert` until the key is done. */
+	function shieldOtherRowsForOneKey(): void {
+		const shielded: HTMLElement[] = [];
+		for (const box of containerEl?.querySelectorAll<HTMLElement>('[data-tree-actions]') ?? []) {
+			if (box.closest('[data-node-id]')?.getAttribute('data-node-id') === tabStopId) continue;
+			box.setAttribute('inert', '');
+			shielded.push(box);
+		}
+		setTimeout(() => {
+			for (const box of shielded) box.removeAttribute('inert');
+		});
 	}
 	// A Tab key is under way (set on the window, cleared once its focus move is done).
 	let tabbing = false;
