@@ -28,6 +28,9 @@
  * list) and the date-and-time helpers.
  * PR-6: `DateRangeInput` (two `DateInput`s in a `role="group"`, inclusive
  * days; the grid's filter turns them into a half-open `between`).
+ * #910: the extended calendar - `DatePicker` (one day) and `DateRangePicker`
+ * (a range picked in one calendar, two months side by side); inside, one
+ * `RangeCalendar` on top of `MonthCalendar` and one `PickerDialog`.
  * #556: ConfirmDialog (the in-page `window.confirm`, on the Modal body) and
  * its `await confirm()` form, `createConfirmStore()` + ConfirmHost (also a
  * `.svelte.ts`, shaped like the toast store).
@@ -58,6 +61,8 @@ export { default as DateInput } from './DateInput.svelte';
 export { default as TimeInput } from './TimeInput.svelte';
 export { default as DateTimeInput } from './DateTimeInput.svelte';
 export { default as DateRangeInput } from './DateRangeInput.svelte';
+export { default as DatePicker } from './DatePicker.svelte';
+export { default as DateRangePicker } from './DateRangePicker.svelte';
 export {
 	DEFAULT_TIME_STEP,
 	addDays,

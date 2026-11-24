@@ -7,6 +7,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	addDays,
+	firstShownMonth,
+	monthStartOfPeriod,
+	orderedRange,
+	shownMonthOffset,
 	addMonths,
 	addYears,
 	civilFromDays,
@@ -404,5 +408,38 @@ describe('Intl names (§5.5)', () => {
 			if (original) Object.defineProperty(proto, 'getWeekInfo', original);
 			else delete proto.getWeekInfo;
 		}
+	});
+});
+
+describe('several months and a range (Issue #910)', () => {
+	const period = (year: number, month: number) => year * 12 + (month - 1);
+
+	it('monthStartOfPeriod gives the 1st, clamped to 0001-01..9999-12', () => {
+		expect(monthStartOfPeriod(period(2026, 11))).toBe('2026-11-01');
+		expect(monthStartOfPeriod(period(0, 12))).toBe('0001-01-01');
+		expect(monthStartOfPeriod(period(10000, 1))).toBe('9999-12-01');
+	});
+
+	it('firstShownMonth keeps the date shown, inside the supported years', () => {
+		expect(firstShownMonth('2026-11-07', 0, 2)).toBe(period(2026, 11));
+		expect(firstShownMonth('2026-11-07', 1, 2)).toBe(period(2026, 10));
+		expect(firstShownMonth('9999-12-31', 0, 2)).toBe(period(9999, 11));
+		expect(firstShownMonth('0001-01-01', 1, 2)).toBe(period(1, 1));
+		expect(firstShownMonth('2026-11-07', 0, 1)).toBe(period(2026, 11));
+		// An offset from two months, now one month: still the date's month.
+		expect(firstShownMonth('2026-11-07', 1, 1)).toBe(period(2026, 11));
+	});
+
+	it('shownMonthOffset keeps the shown months or scrolls just far enough', () => {
+		const first = period(2026, 11);
+		expect(shownMonthOffset('2026-11-30', first, 2)).toBe(0);
+		expect(shownMonthOffset('2026-12-01', first, 2)).toBe(1);
+		expect(shownMonthOffset('2027-01-01', first, 2)).toBe(1);
+		expect(shownMonthOffset('2026-10-31', first, 2)).toBe(0);
+	});
+
+	it('orderedRange puts the earlier day first', () => {
+		expect(orderedRange('2026-11-20', '2026-11-05')).toEqual(['2026-11-05', '2026-11-20']);
+		expect(orderedRange('2026-11-05', '2026-11-05')).toEqual(['2026-11-05', '2026-11-05']);
 	});
 });

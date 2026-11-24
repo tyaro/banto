@@ -381,6 +381,54 @@ export function withYearMonth(
 	return clampDate(moved, min, max);
 }
 
+// --- Several months and a range (the extended calendar, Issue #910) ---------
+
+/** `YYYY-MM-01` of a month period (clamped to 0001-01..9999-12). */
+export function monthStartOfPeriod(period: number): string {
+	const clamped = Math.min(Math.max(period, MIN_YEAR * 12), MAX_YEAR * 12 + 11);
+	const { year, month } = monthOfPeriod(clamped);
+	return formatDate({ year, month, day: 1 });
+}
+
+/**
+ * The first month (a month period) of `count` months shown side by side,
+ * `date`'s month sitting `offset` months from the left. Kept inside
+ * 0001-01..9999-12, so `date`'s month is always one of the shown months
+ * (9999-12 is the last one shown, 0001-01 the first).
+ */
+export function firstShownMonth(date: string, offset: number, count: number): number {
+	const period = periodOf(date, 'month');
+	const last = MAX_YEAR * 12 + 11 - (count - 1);
+	// An offset left from more months (2 -> 1 on a narrow screen) still shows `date`.
+	const at = Math.min(Math.max(offset, 0), count - 1);
+	return Math.max(MIN_YEAR * 12, Math.min(period - at, last));
+}
+
+/**
+ * Where `date`'s month sits (0 .. `count` - 1) once focus moves to it from
+ * the months starting at `first`: the same months when it is one of them,
+ * otherwise the view scrolls just far enough (it becomes the first or the
+ * last month shown).
+ */
+export function shownMonthOffset(date: string, first: number, count: number): number {
+	const period = periodOf(date, 'month');
+	if (period < first) return 0;
+	if (period >= first + count) return count - 1;
+	return period - first;
+}
+
+/** The two ends of a range in date order (`[earlier, later]`; either order in). */
+export function orderedRange(a: string, b: string): [string, string] {
+	return a <= b ? [a, b] : [b, a];
+}
+
+/** A range shown in the extended calendar: `start` is the first day picked; `preview` while the end is still being chosen. */
+export interface CalendarRange {
+	start: string;
+	end: string;
+	preview: boolean;
+}
+
 /** A year as the locale writes it alone ("2026年", "2026"). */
 export function formatYear(year: number, locale: string): string {
 	return formatter(locale, { year: 'numeric' }).format(utcDate({ year, month: 1, day: 1 }));
