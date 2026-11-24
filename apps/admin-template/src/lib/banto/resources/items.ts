@@ -7,6 +7,7 @@
  */
 import { Package } from '@lucide/svelte';
 import type { FormSchema } from '@banto/forms';
+import { nextDay, type FilterState } from '@banto/grid-svelte';
 import * as m from '#lib/paraglide/messages.js';
 // [scaffold:attachments] begin
 import { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';
@@ -138,6 +139,57 @@ export const LOW_STOCK_THRESHOLD = 50;
 export const LOW_STOCK_VIEW_ID = 'low-stock';
 
 /**
+ * The price bands (#882). The ONE place the cut points live: the dashboard's
+ * 価格帯 aggregate (`priceBuckets`) and the list's `price-band` view
+ * (`?view=price-band&arg.band=<id>`) both read this table, so a chart mark and
+ * the list it opens count the same rows. `from` is inclusive, `to` exclusive
+ * (`null` = open); prices are whole yen.
+ */
+export const PRICE_BANDS = [
+	{ id: '0-99', label: '〜¥99', from: null, to: 100 },
+	{ id: '100-149', label: '¥100〜149', from: 100, to: 150 },
+	{ id: '150-199', label: '¥150〜199', from: 150, to: 200 },
+	{ id: '200-', label: '¥200〜', from: 200, to: null }
+] as const satisfies readonly PriceBand[];
+
+export interface PriceBand {
+	id: string;
+	label: string;
+	from: number | null;
+	to: number | null;
+}
+
+/** The index in {@link PRICE_BANDS} of the band a price falls in. */
+export function priceBandIndex(price: number): number {
+	const index = PRICE_BANDS.findIndex((band) => band.to === null || price < band.to);
+	return index === -1 ? PRICE_BANDS.length - 1 : index;
+}
+
+/** The grid conditions that select a band (`null` for an id that is not one). */
+export function priceBandFilters(id: string): FilterState[] | null {
+	const band: PriceBand | undefined = PRICE_BANDS.find((entry) => entry.id === id);
+	if (!band) return null;
+	const filters: FilterState[] = [];
+	if (band.from !== null) filters.push({ field: 'price', op: 'gte', value: band.from });
+	if (band.to !== null) filters.push({ field: 'price', op: 'lt', value: band.to });
+	return filters;
+}
+
+/** The `price-band` view's id (`/items?view=price-band&arg.band=100-149`). */
+export const PRICE_BAND_VIEW_ID = 'price-band';
+
+/**
+ * `after` (a day, `YYYY-MM-DD`; that day NOT included, like the dashboard's
+ * period start) -> the condition "updated from the next day on". `updatedAt`
+ * is a date-time text, so comparing with `after` itself would let that day's
+ * rows in. `null` for anything that is not a real day.
+ */
+export function updatedAfterFilters(after: string): FilterState[] | null {
+	const next = nextDay(after);
+	return next === null ? null : [{ field: 'updatedAt', op: 'between', value: [next, null] }];
+}
+
+/**
  * The generic import row -> `ItemImportRow` (the Rust `ItemImportRow` shape).
  * The panel only sends rows without errors and with every required column
  * present, so the defaults never stand in for real input.
@@ -179,7 +231,20 @@ export const itemsResource = defineResource({
 				id: LOW_STOCK_VIEW_ID,
 				label: () => m['items.viewLowStock']({ threshold: LOW_STOCK_THRESHOLD }),
 				filters: [{ field: 'stock', op: 'lt', value: LOW_STOCK_THRESHOLD }],
-				sort: [{ field: 'stock', direction: 'asc' }]
+				sort: [{ field: 'stock', direction: 'asc' }],
+				// #882: the dashboard's KPI tile passes its period start, so the
+				// list counts what the tile counts.
+				args: { after: 'optional' },
+				filtersFor: (args) => (args.after === undefined ? [] : updatedAfterFilters(args.after))
+			},
+			{
+				// #882: opened by the price-band chart's marks (link only: a required
+				// argument keeps it out of the "Views" menu).
+				id: PRICE_BAND_VIEW_ID,
+				label: () => m['items.viewPriceBand'](),
+				sort: [{ field: 'price', direction: 'asc' }],
+				args: { band: 'required' },
+				filtersFor: (args) => priceBandFilters(args.band ?? '')
 			}
 		],
 		client: {

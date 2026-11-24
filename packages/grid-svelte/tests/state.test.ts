@@ -110,6 +110,20 @@ describe('GridState', () => {
 			expect(state.filters).toEqual([{ field: 'name', op: 'eq', value: 'exact' }]);
 		});
 
+		it('setFilter replaces every condition of the field (a range from a view link, #882)', () => {
+			const state = new GridState(columns);
+			state.filters = [
+				{ field: 'price', op: 'gte', value: 100 },
+				{ field: 'name', op: 'contains', value: 'tea' },
+				{ field: 'price', op: 'lt', value: 150 }
+			];
+			state.setFilter({ field: 'price', op: 'eq', value: 200 });
+			expect(state.filters).toEqual([
+				{ field: 'price', op: 'eq', value: 200 },
+				{ field: 'name', op: 'contains', value: 'tea' }
+			]);
+		});
+
 		it('removeFilter and clearFilters', () => {
 			const state = new GridState(columns);
 			state.setFilter({ field: 'name', op: 'contains', value: 'tea' });

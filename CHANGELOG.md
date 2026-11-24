@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- feat(resource): 一覧のビューが URL から引数を受け取れる（`?view=<id>&arg.<名前>=<値>`。`ResourceListView` に `args`・`filtersFor`）。条件を一部でも作れないリンク（必須の欠落・重複・空値・知らない値・その方式の格子に無い列）は何も当てず、今の条件を保ったまま知らせる。適用後に消すのは `view` と `arg.*` だけ（`id` は残る）。`'required'` の引数を持つビューは「ビュー」メニューに出さない。items に見本（`price-band`・`low-stock` の `after`）、価格帯の区切りは `resources/items.ts` の `PRICE_BANDS` の 1 か所（ダッシュボードの集計も参照）。`@banto/grid-svelte` の `FilterChips` は、同じ項目に 2 つの条件（範囲 = `gte` + `lt`）があっても落ちない（key の重複）・チップの削除後の件数を状態から数える形に直した。`GridState.setFilter` は同じ項目の条件を全部置き換える（列の見出しから変えたとき前の上限が残らない）（#882 D1。設計書 §7.1・[docs/recipes/add-resource.md](docs/recipes/add-resource.md)）
 - `@banto/charts`: `BarChart`・`PieChart` に `onMarkActivate`・`markLabel`（追加。渡さなければ DOM も見た目も変わらない。渡すと入れ物が `role="group"`・印が `role="button"` になり、Tab は 1 か所・矢印 / Home / End で移動・Enter / Space / クリックで選ぶ）、`ChartMark`・`MarkProps`・`nextMarkIndex` の export、`messages` に `markLabel`・`markLabelWithSeries`。見本は `/chart-gallery/marks`（#882 の D2）
 - CI: e2e の設定画面の表示言語の切り替え（`settings-controls.spec.ts`）と長いメニュー（`ui-overlays.spec.ts`）がハイドレーション前の操作で落ちる揺らぎを、操作と確認をまとめて `toPass()` で再試行する形に直した（#810）。
 - fix(theme): ダークでネイティブ `<select>` の選択肢（option）の背景が白・文字が薄くて読めない問題を直した（`.banto-field-control` と grid のフィルタの select の option を `--banto-surface-overlay` / `--banto-text` で明示、#928）

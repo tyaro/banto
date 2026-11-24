@@ -61,8 +61,26 @@ export interface ResourceListView {
 	id: string;
 	label: () => string;
 	sort?: SortState[];
+	/** Fixed conditions (always applied). */
 	filters?: FilterState[];
 	search?: string;
+	/**
+	 * Arguments this view reads from the URL (`?view=<id>&arg.<name>=<value>`, #882).
+	 * Only the declared names are read; a name is `[a-z][A-Za-z0-9]*`. A view with a
+	 * `'required'` argument is not listed in the "Views" menu (it means nothing without
+	 * the value): it is opened by a link only. A view with only `'optional'` ones stays
+	 * in the menu and is applied from there without arguments (just `filters`).
+	 */
+	args?: Readonly<Record<string, 'required' | 'optional'>>;
+	/**
+	 * Build conditions from the arguments (added after `filters`). Called when the URL
+	 * carries at least one declared argument (or the view has a required one). `null` =
+	 * "this link's narrowing cannot be applied": nothing is applied and the list says so
+	 * (it never falls back to the plain view). The values are checked for length and
+	 * control characters before this runs, but they are still the URL's text: only ever
+	 * use them as condition VALUES; the fields and operators are yours.
+	 */
+	filtersFor?: (args: Readonly<Record<string, string>>) => FilterState[] | null;
 }
 
 export interface ResourceListOptions {
