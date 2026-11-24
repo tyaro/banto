@@ -78,7 +78,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
@@ -116,25 +116,62 @@ const BODY_LIMIT_BYTES: usize = 1024;
 
 /// The time source: a monotonic instant for expiry / rate limiting, and the
 /// wall clock (milliseconds since the Unix epoch) for what the administrator's
-/// screen shows. Injected so tests can move time ([`ReachCheckState::with_clock`]).
-pub trait ReachCheckClock: Send + Sync + 'static {
-    fn now(&self) -> Instant;
-    fn wall_ms(&self) -> i64;
+/// screen shows. In the library build this is the real clock. Under
+/// `cfg(test)` it is frozen at construction and moved by hand
+/// ([`Clock::advance`]), so the tests stay deterministic without a trait the
+/// public API would carry only for them.
+#[derive(Debug)]
+struct Clock {
+    #[cfg(test)]
+    base: Instant,
+    #[cfg(test)]
+    offset_ms: std::sync::atomic::AtomicU64,
 }
 
-/// The real clock.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemReachCheckClock;
+#[cfg(not(test))]
+impl Clock {
+    fn new() -> Self {
+        Self {}
+    }
 
-impl ReachCheckClock for SystemReachCheckClock {
     fn now(&self) -> Instant {
         Instant::now()
     }
 
     fn wall_ms(&self) -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+    }
+}
+
+#[cfg(test)]
+impl Clock {
+    /// The wall time the frozen clock starts at.
+    const WALL_BASE_MS: i64 = 1_800_000_000_000;
+
+    fn new() -> Self {
+        Self {
+            base: Instant::now(),
+            offset_ms: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    fn offset(&self) -> u64 {
+        self.offset_ms.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn now(&self) -> Instant {
+        self.base + Duration::from_millis(self.offset())
+    }
+
+    fn wall_ms(&self) -> i64 {
+        Self::WALL_BASE_MS + self.offset() as i64
+    }
+
+    fn advance(&self, by: Duration) {
+        self.offset_ms
+            .fetch_add(by.as_millis() as u64, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -385,7 +422,7 @@ impl Inner {
 #[derive(Clone)]
 pub struct ReachCheckState {
     inner: Arc<Mutex<Inner>>,
-    clock: Arc<dyn ReachCheckClock>,
+    clock: Arc<Clock>,
 }
 
 impl Default for ReachCheckState {
@@ -402,15 +439,11 @@ impl fmt::Debug for ReachCheckState {
 
 impl ReachCheckState {
     /// A store at generation `0` (the template's launch-time listener
-    /// generation) on the real clock.
+    /// generation).
     pub fn new() -> Self {
-        Self::with_clock(Arc::new(SystemReachCheckClock))
-    }
-
-    pub fn with_clock(clock: Arc<dyn ReachCheckClock>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner::default())),
-            clock,
+            clock: Arc::new(Clock::new()),
         }
     }
 

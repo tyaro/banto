@@ -24,6 +24,7 @@
 
 消費側への注意（破壊的。次のメジャー v8.0.0 に入る。詳細は下の各項目と [docs/upgrading.md](docs/upgrading.md) 4.2 節）:
 
+- **`banto-server` の `ReachCheckClock`・`SystemReachCheckClock`・`ReachCheckState::with_clock` を消す（#818）。** テストのためだけの時計の差し替え口だった。`ReachCheckState::new()` は常に実時計。下流（banto-industrial・temp-scada）に使用なし。使っていた派生アプリは `ReachCheckState::new()` に替える（時刻を動かす試験は、ストアの外から時計を差せなくなるため、クレート内の試験のみが対象）。
 - **Node の基準を 24 から 26 に上げる（#837 を置き換える）。** Node 26 は 2026-10-28 から Active LTS。派生アプリ（ルートの `package.json` を取り込む場合）は Node 26 が必要になる: `engines.node` を `>=26`、`.nvmrc` を `26`、devDependencies の `@types/node` を `^26.0.0`、CI の `setup-node` の `node-version` を `26` にする。取り込まなければ今までどおり。
 - **基準の作り直し: DB を作り直す（#790・#778・#786 の C1、[ADR-0034](docs/adr/0034-owner-identity-builtin-admin.md) 決定 §9）。** `core/migrations-{sqlite,postgres}/0003_users.sql`・`0005_audit_log.sql` を差し替え、`0014_ui_settings.sql` を足す（自分の migration を 0014 以降で足しているなら番号をずらす）。v7.11.0 以前の DB は起動時に「この DB は v8.0.0 より前の版のものです。読めません。DB を作り直してください」で止まり、旧版のバックアップはリストアの予約で断られる。データの移行は無い。
   - 新しい DB には組み込みのユーザー `admin`（`users.kind = 'builtin'`）が 1 行居る。ログイン・変更・削除はできない。`admin` という username のアカウントは作れないので、試験・fixture で作っているなら別の名前にする。`UserSummary` に `kind`（`'account'` / `'builtin'`）が増えた（Rust の構造体と wire の両方）。

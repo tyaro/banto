@@ -1,6 +1,6 @@
 //! Tests of the reach-check store and route (design §6.2). The route is
 //! driven through `tower::oneshot` with `ConnectInfo` inserted by hand (the
-//! grant tests' convention); time comes from [`ManualClock`].
+//! grant tests' convention); time comes from the frozen [`Clock`].
 
 use super::*;
 use crate::auth::SessionValidation;
@@ -10,40 +10,9 @@ use axum::extract::ConnectInfo;
 use axum::http::Request as HttpRequest;
 use axum::routing::get;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::atomic::{AtomicU64, Ordering};
 use tower::ServiceExt;
 
-/// A clock tests move by hand (monotonic and wall time move together).
-struct ManualClock {
-    base: Instant,
-    offset_ms: AtomicU64,
-}
-
-const WALL_BASE_MS: i64 = 1_800_000_000_000;
-
-impl ManualClock {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            base: Instant::now(),
-            offset_ms: AtomicU64::new(0),
-        })
-    }
-
-    fn advance(&self, by: Duration) {
-        self.offset_ms
-            .fetch_add(by.as_millis() as u64, Ordering::SeqCst);
-    }
-}
-
-impl ReachCheckClock for ManualClock {
-    fn now(&self) -> Instant {
-        self.base + Duration::from_millis(self.offset_ms.load(Ordering::SeqCst))
-    }
-
-    fn wall_ms(&self) -> i64 {
-        WALL_BASE_MS + self.offset_ms.load(Ordering::SeqCst) as i64
-    }
-}
+const WALL_BASE_MS: i64 = Clock::WALL_BASE_MS;
 
 const PORT: u16 = 23456;
 const HOST: &str = "192.168.1.10";
@@ -56,9 +25,10 @@ fn target() -> ReachTarget {
     }
 }
 
-fn store() -> (ReachCheckState, Arc<ManualClock>) {
-    let clock = ManualClock::new();
-    (ReachCheckState::with_clock(clock.clone()), clock)
+fn store() -> (ReachCheckState, Arc<Clock>) {
+    let store = ReachCheckState::new();
+    let clock = store.clock.clone();
+    (store, clock)
 }
 
 /// Issue at the store's current generation; this PC's own address is
