@@ -218,6 +218,8 @@
 	/** The one Esc path (§5.4): yields to a consumed Esc and to a layer above. */
 	function closeOnEscape(event: KeyboardEvent): void {
 		if (!open || event.key !== 'Escape') return;
+		// IME 変換中の Escape は変換の取消。ピッカーを閉じない。
+		if (event.isComposing || event.keyCode === 229) return;
 		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panelEl })) return;
 		event.preventDefault();
 		closePicker(true);
@@ -293,7 +295,7 @@
 	}
 
 	function handleInputKeydown(event: KeyboardEvent): void {
-		if (!event.isComposing) {
+		if (!event.isComposing && event.keyCode !== 229) {
 			if (event.key === 'ArrowDown' && event.altKey) {
 				event.preventDefault();
 				openPicker();

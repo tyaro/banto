@@ -113,6 +113,29 @@ describe('DateInput text box', () => {
 		expect(screen.getByTestId('value').textContent).toBe('2026-11-07');
 	});
 
+	it('IME composition (isComposing or keyCode 229): Enter does not commit, Esc does not close; ordinary keys still do', () => {
+		const { input, button, onValueChange } = setup();
+		fireEvent.input(input, { target: { value: '20261107' } });
+		for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+			fireEvent.keyDown(input, { key: 'Enter', ...init });
+		}
+		expect(onValueChange).not.toHaveBeenCalled();
+		fireEvent.click(button);
+		flushSync();
+		expect(isOpen()).toBe(true);
+		for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+			fireEvent.keyDown(input, { key: 'Escape', ...init });
+			fireEvent.keyDown(window, { key: 'Escape', ...init });
+			flushSync();
+			expect(isOpen()).toBe(true);
+		}
+		fireEvent.keyDown(input, { key: 'Escape' });
+		flushSync();
+		expect(isOpen()).toBe(false);
+		fireEvent.keyDown(input, { key: 'Enter' });
+		expect(onValueChange).toHaveBeenCalledTimes(1);
+	});
+
 	it('Enter commits and still reaches onkeydown untouched', () => {
 		const { input, onValueChange, onkeydown } = setup();
 		fireEvent.input(input, { target: { value: '20261107' } });
