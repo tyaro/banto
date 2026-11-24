@@ -283,9 +283,12 @@
 	// pointer wins while it is over a mark; otherwise the focused mark is shown.
 	let pointed: { catIndex: number; seriesIndex: number } | null = $state(null);
 	let focusedMark: { catIndex: number; seriesIndex: number } | null = $state(null);
-	const hovered: { catIndex: number; seriesIndex: number } | null = $derived(
-		pointed ?? focusedMark
-	);
+	// Checked against the current data: when `data` / `series` shrink, a removed
+	// focused element may never fire blur, so a stale reference must not survive.
+	const hovered: { catIndex: number; seriesIndex: number } | null = $derived.by(() => {
+		const h = pointed ?? focusedMark;
+		return h !== null && h.catIndex < data.length && h.seriesIndex < series.length ? h : null;
+	});
 
 	function isHovered(bar: BarRect): boolean {
 		return (

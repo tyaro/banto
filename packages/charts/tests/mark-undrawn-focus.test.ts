@@ -133,6 +133,32 @@ describe('tooltip follows focus and pointer separately', () => {
 		expect(tip(container)).toBeNull();
 	});
 
+	it('pie and bar: data shrinking under a focused last mark does not throw or leave a tooltip', async () => {
+		const three: Row[] = [...rows, { name: 'C', a: 30, b: 3 }];
+		for (const [Comp, props] of [
+			[PieChart, { category: cat, value: valA, label: '円' }],
+			[BarChart, { category: cat, series: [{ id: 'a', label: 'A', value: valA }], label: '棒' }]
+		] as const) {
+			const { container, rerender } = render(
+				Comp as never,
+				{
+					...props,
+					data: three,
+					onMarkActivate: () => {}
+				} as never
+			);
+			await flush();
+			buttonsOf(container)[2].focus();
+			await flush();
+			expect(tip(container)).not.toBeNull();
+			await rerender({ data: [rows[0]] } as never);
+			await flush();
+			expect(tip(container)).toBeNull();
+			expect(buttonsOf(container).length).toBe(1);
+			cleanup();
+		}
+	});
+
 	it('pie: the pointer entering and leaving the focused slice keeps its tooltip', async () => {
 		const { container } = render(PieChart, {
 			data: rows,

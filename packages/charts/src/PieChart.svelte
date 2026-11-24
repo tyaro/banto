@@ -78,7 +78,12 @@
 	// pointer leaving a slice must not hide the tooltip of the focused one.
 	let pointedIndex: number | null = $state(null);
 	let focusedIndex: number | null = $state(null);
-	const hoveredIndex = $derived(pointedIndex ?? focusedIndex);
+	// Checked against the current slices: when `data` shrinks, a removed focused
+	// element may never fire blur, so a stale index must not reach the overlay.
+	const hoveredIndex = $derived.by(() => {
+		const i = pointedIndex ?? focusedIndex;
+		return i !== null && i >= 0 && i < slices.length ? i : null;
+	});
 
 	// Selectable slices (only when `onMarkActivate` is given). Clockwise from the
 	// first slice; roving tabindex keeps one slice as the Tab stop.
