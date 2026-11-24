@@ -4805,6 +4805,14 @@ async fn panel_open(app: tauri::AppHandle, id: String, title: String) -> Result<
     Ok(())
 }
 
+/// Stops a start that the setup closure refuses: one "起動できません" line on
+/// stderr, then exit code 1, like `banto-serve`. Not `return Err(..)` from
+/// `setup`: Tauri turns that into `panic!("Failed to setup app: ..")`.
+fn exit_startup_refused(reason: impl std::fmt::Display) -> ! {
+    eprintln!("banto: 起動できません: {reason}");
+    std::process::exit(1);
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -4854,8 +4862,7 @@ pub fn run() {
             let db = match tauri::async_runtime::block_on(init_db(&db_path)) {
                 Ok(db) => db,
                 Err(err) => {
-                    eprintln!("banto: 起動できません: {err}");
-                    std::process::exit(1);
+                    exit_startup_refused(err);
                 }
             };
 
@@ -4893,10 +4900,9 @@ pub fn run() {
                 Ok(true) => println!("banto: 初回起動の既定設定を適用しました"),
                 Ok(false) => {}
                 Err(err) => {
-                    eprintln!("banto: 起動できません: 初回起動の既定設定を書き込めませんでした: {err}");
-                    return Err(
-                        format!("起動できません: 初回起動の既定設定を書き込めませんでした: {err}").into(),
-                    );
+                    exit_startup_refused(format_args!(
+                        "初回起動の既定設定を書き込めませんでした: {err}"
+                    ));
                 }
             }
             // ADR-0034 §2/§4/§5/§6: the checks that stop a startup, after the
@@ -4918,8 +4924,7 @@ pub fn run() {
             ) {
                 Ok(found) => found,
                 Err(err) => {
-                    eprintln!("banto: 起動できません: {err}");
-                    return Err(format!("起動できません: {err}").into());
+                    exit_startup_refused(err);
                 }
             };
             let builtin_admin_id = started.users.builtin_admin_id;
