@@ -17,6 +17,8 @@ import {
 	expandRegionOf,
 	findNode,
 	findParent,
+	isRegionCollapsed,
+	MIN_PANE_FRACTION,
 	normalizeSizes,
 	removePanel
 } from './core/tree';
@@ -28,6 +30,7 @@ import type {
 	DockLayout,
 	DockNode,
 	DockPanelNode,
+	DockSplitNode,
 	DockTabGroupNode,
 	FloatingWindow
 } from './types';
@@ -41,6 +44,11 @@ export const THREE_PANE_DEFAULTS = {
 	rightWidth: 360,
 	/** The centre keeps at least this many px of the default layout (the sides shrink first). */
 	centerMinWidth: 320,
+	/**
+	 * `sideWidthUnit: 'px'` (#892): a side shrunk to leave the centre its `centerMinWidth` keeps at
+	 * least this many px (or its own width, when that is smaller).
+	 */
+	sideMinWidth: 120,
 	/** Used when the host is not measured yet (hidden, jsdom). */
 	hostWidth: 1280,
 	hostHeight: 720
@@ -551,6 +559,236 @@ export function isPaneShown(layout: DockLayout, id: string): boolean {
 		autoHiddenPanelIds(layout).includes(id) ||
 		layout.floating.some((w) => w.id === id && w.open)
 	);
+}
+
+// --- `sideWidthUnit: 'px'` (#892): the sides keep their px when the width changes ---
+//
+// The saved value is unchanged (version 4, shares): the px are read off the shares at the width
+// they are shown at and kept beside the layout, never in it. A px is the width the region is drawn
+// at: the docked tree hands the open regions of a row what the edge bands of auto-hidden regions
+// (left / right), the dividers and the bands of collapsed regions leave, in proportion to their
+// shares (`DockedTree`'s flex), so the shares are worked out on that room (`ThreePaneRowFrame`).
+
+/**
+ * How `ThreePaneDock` keeps the widths of the sides when its width changes. `'share'` (default):
+ * every region keeps its share, the sides grow and shrink with the component. `'px'`: the regions
+ * of the centre's row (the outermost row on the way to it) beside its own keep their px, the centre's region takes the
+ * rest (`fitThreePaneSideWidths`).
+ */
+export type ThreePaneSideWidthUnit = 'share' | 'px';
+
+/**
+ * What the docked tree takes off a row's width besides its regions, in px (measured by
+ * `ThreePaneDock`; all 0 = the shares of the whole width, as in jsdom).
+ */
+export interface ThreePaneRowFrame {
+	/** A collapsed region's band, and an auto-hide band on the left / right edge (`--banto-dock-titlebar-height`). */
+	band: number;
+	/** A divider between two regions of a row (`DockedTree`'s `.divider.row`). */
+	divider: number;
+}
+
+const NO_FRAME: ThreePaneRowFrame = { band: 0, divider: 0 };
+
+/**
+ * The outermost row split on the way from the root to the centre - the root, or one under columns
+ * only (an extra panel docked along the bottom edge), so it spans the component's width - and the
+ * index of its child holding the centre. `null`: no such row (the centre alone, under columns only).
+ */
+function centreRow(layout: DockLayout): { row: DockSplitNode; centre: number } | null {
+	let node = layout.docked;
+	while (node?.type === 'split') {
+		const centre = node.children.findIndex((c) =>
+			collectPanelIds(c).includes(THREE_PANE_IDS.center)
+		);
+		if (centre < 0) return null;
+		if (node.direction === 'row') return { row: node, centre };
+		node = node.children[centre];
+	}
+	return null;
+}
+
+/**
+ * The room of the centre's row at `width` (the docked area's): `all`, what its regions would share
+ * with none collapsed (the width less the left / right edge bands and the dividers), and `open`,
+ * what the open regions share (less the collapsed regions' bands too).
+ */
+function rowRoom(
+	layout: DockLayout,
+	row: DockSplitNode,
+	width: number,
+	frame: ThreePaneRowFrame
+): { all: number; open: number } {
+	const edges = new Set((layout.autoHidden ?? []).map((e) => e.edge));
+	const edgeBands = (edges.has('left') ? 1 : 0) + (edges.has('right') ? 1 : 0);
+	const all = width - frame.band * edgeBands - frame.divider * (row.children.length - 1);
+	const collapsed = row.children.filter(isRegionCollapsed).length;
+	return { all, open: all - frame.band * collapsed };
+}
+
+/**
+ * The px child `i` of the centre's row is drawn at: open, its part of the open room (the open
+ * regions share it by their shares); collapsed, the px it would show at (its share of `all`).
+ */
+function drawnPx(row: DockSplitNode, i: number, room: { all: number; open: number }): number {
+	if (isRegionCollapsed(row.children[i])) return row.sizes[i] * room.all;
+	const open = row.children.reduce(
+		(sum, c, j) => (isRegionCollapsed(c) ? sum : sum + row.sizes[j]),
+		0
+	);
+	return open > 0 ? (row.sizes[i] / open) * room.open : row.sizes[i] * room.all;
+}
+
+/**
+ * Has the centre's row of `now` the children and the shares it had in `then` (a divider drag
+ * cancelled puts the shares of its press back, #892)? `false` when either has no such row.
+ */
+export function isThreePaneRowAsIn(then: DockLayout, now: DockLayout): boolean {
+	const a = centreRow(then)?.row;
+	const b = centreRow(now)?.row;
+	return (
+		a !== undefined &&
+		b !== undefined &&
+		a.id === b.id &&
+		a.children.length === b.children.length &&
+		a.children.every((c, i) => c.id === b.children[i].id && a.sizes[i] === b.sizes[i])
+	);
+}
+
+/** The px each side of the centre's row should have (by the child's id), kept beside the layout. */
+export type ThreePaneSideWidths = ReadonlyMap<string, number>;
+
+/**
+ * The px of the sides after `next` was put in at `width`, given the layout seen before (`prev`, at
+ * the same `width` or an older one) and the px kept then (`kept`):
+ * - the centre's row has the children it had (`prev`'s ids, in order) and a side's share changed: the
+ *   user (or the app) resized it - its px is read off the new share (`resized: true`);
+ * - else a side kept (by id) keeps its px - a pane hidden, shown, collapsed, docked or moved
+ *   elsewhere in the tree, the narrow display left, a width change - and a new one has its share's px.
+ * Sides no longer in the row are kept (a pane shown again comes back at its px). `fallback` gives
+ * the px of a side seen for the first time (by id), when it has one (`leftWidth` for a left
+ * pane hidden in the default layout). No row holding the centre: `kept` as it is. `width` is the
+ * docked area's; a px is the width drawn (`frame`, the module comment).
+ */
+export function followThreePaneSideWidths(
+	prev: DockLayout | null,
+	kept: ThreePaneSideWidths | null,
+	next: DockLayout,
+	width: number,
+	fallback?: (id: string) => number | undefined,
+	frame: ThreePaneRowFrame = NO_FRAME
+): { widths: Map<string, number>; resized: boolean } {
+	const widths = new Map(kept ?? []);
+	const found = centreRow(next);
+	if (!found || !(width > 0)) return { widths, resized: false };
+	const { row, centre } = found;
+	const before = prev ? centreRow(prev) : null;
+	const prevSizes =
+		before !== null &&
+		before.row.id === row.id &&
+		before.row.children.length === row.children.length &&
+		before.row.children.every((c, i) => c.id === row.children[i].id)
+			? before.row.sizes
+			: null;
+	const room = rowRoom(next, row, width, frame);
+	let resized = false;
+	row.children.forEach((child, i) => {
+		if (i === centre) return;
+		const px = drawnPx(row, i, room);
+		if (prevSizes && Math.abs(prevSizes[i] - row.sizes[i]) > SHARE_EPSILON) {
+			widths.set(child.id, px);
+			resized = true;
+		} else if (!widths.has(child.id)) widths.set(child.id, fallback?.(child.id) ?? px);
+	});
+	return { widths, resized };
+}
+
+/** Two shares closer than this are the same (a rounding of `normalizeSizes`, not a resize). */
+const SHARE_EPSILON = 1e-9;
+
+/**
+ * The shares of a row of `count` regions at `width` px, the one at `centre` taking what the others
+ * (`px[i]`, the centre's ignored) leave:
+ * - room for all: each side has its px exactly;
+ * - else the sides shrink in proportion so the centre keeps `centerMinWidth`, none below
+ *   `min(px, sideMinWidth)`;
+ * - still too wide (a width below the minimums): the sides shrink so the centre keeps
+ *   `MIN_PANE_FRACTION` of the row (the dock's own minimum share).
+ * The shares sum to 1 and are all positive.
+ */
+export function threePaneSideShares(
+	px: readonly number[],
+	centre: number,
+	width: number
+): number[] {
+	const w = width > 0 ? width : THREE_PANE_DEFAULTS.hostWidth;
+	const wanted = px.map((p, i) => (i === centre ? 0 : Number.isFinite(p) && p > 1 ? p : 1));
+	const total = wanted.reduce((a, b) => a + b, 0);
+	const room = Math.max(0, w - THREE_PANE_DEFAULTS.centerMinWidth);
+	let sides = wanted;
+	if (total > room) {
+		// Shrunk in proportion, a side reaching its floor held there and the rest shrunk further.
+		const floors = wanted.map((p) => Math.min(p, THREE_PANE_DEFAULTS.sideMinWidth));
+		const pinned = new Set<number>([centre]);
+		for (;;) {
+			const fixed = [...pinned].reduce((sum, i) => sum + (i === centre ? 0 : floors[i]), 0);
+			const free = wanted.reduce((sum, p, i) => (pinned.has(i) ? sum : sum + p), 0);
+			const scale = free > 0 ? Math.max(0, room - fixed) / free : 0;
+			const below = wanted.findIndex((p, i) => !pinned.has(i) && p * scale < floors[i]);
+			if (below < 0) {
+				sides = wanted.map((p, i) => (i === centre ? 0 : pinned.has(i) ? floors[i] : p * scale));
+				break;
+			}
+			// Pin every side under its floor at this scale at once (each round pins at least one).
+			wanted.forEach((p, i) => {
+				if (!pinned.has(i) && p * scale < floors[i]) pinned.add(i);
+			});
+		}
+	}
+	const most = w * (1 - MIN_PANE_FRACTION);
+	const sum = sides.reduce((a, b) => a + b, 0);
+	if (sum > most) sides = sides.map((p) => (p * most) / sum);
+	const shares = sides.map((p) => p / w);
+	shares[centre] = Math.max(MIN_PANE_FRACTION, 1 - shares.reduce((a, b) => a + b, 0));
+	return shares;
+}
+
+/**
+ * `layout` with the centre's row's sides drawn at their px (`widths`, by id; a side not in it keeps
+ * the px it is drawn at) at `width` (the docked area's; `frame`, the module comment): the open
+ * regions share the open room by `threePaneSideShares`; a collapsed side keeps the share it would
+ * show at, so it comes back at its px. The same object when nothing changes, or there is no row
+ * holding the centre. Only the row's `sizes` change: no structure, nothing re-mounted.
+ */
+export function fitThreePaneSideWidths(
+	layout: DockLayout,
+	widths: ThreePaneSideWidths,
+	width: number,
+	frame: ThreePaneRowFrame = NO_FRAME
+): DockLayout {
+	const found = centreRow(layout);
+	if (!found || !(width > 0)) return layout;
+	const { row, centre } = found;
+	const room = rowRoom(layout, row, width, frame);
+	const px = row.children.map((c, i) => widths.get(c.id) ?? drawnPx(row, i, room));
+	const collapsed = row.children.map(isRegionCollapsed);
+	// As if all were open: the collapsed sides' shares (the centre keeps its minimum share then).
+	const sizes = threePaneSideShares(px, centre, room.all);
+	if (collapsed.some(Boolean) && !collapsed[centre]) {
+		// The open regions share the rest as they share the open room.
+		const rest = 1 - sizes.reduce((sum, s, i) => (collapsed[i] ? sum + s : sum), 0);
+		const open = row.children.flatMap((_, i) => (collapsed[i] ? [] : [i]));
+		const parts = threePaneSideShares(
+			open.map((i) => px[i]),
+			open.indexOf(centre),
+			room.open
+		);
+		open.forEach((i, k) => {
+			sizes[i] = rest * parts[k];
+		});
+	}
+	if (sizes.every((s, i) => Math.abs(s - row.sizes[i]) <= SHARE_EPSILON)) return layout;
+	return { ...layout, docked: replaceById(layout.docked!, row.id, { ...row, sizes }) };
 }
 
 export interface ThreePaneNarrowLayoutOptions {

@@ -55,6 +55,7 @@ export {
 	type ThreePanePanels,
 	type ThreePaneRestoreStatus,
 	type ThreePaneSavedLayout,
+	type ThreePaneSideWidthUnit,
 	type ThreePaneViewMenuItem,
 	type ThreePaneViewMenuLabels
 } from './threePane';

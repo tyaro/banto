@@ -243,6 +243,40 @@
 	// svelte-ignore state_referenced_locally
 	const gridState: GridState<TRow> = externalState ?? new GridState(columns, { rowHeight });
 
+	// #890: a `columns` prop that changes AFTER mount is handed to the state,
+	// which keeps the user's widths / order / sort / filters / pins
+	// (`GridState.setColumns`). The array given at mount is not pushed: a
+	// caller's own `state` stays the source of truth for what it was built
+	// with, as before. `$effect.pre` so the header and the cells never render
+	// one frame with the old definitions; only `columns` is tracked
+	// (conventions §8).
+	// svelte-ignore state_referenced_locally
+	let appliedColumns = columns;
+	// The last `conditionsRevision` counters handled (see
+	// `afterConditionsChanged`). Declared here: a pre-effect runs during this
+	// script, before the code below.
+	let handledConditions = untrack(() => gridState.conditionsRevision);
+	$effect.pre(() => {
+		const next = columns;
+		if (next === appliedColumns) return;
+		appliedColumns = next;
+		untrack(() => {
+			// Which record the active cell is on, and what each display index
+			// shows, read before the swap can re-sort or re-filter the rows.
+			const anchor = cellSelectionRecord();
+			const before = anchor && mode === 'client' ? displayedOrder() : null;
+			gridState.setColumns(next);
+			afterConditionsChanged(anchor, before);
+		});
+	});
+	// The same when the caller calls `state.setColumns` itself (no record to
+	// follow then: the cell selection is cleared instead). Several calls in
+	// one update are handled here once, with the latest conditions.
+	$effect.pre(() => {
+		void gridState.conditionsRevision;
+		untrack(() => afterConditionsChanged(null, null));
+	});
+
 	const OVERSCAN = 8;
 
 	let containerEl: HTMLDivElement | undefined = $state();
@@ -381,9 +415,9 @@
 		mode === 'server'
 			? rows
 			: sortRows(
-					filterRows(rows as TRow[], gridState.filters, columns),
+					filterRows(rows as TRow[], gridState.filters, gridState.columns),
 					gridState.sort,
-					columns,
+					gridState.columns,
 					getRowId
 				)
 	);
@@ -394,7 +428,7 @@
 	// rendering exactly as before M5 Phase B.
 	const groupedEntries: FlatEntry<TRow>[] | null = $derived(
 		mode === 'client' && gridState.groupBy
-			? buildGroupedView(sorted as TRow[], columns, gridState.groupBy, (key) =>
+			? buildGroupedView(sorted as TRow[], gridState.columns, gridState.groupBy, (key) =>
 					gridState.collapsedGroups.has(key)
 				)
 			: null
@@ -886,6 +920,88 @@
 				}
 			}
 			if (editing && !visible.has(editing.field)) edit.cancel();
+		});
+	});
+
+	/**
+	 * #890: `setColumns` dropped a sort / filter / group-by whose column went
+	 * away, or gave the column under one a new definition (see
+	 * `GridState.conditionsRevision`). When the sort / filters changed the
+	 * server is asked for them once (as after a header change), however many
+	 * `setColumns` calls led here. The cell selection - display indices -
+	 * stays when the display order did not change; otherwise it moves with
+	 * the record it was on: the active cell follows that row id, a range
+	 * (which cannot be kept over re-ordered rows) collapses to it, and with no
+	 * record to follow (the caller's own `setColumns`, a row no longer shown)
+	 * the selection is cleared. Server mode clears it when the sort / filters
+	 * changed (the rows are fetched again).
+	 */
+	function afterConditionsChanged(
+		anchor: { rowId: string | number; field: string } | null,
+		before: unknown[] | null
+	) {
+		const current = gridState.conditionsRevision;
+		if (current.revision === handledConditions.revision) return;
+		const paramsChanged = current.paramsRevision !== handledConditions.paramsRevision;
+		handledConditions = current;
+		if (paramsChanged) notifyParamsChange();
+		if (!selection.active) return;
+		if (mode === 'server') {
+			if (paramsChanged) selection.clear();
+			return;
+		}
+		if (before && sameOrder(before, displayedOrder())) return;
+		const rowIndex = anchor ? displayIndexOfRowId(anchor.rowId) : -1;
+		if (anchor && rowIndex >= 0) selection.setActive(rowIndex, anchor.field, false);
+		else selection.clear();
+	}
+
+	/** Client mode: what each display index shows - a row, or a group's key. */
+	function displayedOrder(): unknown[] {
+		return groupedEntries
+			? groupedEntries.map((entry) => (entry.kind === 'row' ? entry.row : `__group_${entry.key}`))
+			: sorted;
+	}
+
+	function sameOrder(a: unknown[], b: unknown[]): boolean {
+		return a.length === b.length && a.every((item, index) => item === b[index]);
+	}
+
+	function cellSelectionRecord(): { rowId: string | number; field: string } | null {
+		const active = selection.active;
+		if (!active) return null;
+		const row = rowAtDisplayIndex(active.rowIndex);
+		return row === undefined ? null : { rowId: getRowId(row), field: active.field };
+	}
+
+	/** Client mode: the display index of the row with `rowId`, or -1. */
+	function displayIndexOfRowId(rowId: string | number): number {
+		const index = groupedEntries
+			? groupedEntries.findIndex((entry) => entry.kind === 'row' && getRowId(entry.row) === rowId)
+			: sorted.findIndex((row) => row !== undefined && getRowId(row) === rowId);
+		return index < effectiveRowCount ? index : -1;
+	}
+
+	/**
+	 * #890: the definition of the column being edited can change under the
+	 * open editor (`columns` swapped: an edit mode switched off). When the
+	 * cell is no longer editable the edit is cancelled - the draft is dropped,
+	 * the same as when the column is hidden or removed (the effect above); a
+	 * save already on its way is not waited for. Only the DEFINITION is
+	 * tracked: a row whose own values change during an edit does not close it.
+	 */
+	const editingColumn = $derived.by(() => {
+		const field = editingField;
+		return field === undefined
+			? undefined
+			: gridState.orderedColumns.find((candidate) => candidate.id === field);
+	});
+	$effect(() => {
+		const column = editingColumn;
+		if (!column) return;
+		untrack(() => {
+			const row = rowAtDisplayIndex(editingRowIndex);
+			if (row !== undefined && !isColumnEditable(column, row)) edit.cancel();
 		});
 	});
 
@@ -2081,7 +2197,8 @@
 			errorId={editErrorId}
 			message={editing.error}
 			label={t.inlineEditErrorLabel(
-				columns.find((column) => column.id === editing?.field)?.header.trim() || editing.field
+				gridState.columns.find((column) => column.id === editing?.field)?.header.trim() ||
+					editing.field
 			)}
 			hint={t.inlineEditErrorHint()}
 			onReturn={returnFromEditError}

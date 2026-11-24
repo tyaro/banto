@@ -100,7 +100,7 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' && !event.isComposing) commit();
+		if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) commit();
 	}
 
 	// One commit per user action with the injected input. Its own commit
@@ -121,7 +121,7 @@
 	}
 
 	function handleInputKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' && !event.isComposing) commitUnlessDone();
+		if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) commitUnlessDone();
 	}
 </script>
 

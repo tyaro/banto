@@ -258,7 +258,8 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent): void {
-		if (event.isComposing || !editable) return;
+		// keyCode 229: some WebViews report the IME-confirming keydown with isComposing false.
+		if (event.isComposing || event.keyCode === 229 || !editable) return;
 		switch (event.key) {
 			case 'ArrowDown':
 				event.preventDefault();
