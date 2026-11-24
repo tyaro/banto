@@ -167,6 +167,7 @@
 
 ### Fixed
 
+- **tree-svelte:** `BantoTree` の名前変更の入力で、IME の変換中（`isComposing`・`keyCode === 229`）の Enter・Escape を無視する。変換の確定で名前変更が確定していた恐れを防ぐ（#891）。
 - **template:** items の添付パネル（`ItemAttachments`）のアップロードも、`ResourceDetail` の `file` 欄と同じセッションの確認（`uploadWhile` / `guardUpload`）を通すようにした（#714）。送信の途中でログアウトや別ユーザーへの切り替えが起きても、古いセッションの資格では送らない。
 
 ## [7.11.0] - 2026-11-22

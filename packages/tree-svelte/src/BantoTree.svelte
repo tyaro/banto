@@ -387,6 +387,9 @@
 		else roots = patchNode(roots, current.id, { label: trimmed });
 	}
 	function onRenameKeydown(event: KeyboardEvent): void {
+		// IME の変換中の Enter（確定）・Escape（取り消し）は変換側のもの。素通しにする
+		// （一部の WebView は変換確定の keydown で isComposing が false になり keyCode 229 だけが立つ）。
+		if (event.isComposing || event.keyCode === 229) return;
 		if (event.key === 'Enter') {
 			event.preventDefault();
 			event.stopPropagation();
