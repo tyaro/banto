@@ -1399,19 +1399,83 @@ async fn autologin_enable_deletes_the_previous_credential_under_the_lock() {
 }
 
 /// Review of #924: names differing only in case may share one OS keyring
-/// entry (Windows), so switching between them must not delete it.
+/// entry (Windows), so switching between them is refused before the keyring is
+/// written: the saved settings and their credential stay usable.
 #[tokio::test]
-async fn autologin_enable_keeps_the_entry_when_only_the_case_differs() {
-    let state = admin_state_with_fake_keyring().await;
+async fn autologin_enable_refuses_a_case_only_switch_and_keeps_the_old_setup() {
+    keyring_store::fake::install_case_insensitive();
+    let state = app_state().await;
+    let admin = state
+        .users
+        .create_user("manager", "password123", "管理者", Role::Admin)
+        .await
+        .expect("create admin");
+    state.set_session_for_test(Some(DesktopSession::Account(admin)));
+    state
+        .users
+        .create_user("Manager", "other-pass-1", "別人", Role::Admin)
+        .await
+        .expect("create case variant");
+    // The previous setup: `Manager` with its own password in the shared entry.
     let mut config = state.settings.auth_config().await.unwrap();
     config.autologin_enabled = true;
     config.autologin_username = Some("Manager".to_string());
     state.settings.set_auth_config(&config).await.unwrap();
-    keyring_store::fake::on_delete(|| panic!("must not delete a case-variant entry"));
+    keyring_store::set_password("Manager", "other-pass-1").unwrap();
+    keyring_store::fake::on_delete(|| panic!("must not delete anything"));
 
+    let err = autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect_err("a case-only switch");
+    assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+    let config = state.settings.auth_config().await.unwrap();
+    assert!(config.autologin_enabled);
+    assert_eq!(config.autologin_username.as_deref(), Some("Manager"));
+    assert_eq!(
+        keyring_store::get_password("Manager").unwrap(),
+        "other-pass-1"
+    );
+}
+
+/// The case comparison is Unicode-aware (not ASCII only).
+#[tokio::test]
+async fn autologin_enable_refuses_a_non_ascii_case_only_switch() {
+    keyring_store::fake::install_case_insensitive();
+    let state = app_state().await;
+    let admin = state
+        .users
+        .create_user("manager", "password123", "管理者", Role::Admin)
+        .await
+        .expect("create admin");
+    state.set_session_for_test(Some(DesktopSession::Account(admin)));
+    state
+        .users
+        .create_user("ÉCOLE", "password123", "学校", Role::Admin)
+        .await
+        .expect("create");
+    let mut config = state.settings.auth_config().await.unwrap();
+    config.autologin_enabled = true;
+    config.autologin_username = Some("école".to_string());
+    state.settings.set_auth_config(&config).await.unwrap();
+
+    let err = autologin_enable_body(&state, "ÉCOLE", "password123")
+        .await
+        .expect_err("a case-only switch");
+    assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+    assert_eq!(keyring_store::fake::stored("école"), None);
+}
+
+/// Re-enabling the same (exactly equal) name just refreshes the entry.
+#[tokio::test]
+async fn autologin_enable_for_the_same_account_keeps_the_entry() {
+    let state = admin_state_with_fake_keyring().await;
     autologin_enable_body(&state, "manager", "password123")
         .await
-        .expect("enable");
+        .expect("first");
+    keyring_store::fake::on_delete(|| panic!("must not delete the same entry"));
+    autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect("second");
     assert!(keyring_store::fake::stored("manager").is_some());
 }
 

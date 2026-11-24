@@ -2267,6 +2267,21 @@ async fn autologin_enable_body(
     let auth_config_guard = state.auth_config_lock.lock().await;
     let mut config = state.settings.auth_config().await?;
     let previous = config.autologin_username.clone();
+    // Some OS keyrings (Windows) address one entry for names differing only
+    // in case, others keep them apart. Switching between such names would
+    // overwrite the entry the saved settings still point at, so refuse it
+    // before touching the keyring, the same on every platform.
+    if previous
+        .as_deref()
+        .is_some_and(|p| p != username && p.to_lowercase() == username.to_lowercase())
+    {
+        return Err(BantoError::Validation {
+            field_errors: vec![FieldError {
+                field: "username".to_string(),
+                message: "現在の自動ログインのユーザー名と大文字・小文字だけが違う名前には切り替えられません（OS のキーリングで同じ項目になることがあります）。先に自動ログインを無効にしてから、設定し直してください".to_string(),
+            }],
+        });
+    }
     keyring_store::set_password(username, password)?;
     config.autologin_enabled = true;
     config.autologin_username = Some(username.to_string());
@@ -2274,12 +2289,9 @@ async fn autologin_enable_body(
         // Same username as before: the entry was already the settings'
         // credential (this call only refreshed it with the verified
         // password), so it stays. A different one is ours: remove it.
-        // Compared ignoring ASCII case: some OS keyrings (Windows) treat
-        // names differing only in case as one entry.
-        if !previous
-            .as_deref()
-            .is_some_and(|p| p.eq_ignore_ascii_case(username))
-        {
+        // (Case-only variants were refused above, so a different name is a
+        // different keyring entry.)
+        if previous.as_deref() != Some(username) {
             if let Err(delete_err) = keyring_store::delete_password(username) {
                 return Err(BantoError::Other(format!(
                     "{save_err}。さらに、キーリングに保存した資格情報の取り消しにも失敗しました（{delete_err}）。OS のキーリングから「{username}」の資格情報を手で削除してください"
@@ -2293,10 +2305,7 @@ async fn autologin_enable_body(
     // settings are already saved, so a failure here is logged, not an error.
     // The lock is still held: releasing it first would let a concurrent
     // call switch back to `previous` and have this delete its fresh entry.
-    if let Some(previous) = previous
-        .as_deref()
-        .filter(|p| !p.eq_ignore_ascii_case(username))
-    {
+    if let Some(previous) = previous.as_deref().filter(|p| *p != username) {
         if let Err(err) = keyring_store::delete_password(previous) {
             eprintln!("banto: 前の自動ログインの資格情報のキーリング削除に失敗しました: {err}");
         }

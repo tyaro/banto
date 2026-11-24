@@ -92,6 +92,9 @@ pub(crate) mod fake {
     #[derive(Default)]
     struct Fake {
         entries: HashMap<String, String>,
+        /// Mimics the Windows credential store: names differing only in
+        /// (Unicode) case address one entry.
+        case_insensitive: bool,
         fail_delete: bool,
         on_delete: Option<Box<dyn Fn()>>,
     }
@@ -102,6 +105,24 @@ pub(crate) mod fake {
 
     pub(crate) fn install() {
         FAKE.with(|f| *f.borrow_mut() = Some(Fake::default()));
+    }
+
+    /// Like [`install`], but names differing only in case share one entry.
+    pub(crate) fn install_case_insensitive() {
+        FAKE.with(|f| {
+            *f.borrow_mut() = Some(Fake {
+                case_insensitive: true,
+                ..Fake::default()
+            });
+        });
+    }
+
+    fn key(f: &Fake, username: &str) -> String {
+        if f.case_insensitive {
+            username.to_lowercase()
+        } else {
+            username.to_string()
+        }
     }
 
     pub(crate) fn fail_delete(on: bool) {
@@ -117,14 +138,15 @@ pub(crate) mod fake {
         FAKE.with(|f| {
             f.borrow()
                 .as_ref()
-                .and_then(|f| f.entries.get(username).cloned())
+                .and_then(|f| f.entries.get(&key(f, username)).cloned())
         })
     }
 
     pub(super) fn set(username: &str, password: &str) -> Option<Result<(), BantoError>> {
         FAKE.with(|f| {
             f.borrow_mut().as_mut().map(|f| {
-                f.entries.insert(username.to_string(), password.to_string());
+                let k = key(f, username);
+                f.entries.insert(k, password.to_string());
                 Ok(())
             })
         })
@@ -134,7 +156,7 @@ pub(crate) mod fake {
         FAKE.with(|f| {
             f.borrow().as_ref().map(|f| {
                 f.entries
-                    .get(username)
+                    .get(&key(f, username))
                     .cloned()
                     .ok_or_else(|| BantoError::Other("no entry".to_string()))
             })
@@ -150,7 +172,8 @@ pub(crate) mod fake {
                 if f.fail_delete {
                     return Err(BantoError::Other("delete failed".to_string()));
                 }
-                f.entries.remove(username);
+                let k = key(f, username);
+                f.entries.remove(&k);
                 Ok(())
             })
         })
