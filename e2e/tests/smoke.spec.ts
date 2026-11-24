@@ -1816,6 +1816,40 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
 	});
 
+	test('5a-2. users: the row context menu opens at the pointer, Esc returns focus, Edit selects (#889)', async () => {
+		await page.goto('/users');
+		const grid = page.getByRole('grid');
+		const cell = rowWithText(page, ADMIN_USERNAME).locator('[data-cell-field="username"]');
+		await expect(cell).toBeVisible();
+		const box = (await cell.boundingBox())!;
+		const point = { x: box.x + 10, y: box.y + box.height / 2 };
+		// A real right-click: on Linux Chromium `contextmenu` fires on the press,
+		// so this also covers waiting for the release (the browser's light
+		// dismiss of that release would close a menu shown before it).
+		await page.mouse.click(point.x, point.y, { button: 'right' });
+		const menu = page.getByRole('menu', { name: ADMIN_USERNAME });
+		await expect(menu).toBeVisible();
+		const menuBox = (await menu.boundingBox())!;
+		expect(Math.abs(menuBox.x - point.x)).toBeLessThanOrEqual(1);
+		// Below the point, or flipped above it when there is no room below (the
+		// grid runs past the bottom of the viewport here).
+		expect(menuBox.y >= point.y || menuBox.y + menuBox.height <= point.y).toBe(true);
+		await expect(menu.getByRole('menuitem').first()).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(menu).toBeHidden();
+		await expect(grid).toBeFocused();
+
+		// From the keyboard (Shift+F10 on the active cell), then pick Edit.
+		await page.keyboard.press('Shift+F10');
+		await expect(menu).toBeVisible();
+		await page.keyboard.press('Enter');
+		await expect(menu).toBeHidden();
+		await expect(page.locator('.edit-column').getByRole('heading', { level: 2 })).toContainText(
+			ADMIN_USERNAME
+		);
+		await expect(grid).toBeFocused();
+	});
+
 	test('5b. delayed deletion preserves another user but closes a reselected deleted user', async () => {
 		test.setTimeout(60_000);
 		await page.goto('/users');

@@ -279,6 +279,28 @@
 		overlayClosed += 1;
 	}
 	let selected = $state<string | undefined>(undefined);
+
+	// Context menu (#889): `Menu` without a trigger, opened at the pointer by
+	// `openAt`. The segmented control picks where focus returns on close (the
+	// right-clicked area, another element, nowhere) - e2e/visual/ui-overlays.spec.ts.
+	type ContextReturn = 'origin' | 'other' | 'none';
+	const contextReturns: SegmentedOption<ContextReturn>[] = [
+		{ value: 'origin', label: m['uiDemo.contextMenu.returnOrigin']() },
+		{ value: 'other', label: m['uiDemo.contextMenu.returnOther']() },
+		{ value: 'none', label: m['uiDemo.contextMenu.returnNone']() }
+	];
+	let contextReturn = $state<ContextReturn>('origin');
+	let contextMenu: ReturnType<typeof Menu> | undefined = $state();
+	let contextOtherEl: HTMLButtonElement | undefined = $state();
+
+	function openContextMenu(event: MouseEvent): void {
+		event.preventDefault();
+		(event.currentTarget as HTMLElement).focus();
+		const point = { x: event.clientX, y: event.clientY };
+		if (contextReturn === 'origin') contextMenu?.openAt(point);
+		else
+			contextMenu?.openAt(point, { returnFocus: contextReturn === 'none' ? null : contextOtherEl });
+	}
 	let colName = $state(true);
 	let colUpdated = $state(false);
 
@@ -963,6 +985,35 @@
 				{m['uiDemo.menu.selected']()}: {selected ?? m['uiDemo.menu.none']()}
 			</span>
 		</div>
+		<div class="row row--spaced">
+			<button
+				type="button"
+				class="context-area"
+				data-testid="ui-demo-context-area"
+				oncontextmenu={openContextMenu}
+			>
+				{m['uiDemo.contextMenu.area']()}
+			</button>
+			<SegmentedControl
+				options={contextReturns}
+				bind:value={contextReturn}
+				name="ui-demo-context-return"
+				label={m['uiDemo.contextMenu.returnLabel']()}
+			/>
+			<button type="button" bind:this={contextOtherEl} data-testid="ui-demo-context-other">
+				{m['uiDemo.contextMenu.other']()}
+			</button>
+			<Menu bind:this={contextMenu} label={m['uiDemo.contextMenu.label']()}>
+				<MenuItem
+					label={m['uiDemo.menu.edit']()}
+					onSelect={() => (selected = m['uiDemo.menu.edit']())}
+				/>
+				<MenuItem
+					label={m['uiDemo.menu.duplicate']()}
+					onSelect={() => (selected = m['uiDemo.menu.duplicate']())}
+				/>
+			</Menu>
+		</div>
 	</SurfaceCard>
 
 	<SurfaceCard title="HeaderNav" description={m['uiDemo.headerNav.desc']()}>
@@ -1646,6 +1697,15 @@
 
 	.row--spaced {
 		margin-top: var(--banto-space-3);
+	}
+
+	.context-area {
+		padding: var(--banto-space-3) var(--banto-space-4);
+		border: var(--banto-border-width) dashed var(--banto-border);
+		border-radius: var(--banto-radius-md);
+		background: transparent;
+		color: var(--banto-text-muted);
+		font: inherit;
 	}
 
 	.sample {
