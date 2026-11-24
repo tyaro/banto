@@ -36,6 +36,8 @@ export interface SseStreamOptions<T> {
 	 * host - including through what URL parsing removes (a tab or a newline
 	 * between two slashes still makes `//host/x` to a browser). Never put a
 	 * token or any other secret in its query string (conventions §6).
+	 * `fetchFn` is given the resolved, absolute URL that passed this check
+	 * (the text itself only where there is no page to resolve against).
 	 */
 	path: string;
 	/**
@@ -158,6 +160,13 @@ const PLACEHOLDER_ORIGIN = 'http://banto.invalid';
  * string), not on the text: parsing drops tabs and newlines and reads a
  * backslash as `/`, so a path can name another host although its text
  * starts with a single `/`.
+ *
+ * What is returned is the URL that was CHECKED, as an absolute URL, so that
+ * `fetch` does not resolve the text a second time: it would do so against
+ * the document's base URL, which a `<base href>` can point at another origin
+ * than `location.origin`. Only where there is nothing to resolve against (no
+ * page and a `baseUrl` that is not absolute: tests, SSR) the text is returned
+ * as it is - there is no document base to disagree with there.
  */
 function resolveStreamUrl(baseUrl: string, path: string): string {
 	const refuse = (): never => {
@@ -167,7 +176,8 @@ function resolveStreamUrl(baseUrl: string, path: string): string {
 	};
 	if (!path.startsWith('/') || path[1] === '/' || path[1] === '\\') refuse();
 	const pageOrigin = (globalThis as { location?: { origin?: string } }).location?.origin;
-	const fallback = pageOrigin && pageOrigin !== 'null' ? pageOrigin : PLACEHOLDER_ORIGIN;
+	const hasPage = typeof pageOrigin === 'string' && pageOrigin !== '' && pageOrigin !== 'null';
+	const fallback = hasPage ? pageOrigin : PLACEHOLDER_ORIGIN;
 	const url = `${baseUrl}${path}`;
 	let allowed: URL;
 	let target: URL;
@@ -190,7 +200,16 @@ function resolveStreamUrl(baseUrl: string, path: string): string {
 	) {
 		refuse();
 	}
-	return url;
+	return hasPage || isAbsoluteUrl(baseUrl) ? target.href : url;
+}
+
+function isAbsoluteUrl(text: string): boolean {
+	try {
+		new URL(text);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**

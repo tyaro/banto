@@ -220,23 +220,27 @@ describe('createSseStream: reading', () => {
 		['', '/api/app/values', '/api/app/values'],
 		['', '/api/app/values?unit=c#top', '/api/app/values?unit=c#top'],
 		['http://x:8080', '/api/app/values', 'http://x:8080/api/app/values'],
-		['https://x', '/a/../b//c', 'https://x/a/../b//c'],
+		['https://x', '/a/../b//c', 'https://x/b//c'],
+		['https://x', '/\tapi/app/values', 'https://x/api/app/values'],
 		['tauri://localhost', '/api/app/values', 'tauri://localhost/api/app/values']
-	])('lets a same-origin URL through unchanged (%j + %j)', (baseUrl, path, url) => {
-		const net = manualFetch();
-		const stop = createSseStream<Value>({
-			baseUrl,
-			path,
-			fetchFn: net.fetchFn,
-			getToken: () => 'A',
-			parse: () => null,
-			onEvent: () => {}
-		});
-		expect(net.calls).toHaveLength(1);
-		expect(net.calls[0].url).toBe(url);
-		expect(auth(net.calls[0])).toBe('Bearer A');
-		stop();
-	});
+	])(
+		'lets a same-origin URL through (%j + %j), as the URL that was checked',
+		(baseUrl, path, url) => {
+			const net = manualFetch();
+			const stop = createSseStream<Value>({
+				baseUrl,
+				path,
+				fetchFn: net.fetchFn,
+				getToken: () => 'A',
+				parse: () => null,
+				onEvent: () => {}
+			});
+			expect(net.calls).toHaveLength(1);
+			expect(net.calls[0].url).toBe(url);
+			expect(auth(net.calls[0])).toBe('Bearer A');
+			stop();
+		}
+	);
 
 	it('with no baseUrl the allowed origin is the page’s', () => {
 		vi.stubGlobal('location', { origin: 'https://app.example' });
@@ -253,10 +257,19 @@ describe('createSseStream: reading', () => {
 			expect(() => make('/\t/other.example/x')).toThrow(TypeError);
 			expect(() => make('/\n/app.example.other.example/x')).toThrow(TypeError);
 			expect(net.calls).toHaveLength(0);
-			const stop = make('/api/app/values');
-			expect(net.calls).toHaveLength(1);
-			expect(net.calls[0].url).toBe('/api/app/values');
-			stop();
+			// What `fetchFn` receives is the checked URL itself, absolute: `fetch`
+			// would resolve a relative one against the document's base URL
+			// (`<base href>`), which need not be `location.origin`.
+			const stops = [make('/api/app/values'), make('/\tapi/../app/values?unit=c')];
+			expect(net.calls.map((call) => call.url)).toEqual([
+				'https://app.example/api/app/values',
+				'https://app.example/app/values?unit=c'
+			]);
+			for (const call of net.calls) {
+				expect(new URL(call.url).origin).toBe('https://app.example');
+				expect(auth(call)).toBe('Bearer A');
+			}
+			for (const stop of stops) stop();
 		} finally {
 			vi.unstubAllGlobals();
 		}

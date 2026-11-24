@@ -330,7 +330,7 @@ const stop = createSseStream<Reading>({
   続けて出る）。切断の帯は `/api/events` の 1 本に任せ、アプリの配信からは既定では知らせない。
 - `path` は `/` 1 つで始まり、`baseUrl + path` を URL として解決した先が `baseUrl`（空ならページ）の origin に
   留まるもの以外は `TypeError`（要求を 1 つも出さない。`Authorization` を別のホストへ送らない。タブ・改行を挟んで
-  `//host` になる path もここで断る）。
+  `//host` になる path もここで断る）。`fetchFn` には、確かめた解決後の絶対 URL を渡す（`<base href>` で解決し直させない）。
 - `parse`・`valueStamp`・`onEvent`・各フックの中で配信を止める・ログインし直す・ログアウトするのは構わない。
   読み口は呼ぶ側のコードから戻るたびに照合し直し、旧いセッションの分は値・印・鮮度の時計・`onUnauthorized` を
   それ以上進めずに、いまの token で開き直す。配信が終わった時点で token が変わっていれば、そこで `onSessionChange` を呼ぶ。
