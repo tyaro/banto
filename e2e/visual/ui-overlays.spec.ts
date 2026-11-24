@@ -773,6 +773,14 @@ test.describe('ui-demo Menu longer than the space beside its trigger', () => {
 		}
 	}
 
+	// A click before hydration is lost: re-click until the menu is open.
+	async function openByClick(page: Page) {
+		await expect(async () => {
+			if (!(await menuOf(page).isVisible())) await triggerOf(page).click({ timeout: 2_000 });
+			await expect(menuOf(page)).toBeVisible({ timeout: 2_000 });
+		}).toPass();
+	}
+
 	// A key pressed before hydration is lost: retry until the menu is open.
 	async function openByKey(page: Page, key: 'ArrowDown' | 'ArrowUp') {
 		await expect(async () => {
@@ -788,11 +796,7 @@ test.describe('ui-demo Menu longer than the space beside its trigger', () => {
 		page
 	}) => {
 		const menu = menuOf(page);
-		// A click before hydration is lost: re-click until the menu is open.
-		await expect(async () => {
-			if (!(await menu.isVisible())) await triggerOf(page).click({ timeout: 2_000 });
-			await expect(menu).toBeVisible({ timeout: 2_000 });
-		}).toPass();
+		await openByClick(page);
 		await expectInsideViewport(page, await menu.boundingBox());
 		expect(await menu.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
 
@@ -843,9 +847,8 @@ test.describe('ui-demo Menu longer than the space beside its trigger', () => {
 	});
 
 	test('an outer scroll still closes it', async ({ page }) => {
-		await triggerOf(page).click();
 		const menu = menuOf(page);
-		await expect(menu).toBeVisible();
+		await openByClick(page);
 		// Scroll whatever ancestor of the trigger actually scrolls (the app
 		// shell's main area or the document).
 		await triggerOf(page).evaluate((el) => {
@@ -857,9 +860,8 @@ test.describe('ui-demo Menu longer than the space beside its trigger', () => {
 	});
 
 	test('Esc closes it and returns focus to the trigger', async ({ page }) => {
-		await triggerOf(page).click();
 		const menu = menuOf(page);
-		await expect(menu).toBeVisible();
+		await openByClick(page);
 		await page.keyboard.press('Escape');
 		await expect(menu).toBeHidden();
 		await expect(triggerOf(page)).toBeFocused();
