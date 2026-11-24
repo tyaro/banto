@@ -321,8 +321,9 @@ describe('DraftDateField with @banto/ui DateInput injected (FormDraft path)', ()
 		input.focus();
 		fireEvent.input(input, { target: { value: '2026/1/2' } });
 		flushSync();
-		// The injected input's own Enter handling is not forms' (DateInput lives in ui).
+		// DateInput (ui) ignores both signals itself; forms' wrapper must not commit either.
 		await fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+		await fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
 		expect(draft.values.due).toBeNull();
 		await fireEvent.keyDown(input, { key: 'Enter' });
 		expect(draft.values.due).toBe('2026-01-02');
