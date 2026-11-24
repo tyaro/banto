@@ -1280,6 +1280,95 @@ async fn autologin_enable_is_recorded_as_settings_change() {
     );
 }
 
+/// Makes `set_auth_config` fail (auth-disabled + LAN without viewer-public is
+/// refused), leaving the autologin settings as they were.
+async fn make_settings_save_fail(state: &AppState) {
+    for (k, v) in [
+        ("server.enabled", "true"),
+        ("server.viewer_public", "false"),
+        ("auth.disabled", "true"),
+    ] {
+        state.settings.set(k, v).await.expect("set");
+    }
+}
+
+async fn admin_state_with_fake_keyring() -> AppState {
+    keyring_store::fake::install();
+    let state = app_state().await;
+    let admin = state
+        .users
+        .create_user("manager", "password123", "管理者", Role::Admin)
+        .await
+        .expect("create admin");
+    state.set_session_for_test(Some(DesktopSession::Account(admin)));
+    state
+}
+
+/// S2 D: a failed settings save must not leave the credential in the keyring.
+#[tokio::test]
+async fn autologin_enable_removes_the_credential_when_the_settings_save_fails() {
+    let state = admin_state_with_fake_keyring().await;
+    make_settings_save_fail(&state).await;
+
+    let err = autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect_err("the save must fail");
+    assert!(format!("{err}").contains("LAN"), "{err}");
+    assert_eq!(keyring_store::fake::stored("manager"), None);
+    assert!(
+        !state
+            .settings
+            .auth_config()
+            .await
+            .unwrap()
+            .autologin_enabled
+    );
+}
+
+/// S2 D: when the take-back itself fails, the error says so (and names the
+/// account to clean up by hand).
+#[tokio::test]
+async fn autologin_enable_reports_a_failed_take_back() {
+    let state = admin_state_with_fake_keyring().await;
+    make_settings_save_fail(&state).await;
+    keyring_store::fake::fail_delete(true);
+
+    let err = autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect_err("the save must fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("LAN") && msg.contains("取り消しにも失敗"),
+        "{msg}"
+    );
+    assert!(msg.contains("manager"), "{msg}");
+}
+
+/// S2 D: switching the account removes the previous account's credential.
+#[tokio::test]
+async fn autologin_enable_for_another_account_removes_the_previous_credential() {
+    let state = admin_state_with_fake_keyring().await;
+    state
+        .users
+        .create_user("second", "password456", "二人目", Role::Admin)
+        .await
+        .expect("create second");
+
+    autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect("enable manager");
+    assert!(keyring_store::fake::stored("manager").is_some());
+    autologin_enable_body(&state, "second", "password456")
+        .await
+        .expect("enable second");
+
+    assert_eq!(keyring_store::fake::stored("manager"), None);
+    assert_eq!(
+        keyring_store::fake::stored("second").as_deref(),
+        Some("password456")
+    );
+}
+
 /// [`autologin_disable_body`] records a `settings_change`/`settings` entry
 /// with an `{autologinEnabled:false}` detail (M-review 2026-08 M-5). No
 /// keyring is touched: with `autologin_username` unset the delete is

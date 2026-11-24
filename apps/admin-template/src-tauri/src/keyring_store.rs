@@ -43,6 +43,10 @@ fn entry(username: &str) -> Result<keyring::Entry, BantoError> {
 /// Store `password` in the OS keyring under `username`, overwriting any
 /// existing entry for that username.
 pub fn set_password(username: &str, password: &str) -> Result<(), BantoError> {
+    #[cfg(test)]
+    if let Some(result) = fake::set(username, password) {
+        return result;
+    }
     entry(username)?
         .set_password(password)
         .map_err(|err| degrade("OSキーリングへの資格情報の保存に失敗しました", err))
@@ -51,6 +55,10 @@ pub fn set_password(username: &str, password: &str) -> Result<(), BantoError> {
 /// Retrieve the password previously stored for `username`, or an error if
 /// there is none (or the backend is unavailable).
 pub fn get_password(username: &str) -> Result<String, BantoError> {
+    #[cfg(test)]
+    if let Some(result) = fake::get(username) {
+        return result;
+    }
     entry(username)?
         .get_password()
         .map_err(|err| degrade("OSキーリングからの資格情報の取得に失敗しました", err))
@@ -61,7 +69,81 @@ pub fn get_password(username: &str) -> Result<String, BantoError> {
 /// `autologin_disable` in `lib.rs`, which logs and proceeds rather than
 /// failing the whole command on a keyring delete error).
 pub fn delete_password(username: &str) -> Result<(), BantoError> {
+    #[cfg(test)]
+    if let Some(result) = fake::delete(username) {
+        return result;
+    }
     entry(username)?
         .delete_credential()
         .map_err(|err| degrade("OSキーリングからの資格情報の削除に失敗しました", err))
+}
+
+/// Test-only seam: a per-thread fake store that tests can read back and make
+/// fail. `keyring`'s own mock gives every `Entry` a private value, so a test
+/// cannot see whether a credential was stored or removed through it. Off
+/// (None) unless a test calls [`fake::install`]; tokio tests run on one
+/// thread, so a thread-local is isolated per test.
+#[cfg(test)]
+pub(crate) mod fake {
+    use banto_core::BantoError;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct Fake {
+        entries: HashMap<String, String>,
+        fail_delete: bool,
+    }
+
+    thread_local! {
+        static FAKE: RefCell<Option<Fake>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn install() {
+        FAKE.with(|f| *f.borrow_mut() = Some(Fake::default()));
+    }
+
+    pub(crate) fn fail_delete(on: bool) {
+        FAKE.with(|f| f.borrow_mut().as_mut().expect("installed").fail_delete = on);
+    }
+
+    pub(crate) fn stored(username: &str) -> Option<String> {
+        FAKE.with(|f| {
+            f.borrow()
+                .as_ref()
+                .and_then(|f| f.entries.get(username).cloned())
+        })
+    }
+
+    pub(super) fn set(username: &str, password: &str) -> Option<Result<(), BantoError>> {
+        FAKE.with(|f| {
+            f.borrow_mut().as_mut().map(|f| {
+                f.entries.insert(username.to_string(), password.to_string());
+                Ok(())
+            })
+        })
+    }
+
+    pub(super) fn get(username: &str) -> Option<Result<String, BantoError>> {
+        FAKE.with(|f| {
+            f.borrow().as_ref().map(|f| {
+                f.entries
+                    .get(username)
+                    .cloned()
+                    .ok_or_else(|| BantoError::Other("no entry".to_string()))
+            })
+        })
+    }
+
+    pub(super) fn delete(username: &str) -> Option<Result<(), BantoError>> {
+        FAKE.with(|f| {
+            f.borrow_mut().as_mut().map(|f| {
+                if f.fail_delete {
+                    return Err(BantoError::Other("delete failed".to_string()));
+                }
+                f.entries.remove(username);
+                Ok(())
+            })
+        })
+    }
 }
