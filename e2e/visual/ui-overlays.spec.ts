@@ -773,12 +773,26 @@ test.describe('ui-demo Menu longer than the space beside its trigger', () => {
 		}
 	}
 
+	// A key pressed before hydration is lost: retry until the menu is open.
+	async function openByKey(page: Page, key: 'ArrowDown' | 'ArrowUp') {
+		await expect(async () => {
+			if (!(await menuOf(page).isVisible())) {
+				await triggerOf(page).focus();
+				await page.keyboard.press(key);
+			}
+			await expect(menuOf(page)).toBeVisible({ timeout: 2_000 });
+		}).toPass();
+	}
+
 	test('is capped to the viewport and scrolls inside without closing or moving the page', async ({
 		page
 	}) => {
-		await triggerOf(page).click();
 		const menu = menuOf(page);
-		await expect(menu).toBeVisible();
+		// A click before hydration is lost: re-click until the menu is open.
+		await expect(async () => {
+			if (!(await menu.isVisible())) await triggerOf(page).click({ timeout: 2_000 });
+			await expect(menu).toBeVisible({ timeout: 2_000 });
+		}).toPass();
 		await expectInsideViewport(page, await menu.boundingBox());
 		expect(await menu.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
 
@@ -809,10 +823,8 @@ test.describe('ui-demo Menu longer than the space beside its trigger', () => {
 	});
 
 	test('End focuses the last item in view and keeps the menu open', async ({ page }) => {
-		await triggerOf(page).focus();
-		await page.keyboard.press('ArrowDown');
 		const menu = menuOf(page);
-		await expect(menu).toBeVisible();
+		await openByKey(page, 'ArrowDown');
 		await page.keyboard.press('End');
 		const lastItem = menu.getByRole('menuitem', { name: '削除' });
 		await expect(lastItem).toBeFocused();
@@ -824,8 +836,7 @@ test.describe('ui-demo Menu longer than the space beside its trigger', () => {
 	});
 
 	test('ArrowUp on the trigger opens at the last item, in view', async ({ page }) => {
-		await triggerOf(page).focus();
-		await page.keyboard.press('ArrowUp');
+		await openByKey(page, 'ArrowUp');
 		const lastItem = menuOf(page).getByRole('menuitem', { name: '削除' });
 		await expect(lastItem).toBeFocused();
 		await expectInsideViewport(page, await lastItem.boundingBox());

@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- CI: e2e の設定画面の表示言語の切り替え（`settings-controls.spec.ts`）と長いメニュー（`ui-overlays.spec.ts`）がハイドレーション前の操作で落ちる揺らぎを、操作と確認をまとめて `toPass()` で再試行する形に直した（#810）。
 - fix(theme): ダークでネイティブ `<select>` の選択肢（option）の背景が白・文字が薄くて読めない問題を直した（`.banto-field-control` と grid のフィルタの select の option を `--banto-surface-overlay` / `--banto-text` で明示、#928）
 
 ## [8.0.0] - 2026-11-24
