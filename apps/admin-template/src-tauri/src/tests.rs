@@ -1398,6 +1398,23 @@ async fn autologin_enable_deletes_the_previous_credential_under_the_lock() {
     assert_eq!(held.get(), Some(true), "delete must run under the lock");
 }
 
+/// Review of #924: names differing only in case may share one OS keyring
+/// entry (Windows), so switching between them must not delete it.
+#[tokio::test]
+async fn autologin_enable_keeps_the_entry_when_only_the_case_differs() {
+    let state = admin_state_with_fake_keyring().await;
+    let mut config = state.settings.auth_config().await.unwrap();
+    config.autologin_enabled = true;
+    config.autologin_username = Some("Manager".to_string());
+    state.settings.set_auth_config(&config).await.unwrap();
+    keyring_store::fake::on_delete(|| panic!("must not delete a case-variant entry"));
+
+    autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect("enable");
+    assert!(keyring_store::fake::stored("manager").is_some());
+}
+
 /// [`autologin_disable_body`] records a `settings_change`/`settings` entry
 /// with an `{autologinEnabled:false}` detail (M-review 2026-08 M-5). No
 /// keyring is touched: with `autologin_username` unset the delete is
