@@ -197,6 +197,33 @@ describe('tooltip follows focus and pointer separately', () => {
 		}
 	});
 
+	it('pie and bar: a mark before the focused one turning 0 keeps the focused mark the only Tab stop', async () => {
+		const three: Row[] = [...rows, { name: 'C', a: 30, b: 3 }];
+		const firstZero: Row[] = [{ name: 'A', a: 0, b: 0 }, rows[1], three[2]];
+		for (const [Comp, props] of [
+			[PieChart, { category: cat, value: valA, label: '円' }],
+			[BarChart, { category: cat, series: [{ id: 'a', label: 'A', value: valA }], label: '棒' }]
+		] as const) {
+			const { container, rerender } = render(
+				Comp as never,
+				{
+					...props,
+					data: three,
+					onMarkActivate: () => {}
+				} as never
+			);
+			await flush();
+			buttonsOf(container)[1].focus();
+			await flush();
+			await rerender({ data: firstZero } as never);
+			await flush();
+			const buttons = buttonsOf(container);
+			expect(names(container)).toEqual(['B: 20', 'C: 30']);
+			expect(buttons.map((b) => b.getAttribute('tabindex'))).toEqual(['0', '-1']);
+			cleanup();
+		}
+	});
+
 	it('pie: the pointer entering and leaving the focused slice keeps its tooltip', async () => {
 		const { container } = render(PieChart, {
 			data: rows,

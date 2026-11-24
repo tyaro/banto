@@ -25,7 +25,6 @@
 		truncateLabel
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
-	import { clampMarkIndex } from './core/mark-nav';
 	import { handleMarkKeydown, onMarkDetached } from './internal/mark-keys';
 	import {
 		getValue,
@@ -310,7 +309,9 @@
 	// this runs and the DOM is exactly what it was). Marks are one linear order,
 	// category-major then series, which is also the order `computeBars` pushes
 	// them in. Roving tabindex: exactly one mark is a Tab stop.
-	let tabStop = $state(0);
+	// The tab stop is a mark identity (not a position), so it survives marks before it appearing or disappearing.
+	let tabKey: string | null = $state(null);
+	const keyOf = (b: { catIndex: number; seriesIndex: number }) => `${b.catIndex}:${b.seriesIndex}`;
 
 	/**
 	 * A mark with no drawn area (a zero-width stacked segment, a zero-value bar)
@@ -384,7 +385,11 @@
 				(onMarkActivate ? bars.filter(isDrawn) : []).map((b, i) => [b, i] as const)
 			)}
 			{@const navCount = navPos.size}
-			{@const stop = clampMarkIndex(tabStop, navCount)}
+			{@const navBars = [...navPos.keys()]}
+			{@const stop = Math.max(
+				0,
+				navBars.findIndex((b) => keyOf(b) === tabKey)
+			)}
 
 			{#if horizontal}
 				{@const valueScale = linearScale(
@@ -524,10 +529,10 @@
 								idx,
 								navCount,
 								() => onMarkActivate(markFor(bar)),
-								(next) => (tabStop = next)
+								(next) => (tabKey = keyOf(navBars[next]))
 							)}
 						onfocus={() => {
-							tabStop = idx;
+							tabKey = keyOf(bar);
 							focusedMark = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex };
 						}}
 						onblur={() => (focusedMark = null)}

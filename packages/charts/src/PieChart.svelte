@@ -6,7 +6,6 @@
 	 */
 	import { pieSlices, arcPath } from './core/pie';
 	import { seriesColorVar } from './core/color';
-	import { clampMarkIndex } from './core/mark-nav';
 	import { handleMarkKeydown, onMarkDetached } from './internal/mark-keys';
 	import {
 		getValue,
@@ -93,12 +92,13 @@
 
 	// Selectable slices (only when `onMarkActivate` is given). Clockwise from the
 	// first slice; roving tabindex keeps one slice as the Tab stop.
-	let tabStop = $state(0);
+	// The tab stop is the slice's `data` index (an identity, not a position in `navOrder`).
+	let tabIdx: number | null = $state(null);
 	// A slice with no sweep (value 0 / invalid) has no drawn area: it would be an
 	// invisible Tab stop, so it is not selectable. `navOrder[pos]` is its `data`
 	// index; the callback's `index` stays the position in `data`.
 	const navOrder = $derived(slices.flatMap((s, i) => (s.endAngle > s.startAngle ? [i] : [])));
-	const activeMark = $derived(clampMarkIndex(tabStop, navOrder.length));
+	const activeMark = $derived(Math.max(0, navOrder.indexOf(tabIdx ?? -1)));
 
 	function markFor(i: number): ChartMark<TRow> {
 		return {
@@ -153,10 +153,10 @@
 								pos,
 								navOrder.length,
 								() => onMarkActivate(markFor(i)),
-								(next) => (tabStop = next)
+								(next) => (tabIdx = navOrder[next])
 							)}
 						onfocus={() => {
-							tabStop = pos;
+							tabIdx = i;
 							focusedIndex = i;
 						}}
 						onblur={() => (focusedIndex = null)}
