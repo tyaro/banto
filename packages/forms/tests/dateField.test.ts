@@ -317,7 +317,7 @@ describe('DraftDateField with @banto/ui DateInput injected (FormDraft path)', ()
 	});
 
 	it('Enter during IME composition (isComposing / keyCode 229) does not commit', async () => {
-		const { draft, onCommit, input } = setup();
+		const { draft, input } = setup();
 		input.focus();
 		fireEvent.input(input, { target: { value: '2026/1/2' } });
 		flushSync();
