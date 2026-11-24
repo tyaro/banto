@@ -329,6 +329,24 @@ describe("ThreePaneDock sideWidthUnit='px': the divider (#892 review)", () => {
 		expect(commits).toEqual([]);
 	});
 
+	it('puts a drag cancelled by the switch to the narrow display back at the px of its press', async () => {
+		const { px, harness } = mount();
+		await settle();
+		firePointer(leftDivider(), 'pointerdown', 280);
+		firePointer(window, 'pointermove', 330);
+		await settle();
+		near(px().left, 330);
+		await resize(800);
+		expect(harness.isNarrow()).toBe(true);
+		// The drag is over (cancelled by the switch): a late pointerup changes nothing.
+		firePointer(window, 'pointerup', 330);
+		await settle();
+		await resize(1600);
+		expect(harness.isNarrow()).toBe(false);
+		near(px().left, 280);
+		near(px().right, 360);
+	});
+
 	it('takes a drag committed after a width change at the px it is drawn at', async () => {
 		const { px, commits } = mount();
 		await settle();

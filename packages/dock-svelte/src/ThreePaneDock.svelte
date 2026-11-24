@@ -455,7 +455,11 @@
 		if (narrowShown || wantNarrow) {
 			// The narrow display is not the wide row: the px stay as they were, compared afresh after.
 			sidesSeen = null;
-			if (sidesPress?.ended) sidesPress = null;
+			// A drag cancelled by the switch (or while narrow): the px of its press come back wide.
+			if (sidesPress?.ended) {
+				sideWidths = sidesPress.widths;
+				sidesPress = null;
+			}
 			return;
 		}
 		const row = rowGeometry(width);

@@ -283,4 +283,62 @@ describe('the drawn px and the divider (#892 review)', () => {
 		const grown = resizeSplit(layout.docked, 'three-pane:root', 0, 1 / 2000) as DockSplitNode;
 		expect(grown.sizes[0] * 2000).toBeCloseTo(121, 6);
 	});
+
+	it('does not jump a pair of narrow panes (together under twice the minimum) the other way', () => {
+		// An extra pane of 60 px and the left of 120 px on the same side of the centre, at 2000 px:
+		// the pair is 180 px, under twice the dock minimum share (400 px).
+		const row: DockSplitNode = {
+			type: 'split',
+			id: 'row',
+			direction: 'row',
+			children: ['extra', 'left', 'center', 'right'].map((id) => ({
+				type: 'panel' as const,
+				id,
+				title: id
+			})),
+			sizes: [60, 120, 1460, 360].map((p) => p / 2000)
+		};
+		// The 60 px pane 1 px narrower: it stays (not ~90 px, the pair split evenly).
+		const shrunk = resizeSplit(row, 'row', 0, -1 / 2000) as DockSplitNode;
+		expect(shrunk.sizes[0] * 2000).toBeCloseTo(60, 6);
+		expect(shrunk.sizes[1] * 2000).toBeCloseTo(120, 6);
+		// 1 px wider: 61 px, the other 119 px.
+		const grown = resizeSplit(row, 'row', 0, 1 / 2000) as DockSplitNode;
+		expect(grown.sizes[0] * 2000).toBeCloseTo(61, 6);
+		expect(grown.sizes[1] * 2000).toBeCloseTo(119, 6);
+	});
+
+	it('never moves a pane the other way from the drag, nor past it (any shares, any delta)', () => {
+		fc.assert(
+			fc.property(
+				fc.array(fc.double({ min: 0, max: 1, noNaN: true }), { minLength: 2, maxLength: 5 }),
+				fc.nat(),
+				fc.double({ min: -1, max: 1, noNaN: true }),
+				(weights, at, delta) => {
+					const total = weights.reduce((a, b) => a + b, 0);
+					fc.pre(total > 0);
+					const sizes = weights.map((w) => w / total);
+					const row: DockSplitNode = {
+						type: 'split',
+						id: 'row',
+						direction: 'row',
+						children: sizes.map((_, i) => ({ type: 'panel' as const, id: `p${i}`, title: '' })),
+						sizes
+					};
+					const i = at % (sizes.length - 1);
+					const next = (resizeSplit(row, 'row', i, delta) as DockSplitNode).sizes;
+					const from = sizes[i];
+					expect(next[i]).toBeGreaterThanOrEqual(Math.min(from, from + delta) - EPS);
+					expect(next[i]).toBeLessThanOrEqual(Math.max(from, from + delta) + EPS);
+					expect(next[i]).toBeGreaterThanOrEqual(0);
+					expect(next[i + 1]).toBeGreaterThanOrEqual(-EPS);
+					expect(next[i] + next[i + 1]).toBeCloseTo(sizes[i] + sizes[i + 1], 9);
+					next.forEach((s, k) => {
+						if (k !== i && k !== i + 1) expect(s).toBe(sizes[k]);
+					});
+				}
+			),
+			params(300)
+		);
+	});
 });
