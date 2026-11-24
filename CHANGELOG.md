@@ -24,6 +24,7 @@
 
 消費側への注意（破壊的。次のメジャー v8.0.0 に入る。詳細は下の各項目と [docs/upgrading.md](docs/upgrading.md) 4.2 節）:
 
+- **`banto-server` の `ReachCheckClock`・`SystemReachCheckClock`・`ReachCheckState::with_clock` を消す（#818）。** テストのためだけの時計の差し替え口だった。`ReachCheckState::new()` は常に実時計。下流（banto-industrial・temp-scada）に使用なし。使っていた派生アプリは `ReachCheckState::new()` に替える（時刻を動かす試験は、ストアの外から時計を差せなくなるため、クレート内の試験のみが対象）。
 - **Node の基準を 24 から 26 に上げる（#837 を置き換える）。** Node 26 は 2026-10-28 から Active LTS。派生アプリ（ルートの `package.json` を取り込む場合）は Node 26 が必要になる: `engines.node` を `>=26`、`.nvmrc` を `26`、devDependencies の `@types/node` を `^26.0.0`、CI の `setup-node` の `node-version` を `26` にする。取り込まなければ今までどおり。
 - **基準の作り直し: DB を作り直す（#790・#778・#786 の C1、[ADR-0034](docs/adr/0034-owner-identity-builtin-admin.md) 決定 §9）。** `core/migrations-{sqlite,postgres}/0003_users.sql`・`0005_audit_log.sql` を差し替え、`0014_ui_settings.sql` を足す（自分の migration を 0014 以降で足しているなら番号をずらす）。v7.11.0 以前の DB は起動時に「この DB は v8.0.0 より前の版のものです。読めません。DB を作り直してください」で止まり、旧版のバックアップはリストアの予約で断られる。データの移行は無い。
   - 新しい DB には組み込みのユーザー `admin`（`users.kind = 'builtin'`）が 1 行居る。ログイン・変更・削除はできない。`admin` という username のアカウントは作れないので、試験・fixture で作っているなら別の名前にする。`UserSummary` に `kind`（`'account'` / `'builtin'`）が増えた（Rust の構造体と wire の両方）。
@@ -164,10 +165,12 @@
 - E2E（#798）: `BANTO_E2E_SERVERS` に `smoke`（:8799）と `public-viewer`（:8798）を足し、CI の E2E ジョブの smoke・viewer-public の各 step で必要な banto-serve だけを立てる（使わない 2 本目を立てない）。smoke の固定 wait は、時間経過そのものを見る scenario 13b の 7 秒（「その後は何も起きない」の確認）と、同じ性質の 500ms・300ms を例外として残した。
 - **ci:** `visual.spec.ts` のログインとダッシュボードの基準画像を、ほかの画面と同じ対角の 2 組（light-standard と dark-glass）にした。24 枚から 12 枚になり、visual の実行が短くなる（#798）。
 - **CI: `@banto/dock-svelte` の総当たりテストを別ファイルに分け、深さを環境変数 `DOCK_EXHAUSTIVE` で切り替えるようにした（#798 PR-d）。** `panel-visibility.test.ts` の総当たり（隠す順 × 戻す順・手順の全列挙・乱数の手順）を `panel-visibility-exhaustive-*.test.ts` に移し（共有の道具は `tests/fixtures/`）、`DOCK_EXHAUSTIVE=1` のときだけ全部の深さ・件数で走る。未設定（手元の既定）は浅く、CI は dock-svelte を触る PR と main の push で全部、触らない PR は浅い既定（`ci.yml` の `changes` の出力 `dock`）。テストと CI だけの変更で、`src/`・公開 API・保存形式の変更なし。
+- **`@banto/grid-svelte`: `BantoGrid` のインライン編集の状態遷移を `EditController`（`src/edit.svelte.ts`）に分けた（#822）。** 挙動と公開の口（`onCellEdit`・`onRangePaste`・`CellEdit`・列の `editable`）は変わらない。編集の開始・下書き・確定・保存中・失敗・取り消しと、フォーカスを取り戻してよいかの判定を DOM なしで試験できる形にし、遷移の単体試験（`tests/edit-controller.test.ts`）を足した。コントローラは列を持たず、呼び出しのたびに今の列を受け取る（`columns` を後から変える #890 の前段）。
 - refactor(ui / forms / grid-svelte): 日付・時刻の文字列の決まり（正準形の判定・入力の解析・表示の形式・時刻の刻み）の 3 か所の手書きの複製を、1 つの原本（packages/ui/src/datetime-core.ts）とその生成した写し（forms・grid-svelte の datetime-core.ts）に置き換えた（#811。#813・#815 を含む）。パッケージ間の import は増やさない（conventions §4）。写しは scripts/sync-datetime-core.mjs が書き（pnpm sync:datetime-core）、原本と違えば CI が落とす（pnpm check:datetime-core）。挙動と各パッケージの index の export は変えない。
 
 ### Fixed
 
+- **tree-svelte:** `BantoTree` の名前変更の入力で、IME の変換中（`isComposing`・`keyCode === 229`）の Enter・Escape を無視する。変換の確定で名前変更が確定していた恐れを防ぐ（#891）。
 - **template:** items の添付パネル（`ItemAttachments`）のアップロードも、`ResourceDetail` の `file` 欄と同じセッションの確認（`uploadWhile` / `guardUpload`）を通すようにした（#714）。送信の途中でログアウトや別ユーザーへの切り替えが起きても、古いセッションの資格では送らない。
 
 ## [7.11.0] - 2026-11-22

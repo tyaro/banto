@@ -25,6 +25,7 @@
 	import CellEditor from './CellEditor.svelte';
 	import { DEFAULT_ROW_HEIGHT, GridState } from './state.svelte';
 	import { CellSelection } from './selection.svelte';
+	import { EditController } from './edit.svelte';
 	import { getColumnValue, sortRows } from './core/sort';
 	import { filterRows } from './core/filter';
 	import { computeWindow, parseRowHeightPx } from './core/virtual';
@@ -35,13 +36,7 @@
 		pinnedOffsets,
 		scrollLeftToReveal
 	} from './core/pinning';
-	import {
-		parseCellInput,
-		parseTsv,
-		rangeToTsv,
-		resolveSelectDraft,
-		resolveSelectValue
-	} from './core/clipboard';
+	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
 	import { prepareCommit, isColumnEditable } from './core/edit';
 	import { cellText, resolveCellPresentation, resolveTone } from './core/cellView';
 	import {
@@ -312,7 +307,7 @@
 	// spec §4.5 / #212: removing a saved editor can leave body focused.
 	// Track explicit user intent separately from that incidental focus loss,
 	// including clicks on non-focusable elements. Never reclaim abandoned focus.
-	let editFocus: { sessionId: number; owned: boolean } | null = null;
+	// The claim itself lives in the edit controller (`edit`, below).
 	$effect(() => {
 		const container = containerEl;
 		if (!container) return;
@@ -330,21 +325,21 @@
 		let pressedOutside = false;
 		let pressTimer: ReturnType<typeof setTimeout> | undefined;
 		function relinquishFocus(event: Event) {
-			if (!editFocus) return;
+			if (!edit.tracksFocus) return;
 			const inside = insideEditor(event.target);
 			if (event.type === 'pointerdown') {
 				if (inside) return;
-				editFocus.owned = false;
+				edit.setFocusOwned(false);
 				pressedOutside = true;
 				clearTimeout(pressTimer);
 				pressTimer = setTimeout(() => (pressedOutside = false));
 				return;
 			}
 			if (inside && pressedOutside) return;
-			editFocus.owned = inside;
+			edit.setFocusOwned(inside);
 		}
 		function leaveWindow() {
-			if (editFocus) editFocus.owned = false;
+			edit.setFocusOwned(false);
 		}
 		document.addEventListener('pointerdown', relinquishFocus, true);
 		document.addEventListener('focusin', relinquishFocus, true);
@@ -354,7 +349,7 @@
 			document.removeEventListener('focusin', relinquishFocus, true);
 			document.defaultView?.removeEventListener('blur', leaveWindow);
 			clearTimeout(pressTimer);
-			if (editFocus) editFocus.owned = false;
+			edit.setFocusOwned(false);
 		};
 	});
 
@@ -365,7 +360,7 @@
 		const editor = editorEl;
 		if (current && editor && !current.pending) {
 			untrack(() => {
-				if (editFocus?.sessionId !== current.sessionId || !editFocus.owned) return;
+				if (!edit.ownsFocus(current.sessionId)) return;
 				editor.focus();
 				if (editor instanceof HTMLInputElement && editor.type !== 'checkbox') editor.select();
 			});
@@ -890,7 +885,7 @@
 					selection.clear();
 				}
 			}
-			if (editing && !visible.has(editing.field)) editing = null;
+			if (editing && !visible.has(editing.field)) edit.cancel();
 		});
 	});
 
@@ -1394,23 +1389,18 @@
 	}
 
 	// --- Inline editing (spec §4.5) ---
-	interface EditingState {
-		sessionId: number;
-		rowId: string | number;
-		field: string;
-		draft: unknown;
-		error: string | null;
-		pending: boolean;
-	}
-
-	let editing: EditingState | null = $state(null);
-	// spec §4.5 / conventions §8 / #210: even reopening the same cell
-	// starts a new session. Keep the counter after a session closes so a
-	// delayed post-commit navigation cannot move a newer selection.
-	let editSessionId = 0;
-	// The row as displayed when the session opened (`CellEdit.baseRow`). Kept
-	// outside `editing` so it stays the caller's object, not a $state proxy.
-	let editBase: { sessionId: number; row: TRow } | null = null;
+	// The session's state transitions (start / draft / commit / save / cancel)
+	// and its focus claim live in `EditController` (edit.svelte.ts, #822). This
+	// component keeps what needs the DOM or the displayed rows: focus moves,
+	// following the edited row, and the post-commit navigation.
+	// The controller reads these props when it needs them, never at creation.
+	const edit = new EditController<TRow>({
+		getRowId: (row) => getRowId(row),
+		currentRow: () => rowAtDisplayIndex(editingRowIndex),
+		save: () => onCellEdit,
+		invalidMessage: () => t.inlineEditInvalid()
+	});
+	const editing = $derived(edit.session);
 	// Saving/validation replaces `editing`; keep those state changes from
 	// invalidating the row lookup or taking over a user's newer selection.
 	const editingRowId = $derived.by(() => editing?.rowId);
@@ -1437,7 +1427,7 @@
 	// spec §4.5 / #205: an edit belongs to a record, not a display slot.
 	// Resolve against the full displayed dataset (including loaded server
 	// rows), so virtualization alone does not cancel an off-screen edit.
-	const editingRowIndex = $derived.by(() => {
+	const editingRowIndex: number = $derived.by(() => {
 		const rowId = editingRowId;
 		if (rowId === undefined) return -1;
 		if (mode === 'server') return serverRowIndexById.get(rowId) ?? -1;
@@ -1467,7 +1457,7 @@
 			if (rowIndex < 0) {
 				// Deleted, filtered out, collapsed, or unloaded: never leave a
 				// draft waiting to attach to a replacement row at the old index.
-				editing = null;
+				edit.cancel();
 				if (followsEdit) selection.clear();
 			} else if (followsEdit && previous.rowIndex !== rowIndex) {
 				selection.setActive(rowIndex, field, false);
@@ -1476,78 +1466,10 @@
 	});
 
 	function startEditing(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
-		if (!isEditable(column, row)) return;
-		const rowId = getRowId(row);
+		const session = edit.start(column, row);
+		if (!session) return;
 		selection.setActive(rowIndex, column.id, false);
-		previousEditingPosition = { rowId, field: column.id, rowIndex };
-		editFocus = { sessionId: ++editSessionId, owned: true };
-		editBase = { sessionId: editSessionId, row };
-		editing = {
-			sessionId: editSessionId,
-			rowId,
-			field: column.id,
-			draft: getColumnValue(row, column),
-			error: null,
-			pending: false
-		};
-	}
-
-	/** Runs prepareCommit and, if it decides to commit, awaits onCellEdit. Returns whether the edit session should close. */
-	async function commitValue(
-		column: GridColumn<TRow>,
-		row: TRow,
-		value: unknown
-	): Promise<boolean> {
-		if (!editing || editing.rowId !== getRowId(row) || editing.field !== column.id) return false;
-		const { sessionId, rowId } = editing;
-		// Re-resolve at the commit boundary too: a removed editor can emit
-		// blur before the cancellation effect runs, carrying its old row.
-		const currentRow = rowAtDisplayIndex(editingRowIndex);
-		if (currentRow === undefined || getRowId(currentRow) !== rowId) return false;
-		const result = prepareCommit(column, currentRow, rowId, value);
-		const baseRow = editBase?.sessionId === sessionId ? editBase.row : currentRow;
-
-		if (result.kind === 'noop') {
-			editing = null;
-			return true;
-		}
-		if (result.kind === 'invalid') {
-			editing = {
-				sessionId,
-				rowId,
-				field: column.id,
-				draft: value,
-				error: result.message,
-				pending: false
-			};
-			return false;
-		}
-
-		if (!onCellEdit) {
-			editing = null;
-			return true;
-		}
-		editing = { sessionId, rowId, field: column.id, draft: value, error: null, pending: true };
-		try {
-			await onCellEdit({ ...result.edit, baseRow });
-			// The caller's save still completes, but only the session that
-			// submitted it owns these UI updates (including the failure path).
-			if (editing?.sessionId !== sessionId) return false;
-			editing = null;
-			return true;
-		} catch (err) {
-			if (editing?.sessionId !== sessionId) return false;
-			const message = err instanceof Error ? err.message : String(err);
-			editing = {
-				sessionId,
-				rowId,
-				field: column.id,
-				draft: value,
-				error: message,
-				pending: false
-			};
-			return false;
-		}
+		previousEditingPosition = { rowId: session.rowId, field: column.id, rowIndex };
 	}
 
 	/** Parse the current draft text and commit; optionally move the active cell afterward on success. */
@@ -1558,31 +1480,12 @@
 	) {
 		if (!editing || editing.pending) return;
 		const sessionId = editing.sessionId;
-		const focus = editFocus;
-		const editorType = column.editor ?? 'text';
-		let value: unknown;
-		if (editorType === 'select') {
-			// Never round-trip a select's draft through parseCellInput: it only
-			// passes strings through unchanged, which would undo the onchange
-			// handler's editorOptions resolution below. Re-resolving here is
-			// idempotent (and also covers the paste path never reaching this
-			// function at all), and is what makes `prepareCommit`'s `draft ===
-			// oldValue` no-op check work for select columns with non-string
-			// (e.g. numeric) option values.
-			// A draft that already is an option value keeps its type (`2` vs `'2'`).
-			value = resolveSelectDraft(editing.draft, column.editorOptions);
-		} else {
-			// Typed: a year-less date is this year's (the injected date input's
-			// rule); a paste or CSV cell never guesses it (date-time-pickers §5.10).
-			const parsed = parseCellInput(String(editing.draft ?? ''), editorType, { typed: true });
-			if (!parsed.ok) {
-				editing = { ...editing, error: t.inlineEditInvalid() };
-				if (moveAfter === 'left' || moveAfter === 'right') await focusEditError(sessionId);
-				return;
-			}
-			value = parsed.value;
+		const draft = edit.resolveDraft(column);
+		if (!draft.ok) {
+			if (moveAfter === 'left' || moveAfter === 'right') await focusEditError(sessionId);
+			return;
 		}
-		const closed = await commitValue(column, row, value);
+		const closed = await edit.commitValue(column, row, draft.value);
 		if (!closed && (moveAfter === 'left' || moveAfter === 'right')) {
 			await focusEditError(sessionId);
 		}
@@ -1591,8 +1494,8 @@
 		if (
 			closed &&
 			moveAfter &&
-			editSessionId === sessionId &&
-			focus?.owned &&
+			edit.isLatest(sessionId) &&
+			edit.ownsFocus(sessionId) &&
 			containerEl?.isConnected
 		) {
 			const rowCount = effectiveRowCount;
@@ -1606,15 +1509,14 @@
 
 	function handleCheckboxToggle(column: GridColumn<TRow>, row: TRow, checked: boolean) {
 		if (!editing || editing.pending) return;
-		void commitValue(column, row, checked);
+		void edit.commitValue(column, row, checked);
 	}
 
 	function canFocusEditError(sessionId: number) {
 		return (
 			editing?.sessionId === sessionId &&
 			!!editing.error &&
-			editFocus?.sessionId === sessionId &&
-			editFocus.owned &&
+			edit.ownsFocus(sessionId) &&
 			editorEl?.isConnected &&
 			editorEl.ownerDocument.activeElement === editorEl
 		);
@@ -1656,15 +1558,12 @@
 		if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
 		// Returning from another window need not emit focusin on the editor.
 		// A fresh key action on the focused, non-pending draft renews ownership.
-		if (
-			editFocus?.sessionId === editing.sessionId &&
-			editorEl?.ownerDocument.activeElement === event.currentTarget
-		)
-			editFocus.owned = true;
+		if (editorEl?.ownerDocument.activeElement === event.currentTarget)
+			edit.renewFocus(editing.sessionId);
 		if (event.key === 'Escape') {
 			event.preventDefault();
-			const restoreFocus = editFocus?.owned;
-			editing = null;
+			const restoreFocus = edit.focusOwned;
+			edit.cancel();
 			if (restoreFocus) containerEl?.focus({ preventScroll: true });
 			return;
 		}
@@ -2016,7 +1915,7 @@
 									bind:editorEl
 									bind:editorRootEl
 									onDraftChange={(value) => {
-										if (editing) editing.draft = value;
+										edit.setDraft(value);
 									}}
 									onToggle={(checked) => handleCheckboxToggle(column, row, checked)}
 									onKeydown={(event) => handleEditorKeydown(event, column, row)}
