@@ -678,6 +678,12 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   **`id` は保存値に入るので、あとから変えない**（登録に無い id を含む保存値は捨てられ、既定の配置が出る）。
 - **確かめる**: 追加・非表示・並べ替えが再読み込みの後も残ること、「レイアウトを既定に戻す」で保存した値が消えること、
   キオスクで組み替えられないこと、幅を狭めると 1 列になり、戻すと配置がそのままであること（`e2e/demo/dashboard-layout-commit.spec.ts`）。
+- **期間フィルタの共有（W3。取り込みは任意）**: 見出しに「期間」の操作が増え、KPI の帯と `usesPeriod: true` のウィジェットが、期間で絞った同じ行で描かれる。
+  取り込むのは `banto/dashboardPeriod.ts`（新規）と、`banto/dashboardData.svelte.ts`・`banto/dashboardWidgets.ts`（`dashboardDataFor`）・
+  `components/dashboard/DashboardWidgetFrame.svelte`・`DashboardWidgetStack.svelte`・ページ・`messages/{ja,en}.json`（`dashboard.period*`）の差分。
+  自分のウィジェットは、期間に追随させるものだけ登録に `usesPeriod: true` と書く（部品は変えなくてよい）。見本は「データの中でいちばん新しい
+  `updatedAt`」から数えるので、今日から数える・自分の日付の列で絞るなら `dashboardPeriod.ts` を書き換える
+  （[recipes/dashboard-widgets.md](recipes/dashboard-widgets.md)）。期間は保存されない。
 
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に

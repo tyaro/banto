@@ -32,7 +32,7 @@
  */
 import type { Component } from 'svelte';
 import * as m from '#lib/paraglide/messages.js';
-import type { DashboardData } from './dashboardData.svelte';
+import type { DashboardData, DashboardPageData } from './dashboardData.svelte';
 // [scaffold:charts] begin
 import CategoryStockWidget from '#lib/components/dashboard/charts/CategoryStockWidget.svelte';
 import MonthlyWidget from '#lib/components/dashboard/charts/MonthlyWidget.svelte';
@@ -49,7 +49,11 @@ import MemoWidget from '#lib/components/dashboard/MemoWidget.svelte';
 
 /** The props every widget component takes. */
 export interface DashboardWidgetProps {
-	/** The data the page read once (`createDashboardData`), and - from W3 - the shared period. */
+	/**
+	 * The data the page read once (`createDashboardData`). For a widget registered with
+	 * `usesPeriod` its `rows` are narrowed by the page's shared period (#716 W3); the widget does
+	 * not know the period, it draws the rows it is given.
+	 */
 	data: DashboardData;
 	/** The content's height in px. The caller measures its own container and hands it down. */
 	height: number;
@@ -73,8 +77,24 @@ export interface DashboardWidgetDef {
 	height?: number;
 	/** Draws the content. */
 	component: Component<DashboardWidgetProps>;
-	/** Uses the rows narrowed by the shared period (W3). `false` / omitted: the memo, the streaming trend. */
+	/**
+	 * Draws the rows narrowed by the page's shared period (#716 W3, `dashboardPeriod.ts`), and is
+	 * drawn again when the period changes. `false` / omitted (the memo, the streaming trend): the
+	 * widget is given the rows not narrowed, and a change of the period does not reach it.
+	 */
 	usesPeriod?: boolean;
+}
+
+/**
+ * The data ONE widget is given: the page's narrowed data (the same object the KPI strip draws
+ * from) when it is registered with `usesPeriod`, else the same read not narrowed. Every place
+ * that draws a widget goes through `DashboardWidgetFrame.svelte`, which calls this.
+ */
+export function dashboardDataFor(
+	def: Pick<DashboardWidgetDef, 'usesPeriod'>,
+	data: DashboardPageData
+): DashboardData {
+	return def.usesPeriod ? data : data.all;
 }
 
 /**

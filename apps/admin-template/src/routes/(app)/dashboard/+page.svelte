@@ -74,12 +74,38 @@
 	import DashboardKpiStrip from '#lib/components/DashboardKpiStrip.svelte';
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
-	import { PageHeader, LoadingState } from '@banto/ui';
+	import {
+		DASHBOARD_PERIODS,
+		DEFAULT_DASHBOARD_FILTER,
+		type DashboardFilter,
+		type DashboardPeriod
+	} from '#lib/banto/dashboardPeriod.js';
+	import { PageHeader, LoadingState, SegmentedControl, type SegmentedOption } from '@banto/ui';
+
+	/**
+	 * #716 W3: the ONE period the page holds (§4.13.3). The KPI strip and the widgets registered
+	 * with `usesPeriod` draw the rows it leaves; the others do not notice a change. It is the
+	 * page's state and nothing else: not saved (a reload starts at "all"), not part of the saved
+	 * arrangement, not sent to a popped-out window. #882 (cross-filtering) adds its conditions to
+	 * this same object.
+	 */
+	let filter = $state<DashboardFilter>({ ...DEFAULT_DASHBOARD_FILTER });
+	const PERIOD_LABELS: Record<DashboardPeriod, () => string> = {
+		all: m['dashboard.periodAll'],
+		'30d': m['dashboard.period30d'],
+		'90d': m['dashboard.period90d'],
+		'12m': m['dashboard.period12m']
+	};
+	const periodOptions: SegmentedOption<DashboardPeriod>[] = DASHBOARD_PERIODS.map((value) => ({
+		value,
+		label: PERIOD_LABELS[value]()
+	}));
 
 	// The one read of `items` for this document (same "load once, whole dataset" pattern as the
 	// items page: the dashboard aggregates over the full set, not a paginated window). The KPI
-	// strip and every widget get it as a prop; none of them reads `items` itself.
-	const data = createDashboardData();
+	// strip and every widget get it as a prop; none of them reads `items` itself. Changing the
+	// period reads nothing again: the rows already read are narrowed (dashboardData.svelte.ts).
+	const data = createDashboardData({ filter: () => filter });
 
 	$effect(() => {
 		void data.load();
@@ -421,6 +447,13 @@
 		description={m['dashboard.summary']({ count: data.totalCount.toLocaleString() })}
 	>
 		{#snippet actions()}
+			<SegmentedControl
+				name="dashboard-period"
+				size="sm"
+				label={m['dashboard.periodLabel']()}
+				options={periodOptions}
+				bind:value={filter.period}
+			/>
 			<!-- [scaffold:dock] begin -->
 			{#if arrange && dockShown}
 				<PageViewMenu label={m['dashboard.viewMenu']()} items={viewMenuItems} />
@@ -441,7 +474,7 @@
 	<!-- [scaffold:dock] begin -->
 	<div class="page-measure" bind:clientWidth={measuredWidth}></div>
 	<!-- [scaffold:dock] end -->
-	{#if data.loading && data.rows.length === 0}
+	{#if data.loading && data.all.rows.length === 0}
 		<LoadingState label={m['items.loadingData']()} />
 	{:else}
 		<!-- [scaffold:dock] begin -->

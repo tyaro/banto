@@ -71,7 +71,7 @@ track your task belongs to.**
   full procedures live in `docs/recipes/` (rename / add-resource /
   remove-optional-assets / consume-as-git-dependency / lan-access /
   database-backup / windows-setup / no-login-app / scan-wedge / notifications /
-  tree-svelte / image-assets / add-role; mostly Japanese).
+  tree-svelte / image-assets / add-role / dashboard-widgets; mostly Japanese).
 
 ## Entry points by task
 

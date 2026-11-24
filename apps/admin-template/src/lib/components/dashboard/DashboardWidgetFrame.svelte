@@ -11,15 +11,22 @@
 	 *
 	 * The caller's box needs a height (a pane, a fixed-height card body); this fills it.
 	 */
-	import type { DashboardData } from '#lib/banto/dashboardData.svelte.js';
-	import type { DashboardWidgetDef } from '#lib/banto/dashboardWidgets.js';
+	import type { DashboardPageData } from '#lib/banto/dashboardData.svelte.js';
+	import { dashboardDataFor, type DashboardWidgetDef } from '#lib/banto/dashboardWidgets.js';
 
 	interface Props {
 		widget: DashboardWidgetDef;
-		data: DashboardData;
+		data: DashboardPageData;
 	}
 
 	let { widget, data }: Props = $props();
+
+	/**
+	 * #716 W3: the rows narrowed by the page's shared period only for a widget registered with
+	 * `usesPeriod`; every other widget gets the read as it is, so a change of the period does not
+	 * reach it.
+	 */
+	const widgetData = $derived(dashboardDataFor(widget, data));
 
 	/** Until the box is measured (the first frame). */
 	const UNMEASURED_HEIGHT = 240;
@@ -31,7 +38,7 @@
 </script>
 
 <div class="widget-frame" bind:clientHeight={measured}>
-	<widget.component {data} {height} />
+	<widget.component data={widgetData} {height} />
 </div>
 
 <style>

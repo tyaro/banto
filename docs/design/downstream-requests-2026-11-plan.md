@@ -825,7 +825,7 @@ interface DashboardWidgetProps {
 | W0 | 線引きを template-scope §4.2 に書く。この節を設計に書き直す。#882 の起票（文書だけ） | `pnpm format:check`。**済み** |
 | W1 | 登録の型（`DashboardWidgetDef`・`DashboardWidgetProps`）、KPI の定義と帯の部品、データを 1 回読む関数。固定のカード 5 枚と dock のパネル 5 つを、登録 1 件 + 部品 1 ファイルへ分ける（`DashboardPanel.svelte` の分岐を解体）。**置き場所はまだ変えない**（固定のカードは今の格子に、登録から描く）。切り離した窓のルートを新しい登録へ載せ替える。scaffold の `removeCharts`・`removeDock` を「登録の行と部品のファイルを消す」形へ直す | **基準画像が 1 枚も変わらない**（変わったら載せ替えの誤り）。登録の単体テスト（id の重複なし、title・icon・部品がそろう、KPI の値）。items の読み込みがページで 1 回になる。scaffold の 4 プリセットと、charts だけ・dock だけを外す組み合わせの `--dry-run`（`--list-touched` を含む）が通り、外した後に `@banto/charts`・`@banto/dock-svelte` の参照が残らない。`pnpm check`・`pnpm lint`・`pnpm format:check`・単体テスト・`pnpm e2e`。固定のカードが dock のパネルとして成り立つ最小の大きさを測り、この節に書く（§9）。**済み**（PR #884。決めた形と測った値は 4.13.8） |
 | W2 | 固定のカードの格子と「分析ワークスペース」の枠を消し、1 つの `DockHost` へ寄せる。既定の配置。重複（`monthly`・`priceBuckets`）の統合。新しい保存キーと `reset: 'remove'`。表示メニュー（追加・表示 / 非表示・既定へ戻す）。キオスクの `arrange={false}`。狭い幅と dock を外したときの「積む」部品（4.13.7 の a の確認の後）。使わなくなる文言キー（`dashboard.workspaceHeading` など。ja・en）を消す。CHANGELOG「消費側への注意」・upgrading.md・`docs/recipes/remove-optional-assets.md`・maintainers.md の基準画像の注意 | e2e: 追加・非表示・並べ替えが再読み込みの後も残る／「既定の配置へ戻す」で保存した値が消える／旧いキー（`dock.dashboard`）に値があっても読まない／キオスクでは組み替えられず、表示メニューが出ない／別の利用者の配置を読まない（今の `dashboard-layout-commit.spec.ts` を新しいキーへ直す）。キーボードだけで追加・移動・非表示ができる。狭い幅の 1 列の表示を採る場合（4.13.7 の a）: 幅を狭めて戻しても、保存した幅の広い配置が変わらない／メモの編集中に表示が切り替わっても下書きが残る。**基準画像の再生成**（`/dashboard` を写すもの全部: dashboard の各組み合わせ・kiosk・compact・touch・menubar と、背景に写る **command-palette**。`visual-baselines.yml` を dispatch）。scaffold の 4 プリセットと、charts だけ・dock だけを外す組み合わせの `--dry-run` と template-acceptance。charts を外すとメモだけの dock、dock を外すと「積む」表示で壊れない。a11y の spec（axe）が通る。**済み**（PR #886。決めた形は 4.13.9。charts を外した dock は一覧とメモ） |
-| W3 | 期間の状態と操作、`createDashboardData()` の絞り込み、KPI の帯と `usesPeriod` のウィジェットへの配線。README / recipe に「ウィジェットを足す」「期間を使う」の手順 | 単体: 期間を変えると、KPI と `usesPeriod` のウィジェットが同じ行で描き直り、ほかは描き直らない。期間が配置の保存値に入らない。e2e: 期間を変えて KPI とチャートが変わる。charts を外すプリセットでも期間の操作が壊れない（KPI だけに効く）。基準画像の再生成（見出しに操作が増える。command-palette も）。CHANGELOG [Unreleased]。**#716 を閉じる** |
+| W3 | 期間の状態と操作、`createDashboardData()` の絞り込み、KPI の帯と `usesPeriod` のウィジェットへの配線。README / recipe に「ウィジェットを足す」「期間を使う」の手順 | 単体: 期間を変えると、KPI と `usesPeriod` のウィジェットが同じ行で描き直り、ほかは描き直らない。期間が配置の保存値に入らない。e2e: 期間を変えて KPI とチャートが変わる。charts を外すプリセットでも期間の操作が壊れない（KPI だけに効く）。基準画像の再生成（見出しに操作が増える。command-palette も）。CHANGELOG [Unreleased]。**#716 を閉じる**。**済み**（決めた形は 4.13.10） |
 
 順序: W1 → W2 → W3（同じ `+page.svelte` を触るので並べない）。W2 の前提だった K4（PR #881）と C5（PR #875）は済んでいる。
 
@@ -1013,6 +1013,36 @@ dock を外したプリセットでは、ページの `stackView`（いつも積
 **アプリの依存（`apps/admin-template/package.json`）**で飛ばすかを決め、その後は DOM を必ず求める（全部入りの構成で dock が回帰で
 消えたときに、飛ばさず落ちる）。
 
+#### 4.13.10 W3 で決めた形（2026-11-24）
+
+**ファイル**（どれも `apps/admin-template/src/lib/`）
+
+| ファイル | 中身 |
+| --- | --- |
+| `banto/dashboardPeriod.ts` | 期間の選択肢 `DASHBOARD_PERIODS`（`all`・`30d`・`90d`・`12m`）・ページの条件の型 `DashboardFilter`（今は `period` だけ）・`periodStart()`・`latestDay()`・`narrowRows()` |
+| `banto/dashboardData.svelte.ts` | `createDashboardData({ filter })`。`rows`・`stats` は条件で絞ったもの、`all` は絞っていない同じ読み込み（型 `DashboardPageData`） |
+| `banto/dashboardWidgets.ts` | `dashboardDataFor(def, data)`: `usesPeriod` のウィジェットへは絞ったデータ（KPI の帯と同じオブジェクト）、ほかへは `data.all` |
+
+- **ページが条件を 1 つ持つ**（`let filter = $state<DashboardFilter>(…)`）。`createDashboardData({ filter: () => filter })` に渡す。
+  #882 は `DashboardFilter` に欄を足し、`narrowRows` に 1 段足す（ページの状態が props でデータへ届く道は同じ）。
+- **ウィジェットの props は変えていない**（`data`・`height`）。`usesPeriod` のウィジェットは `data.rows` が絞った行になるだけで、期間の中身を知らない。
+  渡し分けは枠（`DashboardWidgetFrame.svelte`）の 1 か所で、dock の区画・「積む」表示・切り離した窓が同じ枠を通る。
+  `usesPeriod` でないウィジェット（`trend`・`memo`）は `data.all` だけを読むので、期間を変えても描き直されない。
+- **全期間のとき、絞った行は読み込んだ配列そのもの**（`narrowRows` が同じ配列を返す。KPI の数字も 2 回計算しない）。
+- **操作**: `PageHeader` の actions に `@banto/ui` の `SegmentedControl`（`size="sm"`）。キオスクでも出す（配置の編集ではなく、保存もしないため）。
+  文言は `dashboard.periodLabel`・`periodAll`・`period30d`・`period90d`・`period12m`（ja・en）。
+- **基準の日は、読み込んだ行の中でいちばん新しい `updatedAt`**（今日ではない）。見本のデータは日付が固定（`sampleData.ts` の
+  `UPDATED_AT_END` = 2026-07-02）なので、今日から数えると「直近 30 日」「直近 90 日」が空になり、日が経つほど「直近 12 か月」も減る。
+  `dashboard.ts` の `inventorySchedule` と同じ理由（壁時計を使わない）で、基準画像・e2e も実行日に依らない。
+  自分のアプリで今日から数える書き換えは recipe（`docs/recipes/dashboard-widgets.md`）に書いた。
+- **境界**: `30d` は基準の日を含む 30 日（基準の日 − 30 日より後）。`12m` は暦の 12 か月前の同じ日より後。`updatedAt` は先頭 10 文字（`YYYY-MM-DD`）で比べる。
+- **保存しない・届けない**（4.13.7 の b）: 条件はページの `$state` だけ。切り離した窓のルートは `createDashboardData()` を引数なしで呼ぶ。
+- **サーバーの総数**（見出しの「N 件からの集計」、`totalCount`）は絞らない。
+- **単体テストの形**: このアプリの単体テストは node で走り、runes は反応しない形でコンパイルされる（effect が走らない。jsdom は依存に無い）。
+  「描き直る範囲」は、ウィジェットがどのオブジェクトを読むか（絞ったデータか `data.all` か）で確かめ、画面での描き直しは e2e（smoke の 13k6）で確かめる。
+- **残したこと**: KPI の「在庫少」のタイルは期間で絞った件数を出すが、リンク先の一覧（`?view=low-stock`）は期間で絞らない。
+  一覧へ条件を持って行くのはドリルダウン（#882）の範囲。
+
 ### 4.14 追加の 4 件（#838・#850・#851・#852。2026-11-22、banto-industrial）
 
 2026-11-22 に banto-industrial から 4 件が届いた。下流の開発は止まっている（§1）ので、同じ 1 回のリリースに載せる。
@@ -1128,7 +1158,7 @@ dock を外したプリセットでは、ページの `stackView`（いつも積
 - T1（#794）・T2（#795）は誰とも重ならない。T2 は基準画像を変える。T1 の Toast は基準画像を使わず、computed style の試験で確かめる（§7）。
   C2b もログインの画面の基準画像を変える（初回セットアップの画面が無くなる）。
 - F1 → F2（#714）は誰とも重ならない（`packages/forms` とテンプレートの items）。早く始めてよい。
-- W0（#716 の判断と設計）は済み（2026-11-23）。W1 → W2 → W3 の順（同じ `+page.svelte` を触るので並べない）。
+- W0（#716 の判断と設計）は済み（2026-11-23）。W1 → W2 → W3 の順（同じ `+page.svelte` を触るので並べない）。W1〜W3 とも済み（W3 は 2026-11-24）。
   W2 の前提の **K4 と C5**（保存の部品と provider の形）は済んでいる。§4.13.7 も確定済み（2026-11-23）。
 - **追加の 4 件（§4.14）**: C7（#838）は **C3 の後**（C2b が `setup` を消し、C3 が Identity を触る。どちらも
   `admin-core` の `providers/http.ts` の同じ provider）。C4〜C6 とは並べられる（そちらが触るのは `providers/uiSettings.ts` と呼び手）。
@@ -1189,7 +1219,7 @@ CHANGELOG の `[Unreleased]` に 1 行（破壊的なら「消費側への注意
 | W0 | #716 の判断（§4.13 の 1〜4）と template-scope §4.2 の 1 文。**状態: 済み（2026-11-23。判断は 4 つとも推奨どおり。§4.13 を設計に書き直し、クロスフィルタとドリルダウンを #882 に分けた）** | `docs` | — | fable | **オーナーの判断** |
 | W1 | #716 ウィジェットの登録の型・KPI の定義と帯の部品・データを 1 回読む関数。固定のカードと dock のパネルを「登録 1 件 + 部品 1 ファイル」へ分ける（置き場所は変えない）。scaffold の `removeCharts`・`removeDock` を登録の形へ直す。§4.13.5 | テンプレート・scaffold | なし（見た目も保存も同じ） | fable | 基準画像が 1 枚も変わらない。登録の単体テスト。items の読み込みがページで 1 回。scaffold の 4 プリセットと charts だけ・dock だけの dry-run。最小の大きさを §4.13 に書く。**状態: 済み**（PR #884、2026-11-23。§4.13.8） |
 | W2 | #716 1 つの dock への一本化（固定のカードの格子と「分析ワークスペース」の枠を消す）・既定の配置・新しい保存キーと `reset: 'remove'`・表示メニューでの追加と表示 / 非表示・キオスクの `arrange={false}`・狭い幅と dock を外したときの表示（§4.13.7 の a の確認の後）。§4.13.5 | テンプレート・scaffold・e2e・docs | **見た目・保存**（配置が既定へ戻る。旧いキーは読まない） | fable | e2e（追加・非表示・並べ替えが残る、既定へ戻すで保存値が消える、旧いキーを読まない、キオスクで組み替え不可）。基準画像の再生成（command-palette を含む）。scaffold の dry-run と template-acceptance。CHANGELOG・upgrading.md。**状態: 済み**（PR #886、2026-11-23。§4.13.9） |
-| W3 | #716 期間フィルタの共有（ページが期間を 1 つ持ち、KPI の帯と `usesPeriod` のウィジェットへ同じ行を渡す。持ち方は §4.13.7 の b の確認の後）・「ウィジェットを足す」手順の文書。§4.13.5 | テンプレート・docs | 見た目（見出しに操作が増える） | fable | 単体（期間で描き直る範囲、保存値に入らない）・e2e。charts を外しても壊れない。基準画像の再生成。**#716 を閉じる**（クロスフィルタとドリルダウンは #882、この版に入れない） |
+| W3 | **状態: 済み（2026-11-24。決めた形は §4.13.10）。** #716 期間フィルタの共有（ページが期間を 1 つ持ち、KPI の帯と `usesPeriod` のウィジェットへ同じ行を渡す。持ち方は §4.13.7 の b の確認の後）・「ウィジェットを足す」手順の文書。§4.13.5 | テンプレート・docs | 見た目（見出しに操作が増える） | fable | 単体（期間で描き直る範囲、保存値に入らない）・e2e。charts を外しても壊れない。基準画像の再生成。**#716 を閉じる**（クロスフィルタとドリルダウンは #882、この版に入れない） |
 | C7 | **状態: 済み（PR #871、2026-11-23。計画に無い点が 1 つ: `'web'`・`'memory'` 以外の値は作成時に例外にした）。** #838 `createHttpAuthProvider` に `storage: 'web' \| 'memory'`（既定は `'web'`）。`'memory'` はトークンを provider の中だけに持ち、web storage を読まず・書かず、`storage` イベントを購読しない。`remember` は覚えず、送る本文でも `false` にして通常の期限を使う。README（Tauri には対の口が無いことを含む）。口の形は §10 の B1（確定）。§4.14 | `admin-core`（`providers/http.ts`・README） | 足すだけ | fable | `'memory'` で web storage に一度も触れず、`storage` の購読も無い試験。追い越しの試験（`sessionRaces`・`httpRevision`）が両方の保存先で通る。`'memory'` で `remember: true` を渡しても、送る本文は `remember: false`。既定の挙動と送る本文が変わらない。#838 を閉じる |
 | U1 | #850 `NARROW_QUERY`・`narrowViewport` を `@banto/ui` へ移し、ドロワーにするかを決める純関数 `resolveShellNav`（狭い幅のサイドバーの方針 `narrowSidebar: 'drawer' \| 'column'` を受ける）と、状態 `createShellDrawer({ isDrawer })`（判断は呼び出し側が渡す。開く・閉じる・ドロワーでなくなったら閉じる）を出す。テンプレート（`(app)/+layout.svelte`・`Header`・`Sidebar`）と `LauncherBar` を載せ替える。DOM とフォーカスの移し替えはテンプレートに残す。口の形は §10 の B2（確定）。§4.14 | `ui`・テンプレート | 足すだけ（テンプレートの `src/lib/narrowViewport.svelte.ts` はパッケージへ移る） | sonnet | 状態の単体テスト（下流の `mobileNav.test.ts`・`viewportWatch.test.ts` が見ている場合分けを含む）。**banto-hub の形（狭い幅のサイドバーがドロワー）と chronogazer の形（狭い幅でもサイドバーは列、ドロワーはメニューバーの代わりのときだけ）の両方を、同じ口で表せる試験**。launcher ではトグルを出さない。メニューバーが入りきらない状態から幅が戻ったら、測り直してバーへ戻る。テンプレートの挙動と基準画像が変わらない（e2e のメニューバー・ドロワー）。scaffold の 4 プリセットの dry-run。conventions §14 の除外の確認。#850 を閉じる |
 | T3 | #851 `--banto-chart-9〜16`（ライト・ダーク）と、`MAX_CHART_SERIES` を 16 に（折り返さず、17 本目以降は 16 番に固定）。9〜16 番の `seriesColorVar` は 8 番の色へ fallback させる（旧いテーマ・1〜8 だけの自前のテーマでは今と同じ見た目）。1〜8 の値と検査は変えない。9〜16 の検査（1〜16 のどの 2 つも 0.06 以上・面との比 3:1 以上）を足す。README と [visual-refresh-plan.md](visual-refresh-plan.md) の付録に値と保証しない範囲。色の決め方と下限は §10 の B3（確定）。§4.14 | `theme`・`charts` | 見た目（9 本目以降の色が変わる。`MAX_CHART_SERIES` の値が変わる） | fable | `chart-palette.test.ts` が 16 枠で両テーマとも通る。1〜8 の既存の検査がそのまま通る。charts の色の試験（9〜16 番・17 本目以降）。**9〜16 を持たないテーマとの組み合わせで、9 本目以降が 8 番の色になる試験**（画像の書き出しを含む）。基準画像が変わらないことの確認。#851 を閉じる（PR 中。色は banto-industrial の値のまま、実測の最小はライト 0.092・ダーク 0.076） |

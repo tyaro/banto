@@ -1941,14 +1941,16 @@ function removeAdminPages() {
 
 function removeDashboard() {
 	removeDir(`${APP}/src/routes/(app)/dashboard`, 'dashboard 画面削除');
-	// #716 W1: ページだけが使う登録（ウィジェット・KPI）・データの読み込み・部品。items の集計
+	// #716 W1・W3: ページだけが使う登録（ウィジェット・KPI）・データの読み込み・共有の期間・部品。items の集計
 	// （dashboard.ts、removeItems が消す）に依存するので、ページと一緒に外す。
 	for (const name of [
 		'dashboardWidgets.ts',
 		'dashboardWidgets.test.ts',
 		'dashboardKpis.ts',
 		'dashboardData.svelte.ts',
-		'dashboardData.svelte.test.ts'
+		'dashboardData.svelte.test.ts',
+		'dashboardPeriod.ts',
+		'dashboardPeriod.test.ts'
 	])
 		removeFile(`${APP}/src/lib/banto/${name}`, `${name} 削除`);
 	removeFile(DASH_KPI_STRIP, 'DashboardKpiStrip.svelte 削除');

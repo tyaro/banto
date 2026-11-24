@@ -13,14 +13,14 @@
 	 * Each card is as high as the widget's floating window would be (`def.height`), so a widget is
 	 * given the same room as in a pane.
 	 */
-	import type { DashboardData } from '#lib/banto/dashboardData.svelte.js';
+	import type { DashboardPageData } from '#lib/banto/dashboardData.svelte.js';
 	import type { DashboardWidgetDef } from '#lib/banto/dashboardWidgets.js';
 	import DashboardWidgetFrame from './DashboardWidgetFrame.svelte';
 
 	interface Props {
 		/** The widgets to show, in the order to stack them. */
 		widgets: readonly DashboardWidgetDef[];
-		data: DashboardData;
+		data: DashboardPageData;
 	}
 
 	let { widgets, data }: Props = $props();
