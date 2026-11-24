@@ -120,9 +120,7 @@ describe('DatePicker', () => {
 	it("the second month's heading opens its own month view; Esc goes back, then closes", () => {
 		const { button, input } = setup({ value: '2026-11-07' });
 		fireEvent.click(button);
-		const monthButtons = screen.getAllByRole('button', { name: /月$/ });
-		const december = monthButtons.find((b) => b.textContent?.trim() === '12月')!;
-		fireEvent.click(december);
+		fireEvent.click(screen.getByRole('button', { name: '2026年12月' }));
 		flushSync();
 		const focused = document.activeElement as HTMLElement;
 		expect(focused.getAttribute('aria-label')).toBe('2026年12月');
@@ -137,7 +135,7 @@ describe('DatePicker', () => {
 	it('picking a month in the month view shows it first', () => {
 		const { button } = setup({ value: '2026-11-07' });
 		fireEvent.click(button);
-		fireEvent.click(screen.getByRole('button', { name: '11月' }));
+		fireEvent.click(screen.getByRole('button', { name: '2026年11月' }));
 		flushSync();
 		key('ArrowRight');
 		key('ArrowRight');
@@ -145,6 +143,19 @@ describe('DatePicker', () => {
 		key('Enter');
 		expect(headings()).toEqual(['2027年2月', '2027年3月']);
 		expect(focusedDate()).toBe('2027-02-07');
+	});
+
+	it('the second month’s heading opens its own year’s months (Issue #920)', () => {
+		const { button } = setup({ value: '2026-12-07' });
+		fireEvent.click(button);
+		expect(headings()).toEqual(['2026年12月', '2027年1月']);
+		fireEvent.click(screen.getByRole('button', { name: '2027年1月' }));
+		flushSync();
+		expect(headings()).toEqual(['2027年']);
+		expect((document.activeElement as HTMLElement).getAttribute('aria-label')).toBe('2027年1月');
+		key('Escape');
+		expect(headings()).toEqual(['2026年12月', '2027年1月']);
+		expect(dialog()).not.toBeNull();
 	});
 
 	it('Today and Clear set the value and close', () => {

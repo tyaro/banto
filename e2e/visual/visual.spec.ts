@@ -383,7 +383,7 @@ test.describe('date picker', () => {
 			await page.keyboard.press('Shift+Tab');
 			await page.keyboard.press('Shift+Tab');
 			await page.keyboard.press('Shift+Tab');
-			await expect(dialog.getByRole('button', { name: '11月' })).toBeFocused();
+			await expect(dialog.getByRole('button', { name: '2026年11月' })).toBeFocused();
 			await page.keyboard.press('Enter');
 			await expect(dialog.getByRole('gridcell', { name: '2026年11月' })).toBeFocused();
 			await page.waitForTimeout(SETTLE_MS);

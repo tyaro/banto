@@ -14,10 +14,11 @@
 	 *   so they run before the dialog's own native keydown listener (which
 	 *   stops every key, §5.8 promise 1). Enter / Space and a click pick a
 	 *   selectable day through `onPick`; what picking means is the parent's.
-	 * - Month and year views (Issue #908): the heading's year and month are
-	 *   buttons. The month button shows the year's 12 months, the year button
-	 *   12 years (`CalendarPeriodView`); picking a year shows its months,
-	 *   picking a month shows its days (moving `focusDate` there). Esc is the
+	 * - Month and year views (Issue #908, #920): the heading ("2026年11月") is
+	 *   one button that shows the year's 12 months; the month view's heading
+	 *   (the year) shows 12 years (`CalendarPeriodView`) - the views widen
+	 *   one step at a time. Picking a year shows its months, picking a month
+	 *   shows its days (moving `focusDate` there). Esc is the
 	 *   parent's one path (`closeOnEscape`, with its IME / consumed-key /
 	 *   layer checks): it first calls `back()`, which in the month / year view
 	 *   goes back one view (year -> month -> day) so the dialog stays open, and
@@ -285,11 +286,9 @@
 		showView('month');
 	}
 
-	function openYearView(month: string = focusDate): void {
-		// Escape from the year view lands on the month view: give it the
-		// pressed heading's month when the year view is entered from the days.
-		if (view === 'day') setMonthView(periodOf(month, 'month'));
-		setYearView(view === 'month' ? Math.floor(monthPage / 12) : periodOf(month, 'year'));
+	/** From the month view's heading: the 12 years around the shown year. */
+	function openYearView(): void {
+		setYearView(Math.floor(monthPage / 12));
 		showView('year');
 	}
 
@@ -376,15 +375,7 @@
 	}
 </script>
 
-{#snippet yearButton(month: string, text: string)}<button
-		type="button"
-		class="date-picker-heading-button"
-		title={t.datePickerChooseYear()}
-		onclick={() => openYearView(month)}
-	>
-		{text}
-	</button>{/snippet}
-{#snippet monthButton(month: string, text: string)}<button
+{#snippet headingButton(month: string, text: string)}<button
 		type="button"
 		class="date-picker-heading-button"
 		title={t.datePickerChooseMonth()}
@@ -476,15 +467,15 @@
 		{:else}
 			<span class="date-picker-nav-spacer" aria-hidden="true"></span>
 		{/if}
-		<!-- The year and the month in the locale's order ("2026年11月", "November 2026"). -->
+		<!-- The year and the month in the locale's order ("2026年11月", "November 2026"), as one
+		     button: either part opens the year's months (Issue #920). -->
 		<h2 id={headingIdOf(index)} class="date-picker-heading" aria-live="polite">
-			{#if parts.yearFirst}{@render yearButton(
-					month,
-					parts.year
-				)}{parts.separator}{@render monthButton(month, parts.month)}{:else}{@render monthButton(
-					month,
-					parts.month
-				)}{parts.separator}{@render yearButton(month, parts.year)}{/if}
+			{@render headingButton(
+				month,
+				parts.yearFirst
+					? `${parts.year}${parts.separator}${parts.month}`
+					: `${parts.month}${parts.separator}${parts.year}`
+			)}
 		</h2>
 		{#if index === months - 1}
 			<CalendarNavButton
@@ -591,8 +582,8 @@
 		overflow-wrap: break-word;
 	}
 
-	/* The heading's year and month: they read as the heading, and show they
-	   can be pressed on hover / focus (Issue #908). */
+	/* The heading's button (the year and month, Issue #908 / #920): it reads
+	   as the heading, and shows it can be pressed on hover / focus. */
 	.date-picker-heading-button {
 		max-inline-size: 100%;
 		padding-block: 0;

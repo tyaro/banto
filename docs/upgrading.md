@@ -727,7 +727,7 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   保存形式（`version: 4`）は変わらない。中央は 320px を保ち、足りなければ左右が縮む。保存した比率から再読み込みしたときに同じ px になることは保証しない。幅を自分で測って直していた所（temp-scada の `keepDesignerPaneWidths`）を置き換えられる。
 - **`BantoTree` の `rowActions`・`expansion` / `onExpandedChange`・`canDrop` / `onDropTargetChange`（#821）**: 行末のボタン、
   展開を外から決める（`undefined` に戻すと木の持つ展開に戻る）、ドロップの可否を聞く。木をラップして自前で足していた所の置き換え先。
-- **日付のピッカー**: 見出しの「年」「月」から 12 か月・12 年の格子へ切り替えて選べる（#908、`DateInput`・`DateTimeInput`・
+- **日付のピッカー**: 見出し（年と月）を押すとその年の 12 か月、その見出し（年）を押すと 12 年の格子へ切り替えて選べる（#908・#920、`DateInput`・`DateTimeInput`・
   `DateRangeInput` の見た目が変わる）。月を 2 つ並べる `DatePicker`・`DateRangePicker`（#910）が増えた。
 - **IME の変換中の判定（#891・#898・#905・#907）**: 入力欄の Enter・Escape で `isComposing || keyCode === 229` を見る。
   `BantoTree` の名前変更・`DateInput` ほか。自前で同じ回避を足していた所は、パッケージ側の判定と二重になる（残しても動く。整理してよい）。

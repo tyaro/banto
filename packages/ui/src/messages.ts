@@ -48,9 +48,9 @@ export interface UiMessages {
 	datePickerPrevYear?: () => string;
 	/** DateInput: the next-year button. */
 	datePickerNextYear?: () => string;
-	/** DateInput: the heading's month button (its tooltip / description): opens the month view. */
+	/** DateInput: the day view's heading button (its tooltip / description): opens the month view (#920). */
 	datePickerChooseMonth?: () => string;
-	/** DateInput: the heading's year button (its tooltip / description): opens the year view. */
+	/** DateInput: the month view's heading button, the year (its tooltip / description): opens the year view. */
 	datePickerChooseYear?: () => string;
 	/** DateInput: the year view's previous-page button (12 years back). */
 	datePickerPrevYears?: () => string;

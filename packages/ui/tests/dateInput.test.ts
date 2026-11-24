@@ -675,25 +675,32 @@ describe('DateInput month and year views (Issue #908)', () => {
 	const periodCell = (label: string) =>
 		screen.getByRole('grid').querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
 
-	it('the heading is a year button and a month button', () => {
+	it('the heading is one button (the year and month) that opens the months (Issue #920)', () => {
 		const { button } = setup({ value: '2026-11-07' });
 		fireEvent.click(button);
 		const heading = screen.getByRole('heading');
-		const [year, month] = Array.from(heading.querySelectorAll('button'));
-		expect(year.textContent?.trim()).toBe('2026年');
-		expect(year.getAttribute('title')).toBe('年を選ぶ');
-		expect(month.textContent?.trim()).toBe('11月');
-		expect(month.getAttribute('title')).toBe('月を選ぶ');
+		const buttons = heading.querySelectorAll('button');
+		expect(buttons).toHaveLength(1);
+		expect(buttons[0].textContent?.trim()).toBe('2026年11月');
+		expect(buttons[0].getAttribute('title')).toBe('月を選ぶ');
+		// The grid's name stays the heading's text.
+		expect(screen.getByRole('grid', { name: '2026年11月' })).toBeTruthy();
+		// The month view's heading (the year) opens the years.
+		fireEvent.click(buttons[0]);
+		const yearButton = screen.getByRole('button', { name: '2026年' });
+		expect(yearButton.getAttribute('title')).toBe('年を選ぶ');
+		fireEvent.click(yearButton);
+		expect(headingText()).toBe('2020年～2031年');
 	});
 
-	it('month button -> the 12 months; picking one shows its days with the same day', () => {
+	it('heading -> the 12 months; picking one shows its days with the same day', () => {
 		vi.useFakeTimers({ toFake: ['Date'] });
 		vi.setSystemTime(new Date(2026, 5, 20, 10, 0));
 		const { button, onValueChange, onblur } = setup({ value: '2026-11-07' });
 		fireEvent.click(button);
-		const monthButton = screen.getByRole('button', { name: '11月' });
-		monthButton.focus();
-		fireEvent.click(monthButton);
+		const headingButton = screen.getByRole('button', { name: '2026年11月' });
+		headingButton.focus();
+		fireEvent.click(headingButton);
 		const grid = screen.getByRole('grid');
 		expect(grid.querySelectorAll('td[data-period]')).toHaveLength(12);
 		expect(headingText()).toBe('2026年');
@@ -718,9 +725,10 @@ describe('DateInput month and year views (Issue #908)', () => {
 		expect(onblur).not.toHaveBeenCalled();
 	});
 
-	it('year button -> 12 years from the decade; picking a year shows its months', () => {
+	it('month view heading -> 12 years from the decade; picking a year shows its months', () => {
 		const { button } = setup({ value: '2026-11-07' });
 		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '2026年11月' }));
 		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
 		expect(headingText()).toBe('2020年～2031年');
 		const cells = screen.getByRole('grid').querySelectorAll<HTMLElement>('td[data-period]');
@@ -750,7 +758,10 @@ describe('DateInput month and year views (Issue #908)', () => {
 	it('Esc goes back one view (year -> month -> day) and then closes; not during IME', () => {
 		const { button, input, onHostKeydown } = setup({ value: '2026-11-07' });
 		fireEvent.click(button);
-		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
+		fireEvent.click(screen.getByRole('button', { name: '2026年11月' }));
+		// The month view's year moves on (2027) before the year view opens.
+		fireEvent.click(screen.getByRole('button', { name: '次の年' }));
+		fireEvent.click(screen.getByRole('button', { name: '2027年' }));
 		fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
 		fireEvent.keyDown(document.activeElement!, { key: 'Escape', isComposing: true });
 		fireEvent.keyDown(document.activeElement!, { key: 'Escape', keyCode: 229 });
@@ -758,9 +769,9 @@ describe('DateInput month and year views (Issue #908)', () => {
 		const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
 		document.activeElement!.dispatchEvent(esc);
 		expect(esc.defaultPrevented).toBe(true);
-		// The month view entered from the day view: the tracked day's month.
-		expect(headingText()).toBe('2026年');
-		expect(focusedLabel()).toBe('2026年11月');
+		// Back to the month view it came from (2027, not the tracked day's year).
+		expect(headingText()).toBe('2027年');
+		expect(focusedLabel()).toBe('2027年11月');
 		fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
 		expect(headingText()).toBe('2026年11月');
 		expect(focusedDate()).toBe('2026-11-07');
@@ -774,6 +785,7 @@ describe('DateInput month and year views (Issue #908)', () => {
 	it('Esc from the footer also goes back one view; focus stays on the footer', () => {
 		const { button } = setup({ value: '2026-11-07' });
 		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '2026年11月' }));
 		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
 		const today = screen.getByRole('button', { name: '今日' });
 		today.focus();
@@ -792,7 +804,7 @@ describe('DateInput month and year views (Issue #908)', () => {
 	it('months / years outside [min, max] are aria-disabled and cannot be reached', () => {
 		const { button } = setup({ value: '2026-03-20', min: '2026-03-15', max: '2027-02-10' });
 		fireEvent.click(button);
-		fireEvent.click(screen.getByRole('button', { name: '3月' }));
+		fireEvent.click(screen.getByRole('button', { name: '2026年3月' }));
 		expect(periodCell('2026年2月').getAttribute('aria-disabled')).toBe('true');
 		expect(periodCell('2026年3月').hasAttribute('aria-disabled')).toBe(false);
 		expect(screen.getByRole('button', { name: '前の年' }).getAttribute('aria-disabled')).toBe(
@@ -824,6 +836,7 @@ describe('DateInput month and year views (Issue #908)', () => {
 	it('the year view at 0001 shows an empty slot for year 0', () => {
 		const { button } = setup({ value: '0005-06-01' });
 		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '5年6月' }));
 		fireEvent.click(screen.getByRole('button', { name: '5年' }));
 		const cells = screen.getByRole('grid').querySelectorAll('td');
 		expect(cells[0].hasAttribute('data-period')).toBe(false);
@@ -839,7 +852,8 @@ describe('DateInput month and year views (Issue #908)', () => {
 		const { button } = setup({ value: '2026-11-07', locale: 'en-US' });
 		fireEvent.click(button);
 		expect(screen.getByRole('heading').textContent?.trim()).toBe('November 2026');
-		fireEvent.click(screen.getByRole('button', { name: 'November' }));
+		fireEvent.click(screen.getByRole('button', { name: 'November 2026' }));
+		expect(screen.getByRole('button', { name: '2026' })).toBeTruthy();
 		expect(periodCell('January 2026').textContent?.trim()).toBe('Jan');
 	});
 });
