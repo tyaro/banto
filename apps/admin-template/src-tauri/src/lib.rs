@@ -4848,13 +4848,14 @@ pub fn run() {
             // V2 PR2: it returns a backend-agnostic `banto_storage::Db` handle
             // (SQLite-only in this PR); every service constructor takes `Db`.
             // A database that cannot be opened (a pre-v8 one among them) stops
-            // the start with the same "起動できません" message the check below
-            // gives, not a panic.
+            // the start with a "起動できません" message and exit code 1, like
+            // `banto-serve`. Not `return Err(..)`: Tauri turns a failed setup
+            // into `panic!("Failed to setup app: ..")` (Codex review of #919).
             let db = match tauri::async_runtime::block_on(init_db(&db_path)) {
                 Ok(db) => db,
                 Err(err) => {
                     eprintln!("banto: 起動できません: {err}");
-                    return Err(format!("起動できません: {err}").into());
+                    std::process::exit(1);
                 }
             };
 
