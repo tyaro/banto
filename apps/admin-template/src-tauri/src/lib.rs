@@ -2270,10 +2270,12 @@ async fn autologin_enable_body(
     // Some OS keyrings (Windows) address one entry for names differing only
     // in case, others keep them apart. Switching between such names would
     // overwrite the entry the saved settings still point at, so refuse it
-    // before touching the keyring, the same on every platform.
+    // before touching the keyring, the same on every platform. The check is
+    // wider than any one OS's rule (lowercase and uppercase folding), which
+    // is the safe side: a refusal leaves the old setup untouched.
     if previous
         .as_deref()
-        .is_some_and(|p| p != username && p.to_lowercase() == username.to_lowercase())
+        .is_some_and(|p| keyring_store::names_may_share_an_entry(p, username))
     {
         return Err(BantoError::Validation {
             field_errors: vec![FieldError {

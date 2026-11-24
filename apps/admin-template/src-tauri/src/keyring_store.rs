@@ -42,6 +42,15 @@ fn entry(username: &str) -> Result<keyring::Entry, BantoError> {
 
 /// Store `password` in the OS keyring under `username`, overwriting any
 /// existing entry for that username.
+/// Whether two different usernames could address one OS keyring entry.
+/// Windows compares credential names ignoring case with its own (uppercase
+/// based) rules, others compare exactly. Both the lowercase and the uppercase
+/// folding are checked (`σ` and `ς` differ lowercased, both are `Σ` uppercased):
+/// refusing too many names is the safe side, the saved setup stays untouched.
+pub fn names_may_share_an_entry(a: &str, b: &str) -> bool {
+    a != b && (a.to_lowercase() == b.to_lowercase() || a.to_uppercase() == b.to_uppercase())
+}
+
 pub fn set_password(username: &str, password: &str) -> Result<(), BantoError> {
     #[cfg(test)]
     if let Some(result) = fake::set(username, password) {
@@ -117,12 +126,19 @@ pub(crate) mod fake {
         });
     }
 
+    /// The stored key `username` addresses (the case-insensitive mode folds
+    /// names with [`super::names_may_share_an_entry`]).
     fn key(f: &Fake, username: &str) -> String {
         if f.case_insensitive {
-            username.to_lowercase()
-        } else {
-            username.to_string()
+            if let Some(k) = f
+                .entries
+                .keys()
+                .find(|k| super::names_may_share_an_entry(k, username))
+            {
+                return k.clone();
+            }
         }
+        username.to_string()
     }
 
     pub(crate) fn fail_delete(on: bool) {

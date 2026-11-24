@@ -1465,6 +1465,36 @@ async fn autologin_enable_refuses_a_non_ascii_case_only_switch() {
     assert_eq!(keyring_store::fake::stored("école"), None);
 }
 
+/// Windows compares names with uppercase folding: `σ` and `ς` differ when
+/// lowercased but are both `Σ`, so they are refused too.
+#[tokio::test]
+async fn autologin_enable_refuses_a_sigma_variant_switch() {
+    keyring_store::fake::install_case_insensitive();
+    let state = app_state().await;
+    let admin = state
+        .users
+        .create_user("manager", "password123", "管理者", Role::Admin)
+        .await
+        .expect("create admin");
+    state.set_session_for_test(Some(DesktopSession::Account(admin)));
+    state
+        .users
+        .create_user("ας", "password123", "シグマ", Role::Admin)
+        .await
+        .expect("create");
+    let mut config = state.settings.auth_config().await.unwrap();
+    config.autologin_enabled = true;
+    config.autologin_username = Some("ασ".to_string());
+    state.settings.set_auth_config(&config).await.unwrap();
+    keyring_store::set_password("ασ", "old-value").unwrap();
+
+    let err = autologin_enable_body(&state, "ας", "password123")
+        .await
+        .expect_err("a sigma variant");
+    assert!(matches!(err, BantoError::Validation { .. }), "{err:?}");
+    assert_eq!(keyring_store::get_password("ασ").unwrap(), "old-value");
+}
+
 /// Re-enabling the same (exactly equal) name just refreshes the entry.
 #[tokio::test]
 async fn autologin_enable_for_the_same_account_keeps_the_entry() {
