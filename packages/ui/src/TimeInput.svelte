@@ -230,6 +230,8 @@
 	/** The one Esc path (§5.4): yields to a consumed Esc and to a layer above. */
 	function closeOnEscape(event: KeyboardEvent): void {
 		if (!open || event.key !== 'Escape') return;
+		// IME 変換中の Escape は変換の取消。リストを閉じない。
+		if (event.isComposing || event.keyCode === 229) return;
 		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panelEl })) return;
 		event.preventDefault();
 		closeList();
@@ -272,7 +274,7 @@
 	}
 
 	function handleInputKeydown(event: KeyboardEvent): void {
-		if (!event.isComposing) {
+		if (!event.isComposing && event.keyCode !== 229) {
 			switch (event.key) {
 				case 'ArrowDown':
 					if (open) {
