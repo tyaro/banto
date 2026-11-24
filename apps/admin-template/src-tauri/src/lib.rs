@@ -4847,8 +4847,16 @@ pub fn run() {
             // Windows paths with drive letters/backslashes work unchanged.
             // V2 PR2: it returns a backend-agnostic `banto_storage::Db` handle
             // (SQLite-only in this PR); every service constructor takes `Db`.
-            let db =
-                tauri::async_runtime::block_on(init_db(&db_path)).expect("init_db should succeed");
+            // A database that cannot be opened (a pre-v8 one among them) stops
+            // the start with the same "起動できません" message the check below
+            // gives, not a panic.
+            let db = match tauri::async_runtime::block_on(init_db(&db_path)) {
+                Ok(db) => db,
+                Err(err) => {
+                    eprintln!("banto: 起動できません: {err}");
+                    return Err(format!("起動できません: {err}").into());
+                }
+            };
 
             let events = event_channel();
             // [scaffold:items] begin
