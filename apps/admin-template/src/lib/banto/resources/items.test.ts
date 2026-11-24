@@ -106,7 +106,7 @@ describe('the definition views', () => {
 
 	it('every field the views use is a column of both grids', () => {
 		const both = ['price', 'stock', 'updatedAt'];
-		const links = {
+		const links: Record<string, string> = {
 			[PRICE_BAND_VIEW_ID]: 'arg.band=100-149',
 			[LOW_STOCK_VIEW_ID]: 'arg.after=2026-06-02'
 		};
