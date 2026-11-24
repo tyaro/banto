@@ -74,12 +74,20 @@
 		return { cx, cy, rOuter, rInner };
 	}
 
-	let hoveredIndex: number | null = $state(null);
+	// Pointer and keyboard focus are tracked separately (see BarChart): the
+	// pointer leaving a slice must not hide the tooltip of the focused one.
+	let pointedIndex: number | null = $state(null);
+	let focusedIndex: number | null = $state(null);
+	const hoveredIndex = $derived(pointedIndex ?? focusedIndex);
 
 	// Selectable slices (only when `onMarkActivate` is given). Clockwise from the
 	// first slice; roving tabindex keeps one slice as the Tab stop.
 	let tabStop = $state(0);
-	const activeMark = $derived(clampMarkIndex(tabStop, slices.length));
+	// A slice with no sweep (value 0 / invalid) has no drawn area: it would be an
+	// invisible Tab stop, so it is not selectable. `navOrder[pos]` is its `data`
+	// index; the callback's `index` stays the position in `data`.
+	const navOrder = $derived(slices.flatMap((s, i) => (s.endAngle > s.startAngle ? [i] : [])));
+	const activeMark = $derived(clampMarkIndex(tabStop, navOrder.length));
 
 	function markFor(i: number): ChartMark<TRow> {
 		return {
@@ -118,29 +126,30 @@
 		{#snippet plot({ width, height: plotHeight })}
 			{@const g = geometry(width, plotHeight)}
 			{#each slices as slice, i (i)}
-				{#if onMarkActivate}
+				{#if onMarkActivate && navOrder.includes(i)}
+					{@const pos = navOrder.indexOf(i)}
 					<g
 						class="mark"
 						role="button"
-						tabindex={i === activeMark ? 0 : -1}
+						tabindex={pos === activeMark ? 0 : -1}
 						aria-label={markName(i)}
-						data-mark-index={i}
+						data-mark-index={pos}
 						onclick={() => onMarkActivate(markFor(i))}
 						onkeydown={(e) =>
 							handleMarkKeydown(
 								e,
-								i,
-								slices.length,
+								pos,
+								navOrder.length,
 								() => onMarkActivate(markFor(i)),
 								(next) => (tabStop = next)
 							)}
 						onfocus={() => {
-							tabStop = i;
-							hoveredIndex = i;
+							tabStop = pos;
+							focusedIndex = i;
 						}}
-						onblur={() => (hoveredIndex = null)}
-						onpointerenter={() => (hoveredIndex = i)}
-						onpointerleave={() => (hoveredIndex = null)}
+						onblur={() => (focusedIndex = null)}
+						onpointerenter={() => (pointedIndex = i)}
+						onpointerleave={() => (pointedIndex = null)}
 					>
 						<path
 							d={arcPath(g.cx, g.cy, g.rOuter, g.rInner, slice.startAngle, slice.endAngle)}
@@ -161,8 +170,8 @@
 						stroke-width="2"
 						class="slice"
 						class:hovered={hoveredIndex === i}
-						onpointerenter={() => (hoveredIndex = i)}
-						onpointerleave={() => (hoveredIndex = null)}
+						onpointerenter={() => (pointedIndex = i)}
+						onpointerleave={() => (pointedIndex = null)}
 					/>
 				{/if}
 			{/each}

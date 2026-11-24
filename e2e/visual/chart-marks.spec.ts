@@ -57,13 +57,13 @@ test('keyboard only: Tab stops once per chart, arrows move, Enter / Space select
 	page
 }) => {
 	const bars = marks(page, BAR_GROUP);
+	// The first key press needs a hydrated page too: focus, press and the move are retried together (#810).
 	await expect(async () => {
 		await bars.first().focus({ timeout: 2_000 });
 		await expect(bars.first()).toBeFocused({ timeout: 2_000 });
+		await page.keyboard.press('ArrowRight');
+		await expect(bars.nth(1)).toBeFocused({ timeout: 2_000 });
 	}).toPass({ timeout: 30_000 });
-
-	await page.keyboard.press('ArrowRight');
-	await expect(bars.nth(1)).toBeFocused();
 	await page.keyboard.press('Enter');
 	await expect(selected(page)).toHaveText('選んだ印: B（80）');
 
@@ -93,9 +93,9 @@ test('the focused mark shows a focus ring and the tooltip', async ({ page }) => 
 	await expect(async () => {
 		await bars.first().focus({ timeout: 2_000 });
 		await expect(bars.first()).toBeFocused({ timeout: 2_000 });
+		await page.keyboard.press('ArrowRight');
+		await expect(bars.nth(1)).toBeFocused({ timeout: 2_000 });
 	}).toPass({ timeout: 30_000 });
-	await page.keyboard.press('ArrowRight');
-	await expect(bars.nth(1)).toBeFocused();
 
 	const ring = (index: number) =>
 		bars.nth(index).evaluate((g) => {
@@ -113,6 +113,13 @@ test('the focused mark shows a focus ring and the tooltip', async ({ page }) => 
 	expect(await bars.nth(1).evaluate((g) => getComputedStyle(g).cursor)).toBe('pointer');
 
 	const tooltip = page.locator('.banto-barchart .chart-tooltip');
+	await expect(tooltip).toContainText('B');
+	await expect(tooltip).toContainText('80');
+	// the pointer entering and leaving another mark does not hide the focused mark's tooltip
+	await bars.nth(2).hover();
+	await expect(tooltip).toContainText('C');
+	await page.mouse.move(0, 0);
+	await expect(bars.nth(1)).toBeFocused();
 	await expect(tooltip).toContainText('B');
 	await expect(tooltip).toContainText('80');
 	await page.keyboard.press('Tab');

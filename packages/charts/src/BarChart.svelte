@@ -278,7 +278,14 @@
 		return bars;
 	}
 
-	let hovered: { catIndex: number; seriesIndex: number } | null = $state(null);
+	// Pointer and keyboard focus are tracked separately: the pointer leaving a
+	// mark must not hide the tooltip of the mark that still has the focus. The
+	// pointer wins while it is over a mark; otherwise the focused mark is shown.
+	let pointed: { catIndex: number; seriesIndex: number } | null = $state(null);
+	let focusedMark: { catIndex: number; seriesIndex: number } | null = $state(null);
+	const hovered: { catIndex: number; seriesIndex: number } | null = $derived(
+		pointed ?? focusedMark
+	);
 
 	function isHovered(bar: BarRect): boolean {
 		return (
@@ -293,11 +300,15 @@
 	// category-major then series, which is also the order `computeBars` pushes
 	// them in. Roving tabindex: exactly one mark is a Tab stop.
 	let tabStop = $state(0);
-	const markCount = $derived(data.length * series.length);
-	const activeMark = $derived(clampMarkIndex(tabStop, markCount));
 
-	function markIndexOf(bar: BarRect): number {
-		return bar.catIndex * series.length + bar.seriesIndex;
+	/**
+	 * A mark with no drawn area (a zero-width stacked segment, a zero-value bar)
+	 * is not selectable: it would be an invisible Tab stop with no focus ring.
+	 * It stays a plain path. Selectable marks keep their order; the `index` the
+	 * callback receives is still the position in `data`.
+	 */
+	function isDrawn(bar: BarRect): boolean {
+		return bar.w > 0 && bar.h > 0;
 	}
 
 	function markFor(bar: BarRect): ChartMark<TRow> {
@@ -358,6 +369,11 @@
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const bars = computeBars(width, plotHeight)}
+			{@const navPos = new Map(
+				(onMarkActivate ? bars.filter(isDrawn) : []).map((b, i) => [b, i] as const)
+			)}
+			{@const navCount = navPos.size}
+			{@const stop = clampMarkIndex(tabStop, navCount)}
 
 			{#if horizontal}
 				{@const valueScale = linearScale(
@@ -480,13 +496,13 @@
 			{/if}
 
 			{#each bars as bar (`${bar.catIndex}-${bar.seriesIndex}`)}
-				{#if onMarkActivate}
+				{#if onMarkActivate && navPos.has(bar)}
 					{@const hit = hitRect(bar, m)}
-					{@const idx = markIndexOf(bar)}
+					{@const idx = navPos.get(bar) ?? 0}
 					<g
 						class="mark"
 						role="button"
-						tabindex={idx === activeMark ? 0 : -1}
+						tabindex={idx === stop ? 0 : -1}
 						aria-label={markName(bar)}
 						data-mark-index={idx}
 						onclick={() => onMarkActivate(markFor(bar))}
@@ -494,18 +510,18 @@
 							handleMarkKeydown(
 								e,
 								idx,
-								markCount,
+								navCount,
 								() => onMarkActivate(markFor(bar)),
 								(next) => (tabStop = next)
 							)}
 						onfocus={() => {
 							tabStop = idx;
-							hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex };
+							focusedMark = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex };
 						}}
-						onblur={() => (hovered = null)}
+						onblur={() => (focusedMark = null)}
 						onpointerenter={() =>
-							(hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
-						onpointerleave={() => (hovered = null)}
+							(pointed = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
+						onpointerleave={() => (pointed = null)}
 					>
 						<path
 							d={roundedTopBarPath(bar.x, bar.y, bar.w, bar.h, bar.radius, horizontal)}
@@ -528,8 +544,8 @@
 						class="bar"
 						class:hovered={isHovered(bar)}
 						onpointerenter={() =>
-							(hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
-						onpointerleave={() => (hovered = null)}
+							(pointed = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
+						onpointerleave={() => (pointed = null)}
 					/>
 				{/if}
 			{/each}
@@ -537,9 +553,7 @@
 		{#snippet overlay({ width, height: plotHeight })}
 			{#if hovered}
 				{@const bars = computeBars(width, plotHeight)}
-				{@const bar = bars.find(
-					(b) => b.catIndex === hovered!.catIndex && b.seriesIndex === hovered!.seriesIndex
-				)}
+				{@const bar = bars.find(isHovered)}
 				{#if bar}
 					{@const info = tooltipFor(bar)}
 					<Tooltip
