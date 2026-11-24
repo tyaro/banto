@@ -33,6 +33,7 @@
 import type { Component } from 'svelte';
 import * as m from '#lib/paraglide/messages.js';
 import type { DashboardData, DashboardPageData } from './dashboardData.svelte';
+import type { DashboardDrill } from './dashboardDrill';
 // [scaffold:charts] begin
 import CategoryStockWidget from '#lib/components/dashboard/charts/CategoryStockWidget.svelte';
 import MonthlyWidget from '#lib/components/dashboard/charts/MonthlyWidget.svelte';
@@ -57,6 +58,13 @@ export interface DashboardWidgetProps {
 	data: DashboardData;
 	/** The content's height in px. The caller measures its own container and hands it down. */
 	height: number;
+	/**
+	 * Move from a mark to the items list that holds the rows it counts (#882 D3). The widget says
+	 * only WHAT was chosen; the page adds the period and goes (`dashboardDrill.ts`). Not given in
+	 * the popped-out window (`routes/panel/[id]`): the widget then makes its marks not selectable
+	 * (its marks are then not selectable, so nothing takes the focus).
+	 */
+	onDrill?: (drill: DashboardDrill) => void;
 }
 
 export interface DashboardWidgetDef {

@@ -4157,6 +4157,203 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect.poll(number).toBe(allCount);
 	});
 
+	// #882 D3 (crossfilter-drilldown-design §7.2): a mark of the 価格帯分布 donut opens the items list
+	// on that band, and the list holds as many rows as the mark says - with and without a period,
+	// on the client grid and on the server grid. Needs the charts (the marks) and the dock (the
+	// default layout shows the donut).
+	const PRICE_MARKS = '[data-dock-drop-id="priceBuckets"] g.mark[role="button"]';
+
+	/** The marks of the donut as `{ label, count }`, read once the chart is drawn. */
+	async function readPriceMarks(): Promise<{ label: string; count: number }[]> {
+		const marks = page.locator(PRICE_MARKS);
+		await expect(marks.first()).toBeVisible();
+		const names = await marks.evaluateAll((nodes) =>
+			nodes.map((node) => node.getAttribute('aria-label') ?? '')
+		);
+		return names.map((name) => {
+			const found = /^(.+): ([\d,]+)件/.exec(name);
+			if (!found) throw new Error(`unexpected mark name: ${name}`);
+			return { label: found[1]!, count: Number(found[2]!.replace(/,/g, '')) };
+		});
+	}
+
+	/** After a mark opened the list: the link is consumed, and the list holds `count` rows. */
+	async function expectListRows(
+		count: number,
+		answer: Promise<{ totalCount: number }> | null
+	): Promise<void> {
+		// Server grid: the answer's own count first, then the grid showing it.
+		if (answer) expect((await answer).totalCount).toBe(count);
+		await expect(page).toHaveURL(/\/items$/);
+		await expect(page.getByRole('grid').first()).toHaveAttribute(
+			'aria-rowcount',
+			String(count + 1)
+		);
+	}
+
+	/** The server's answer to the list request that carries conditions (started before the click). */
+	function filteredListAnswer(): Promise<{ totalCount: number }> {
+		return page
+			.waitForResponse((res) => {
+				const req = res.request();
+				if (new URL(res.url()).pathname !== '/api/items/list' || req.method() !== 'POST') {
+					return false;
+				}
+				const sent = (req.postDataJSON()?.filters ?? []) as unknown[];
+				return res.ok() && sent.length > 0;
+			})
+			.then((res) => res.json() as Promise<{ totalCount: number }>);
+	}
+
+	function clearListState(): Promise<void> {
+		return page.evaluate(() => {
+			for (const key of Object.keys(sessionStorage)) {
+				if (key.startsWith('banto.listView.items:')) sessionStorage.removeItem(key);
+			}
+		});
+	}
+
+	test('13k7. dashboard: a price-band mark opens the list with as many rows as it counts (period or not, client and server)', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		test.setTimeout(240_000);
+		try {
+			for (const mode of [CLIENT_MODE, SERVER_MODE]) {
+				const server = mode === SERVER_MODE;
+				await page.goto('/items');
+				await chooseItemsMode(page, mode);
+				for (const period of [null, '直近12か月'] as const) {
+					await page.goto('/dashboard');
+					await resetDashboardLayout(page);
+					if (period) {
+						await page
+							.getByRole('radiogroup', { name: '期間（更新日）' })
+							.getByText(period, { exact: true })
+							.click();
+						await expect(page.getByRole('radio', { name: period })).toBeChecked();
+					}
+					// The donut is drawn from the narrowed rows: wait until the marks stop changing.
+					let marks = await readPriceMarks();
+					await expect(async () => {
+						const again = await readPriceMarks();
+						expect(again).toEqual(marks);
+						marks = again;
+					}).toPass();
+					// Without a period every mark is tried; with one, the first (the period is the same
+					// for every mark, so one shows that it is carried).
+					const tried = period ? marks.slice(0, 1) : marks;
+					expect(tried.length).toBeGreaterThan(0);
+					for (const [i, mark] of tried.entries()) {
+						if (i > 0) {
+							await page.goto('/dashboard');
+							await resetDashboardLayout(page);
+							await expect(page.locator(PRICE_MARKS).first()).toBeVisible();
+						}
+						const answer = server ? filteredListAnswer() : null;
+						await page.locator(PRICE_MARKS).nth(i).click();
+						await expectListRows(mark.count, answer);
+						await clearListState();
+					}
+				}
+			}
+		} finally {
+			await clearListState();
+		}
+	});
+
+	test('13k8. dashboard: a mark can be reached and opened with the keyboard alone', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		try {
+			await page.goto('/items');
+			await chooseItemsMode(page, CLIENT_MODE);
+			await page.goto('/dashboard');
+			await resetDashboardLayout(page);
+			const marks = await readPriceMarks();
+			expect(marks.length).toBeGreaterThan(1);
+			// One Tab stop for the whole donut; the arrow keys move inside it.
+			await expect(page.locator(`${PRICE_MARKS}[tabindex="0"]`)).toHaveCount(1);
+			await page.locator(`${PRICE_MARKS}[tabindex="0"]`).focus();
+			await page.keyboard.press('ArrowRight');
+			await expect(page.locator(`${PRICE_MARKS}:focus`)).toHaveAttribute(
+				'aria-label',
+				new RegExp(`^${marks[1]!.label}: `)
+			);
+			await page.keyboard.press('Enter');
+			await expectListRows(marks[1]!.count, null);
+			await clearListState();
+
+			// Space opens the focused mark as well.
+			await page.goto('/dashboard');
+			await expect(page.locator(PRICE_MARKS).first()).toBeVisible();
+			await page.locator(`${PRICE_MARKS}[tabindex="0"]`).focus();
+			await page.keyboard.press('Space');
+			await expectListRows(marks[0]!.count, null);
+		} finally {
+			await clearListState();
+		}
+	});
+
+	// The dashboard reads at most 20,000 rows; when the server holds more, the page says so (the
+	// list a mark opens shows every matching row). Narrowing by a period is NOT a cut. The server's
+	// count is raised in the answer: the demo data never reaches the limit.
+	test('13k9. dashboard: the row limit is told only when rows were left out (not by a period)', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		const note = '先頭 20,000 件）の集計です。一覧は条件に合う全件を表示します';
+		const tile = page.getByRole('link', { name: /^在庫僅少/ });
+		await page.goto('/dashboard');
+		await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+		await expect(page.getByText(note)).toHaveCount(0);
+		// A period leaves fewer rows, but nothing was left out of the read.
+		const period = page.getByRole('radiogroup', { name: '期間（更新日）' });
+		await period.getByText('直近30日', { exact: true }).click();
+		await expect(period.getByRole('radio', { name: '直近30日' })).toBeChecked();
+		await expect(page.getByText(note)).toHaveCount(0);
+		await expect(tile).not.toHaveAttribute('title', new RegExp(note));
+
+		const patch = async (route: Route) => {
+			const request = route.request();
+			const body = request.postDataJSON() as { pagination?: { limit?: number } } | null;
+			if (request.method() !== 'POST' || body?.pagination?.limit !== 20_000) {
+				return route.fallback();
+			}
+			const response = await route.fetch();
+			const json = (await response.json()) as { totalCount: number };
+			await route.fulfill({ response, json: { ...json, totalCount: 20_005 } });
+		};
+		await page.route('**/api/items/list', patch);
+		try {
+			await page.reload();
+			await expect(page.getByText(note).first()).toBeVisible();
+			// The tile's tooltip and the marks' names say it too.
+			await expect(tile).toHaveAttribute('title', new RegExp(note));
+			await expect(page.locator(PRICE_MARKS).first()).toHaveAttribute(
+				'aria-label',
+				new RegExp(note)
+			);
+		} finally {
+			await page.unroute('**/api/items/list', patch);
+		}
+		await page.reload();
+		await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+		await expect(page.getByText(note)).toHaveCount(0);
+	});
+
+	// The popped-out window (Tauri `WebviewWindow`, here its route in a plain tab) has no
+	// drill-down: the donut is an image, nothing in it takes the focus.
+	test('13k10. dashboard: the panel route has no selectable marks and nothing takes the focus', async () => {
+		test.skip(!HAS_CHARTS, 'needs @banto/charts');
+		await page.goto('/panel/priceBuckets');
+		const chart = page.getByRole('img', { name: '価格帯分布のドーナツグラフ' });
+		await expect(chart).toBeVisible();
+		await expect(chart.locator('[role="button"], [data-mark-index], [tabindex]')).toHaveCount(0);
+		// Tabbing through the document never stops inside the chart.
+		for (let i = 0; i < 6; i++) {
+			await page.keyboard.press('Tab');
+			expect(
+				await page.evaluate(() => document.activeElement?.closest('svg, [role="img"]') !== null)
+			).toBe(false);
+		}
+	});
+
 	// Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the dashboard
 	// メモ pane keeps unapplied input across the dock's structure changes (the
 	// draft is owned by the page, the pane is re-created), a close settles it

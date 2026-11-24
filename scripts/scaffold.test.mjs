@@ -504,7 +504,7 @@ test('チャートと dock を外す minimal では、ダッシュボードの�
 			'登録に残る id が一覧だけでない'
 		);
 		assert.ok(
-			files.page.includes('<DashboardWidgetStack widgets={stackWidgets} {data} />'),
+			files.page.includes('<DashboardWidgetStack widgets={stackWidgets} {data} {onDrill} />'),
 			'「積む」表示が消えた'
 		);
 		for (const kept of [
@@ -531,8 +531,16 @@ test('チャートと dock を外す minimal では、ダッシュボードの�
 		);
 		// 残るもの: 登録（ページが引く）、KPI の帯と値、データの読み込み。
 		assert.ok(files.widgets.includes('export const DASHBOARD_WIDGETS'), '登録の公開が消えた');
-		assert.ok(files.page.includes('<DashboardKpiStrip {data} />'), 'KPI の帯が消えた');
+		assert.ok(files.page.includes('<DashboardKpiStrip {data} {filter} />'), 'KPI の帯が消えた');
 		assert.ok(files.kpis.includes('data.stats.stockTotal'), 'KPI の値が消えた');
+		// #882 D3: 在庫少のリンクは期間つきで残る（チャートの印と違い、charts に依存しない）。
+		assert.ok(files.kpis.includes("drill: { kind: 'lowStock' }"), '在庫少のリンクが消えた');
+		assert.ok(files.strip.includes('drillHref('), 'KPI のリンクの期間の組み立てが消えた');
+		assert.ok(
+			fs.existsSync(path.join(app, 'lib/banto/dashboardDrill.ts')),
+			'ドリルダウンの URL の組み立てが消えた'
+		);
+		assert.ok(!files.widgets.includes('onMarkActivate'), '登録に印の配線が残っている');
 		assert.ok(
 			fs.existsSync(path.join(app, 'lib/banto/dashboardData.svelte.ts')),
 			'読み込みが消えた'

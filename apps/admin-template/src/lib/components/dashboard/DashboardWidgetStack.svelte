@@ -14,6 +14,7 @@
 	 * given the same room as in a pane.
 	 */
 	import type { DashboardPageData } from '#lib/banto/dashboardData.svelte.js';
+	import type { DashboardDrill } from '#lib/banto/dashboardDrill.js';
 	import type { DashboardWidgetDef } from '#lib/banto/dashboardWidgets.js';
 	import DashboardWidgetFrame from './DashboardWidgetFrame.svelte';
 
@@ -21,9 +22,10 @@
 		/** The widgets to show, in the order to stack them. */
 		widgets: readonly DashboardWidgetDef[];
 		data: DashboardPageData;
+		onDrill?: (drill: DashboardDrill) => void;
 	}
 
-	let { widgets, data }: Props = $props();
+	let { widgets, data, onDrill }: Props = $props();
 
 	/** `def.height` is a floating window's height, title bar included; the card has its own heading. */
 	const WINDOW_TITLEBAR = 40;
@@ -37,7 +39,7 @@
 		<section class="card" aria-labelledby="dashboard-stack-{widget.id}">
 			<h2 id="dashboard-stack-{widget.id}">{widget.title}</h2>
 			<div class="card-body" style:height="{bodyHeight(widget)}px">
-				<DashboardWidgetFrame {widget} {data} />
+				<DashboardWidgetFrame {widget} {data} {onDrill} />
 			</div>
 		</section>
 	{/each}

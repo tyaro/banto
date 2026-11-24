@@ -11,10 +11,20 @@
 	import { Sparkline } from '@banto/charts';
 	// [scaffold:charts] end
 	import { ChevronRight } from '@lucide/svelte';
-	import type { DashboardData } from '#lib/banto/dashboardData.svelte.js';
+	import { DASHBOARD_ROW_LIMIT, type DashboardPageData } from '#lib/banto/dashboardData.svelte.js';
+	import { drillHref } from '#lib/banto/dashboardDrill.js';
 	import { DASHBOARD_KPIS, type DashboardKpiDef } from '#lib/banto/dashboardKpis.js';
+	import { latestDay, type DashboardFilter } from '#lib/banto/dashboardPeriod.js';
+	import * as m from '#lib/paraglide/messages.js';
 
-	let { data }: { data: DashboardData } = $props();
+	/** `filter` is the page's period: a tile that opens the list carries it (#882 D3). */
+	let { data, filter }: { data: DashboardPageData; filter: DashboardFilter } = $props();
+	const anchorDay = $derived(latestDay(data.all.rows));
+	const truncatedNote = $derived(
+		data.truncated
+			? m['dashboard.truncatedNote']({ limit: DASHBOARD_ROW_LIMIT.toLocaleString() })
+			: ''
+	);
 </script>
 
 {#snippet tile(kpi: DashboardKpiDef)}
@@ -37,7 +47,14 @@
 <div class="stat-row">
 	{#each DASHBOARD_KPIS as kpi (kpi.id)}
 		{#if kpi.link}
-			<a class="stat-tile stat-link" href={kpi.link.href} title={kpi.link.title}>
+			<a
+				class="stat-tile stat-link"
+				href={drillHref(kpi.link.drill, filter, anchorDay)}
+				title={truncatedNote
+					? `${kpi.link.title}
+${truncatedNote}`
+					: kpi.link.title}
+			>
 				{@render tile(kpi)}
 				<ChevronRight class="stat-link-icon" size={16} aria-hidden="true" />
 			</a>
