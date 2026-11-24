@@ -22,7 +22,11 @@
 
 ## [Unreleased]
 
-消費側への注意（破壊的。次のメジャー v8.0.0 に入る。詳細は下の各項目と [docs/upgrading.md](docs/upgrading.md) 4.2 節）:
+## [8.0.0] - 2026-11-24
+
+**v8.0.0 — 基準の作り直し（DB を作り直す。組み込みユーザー `admin`・初回セットアップの廃止・持ち主のキー `accountId`・`ui_settings` の revision、[ADR-0034](docs/adr/0034-owner-identity-builtin-admin.md)）、Node の基準を 26 へ、`@banto/dock-svelte` の影の木への移行（`dockSlot` の廃止・保存形式 `version` 4）、`UiSettingsProvider` の置き換え、`banto-server` の `ReachCheckClock` の削除、ダッシュボードの dock 盤化、`libsqlite3-sys` 0.40.0（RUSTSEC-2026-0459）ほか。** 版の種類: major。公開 API の削除・改名・意味変更がある（`ReachCheckClock` 系・`dockSlot`・`AuthProvider.setup`・`UiSettingsProvider` の形ほか）うえ、v7.11.0 以前の DB を読まない（データの移行が無く、移行手順なしでは動かなくなる変更。[docs/publishing.md](docs/publishing.md)「バージョニング規約」の major の基準）。migration は 0003・0005 の差し替えと 0014 の追加（DB を作り直す）。詳細は下の各項目と [docs/upgrading.md](docs/upgrading.md) 4.2 節。
+
+消費側への注意（破壊的）:
 
 - **`banto-server` の `ReachCheckClock`・`SystemReachCheckClock`・`ReachCheckState::with_clock` を消す（#818）。** テストのためだけの時計の差し替え口だった。`ReachCheckState::new()` は常に実時計。下流（banto-industrial・temp-scada）に使用なし。使っていた派生アプリは `ReachCheckState::new()` に替える（時刻を動かす試験は、ストアの外から時計を差せなくなるため、クレート内の試験のみが対象）。
 - **Node の基準を 24 から 26 に上げる（#837 を置き換える）。** Node 26 は 2026-10-28 から Active LTS。派生アプリ（ルートの `package.json` を取り込む場合）は Node 26 が必要になる: `engines.node` を `>=26`、`.nvmrc` を `26`、devDependencies の `@types/node` を `^26.0.0`、CI の `setup-node` の `node-version` を `26` にする。取り込まなければ今までどおり。
@@ -120,6 +124,7 @@
 - **派生アプリのコードを grep して確かめる所（D1 の所見、[docs/upgrading.md](docs/upgrading.md) 4.2 節の「派生アプリ向けの確認と、足した口の使い方」）。** `status().initialized` / `is_initialized()` を入口・grant の条件にしていたアプリ（置き換え先は未確認のため断定しない。認証モード・管理者の有無で書けるかを自分で確かめる）、自作の模擬サーバーの `/api/ui-settings`・`/api/auth/status` の形（前者は `{ value, revision }`。後者は `initialized` を返さず、標準は `grants`、派生アプリ固有の項目は `AuthStatusExtras` で同じ JSON に残る）、`dock.layout` の自前の代入・配置の木を歩くコード（画面に出ているかだけなら `isOnScreen`）、`resetDemoToken` のようなトークンの置き直し（`storage: 'memory'` に替えられるが初めのトークンは渡せない）。
 - **新しい DB では先に `banto-serve create-admin` をする。** 閲覧公開が off のヘッドレス起動（`banto-serve`）は、これをするまで待ち受けない。`create-admin` は、後から起動するのと同じ `BANTO_DB` を指して実行する。既知の旧基準（v7 側の migration の履歴）の DB は、書き換えずに起動を断る。移行はしない（互換不要、v8.0.0 は DB を作り直す）。migration の付け替えは新しい基準（C1）用で、派生アプリの既存の DB を流用する案内ではない。
 - **items の新規作成の `file` 欄（F2、#714）:** `ResourceDetail` の `file` 欄は、`uploadWhile` を持つ添付のクライアント（テンプレートの `attachmentsClient.ts`）だけが送る。自前の `AttachmentsClient` を渡しているアプリは `uploadWhile` を足す。メソッド名だけでなくガードの位置も条件: ファイルを読み終えたあと、資格情報を取って送信を始める同じ同期の区間で `guard.canSend()` を確かめる（読む前の確認だけでは、途中のログアウト・アカウントの切り替えを拾えない）。始まった送信を取り消す機能ではない（`lib/resource/sessionUpload.ts`）。
+- **自前の `Cargo.lock` を持つ消費側は `libsqlite3-sys` の解決版を確かめる（#805）。** 同梱 SQLite を 0.30.1 から 0.40.0 に上げた（RUSTSEC-2026-0459）。sqlx（`banto-storage`）経由で入るので、タグを上げて `cargo update` した `Cargo.lock` の `libsqlite3-sys` が 0.39 以上になっていることを確かめる（古い版が残ると、細工した `-wal` による未初期化メモリ漏れの修正が入らない）。`cargo audit` の除外を `RUSTSEC-2026-0459` で持っている派生アプリは外せる。
 - **保守者向け（#811）:** 日付・時刻の文字列の決まりの原本は `packages/ui/src/datetime-core.ts`。forms・grid-svelte の写しは `pnpm sync:datetime-core` が書き、`pnpm check:datetime-core` が CI で見る（[docs/conventions.md](docs/conventions.md) §4）。
 
 ### Added
