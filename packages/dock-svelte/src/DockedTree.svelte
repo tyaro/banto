@@ -1010,6 +1010,7 @@
 		box-shadow: var(--banto-focus-ring);
 	}
 
+	/* `ThreePaneDock`'s `.divider-probe` measures this width (#892): change both together. */
 	.divider.row {
 		width: 6px;
 		cursor: col-resize;
