@@ -106,6 +106,7 @@ function mount(
 		dock,
 		commits,
 		harness: view.component,
+		rerender: view.rerender,
 		api: () => view.component.api(),
 		/** The centre's row's children (by id) and their px at the current width. */
 		px: () => {
@@ -166,6 +167,24 @@ describe("ThreePaneDock sideWidthUnit='px' (#892)", () => {
 		await settle();
 		await resize(1600);
 		near(px().left, (280 / 1280) * 1600);
+	});
+
+	it("keeps the px a layout is drawn at when switched from 'share' (a divider moved, the width changed)", async () => {
+		const { px, dock, rerender } = mount({ sideWidthUnit: 'share' });
+		await settle();
+		dock.resizeSplit('three-pane:root', 0, 100 / 1280);
+		await settle();
+		await resize(1600);
+		const drawn = px();
+		near(drawn.left, (380 / 1280) * 1600);
+		await rerender({ sideWidthUnit: 'px' });
+		await settle();
+		// Not the default (`leftWidth` 280 / `rightWidth` 360): the px as they were drawn.
+		near(px().left, drawn.left);
+		near(px().right, drawn.right);
+		await resize(1280);
+		near(px().left, drawn.left);
+		near(px().right, drawn.right);
 	});
 
 	it('takes a divider the user moved as the new px, reported once', async () => {

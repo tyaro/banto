@@ -448,6 +448,10 @@
 		if (sideWidthUnit !== 'px') {
 			sideWidths = null;
 			sidesSeen = null;
+			// The marks too (Codex review): a layout shown in 'share' (a divider moved, the width changed)
+			// is no longer the untouched default - a switch to 'px' takes its px as they are drawn.
+			sidesFresh = false;
+			sidesDefault = false;
 			return;
 		}
 		// Before mount (`settledSnapshot` set in `onMount`) nothing is measured.
