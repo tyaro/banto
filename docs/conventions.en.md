@@ -287,6 +287,10 @@ Current guarantees:
 
 - The `dependencies` / `peerDependencies` of all `packages/@banto/*` are empty.
 - There are zero `from '@banto/...'` imports between packages.
+  When several core packages need the same rule, do not hand-copy it: keep one original and a
+  generated copy in each package. The date/time string rules have `packages/ui/src/datetime-core.ts` as the
+  original; the `datetime-core.ts` in forms and grid-svelte are copies written by `pnpm sync:datetime-core`
+  (do not edit them by hand; CI's `pnpm check:datetime-core` fails if they differ from the original; Issue #811).
 - Notes like "charts/dock consume this token" in `theme/banto.css` are comments,
   not imports.
 - The app layer's **`apps/admin-template/src/lib/resource/`** (the shared parts of

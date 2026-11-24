@@ -685,6 +685,58 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   `updatedAt`」から数えるので、今日から数える・自分の日付の列で絞るなら `dashboardPeriod.ts` を書き換える
   （[recipes/dashboard-widgets.md](recipes/dashboard-widgets.md)）。期間は保存されない。
 
+**派生アプリ向けの確認と、足した口の使い方（D1 の所見・D2・D4）**。DB の作り直しとは別に、v8.0.0 へ上げるときに下流の
+コードを grep して確かめる所と、新しく足した口で置き換えられる回り道。banto-industrial（v7.9.0）・temp-scada（v7.10.0）の
+読み取りの結果は [所見 §6](reviews/downstream-usability-d1-2026-11.md) の表（識別子ごとの一致数）。
+
+- **`status().initialized` / `is_initialized()` を入口・grant の条件にしていた派生アプリ**（ChronoGazer の「この PC から続ける」
+  など）。この 2 つは無い（上の初回セットアップの撤去）。**置き換え先はここでは断定しない**: 新しい DB は初回からログインなしで
+  始まり「未初期化」の状態が無いので、条件の意味そのものを見直す。認証モード（`auth.disabled`）や管理者のアカウントの有無
+  （`hasAdminAccount` / `has_admin`）で同じことが書けるかは、banto 側では**未確認**。自分のアプリで何を判定したかったのかから
+  決めて、試す。
+- **自作の模擬サーバー・デモ（`/api/ui-settings`・`/api/auth/status` を返すもの）**: `/api/ui-settings/{key}` は
+  `{ value, revision }` を返し、`PUT` は `{ value, ifRevision? }` を受けて `200 { revision }` を返す（C4・C5 の項）。
+  `/api/auth/status` は `initialized` を返さない。標準は `grants` で、派生アプリ固有の項目は `AuthStatusExtras` で同じ JSON に展開される（模擬から削るのは `initialized` だけで、固有の項目は残す）。`/api/auth/setup` の模擬は消してよい。
+- **`dock.layout` を自分で代入している・配置の木を自分で歩いている所**: 代入は、浮かせた pane の「元の場所」の規則が変わる
+  （上の #782 PR7 の項）。木を歩いて「画面に出ているか」を調べているだけなら `dock.isOnScreen(id)`（`dock.panels[].onScreen`、#792）に
+  置き換えられる。「操作できるか」「前面のタブか」の判定は別なので、置き換えない。
+- **`resetDemoToken` のような「トークンを置き直す」回り道**（デモ・試験でログイン状態を作るため）: `createHttpAuthProvider` の
+  `storage: 'memory'`（#838）に替えられる（`sessionStorage`・`localStorage` に触らず、再読み込みでログインし直す）。**初めの
+  トークンは渡せない**ので、最初から入った状態を作る回り道は残る。
+- **`ReachCheckClock`・`SystemReachCheckClock`・`ReachCheckState::with_clock`（#818）は無い**。`ReachCheckState::new()`（常に実時計）を使う。
+  ストアの外の試験から時計を差せなくなる（クレート内の試験のみ）。下流（banto-industrial・temp-scada）に使用なし。
+- **items の新規作成の `file` 欄（F2、B。#714）**: `ResourceDetail` の `file` 欄は、`uploadWhile`（セッションの確認つきの送信、
+  `lib/resource/sessionUpload.ts`）を持つ添付のクライアントだけが送る。テンプレートの `lib/banto/attachmentsClient.ts` は持つ。
+  自前の `AttachmentsClient` を渡している派生アプリは `uploadWhile` を足す。ガードの位置も条件で、ファイルを読み終えたあと、
+  資格情報を取って送信を始める同じ同期の区間（間に `await` を挟まない）で `guard.canSend()` を確かめ、`false` なら送らない。
+  読む前の確認だけでは途中のログアウトを拾えない。始まった送信を取り消す機能ではない（実装は `lib/resource/sessionUpload.ts`）。
+  無いと送らずにエラーにする（送信の途中でログアウトや
+  別ユーザーへの切り替えがあっても、古いセッションの資格では送らないための確認）。取り込まないなら不要。
+
+**足した口で置き換えられる回り道（D2・D4。どれも足すだけ・既定は今までどおり）**。下流の自前の包みを置き換えるときの目安。
+
+- **`BantoGrid` の `columns` の差し替え（#890）**: 後から差し替えても作り直さずに反映し、残る列の列幅・並び順・並べ替え・絞り込み・
+  固定・非表示・グループ化・スクロールを保つ。全部を保つわけではない: 消えた列の条件は外れ、セルの選択は同じ行に引き継げるときだけ残る
+  （引き継げなければ外れ、行順が変われば矩形の選択は 1 つのセルに縮む）。`GridState` に `setColumns`・`columns`・`conditionsRevision` が
+  増えた。`columns` が変わるたびに `{#key gridEditMode}` で作り直していた所（Hub）は、`{#key}` を外せる（外すときは、編集の途中と列の追加・削除を確かめる）。
+- **座標で開く文脈メニュー `Menu` の `openAt({ x, y }, { returnFocus? })`（#889）**: `trigger` を省いたメニューを、
+  `BantoTree.onContextMenu`・`BantoGrid.onRowContextMenu` の座標のまま開く。位置の補正・キーボード・層の判定は共通で、
+  閉じるとフォーカスは開いた元へ戻る（`returnFocus` に要素を渡すと戻り先を変えられる）。自前でメニューの位置・外側クリック・Escape を組んでいた所
+  （Hub の `TreeContextMenu`、temp-scada の `ContextActions`）を置き換えられる。
+- **`ThreePaneDock` の `sideWidthUnit="px"`（#892）**: 部品の幅が変わっても中央以外の区画が px のまま、中央が伸び縮みする。
+  保存形式（`version: 4`）は変わらない。中央は 320px を保ち、足りなければ左右が縮む。保存した比率から再読み込みしたときに同じ px になることは保証しない。幅を自分で測って直していた所（temp-scada の `keepDesignerPaneWidths`）を置き換えられる。
+- **`BantoTree` の `rowActions`・`expansion` / `onExpandedChange`・`canDrop` / `onDropTargetChange`（#821）**: 行末のボタン、
+  展開を外から決める（`undefined` に戻すと木の持つ展開に戻る）、ドロップの可否を聞く。木をラップして自前で足していた所の置き換え先。
+- **日付のピッカー**: 見出しの「年」「月」から 12 か月・12 年の格子へ切り替えて選べる（#908、`DateInput`・`DateTimeInput`・
+  `DateRangeInput` の見た目が変わる）。月を 2 つ並べる `DatePicker`・`DateRangePicker`（#910）が増えた。
+- **IME の変換中の判定（#891・#898・#905・#907）**: 入力欄の Enter・Escape で `isComposing || keyCode === 229` を見る。
+  `BantoTree` の名前変更・`DateInput` ほか。自前で同じ回避を足していた所は、パッケージ側の判定と二重になる（残しても動く。整理してよい）。
+- **内部になったもの（使っていないはず）**: `EditController`（`BantoGrid` の編集の状態遷移、#822）・`createTextMirror`（ピッカーの
+  入力欄の文字の同期、#816）・`PickerDialog`（#914）は公開の口ではない。挙動は変わらない。
+- **保守者向け（#811）**: 日付・時刻の文字列の決まりの原本は `packages/ui/src/datetime-core.ts`、forms・grid-svelte の
+  `datetime-core.ts` は `pnpm sync:datetime-core` が書く写し（手で直さない。`pnpm check:datetime-core` が CI で見る。conventions §4）。
+  派生アプリが日付の解析を自前で持っているなら、`@banto/ui` の公開の口へ寄せられる。
+
 **起動が止まった DB をバックアップで戻す手順（画面を通らない）**: アプリを止める → 戻したいバックアップ
 （同じ版のアプリで取ったもの）を、その DB のバックアップのディレクトリ（`<DBの親フォルダ>/backups/<DBファイル名>/`）に
 `restore-pending.sqlite3` という名前で置く → 起動する。起動は「予約の適用 → migration → 初回の seed → 設定の読み取り」の
