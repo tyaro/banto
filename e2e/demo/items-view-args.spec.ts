@@ -133,7 +133,7 @@ for (const mode of ['client', 'server'] as const) {
 
 		test('only view and arg.* leave the URL; id stays', async ({ page }) => {
 			await openItems(page, mode);
-			await page.goto('/items?id=1&view=price-band&arg.band=100-149&arg.note=x');
+			await page.goto('/items?id=1&view=price-band&arg.band=100-149');
 			await expect(page).toHaveURL(/\/items\?id=1$/, { timeout: 30_000 });
 		});
 	});

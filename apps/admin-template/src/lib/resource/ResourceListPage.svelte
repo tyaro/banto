@@ -673,7 +673,7 @@
 	function resolveViewRequest(
 		id: string,
 		refetch: boolean,
-		params: Pick<URLSearchParams, 'getAll'>
+		params: Pick<URLSearchParams, 'getAll' | 'keys'>
 	): void {
 		const preset = presetViews.find((view) => view.id === id);
 		if (preset) {

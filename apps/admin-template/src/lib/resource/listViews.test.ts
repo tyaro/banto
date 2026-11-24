@@ -341,7 +341,7 @@ describe('view arguments (#882)', () => {
 	});
 
 	it('reads the declared names and adds the conditions after the fixed ones', () => {
-		const result = presetViewFromUrl(view(), q('view=v&arg.band=1&arg.after=d&arg.other=x'))!;
+		const result = presetViewFromUrl(view(), q('view=v&arg.band=1&arg.after=d'))!;
 		expect(result.strict).toBe(true);
 		expect(result.content.filters.map((f) => f.field)).toEqual(['stock', 'price', 'updatedAt']);
 	});
@@ -361,8 +361,12 @@ describe('view arguments (#882)', () => {
 			content: presetViewContent(plain),
 			strict: false
 		});
-		// An argument the view does not declare is ignored.
-		expect(presetViewFromUrl(plain, q('arg.band=1'))?.strict).toBe(false);
+		// `arg.*` names the view does not declare are refused (a typo must not widen the link).
+		expect(presetViewFromUrl(plain, q('arg.band=1'))).toBeNull();
+		expect(presetViewFromUrl(plain, q('arg.afetr=2026-06-02'))).toBeNull();
+		expect(presetViewFromUrl(plain, q('arg.after=d&arg.afetr=d'))).toBeNull();
+		// Not `arg.*` at all: untouched.
+		expect(presetViewFromUrl(plain, q('argx=1&id=3'))?.strict).toBe(false);
 	});
 
 	it('the menu leaves out views with a required argument', () => {

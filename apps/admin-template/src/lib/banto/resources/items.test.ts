@@ -100,15 +100,18 @@ describe('the definition views', () => {
 		expect(withAfter.strict).toBe(true);
 		expect(withAfter.content.filters.map((f) => f.field)).toEqual(['stock', 'updatedAt']);
 		expect(presetViewFromUrl(v, query('arg.after=2026-13-40'))).toBeNull();
+		// A mistyped name must not widen the link to the whole period.
+		expect(presetViewFromUrl(v, query('arg.afetr=2026-06-02'))).toBeNull();
 	});
 
 	it('every field the views use is a column of both grids', () => {
 		const both = ['price', 'stock', 'updatedAt'];
+		const links = {
+			[PRICE_BAND_VIEW_ID]: 'arg.band=100-149',
+			[LOW_STOCK_VIEW_ID]: 'arg.after=2026-06-02'
+		};
 		for (const entry of views) {
-			const content = presetViewFromUrl(
-				entry,
-				query('arg.band=100-149&arg.after=2026-06-02')
-			)?.content;
+			const content = presetViewFromUrl(entry, query(links[entry.id] ?? ''))?.content;
 			expect(content && viewFitsFields(content, both)).toBe(true);
 		}
 	});

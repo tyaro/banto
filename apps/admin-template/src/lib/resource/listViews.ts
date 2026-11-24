@@ -128,16 +128,24 @@ export function viewLinkParamNames(params: Pick<URLSearchParams, 'keys'>): strin
  *  - `strict`: the link carried arguments, so every condition must fit the grid
  *    shown ({@link viewFitsFields}); nothing may be dropped silently.
  * `null`: the link's narrowing cannot be applied (a missing required argument, a
- * repeated one, an empty / invalid value, `filtersFor` said `null`). The caller then
+ * repeated one, an empty / invalid value, an `arg.*` name the view does not declare,
+ * `filtersFor` said `null`). The caller then
  * applies nothing and says so; it never falls back to the plain view.
  * A view without arguments in the URL (an optional-only view, or one that declares
  * none) applies as it always did.
  */
 export function presetViewFromUrl(
 	view: ResourceListView,
-	params: Pick<URLSearchParams, 'getAll'>
+	params: Pick<URLSearchParams, 'getAll' | 'keys'>
 ): { content: ListViewContent; strict: boolean } | null {
 	const declared = Object.entries(view.args ?? {});
+	// A name this view does not declare (a typo such as `arg.afetr`) means the link asks for
+	// something we cannot honour: refuse it whole rather than drop the condition silently.
+	for (const key of params.keys()) {
+		if (key.startsWith(VIEW_ARG_PREFIX) && !declared.some(([n]) => VIEW_ARG_PREFIX + n === key)) {
+			return null;
+		}
+	}
 	const anyPresent = declared.some(
 		([argName]) => params.getAll(VIEW_ARG_PREFIX + argName).length > 0
 	);

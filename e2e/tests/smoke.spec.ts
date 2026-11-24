@@ -1194,11 +1194,23 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// so the checks are invariants: the four price bands partition the list (cut points included),
 	// and `after` excludes its own day (a day-by-day count falls at the day the item was updated).
 	test('3d4. items: view links with arguments count the right rows on the real server', async () => {
+		// Two snapshots of ten links each, every link counted twice (to see it settle).
+		test.setTimeout(180_000);
 		await page.goto('/items');
 		await chooseItemsMode(page, SERVER_MODE);
 		const grid = page.getByRole('grid').first();
 		const countAt = async (href: string): Promise<number> => {
-			await page.goto(href);
+			// BantoGrid shows only the header (rowcount 1) until the server's list answer
+			// arrives, which is also what an empty answer looks like: wait for the answer first.
+			await Promise.all([
+				page.waitForResponse(
+					(res) =>
+						new URL(res.url()).pathname === '/api/items/list' &&
+						res.request().method() === 'POST' &&
+						res.ok()
+				),
+				page.goto(href)
+			]);
 			await expect(grid).toHaveAttribute('aria-rowcount', /^\d+$/);
 			// The link's own parameters are gone once applied.
 			await expect(page).toHaveURL(/\/items$/);
