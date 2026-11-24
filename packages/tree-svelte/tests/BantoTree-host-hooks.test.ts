@@ -454,6 +454,25 @@ describe('canDrop / onDropTargetChange', () => {
 		expect(onMove).not.toHaveBeenCalled();
 	});
 
+	it('a row of another tree with the same id is not a drop target', async () => {
+		const onMove = vi.fn();
+		const onDropTargetChange = vi.fn();
+		render(BantoTree, { nodes: forest(), draggable: true, onMove, onDropTargetChange });
+		render(BantoTree, { nodes: forest() }); // a second tree, same ids
+		const [mine, other] = screen.getAllByRole('tree');
+		const otherAlpha = other!.querySelector('[data-node-id="a"]');
+		let over: Element | null = null;
+		stubLayout(() => over);
+		mine!.querySelector('[data-node-id="c"]')!.dispatchEvent(pointer('pointerdown', 0, 0));
+		over = otherAlpha;
+		window.dispatchEvent(pointer('pointermove', 50, 2));
+		await tick();
+		window.dispatchEvent(pointer('pointerup', 50, 2));
+		await tick();
+		expect(onDropTargetChange).not.toHaveBeenCalled();
+		expect(onMove).not.toHaveBeenCalled();
+	});
+
 	it('without canDrop every shape-legal drop is allowed (as before) and still reported', async () => {
 		const onDropTargetChange = vi.fn();
 		render(BantoTree, { nodes: forest(), draggable: true, onDropTargetChange });

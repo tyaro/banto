@@ -757,7 +757,8 @@
 			return;
 		}
 		const targetId = el.getAttribute('data-node-id');
-		if (targetId === null || targetId === dragState.id) {
+		// Only a row of THIS tree (another tree on the page may use the same ids).
+		if (targetId === null || targetId === dragState.id || elements.get(targetId) !== el) {
 			clearDropTarget();
 			return;
 		}
