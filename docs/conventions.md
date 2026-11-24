@@ -345,6 +345,12 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   `INSERT ... ON CONFLICT DO NOTHING`）。revision は書き込みのたびにサービス層が作る乱数で、数にしない（復元・削除の後に
   古い revision が一致しないため）。アカウントの行は外部キーで `users` に結び、孤児の行を作らない。試験は
   `apps/admin-template/core/tests/ui_settings_cases`（両方言で同じ場合を、別々のプール 2 つから）。
+- **設定のキー名は 2 系統の規則に従い、既存のキーは改名しない（Issue #814）。** 運用設定（`settings` 表）は
+  ドット区切り・小文字・項目名は snake_case（`server.viewer_public`・`auth.autologin.enabled`・`first_boot.seeded`）。
+  `auth.`・`server.` の前置は Tauri の `settings_set` が拒否する契約。UI の設定（`ui_settings` の論理キー）は
+  ドット区切りで、項目名は camelCase を許す（`shell.navLayout`・`dock.threePane.workspace`。wire 契約 spec M12、
+  サーバーの検証は `[A-Za-z0-9._-]{1,64}`）。新しいキーはこの規則に従う。既存キーの改名は保存済みの値・e2e・
+  FOUC スクリプトに及ぶ破壊的変更なので行わない。
 - **SQL 列はホワイトリスト経由のみ。** フロント由来のフィールド名は必ず
   `ColumnMap`（`list_query.rs`）で SQL 列に解決し、値は必ずバインドする（文字列
   補間しない）。未知フィールドの sort は無視、filter は hard error。

@@ -391,6 +391,13 @@ without a runtime guard are **upheld by reviewing every call site**.
   account's rows are tied to `users` by the foreign key, so no orphan row is
   created. Tests: `apps/admin-template/core/tests/ui_settings_cases` (the same
   cases on both dialects, from two separate pools).
+- **Settings key names follow two conventions; existing keys are not renamed (Issue #814).** Operational
+  settings (the `settings` table) are dot-separated, lowercase, with snake_case item names (`server.viewer_public`,
+  `auth.autologin.enabled`, `first_boot.seeded`). The `auth.` and `server.` prefixes are rejected by Tauri's
+  `settings_set` by contract. UI settings (logical keys in `ui_settings`) are dot-separated and item names may be
+  camelCase (`shell.navLayout`, `dock.threePane.workspace`; wire contract spec M12; the server validates
+  `[A-Za-z0-9._-]{1,64}`). New keys follow these conventions. Renaming an existing key is a breaking change
+  (stored values, e2e, the FOUC script), so it is not done.
 - **SQL columns only through the whitelist.** Field names originating from the
   frontend must always be resolved to SQL columns via `ColumnMap`
   (`list_query.rs`), and values must always be bound (never string-interpolated).

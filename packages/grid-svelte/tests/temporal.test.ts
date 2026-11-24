@@ -68,7 +68,11 @@ describe('time / datetime parsing mirrors @banto/ui (and forms)', () => {
 		['09:15', 15],
 		['23:59', 25],
 		['12:00', 0],
-		['12:00', undefined]
+		['12:00', undefined],
+		['24:00', 15],
+		['10:60', 15],
+		['abc', 15],
+		['9:15', 15]
 	] as [string, number | undefined][])('isOnTimeStep(%j, %j)', (time, step) => {
 		expect(isOnTimeStep(time, step)).toBe(uiDatetime.isOnTimeStep(time, step));
 	});
