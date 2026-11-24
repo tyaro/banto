@@ -430,15 +430,23 @@ export class GridState<TRow = unknown> {
 		}
 	}
 
+	/**
+	 * Set the column's filter. Replaces ALL of the field's conditions (a view link can carry two
+	 * for one field, a range written as `gte` + `lt`, #882): the new one takes the first one's
+	 * place and the others go, so no stale bound survives a change made from the header.
+	 */
 	setFilter(filter: FilterState): void {
 		const index = this.filters.findIndex((entry) => entry.field === filter.field);
 		if (index === -1) {
 			this.filters = [...this.filters, filter];
-		} else {
-			const next = this.filters.slice();
-			next[index] = filter;
-			this.filters = next;
+			return;
 		}
+		const next: FilterState[] = [];
+		this.filters.forEach((entry, i) => {
+			if (i === index) next.push(filter);
+			else if (entry.field !== filter.field) next.push(entry);
+		});
+		this.filters = next;
 	}
 
 	removeFilter(field: string): void {
