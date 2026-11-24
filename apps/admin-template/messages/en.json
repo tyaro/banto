@@ -847,6 +847,8 @@
   "users.resetDesc": "Set a new password and force it onto this user.",
   "users.resetPassword": "Reset password",
   "users.deleteDesc": "Delete this account permanently. This cannot be undone.",
+  "users.rowMenu": "Actions for {username}",
+  "users.rowMenuEdit": "Edit",
   "users.selectPrompt": "Select a user",
   "users.selectHint": "Click a row in the list to show the edit panel here.",
   "users.created": "Created",

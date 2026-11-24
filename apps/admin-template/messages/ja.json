@@ -847,6 +847,8 @@
   "users.resetDesc": "新しいパスワードを設定し、このユーザーへ強制的に反映します。",
   "users.resetPassword": "パスワードをリセット",
   "users.deleteDesc": "このアカウントを完全に削除します。取り消せません。",
+  "users.rowMenu": "{username} の操作",
+  "users.rowMenuEdit": "編集",
   "users.selectPrompt": "ユーザーを選択してください",
   "users.selectHint": "一覧から行をクリックすると、ここに編集パネルが表示されます。",
   "users.created": "作成しました",
