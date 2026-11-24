@@ -19,6 +19,7 @@ import DateInput from '../../ui/src/DateInput.svelte';
 import { isIsoDate, parseDateText } from '../src/date';
 import { createFormDraft } from '../src/draft.svelte';
 import DateField from '../src/fields/DateField.svelte';
+import DraftDateField from '../src/fields/DraftDateField.svelte';
 import { createFormStore } from '../src/store.svelte';
 import type { FieldDef, FormSchema } from '../src/types';
 import { validateField } from '../src/validate';
@@ -313,6 +314,32 @@ describe('DraftDateField with @banto/ui DateInput injected (FormDraft path)', ()
 		// One blur, one commit (the component's own commit is not repeated).
 		expect(onCommit).toHaveBeenCalledTimes(1);
 		expect(onCommit).toHaveBeenLastCalledWith(true);
+	});
+
+	it('Enter during IME composition (isComposing / keyCode 229) does not commit', async () => {
+		const { draft, onCommit, input } = setup();
+		input.focus();
+		fireEvent.input(input, { target: { value: '2026/1/2' } });
+		flushSync();
+		// The injected input's own Enter handling is not forms' (DateInput lives in ui).
+		await fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+		expect(draft.values.due).toBeNull();
+		await fireEvent.keyDown(input, { key: 'Enter' });
+		expect(draft.values.due).toBe('2026-01-02');
+	});
+
+	it('native fallback: Enter with keyCode 229 does not commit, ordinary Enter does', async () => {
+		const draft = createFormDraft({ key: 'k', schema });
+		const onCommit = vi.fn();
+		render(DraftDateField, { def: due, draft, onCommit });
+		const input = document.querySelector<HTMLInputElement>('input#due')!;
+		fireEvent.input(input, { target: { value: '2026-01-02' } });
+		flushSync();
+		await fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+		await fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+		expect(onCommit).not.toHaveBeenCalled();
+		await fireEvent.keyDown(input, { key: 'Enter' });
+		expect(onCommit).toHaveBeenCalledExactlyOnceWith(true);
 	});
 
 	it('Enter commits typed text once', async () => {

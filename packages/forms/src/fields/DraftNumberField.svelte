@@ -51,7 +51,7 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' && !event.isComposing) commit();
+		if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) commit();
 	}
 </script>
 
