@@ -95,3 +95,82 @@ fn write_budget_api_is_public(
     let _: usize = banto_server::MAX_DETACHED_WRITES;
     bound.with_write_budget(budget)
 }
+
+/// Issue #935 (design `docs/design/sse-stream-design.md` §4.3): the
+/// foundation of an app's own SSE stream. A derived app's handler takes an
+/// `SseContext`, sets its conditions, and returns `sse_response`; the frames
+/// come from a `watch` or a `broadcast`. Narrowing or re-shaping any of
+/// these must fail compilation - in particular `sse_response` takes NO
+/// `AuthState` (the context carries the one that authorized the request).
+async fn sse_foundation_api_is_public(
+    context: banto_server::SseContext,
+    values: tokio::sync::watch::Receiver<Vec<f64>>,
+    alarms: tokio::sync::broadcast::Receiver<String>,
+    permission: banto_admin_services::permissions::PermissionKey,
+) -> axum::response::Response {
+    use banto_server::sse::{REVALIDATE_INTERVAL, REVALIDATE_TIMEOUT};
+    use banto_server::{
+        broadcast_frames, sse_response, watch_frames, InvalidSseEventName, SessionPermissions,
+        SseContext, SseFrame,
+    };
+    use futures_util::{Stream, StreamExt};
+
+    // The constants stay reachable on their pre-#935 path too.
+    let _: std::time::Duration = REVALIDATE_INTERVAL;
+    let _: std::time::Duration = banto_server::events::REVALIDATE_INTERVAL;
+    let _: std::time::Duration = REVALIDATE_TIMEOUT;
+    let _: std::time::Duration = banto_server::events::REVALIDATE_TIMEOUT;
+
+    let json: Result<SseFrame, serde_json::Error> = SseFrame::json(&[1.0, 2.0]);
+    let named: Result<SseFrame, InvalidSseEventName> = SseFrame::text("line").event("note");
+    if let Err(InvalidSseEventName { name, reason }) = &named {
+        let _: (&String, &&'static str) = (name, reason);
+    }
+    let _: bool = json.ok() == named.clone().ok();
+
+    // `T` needs no `Clone` for a `watch`; the closures are `FnMut`.
+    struct NotClone(f64);
+    let (_tx, not_clone) = tokio::sync::watch::channel(NotClone(0.0));
+    let mut sent = 0usize;
+    let _ = watch_frames(not_clone, move |value: &NotClone| {
+        sent += 1;
+        SseFrame::json(&(value.0, sent)).ok()
+    });
+
+    fn is_send_stream<S: Stream<Item = SseFrame> + Send + 'static>(stream: S) -> S {
+        stream
+    }
+    let values = is_send_stream(watch_frames(values, |values| {
+        SseFrame::json(values).ok()?.event("values").ok()
+    }));
+    let alarms = is_send_stream(broadcast_frames(alarms, |alarm: &String| {
+        SseFrame::text(alarm.as_str()).event("alarm").ok()
+    }));
+
+    let context: SseContext = context
+        .counted_as_client()
+        .require_permission(permission)
+        .reauthorize_with(
+            |session: &AuthenticatedSession, permissions: &SessionPermissions| {
+                session.grant.is_none() && !permissions.is_empty()
+            },
+        );
+    sse_response(
+        context,
+        futures_util::stream::select(values.boxed(), alarms.boxed()),
+    )
+}
+
+/// `SseContext` is an extractor for any router state, so a handler can take
+/// it next to `State<_>` / `Extension<_>`.
+fn sse_context_is_an_extractor() -> axum::Router {
+    async fn handler(
+        context: banto_server::SseContext,
+        axum::extract::State(_state): axum::extract::State<u8>,
+    ) -> axum::response::Response {
+        banto_server::sse_response(context, futures_util::stream::empty())
+    }
+    axum::Router::new()
+        .route("/api/app/stream", axum::routing::get(handler))
+        .with_state(0u8)
+}

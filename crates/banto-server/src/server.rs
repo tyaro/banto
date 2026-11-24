@@ -42,9 +42,12 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DETACHED_WRITES_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Server-wide stop signal, injected into every request as an `Extension` by
-/// [`start`]. Long-lived handlers (the SSE stream, [`crate::events`]) watch it
-/// and end on their own when the server is asked to stop - hyper's graceful
-/// shutdown otherwise waits for them forever (Issue #283). Absent when a
+/// [`start`]. Long-lived handlers (every SSE stream - `/api/events` and an
+/// app's own, all served by [`crate::sse`]) watch it and end on their own
+/// when the server is asked to stop - hyper's graceful shutdown otherwise
+/// waits for them forever (Issue #283). A stream sees it when it is polled;
+/// for one that is not (its client does not read), [`RunningServer::stop`]
+/// only stops waiting at its cap. Absent when a
 /// router is served some other way (e.g. `oneshot` in tests); handlers treat
 /// that as "never signalled".
 #[derive(Clone)]
@@ -60,8 +63,10 @@ impl ShutdownSignal {
     }
 }
 
-/// How many SSE streams (`GET /api/events`, [`crate::events`]) are open on
-/// one listener (Issue #558: the desktop header's "LAN 共有中・接続 n 台").
+/// How many counted SSE streams are open on one listener (Issue #558: the
+/// desktop header's "LAN 共有中・接続 n 台"): every `GET /api/events`
+/// ([`crate::events`]), and an app's own stream only when it asked for it
+/// ([`crate::sse::SseContext::counted_as_client`], Issue #935).
 /// Injected into every request as an `Extension` by [`BoundServer::serve`],
 /// like [`ShutdownSignal`]; absent when a router is served some other way, and
 /// then nothing is counted.
@@ -117,7 +122,11 @@ impl RunningServer {
     /// right now (Issue #558). One per open browser tab or window - two tabs
     /// on the same device count twice. A window that receives events some
     /// other way (the desktop app's own webview gets them over IPC) is not
-    /// counted. A snapshot: it can change right after it is read.
+    /// counted. An app's own SSE stream ([`crate::sse`]) is counted only when
+    /// its handler called [`crate::sse::SseContext::counted_as_client`] -
+    /// meant for the one stream of a screen that does not open
+    /// `/api/events` - so a screen that opens both is still one. A snapshot:
+    /// it can change right after it is read.
     pub fn sse_connections(&self) -> usize {
         self.sse_connections.count()
     }
@@ -131,9 +140,23 @@ impl RunningServer {
 
     /// Signal graceful shutdown and wait for the server task to finish.
     ///
-    /// Open SSE streams are told to end ([`ShutdownSignal`]). As a safety net
-    /// for any other connection that does not finish, the wait is capped at
-    /// [`STOP_TIMEOUT`], after which the server task is aborted (Issue #283).
+    /// Open SSE streams - `/api/events` and every app stream served through
+    /// [`crate::sse::sse_response`] - are told to end ([`ShutdownSignal`]).
+    /// Two separate guarantees:
+    ///
+    /// - a stream that is being polled ends on the signal, also while one of
+    ///   its session re-checks is waiting for the store (Issue #935): this
+    ///   never waits for a check;
+    /// - everything else is covered only by the cap, which is a cap on this
+    ///   WAIT. A connection that does not finish - any other long response,
+    ///   and also an SSE stream whose body is not polled because its client
+    ///   does not read (the send is held by backpressure, so the stream
+    ///   never gets to see the signal) - makes this wait up to
+    ///   [`STOP_TIMEOUT`]; then the wait is given up and the task that runs
+    ///   the server is aborted (Issue #283). That task is the one around
+    ///   `axum::serve`: axum runs each connection on a task of its own, so
+    ///   closing the socket of a connection that did not finish within the
+    ///   cap is NOT guaranteed.
     ///
     /// Writes (Issue #793, ADR-0035, [`crate::detach`]): from the first
     /// moment of the stop, a write that arrives - also on a connection that

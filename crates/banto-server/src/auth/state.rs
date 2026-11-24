@@ -576,6 +576,17 @@ impl AuthState {
     /// [`AuthState::switch_auth_mode`] completed is `Ok(None)`. A grant
     /// session is outside the mode (ADR-0017).
     ///
+    /// The same holds for the token itself (review of #943): a logout or an
+    /// expiry does not advance the mode's generation, so after the
+    /// permissions were read the token is looked at once more, in memory and
+    /// without sliding its idle window. A token that was logged out, expired
+    /// or revoked while its permissions were being read is `Ok(None)`; one
+    /// that was re-bound meanwhile (its own password change,
+    /// [`AuthState::rotate_session_epoch`]) is authorized once more from the
+    /// start, on its current binding. What is returned was therefore read
+    /// for a token that was still alive, and bound as the session says,
+    /// after the last await.
+    ///
     /// Everything that reads the permissions next to a token goes through
     /// here - [`require_auth`], `GET /api/auth/identity`, and a permission
     /// guard stacked without `require_auth` - so none of them can answer for
@@ -585,15 +596,61 @@ impl AuthState {
         &self,
         token: &str,
     ) -> Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError> {
+        self.authorize_with(token, IdleWindow::Slide).await
+    }
+
+    /// [`AuthState::authenticate_with_permissions`] for a check the client
+    /// did not ask for: the re-check of an open stream that carries an
+    /// authorization condition ([`crate::sse::SseContext::require_permission`],
+    /// Issue #935). The same ONE authorization - session, then permissions,
+    /// then the mode generation and the token itself looked at once more -
+    /// but, like
+    /// [`AuthState::revalidate`], it does not slide the token's idle window.
+    /// That is the only difference.
+    pub(crate) async fn revalidate_with_permissions(
+        &self,
+        token: &str,
+    ) -> Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError> {
+        self.authorize_with(token, IdleWindow::Keep).await
+    }
+
+    /// The one implementation behind
+    /// [`AuthState::authenticate_with_permissions`] and
+    /// [`AuthState::revalidate_with_permissions`].
+    async fn authorize_with(
+        &self,
+        token: &str,
+        idle: IdleWindow,
+    ) -> Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError> {
         let entered = self.mode_generation();
-        let Some(session) = self.authenticate(token).await? else {
-            return Ok(None);
-        };
-        let permissions = self.session_permissions(&session).await?;
-        if session.grant.is_none() && self.mode_generation() != entered {
-            return Ok(None);
+        // One extra round only for a token that was re-bound while its
+        // permissions were being read; every other case is decided in the
+        // first round (the same shape as `authenticate_with`).
+        for _ in 0..2 {
+            let Some(session) = self.authenticate_with(token, idle).await? else {
+                return Ok(None);
+            };
+            let permissions = self.session_permissions(&session).await?;
+            if session.grant.is_none() && self.mode_generation() != entered {
+                return Ok(None);
+            }
+            // The permission read awaited: the token may have been logged
+            // out, expired, revoked or re-bound meanwhile, and none of these
+            // advances the mode's generation. Decide on the token AS IT IS
+            // NOW - in memory, under the table's lock, and never sliding the
+            // idle window (this look is not something the client asked for).
+            // Nothing awaits between here and the return.
+            match self.session_for_with(token, IdleWindow::Keep) {
+                None => return Ok(None),
+                Some(current)
+                    if current.stamp == session.stamp && current.grant == session.grant =>
+                {
+                    return Ok(Some((session, permissions)));
+                }
+                Some(_) => {}
+            }
         }
-        Ok(Some((session, permissions)))
+        Ok(None)
     }
 
     /// Switch the auth mode (ADR-0034 section 6): under the token table's one

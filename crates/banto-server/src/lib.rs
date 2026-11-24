@@ -3,7 +3,8 @@
 //! Domain-agnostic only: auth/token management, credential-less grant
 //! issuance ([`grant`], ADR-0017), the LAN reach check's one-time-token
 //! store and route ([`reach_check`], Issue #219), CSRF header enforcement,
-//! baseline security response headers, SSE event fan-out, static/SPA
+//! baseline security response headers, SSE event fan-out and the foundation
+//! an app's own SSE streams are served on ([`sse`], Issue #935), static/SPA
 //! fallback serving, server lifecycle (bind/serve/graceful-shutdown), plus
 //! (since theme C PR-C4, docs/template-scope.md §7 移行順 ④) the REST
 //! routers for the resources that are themselves domain-agnostic
@@ -33,6 +34,7 @@ pub mod response;
 pub mod routes;
 pub mod security_headers;
 pub mod server;
+pub mod sse;
 pub mod static_files;
 
 pub use auth::{
@@ -66,5 +68,8 @@ pub use server::{
     bind, bind_with_port_fallback, bind_without_fallback, lan_addrs_for_bind, lan_urls,
     lan_urls_for_bind, start, BoundServer, PortFallbackError, RunningServer, ServerConfig,
     DETACHED_WRITES_STOP_TIMEOUT, PORT_FALLBACK_SPAN,
+};
+pub use sse::{
+    broadcast_frames, sse_response, watch_frames, InvalidSseEventName, SseContext, SseFrame,
 };
 pub use static_files::{guess_mime, static_router, UiAssets};
