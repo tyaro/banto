@@ -458,18 +458,29 @@ describe('conditions on a column that goes away (#890 review)', () => {
 		state.setColumns(tagColumns());
 		expect(state.filters).toEqual([{ field: 'site', op: 'eq', value: 'A' }]);
 		expect(state.sort).toEqual([{ field: 'site', direction: 'asc' }]);
-		expect(state.prunedRevision).toEqual({ revision: 1, params: true });
+		expect(state.conditionsRevision).toEqual({ revision: 1, paramsRevision: 1 });
 	});
 
-	it('prunedRevision stays when nothing is dropped, and says when only a group-by went', () => {
+	it('conditionsRevision stays when no condition is touched, and says when only a group-by went', () => {
 		const state = new GridState<Tag>(tagColumns({ analog: true }));
 		state.setColumns(tagColumns({ analog: true, edit: true }));
 		state.setColumns(tagColumns());
-		expect(state.prunedRevision.revision).toBe(0);
+		expect(state.conditionsRevision.revision).toBe(0);
 		state.setColumns(tagColumns({ analog: true }));
 		state.setGroupBy('unit');
 		state.setColumns(tagColumns());
-		expect(state.prunedRevision).toEqual({ revision: 1, params: false });
+		expect(state.conditionsRevision).toEqual({ revision: 1, paramsRevision: 0 });
+	});
+
+	it('conditionsRevision moves when the column under a condition gets a new definition', () => {
+		const columns = tagColumns();
+		const state = new GridState<Tag>(columns);
+		state.toggleSort('value', false);
+		// Same objects for every column but `name`: nothing under the sort changed.
+		state.setColumns(columns.map((column) => (column.id === 'name' ? { ...column } : column)));
+		expect(state.conditionsRevision.revision).toBe(0);
+		state.setColumns(tagColumns({ edit: true }));
+		expect(state.conditionsRevision).toEqual({ revision: 1, paramsRevision: 0 });
 	});
 
 	it('hydrate drops the conditions on a saved column this set lacks; its width comes back with it', () => {
@@ -533,6 +544,23 @@ describe('conditions on a column that goes away (#890 review)', () => {
 			flushSync(() => state.setColumns(tagColumns()));
 			expect(calls).toEqual([{ sort: [], filters: [] }]);
 		});
+
+		it('once, with the latest conditions, for several `state.setColumns` in one update', () => {
+			const columns = tagColumns({ analog: true });
+			const state = new GridState<Tag>(columns);
+			state.toggleSort('decimals', false);
+			state.setFilter({ field: 'site', op: 'eq', value: 'A' });
+			state.setGroupBy('unit');
+			const { calls } = serverSetup(columns, state);
+
+			flushSync(() => {
+				// First the sorted column goes, then the one only grouped by.
+				state.setColumns(columns.filter((column) => column.id !== 'decimals'));
+				state.setColumns(tagColumns());
+			});
+			expect(state.groupBy).toBeNull();
+			expect(calls).toEqual([{ sort: [], filters: [{ field: 'site', op: 'eq', value: 'A' }] }]);
+		});
 	});
 
 	describe('the cell selection follows the record when the rows re-sort', () => {
@@ -579,6 +607,43 @@ describe('conditions on a column that goes away (#890 review)', () => {
 			);
 			flushSync(() => state.setColumns(tagColumns()));
 			expect(activeCell(container)).toBeNull();
+		});
+
+		describe('a sorted column redefined under the same id', () => {
+			// `value` now reads the negated value: Alpha(10), Beta, Delta(30) turns over.
+			const reversed = () =>
+				tagColumns().map((column) =>
+					column.id === 'value' ? { ...column, accessor: (row: Tag) => -row.value } : column
+				);
+			function sortedByValue() {
+				const state = new GridState<Tag>(tagColumns());
+				state.toggleSort('value', false);
+				const view = grid(tagColumns(), state);
+				return { ...view, state };
+			}
+
+			it('the active cell follows its tag (the `columns` prop)', async () => {
+				const { container, rerender } = sortedByValue();
+				await fireEvent.pointerDown(
+					container.querySelector<HTMLElement>('[data-cell-row="0"][data-cell-field="name"]')!
+				);
+				expect(activeCell(container)?.textContent?.trim()).toBe('Alpha');
+
+				await rerender({ columns: reversed() });
+
+				const active = activeCell(container)!;
+				expect(active.textContent?.trim()).toBe('Alpha');
+				expect(active.getAttribute('data-cell-row')).toBe('2');
+			});
+
+			it('the selection is cleared when the caller redefines it (`state.setColumns`)', async () => {
+				const { container, state } = sortedByValue();
+				await fireEvent.pointerDown(
+					container.querySelector<HTMLElement>('[data-cell-row="0"][data-cell-field="name"]')!
+				);
+				flushSync(() => state.setColumns(reversed()));
+				expect(activeCell(container)).toBeNull();
+			});
 		});
 
 		it('is left alone when no condition changed', async () => {

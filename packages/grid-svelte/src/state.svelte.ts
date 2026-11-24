@@ -146,19 +146,33 @@ export class GridState<TRow = unknown> {
 	 *   is remembered (see above). The "never hide every column" rule is
 	 *   applied again afterwards (the first column in display order is shown).
 	 *   A sort / filter on a field that was never a column stays. Dropping one
-	 *   moves `prunedRevision` on.
+	 *   moves `conditionsRevision` on.
+	 * - A column that stays but gets a NEW definition object while a sort /
+	 *   filter / group-by is on it moves `conditionsRevision.revision` on too:
+	 *   its accessor (or compare / format) may read other data, so the rows
+	 *   may be shown in another order.
 	 *
 	 * Pass a NEW array to change the set: the same array instance is a no-op.
 	 */
 	setColumns(columns: GridColumn<TRow>[]): void {
 		if (columns === this.#columns) return;
-		const previous = new Set(this.#columns.map((column) => column.id));
+		const before = new Map(this.#columns.map((column) => [column.id, column]));
+		const previous = new Set(before.keys());
+		// A condition on a column whose definition changed may now order /
+		// filter / group the rows differently (#890 review).
+		const redefined = columns.some((column) => {
+			const old = before.get(column.id);
+			return old !== undefined && old !== column && this.#hasConditionOn(column.id);
+		});
 		this.#columns = columns;
 		const known = new Set(columns.map((column) => column.id));
 		const added = columns.filter((column) => !previous.has(column.id));
 		const removed = [...previous].some((id) => !known.has(id));
 		// The usual case - same ids, new definitions - touches nothing else.
-		if (added.length === 0 && !removed) return;
+		if (added.length === 0 && !removed) {
+			if (redefined) this.#conditionsChanged(false);
+			return;
+		}
 
 		const order = this.order.filter((id) => known.has(id));
 		columns.forEach((column, index) => {
@@ -186,21 +200,28 @@ export class GridState<TRow = unknown> {
 			...this.pinned.filter((id) => known.has(id)),
 			...added.filter((column) => column.pinned === 'left').map((column) => column.id)
 		];
-		if (removed) {
-			const gone = new Set([...previous].filter((id) => !known.has(id)));
-			this.#dropConditionsOn(gone);
-		}
+		const dropped = removed
+			? this.#dropConditionsOn(new Set([...previous].filter((id) => !known.has(id))))
+			: { any: false, params: false };
+		if (redefined || dropped.any) this.#conditionsChanged(dropped.params);
+	}
+
+	#hasConditionOn(id: string): boolean {
+		return (
+			this.groupBy === id ||
+			this.sort.some((entry) => entry.field === id) ||
+			this.filters.some((entry) => entry.field === id)
+		);
 	}
 
 	/**
 	 * Drop the sort / filter entries and the `groupBy` on the columns in `gone`
 	 * (#890). Only those: a condition the app set on a field that never was a
-	 * column (a server-side condition) stays. When anything is dropped,
-	 * `prunedRevision` moves on - BantoGrid reports the new sort / filters to
-	 * `onParamsChange` (server mode) and re-anchors the cell selection, since
-	 * the displayed rows change under it.
+	 * column (a server-side condition) stays. Says whether anything was
+	 * dropped, and whether that was a sort / filter (what a server is asked
+	 * for).
 	 */
-	#dropConditionsOn(gone: Set<string>): void {
+	#dropConditionsOn(gone: Set<string>): { any: boolean; params: boolean } {
 		let params = false;
 		if (this.sort.some((entry) => gone.has(entry.field))) {
 			this.sort = this.sort.filter((entry) => !gone.has(entry.field));
@@ -212,20 +233,31 @@ export class GridState<TRow = unknown> {
 		}
 		const grouped = this.groupBy !== null && gone.has(this.groupBy);
 		if (grouped) this.setGroupBy(null);
-		if (params || grouped) this.#pruned = { revision: this.#pruned.revision + 1, params };
+		return { any: params || grouped, params };
 	}
 
-	#pruned = $state.raw({ revision: 0, params: false });
+	#conditionsChanged(params: boolean): void {
+		const { revision, paramsRevision } = this.#conditions;
+		this.#conditions = {
+			revision: revision + 1,
+			paramsRevision: params ? paramsRevision + 1 : paramsRevision
+		};
+	}
+
+	#conditions = $state.raw({ revision: 0, paramsRevision: 0 });
 
 	/**
-	 * Moves on each time `setColumns` drops a sort / filter / group-by because
-	 * its column went away (#890); `params` tells whether the sort or the
-	 * filters (what a server is asked for) changed. For BantoGrid, which
-	 * reacts to it; an app that calls `setColumns` itself and fetches rows with
-	 * `sort` / `filters` can watch it too.
+	 * Counters `setColumns` moves on (#890). `revision`: the rows may be shown
+	 * in another order - a sort / filter / group-by was dropped because its
+	 * column went away, or the column under one got a new definition.
+	 * `paramsRevision`: a sort or a filter (what a server is asked for) was
+	 * dropped. Both only grow, so several `setColumns` calls before anyone
+	 * looks are still seen: compare with the last value handled. For
+	 * BantoGrid, which reacts to it; an app that calls `setColumns` itself and
+	 * fetches rows with `sort` / `filters` can watch it too.
 	 */
-	get prunedRevision(): { readonly revision: number; readonly params: boolean } {
-		return this.#pruned;
+	get conditionsRevision(): { readonly revision: number; readonly paramsRevision: number } {
+		return this.#conditions;
 	}
 
 	/**

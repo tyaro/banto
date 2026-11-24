@@ -252,26 +252,29 @@
 	// (conventions §8).
 	// svelte-ignore state_referenced_locally
 	let appliedColumns = columns;
-	// The last `prunedRevision` handled (see `afterConditionsPruned`). Declared
-	// here: a pre-effect runs during this script, before the code below.
-	let handledPruneRevision = untrack(() => gridState.prunedRevision.revision);
+	// The last `conditionsRevision` counters handled (see
+	// `afterConditionsChanged`). Declared here: a pre-effect runs during this
+	// script, before the code below.
+	let handledConditions = untrack(() => gridState.conditionsRevision);
 	$effect.pre(() => {
 		const next = columns;
 		if (next === appliedColumns) return;
 		appliedColumns = next;
 		untrack(() => {
-			// Which record the active cell is on, read before the swap can
-			// re-sort or re-filter the rows under it.
+			// Which record the active cell is on, and what each display index
+			// shows, read before the swap can re-sort or re-filter the rows.
 			const anchor = cellSelectionRecord();
+			const before = anchor && mode === 'client' ? displayedOrder() : null;
 			gridState.setColumns(next);
-			afterConditionsPruned(anchor);
+			afterConditionsChanged(anchor, before);
 		});
 	});
 	// The same when the caller calls `state.setColumns` itself (no record to
-	// follow then: the cell selection is cleared instead).
+	// follow then: the cell selection is cleared instead). Several calls in
+	// one update are handled here once, with the latest conditions.
 	$effect.pre(() => {
-		void gridState.prunedRevision;
-		untrack(() => afterConditionsPruned(null));
+		void gridState.conditionsRevision;
+		untrack(() => afterConditionsChanged(null, null));
 	});
 
 	const OVERSCAN = 8;
@@ -922,22 +925,46 @@
 
 	/**
 	 * #890: `setColumns` dropped a sort / filter / group-by whose column went
-	 * away. The server is asked for the new sort / filters (as after a header
-	 * change), and the cell selection - display indices - moves with the
-	 * record it was on: the active cell follows that row id, a range (which
-	 * cannot be kept over re-ordered rows) collapses to it, and with no record
-	 * to follow (server mode, the caller's own `setColumns`, a row no longer
-	 * shown) the selection is cleared.
+	 * away, or gave the column under one a new definition (see
+	 * `GridState.conditionsRevision`). When the sort / filters changed the
+	 * server is asked for them once (as after a header change), however many
+	 * `setColumns` calls led here. The cell selection - display indices -
+	 * stays when the display order did not change; otherwise it moves with
+	 * the record it was on: the active cell follows that row id, a range
+	 * (which cannot be kept over re-ordered rows) collapses to it, and with no
+	 * record to follow (the caller's own `setColumns`, a row no longer shown)
+	 * the selection is cleared. Server mode clears it when the sort / filters
+	 * changed (the rows are fetched again).
 	 */
-	function afterConditionsPruned(anchor: { rowId: string | number; field: string } | null) {
-		const pruned = gridState.prunedRevision;
-		if (pruned.revision === handledPruneRevision) return;
-		handledPruneRevision = pruned.revision;
-		if (pruned.params) notifyParamsChange();
+	function afterConditionsChanged(
+		anchor: { rowId: string | number; field: string } | null,
+		before: unknown[] | null
+	) {
+		const current = gridState.conditionsRevision;
+		if (current.revision === handledConditions.revision) return;
+		const paramsChanged = current.paramsRevision !== handledConditions.paramsRevision;
+		handledConditions = current;
+		if (paramsChanged) notifyParamsChange();
 		if (!selection.active) return;
-		const rowIndex = anchor && mode === 'client' ? displayIndexOfRowId(anchor.rowId) : -1;
+		if (mode === 'server') {
+			if (paramsChanged) selection.clear();
+			return;
+		}
+		if (before && sameOrder(before, displayedOrder())) return;
+		const rowIndex = anchor ? displayIndexOfRowId(anchor.rowId) : -1;
 		if (anchor && rowIndex >= 0) selection.setActive(rowIndex, anchor.field, false);
 		else selection.clear();
+	}
+
+	/** Client mode: what each display index shows - a row, or a group's key. */
+	function displayedOrder(): unknown[] {
+		return groupedEntries
+			? groupedEntries.map((entry) => (entry.kind === 'row' ? entry.row : `__group_${entry.key}`))
+			: sorted;
+	}
+
+	function sameOrder(a: unknown[], b: unknown[]): boolean {
+		return a.length === b.length && a.every((item, index) => item === b[index]);
 	}
 
 	function cellSelectionRecord(): { rowId: string | number; field: string } | null {
