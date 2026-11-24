@@ -148,6 +148,26 @@ describe('rowActions', () => {
 		expect(u1b.getAttribute('tabindex')).toBe('0'); // the host's latest value comes back
 	});
 
+	it('two host rewrites in one batch: the last one is remembered', async () => {
+		const toolbar = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
+			render: () =>
+				`<span><button type="button" data-testid="v1-${node().id}" tabindex="0">1</button></span>`
+		}));
+		render(BantoTree, { nodes: forest(), rowActions: toolbar });
+		await new Promise((r) => setTimeout(r, 0));
+		const v1b = screen.getByTestId('v1-b');
+		v1b.setAttribute('tabindex', '2');
+		v1b.setAttribute('tabindex', '3');
+		await new Promise((r) => setTimeout(r, 0));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(v1b.getAttribute('tabindex')).toBe('-1');
+
+		row('Alpha').focus();
+		keyOn(screen.getByRole('tree'), 'ArrowDown');
+		await tick();
+		expect(v1b.getAttribute('tabindex')).toBe('3');
+	});
+
 	it('focusing a control moves the tab stop to its row', async () => {
 		render(BantoTree, { nodes: forest(), rowActions: actions });
 		screen.getByTestId('act-c').focus();
@@ -268,7 +288,7 @@ describe('canDrop / onDropTargetChange', () => {
 			toJSON: () => ({})
 		});
 	}
-	function pointer(type: string, x: number, y: number): MouseEvent {
+	function pointer(type: string, x: number, y: number, pointerId = 1): MouseEvent {
 		const event = new MouseEvent(type, {
 			bubbles: true,
 			cancelable: true,
@@ -276,7 +296,7 @@ describe('canDrop / onDropTargetChange', () => {
 			clientX: x,
 			clientY: y
 		});
-		Object.defineProperty(event, 'pointerId', { value: 1 });
+		Object.defineProperty(event, 'pointerId', { value: pointerId });
 		return event;
 	}
 	/** Drag `from` over `to` at vertical offset `y` (0-30) and, unless `hold`, release. */
@@ -297,7 +317,7 @@ describe('canDrop / onDropTargetChange', () => {
 		const onMove = vi.fn();
 		render(BantoTree, { nodes: forest(), draggable: true, expanded: ['a'], canDrop, onMove });
 		await drag('Charlie', 'Alpha-1', 2);
-		expect(canDrop).toHaveBeenCalledTimes(1);
+		expect(canDrop).toHaveBeenCalledTimes(2); // on reaching the row, and again on release
 		const request = canDrop.mock.calls[0]?.[0];
 		expect(request?.dragged.id).toBe('c');
 		expect(request?.target.id).toBe('a1');
@@ -361,6 +381,59 @@ describe('canDrop / onDropTargetChange', () => {
 		window.dispatchEvent(pointer('pointermove', 70, 28)); // now "after"
 		expect(canDrop).toHaveBeenCalledTimes(2);
 		window.dispatchEvent(pointer('pointerup', 70, 28));
+	});
+
+	it('judges the drop again on release: a host that refuses by now gets no move', async () => {
+		let open = true;
+		const onMove = vi.fn();
+		render(BantoTree, { nodes: forest(), draggable: true, onMove, canDrop: () => open });
+		await drag('Charlie', 'Alpha', 2, true);
+		expect(row('Alpha').hasAttribute('data-drop-denied')).toBe(false);
+		open = false; // e.g. a permission changed mid-drag
+		window.dispatchEvent(pointer('pointerup', 50, 2));
+		await tick();
+		expect(onMove).not.toHaveBeenCalled();
+	});
+
+	it('only the pointer that started the drag drops it', async () => {
+		const onMove = vi.fn();
+		render(BantoTree, { nodes: forest(), draggable: true, onMove });
+		await drag('Charlie', 'Alpha', 2, true);
+		window.dispatchEvent(pointer('pointerup', 50, 2, 7));
+		await tick();
+		expect(onMove).not.toHaveBeenCalled();
+		window.dispatchEvent(pointer('pointerup', 50, 2));
+		await tick();
+		expect(onMove).toHaveBeenCalledWith('c', 'a', 'before');
+	});
+
+	it('a cancelled drag clears the candidate and moves nothing', async () => {
+		const onMove = vi.fn();
+		const onDropTargetChange = vi.fn();
+		render(BantoTree, { nodes: forest(), draggable: true, onMove, onDropTargetChange });
+		await drag('Charlie', 'Alpha', 2, true);
+		window.dispatchEvent(pointer('pointercancel', 50, 2));
+		await tick();
+		expect(onDropTargetChange).toHaveBeenLastCalledWith(null);
+		window.dispatchEvent(pointer('pointerup', 50, 2));
+		await tick();
+		expect(onMove).not.toHaveBeenCalled();
+	});
+
+	it('a tree torn down mid-drag clears the candidate and leaves no listeners', async () => {
+		const onMove = vi.fn();
+		const onDropTargetChange = vi.fn();
+		const view = render(BantoTree, {
+			nodes: forest(),
+			draggable: true,
+			onMove,
+			onDropTargetChange
+		});
+		await drag('Charlie', 'Alpha', 2, true);
+		view.unmount();
+		expect(onDropTargetChange).toHaveBeenLastCalledWith(null);
+		window.dispatchEvent(pointer('pointerup', 50, 2));
+		expect(onMove).not.toHaveBeenCalled();
 	});
 
 	it('without canDrop every shape-legal drop is allowed (as before) and still reported', async () => {

@@ -464,27 +464,38 @@
 				ownWrites.clear();
 				return;
 			}
-			for (const record of records) {
-				if (record.type !== 'attributes' || !(record.target instanceof HTMLElement)) continue;
-				const control = record.target;
+			// Sort every record first, write back after: a write made while sorting would be
+			// counted against a host record still in this batch. The value a record set is the
+			// next record's old value for the same control (or the live value for the last one).
+			const attrRecords = records.filter(
+				(r) => r.type === 'attributes' && r.target instanceof HTMLElement
+			);
+			const touched = new Set<HTMLElement>();
+			attrRecords.forEach((record, i) => {
+				const control = record.target as HTMLElement;
+				const next = attrRecords.slice(i + 1).find((r) => r.target === control);
+				const value = next ? next.oldValue : control.getAttribute('tabindex');
 				const pending = ownWrites.get(control) ?? 0;
-				if (pending > 0) {
+				if (pending > 0 && value === '-1') {
 					if (pending === 1) ownWrites.delete(control);
 					else ownWrites.set(control, pending - 1);
-					continue;
+					return;
 				}
-				// The host rewrote a tab stop we hold: remember its value, keep it out of the order.
-				if (!saved.has(control)) continue;
-				const value = control.getAttribute('tabindex');
+				// The host rewrote a tab stop we hold: remember its value.
+				if (!saved.has(control)) return;
 				saved.set(control, value);
-				if (value !== '-1') holdOut(control);
-			}
+				touched.add(control);
+			});
+			// ...and keep it out of the order.
+			for (const control of touched)
+				if (control.getAttribute('tabindex') !== '-1') holdOut(control);
 			apply();
 		});
 		observer.observe(el, {
 			childList: true,
 			subtree: true,
 			attributes: true,
+			attributeOldValue: true,
 			attributeFilter: ['tabindex']
 		});
 		// After `observe`: the first hold-outs are counted in `ownWrites`, so their records must come.
@@ -737,6 +748,7 @@
 		};
 		window.addEventListener('pointermove', onDragMove);
 		window.addEventListener('pointerup', onDragUp);
+		window.addEventListener('pointercancel', onDragCancel);
 	}
 	function onDragMove(event: PointerEvent): void {
 		if (!dragState || event.pointerId !== dragState.pointerId) return;
@@ -773,42 +785,74 @@
 		if (y < third) position = 'before';
 		else if (y > rect.height - third) position = 'after';
 		else position = targetNode && nodeHasChildren(targetNode) ? 'inside' : 'after';
-		const dragged = findNode(roots, dragState.id);
-		if (!dragged || !targetNode || !canDropShape(roots, dragState.id, targetId, position)) {
+		// Same candidate as the last move: keep the verdict (the host is asked once per change;
+		// the drop itself is judged again on release).
+		if (dropTarget?.id === targetId && dropTarget.position === position) return;
+		const judged = judgeDrop(dragState.id, targetId, position);
+		if (!judged) {
 			clearDropTarget();
 			return;
 		}
-		// Same candidate as the last move: keep the verdict (the host is asked once per change).
-		if (dropTarget?.id === targetId && dropTarget.position === position) return;
+		dropTarget = { id: targetId, position, denied: !judged.allowed };
+		onDropTargetChange?.(judged);
+	}
+	/**
+	 * The tree's shape check, then the host's `canDrop`, on the current forest. `null` when the
+	 * shape (or a missing / disabled node) rules the drop out before the host is asked.
+	 */
+	function judgeDrop(
+		dragId: NodeId,
+		targetId: NodeId,
+		position: DropPosition
+	): TreeDropHover<TData> | null {
+		const dragged = findNode(roots, dragId);
+		const target = findNode(roots, targetId);
+		if (!dragged || !target || target.disabled) return null;
+		if (!canDropShape(roots, dragId, targetId, position)) return null;
 		const request: TreeDropRequest<TData> = {
 			dragged,
-			target: targetNode,
+			target,
 			position,
-			parent: position === 'inside' ? targetNode : findParent(roots, targetId)
+			parent: position === 'inside' ? target : findParent(roots, targetId)
 		};
 		const verdict = canDrop ? canDrop(request) : true;
 		const allowed = typeof verdict === 'boolean' ? verdict : verdict.allowed;
 		const reason = typeof verdict === 'boolean' || allowed ? undefined : verdict.reason;
-		dropTarget = { id: targetId, position, denied: !allowed };
-		onDropTargetChange?.({ ...request, allowed, reason });
+		return { ...request, allowed, reason };
 	}
 	function clearDropTarget(): void {
 		if (dropTarget === null) return;
 		dropTarget = null;
 		onDropTargetChange?.(null);
 	}
-	function onDragUp(): void {
+	/** Ends a drag (release, cancel or teardown): listeners off, candidate cleared. */
+	function endDrag(): void {
 		window.removeEventListener('pointermove', onDragMove);
 		window.removeEventListener('pointerup', onDragUp);
-		const ds = dragState;
-		const dt = dropTarget;
+		window.removeEventListener('pointercancel', onDragCancel);
 		dragState = null;
 		clearDropTarget();
-		if (!ds || !ds.active || !dt || dt.denied) return;
+	}
+	function onDragCancel(event: PointerEvent): void {
+		if (!dragState || event.pointerId !== dragState.pointerId) return;
+		endDrag();
+	}
+	function onDragUp(event: PointerEvent): void {
+		// Only the pointer that started the drag ends it.
+		if (!dragState || event.pointerId !== dragState.pointerId) return;
+		const ds = dragState;
+		const dt = dropTarget;
+		endDrag();
+		if (!ds.active || !dt || dt.denied) return;
+		// Judged again on the current forest and host state: the hover verdict may be stale.
+		const judged = judgeDrop(ds.id, dt.id, dt.position);
+		if (!judged?.allowed) return;
 		if (onMove) onMove(ds.id, dt.id, dt.position);
 		else roots = moveNode(roots, ds.id, dt.id, dt.position);
 		if (dt.position === 'inside') requestExpanded(dt.id, true);
 	}
+	// A tree torn down mid-drag leaves no window listeners behind.
+	$effect(() => () => untrack(endDrag));
 
 	// --- tree-grid cell rendering ---
 	function cellText(col: TreeColumn<TData>, node: TreeNode<TData>): string {
