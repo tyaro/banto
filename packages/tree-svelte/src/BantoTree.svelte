@@ -432,7 +432,22 @@
 		// `:disabled` also covers controls inside a disabled `<fieldset>`
 		if (el.matches(':disabled')) return false;
 		if (el.closest('[inert], [hidden]')) return false;
-		return typeof el.checkVisibility === 'function' ? el.checkVisibility() : true;
+		return typeof el.checkVisibility === 'function'
+			? el.checkVisibility({ visibilityProperty: true })
+			: true;
+	}
+	/**
+	 * Focuses the first candidate that really takes the focus (checked on
+	 * `document.activeElement`, so any reason a control cannot be focused is covered), else
+	 * `fallback` (the row itself).
+	 */
+	function focusFirstOf(candidates: HTMLElement[], fallback: HTMLElement | undefined): void {
+		for (const el of candidates) {
+			if (!isTabbable(el)) continue;
+			el.focus();
+			if (document.activeElement === el) return;
+		}
+		fallback?.focus();
 	}
 	/** The other rows' control boxes are `inert` until this key's default action is done. */
 	function shieldOtherRowsForOneKey(): void {
@@ -470,8 +485,7 @@
 			const controls = fromAfter
 				? [...(rowEl?.querySelectorAll<HTMLElement>(`[data-tree-actions] :is(${TABBABLE})`) ?? [])]
 				: [];
-			const last = controls.filter(isTabbable).pop();
-			(last ?? rowEl)?.focus();
+			focusFirstOf(controls.reverse(), rowEl);
 			return;
 		}
 		tree.focusedId = id;

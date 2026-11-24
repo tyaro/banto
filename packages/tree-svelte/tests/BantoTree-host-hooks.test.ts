@@ -115,16 +115,14 @@ describe('rowActions', () => {
 		expect(inertRows()).toEqual([]); // clicks work again right after the key
 
 		screen.getByTestId('more-a1').focus();
-		const backward = screen
-			.getByTestId('more-a1')
-			.dispatchEvent(
-				new KeyboardEvent('keydown', {
-					key: 'Tab',
-					shiftKey: true,
-					bubbles: true,
-					cancelable: true
-				})
-			);
+		const backward = screen.getByTestId('more-a1').dispatchEvent(
+			new KeyboardEvent('keydown', {
+				key: 'Tab',
+				shiftKey: true,
+				bubbles: true,
+				cancelable: true
+			})
+		);
 		expect(backward).toBe(true);
 		expect(inertRows()).toEqual(['a', 'a2', 'b', 'c']);
 		await nextTask();
@@ -194,6 +192,29 @@ describe('rowActions', () => {
 		);
 		screen.getByTestId('more-c').focus();
 		expect(document.activeElement).toBe(screen.getByTestId('more-a'));
+		before.remove();
+		after.remove();
+	});
+
+	it('Shift+Tab entry skips controls that cannot take the focus, and ends on the row', async () => {
+		const { before, after } = framed({ nodes: forest(), rowActions: actions });
+		const enterFromAfter = () => {
+			after.focus();
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
+			);
+			screen.getByTestId('more-c').focus();
+		};
+		// `visibility: hidden` (jsdom has no CSS: the check is stubbed as a browser answers it)
+		const more = screen.getByTestId('more-a');
+		more.checkVisibility = (options?: CheckVisibilityOptions) => !options?.visibilityProperty;
+		enterFromAfter();
+		expect(document.activeElement).toBe(screen.getByTestId('act-a'));
+
+		// A control that refuses the focus for any other reason: the next one, then the row.
+		screen.getByTestId('act-a').focus = () => {};
+		enterFromAfter();
+		expect(document.activeElement).toBe(row('Alpha'));
 		before.remove();
 		after.remove();
 	});
