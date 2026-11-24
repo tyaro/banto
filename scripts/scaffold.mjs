@@ -1950,6 +1950,8 @@ function removeDashboard() {
 		'dashboardKpis.ts',
 		'dashboardData.svelte.ts',
 		'dashboardData.svelte.test.ts',
+		'dashboardDrill.ts',
+		'dashboardDrill.test.ts',
 		'dashboardPeriod.ts',
 		'dashboardPeriod.test.ts'
 	])

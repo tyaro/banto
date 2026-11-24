@@ -12,14 +12,17 @@
 	 * The caller's box needs a height (a pane, a fixed-height card body); this fills it.
 	 */
 	import type { DashboardPageData } from '#lib/banto/dashboardData.svelte.js';
+	import type { DashboardDrill } from '#lib/banto/dashboardDrill.js';
 	import { dashboardDataFor, type DashboardWidgetDef } from '#lib/banto/dashboardWidgets.js';
 
 	interface Props {
 		widget: DashboardWidgetDef;
 		data: DashboardPageData;
+		/** Handed to the widget as it is. Omitted in the popped-out window: no drill-down there (#882 D3). */
+		onDrill?: (drill: DashboardDrill) => void;
 	}
 
-	let { widget, data }: Props = $props();
+	let { widget, data, onDrill }: Props = $props();
 
 	/**
 	 * #716 W3: the rows narrowed by the page's shared period only for a widget registered with
@@ -38,7 +41,7 @@
 </script>
 
 <div class="widget-frame" bind:clientHeight={measured}>
-	<widget.component data={widgetData} {height} />
+	<widget.component data={widgetData} {height} {onDrill} />
 </div>
 
 <style>

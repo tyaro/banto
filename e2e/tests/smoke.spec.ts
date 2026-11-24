@@ -4043,7 +4043,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			])
 				await expect(page.locator(`.dock-wrapper [data-dock-drop-id="${id}"]`)).toHaveCount(1);
 			await expect(page.getByRole('img', { name: '月別更新件数の面グラフ' })).toHaveCount(1);
-			await expect(page.getByRole('img', { name: '価格帯分布のドーナツグラフ' })).toHaveCount(1);
+			// The donut's marks are selectable here (drill-down, #882 D3): a group, not an image.
+			await expect(page.getByRole('group', { name: '価格帯分布のドーナツグラフ' })).toHaveCount(1);
 			// The list shows rows of the same read.
 			await expect(
 				page.locator('.dock-wrapper [data-dock-drop-id="lowStock"]').getByRole('row').nth(1)
@@ -4155,6 +4156,309 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.reload();
 		await expect(period.getByRole('radio', { name: '全期間' })).toBeChecked();
 		await expect.poll(number).toBe(allCount);
+	});
+
+	// #882 D3 (crossfilter-drilldown-design §7.2): a mark of the 価格帯分布 donut opens the items list
+	// on that band, and the list holds as many rows as the mark says - with and without a period,
+	// on the client grid and on the server grid. Needs the charts (the marks) and the dock (the
+	// default layout shows the donut).
+	const PRICE_MARKS = '[data-dock-drop-id="priceBuckets"] g.mark[role="button"]';
+
+	const PRICE_CHART = '[data-dock-drop-id="priceBuckets"]';
+	const PRICE_CHART_NAME = '価格帯分布のドーナツグラフ';
+	const BAND_LABELS = ['〜¥99', '¥100〜149', '¥150〜199', '¥200〜'];
+	/** The band (0..3) a price falls in: the cut points 100 / 150 / 200, written out here on purpose. */
+	const bandOf = (price: number) => (price < 100 ? 0 : price < 150 ? 1 : price < 200 ? 2 : 3);
+
+	/** The marks of the donut as `{ label, count }`, read once the chart is drawn (none for an empty chart). */
+	async function readPriceMarks(): Promise<{ label: string; count: number }[]> {
+		await expect(
+			page.locator(PRICE_CHART).getByRole('group', { name: PRICE_CHART_NAME })
+		).toBeVisible();
+		const names = await page
+			.locator(PRICE_MARKS)
+			.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label') ?? ''));
+		return names.map((name) => {
+			const found = /^(.+): ([\d,]+)件/.exec(name);
+			if (!found) throw new Error(`unexpected mark name: ${name}`);
+			return { label: found[1]!, count: Number(found[2]!.replace(/,/g, '')) };
+		});
+	}
+
+	/** The count each band's mark shows, in band order (0 where the donut has no mark). */
+	async function readBandCounts(): Promise<number[]> {
+		const marks = await readPriceMarks();
+		return BAND_LABELS.map((label) => marks.find((mark) => mark.label === label)?.count ?? 0);
+	}
+
+	/** After a mark opened the list: the link is consumed, and the list holds `count` rows. */
+	async function expectListRows(
+		count: number,
+		answer: Promise<{ totalCount: number }> | null
+	): Promise<void> {
+		// Server grid: the answer's own count first, then the grid showing it.
+		if (answer) expect((await answer).totalCount).toBe(count);
+		await expect(page).toHaveURL(/\/items$/);
+		await expect(page.getByRole('grid').first()).toHaveAttribute(
+			'aria-rowcount',
+			String(count + 1)
+		);
+	}
+
+	/** The server's answer to the list request that carries conditions (started before the click). */
+	function filteredListAnswer(): Promise<{ totalCount: number }> {
+		return page
+			.waitForResponse((res) => {
+				const req = res.request();
+				if (new URL(res.url()).pathname !== '/api/items/list' || req.method() !== 'POST') {
+					return false;
+				}
+				const sent = (req.postDataJSON()?.filters ?? []) as unknown[];
+				return res.ok() && sent.length > 0;
+			})
+			.then((res) => res.json() as Promise<{ totalCount: number }>);
+	}
+
+	function clearListState(): Promise<void> {
+		return page.evaluate(() => {
+			for (const key of Object.keys(sessionStorage)) {
+				if (key.startsWith('banto.listView.items:')) sessionStorage.removeItem(key);
+			}
+		});
+	}
+
+	test('13k7. dashboard: a mark opens the list with as many rows as it counts (period or not, client and server)', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		test.setTimeout(300_000);
+		const PERIOD = '直近30日';
+
+		// Known rows on the price cut points (stock 1: low stock; updated today by the server's
+		// clock), so what is expected below does not depend on what earlier scenarios left.
+		await page.goto('/items');
+		const prices = [99, 100, 149, 150, 199, 200];
+		const ids: number[] = await page.evaluate(async (list) => {
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const made: number[] = [];
+			for (const price of list) {
+				const res = await fetch('/api/items', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-Banto-Client': 'banto',
+						Authorization: `Bearer ${token}`
+					},
+					body: JSON.stringify({ name: `E2E境界${price}`, price, stock: 1 })
+				});
+				if (!res.ok) throw new Error(`create failed: ${res.status}`);
+				made.push(((await res.json()) as { id: number }).id);
+			}
+			return made;
+		}, prices);
+		try {
+			// What is expected is worked out here from the rows themselves, not read from the page:
+			// the band of each price, "low stock" under 50, and the period = the 30 days up to the
+			// newest day (the start day itself not included).
+			const rows = await page.evaluate(async () => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				const res = await fetch('/api/items/list', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-Banto-Client': 'banto',
+						Authorization: `Bearer ${token}`
+					},
+					body: JSON.stringify({ pagination: { offset: 0, limit: 20000 } })
+				});
+				const body = (await res.json()) as {
+					rows: { price: number; stock: number; updatedAt: string }[];
+				};
+				return body.rows;
+			});
+			const dayOf = (value: string) => value.slice(0, 10);
+			const newest = rows
+				.map((row) => dayOf(row.updatedAt))
+				.sort()
+				.at(-1)!;
+			const start = new Date(Date.parse(`${newest}T00:00:00Z`) - 30 * 86_400_000)
+				.toISOString()
+				.slice(0, 10);
+			const expected = (period: string | null) => {
+				const inside = rows.filter((row) => period === null || dayOf(row.updatedAt) > start);
+				const bands = [0, 0, 0, 0];
+				for (const row of inside) bands[bandOf(row.price)]!++;
+				return { bands, low: inside.filter((row) => row.stock < 50).length };
+			};
+			// The rows this test made are inside the 30 days: the period's donut holds at least them.
+			expect(expected(PERIOD).bands.map((n, i) => n >= [1, 2, 2, 1][i]!)).toEqual([
+				true,
+				true,
+				true,
+				true
+			]);
+
+			const openDashboard = async (period: string | null) => {
+				await page.goto('/dashboard');
+				await resetDashboardLayout(page);
+				if (period) {
+					await page
+						.getByRole('radiogroup', { name: '期間（更新日）' })
+						.getByText(period, { exact: true })
+						.click();
+					await expect(page.getByRole('radio', { name: period })).toBeChecked();
+				}
+			};
+			const lowTile = page.getByRole('link', { name: /^在庫僅少/ });
+			const lowValue = async () =>
+				Number(((await lowTile.locator('.stat-value').textContent()) ?? '').replace(/[^\d]/g, ''));
+
+			for (const mode of [CLIENT_MODE, SERVER_MODE]) {
+				const server = mode === SERVER_MODE;
+				await page.goto('/items');
+				await chooseItemsMode(page, mode);
+				for (const period of [null, PERIOD]) {
+					const want = expected(period);
+					for (const [i, label] of BAND_LABELS.entries()) {
+						await openDashboard(period);
+						// The donut and the tile show the expected numbers, whatever came before.
+						await expect.poll(readBandCounts).toEqual(want.bands);
+						await expect.poll(lowValue).toBe(want.low);
+						const answer = server ? filteredListAnswer() : null;
+						// The click event itself: the centre of a thin slice of a donut is in its hole.
+						await page.locator(`${PRICE_MARKS}[aria-label^="${label}: "]`).dispatchEvent('click');
+						await expectListRows(want.bands[i]!, answer);
+						if (period) {
+							// Inside the 30 days the list is short: the rows of the band are there, the
+							// boundary rows of the other bands are not.
+							for (const price of prices) {
+								const row = page.getByText(`E2E境界${price}`, { exact: true });
+								if (bandOf(price) === i) await expect(row.first()).toBeVisible();
+								else await expect(row).toHaveCount(0);
+							}
+						}
+						await clearListState();
+					}
+					// The low-stock tile, with the period when there is one.
+					await openDashboard(period);
+					await expect.poll(lowValue).toBe(want.low);
+					const answer = server ? filteredListAnswer() : null;
+					await lowTile.click();
+					await expectListRows(want.low, answer);
+					await clearListState();
+				}
+			}
+		} finally {
+			await page.evaluate(async (all) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				for (const id of all) {
+					await fetch(`/api/items/${id}`, {
+						method: 'DELETE',
+						headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+					});
+				}
+			}, ids);
+			await clearListState();
+		}
+	});
+
+	test('13k8. dashboard: a mark can be reached and opened with the keyboard alone', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		try {
+			await page.goto('/items');
+			await chooseItemsMode(page, CLIENT_MODE);
+			await page.goto('/dashboard');
+			await resetDashboardLayout(page);
+			const marks = await readPriceMarks();
+			expect(marks.length).toBeGreaterThan(1);
+			// One Tab stop for the whole donut; the arrow keys move inside it.
+			await expect(page.locator(`${PRICE_MARKS}[tabindex="0"]`)).toHaveCount(1);
+			await page.locator(`${PRICE_MARKS}[tabindex="0"]`).focus();
+			await page.keyboard.press('ArrowRight');
+			await expect(page.locator(`${PRICE_MARKS}:focus`)).toHaveAttribute(
+				'aria-label',
+				new RegExp(`^${marks[1]!.label}: `)
+			);
+			await page.keyboard.press('Enter');
+			await expectListRows(marks[1]!.count, null);
+			await clearListState();
+
+			// Space opens the focused mark as well.
+			await page.goto('/dashboard');
+			await expect(page.locator(PRICE_MARKS).first()).toBeVisible();
+			await page.locator(`${PRICE_MARKS}[tabindex="0"]`).focus();
+			await page.keyboard.press('Space');
+			await expectListRows(marks[0]!.count, null);
+		} finally {
+			await clearListState();
+		}
+	});
+
+	// The dashboard reads at most 20,000 rows; when the server holds more, the page says so (the
+	// list a mark opens shows every matching row). Narrowing by a period is NOT a cut. The server's
+	// count is raised in the answer: the demo data never reaches the limit.
+	test('13k9. dashboard: the row limit is told only when rows were left out (not by a period)', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		const note =
+			'先頭 20,000 件）の集計です。一覧は、サーバー方式（少しずつ読み込む）なら条件に合う全件に対して絞ります';
+		const tile = page.getByRole('link', { name: /^在庫僅少/ });
+		await page.goto('/dashboard');
+		await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+		await expect(page.getByText(note)).toHaveCount(0);
+		// A period leaves fewer rows, but nothing was left out of the read.
+		const period = page.getByRole('radiogroup', { name: '期間（更新日）' });
+		await period.getByText('直近30日', { exact: true }).click();
+		await expect(period.getByRole('radio', { name: '直近30日' })).toBeChecked();
+		await expect(page.getByText(note)).toHaveCount(0);
+		await expect(tile).not.toHaveAttribute('title', new RegExp(note));
+
+		const patch = async (route: Route) => {
+			const request = route.request();
+			const body = request.postDataJSON() as { pagination?: { limit?: number } } | null;
+			if (request.method() !== 'POST' || body?.pagination?.limit !== 20_000) {
+				return route.fallback();
+			}
+			const response = await route.fetch();
+			const json = (await response.json()) as { totalCount: number };
+			await route.fulfill({ response, json: { ...json, totalCount: 20_005 } });
+		};
+		await page.route('**/api/items/list', patch);
+		try {
+			await page.reload();
+			await expect(page.getByText(note).first()).toBeVisible();
+			// The list shows every matching row only in the server mode: the page must not promise it for all.
+			await expect(page.getByText('一覧は条件に合う全件を表示します')).toHaveCount(0);
+			// The tile's tooltip and the marks' names say it too.
+			await expect(tile).toHaveAttribute('title', new RegExp(note));
+			await expect(page.locator(PRICE_MARKS).first()).toHaveAttribute(
+				'aria-label',
+				new RegExp(note)
+			);
+		} finally {
+			await page.unroute('**/api/items/list', patch);
+		}
+		await page.reload();
+		await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+		await expect(page.getByText(note)).toHaveCount(0);
+	});
+
+	// The popped-out window (Tauri `WebviewWindow`, here its route in a plain tab) has no
+	// drill-down: the donut is an image, nothing in it takes the focus.
+	test('13k10. dashboard: the panel route has no selectable marks and nothing takes the focus', async () => {
+		// `/panel/[id]` goes with the dock (removeDock).
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		await page.goto('/panel/priceBuckets');
+		const chart = page.getByRole('img', { name: '価格帯分布のドーナツグラフ' });
+		await expect(chart).toBeVisible();
+		await expect(chart.locator('[role="button"], [data-mark-index], [tabindex]')).toHaveCount(0);
+		// Tabbing through the document never stops inside the chart.
+		for (let i = 0; i < 6; i++) {
+			await page.keyboard.press('Tab');
+			expect(
+				await page.evaluate(() => document.activeElement?.closest('svg, [role="img"]') !== null)
+			).toBe(false);
+		}
 	});
 
 	// Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the dashboard

@@ -67,8 +67,10 @@
 	import PageViewMenu, { type PageViewMenuItem } from '#lib/components/PageViewMenu.svelte';
 	import DashboardWidgetFrame from '#lib/components/dashboard/DashboardWidgetFrame.svelte';
 	// [scaffold:dock] end
+	import { goto } from '$app/navigation';
 	import * as m from '#lib/paraglide/messages.js';
-	import { createDashboardData } from '#lib/banto/dashboardData.svelte.js';
+	import { DASHBOARD_ROW_LIMIT, createDashboardData } from '#lib/banto/dashboardData.svelte.js';
+	import { drillHref, type DashboardDrill } from '#lib/banto/dashboardDrill.js';
 	import { DASHBOARD_WIDGETS } from '#lib/banto/dashboardWidgets.js';
 	import DashboardWidgetStack from '#lib/components/dashboard/DashboardWidgetStack.svelte';
 	import DashboardKpiStrip from '#lib/components/DashboardKpiStrip.svelte';
@@ -77,6 +79,7 @@
 	import {
 		DASHBOARD_PERIODS,
 		DEFAULT_DASHBOARD_FILTER,
+		latestDay,
 		type DashboardFilter,
 		type DashboardPeriod
 	} from '#lib/banto/dashboardPeriod.js';
@@ -110,6 +113,24 @@
 	$effect(() => {
 		void data.load();
 		return () => data.dispose();
+	});
+
+	/**
+	 * #882 D3: a mark of a widget opens the items list that holds the rows it counts. The widget
+	 * says what was chosen; the period is added here (`drillHref`), so the list counts what the mark
+	 * counted. Handed to the widgets in the dock and in the one-column display; the popped-out
+	 * window (`routes/panel/[id]`) has none.
+	 */
+	const anchorDay = $derived(latestDay(data.all.rows));
+	function onDrill(drill: DashboardDrill): void {
+		void goto(drillHref(drill, filter, anchorDay));
+	}
+	// The read left rows out (the limit): say so next to the count, in one sentence.
+	const summary = $derived.by(() => {
+		const base = m['dashboard.summary']({ count: data.totalCount.toLocaleString() });
+		if (!data.truncated) return base;
+		const note = m['dashboard.truncatedNote']({ limit: DASHBOARD_ROW_LIMIT.toLocaleString() });
+		return m['dashboard.summaryWithNote']({ summary: base, note });
 	});
 
 	/**
@@ -441,11 +462,7 @@
 </script>
 
 <div class="page">
-	<PageHeader
-		hideTitle
-		title={m['nav.dashboard']()}
-		description={m['dashboard.summary']({ count: data.totalCount.toLocaleString() })}
-	>
+	<PageHeader hideTitle title={m['nav.dashboard']()} description={summary}>
 		{#snippet actions()}
 			<SegmentedControl
 				name="dashboard-period"
@@ -469,7 +486,7 @@
 		<p>{m['dashboard.aboutNote']({ count: data.totalCount.toLocaleString() })}</p>
 	</AnnotationDrawer>
 
-	<DashboardKpiStrip {data} />
+	<DashboardKpiStrip {data} {filter} />
 
 	<!-- [scaffold:dock] begin -->
 	<div class="page-measure" bind:clientWidth={measuredWidth}></div>
@@ -501,7 +518,7 @@
 		{/if}
 		<!-- [scaffold:dock] end -->
 		{#if stacked}
-			<DashboardWidgetStack widgets={stackWidgets} {data} />
+			<DashboardWidgetStack widgets={stackWidgets} {data} {onDrill} />
 		{/if}
 	{/if}
 	<!-- [scaffold:dock] begin -->
@@ -533,7 +550,7 @@
 	{@const widget = widgetOf(content.id)}
 	<div class="dock-panel">
 		{#if widget}
-			<DashboardWidgetFrame {widget} {data} />
+			<DashboardWidgetFrame {widget} {data} {onDrill} />
 		{:else}
 			<p class="dock-status">{m['dashboard.unknownPanel']()}</p>
 		{/if}

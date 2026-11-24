@@ -14,7 +14,7 @@ import { computeStatTiles, lowestStockItems } from './dashboard';
 import type { DashboardData } from './dashboardData.svelte';
 import { DASHBOARD_KPIS } from './dashboardKpis';
 import { DASHBOARD_WIDGETS, findDashboardWidget } from './dashboardWidgets';
-import { LOW_STOCK_THRESHOLD, LOW_STOCK_VIEW_ID } from './resources/items';
+import { LOW_STOCK_THRESHOLD } from './resources/items';
 import type { Item } from './sampleData';
 
 const item = (id: number, price: number, stock: number, updatedAt: string): Item => ({
@@ -27,7 +27,13 @@ const item = (id: number, price: number, stock: number, updatedAt: string): Item
 });
 
 function dataOf(rows: Item[]): DashboardData {
-	return { rows, loading: false, totalCount: rows.length, stats: computeStatTiles(rows) };
+	return {
+		rows,
+		loading: false,
+		totalCount: rows.length,
+		truncated: false,
+		stats: computeStatTiles(rows)
+	};
 }
 
 describe('DASHBOARD_WIDGETS (#716 W1)', () => {
@@ -159,7 +165,8 @@ describe('DASHBOARD_KPIS (#716 W1)', () => {
 	it('links the low-stock tile to the items list on its low-stock view', () => {
 		expect(DASHBOARD_KPIS.filter((def) => def.link).map((def) => def.id)).toEqual(['lowStock']);
 		const link = kpi('lowStock').link!;
-		expect(link.href).toMatch(new RegExp(`/items\\?view=${LOW_STOCK_VIEW_ID}$`));
+		// The strip turns `drill` into the URL with the page's period (dashboardDrill.test.ts).
+		expect(link.drill).toEqual({ kind: 'lowStock' });
 		expect(link.title.trim()).not.toBe('');
 	});
 	// [scaffold:charts] begin

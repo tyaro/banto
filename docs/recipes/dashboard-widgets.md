@@ -100,6 +100,34 @@
 期間を使わないなら、ページ（`routes/(app)/dashboard/+page.svelte`）の `SegmentedControl` と `filter` を消し、
 `createDashboardData()` を引数なしで呼ぶ（何も絞られない）。
 
+## 印から一覧へ移る
+
+チャートの印（価格帯のドーナツの 1 片）を選ぶと、その印が数えた行を持つ一覧（`/items`）へ移れる（Issue #882。設計は
+[crossfilter-drilldown-design.md](../design/crossfilter-drilldown-design.md) §7.2）。クリック・Tab で入って矢印・Enter / Space で選べる。
+**第 1 段はドリルダウンだけ**で、チャート同士の絞り込み（クロスフィルタ）は入っていない。
+
+流れ: 部品が「何を選んだか」だけを言い（`onDrill({ kind: 'priceBucket', bucket })`）、期間を足して URL を作るのはページ
+（`banto/dashboardDrill.ts` の `drillHref`）。部品は期間を知らないままでよい。
+
+1. **一覧の側にビューを用意する**（[add-resource.md](add-resource.md)「一覧のビューに引数を持たせる」）。移る先は `?view=<id>&arg.<名前>=<値>` で、items の見本は
+   `price-band`（`arg.band`）と `low-stock`（`arg.after`）。区切りの表は 1 か所（`resources/items.ts` の `PRICE_BANDS`）で、集計もビューもそれを読む。
+2. **`DashboardDrill` に種類を足し**、`drillHref` に移る先を書く。期間が「全期間」でなければ、`periodStart` が返した日（`latestDay` から数えた日。
+   **その日は含まない**下限）をそのまま `arg.after` に載せる。一覧の側で基準の日を数え直さない。
+3. **部品**: `DashboardWidgetProps` の `onDrill` があるときだけ、チャートに `onMarkActivate` を渡す
+   （`components/dashboard/charts/PriceBucketsWidget.svelte` が見本）。**`onMarkActivate`・`markLabel` は `components/dashboard/charts/` の中だけで使う**
+   （charts を外すと部品ごと消える。登録・ページ・枠は `@banto/charts` を import しない）。
+4. **KPI のタイル**: `dashboardKpis.ts` の `link` に `drill` を書くと、帯が `drillHref` で URL を作る（期間つき。「在庫少」が見本）。
+
+決まっていること:
+
+- **カテゴリは入れない**。items に実在のカテゴリの列が無い（名前の先頭の語からの派生）ため、価格帯と在庫少だけ（オーナー決定）。
+- **切り離した窓（Tauri のポップアウト、`/panel/[id]`）では印を選べず、ドリルダウンもしない**。ページが `onDrill` を渡さないので、部品は `onMarkActivate`
+  を渡さず、フォーカスも止まらない。シェルの無い小さな窓の中で `/items` へ移らないため。
+- **取得の上限を超えたときだけ画面で断る**。ダッシュボードは最大 20,000 行（`DASHBOARD_ROW_LIMIT`）を読んで集計し、一覧は（サーバー方式なら）条件に合う全件に対して絞るので、
+  それを超えるデータでは印の値と一覧の件数が合わない。サーバーの総数が読んだ行数（期間で絞る前）より多いときだけ、見出し・印の読み上げ・
+  KPI のリンクの title に「ダッシュボードは取得した範囲の集計。一覧は、サーバー方式（少しずつ読み込む）なら条件に合う全件に対して絞る（全件を読み込む方式は、同じ範囲の外の行を出さない）」と出す（`DashboardData.truncated`）。期間で絞っただけでは出ない。
+- リンクは 1 回きりの指示で、保存しない・ダッシュボードの URL に載せない（一覧が適用して `view` と `arg.*` を消す）。
+
 ## 外すとき
 
 - charts / dock を外す: `pnpm scaffold`（[remove-optional-assets.md](remove-optional-assets.md)）。charts を外すと、期間は KPI の帯と

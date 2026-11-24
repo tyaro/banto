@@ -10,13 +10,13 @@
  */
 import type { Component } from 'svelte';
 import { JapaneseYen, Package, TriangleAlert, Warehouse } from '@lucide/svelte';
-import { resolveAppPath } from '#lib/appPath.js';
 import * as m from '#lib/paraglide/messages.js';
 // [scaffold:charts] begin
 import { updatesByMonth } from './dashboard';
 // [scaffold:charts] end
 import type { DashboardData } from './dashboardData.svelte';
-import { LOW_STOCK_THRESHOLD, LOW_STOCK_VIEW_ID, itemsResource } from './resources/items';
+import type { DashboardDrill } from './dashboardDrill';
+import { LOW_STOCK_THRESHOLD } from './resources/items';
 
 export interface DashboardKpiDef {
 	id: string;
@@ -26,8 +26,11 @@ export interface DashboardKpiDef {
 	icon: Component<{ size?: number }>;
 	/** The formatted value. */
 	value: (data: DashboardData) => string;
-	/** When the tile is a link: where it goes (an app path, resolved when read) and its tooltip. */
-	link?: { readonly href: string; readonly title: string };
+	/**
+	 * When the tile is a link: what it opens and its tooltip. The strip turns `drill` into the URL
+	 * with the page's period (`drillHref`, #882 D3), so the list counts what the tile counts.
+	 */
+	link?: { readonly drill: DashboardDrill; readonly title: string };
 	/**
 	 * The values of a small trend line beside the number (the charts package's sparkline).
 	 * `scripts/scaffold.mjs` (`removeCharts`) drops the entries' values and the strip's drawing of it.
@@ -67,7 +70,7 @@ export const DASHBOARD_KPIS: DashboardKpiDef[] = [
 	},
 	{
 		// #555 (4): the tile opens the items list on its `low-stock` view (ResourceListPage reads
-		// `?view=`; same LOW_STOCK_THRESHOLD as the count).
+		// `?view=`; same LOW_STOCK_THRESHOLD as the count), and #882 D3 carries the period too.
 		id: 'lowStock',
 		get label() {
 			return m['dashboard.statLowStock']({ threshold: LOW_STOCK_THRESHOLD });
@@ -75,9 +78,7 @@ export const DASHBOARD_KPIS: DashboardKpiDef[] = [
 		icon: TriangleAlert,
 		value: (data) => data.stats.lowStockCount.toLocaleString(),
 		link: {
-			get href() {
-				return `${resolveAppPath(itemsResource.path)}?view=${LOW_STOCK_VIEW_ID}`;
-			},
+			drill: { kind: 'lowStock' },
 			get title() {
 				return m['dashboard.statLowStockOpen']();
 			}

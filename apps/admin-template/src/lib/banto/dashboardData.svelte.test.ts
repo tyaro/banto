@@ -18,7 +18,7 @@ import {
 	type AuthProvider,
 	type CredentialRevision
 } from '@banto/admin-core';
-import { DASHBOARD_ROW_LIMIT, createDashboardData } from './dashboardData.svelte';
+import { DASHBOARD_ROW_LIMIT, createDashboardData, rowsTruncated } from './dashboardData.svelte';
 import type { DashboardFilter } from './dashboardPeriod';
 import { DASHBOARD_WIDGETS, dashboardDataFor, type DashboardWidgetDef } from './dashboardWidgets';
 import { itemsResource } from './resources/items';
@@ -77,6 +77,16 @@ describe('createDashboardData (#716 W1)', () => {
 	});
 });
 
+describe('the row limit (#882 D3)', () => {
+	it('is exceeded only when the server holds more rows than were read', () => {
+		expect(rowsTruncated(0, 0)).toBe(false);
+		expect(rowsTruncated(DASHBOARD_ROW_LIMIT, DASHBOARD_ROW_LIMIT)).toBe(false);
+		expect(rowsTruncated(DASHBOARD_ROW_LIMIT + 1, DASHBOARD_ROW_LIMIT)).toBe(true);
+		// Compared with the rows read, not with what a period leaves: 2 of 4 shown is not a cut.
+		expect(rowsTruncated(4, 4)).toBe(false);
+	});
+});
+
 describe('the shared period (#716 W3)', () => {
 	const dated = (id: number, stock: number, updatedAt: string): Item => ({
 		...item(id, 100, stock),
@@ -108,6 +118,9 @@ describe('the shared period (#716 W3)', () => {
 		expect(data.all.rows.map((row) => row.id)).toEqual([1, 2, 3, 4]);
 		expect(data.all.stats).toMatchObject({ count: 4, stockTotal: 550 });
 		expect(data.totalCount).toBe(4);
+		// Narrowing by the period is not a truncation (#882 D3): 2 of 4 rows shown, all 4 were read.
+		expect(data.truncated).toBe(false);
+		expect(data.all.truncated).toBe(false);
 
 		filter.period = '12m';
 		expect(data.rows.map((row) => row.id)).toEqual([1, 2, 3]);

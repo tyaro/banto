@@ -28,6 +28,16 @@ import type { Item } from './sampleData';
 /** The most rows one read asks for (the same limit the page and each panel used before W1). */
 export const DASHBOARD_ROW_LIMIT = 20_000;
 
+/**
+ * Did the read leave rows out (the server holds more than the `DASHBOARD_ROW_LIMIT` it read)?
+ * `readRows` is the count BEFORE the period narrows anything: narrowing is not a truncation
+ * (#882 D3, crossfilter-drilldown-design §7.2). Then the dashboard's numbers cover the rows read,
+ * while the list a mark opens shows every row that matches.
+ */
+export function rowsTruncated(totalCount: number, readRows: number): boolean {
+	return totalCount > readRows;
+}
+
 /** What a widget / the KPI strip may read. Read-only: only the owner loads and disposes. */
 export interface DashboardData {
 	/**
@@ -39,6 +49,8 @@ export interface DashboardData {
 	readonly loading: boolean;
 	/** The server's count of all rows (may exceed what was read past `DASHBOARD_ROW_LIMIT`). Never narrowed. */
 	readonly totalCount: number;
+	/** The read left rows out (`rowsTruncated`): the numbers cover the rows read, not every row. Never narrowed. */
+	readonly truncated: boolean;
 	/** The KPI numbers, computed once per `rows` (not once per tile). */
 	readonly stats: StatTiles;
 }
@@ -74,6 +86,9 @@ export function createDashboardData(options: DashboardDataOptions = {}): Dashboa
 	// are not computed twice).
 	const rows = $derived(narrowRows(list.rows, options.filter?.() ?? DEFAULT_DASHBOARD_FILTER));
 	const stats = $derived(rows === list.rows ? allStats : computeStatTiles(rows));
+	// Also while a read is in flight: the rows and the count shown stay the previous ones until the
+	// answer is in, so the warning for them stays too.
+	const truncated = $derived(rowsTruncated(list.totalCount, list.rows.length));
 	const all: DashboardData = {
 		get rows() {
 			return list.rows;
@@ -83,6 +98,9 @@ export function createDashboardData(options: DashboardDataOptions = {}): Dashboa
 		},
 		get totalCount() {
 			return list.totalCount;
+		},
+		get truncated() {
+			return truncated;
 		},
 		get stats() {
 			return allStats;
@@ -97,6 +115,9 @@ export function createDashboardData(options: DashboardDataOptions = {}): Dashboa
 		},
 		get totalCount() {
 			return list.totalCount;
+		},
+		get truncated() {
+			return truncated;
 		},
 		get stats() {
 			return stats;

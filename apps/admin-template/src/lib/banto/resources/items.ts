@@ -243,8 +243,15 @@ export const itemsResource = defineResource({
 				id: PRICE_BAND_VIEW_ID,
 				label: () => m['items.viewPriceBand'](),
 				sort: [{ field: 'price', direction: 'asc' }],
-				args: { band: 'required' },
-				filtersFor: (args) => priceBandFilters(args.band ?? '')
+				// `after`: the dashboard's period start, so a mark counts what the chart counted
+				// (#882 D3).
+				args: { band: 'required', after: 'optional' },
+				filtersFor: (args) => {
+					const band = priceBandFilters(args.band ?? '');
+					if (band === null || args.after === undefined) return band;
+					const after = updatedAfterFilters(args.after);
+					return after === null ? null : [...band, ...after];
+				}
 			}
 		],
 		client: {

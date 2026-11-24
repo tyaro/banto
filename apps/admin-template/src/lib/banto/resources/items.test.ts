@@ -93,6 +93,17 @@ describe('the definition views', () => {
 		expect(presetViewFromUrl(v, query('arg.band=nope'))).toBeNull();
 	});
 
+	it('price-band: takes the dashboard period as `after` (#882 D3), whole or not at all', () => {
+		const v = view(PRICE_BAND_VIEW_ID);
+		const withAfter = presetViewFromUrl(v, query('arg.band=100-149&arg.after=2026-06-02'))!;
+		expect(withAfter.content.filters).toEqual([
+			...priceBandFilters('100-149')!,
+			...updatedAfterFilters('2026-06-02')!
+		]);
+		expect(presetViewFromUrl(v, query('arg.band=100-149&arg.after=2026-13-40'))).toBeNull();
+		expect(presetViewFromUrl(v, query('arg.after=2026-06-02'))).toBeNull();
+	});
+
 	it('low-stock: stays plain without arguments, narrows with after', () => {
 		const v = view(LOW_STOCK_VIEW_ID);
 		expect(presetViewFromUrl(v, query('view=low-stock'))?.strict).toBe(false);
@@ -107,7 +118,7 @@ describe('the definition views', () => {
 	it('every field the views use is a column of both grids', () => {
 		const both = ['price', 'stock', 'updatedAt'];
 		const links: Record<string, string> = {
-			[PRICE_BAND_VIEW_ID]: 'arg.band=100-149',
+			[PRICE_BAND_VIEW_ID]: 'arg.band=100-149&arg.after=2026-06-02',
 			[LOW_STOCK_VIEW_ID]: 'arg.after=2026-06-02'
 		};
 		for (const entry of views) {
