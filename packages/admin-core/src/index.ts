@@ -203,10 +203,18 @@ export type {
 	SseEventProviderOptions,
 	StreamConnectionListener
 } from './events';
-export { createTauriEventProvider, createSseEventProvider, connectEvents } from './events';
+export {
+	createTauriEventProvider,
+	createSseEventProvider,
+	connectEvents,
+	sessionStreamHooks
+} from './events';
 
-export type { SseParser } from './sse-parser';
-export { createSseParser } from './sse-parser';
+export type { SseParser, SseMessage, SseMessageParser } from './sse-parser';
+export { createSseParser, createSseMessageParser } from './sse-parser';
+
+export type { SseStreamOptions } from './sse-stream';
+export { createSseStream } from './sse-stream';
 
 export type { PaletteCommand, PaletteSource } from './commands';
 export { searchCommands } from './commands';
