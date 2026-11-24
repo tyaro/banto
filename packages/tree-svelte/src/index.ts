@@ -43,6 +43,9 @@ export type {
 	LoadStatus,
 	DropPosition,
 	TreeColumn,
+	TreeDropHover,
+	TreeDropRequest,
+	TreeDropVerdict,
 	TreeEmptyContext,
 	TreeLabelContext
 } from './core/types';

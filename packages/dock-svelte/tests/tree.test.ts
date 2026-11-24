@@ -503,7 +503,7 @@ describe('resizeSplit', () => {
 		expect(resizeSplit(null, 's1', 0, 0.1)).toBeNull();
 	});
 
-	it('splits a degenerate (already-too-small) pair evenly rather than going negative', () => {
+	it('keeps a degenerate (already-too-small) pair from going negative or jumping the other way', () => {
 		const s = split('s1', 'row', [panel('a'), panel('b')], [0.05, 0.05]);
 		const result = resizeSplit(s, 's1', 0, 0.03) as DockSplitNode;
 		expect(result.sizes[0]).toBeCloseTo(0.05);
