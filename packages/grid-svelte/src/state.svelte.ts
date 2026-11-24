@@ -104,7 +104,10 @@ export class GridState<TRow = unknown> {
 		return this.#rowHeightFixed;
 	}
 
-	#columns: GridColumn<TRow>[];
+	// Reactive (#890): `setColumns` swaps the definitions, and every getter
+	// that reads them (`orderedColumns`, `allColumns`, ...) follows. Raw, so
+	// the caller's column objects are never wrapped in a proxy.
+	#columns: GridColumn<TRow>[] = $state.raw([]);
 
 	constructor(columns: GridColumn<TRow>[], options: GridStateOptions = {}) {
 		this.#columns = columns;
@@ -118,6 +121,143 @@ export class GridState<TRow = unknown> {
 		);
 		this.#rowHeightFixed = options.rowHeight !== undefined;
 		this.#rowHeight = options.rowHeight ?? DEFAULT_ROW_HEIGHT;
+	}
+
+	/**
+	 * Replace the column definitions and keep what the user did (#890). An app
+	 * whose columns change after mount (an edit mode flipping `editable`, a
+	 * column that only exists for some data) calls this - or just passes the
+	 * new array to `<BantoGrid columns>`, which calls it - instead of building
+	 * a new `GridState`, which would lose the widths, sort, filters and so on.
+	 * Columns are matched by `id`:
+	 *
+	 * - A column in both sets keeps its width, its place in `order`, and its
+	 *   hidden / pinned / sort / filter / group state. Its definition is the
+	 *   new one (`editable`, `header`, `renderer`, ...). `width`, `hidden` and
+	 *   `pinned` of a definition stay what they always were - initial values -
+	 *   so changing them on an existing column changes nothing here.
+	 * - A new column is seeded from its definition (`width`, `hidden`,
+	 *   `pinned`) like in the constructor, and takes the place its definition
+	 *   has: right after the column that precedes it in `columns` (first when
+	 *   it is the first definition). A column that was here before and comes
+	 *   back gets its last width again; the rest of its state starts over.
+	 * - A column that is gone loses its place in `order` and its hidden /
+	 *   pinned / sort / filter entries; a `groupBy` on it is cleared. Its width
+	 *   is remembered (see above). The "never hide every column" rule is
+	 *   applied again afterwards (the first column in display order is shown).
+	 *   A sort / filter on a field that was never a column stays. Dropping one
+	 *   moves `conditionsRevision` on.
+	 * - A column that stays but gets a NEW definition object while a sort /
+	 *   filter / group-by is on it moves `conditionsRevision.revision` on too:
+	 *   its accessor (or compare / format) may read other data, so the rows
+	 *   may be shown in another order.
+	 *
+	 * Pass a NEW array to change the set: the same array instance is a no-op.
+	 */
+	setColumns(columns: GridColumn<TRow>[]): void {
+		if (columns === this.#columns) return;
+		const before = new Map(this.#columns.map((column) => [column.id, column]));
+		const previous = new Set(before.keys());
+		// A condition on a column whose definition changed may now order /
+		// filter / group the rows differently (#890 review).
+		const redefined = columns.some((column) => {
+			const old = before.get(column.id);
+			return old !== undefined && old !== column && this.#hasConditionOn(column.id);
+		});
+		this.#columns = columns;
+		const known = new Set(columns.map((column) => column.id));
+		const added = columns.filter((column) => !previous.has(column.id));
+		const removed = [...previous].some((id) => !known.has(id));
+		// The usual case - same ids, new definitions - touches nothing else.
+		if (added.length === 0 && !removed) {
+			if (redefined) this.#conditionsChanged(false);
+			return;
+		}
+
+		const order = this.order.filter((id) => known.has(id));
+		columns.forEach((column, index) => {
+			if (order.includes(column.id)) return;
+			// Every earlier definition is in `order` by now, so its neighbour is too.
+			const after = index === 0 ? -1 : order.indexOf(columns[index - 1].id);
+			order.splice(after + 1, 0, column.id);
+		});
+		this.order = order;
+
+		const seeded = added.filter((column) => this.widths[column.id] === undefined);
+		if (seeded.length > 0) {
+			this.widths = {
+				...this.widths,
+				...Object.fromEntries(
+					seeded.map((column) => [column.id, column.width ?? DEFAULT_COLUMN_WIDTH])
+				)
+			};
+		}
+		this.hidden = this.#clampHidden([
+			...this.hidden,
+			...added.filter((column) => column.hidden).map((column) => column.id)
+		]);
+		this.pinned = [
+			...this.pinned.filter((id) => known.has(id)),
+			...added.filter((column) => column.pinned === 'left').map((column) => column.id)
+		];
+		const dropped = removed
+			? this.#dropConditionsOn(new Set([...previous].filter((id) => !known.has(id))))
+			: { any: false, params: false };
+		if (redefined || dropped.any) this.#conditionsChanged(dropped.params);
+	}
+
+	#hasConditionOn(id: string): boolean {
+		return (
+			this.groupBy === id ||
+			this.sort.some((entry) => entry.field === id) ||
+			this.filters.some((entry) => entry.field === id)
+		);
+	}
+
+	/**
+	 * Drop the sort / filter entries and the `groupBy` on the columns in `gone`
+	 * (#890). Only those: a condition the app set on a field that never was a
+	 * column (a server-side condition) stays. Says whether anything was
+	 * dropped, and whether that was a sort / filter (what a server is asked
+	 * for).
+	 */
+	#dropConditionsOn(gone: Set<string>): { any: boolean; params: boolean } {
+		let params = false;
+		if (this.sort.some((entry) => gone.has(entry.field))) {
+			this.sort = this.sort.filter((entry) => !gone.has(entry.field));
+			params = true;
+		}
+		if (this.filters.some((entry) => gone.has(entry.field))) {
+			this.filters = this.filters.filter((entry) => !gone.has(entry.field));
+			params = true;
+		}
+		const grouped = this.groupBy !== null && gone.has(this.groupBy);
+		if (grouped) this.setGroupBy(null);
+		return { any: params || grouped, params };
+	}
+
+	#conditionsChanged(params: boolean): void {
+		const { revision, paramsRevision } = this.#conditions;
+		this.#conditions = {
+			revision: revision + 1,
+			paramsRevision: params ? paramsRevision + 1 : paramsRevision
+		};
+	}
+
+	#conditions = $state.raw({ revision: 0, paramsRevision: 0 });
+
+	/**
+	 * Counters `setColumns` moves on (#890). `revision`: the rows may be shown
+	 * in another order - a sort / filter / group-by was dropped because its
+	 * column went away, or the column under one got a new definition.
+	 * `paramsRevision`: a sort or a filter (what a server is asked for) was
+	 * dropped. Both only grow, so several `setColumns` calls before anyone
+	 * looks are still seen: compare with the last value handled. For
+	 * BantoGrid, which reacts to it; an app that calls `setColumns` itself and
+	 * fetches rows with `sort` / `filters` can watch it too.
+	 */
+	get conditionsRevision(): { readonly revision: number; readonly paramsRevision: number } {
+		return this.#conditions;
 	}
 
 	/**
@@ -157,6 +297,17 @@ export class GridState<TRow = unknown> {
 	 */
 	get allColumns(): GridColumn<TRow>[] {
 		return this.#partition(this.#inOrder()).ordered;
+	}
+
+	/**
+	 * The column definitions as given - to the constructor or the latest
+	 * `setColumns` (#890) - in definition order, hidden ones included. Unlike
+	 * `allColumns` it changes only when the definitions are swapped, not on a
+	 * reorder / hide / pin: read it to look a definition up by id (sorting,
+	 * filtering, grouping).
+	 */
+	get columns(): GridColumn<TRow>[] {
+		return this.#columns;
 	}
 
 	#visiblePartition(): { ordered: GridColumn<TRow>[]; pinnedCount: number } {
@@ -380,6 +531,16 @@ export class GridState<TRow = unknown> {
 		// preserve the persisted order for those that do; append any new
 		// columns (added since the state was saved) at the end.
 		const knownIds = new Set(this.#columns.map((column) => column.id));
+		// A column that was in the saved set but is not in this one takes its
+		// sort / filter / group-by with it (#890: the same rule as
+		// `setColumns`) - a filter nobody can see or clear would hide rows.
+		// Fields that were never columns (an app's own server condition) stay.
+		const gone = new Set(parsed.order.filter((id) => !knownIds.has(id)));
+		if (gone.size > 0) {
+			this.sort = this.sort.filter((entry) => !gone.has(entry.field));
+			this.filters = this.filters.filter((entry) => !gone.has(entry.field));
+			if (this.groupBy !== null && gone.has(this.groupBy)) this.groupBy = null;
+		}
 		const restoredOrder = parsed.order.filter((id) => knownIds.has(id));
 		const missing = this.order.filter((id) => !restoredOrder.includes(id));
 		this.order = [...restoredOrder, ...missing];
