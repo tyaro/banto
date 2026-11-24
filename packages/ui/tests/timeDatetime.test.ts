@@ -127,6 +127,13 @@ describe('time steps (§5.6, D8)', () => {
 		expect(isOnTimeStep('23:44', 25)).toBe(false);
 		expect(isOnTimeStep('10:17')).toBe(true);
 	});
+
+	it('isOnTimeStep is false (never throws) for a non-canonical time when a step is given', () => {
+		for (const bad of ['', 'abc', '9:15', '24:00', '10:60', '99:99', '10:15:00']) {
+			expect(isOnTimeStep(bad, 15), bad).toBe(false);
+			expect(isOnTimeStep(bad), bad).toBe(true);
+		}
+	});
 });
 
 describe('nearestTime', () => {

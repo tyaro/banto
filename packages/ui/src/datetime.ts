@@ -45,6 +45,7 @@ export {
 	formatDate,
 	formatTime,
 	isLeapYear,
+	isOnTimeStep,
 	normalizeTimeStep,
 	parseDateText,
 	parseDateTimeText,
@@ -539,16 +540,6 @@ export function timeOptions(step?: number): string[] {
 	const times: string[] = [];
 	for (let m = 0; m < MINUTES_PER_DAY; m += by) times.push(minutesToTime(m));
 	return times;
-}
-
-/**
- * Is `time` on the `step` grid counted from 00:00 (D8)? No (valid) step: always true.
- * Unlike the shared `datetime-core` one (the forms / grid validators), a
- * `time` that is not canonical throws - the pickers only pass canonical times.
- */
-export function isOnTimeStep(time: string, step?: number): boolean {
-	const by = normalizeTimeStep(step);
-	return by === undefined || timeToMinutes(time) % by === 0;
 }
 
 /**

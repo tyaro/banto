@@ -228,15 +228,16 @@ export function normalizeTimeStep(step: number | null | undefined): number | und
 
 /**
  * Is `time` on the `step` grid counted from 00:00 (D8)? No (valid) step: true.
- * A `time` that is not shaped `HH:mm` is off the grid (`false`); the range is
- * not checked here (callers check {@link isIsoTime} first).
+ * A `time` that is not a canonical `HH:mm` (shape or range, e.g. `24:00`) is
+ * off the grid (`false`); it never throws. With no step, though, anything
+ * passes - callers check {@link isIsoTime} first.
  */
 export function isOnTimeStep(time: string, step?: number): boolean {
 	const by = normalizeTimeStep(step);
 	if (by === undefined) return true;
-	const match = CANONICAL_TIME.exec(time);
-	if (!match) return false;
-	return (Number(match[1]) * 60 + Number(match[2])) % by === 0;
+	const parts = parseIsoTime(time);
+	if (!parts) return false;
+	return (parts.hour * 60 + parts.minute) % by === 0;
 }
 
 /**
