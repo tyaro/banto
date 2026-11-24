@@ -165,14 +165,51 @@ describe('hidden panes come back at their default place, in any order (#782 PR5 
 		);
 	});
 
-	it('pinned: row[a .2, b .3, c .5], a then b hidden: +b +a is .2 / .3 / .5, +a +b is .2 / .3 / .5 of what each held', () => {
+	// #939: the shares say more than "last hidden, first shown" (`shareAmongHidden`).
+	// One split, 2 to 4 of its panes hidden one after the other, shown in every order: the sizes
+	// too. (Panes of nested splits hidden until a split is gone are not covered: the share a pane
+	// keeps is of the split it was in when it was hidden.)
+	it('panes of one split hidden, shown in every order: the tree as it was, sizes too (#939)', () => {
+		const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+		const rowCase = fc.integer({ min: 3, max: 6 }).chain((n) =>
+			fc.record({
+				weights: fc.array(fc.integer({ min: 1, max: 20 }), { minLength: n, maxLength: n }),
+				order: fc.shuffledSubarray(ids.slice(0, n), {
+					minLength: 2,
+					maxLength: Math.min(4, n - 1)
+				}),
+				column: fc.boolean()
+			})
+		);
+		fc.assert(
+			fc.property(rowCase, ({ weights, order, column }) => {
+				const total = weights.reduce((x, y) => x + y, 0);
+				const tree = split(
+					's1',
+					column ? 'column' : 'row',
+					weights.map((w) => w / total),
+					ids.slice(0, weights.length).map(panel)
+				);
+				const hide = order.map((id) => `-${id}`);
+				for (const back of permutations(order)) {
+					const all = [...hide, ...back.map((id) => `+${id}`)];
+					const diff = treeDiff(treeAfter(tree, all), tree);
+					if (diff) failCase(tree, all, diff);
+				}
+			}),
+			params(200)
+		);
+	});
+
+	it('pinned: row[a .2, b .3, c .5], a then b hidden: +b +a and +a +b are both .2 / .3 / .5 (#939)', () => {
 		const tree = split('s1', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel));
 		expect(treeDiff(treeAfter(tree, ['-a', '-b', '+b', '+a']), tree)).toBeNull();
-		// a held .2 of row[a, b, c], b .375 of row[b, c]: a first takes .2 beside c, then b .375.
-		const other = treeAfter(tree, ['-a', '-b', '+a', '+b']);
-		expect(shapeOf(other)).toEqual({ row: ['a', 'b', 'c'] });
-		const sizes = other?.type === 'split' ? other.sizes : [];
-		[0.2 * 0.625, 0.375, 0.8 * 0.625].forEach((v, i) => expect(sizes[i]).toBeCloseTo(v, 9));
+		// a held .2 of row[a, b, c], b .375 of row[b, c] - .3 of the row with a: a first takes .2 of
+		// what it shares with c (2 / 7 of row[a, c]), then b .3.
+		const first = treeAfter(tree, ['-a', '-b', '+a'], false);
+		const sizes = first?.type === 'split' ? first.sizes : [];
+		[2 / 7, 5 / 7].forEach((v, i) => expect(sizes[i]).toBeCloseTo(v, 9));
+		expect(treeDiff(treeAfter(tree, ['-a', '-b', '+a', '+b']), tree)).toBeNull();
 	});
 });
 

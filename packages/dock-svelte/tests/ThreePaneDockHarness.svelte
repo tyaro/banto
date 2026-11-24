@@ -26,6 +26,7 @@
 		withRight = true,
 		extra = [],
 		initialLayout,
+		defaultPlaces,
 		initialLeftOpen = true,
 		beforePanelChange,
 		capabilities,
@@ -43,6 +44,7 @@
 		withRight?: boolean;
 		extra?: ThreePaneExtraPanelDef[];
 		initialLayout?: unknown;
+		defaultPlaces?: unknown;
 		initialLeftOpen?: boolean;
 		beforePanelChange?: (change: DockPanelChange) => boolean | Promise<boolean>;
 		capabilities?: (id: string) => DockCapabilities | undefined;
@@ -108,6 +110,7 @@
 	right={withRight ? rightContent : undefined}
 	{panels}
 	{initialLayout}
+	{defaultPlaces}
 	{beforePanelChange}
 	{capabilities}
 	{onRestore}

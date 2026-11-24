@@ -387,8 +387,21 @@ export function reconcileThreePaneLayout(
  * the package): the default layout with both sides docked - a side that starts hidden
  * (`*Open: false`) still belongs beside the centre. An extra panel that starts `hidden` /
  * `floating` has no docked place (shown again after it was docked and hidden, it opens floating).
+ *
+ * `given` (#939, `ThreePaneDock`'s `defaultPlaces`): the app's own default places, in the forms of
+ * a saved layout (`ThreePaneSavedLayout`, a bare `DockLayout`, either as JSON text). Taken as it
+ * is when it is a usable layout whose docked tree holds the centre - a pane its docked tree does
+ * not hold has no docked place; else (omitted too) the default above.
  */
-export function threePaneDefaultPlaces(options: ThreePaneDockLayoutOptions): DockLayout {
+export function threePaneDefaultPlaces(
+	options: ThreePaneDockLayoutOptions,
+	given?: unknown
+): DockLayout {
+	if (given !== undefined && given !== null) {
+		const checked = validateDockLayout(unwrap(given));
+		if (checked.ok && findNode(checked.layout.docked, THREE_PANE_IDS.center)?.type === 'panel')
+			return checked.layout;
+	}
 	return threePaneDockLayout({ ...options, leftOpen: true, rightOpen: true });
 }
 
