@@ -16,7 +16,8 @@
 		ThreePaneExtraPanelDef,
 		ThreePaneLayoutCommitReason,
 		ThreePaneRestoreStatus,
-		ThreePaneSavedLayout
+		ThreePaneSavedLayout,
+		ThreePaneSideWidthUnit
 	} from '../src/threePane';
 
 	let {
@@ -34,7 +35,8 @@
 		arrange = true,
 		onCenterMounted,
 		onSave,
-		onLayoutCommit
+		onLayoutCommit,
+		sideWidthUnit
 	}: {
 		dock?: DockState;
 		withLeft?: boolean;
@@ -51,6 +53,7 @@
 		onCenterMounted?: (id: string) => void;
 		onSave?: (snapshot: ThreePaneSavedLayout) => void;
 		onLayoutCommit?: (saved: ThreePaneSavedLayout, reason: ThreePaneLayoutCommitReason) => void;
+		sideWidthUnit?: ThreePaneSideWidthUnit;
 	} = $props();
 
 	// svelte-ignore state_referenced_locally
@@ -112,6 +115,7 @@
 	{narrowBreakpoint}
 	{arrange}
 	{onLayoutCommit}
+	{sideWidthUnit}
 	bind:narrow
 >
 	<div data-pane="center">CENTER<input aria-label="center input" /></div>

@@ -44,6 +44,14 @@
 	 *   rearranges (`setVisible` / `toggle` / `leftOpen` / `rightOpen` writes / `float` / `dockBack`
 	 *   / `move` / `resetLayout`) is refused with nothing changed; `viewMenuItems` is empty.
 	 *   `restoreLayout` and the narrow switch still work (they show the saved layout, not the user's).
+	 * - `sideWidthUnit="px"` (#892): the sides keep their px when the component's width changes, the
+	 *   centre takes the rest (`fitThreePaneSideWidths`; the saved value is the same version-4 layout
+	 *   of shares). The px are read off the shares at the width shown: a restore, `resetLayout` and
+	 *   the start take them from the layout; a divider moved by the user (or the app) gives the side
+	 *   its new px; a pane hidden / shown / moved keeps the px of the regions still there. Re-fitting
+	 *   to a new width is this component's own write (no report, like the measured default); one that
+	 *   follows the user's change is part of it, fitted before it is reported.
+	 *   Narrow: nothing is kept or fitted (the kept wide layout is fitted when it comes back).
 	 * - Touch: the title-bar and drop-guide buttons follow the density tokens of `@banto/theme`
 	 *   (`--banto-dock-button-size`, `--banto-dock-guide-button-size`); nothing to pass here.
 	 */
@@ -67,6 +75,9 @@
 		isPaneShown,
 		isThreePaneNarrow,
 		reconcileThreePaneLayout,
+		fitThreePaneSideWidths,
+		followThreePaneSideWidths,
+		THREE_PANE_DEFAULTS,
 		THREE_PANE_IDS,
 		THREE_PANE_NARROW_BREAKPOINT,
 		threePaneDockLayout,
@@ -79,6 +90,7 @@
 		type ThreePanePanels,
 		type ThreePaneRestoreStatus,
 		type ThreePaneSavedLayout,
+		type ThreePaneSideWidthUnit,
 		type ThreePaneViewMenuItem,
 		type ThreePaneViewMenuLabels
 	} from './threePane';
@@ -99,6 +111,14 @@
 		leftWidth?: number;
 		/** Default-layout width of the right pane in px. Default 360. */
 		rightWidth?: number;
+		/**
+		 * `'px'` (#892): when the component's width changes, the regions beside the centre's in the
+		 * outermost row on the way to it keep their px and the centre's takes the rest (it keeps at
+		 * least 320 px; the sides shrink in proportion when there is not room, none below 120 px or
+		 * its own width). A divider the user moves sets the new px. `'share'` (default): every region keeps its share. The saved
+		 * value is the same either way (shares, read as px at the width it is shown at).
+		 */
+		sideWidthUnit?: ThreePaneSideWidthUnit;
 		/** Panes besides the three (plan §4.9). An id equal to `left` / `center` / `right`, or used twice, throws. */
 		panels?: ThreePaneExtraPanel[];
 		/**
@@ -164,6 +184,7 @@
 		rightOpen = $bindable(true),
 		leftWidth,
 		rightWidth,
+		sideWidthUnit = 'share',
 		panels = [],
 		dock: dockProp,
 		initialLayout,
@@ -259,6 +280,19 @@
 	let narrowWish: boolean | null = null;
 	let narrowGen = 0;
 
+	// --- `sideWidthUnit="px"` (#892, the prop's doc and the module doc) ---
+	/** The px of the centre's row's sides (by the region's id); `null`: not taken yet (taken fresh). */
+	let sideWidths: Map<string, number> | null = null;
+	/** The layout (wide) the px were last taken from or fitted to; `null` after the narrow display. */
+	let sidesSeen: DockLayout | null = null;
+	/** The next fit takes the px afresh from the layout (a restore, `resetLayout`, the default shown again). */
+	let sidesFresh = false;
+	/**
+	 * ... and the layout is the default: the left / right pane at `leftWidth` / `rightWidth` - a side
+	 * hidden in it gives its room to the others, which are not at their px then.
+	 */
+	let sidesDefault = false;
+
 	// --- `onLayoutCommit` (#791, the prop's doc) ---
 	/** `layoutSnapshot()` (JSON) as last reported, restored or followed. `null` until mounted: nothing is reported before. */
 	let settledSnapshot: string | null = null;
@@ -276,6 +310,8 @@
 
 	/** `DockHost` settled a layout: the value to save may be the same (a change to the narrow display). */
 	function hostCommitted(_layout: DockLayout, reason: DockLayoutCommitReason): void {
+		// `sideWidthUnit="px"` (#892): the sides fitted first, so the value reported is the one shown.
+		keepSides(dock.layout, measuredWidth);
 		commitLayout(reason);
 	}
 
@@ -317,7 +353,10 @@
 			}
 			status = result.status;
 		}
-		if (status === 'fresh' || status === 'default') installedDefault = dock.layout;
+		if (status === 'fresh' || status === 'default') {
+			installedDefault = dock.layout;
+			sidesDefault = true;
+		}
 		// Narrow forced from the start: shown before anything is mounted.
 		if (narrowOverride === true) enterNarrowNow();
 		writeOpen();
@@ -356,9 +395,77 @@
 	function wideTarget(): DockLayout {
 		const { width, height } = hostSize();
 		const options = layoutOptions(width, height);
-		if (wideIsDefault || wideLayout === null) return threePaneDockLayout(options);
-		return reconcileThreePaneLayout(wideLayout, options).layout;
+		if (wideIsDefault || wideLayout === null) {
+			sidesFresh = true;
+			sidesDefault = true;
+			return threePaneDockLayout(options);
+		}
+		const kept = reconcileThreePaneLayout(wideLayout, options).layout;
+		// `sideWidthUnit="px"` (#892): the kept layout's sides at their px of before, at today's width.
+		return sideWidthUnit === 'px' && sideWidths !== null && !sidesFresh && width > 0
+			? fitThreePaneSideWidths(kept, sideWidths, width)
+			: kept;
 	}
+
+	/** A side seen for the first time: the left / right pane at its default width (hidden at mount, say). */
+	function defaultSidePx(id: string): number | undefined {
+		if (id === THREE_PANE_IDS.left) return leftWidth ?? THREE_PANE_DEFAULTS.leftWidth;
+		if (id === THREE_PANE_IDS.right) return rightWidth ?? THREE_PANE_DEFAULTS.rightWidth;
+		return undefined;
+	}
+
+	/** Keep / fit the sides' px for `layout` shown at `width` (the effect below). */
+	function keepSides(layout: DockLayout, width: number | null): void {
+		if (sideWidthUnit !== 'px') {
+			sideWidths = null;
+			sidesSeen = null;
+			return;
+		}
+		// Before mount (`settledSnapshot` set in `onMount`) nothing is measured.
+		if (settledSnapshot === null || width === null) return;
+		if (narrowShown || wantNarrow) {
+			// The narrow display is not the wide row: the px stay as they were, compared afresh after.
+			sidesSeen = null;
+			return;
+		}
+		const fresh = sidesFresh || sideWidths === null;
+		const preset = fresh && sidesDefault;
+		sidesFresh = false;
+		sidesDefault = false;
+		const defaults = new Map<string, number>();
+		if (preset)
+			for (const id of [THREE_PANE_IDS.left, THREE_PANE_IDS.right]) {
+				const px = defaultSidePx(id);
+				if (px !== undefined) defaults.set(id, px);
+			}
+		const { widths, resized } = followThreePaneSideWidths(
+			fresh ? null : sidesSeen,
+			fresh ? defaults : sideWidths,
+			layout,
+			width,
+			fresh ? undefined : defaultSidePx
+		);
+		sideWidths = widths;
+		// A divider moved: the user's shares are the new px as they are (a fit now would fight the drag).
+		// Taken afresh from a layout that is not the default: its shares are its px already.
+		const next =
+			resized || (fresh && !preset) ? layout : fitThreePaneSideWidths(layout, widths, width);
+		// Without a report of its own: a change not reported yet (the user's, which this follows) stays
+		// unsettled and is reported fitted (`hostCommitted` fits before it reports).
+		if (next !== layout)
+			quietly(() => {
+				dock.layout = next;
+			});
+		sidesSeen = dock.layout;
+	}
+
+	$effect(() => {
+		const layout = dock.layout;
+		const width = measuredWidth;
+		void narrowShown;
+		void sideWidthUnit;
+		untrack(() => keepSides(layout, width));
+	});
 
 	/**
 	 * Switch to the narrow / wide display through `DockHost.replaceLayout` (module doc). Applied only
@@ -798,6 +905,9 @@
 				}
 				// A restore is the value the app already holds: later changes are compared with it.
 				if (!commit && settledSnapshot !== null) settledSnapshot = snapshotKey();
+				// `sideWidthUnit="px"` (#892): the sides' px are read off the layout put in.
+				sidesFresh = true;
+				sidesDefault = isDefault;
 			}
 		});
 		writeOpen();
