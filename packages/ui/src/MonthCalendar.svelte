@@ -26,6 +26,15 @@
 	 * - A view switch removes the focused element (a heading button, a cell),
 	 *   so focus is parked on this component's wrapper first: it never drops
 	 *   to <body>, which the parent would read as "focus left" and close.
+	 * - The extended calendar (Issue #910, `RangeCalendar`) reuses this one
+	 *   through optional props, whose defaults keep the plain pickers as they
+	 *   are: `months={2}` shows two months side by side (the days of the
+	 *   neighbouring months are empty slots then, so a day is never shown
+	 *   twice; focus moving past the shown months scrolls the view just far
+	 *   enough), `selectionMode="range"` paints `range` (its ends and the days
+	 *   between; `aria-selected` on all of them once both ends are chosen,
+	 *   `aria-multiselectable` on the grid), `onHover` reports the day under
+	 *   the pointer (the range preview).
 	 */
 	import { flushSync } from 'svelte';
 	import { revealInPopover } from './anchoredPopover';
@@ -38,17 +47,22 @@
 		clampDate,
 		clampPeriod,
 		endOfWeek,
+		firstShownMonth,
 		formatFullDate,
 		isOutOfRange,
 		isSameMonth,
 		monthGrid,
 		monthOfPeriod,
+		monthStartOfPeriod,
 		monthYearParts,
+		orderedRange,
 		periodOf,
 		periodPageStart,
+		shownMonthOffset,
 		startOfWeek,
 		weekdayNames,
 		withYearMonth,
+		type CalendarRange,
 		type Weekday
 	} from './datetime';
 	import ChevronLeft from './icons/ChevronLeft.svelte';
@@ -78,6 +92,14 @@
 		scroller?: HTMLElement;
 		/** A selectable day was picked (Enter / Space / click). */
 		onPick: (date: string) => void;
+		/** Months shown side by side in the day view (Issue #910). Default 1. */
+		months?: 1 | 2;
+		/** `'range'`: the days of `range` are the selection (Issue #910). Default `'single'` (`selectedDate`). */
+		selectionMode?: 'single' | 'range';
+		/** The range painted in `'range'` mode, or `null`. */
+		range?: CalendarRange | null;
+		/** The pointer moved onto a day, or left the calendar (`null`) - the range preview. */
+		onHover?: (date: string | null) => void;
 	}
 
 	let {
@@ -91,14 +113,17 @@
 		weekStart,
 		t,
 		scroller,
-		onPick
+		onPick,
+		months = 1,
+		selectionMode = 'single',
+		range = null,
+		onHover
 	}: Props = $props();
 
 	const uid = $props.id();
 	const headingId = `${uid}-heading`;
 
 	let rootEl: HTMLDivElement | undefined = $state();
-	let gridEl: HTMLTableElement | undefined = $state();
 	let periodView: ReturnType<typeof CalendarPeriodView> | undefined = $state();
 
 	/** Which view is shown: the days of a month, the months of a year, or 12 years. */
@@ -110,9 +135,33 @@
 	let yearFocus = $state(0);
 	let yearPage = $state(0);
 
+	/** Where the tracked day's month sits among the shown months (0 with one month). */
+	let offset = $state(0);
+
 	const weekdays = $derived(weekdayNames(locale, weekStart));
-	const weeks = $derived(focusDate ? monthGrid(focusDate, weekStart) : []);
-	const heading = $derived(monthYearParts(focusDate, locale));
+	const firstMonth = $derived(focusDate ? firstShownMonth(focusDate, offset, months) : 0);
+	/** `YYYY-MM-01` of each month shown in the day view, left to right. */
+	const shownMonths = $derived(
+		focusDate ? Array.from({ length: months }, (_, i) => monthStartOfPeriod(firstMonth + i)) : []
+	);
+	/** The range's ends in date order. */
+	const rangeEnds = $derived(range ? orderedRange(range.start, range.end) : null);
+
+	function headingIdOf(index: number): string {
+		return index === 0 ? headingId : `${headingId}-${index}`;
+	}
+
+	/** `aria-selected` of a day: the value's day, or (range) the range - only its first day while the end is a preview. */
+	function isSelected(date: string): boolean {
+		if (selectionMode === 'single') return date === selectedDate;
+		if (!range || !rangeEnds) return false;
+		if (range.preview) return date === range.start;
+		return date >= rangeEnds[0] && date <= rangeEnds[1];
+	}
+
+	function inRange(date: string): boolean {
+		return !!rangeEnds && date >= rangeEnds[0] && date <= rangeEnds[1];
+	}
 
 	export function isSelectable(date: string): boolean {
 		return !isOutOfRange(date, min, max) && !isDateDisabled?.(date);
@@ -120,7 +169,7 @@
 
 	/** Focus the tracked day's cell (after the cells were rendered). */
 	export function focusCell(): void {
-		const cell = gridEl?.querySelector<HTMLElement>(`[data-date="${focusDate}"]`);
+		const cell = rootEl?.querySelector<HTMLElement>(`td[data-date="${focusDate}"]`);
 		if (!cell) return;
 		// `preventScroll`: never scroll the page / ancestors (an ancestor scroll
 		// would close the popover). But when `computeAnchoredPosition` capped the
@@ -132,9 +181,25 @@
 	}
 
 	function moveFocus(date: string): void {
-		focusDate = clampDate(date, min, max);
+		const next = clampDate(date, min, max);
+		if (months > 1) {
+			const at = shownMonthOffset(next, firstMonth, months);
+			// The shown months scroll: the focused cell may become an empty slot
+			// (no longer focusable). Park focus on the wrapper first, as a view
+			// switch does, so it never drops to <body>.
+			if (firstShownMonth(next, at, months) !== firstMonth) parkFocus();
+			offset = at;
+		}
+		focusDate = next;
 		flushSync();
 		focusCell();
+	}
+
+	/** Focus is in the calendar: hold it on the wrapper while its element goes away. */
+	function parkFocus(): boolean {
+		if (!rootEl?.contains(document.activeElement)) return false;
+		rootEl.focus({ preventScroll: true });
+		return true;
 	}
 
 	/**
@@ -185,11 +250,8 @@
 	 * with the old view, and a focus drop to <body> would close the dialog.
 	 */
 	function showView(next: 'day' | 'month' | 'year', { focus = true } = {}): void {
-		if (rootEl?.contains(document.activeElement)) {
-			rootEl.focus({ preventScroll: true });
-			// Focus was in the calendar: it follows to the new view's cell.
-			focus = true;
-		}
+		// Focus was in the calendar: it follows to the new view's cell.
+		if (parkFocus()) focus = true;
 		view = next;
 		flushSync();
 		if (!focus) return;
@@ -197,16 +259,17 @@
 		else periodView?.focusCell();
 	}
 
-	function openMonthView(): void {
-		setMonthView(periodOf(focusDate, 'month'));
+	/** `month`: the shown month whose heading was pressed (the tracked day's by default). */
+	function openMonthView(month: string = focusDate): void {
+		setMonthView(periodOf(month, 'month'));
 		showView('month');
 	}
 
-	function openYearView(): void {
+	function openYearView(month: string = focusDate): void {
 		// Escape from the year view lands on the month view: give it the
-		// tracked day's month when the year view is entered from the days.
-		if (view === 'day') setMonthView(periodOf(focusDate, 'month'));
-		setYearView(view === 'month' ? Math.floor(monthPage / 12) : periodOf(focusDate, 'year'));
+		// pressed heading's month when the year view is entered from the days.
+		if (view === 'day') setMonthView(periodOf(month, 'month'));
+		setYearView(view === 'month' ? Math.floor(monthPage / 12) : periodOf(month, 'year'));
 		showView('year');
 	}
 
@@ -219,6 +282,8 @@
 	function pickMonth(period: number): void {
 		const { year, month } = monthOfPeriod(period);
 		focusDate = withYearMonth(focusDate, year, month, min, max);
+		// Several months: the picked month is the first one shown.
+		offset = 0;
 		showView('day');
 	}
 
@@ -279,73 +344,56 @@
 		moveFocus(next);
 	}
 
-	// A native listener: it runs before the dialog's own native keydown
-	// listener, which stops every key (Svelte would delegate `onkeydown` to
-	// the app root, past that listener).
-	$effect(() => {
-		const grid = gridEl;
-		if (!grid) return;
+	// A native listener on each grid: it runs before the dialog's own native
+	// keydown listener, which stops every key (Svelte would delegate
+	// `onkeydown` to the app root, past that listener).
+	function gridKeys(grid: HTMLTableElement): () => void {
 		grid.addEventListener('keydown', handleGridKey);
 		return () => grid.removeEventListener('keydown', handleGridKey);
-	});
+	}
 </script>
 
-{#snippet yearButton()}<button
+{#snippet yearButton(month: string, text: string)}<button
 		type="button"
 		class="date-picker-heading-button"
 		title={t.datePickerChooseYear()}
-		onclick={openYearView}
+		onclick={() => openYearView(month)}
 	>
-		{heading.year}
+		{text}
 	</button>{/snippet}
-{#snippet monthButton()}<button
+{#snippet monthButton(month: string, text: string)}<button
 		type="button"
 		class="date-picker-heading-button"
 		title={t.datePickerChooseMonth()}
-		onclick={openMonthView}
+		onclick={() => openMonthView(month)}
 	>
-		{heading.month}
+		{text}
 	</button>{/snippet}
 
-<!-- The wrapper takes focus only for a moment, while a view switch removes the focused element. -->
-<div class="date-picker-calendar" tabindex="-1" bind:this={rootEl}>
+<!-- The wrapper takes focus only for a moment, while a view switch removes the focused element.
+     Its mouseleave only ends the range preview (pointer-only feedback; the
+     keyboard previews to the focused day). -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="date-picker-calendar"
+	tabindex="-1"
+	bind:this={rootEl}
+	onmouseleave={onHover ? () => onHover(null) : undefined}
+>
 	{#if view === 'day'}
-		<div class="date-picker-header">
-			<CalendarNavButton
-				label={t.datePickerPrevYear()}
-				disabled={navDisabled(-12)}
-				onclick={() => navigate(-12)}
-			>
-				<ChevronsLeft size={16} aria-hidden="true" />
-			</CalendarNavButton>
-			<CalendarNavButton
-				label={t.datePickerPrevMonth()}
-				disabled={navDisabled(-1)}
-				onclick={() => navigate(-1)}
-			>
-				<ChevronLeft size={16} aria-hidden="true" />
-			</CalendarNavButton>
-			<!-- The year and the month in the locale's order ("2026年11月", "November 2026"). -->
-			<h2 id={headingId} class="date-picker-heading" aria-live="polite">
-				{#if heading.yearFirst}{@render yearButton()}{heading.separator}{@render monthButton()}{:else}{@render monthButton()}{heading.separator}{@render yearButton()}{/if}
-			</h2>
-			<CalendarNavButton
-				label={t.datePickerNextMonth()}
-				disabled={navDisabled(1)}
-				onclick={() => navigate(1)}
-			>
-				<ChevronRight size={16} aria-hidden="true" />
-			</CalendarNavButton>
-			<CalendarNavButton
-				label={t.datePickerNextYear()}
-				disabled={navDisabled(12)}
-				onclick={() => navigate(12)}
-			>
-				<ChevronsRight size={16} aria-hidden="true" />
-			</CalendarNavButton>
-		</div>
-
-		{@render dayGrid()}
+		{#if months === 1}
+			{@render monthHeader(shownMonths[0], 0)}
+			{@render dayGrid(shownMonths[0], 0)}
+		{:else}
+			<div class="date-picker-months">
+				{#each shownMonths as month, i (i)}
+					<div class="date-picker-month">
+						{@render monthHeader(month, i)}
+						{@render dayGrid(month, i)}
+					</div>
+				{/each}
+			</div>
+		{/if}
 	{:else if view === 'month'}
 		<CalendarPeriodView
 			bind:this={periodView}
@@ -380,8 +428,71 @@
 	{/if}
 </div>
 
-{#snippet dayGrid()}
-	<table class="date-picker-grid" role="grid" aria-labelledby={headingId} bind:this={gridEl}>
+<!-- The heading of one shown month: the previous buttons before the first
+     month, the next buttons after the last (all four with one month). With
+     two months a spacer as wide as the missing buttons keeps each heading
+     centred over its grid. -->
+{#snippet monthHeader(month: string, index: number)}
+	{@const parts = monthYearParts(month, locale)}
+	<div class="date-picker-header">
+		{#if index === 0}
+			<CalendarNavButton
+				label={t.datePickerPrevYear()}
+				disabled={navDisabled(-12)}
+				onclick={() => navigate(-12)}
+			>
+				<ChevronsLeft size={16} aria-hidden="true" />
+			</CalendarNavButton>
+			<CalendarNavButton
+				label={t.datePickerPrevMonth()}
+				disabled={navDisabled(-1)}
+				onclick={() => navigate(-1)}
+			>
+				<ChevronLeft size={16} aria-hidden="true" />
+			</CalendarNavButton>
+		{:else}
+			<span class="date-picker-nav-spacer" aria-hidden="true"></span>
+		{/if}
+		<!-- The year and the month in the locale's order ("2026年11月", "November 2026"). -->
+		<h2 id={headingIdOf(index)} class="date-picker-heading" aria-live="polite">
+			{#if parts.yearFirst}{@render yearButton(
+					month,
+					parts.year
+				)}{parts.separator}{@render monthButton(month, parts.month)}{:else}{@render monthButton(
+					month,
+					parts.month
+				)}{parts.separator}{@render yearButton(month, parts.year)}{/if}
+		</h2>
+		{#if index === months - 1}
+			<CalendarNavButton
+				label={t.datePickerNextMonth()}
+				disabled={navDisabled(1)}
+				onclick={() => navigate(1)}
+			>
+				<ChevronRight size={16} aria-hidden="true" />
+			</CalendarNavButton>
+			<CalendarNavButton
+				label={t.datePickerNextYear()}
+				disabled={navDisabled(12)}
+				onclick={() => navigate(12)}
+			>
+				<ChevronsRight size={16} aria-hidden="true" />
+			</CalendarNavButton>
+		{:else}
+			<span class="date-picker-nav-spacer" aria-hidden="true"></span>
+		{/if}
+	</div>
+{/snippet}
+
+{#snippet dayGrid(month: string, index: number)}
+	{@const weeks = monthGrid(month, weekStart)}
+	<table
+		class="date-picker-grid"
+		role="grid"
+		aria-labelledby={headingIdOf(index)}
+		aria-multiselectable={selectionMode === 'range' ? 'true' : undefined}
+		{@attach gridKeys}
+	>
 		<thead>
 			<tr>
 				{#each weekdays as day (day.weekday)}
@@ -395,19 +506,27 @@
 		     would read as "focus left the component"). -->
 			{#each weeks as week, w (w)}
 				<tr>
-					{#each week as date, d (d)}
+					{#each week as slot, d (d)}
 						<!-- One <td> per position whether it holds a day or an empty slot
-					     (before 0001-01-01 / after 9999-12-31), so a month change never
+					     (before 0001-01-01 / after 9999-12-31, or - with several months -
+					     a day of a neighbouring month), so a month change never
 					     replaces the element that has focus. -->
+						{@const date = slot !== null && months > 1 && !isSameMonth(slot, month) ? null : slot}
+						{@const ranged = date !== null && selectionMode === 'range' && inRange(date)}
 						<td
 							data-date={date ?? undefined}
 							tabindex={date === null ? undefined : date === focusDate ? 0 : -1}
 							aria-label={date === null ? undefined : formatFullDate(date, locale)}
-							aria-selected={date === null ? undefined : date === selectedDate ? 'true' : 'false'}
+							aria-selected={date === null ? undefined : isSelected(date) ? 'true' : 'false'}
 							aria-current={date !== null && date === today ? 'date' : undefined}
 							aria-disabled={date === null || isSelectable(date) ? undefined : 'true'}
-							class:date-picker-day--outside={date !== null && !isSameMonth(date, focusDate)}
+							class:date-picker-day--outside={date !== null && !isSameMonth(date, month)}
 							class:date-picker-day--empty={date === null}
+							class:date-picker-day--in-range={ranged}
+							class:date-picker-day--range-start={ranged && date === rangeEnds?.[0]}
+							class:date-picker-day--range-end={ranged && date === rangeEnds?.[1]}
+							class:date-picker-day--preview={ranged && !!range?.preview}
+							onmouseenter={onHover && date !== null ? () => onHover(date) : undefined}
 							onmousedown={(event) => {
 								// An empty slot or a day outside [min, max] cannot be focused:
 								// keep focus on the tracked day, so focusDate and the focused
@@ -525,6 +644,26 @@
 		color: var(--banto-on-solid);
 	}
 
+	/* The extended calendar's range (Issue #910): the days between the ends
+	   on a tint of the primary colour, the ends solid (aria-selected above).
+	   While the end is a preview, the day under the pointer / focus is
+	   outlined instead. */
+	.date-picker-grid
+		td.date-picker-day--in-range:not(.date-picker-day--range-start, .date-picker-day--range-end) {
+		border-radius: 0;
+		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);
+		color: var(--banto-text);
+	}
+
+	.date-picker-grid
+		td.date-picker-day--preview:not([aria-selected='true']):is(
+			.date-picker-day--range-start,
+			.date-picker-day--range-end
+		) {
+		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);
+		box-shadow: inset 0 0 0 var(--banto-border-width-strong) var(--banto-primary);
+	}
+
 	.date-picker-grid td[aria-disabled='true'] {
 		color: var(--banto-text-muted);
 		text-decoration: line-through;
@@ -543,6 +682,23 @@
 			var(--banto-focus-ring);
 	}
 
+	/* Two months side by side (Issue #910). */
+	.date-picker-months {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--banto-space-4);
+	}
+
+	.date-picker-month {
+		flex: 0 0 auto;
+	}
+
+	/* As wide as the two buttons it stands in for (with the gap between them). */
+	.date-picker-nav-spacer {
+		flex: 0 0 auto;
+		inline-size: calc(2 * var(--banto-control-height-sm) + var(--banto-space-1));
+	}
+
 	@media (forced-colors: active) {
 		.date-picker-grid td[aria-selected='true'] {
 			forced-color-adjust: none;
@@ -557,6 +713,20 @@
 
 		.date-picker-grid td[aria-disabled='true'] {
 			color: GrayText;
+		}
+
+		.date-picker-grid
+			td.date-picker-day--in-range:not(.date-picker-day--range-start, .date-picker-day--range-end),
+		.date-picker-grid
+			td.date-picker-day--preview:not([aria-selected='true']):is(
+				.date-picker-day--range-start,
+				.date-picker-day--range-end
+			) {
+			forced-color-adjust: none;
+			background: Canvas;
+			color: CanvasText;
+			outline: var(--banto-border-width) dashed Highlight;
+			outline-offset: calc(-1 * var(--banto-border-width));
 		}
 
 		.date-picker-grid td:focus,

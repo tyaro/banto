@@ -15,7 +15,7 @@
 	 * The Menu card (phase 2a), the DateInput card (date-time-pickers PR-1),
 	 * the TimeInput card (PR-2), the BantoGrid date cell card (PR-4), the
 	 * DateTimeInput card (PR-5), the DateRangeInput card and the grid's datetime
-	 * column (PR-6),
+	 * column (PR-6), the DatePicker / DateRangePicker card (#910),
 	 * the CommandPalette card (phase 2b), the
 	 * Toast card (phase 2c), the Modal / Drawer card (phase 4) and the
 	 * ConfirmDialog card (#556), the Tooltip card (#556) and the HeaderNav card's
@@ -41,7 +41,9 @@
 	import {
 		CommandPalette,
 		DateInput,
+		DatePicker,
 		DateRangeInput,
+		DateRangePicker,
 		DateTimeInput,
 		dayOfWeek,
 		Drawer,
@@ -100,6 +102,7 @@
 		columnValidationMessages,
 		dateInputMessages,
 		dateRangeInputMessages,
+		dateRangePickerMessages,
 		dateTimeInputMessages,
 		fileFieldMessages,
 		formValidationMessages,
@@ -359,6 +362,15 @@
 	});
 	let campaignRange = $state<{ from: string | null; to: string | null }>({ from: null, to: null });
 	const dateRangeMessages = dateRangeInputMessages();
+	// DatePicker / DateRangePicker card (#910): the extended calendar (two
+	// months, a range picked in one calendar). Fixed values, so the closed
+	// page is deterministic; the range crosses a month end.
+	let bookingDate = $state<string | null>('2026-11-27');
+	let lodgingRange = $state<{ from: string | null; to: string | null }>({
+		from: '2026-11-28',
+		to: '2026-12-03'
+	});
+	const dateRangePickerMessagesText = dateRangePickerMessages();
 	// BantoForm card (#714): sections, two columns, help text and `visibleWhen`.
 	// Labels are getters so they follow the locale (see resources/items.ts).
 	const formDemoSchema: FormSchema = {
@@ -1563,6 +1575,39 @@
 					</button>
 				{/snippet}
 			</BantoGrid>
+		</div>
+	</SurfaceCard>
+
+	<!-- Last on the page on purpose: the cards above keep their place, so the
+	     open-calendar screenshots of the simple pickers do not move. -->
+	<SurfaceCard title="DatePicker / DateRangePicker" description={m['uiDemo.picker.desc']()}>
+		<div class="grid">
+			<div class="sample">
+				<label class="caption" for="ui-demo-booking-date">{m['uiDemo.picker.dateLabel']()}</label>
+				<DatePicker
+					id="ui-demo-booking-date"
+					bind:value={bookingDate}
+					locale={getLocale()}
+					messages={dateMessages}
+				/>
+				<span class="caption" data-testid="ui-demo-booking-date-value">
+					{m['uiDemo.date.value']()}: {bookingDate ?? m['uiDemo.date.empty']()}
+				</span>
+			</div>
+			<div class="sample">
+				<span class="caption" id="ui-demo-lodging-label">{m['uiDemo.picker.rangeLabel']()}</span>
+				<DateRangePicker
+					id="ui-demo-lodging"
+					labelledBy="ui-demo-lodging-label"
+					bind:value={lodgingRange}
+					locale={getLocale()}
+					messages={dateRangePickerMessagesText}
+				/>
+				<span class="caption" data-testid="ui-demo-lodging-value">
+					{m['uiDemo.date.value']()}: {lodgingRange.from ?? m['uiDemo.date.empty']()} – {lodgingRange.to ??
+						m['uiDemo.date.empty']()}
+				</span>
+			</div>
 		</div>
 	</SurfaceCard>
 </div>

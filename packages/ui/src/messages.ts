@@ -6,7 +6,7 @@
  * verbatim, so passing nothing reproduces the stock output.
  *
  * Components with their own text take `messages?: UiMessages` and merge it
- * over the defaults (CommandPalette, ToastHost, Modal, Drawer, ConfirmDialog, DateInput, TimeInput, DateTimeInput, DateRangeInput, ThreePaneLayout). Apps that localise (admin-template
+ * over the defaults (CommandPalette, ToastHost, Modal, Drawer, ConfirmDialog, DateInput, TimeInput, DateTimeInput, DateRangeInput, DatePicker, DateRangePicker, ThreePaneLayout). Apps that localise (admin-template
  * does, via Paraglide) pass their own text explicitly - see `LoadingState`'s
  * `label` and admin-template's CommandPalette wrapper.
  */
@@ -82,6 +82,16 @@ export interface UiMessages {
 	dateRangeStart?: () => string;
 	/** DateRangeInput: the end day's text box. */
 	dateRangeEnd?: () => string;
+	/** DateRangePicker: the calendar button's name while the range has no two ends. */
+	dateRangePickerOpen?: () => string;
+	/** DateRangePicker: the calendar button's name with a range; `from` / `to` are full dates. */
+	dateRangePickerChange?: (from: string, to: string) => string;
+	/** DateRangePicker: the dialog's accessible name. */
+	dateRangePickerDialog?: () => string;
+	/** DateRangePicker: the dialog's status line while the start day is next. */
+	dateRangePickerPickStart?: () => string;
+	/** DateRangePicker: the dialog's status line once the start day is picked; `from` is its full date. */
+	dateRangePickerPickEnd?: (from: string) => string;
 	/** ThreePaneLayout: the left pane's name (its region and the band's toggle). */
 	threePaneLeft?: () => string;
 	/** ThreePaneLayout: the right pane's name (its region and the band's toggle). */
@@ -128,6 +138,11 @@ export const defaultUiMessages: Required<UiMessages> = {
 	dateTimeFormatHint: () => 'YYYY-MM-DD HH:mm の形で入力（例: 2026-11-07 09:30）',
 	dateRangeStart: () => '開始日',
 	dateRangeEnd: () => '終了日',
+	dateRangePickerOpen: () => '期間を選択',
+	dateRangePickerChange: (from, to) => `期間を変更、${from}～${to}`,
+	dateRangePickerDialog: () => '期間の選択',
+	dateRangePickerPickStart: () => '開始日を選んでください',
+	dateRangePickerPickEnd: (from) => `開始日 ${from}。終了日を選んでください`,
 	threePaneLeft: () => '左のペイン',
 	threePaneRight: () => '右のペイン',
 	threePaneResizeLeft: () => '左のペインの幅',

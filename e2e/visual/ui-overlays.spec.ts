@@ -954,3 +954,142 @@ test.describe('ui-demo BantoGrid date cell', () => {
 		await expect(trigger).toBeFocused();
 	});
 });
+
+// DatePicker / DateRangePicker (Issue #910): the extended calendar in a real
+// browser - two months in the viewport, the range picked in one calendar by
+// pointer (start, hover preview, end across the month end) and by keyboard,
+// Esc going back one view and then closing - plus an axe scan of both
+// dialogs, the range picker with a range and with a preview.
+async function openFrom(page: Page, name: string): Promise<void> {
+	const opener = page.getByRole('button', { name });
+	await opener.scrollIntoViewIfNeeded();
+	await page.waitForTimeout(100);
+	await opener.click();
+}
+
+const BOOKING_OPENER = '日付を変更、2026年11月27日金曜日';
+const LODGING_OPENER = '期間を変更、2026年11月28日土曜日～2026年12月3日木曜日';
+
+test.describe('ui-demo DatePicker / DateRangePicker', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+	});
+
+	test('DatePicker: two months in the viewport, the keys cross them, Enter picks', async ({
+		page
+	}) => {
+		const input = page.getByRole('textbox', { name: '予約日' });
+		await openFrom(page, BOOKING_OPENER);
+		const dialog = page.getByRole('dialog', { name: '日付の選択' });
+		await expect(dialog).toBeVisible();
+		await expect(dialog.getByRole('grid')).toHaveCount(2);
+		await expect(dialog.getByRole('gridcell', { name: '2026年11月27日金曜日' })).toBeFocused();
+		const box = await dialog.boundingBox();
+		const viewport = page.viewportSize() ?? { width: 0, height: 0 };
+		expect(box).not.toBeNull();
+		if (box) {
+			expect(box.x).toBeGreaterThanOrEqual(0);
+			expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+			expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+		}
+		await page.keyboard.press('ArrowDown');
+		await expect(dialog.getByRole('gridcell', { name: '2026年12月4日金曜日' })).toBeFocused();
+		await page.keyboard.press('Enter');
+		await expect(dialog).toBeHidden();
+		await expect(input).toBeFocused();
+		await expect(page.getByTestId('ui-demo-booking-date-value')).toContainText('2026-12-04');
+	});
+
+	test('DateRangePicker: start, hover preview, end in the next month; a reversed pick swaps', async ({
+		page
+	}) => {
+		const group = page.getByRole('group', { name: '宿泊期間' });
+		await openFrom(page, LODGING_OPENER);
+		const dialog = page.getByRole('dialog', { name: '期間の選択' });
+		await expect(dialog).toBeVisible();
+		await expect(dialog.getByRole('grid').first()).toHaveAttribute('aria-multiselectable', 'true');
+		await dialog.getByRole('gridcell', { name: '2026年11月20日金曜日' }).click();
+		await expect(
+			dialog.getByText('開始日 2026年11月20日金曜日。終了日を選んでください')
+		).toBeVisible();
+		await dialog.getByRole('gridcell', { name: '2026年11月24日火曜日' }).hover();
+		await expect(dialog.locator('td.date-picker-day--preview')).toHaveCount(5);
+		await dialog.getByRole('gridcell', { name: '2026年12月2日水曜日' }).click();
+		await expect(dialog).toBeHidden();
+		await expect(group.getByRole('textbox', { name: '開始日' })).toHaveValue('2026-11-20');
+		await expect(group.getByRole('textbox', { name: '終了日' })).toHaveValue('2026-12-02');
+		await expect(page.getByTestId('ui-demo-lodging-value')).toContainText(
+			'2026-11-20 – 2026-12-02'
+		);
+
+		// Keyboard: Enter sets the start, a day before it swaps the ends.
+		await openFrom(page, '期間を変更、2026年11月20日金曜日～2026年12月2日水曜日');
+		await expect(dialog.getByRole('gridcell', { name: '2026年11月20日金曜日' })).toBeFocused();
+		await page.keyboard.press('Enter');
+		await page.keyboard.press('ArrowUp');
+		await page.keyboard.press('Enter');
+		await expect(dialog).toBeHidden();
+		await expect(page.getByTestId('ui-demo-lodging-value')).toContainText(
+			'2026-11-13 – 2026-11-20'
+		);
+	});
+
+	test('DateRangePicker: Esc goes back one view, then closes and keeps the value', async ({
+		page
+	}) => {
+		await openFrom(page, LODGING_OPENER);
+		const dialog = page.getByRole('dialog', { name: '期間の選択' });
+		await expect(dialog).toBeVisible();
+		await page.keyboard.press('Enter');
+		await dialog.getByRole('button', { name: '12月' }).click();
+		await expect(dialog.getByRole('gridcell', { name: '2026年12月' })).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(dialog.getByRole('grid')).toHaveCount(2);
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+		await expect(
+			page.getByRole('group', { name: '宿泊期間' }).getByRole('textbox', { name: '開始日' })
+		).toBeFocused();
+		await expect(page.getByTestId('ui-demo-lodging-value')).toContainText(
+			'2026-11-28 – 2026-12-03'
+		);
+	});
+});
+
+for (const combo of DIAGONAL_MATRIX) {
+	test(`open extended calendars have no wcag2a/wcag2aa violations (${comboLabel(combo)})`, async ({
+		page
+	}) => {
+		await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+		await primeThemeAndAuth(page, combo);
+		await gotoDemo(page);
+		const booking = page.getByRole('textbox', { name: '予約日' });
+		const dateDialog = page.getByRole('dialog', { name: '日付の選択' });
+		// Same hydration race as the calendar scan above: retry the open.
+		await expect(async () => {
+			await booking.focus();
+			await page.keyboard.press('Alt+ArrowDown');
+			await expect(dateDialog).toBeVisible({ timeout: 1000 });
+		}).toPass();
+		const single = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(single.violations, formatViolations(single.violations)).toEqual([]);
+		await page.keyboard.press('Escape');
+		await expect(dateDialog).toBeHidden();
+
+		const start = page
+			.getByRole('group', { name: '宿泊期間' })
+			.getByRole('textbox', { name: '開始日' });
+		const rangeDialog = page.getByRole('dialog', { name: '期間の選択' });
+		await start.focus();
+		await page.keyboard.press('Alt+ArrowDown');
+		await expect(rangeDialog).toBeVisible();
+		const range = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(range.violations, formatViolations(range.violations)).toEqual([]);
+		await page.keyboard.press('Enter');
+		await page.keyboard.press('ArrowDown');
+		const preview = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(preview.violations, formatViolations(preview.violations)).toEqual([]);
+	});
+}

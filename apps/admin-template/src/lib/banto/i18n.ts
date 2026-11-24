@@ -200,6 +200,18 @@ export function dateRangeInputMessages(): UiMessages {
 	};
 }
 
+/** @banto/ui `DateRangePicker` `messages` (Issue #910): DateRangeInput's copy plus the one calendar's button, dialog and status line. */
+export function dateRangePickerMessages(): UiMessages {
+	return {
+		...dateRangeInputMessages(),
+		dateRangePickerOpen: () => m['dateRangePicker.open'](),
+		dateRangePickerChange: (from, to) => m['dateRangePicker.change']({ from, to }),
+		dateRangePickerDialog: () => m['dateRangePicker.dialog'](),
+		dateRangePickerPickStart: () => m['dateRangePicker.pickStart'](),
+		dateRangePickerPickEnd: (from) => m['dateRangePicker.pickEnd']({ from })
+	};
+}
+
 /** @banto/grid-svelte `ColumnValidationMessages` (columnsFromSchema): inline-edit validation copy, kept in lockstep with {@link formValidationMessages}. */
 export function columnValidationMessages(): ColumnValidationMessages {
 	return {

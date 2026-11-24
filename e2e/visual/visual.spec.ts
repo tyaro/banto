@@ -450,3 +450,38 @@ test.describe('date-time picker', () => {
 		});
 	}
 });
+
+// @banto/ui DateRangePicker (Issue #910): the extended calendar - two months
+// side by side, the sample's range crossing the month end - open, then with a
+// start picked and the end previewed from the keyboard (so no pointer hovers
+// a cell). Clock pinned for the "today" ring, as the date picker above.
+test.describe('extended calendar', () => {
+	for (const combo of DIAGONAL_MATRIX) {
+		test(`ui-demo-date-range-picker ${comboLabel(combo)} 1440x900`, async ({ page }) => {
+			await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+			await primeThemeAndAuth(page, combo);
+			await page.goto('/ui-demo');
+			await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+			const opener = page.getByRole('button', {
+				name: '期間を変更、2026年11月28日土曜日～2026年12月3日木曜日'
+			});
+			await opener.scrollIntoViewIfNeeded();
+			await page.waitForTimeout(SETTLE_MS);
+			await opener.click();
+			const dialog = page.getByRole('dialog', { name: '期間の選択' });
+			await expect(dialog).toBeVisible();
+			await expect(dialog.getByRole('gridcell', { name: '2026年11月28日土曜日' })).toBeFocused();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(
+				`ui-demo-date-range-picker-${comboLabel(combo)}-1440x900.png`
+			);
+			await page.keyboard.press('Enter');
+			await page.keyboard.press('ArrowDown');
+			await expect(dialog.getByRole('gridcell', { name: '2026年12月5日土曜日' })).toBeFocused();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(
+				`ui-demo-date-range-picker-preview-${comboLabel(combo)}-1440x900.png`
+			);
+		});
+	}
+});

@@ -46,12 +46,14 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 
 日付・時刻の入力（[date-time-pickers.md](../../docs/design/date-time-pickers.md) PR-1・PR-2・PR-5・PR-6。`popover` API を前提にする）:
 
-| 部品             | 役割                                                                                                                                                      | props                                                                                                                                                                                                                                                                                                                                      |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DateInput`      | 直接打てる入力欄 ＋ 横のボタンで開くカレンダー（`role="dialog"` + `aria-modal`、矢印・Home・End・PageUp/Down・Enter・Esc）                                | `value`(`'YYYY-MM-DD'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `locale?` `weekStartsOn?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable)                                                                         |
-| `TimeInput`      | 直接打てる入力欄 ＋ 時刻の一覧（`role="combobox"` + `role="listbox"`、フォーカスは入力欄のまま `aria-activedescendant`。↓・Alt+↓ で開く、↑↓・Enter・Esc） | `value`(`'HH:mm'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `step?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable)                                                                                                                  |
-| `DateTimeInput`  | 入力欄 1 つ ＋ カレンダーと時刻の一覧を並べたダイアログ 1 枚（`role="dialog"`。日を選ぶと一覧へ、時刻を選ぶと値が決まって閉じる）                         | `value`(`'YYYY-MM-DDTHH:mm'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `step?` `locale?` `weekStartsOn?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable)                                                           |
-| `DateRangeInput` | 開始日・終了日の 2 つの `DateInput` を `role="group"` でまとめる（両端とも含む日。範囲の強調表示はしない）                                                | `value`(`{ from, to }`、各端は `'YYYY-MM-DD'`/`null`、bindable) `onValueChange?` `onTextInput?(end, text)` `id?` `label?` `labelledBy?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `locale?` `weekStartsOn?` `messages?` `orientation?` `onkeydown?` `onblur?` `fromInputEl`・`toInputEl`(bindable) |
+| 部品              | 役割                                                                                                                                                      | props                                                                                                                                                                                                                                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DateInput`       | 直接打てる入力欄 ＋ 横のボタンで開くカレンダー（`role="dialog"` + `aria-modal`、矢印・Home・End・PageUp/Down・Enter・Esc）                                | `value`(`'YYYY-MM-DD'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `locale?` `weekStartsOn?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable)                                                                         |
+| `TimeInput`       | 直接打てる入力欄 ＋ 時刻の一覧（`role="combobox"` + `role="listbox"`、フォーカスは入力欄のまま `aria-activedescendant`。↓・Alt+↓ で開く、↑↓・Enter・Esc） | `value`(`'HH:mm'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `step?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable)                                                                                                                  |
+| `DateTimeInput`   | 入力欄 1 つ ＋ カレンダーと時刻の一覧を並べたダイアログ 1 枚（`role="dialog"`。日を選ぶと一覧へ、時刻を選ぶと値が決まって閉じる）                         | `value`(`'YYYY-MM-DDTHH:mm'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `step?` `locale?` `weekStartsOn?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable)                                                           |
+| `DateRangeInput`  | 開始日・終了日の 2 つの `DateInput` を `role="group"` でまとめる（両端とも含む日。範囲の強調表示はしない）                                                | `value`(`{ from, to }`、各端は `'YYYY-MM-DD'`/`null`、bindable) `onValueChange?` `onTextInput?(end, text)` `id?` `label?` `labelledBy?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `locale?` `weekStartsOn?` `messages?` `orientation?` `onkeydown?` `onblur?` `fromInputEl`・`toInputEl`(bindable) |
+| `DatePicker`      | 拡張の日付入力（#910）。`DateInput` と同じ入力欄に、月を 2 つ並べるカレンダー                                                                             | `DateInput` と同じ（`text`・`onTextInput` の外部持ちなし）＋ `months?`(`1`/`2`、既定 `2`)                                                                                                                                                                                                                                                  |
+| `DateRangePicker` | 拡張の期間入力（#910）。開始日・終了日の 2 つの入力欄と、期間を続けて選ぶ 1 つのカレンダー（月を 2 つ並べる）                                             | `DateRangeInput` と同じ（`orientation` なし）＋ `months?`(`1`/`2`、既定 `2`)                                                                                                                                                                                                                                                               |
 
 値は `YYYY-MM-DD`（タイムゾーンを持たない日付）か `null`。手入力は blur・Enter で解析し、通れば正規の形に直す
 （`2026/11/7`・`20261107`・全角・`11/7`（今年）も可。`11/07/2026` のような年月日の順でない形は受け付けない）。
@@ -93,8 +95,28 @@ blur・Enter で正規の形に直す。表示は全ロケールで `HH:mm`（�
 `DateInput` のまま。`onblur` は 2 つの入力欄の全体からフォーカスが出たときだけ、`pointerdown` はまとまりの外へ伝えない。
 `orientation="vertical"` で縦に積む（幅の狭いポップオーバー向け）。
 
-入力欄の幅は CSS カスタムプロパティで調整できる（公開の調整点）: `DateInput` と `DateRangeInput` の各欄は
-`--banto-date-input-width`（既定 `11em`）、`TimeInput` は `--banto-time-input-width`（`7.5em`）、`DateTimeInput` は
+**シンプルと拡張の使い分け（#910）**
+
+日付の部品は 2 系統ある。**シンプル**（`DateInput`・`DateTimeInput`・`DateRangeInput`）は 1 か月のカレンダーで、表の
+セル編集・絞り込み・狭いポップオーバーの中など、場所を取らずに 1 日を選ぶ所に使う。**拡張**（`DatePicker`・
+`DateRangePicker`）は月を 2 つ並べるカレンダー（600px 以下の画面では 1 つ）で、月末をまたぐ予約・期間など、
+前後の月を見ながら選ぶ所に使う。期間を 1 つのカレンダーで選びたいなら `DateRangePicker`。
+
+- `DatePicker` の props・値・手入力・キー・約束は `DateInput` と同じ（`text` は無い）。`months`（`1` か `2`、既定 `2`）で
+  並べる月の数を決める。文言は `DateInput` と同じ `datePicker*`・`dateFormatHint`。
+- `DateRangePicker` の入力欄・値・名前は `DateRangeInput` と同じ（`{ from, to }`、`dateRangeStart`・`dateRangeEnd`、`label` /
+  `labelledBy`、手入力は各欄の blur・Enter で確定、前後は検査しない）。違いはカレンダーが 1 つなこと: 1 回目に押した日が
+  開始、2 回目が終了（開始より前を押すと入れ替える）。2 回目までは、ポインターを乗せた日（キーボードではフォーカスの日）
+  までを仮の期間として塗る。キーは日の格子と同じで、Enter で開始、もう一度 Enter で終了。Esc は一段上の表示へ戻り、
+  日の表示では閉じる（開始だけ選んだ途中は捨てる）。閉じるとフォーカスは開いた元の入力欄へ（ボタンからは開始日）。
+  端に選べるのは `min`・`max` の内で `isDateDisabled` でない日（間の日は問わない）。期間は `aria-selected`（グリッドは
+  `aria-multiselectable`）。文言は `dateRangePickerOpen`・`dateRangePickerChange(from, to)`・`dateRangePickerDialog`・
+  `dateRangePickerPickStart`・`dateRangePickerPickEnd(from)`（ダイアログの下の案内。読み上げる）と、`DateRangeInput` の文言。
+  `orientation` は無い。よく使う期間のボタン（今週・今月など）は持たない（アプリごとに違うため）。
+
+入力欄の幅は CSS カスタムプロパティで調整できる（公開の調整点）: `DateInput`・`DatePicker` と `DateRangeInput` の各欄は
+`--banto-date-input-width`（既定 `11em`）、`DateRangePicker` は 2 つの欄とボタンを合わせて `--banto-date-range-picker-width`
+（`18em`）、`TimeInput` は `--banto-time-input-width`（`7.5em`）、`DateTimeInput` は
 `--banto-datetime-input-width`（`15em`）。祖先の要素で上書きする（`100%` で親の幅に合わせる）。高さは `--banto-control-height`。
 `@banto/grid-svelte` のセル編集はこの 3 つの幅を `100%` にし、高さを行に収める。
 
