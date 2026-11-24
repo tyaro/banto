@@ -251,6 +251,10 @@ lockfile に増えるのは `fast-check` と `pure-rand` の 2 つ）。
 
 - 全 `packages/@banto/*` の `dependencies` / `peerDependencies` は空。
 - パッケージ間の `from '@banto/...'` import はゼロ。
+  複数のコアパッケージで同じ決まりが要るときは、手で複製せず、1 つの原本から生成した写しを
+  各パッケージに置く。日付・時刻の文字列の決まりは `packages/ui/src/datetime-core.ts` が原本で、
+  forms・grid-svelte の `datetime-core.ts` は `pnpm sync:datetime-core` が書く写し
+  （手で直さない。原本と違えば CI の `pnpm check:datetime-core` が落とす。Issue #811）。
 - `theme/banto.css` の「charts/dock がこのトークンを消費する」等はコメントで
   あって import ではない。
 - app 層の **`apps/admin-template/src/lib/resource/`**（リソースの画面の共通部品。

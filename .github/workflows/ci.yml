@@ -236,6 +236,15 @@ jobs:
         if: needs.changes.outputs.docs != 'true'
         run: pnpm check:versions
 
+      # 日付・時刻の文字列の決まり（datetime-core.ts）は ui が原本で、forms・grid-svelte
+      # は生成した写し（パッケージ間 import ゼロのため。Issue #811）。写しが原本と
+      # 違えば落とす。スクリプト自身のテストも同じ場所で回す。
+      - name: Verify datetime-core copies match the source
+        if: needs.changes.outputs.docs != 'true'
+        run: |
+          node --test scripts/sync-datetime-core.test.mjs
+          pnpm check:datetime-core
+
       - name: Format check (Prettier)
         run: pnpm format:check
 
