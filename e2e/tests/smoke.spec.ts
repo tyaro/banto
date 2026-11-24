@@ -4249,7 +4249,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 							await expect(page.locator(PRICE_MARKS).first()).toBeVisible();
 						}
 						const answer = server ? filteredListAnswer() : null;
-						await page.locator(PRICE_MARKS).nth(i).click();
+						// The click event itself: the centre of a thin slice of a donut is in its hole.
+						await page.locator(PRICE_MARKS).nth(i).dispatchEvent('click');
 						await expectListRows(mark.count, answer);
 						await clearListState();
 					}
