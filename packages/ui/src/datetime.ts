@@ -3,6 +3,10 @@
  * the calendar arithmetic, the month grid and the `Intl` names. Pure
  * functions, no Svelte - the main unit-test target.
  *
+ * The text rules (the canonical checks, the lenient parse, the formats) are
+ * `datetime-core.ts`, the one source also copied to forms and grid (Issue
+ * #811); this module re-exports them and adds what only the pickers need.
+ *
  * - A date is the canonical string `YYYY-MM-DD` (years 0001-9999), a wall
  *   date with no time zone. Fixed width, so string order = date order;
  *   nothing here goes through `Date.parse` (§2.2's UTC / local mix-up).
@@ -19,89 +23,51 @@
  *   here (conventions §13) - the caller passes the BCP 47 tag.
  */
 
+import * as core from './datetime-core';
+import {
+	MAX_YEAR,
+	MIN_YEAR,
+	daysInMonth,
+	formatDate,
+	formatTime,
+	normalizeTimeStep,
+	parseIsoDate,
+	parseIsoTime,
+	type DateParts
+} from './datetime-core';
+
+// The parse / format rules shared with forms and grid live in
+// `datetime-core.ts` (the one source, Issue #811). The three `isIso*` and
+// `formatDateTimeText` below are thin wrappers that keep this package's
+// signatures (`string` in, `boolean` out - no type guard; `null` -> `''`).
+export {
+	daysInMonth,
+	formatDate,
+	formatTime,
+	isLeapYear,
+	normalizeTimeStep,
+	parseDateText,
+	parseDateTimeText,
+	parseIsoDate,
+	parseIsoDateTime,
+	parseIsoTime,
+	parseTimeText,
+	type DateParts,
+	type DateTimeParts,
+	type TimeParts
+} from './datetime-core';
+
 /** Weekday index: 0 = Sunday ... 6 = Saturday (the `Date#getDay` numbering). */
 export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
-export interface DateParts {
-	year: number;
-	month: number; // 1-12
-	day: number; // 1-31
-}
-
-const MIN_YEAR = 1;
-const MAX_YEAR = 9999;
-
-export function isLeapYear(year: number): boolean {
-	return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-}
-
-/** Days in `month` (1-12) of `year`. */
-export function daysInMonth(year: number, month: number): number {
-	if (month === 2) return isLeapYear(year) ? 29 : 28;
-	return [4, 6, 9, 11].includes(month) ? 30 : 31;
-}
-
-function isValidParts(year: number, month: number, day: number): boolean {
-	return (
-		Number.isInteger(year) &&
-		Number.isInteger(month) &&
-		Number.isInteger(day) &&
-		year >= MIN_YEAR &&
-		year <= MAX_YEAR &&
-		month >= 1 &&
-		month <= 12 &&
-		day >= 1 &&
-		day <= daysInMonth(year, month)
-	);
-}
-
-const pad = (n: number, width: number) => String(n).padStart(width, '0');
-
-/** `YYYY-MM-DD` from parts (no validation - pass valid parts). */
-export function formatDate(parts: DateParts): string {
-	return `${pad(parts.year, 4)}-${pad(parts.month, 2)}-${pad(parts.day, 2)}`;
-}
-
-const CANONICAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/** Parts of a canonical `YYYY-MM-DD` that is a real calendar day, else `null`. Strict: no lenient forms. */
-export function parseIsoDate(value: string): DateParts | null {
-	const match = CANONICAL_DATE.exec(value);
-	if (!match) return null;
-	const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-	return isValidParts(year, month, day) ? { year, month, day } : null;
-}
-
 /** Is `value` a canonical `YYYY-MM-DD` real calendar day? */
 export function isIsoDate(value: string): boolean {
-	return parseIsoDate(value) !== null;
+	return core.isIsoDate(value);
 }
 
 /** Empty for the pickers: `null`, `undefined`, `''` or only white space (D6). */
 export function isBlankDateText(text: string | null | undefined): boolean {
 	return text == null || text.trim() === '';
-}
-
-/**
- * Typed text -> canonical `YYYY-MM-DD`, or `null` when it is not a date
- * (blank text is also `null` - check {@link isBlankDateText} first to tell
- * "empty" from "invalid"). `currentYear` fills the year of `M/D` / `M-D`
- * (defaults to the local current year).
- */
-export function parseDateText(text: string, currentYear?: number): string | null {
-	const s = text.normalize('NFKC').trim();
-	let match = /^(\d{4})([-/.])(\d{1,2})\2(\d{1,2})$/.exec(s);
-	let parts: [number, number, number] | null = null;
-	if (match) {
-		parts = [Number(match[1]), Number(match[3]), Number(match[4])];
-	} else if ((match = /^(\d{4})(\d{2})(\d{2})$/.exec(s))) {
-		parts = [Number(match[1]), Number(match[2]), Number(match[3])];
-	} else if ((match = /^(\d{1,2})([-/])(\d{1,2})$/.exec(s))) {
-		const year = currentYear ?? new Date().getFullYear();
-		parts = [year, Number(match[1]), Number(match[3])];
-	}
-	if (!parts || !isValidParts(...parts)) return null;
-	return formatDate({ year: parts[0], month: parts[1], day: parts[2] });
 }
 
 // --- Day numbers (Howard Hinnant, http://howardhinnant.github.io/date_algorithms.html) ---
@@ -328,63 +294,15 @@ export function weekdayNames(
 // form in every locale - no `Intl`, so neither the locale's `hourCycle`
 // (`h12` "9:30 AM") nor its digits change what is shown (D7).
 
-export interface TimeParts {
-	hour: number; // 0-23
-	minute: number; // 0-59
-}
-
 /** Minutes in a day: the step list ends before this (no wrap past 23:59). */
 const MINUTES_PER_DAY = 24 * 60;
 
 /** The list step when `step` is not given (D8: the list only; any minute is accepted). */
 export const DEFAULT_TIME_STEP = 30;
 
-function isValidTimeParts(hour: number, minute: number): boolean {
-	return (
-		Number.isInteger(hour) &&
-		Number.isInteger(minute) &&
-		hour >= 0 &&
-		hour <= 23 &&
-		minute >= 0 &&
-		minute <= 59
-	);
-}
-
-/** `HH:mm` from parts (no validation - pass valid parts). */
-export function formatTime(parts: TimeParts): string {
-	return `${pad(parts.hour, 2)}:${pad(parts.minute, 2)}`;
-}
-
-const CANONICAL_TIME = /^(\d{2}):(\d{2})$/;
-
-/** Parts of a canonical `HH:mm` (00:00-23:59), else `null`. Strict: no lenient forms. */
-export function parseIsoTime(value: string): TimeParts | null {
-	const match = CANONICAL_TIME.exec(value);
-	if (!match) return null;
-	const [hour, minute] = [Number(match[1]), Number(match[2])];
-	return isValidTimeParts(hour, minute) ? { hour, minute } : null;
-}
-
 /** Is `value` a canonical `HH:mm` (00:00-23:59)? */
 export function isIsoTime(value: string): boolean {
-	return parseIsoTime(value) !== null;
-}
-
-/**
- * Typed text -> canonical `HH:mm`, or `null` when it is not a time (blank
- * text is also `null` - check {@link isBlankDateText} first). Accepted (§5.3):
- * `H:mm` / `HH:mm`, `HHmm`, `Hmm`, and `H` / `HH` alone (`9` -> `09:00`);
- * full-width digits and `：` through NFKC. 24-hour only: no `AM` / `PM`, no
- * `24:00`, no seconds.
- */
-export function parseTimeText(text: string): string | null {
-	const s = text.normalize('NFKC').trim();
-	const match =
-		/^(\d{1,2}):(\d{2})$/.exec(s) ?? /^(\d{1,2})(\d{2})$/.exec(s) ?? /^(\d{1,2})()$/.exec(s);
-	if (!match) return null;
-	const hour = Number(match[1]);
-	const minute = match[2] === '' ? 0 : Number(match[2]);
-	return isValidTimeParts(hour, minute) ? formatTime({ hour, minute }) : null;
+	return core.isIsoTime(value);
 }
 
 /** Minutes since 00:00 of a canonical `HH:mm`. */
@@ -402,11 +320,6 @@ export function minutesToTime(minutes: number): string {
 	return formatTime({ hour: Math.floor(minutes / 60), minute: minutes % 60 });
 }
 
-/** `step` as a usable step in minutes (a positive integer), else `undefined` (not given / invalid). */
-export function normalizeTimeStep(step: number | null | undefined): number | undefined {
-	return typeof step === 'number' && Number.isInteger(step) && step > 0 ? step : undefined;
-}
-
 /**
  * The times of the list: from 00:00 every `step` minutes (default
  * {@link DEFAULT_TIME_STEP}; an invalid step falls back to it), up to the
@@ -421,7 +334,11 @@ export function timeOptions(step?: number): string[] {
 	return times;
 }
 
-/** Is `time` on the `step` grid counted from 00:00 (D8)? No (valid) step: always true. */
+/**
+ * Is `time` on the `step` grid counted from 00:00 (D8)? No (valid) step: always true.
+ * Unlike the shared `datetime-core` one (the forms / grid validators), a
+ * `time` that is not canonical throws - the pickers only pass canonical times.
+ */
 export function isOnTimeStep(time: string, step?: number): boolean {
 	const by = normalizeTimeStep(step);
 	return by === undefined || timeToMinutes(time) % by === 0;
@@ -454,25 +371,9 @@ export function nearestTime(time: string, candidates: readonly string[]): string
 // a space in place of the `T` (`2026-11-07 09:30`, §5.3); the value keeps the
 // `T`.
 
-export interface DateTimeParts {
-	/** Canonical `YYYY-MM-DD`. */
-	date: string;
-	/** Canonical `HH:mm`. */
-	time: string;
-}
-
-const CANONICAL_DATETIME = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/;
-
-/** Date and time of a canonical `YYYY-MM-DDTHH:mm` (a real day, 00:00-23:59), else `null`. Strict. */
-export function parseIsoDateTime(value: string): DateTimeParts | null {
-	const match = CANONICAL_DATETIME.exec(value);
-	if (!match || !isIsoDate(match[1]) || !isIsoTime(match[2])) return null;
-	return { date: match[1], time: match[2] };
-}
-
 /** Is `value` a canonical `YYYY-MM-DDTHH:mm`? */
 export function isIsoDateTime(value: string): boolean {
-	return parseIsoDateTime(value) !== null;
+	return core.isIsoDateTime(value);
 }
 
 /** `YYYY-MM-DDTHH:mm` from a canonical date and time (no validation). */
@@ -486,26 +387,5 @@ export function joinDateTime(date: string, time: string): string {
  * (`null` -> `''`).
  */
 export function formatDateTimeText(value: string | null | undefined): string {
-	if (value == null) return '';
-	const parts = parseIsoDateTime(value);
-	return parts ? `${parts.date} ${parts.time}` : value;
-}
-
-/** A date part, then `T` or white space, then a time part (after NFKC, so a full-width space is a space). */
-const DATETIME_TEXT = /^([^\sT]+)(?:T|\s+)([^\sT]+)$/;
-
-/**
- * Typed text -> canonical `YYYY-MM-DDTHH:mm`, or `null` when it is not a date
- * and time (blank text is also `null` - check {@link isBlankDateText} first).
- * Accepted (§5.3): a date as {@link parseDateText} reads it, then a space or
- * `T`, then a time as {@link parseTimeText} reads it (`2026/11/7 9:30`,
- * `20261107 0930`, `11/7 9` for this year, full-width). Both parts are
- * required; seconds are refused like {@link parseTimeText} does.
- */
-export function parseDateTimeText(text: string, currentYear?: number): string | null {
-	const match = DATETIME_TEXT.exec(text.normalize('NFKC').trim());
-	if (!match) return null;
-	const date = parseDateText(match[1], currentYear);
-	const time = parseTimeText(match[2]);
-	return date !== null && time !== null ? joinDateTime(date, time) : null;
+	return value == null ? '' : core.formatDateTimeText(value);
 }
