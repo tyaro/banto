@@ -1189,6 +1189,77 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 	});
 
+	// #882 D1: links with view arguments against the REAL server (ColumnMap allow-list, the
+	// `between` / `gte` / `lt` conditions in SQL). The data is whatever the earlier scenarios left,
+	// so the checks are invariants: the four price bands partition the list (cut points included),
+	// and `after` excludes its own day (a day-by-day count falls at the day the item was updated).
+	test('3d4. items: view links with arguments count the right rows on the real server', async () => {
+		await page.goto('/items');
+		await chooseItemsMode(page, SERVER_MODE);
+		const grid = page.getByRole('grid').first();
+		const countAt = async (href: string): Promise<number> => {
+			await page.goto(href);
+			await expect(grid).toHaveAttribute('aria-rowcount', /^\d+$/);
+			// The link's own parameters are gone once applied.
+			await expect(page).toHaveURL(/\/items$/);
+			return Number(await grid.getAttribute('aria-rowcount')) - 1;
+		};
+		// The count settles after the server answered: wait for it to stop changing.
+		const settled = async (href: string): Promise<number> => {
+			let last = -1;
+			await expect(async () => {
+				const now = await countAt(href);
+				const same = now === last;
+				last = now;
+				expect(same).toBe(true);
+			}).toPass();
+			return last;
+		};
+
+		const total = await settled('/items');
+		let sum = 0;
+		for (const band of ['0-99', '100-149', '150-199', '200-']) {
+			sum += await settled(`/items?view=price-band&arg.band=${band}`);
+		}
+		expect(sum).toBe(total);
+		expect(await settled('/items?view=price-band&arg.band=200-')).toBeGreaterThanOrEqual(1);
+
+		const lowStock = await settled('/items?view=low-stock');
+		expect(lowStock).toBeGreaterThanOrEqual(1);
+		expect(await settled('/items?view=low-stock&arg.after=2000-01-01')).toBe(lowStock);
+		expect(await settled('/items?view=low-stock&arg.after=2999-12-31')).toBe(0);
+		// Around today (UTC or local stamp): never rising, and it falls at the item's day.
+		const day = (offset: number) =>
+			new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+		const counts: number[] = [];
+		for (const offset of [-2, -1, 0, 1]) {
+			counts.push(await settled(`/items?view=low-stock&arg.after=${day(offset)}`));
+		}
+		for (let i = 1; i < counts.length; i++) expect(counts[i]!).toBeLessThanOrEqual(counts[i - 1]!);
+		expect(counts[0]!).toBeGreaterThan(counts[counts.length - 1]!);
+
+		// A link that cannot be applied changes nothing.
+		await page.goto('/items?view=low-stock');
+		await expect.poll(() => grid.getAttribute('aria-rowcount')).toBe(String(lowStock + 1));
+		await page.evaluate(() => {
+			const a = document.createElement('a');
+			a.href = '/items?view=price-band';
+			a.id = 'e2e-view-link';
+			a.textContent = 'e2e link';
+			document.body.appendChild(a);
+		});
+		await page.locator('#e2e-view-link').click();
+		await expect(page.getByText('このリンクの絞り込みを適用できません').first()).toBeVisible();
+		expect(await grid.getAttribute('aria-rowcount')).toBe(String(lowStock + 1));
+
+		// Cleanup: the applied view lives on in this session's list state.
+		await page.evaluate(() => {
+			for (const key of Object.keys(sessionStorage)) {
+				if (key.startsWith('banto.listView.items:')) sessionStorage.removeItem(key);
+			}
+		});
+	});
+
 	// Issue #215/#255 review (fix 3): the CLIENT grid filters/shows rows
 	// through `toItemRow()` (adds the synthetic `category` field), not the
 	// raw `Item`. The exclusion check must run the SAME derivation, or a
