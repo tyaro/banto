@@ -210,9 +210,14 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
  * (`signal('unauthorized')` / `signal('credentialCleared')`; the controller
  * then confirms with a probe, ADR-0014). A screen that reads an app stream
  * WITHOUT `/api/events` open must pass them, or a revoked session goes
- * unnoticed; passing them next to `/api/events` is harmless (the signals of
- * two streams are answered by one confirmation). `createSseStream` itself
- * stays unaware of the controller (conventions §4/§5).
+ * unnoticed; passing them next to `/api/events` is harmless. The contract
+ * when two streams report the same revocation: at most ONE confirmation is
+ * in flight and the session ends ONCE - not "one request in total". A signal
+ * means "an answer that started before now may be out of date", so the
+ * second signal aborts the confirmation the first one started and starts
+ * its own: N streams cost up to N `GET /api/auth/identity` in a row, of
+ * which only the last is used. `createSseStream` itself stays unaware of
+ * the controller (conventions §4/§5).
  */
 export function sessionStreamHooks(): Pick<
 	EventSubscriptionHooks,

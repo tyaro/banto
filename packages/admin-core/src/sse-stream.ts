@@ -28,13 +28,21 @@ import { createSseMessageParser, type SseMessage } from './sse-parser';
 /** Options of `createSseStream` (Issue #936, design §5.2). */
 export interface SseStreamOptions<T> {
 	/**
-	 * The path appended to `baseUrl`. Must start with a single `/` (anything
-	 * else throws a `TypeError`: the bearer token is sent to this URL, so it
-	 * must not be able to name another host). Never put a token or any other
-	 * secret in its query string (conventions §6).
+	 * The path appended to `baseUrl`. Must start with a single `/`, and
+	 * `baseUrl + path`, once RESOLVED the way `fetch` resolves it, must stay
+	 * on the origin of `baseUrl` (of the page, when `baseUrl` is empty).
+	 * Anything else throws a `TypeError` before any request is made: the
+	 * bearer token is sent to this URL, so it must not be able to name another
+	 * host - including through what URL parsing removes (a tab or a newline
+	 * between two slashes still makes `//host/x` to a browser). Never put a
+	 * token or any other secret in its query string (conventions §6).
 	 */
 	path: string;
-	/** Origin of the server, without a trailing slash. Default `''` (same origin). */
+	/**
+	 * Origin of the server, without a trailing slash. Default `''` (same
+	 * origin). It is the origin the bearer token may be sent to; a value that
+	 * does not parse as a URL with a host throws a `TypeError`.
+	 */
 	baseUrl?: string;
 	/** Default: the global `fetch`. */
 	fetchFn?: typeof fetch;
@@ -137,6 +145,55 @@ const DEFAULT_TOKEN_WAIT_DELAY_MS = 500;
 const SSE_HEADERS = { 'X-Banto-Client': 'banto' } as const;
 
 /**
+ * Stands in for the page's origin where there is none (tests, SSR). How a
+ * path-only reference resolves does not depend on WHICH http(s) origin it is
+ * resolved against, so "stays on this origin" answers the question for any.
+ */
+const PLACEHOLDER_ORIGIN = 'http://banto.invalid';
+
+/**
+ * The URL to request: `baseUrl + path`, refused (`TypeError`) unless it
+ * resolves to the origin the bearer token is meant for. The comparison is
+ * made on the PARSED URL (WHATWG URL Standard - what `fetch` does with the
+ * string), not on the text: parsing drops tabs and newlines and reads a
+ * backslash as `/`, so a path can name another host although its text
+ * starts with a single `/`.
+ */
+function resolveStreamUrl(baseUrl: string, path: string): string {
+	const refuse = (): never => {
+		throw new TypeError(
+			'createSseStream: `path` must start with a single "/" and stay on the origin of `baseUrl`'
+		);
+	};
+	if (!path.startsWith('/') || path[1] === '/' || path[1] === '\\') refuse();
+	const pageOrigin = (globalThis as { location?: { origin?: string } }).location?.origin;
+	const fallback = pageOrigin && pageOrigin !== 'null' ? pageOrigin : PLACEHOLDER_ORIGIN;
+	const url = `${baseUrl}${path}`;
+	let allowed: URL;
+	let target: URL;
+	try {
+		// A `baseUrl` that is itself only a path (or empty) is on the page's origin.
+		allowed = new URL(baseUrl === '' ? '/' : baseUrl, fallback);
+		target = new URL(url, fallback);
+	} catch {
+		return refuse();
+	}
+	// `origin` is the string "null" for a non-http(s) scheme (a webview's
+	// custom one), which would compare equal for any two hosts: compare the
+	// parts. No user/password either (`fetch` refuses those anyway).
+	if (
+		allowed.host === '' ||
+		target.protocol !== allowed.protocol ||
+		target.host !== allowed.host ||
+		target.username !== '' ||
+		target.password !== ''
+	) {
+		refuse();
+	}
+	return url;
+}
+
+/**
  * Read a server-sent-events stream at `options.path`, reconnecting for as
  * long as it is not stopped. Starts reading at once; returns the function
  * that stops it (nothing is called after that).
@@ -187,14 +244,23 @@ const SSE_HEADERS = { 'X-Banto-Client': 'banto' } as const;
  * - a frame read between a token change and the next tick of the token
  *   watch is dropped, and so is the rest of a read after an `onEvent` that
  *   changed the token.
+ * The same check is repeated every time code of the caller returns (`parse`,
+ * `valueStamp`, `onEvent` and every hook): what that code did - stop the
+ * stream, log in, log out - decides whether the step that follows still
+ * belongs to this attempt. If it does not, nothing more is done for the old
+ * attempt: the value is not delivered, its mark and the stale clock are not
+ * updated, a `401` is not reported through `onUnauthorized`, and the stream
+ * is reopened for whatever token is stored now.
+ * A stream that ENDS (the server closing it, a network error) is checked
+ * too: if the token is no longer this attempt's, `onSessionChange` is called
+ * then, not at the next attempt, and the stream reconnects at once with a
+ * new token (after `tokenWaitDelayMs` if there is none).
  * The check is a synchronous comparison; it adds no timer.
  */
 export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
-	const { path } = options;
-	if (!path.startsWith('/') || path[1] === '/' || path[1] === '\\') {
-		throw new TypeError('createSseStream: `path` must start with a single "/"');
-	}
-	const url = `${options.baseUrl ?? ''}${path}`;
+	// Checked once, before anything else: no request (and so no bearer token)
+	// is ever made for a URL that failed it.
+	const url = resolveStreamUrl(options.baseUrl ?? '', options.path);
 	const fetchFn = options.fetchFn ?? fetch;
 	const reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
 	const tokenWaitDelayMs = options.tokenWaitDelayMs ?? DEFAULT_TOKEN_WAIT_DELAY_MS;
@@ -253,28 +319,31 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 		}, staleAfterMs);
 	}
 
-	/** Whether `value` is a NEW one (design §5.5); remembers its mark. */
-	function isNewValue(value: T, event: string | undefined): boolean {
-		if (!options.valueStamp) return true;
-		const stamp = options.valueStamp(value, event);
-		if (stamps.has(event) && Object.is(stamps.get(event), stamp)) return false;
-		stamps.set(event, stamp);
-		return true;
-	}
-
-	/** Hand one event to the caller. The owner check is the caller's (`connectOnce`). */
-	function deliver(message: SseMessage, token: string): void {
+	/**
+	 * Hand one event to the caller. `mine` is the attempt's owner check
+	 * (design §5.2.1): the caller made it just before, and it is made again
+	 * here every time code of the app returns, because that code may have
+	 * stopped the stream or changed the session. Returns `false` when the
+	 * attempt is no longer the one in charge; nothing of this event is kept
+	 * then that was not already handed over (no value, no mark, no clock).
+	 */
+	function deliver(message: SseMessage, token: string, mine: () => boolean): boolean {
 		let value: T;
-		let isNew: boolean;
+		const useStamp = staleAfterMs !== undefined && options.valueStamp !== undefined;
+		let stamp: string | number | undefined;
 		try {
 			const parsed = options.parse(message.data, message.event);
-			if (parsed === null) return;
+			if (!mine()) return false;
+			if (parsed === null) return true;
 			value = parsed;
-			isNew = staleAfterMs !== undefined && isNewValue(value, message.event);
+			if (useStamp) {
+				stamp = options.valueStamp!(value, message.event);
+				if (!mine()) return false;
+			}
 		} catch {
 			// Malformed payload (should not happen against banto-server):
 			// ignore rather than tear down the whole connection over it.
-			return;
+			return mine();
 		}
 		sessionToken = token;
 		try {
@@ -282,13 +351,24 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 		} catch {
 			// A throwing consumer must not tear down the connection either.
 		}
-		if (isNew && !stopped) {
-			armStaleTimer();
-			if (stale) {
-				stale = false;
-				options.onStale?.(false);
-			}
+		// The value was this session's and has been delivered, but if `onEvent`
+		// ended the session (or stopped the stream), its freshness is not the
+		// next session's to be told about: the mark is not remembered either,
+		// so the same value re-sent to the next session counts as new there.
+		if (!mine()) return false;
+		if (staleAfterMs === undefined) return true;
+		if (useStamp) {
+			const event = message.event;
+			if (stamps.has(event) && Object.is(stamps.get(event), stamp)) return true;
+			stamps.set(event, stamp as string | number);
 		}
+		armStaleTimer();
+		if (stale) {
+			stale = false;
+			options.onStale?.(false);
+			return mine();
+		}
+		return true;
 	}
 
 	function scheduleReconnect(delayMs: number = reconnectDelayMs): void {
@@ -306,17 +386,34 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 	 */
 	function dropStale(): void {
 		endSession();
+		reopen();
+	}
+
+	/** Connect again for whatever token is stored NOW (read after the callbacks). */
+	function reopen(): void {
 		scheduleReconnect(options.getToken() === null ? tokenWaitDelayMs : 0);
 	}
 
 	async function connectOnce(): Promise<void> {
 		const attempt = ++generation;
 		const token = options.getToken();
+		/**
+		 * Design §5.2.1: is this attempt still the one in charge? Asked after
+		 * every wait AND every time a callback of the caller returns.
+		 */
+		const mine = (): boolean => !stopped && generation === attempt && options.getToken() === token;
+
 		if (token === null && usedToken !== null) {
 			usedToken = null;
 			hasConnected = false;
 			endSession();
-			if (!stopped) options.onTokenCleared?.();
+			// `onSessionChange` may have logged in again: the cleared token is
+			// then not the current state any more, and is not reported.
+			if (mine()) options.onTokenCleared?.();
+			if (!stopped && !mine()) {
+				reopen();
+				return;
+			}
 		}
 		if (token === null || token === rejectedToken) {
 			scheduleReconnect(tokenWaitDelayMs);
@@ -325,13 +422,15 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 		if (usedToken !== null && usedToken !== token) {
 			hasConnected = false; // a new login
 			endSession();
-			if (stopped) return;
+			if (!mine()) {
+				// Stopped, or the token changed again inside `onSessionChange`
+				// (`usedToken` is left as it was, so the next attempt sees it).
+				reopen();
+				return;
+			}
 		}
 		usedToken = token;
 		sessionToken = token;
-
-		/** Design §5.2.1: is this attempt still the one in charge? */
-		const mine = (): boolean => !stopped && generation === attempt && options.getToken() === token;
 
 		const attemptController = new AbortController();
 		controller = attemptController;
@@ -355,10 +454,19 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 			if (response.status === 401) {
 				void response.body?.cancel().catch(() => {});
 				rejectedToken = token;
-				usedToken = null;
 				hasConnected = false;
 				endSession();
-				if (!stopped) options.onUnauthorized?.();
+				if (!mine()) {
+					// `onSessionChange` stopped the stream or changed the token:
+					// this `401` is the previous session's now, and must not
+					// reach the session controller as the new one's. `usedToken`
+					// is left set, so a token that was cleared (not replaced)
+					// still gets its `onTokenCleared` at the next attempt.
+					reopen();
+					return;
+				}
+				usedToken = null;
+				options.onUnauthorized?.();
 				scheduleReconnect(tokenWaitDelayMs);
 				return;
 			}
@@ -367,6 +475,12 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 				if (!forbidden) {
 					forbidden = true;
 					options.onForbidden?.();
+					if (!mine()) {
+						// The session changed inside `onForbidden`: do not sit out
+						// the (long) refused delay on the previous session's answer.
+						dropStale();
+						return;
+					}
 				}
 				scheduleReconnect(forbiddenRetryDelayMs);
 				return;
@@ -391,6 +505,13 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 			}
 			options.onConnection?.(true);
 			if (wasReconnect && mine()) options.onReconnected?.();
+			if (!mine()) {
+				// Stopped or the session changed inside those two hooks: read
+				// nothing from this body (the end of this function reports it).
+				dropped = true;
+				void response.body.cancel().catch(() => {});
+				throw new DOMException('not this attempt', 'AbortError');
+			}
 
 			// Issue #591: a login in this tab while the stream is open (the
 			// public viewer's synthetic session -> a real account) replaces
@@ -404,13 +525,14 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 			// paths: the server ends a logged-out token's stream at its next
 			// re-check, and the reconnect then reports `onTokenCleared`.
 			tokenWatch = setInterval(() => {
-				const current = options.getToken();
-				if (current === token) return;
+				if (options.getToken() === token) return;
 				endSession();
-				if (current !== null) {
-					switchedToken = true;
-					attemptController.abort();
-				}
+				// Read again: `onSessionChange` may have stopped the stream or
+				// changed the token once more.
+				const current = options.getToken();
+				if (stopped || current === null || current === token) return;
+				switchedToken = true;
+				attemptController.abort();
 			}, tokenWaitDelayMs);
 
 			const parser = createSseMessageParser();
@@ -430,7 +552,11 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 						dropped = true;
 						break;
 					}
-					deliver(message, token);
+					// ... and again inside, after each callback of the caller.
+					if (!deliver(message, token, mine)) {
+						dropped = true;
+						break;
+					}
 				}
 			}
 			if (dropped) {
@@ -451,14 +577,22 @@ export function createSseStream<T>(options: SseStreamOptions<T>): () => void {
 			scheduleReconnect(0);
 			return;
 		}
-		if (dropped) {
+		// Design §5.2.1: the stream ended (EOF, a network error, a failed
+		// `fetch`) and the token is not this attempt's any more - the values
+		// the caller shows are the previous session's NOW, not at the next
+		// attempt. Same handling as a dropped frame.
+		if (dropped || !mine()) {
 			dropStale();
 			return;
 		}
 		// Issue #637: report the loss of an open stream once, unless this
 		// stream ended it (stopped) or the session it belonged to is gone
-		// (a logout clears the token; the server then ends the stream).
-		if (established && mine()) options.onDisconnected?.();
+		// (handled just above).
+		if (established) options.onDisconnected?.();
+		if (!stopped && !mine()) {
+			dropStale();
+			return;
+		}
 		scheduleReconnect();
 	}
 

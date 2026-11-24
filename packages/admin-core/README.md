@@ -325,9 +325,15 @@ const stop = createSseStream<Reading>({
   （`createSseMessageParser` が `{ data, event? }` を返す。`createSseParser` の形は変わらない）。
 - 文言は持たない（「配信が止まった」「権限が無い」の表示はアプリの Paraglide のキー）。`getSessionController` も
   `createConnectionMonitor` も知らない。`/api/events` を開かない画面では `sessionStreamHooks()` を**必ず**渡す
-  （渡さないと失効に気づかない。`/api/events` と並べて渡しても確かめは増えない）。切断の帯は `/api/events` の
-  1 本に任せ、アプリの配信からは既定では知らせない。
-- `path` は `/` 1 つで始まるもの以外は `TypeError`（`Authorization` を別のホストへ送らない）。
+  （渡さないと失効に気づかない。`/api/events` と並べて渡してもよい: 同じ失効を 2 本が知らせると、先の確かめを
+  中断して確かめ直すので、同時に走る確かめは 1 件・セッションの終わりは 1 回。確かめの要求そのものは配信の本数まで
+  続けて出る）。切断の帯は `/api/events` の 1 本に任せ、アプリの配信からは既定では知らせない。
+- `path` は `/` 1 つで始まり、`baseUrl + path` を URL として解決した先が `baseUrl`（空ならページ）の origin に
+  留まるもの以外は `TypeError`（要求を 1 つも出さない。`Authorization` を別のホストへ送らない。タブ・改行を挟んで
+  `//host` になる path もここで断る）。
+- `parse`・`valueStamp`・`onEvent`・各フックの中で配信を止める・ログインし直す・ログアウトするのは構わない。
+  読み口は呼ぶ側のコードから戻るたびに照合し直し、旧いセッションの分は値・印・鮮度の時計・`onUnauthorized` を
+  それ以上進めずに、いまの token で開き直す。配信が終わった時点で token が変わっていれば、そこで `onSessionChange` を呼ぶ。
 
 ## トークンを web storage に置かない（`createHttpAuthProvider` の `storage: 'memory'`）
 

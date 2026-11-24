@@ -166,22 +166,101 @@ describe('createSseStream: reading', () => {
 		stop();
 	});
 
-	it.each(['api/values', '//other.example/x', '/\\other.example/x', 'https://other.example/x', ''])(
-		'refuses a path that could name another host (%j)',
-		(path) => {
+	// Review of #945: the check is on the RESOLVED URL. URL parsing drops a
+	// tab/newline and reads `\\` as `/`, so these start with a single `/` as
+	// text and still name `other.example` to `fetch`.
+	it.each([
+		'api/values',
+		'//other.example/x',
+		'/\\other.example/x',
+		'https://other.example/x',
+		'',
+		'/\t/other.example/x',
+		'/\n/other.example/x',
+		'/\r/other.example/x',
+		'/\r\n/other.example/x',
+		'/\t\\other.example/x',
+		'/\t\n\t/other.example/x'
+	])('refuses a path that could name another host (%j)', (path) => {
+		const net = manualFetch();
+		expect(() =>
+			createSseStream<Value>({
+				path,
+				fetchFn: net.fetchFn,
+				getToken: () => 'A',
+				parse: () => null,
+				onEvent: () => {}
+			})
+		).toThrow(TypeError);
+		expect(net.calls).toHaveLength(0);
+	});
+
+	it.each([
+		['', '/\t/other.example/x'],
+		['http:', '/\t/other.example/x'],
+		['https://x@', '/other.example/x'],
+		['http://user:pw@x', '/api/app/values'],
+		['http://', '/api/app/values']
+	])('refuses baseUrl %j + path %j: no request, so no bearer token', (baseUrl, path) => {
+		const net = manualFetch();
+		expect(() =>
+			createSseStream<Value>({
+				baseUrl,
+				path,
+				fetchFn: net.fetchFn,
+				getToken: () => 'A',
+				parse: () => null,
+				onEvent: () => {}
+			})
+		).toThrow(TypeError);
+		expect(net.calls).toHaveLength(0);
+	});
+
+	it.each([
+		['', '/api/app/values', '/api/app/values'],
+		['', '/api/app/values?unit=c#top', '/api/app/values?unit=c#top'],
+		['http://x:8080', '/api/app/values', 'http://x:8080/api/app/values'],
+		['https://x', '/a/../b//c', 'https://x/a/../b//c'],
+		['tauri://localhost', '/api/app/values', 'tauri://localhost/api/app/values']
+	])('lets a same-origin URL through unchanged (%j + %j)', (baseUrl, path, url) => {
+		const net = manualFetch();
+		const stop = createSseStream<Value>({
+			baseUrl,
+			path,
+			fetchFn: net.fetchFn,
+			getToken: () => 'A',
+			parse: () => null,
+			onEvent: () => {}
+		});
+		expect(net.calls).toHaveLength(1);
+		expect(net.calls[0].url).toBe(url);
+		expect(auth(net.calls[0])).toBe('Bearer A');
+		stop();
+	});
+
+	it('with no baseUrl the allowed origin is the page’s', () => {
+		vi.stubGlobal('location', { origin: 'https://app.example' });
+		try {
 			const net = manualFetch();
-			expect(() =>
+			const make = (path: string) =>
 				createSseStream<Value>({
 					path,
 					fetchFn: net.fetchFn,
 					getToken: () => 'A',
 					parse: () => null,
 					onEvent: () => {}
-				})
-			).toThrow(TypeError);
+				});
+			expect(() => make('/\t/other.example/x')).toThrow(TypeError);
+			expect(() => make('/\n/app.example.other.example/x')).toThrow(TypeError);
 			expect(net.calls).toHaveLength(0);
+			const stop = make('/api/app/values');
+			expect(net.calls).toHaveLength(1);
+			expect(net.calls[0].url).toBe('/api/app/values');
+			stop();
+		} finally {
+			vi.unstubAllGlobals();
 		}
-	);
+	});
 
 	it('drops an event parse returns null for or throws on, and keeps the connection', async () => {
 		const s = start();
@@ -602,6 +681,340 @@ describe('createSseStream: the owner check', () => {
 			await tick(3000);
 		}
 		expect(s.log).not.toContain('sessionChange');
+		s.stop();
+	});
+});
+
+// Design §5.2.1, review of #945: the check is made again every time code of
+// the caller returns, and when the stream ends.
+describe('createSseStream: the owner check after a callback of the caller', () => {
+	const stales = (log: string[]) => log.filter((entry) => entry.startsWith('stale:'));
+	const parseValue = (data: string) => JSON.parse(data) as Value;
+
+	it('parse stops the stream: the value is not delivered, nothing follows', async () => {
+		const holder: { stop?: () => void } = {};
+		const s = start({
+			parse: (data) => {
+				holder.stop!();
+				return parseValue(data);
+			}
+		});
+		holder.stop = s.stop;
+		const body = s.calls[0].open();
+		await micro();
+		body.send(frame({ v: 1 }) + frame({ v: 2 }));
+		await micro();
+		await tick(10_000);
+		expect(s.log).toEqual(['connection:true']);
+		expect(s.calls).toHaveLength(1);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('parse changes the session: the value is not delivered, the stream reopens for the new token', async () => {
+		const s = start({
+			parse: (data) => {
+				s.state.token = 'B';
+				return parseValue(data);
+			}
+		});
+		const body = s.calls[0].open();
+		await micro();
+		body.send(frame({ v: 1 }));
+		await micro();
+		expect(s.log).toEqual(['connection:true', 'connection:false', 'sessionChange']);
+		await tick(1);
+		expect(s.calls).toHaveLength(2);
+		expect(auth(s.calls[1])).toBe('Bearer B');
+		s.stop();
+	});
+
+	it('parse throws after logging out: still dropped as the previous session’s', async () => {
+		const s = start({
+			parse: () => {
+				s.state.token = null;
+				throw new Error('bad');
+			}
+		});
+		const body = s.calls[0].open();
+		await micro();
+		body.send(frame({ v: 1 }) + frame({ v: 2 }));
+		await micro();
+		expect(s.log).toEqual(['connection:true', 'connection:false', 'sessionChange']);
+		await tick(500);
+		expect(s.log.slice(3)).toEqual(['tokenCleared']);
+		s.stop();
+	});
+
+	it('valueStamp changes the session: no value, no mark, no clock for the old attempt', async () => {
+		let switchAt: number | null = 200;
+		const s = start({
+			staleAfterMs: 1000,
+			valueStamp: (value) => {
+				if (value.at === switchAt) {
+					switchAt = null;
+					s.state.token = 'B';
+				}
+				return value.at ?? 0;
+			}
+		});
+		const body = s.calls[0].open();
+		await micro();
+		body.send(frame({ v: 1, at: 100 }));
+		await micro();
+		await tick(1000);
+		expect(stales(s.log)).toEqual(['stale:true']);
+
+		body.send(frame({ v: 2, at: 200 }));
+		await micro();
+		expect(s.log).not.toContain('event:2');
+		expect(stales(s.log)).toEqual(['stale:true']);
+		expect(s.log.slice(-2)).toEqual(['connection:false', 'sessionChange']);
+
+		// The mark of the dropped value was not remembered: under B it is new.
+		await tick(1);
+		const b = s.calls[1].open();
+		await micro();
+		b.send(frame({ v: 2, at: 200 }));
+		await micro();
+		expect(s.log.slice(-2)).toEqual(['event:2', 'stale:false']);
+		s.stop();
+	});
+
+	it('onEvent changes the session: its value does not restart the clock or end stale', async () => {
+		const s = start({
+			staleAfterMs: 1000,
+			valueStamp: (value) => value.at ?? 0,
+			onEvent: (value) => {
+				s.log.push(`event:${value.v}`);
+				if (value.v === 2 && s.state.token === 'A') s.state.token = 'B';
+			}
+		});
+		const body = s.calls[0].open();
+		await micro();
+		body.send(frame({ v: 1, at: 100 }));
+		await micro();
+		await tick(1000);
+		expect(stales(s.log)).toEqual(['stale:true']);
+
+		body.send(frame({ v: 2, at: 200 }) + frame({ v: 3, at: 300 }));
+		await micro();
+		expect(s.log.slice(-3)).toEqual(['event:2', 'connection:false', 'sessionChange']);
+		expect(stales(s.log)).toEqual(['stale:true']);
+
+		// B gets the same value re-sent: new to B (the mark was not kept), so
+		// it is B's value that ends stale.
+		await tick(1);
+		const b = s.calls[1].open();
+		await micro();
+		b.send(frame({ v: 2, at: 200 }));
+		await micro();
+		expect(s.log.slice(-3)).toEqual(['connection:true', 'event:2', 'stale:false']);
+		s.stop();
+	});
+
+	it('onEvent stops the stream: no onStale(false), no timer left', async () => {
+		const holder: { stop?: () => void } = {};
+		const s = start({
+			staleAfterMs: 1000,
+			onEvent: (value) => {
+				s.log.push(`event:${value.v}`);
+				holder.stop!();
+			}
+		});
+		holder.stop = s.stop;
+		const body = s.calls[0].open();
+		await micro();
+		await tick(1000);
+		body.send(frame({ v: 1 }) + frame({ v: 2 }));
+		await micro();
+		expect(s.log).toEqual(['connection:true', 'stale:true', 'event:1']);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('onConnection(true) changes the session: nothing is read from that stream', async () => {
+		const s = start({
+			onConnection: (connected) => {
+				s.log.push(`connection:${connected}`);
+				if (connected && s.state.token === 'A') s.state.token = 'B';
+			}
+		});
+		const body = s.calls[0].open();
+		await micro();
+		expect(() => body.send(frame({ v: 1 }))).toThrow(); // cancelled
+		expect(s.log).toEqual(['connection:true', 'connection:false', 'sessionChange']);
+		await tick(1);
+		expect(auth(s.calls[1])).toBe('Bearer B');
+		s.stop();
+	});
+
+	it('a 401 whose onSessionChange logs in again is not reported as the new session’s', async () => {
+		const s = start({
+			onSessionChange: () => {
+				s.log.push('sessionChange');
+				if (s.state.token === 'A') s.state.token = 'B';
+			}
+		});
+		s.calls[0].status(401);
+		await micro();
+		expect(s.log).toEqual(['sessionChange']);
+		await tick(1);
+		expect(s.calls).toHaveLength(2);
+		expect(auth(s.calls[1])).toBe('Bearer B');
+		const b = s.calls[1].open();
+		await micro();
+		b.send(frame({ v: 1 }));
+		await micro();
+		// One change, reported once; no `unauthorized` for B.
+		expect(s.log).toEqual(['sessionChange', 'connection:true', 'event:1']);
+		s.stop();
+	});
+
+	it('a 401 whose onSessionChange clears the token goes through onTokenCleared', async () => {
+		const s = start({
+			onSessionChange: () => {
+				s.log.push('sessionChange');
+				s.state.token = null;
+			}
+		});
+		s.calls[0].status(401);
+		await micro();
+		expect(s.log).toEqual(['sessionChange']);
+		await tick(500);
+		expect(s.log).toEqual(['sessionChange', 'tokenCleared']);
+		// A stays rejected: storing it again does not send it.
+		s.state.token = 'A';
+		await tick(5000);
+		expect(s.calls).toHaveLength(1);
+		s.stop();
+	});
+
+	it('a 401 whose onSessionChange stops the stream reports nothing more', async () => {
+		const holder: { stop?: () => void } = {};
+		const s = start({
+			onSessionChange: () => {
+				s.log.push('sessionChange');
+				holder.stop!();
+			}
+		});
+		holder.stop = s.stop;
+		s.calls[0].status(401);
+		await micro();
+		await tick(10_000);
+		expect(s.log).toEqual(['sessionChange']);
+		expect(s.calls).toHaveLength(1);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('a 403 whose onForbidden changes the session does not sit out the refused delay', async () => {
+		const s = start({
+			forbiddenRetryDelayMs: 30_000,
+			onForbidden: () => {
+				s.log.push('forbidden');
+				s.state.token = 'B';
+			}
+		});
+		s.calls[0].status(403);
+		await micro();
+		expect(s.log).toEqual(['forbidden', 'sessionChange']);
+		await tick(1);
+		expect(auth(s.calls[1])).toBe('Bearer B');
+		s.stop();
+	});
+
+	it('the token watch: an onSessionChange that stops the stream ends it there', async () => {
+		const holder: { stop?: () => void } = {};
+		const s = start({
+			onSessionChange: () => {
+				s.log.push('sessionChange');
+				holder.stop!();
+			}
+		});
+		holder.stop = s.stop;
+		s.calls[0].open();
+		await micro();
+		s.state.token = 'B';
+		await tick(500);
+		await tick(10_000);
+		expect(s.log).toEqual(['connection:true', 'sessionChange']);
+		expect(s.calls).toHaveLength(1);
+	});
+});
+
+describe('createSseStream: the owner check when the stream ends', () => {
+	it('EOF right after a new login: onSessionChange at once, then the new token', async () => {
+		const s = start();
+		const body = s.calls[0].open();
+		await micro();
+		body.send(frame({ v: 1 }));
+		await micro();
+
+		// Before the token watch ticks.
+		s.state.token = 'B';
+		body.end();
+		await micro();
+		expect(s.log).toEqual(['connection:true', 'event:1', 'connection:false', 'sessionChange']);
+		expect(vi.getTimerCount()).toBe(1); // the reconnect; the watch is gone
+
+		await tick(1); // not `reconnectDelayMs`
+		expect(s.calls).toHaveLength(2);
+		expect(auth(s.calls[1])).toBe('Bearer B');
+		const b = s.calls[1].open();
+		await micro();
+		b.send(frame({ v: 2 }));
+		await micro();
+		expect(s.log.slice(4)).toEqual(['connection:true', 'event:2']);
+		expect(s.log).not.toContain('disconnected');
+		expect(s.log).not.toContain('reconnected');
+		s.stop();
+	});
+
+	it('EOF right after a logout: onSessionChange at once, onTokenCleared at the token wait', async () => {
+		const s = start();
+		const body = s.calls[0].open();
+		await micro();
+		body.send(frame({ v: 1 }));
+		await micro();
+
+		s.state.token = null;
+		body.end();
+		await micro();
+		expect(s.log).toEqual(['connection:true', 'event:1', 'connection:false', 'sessionChange']);
+		await tick(500);
+		expect(s.log.slice(4)).toEqual(['tokenCleared']);
+		expect(s.calls).toHaveLength(1);
+		s.stop();
+	});
+
+	it('a failed fetch after a new login: onSessionChange at once, then the new token', async () => {
+		const s = start();
+		s.state.token = 'B';
+		s.calls[0].fail();
+		await micro();
+		expect(s.log).toEqual(['sessionChange']);
+		await tick(1);
+		expect(auth(s.calls[1])).toBe('Bearer B');
+		// B's own failure waits the usual delay (no tight loop).
+		s.calls[1].fail();
+		await micro();
+		await tick(2999);
+		expect(s.calls).toHaveLength(2);
+		await tick(1);
+		expect(s.calls).toHaveLength(3);
+		expect(s.log).toEqual(['sessionChange']);
+		s.stop();
+	});
+
+	it('EOF under the same token is still an ordinary loss', async () => {
+		const s = start();
+		const body = s.calls[0].open();
+		await micro();
+		body.end();
+		await micro();
+		expect(s.log).toEqual(['connection:true', 'connection:false', 'disconnected']);
+		await tick(2999);
+		expect(s.calls).toHaveLength(1);
+		await tick(1);
+		expect(s.calls).toHaveLength(2);
 		s.stop();
 	});
 });
