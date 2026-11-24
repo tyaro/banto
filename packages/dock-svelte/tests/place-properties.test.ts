@@ -201,6 +201,56 @@ describe('hidden panes come back at their default place, in any order (#782 PR5 
 		);
 	});
 
+	// Codex P2 on #940: a share kept inside a nested split is not a share of the split around it.
+	it('pinned: row[column[a .4, b .6] .2, c .3, d .5], -a -c -b +c +b +a: the column is .4 / .6 again (#939)', () => {
+		const tree = split(
+			's1',
+			'row',
+			[0.2, 0.3, 0.5],
+			[split('s2', 'column', [0.4, 0.6], ['a', 'b'].map(panel)), panel('c'), panel('d')]
+		);
+		expect(treeDiff(treeAfter(tree, ['-a', '-c', '-b', '+c', '+b', '+a']), tree)).toBeNull();
+	});
+
+	// The same over generated cases: a row with a nested column, the column's panes and some of the
+	// row's hidden in any order with the column's LAST pane hidden after the others of the column,
+	// shown so that the column comes back by that pane first - the order a share is known for.
+	it('a nested split hidden as a whole among its siblings: the inner shares stay (#939)', () => {
+		const nested = fc.record({
+			outer: fc.array(fc.integer({ min: 1, max: 20 }), { minLength: 4, maxLength: 4 }),
+			inner: fc.array(fc.integer({ min: 1, max: 20 }), { minLength: 2, maxLength: 2 }),
+			// Where among the hides of c / d's sibling `c` the two of the column go, and the order back.
+			hide: fc.shuffledSubarray(['a', 'c', 'e'], { minLength: 3 }),
+			back: fc.shuffledSubarray(['c', 'e', 'b'], { minLength: 3 })
+		});
+		fc.assert(
+			fc.property(nested, ({ outer, inner, hide, back }) => {
+				const sum = (xs: number[]) => xs.reduce((x, y) => x + y, 0);
+				const tree = split(
+					's1',
+					'row',
+					outer.map((w) => w / sum(outer)),
+					[
+						split(
+							's2',
+							'column',
+							inner.map((w) => w / sum(inner)),
+							['a', 'b'].map(panel)
+						),
+						panel('c'),
+						panel('d'),
+						panel('e')
+					]
+				);
+				// b last (the column leaves the row with it); a comes back last, into the column.
+				const all = [...hide.map((id) => `-${id}`), '-b', ...back.map((id) => `+${id}`), '+a'];
+				const diff = treeDiff(treeAfter(tree, all), tree);
+				if (diff) failCase(tree, all, diff);
+			}),
+			params(200)
+		);
+	});
+
 	it('pinned: row[a .2, b .3, c .5], a then b hidden: +b +a and +a +b are both .2 / .3 / .5 (#939)', () => {
 		const tree = split('s1', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel));
 		expect(treeDiff(treeAfter(tree, ['-a', '-b', '+b', '+a']), tree)).toBeNull();

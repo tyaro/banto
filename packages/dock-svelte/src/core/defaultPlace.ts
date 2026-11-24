@@ -100,7 +100,9 @@ export function dockShareOf(docked: DockNode | null, panelId: string): number {
  * follows, and from that:
  *  - `share`: the pane's share of the split without the children still hidden;
  *  - `others`: for the panes of the children hidden after it, the share of the split with the
- *    pane back (they were hidden when it was out; unchanged ones are left out).
+ *    pane back (they were hidden when it was out; unchanged ones are left out). Only the shares
+ *    that are shares of this split: of a child that is a split itself, the one of the pane hidden
+ *    last - the others are shares of the splits inside it.
  * `null`: nothing to work out - the pane keeps no usable share, has no default place, joins a tab
  * group, goes to an edge, or no default sibling hidden after it is still hidden (its share is
  * right as it is, exactly).
@@ -131,7 +133,11 @@ export function shareAmongHidden(
 		if (members.length === 0) return;
 		const at = Math.max(...members);
 		const mine = i === step.index;
-		regions.push({ mine, at, raw: mine ? own.share : hidden[at].share, members });
+		// Whose share is a share of THIS split: every tab of a hidden tab group keeps the group's;
+		// of a nested split only the pane hidden last does - the ones hidden before it keep their
+		// share of a split inside, which stays as it is (Codex P2 on #940).
+		const outer = child.type === 'split' ? [at] : members;
+		regions.push({ mine, at, raw: mine ? own.share : hidden[at].share, members: outer });
 	});
 	regions.sort((a, b) => a.at - b.at);
 	const me = regions.findIndex((r) => r.mine);
