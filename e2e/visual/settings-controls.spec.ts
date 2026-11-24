@@ -37,8 +37,14 @@ test('settings labels stay above selected values and password input', async ({ p
 
 	await page.setViewportSize({ width: 320, height: 700 });
 	await page.goto('/settings/appearance');
-	await page.getByLabel('表示言語').selectOption('en');
-	await expect(page.getByLabel('Display language')).toHaveValue('en');
+	// A choice made before hydration is not picked up: retry select + check.
+	const english = page.getByLabel('Display language');
+	await expect(async () => {
+		if (!(await english.isVisible())) {
+			await page.getByLabel('表示言語').selectOption('en', { timeout: 2_000 });
+		}
+		await expect(english).toHaveValue('en', { timeout: 2_000 });
+	}).toPass();
 	await page.goto('/settings/account');
 	const newPassword = page.getByLabel('New password (8+ characters)');
 	await newPassword.fill('abcdefgh');
