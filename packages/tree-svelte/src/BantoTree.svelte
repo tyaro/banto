@@ -134,10 +134,10 @@
 		 * Controls at the end of a row (buttons, a toggle, a menu trigger). Drawn at the end of
 		 * the tree column, after the label. A click, double-click or drag that starts inside them
 		 * never selects / renames / drags the row. Keyboard: the controls of the row that holds the
-		 * tree's tab stop are reachable with Tab (row -> its controls -> out of the tree); the
-		 * controls of every other row are taken out of the tab order (`tabindex="-1"`, set by the
-		 * tree and given back as the host wrote it, so a toolbar with its own roving `tabindex`
-		 * keeps it), so the tree adds no tab stop per row. Inside the controls the tree's own keys
+		 * tree's tab stop are reachable with Tab (row -> its controls -> out of the tree); Tab /
+		 * Shift+Tab skip the controls of every other row, and a Tab from outside that lands on them
+		 * is sent to the tab-stop row - so the tree adds no tab stop per row. The tree never
+		 * writes to the controls (a host toolbar's own roving `tabindex` is left as it is). Inside the controls the tree's own keys
 		 * (arrows, Enter, Space, F2 ...) are not handled, and Escape returns the focus to the row.
 		 * Give every control its own accessible name (e.g. `aria-label` with the node's label).
 		 */
@@ -417,99 +417,76 @@
 	function actionsOf(target: EventTarget | null): HTMLElement | null {
 		return target instanceof Element ? target.closest<HTMLElement>('[data-tree-actions]') : null;
 	}
-	const ACTION_FOCUSABLE =
-		'button, a[href], input, select, textarea, summary, [tabindex], [contenteditable]';
+	// The tree never writes to the host's controls (no `tabindex` rewriting): the tab order
+	// is kept at the keyboard instead. Tab / Shift+Tab inside the tree go to the next / previous
+	// tabbable of the page, skipping everything in the tree but the row that holds the tab stop
+	// and its own controls; a Tab from outside that lands on another row's control is sent to
+	// that row.
+	const TABBABLE =
+		'a[href], area[href], button, input:not([type="hidden"]), select, textarea, summary, iframe, audio[controls], video[controls], [tabindex], [contenteditable]:not([contenteditable="false"])';
+	function tabOrderOf(el: HTMLElement): number {
+		// `contenteditable` without a `tabindex` is a Tab stop in browsers (jsdom says -1)
+		if (el.getAttribute('tabindex') === null && el.matches('[contenteditable]')) return 0;
+		return el.tabIndex;
+	}
+	function isTabbable(el: HTMLElement): boolean {
+		if (tabOrderOf(el) < 0) return false;
+		if ((el as HTMLButtonElement).disabled) return false;
+		if (el.closest('[inert], [hidden]')) return false;
+		return typeof el.checkVisibility === 'function' ? el.checkVisibility() : true;
+	}
+	/** May Tab stop here? Outside the tree: yes. Inside: the tab-stop row and its controls only. */
+	function isAllowedStop(el: HTMLElement): boolean {
+		if (!containerEl?.contains(el)) return true;
+		const row = el.closest<HTMLElement>('[data-node-id]');
+		if (!row || tabStopId === null || row.dataset.nodeId !== String(tabStopId)) return false;
+		return el === row || actionsOf(el)?.closest('[data-node-id]') === row;
+	}
+	/** Moves the focus to the next / previous allowed Tab stop; `false` = leave it to the browser. */
+	function tabFromTree(back: boolean): boolean {
+		const active = document.activeElement;
+		const all = [...document.querySelectorAll<HTMLElement>(TABBABLE)].filter(
+			(el) => el === active || (isTabbable(el) && isAllowedStop(el))
+		);
+		const positive = all.filter((el) => el !== active && tabOrderOf(el) > 0);
+		positive.sort((a, b) => tabOrderOf(a) - tabOrderOf(b));
+		const order = [...positive, ...all.filter((el) => !positive.includes(el))];
+		const index = order.findIndex((el) => el === active);
+		if (index < 0) return false;
+		const next = order[back ? index - 1 : index + 1];
+		if (!next) return false;
+		next.focus();
+		return true;
+	}
+	// A Tab key is under way (set on the window, cleared once its focus move is done).
+	let tabbing = false;
+	function onWindowKeydown(event: KeyboardEvent): void {
+		if (event.key !== 'Tab') return;
+		tabbing = true;
+		setTimeout(() => (tabbing = false));
+	}
 	/**
-	 * Takes the host's controls out of the tab order (`tabindex="-1"`) on every row except the
-	 * one that holds the tree's tab stop (`tabbable`). The tree never writes a tab stop of its
-	 * own: what it takes away it remembers and gives back unchanged (an absent attribute stays
-	 * absent, a host's own roving `-1` / `0` stays as the host wrote it). A host that rewrites a
-	 * `tabindex` on a row that is not tabbable has the new value remembered instead. Re-applied
-	 * when the snippet's content changes.
+	 * Focus entered a row's controls. From a Tab outside the tree onto another row's controls:
+	 * sent to the tab-stop row. Otherwise (a click, a host's `focus()`): that row takes the tab stop.
 	 */
-	function actionTabStops(el: HTMLElement, tabbable: boolean) {
-		let current = tabbable;
-		// control -> the host's own `tabindex` attribute (null = none) while the tree holds it at -1
-		const saved = new Map<HTMLElement, string | null>();
-		// our own `tabindex="-1"` writes not yet seen by the observer (not to be taken as the host's)
-		const ownWrites = new Map<HTMLElement, number>();
-		const holdOut = (control: HTMLElement) => {
-			ownWrites.set(control, (ownWrites.get(control) ?? 0) + 1);
-			control.setAttribute('tabindex', '-1');
-		};
-		const suppress = (control: HTMLElement) => {
-			if (saved.has(control)) return;
-			const own = control.getAttribute('tabindex');
-			saved.set(control, own);
-			if (own !== '-1') holdOut(control);
-		};
-		const restore = () => {
-			ownWrites.clear();
-			for (const [control, own] of saved) {
-				if (own === null) control.removeAttribute('tabindex');
-				else control.setAttribute('tabindex', own);
-			}
-			saved.clear();
-		};
-		const apply = () => {
-			if (current) {
-				restore();
-				return;
-			}
-			for (const control of saved.keys()) if (!el.contains(control)) saved.delete(control);
-			for (const control of el.querySelectorAll<HTMLElement>(ACTION_FOCUSABLE)) suppress(control);
-		};
-		const observer = new MutationObserver((records) => {
-			if (current) {
-				ownWrites.clear();
-				return;
-			}
-			// Sort every record first, write back after: a write made while sorting would be
-			// counted against a host record still in this batch. The value a record set is the
-			// next record's old value for the same control (or the live value for the last one).
-			const attrRecords = records.filter(
-				(r) => r.type === 'attributes' && r.target instanceof HTMLElement
-			);
-			const touched = new Set<HTMLElement>();
-			attrRecords.forEach((record, i) => {
-				const control = record.target as HTMLElement;
-				const next = attrRecords.slice(i + 1).find((r) => r.target === control);
-				const value = next ? next.oldValue : control.getAttribute('tabindex');
-				const pending = ownWrites.get(control) ?? 0;
-				if (pending > 0 && value === '-1') {
-					if (pending === 1) ownWrites.delete(control);
-					else ownWrites.set(control, pending - 1);
-					return;
-				}
-				// The host rewrote a tab stop we hold: remember its value.
-				if (!saved.has(control)) return;
-				saved.set(control, value);
-				touched.add(control);
-			});
-			// ...and keep it out of the order.
-			for (const control of touched)
-				if (control.getAttribute('tabindex') !== '-1') holdOut(control);
-			apply();
-		});
-		observer.observe(el, {
-			childList: true,
-			subtree: true,
-			attributes: true,
-			attributeOldValue: true,
-			attributeFilter: ['tabindex']
-		});
-		// After `observe`: the first hold-outs are counted in `ownWrites`, so their records must come.
-		apply();
-		return {
-			update(next: boolean) {
-				if (next === current) return;
-				current = next;
-				apply();
-			},
-			destroy() {
-				observer.disconnect();
-			}
-		};
+	function onActionsFocusIn(event: FocusEvent, id: NodeId): void {
+		const from = event.relatedTarget;
+		const fromInside = from instanceof Node && !!containerEl?.contains(from);
+		if (tabbing && !fromInside && tabStopId !== null && tabStopId !== id) {
+			const rowEl = elements.get(tabStopId);
+			// Shift+Tab from after the tree: the row's last control, else the row itself.
+			const fromAfter =
+				from instanceof Node &&
+				!!containerEl &&
+				(containerEl.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+			const controls = fromAfter
+				? [...(rowEl?.querySelectorAll<HTMLElement>(`[data-tree-actions] :is(${TABBABLE})`) ?? [])]
+				: [];
+			const last = controls.filter(isTabbable).pop();
+			(last ?? rowEl)?.focus();
+			return;
+		}
+		tree.focusedId = id;
 	}
 
 	function selectAt(
@@ -643,6 +620,18 @@
 
 	function onKeydown(event: KeyboardEvent): void {
 		if (editing) return;
+		// With trailing controls, Tab skips the other rows' controls (see `tabFromTree`).
+		if (
+			rowActions &&
+			event.key === 'Tab' &&
+			!event.defaultPrevented &&
+			!event.ctrlKey &&
+			!event.altKey &&
+			!event.metaKey
+		) {
+			if (tabFromTree(event.shiftKey)) event.preventDefault();
+			return;
+		}
 		// Inside a row's trailing controls the keys belong to the control (Enter / Space press
 		// the button, arrows may drive a host widget). Only Escape is ours: back to the row.
 		const actions = actionsOf(event.target);
@@ -890,6 +879,8 @@
 	</div>
 {/if}
 
+<svelte:window onkeydowncapture={rowActions ? onWindowKeydown : undefined} />
+
 <div
 	class="tree"
 	class:has-columns={!!columns}
@@ -1005,13 +996,13 @@
 
 				{#if rowActions}
 					<!-- The host's controls. `data-tree-control` keeps their clicks / drags away from
-					     the row; a focus that lands inside moves the tree's tab stop to this row. -->
+					     the row; the tab order is kept by the tree's keyboard handling (never by
+					     rewriting the host's attributes). -->
 					<span
 						class="row-actions"
 						data-tree-control
 						data-tree-actions
-						use:actionTabStops={tabStopId === node.id}
-						onfocusin={() => (tree.focusedId = node.id)}
+						onfocusin={(e) => onActionsFocusIn(e, node.id)}
 					>
 						{@render rowActions(node, rowContext)}
 					</span>

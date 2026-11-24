@@ -76,96 +76,114 @@ describe('rowActions', () => {
 		expect(row('Charlie').getAttribute('aria-selected')).toBe('false');
 	});
 
-	it('only the row holding the tab stop keeps its controls in the tab order', async () => {
-		render(BantoTree, { nodes: forest(), rowActions: actions });
-		// The first row is the tab stop of a fresh tree.
-		expect(row('Alpha').tabIndex).toBe(0);
-		expect(screen.getByTestId('act-a').tabIndex).toBe(0);
-		expect(screen.getByTestId('more-a').tabIndex).toBe(0);
-		expect(screen.getByTestId('act-b').tabIndex).toBe(-1);
-		expect(screen.getByTestId('act-c').tabIndex).toBe(-1);
+	/** Buttons around the tree, so Tab has somewhere to go before and after it. */
+	function framed(props: Record<string, unknown>) {
+		const before = document.createElement('button');
+		before.textContent = 'before';
+		const after = document.createElement('button');
+		after.textContent = 'after';
+		document.body.append(before);
+		const view = render(BantoTree, props);
+		document.body.append(after);
+		return { view, before, after };
+	}
+	/** Presses Tab (or Shift+Tab) on the focused element as the tree sees it. */
+	function tab(back = false): void {
+		const target = (document.activeElement as HTMLElement) ?? document.body;
+		target.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'Tab', shiftKey: back, bubbles: true, cancelable: true })
+		);
+	}
+	const focusedName = () =>
+		(document.activeElement as HTMLElement | null)?.getAttribute('aria-label') ??
+		document.activeElement?.textContent;
 
+	it('Tab stops only at the tab-stop row and its controls, then leaves the tree', async () => {
+		const { after, before } = framed({ nodes: forest(), rowActions: actions, expanded: ['a'] });
 		row('Alpha').focus();
-		keyOn(screen.getByRole('tree'), 'ArrowDown');
+		keyOn(screen.getByRole('tree'), 'ArrowDown'); // Alpha-1 holds the tab stop
 		await tick();
-		expect(row('Bravo').tabIndex).toBe(0);
-		expect(screen.getByTestId('act-a').tabIndex).toBe(-1);
-		expect(screen.getByTestId('act-b').tabIndex).toBe(0);
+		expect(focusedName()).toBe('Alpha-1');
+		tab();
+		expect(focusedName()).toBe('Hide Alpha-1');
+		tab();
+		expect(focusedName()).toBe('More Alpha-1');
+		tab();
+		expect(document.activeElement).toBe(after);
+		// and back
+		after.focus();
+		screen.getByTestId('more-a1').focus();
+		tab(true);
+		expect(focusedName()).toBe('Hide Alpha-1');
+		tab(true);
+		expect(focusedName()).toBe('Alpha-1');
+		tab(true);
+		expect(document.activeElement).toBe(before);
+		before.remove();
+		after.remove();
 	});
 
-	it("keeps a host's own roving tabindex (adds no tab stop, gives back what it took)", async () => {
-		// A toolbar with its own roving tab stop: only the active button is tabindex=0.
-		const toolbar = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
+	it('later host changes (tabindex, href, contenteditable) never add Tab stops in the tree', async () => {
+		const extras = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
 			render: () =>
-				`<span role="toolbar" aria-label="Tools ${node().label}"><button type="button" data-testid="t1-${node().id}" tabindex="0">1</button><button type="button" data-testid="t2-${node().id}" tabindex="-1">2</button></span>`
+				`<span><button type="button" data-testid="x-${node().id}" tabindex="-1" aria-label="X ${node().label}">x</button><a data-testid="l-${node().id}" aria-label="L ${node().label}">l</a><span data-testid="e-${node().id}" aria-label="E ${node().label}">e</span></span>`
 		}));
-		const tabStops = () =>
-			[...document.querySelectorAll<HTMLElement>('[data-testid^="t"]')]
-				.filter((b) => b.tabIndex === 0)
-				.map((b) => b.dataset.testid);
-		render(BantoTree, { nodes: forest(), rowActions: toolbar });
-		expect(tabStops()).toEqual(['t1-a']);
-
+		const { before, after } = framed({ nodes: forest(), rowActions: extras });
+		for (const id of ['a', 'b', 'c']) {
+			screen.getByTestId(`x-${id}`).setAttribute('tabindex', '0');
+			screen.getByTestId(`l-${id}`).setAttribute('href', '#here');
+			screen.getByTestId(`e-${id}`).setAttribute('contenteditable', 'true');
+		}
+		await tick();
 		row('Alpha').focus();
-		keyOn(screen.getByRole('tree'), 'ArrowDown');
-		await tick();
-		expect(tabStops()).toEqual(['t1-b']);
-		expect(screen.getByTestId('t2-a').getAttribute('tabindex')).toBe('-1');
-
-		// The host moves its roving stop on an inactive row: remembered, kept out of the order.
-		const t1a = screen.getByTestId('t1-a');
-		const t2a = screen.getByTestId('t2-a');
-		t1a.setAttribute('tabindex', '-1');
-		t2a.setAttribute('tabindex', '0');
-		await new Promise((r) => setTimeout(r, 0));
-		expect(tabStops()).toEqual(['t1-b']);
-
-		// Back to Alpha: the host's latest choice comes back as it wrote it.
-		keyOn(screen.getByRole('tree'), 'ArrowUp');
-		await tick();
-		expect(tabStops()).toEqual(['t2-a']);
-		expect(t1a.getAttribute('tabindex')).toBe('-1');
+		const stops: unknown[] = [];
+		for (let i = 0; i < 4; i++) {
+			tab();
+			stops.push(focusedName());
+		}
+		expect(stops).toEqual(['X Alpha', 'L Alpha', 'E Alpha', 'after']);
+		expect(document.activeElement).toBe(after);
+		after.remove();
+		before.remove();
 	});
 
-	it("takes the host's first rewrite on a row that starts inactive as the host's", async () => {
+	it("never writes to the host's controls", async () => {
 		const toolbar = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
 			render: () =>
-				`<span><button type="button" data-testid="u1-${node().id}" tabindex="0">1</button></span>`
+				`<span role="toolbar" aria-label="Tools ${node().label}"><button type="button" data-testid="t1-${node().id}" tabindex="0">1</button><button type="button" data-testid="t2-${node().id}" tabindex="-1">2</button><button type="button" data-testid="t3-${node().id}">3</button></span>`
 		}));
 		render(BantoTree, { nodes: forest(), rowActions: toolbar });
-		await new Promise((r) => setTimeout(r, 0));
-		const u1b = screen.getByTestId('u1-b');
-		expect(u1b.getAttribute('tabindex')).toBe('-1');
-
-		// The host's first rewrite must not be mistaken for the tree's own initial hold-out.
-		u1b.setAttribute('tabindex', '0');
-		await new Promise((r) => setTimeout(r, 0));
-		expect(u1b.tabIndex).toBe(-1); // still out of the order on an inactive row
-
+		const snapshot = () =>
+			[...document.querySelectorAll<HTMLElement>('[data-testid^="t"]')].map(
+				(b) => `${b.dataset.testid}=${b.getAttribute('tabindex')}`
+			);
+		const initial = snapshot();
+		expect(initial).toContain('t1-b=0');
+		expect(initial).toContain('t3-c=null');
 		row('Alpha').focus();
 		keyOn(screen.getByRole('tree'), 'ArrowDown');
 		await tick();
-		expect(u1b.getAttribute('tabindex')).toBe('0'); // the host's latest value comes back
+		tab();
+		await tick();
+		expect(snapshot()).toEqual(initial);
 	});
 
-	it('two host rewrites in one batch: the last one is remembered', async () => {
-		const toolbar = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
-			render: () =>
-				`<span><button type="button" data-testid="v1-${node().id}" tabindex="0">1</button></span>`
-		}));
-		render(BantoTree, { nodes: forest(), rowActions: toolbar });
-		await new Promise((r) => setTimeout(r, 0));
-		const v1b = screen.getByTestId('v1-b');
-		v1b.setAttribute('tabindex', '2');
-		v1b.setAttribute('tabindex', '3');
-		await new Promise((r) => setTimeout(r, 0));
-		await new Promise((r) => setTimeout(r, 0));
-		expect(v1b.getAttribute('tabindex')).toBe('-1');
-
-		row('Alpha').focus();
-		keyOn(screen.getByRole('tree'), 'ArrowDown');
-		await tick();
-		expect(v1b.getAttribute('tabindex')).toBe('3');
+	it('a Tab from outside that lands on another row is sent to the tab-stop row', async () => {
+		const { before, after } = framed({ nodes: forest(), rowActions: actions });
+		before.focus();
+		// The browser's own Tab would land on the first control in the DOM after `before`.
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+		screen.getByTestId('act-c').focus();
+		expect(document.activeElement).toBe(row('Alpha'));
+		// Shift+Tab from after the tree: the tab-stop row's last control.
+		after.focus();
+		window.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
+		);
+		screen.getByTestId('more-c').focus();
+		expect(document.activeElement).toBe(screen.getByTestId('more-a'));
+		before.remove();
+		after.remove();
 	});
 
 	it('focusing a control moves the tab stop to its row', async () => {
