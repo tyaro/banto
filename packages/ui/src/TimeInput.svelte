@@ -47,6 +47,7 @@
 	 * (conventions §13).
 	 */
 	import { flushSync, untrack } from 'svelte';
+	import { createTextMirror } from './textMirror.svelte.js';
 	import {
 		computeAnchoredPosition,
 		revealInPopover,
@@ -127,29 +128,20 @@
 
 	// --- text and value --------------------------------------------------
 
-	let ownText = $state(untrack(() => value ?? ''));
-	// The value last mirrored into `ownText`, so a parent's change of `value`
-	// rewrites the box but the component's own commit does not run twice.
-	let mirroredValue: string | null | undefined = untrack(() => value);
-	$effect(() => {
-		const current = value;
-		if (current === mirroredValue) return;
-		mirroredValue = current;
-		ownText = current ?? '';
-	});
+	const mirror = createTextMirror({ value: () => value });
 
-	const shownText = $derived(text ?? ownText);
+	const shownText = $derived(text ?? mirror.text);
 	const selectedTime = $derived(value && isIsoTime(value) ? value : null);
 
 	function setText(next: string): void {
-		ownText = next;
+		mirror.setText(next);
 		onTextInput?.(next);
 	}
 
 	function setValue(next: string | null): void {
 		const current = isBlankDateText(value) ? null : value;
 		if (next === current) return;
-		mirroredValue = next;
+		mirror.committed(next);
 		value = next;
 		onValueChange?.(next);
 	}
@@ -238,6 +230,8 @@
 	/** The one Esc path (§5.4): yields to a consumed Esc and to a layer above. */
 	function closeOnEscape(event: KeyboardEvent): void {
 		if (!open || event.key !== 'Escape') return;
+		// IME 変換中の Escape は変換の取消。リストを閉じない。
+		if (event.isComposing || event.keyCode === 229) return;
 		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panelEl })) return;
 		event.preventDefault();
 		closeList();
@@ -280,7 +274,7 @@
 	}
 
 	function handleInputKeydown(event: KeyboardEvent): void {
-		if (!event.isComposing) {
+		if (!event.isComposing && event.keyCode !== 229) {
 			switch (event.key) {
 				case 'ArrowDown':
 					if (open) {

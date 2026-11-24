@@ -346,6 +346,26 @@ describe('TimeInput list (combobox + listbox)', () => {
 		expect(isOpen()).toBe(true);
 	});
 
+	it('IME composition (isComposing or keyCode 229): Enter and Esc are left alone, list stays open', () => {
+		const { input, onValueChange } = setup({ value: '09:30' });
+		input.focus();
+		press(input, 'ArrowDown');
+		press(input, 'ArrowDown');
+		const before = onValueChange.mock.calls.length;
+		for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+			press(input, 'Escape', init);
+			expect(isOpen()).toBe(true);
+			fireEvent.keyDown(window, { key: 'Escape', ...init });
+			flushSync();
+			expect(isOpen()).toBe(true);
+			press(input, 'Enter', init);
+			expect(isOpen()).toBe(true);
+		}
+		expect(onValueChange.mock.calls.length).toBe(before);
+		press(input, 'Escape');
+		expect(isOpen()).toBe(false);
+	});
+
 	it('Esc at window level closes it (layering rule 3)', () => {
 		const { input } = setup({ value: '09:30' });
 		input.focus();

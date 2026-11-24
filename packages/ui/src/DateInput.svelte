@@ -34,7 +34,8 @@
 	 * `Intl` with the `locale` prop (§5.5), text from `messages` (conventions
 	 * §13).
 	 */
-	import { flushSync, untrack } from 'svelte';
+	import { flushSync } from 'svelte';
+	import { createTextMirror } from './textMirror.svelte.js';
 	import { computeAnchoredPosition, watchAnchoredPopover } from './anchoredPopover';
 	import {
 		clampDate,
@@ -117,29 +118,20 @@
 
 	// --- text and value --------------------------------------------------
 
-	let ownText = $state(untrack(() => value ?? ''));
-	// The value last mirrored into `ownText`, so a parent's change of `value`
-	// rewrites the box but the component's own commit does not run twice.
-	let mirroredValue: string | null | undefined = untrack(() => value);
-	$effect(() => {
-		const current = value;
-		if (current === mirroredValue) return;
-		mirroredValue = current;
-		ownText = current ?? '';
-	});
+	const mirror = createTextMirror({ value: () => value });
 
-	const shownText = $derived(text ?? ownText);
+	const shownText = $derived(text ?? mirror.text);
 	const selectedDate = $derived(value && isIsoDate(value) ? value : null);
 
 	function setText(next: string): void {
-		ownText = next;
+		mirror.setText(next);
 		onTextInput?.(next);
 	}
 
 	function setValue(next: string | null): void {
 		const current = isBlankDateText(value) ? null : value;
 		if (next === current) return;
-		mirroredValue = next;
+		mirror.committed(next);
 		value = next;
 		onValueChange?.(next);
 	}

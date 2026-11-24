@@ -11,6 +11,10 @@
 	 * 詳細/編集/リセット/削除パネルを表示する構成にしている（items.[id]ページの
 	 * 「クリックで編集ページへ」と同じ発想を、別ページ遷移ではなくページ内表示
 	 * にしたもの）。
+	 *
+	 * 行の右クリック（キーボードは Shift+F10・Menu キー）で、その行の「編集」「削除」
+	 * の文脈メニューを開く（#889 の見本。BantoGrid の onRowContextMenu の座標を
+	 * `@banto/ui` の Menu.openAt に渡す。閉じるとフォーカスは表へ戻る）。
 	 */
 	import { onDestroy, untrack, type Component } from 'svelte';
 	import { BantoGrid, type GridColumn } from '@banto/grid-svelte';
@@ -37,7 +41,9 @@
 		type StatusBadgeVariant,
 		EmptyState,
 		LoadingState,
-		Button
+		Button,
+		Menu,
+		MenuItem
 	} from '@banto/ui';
 	import {
 		createUser,
@@ -434,6 +440,25 @@
 
 	let deleting = $state(false);
 
+	// Row context menu (#889): the row it was opened for, and the Menu to open.
+	let rowMenu: ReturnType<typeof Menu> | undefined = $state();
+	let menuUser: UserSummary | null = $state(null);
+
+	function openRowMenu(user: UserSummary, position: { x: number; y: number }): void {
+		menuUser = user;
+		rowMenu?.openAt(position);
+	}
+
+	function editFromMenu(): void {
+		if (menuUser) selectUser(menuUser);
+	}
+
+	function deleteFromMenu(): void {
+		if (!menuUser) return;
+		selectUser(menuUser);
+		void handleDelete();
+	}
+
 	async function handleDelete(): Promise<void> {
 		if (!selected || deleting) return;
 		// Cannot be undone: the user types the user name to confirm (Issue #556).
@@ -529,7 +554,26 @@
 								{columns}
 								getRowId={(user) => user.id}
 								onRowClick={selectUser}
+								onRowContextMenu={openRowMenu}
 							/>
+							<Menu
+								bind:this={rowMenu}
+								label={m['users.rowMenu']({ username: menuUser?.username ?? '' })}
+							>
+								<MenuItem
+									label={m['users.rowMenuEdit']()}
+									icon={Pencil}
+									disabled={menuUser?.kind === 'builtin'}
+									onSelect={editFromMenu}
+								/>
+								<MenuItem
+									label={m['common.delete']()}
+									icon={Trash2}
+									danger
+									disabled={menuUser?.kind === 'builtin'}
+									onSelect={deleteFromMenu}
+								/>
+							</Menu>
 						</div>
 					{/if}
 				</SurfaceCard>

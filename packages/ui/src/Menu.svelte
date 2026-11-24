@@ -15,6 +15,11 @@
 	 *   focused item into view) does not count as an ancestor scroll (#427).
 	 *   The placement and the resize / scroll watch live in
 	 *   `anchoredPopover.ts`, shared with DateInput.
+	 * - Context menu (#889): without a `trigger`, `openAt({ x, y })` opens the
+	 *   same popover at a viewport point (a right-click in a tree / grid).
+	 *   Everything else is this one component: the point is placed as a
+	 *   zero-size anchor (so the flip / clamp / height cap are the same), and
+	 *   focus returns to the element that had it when the menu opened.
 	 * - Keyboard: see the table in §7.5. Enter/Space on menu items is
 	 *   native `<button>` behavior (handled in MenuItem); everything else
 	 *   funnels through the handlers below.
@@ -22,9 +27,10 @@
 	 * No app-specific store imports: lives in @banto/ui (ADR-0018 phase 2a),
 	 * which imports nothing but `svelte`.
 	 */
-	import { flushSync, type Snippet } from 'svelte';
+	import { flushSync, onMount, type Snippet } from 'svelte';
 	import { computeAnchoredPosition, watchAnchoredPopover } from './anchoredPopover';
 	import { setMenuContext } from './menuContext';
+	import { afterPointerRelease, trackPointerGesture } from './pointerGesture';
 
 	interface MenuTriggerProps {
 		'aria-haspopup': 'menu';
@@ -37,8 +43,19 @@
 		/** aria-label for the popover (role="menu"). */
 		label: string;
 		placement?: 'bottom-start' | 'bottom-end';
-		trigger: Snippet<[MenuTriggerProps]>;
+		/** Omit for a context menu opened with `openAt()` only (#889). */
+		trigger?: Snippet<[MenuTriggerProps]>;
 		children: Snippet;
+	}
+
+	interface MenuOpenAtOptions {
+		/**
+		 * Where focus goes when the menu closes with focus still in it (Escape,
+		 * an item picked). Default: the element focused when `openAt()` was
+		 * called (BantoGrid / BantoTree focus the clicked cell / row before
+		 * their callback). `null`: nowhere.
+		 */
+		returnFocus?: HTMLElement | null;
 	}
 
 	let { label, placement = 'bottom-end', trigger, children }: Props = $props();
@@ -52,6 +69,14 @@
 	// event that opens the menu (`event.currentTarget`) instead of asking
 	// the caller for an extra ref prop.
 	let triggerEl: HTMLElement | undefined;
+
+	// Set while the menu is open (or opening) at a point (`openAt`); the
+	// trigger handlers clear it. `pointReturnEl` is that open's focus target.
+	let anchorPoint: { x: number; y: number } | undefined;
+	let pointReturnEl: HTMLElement | undefined;
+	let openAtRequest = 0;
+
+	onMount(trackPointerGesture);
 
 	// Items registered by MenuItem (menuContext.ts), in mount order
 	// (`enabledItems()` re-sorts them into DOM order).
@@ -81,8 +106,74 @@
 	}
 
 	function computePosition(): void {
-		if (!triggerEl || !popoverEl) return;
-		coords = computeAnchoredPosition(triggerEl, popoverEl, placement);
+		if (!popoverEl) return;
+		if (anchorPoint) {
+			const { x, y } = anchorPoint;
+			const rect = { top: y, bottom: y, left: x, right: x, width: 0 };
+			coords = computeAnchoredPosition(
+				{ getBoundingClientRect: () => rect },
+				popoverEl,
+				'bottom-start'
+			);
+		} else if (triggerEl) {
+			coords = computeAnchoredPosition(triggerEl, popoverEl, placement);
+		}
+	}
+
+	// Not the `open` state: that follows the queued `toggle` event, so right
+	// after a light dismiss (a right-click elsewhere while open) it still
+	// says open. The catch is for engines without the pseudo-class.
+	function isShowing(): boolean {
+		try {
+			return popoverEl?.matches(':popover-open') ?? false;
+		} catch {
+			return open;
+		}
+	}
+
+	/**
+	 * Opens the menu at a viewport point (`clientX` / `clientY`), as a context
+	 * menu (#889): below-right of the point, flipped / clamped / height-capped
+	 * like a trigger menu, first item focused. Called while a mouse button is
+	 * still held (`contextmenu` fires on the press on macOS / Linux) it opens
+	 * when the button is released. Called again while open, it moves there.
+	 */
+	export function openAt(point: { x: number; y: number }, options: MenuOpenAtOptions = {}): void {
+		const active = document.activeElement;
+		let returnTo: HTMLElement | undefined;
+		if (options.returnFocus !== undefined) {
+			returnTo = options.returnFocus ?? undefined;
+		} else if (
+			active instanceof HTMLElement &&
+			active !== document.body &&
+			!popoverEl?.contains(active)
+		) {
+			returnTo = active;
+		} else {
+			// Re-opened with focus still on one of its own items: keep the
+			// target of the open before.
+			returnTo = anchorPoint ? pointReturnEl : undefined;
+		}
+		const request = ++openAtRequest;
+		afterPointerRelease(() => {
+			if (request !== openAtRequest || !popoverEl) return;
+			anchorPoint = { x: point.x, y: point.y };
+			pointReturnEl = returnTo;
+			if (!isShowing()) {
+				focusIntent = 'first';
+				try {
+					popoverEl.showPopover();
+					return;
+				} catch {
+					// Already open after all (an engine that cannot match
+					// `:popover-open`): move it instead.
+					focusIntent = 'none';
+				}
+			}
+			computePosition();
+			flushSync();
+			focusItem(0);
+		});
 	}
 
 	/**
@@ -106,8 +197,51 @@
 		popoverEl?.hidePopover();
 	}
 
+	/**
+	 * Where focus goes back to on close: the trigger, or for a menu opened at a
+	 * point the element that had focus then - if that row / cell still exists
+	 * (deleted, virtualised away), without scrolling to it.
+	 */
+	function returnFocus(): void {
+		if (!anchorPoint) triggerEl?.focus();
+		else if (pointReturnEl?.isConnected) pointReturnEl.focus({ preventScroll: true });
+	}
+
+	// An item picked: focus goes back before the menu hides, not when the
+	// queued `toggle` fires - a Modal / ConfirmDialog the item opens (rendered
+	// before that event) then records the trigger / row as its opener instead
+	// of the hidden item, and gets focus back there on close (#889).
+	function closeFromItem(): void {
+		returnFocusFromInside();
+		closeMenu();
+	}
+
+	/**
+	 * Hands focus over while it is still in the menu, before it hides. The
+	 * browser's own hide moves focus left in a `popover="auto"` back to the
+	 * element focused when it was shown - for a menu opened at a point that is
+	 * not necessarily `returnFocus` - and afterwards a native move cannot be
+	 * told from the user's own (#889 review). Focus already outside (an outside
+	 * click, a focus move by the app) is left alone. A point menu with nowhere
+	 * to return to (`returnFocus: null`, the row gone) drops focus instead of
+	 * letting the browser put it back.
+	 */
+	let tabbingOut = false;
+
+	function returnFocusFromInside(): void {
+		if (tabbingOut) return;
+		const active = document.activeElement;
+		if (!(active instanceof HTMLElement) || !popoverEl?.contains(active)) return;
+		if (anchorPoint && !pointReturnEl?.isConnected) active.blur();
+		else returnFocus();
+	}
+
+	function handleBeforeToggle(event: ToggleEvent): void {
+		if (event.newState === 'closed') returnFocusFromInside();
+	}
+
 	setMenuContext({
-		close: closeMenu,
+		close: closeFromItem,
 		registerItem
 	});
 
@@ -127,23 +261,28 @@
 		} else {
 			coords = undefined;
 			popoverEl?.style.removeProperty('max-height');
-			// Return focus to the trigger only when it would otherwise be
-			// dropped (Escape / item selection leave it on a menu item; the
-			// browser then moves it to <body> once the popover hides). An
-			// outside click or Tab has already focused something else by the
-			// time this queued event fires - stealing it back would fight
-			// the user's own focus move.
+			// Normally done already in `beforetoggle`. Kept for an engine
+			// without it: return focus only when it would otherwise be dropped
+			// (left on a menu item, or on <body>). An outside click or Tab has
+			// already focused something else by the time this queued event
+			// fires - stealing it back would fight the user's own focus move.
 			const active = document.activeElement;
 			if (active === null || active === document.body || popoverEl?.contains(active)) {
-				triggerEl?.focus();
+				returnFocus();
 			}
+			anchorPoint = undefined;
+			pointReturnEl = undefined;
 		}
 	}
 
 	function handleTriggerClick(event: MouseEvent): void {
 		triggerEl = event.currentTarget as HTMLElement;
-		if (open) closeMenu();
-		else openMenu('first');
+		if (open) {
+			closeMenu();
+			return;
+		}
+		anchorPoint = undefined;
+		openMenu('first');
 	}
 
 	function handleTriggerKeydown(event: KeyboardEvent): void {
@@ -153,10 +292,12 @@
 			case ' ':
 			case 'ArrowDown':
 				event.preventDefault();
+				if (!open) anchorPoint = undefined;
 				openMenu('first');
 				break;
 			case 'ArrowUp':
 				event.preventDefault();
+				if (!open) anchorPoint = undefined;
 				openMenu('last');
 				break;
 		}
@@ -186,8 +327,16 @@
 				break;
 			case 'Tab':
 				// Let the browser continue its normal tab traversal; just
-				// drop out of the menu instead of trapping focus in it.
-				closeMenu();
+				// drop out of the menu instead of trapping focus in it. The
+				// browser's own hide puts focus back where the menu was opened
+				// from (the trigger, the row), so Tab goes on from there - not
+				// from a `returnFocus` elsewhere (#889 review).
+				tabbingOut = true;
+				try {
+					closeMenu();
+				} finally {
+					tabbingOut = false;
+				}
 				break;
 		}
 	}
@@ -200,7 +349,7 @@
 	});
 </script>
 
-{@render trigger({
+{@render trigger?.({
 	'aria-haspopup': 'menu',
 	'aria-expanded': open,
 	onclick: handleTriggerClick,
@@ -217,6 +366,7 @@
 	style:top={coords ? `${coords.top}px` : undefined}
 	style:left={coords ? `${coords.left}px` : undefined}
 	style:visibility={coords ? 'visible' : 'hidden'}
+	onbeforetoggle={handleBeforeToggle}
 	ontoggle={handleToggle}
 	onkeydown={handlePopoverKeydown}
 >
