@@ -12,10 +12,11 @@
 	 * how to show it, `invalid`).
 	 *
 	 * The dialog (§5.4: "the time listbox beside the date dialog's calendar,
-	 * inside the dialog, so focus moves"): `role="dialog"` +
-	 * `aria-modal="true"` + `attachFocusTrap`, a `popover="manual"` in the top
-	 * layer placed by `anchoredPopover.ts`, closed on an ancestor scroll or a
-	 * pointerdown outside - the same dialog as `DateInput`, with the same
+	 * inside the dialog, so focus moves"): the shared `PickerDialog`
+	 * (`role="dialog"` + `aria-modal="true"` + `attachFocusTrap`, a
+	 * `popover="manual"` in the top layer placed by `anchoredPopover.ts`,
+	 * closed on an ancestor scroll or a pointerdown outside) - the same dialog
+	 * as `DateInput`, with the same
 	 * calendar (`MonthCalendar`). Picking a day (Enter / Space / click, or
 	 * "today") marks it and moves focus to the time list without changing the
 	 * value; picking a time there (Enter / Space / click) sets the value to
@@ -44,11 +45,7 @@
 	 */
 	import { flushSync, untrack } from 'svelte';
 	import { createTextMirror } from './textMirror.svelte.js';
-	import {
-		computeAnchoredPosition,
-		revealInPopover,
-		watchAnchoredPopover
-	} from './anchoredPopover';
+	import { revealInPopover } from './anchoredPopover';
 	import {
 		clampDate,
 		currentTime,
@@ -66,9 +63,9 @@
 		type DateTimeParts
 	} from './datetime';
 	import Calendar from './icons/Calendar.svelte';
-	import { attachFocusTrap, hasVisibleLayerAbove } from './layering';
 	import { defaultUiMessages, type UiMessages } from './messages';
 	import MonthCalendar from './MonthCalendar.svelte';
+	import PickerDialog from './PickerDialog.svelte';
 	import { stopPointerdown } from './stopPointerdown';
 
 	interface Props {
@@ -184,15 +181,14 @@
 	let listEl: HTMLDivElement | undefined = $state();
 	let buttonEl: HTMLButtonElement | undefined = $state();
 	let calendar: ReturnType<typeof MonthCalendar> | undefined = $state();
+	let dialog: ReturnType<typeof PickerDialog> | undefined = $state();
 	let open = $state(false);
-	let coords = $state<{ top: number; left: number } | undefined>(undefined);
 	let focusDate = $state('');
 	let today = $state('');
 	/** The day picked in the calendar (or the value's), shown as chosen; `null` until one is. */
 	let pickedDate = $state<string | null>(null);
 	/** The active time option (`aria-activedescendant`), always a selectable one or `null`. */
 	let activeTime = $state<string | null>(null);
-	let detachTrap: (() => void) | undefined;
 
 	// The bounds as canonical date and time; a bound that is not one is ignored.
 	const minParts = $derived(min ? parseIsoDateTime(min) : null);
@@ -237,11 +233,6 @@
 		return nearestTime(time, selectableTimes);
 	}
 
-	function reposition(): void {
-		if (!fieldEl || !panelEl) return;
-		coords = computeAnchoredPosition(fieldEl, panelEl, 'bottom-start');
-	}
-
 	function revealActive(block: 'nearest' | 'center'): void {
 		const list = listEl;
 		if (!list || !activeTime) return;
@@ -255,51 +246,22 @@
 		today = todayDate();
 		pickedDate = initial && isDaySelectable(initial.date) ? initial.date : null;
 		focusDate = clampDate(initial?.date ?? today, minDate, maxDate);
-		open = true;
-		// Render the dialog, show it, measure it, then make it visible
-		// (`coords`) - a still-hidden cell cannot take focus. It exists only
-		// while open, so a closed picker leaves no `role="dialog"` in the page.
-		flushSync();
-		if (!panelEl) return;
 		// Empty: point at the time nearest to now (only points, never picks).
 		activeTime = nearestSelectable(initial?.time ?? currentTime());
-		panelEl.showPopover();
-		reposition();
-		flushSync();
-		detachTrap = attachFocusTrap(panelEl);
-		revealActive('center');
-		calendar?.focusCell();
+		dialog?.show(() => {
+			revealActive('center');
+			calendar?.focusCell();
+		});
 	}
 
 	function closePicker(focusInput: boolean): void {
-		if (!open) return;
-		// Trap off first: focusing the box from inside the dialog must not be
-		// pulled back. Then focus the box before hiding, so focus never drops
-		// to <body> (which would read as "left the component", promise 3).
-		detachTrap?.();
-		detachTrap = undefined;
-		if (focusInput) inputEl?.focus({ preventScroll: true });
-		try {
-			panelEl?.hidePopover();
-		} catch {
-			// Already hidden (removed from the top layer by the browser).
-		}
-		open = false;
-		coords = undefined;
-		pickedDate = null;
-		activeTime = null;
+		dialog?.close(focusInput);
 	}
 
-	/** The one Esc path (§5.4): yields to a consumed Esc and to a layer above. */
-	function closeOnEscape(event: KeyboardEvent): void {
-		if (!open || event.key !== 'Escape') return;
-		// IME 変換中の Escape は変換の取消。ピッカーを閉じない。
-		if (event.isComposing || event.keyCode === 229) return;
-		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panelEl })) return;
-		event.preventDefault();
-		// The month / year view (#908) goes back one view first, even from the time list.
-		if (calendar?.back()) return;
-		closePicker(true);
+	/** Every close (whatever closed it): drop the marked day and the active time. */
+	function handleClose(): void {
+		pickedDate = null;
+		activeTime = null;
 	}
 
 	/** A day picked in the calendar (or "today"): mark it and go on to the time list. */
@@ -383,46 +345,13 @@
 		event.preventDefault();
 	}
 
-	// Promise 1: a native listener (Svelte delegates `onkeydown` to the app
-	// root, past a host's own native listeners), so stopPropagation here
-	// keeps every key inside. The calendar's own grid listener runs first
-	// (arrows, Enter). Promise 4 the same way for pointerdown.
+	/** What a press in the dialog may focus: the calendar's, plus the time list. */
+	const TIME_FOCUSABLE = 'button, td[tabindex], [role="listbox"]';
+
+	/** Keys inside the dialog: the time list's own (the dialog then runs the Esc path). */
 	function handlePanelKeydown(event: KeyboardEvent): void {
 		if (event.target === listEl) handleListKey(event);
-		closeOnEscape(event);
-		event.stopPropagation();
 	}
-
-	$effect(() => {
-		const panel = panelEl;
-		if (!panel) return;
-		panel.addEventListener('keydown', handlePanelKeydown);
-		return () => panel.removeEventListener('keydown', handlePanelKeydown);
-	});
-
-	$effect(() => {
-		if (!open) return;
-		// Light dismiss (manual popover): a pointerdown outside the dialog
-		// closes it. The button is left to its own click (toggle).
-		function handleDocumentPointerDown(event: PointerEvent): void {
-			const target = event.target;
-			if (target instanceof Node && (panelEl?.contains(target) || buttonEl?.contains(target))) {
-				return;
-			}
-			// Park focus on the text box first: the click then moves it on from
-			// there, so a host sees one ordinary blur from the component.
-			closePicker(true);
-		}
-		document.addEventListener('pointerdown', handleDocumentPointerDown, true);
-		const unwatch = watchAnchoredPopover(panelEl, {
-			reposition,
-			close: () => closePicker(!!panelEl?.contains(document.activeElement))
-		});
-		return () => {
-			document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
-			unwatch();
-		};
-	});
 
 	// The parent changed `step` / `min` / `max` (or disabled the input) while
 	// the dialog is open: never leave the active time on one that is gone or
@@ -438,9 +367,6 @@
 			if (activeTime !== null && !list.includes(activeTime)) activeTime = null;
 		});
 	});
-
-	// Unmounted while open (a grid row scrolled away): drop the trap's listeners.
-	$effect(() => () => detachTrap?.());
 
 	function handleButtonClick(): void {
 		if (open) closePicker(true);
@@ -459,7 +385,7 @@
 				event.preventDefault();
 				openPicker();
 			} else if (event.key === 'Escape') {
-				closeOnEscape(event);
+				dialog?.closeOnEscape(event);
 			} else if (event.key === 'Enter' && !open) {
 				commit();
 			}
@@ -475,8 +401,6 @@
 		onblur?.(event);
 	}
 </script>
-
-<svelte:window onkeydown={closeOnEscape} />
 
 <div
 	class="datetime-input"
@@ -522,108 +446,96 @@
 	</div>
 	<span id={hintId} class="datetime-input-hint">{t.dateTimeFormatHint()}</span>
 
-	{#if open}
-		<div
-			bind:this={panelEl}
-			popover="manual"
-			role="dialog"
-			aria-modal="true"
-			aria-label={t.dateTimePickerDialog()}
-			tabindex="-1"
-			class="datetime-picker"
-			style:top={coords ? `${coords.top}px` : undefined}
-			style:left={coords ? `${coords.left}px` : undefined}
-			style:visibility={coords ? 'visible' : 'hidden'}
-			onmousedown={(event) => {
-				// A press on something that cannot take focus (heading, weekday
-				// header, gaps) would focus the dialog itself and strand the keys:
-				// keep focus where it is. A time option focuses the list (its
-				// focusable ancestor), which the click then picks from.
-				const target = event.target;
-				if (
-					!(target instanceof Element) ||
-					!target.closest('button, td[tabindex], [role="listbox"]')
-				) {
-					event.preventDefault();
-				}
-			}}
-		>
-			{#if focusDate}
-				<div class="datetime-picker-body">
-					<div class="datetime-picker-calendar">
-						<MonthCalendar
-							bind:this={calendar}
-							bind:focusDate
-							selectedDate={pickedDate}
-							{today}
-							min={minDate}
-							max={maxDate}
-							{isDateDisabled}
-							{locale}
-							{weekStart}
-							{t}
-							scroller={panelEl}
-							onPick={pickDate}
-						/>
-					</div>
-
-					<!-- Focus moves into the list (it is inside the dialog, §5.4); the
-					     active option is pointed at with aria-activedescendant. -->
-					<div
-						bind:this={listEl}
-						id={listId}
-						role="listbox"
-						tabindex="0"
-						aria-label={t.timePickerList()}
-						aria-activedescendant={activeTime ? optionId(activeTime) : undefined}
-						class="datetime-picker-times"
-						onfocus={ensureActive}
-					>
-						{#each options as time (time)}
-							{@const pickable = isTimeSelectable(timeDay, time)}
-							<!-- svelte-ignore a11y_interactive_supports_focus, a11y_click_events_have_key_events -->
-							<div
-								id={optionId(time)}
-								role="option"
-								data-time={time}
-								aria-selected={time === activeTime ? 'true' : 'false'}
-								aria-disabled={pickable ? undefined : 'true'}
-								class="datetime-option"
-								class:datetime-option--active={time === activeTime}
-								class:datetime-option--value={!!selected &&
-									time === selected.time &&
-									timeDay === selected.date}
-								onpointermove={() => {
-									// The pointer moves the active option (one highlight, the
-									// one aria-activedescendant names); a disabled one is skipped.
-									if (pickable && activeTime !== time) activeTime = time;
-								}}
-								onclick={() => {
-									if (pickable) pickTime(time);
-								}}
-							>
-								{time}
-							</div>
-						{/each}
-					</div>
+	<!-- A press on a time option focuses the list (its focusable ancestor,
+	     `focusable`), which the click then picks from. -->
+	<PickerDialog
+		bind:this={dialog}
+		bind:open
+		bind:panel={panelEl}
+		label={t.dateTimePickerDialog()}
+		anchor={fieldEl}
+		toggle={buttonEl}
+		returnFocus={() => inputEl}
+		back={() => calendar?.back() ?? false}
+		onPanelKeydown={handlePanelKeydown}
+		focusable={TIME_FOCUSABLE}
+		onclose={handleClose}
+	>
+		{#if focusDate}
+			<div class="datetime-picker-body">
+				<div class="datetime-picker-calendar">
+					<MonthCalendar
+						bind:this={calendar}
+						bind:focusDate
+						selectedDate={pickedDate}
+						{today}
+						min={minDate}
+						max={maxDate}
+						{isDateDisabled}
+						{locale}
+						{weekStart}
+						{t}
+						scroller={panelEl}
+						onPick={pickDate}
+					/>
 				</div>
 
-				<div class="datetime-picker-footer">
-					<button
-						type="button"
-						class="datetime-picker-action"
-						aria-disabled={isDaySelectable(today) ? undefined : 'true'}
-						onclick={() => pickDate(today)}
-					>
-						{t.datePickerToday()}
-					</button>
-					<button type="button" class="datetime-picker-action" onclick={clear}>
-						{t.datePickerClear()}
-					</button>
+				<!-- Focus moves into the list (it is inside the dialog, §5.4); the
+				     active option is pointed at with aria-activedescendant. -->
+				<div
+					bind:this={listEl}
+					id={listId}
+					role="listbox"
+					tabindex="0"
+					aria-label={t.timePickerList()}
+					aria-activedescendant={activeTime ? optionId(activeTime) : undefined}
+					class="datetime-picker-times"
+					onfocus={ensureActive}
+				>
+					{#each options as time (time)}
+						{@const pickable = isTimeSelectable(timeDay, time)}
+						<!-- svelte-ignore a11y_interactive_supports_focus, a11y_click_events_have_key_events -->
+						<div
+							id={optionId(time)}
+							role="option"
+							data-time={time}
+							aria-selected={time === activeTime ? 'true' : 'false'}
+							aria-disabled={pickable ? undefined : 'true'}
+							class="datetime-option"
+							class:datetime-option--active={time === activeTime}
+							class:datetime-option--value={!!selected &&
+								time === selected.time &&
+								timeDay === selected.date}
+							onpointermove={() => {
+								// The pointer moves the active option (one highlight, the
+								// one aria-activedescendant names); a disabled one is skipped.
+								if (pickable && activeTime !== time) activeTime = time;
+							}}
+							onclick={() => {
+								if (pickable) pickTime(time);
+							}}
+						>
+							{time}
+						</div>
+					{/each}
 				</div>
-			{/if}
-		</div>
-	{/if}
+			</div>
+
+			<div class="date-picker-footer">
+				<button
+					type="button"
+					class="date-picker-action"
+					aria-disabled={isDaySelectable(today) ? undefined : 'true'}
+					onclick={() => pickDate(today)}
+				>
+					{t.datePickerToday()}
+				</button>
+				<button type="button" class="date-picker-action" onclick={clear}>
+					{t.datePickerClear()}
+				</button>
+			</div>
+		{/if}
+	</PickerDialog>
 </div>
 
 <style>
@@ -706,36 +618,6 @@
 		white-space: nowrap;
 	}
 
-	.datetime-picker {
-		/* Shape of the calendar (§9: a part's own size, not a dimension step):
-		   one day cell, shrunk so 7 of them plus the padding fit a 320px
-		   viewport at 200% text (the time list then wraps below). */
-		--banto-date-cell-size: min(
-			2.25rem,
-			calc((100vw - 2 * var(--banto-space-3) - var(--banto-space-4)) / 7)
-		);
-		position: fixed;
-		inset: auto;
-		margin: 0;
-		box-sizing: border-box;
-		max-inline-size: calc(100vw - 2 * var(--banto-space-1));
-		padding: var(--banto-space-3);
-		border: var(--banto-border-width) solid var(--banto-border);
-		border-radius: var(--banto-radius-md);
-		background: var(--banto-surface-overlay);
-		box-shadow: var(--banto-shadow-lg);
-		color: var(--banto-text);
-		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
-		backdrop-filter: var(--banto-backdrop, none);
-		-webkit-backdrop-filter: var(--banto-backdrop, none);
-		overflow: auto;
-		overscroll-behavior: contain;
-	}
-
-	.datetime-picker:focus {
-		outline: none;
-	}
-
 	.datetime-picker-body {
 		display: flex;
 		flex-wrap: wrap;
@@ -795,41 +677,6 @@
 		cursor: not-allowed;
 	}
 
-	.datetime-picker-footer {
-		display: flex;
-		justify-content: space-between;
-		margin-block-start: var(--banto-space-2);
-	}
-
-	.datetime-picker-action {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: var(--banto-space-1) var(--banto-space-2);
-		border: none;
-		border-radius: var(--banto-radius-sm);
-		background: transparent;
-		color: var(--banto-primary-text);
-		font: inherit;
-		font-size: var(--banto-font-size-md);
-		cursor: pointer;
-	}
-
-	.datetime-picker-action:hover:not([aria-disabled='true']) {
-		background: var(--banto-surface-hover);
-		color: var(--banto-text);
-	}
-
-	.datetime-picker-action[aria-disabled='true'] {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
-	.datetime-picker-action:focus-visible {
-		outline: none;
-		box-shadow: var(--banto-focus-ring);
-	}
-
 	@media (forced-colors: active) {
 		.datetime-option--active {
 			forced-color-adjust: none;
@@ -842,7 +689,6 @@
 		}
 
 		.datetime-picker-times:focus-visible,
-		.datetime-picker-action:focus-visible,
 		.datetime-input-text:focus-visible,
 		.datetime-input-button:focus-visible {
 			outline: var(--banto-border-width-strong) solid Highlight;

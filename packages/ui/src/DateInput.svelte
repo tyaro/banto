@@ -7,15 +7,13 @@
 	 * rewritten to the canonical form; text that does not parse is left as is
 	 * (the value does not change - the parent decides how to show it, `invalid`).
 	 *
-	 * Popover (APG Date Picker Dialog, §5.4): `role="dialog"` +
-	 * `aria-modal="true"` + `attachFocusTrap`, in the browser's top layer
-	 * (`popover="manual"`, so it never closes another `auto` popover and its
-	 * light dismiss is ours: a pointerdown outside closes it), placed by
-	 * `anchoredPopover.ts` (shared with Menu), closed on an ancestor scroll.
-	 * Esc goes through one function, `closeOnEscape` (layering.ts rules 1-2),
-	 * from the popover's keydown and from the window (rule 3); a capture-phase
-	 * window listener is not used (§5.4). Closing returns focus to the text box
-	 * (D10).
+	 * Popover (APG Date Picker Dialog, §5.4): the shared `PickerDialog`
+	 * (`role="dialog"` + `aria-modal="true"` + `attachFocusTrap`, in the
+	 * browser's top layer with our own light dismiss, placed by
+	 * `anchoredPopover.ts`, closed on an ancestor scroll). Esc goes through
+	 * one function, its `closeOnEscape` (layering.ts rules 1-2), from the
+	 * popover's keydown and from the window (rule 3); a capture-phase window
+	 * listener is not used (§5.4). Closing returns focus to the text box (D10).
 	 *
 	 * Promises to a host that runs its own key / blur state machine (§5.8, the
 	 * grid cell editor of PR-4):
@@ -34,9 +32,7 @@
 	 * `Intl` with the `locale` prop (§5.5), text from `messages` (conventions
 	 * §13).
 	 */
-	import { flushSync } from 'svelte';
 	import { createTextMirror } from './textMirror.svelte.js';
-	import { computeAnchoredPosition, watchAnchoredPopover } from './anchoredPopover';
 	import {
 		clampDate,
 		formatFullDate,
@@ -48,9 +44,9 @@
 		todayDate
 	} from './datetime';
 	import Calendar from './icons/Calendar.svelte';
-	import { attachFocusTrap, hasVisibleLayerAbove } from './layering';
 	import { defaultUiMessages, type UiMessages } from './messages';
 	import MonthCalendar from './MonthCalendar.svelte';
+	import PickerDialog from './PickerDialog.svelte';
 	import { stopPointerdown } from './stopPointerdown';
 
 	interface Props {
@@ -154,11 +150,10 @@
 	let fieldEl: HTMLDivElement | undefined = $state();
 	let panelEl: HTMLDivElement | undefined = $state();
 	let buttonEl: HTMLButtonElement | undefined = $state();
+	let dialog: ReturnType<typeof PickerDialog> | undefined = $state();
 	let open = $state(false);
-	let coords = $state<{ top: number; left: number } | undefined>(undefined);
 	let focusDate = $state('');
 	let today = $state('');
-	let detachTrap: (() => void) | undefined;
 	let calendar: ReturnType<typeof MonthCalendar> | undefined = $state();
 
 	const weekStart = $derived(resolveWeekStart(locale, weekStartsOn));
@@ -176,55 +171,15 @@
 		return clampDate(typed ?? selectedDate ?? today, min, max);
 	}
 
-	function reposition(): void {
-		if (!fieldEl || !panelEl) return;
-		coords = computeAnchoredPosition(fieldEl, panelEl, 'bottom-start');
-	}
-
 	function openPicker(): void {
 		if (open || disabled || readonly) return;
 		today = todayDate();
 		focusDate = initialFocusDate();
-		open = true;
-		// Render the popover, show it, measure it, then make it visible
-		// (`coords`) - a still-hidden cell cannot take focus. It exists only
-		// while open, so a closed picker leaves no `role="dialog"` in the page.
-		flushSync();
-		if (!panelEl) return;
-		panelEl.showPopover();
-		reposition();
-		flushSync();
-		detachTrap = attachFocusTrap(panelEl);
-		calendar?.focusCell();
+		dialog?.show(() => calendar?.focusCell());
 	}
 
 	function closePicker(focusInput: boolean): void {
-		if (!open) return;
-		// Trap off first: focusing the box from inside the dialog must not be
-		// pulled back. Then focus the box before hiding, so focus never drops
-		// to <body> (which would read as "left the component", promise 3).
-		detachTrap?.();
-		detachTrap = undefined;
-		if (focusInput) inputEl?.focus({ preventScroll: true });
-		try {
-			panelEl?.hidePopover();
-		} catch {
-			// Already hidden (removed from the top layer by the browser).
-		}
-		open = false;
-		coords = undefined;
-	}
-
-	/** The one Esc path (§5.4): yields to a consumed Esc and to a layer above. */
-	function closeOnEscape(event: KeyboardEvent): void {
-		if (!open || event.key !== 'Escape') return;
-		// IME 変換中の Escape は変換の取消。ピッカーを閉じない。
-		if (event.isComposing || event.keyCode === 229) return;
-		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panelEl })) return;
-		event.preventDefault();
-		// The month / year view (#908) goes back one view first.
-		if (calendar?.back()) return;
-		closePicker(true);
+		dialog?.close(focusInput);
 	}
 
 	function select(date: string): void {
@@ -239,51 +194,6 @@
 		setValue(null);
 		closePicker(true);
 	}
-
-	// Promise 1: a native listener (Svelte delegates `onkeydown` to the app
-	// root, past a host's own native listeners), so stopPropagation here
-	// keeps every key inside. The calendar's own grid listener runs first
-	// (arrows, Enter). Promise 4 the same way for pointerdown.
-	function handlePanelKeydown(event: KeyboardEvent): void {
-		closeOnEscape(event);
-		event.stopPropagation();
-	}
-
-	$effect(() => {
-		const panel = panelEl;
-		if (!panel) return;
-		panel.addEventListener('keydown', handlePanelKeydown);
-		return () => panel.removeEventListener('keydown', handlePanelKeydown);
-	});
-
-	$effect(() => {
-		if (!open) return;
-		// Light dismiss (manual popover): a pointerdown outside the popover
-		// closes it. The button is left to its own click (toggle).
-		function handleDocumentPointerDown(event: PointerEvent): void {
-			const target = event.target;
-			if (target instanceof Node && (panelEl?.contains(target) || buttonEl?.contains(target))) {
-				return;
-			}
-			// Park focus on the text box first: the click then moves it on from
-			// there, so a host sees one ordinary blur from the component (focus
-			// on a day cell that is hidden / removed would drop to <body>
-			// without any focusout).
-			closePicker(true);
-		}
-		document.addEventListener('pointerdown', handleDocumentPointerDown, true);
-		const unwatch = watchAnchoredPopover(panelEl, {
-			reposition,
-			close: () => closePicker(!!panelEl?.contains(document.activeElement))
-		});
-		return () => {
-			document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
-			unwatch();
-		};
-	});
-
-	// Unmounted while open (a grid row scrolled away): drop the trap's listeners.
-	$effect(() => () => detachTrap?.());
 
 	function handleButtonClick(): void {
 		if (open) closePicker(true);
@@ -302,7 +212,7 @@
 				event.preventDefault();
 				openPicker();
 			} else if (event.key === 'Escape') {
-				closeOnEscape(event);
+				dialog?.closeOnEscape(event);
 			} else if (event.key === 'Enter' && !open) {
 				commit();
 			}
@@ -318,8 +228,6 @@
 		onblur?.(event);
 	}
 </script>
-
-<svelte:window onkeydown={closeOnEscape} />
 
 <div class="date-input" bind:this={rootEl} {@attach stopPointerdown} onfocusout={handleFocusOut}>
 	<div class="date-input-field" class:date-input-field--invalid={invalid} bind:this={fieldEl}>
@@ -356,60 +264,47 @@
 	</div>
 	<span id={hintId} class="date-input-hint">{t.dateFormatHint()}</span>
 
-	{#if open}
-		<div
-			bind:this={panelEl}
-			popover="manual"
-			role="dialog"
-			aria-modal="true"
-			aria-label={t.datePickerDialog()}
-			tabindex="-1"
-			class="date-picker"
-			style:top={coords ? `${coords.top}px` : undefined}
-			style:left={coords ? `${coords.left}px` : undefined}
-			style:visibility={coords ? 'visible' : 'hidden'}
-			onmousedown={(event) => {
-				// A press on something that cannot take focus (heading, weekday
-				// header, gaps) would focus the dialog itself and strand the
-				// arrow keys: keep focus where it is (the tracked day).
-				const target = event.target;
-				if (!(target instanceof Element) || !target.closest('button, td[tabindex]')) {
-					event.preventDefault();
-				}
-			}}
-		>
-			{#if focusDate}
-				<MonthCalendar
-					bind:this={calendar}
-					bind:focusDate
-					{selectedDate}
-					{today}
-					{min}
-					{max}
-					{isDateDisabled}
-					{locale}
-					{weekStart}
-					{t}
-					scroller={panelEl}
-					onPick={select}
-				/>
+	<PickerDialog
+		bind:this={dialog}
+		bind:open
+		bind:panel={panelEl}
+		label={t.datePickerDialog()}
+		anchor={fieldEl}
+		toggle={buttonEl}
+		returnFocus={() => inputEl}
+		back={() => calendar?.back() ?? false}
+	>
+		{#if focusDate}
+			<MonthCalendar
+				bind:this={calendar}
+				bind:focusDate
+				{selectedDate}
+				{today}
+				{min}
+				{max}
+				{isDateDisabled}
+				{locale}
+				{weekStart}
+				{t}
+				scroller={panelEl}
+				onPick={select}
+			/>
 
-				<div class="date-picker-footer">
-					<button
-						type="button"
-						class="date-picker-action"
-						aria-disabled={isSelectable(today) ? undefined : 'true'}
-						onclick={() => select(today)}
-					>
-						{t.datePickerToday()}
-					</button>
-					<button type="button" class="date-picker-action" onclick={clear}>
-						{t.datePickerClear()}
-					</button>
-				</div>
-			{/if}
-		</div>
-	{/if}
+			<div class="date-picker-footer">
+				<button
+					type="button"
+					class="date-picker-action"
+					aria-disabled={isSelectable(today) ? undefined : 'true'}
+					onclick={() => select(today)}
+				>
+					{t.datePickerToday()}
+				</button>
+				<button type="button" class="date-picker-action" onclick={clear}>
+					{t.datePickerClear()}
+				</button>
+			</div>
+		{/if}
+	</PickerDialog>
 </div>
 
 <style>
@@ -492,77 +387,7 @@
 		white-space: nowrap;
 	}
 
-	.date-picker {
-		/* Shape of the calendar (§9: a part's own size, not a dimension step):
-		   one day cell, shrunk so 7 of them plus the padding fit a 320px
-		   viewport at 200% text. */
-		--banto-date-cell-size: min(
-			2.25rem,
-			calc((100vw - 2 * var(--banto-space-3) - var(--banto-space-4)) / 7)
-		);
-		position: fixed;
-		inset: auto;
-		margin: 0;
-		box-sizing: border-box;
-		max-inline-size: calc(100vw - 2 * var(--banto-space-1));
-		padding: var(--banto-space-3);
-		border: var(--banto-border-width) solid var(--banto-border);
-		border-radius: var(--banto-radius-md);
-		background: var(--banto-surface-overlay);
-		box-shadow: var(--banto-shadow-lg);
-		color: var(--banto-text);
-		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
-		backdrop-filter: var(--banto-backdrop, none);
-		-webkit-backdrop-filter: var(--banto-backdrop, none);
-		overflow: auto;
-		overscroll-behavior: contain;
-	}
-
-	.date-picker:focus {
-		outline: none;
-	}
-
-	.date-picker-action {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border: none;
-		border-radius: var(--banto-radius-sm);
-		background: transparent;
-		color: var(--banto-text-muted);
-		font: inherit;
-		cursor: pointer;
-	}
-
-	.date-picker-action {
-		padding: var(--banto-space-1) var(--banto-space-2);
-		color: var(--banto-primary-text);
-		font-size: var(--banto-font-size-md);
-	}
-
-	.date-picker-action:hover:not([aria-disabled='true']) {
-		background: var(--banto-surface-hover);
-		color: var(--banto-text);
-	}
-
-	.date-picker-action[aria-disabled='true'] {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
-	.date-picker-action:focus-visible {
-		outline: none;
-		box-shadow: var(--banto-focus-ring);
-	}
-
-	.date-picker-footer {
-		display: flex;
-		justify-content: space-between;
-		margin-block-start: var(--banto-space-2);
-	}
-
 	@media (forced-colors: active) {
-		.date-picker-action:focus-visible,
 		.date-input-text:focus-visible,
 		.date-input-button:focus-visible {
 			outline: var(--banto-border-width-strong) solid Highlight;
