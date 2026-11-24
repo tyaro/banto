@@ -88,6 +88,7 @@ function mount(
 		initialLeftOpen?: boolean;
 		narrowOverride?: boolean;
 		extra?: ThreePaneExtraPanelDef[];
+		beforePanelChange?: () => boolean;
 	} = {}
 ) {
 	const dock: DockState = createDockState();
@@ -363,6 +364,32 @@ describe("ThreePaneDock sideWidthUnit='px': the divider (#892 review)", () => {
 		await resize(1600);
 		expect(harness.isNarrow()).toBe(false);
 		near(px().left, 280);
+		near(px().right, 360);
+	});
+
+	it('keeps following the wide layout when the switch to the narrow display is refused', async () => {
+		const { px, harness } = mount({ beforePanelChange: () => false });
+		await settle();
+		// The left at 180 px: 180 + 360 + the centre's 320 fit in 880 px.
+		firePointer(leftDivider(), 'pointerdown', 280);
+		firePointer(window, 'pointermove', 180);
+		firePointer(window, 'pointerup', 180);
+		await settle();
+		near(px().left, 180);
+		await resize(880);
+		expect(harness.isNarrow()).toBe(false);
+		// Still at their px (not the shares of 1280 drawn at 880).
+		near(px().left, 180);
+		near(px().right, 360);
+		// A divider moved meanwhile is the new px.
+		firePointer(leftDivider(), 'pointerdown', 180);
+		firePointer(window, 'pointermove', 200);
+		firePointer(window, 'pointerup', 200);
+		await settle();
+		near(px().left, 200);
+		await resize(1600);
+		expect(harness.isNarrow()).toBe(false);
+		near(px().left, 200);
 		near(px().right, 360);
 	});
 

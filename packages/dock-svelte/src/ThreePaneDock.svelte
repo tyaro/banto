@@ -297,6 +297,12 @@
 	 */
 	let sidesDefault = false;
 	/**
+	 * The switch to the narrow display was refused (`beforePanelChange`): the wide layout stays shown
+	 * and its px are followed again (Codex review) although `wantNarrow` stays true until the next
+	 * crossing. While a switch is only wanted (not answered yet) the px are left alone.
+	 */
+	let narrowRefused = false;
+	/**
 	 * A divider drag (or key) running, or cancelled and not followed yet: the layout and the px at
 	 * its press. Its cancel puts the press's shares back; those are the press's px at the width of
 	 * then, so they are fitted again (not taken as new px at today's width).
@@ -456,7 +462,7 @@
 		}
 		// Before mount (`settledSnapshot` set in `onMount`) nothing is measured.
 		if (settledSnapshot === null || width === null) return;
-		if (narrowShown || wantNarrow) {
+		if (narrowShown || (wantNarrow && !narrowRefused)) {
 			// The narrow display is not the wide row: the px stay as they were, compared afresh after.
 			sidesSeen = null;
 			// A drag cancelled by the switch (or while narrow): the px of its press come back wide.
@@ -539,6 +545,7 @@
 	 */
 	async function switchNarrow(want: boolean): Promise<void> {
 		narrowWish = want;
+		narrowRefused = false;
 		if (!host || want === narrowShown) return;
 		const gen = ++narrowGen;
 		const current = () => narrowWish === want && gen === narrowGen;
@@ -582,6 +589,11 @@
 			});
 		}
 		if (outcome === 'disposed') return;
+		// Refused: the wide layout stays shown - its px are followed again at this width.
+		if (want && outcome !== 'stale' && !narrowShown && gen === narrowGen) {
+			narrowRefused = true;
+			keepSides(dock.layout, measuredWidth);
+		}
 		writeOpen();
 		if (outcome === 'stale' && gen === narrowGen && narrowWish !== null)
 			void switchNarrow(narrowWish);
