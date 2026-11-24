@@ -164,6 +164,9 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent): void {
+		// IME 変換中の Enter は変換の確定。コマンドを実行しない
+		// （一部の WebView は確定の keydown で isComposing が false になり keyCode 229 だけが立つ）。
+		if (event.isComposing || event.keyCode === 229) return;
 		switch (event.key) {
 			case 'ArrowDown':
 				event.preventDefault();
@@ -186,6 +189,8 @@
 	// to an Esc already consumed or to a layer above.
 	function handleWindowKeydown(event: KeyboardEvent): void {
 		if (event.key !== 'Escape' || event.defaultPrevented) return;
+		// IME 変換中の Escape は変換の取消。パレットを閉じない。
+		if (event.isComposing || event.keyCode === 229) return;
 		if (paletteEl && hasVisibleLayerAbove({ except: paletteEl })) return;
 		event.preventDefault();
 		onRequestClose('escape');

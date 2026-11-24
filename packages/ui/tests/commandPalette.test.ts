@@ -262,6 +262,22 @@ describe('CommandPalette: keyboard and execution', () => {
 		expect(onClose).toHaveBeenCalledWith('execute');
 	});
 
+	it('IME composition (isComposing or keyCode 229): Enter does not execute, Esc does not close', async () => {
+		const { input, onExecute, onClose } = await openPalette();
+		for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+			await fireEvent.keyDown(input, { key: 'Enter', ...init });
+			await fireEvent.keyDown(input, { key: 'Escape', ...init });
+			await fireEvent.keyDown(window, { key: 'Escape', ...init });
+		}
+		await flush();
+		expect(onExecute).not.toHaveBeenCalled();
+		expect(onClose).not.toHaveBeenCalled();
+		expect(screen.queryByRole('dialog')).not.toBeNull();
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		await flush();
+		expect(onClose).toHaveBeenCalledWith('escape');
+	});
+
 	it('disables the rows while an async onExecute is pending and closes when it settles', async () => {
 		let finish!: () => void;
 		const pending = new Promise<void>((resolve) => (finish = resolve));

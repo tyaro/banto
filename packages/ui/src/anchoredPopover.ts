@@ -18,6 +18,14 @@ export const ANCHORED_POPOVER_GAP = 4;
 export type AnchoredPlacement = 'bottom-start' | 'bottom-end' | 'bottom-center';
 
 /**
+ * What the placement reads from an anchor: an element, or a stand-in such as
+ * the zero-size rect of a context menu's point (`Menu.openAt`, #889).
+ */
+export interface AnchorLike {
+	getBoundingClientRect(): Pick<DOMRect, 'top' | 'bottom' | 'left' | 'right' | 'width'>;
+}
+
+/**
  * Measure `popover` against `anchor` and return its viewport coordinates.
  * Side effect (kept from Menu): sets / clears `popover.style.maxHeight` - set
  * imperatively, not through a `style:` directive, so the cap is in place
@@ -26,7 +34,7 @@ export type AnchoredPlacement = 'bottom-start' | 'bottom-end' | 'bottom-center';
  * afterwards (resize).
  */
 export function computeAnchoredPosition(
-	anchor: Element,
+	anchor: AnchorLike,
 	popover: HTMLElement,
 	placement: AnchoredPlacement
 ): { top: number; left: number } {

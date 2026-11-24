@@ -34,12 +34,12 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 
 メニュー部品（段階 2a。`popover` API を前提にする）:
 
-| 部品            | 役割                                                                                       | props / snippet                                                                     |
-| --------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `Menu`          | トリガーから開く 1 階層のドロップダウン（`popover="auto"` + `role="menu"`、↑↓・Home・End） | `label` `placement?`(`'bottom-start'`/`'bottom-end'`) `trigger`(snippet) `children` |
-| `MenuGroup`     | 見出し付きの項目グループ（`role="group"`）                                                 | `label` `children`                                                                  |
-| `MenuItem`      | メニュー項目（`role="menuitem"`、ローヴィングフォーカス。`disabled` は `aria-disabled`）   | `label` `icon?` `danger?` `disabled?` `onSelect`                                    |
-| `MenuSeparator` | 区切り線                                                                                   | なし                                                                                |
+| 部品            | 役割                                                                                                                                             | props / snippet                                                                      |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `Menu`          | トリガーから開く 1 階層のドロップダウン（`popover="auto"` + `role="menu"`、↑↓・Home・End）。`trigger` を省くと座標で開く文脈メニュー（`openAt`） | `label` `placement?`(`'bottom-start'`/`'bottom-end'`) `trigger?`(snippet) `children` |
+| `MenuGroup`     | 見出し付きの項目グループ（`role="group"`）                                                                                                       | `label` `children`                                                                   |
+| `MenuItem`      | メニュー項目（`role="menuitem"`、ローヴィングフォーカス。`disabled` は `aria-disabled`）                                                         | `label` `icon?` `danger?` `disabled?` `onSelect`                                     |
+| `MenuSeparator` | 区切り線                                                                                                                                         | なし                                                                                 |
 
 `trigger` snippet は `aria-haspopup`・`aria-expanded`・`onclick`・`onkeydown` を props で受け取る
 ので、ボタンに `{...props}` で展開する。項目を選ぶとメニューは閉じ、フォーカスはトリガーへ戻る。
@@ -575,6 +575,52 @@ ADR-0018 §12）。上段は単独のリンク（素の `<a href>`）とグル�
 ```
 
 `Menu` は項目が多くてトリガーの上下どちらにも収まらないとき、広い側の可用高（余白・枠線込み）に高さを抑えて中をスクロールする。メニュー自身のスクロール（ホイールや End・矢印で項目へ移ったときの自動スクロール）では閉じず、外側のスクロールでは従来どおり閉じる。
+
+### 文脈メニュー（右クリック、#889）
+
+`trigger` を省いた `Menu` は、`bind:this` で取った部品の `openAt({ x, y }, options?)` で画面の座標
+（`clientX` / `clientY`）に開く。`BantoTree` の `onContextMenu`・`BantoGrid` の `onRowContextMenu` が
+渡す座標をそのまま渡せばよい（キーボードの Shift+F10・Menu キーでは、両部品が行・セルの左下の座標を渡す）。
+
+```svelte
+<script lang="ts">
+	import { Menu, MenuItem } from '@banto/ui';
+	import { BantoGrid } from '@banto/grid-svelte';
+
+	let rowMenu: ReturnType<typeof Menu> | undefined = $state();
+	let target: Row | null = $state(null);
+</script>
+
+<BantoGrid
+	{rows}
+	{columns}
+	getRowId={(row) => row.id}
+	onRowContextMenu={(row, point) => {
+		target = row;
+		rowMenu?.openAt(point);
+	}}
+/>
+<Menu bind:this={rowMenu} label="行の操作">
+	<MenuItem label="編集" onSelect={() => edit(target)} />
+	<MenuItem label="削除" danger onSelect={() => remove(target)} />
+</Menu>
+```
+
+- 位置・キーボード・層はトリガーのメニューと同じ: 座標の右下に出し、下に収まらなければ上へ返し、
+  左右は画面の内側に寄せる。↑↓（無効の項目を飛ばして端で回る）・Home・End・Esc、外側のクリックと
+  外側のスクロールで閉じる。`role="menu"` の popover なので `closeOpenMenus`・`hasVisibleMenuLayer`・
+  モーダルとの層の判定もそのまま効く。
+- 閉じたときのフォーカスは、`openAt` を呼んだときにフォーカスを持っていた要素（木の行・表）へ戻す。
+  その要素が閉じるまでに消えていれば（行の削除など）フォーカスを外す。`options.returnFocus` で
+  戻り先を指定でき、`null` なら戻さない。戻しはメニューが隠れる前に行う（ブラウザーが popover を
+  隠すときの「表示したときの要素へ戻す」より先に）。外側のクリックなどでフォーカスが既に外へ
+  移っていれば触らない。Tab・Shift+Tab ではブラウザーの戻し（開いた元）に任せ、そこから通常の順に進む。項目から開いた `Modal` / `ConfirmDialog` は、閉じたあと戻り先へフォーカスを
+  返す（トリガーのメニューも同じ）。
+- マウスのボタンを押している間に呼ぶと（macOS・Linux では押した時点で `contextmenu` が来る）、
+  離してから開く（離した操作の light dismiss で閉じないため）。押下が `pointerup` 以外で終わったとき
+  （`pointercancel`・ウィンドウの切り替え・キー）は開かない。開いたまま呼ぶとその座標へ移る。
+- 見本はテンプレートのユーザー管理（`/users`）の一覧の行の右クリックと、`/ui-demo` の Menu の欄
+  （戻り先の 3 通り）。
 
 ```svelte
 <script lang="ts">
