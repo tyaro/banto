@@ -12,7 +12,7 @@
 
 1. **下流が「入ったら置き換える」と書いていた回り道は、全部 main に置き換え先がある。** #784（行の右クリック）・#791（配置の保存と確定の合図）・#792（`isOnScreen`）・#793（書き込みの切り離し）・#786（条件付きの書き込みと再送）・#838（メモリだけのトークン）・dock の進行中の操作の取り消し・Toast の透け・`--banto-warning` と `--banto-chart-2` の近さ。足りない口のまま残っているものは無い。
 2. **新しく見つかった「足りない口」は 2 つ**: (a) 座標で開く文脈メニュー（`@banto/ui`。Hub と temp-scada が別々に 270〜290 行で自作）、(b) `BantoGrid` の `columns` を後から変えても反映されない（Hub が `{#key}` で作り直している）。どちらも足すだけで、v8 を待たせる理由は無い。
-3. **#821（`BantoTree` の 3 点）は、口が無いことは事実。ただし今それを要る下流は居ない。** temp-scada は `@banto/tree-svelte` に依存しておらず（自前の `LayerTree`）、置き換えを先送りしている。banto-industrial の 3 か所は 3 点のどれも使わない。v8 では足さないのが妥当。
+3. **#821（`BantoTree` の 3 点）は、口が無いことは事実。ただし今それを要る下流は居ない。** temp-scada は `@banto/tree-svelte` に依存しておらず（自前の `LayerTree`）、置き換えを先送りしている。banto-industrial の 3 か所は 3 点のどれも使わない。v8 では足さないのが妥当（**決定前の推奨。オーナー決定で v8 に入れる＝計画書 §7 の D4**）。
 4. **「D1 で見る」項目に、banto の計画を変えるものは無い。** 下流の migration は 0101 から（0014・0015 と衝突しない）。監査を名前 `local` で絞る所は無い。slot の公開 API を使う下流は無い。dock・grid の DOM 試験の下準備を求める下流は無い（下流は部品をマウントする試験を持たない）。`initialized` は 2 アプリが読んでいて、ChronoGazer は設計に食い込んでいる（§2 の 4）。
 5. **D2 の 4 件（#811・#816・#818・#822）は、下流の互換を気にせず進められる。** 下流は日付のピッカーを 1 つも使っておらず、`ReachCheckClock` も使っていない。`BantoGrid` の編集の口を使うのは Hub のタグ表 1 か所だけ。
 6. v8 へ上げるときの下流の直しは多い（§6）。大半はテンプレートの写し（`src-tauri/src/lib.rs`・`core`・`src/lib/banto/*`）の追従で、upgrading の 4.2 節に載っている種類のもの。
@@ -42,7 +42,7 @@
 | --- | --- | --- | --- | --- | --- |
 | I1 | `apps/banto-hub/src/lib/dockLayoutStore.ts`（165 行、:4-5 に「#791 が入ったら置き換える」）・`dockLayout.ts`（87）・`dockLayoutPersist.svelte.ts`（90、:18） | dock の配置を利用者ごとに保存（サーバー + localStorage の控え）。確定の合図が無いので `layoutSnapshot()` を `$effect` で追う | 置き換え可（既知の写し） | `@banto/dock-svelte` の `createDockLayoutStore`（`packages/dock-svelte/src/layoutStore.ts:196`。`settingKey`・`storageKey`・`scope`・`reset`・`validate`）と `createThreePaneLayoutTarget`、`ThreePaneDock` の `onLayoutCommit` | 下流の作業。banto は無し |
 | I2 | `apps/banto-hub/src/lib/dockLogBand.svelte.ts`（210） | 低い画面では、既定の配置のログのパネルを帯にしてから基準にする | 置き換え可 | `createDockLayoutStore` の `beforeBaseline`（doc の例がこの用途） | 下流の作業 |
-| I3 | `apps/banto-hub/src/lib/dockPanelOnScreen.ts`（49、:17-18）・`routes/(app)/tags/+page.svelte:2189` | 配置の木（`layout.floating`・`autoHidden`・`docked`）を自分で歩いて「実際に画面に出ているか」を判定 | 置き換え可 | `DockState.isOnScreen(id)`・`dock.panels[].onScreen`、`ThreePaneDock` の `isOnScreen`（`ThreePaneDock.svelte:902`） | 下流の作業。v8 は帯の `slot` を消したので、木を歩くコードは残すと壊れやすい |
+| I3 | (a) `apps/banto-hub/src/lib/dockPanelOnScreen.ts`（49、:17-18）／(b) `routes/(app)/tags/+page.svelte:2180-2191`（`rightPaneOperable`・`paneOperableIn`） | (a) 配置の木（`layout.floating`・`autoHidden`・`docked`）を自分で歩いて「実際に画面に出ているか」を判定（ログの購読の判定）／(b) 右ペインを操作できるか。狭い表示・自動で隠した帯（引き出し中も）・畳んだ区画・裏のタブを除く | (a) 置き換え可／(b) 下流に残す | (a) `DockState.isOnScreen(id)`・`dock.panels[].onScreen`。`ThreePaneDock` に `isOnScreen` は無い（公開は `isVisible` で、帯にしまったパネルも真）／(b) 「画面に出ている」とは別の判定（引き出した帯は画面に出ていても操作できないと数える）。既存の条件を残す | 下流の作業。v8 は帯の `slot` を消したので、木を歩くコードは帯の形の変化を確かめる |
 | I4 | `apps/banto-hub/src/routes/(app)/tags/+page.svelte:3581-3584` | グリッドを包む要素で `contextmenu` を受け、`rowClass` に載せた `tag-row-id-<id>` で行を特定 | 置き換え可 | `BantoGrid` の `onRowContextMenu`（#784、v7.11.0） | 下流の作業 |
 | I5 | `apps/banto-hub/src/lib/components/TreeContextMenu.svelte`（290） | 座標に浮かべる ARIA `menu`（フォーカス・Esc・外側クリック・層の判定を自作） | **足りない口**（N1） | `@banto/ui` に座標で開くメニュー（`Menu` の `trigger` なしの開き方、または `ContextMenu`）。`Menu.svelte` は `trigger` の矩形からしか位置を出せない（:9, :40） | 別 Issue（§2 の 2） |
 | I6 | `apps/banto-hub/src/routes/(app)/tags/+page.svelte:8292-8305` | 表編集モードの切り替えで `columns` の `editable` を変えても反映されないので、`{#key gridEditMode}` で `BantoGrid` を作り直す（列幅・並べ替え・絞り込み・スクロールが戻る） | **足りない口**（N2） | `BantoGrid.svelte:249` は `new GridState(columns, …)` を 1 回だけ作る。`columns` の変化を `GridState` に伝える口、または `editable` を関数で受ける形 | 別 Issue（§2 の 3）。#822 に関係 |
@@ -69,8 +69,8 @@
 | S2 | `apps/banto-scada/src/lib/designer/ContextActions.svelte`（274、:59-126・:161-175） | `@banto/ui` の `Menu` を文脈メニューとして使うため、見えない trigger を座標に置いて `click()` し、フォーカスの戻り先を自分で直す | **足りない口**（N1） | I5 と同じ | 別 Issue（§2 の 2） |
 | S3 | `apps/banto-scada/src/lib/designer/controllers/designer-shortcuts.svelte.ts:188-192` | メニューを開いたまま F1 でモーダルを開くと、上流の層の判定で互いに「上」になるので、保存のショートカットを dispatcher に載せない | 置き換え可（**未確認**） | `@banto/ui` の `closeOpenMenus`（`packages/ui/src/openMenus.ts:19`）でモーダルを開く前にメニューを閉じれば、2 つが同時に残らない。temp-scada の監査（§7）も「使えるかは未確認」 | 下流で確かめる。直らなければ別 Issue |
 | S4 | `apps/banto-scada/src/lib/banto/ui-preference.ts`（88） | `createSavedSetting` の薄い包み（失敗の通知を送信ごとに 1 回） | 置き換え可（小） | `createSavedSetting` の `onSettled`（送信ごとに 1 回）と `retry` | 下流の作業 |
-| S5 | `apps/banto-scada/src/lib/designer/dock-layout.ts:93-112`（`frontLeftPanes`） | 配置の木を歩いて、左のパネルのうち表に出ているものを求める | 置き換え可 | `isOnScreen(id)` | 下流の作業 |
-| S6 | `apps/banto-scada/src/App.svelte:446-473`、`dock-layout.ts:126-171`（`withDesignerPaneWidths`・`keepDesignerPaneWidths`） | 窓の幅が変わるたびに `dock.layout` を代入し、左右の区画の px を保つ（dock の分割は比率） | 下流に残す | 口の案は「`ThreePaneDock` に左右を px で保つ指定」。使い手が 1 つなので足さない（§2 の 5） | D3 の upgrading に 1 行 |
+| S5 | `apps/banto-scada/src/lib/designer/dock-layout.ts:92-116`（`frontLeftPanes`） | 配置の木を歩いて、左のパネルのうちタブの組の前面のもの（引き出していない帯の選択タブも含む）を求め、前面のタブの復元・文脈の鍵に使う | 下流に残す | `isOnScreen(id)` は画面上の可視性なので、引き出していない帯の選択タブが外れて挙動が変わる。置き換えない | 下流の作業。v8 の帯の形（`autoHidden[].node`）に合わせて確かめるだけ |
+| S6 | `apps/banto-scada/src/App.svelte:446-473`、`dock-layout.ts:126-171`（`withDesignerPaneWidths`・`keepDesignerPaneWidths`） | 窓の幅が変わるたびに `dock.layout` を代入し、左右の区画の px を保つ（dock の分割は比率） | 下流に残す | 口の案は「`ThreePaneDock` に左右を px で保つ指定」。使い手が 1 つなので足さない（§2 の 5。**決定前の推奨。オーナー決定で v8 に入れる＝#892**） | #892。D3 の upgrading にも 1 行 |
 | S7 | `apps/banto-scada/src/lib/designer/LayerTree.svelte`（723）・`controllers/layer-tree.svelte.ts`（634） | レイヤーとフォルダーの木を自作（行末の表示・ロック・操作のボタン、ドロップの可否と理由、検索、IME のガード） | 下流に残す（今は） | §5 | §2 の 1 |
 | S8 | `apps/banto-scada/src/lib/history/time-input.ts:8-48`、`<input type="datetime-local">`（3 画面） | UTC とローカルの時刻入力の変換を自作 | 下流に残す（置き換え候補） | I16 と同じ | #811 の後に下流で検討 |
 | S9 | `apps/banto-scada/src/lib/hub-tag-csv.ts`・`equipment-io-csv.ts` | CSV の直列化・解析を自作（Shift_JIS の判定・列名の推定つき） | 下流に残す | `@banto/grid-svelte` の `toCsv`・`csvForExcel`・`parseCsv` はあるが、temp-scada は grid-svelte に依存していない。Shift_JIS の判定は banto に無い | 下流の判断。要望が来たら別 Issue |
@@ -122,7 +122,7 @@ temp-scada 自身の精査（`docs/reviews/upstream-placement-audit-2026-11-22.m
 | 外からの絞り込み | `filter` の prop は無い。絞った `nodes` を渡すことはできる（展開の状態は id で持つので、差し替えても残る。`tree-state.svelte.ts:31`）。ただし `expanded` は初めの値だけで、検索の間だけ一致の先祖を開いて、やめたら元に戻す、を外から指示する口が無い | 検索の間は一致を含むフォルダーを開き、「検索結果を展開中」を出す（`LayerTree.svelte:100-131`、`layer-tree.svelte.ts:58-94`） | **半分ある**（絞った木は渡せる。足りないのは展開を外から決める口） |
 
 - **使い手の側**: temp-scada は `@banto/tree-svelte` に依存していない（`package.json` に無い）。`LayerTree` は `role="tree"` ではなく `nav` + ボタンの並びで、複数選択・フォルダーごとの移動の案内など、絵の編集の事情が濃い。temp-scada 自身の監査も「置き換えの効果は大きいが手間も大きい。D4 の後でよい」「小さい利用側の fixture で今の API との差を確かめてから起票する」としている。banto-industrial の 3 か所は、ドラッグなし・行末のボタンなし（Hub は右クリックのメニュー）・検索は木の外（`PenTagPicker` は検索中は木を出さず表にする）で、3 点のどれも使わない。
-- **結論**: 3 点とも「banto に口が無い」ことは確かめられた。ただし「本当に不足か」＝今それを要る下流が居るか、は **否**。計画書の「不足が確かめられたら別 Issue・別 PR」に当たるほどの要望はまだ無い。§2 の 1 のとおり、v8 では足さない。
+- **結論**: 3 点とも「banto に口が無い」ことは確かめられた。ただし「本当に不足か」＝今それを要る下流が居るか、は **否**。計画書の「不足が確かめられたら別 Issue・別 PR」に当たるほどの要望はまだ無い。§2 の 1 の推奨は「v8 では足さない」だったが、**オーナー決定で v8 に入れる（D4）**。外からの絞り込みは「絞り込みの機能を足す」ではなく「展開の状態を外から決める口を足す」（絞った `nodes` は今も渡せる）。
 - 足すときの順の案（参考）: 行末のアクションのスニペット（いちばん汎用。Hub の木にも使える）→ 展開を外から決める口 → ドロップの可否を聞く口。
 - ついでに見つけたこと: 名前変更の Enter に IME のガードが無い（§2 の 6）。temp-scada の監査が挙げた「IME 中のガード」はこれに当たる。`BantoGrid`・`@banto/ui` の入力は `isComposing` を見ている所がある（3 件）。
 
@@ -167,7 +167,7 @@ grep の一致数（概数。試験を含む。`apps`・`crates`・`packages`・
 upgrading に足すとよい項（本書から出たもの）:
 - 自作の模擬サーバー・デモの `/api/ui-settings` と `/api/auth/status` の形（I10）。
 - `status().initialized` / `is_initialized()` を入口・grant の条件にしていた派生アプリ（§2 の 4）。
-- `dock.layout` を自分で代入している・配置の木を自分で歩いている派生アプリ（S6・I3・S5。`isOnScreen` への置き換え）。
+- `dock.layout` を自分で代入している・配置の木を自分で歩いている派生アプリ（S6・I3・S5。画面に出ているかの判定だけなら `isOnScreen` へ。操作できるか・前面のタブかの判定は別なので置き換えない）。
 - `resetDemoToken` のような「トークンを置き直す」回り道は `storage: 'memory'` に替えられるが、初めのトークンは渡せない（I9）。
 
 ## 7. D2 の確定済み Issue への所見
