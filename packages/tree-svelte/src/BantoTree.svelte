@@ -136,7 +136,8 @@
 		 * never selects / renames / drags the row. Keyboard: the controls of the row that holds the
 		 * tree's tab stop are reachable with Tab (row -> its controls -> out of the tree); the
 		 * controls of every other row are taken out of the tab order (`tabindex="-1"`, set by the
-		 * tree), so the tree adds no tab stop per row. Inside the controls the tree's own keys
+		 * tree and given back as the host wrote it, so a toolbar with its own roving `tabindex`
+		 * keeps it), so the tree adds no tab stop per row. Inside the controls the tree's own keys
 		 * (arrows, Enter, Space, F2 ...) are not handled, and Escape returns the focus to the row.
 		 * Give every control its own accessible name (e.g. `aria-label` with the node's label).
 		 */
@@ -419,22 +420,77 @@
 	const ACTION_FOCUSABLE =
 		'button, a[href], input, select, textarea, summary, [tabindex], [contenteditable]';
 	/**
-	 * Keeps the host's controls in the tab order only for the row that holds the tree's tab
-	 * stop (`tabbable`), and out of it (`tabindex="-1"`) for every other row. Re-applied when
-	 * the snippet's content changes.
+	 * Takes the host's controls out of the tab order (`tabindex="-1"`) on every row except the
+	 * one that holds the tree's tab stop (`tabbable`). The tree never writes a tab stop of its
+	 * own: what it takes away it remembers and gives back unchanged (an absent attribute stays
+	 * absent, a host's own roving `-1` / `0` stays as the host wrote it). A host that rewrites a
+	 * `tabindex` on a row that is not tabbable has the new value remembered instead. Re-applied
+	 * when the snippet's content changes.
 	 */
 	function actionTabStops(el: HTMLElement, tabbable: boolean) {
 		let current = tabbable;
+		// control -> the host's own `tabindex` attribute (null = none) while the tree holds it at -1
+		const saved = new Map<HTMLElement, string | null>();
+		// our own `tabindex="-1"` writes not yet seen by the observer (not to be taken as the host's)
+		const ownWrites = new Map<HTMLElement, number>();
+		const holdOut = (control: HTMLElement) => {
+			ownWrites.set(control, (ownWrites.get(control) ?? 0) + 1);
+			control.setAttribute('tabindex', '-1');
+		};
+		const suppress = (control: HTMLElement) => {
+			if (saved.has(control)) return;
+			const own = control.getAttribute('tabindex');
+			saved.set(control, own);
+			if (own !== '-1') holdOut(control);
+		};
+		const restore = () => {
+			ownWrites.clear();
+			for (const [control, own] of saved) {
+				if (own === null) control.removeAttribute('tabindex');
+				else control.setAttribute('tabindex', own);
+			}
+			saved.clear();
+		};
 		const apply = () => {
-			const value = current ? '0' : '-1';
-			for (const control of el.querySelectorAll<HTMLElement>(ACTION_FOCUSABLE))
-				if (control.getAttribute('tabindex') !== value) control.setAttribute('tabindex', value);
+			if (current) {
+				restore();
+				return;
+			}
+			for (const control of saved.keys()) if (!el.contains(control)) saved.delete(control);
+			for (const control of el.querySelectorAll<HTMLElement>(ACTION_FOCUSABLE)) suppress(control);
 		};
 		apply();
-		const observer = new MutationObserver(apply);
-		observer.observe(el, { childList: true, subtree: true });
+		const observer = new MutationObserver((records) => {
+			if (current) {
+				ownWrites.clear();
+				return;
+			}
+			for (const record of records) {
+				if (record.type !== 'attributes' || !(record.target instanceof HTMLElement)) continue;
+				const control = record.target;
+				const pending = ownWrites.get(control) ?? 0;
+				if (pending > 0) {
+					if (pending === 1) ownWrites.delete(control);
+					else ownWrites.set(control, pending - 1);
+					continue;
+				}
+				// The host rewrote a tab stop we hold: remember its value, keep it out of the order.
+				if (!saved.has(control)) continue;
+				const value = control.getAttribute('tabindex');
+				saved.set(control, value);
+				if (value !== '-1') holdOut(control);
+			}
+			apply();
+		});
+		observer.observe(el, {
+			childList: true,
+			subtree: true,
+			attributes: true,
+			attributeFilter: ['tabindex']
+		});
 		return {
 			update(next: boolean) {
+				if (next === current) return;
 				current = next;
 				apply();
 			},

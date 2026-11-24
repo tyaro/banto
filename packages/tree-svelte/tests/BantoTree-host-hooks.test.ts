@@ -93,6 +93,40 @@ describe('rowActions', () => {
 		expect(screen.getByTestId('act-b').tabIndex).toBe(0);
 	});
 
+	it("keeps a host's own roving tabindex (adds no tab stop, gives back what it took)", async () => {
+		// A toolbar with its own roving tab stop: only the active button is tabindex=0.
+		const toolbar = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
+			render: () =>
+				`<span role="toolbar" aria-label="Tools ${node().label}"><button type="button" data-testid="t1-${node().id}" tabindex="0">1</button><button type="button" data-testid="t2-${node().id}" tabindex="-1">2</button></span>`
+		}));
+		const tabStops = () =>
+			[...document.querySelectorAll<HTMLElement>('[data-testid^="t"]')]
+				.filter((b) => b.tabIndex === 0)
+				.map((b) => b.dataset.testid);
+		render(BantoTree, { nodes: forest(), rowActions: toolbar });
+		expect(tabStops()).toEqual(['t1-a']);
+
+		row('Alpha').focus();
+		keyOn(screen.getByRole('tree'), 'ArrowDown');
+		await tick();
+		expect(tabStops()).toEqual(['t1-b']);
+		expect(screen.getByTestId('t2-a').getAttribute('tabindex')).toBe('-1');
+
+		// The host moves its roving stop on an inactive row: remembered, kept out of the order.
+		const t1a = screen.getByTestId('t1-a');
+		const t2a = screen.getByTestId('t2-a');
+		t1a.setAttribute('tabindex', '-1');
+		t2a.setAttribute('tabindex', '0');
+		await new Promise((r) => setTimeout(r, 0));
+		expect(tabStops()).toEqual(['t1-b']);
+
+		// Back to Alpha: the host's latest choice comes back as it wrote it.
+		keyOn(screen.getByRole('tree'), 'ArrowUp');
+		await tick();
+		expect(tabStops()).toEqual(['t2-a']);
+		expect(t1a.getAttribute('tabindex')).toBe('-1');
+	});
+
 	it('focusing a control moves the tab stop to its row', async () => {
 		render(BantoTree, { nodes: forest(), rowActions: actions });
 		screen.getByTestId('act-c').focus();
