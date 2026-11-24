@@ -241,6 +241,11 @@
 		font: inherit;
 	}
 
+	.cell-editor option {
+		background-color: var(--banto-surface-overlay);
+		color: var(--banto-text);
+	}
+
 	/* Keep the native checkbox compact instead of stretching the editor box. */
 	.cell-editor[type='checkbox'] {
 		width: var(--banto-checkbox-size, 1.1rem);
