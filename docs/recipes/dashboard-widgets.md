@@ -53,6 +53,10 @@
 
    `@banto/charts` を使う部品の登録は `[scaffold:charts]` の印の間に、メモのように dock に結び付く部品は `[scaffold:dock]` の印の間に書く
    （`pnpm scaffold` がその資産を外すとき、登録と部品を一緒に消す）。どちらも使わない部品は、印の外に書く。
+   dock 専用の部品を足すときは、(a) `dashboardWidgets.ts` の import と登録の**両方**を既存の `[scaffold:dock]` の印の中に置く、
+   (b) 自分の部品ファイルを `scripts/scaffold.mjs` の `removeDock`（`MemoWidget.svelte` を消している行の隣）の削除対象に足す
+   （`removeDock` が消すのは `MemoWidget.svelte` 固定で、ほかの部品ファイルは自動では消えない。残ると、消えた import を
+   参照して `pnpm check` が落ちる）。charts 専用も同様に `removeCharts` へ。
 
 3. **既定の配置に置くなら** `banto/dashboardLayout.ts` の `DEFAULT_ROWS` に id を足す。足さなければ、利用者が「表示」メニューで
    足せる（浮動の窓で出る）。すでに配置を保存している利用者には、既定を変えても届かない（「レイアウトを既定に戻す」で届く）。

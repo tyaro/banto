@@ -3963,9 +3963,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				await expect.poll(() => monthly.innerHTML()).not.toBe(chartBefore);
 			}
 			const twelveMonths = await number();
-			// A shorter period leaves no more rows than a longer one.
+			await expect(period.getByRole('radio', { name: '直近12か月' })).toBeChecked();
+			// A shorter period leaves fewer rows: the sample dates are spread over about 2.5 years, so
+			// 30 days hold far fewer than 12 months (a control that did not switch would fail here).
 			await period.getByText('直近30日', { exact: true }).click();
-			await expect.poll(number).toBeLessThanOrEqual(twelveMonths);
+			await expect(period.getByRole('radio', { name: '直近30日' })).toBeChecked();
+			await expect.poll(number).toBeLessThan(twelveMonths);
+			expect(await number()).toBeGreaterThan(0);
 			// Back to everything: the same numbers and the same chart as before.
 			await period.getByText('全期間', { exact: true }).click();
 			await expect.poll(number).toBe(allCount);

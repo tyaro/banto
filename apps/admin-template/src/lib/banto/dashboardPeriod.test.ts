@@ -70,6 +70,14 @@ describe('narrowRows (#716 W3)', () => {
 		expect(ids('12m')).toEqual([1, 2, 3, 4, 5, 6]);
 	});
 
+	it('clamps a day that overflows the target month (leap day, 12 months back)', () => {
+		expect(periodStart('12m', '2024-02-29')).toBe('2023-02-28');
+		const leap = [item(1, '2024-02-29'), item(2, '2023-03-01'), item(3, '2023-02-28')];
+		expect(narrowRows(leap, { period: '12m' }).map((row) => row.id)).toEqual([1, 2]);
+		// Days back are not clamped: 30 days before 2024-03-31 is 2024-03-01.
+		expect(periodStart('30d', '2024-03-31')).toBe('2024-03-01');
+	});
+
 	it('returns the rows themselves when there is nothing to narrow by', () => {
 		expect(narrowRows(rows, { period: 'all' })).toBe(rows);
 		const none: Item[] = [];

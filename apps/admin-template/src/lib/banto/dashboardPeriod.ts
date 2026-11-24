@@ -54,7 +54,12 @@ export function periodStart(period: DashboardPeriod, anchor: string): string | n
 	const months = MONTHS[period];
 	if (days === undefined && months === undefined) return null;
 	const [year, month, day] = dayOf(anchor).split('-').map(Number);
-	const start = new Date(Date.UTC(year, month - 1 - (months ?? 0), day - (days ?? 0)));
+	// Months back: a day that overflows the target month is clamped to its last day (2024-02-29
+	// minus 12 months is 2023-02-28, not 2023-03-01 - `Date.UTC` alone would roll it over and drop
+	// the 2023-03-01 rows). Days back need no clamp.
+	const target = month - 1 - (months ?? 0);
+	const lastDay = new Date(Date.UTC(year, target + 1, 0)).getUTCDate();
+	const start = new Date(Date.UTC(year, target, Math.min(day, lastDay) - (days ?? 0)));
 	return Number.isNaN(start.getTime()) ? null : start.toISOString().slice(0, 10);
 }
 
