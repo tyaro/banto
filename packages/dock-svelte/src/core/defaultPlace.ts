@@ -103,9 +103,11 @@ export function dockShareOf(docked: DockNode | null, panelId: string): number {
  *    pane back (they were hidden when it was out; unchanged ones are left out). Only the shares
  *    that are shares of this split: of a child that is a split itself, the one of the pane hidden
  *    last - the others are shares of the splits inside it.
+ * The pane's own child counts with the share of the tab of it hidden last when it is a tab group
+ * (every tab keeps the group's share, the last one the share the group left the split with).
  * `null`: nothing to work out - the pane keeps no usable share, has no default place, joins a tab
- * group, goes to an edge, or no default sibling hidden after it is still hidden (its share is
- * right as it is, exactly).
+ * group, goes to an edge, or no default sibling hidden after it is still hidden and the share it
+ * keeps is the one its child left with (right as it is, exactly).
  */
 export function shareAmongHidden(
 	defaults: DockNode | null,
@@ -137,11 +139,22 @@ export function shareAmongHidden(
 		// of a nested split only the pane hidden last does - the ones hidden before it keep their
 		// share of a split inside, which stays as it is (Codex P2 on #940).
 		const outer = child.type === 'split' ? [at] : members;
-		regions.push({ mine, at, raw: mine ? own.share : hidden[at].share, members: outer });
+		// The pane's own child: a tab group left the split with its LAST tab, so that tab's share is
+		// the group's - a tab hidden while the group was still there keeps what the group had then,
+		// before a sibling hidden in between went (cross-review of #940). A nested split: the pane's
+		// own (it may be a share of a split inside; the top of this file).
+		const raw = mine && child.type === 'split' ? own.share : hidden[at].share;
+		regions.push({ mine, at, raw, members: outer });
 	});
 	regions.sort((a, b) => a.at - b.at);
 	const me = regions.findIndex((r) => r.mine);
-	if (me === -1 || me === regions.length - 1) return null;
+	if (me === -1) return null;
+	if (me === regions.length - 1) {
+		// Nothing hidden after it: the share it left with is right as it is - the pane's own, or
+		// the one of the tab of its group hidden last.
+		const { raw } = regions[me];
+		return raw === own.share ? null : { share: raw, others: new Map() };
+	}
 	// Of the split with every hidden child there: a child's share, and what the ones before it hold.
 	const whole: number[] = [];
 	const before: number[] = [];

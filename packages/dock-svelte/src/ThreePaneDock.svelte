@@ -142,7 +142,7 @@
 		 * with, an extra panel as a tab beside the left pane. Only its docked tree is read: a hidden
 		 * pane shown again goes beside its nearest sibling of this tree (back into its tab group), a
 		 * pane the tree does not hold opens floating. Reactive. Omitted (or not a usable layout
-		 * with the centre docked) = this component's own: left | centre | right, the extra panels
+		 * with the centre docked outside a tab group) = this component's own: left | centre | right, the extra panels
 		 * along their `initial` edge. It is not what `resetLayout` installs, and it is not saved.
 		 */
 		defaultPlaces?: unknown;

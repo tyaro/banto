@@ -152,6 +152,37 @@ describe('ThreePaneDock defaultPlaces (#939)', () => {
 		}
 	});
 
+	// Cross-review of #940: a pane shown would become the active tab over the centre.
+	it('the centre as a tab of a group is not taken: the pane shown leaves the centre showing', async () => {
+		const overCentre: DockLayout = {
+			version: 4,
+			floating: [],
+			docked: {
+				type: 'tabs',
+				id: 'over',
+				activeIndex: 0,
+				children: [panel(THREE_PANE_IDS.center), panel(THREE_PANE_IDS.left)]
+			}
+		};
+		const { api, dock, tabsOf } = mount({ defaultPlaces: overCentre });
+		await settle();
+		expect(dock.defaultLayout?.docked?.id).not.toBe('over');
+		expect(await api().setVisible(THREE_PANE_IDS.left, false)).toBe('applied');
+		expect(await api().setVisible(THREE_PANE_IDS.left, true)).toBe('applied');
+		expect(tabsOf(THREE_PANE_IDS.center)).toBeNull();
+		expect(api().isVisible(THREE_PANE_IDS.center)).toBe(true);
+	});
+
+	it('tabs and the right pane hidden in turn (left, right, layers, parts), shown left first: 240px', async () => {
+		const { api, px } = mount({ defaultPlaces: designer() });
+		await settle();
+		const order = [THREE_PANE_IDS.left, THREE_PANE_IDS.right, 'layers', 'parts'];
+		for (const id of order) expect(await api().setVisible(id, false)).toBe('applied');
+		for (const id of order) expect(await api().setVisible(id, true)).toBe('applied');
+		expect(px()['designer:side']).toBeCloseTo(240, 6);
+		expect(px()[THREE_PANE_IDS.right]).toBeCloseTo(240, 6);
+	});
+
 	it('threePaneDefaultPlaces takes the forms of a saved layout', () => {
 		const options = {
 			hostWidth: width,

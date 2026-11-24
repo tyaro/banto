@@ -201,6 +201,59 @@ describe('hidden panes come back at their default place, in any order (#782 PR5 
 		);
 	});
 
+	// Cross-review of #940: a tab hidden while its group was still in the split keeps the share the
+	// group had THEN; the group left the split with its last tab, after the sibling in between.
+	it('pinned: row[tabs[a, b] .2, c .5, r .3], -a -r -b, shown in every order: .2 / .5 / .3 (#939)', () => {
+		const tree = split(
+			's1',
+			'row',
+			[0.2, 0.5, 0.3],
+			[tabs('t1', ['a', 'b']), panel('c'), panel('r')]
+		);
+		const first = treeAfter(tree, ['-a', '-r', '-b', '+a'], false);
+		const sizes = first?.type === 'split' ? first.sizes : [];
+		[2 / 7, 5 / 7].forEach((v, i) => expect(sizes[i]).toBeCloseTo(v, 9));
+		for (const hide of permutations(['a', 'r', 'b']))
+			for (const back of permutations(['a', 'r', 'b'])) {
+				const all = [...hide.map((id) => `-${id}`), ...back.map((id) => `+${id}`)];
+				const after = treeAfter(tree, all);
+				const now = after?.type === 'split' ? after.sizes : [];
+				[0.2, 0.5, 0.3].forEach((v, i) => expect(now[i], all.join(' ')).toBeCloseTo(v, 9));
+			}
+	});
+
+	it('a tab group and panes of one split hidden in any order, shown in any order: the sizes (#939)', () => {
+		const ids = ['a', 'b', 'x', 'y', 'z'];
+		const mixed = fc.record({
+			weights: fc.array(fc.integer({ min: 1, max: 20 }), { minLength: 5, maxLength: 5 }),
+			hide: fc.shuffledSubarray(ids, { minLength: 2, maxLength: 5 }),
+			seed: fc.array(fc.nat(), { minLength: 5, maxLength: 5 })
+		});
+		fc.assert(
+			fc.property(mixed, ({ weights, hide, seed }) => {
+				const total = weights.reduce((x, y) => x + y, 0);
+				// row[tabs[a, b], x, c, y, z]: c stays.
+				const tree = split(
+					's1',
+					'row',
+					weights.map((w) => w / total),
+					[tabs('t1', ['a', 'b']), panel('x'), panel('c'), panel('y'), panel('z')]
+				);
+				const back = hide
+					.map((id, i) => ({ id, key: seed[i] }))
+					.sort((p, q) => p.key - q.key || (p.id < q.id ? -1 : 1))
+					.map((p) => p.id);
+				const all = [...hide.map((id) => `-${id}`), ...back.map((id) => `+${id}`)];
+				const after = treeAfter(tree, all);
+				const want = tree.type === 'split' ? tree.sizes : [];
+				const now = after?.type === 'split' ? after.sizes : [];
+				if (now.length !== want.length || now.some((v, i) => Math.abs(v - want[i]) > 1e-9))
+					failCase(tree, all, `sizes ${JSON.stringify(now)}`);
+			}),
+			params(300)
+		);
+	});
+
 	// Codex P2 on #940: a share kept inside a nested split is not a share of the split around it.
 	it('pinned: row[column[a .4, b .6] .2, c .3, d .5], -a -c -b +c +b +a: the column is .4 / .6 again (#939)', () => {
 		const tree = split(
