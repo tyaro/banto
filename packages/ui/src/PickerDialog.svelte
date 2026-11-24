@@ -1,9 +1,9 @@
 <script lang="ts">
 	/**
-	 * The calendar dialog of the extended pickers (internal, not exported;
-	 * Issue #910): `DatePicker` and `DateRangePicker` share it. The same
-	 * dialog as `DateInput`'s (docs/design/date-time-pickers.md §5.4, APG Date
-	 * Picker Dialog): `role="dialog"` + `aria-modal="true"` +
+	 * The calendar dialog of the date pickers (internal, not exported; Issue
+	 * #910, #914): `DateInput`, `DateTimeInput`, `DatePicker` and
+	 * `DateRangePicker` share it (docs/design/date-time-pickers.md §5.4, APG
+	 * Date Picker Dialog): `role="dialog"` + `aria-modal="true"` +
 	 * `attachFocusTrap`, in the top layer (`popover="manual"`, our own light
 	 * dismiss: a pointerdown outside closes it), placed by `anchoredPopover.ts`
 	 * below `anchor`, closed on an ancestor scroll. Esc goes through one
@@ -17,8 +17,9 @@
 	 * inside its root, so the parent's `focusout` / `pointerdown` handling
 	 * sees the dialog as part of the component (promises 3 and 4).
 	 *
-	 * `DateInput` / `DateTimeInput` keep their own copy of this logic on
-	 * purpose: the plain pickers are not changed by #910.
+	 * What only some pickers need is optional: `onPanelKeydown` (keys of the
+	 * picker's own widgets in the dialog, e.g. `DateTimeInput`'s time list),
+	 * `focusable` (what a press may focus) and `onclose` (drop per-open state).
 	 */
 	import { flushSync, type Snippet } from 'svelte';
 	import { computeAnchoredPosition, watchAnchoredPopover } from './anchoredPopover';
@@ -39,6 +40,12 @@
 		back?: () => boolean;
 		/** The dialog element while open (bindable, read-only): the calendar's `scroller`. */
 		panel?: HTMLDivElement;
+		/** Keys inside the dialog, before the Esc path (they never propagate out). */
+		onPanelKeydown?: (event: KeyboardEvent) => void;
+		/** What a press inside the dialog may focus (anything else keeps focus where it is). */
+		focusable?: string;
+		/** Called after every close (whatever closed it). */
+		onclose?: () => void;
 		children: Snippet;
 	}
 
@@ -50,6 +57,9 @@
 		returnFocus,
 		back,
 		panel = $bindable(),
+		onPanelKeydown,
+		focusable = 'button, td[tabindex]',
+		onclose,
 		children
 	}: Props = $props();
 
@@ -93,6 +103,7 @@
 		}
 		open = false;
 		coords = undefined;
+		onclose?.();
 	}
 
 	/** The one Esc path (§5.4): yields to IME, to a consumed Esc and to a layer above. */
@@ -106,7 +117,11 @@
 		close(true);
 	}
 
+	// A native listener (Svelte delegates `onkeydown` to the app root, past a
+	// host's own native listeners), so stopPropagation here keeps every key
+	// inside (§5.8 promise 1).
 	function handlePanelKeydown(event: KeyboardEvent): void {
+		onPanelKeydown?.(event);
 		closeOnEscape(event);
 		event.stopPropagation();
 	}
@@ -170,7 +185,7 @@
 			// header, gaps) would focus the dialog itself and strand the arrow
 			// keys: keep focus where it is (the tracked day).
 			const target = event.target;
-			if (!(target instanceof Element) || !target.closest('button, td[tabindex]')) {
+			if (!(target instanceof Element) || !target.closest(focusable)) {
 				event.preventDefault();
 			}
 		}}
