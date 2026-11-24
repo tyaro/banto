@@ -177,6 +177,7 @@
 
 ### Fixed
 
+- **admin-services:** 起動時の検査が予約名と同じ名前のアカウントを見つけたときのエラーを、実際にできる手順に直した（起動しないのでアカウントを作り直せない）。grant の固定 id を先に変え、アカウントを作り直して（または削除して）から戻す。組み込みの `admin` と当たる場合は、DB の直接編集なのでバックアップから戻す案内にした（`Refs #778`）。
 - **ui:** `DateInput`・`DateTimeInput` の入力欄の Enter と `closeOnEscape` で、IME の変換中（`isComposing`・`keyCode === 229`）の Enter（確定）・Escape（ピッカーを閉じる）を無視する。`DateRangeInput` は `DateInput` を使うので同じ。forms の `DraftDateField` に `DateInput` を注入した経路でも変換確定の Enter が確定扱いになる漏れを塞ぐ（#907）
 - **forms:** `DraftDateField`・`DraftNumberField` の Enter と `ReferenceField` のキー操作（Enter・Escape・矢印）で、IME の変換確定の keydown（`isComposing` が false で `keyCode === 229` だけが立つ WebView）を無視する（#905）
 - **tree-svelte:** `BantoTree` の名前変更の入力で、IME の変換中（`isComposing`・`keyCode === 229`）の Enter・Escape を無視する。変換の確定で名前変更が確定していた恐れを防ぐ（#891）。

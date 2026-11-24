@@ -418,8 +418,8 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   配線は `UsersService::new(db).with_reserved_usernames(startup::reserved_usernames(&settings))` と組み立てる
   （REST と Tauri の両方）。試験・e2e で `public` や `Admin` というアカウントを作っているなら別の名前にする。
 - **起動時の検査**: 両方の配線が、migration と初回の seed の後に `admin_template_core::startup::check(&db)` を呼ぶ。
-  組み込みの行が無い・2 つ以上ある・名前が `admin` でない・ロールが `admin` でない DB と、予約名と同じ名前のアカウントがある DB（grant を後から足したときだけ起きる）は、
-  名前と対処を書いたエラーで起動を止める。返ってくる組み込みの行の id を
+  組み込みの行が無い・2 つ以上ある・名前が `admin` でない・ロールが `admin` でない DB と、予約名と同じ名前のアカウントがある DB（grant の固定 id との衝突は、派生アプリが grant を後から足したときに起きる。`admin` との衝突（`Admin` など大小違いを含む）は DB の直接編集でしか起きない）は、
+  名前と対処を書いたエラーで起動を止める。予約名の衝突で止まったときは、(a) grant の固定 id とだけ当たるなら（テンプレートの `public` は起動時の設定ではなく grant の登録側の固定 id）、grant の固定 id を別の値に変えて起動し、そのアカウントを別の名前で作り直して（または削除して）から固定 id を戻す（起動しない状態ではアカウントを作り直せないため、先に固定 id を変える）。(b) 組み込みの `admin` と大小違いの `Admin` などが当たる場合（grant との衝突が混在していても）は、先に DB をバックアップから戻すか作り直す（固定 id を変えても `admin` は予約名のまま残る）。返ってくる組み込みの行の id を
   `user_auth_state(..).with_builtin_admin_id(id)` と Tauri の `AppState.builtin_admin_id` に渡す。
 - **復元前の検査**: `with_migrations` と `apply_pending_restore_at_startup` には、`db::sqlite_migration_manifest()` の代わりに
   `startup::sqlite_restore_manifest()` を渡す。同じ `startup::check` を、リストアの候補にも（予約のときと適用の直前に）掛ける。

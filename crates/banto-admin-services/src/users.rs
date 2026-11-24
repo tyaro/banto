@@ -865,12 +865,32 @@ impl UsersService {
             }
         };
         if !collisions.is_empty() {
-            return Err(BantoError::Other(format!(
-                "予約されたユーザー名と同じ名前のアカウントがあります: {}。\
-                 この名前は組み込みのユーザーか、ログインなしのセッション（grant）の固定 id に使われています。\
-                 そのアカウントを別の名前で作り直すか、grant の固定 id を変えてください",
-                collisions.join(", ")
-            )));
+            // `admin` (any case) is reserved for the built-in user and cannot be
+            // freed by changing a grant, so an account with that name only
+            // exists after a direct edit of the database. Both kinds can be
+            // present at once, so each gets its own guidance.
+            let (admins, grants): (Vec<String>, Vec<String>) = collisions
+                .into_iter()
+                .partition(|n| n.eq_ignore_ascii_case(BUILTIN_ADMIN_USERNAME));
+            let mut parts = Vec::new();
+            if !admins.is_empty() {
+                parts.push(format!(
+                    "組み込みのユーザー admin と同じ名前のアカウントがあります: {}。\
+                     これは DB を直接書き換えたときだけ起きます。バックアップから戻すか、DB を作り直してください",
+                    admins.join(", ")
+                ));
+            }
+            if !grants.is_empty() {
+                parts.push(format!(
+                    "予約されたユーザー名と同じ名前のアカウントがあります: {}。\
+                     この名前はログインなしのセッション（grant）の固定 id に使われています。\
+                     grant の固定 id を別の値に変えて起動し直してください。\
+                     そのアカウントを残したまま固定 id を戻したい場合は、いったん固定 id を変えて起動し、\
+                     そのアカウントを別の名前で作り直して（または削除して）から戻してください",
+                    grants.join(", ")
+                ));
+            }
+            return Err(BantoError::Other(parts.join("。また、")));
         }
         Ok(StartupUsers { builtin_admin_id })
     }
@@ -3516,6 +3536,30 @@ mod tests {
             .with_reserved_usernames(ReservedUsernames::new(["kiosk"]));
         let err = with_grant.check_startup().await.unwrap_err();
         assert!(err.to_string().contains("Kiosk"), "{err}");
+        assert!(
+            err.to_string().contains("grant の固定 id を別の値に変えて"),
+            "{err}"
+        );
+        assert!(!err.to_string().contains("バックアップから戻す"), "{err}");
+
+        // An `Admin` account (only a direct edit makes one) next to a grant
+        // collision: both get their own guidance, so the grant hint is not
+        // the only way out.
+        let pool = svc.db.as_sqlite().expect("sqlite test service");
+        sqlx::query(
+            "INSERT INTO users (username, password_hash, display_name, role, account_uid) \
+             VALUES ('Admin', 'x', 'x', 'viewer', 'uid-admin-twin')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let err = with_grant.check_startup().await.unwrap_err().to_string();
+        assert!(err.contains("grant の固定 id を別の値に変えて"), "{err}");
+        assert!(err.contains("バックアップから戻す"), "{err}");
+        sqlx::query("DELETE FROM users WHERE username = 'Admin'")
+            .execute(pool)
+            .await
+            .unwrap();
 
         // A built-in row that is not `admin` / role `admin` (the schema pins
         // neither): reported with what was found, never corrected.
