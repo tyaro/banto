@@ -459,7 +459,6 @@
 			for (const control of saved.keys()) if (!el.contains(control)) saved.delete(control);
 			for (const control of el.querySelectorAll<HTMLElement>(ACTION_FOCUSABLE)) suppress(control);
 		};
-		apply();
 		const observer = new MutationObserver((records) => {
 			if (current) {
 				ownWrites.clear();
@@ -488,6 +487,8 @@
 			attributes: true,
 			attributeFilter: ['tabindex']
 		});
+		// After `observe`: the first hold-outs are counted in `ownWrites`, so their records must come.
+		apply();
 		return {
 			update(next: boolean) {
 				if (next === current) return;

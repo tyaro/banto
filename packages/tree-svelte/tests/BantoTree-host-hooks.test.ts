@@ -127,6 +127,27 @@ describe('rowActions', () => {
 		expect(t1a.getAttribute('tabindex')).toBe('-1');
 	});
 
+	it("takes the host's first rewrite on a row that starts inactive as the host's", async () => {
+		const toolbar = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
+			render: () =>
+				`<span><button type="button" data-testid="u1-${node().id}" tabindex="0">1</button></span>`
+		}));
+		render(BantoTree, { nodes: forest(), rowActions: toolbar });
+		await new Promise((r) => setTimeout(r, 0));
+		const u1b = screen.getByTestId('u1-b');
+		expect(u1b.getAttribute('tabindex')).toBe('-1');
+
+		// The host's first rewrite must not be mistaken for the tree's own initial hold-out.
+		u1b.setAttribute('tabindex', '0');
+		await new Promise((r) => setTimeout(r, 0));
+		expect(u1b.tabIndex).toBe(-1); // still out of the order on an inactive row
+
+		row('Alpha').focus();
+		keyOn(screen.getByRole('tree'), 'ArrowDown');
+		await tick();
+		expect(u1b.getAttribute('tabindex')).toBe('0'); // the host's latest value comes back
+	});
+
 	it('focusing a control moves the tab stop to its row', async () => {
 		render(BantoTree, { nodes: forest(), rowActions: actions });
 		screen.getByTestId('act-c').focus();
