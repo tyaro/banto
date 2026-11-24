@@ -7,7 +7,7 @@
 	import { pieSlices, arcPath } from './core/pie';
 	import { seriesColorVar } from './core/color';
 	import { clampMarkIndex } from './core/mark-nav';
-	import { handleMarkKeydown } from './internal/mark-keys';
+	import { handleMarkKeydown, onMarkDetached } from './internal/mark-keys';
 	import {
 		getValue,
 		toNumber,
@@ -80,6 +80,12 @@
 	let focusedIndex: number | null = $state(null);
 	// Checked against the current slices: when `data` shrinks, a removed focused
 	// element may never fire blur, so a stale index must not reach the overlay.
+	/** The slice's element left the document (data shrank, value became 0): drop the focus / pointer state that pointed at it. */
+	function forgetMark(i: number): void {
+		if (focusedIndex === i) focusedIndex = null;
+		if (pointedIndex === i) pointedIndex = null;
+	}
+
 	const hoveredIndex = $derived.by(() => {
 		const i = pointedIndex ?? focusedIndex;
 		return i !== null && i >= 0 && i < slices.length ? i : null;
@@ -135,6 +141,7 @@
 					{@const pos = navOrder.indexOf(i)}
 					<g
 						class="mark"
+						{@attach (node: Element) => onMarkDetached(node, () => forgetMark(i))}
 						role="button"
 						tabindex={pos === activeMark ? 0 : -1}
 						aria-label={markName(i)}

@@ -5,6 +5,21 @@
  */
 import { isMarkActivateKey, nextMarkIndex } from '../core/mark-nav';
 
+/**
+ * Attachment cleanup helper: calls `forget` once the mark element has really
+ * left the document. A removed element never fires `blur` / `pointerleave`, so
+ * the chart must drop its focus / pointer state itself. The `isConnected`
+ * check (after a microtask) keeps an attachment that merely re-runs on a
+ * re-render from clearing state of a mark that is still there.
+ */
+export function onMarkDetached(node: Element, forget: () => void): () => void {
+	return () => {
+		queueMicrotask(() => {
+			if (!node.isConnected) forget();
+		});
+	};
+}
+
 /** Attribute that carries a mark's position in the linear mark order (the charts write it literally as `data-mark-index`). */
 const MARK_INDEX_ATTR = 'data-mark-index';
 

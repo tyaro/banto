@@ -26,7 +26,7 @@
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { clampMarkIndex } from './core/mark-nav';
-	import { handleMarkKeydown } from './internal/mark-keys';
+	import { handleMarkKeydown, onMarkDetached } from './internal/mark-keys';
 	import {
 		getValue,
 		toNumber,
@@ -290,6 +290,14 @@
 		return h !== null && h.catIndex < data.length && h.seriesIndex < series.length ? h : null;
 	});
 
+	/** The mark's element left the document (data shrank, value became 0): drop the focus / pointer state that pointed at it. */
+	function forgetMark(bar: BarRect): void {
+		const same = (h: { catIndex: number; seriesIndex: number } | null) =>
+			h !== null && h.catIndex === bar.catIndex && h.seriesIndex === bar.seriesIndex;
+		if (same(focusedMark)) focusedMark = null;
+		if (same(pointed)) pointed = null;
+	}
+
 	function isHovered(bar: BarRect): boolean {
 		return (
 			hovered !== null &&
@@ -504,6 +512,7 @@
 					{@const idx = navPos.get(bar) ?? 0}
 					<g
 						class="mark"
+						{@attach (node: Element) => onMarkDetached(node, () => forgetMark(bar))}
 						role="button"
 						tabindex={idx === stop ? 0 : -1}
 						aria-label={markName(bar)}

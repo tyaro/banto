@@ -159,6 +159,44 @@ describe('tooltip follows focus and pointer separately', () => {
 		}
 	});
 
+	it('pie and bar: shrink then grow back, or the focused value turning 0, leaves no stale tooltip', async () => {
+		const three: Row[] = [...rows, { name: 'C', a: 30, b: 3 }];
+		const lastZero: Row[] = [...rows, { name: 'C', a: 0, b: 0 }];
+		for (const [Comp, props] of [
+			[PieChart, { category: cat, value: valA, label: '円' }],
+			[BarChart, { category: cat, series: [{ id: 'a', label: 'A', value: valA }], label: '棒' }]
+		] as const) {
+			const { container, rerender } = render(
+				Comp as never,
+				{
+					...props,
+					data: three,
+					onMarkActivate: () => {}
+				} as never
+			);
+			await flush();
+			buttonsOf(container)[2].focus();
+			await flush();
+			await rerender({ data: [rows[0]] } as never);
+			await flush();
+			await rerender({ data: three } as never);
+			await flush();
+			expect(buttonsOf(container).length).toBe(3);
+			expect(document.activeElement).not.toBe(buttonsOf(container)[2]);
+			expect(tip(container)).toBeNull();
+
+			// the focused mark stays in the data but is no longer drawn (value 0)
+			buttonsOf(container)[2].focus();
+			await flush();
+			expect(tip(container)).not.toBeNull();
+			await rerender({ data: lastZero } as never);
+			await flush();
+			expect(buttonsOf(container).length).toBe(2);
+			expect(tip(container)).toBeNull();
+			cleanup();
+		}
+	});
+
 	it('pie: the pointer entering and leaving the focused slice keeps its tooltip', async () => {
 		const { container } = render(PieChart, {
 			data: rows,
