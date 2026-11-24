@@ -122,6 +122,37 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
   `GaugeThresholds` に `warningLow` / `dangerLow`（`value <=` で warning / danger 色）を追加。
   上側の `warning` / `danger` の挙動は変わらない。
 
+### 印を選べる棒・円（`onMarkActivate` / `markLabel`）
+
+`BarChart` と `PieChart` は、`onMarkActivate` を渡したときだけ、印（棒・扇）を選べる。渡さなければ今までと同じ
+（操作なし・入れ物は `role="img"`・DOM も見た目も変わらない）。
+
+```svelte
+<BarChart
+	data={rows}
+	category="category"
+	series={[{ id: 'stock', label: '在庫', value: 'stock' }]}
+	label="カテゴリ別の在庫数"
+	onMarkActivate={(mark) => open(mark.row)}
+	markLabel={(mark) => `${mark.category}を一覧で開く`}
+/>
+```
+
+- `onMarkActivate(mark)`: `mark` は `ChartMark<TRow>`（`row`・`index`（`data` の位置）・`category`（文字列）・`seriesId`（`BarChart` のみ）・
+  `value`（`formatValue` を通す前。積み上げは、その区間の値で、積み上げの合計ではない））。クリック・Enter・Space で呼ばれる。
+- `markLabel(mark)`: 印の読み上げの名前。既定は `<category>: <formatValue(value)>`（系列が複数の `BarChart` は
+  `<category>（<系列名>）: <値>`）。既定の文は `messages.markLabel` / `messages.markLabelWithSeries` で差し替える。
+- 渡すと、入れ物は `role="group"`（`aria-label` は `label` のまま）になり、印は `role="button"` になる。
+  **Tab で止まるのはチャート 1 つにつき 1 か所**（roving tabindex）。矢印キー（→ ↓ で次、← ↑ で前）・Home・End で
+  隣の印へ動き（端で止まり、回り込まない）、Enter / Space で選ぶ。フォーカスした印は、ポインターを載せたときと同じ
+  ツールチップを出し、枠線が `--banto-text` の太い線になる。
+- 棒は帯の幅いっぱい（グループ化した棒は値の軸の向きにも枠いっぱい）が当たり判定になる。積み上げの区間は、その区間の形のまま。
+- 描かれる面積のない印（値 0・欠測の扇、幅 0 の積み上げ区間、値 0 の棒）は選べない（見えない Tab の停止点を作らないため）。
+  順番から外れるだけで、`mark.index` は元の `data` の位置のまま。
+- フォーカスとポインターは別々に持つ。ポインターが別の印へ動いている間はそちらのツールチップ、外れればフォーカス中の印のものを出す。
+- 矢印キーの移動先を決める関数（`nextMarkIndex`・`clampMarkIndex`）は、`core/mark-nav.ts` の純関数で、パッケージからも export する。
+- ほかのチャート（`ParetoChart`・`Histogram`・`ScatterChart`・`Heatmap` など）はまだ対応しない。
+
 ### 系列の色（16 枠。次の版から）
 
 系列は並び順に `--banto-chart-1`〜`16` を使う（`seriesColorVar(index)`、`MAX_CHART_SERIES = 16`）。

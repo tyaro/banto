@@ -29,6 +29,8 @@ export { defaultChartMessages, type ChartMessages } from './messages';
 export type {
 	Accessor,
 	ChartMargin,
+	ChartMark,
+	MarkProps,
 	SeriesBase,
 	TooltipRow,
 	ChartAxis,
@@ -39,6 +41,13 @@ export type {
 export { getValue, toNumber } from './types';
 
 export { linearScale, niceTicks, bandScale, type LinearScale, type BandScale } from './core/scale';
+export {
+	nextMarkIndex,
+	clampMarkIndex,
+	isMarkNavKey,
+	isMarkActivateKey,
+	type MarkNavKey
+} from './core/mark-nav';
 export { stackSeries, type StackSegment } from './core/stack';
 export { pieSlices, arcPath, polarToCartesian, type PieSlice } from './core/pie';
 export {

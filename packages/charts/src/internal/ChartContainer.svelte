@@ -7,9 +7,12 @@
 	 * `plot` is 1:1 with real pixels, with no scale distortion), and hosts an
 	 * absolutely-positioned HTML `overlay` snippet for tooltips (spec rule 6).
 	 *
-	 * Accessibility (spec rule 8): the root gets `role="img"` and the
+	 * Accessibility (spec rule 8): the root gets `role={interactive ? 'group' : 'img'}` and the
 	 * required `label` prop as `aria-label`. A table-view fallback for
 	 * screen-reader users is out of scope for v1 (later milestone).
+	 * With `interactive` (the chart's marks are selectable, `onMarkActivate`
+	 * given) the root is a `role="group"` instead, since an image may not
+	 * contain operable children; the `aria-label` stays.
 	 */
 	import type { Snippet } from 'svelte';
 	import { defaultChartMessages, type ChartMessages } from '../messages';
@@ -23,6 +26,8 @@
 		label: string;
 		height?: number;
 		empty?: boolean;
+		/** Marks are operable (`onMarkActivate`): root role `group` instead of `img`. */
+		interactive?: boolean;
 		plot: Snippet<[PlotMetrics]>;
 		overlay?: Snippet<[PlotMetrics]>;
 		/**
@@ -41,6 +46,7 @@
 		label,
 		height = 240,
 		empty = false,
+		interactive = false,
 		plot,
 		overlay,
 		width = $bindable(0),
@@ -54,7 +60,7 @@
 
 <div
 	class="chart-container"
-	role="img"
+	role={interactive ? 'group' : 'img'}
 	aria-label={label}
 	style:height={`${height}px`}
 	bind:clientWidth={width}
