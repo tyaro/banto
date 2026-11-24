@@ -9,7 +9,9 @@
 	 *   - highlight selection: `single` or `multi` (ctrl-toggle, shift-range),
 	 *   - tri-state checkboxes (`checkboxes`),
 	 *   - inline rename (`editable`, F2 / double-click),
-	 *   - drag reorder / reparent (`draggable`),
+	 *   - drag reorder / reparent (`draggable`, with a host veto via `canDrop`),
+	 *   - trailing per-row controls (`rowActions`),
+	 *   - host-decided expansion (`expansion`),
 	 *   - optional `columns` → renders as a tree-grid.
 	 *
 	 * All tree math (flatten, move, tri-state, rename patch) lives in the
@@ -21,8 +23,9 @@
 	import { tick, untrack, type Snippet } from 'svelte';
 	import { computeCheckState, subtreeCheckToggle } from './core/checkbox';
 	import {
-		canDrop,
+		canDrop as canDropShape,
 		findNode,
+		findParent,
 		flattenVisible,
 		moveNode,
 		nodeHasChildren,
@@ -36,6 +39,9 @@
 		FlatNode,
 		NodeId,
 		TreeColumn,
+		TreeDropHover,
+		TreeDropRequest,
+		TreeDropVerdict,
 		TreeEmptyContext,
 		TreeLabelContext,
 		TreeNode
@@ -124,6 +130,52 @@
 		 * assistive tech as a disabled `treeitem` one level below the branch.
 		 */
 		emptyChildren?: Snippet<[TreeNode<TData>, TreeEmptyContext]>;
+		/**
+		 * Controls at the end of a row (buttons, a toggle, a menu trigger). Drawn at the end of
+		 * the tree column, after the label. A click, double-click or drag that starts inside them
+		 * never selects / renames / drags the row. Keyboard: the controls of the row that holds the
+		 * tree's tab stop are reachable with Tab (row -> its controls -> out of the tree); the
+		 * controls of every other row are taken out of the tab order (`tabindex="-1"`, set by the
+		 * tree), so the tree adds no tab stop per row. Inside the controls the tree's own keys
+		 * (arrows, Enter, Space, F2 ...) are not handled, and Escape returns the focus to the row.
+		 * Give every control its own accessible name (e.g. `aria-label` with the node's label).
+		 */
+		rowActions?: Snippet<[TreeNode<TData>, TreeLabelContext]>;
+		/**
+		 * Host-decided expansion. While given, exactly these ids are open: a toggle / arrow key /
+		 * drop-into only calls `onExpandedChange` with the list it asks for, and nothing changes
+		 * until the host passes a new `expansion`. `autoExpandNewRoots` and "open the branches above
+		 * the `selection`" do not apply while it is given. A lazy branch listed here is loaded.
+		 * When it goes back to `undefined`, the tree shows its own expansion again (the user's
+		 * toggles meanwhile only went to `onExpandedChange`; `autoExpandNewRoots` and revealing a
+		 * `selection` still update the tree's own set, so a match picked while searching stays
+		 * visible) - so "open the ancestors of the matches only while searching" is
+		 * `expansion={query ? ancestorIdsOfMatches : undefined}`. Omitted = uncontrolled
+		 * (`expanded` is only the initial value).
+		 */
+		expansion?: NodeId[];
+		/**
+		 * The user opened / closed a branch (toggle, arrow keys, Enter, double-click, a drop
+		 * into a branch). Gets the full list of open ids: the new state when uncontrolled, the
+		 * requested state when `expansion` is given. Not called for expansion the tree does on
+		 * its own (`autoExpandNewRoots`, revealing a `selection`).
+		 */
+		onExpandedChange?: (ids: NodeId[]) => void;
+		/**
+		 * Asked while dragging, for each (target row, position) the pointer reaches, after the
+		 * tree's own shape check passed (not onto itself, not into its own subtree; a disabled row
+		 * is never a target). Return `false` or `{ allowed: false, reason }` to refuse: the row is
+		 * marked as refused (`data-drop-denied`) and releasing there does nothing. `true` /
+		 * `{ allowed: true }` accepts. Omitted = every shape-legal drop is accepted. Must be
+		 * synchronous and cheap (called on pointer moves, once per target / position change).
+		 */
+		canDrop?: (request: TreeDropRequest<TData>) => TreeDropVerdict;
+		/**
+		 * The drop the pointer currently points at changed during a drag: the candidate with the
+		 * verdict (and the `reason` from `canDrop`, for the host to show), or `null` when there is
+		 * no candidate (outside the rows, over the dragged row, a shape-illegal target, drag ended).
+		 */
+		onDropTargetChange?: (hover: TreeDropHover<TData> | null) => void;
 	}
 
 	let {
@@ -148,7 +200,12 @@
 		onContextMenu,
 		autoExpandNewRoots = false,
 		selectionFollowsFocus = true,
-		emptyChildren
+		emptyChildren,
+		rowActions,
+		expansion,
+		onExpandedChange,
+		canDrop,
+		onDropTargetChange
 	}: Props = $props();
 
 	const t = $derived({ ...defaultTreeMessages, ...messages });
@@ -168,7 +225,28 @@
 	// "uncontrolled with host-reset" behaviour we want, in one line.
 	let roots = $derived(nodes);
 
-	const flat = $derived(flattenVisible(roots, (id) => tree.isExpanded(id)));
+	// Expansion: the host's `expansion` while given, else the tree's own set (which is left
+	// untouched meanwhile, so it is what shows again once `expansion` is dropped).
+	const hostExpanded = $derived(expansion ? new Set(expansion) : null);
+	function isExpandedId(id: NodeId): boolean {
+		return hostExpanded ? hostExpanded.has(id) : tree.isExpanded(id);
+	}
+	/** A user request to open / close `id`: applied when uncontrolled, only reported when controlled. */
+	function requestExpanded(id: NodeId, open: boolean): void {
+		if (isExpandedId(id) === open) return;
+		if (hostExpanded) {
+			const next = new Set(hostExpanded);
+			if (open) next.add(id);
+			else next.delete(id);
+			onExpandedChange?.([...next]);
+			return;
+		}
+		if (open) tree.expand(id);
+		else tree.collapse(id);
+		onExpandedChange?.([...tree.expandedIds]);
+	}
+
+	const flat = $derived(flattenVisible(roots, isExpandedId));
 	const templateColumns = $derived(
 		columns
 			? `minmax(180px, 1fr) ${columns.map((c) => `${c.width ?? DEFAULT_COL_WIDTH}px`).join(' ')}`
@@ -176,7 +254,7 @@
 	);
 
 	let editing = $state<{ id: NodeId; draft: string } | null>(null);
-	let dropTarget = $state<{ id: NodeId; position: DropPosition } | null>(null);
+	let dropTarget = $state<{ id: NodeId; position: DropPosition; denied: boolean } | null>(null);
 	let containerEl = $state<HTMLElement | null>(null);
 
 	// Element registry for roving focus (id -> row element).
@@ -213,6 +291,20 @@
 		}
 	}
 
+	// Host-decided expansion: load the lazy branches it lists (also the ones that appear
+	// later, inside a branch that just loaded - hence the dependency on `roots`).
+	$effect(() => {
+		if (!hostExpanded || !loadChildren) return;
+		const forest = roots;
+		const wanted = [...hostExpanded];
+		untrack(() => {
+			for (const id of wanted) {
+				const node = findNode(forest, id);
+				if (node) void ensureLoaded(node);
+			}
+		});
+	});
+
 	// Root ids already auto-expanded once (never re-opened after a user collapse).
 	// `$effect.pre` so the first render already shows them open (no flash).
 	const seenRootIds = new Set<NodeId>();
@@ -240,15 +332,16 @@
 		return f.hasChildren || isEmptyBranch(f.node);
 	}
 	function isOpen(f: FlatNode<TData>): boolean {
-		return expandable(f) && tree.isExpanded(f.node.id);
+		return expandable(f) && isExpandedId(f.node.id);
 	}
 
 	function toggleExpand(node: TreeNode<TData>): void {
-		if (tree.isExpanded(node.id)) {
-			tree.collapse(node.id);
+		if (isExpandedId(node.id)) {
+			requestExpanded(node.id, false);
 		} else {
-			tree.expand(node.id);
-			void ensureLoaded(node);
+			requestExpanded(node.id, true);
+			// Controlled: the load starts once the host lists the id (the effect above).
+			if (!hostExpanded) void ensureLoaded(node);
 		}
 	}
 
@@ -316,7 +409,39 @@
 	}
 
 	function isControl(target: EventTarget | null): boolean {
-		return target instanceof HTMLElement && target.closest('[data-tree-control]') !== null;
+		return target instanceof Element && target.closest('[data-tree-control]') !== null;
+	}
+
+	// --- trailing row controls (`rowActions`) ---
+	function actionsOf(target: EventTarget | null): HTMLElement | null {
+		return target instanceof Element ? target.closest<HTMLElement>('[data-tree-actions]') : null;
+	}
+	const ACTION_FOCUSABLE =
+		'button, a[href], input, select, textarea, summary, [tabindex], [contenteditable]';
+	/**
+	 * Keeps the host's controls in the tab order only for the row that holds the tree's tab
+	 * stop (`tabbable`), and out of it (`tabindex="-1"`) for every other row. Re-applied when
+	 * the snippet's content changes.
+	 */
+	function actionTabStops(el: HTMLElement, tabbable: boolean) {
+		let current = tabbable;
+		const apply = () => {
+			const value = current ? '0' : '-1';
+			for (const control of el.querySelectorAll<HTMLElement>(ACTION_FOCUSABLE))
+				if (control.getAttribute('tabindex') !== value) control.setAttribute('tabindex', value);
+		};
+		apply();
+		const observer = new MutationObserver(apply);
+		observer.observe(el, { childList: true, subtree: true });
+		return {
+			update(next: boolean) {
+				current = next;
+				apply();
+			},
+			destroy() {
+				observer.disconnect();
+			}
+		};
 	}
 
 	function selectAt(
@@ -450,6 +575,20 @@
 
 	function onKeydown(event: KeyboardEvent): void {
 		if (editing) return;
+		// Inside a row's trailing controls the keys belong to the control (Enter / Space press
+		// the button, arrows may drive a host widget). Only Escape is ours: back to the row.
+		const actions = actionsOf(event.target);
+		if (actions) {
+			if (event.key === 'Escape' && !event.defaultPrevented) {
+				const rowId = actions.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
+				if (rowId !== undefined) {
+					event.preventDefault();
+					tree.focusedId = rowId;
+					elements.get(rowId)?.focus();
+				}
+			}
+			return;
+		}
 		// Keys act on the row that holds the tab stop: a focus id that is hidden (a closed
 		// branch, an unknown `selection`) falls back to the shown row the user tabbed into.
 		const focusedId = tabStopId;
@@ -474,7 +613,7 @@
 				break;
 			case 'ArrowLeft':
 				event.preventDefault();
-				if (isOpen(f)) tree.collapse(f.node.id);
+				if (isOpen(f)) requestExpanded(f.node.id, false);
 				else if (f.parentId !== null) focusNodeEl(f.parentId);
 				break;
 			case 'Home':
@@ -554,14 +693,14 @@
 		}
 		event.preventDefault();
 		const hit = document.elementFromPoint(event.clientX, event.clientY);
-		const el = hit instanceof HTMLElement ? hit.closest<HTMLElement>('[data-node-id]') : null;
+		const el = hit instanceof Element ? hit.closest<HTMLElement>('[data-node-id]') : null;
 		if (!el) {
-			dropTarget = null;
+			clearDropTarget();
 			return;
 		}
 		const targetId = el.getAttribute('data-node-id');
 		if (targetId === null || targetId === dragState.id) {
-			dropTarget = null;
+			clearDropTarget();
 			return;
 		}
 		const rect = el.getBoundingClientRect();
@@ -570,16 +709,36 @@
 		const targetNode = findNode(roots, targetId);
 		if (targetNode?.disabled) {
 			// disabled rows used to be skipped by pointer-events: none
-			dropTarget = null;
+			clearDropTarget();
 			return;
 		}
 		let position: DropPosition;
 		if (y < third) position = 'before';
 		else if (y > rect.height - third) position = 'after';
 		else position = targetNode && nodeHasChildren(targetNode) ? 'inside' : 'after';
-		dropTarget = canDrop(roots, dragState.id, targetId, position)
-			? { id: targetId, position }
-			: null;
+		const dragged = findNode(roots, dragState.id);
+		if (!dragged || !targetNode || !canDropShape(roots, dragState.id, targetId, position)) {
+			clearDropTarget();
+			return;
+		}
+		// Same candidate as the last move: keep the verdict (the host is asked once per change).
+		if (dropTarget?.id === targetId && dropTarget.position === position) return;
+		const request: TreeDropRequest<TData> = {
+			dragged,
+			target: targetNode,
+			position,
+			parent: position === 'inside' ? targetNode : findParent(roots, targetId)
+		};
+		const verdict = canDrop ? canDrop(request) : true;
+		const allowed = typeof verdict === 'boolean' ? verdict : verdict.allowed;
+		const reason = typeof verdict === 'boolean' || allowed ? undefined : verdict.reason;
+		dropTarget = { id: targetId, position, denied: !allowed };
+		onDropTargetChange?.({ ...request, allowed, reason });
+	}
+	function clearDropTarget(): void {
+		if (dropTarget === null) return;
+		dropTarget = null;
+		onDropTargetChange?.(null);
 	}
 	function onDragUp(): void {
 		window.removeEventListener('pointermove', onDragMove);
@@ -587,11 +746,11 @@
 		const ds = dragState;
 		const dt = dropTarget;
 		dragState = null;
-		dropTarget = null;
-		if (!ds || !ds.active || !dt) return;
+		clearDropTarget();
+		if (!ds || !ds.active || !dt || dt.denied) return;
 		if (onMove) onMove(ds.id, dt.id, dt.position);
 		else roots = moveNode(roots, ds.id, dt.id, dt.position);
-		if (dt.position === 'inside') tree.expand(dt.id);
+		if (dt.position === 'inside') requestExpanded(dt.id, true);
 	}
 
 	// --- tree-grid cell rendering ---
@@ -642,6 +801,14 @@
 	{#each flat as f, index (f.node.id)}
 		{@const node = f.node}
 		{@const check = checkStateOf(node)}
+		{@const rowContext = {
+			selected: selectionMode !== 'none' && tree.isSelected(node.id),
+			focused: tree.focusedId === node.id,
+			expanded: isOpen(f),
+			hasChildren: expandable(f),
+			depth: f.depth,
+			disabled: !!node.disabled
+		}}
 		<!-- Keyboard is handled at the role="tree" container (roving tabindex +
 		     onkeydown), the standard WAI-ARIA tree pattern; the row click is a
 		     pointer convenience only. -->
@@ -654,6 +821,8 @@
 			class:drop-before={dropTarget?.id === node.id && dropTarget.position === 'before'}
 			class:drop-after={dropTarget?.id === node.id && dropTarget.position === 'after'}
 			class:drop-inside={dropTarget?.id === node.id && dropTarget.position === 'inside'}
+			class:drop-denied={dropTarget?.id === node.id && dropTarget.denied}
+			data-drop-denied={dropTarget?.id === node.id && dropTarget.denied ? '' : undefined}
 			role="treeitem"
 			data-node-id={node.id}
 			aria-level={f.depth + 1}
@@ -663,7 +832,7 @@
 			aria-expanded={expandable(f) ? isOpen(f) : undefined}
 			aria-selected={selectionMode !== 'none' ? tree.isSelected(node.id) : undefined}
 			aria-disabled={node.disabled ? 'true' : undefined}
-			aria-label={label ? node.label : undefined}
+			aria-label={label || rowActions ? node.label : undefined}
 			tabindex={tabStopId === node.id ? 0 : -1}
 			style:grid-template-columns={columns ? templateColumns : undefined}
 			use:register={node.id}
@@ -720,14 +889,7 @@
 				{:else}
 					<span class="label">
 						{#if label}
-							{@render label(node, {
-								selected: selectionMode !== 'none' && tree.isSelected(node.id),
-								focused: tree.focusedId === node.id,
-								expanded: isOpen(f),
-								hasChildren: expandable(f),
-								depth: f.depth,
-								disabled: !!node.disabled
-							})}
+							{@render label(node, rowContext)}
 						{:else}
 							{node.label}
 						{/if}
@@ -738,6 +900,20 @@
 					<span class="badge">{t.loading()}</span>
 				{:else if tree.getLoadStatus(node.id) === 'error'}
 					<span class="badge error">{t.loadError()}</span>
+				{/if}
+
+				{#if rowActions}
+					<!-- The host's controls. `data-tree-control` keeps their clicks / drags away from
+					     the row; a focus that lands inside moves the tree's tab stop to this row. -->
+					<span
+						class="row-actions"
+						data-tree-control
+						data-tree-actions
+						use:actionTabStops={tabStopId === node.id}
+						onfocusin={() => (tree.focusedId = node.id)}
+					>
+						{@render rowActions(node, rowContext)}
+					</span>
 				{/if}
 			</div>
 
@@ -842,6 +1018,18 @@
 		background: color-mix(in srgb, var(--banto-primary) 12%, transparent);
 		box-shadow: inset 0 0 0 1px var(--banto-primary);
 	}
+	/* refused by the host's `canDrop` (after the position rules, so it wins) */
+	.tree-row.drop-denied {
+		cursor: not-allowed;
+	}
+	.tree-row.drop-denied::before,
+	.tree-row.drop-denied::after {
+		background: var(--banto-danger);
+	}
+	.tree-row.drop-denied.drop-inside {
+		background: color-mix(in srgb, var(--banto-danger) 12%, transparent);
+		box-shadow: inset 0 0 0 1px var(--banto-danger);
+	}
 
 	.primary {
 		display: flex;
@@ -927,6 +1115,16 @@
 	}
 	.badge.error {
 		color: var(--banto-danger);
+	}
+
+	.row-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--banto-space-1);
+		flex: 0 0 auto;
+		margin-inline-start: auto;
+		padding-inline-start: var(--banto-space-2);
+		font-weight: 400;
 	}
 
 	.cell {

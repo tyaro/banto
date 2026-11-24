@@ -54,6 +54,37 @@ UI で、展開/折りたたみ・単一/複数選択・三状態チェックボ
 フォーカスが止まらず、選択・チェックの対象にならず、`aria-disabled` の `treeitem` として読み上げられる。
 遅延読み込みの枝は、読み込みが終わって 0 件だったときだけ「空」とみなす（未読み込み・読み込み中・失敗は別）。
 
+### 行末のボタン・展開を外から決める・ドロップの可否（#821）
+
+```svelte
+{#snippet actions(node, ctx)}
+	<button type="button" aria-label={`${node.label} を隠す`} onclick={() => hide(node.id)}>…</button>
+{/snippet}
+
+<BantoTree
+	nodes={query ? matchedNodes : nodes}
+	rowActions={actions}
+	expansion={query ? ancestorIdsOfMatches : undefined}
+	onExpandedChange={(ids) => (openWhileSearching = ids)}
+	draggable
+	canDrop={({ dragged, target, position, parent }) =>
+		parent?.id === 'locked' ? { allowed: false, reason: 'ロック中のフォルダー' } : true}
+	onDropTargetChange={(hover) => (hint = hover && !hover.allowed ? hover.reason : '')}
+/>
+```
+
+- `rowActions`（`(node, ctx)`、`ctx` は `label` と同じ）: 木の列の末尾にボタンなどを置く。中のクリック・
+  ダブルクリック・ドラッグは行の選択・名前変更・ドラッグにならない。キーボードは、木のタブ位置を持つ行の
+  ボタンだけが Tab で届き（行 → その行のボタン → 木の外）、ほかの行のボタンは `tabindex="-1"` にされる
+  （行ごとにタブ位置は増えない）。ボタンの中では木のキー（矢印・Enter・Space・F2 …）は効かず、Escape で
+  行に戻る。各ボタンには `node.label` を含むアクセシブル名を付けること。行のアクセシブル名は `node.label`。
+- `expansion`（`NodeId[]`）: 渡している間はちょうどその id が開く。開閉の操作は `onExpandedChange` で
+  求める一覧が通知されるだけ。`undefined` に戻すと木が自分で持っていた展開に戻る（「検索の間だけ一致の
+  先祖を開き、やめたら元に戻す」）。`onExpandedChange` は省略時（木が持つ展開）でも呼ばれる。
+- `canDrop`（`TreeDropRequest` → `boolean | { allowed, reason? }`）: 木の形の検査（自分自身・自分の子孫へは
+  落とせない）を通った候補ごとに、ドラッグ中に 1 回だけ聞かれる。拒むとその行に `data-drop-denied` が付き、
+  離しても何も起きない。`onDropTargetChange` で候補と可否・理由を受け取り、画面に出せる。
+
 #### 外から当ててよい属性（公開の約束）
 
 各行（`role="treeitem"`）には `data-depth`（0 始まり。`aria-level` - 1 と同じ）が付く。階層ごとに

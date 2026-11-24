@@ -51,7 +51,7 @@ export interface FlatNode<TData = unknown> {
 	parentId: NodeId | null;
 }
 
-/** State handed to the `label` snippet of `BantoTree` (read-only snapshot per row). */
+/** State handed to the `label` and `rowActions` snippets of `BantoTree` (read-only snapshot per row). */
 export interface TreeLabelContext {
 	/** Highlight-selected (always `false` when `selectionMode` is `'none'`). */
 	selected: boolean;
@@ -78,6 +78,28 @@ export type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
 /** Where a dragged node lands relative to a drop target. */
 export type DropPosition = 'before' | 'after' | 'inside';
+
+/** What `BantoTree` asks its `canDrop` prop: one candidate drop that already passed the shape check. */
+export interface TreeDropRequest<TData = unknown> {
+	/** The node being dragged. */
+	dragged: TreeNode<TData>;
+	/** The row under the pointer. */
+	target: TreeNode<TData>;
+	/** Where the dragged node would land relative to `target`. */
+	position: DropPosition;
+	/** The node that would become the parent (`target` for `'inside'`, else its parent; `null` = root level). */
+	parent: TreeNode<TData> | null;
+}
+
+/** The answer of `canDrop`: a boolean, or the verdict with a reason for the host to show. */
+export type TreeDropVerdict = boolean | { allowed: boolean; reason?: string };
+
+/** Handed to `onDropTargetChange`: the candidate under the pointer and the verdict on it. */
+export interface TreeDropHover<TData = unknown> extends TreeDropRequest<TData> {
+	allowed: boolean;
+	/** The `reason` `canDrop` returned (only with a refusal that gave one). */
+	reason?: string;
+}
 
 /**
  * A tree-grid column. This is a deliberate STRUCTURAL MIRROR of
