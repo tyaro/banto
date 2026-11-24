@@ -7,6 +7,8 @@
 		max?: string;
 		isDateDisabled?: (date: string) => boolean;
 		months?: 1 | 2;
+		disabled?: boolean;
+		readonly?: boolean;
 		onValueChange?: (value: string | null) => void;
 		onkeydown?: (event: KeyboardEvent) => void;
 		onblur?: (event: FocusEvent) => void;

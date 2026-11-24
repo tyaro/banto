@@ -15,6 +15,7 @@
 	 * near a month end). The calendar is `RangeCalendar` (`mode="single"`),
 	 * the dialog `PickerDialog`.
 	 */
+	import { untrack } from 'svelte';
 	import { createTextMirror } from './textMirror.svelte.js';
 	import {
 		clampDate,
@@ -135,6 +136,13 @@
 	let open = $state(false);
 	let focusDate = $state('');
 	let today = $state('');
+	/** The dialog element while open: the calendar scrolls a focused day into it. */
+	let panelEl: HTMLDivElement | undefined = $state();
+
+	// Made disabled / read-only while open: close (nothing can be picked any more).
+	$effect(() => {
+		if ((disabled || readonly) && open) untrack(() => dialog?.close(true));
+	});
 
 	const weekStart = $derived(resolveWeekStart(locale, weekStartsOn));
 	const buttonLabel = $derived(
@@ -154,13 +162,14 @@
 	}
 
 	function select(date: string): void {
-		if (!isSelectable(date)) return;
+		if (disabled || readonly || !isSelectable(date)) return;
 		setText(date);
 		setValue(date);
 		dialog?.close(true);
 	}
 
 	function clear(): void {
+		if (disabled || readonly) return;
 		setText('');
 		setValue(null);
 		dialog?.close(true);
@@ -237,6 +246,7 @@
 	<PickerDialog
 		bind:this={dialog}
 		bind:open
+		bind:panel={panelEl}
 		label={t.datePickerDialog()}
 		anchor={fieldEl}
 		toggle={buttonEl}
@@ -257,6 +267,7 @@
 				{locale}
 				{weekStart}
 				{t}
+				scroller={panelEl}
 				onSelect={select}
 			/>
 			<div class="date-picker-footer">

@@ -36,7 +36,7 @@
 	 *   `aria-multiselectable` on the grid), `onHover` reports the day under
 	 *   the pointer (the range preview).
 	 */
-	import { flushSync } from 'svelte';
+	import { flushSync, untrack } from 'svelte';
 	import { revealInPopover } from './anchoredPopover';
 	import CalendarNavButton from './CalendarNavButton.svelte';
 	import CalendarPeriodView from './CalendarPeriodView.svelte';
@@ -98,7 +98,7 @@
 		selectionMode?: 'single' | 'range';
 		/** The range painted in `'range'` mode, or `null`. */
 		range?: CalendarRange | null;
-		/** The pointer moved onto a day, or left the calendar (`null`) - the range preview. */
+		/** The pointer moved onto a day; `null` when it left the calendar or a key moved focus - the range preview. */
 		onHover?: (date: string | null) => void;
 	}
 
@@ -201,6 +201,26 @@
 		rootEl.focus({ preventScroll: true });
 		return true;
 	}
+
+	// `months` changing while open (the extended calendar crossing its
+	// one-month width) swaps the day view's markup: park focus before the
+	// swap and put it back on the tracked day after it, so the arrow keys
+	// still reach the grid. The month / year views are not swapped.
+	let refocusAfterMonths = false;
+	$effect.pre(() => {
+		void months;
+		untrack(() => {
+			if (view === 'day' && parkFocus()) refocusAfterMonths = true;
+		});
+	});
+	$effect(() => {
+		void months;
+		untrack(() => {
+			if (!refocusAfterMonths) return;
+			refocusAfterMonths = false;
+			focusCell();
+		});
+	});
 
 	/**
 	 * A click on a cell: move the tracked day there (the view follows into a
@@ -341,6 +361,9 @@
 				return;
 		}
 		event.preventDefault();
+		// A keyboard move takes over from the pointer: the range preview
+		// follows the focused day, not a day the pointer rests on.
+		onHover?.(null);
 		moveFocus(next);
 	}
 

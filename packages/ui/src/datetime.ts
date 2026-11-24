@@ -399,7 +399,9 @@ export function monthStartOfPeriod(period: number): string {
 export function firstShownMonth(date: string, offset: number, count: number): number {
 	const period = periodOf(date, 'month');
 	const last = MAX_YEAR * 12 + 11 - (count - 1);
-	return Math.max(MIN_YEAR * 12, Math.min(period - offset, last));
+	// An offset left from more months (2 -> 1 on a narrow screen) still shows `date`.
+	const at = Math.min(Math.max(offset, 0), count - 1);
+	return Math.max(MIN_YEAR * 12, Math.min(period - at, last));
 }
 
 /**

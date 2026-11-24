@@ -39,10 +39,10 @@ function setup(props: Record<string, unknown> = {}) {
 		onHostKeydown: vi.fn(),
 		onHostPointerdown: vi.fn()
 	};
-	render(DatePickerHarness, { ...handlers, ...props });
+	const { rerender } = render(DatePickerHarness, { ...handlers, ...props });
 	const input = screen.getByRole('textbox', { name: 'Due date' }) as HTMLInputElement;
 	const button = document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!;
-	return { ...handlers, input, button };
+	return { ...handlers, input, button, rerender };
 }
 
 const dialog = () => screen.queryByRole('dialog', { name: '日付の選択' });
@@ -225,5 +225,46 @@ describe('DatePicker', () => {
 		expect(dialog()).toBeNull();
 		expect(onblur).toHaveBeenCalledTimes(1);
 		expect(button.getAttribute('aria-expanded')).toBe('false');
+	});
+});
+
+describe('DatePicker while open (PR #912 review)', () => {
+	it('crossing the one-month width keeps focus on the tracked day', () => {
+		let narrow = false;
+		const listeners = new Set<() => void>();
+		vi.stubGlobal('matchMedia', (query: string) => ({
+			get matches() {
+				return query === '(max-width: 600px)' && narrow;
+			},
+			media: query,
+			addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+			removeEventListener: (_: string, fn: () => void) => listeners.delete(fn)
+		}));
+		const { button } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		key('PageDown');
+		expect(focusedDate()).toBe('2026-12-07');
+		expect(headings()).toEqual(['2026年11月', '2026年12月']);
+		narrow = true;
+		listeners.forEach((fn) => fn());
+		flushSync();
+		expect(headings()).toEqual(['2026年12月']);
+		expect(focusedDate()).toBe('2026-12-07');
+		key('ArrowRight');
+		expect(focusedDate()).toBe('2026-12-08');
+		narrow = false;
+		listeners.forEach((fn) => fn());
+		flushSync();
+		expect(screen.getAllByRole('grid')).toHaveLength(2);
+		expect(focusedDate()).toBe('2026-12-08');
+	});
+
+	it('made disabled or read-only while open: closes, and nothing is picked', async () => {
+		const { button, rerender, onValueChange } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		expect(dialog()).not.toBeNull();
+		await rerender({ readonly: true });
+		expect(dialog()).toBeNull();
+		expect(onValueChange).not.toHaveBeenCalled();
 	});
 });

@@ -47,7 +47,7 @@
 	 * What a pick means is the parent's (`onSelect`, `onRangeSelect`): it sets
 	 * the value and closes the dialog.
 	 */
-	import { orderedRange, type CalendarRange, type Weekday } from './datetime';
+	import { isOutOfRange, orderedRange, type CalendarRange, type Weekday } from './datetime';
 	import type { UiMessages } from './messages';
 	import MonthCalendar from './MonthCalendar.svelte';
 
@@ -127,7 +127,9 @@
 			onSelect?.(date);
 			return;
 		}
-		if (anchor === null) {
+		// No start yet - or the start can no longer be an end (`min` / `max` /
+		// `isDateDisabled` changed since it was picked): this pick is the start.
+		if (anchor === null || isOutOfRange(anchor, min, max) || isDateDisabled?.(anchor)) {
 			anchor = date;
 			return;
 		}

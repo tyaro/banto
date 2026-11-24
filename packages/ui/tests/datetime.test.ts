@@ -426,6 +426,8 @@ describe('several months and a range (Issue #910)', () => {
 		expect(firstShownMonth('9999-12-31', 0, 2)).toBe(period(9999, 11));
 		expect(firstShownMonth('0001-01-01', 1, 2)).toBe(period(1, 1));
 		expect(firstShownMonth('2026-11-07', 0, 1)).toBe(period(2026, 11));
+		// An offset from two months, now one month: still the date's month.
+		expect(firstShownMonth('2026-11-07', 1, 1)).toBe(period(2026, 11));
 	});
 
 	it('shownMonthOffset keeps the shown months or scrolls just far enough', () => {

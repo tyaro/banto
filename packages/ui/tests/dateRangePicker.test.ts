@@ -37,12 +37,12 @@ function setup(props: Record<string, unknown> = {}) {
 		onHostKeydown: vi.fn(),
 		onHostPointerdown: vi.fn()
 	};
-	render(DateRangePickerHarness, { label: 'Visit', ...handlers, ...props });
+	const { rerender } = render(DateRangePickerHarness, { label: 'Visit', ...handlers, ...props });
 	const group = screen.getByRole('group', { name: 'Visit' });
 	const from = within(group).getByRole('textbox', { name: '開始日' }) as HTMLInputElement;
 	const to = within(group).getByRole('textbox', { name: '終了日' }) as HTMLInputElement;
 	const button = within(group).getByRole('button');
-	return { ...handlers, group, from, to, button };
+	return { ...handlers, group, from, to, button, rerender };
 }
 
 const dialog = () => screen.queryByRole('dialog', { name: '期間の選択' });
@@ -259,5 +259,45 @@ describe('DateRangePicker calendar (keys and edges)', () => {
 		flushSync();
 		expect(dialog()).toBeNull();
 		expect(onblur).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('DateRangePicker mixed pointer and keyboard (PR #912 review)', () => {
+	it('after a click and a hover, the arrow keys move the preview to the focused day', () => {
+		const { button, onValueChange } = setup();
+		fireEvent.click(button);
+		fireEvent.mouseEnter(cell('2026-11-10'));
+		fireEvent.click(cell('2026-11-10'));
+		flushSync();
+		// The pointer rests on the start; the keys take over.
+		key('ArrowRight');
+		key('ArrowRight');
+		expect(focusedDate()).toBe('2026-11-12');
+		expect(classed('date-picker-day--range-end')).toEqual(['2026-11-12']);
+		key('Enter');
+		expect(onValueChange).toHaveBeenLastCalledWith({ from: '2026-11-10', to: '2026-11-12' });
+	});
+
+	it('a start that the new bounds rule out is replaced by the next pick', async () => {
+		const { button, rerender, onValueChange } = setup();
+		fireEvent.click(button);
+		fireEvent.click(cell('2026-11-03'));
+		await rerender({ min: '2026-11-05' });
+		fireEvent.click(cell('2026-11-10'));
+		expect(onValueChange).not.toHaveBeenCalled();
+		expect(selected()).toEqual(['2026-11-10']);
+		fireEvent.click(cell('2026-11-12'));
+		expect(onValueChange).toHaveBeenLastCalledWith({ from: '2026-11-10', to: '2026-11-12' });
+	});
+
+	it('made disabled while open: closes without a change', async () => {
+		const { button, rerender, onValueChange } = setup({
+			value: { from: '2026-11-10', to: '2026-11-12' }
+		});
+		fireEvent.click(button);
+		fireEvent.click(cell('2026-11-14'));
+		await rerender({ disabled: true });
+		expect(dialog()).toBeNull();
+		expect(onValueChange).not.toHaveBeenCalled();
 	});
 });

@@ -26,12 +26,14 @@
 	 * Simple vs extended: `DateRangeInput` stays two `DateInput`s with a
 	 * calendar each; this one picks both ends in one calendar.
 	 */
+	import { untrack } from 'svelte';
 	import { createTextMirror, type TextMirror } from './textMirror.svelte.js';
 	import {
 		clampDate,
 		formatFullDate,
 		isBlankDateText,
 		isIsoDate,
+		isOutOfRange,
 		parseDateText,
 		resolveWeekStart,
 		todayDate
@@ -173,6 +175,13 @@
 	let anchor = $state<string | null>(null);
 	/** The box focus returns to when the dialog closes. */
 	let openedFrom: End = 'from';
+	/** The dialog element while open: the calendar scrolls a focused day into it. */
+	let panelEl: HTMLDivElement | undefined = $state();
+
+	// Made disabled / read-only while open: close (nothing can be picked any more).
+	$effect(() => {
+		if ((disabled || readonly) && open) untrack(() => dialog?.close(true));
+	});
 
 	const weekStart = $derived(resolveWeekStart(locale, weekStartsOn));
 	const buttonLabel = $derived(
@@ -196,7 +205,14 @@
 		dialog?.show(() => calendar?.focusCell());
 	}
 
+	/** Can `date` be an end under the current props (they may change while open)? */
+	function isSelectable(date: string): boolean {
+		return !isOutOfRange(date, min, max) && !isDateDisabled?.(date);
+	}
+
 	function pickRange(from: string, to: string): void {
+		// Both ends against the latest bounds (RangeCalendar checks them too).
+		if (disabled || readonly || !isSelectable(from) || !isSelectable(to)) return;
 		setText('from', from);
 		setText('to', to);
 		setRange({ from, to });
@@ -204,6 +220,7 @@
 	}
 
 	function clear(): void {
+		if (disabled || readonly) return;
 		anchor = null;
 		setText('from', '');
 		setText('to', '');
@@ -314,6 +331,7 @@
 	<PickerDialog
 		bind:this={dialog}
 		bind:open
+		bind:panel={panelEl}
 		label={t.dateRangePickerDialog()}
 		anchor={fieldEl}
 		toggle={buttonEl}
@@ -336,6 +354,7 @@
 				{locale}
 				{weekStart}
 				{t}
+				scroller={panelEl}
 				onRangeSelect={pickRange}
 			/>
 			<div class="date-picker-footer">

@@ -37,6 +37,8 @@
 		returnFocus: () => HTMLElement | undefined;
 		/** Esc's first stop: `true` when it was consumed (stay open). */
 		back?: () => boolean;
+		/** The dialog element while open (bindable, read-only): the calendar's `scroller`. */
+		panel?: HTMLDivElement;
 		children: Snippet;
 	}
 
@@ -47,16 +49,16 @@
 		toggle,
 		returnFocus,
 		back,
+		panel = $bindable(),
 		children
 	}: Props = $props();
 
-	let panelEl: HTMLDivElement | undefined = $state();
 	let coords = $state<{ top: number; left: number } | undefined>(undefined);
 	let detachTrap: (() => void) | undefined;
 
 	function reposition(): void {
-		if (!anchor || !panelEl) return;
-		coords = computeAnchoredPosition(anchor, panelEl, 'bottom-start');
+		if (!anchor || !panel) return;
+		coords = computeAnchoredPosition(anchor, panel, 'bottom-start');
 	}
 
 	/**
@@ -68,11 +70,11 @@
 		if (open) return;
 		open = true;
 		flushSync();
-		if (!panelEl) return;
-		panelEl.showPopover();
+		if (!panel) return;
+		panel.showPopover();
 		reposition();
 		flushSync();
-		detachTrap = attachFocusTrap(panelEl);
+		detachTrap = attachFocusTrap(panel);
 		focusInside();
 	}
 
@@ -85,7 +87,7 @@
 		detachTrap = undefined;
 		if (focusBack) returnFocus()?.focus({ preventScroll: true });
 		try {
-			panelEl?.hidePopover();
+			panel?.hidePopover();
 		} catch {
 			// Already hidden (removed from the top layer by the browser).
 		}
@@ -98,7 +100,7 @@
 		if (!open || event.key !== 'Escape') return;
 		// IME 変換中の Escape は変換の取消。ピッカーを閉じない。
 		if (event.isComposing || event.keyCode === 229) return;
-		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panelEl })) return;
+		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panel })) return;
 		event.preventDefault();
 		if (back?.()) return;
 		close(true);
@@ -110,17 +112,17 @@
 	}
 
 	$effect(() => {
-		const panel = panelEl;
-		if (!panel) return;
-		panel.addEventListener('keydown', handlePanelKeydown);
-		return () => panel.removeEventListener('keydown', handlePanelKeydown);
+		const el = panel;
+		if (!el) return;
+		el.addEventListener('keydown', handlePanelKeydown);
+		return () => el.removeEventListener('keydown', handlePanelKeydown);
 	});
 
 	$effect(() => {
 		if (!open) return;
 		function handleDocumentPointerDown(event: PointerEvent): void {
 			const target = event.target;
-			if (target instanceof Node && (panelEl?.contains(target) || toggle?.contains(target))) {
+			if (target instanceof Node && (panel?.contains(target) || toggle?.contains(target))) {
 				return;
 			}
 			// Park focus on the text box first: the click then moves it on from
@@ -128,13 +130,20 @@
 			close(true);
 		}
 		document.addEventListener('pointerdown', handleDocumentPointerDown, true);
-		const unwatch = watchAnchoredPopover(panelEl, {
+		const unwatch = watchAnchoredPopover(panel, {
 			reposition,
-			close: () => close(!!panelEl?.contains(document.activeElement))
+			close: () => close(!!panel?.contains(document.activeElement))
 		});
+		// The content can change size while open (two months <-> one at the
+		// narrow width, or `months` changed): measure and place it again, so
+		// it never sticks out past the viewport's edge.
+		const resize =
+			typeof ResizeObserver === 'function' && panel ? new ResizeObserver(reposition) : null;
+		if (resize && panel) resize.observe(panel);
 		return () => {
 			document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
 			unwatch();
+			resize?.disconnect();
 		};
 	});
 
@@ -146,7 +155,7 @@
 
 {#if open}
 	<div
-		bind:this={panelEl}
+		bind:this={panel}
 		popover="manual"
 		role="dialog"
 		aria-modal="true"

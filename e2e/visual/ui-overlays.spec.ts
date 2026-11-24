@@ -1093,3 +1093,27 @@ for (const combo of DIAGONAL_MATRIX) {
 		expect(preview.violations, formatViolations(preview.violations)).toEqual([]);
 	});
 }
+
+// A short viewport caps the dialog's height and it scrolls inside: the day the
+// keys move to is brought into the dialog's visible box (PR #912 review).
+test('extended calendar in a short viewport: the focused day stays inside the dialog', async ({
+	page
+}) => {
+	await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+	await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+	await page.setViewportSize({ width: 1440, height: 320 });
+	await gotoDemo(page);
+	await openFrom(page, LODGING_OPENER);
+	const dialog = page.getByRole('dialog', { name: '期間の選択' });
+	await expect(dialog).toBeVisible();
+	for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+	const focused = dialog.getByRole('gridcell', { name: '2026年12月19日土曜日' });
+	await expect(focused).toBeFocused();
+	const box = await dialog.boundingBox();
+	const cellBox = await focused.boundingBox();
+	expect(box && cellBox).toBeTruthy();
+	if (box && cellBox) {
+		expect(cellBox.y).toBeGreaterThanOrEqual(box.y - 1);
+		expect(cellBox.y + cellBox.height).toBeLessThanOrEqual(box.y + box.height + 1);
+	}
+});

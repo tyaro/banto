@@ -9,6 +9,8 @@
 		max?: string;
 		isDateDisabled?: (date: string) => boolean;
 		months?: 1 | 2;
+		disabled?: boolean;
+		readonly?: boolean;
 		onValueChange?: (value: { from: string | null; to: string | null }) => void;
 		onTextInput?: (end: 'from' | 'to', text: string) => void;
 		onkeydown?: (event: KeyboardEvent) => void;
