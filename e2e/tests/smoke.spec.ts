@@ -1199,33 +1199,28 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto('/items');
 		await chooseItemsMode(page, SERVER_MODE);
 		const grid = page.getByRole('grid').first();
-		const countAt = async (href: string): Promise<number> => {
-			// BantoGrid shows only the header (rowcount 1) until the server's list answer
-			// arrives, which is also what an empty answer looks like: wait for the answer first.
-			await Promise.all([
-				page.waitForResponse(
-					(res) =>
-						new URL(res.url()).pathname === '/api/items/list' &&
-						res.request().method() === 'POST' &&
-						res.ok()
-				),
+		// Open the link and read the count the server answered for ITS conditions (the list request
+		// that carries filters), then wait for the grid to show exactly that: the response only
+		// says the answer arrived, the grid shows it a moment later (an empty grid and a grid that
+		// has not heard yet both read as a header row only).
+		const settled = async (href: string): Promise<number> => {
+			const filtered = href.includes('view=');
+			const [response] = await Promise.all([
+				page.waitForResponse((res) => {
+					const req = res.request();
+					if (new URL(res.url()).pathname !== '/api/items/list' || req.method() !== 'POST') {
+						return false;
+					}
+					const sent = (req.postDataJSON()?.filters ?? []) as unknown[];
+					return res.ok() && sent.length > 0 === filtered;
+				}),
 				page.goto(href)
 			]);
-			await expect(grid).toHaveAttribute('aria-rowcount', /^\d+$/);
+			const { totalCount } = (await response.json()) as { totalCount: number };
+			await expect(grid).toHaveAttribute('aria-rowcount', String(totalCount + 1));
 			// The link's own parameters are gone once applied.
 			await expect(page).toHaveURL(/\/items$/);
-			return Number(await grid.getAttribute('aria-rowcount')) - 1;
-		};
-		// The count settles after the server answered: wait for it to stop changing.
-		const settled = async (href: string): Promise<number> => {
-			let last = -1;
-			await expect(async () => {
-				const now = await countAt(href);
-				const same = now === last;
-				last = now;
-				expect(same).toBe(true);
-			}).toPass();
-			return last;
+			return totalCount;
 		};
 
 		// Counts before and after this test puts its own boundary rows (stock 1, price 99 / 100 /
