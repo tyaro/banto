@@ -230,11 +230,11 @@ describe('EditController', () => {
 		});
 
 		it('reads the save callback at commit time, not at construction', async () => {
-			let save: ((edit: CellEdit<Row>) => void) | undefined;
-			const { rows, edit } = setup({ save: () => save });
+			const current: { save?: (edit: CellEdit<Row>) => void } = {};
+			const { rows, edit } = setup({ save: () => current.save });
 			const later = vi.fn();
 			edit.start(nameColumn, rows[0]);
-			save = later;
+			current.save = later;
 			await edit.commitValue(nameColumn, rows[0], 'Apricot');
 			expect(later).toHaveBeenCalledTimes(1);
 		});
