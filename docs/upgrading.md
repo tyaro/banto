@@ -696,7 +696,7 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   決めて、試す。
 - **自作の模擬サーバー・デモ（`/api/ui-settings`・`/api/auth/status` を返すもの）**: `/api/ui-settings/{key}` は
   `{ value, revision }` を返し、`PUT` は `{ value, ifRevision? }` を受けて `200 { revision }` を返す（C4・C5 の項）。
-  `/api/auth/status` は `{ grants }` だけで、`initialized` は返さない。`/api/auth/setup` の模擬は消してよい。
+  `/api/auth/status` は `initialized` を返さない。標準は `grants` で、派生アプリ固有の項目は `AuthStatusExtras` で同じ JSON に展開される（模擬から削るのは `initialized` だけで、固有の項目は残す）。`/api/auth/setup` の模擬は消してよい。
 - **`dock.layout` を自分で代入している・配置の木を自分で歩いている所**: 代入は、浮かせた pane の「元の場所」の規則が変わる
   （上の #782 PR7 の項）。木を歩いて「画面に出ているか」を調べているだけなら `dock.isOnScreen(id)`（`dock.panels[].onScreen`、#792）に
   置き換えられる。「操作できるか」「前面のタブか」の判定は別なので、置き換えない。
@@ -707,20 +707,24 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
   ストアの外の試験から時計を差せなくなる（クレート内の試験のみ）。下流（banto-industrial・temp-scada）に使用なし。
 - **items の新規作成の `file` 欄（F2、B。#714）**: `ResourceDetail` の `file` 欄は、`uploadWhile`（セッションの確認つきの送信、
   `lib/resource/sessionUpload.ts`）を持つ添付のクライアントだけが送る。テンプレートの `lib/banto/attachmentsClient.ts` は持つ。
-  自前の `AttachmentsClient` を渡している派生アプリは `uploadWhile` を足す（無いと送らずにエラーにする。送信の途中でログアウトや
+  自前の `AttachmentsClient` を渡している派生アプリは `uploadWhile` を足す。ガードの位置も条件で、ファイルを読み終えたあと、
+  資格情報を取って送信を始める同じ同期の区間（間に `await` を挟まない）で `guard.canSend()` を確かめ、`false` なら送らない。
+  読む前の確認だけでは途中のログアウトを拾えない。始まった送信を取り消す機能ではない（実装は `lib/resource/sessionUpload.ts`）。
+  無いと送らずにエラーにする（送信の途中でログアウトや
   別ユーザーへの切り替えがあっても、古いセッションの資格では送らないための確認）。取り込まないなら不要。
 
 **足した口で置き換えられる回り道（D2・D4。どれも足すだけ・既定は今までどおり）**。下流の自前の包みを置き換えるときの目安。
 
-- **`BantoGrid` の `columns` の差し替え（#890）**: 後から差し替えても作り直さずに反映し、列幅・並び順・並べ替え・絞り込み・
-  固定・非表示・グループ化・セルの選択・スクロールを保つ。`GridState` に `setColumns`・`columns`・`conditionsRevision` が
-  増えた。`columns` が変わるたびに `{#key gridEditMode}` で作り直していた所（Hub）は、`{#key}` を外せる。
+- **`BantoGrid` の `columns` の差し替え（#890）**: 後から差し替えても作り直さずに反映し、残る列の列幅・並び順・並べ替え・絞り込み・
+  固定・非表示・グループ化・スクロールを保つ。全部を保つわけではない: 消えた列の条件は外れ、セルの選択は同じ行に引き継げるときだけ残る
+  （引き継げなければ外れ、行順が変われば矩形の選択は 1 つのセルに縮む）。`GridState` に `setColumns`・`columns`・`conditionsRevision` が
+  増えた。`columns` が変わるたびに `{#key gridEditMode}` で作り直していた所（Hub）は、`{#key}` を外せる（外すときは、編集の途中と列の追加・削除を確かめる）。
 - **座標で開く文脈メニュー `Menu` の `openAt({ x, y }, { returnFocus? })`（#889）**: `trigger` を省いたメニューを、
   `BantoTree.onContextMenu`・`BantoGrid.onRowContextMenu` の座標のまま開く。位置の補正・キーボード・層の判定は共通で、
   閉じるとフォーカスは開いた元へ戻る（`returnFocus` に要素を渡すと戻り先を変えられる）。自前でメニューの位置・外側クリック・Escape を組んでいた所
   （Hub の `TreeContextMenu`、temp-scada の `ContextActions`）を置き換えられる。
 - **`ThreePaneDock` の `sideWidthUnit="px"`（#892）**: 部品の幅が変わっても中央以外の区画が px のまま、中央が伸び縮みする。
-  保存形式（`version: 4`）は変わらない。幅を自分で測って直していた所（temp-scada の `keepDesignerPaneWidths`）を置き換えられる。
+  保存形式（`version: 4`）は変わらない。中央は 320px を保ち、足りなければ左右が縮む。保存した比率から再読み込みしたときに同じ px になることは保証しない。幅を自分で測って直していた所（temp-scada の `keepDesignerPaneWidths`）を置き換えられる。
 - **`BantoTree` の `rowActions`・`expansion` / `onExpandedChange`・`canDrop` / `onDropTargetChange`（#821）**: 行末のボタン、
   展開を外から決める（`undefined` に戻すと木の持つ展開に戻る）、ドロップの可否を聞く。木をラップして自前で足していた所の置き換え先。
 - **日付のピッカー**: 見出しの「年」「月」から 12 か月・12 年の格子へ切り替えて選べる（#908、`DateInput`・`DateTimeInput`・
