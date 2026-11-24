@@ -93,6 +93,9 @@ describe('DraftNumberField', () => {
 		await fireEvent.keyDown(control, { key: 'Enter', isComposing: true });
 		expect(draft.values.qty).toBe(1);
 		expect(onCommit).not.toHaveBeenCalled();
+		await fireEvent.keyDown(control, { key: 'Enter', keyCode: 229 });
+		expect(draft.values.qty).toBe(1);
+		expect(onCommit).not.toHaveBeenCalled();
 		await fireEvent.keyDown(control, { key: 'Enter' });
 		expect(draft.values.qty).toBe(7);
 		expect(onCommit).toHaveBeenCalledExactlyOnceWith(true);

@@ -189,6 +189,22 @@ describe('ReferenceField: combobox', () => {
 		expect(screen.queryByRole('listbox')).toBeNull();
 	});
 
+	it('Esc with keyCode 229 (IME confirmation) leaves the list open', async () => {
+		renderField({ value: 2 });
+		await settled();
+		await type('井');
+		const event = new KeyboardEvent('keydown', {
+			key: 'Escape',
+			keyCode: 229,
+			bubbles: true,
+			cancelable: true
+		});
+		box().dispatchEvent(event);
+		flushSync();
+		expect(event.defaultPrevented).toBe(false);
+		expect(screen.queryByRole('listbox')).not.toBeNull();
+	});
+
 	it('Esc closes the list and keeps the text; a second Esc puts the name back', async () => {
 		const { onInput } = renderField({ value: 2 });
 		await settled();
