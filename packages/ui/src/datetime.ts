@@ -397,29 +397,51 @@ export function formatMonthName(
 
 /**
  * The day view's heading split into its year and month (each becomes a
- * button), in the locale's order: "2026年" + "11月" (ja), "November" + " " +
- * "2026" (en). `separator` is what the locale puts between them, so the two
- * pieces still read as `formatMonthYear`.
+ * button), cut from the same combined format as `formatMonthYear`, so
+ * `first + separator + second` is exactly that string in every locale:
+ * "2026年" + "" + "11月" (ja), "November" + " " + "2026" (en), "noviembre" +
+ * " de " + "2026" (es), "2026년" + " " + "11월" (ko).
+ *
+ * The literal between the two fields is split at its first whitespace: the
+ * characters before it stay with the first field ("年", "년" - its unit),
+ * the rest is the `separator` (" ", " de "). Literals before the first
+ * field / after the second stay with that field ("月" after "11").
  */
 export function monthYearParts(
 	date: string,
 	locale: string
 ): { yearFirst: boolean; year: string; month: string; separator: string } {
 	const { year, month } = requireDate(date);
-	const yearText = formatYear(year, locale);
-	const monthText = formatMonthName(month, locale);
 	const parts = formatter(locale, { year: 'numeric', month: 'long' }).formatToParts(
 		utcDate({ year, month, day: 1 })
 	);
-	const yearFirst =
-		parts.findIndex((p) => p.type === 'year') < parts.findIndex((p) => p.type === 'month');
-	const [first, second] = yearFirst ? [yearText, monthText] : [monthText, yearText];
-	const whole = formatMonthYear(date, locale);
+	const yearAt = parts.findIndex((p) => p.type === 'year');
+	const monthAt = parts.findIndex((p) => p.type === 'month');
+	if (yearAt < 0 || monthAt < 0) {
+		// Not expected from Intl; keep the heading readable.
+		return {
+			yearFirst: true,
+			year: formatYear(year, locale),
+			month: formatMonthName(month, locale),
+			separator: ' '
+		};
+	}
+	const [i1, i2] = yearAt < monthAt ? [yearAt, monthAt] : [monthAt, yearAt];
+	const join = (from: number, to: number) =>
+		parts
+			.slice(from, to)
+			.map((p) => p.value)
+			.join('');
+	const middle = join(i1 + 1, i2);
+	const unit = /^\S*/.exec(middle)?.[0] ?? '';
+	const first = join(0, i1 + 1) + unit;
+	const second = join(i2, parts.length);
+	const yearFirst = yearAt < monthAt;
 	return {
 		yearFirst,
-		year: yearText,
-		month: monthText,
-		separator: whole === first + second ? '' : ' '
+		year: yearFirst ? first : second,
+		month: yearFirst ? second : first,
+		separator: middle.slice(unit.length)
 	};
 }
 

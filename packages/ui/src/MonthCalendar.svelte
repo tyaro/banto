@@ -17,11 +17,12 @@
 	 * - Month and year views (Issue #908): the heading's year and month are
 	 *   buttons. The month button shows the year's 12 months, the year button
 	 *   12 years (`CalendarPeriodView`); picking a year shows its months,
-	 *   picking a month shows its days (moving `focusDate` there). Escape in
-	 *   the month / year view goes back one view (year -> month -> day) and is
-	 *   consumed (`defaultPrevented`), so the dialog stays open; in the day
-	 *   view it is left to the parent (closes the dialog, as before). The view
-	 *   is not kept: the dialog opens on the day view.
+	 *   picking a month shows its days (moving `focusDate` there). Esc is the
+	 *   parent's one path (`closeOnEscape`, with its IME / consumed-key /
+	 *   layer checks): it first calls `back()`, which in the month / year view
+	 *   goes back one view (year -> month -> day) so the dialog stays open, and
+	 *   in the day view closes as before - wherever focus is in the dialog.
+	 *   The view is not kept: the dialog opens on the day view.
 	 * - A view switch removes the focused element (a heading button, a cell),
 	 *   so focus is parked on this component's wrapper first: it never drops
 	 *   to <body>, which the parent would read as "focus left" and close.
@@ -183,10 +184,15 @@
 	 * first: the element that has it (a heading button, a cell) is removed
 	 * with the old view, and a focus drop to <body> would close the dialog.
 	 */
-	function showView(next: 'day' | 'month' | 'year'): void {
-		if (rootEl?.contains(document.activeElement)) rootEl.focus({ preventScroll: true });
+	function showView(next: 'day' | 'month' | 'year', { focus = true } = {}): void {
+		if (rootEl?.contains(document.activeElement)) {
+			rootEl.focus({ preventScroll: true });
+			// Focus was in the calendar: it follows to the new view's cell.
+			focus = true;
+		}
 		view = next;
 		flushSync();
+		if (!focus) return;
 		if (next === 'day') focusCell();
 		else periodView?.focusCell();
 	}
@@ -216,21 +222,19 @@
 		showView('day');
 	}
 
-	// Escape goes back one view; in the day view it is the parent's (closes).
-	function handleRootKey(event: KeyboardEvent): void {
-		if (event.key !== 'Escape' || view === 'day') return;
-		// IME 変換中の Escape は変換の取消。表示を戻さない（#907 と同じ判定）。
-		if (event.isComposing || event.keyCode === 229) return;
-		event.preventDefault();
-		showView(view === 'year' ? 'month' : 'day');
+	/**
+	 * Esc's first stop (the parent's one Esc path calls it before closing,
+	 * wherever focus is in the dialog - a cell, the footer, DateTimeInput's
+	 * time list): in the month / year view go back one view and return
+	 * `true` (the parent consumes the key and stays open); in the day view
+	 * return `false` (the parent closes). Focus moves to the new view's cell
+	 * only when it was in the calendar; from the footer / time list it stays.
+	 */
+	export function back(): boolean {
+		if (view === 'day') return false;
+		showView(view === 'year' ? 'month' : 'day', { focus: false });
+		return true;
 	}
-
-	$effect(() => {
-		const root = rootEl;
-		if (!root) return;
-		root.addEventListener('keydown', handleRootKey);
-		return () => root.removeEventListener('keydown', handleRootKey);
-	});
 
 	function handleGridKey(event: KeyboardEvent): void {
 		// IME 変換中のキーは変換のもの。日を動かさない（#907 と同じ判定）。

@@ -103,6 +103,40 @@ describe('month / year periods (Issue #908)', () => {
 			month: 'November',
 			separator: ' '
 		});
+		// The locale's own separator is kept ("noviembre de 2026", not "noviembre 2026").
+		expect(monthYearParts('2026-11-07', 'es-ES')).toEqual({
+			yearFirst: false,
+			year: '2026',
+			month: 'noviembre',
+			separator: ' de '
+		});
+	});
+
+	it('the split heading joins back to formatMonthYear in every locale', () => {
+		for (const locale of [
+			'ja-JP',
+			'en-US',
+			'es-ES',
+			'de-DE',
+			'fr-FR',
+			'zh-CN',
+			'ko-KR',
+			'pt-BR',
+			'ru-RU',
+			'fi-FI'
+		]) {
+			for (const date of ['2026-01-15', '2026-11-07', '0005-06-01']) {
+				const p = monthYearParts(date, locale);
+				const [first, second] = p.yearFirst ? [p.year, p.month] : [p.month, p.year];
+				// Spaces compared as one kind: V8's ICU sometimes gives ru's " г." a
+				// narrow no-break space in one call and a plain one in another.
+				const spaces = (s: string) => s.replace(/\s/g, ' ');
+				expect(spaces(first + p.separator + second), `${locale} ${date}`).toBe(
+					spaces(formatMonthYear(date, locale))
+				);
+				expect(p.year.length > 0 && p.month.length > 0).toBe(true);
+			}
+		}
 	});
 });
 

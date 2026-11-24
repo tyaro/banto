@@ -771,6 +771,24 @@ describe('DateInput month and year views (Issue #908)', () => {
 		expect(onHostKeydown).not.toHaveBeenCalled();
 	});
 
+	it('Esc from the footer also goes back one view; focus stays on the footer', () => {
+		const { button } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
+		const today = screen.getByRole('button', { name: '今日' });
+		today.focus();
+		fireEvent.keyDown(today, { key: 'Escape', isComposing: true });
+		expect(headingText()).toBe('2020年～2031年');
+		fireEvent.keyDown(today, { key: 'Escape' });
+		expect(headingText()).toBe('2026年');
+		expect(document.activeElement).toBe(today);
+		fireEvent.keyDown(today, { key: 'Escape' });
+		expect(headingText()).toBe('2026年11月');
+		expect(isOpen()).toBe(true);
+		fireEvent.keyDown(today, { key: 'Escape' });
+		expect(isOpen()).toBe(false);
+	});
+
 	it('months / years outside [min, max] are aria-disabled and cannot be reached', () => {
 		const { button } = setup({ value: '2026-03-20', min: '2026-03-15', max: '2027-02-10' });
 		fireEvent.click(button);

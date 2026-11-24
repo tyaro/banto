@@ -216,6 +216,25 @@ describe('DateTimeInput dialog', () => {
 		expect(onValueChange).not.toHaveBeenCalled();
 	});
 
+	it('Esc from the time list goes back one view first (year -> month -> day -> closed)', () => {
+		const { button } = setup({ value: '2026-11-07T09:30' });
+		fireEvent.click(button);
+		fireEvent.click(screen.getByRole('button', { name: '2026年' }));
+		const heading = () => screen.getByRole('heading').textContent?.replace(/\s+/g, '');
+		expect(heading()).toBe('2020年～2031年');
+		list().focus();
+		fireEvent.keyDown(list(), { key: 'Escape', keyCode: 229 });
+		expect(heading()).toBe('2020年～2031年');
+		fireEvent.keyDown(list(), { key: 'Escape' });
+		expect(heading()).toBe('2026年');
+		expect(document.activeElement).toBe(list());
+		fireEvent.keyDown(list(), { key: 'Escape' });
+		expect(heading()).toBe('2026年11月');
+		expect(isOpen()).toBe(true);
+		fireEvent.keyDown(list(), { key: 'Escape' });
+		expect(isOpen()).toBe(false);
+	});
+
 	it('opens on the value: the day focused and marked, its time active in the list', () => {
 		const { button } = setup({ value: '2026-11-07T09:30' });
 		fireEvent.click(button);
