@@ -86,8 +86,9 @@ export function createDashboardData(options: DashboardDataOptions = {}): Dashboa
 	// are not computed twice).
 	const rows = $derived(narrowRows(list.rows, options.filter?.() ?? DEFAULT_DASHBOARD_FILTER));
 	const stats = $derived(rows === list.rows ? allStats : computeStatTiles(rows));
-	// Not while a read is in flight: the count and the rows are replaced one after the other.
-	const truncated = $derived(!list.loading && rowsTruncated(list.totalCount, list.rows.length));
+	// Also while a read is in flight: the rows and the count shown stay the previous ones until the
+	// answer is in, so the warning for them stays too.
+	const truncated = $derived(rowsTruncated(list.totalCount, list.rows.length));
 	const all: DashboardData = {
 		get rows() {
 			return list.rows;

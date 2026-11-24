@@ -14,12 +14,19 @@
 	import { DASHBOARD_ROW_LIMIT, type DashboardPageData } from '#lib/banto/dashboardData.svelte.js';
 	import { drillHref } from '#lib/banto/dashboardDrill.js';
 	import { DASHBOARD_KPIS, type DashboardKpiDef } from '#lib/banto/dashboardKpis.js';
-	import { latestDay, type DashboardFilter } from '#lib/banto/dashboardPeriod.js';
+	import {
+		DEFAULT_DASHBOARD_PERIOD,
+		latestDay,
+		type DashboardFilter
+	} from '#lib/banto/dashboardPeriod.js';
 	import * as m from '#lib/paraglide/messages.js';
 
 	/** `filter` is the page's period: a tile that opens the list carries it (#882 D3). */
 	let { data, filter }: { data: DashboardPageData; filter: DashboardFilter } = $props();
 	const anchorDay = $derived(latestDay(data.all.rows));
+	// A period is chosen but there is no row to count it from yet (the first read): the link would
+	// open the list for every period, so it waits.
+	const waiting = $derived(filter.period !== DEFAULT_DASHBOARD_PERIOD && anchorDay === null);
 	const truncatedNote = $derived(
 		data.truncated
 			? m['dashboard.truncatedNote']({ limit: DASHBOARD_ROW_LIMIT.toLocaleString() })
@@ -49,7 +56,8 @@
 		{#if kpi.link}
 			<a
 				class="stat-tile stat-link"
-				href={drillHref(kpi.link.drill, filter, anchorDay)}
+				href={waiting ? undefined : drillHref(kpi.link.drill, filter, anchorDay)}
+				aria-disabled={waiting ? 'true' : undefined}
 				title={truncatedNote
 					? `${kpi.link.title}
 ${truncatedNote}`
