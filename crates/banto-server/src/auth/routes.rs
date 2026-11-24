@@ -68,6 +68,10 @@ pub(crate) fn bearer_token(req: &Request) -> Option<&str> {
 /// or without a reader). A handler takes them with
 /// `Extension<SessionPermissions>`; a store failure fails the request.
 ///
+/// Issue #935: a handler behind this middleware can also take a
+/// [`crate::sse::SseContext`] to open its own SSE stream; the stream's
+/// re-checks run against the `AuthState` given to this middleware.
+///
 /// ADR-0034 section 6: the authorization is serialized with the auth mode
 /// to its end ([`AuthState::authenticate_with_permissions`]: the mode's
 /// generation is compared once more after the account lookup AND the
@@ -89,6 +93,12 @@ pub async fn require_auth(State(auth): State<AuthState>, mut req: Request, next:
             req.extensions_mut().insert(auth.audit_actor(&session));
             req.extensions_mut().insert(session);
             req.extensions_mut().insert(permissions);
+            // Issue #935: bind an app stream opened behind this middleware
+            // to THIS state (the one that just authorized the request), so
+            // its re-checks cannot be pointed at another one. Inserted
+            // together with the session, never without it.
+            req.extensions_mut()
+                .insert(crate::sse::SseAuthBinding::new(auth.clone()));
             next.run(req).await
         }
         Ok(None) => unauthorized_response(),

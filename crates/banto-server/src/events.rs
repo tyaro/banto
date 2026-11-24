@@ -10,124 +10,32 @@
 //!
 //! ## Re-checking an open stream (Issue #231, ADR-0014)
 //!
-//! [`require_auth`] validates the session when the stream opens. A stream
-//! then stays open for as long as the tab does, so every stream also
-//! re-runs the session check (`AuthState::revalidate`, i.e.
-//! [`AuthState::authenticate`] without sliding the idle window) every
-//! [`REVALIDATE_INTERVAL`] - the keepalive's interval - and ends when the
-//! session is no longer valid (account deleted, role/password changed or
-//! reset, token logged out or expired). Revocation therefore reaches an open
-//! stream within one interval (plus one check), in any process sharing the
-//! account store.
-//!
-//! - One deadline per stream, owned by the stream itself (no spawned task,
-//!   no second timer): when the client disconnects, axum drops the stream,
-//!   and the deadline and any re-check in flight are dropped with it.
-//! - A due re-check runs before further events are taken, exactly once; the
-//!   next deadline is set one interval after that check FINISHED. However
-//!   long checks take, events get a whole interval between two checks - the
-//!   checks can never starve the delivery (review of #234).
-//! - A check is abandoned after [`REVALIDATE_TIMEOUT`] (shorter than the
-//!   interval). A timeout counts as "could not check", like a store failure
-//!   (`Err`): neither ends the stream (#230: a session that cannot be
-//!   checked is kept); the next deadline checks again. The abandoned lookup
-//!   future is dropped, and since `authenticate` only changes the session
-//!   after its lookup returns, an abandoned check never changes it later.
-//! - A session re-bound while its check was in flight (its own password
-//!   change) is judged on its current binding, exactly as for a request
-//!   ([`AuthState::authenticate`]'s `settle_lookup`).
-//! - Public viewer sessions and `SessionValidation::DisabledNoRevocation`
-//!   never look anything up, so the re-check is an in-memory token check:
-//!   those streams end only when the token itself does.
+//! This module is only the `/api/events` route and [`ServerEvent`]. The
+//! stream itself - the session re-check every [`REVALIDATE_INTERVAL`], its
+//! [`REVALIDATE_TIMEOUT`], "a store failure keeps the stream" (#230), the
+//! stop signal (#283) and the stream count (#558) - is the one loop of
+//! [`crate::sse`] (Issue #935), which a derived app's own streams run on
+//! too. The rules are written in that module's doc; `/api/events` is a
+//! stream without an authorization condition, counted as one client.
 
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Extension, Request};
+use axum::extract::Extension;
 use axum::middleware;
-use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use serde::Serialize;
 use tokio::sync::broadcast;
-use tokio::time::Instant;
 
-use crate::auth::{bearer_token, require_auth, unauthorized_response, AuthState};
-use crate::server::{ShutdownSignal, SseConnectionGuard, SseConnections};
-
-/// Interval of the SSE keepalive comment.
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
-
-/// Interval of an open stream's session re-check (Issue #231): the
-/// keepalive's, so a revoked session loses its stream within one keepalive
-/// period. Measured from the end of the previous check. Costs one indexed
-/// account read per open account stream per interval (none for public
-/// viewer / no-revocation sessions).
-pub const REVALIDATE_INTERVAL: Duration = KEEPALIVE_INTERVAL;
-
-/// How long one re-check may take before it is abandoned as "could not
-/// check" (the session is kept). Shorter than [`REVALIDATE_INTERVAL`], so a
-/// store that stops answering cannot hold the stream inside one check.
-pub const REVALIDATE_TIMEOUT: Duration = Duration::from_secs(5);
-
-const _: () = assert!(REVALIDATE_TIMEOUT.as_nanos() < REVALIDATE_INTERVAL.as_nanos());
-
-/// When one stream's re-checks are due.
-enum Schedule {
-    /// Production: due `period` after the stream opened (the open itself
-    /// was just checked by [`require_auth`]), then `period` after the END of
-    /// each check ([`Schedule::rearm`]).
-    Every { period: Duration, next: Instant },
-    /// Tests: due whenever the test sends a tick; ends when it drops the
-    /// sender.
-    #[cfg(test)]
-    Manual(tokio::sync::mpsc::UnboundedReceiver<()>),
-}
-
-impl Schedule {
-    fn every(period: Duration) -> Self {
-        Self::Every {
-            period,
-            next: Instant::now() + period,
-        }
-    }
-
-    /// Resolves when a re-check is due; `false` if the schedule ended.
-    /// Cancel-safe: the deadline lives in `self`, not in this future.
-    async fn due(&mut self) -> bool {
-        match self {
-            Self::Every { next, .. } => {
-                tokio::time::sleep_until(*next).await;
-                true
-            }
-            #[cfg(test)]
-            Self::Manual(ticks) => ticks.recv().await.is_some(),
-        }
-    }
-
-    /// Set the next deadline, after a check has finished.
-    fn rearm(&mut self) {
-        match self {
-            Self::Every { period, next } => *next = Instant::now() + *period,
-            #[cfg(test)]
-            Self::Manual(_) => {}
-        }
-    }
-}
-
-/// Makes the [`Schedule`] for each newly opened stream.
-type ScheduleSource = Arc<dyn Fn() -> Schedule + Send + Sync>;
-
-/// What the stream's loop does next.
-enum Step {
-    /// A re-check is due (`false`: the schedule ended).
-    Recheck(bool),
-    Deliver(Result<ServerEvent, broadcast::error::RecvError>),
-    /// The server was asked to stop (Issue #283).
-    Shutdown,
-}
+use crate::auth::{require_auth, AuthState};
+#[cfg(test)]
+use crate::server::SseConnections;
+use crate::sse::{
+    broadcast_frames, sse_response, Schedule, ScheduleSource, SseContext, SseFrame, SseTiming,
+};
+pub use crate::sse::{REVALIDATE_INTERVAL, REVALIDATE_TIMEOUT};
 
 /// The two event kinds delivered to browser clients (spec §3.5). Serializes
 /// as `{ "kind": "resource_changed", "resource": "items" }` /
@@ -166,110 +74,21 @@ pub enum ServerEvent {
     },
 }
 
-/// The state the handler needs to re-check its stream's session.
-#[derive(Clone)]
-struct Revalidation {
-    auth: AuthState,
-    schedule: ScheduleSource,
-    timeout: Duration,
-}
-
-/// The event stream of one connection: broadcast events, ended when the
-/// session behind `token` stops being valid (see the module doc).
-///
-/// `counted` (Issue #558) is owned by the stream: it is dropped - and the
-/// stream uncounted - when the stream ends or is dropped unfinished.
-fn event_stream(
-    auth: AuthState,
-    token: String,
-    mut rx: broadcast::Receiver<ServerEvent>,
-    mut schedule: Schedule,
-    timeout: Duration,
-    mut shutdown: Option<ShutdownSignal>,
-    counted: Option<SseConnectionGuard>,
-) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
-    async_stream::stream! {
-        // Moved into the stream's state, so it lives exactly as long as it.
-        let _counted = counted;
-        loop {
-            // Both branches are cancel-safe (an event not taken stays in the
-            // receiver; the deadline stays in `schedule`). `biased`: a due
-            // re-check runs before further events are taken - once, since
-            // `rearm` then puts the next one a whole interval away.
-            let step = tokio::select! {
-                biased;
-                // Server stop (Issue #283): a separate lifecycle from the
-                // session re-check - without it graceful shutdown waits for
-                // this stream forever.
-                () = async {
-                    match shutdown.as_mut() {
-                        Some(signal) => signal.triggered().await,
-                        None => std::future::pending().await,
-                    }
-                } => Step::Shutdown,
-                due = schedule.due() => Step::Recheck(due),
-                received = rx.recv() => Step::Deliver(received),
-            };
-            match step {
-                Step::Shutdown => break,
-                Step::Recheck(true) => {
-                    let verdict = tokio::time::timeout(timeout, auth.revalidate(&token)).await;
-                    schedule.rearm();
-                    // Revoked, logged out or expired: end the stream. Valid,
-                    // or the store could not answer (`Err`) or not in time
-                    // (the lookup is dropped): keep the stream (#230) and
-                    // check again next time.
-                    if let Ok(Ok(None)) = verdict {
-                        break;
-                    }
-                }
-                // Never keep streaming without the re-check.
-                Step::Recheck(false) => break,
-                Step::Deliver(Ok(event)) => {
-                    if let Ok(json) = serde_json::to_string(&event) {
-                        yield Ok(Event::default().data(json));
-                    }
-                }
-                // A slow client fell behind the broadcast buffer: skip the
-                // gap rather than closing the connection.
-                Step::Deliver(Err(broadcast::error::RecvError::Lagged(_))) => continue,
-                // Sender dropped (server shutting down): end the stream.
-                Step::Deliver(Err(broadcast::error::RecvError::Closed)) => break,
-            }
-        }
-    }
-}
-
 async fn sse_handler(
     Extension(tx): Extension<broadcast::Sender<ServerEvent>>,
-    Extension(revalidation): Extension<Revalidation>,
-    shutdown: Option<Extension<ShutdownSignal>>,
-    connections: Option<Extension<SseConnections>>,
-    req: Request,
+    context: SseContext,
 ) -> Response {
-    // Always present behind `require_auth`, which just validated it.
-    let Some(token) = bearer_token(&req).map(str::to_owned) else {
-        return unauthorized_response();
-    };
-    let stream = event_stream(
-        revalidation.auth,
-        token,
-        tx.subscribe(),
-        (revalidation.schedule)(),
-        revalidation.timeout,
-        shutdown.map(|Extension(signal)| signal),
-        connections.map(|Extension(connections)| connections.open()),
-    );
-    Sse::new(stream)
-        .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL))
-        .into_response()
+    // One receiver per stream, subscribed as the stream opens. The wire
+    // shape is unchanged: no `event:` name, `data: {JSON}`.
+    let frames = broadcast_frames(tx.subscribe(), |event| SseFrame::json(event).ok());
+    sse_response(context.counted_as_client(), frames)
 }
 
 /// Build the `GET /api/events` SSE endpoint (spec §11.3), auth-required.
 /// Each subscriber gets its own broadcast receiver, so one slow reader
 /// cannot block delivery to the others. An open stream re-checks its
 /// session every [`REVALIDATE_INTERVAL`] and ends once it is revoked
-/// (Issue #231, see the module doc).
+/// (Issue #231, see [`crate::sse`]'s module doc).
 pub fn sse_route(auth: AuthState, tx: broadcast::Sender<ServerEvent>) -> Router {
     sse_route_with(
         auth,
@@ -279,7 +98,9 @@ pub fn sse_route(auth: AuthState, tx: broadcast::Sender<ServerEvent>) -> Router 
     )
 }
 
-fn sse_route_with(
+/// [`sse_route`] with the schedule and timeout given (the seam of this
+/// crate's tests; production always goes through `sse_route`).
+pub(crate) fn sse_route_with(
     auth: AuthState,
     tx: broadcast::Sender<ServerEvent>,
     schedule: ScheduleSource,
@@ -288,11 +109,7 @@ fn sse_route_with(
     Router::new()
         .route("/api/events", get(sse_handler))
         .layer(Extension(tx))
-        .layer(Extension(Revalidation {
-            auth: auth.clone(),
-            schedule,
-            timeout,
-        }))
+        .layer(Extension(SseTiming { schedule, timeout }))
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
 

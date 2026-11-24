@@ -1,7 +1,7 @@
-# アプリ独自の SSE の配信と読み口 設計書（草案） — Issue #935・#936
+# アプリ独自の SSE の配信と読み口 設計書 — Issue #935・#936
 
 作成日: 2026-11-25
-状態: **草案（オーナーの判断待ち。§10 の 1〜10）。実装はまだ無い。承認の後に S1 → S2 → S3 の順で別 PR にする**
+状態: **§10 の 1〜16 は推奨どおりで決定（2026-11-25、オーナー）。S1（server の土台、#935）は実装済み。S2（admin-core の読み口、#936）→ S3（レシピ）は別 PR**
 トラック: 保守者向け（トラックA）
 関連: Issue #935（server の配信の部品）、Issue #936（admin-core の読み口）、
 #231 / [ADR-0014](../adr/0014-account-bound-session-revocation.md)（開いた配信の確かめ直し）、#239（`AuthState::revalidate` の公開）、
@@ -10,6 +10,33 @@ conventions §3 / §4 / §5 / §6 / §12 / §13
 
 この文書の `path` と型の名前は、2026-11-25 の main（`dc73f4c0`）で開いて確かめた。
 **新しく足す型・関数・ファイルの名前は見込み**で、各 PR で決める（決めた形はこの文書へ書き戻す）。
+server 側（§4）の名前は S1 で決まった（下の「S1 で決まった形」）。S2・S3 の分は見込みのまま。
+
+### S1 で決まった形（設計とのずれと、未確定だった点）
+
+- 公開したもの（`banto_server::sse`、`lib.rs` から再輸出）は §4.3 のとおり: `SseContext`（`counted_as_client`・
+  `require_permission`・`reauthorize_with`）、`SseFrame`（`json`・`text`・`event`）、`InvalidSseEventName`、
+  `sse_response`、`watch_frames`、`broadcast_frames`。`REVALIDATE_INTERVAL`・`REVALIDATE_TIMEOUT` は `sse` へ移し、
+  `events::` の今の path からも再輸出する。
+- **結びつけの型は `sse::SseAuthBinding`**（`pub(crate)`。`require_auth` がセッション・権限と並べて入れる）。
+- **`SseContext` の拒否の本文は `ApiError` の形**: `require_auth` の外は 500 `{ "kind": "other", … }`、
+  条件を満たさない開き方は 403 `{ "kind": "forbidden" }`（`PermissionGuard` の 403 と同じ本文）、token なしは 401。
+  `require_auth` の入れるセッション・権限だけが要求にあっても、結びつけが無ければ 500。
+- **`watch_frames` の `T` に `Clone` は要らない**（`Send + Sync + 'static` だけ。値は借りて `encode` に渡す）。
+- **`SseFrame::event` は `impl Into<String>` のまま**（`&'static str` には絞らない。設備ごとの名前など、実行時に決まる名前を断らない）。
+  同じフレームに 2 度呼ぶと後の名前が勝つ。
+- **`SseFrame::text` は改行を 1 種類に揃える**（CRLF・CR を LF にしてから載せる。axum は CR と LF のそれぞれで
+  `data:` 行を切るので、CRLF をそのまま渡すと読み口では改行 2 つになる）。設計の「複数の `data:` 行になる」の中身を決めた。
+- **権限の読み直しは `AuthState::revalidate_with_permissions`**（`pub(crate)`。`authenticate_with_permissions` と同じ
+  1 つの関数を、idle を延ばさない指定で呼ぶ。認証モードの世代の照合（ADR-0034 §6）も同じに掛かる）。
+- **grant のセッション**: 権限は「持たない」（要求と同じ読み方）なので、`require_permission` を付けた配信は 403 で開かない。
+  条件の無い配信は今までどおり token だけで確かめ直す。
+- **試験の継ぎ目**: 間隔と時間切れは `pub(crate)` の `SseTiming` を `Extension` で渡したときだけ変わる（crate の外からは
+  作れないので、アプリの配信は必ず定数）。そのため `tests/sse_stream.rs`（crate の外）の確かめ直しを待つ試験は、
+  本物の 15 秒を待つ（並べて走るので全体で 20 秒ほど）。手動の期限で細かく見る分は `src/sse/tests.rs`。
+- **設計から足したもの**: `events::sse_route_with` を `pub(crate)` にした（`/api/events` の経路でも「確かめ直し中の停止」を
+  `sse` の試験から見るため。名前・引数・意味は同じ）。`SseContext` に `Debug`（token は出さない）。
+- **入れなかったもの**: `verify-architecture` での `require_permission` の付け忘れの検査（§9。S3 までに確かめる、のまま）。
 
 ## 1. 用語
 
@@ -635,6 +662,8 @@ server とフロントは別々に移せる（線の上の形は変わらない�
   1 件も落とせない知らせは `broadcast_frames`（それでも `Lagged` は飛ばす）で、つなぎ直しの後は読み直す。レシピに書く。
 
 ## 10. 確かめたい点（オーナーの判断）
+
+**決定（2026-11-25、オーナー）: 1〜16 のすべてを「推奨」の列のとおりにする。** 下の表は判断の記録として残す。
 
 | # | 決めること | 推奨 |
 | --- | --- | --- |

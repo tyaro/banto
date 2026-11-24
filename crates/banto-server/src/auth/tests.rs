@@ -2330,3 +2330,60 @@ async fn a_grant_session_is_reported_across_a_switch_during_its_permissions_read
     switch_away_and_back(&auth);
     assert!(!identity_kind(&router, &token).await.is_null());
 }
+
+#[tokio::test]
+async fn revalidate_with_permissions_reads_the_permissions_without_sliding_the_idle_window() {
+    // Issue #935: the re-check of a stream with an authorization condition
+    // is `authenticate_with_permissions` in everything but the idle window.
+    use banto_admin_services::permissions::PermissionKey;
+    let held = PermissionKey::parse("plant.view").expect("a well-formed key");
+    let store = FakeStore::default();
+    store.put("alice", "admin", 1, 0);
+    let reader_key = held.clone();
+    let auth = store
+        .auth()
+        .with_permission_reader(move |_account_id: i64| {
+            let key = reader_key.clone();
+            Box::pin(async move { Ok(SessionPermissions::new([key].into_iter().collect())) })
+        });
+    let rechecked = login_token(&auth, "alice", false).await;
+    let used = login_token(&auth, "alice", false).await;
+
+    auth.advance(Duration::from_secs(50 * 60));
+    let (session, permissions) = auth
+        .revalidate_with_permissions(&rechecked)
+        .await
+        .unwrap()
+        .expect("valid");
+    assert_eq!(session.identity.id, "alice");
+    assert!(permissions.has(&held), "the permissions as read right now");
+    assert!(auth
+        .authenticate_with_permissions(&used)
+        .await
+        .unwrap()
+        .is_some());
+
+    auth.advance(Duration::from_secs(20 * 60));
+    assert!(
+        auth.revalidate_with_permissions(&rechecked)
+            .await
+            .unwrap()
+            .is_none(),
+        "70 min since the last request: idle-expired despite the re-check"
+    );
+    assert!(
+        auth.revalidate_with_permissions(&used)
+            .await
+            .unwrap()
+            .is_some(),
+        "a request slid the other one's window"
+    );
+
+    // The auth mode ends it like any authorization (ADR-0034 section 6).
+    auth.switch_auth_mode(AuthMode::NoLogin);
+    assert!(auth
+        .revalidate_with_permissions(&used)
+        .await
+        .unwrap()
+        .is_none());
+}

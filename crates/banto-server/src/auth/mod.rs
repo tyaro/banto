@@ -143,7 +143,7 @@ pub use policy::{
     MAX_IN_FLIGHT_PER_IP,
 };
 pub use routes::{auth_routes, require_auth, LOGIN_DISABLED_MESSAGE};
-pub(crate) use routes::{bearer_token, unauthorized_response, MaybePeerAddr};
+pub(crate) use routes::{unauthorized_response, MaybePeerAddr};
 pub use session::{
     AuthenticatedSession, CredentialVerifier, Identity, PermissionReader, SessionAccount,
     SessionLookup, SessionPermissions, SessionStamp, SessionValidation,

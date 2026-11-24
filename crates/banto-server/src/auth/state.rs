@@ -585,8 +585,33 @@ impl AuthState {
         &self,
         token: &str,
     ) -> Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError> {
+        self.authorize_with(token, IdleWindow::Slide).await
+    }
+
+    /// [`AuthState::authenticate_with_permissions`] for a check the client
+    /// did not ask for: the re-check of an open stream that carries an
+    /// authorization condition ([`crate::sse::SseContext::require_permission`],
+    /// Issue #935). The same ONE authorization - session, then permissions,
+    /// then the mode generation compared once more - but, like
+    /// [`AuthState::revalidate`], it does not slide the token's idle window.
+    /// That is the only difference.
+    pub(crate) async fn revalidate_with_permissions(
+        &self,
+        token: &str,
+    ) -> Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError> {
+        self.authorize_with(token, IdleWindow::Keep).await
+    }
+
+    /// The one implementation behind
+    /// [`AuthState::authenticate_with_permissions`] and
+    /// [`AuthState::revalidate_with_permissions`].
+    async fn authorize_with(
+        &self,
+        token: &str,
+        idle: IdleWindow,
+    ) -> Result<Option<(AuthenticatedSession, SessionPermissions)>, BantoError> {
         let entered = self.mode_generation();
-        let Some(session) = self.authenticate(token).await? else {
+        let Some(session) = self.authenticate_with(token, idle).await? else {
             return Ok(None);
         };
         let permissions = self.session_permissions(&session).await?;
