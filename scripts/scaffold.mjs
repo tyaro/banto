@@ -1528,6 +1528,7 @@ function removeItems() {
 	removeDir(`${APP}/src/routes/(app)/items`, 'items ルート一式削除');
 	removeFile(`${APP}/src/lib/banto/itemsAdmin.ts`, 'itemsAdmin.ts 削除');
 	removeFile(`${APP}/src/lib/banto/resources/items.ts`, 'resources/items.ts 削除');
+	removeFile(`${APP}/src/lib/banto/resources/items.test.ts`, 'resources/items.test.ts 削除');
 	removeFile(`${APP}/src/lib/banto/sampleData.ts`, 'sampleData.ts 削除');
 	// dashboard.ts は丸ごと items 集計（ファイル冒頭の D1-d メモ参照）。charts/dock
 	// remover が先に `@banto/charts` 参照を外しているので、ここで消して問題ない。

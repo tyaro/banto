@@ -13,7 +13,7 @@
  */
 import type { GanttTask } from '@banto/charts';
 import type { Item } from './sampleData';
-import { LOW_STOCK_THRESHOLD } from './resources/items';
+import { LOW_STOCK_THRESHOLD, PRICE_BANDS, priceBandIndex } from './resources/items';
 
 export interface StatTiles {
 	count: number;
@@ -118,18 +118,11 @@ export interface PriceBucket {
 	count: number;
 }
 
-const PRICE_BUCKET_LABELS = ['〜¥99', '¥100〜149', '¥150〜199', '¥200〜'] as const;
-
-/** 〜¥99 / ¥100〜149 / ¥150〜199 / ¥200〜 item counts. */
+/** 〜¥99 / ¥100〜149 / ¥150〜199 / ¥200〜 item counts (the cut points: `PRICE_BANDS`). */
 export function priceBuckets(items: Item[]): PriceBucket[] {
-	const counts = [0, 0, 0, 0];
-	for (const item of items) {
-		if (item.price <= 99) counts[0]++;
-		else if (item.price <= 149) counts[1]++;
-		else if (item.price <= 199) counts[2]++;
-		else counts[3]++;
-	}
-	return PRICE_BUCKET_LABELS.map((bucket, i) => ({ bucket, count: counts[i] }));
+	const counts = PRICE_BANDS.map(() => 0);
+	for (const item of items) counts[priceBandIndex(item.price)]++;
+	return PRICE_BANDS.map((band, i) => ({ bucket: band.label, count: counts[i]! }));
 }
 
 export interface MonthCount {

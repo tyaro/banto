@@ -116,8 +116,10 @@
 	async function remove(index: number) {
 		const field = chips[index]?.field;
 		if (field === undefined) return;
-		const remaining = chips.length - 1;
 		gridState.removeFilter(field);
+		// Counted after the removal: a field may carry two conditions (a range written as
+		// `gte` + `lt`, #882), and removing the chip removes both.
+		const remaining = gridState.filters.length;
 		onchange?.();
 		if (remaining === 0) {
 			onEmpty?.();
@@ -137,7 +139,7 @@
 
 {#if chips.length > 0}
 	<div class="filter-chips" role="group" aria-label={t.filterChipsLabel()} bind:this={rootEl}>
-		{#each chips as chip, index (chip.field)}
+		{#each chips as chip, index (`${chip.field}:${index}`)}
 			<span class="chip">
 				<span class="text">
 					<span class="header">{chip.header}</span>

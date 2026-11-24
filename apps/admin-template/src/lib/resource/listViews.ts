@@ -83,6 +83,103 @@ export function presetViewContent(view: ResourceListView): ListViewContent {
 	};
 }
 
+/** The URL prefix of a view argument (`?view=<id>&arg.<name>=<value>`, #882). */
+export const VIEW_ARG_PREFIX = 'arg.';
+/** A view argument's name. */
+export const VIEW_ARG_NAME = /^[a-z][A-Za-z0-9]*$/;
+/** A longer argument value is not accepted (same bound as the audit log query's values). */
+const VIEW_ARG_VALUE_MAX = 200;
+
+/** Is this a name a definition may declare as a view argument? */
+export function isViewArgName(name: string): boolean {
+	return VIEW_ARG_NAME.test(name);
+}
+
+/** The value trimmed, or `null` when it is empty, too long or has control characters. */
+export function cleanViewArgValue(raw: string): string | null {
+	const value = raw.trim();
+	// eslint-disable-next-line no-control-regex
+	if (value === '' || value.length > VIEW_ARG_VALUE_MAX || /[\u0000-\u001f\u007f]/.test(value)) {
+		return null;
+	}
+	return value;
+}
+
+/** Does the view have an argument the link must carry? (Such a view is not in the menu.) */
+export function hasRequiredViewArg(view: ResourceListView): boolean {
+	return Object.values(view.args ?? {}).includes('required');
+}
+
+/** The definition views the "Views" menu lists (those without a required argument). */
+export function menuViews(views: readonly ResourceListView[]): ResourceListView[] {
+	return views.filter((view) => !hasRequiredViewArg(view));
+}
+
+/** The query names a view link uses (`view`, `arg.*`): what applying the link removes. */
+export function viewLinkParamNames(params: Pick<URLSearchParams, 'keys'>): string[] {
+	return [...new Set([...params.keys()])].filter(
+		(key) => key === 'view' || key.startsWith(VIEW_ARG_PREFIX)
+	);
+}
+
+/**
+ * What opening a definition view from a URL applies (#882).
+ *  - `content`: the view's conditions, with the URL's arguments worked in;
+ *  - `strict`: the link carried arguments, so every condition must fit the grid
+ *    shown ({@link viewFitsFields}); nothing may be dropped silently.
+ * `null`: the link's narrowing cannot be applied (a missing required argument, a
+ * repeated one, an empty / invalid value, an `arg.*` name the view does not declare,
+ * `filtersFor` said `null`). The caller then
+ * applies nothing and says so; it never falls back to the plain view.
+ * A view without arguments in the URL (an optional-only view, or one that declares
+ * none) applies as it always did.
+ */
+export function presetViewFromUrl(
+	view: ResourceListView,
+	params: Pick<URLSearchParams, 'getAll' | 'keys'>
+): { content: ListViewContent; strict: boolean } | null {
+	const declared = Object.entries(view.args ?? {});
+	// A name this view does not declare (a typo such as `arg.afetr`) means the link asks for
+	// something we cannot honour: refuse it whole rather than drop the condition silently.
+	for (const key of params.keys()) {
+		if (key.startsWith(VIEW_ARG_PREFIX) && !declared.some(([n]) => VIEW_ARG_PREFIX + n === key)) {
+			return null;
+		}
+	}
+	const anyPresent = declared.some(
+		([argName]) => params.getAll(VIEW_ARG_PREFIX + argName).length > 0
+	);
+	if (!anyPresent && !hasRequiredViewArg(view)) {
+		return { content: presetViewContent(view), strict: false };
+	}
+	const args: Record<string, string> = {};
+	for (const [argName, need] of declared) {
+		const all = params.getAll(VIEW_ARG_PREFIX + argName);
+		if (all.length > 1) return null;
+		const only = all[0];
+		if (only === undefined) {
+			if (need === 'required') return null;
+			continue;
+		}
+		const value = cleanViewArgValue(only);
+		if (value === null) return null;
+		args[argName] = value;
+	}
+	const extra = view.filtersFor ? view.filtersFor(args) : [];
+	if (extra === null) return null;
+	const base = presetViewContent(view);
+	return { content: { ...base, filters: [...base.filters, ...extra] }, strict: true };
+}
+
+/** Does every sort / filter entry of `content` have a column in a grid with these fields? */
+export function viewFitsFields(content: ListViewContent, fields: readonly string[]): boolean {
+	const known = new Set(fields);
+	return (
+		content.sort.every((entry) => known.has(entry.field)) &&
+		content.filters.every((entry) => known.has(entry.field))
+	);
+}
+
 /** The ids of the columns a definition pins to the left (`pinned: 'left'`, #713). */
 export function definitionPinned(
 	columns: readonly { id: string; pinned?: string | undefined }[]

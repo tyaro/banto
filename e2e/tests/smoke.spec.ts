@@ -1189,6 +1189,137 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 	});
 
+	// #882 D1: links with view arguments against the REAL server (ColumnMap allow-list, the
+	// `between` / `gte` / `lt` conditions in SQL). The data is whatever the earlier scenarios left,
+	// so the checks are invariants: the four price bands partition the list (cut points included),
+	// and `after` excludes its own day (a day-by-day count falls at the day the item was updated).
+	test('3d4. items: view links with arguments count the right rows on the real server', async () => {
+		// Two snapshots of ten links each, every link counted twice (to see it settle).
+		test.setTimeout(180_000);
+		await page.goto('/items');
+		await chooseItemsMode(page, SERVER_MODE);
+		const grid = page.getByRole('grid').first();
+		// Open the link and read the count the server answered for ITS conditions (the list request
+		// that carries filters), then wait for the grid to show exactly that: the response only
+		// says the answer arrived, the grid shows it a moment later (an empty grid and a grid that
+		// has not heard yet both read as a header row only).
+		const settled = async (href: string): Promise<number> => {
+			const filtered = href.includes('view=');
+			const [response] = await Promise.all([
+				page.waitForResponse((res) => {
+					const req = res.request();
+					if (new URL(res.url()).pathname !== '/api/items/list' || req.method() !== 'POST') {
+						return false;
+					}
+					const sent = (req.postDataJSON()?.filters ?? []) as unknown[];
+					return res.ok() && sent.length > 0 === filtered;
+				}),
+				page.goto(href)
+			]);
+			const { totalCount } = (await response.json()) as { totalCount: number };
+			await expect(grid).toHaveAttribute('aria-rowcount', String(totalCount + 1));
+			// The link's own parameters are gone once applied.
+			await expect(page).toHaveURL(/\/items$/);
+			return totalCount;
+		};
+
+		// Counts before and after this test puts its own boundary rows (stock 1, price 99 / 100 /
+		// 149 / 150 / 199 / 200), so the checks do not depend on what the seed holds.
+		const dayOf = (offset: number) =>
+			new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+		const days = [-2, -1, 0, 1].map(dayOf);
+		const snapshot = async () => ({
+			bands: [
+				await settled('/items?view=price-band&arg.band=0-99'),
+				await settled('/items?view=price-band&arg.band=100-149'),
+				await settled('/items?view=price-band&arg.band=150-199'),
+				await settled('/items?view=price-band&arg.band=200-')
+			],
+			lowStock: await settled('/items?view=low-stock'),
+			after: [
+				await settled(`/items?view=low-stock&arg.after=${days[0]}`),
+				await settled(`/items?view=low-stock&arg.after=${days[1]}`),
+				await settled(`/items?view=low-stock&arg.after=${days[2]}`),
+				await settled(`/items?view=low-stock&arg.after=${days[3]}`)
+			]
+		});
+		const before = await snapshot();
+		expect(await settled('/items?view=low-stock&arg.after=2000-01-01')).toBe(before.lowStock);
+		expect(await settled('/items?view=low-stock&arg.after=2999-12-31')).toBe(0);
+
+		await page.goto('/items');
+		const ids: number[] = await page.evaluate(
+			async (prices) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				const made: number[] = [];
+				for (const price of prices) {
+					const res = await fetch('/api/items', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							'X-Banto-Client': 'banto',
+							Authorization: `Bearer ${token}`
+						},
+						body: JSON.stringify({ name: `E2E境界${price}`, price, stock: 1 })
+					});
+					if (!res.ok) throw new Error(`create failed: ${res.status}`);
+					made.push(((await res.json()) as { id: number }).id);
+				}
+				return made;
+			},
+			[99, 100, 149, 150, 199, 200]
+		);
+		try {
+			const now = await snapshot();
+			expect(now.bands.reduce((x, y) => x + y, 0) - before.bands.reduce((x, y) => x + y, 0)).toBe(
+				6
+			);
+			// 99 | 100, 149 | 150, 199 | 200: each side of every cut point lands in its own band.
+			expect(now.bands.map((n, i) => n - before.bands[i]!)).toEqual([1, 2, 2, 1]);
+			expect(now.lowStock - before.lowStock).toBe(6);
+			// `after` leaves out its own day: the rows are stamped on one day S (today by the
+			// server's clock, UTC or local), counted for after = S - 1 and not for after = S.
+			const delta = now.after.map((n, i) => n - before.after[i]!);
+			expect(delta[3]).toBe(0);
+			expect(delta).toContain(6);
+			const firstZero = delta.indexOf(0);
+			expect(delta.slice(0, firstZero).every((n) => n === 6)).toBe(true);
+		} finally {
+			await page.evaluate(async (all) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				for (const id of all) {
+					await fetch(`/api/items/${id}`, {
+						method: 'DELETE',
+						headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+					});
+				}
+			}, ids);
+		}
+
+		// A link that cannot be applied changes nothing.
+		await page.goto('/items?view=low-stock');
+		await expect.poll(() => grid.getAttribute('aria-rowcount')).toBe(String(before.lowStock + 1));
+		await page.evaluate(() => {
+			const a = document.createElement('a');
+			a.href = '/items?view=price-band';
+			a.id = 'e2e-view-link';
+			a.textContent = 'e2e link';
+			document.body.appendChild(a);
+		});
+		await page.locator('#e2e-view-link').click();
+		await expect(page.getByText('このリンクの絞り込みを適用できません').first()).toBeVisible();
+		expect(await grid.getAttribute('aria-rowcount')).toBe(String(before.lowStock + 1));
+
+		// Cleanup: the applied view lives on in this session's list state.
+		await page.evaluate(() => {
+			for (const key of Object.keys(sessionStorage)) {
+				if (key.startsWith('banto.listView.items:')) sessionStorage.removeItem(key);
+			}
+		});
+	});
+
 	// Issue #215/#255 review (fix 3): the CLIENT grid filters/shows rows
 	// through `toItemRow()` (adds the synthetic `category` field), not the
 	// raw `Item`. The exclusion check must run the SAME derivation, or a

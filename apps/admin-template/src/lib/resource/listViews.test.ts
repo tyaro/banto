@@ -2,7 +2,15 @@ import { GridState, type GridColumn } from '@banto/grid-svelte';
 import { describe, expect, it } from 'vitest';
 import {
 	SAVED_VIEW_LIMIT,
+	VIEW_ARG_PREFIX,
 	canSaveListViews,
+	cleanViewArgValue,
+	hasRequiredViewArg,
+	isViewArgName,
+	menuViews,
+	presetViewFromUrl,
+	viewFitsFields,
+	viewLinkParamNames,
 	definitionPinned,
 	newSavedViewId,
 	parseSavedViews,
@@ -15,6 +23,7 @@ import {
 	viewForFields,
 	type SavedListView
 } from './listViews';
+import type { ResourceListView } from './types';
 
 const lowStock = {
 	sort: [{ field: 'stock', direction: 'asc' as const }],
@@ -295,5 +304,87 @@ describe('newSavedViewId', () => {
 			() => 1
 		);
 		expect(id).toBe(`my-1${(0.25).toString(36).slice(2, 8)}`);
+	});
+});
+
+describe('view arguments (#882)', () => {
+	const view = (extra: Partial<ResourceListView> = {}): ResourceListView => ({
+		id: 'v',
+		label: () => 'v',
+		filters: [{ field: 'stock', op: 'lt', value: 50 }],
+		args: { band: 'required', after: 'optional' },
+		filtersFor: (args) =>
+			args.band === 'bad'
+				? null
+				: [
+						{ field: 'price', op: 'eq', value: args.band },
+						...(args.after ? [{ field: 'updatedAt', op: 'gt' as const, value: args.after }] : [])
+					],
+		...extra
+	});
+	const q = (text: string) => new URLSearchParams(text);
+
+	it('names: the prefix and the shape', () => {
+		expect(VIEW_ARG_PREFIX).toBe('arg.');
+		for (const ok of ['band', 'after', 'a1B']) expect(isViewArgName(ok)).toBe(true);
+		for (const bad of ['', 'Band', '1a', 'a-b', 'a.b', 'a_b'])
+			expect(isViewArgName(bad)).toBe(false);
+	});
+
+	it('values: trimmed; empty, long or control characters are refused', () => {
+		expect(cleanViewArgValue('  x ')).toBe('x');
+		expect(cleanViewArgValue('   ')).toBeNull();
+		expect(cleanViewArgValue('a'.repeat(201))).toBeNull();
+		expect(cleanViewArgValue('a'.repeat(200))).not.toBeNull();
+		expect(cleanViewArgValue('a\nb')).toBeNull();
+		expect(cleanViewArgValue('a\u007fb')).toBeNull();
+	});
+
+	it('reads the declared names and adds the conditions after the fixed ones', () => {
+		const result = presetViewFromUrl(view(), q('view=v&arg.band=1&arg.after=d'))!;
+		expect(result.strict).toBe(true);
+		expect(result.content.filters.map((f) => f.field)).toEqual(['stock', 'price', 'updatedAt']);
+	});
+
+	it('cannot be applied: missing required (also a bare ?view=), repeated, empty, invalid, null', () => {
+		expect(presetViewFromUrl(view(), q('view=v'))).toBeNull();
+		expect(presetViewFromUrl(view(), q('arg.after=d'))).toBeNull();
+		expect(presetViewFromUrl(view(), q('arg.band=1&arg.band=2'))).toBeNull();
+		expect(presetViewFromUrl(view(), q('arg.band='))).toBeNull();
+		expect(presetViewFromUrl(view(), q('arg.band=1&arg.after=%0A'))).toBeNull();
+		expect(presetViewFromUrl(view(), q('arg.band=bad'))).toBeNull();
+	});
+
+	it('an optional-only view without arguments applies as a plain view', () => {
+		const plain = view({ args: { after: 'optional' } });
+		expect(presetViewFromUrl(plain, q('view=v'))).toEqual({
+			content: presetViewContent(plain),
+			strict: false
+		});
+		// `arg.*` names the view does not declare are refused (a typo must not widen the link).
+		expect(presetViewFromUrl(plain, q('arg.band=1'))).toBeNull();
+		expect(presetViewFromUrl(plain, q('arg.afetr=2026-06-02'))).toBeNull();
+		expect(presetViewFromUrl(plain, q('arg.after=d&arg.afetr=d'))).toBeNull();
+		// Not `arg.*` at all: untouched.
+		expect(presetViewFromUrl(plain, q('argx=1&id=3'))?.strict).toBe(false);
+	});
+
+	it('the menu leaves out views with a required argument', () => {
+		const optionalOnly = view({ id: 'o', args: { after: 'optional' } });
+		expect(hasRequiredViewArg(view())).toBe(true);
+		expect(menuViews([view(), optionalOnly]).map((v) => v.id)).toEqual(['o']);
+	});
+
+	it('a column the grid lacks: not a fit', () => {
+		const content = presetViewFromUrl(view(), q('arg.band=1'))!.content;
+		expect(viewFitsFields(content, ['stock', 'price'])).toBe(true);
+		expect(viewFitsFields(content, ['stock'])).toBe(false);
+		const sorted = { sort: [{ field: 'x', direction: 'asc' as const }], filters: [], search: '' };
+		expect(viewFitsFields(sorted, [])).toBe(false);
+	});
+
+	it('applying a link removes only view and arg.*', () => {
+		const names = viewLinkParamNames(q('id=7&view=v&arg.band=1&arg.band=2&q=z&argx=1'));
+		expect(names.sort()).toEqual(['arg.band', 'view']);
 	});
 });

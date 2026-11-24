@@ -165,6 +165,10 @@
 		newSavedViewId,
 		parseSavedViews,
 		presetViewContent,
+		presetViewFromUrl,
+		menuViews,
+		viewFitsFields,
+		viewLinkParamNames,
 		removeSavedView,
 		sameViewContent,
 		savedViewsKey,
@@ -614,7 +618,9 @@
 	// before the load answered would overwrite the views stored meanwhile.
 	let savedViewsLoad: 'idle' | 'loading' | 'ready' | 'failed' = $state('idle');
 	const savedViews = $derived(canSaveViews ? (savedViewsSetting?.saved ?? []) : []);
-	const hasViewsMenu = $derived(presetViews.length > 0 || canSaveViews);
+	// A view with a required argument (#882) is opened by a link only.
+	const menuPresetViews = menuViews(presetViews);
+	const hasViewsMenu = $derived(menuPresetViews.length > 0 || canSaveViews);
 
 	/** A `?view=` id that names a saved view, waiting for the saved views to load. */
 	let pendingViewId: string | null = null;
@@ -634,7 +640,7 @@
 		savedViewsLoad = result === 'failed' ? 'failed' : 'ready';
 		const pending = pendingViewId;
 		pendingViewId = null;
-		if (pending) resolveViewRequest(pending, true);
+		if (pending) resolveViewRequest(pending, true, new URLSearchParams());
 	}
 
 	function setGridView(state: GridState<ResourceRow>, content: ListViewContent): void {
@@ -645,14 +651,16 @@
 	}
 
 	/** Apply a view to both grids and the search box. `refetch`: the server grid already exists. */
-	function applyView(content: ListViewContent, refetch: boolean): void {
+	function applyView(content: ListViewContent, refetch: boolean, strict = false): void {
 		// A newer choice supersedes a `?view=` still waiting for the saved
 		// views to load: it must not land over this one afterwards.
 		pendingViewId = null;
-		if (hasClient) {
+		// `strict` (a link with arguments, #882): a grid that lacks a column the
+		// conditions use is left as it is, never given a narrower view.
+		if (hasClient && (!strict || viewFitsFields(content, clientFieldIds))) {
 			setGridView(clientGridState, viewForFields(content, clientFieldIds, clientDefaultPinned));
 		}
-		if (hasServer) {
+		if (hasServer && (!strict || viewFitsFields(content, serverFieldIds))) {
 			setGridView(serverGridState, viewForFields(content, serverFieldIds, serverDefaultPinned));
 		}
 		clearTimeout(searchTimer);
@@ -662,10 +670,21 @@
 	}
 
 	/** `?view=<id>`: a definition view, else a saved one (once loaded), else a notice. */
-	function resolveViewRequest(id: string, refetch: boolean): void {
+	function resolveViewRequest(
+		id: string,
+		refetch: boolean,
+		params: Pick<URLSearchParams, 'getAll' | 'keys'>
+	): void {
 		const preset = presetViews.find((view) => view.id === id);
 		if (preset) {
-			applyView(presetViewContent(preset), refetch);
+			// #882: a link with arguments is applied whole or not at all.
+			const request = presetViewFromUrl(preset, params);
+			const fields = mode === 'client' ? clientFieldIds : serverFieldIds;
+			if (!request || (request.strict && !viewFitsFields(request.content, fields))) {
+				notify('info', m['resource.viewLinkNotApplicable']());
+				return;
+			}
+			applyView(request.content, refetch, request.strict);
 			return;
 		}
 		if (canSaveViews && (savedViewsLoad === 'idle' || savedViewsLoad === 'loading')) {
@@ -683,16 +702,17 @@
 	// to the same list while it is open) and removes the parameter.
 	const initialUrl = page.url;
 	const initialViewId = initialUrl.searchParams.get('view');
-	if (initialViewId) resolveViewRequest(initialViewId, false);
+	if (initialViewId) resolveViewRequest(initialViewId, false, initialUrl.searchParams);
 
 	$effect(() => {
 		const url = page.url;
 		const id = url.searchParams.get('view');
 		if (id === null) return;
 		untrack(() => {
-			if (url !== initialUrl) resolveViewRequest(id, true);
+			if (url !== initialUrl) resolveViewRequest(id, true, url.searchParams);
 			const next = new URL(url.href);
-			next.searchParams.delete('view');
+			// Only the view link's own names (`view`, `arg.*`): `id` and the rest stay.
+			for (const key of viewLinkParamNames(next.searchParams)) next.searchParams.delete(key);
 			try {
 				replaceState(next, page.state);
 			} catch {
@@ -1471,9 +1491,9 @@
 							{m['resource.savedViewsMenu']()}
 						</button>
 					{/snippet}
-					{#if presetViews.length > 0}
+					{#if menuPresetViews.length > 0}
 						<MenuGroup label={m['resource.viewsPreset']()}>
-							{#each presetViews as view (view.id)}
+							{#each menuPresetViews as view (view.id)}
 								<MenuItem
 									label={view.label()}
 									checked={isShownView(presetViewContent(view))}
@@ -1494,7 +1514,7 @@
 						</MenuGroup>
 					{/if}
 					{#if canSaveViews}
-						{#if presetViews.length > 0 || savedViews.length > 0}
+						{#if menuPresetViews.length > 0 || savedViews.length > 0}
 							<MenuSeparator />
 						{/if}
 						<MenuItem
