@@ -233,3 +233,39 @@ describe('autoExpandNewRoots', () => {
 		expect(lazy1?.getAttribute('aria-expanded')).toBe('false');
 	});
 });
+
+describe('rename input IME composition', () => {
+	async function openRename(onRename = vi.fn()) {
+		render(BantoTree, { nodes: forest(), editable: true, onRename });
+		await fireEvent.dblClick(screen.getByText('Bravo'));
+		const input = screen.getByRole('textbox') as HTMLInputElement;
+		await fireEvent.input(input, { target: { value: 'Charlie' } });
+		return { input, onRename };
+	}
+
+	it('ignores Enter and Escape while composing (isComposing)', async () => {
+		const { input, onRename } = await openRename();
+		await fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+		await fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+		expect(onRename).not.toHaveBeenCalled();
+		expect(screen.getByRole('textbox')).toBeTruthy();
+	});
+
+	it('ignores Enter while keyCode is 229', async () => {
+		const { input, onRename } = await openRename();
+		await fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+		expect(onRename).not.toHaveBeenCalled();
+		expect(screen.getByRole('textbox')).toBeTruthy();
+	});
+
+	it('still commits on a plain Enter and cancels on a plain Escape', async () => {
+		const first = await openRename();
+		await fireEvent.keyDown(first.input, { key: 'Enter' });
+		expect(first.onRename).toHaveBeenCalledWith('b', 'Charlie');
+		cleanup();
+		const second = await openRename();
+		await fireEvent.keyDown(second.input, { key: 'Escape' });
+		expect(second.onRename).not.toHaveBeenCalled();
+		expect(screen.queryByRole('textbox')).toBeNull();
+	});
+});
