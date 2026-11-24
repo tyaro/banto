@@ -417,59 +417,24 @@
 	function actionsOf(target: EventTarget | null): HTMLElement | null {
 		return target instanceof Element ? target.closest<HTMLElement>('[data-tree-actions]') : null;
 	}
-	// The tree never writes to the host's controls (no `tabindex` rewriting): the tab order
-	// is kept at the keyboard instead. Tab / Shift+Tab inside the tree go to the next / previous
-	// tabbable of the page, skipping everything in the tree but the row that holds the tab stop
-	// and its own controls; a Tab from outside that lands on another row's control is sent to
-	// that row.
+	// The tree never writes to the host's controls (no `tabindex` rewriting), and it does not
+	// recompute the page's Tab order either: a Tab / Shift+Tab inside the tree is the browser's
+	// own, run while the other rows' control boxes (the tree's own spans) are `inert` - so it
+	// stops only at the tab-stop row and its controls and leaves the tree like any Tab would
+	// (disabled fieldsets, positive `tabindex`, the page's edge are the browser's business).
+	// A Tab from outside that lands on another row's control is sent to the tab-stop row.
 	const TABBABLE =
 		'a[href], area[href], button, input:not([type="hidden"]), select, textarea, summary, iframe, audio[controls], video[controls], [tabindex], [contenteditable]:not([contenteditable="false"])';
-	function tabOrderOf(el: HTMLElement): number {
-		// `contenteditable` without a `tabindex` is a Tab stop in browsers (jsdom says -1)
-		if (el.getAttribute('tabindex') === null && el.matches('[contenteditable]')) return 0;
-		return el.tabIndex;
-	}
 	function isTabbable(el: HTMLElement): boolean {
-		if (tabOrderOf(el) < 0) return false;
+		const order =
+			el.getAttribute('tabindex') === null && el.matches('[contenteditable]') ? 0 : el.tabIndex;
+		if (order < 0) return false;
 		// `:disabled` also covers controls inside a disabled `<fieldset>`
 		if (el.matches(':disabled')) return false;
 		if (el.closest('[inert], [hidden]')) return false;
 		return typeof el.checkVisibility === 'function' ? el.checkVisibility() : true;
 	}
-	/** May Tab stop here? Outside the tree: yes. Inside: the tab-stop row and its controls only. */
-	function isAllowedStop(el: HTMLElement): boolean {
-		if (!containerEl?.contains(el)) return true;
-		const row = el.closest<HTMLElement>('[data-node-id]');
-		if (!row || tabStopId === null || row.dataset.nodeId !== String(tabStopId)) return false;
-		return el === row || actionsOf(el)?.closest('[data-node-id]') === row;
-	}
-	/**
-	 * Moves the focus to the next / previous allowed Tab stop. `false` = no such stop on the
-	 * page (the tree is at its edge): the browser's own Tab then runs, with the other rows'
-	 * controls made `inert` for that one key so it leaves the page instead of landing on them.
-	 */
-	function tabFromTree(back: boolean): boolean {
-		const active = document.activeElement;
-		const all = [...document.querySelectorAll<HTMLElement>(TABBABLE)].filter(
-			(el) => el === active || (isTabbable(el) && isAllowedStop(el))
-		);
-		const positive = all.filter((el) => el !== active && tabOrderOf(el) > 0);
-		positive.sort((a, b) => tabOrderOf(a) - tabOrderOf(b));
-		const order = [...positive, ...all.filter((el) => !positive.includes(el))];
-		const index = order.findIndex((el) => el === active);
-		if (index >= 0) {
-			const step = back ? -1 : 1;
-			for (let i = index + step; i >= 0 && i < order.length; i += step) {
-				const next = order[i]!;
-				next.focus();
-				// A stop that would not take the focus: try the one after it.
-				if (document.activeElement === next) return true;
-			}
-		}
-		shieldOtherRowsForOneKey();
-		return false;
-	}
-	/** The other rows' control boxes (the tree's own spans) are `inert` until the key is done. */
+	/** The other rows' control boxes are `inert` until this key's default action is done. */
 	function shieldOtherRowsForOneKey(): void {
 		const shielded: HTMLElement[] = [];
 		for (const box of containerEl?.querySelectorAll<HTMLElement>('[data-tree-actions]') ?? []) {
@@ -643,7 +608,7 @@
 
 	function onKeydown(event: KeyboardEvent): void {
 		if (editing) return;
-		// With trailing controls, Tab skips the other rows' controls (see `tabFromTree`).
+		// With trailing controls, the browser's Tab skips the other rows' controls (see `shieldOtherRowsForOneKey`).
 		if (
 			rowActions &&
 			event.key === 'Tab' &&
@@ -652,7 +617,7 @@
 			!event.altKey &&
 			!event.metaKey
 		) {
-			if (tabFromTree(event.shiftKey)) event.preventDefault();
+			shieldOtherRowsForOneKey();
 			return;
 		}
 		// Inside a row's trailing controls the keys belong to the control (Enter / Space press

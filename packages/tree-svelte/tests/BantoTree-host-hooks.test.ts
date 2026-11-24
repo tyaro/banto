@@ -94,103 +94,69 @@ describe('rowActions', () => {
 			new KeyboardEvent('keydown', { key: 'Tab', shiftKey: back, bubbles: true, cancelable: true })
 		);
 	}
-	const focusedName = () =>
-		(document.activeElement as HTMLElement | null)?.getAttribute('aria-label') ??
-		document.activeElement?.textContent;
+	/** Which rows' control boxes are `inert` right now (by row id). */
+	const inertRows = () =>
+		[...document.querySelectorAll<HTMLElement>('[data-tree-actions]')]
+			.filter((box) => box.hasAttribute('inert'))
+			.map((box) => box.closest('[data-node-id]')?.getAttribute('data-node-id'));
+	const nextTask = () => new Promise((r) => setTimeout(r, 0));
 
-	it('Tab stops only at the tab-stop row and its controls, then leaves the tree', async () => {
-		const { after, before } = framed({ nodes: forest(), rowActions: actions, expanded: ['a'] });
+	it("Tab is the browser's own, with the other rows' controls shut out for that key", async () => {
+		render(BantoTree, { nodes: forest(), rowActions: actions, expanded: ['a'] });
 		row('Alpha').focus();
 		keyOn(screen.getByRole('tree'), 'ArrowDown'); // Alpha-1 holds the tab stop
 		await tick();
-		expect(focusedName()).toBe('Alpha-1');
-		tab();
-		expect(focusedName()).toBe('Hide Alpha-1');
-		tab();
-		expect(focusedName()).toBe('More Alpha-1');
-		tab();
-		expect(document.activeElement).toBe(after);
-		// and back
-		after.focus();
+		expect(inertRows()).toEqual([]);
+
+		const forward = keyOn(row('Alpha-1'), 'Tab');
+		expect(forward.defaultPrevented).toBe(false); // the browser moves the focus
+		expect(inertRows()).toEqual(['a', 'a2', 'b', 'c']);
+		await nextTask();
+		expect(inertRows()).toEqual([]); // clicks work again right after the key
+
 		screen.getByTestId('more-a1').focus();
-		tab(true);
-		expect(focusedName()).toBe('Hide Alpha-1');
-		tab(true);
-		expect(focusedName()).toBe('Alpha-1');
-		tab(true);
-		expect(document.activeElement).toBe(before);
-		before.remove();
-		after.remove();
+		const backward = screen
+			.getByTestId('more-a1')
+			.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: 'Tab',
+					shiftKey: true,
+					bubbles: true,
+					cancelable: true
+				})
+			);
+		expect(backward).toBe(true);
+		expect(inertRows()).toEqual(['a', 'a2', 'b', 'c']);
+		await nextTask();
+		expect(inertRows()).toEqual([]);
 	});
 
-	it('later host changes (tabindex, href, contenteditable) never add Tab stops in the tree', async () => {
+	it('later host changes (tabindex, href, contenteditable) on other rows are shut out too', async () => {
 		const extras = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
 			render: () =>
-				`<span><button type="button" data-testid="x-${node().id}" tabindex="-1" aria-label="X ${node().label}">x</button><a data-testid="l-${node().id}" aria-label="L ${node().label}">l</a><span data-testid="e-${node().id}" aria-label="E ${node().label}">e</span></span>`
+				`<span><button type="button" data-testid="x-${node().id}" tabindex="-1">x</button><a data-testid="l-${node().id}">l</a><span data-testid="e-${node().id}">e</span></span>`
 		}));
-		const { before, after } = framed({ nodes: forest(), rowActions: extras });
+		render(BantoTree, { nodes: forest(), rowActions: extras });
 		for (const id of ['a', 'b', 'c']) {
-			screen.getByTestId(`x-${id}`).setAttribute('tabindex', '0');
+			screen.getByTestId(`x-${id}`).setAttribute('tabindex', '3');
 			screen.getByTestId(`l-${id}`).setAttribute('href', '#here');
 			screen.getByTestId(`e-${id}`).setAttribute('contenteditable', 'true');
 		}
-		await tick();
 		row('Alpha').focus();
-		const stops: unknown[] = [];
-		for (let i = 0; i < 4; i++) {
-			tab();
-			stops.push(focusedName());
-		}
-		expect(stops).toEqual(['X Alpha', 'L Alpha', 'E Alpha', 'after']);
-		expect(document.activeElement).toBe(after);
-		after.remove();
-		before.remove();
+		keyOn(row('Alpha'), 'Tab');
+		const shut = (id: string) =>
+			['x', 'l', 'e'].map((k) => screen.getByTestId(`${k}-${id}`).closest('[inert]') !== null);
+		expect(shut('a')).toEqual([false, false, false]);
+		expect(shut('b')).toEqual([true, true, true]);
+		expect(shut('c')).toEqual([true, true, true]);
+		await nextTask();
 	});
 
-	it('at the edge of the page, the browser Tab runs with the other rows shut out for that key', async () => {
-		render(BantoTree, { nodes: forest(), rowActions: actions }); // nothing tabbable after it
-		screen.getByTestId('more-a').focus();
-		const event = keyOn(screen.getByTestId('more-a'), 'Tab');
-		expect(event.defaultPrevented).toBe(false);
-		const boxes = [...document.querySelectorAll<HTMLElement>('[data-tree-actions]')];
-		expect(boxes.map((b) => b.hasAttribute('inert'))).toEqual([false, true, true]);
-		await new Promise((r) => setTimeout(r, 0));
-		expect(boxes.map((b) => b.hasAttribute('inert'))).toEqual([false, false, false]);
-
-		// Shift+Tab from the row with nothing before the tree: the same.
+	it('without rowActions a Tab is left alone (no inert anywhere)', () => {
+		render(BantoTree, { nodes: forest() });
 		row('Alpha').focus();
-		expect(
-			screen
-				.getByRole('tree')
-				.dispatchEvent(
-					new KeyboardEvent('keydown', {
-						key: 'Tab',
-						shiftKey: true,
-						bubbles: true,
-						cancelable: true
-					})
-				)
-		).toBe(true);
-		expect(boxes.map((b) => b.hasAttribute('inert'))).toEqual([false, true, true]);
-	});
-
-	it('skips a control in a disabled fieldset (it cannot take the focus)', async () => {
-		const { before, after } = framed({ nodes: forest(), rowActions: actions });
-		const fieldset = document.createElement('fieldset');
-		fieldset.disabled = true;
-		const locked = document.createElement('button');
-		locked.textContent = 'locked';
-		fieldset.append(locked);
-		after.before(fieldset);
-		screen.getByTestId('more-a').focus();
-		tab();
-		expect(document.activeElement).toBe(after);
-		// With nothing that can take the focus after it, the key is left to the browser.
-		after.remove();
-		screen.getByTestId('more-a').focus();
-		expect(keyOn(screen.getByTestId('more-a'), 'Tab').defaultPrevented).toBe(false);
-		fieldset.remove();
-		before.remove();
+		keyOn(row('Alpha'), 'Tab');
+		expect(document.querySelector('[inert]')).toBeNull();
 	});
 
 	it("never writes to the host's controls", async () => {
