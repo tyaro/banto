@@ -1369,6 +1369,35 @@ async fn autologin_enable_for_another_account_removes_the_previous_credential() 
     );
 }
 
+/// Review of #924: the previous account's credential is deleted while the
+/// auth-config lock is still held (a concurrent switch back must not have its
+/// fresh entry deleted by this call).
+#[tokio::test]
+async fn autologin_enable_deletes_the_previous_credential_under_the_lock() {
+    let state = admin_state_with_fake_keyring().await;
+    state
+        .users
+        .create_user("second", "password456", "二人目", Role::Admin)
+        .await
+        .expect("create second");
+    autologin_enable_body(&state, "manager", "password123")
+        .await
+        .expect("enable manager");
+
+    let lock_addr = &state.auth_config_lock as *const AsyncMutex<()> as usize;
+    let held = std::rc::Rc::new(std::cell::Cell::new(None));
+    let seen = held.clone();
+    keyring_store::fake::on_delete(move || {
+        // SAFETY: `state` outlives the call below, which runs the hook.
+        let lock = unsafe { &*(lock_addr as *const AsyncMutex<()>) };
+        seen.set(Some(lock.try_lock().is_err()));
+    });
+    autologin_enable_body(&state, "second", "password456")
+        .await
+        .expect("enable second");
+    assert_eq!(held.get(), Some(true), "delete must run under the lock");
+}
+
 /// [`autologin_disable_body`] records a `settings_change`/`settings` entry
 /// with an `{autologinEnabled:false}` detail (M-review 2026-08 M-5). No
 /// keyring is touched: with `autologin_username` unset the delete is

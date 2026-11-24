@@ -2283,15 +2283,17 @@ async fn autologin_enable_body(
         }
         return Err(save_err);
     }
-    drop(auth_config_guard);
     // Switching the account: the previous username's credential is no
     // longer referenced. Best-effort like `autologin_disable_body` - the
     // settings are already saved, so a failure here is logged, not an error.
+    // The lock is still held: releasing it first would let a concurrent
+    // call switch back to `previous` and have this delete its fresh entry.
     if let Some(previous) = previous.as_deref().filter(|p| *p != username) {
         if let Err(err) = keyring_store::delete_password(previous) {
             eprintln!("banto: 前の自動ログインの資格情報のキーリング削除に失敗しました: {err}");
         }
     }
+    drop(auth_config_guard);
     // Spec M14: the target `username` (never the password) is fine to
     // record - it identifies WHICH account autologin now applies to, no
     // different from `users_update`'s `role` detail.

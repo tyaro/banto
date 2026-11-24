@@ -93,6 +93,7 @@ pub(crate) mod fake {
     struct Fake {
         entries: HashMap<String, String>,
         fail_delete: bool,
+        on_delete: Option<Box<dyn Fn()>>,
     }
 
     thread_local! {
@@ -105,6 +106,11 @@ pub(crate) mod fake {
 
     pub(crate) fn fail_delete(on: bool) {
         FAKE.with(|f| f.borrow_mut().as_mut().expect("installed").fail_delete = on);
+    }
+
+    /// Runs `hook` at every delete (before it applies).
+    pub(crate) fn on_delete(hook: impl Fn() + 'static) {
+        FAKE.with(|f| f.borrow_mut().as_mut().expect("installed").on_delete = Some(Box::new(hook)));
     }
 
     pub(crate) fn stored(username: &str) -> Option<String> {
@@ -138,6 +144,9 @@ pub(crate) mod fake {
     pub(super) fn delete(username: &str) -> Option<Result<(), BantoError>> {
         FAKE.with(|f| {
             f.borrow_mut().as_mut().map(|f| {
+                if let Some(hook) = &f.on_delete {
+                    hook();
+                }
                 if f.fail_delete {
                     return Err(BantoError::Other("delete failed".to_string()));
                 }
