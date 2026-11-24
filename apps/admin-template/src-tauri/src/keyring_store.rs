@@ -40,8 +40,6 @@ fn entry(username: &str) -> Result<keyring::Entry, BantoError> {
         .map_err(|err| degrade("OSキーリングへのアクセスに失敗しました", err))
 }
 
-/// Store `password` in the OS keyring under `username`, overwriting any
-/// existing entry for that username.
 /// Whether two different usernames could address one OS keyring entry.
 /// Windows compares credential names ignoring case with its own (uppercase
 /// based) rules, others compare exactly. Both the lowercase and the uppercase
@@ -51,6 +49,8 @@ pub fn names_may_share_an_entry(a: &str, b: &str) -> bool {
     a != b && (a.to_lowercase() == b.to_lowercase() || a.to_uppercase() == b.to_uppercase())
 }
 
+/// Store `password` in the OS keyring under `username`, overwriting any
+/// existing entry for that username.
 pub fn set_password(username: &str, password: &str) -> Result<(), BantoError> {
     #[cfg(test)]
     if let Some(result) = fake::set(username, password) {
