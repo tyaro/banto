@@ -52,9 +52,8 @@ pub use grant::{
     GrantSpec, DEFAULT_GRANT_MAX_SESSIONS, PUBLIC_VIEWER_ID,
 };
 pub use reach_check::{
-    reach_check_router, CheckOutcome, LastIssue, ReachCheckClock, ReachCheckResult,
-    ReachCheckState, ReachCheckStatus, ReachIssue, ReachIssueError, ReachOutcome, ReachRecord,
-    ReachTarget, SystemReachCheckClock,
+    reach_check_router, CheckOutcome, LastIssue, ReachCheckResult, ReachCheckState,
+    ReachCheckStatus, ReachIssue, ReachIssueError, ReachOutcome, ReachRecord, ReachTarget,
 };
 pub use response::ApiError;
 pub use routes::AuthStatusExtras;
