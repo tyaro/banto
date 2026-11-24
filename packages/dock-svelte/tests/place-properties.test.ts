@@ -165,14 +165,154 @@ describe('hidden panes come back at their default place, in any order (#782 PR5 
 		);
 	});
 
-	it('pinned: row[a .2, b .3, c .5], a then b hidden: +b +a is .2 / .3 / .5, +a +b is .2 / .3 / .5 of what each held', () => {
+	// #939: the shares say more than "last hidden, first shown" (`shareAmongHidden`).
+	// One split, 2 to 4 of its panes hidden one after the other, shown in every order: the sizes
+	// too. (Panes of nested splits hidden until a split is gone are not covered: the share a pane
+	// keeps is of the split it was in when it was hidden.)
+	it('panes of one split hidden, shown in every order: the tree as it was, sizes too (#939)', () => {
+		const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+		const rowCase = fc.integer({ min: 3, max: 6 }).chain((n) =>
+			fc.record({
+				weights: fc.array(fc.integer({ min: 1, max: 20 }), { minLength: n, maxLength: n }),
+				order: fc.shuffledSubarray(ids.slice(0, n), {
+					minLength: 2,
+					maxLength: Math.min(4, n - 1)
+				}),
+				column: fc.boolean()
+			})
+		);
+		fc.assert(
+			fc.property(rowCase, ({ weights, order, column }) => {
+				const total = weights.reduce((x, y) => x + y, 0);
+				const tree = split(
+					's1',
+					column ? 'column' : 'row',
+					weights.map((w) => w / total),
+					ids.slice(0, weights.length).map(panel)
+				);
+				const hide = order.map((id) => `-${id}`);
+				for (const back of permutations(order)) {
+					const all = [...hide, ...back.map((id) => `+${id}`)];
+					const diff = treeDiff(treeAfter(tree, all), tree);
+					if (diff) failCase(tree, all, diff);
+				}
+			}),
+			params(200)
+		);
+	});
+
+	// Cross-review of #940: a tab hidden while its group was still in the split keeps the share the
+	// group had THEN; the group left the split with its last tab, after the sibling in between.
+	it('pinned: row[tabs[a, b] .2, c .5, r .3], -a -r -b, shown in every order: .2 / .5 / .3 (#939)', () => {
+		const tree = split(
+			's1',
+			'row',
+			[0.2, 0.5, 0.3],
+			[tabs('t1', ['a', 'b']), panel('c'), panel('r')]
+		);
+		const first = treeAfter(tree, ['-a', '-r', '-b', '+a'], false);
+		const sizes = first?.type === 'split' ? first.sizes : [];
+		[2 / 7, 5 / 7].forEach((v, i) => expect(sizes[i]).toBeCloseTo(v, 9));
+		for (const hide of permutations(['a', 'r', 'b']))
+			for (const back of permutations(['a', 'r', 'b'])) {
+				const all = [...hide.map((id) => `-${id}`), ...back.map((id) => `+${id}`)];
+				const after = treeAfter(tree, all);
+				const now = after?.type === 'split' ? after.sizes : [];
+				[0.2, 0.5, 0.3].forEach((v, i) => expect(now[i], all.join(' ')).toBeCloseTo(v, 9));
+			}
+	});
+
+	it('a tab group and panes of one split hidden in any order, shown in any order: the sizes (#939)', () => {
+		const ids = ['a', 'b', 'x', 'y', 'z'];
+		const mixed = fc.record({
+			weights: fc.array(fc.integer({ min: 1, max: 20 }), { minLength: 5, maxLength: 5 }),
+			hide: fc.shuffledSubarray(ids, { minLength: 2, maxLength: 5 }),
+			seed: fc.array(fc.nat(), { minLength: 5, maxLength: 5 })
+		});
+		fc.assert(
+			fc.property(mixed, ({ weights, hide, seed }) => {
+				const total = weights.reduce((x, y) => x + y, 0);
+				// row[tabs[a, b], x, c, y, z]: c stays.
+				const tree = split(
+					's1',
+					'row',
+					weights.map((w) => w / total),
+					[tabs('t1', ['a', 'b']), panel('x'), panel('c'), panel('y'), panel('z')]
+				);
+				const back = hide
+					.map((id, i) => ({ id, key: seed[i] }))
+					.sort((p, q) => p.key - q.key || (p.id < q.id ? -1 : 1))
+					.map((p) => p.id);
+				const all = [...hide.map((id) => `-${id}`), ...back.map((id) => `+${id}`)];
+				const after = treeAfter(tree, all);
+				const want = tree.type === 'split' ? tree.sizes : [];
+				const now = after?.type === 'split' ? after.sizes : [];
+				if (now.length !== want.length || now.some((v, i) => Math.abs(v - want[i]) > 1e-9))
+					failCase(tree, all, `sizes ${JSON.stringify(now)}`);
+			}),
+			params(300)
+		);
+	});
+
+	// Codex P2 on #940: a share kept inside a nested split is not a share of the split around it.
+	it('pinned: row[column[a .4, b .6] .2, c .3, d .5], -a -c -b +c +b +a: the column is .4 / .6 again (#939)', () => {
+		const tree = split(
+			's1',
+			'row',
+			[0.2, 0.3, 0.5],
+			[split('s2', 'column', [0.4, 0.6], ['a', 'b'].map(panel)), panel('c'), panel('d')]
+		);
+		expect(treeDiff(treeAfter(tree, ['-a', '-c', '-b', '+c', '+b', '+a']), tree)).toBeNull();
+	});
+
+	// The same over generated cases: a row with a nested column, the column's panes and some of the
+	// row's hidden in any order with the column's LAST pane hidden after the others of the column,
+	// shown so that the column comes back by that pane first - the order a share is known for.
+	it('a nested split hidden as a whole among its siblings: the inner shares stay (#939)', () => {
+		const nested = fc.record({
+			outer: fc.array(fc.integer({ min: 1, max: 20 }), { minLength: 4, maxLength: 4 }),
+			inner: fc.array(fc.integer({ min: 1, max: 20 }), { minLength: 2, maxLength: 2 }),
+			// Where among the hides of c / d's sibling `c` the two of the column go, and the order back.
+			hide: fc.shuffledSubarray(['a', 'c', 'e'], { minLength: 3 }),
+			back: fc.shuffledSubarray(['c', 'e', 'b'], { minLength: 3 })
+		});
+		fc.assert(
+			fc.property(nested, ({ outer, inner, hide, back }) => {
+				const sum = (xs: number[]) => xs.reduce((x, y) => x + y, 0);
+				const tree = split(
+					's1',
+					'row',
+					outer.map((w) => w / sum(outer)),
+					[
+						split(
+							's2',
+							'column',
+							inner.map((w) => w / sum(inner)),
+							['a', 'b'].map(panel)
+						),
+						panel('c'),
+						panel('d'),
+						panel('e')
+					]
+				);
+				// b last (the column leaves the row with it); a comes back last, into the column.
+				const all = [...hide.map((id) => `-${id}`), '-b', ...back.map((id) => `+${id}`), '+a'];
+				const diff = treeDiff(treeAfter(tree, all), tree);
+				if (diff) failCase(tree, all, diff);
+			}),
+			params(200)
+		);
+	});
+
+	it('pinned: row[a .2, b .3, c .5], a then b hidden: +b +a and +a +b are both .2 / .3 / .5 (#939)', () => {
 		const tree = split('s1', 'row', [0.2, 0.3, 0.5], ['a', 'b', 'c'].map(panel));
 		expect(treeDiff(treeAfter(tree, ['-a', '-b', '+b', '+a']), tree)).toBeNull();
-		// a held .2 of row[a, b, c], b .375 of row[b, c]: a first takes .2 beside c, then b .375.
-		const other = treeAfter(tree, ['-a', '-b', '+a', '+b']);
-		expect(shapeOf(other)).toEqual({ row: ['a', 'b', 'c'] });
-		const sizes = other?.type === 'split' ? other.sizes : [];
-		[0.2 * 0.625, 0.375, 0.8 * 0.625].forEach((v, i) => expect(sizes[i]).toBeCloseTo(v, 9));
+		// a held .2 of row[a, b, c], b .375 of row[b, c] - .3 of the row with a: a first takes .2 of
+		// what it shares with c (2 / 7 of row[a, c]), then b .3.
+		const first = treeAfter(tree, ['-a', '-b', '+a'], false);
+		const sizes = first?.type === 'split' ? first.sizes : [];
+		[2 / 7, 5 / 7].forEach((v, i) => expect(sizes[i]).toBeCloseTo(v, 9));
+		expect(treeDiff(treeAfter(tree, ['-a', '-b', '+a', '+b']), tree)).toBeNull();
 	});
 });
 

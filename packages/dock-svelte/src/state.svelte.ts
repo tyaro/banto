@@ -34,7 +34,7 @@ import {
 	type AutoHideOptions
 } from './core/autohide';
 import { bandTreeOf, readBandTree, shadowBandIds } from './core/bandTree';
-import { dockShareOf } from './core/defaultPlace';
+import { dockShareOf, shareAmongHidden } from './core/defaultPlace';
 import { notify } from './core/report';
 import {
 	activateInShadow,
@@ -1116,9 +1116,16 @@ export class DockState {
 			this.open(id);
 			return 'floating';
 		}
+		// The panes hidden after it, still hidden: their shares with this pane back (#939).
+		const others = this.#amongHidden(this.layout, id)?.others;
 		this.layout = {
 			...this.layout,
-			floating: this.layout.floating.filter((w) => w.id !== id),
+			floating: this.layout.floating
+				.filter((w) => w.id !== id)
+				.map((w) => {
+					const share = others?.get(w.id);
+					return share === undefined ? w : { ...w, dockShare: share };
+				}),
 			docked: this.#expanded('show', placed, id)
 		};
 		return 'docked';
@@ -1282,11 +1289,34 @@ export class DockState {
 			withFreeShadowIds(this.#shadow, taken, ids),
 			this.defaultLayout?.docked ?? null,
 			panel,
-			win.dockShare,
+			// Its default siblings still hidden are not there to share with (#939).
+			this.#amongHidden(layout, id)?.share ?? win.dockShare,
 			ids,
 			taken
 		);
 		return placed;
+	}
+
+	/**
+	 * The share to show the hidden pane `id` of `layout` with, and the shares its default siblings
+	 * hidden after it keep from then on (`core/defaultPlace.ts#shareAmongHidden`, #939); `null`:
+	 * the share it keeps is the one. The closed windows are in the order they were hidden in
+	 * (`dismiss` adds one at the end).
+	 */
+	#amongHidden(
+		layout: DockLayout,
+		id: string
+	): { share: number; others: Map<string, number> } | null {
+		const hidden: { id: string; share: number }[] = [];
+		for (const w of layout.floating)
+			if (!w.open && w.dockShare !== undefined) hidden.push({ id: w.id, share: w.dockShare });
+		if (hidden.length < 2) return null;
+		return shareAmongHidden(
+			this.defaultLayout?.docked ?? null,
+			id,
+			new Set(shadowPanelIds(this.#shadow)),
+			hidden
+		);
 	}
 
 	/**
