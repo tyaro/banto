@@ -319,7 +319,7 @@ export interface DashboardWidgetProps {
   W3 の「残したこと」（タイルの件数は期間で絞るのに、一覧は絞らない）がここで解ける。
 - **取得の上限を超えたとき、画面で知らせる**: ダッシュボードは最大 `DASHBOARD_ROW_LIMIT`（20,000）行を読んで集計し、
   一覧は条件に合う全件を出すので、それを超えるデータでは印の値と一覧の件数が合わない（今の「在庫少」と同じ）。
-  `totalCount` が読んだ行数より多いときだけ、見出しの「N 件からの集計」の所に 1 文を出す（文言キー。例
+  `totalCount` が読んだ行数（期間で絞る前の `data.all.rows.length`。絞った `data.rows.length` と比べない）より多いときだけ、見出しの「N 件からの集計」の所に 1 文を出す（文言キー。例
   「ダッシュボードは取得した範囲（先頭 20,000 件）の集計です。一覧は条件に合う全件を表示します」）。印の読み上げ（`markLabel`）と
   KPI のリンクの title にも同じ断りを足す。上限の内側では出さないので、基準画像は変わらない。recipe にも書く。
 - `DASHBOARD_WIDGETS` の登録の型には欄を足さない（移る先はウィジェットの部品が決める。部品はチャートと一緒に消える）。
@@ -367,7 +367,7 @@ CHANGELOG の「消費側への注意」と recipe に書く。どちらにな�
 | D0 | この設計書（文書だけ） | `pnpm format:check` |
 | D1 | 一覧のビューの引数（`lib/resource/types.ts`・`listViews.ts`・`ResourceListPage.svelte`）: `arg.` の接頭辞、値の検査、「適用できないとき」の規則、`'required'` の引数を持つビューをメニューに出さない。価格帯の区切りを `resources/items.ts` へ移す。items に見本のビュー（価格帯、`low-stock` の `after`）。`docs/recipes/add-resource.md` に 1 節。**ダッシュボードの画面は触らない** | 単体: 引数の読み取り・検査、適用できない場合の全部（必須の欠落・重複・空値・`filtersFor` が `null`・格子に無い列）、引数の名前の形、区切りの表から作った集計と条件が同じ行を選ぶ（価格 99 / 100 / 149 / 150 / 199 / 200、`after` の日とその次の日）。e2e: リンクで絞られ、`view` と `arg.*` だけが消える（`id` は残る）／適用できないリンクは**今の条件を保ったまま**知らせを出す／境界の行（`after` の日・次の日・価格の区切り）の件数が**クライアント・サーバーの両方式**で集計と合う／必須の引数のビューがメニューに無い。`pnpm check`・`pnpm lint`・`pnpm format:check`・`pnpm e2e`。CHANGELOG [Unreleased] |
 | D2 | `@banto/charts` の `onMarkActivate`・`markLabel`（`BarChart`・`PieChart`）。矢印キーの移動の純関数。`messages.ts` の既定の文。README。ui-demo に見本 1 つ | 単体: 移動の関数、既定の読み上げ。e2e: クリック・Tab・矢印・Enter / Space で呼ばれる。a11y の spec（axe）。**`onMarkActivate` を渡さない既存の画面の基準画像が 1 枚も変わらない**。external-consumer が緑。CHANGELOG [Unreleased]（追加。minor） |
-| D3 | `dashboardDrill.ts`、枠とページの `onDrill`、ウィジェットの配線（価格帯。カテゴリは §10 の判断 8 による）、KPI の「在庫少」に期間。取得の上限を超えたときの画面の断り（§7.2）。`docs/recipes/dashboard-widgets.md` に「印から一覧へ移る」。plan §4.13.10 の「残したこと」を済みに | 単体: `drillHref`（`periodStart` の値をそのまま `arg.after` に載せる・エンコード）、上限を超えたかの判定。e2e: 印 → 一覧の件数が印の値と合う（期間あり / なし、両方式）／上限を超えたときだけ断りが出る／キーボードだけで移れる／切り離した窓のルートでは印にフォーカスが止まらない。scaffold の 4 プリセットと charts だけ・dock だけを外す `--dry-run`（外した後に `@banto/charts` の参照なし、在庫少のリンクは残る）。**基準画像が変わらない**。CHANGELOG [Unreleased] |
+| D3 | `dashboardDrill.ts`、枠とページの `onDrill`、ウィジェットの配線（価格帯。カテゴリは §10 の判断 8 による）、KPI の「在庫少」に期間。取得の上限を超えたときの画面の断り（§7.2）。`docs/recipes/dashboard-widgets.md` に「印から一覧へ移る」。plan §4.13.10 の「残したこと」を済みに | 単体: `drillHref`（`periodStart` の値をそのまま `arg.after` に載せる・エンコード）、上限を超えたかの判定。e2e: 印 → 一覧の件数が印の値と合う（期間あり / なし、両方式）／上限を超えたときだけ断りが出る（期間で絞っただけでは出ない）／キーボードだけで移れる／切り離した窓のルートでは印にフォーカスが止まらない。scaffold の 4 プリセットと charts だけ・dock だけを外す `--dry-run`（外した後に `@banto/charts` の参照なし、在庫少のリンクは残る）。**基準画像が変わらない**。CHANGELOG [Unreleased] |
 | C1（保留） | 選択の状態と絞り込み（`DashboardFilter.selection`・次元を除いた行・`selects` / `usesSelection`）。template-scope §4.2 の 1 文 | 単体: 自分の次元では絞られない／期間と重ねて絞る／選択が配置の保存値に入らない |
 | C2（保留） | 選択の帯、`markSelected`（charts）、ウィジェットの配線、操作の意味の変更（§7.4） | e2e: 選ぶ・解除・すべて解除・キーボード。charts を外しても帯が出ず壊れない。基準画像の再生成（`visual-baselines.yml` を dispatch。command-palette も）。CHANGELOG「消費側への注意」 |
 
