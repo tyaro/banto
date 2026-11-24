@@ -275,6 +275,36 @@ describe('createSseStream: reading', () => {
 		}
 	});
 
+	// Re-review of #945: a browser whose page has no usable origin is not
+	// "no browser". A relative URL would be resolved by `fetch` against a
+	// document nothing was checked with.
+	it.each(['null', '', undefined])(
+		'a page without a usable origin (location.origin = %j) needs an absolute baseUrl',
+		(origin) => {
+			vi.stubGlobal('location', { origin });
+			try {
+				const net = manualFetch();
+				const make = (path: string, baseUrl?: string) =>
+					createSseStream<Value>({
+						path,
+						baseUrl,
+						fetchFn: net.fetchFn,
+						getToken: () => 'A',
+						parse: () => null,
+						onEvent: () => {}
+					});
+				expect(() => make('/api/app/values')).toThrow(TypeError);
+				expect(() => make('/api/app/values', '/prefix')).toThrow(TypeError);
+				expect(net.calls).toHaveLength(0);
+				const stop = make('/api/app/values', 'https://x');
+				expect(net.calls.map((call) => call.url)).toEqual(['https://x/api/app/values']);
+				stop();
+			} finally {
+				vi.unstubAllGlobals();
+			}
+		}
+	);
+
 	it('drops an event parse returns null for or throws on, and keeps the connection', async () => {
 		const s = start();
 		const body = s.calls[0].open();

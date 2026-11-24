@@ -37,7 +37,9 @@ export interface SseStreamOptions<T> {
 	 * between two slashes still makes `//host/x` to a browser). Never put a
 	 * token or any other secret in its query string (conventions §6).
 	 * `fetchFn` is given the resolved, absolute URL that passed this check
-	 * (the text itself only where there is no page to resolve against).
+	 * (the text itself only where there is no browser: tests, SSR). In a
+	 * page without a usable origin (`location.origin` is `"null"`), an
+	 * absolute `baseUrl` is required.
 	 */
 	path: string;
 	/**
@@ -164,9 +166,13 @@ const PLACEHOLDER_ORIGIN = 'http://banto.invalid';
  * What is returned is the URL that was CHECKED, as an absolute URL, so that
  * `fetch` does not resolve the text a second time: it would do so against
  * the document's base URL, which a `<base href>` can point at another origin
- * than `location.origin`. Only where there is nothing to resolve against (no
- * page and a `baseUrl` that is not absolute: tests, SSR) the text is returned
- * as it is - there is no document base to disagree with there.
+ * than `location.origin`. Only where there is no browser at all (no
+ * `location`, and a `baseUrl` that is not absolute: tests, SSR) the text is
+ * returned as it is - there is no document base to disagree with there.
+ * A browser whose page has NO usable origin (`location.origin` is `"null"`:
+ * an opaque origin such as a sandboxed frame or `file:`) is a different
+ * case: there IS a document `fetch` would resolve against, and nothing to
+ * check it with, so an absolute `baseUrl` is required (`TypeError`).
  */
 function resolveStreamUrl(baseUrl: string, path: string): string {
 	const refuse = (): never => {
@@ -175,8 +181,15 @@ function resolveStreamUrl(baseUrl: string, path: string): string {
 		);
 	};
 	if (!path.startsWith('/') || path[1] === '/' || path[1] === '\\') refuse();
-	const pageOrigin = (globalThis as { location?: { origin?: string } }).location?.origin;
+	const page = (globalThis as { location?: { origin?: string } }).location;
+	const pageOrigin = page?.origin;
 	const hasPage = typeof pageOrigin === 'string' && pageOrigin !== '' && pageOrigin !== 'null';
+	const baseIsAbsolute = isAbsoluteUrl(baseUrl);
+	if (page != null && !hasPage && !baseIsAbsolute) {
+		throw new TypeError(
+			'createSseStream: this page has no origin to check the URL against; pass an absolute `baseUrl`'
+		);
+	}
 	const fallback = hasPage ? pageOrigin : PLACEHOLDER_ORIGIN;
 	const url = `${baseUrl}${path}`;
 	let allowed: URL;
@@ -200,7 +213,7 @@ function resolveStreamUrl(baseUrl: string, path: string): string {
 	) {
 		refuse();
 	}
-	return hasPage || isAbsoluteUrl(baseUrl) ? target.href : url;
+	return hasPage || baseIsAbsolute ? target.href : url;
 }
 
 function isAbsoluteUrl(text: string): boolean {
