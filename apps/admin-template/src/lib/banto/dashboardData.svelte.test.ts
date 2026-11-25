@@ -102,7 +102,7 @@ describe('the shared period (#716 W3)', () => {
 
 	it('narrows the rows and the KPI numbers by the page filter, without reading again', async () => {
 		const { getList } = setup(rows);
-		const filter = $state<DashboardFilter>({ period: 'all' });
+		const filter = $state<DashboardFilter>({ period: 'all', selection: {} });
 		const data = createDashboardData({ filter: () => filter });
 		await data.load();
 
@@ -145,7 +145,7 @@ describe('the shared period (#716 W3)', () => {
 	// The redraw on screen is the e2e scenario 13k6 (smoke.spec.ts).
 	it('hands the KPI strip and every usesPeriod widget the same rows, and the others the read as it is', async () => {
 		setup(rows);
-		const filter = $state<DashboardFilter>({ period: 'all' });
+		const filter = $state<DashboardFilter>({ period: 'all', selection: {} });
 		const data = createDashboardData({ filter: () => filter });
 		await data.load();
 		const readBefore = data.all.rows;
@@ -163,13 +163,14 @@ describe('the shared period (#716 W3)', () => {
 		for (const def of defs) {
 			const given = dashboardDataFor(def, data);
 			if (def.usesPeriod) {
-				// The very object the KPI strip draws from: the same narrowed rows and numbers.
-				expect(given, def.id).toBe(data);
+				// The period's rows: the same ones the KPI strip draws (no selection here).
+				expect(given, def.id).toBe(data.byPeriod);
 				expect(
 					given.rows.map((row) => row.id),
 					def.id
 				).toEqual([1, 2]);
 				expect(given.stats, def.id).toEqual(data.stats);
+				expect(given.rows, def.id).toEqual(data.rows);
 			} else {
 				// The read itself: the same array as before the period changed.
 				expect(given, def.id).toBe(data.all);
@@ -209,5 +210,76 @@ describe('the widgets take the data as a prop (#716 W1)', () => {
 		expect(source).not.toMatch(
 			/\b(createListResource|createDashboardData|getDataProvider|fetch)\(|itemsAdmin/
 		);
+	});
+});
+
+describe('the selection of the page (#882 C1)', () => {
+	const row = (id: number, name: string, price: number): Item => ({
+		...item(id, price, 1),
+		name,
+		updatedAt: id === 4 ? '2024-01-01' : '2026-07-02'
+	});
+	const rows = [
+		row(1, 'Alpha one', 50),
+		row(2, 'Alpha two', 120),
+		row(3, 'Beta one', 120),
+		row(4, 'Beta two', 250)
+	];
+	const ids = (data: { rows: Item[] }) => data.rows.map((r) => r.id);
+
+	it('narrows the KPI strip by everything, and each dimension-showing widget by the others only', async () => {
+		setup(rows);
+		const filter = $state<DashboardFilter>({
+			period: '30d',
+			selection: { category: 'Alpha', priceBucket: '100-149' }
+		});
+		const data = createDashboardData({ filter: () => filter });
+		await data.load();
+
+		expect(ids(data)).toEqual([2]);
+		expect(data.stats.count).toBe(1);
+		// Not by its own dimension: the category chart keeps every category of the chosen band.
+		expect(ids(data.without('category'))).toEqual([2, 3]);
+		expect(data.without('category').stats.count).toBe(2);
+		expect(ids(data.without('priceBucket'))).toEqual([1, 2]);
+		// Period only (a usesPeriod widget that ignores the selection), and the read itself.
+		expect(ids(data.byPeriod)).toEqual([1, 2, 3]);
+		expect(ids(data.all)).toEqual([1, 2, 3, 4]);
+
+		// Changing the selection reads nothing again.
+		filter.selection = {};
+		expect(ids(data)).toEqual([1, 2, 3]);
+		expect(data.rows).toEqual(data.byPeriod.rows);
+		data.dispose();
+	});
+
+	it('hands each widget the data its registration asks for', async () => {
+		setup(rows);
+		const filter = $state<DashboardFilter>({ period: 'all', selection: { category: 'Beta' } });
+		const data = createDashboardData({ filter: () => filter });
+		await data.load();
+
+		expect(dashboardDataFor({ usesSelection: true }, data)).toBe(data);
+		expect(dashboardDataFor({ usesSelection: true, selects: 'category' }, data)).toBe(
+			data.without('category')
+		);
+		expect(ids(dashboardDataFor({ usesSelection: true, selects: 'category' }, data))).toEqual([
+			1, 2, 3, 4
+		]);
+		expect(ids(dashboardDataFor({ usesSelection: true, selects: 'priceBucket' }, data))).toEqual([
+			3, 4
+		]);
+		// A widget that only uses the period never sees the selection.
+		expect(dashboardDataFor({ usesPeriod: true }, data)).toBe(data.byPeriod);
+		expect(ids(dashboardDataFor({ usesPeriod: true }, data))).toEqual([1, 2, 3, 4]);
+		expect(dashboardDataFor({}, data)).toBe(data.all);
+		data.dispose();
+	});
+
+	it('is the page state only: nothing of it is in the saved arrangement', () => {
+		// No file: a preset that removed the dock (scripts/scaffold.mjs) has no saved arrangement.
+		const file = fileURLToPath(new URL('./dashboardLayout.ts', import.meta.url));
+		const layout = existsSync(file) ? readFileSync(file, 'utf8') : '';
+		expect(layout).not.toMatch(/selection|DashboardFilter|dashboardPeriod/);
 	});
 });

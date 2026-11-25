@@ -34,6 +34,7 @@ import type { Component } from 'svelte';
 import * as m from '#lib/paraglide/messages.js';
 import type { DashboardData, DashboardPageData } from './dashboardData.svelte';
 import type { DashboardDrill } from './dashboardDrill';
+import type { DashboardDimension } from './dashboardPeriod';
 // [scaffold:charts] begin
 import CategoryStockWidget from '#lib/components/dashboard/charts/CategoryStockWidget.svelte';
 import MonthlyWidget from '#lib/components/dashboard/charts/MonthlyWidget.svelte';
@@ -91,18 +92,31 @@ export interface DashboardWidgetDef {
 	 * widget is given the rows not narrowed, and a change of the period does not reach it.
 	 */
 	usesPeriod?: boolean;
+	/**
+	 * The dimension this widget's marks show (#882 C1, crossfilter-drilldown-design §7.3). The
+	 * widget is NOT narrowed by the selection of its own dimension (choosing a bar leaves every
+	 * bar), only by the others.
+	 */
+	selects?: DashboardDimension;
+	/**
+	 * Draws the rows narrowed by the page's selection (the dimensions other than `selects`) as well
+	 * as by the period, like `usesPeriod`. Without it the selection does not reach the widget.
+	 */
+	usesSelection?: boolean;
 }
 
 /**
- * The data ONE widget is given: the page's narrowed data (the same object the KPI strip draws
- * from) when it is registered with `usesPeriod`, else the same read not narrowed. Every place
- * that draws a widget goes through `DashboardWidgetFrame.svelte`, which calls this.
+ * The data ONE widget is given: `usesSelection` - the rows narrowed by the period and by the
+ * selection of every dimension but its own (`selects`); `usesPeriod` - the period only; else the
+ * same read not narrowed. Every place that draws a widget goes through
+ * `DashboardWidgetFrame.svelte`, which calls this.
  */
 export function dashboardDataFor(
-	def: Pick<DashboardWidgetDef, 'usesPeriod'>,
+	def: Pick<DashboardWidgetDef, 'usesPeriod' | 'usesSelection' | 'selects'>,
 	data: DashboardPageData
 ): DashboardData {
-	return def.usesPeriod ? data : data.all;
+	if (def.usesSelection) return def.selects ? data.without(def.selects) : data;
+	return def.usesPeriod ? data.byPeriod : data.all;
 }
 
 /**

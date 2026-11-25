@@ -89,10 +89,10 @@
 	 * #716 W3: the ONE period the page holds (§4.13.3). The KPI strip and the widgets registered
 	 * with `usesPeriod` draw the rows it leaves; the others do not notice a change. It is the
 	 * page's state and nothing else: not saved (a reload starts at "all"), not part of the saved
-	 * arrangement, not sent to a popped-out window. #882 (cross-filtering) adds its conditions to
-	 * this same object.
+	 * arrangement, not sent to a popped-out window. The selection of #882 (cross-filtering, `selection`) lives in this
+	 * same object, with the same rules.
 	 */
-	let filter = $state<DashboardFilter>({ ...DEFAULT_DASHBOARD_FILTER });
+	let filter = $state<DashboardFilter>({ ...DEFAULT_DASHBOARD_FILTER, selection: {} });
 	const PERIOD_LABELS: Record<DashboardPeriod, () => string> = {
 		all: m['dashboard.periodAll'],
 		'30d': m['dashboard.period30d'],
