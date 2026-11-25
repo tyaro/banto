@@ -21,10 +21,10 @@ banto-serve と Tauri の両方がこの関数を通る）。
 
 ```rust
 use serde_json::json;
-use admin_template_core::config_drafts::{ConfigTarget, ConfigTargetRegistry};
+use crate::config_drafts::{ConfigTarget, ConfigTargetRegistry}; // lib.rs の `pub use banto_admin_services::config_drafts`
 
-pub fn config_targets() -> config_drafts::ConfigTargetRegistry {
-    config_drafts::ConfigTargetRegistry::empty()
+pub fn config_targets() -> ConfigTargetRegistry {
+    ConfigTargetRegistry::empty()
         .register(
             ConfigTarget::new(
                 "plc.line1",                     // キー: 小文字・数字・_、. 区切り、64 バイトまで
@@ -95,10 +95,14 @@ loop {
         _ = tick.tick() => true,                    // 周期の照合
     };
     if !must_read { continue; }
-    let p = service.published_as::<LineConfig>("plc.line1").await?;
+    let p = match service.published_as::<LineConfig>("plc.line1").await {
+        Ok(p) => p,
+        Err(_) => continue,                         // 読めない間は今の設定を維持し、次の知らせ・周期で再試行
+    };
     if current.as_deref() != Some(&p.revision) {    // 版の大小ではなく revision の違い
-        apply(p.value);
-        current = Some(p.revision);
+        if apply(p.value).is_ok() {                 // 採用済みの revision は適用に成功した後だけ更新
+            current = Some(p.revision);
+        }
     }
 }
 ```
