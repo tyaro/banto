@@ -47,16 +47,17 @@
 	const inputId = $derived(id ?? def.name);
 	const described = $derived(describedByWithAffix(def, inputId, describedBy));
 
-	// Native edit + blur fires `change` and `blur`: notify once per text. Remember
-	// which draft / field / text was committed last (not a DOM flag), so a
-	// `setRaw()` from elsewhere or a swapped `draft` still commits next time.
-	let last: { draft: FormDraft; name: string; text: string } | undefined;
+	// Native edit + blur fires `change` and `blur`: notify once per commit. Skip
+	// only while the draft's `revision` is exactly what our last commit left, so
+	// any input, `setRaw()`, `discard()` or swapped `draft` commits again.
+	let last: { draft: FormDraft; name: string; revision: number } | undefined;
 
 	function commit() {
 		if (disabled || def.readonly) return;
-		if (last && last.draft === draft && last.name === def.name && last.text === text) return;
+		if (last && last.draft === draft && last.name === def.name && last.revision === draft.revision)
+			return;
 		const valid = draft.commit(def.name);
-		last = { draft, name: def.name, text }; // text after the commit (e.g. "007" -> "7")
+		last = { draft, name: def.name, revision: draft.revision };
 		onCommit?.(valid);
 	}
 

@@ -154,6 +154,27 @@ describe('DraftNumberField', () => {
 		expect(onCommit).toHaveBeenCalledTimes(3);
 	});
 
+	it('re-validates the same text after the error was cleared or the draft discarded', async () => {
+		const draft = setup();
+		const onCommit = vi.fn();
+		render(DraftNumberField, { def, draft, onCommit });
+		const control = screen.getByRole('textbox');
+		await fireEvent.input(control, { target: { value: '99' } });
+		await fireEvent.change(control);
+		expect(draft.errors.qty).toBeTruthy();
+		draft.setRaw('qty', '9');
+		draft.setRaw('qty', '99');
+		await fireEvent.keyDown(control, { key: 'Enter' });
+		expect(draft.errors.qty).toBeTruthy();
+		expect(onCommit).toHaveBeenCalledTimes(2);
+		expect(onCommit).toHaveBeenLastCalledWith(false);
+		draft.discard();
+		draft.setRaw('qty', '99');
+		await fireEvent.blur(control);
+		expect(draft.errors.qty).toBeTruthy();
+		expect(onCommit).toHaveBeenCalledTimes(3);
+	});
+
 	it('ignores change while readonly or disabled', async () => {
 		const draft = setup();
 		const onCommit = vi.fn();
