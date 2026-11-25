@@ -166,6 +166,17 @@
 		return currentIfSame(s) !== null;
 	}
 
+	/**
+	 * `classifyDraft` does not look at the fraction digits (the keys never let more in than the
+	 * rules they were opened with), so a `decimals` lowered while open is checked here. A value
+	 * left exactly as it was at open is not an entry of this session and passes as before.
+	 */
+	function fitsDecimals(value: string, openValue: string, rules: NumberRules): boolean {
+		if (value === openValue) return true;
+		const dot = value.indexOf('.');
+		return dot < 0 || value.length - dot - 1 <= rules.decimals;
+	}
+
 	function confirm(value: string): void {
 		const s = session;
 		if (!s) return;
@@ -176,6 +187,7 @@
 		if (
 			!now ||
 			!classifyDraft(value, now.rules).canConfirm ||
+			!fitsDecimals(value, s.openValue, now.rules) ||
 			!writeChecked(s.input, value, s.openValue)
 		) {
 			return cancel('target-changed');

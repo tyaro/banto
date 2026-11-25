@@ -464,6 +464,41 @@ describe('TouchKeysHost: the target changed or went away (§6.2, §6.5, §8.3)',
 		expect(seen).toEqual({ input: 1, change: 1 });
 	});
 
+	it('decimals were lowered after open: an entered value with more fraction digits is not written', async () => {
+		const oncancel = vi.fn();
+		const { rerender } = render(HostHarness, { oncancel, recDecimals: 2 });
+		const rec = await openOn('rec');
+		const seen = watch(rec);
+		for (const k of ['1', '.', '2', '5']) await fireEvent.click(key(k));
+		await rerender({ recDecimals: 1 });
+		await tick();
+		await fireEvent.click(key('確定'));
+		expect(pad()).toBeNull();
+		expect(rec.value).toBe('5');
+		expect(seen).toEqual({ input: 0, change: 0 });
+		expect(oncancel).toHaveBeenCalledWith({ input: rec, reason: 'target-changed' });
+	});
+
+	it('decimals were lowered after open: fewer digits, or the untouched opening value, are written', async () => {
+		const { rerender } = render(HostHarness, { recDecimals: 2 });
+		const rec = await openOn('rec');
+		for (const k of ['1', '.', '2']) await fireEvent.click(key(k));
+		await rerender({ recDecimals: 1 });
+		await tick();
+		await fireEvent.click(key('確定'));
+		expect(rec.value).toBe('1.2');
+
+		await rerender({ recDecimals: 2 });
+		rec.value = '1.25';
+		await openOn('rec');
+		const seen = watch(rec);
+		await rerender({ recDecimals: 1 });
+		await tick();
+		await fireEvent.click(key('確定'));
+		expect(rec.value).toBe('1.25');
+		expect(seen).toEqual({ input: 1, change: 1 });
+	});
+
 	it('required was added after open: an empty value is not written, no event', async () => {
 		const oncancel = vi.fn();
 		const { rerender } = render(HostHarness, { oncancel });

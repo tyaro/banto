@@ -15,6 +15,7 @@
 		show?: boolean;
 		editKey?: string | number;
 		recMax?: number;
+		recDecimals?: number;
 		decOff?: boolean;
 		decRequired?: boolean;
 		placement?: { number?: TouchKeysPlacement };
@@ -33,6 +34,7 @@
 		show = true,
 		editKey = 1,
 		recMax = 100,
+		recDecimals,
 		decOff = false,
 		decRequired = false,
 		placement,
@@ -87,7 +89,7 @@
 		id="rec"
 		type="text"
 		value="5"
-		{@attach touchKeys({ kind: 'number', editKey, max: recMax })}
+		{@attach touchKeys({ kind: 'number', editKey, max: recMax, decimals: recDecimals })}
 	/>
 	<!-- the inner marker must not hide an "off" further out (§15.1) -->
 	<div data-touch-keys={decOff ? 'off' : undefined}>
