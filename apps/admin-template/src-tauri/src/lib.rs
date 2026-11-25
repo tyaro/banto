@@ -5451,20 +5451,34 @@ async fn panel_open(app: tauri::AppHandle, id: String, title: String) -> Result<
 /// Stops a start that the setup closure refuses: one "起動できません" line on
 /// stderr, then exit code 1, like `banto-serve`. Not `return Err(..)` from
 /// `setup`: Tauri turns that into `panic!("Failed to setup app: ..")`.
+/// On Windows a message box shows the reason first (the release build has no
+/// console, Issue #975); the other platforms only get the stderr line.
 fn exit_startup_refused(reason: impl std::fmt::Display) -> ! {
+    let reason = reason.to_string();
     eprintln!("banto: 起動できません: {reason}");
+    startup_dialog::show_startup_refused(&reason);
     std::process::exit(1);
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    if let Err(err) = tauri::Builder::default()
         .setup(|app| {
             // Process start, for the `system_info` command's `uptime_secs`
             // (M-review 2026-08 §2.4). Captured first thing so it reflects app
             // start, not the tail of the setup sequence below.
             let started_at = std::time::Instant::now();
-            let data_dir = app.path().app_data_dir().expect("resolve app data dir");
-            std::fs::create_dir_all(&data_dir).expect("create app data dir");
+            let data_dir = match app.path().app_data_dir() {
+                Ok(dir) => dir,
+                Err(err) => exit_startup_refused(format_args!(
+                    "データフォルダの場所を決められません: {err}"
+                )),
+            };
+            if let Err(err) = std::fs::create_dir_all(&data_dir) {
+                exit_startup_refused(format_args!(
+                    "データフォルダ {} を作れません: {err}",
+                    data_dir.display()
+                ));
+            }
             let db_path = data_dir.join("admin-template.sqlite3");
 
             // Spec M17: apply any staged restore BEFORE `init_db`/the pool is
@@ -5601,7 +5615,12 @@ pub fn run() {
             // Desktop CSV export (finding⑤ Option A): same sibling-directory
             // convention as `attachments/`/`backups/` above.
             let exports_dir = data_dir.join("exports");
-            std::fs::create_dir_all(&exports_dir).expect("create exports dir");
+            if let Err(err) = std::fs::create_dir_all(&exports_dir) {
+                exit_startup_refused(format_args!(
+                    "書き出し用フォルダ {} を作れません: {err}",
+                    exports_dir.display()
+                ));
+            }
             // System diagnostics probe (M-review 2026-08 §2.4). Built before
             // `audit` moves `db`, same as the other services above.
             let system_info = SystemInfoService::new(db.clone());
@@ -5790,8 +5809,12 @@ pub fn run() {
             // have written, and leave the inconsistency for the user to
             // resolve from the settings screen (this does NOT rewrite either
             // setting).
-            let server_config = tauri::async_runtime::block_on(settings.server_config())
-                .expect("server_config should succeed");
+            let server_config = match tauri::async_runtime::block_on(settings.server_config()) {
+                Ok(cfg) => cfg,
+                Err(err) => exit_startup_refused(format_args!(
+                    "サーバー設定を読めません: {err}"
+                )),
+            };
             // Same predicate the save-time guards use (Issue #288): 認証無効 + LAN
             // 有効 is only inconsistent WITHOUT 閲覧公開.
             let inconsistent_auth_and_server = !auth_server_combination_allowed(
@@ -5995,8 +6018,12 @@ pub fn run() {
             panel_open,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    {
+        exit_startup_refused(format_args!("アプリの実行中にエラーが起きました: {err}"));
+    }
 }
+
+mod startup_dialog;
 
 #[cfg(test)]
 mod tests;
