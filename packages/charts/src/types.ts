@@ -39,12 +39,18 @@ export interface ChartMark<TRow> {
 	value: number;
 }
 
-/** Props `BarChart` and `PieChart` add for selectable marks. Both are optional; without `onMarkActivate` the chart is unchanged (no interaction, `role="img"`). */
+/** Props `BarChart` and `PieChart` add for selectable marks. All are optional; without `onMarkActivate` the chart is unchanged (no interaction, `role="img"`). */
 export interface MarkProps<TRow> {
 	/** Makes the marks selectable (click, Enter, Space; one Tab stop with arrow keys inside). */
 	onMarkActivate?: (mark: ChartMark<TRow>) => void;
 	/** Accessible name of a mark. Default: `<category>: <formatValue(value)>` (the series is named too for a multi-series bar chart). */
 	markLabel?: (mark: ChartMark<TRow>) => string;
+	/**
+	 * Is this mark chosen (cross-filtering: the app keeps the choice and narrows what it shows)?
+	 * Used only together with `onMarkActivate`. When given, every selectable mark is a toggle
+	 * (`aria-pressed`), and while at least one mark is chosen the others are drawn faded.
+	 */
+	markSelected?: (mark: ChartMark<TRow>) => boolean;
 }
 
 /** One data series shared across chart types that plot more than one value per category/x. */

@@ -14,9 +14,11 @@
  *    day), so a wall-clock "last 30 days" would be empty, and a screenshot would depend on the day
  *    it was taken. In your own app, pass today's date to `periodStart` instead (and narrow by your
  *    own column).
- *  - Cross-filtering between widgets (#882) adds its conditions as further fields of
- *    `DashboardFilter` and further steps of `narrowRows`: the page's state reaches the data the
- *    same way.
+ *  - Cross-filtering between widgets (#882 C1・C2): a mark of a widget registered with `selects`
+ *    chooses ONE value of its dimension (`toggleSelection`); the choice is a further field of
+ *    `DashboardFilter` (`selection`) and a further step of `narrowRows`, so the page's state
+ *    reaches the data the same way as the period. The page shows what is chosen in a band under
+ *    its heading (`DashboardSelectionBar.svelte`).
  *
  * App layer, items demo: removed with the dashboard page by `scripts/scaffold.mjs` (`removeDashboard`).
  */
@@ -54,6 +56,42 @@ export const DEFAULT_DASHBOARD_FILTER: DashboardFilter = {
 	period: DEFAULT_DASHBOARD_PERIOD,
 	selection: {}
 };
+
+/**
+ * How a chosen value reads in the page's band: a price band's label (`PRICE_BANDS`), a category
+ * as it is. An id that is no band reads as the id.
+ */
+export function selectionValueLabel(dimension: DashboardDimension, value: string): string {
+	if (dimension !== 'priceBucket') return value;
+	return PRICE_BANDS.find((band) => band.id === value)?.label ?? value;
+}
+
+/** Is anything chosen (the page's band is shown only then)? An empty value does not count. */
+export function hasSelection(selection: DashboardFilter['selection']): boolean {
+	return DASHBOARD_DIMENSIONS.some((dimension) => (selection[dimension] ?? '') !== '');
+}
+
+/**
+ * What a mark does to the selection (#882 C2): choosing the value that is already chosen takes
+ * it off; any other value replaces the dimension's choice (one value per dimension). The other
+ * dimensions are kept. Returns a NEW object (the page assigns it), without the keys that are off.
+ */
+export function toggleSelection(
+	selection: DashboardFilter['selection'],
+	dimension: DashboardDimension,
+	value: string
+): DashboardFilter['selection'] {
+	const next: DashboardFilter['selection'] = {};
+	for (const key of DASHBOARD_DIMENSIONS) {
+		const chosen = selection[key] ?? '';
+		if (key !== dimension) {
+			if (chosen !== '') next[key] = chosen;
+		} else if (value !== '' && value !== chosen) {
+			next[key] = value;
+		}
+	}
+	return next;
+}
 
 /** `YYYY-MM-DD` of a stored date / timestamp (`2026-07-02`, `2026-07-02T10:00:00Z`, `2026-07-02 10:00:00`). */
 const dayOf = (value: string) => value.slice(0, 10);

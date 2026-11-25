@@ -81,6 +81,35 @@ test.describe('dashboard', () => {
 			});
 		}
 	}
+
+	// #882 C2: the cross-filter's chosen state - the band under the heading, the chosen marks and
+	// the faded ones, the other widgets narrowed. Every other dashboard shot has nothing chosen
+	// (no band). One viewport: the band wraps like any flex row.
+	for (const combo of DIAGONAL_MATRIX) {
+		test(`dashboard selection ${comboLabel(combo)} 1440x900`, async ({ page }) => {
+			await primeThemeAndAuth(page, combo);
+			await page.goto('/dashboard');
+			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			const category = page.locator('[data-dock-drop-id="categoryStock"] g.mark[role="button"]');
+			const price = page.locator('[data-dock-drop-id="priceBuckets"] g.mark[role="button"]');
+			// A hydration-late first click is retried (#810).
+			await expect(async () => {
+				await category.first().click({ timeout: 2_000 });
+				await expect(category.first()).toHaveAttribute('aria-pressed', 'true', { timeout: 2_000 });
+			}).toPass({ timeout: 30_000 });
+			// The click event itself: the centre of a donut's slice can be in its hole.
+			await price.first().dispatchEvent('click');
+			await expect(price.first()).toHaveAttribute('aria-pressed', 'true');
+			await expect(page.locator('[data-dashboard-selection] [data-selection-chip]')).toHaveCount(2);
+			// No tooltip and no hover state in the shot: the pointer and the focus leave the marks.
+			await page.mouse.move(0, 0);
+			await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(`dashboard-selection-${comboLabel(combo)}-1440x900.png`, {
+				fullPage: true
+			});
+		});
+	}
 });
 
 // Kiosk shell (display-preset-plan.md D1-b): one screenshot, not the full

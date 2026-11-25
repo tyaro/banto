@@ -16,17 +16,25 @@
 	import { DASHBOARD_KPIS, type DashboardKpiDef } from '#lib/banto/dashboardKpis.js';
 	import {
 		DEFAULT_DASHBOARD_PERIOD,
+		hasSelection,
 		latestDay,
 		type DashboardFilter
 	} from '#lib/banto/dashboardPeriod.js';
 	import * as m from '#lib/paraglide/messages.js';
 
-	/** `filter` is the page's period: a tile that opens the list carries it (#882 D3). */
+	/**
+	 * `filter` is the page's period: a tile that opens the list carries it (#882 D3). The selection
+	 * (#882 C2) narrows the numbers here but is NOT carried by the link (the list's view takes the
+	 * period only), so the link's tooltip says so while something is chosen.
+	 */
 	let { data, filter }: { data: DashboardPageData; filter: DashboardFilter } = $props();
 	const anchorDay = $derived(latestDay(data.all.rows));
 	// A period is chosen but there is no row to count it from yet (the first read): the link would
 	// open the list for every period, so it waits.
 	const waiting = $derived(filter.period !== DEFAULT_DASHBOARD_PERIOD && anchorDay === null);
+	const selectionNote = $derived(
+		hasSelection(filter.selection) ? m['dashboard.selectionNotCarried']() : ''
+	);
 	const truncatedNote = $derived(
 		data.truncated
 			? m['dashboard.truncatedNote']({ limit: DASHBOARD_ROW_LIMIT.toLocaleString() })
@@ -58,10 +66,7 @@
 				class="stat-tile stat-link"
 				href={waiting ? undefined : drillHref(kpi.link.drill, filter, anchorDay)}
 				aria-disabled={waiting ? 'true' : undefined}
-				title={truncatedNote
-					? `${kpi.link.title}
-${truncatedNote}`
-					: kpi.link.title}
+				title={[kpi.link.title, selectionNote, truncatedNote].filter(Boolean).join('\n')}
 			>
 				{@render tile(kpi)}
 				<ChevronRight class="stat-link-icon" size={16} aria-hidden="true" />

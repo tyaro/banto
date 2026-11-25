@@ -152,7 +152,7 @@ describe('the shared period (#716 W3)', () => {
 
 		// The registry of this copy (a preset may have removed the charts or the memo), plus one
 		// widget of each kind so both sides are checked whatever is registered.
-		const defs: Pick<DashboardWidgetDef, 'id' | 'usesPeriod'>[] = [
+		const defs: Pick<DashboardWidgetDef, 'id' | 'usesPeriod' | 'usesSelection' | 'selects'>[] = [
 			...DASHBOARD_WIDGETS,
 			{ id: 'test:uses-period', usesPeriod: true },
 			{ id: 'test:ignores-period' }
@@ -163,8 +163,10 @@ describe('the shared period (#716 W3)', () => {
 		for (const def of defs) {
 			const given = dashboardDataFor(def, data);
 			if (def.usesPeriod) {
-				// The period's rows: the same ones the KPI strip draws (no selection here).
-				expect(given, def.id).toBe(data.byPeriod);
+				// The period's rows: the same ones the KPI strip draws (no selection here). A widget
+				// that also follows the selection (#882 C2) is handed another view of the same rows.
+				if (!def.usesSelection) expect(given, def.id).toBe(data.byPeriod);
+				expect(given.rows, def.id).toEqual(data.byPeriod.rows);
 				expect(
 					given.rows.map((row) => row.id),
 					def.id
@@ -250,6 +252,30 @@ describe('the selection of the page (#882 C1)', () => {
 		filter.selection = {};
 		expect(ids(data)).toEqual([1, 2, 3]);
 		expect(data.rows).toEqual(data.byPeriod.rows);
+		data.dispose();
+	});
+
+	it('reads only the period for the period-only rows: a change of the selection is not their dependency (#959 review)', async () => {
+		setup(rows);
+		// Runes do not react under node (the rows are computed on every read here), so what is
+		// checked is WHAT the period-only view reads from the filter: never `selection`.
+		let selectionReads = 0;
+		const filter: DashboardFilter = {
+			period: '30d',
+			get selection() {
+				selectionReads++;
+				return { category: 'Alpha' };
+			}
+		};
+		const data = createDashboardData({ filter: () => filter });
+		await data.load();
+
+		expect(ids(data.byPeriod)).toEqual([1, 2, 3]);
+		expect(data.byPeriod.stats.count).toBe(3);
+		expect(selectionReads).toBe(0);
+		// The page's own rows do read it.
+		expect(ids(data)).toEqual([1, 2]);
+		expect(selectionReads).toBeGreaterThan(0);
 		data.dispose();
 	});
 

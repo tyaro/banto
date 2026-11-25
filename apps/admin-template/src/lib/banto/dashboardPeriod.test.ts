@@ -10,9 +10,12 @@ import {
 	DEFAULT_DASHBOARD_FILTER,
 	DEFAULT_DASHBOARD_PERIOD,
 	DASHBOARD_DIMENSIONS,
+	hasSelection,
 	latestDay,
 	narrowRows,
 	periodStart,
+	selectionValueLabel,
+	toggleSelection,
 	type DashboardFilter
 } from './dashboardPeriod';
 import type { Item } from './sampleData';
@@ -154,5 +157,41 @@ describe('the selection (#882 C1)', () => {
 		expect(ids(narrowRows(rows, filter({ category: 'Beta' }, '30d'), 'category'))).toEqual([
 			1, 2, 3
 		]);
+	});
+});
+
+describe('choosing with a mark (#882 C2)', () => {
+	it("chooses a value, replaces the dimension's value, and takes the chosen one off", () => {
+		expect(toggleSelection({}, 'category', 'Alpha')).toEqual({ category: 'Alpha' });
+		expect(toggleSelection({ category: 'Alpha' }, 'category', 'Beta')).toEqual({
+			category: 'Beta'
+		});
+		// The same value again: off, and the key is gone (not an empty string).
+		expect(toggleSelection({ category: 'Alpha' }, 'category', 'Alpha')).toEqual({});
+		// An empty value takes the dimension off (the band's chip).
+		expect(toggleSelection({ category: 'Alpha' }, 'category', '')).toEqual({});
+	});
+
+	it('keeps the other dimension, and does not change the object it is given', () => {
+		const before = { category: 'Alpha', priceBucket: '100-149' };
+		expect(toggleSelection(before, 'priceBucket', '200-')).toEqual({
+			category: 'Alpha',
+			priceBucket: '200-'
+		});
+		expect(toggleSelection(before, 'priceBucket', '100-149')).toEqual({ category: 'Alpha' });
+		expect(toggleSelection(before, 'category', '')).toEqual({ priceBucket: '100-149' });
+		expect(before).toEqual({ category: 'Alpha', priceBucket: '100-149' });
+	});
+
+	it('says whether anything is chosen (an empty value is not)', () => {
+		expect(hasSelection({})).toBe(false);
+		expect(hasSelection({ category: '' })).toBe(false);
+		expect(hasSelection({ priceBucket: '0-99' })).toBe(true);
+	});
+
+	it('reads a price band by its label and a category as it is', () => {
+		expect(selectionValueLabel('priceBucket', '100-149')).toBe('¥100〜149');
+		expect(selectionValueLabel('priceBucket', 'nope')).toBe('nope');
+		expect(selectionValueLabel('category', '緑茶')).toBe('緑茶');
 	});
 });

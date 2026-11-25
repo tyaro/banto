@@ -66,6 +66,23 @@ export interface DashboardWidgetProps {
 	 * (its marks are then not selectable, so nothing takes the focus).
 	 */
 	onDrill?: (drill: DashboardDrill) => void;
+	/**
+	 * Cross-filtering (#882 C2). Given ONLY to a widget registered with `selects`, and only on the
+	 * dashboard page: `onSelect(value)` toggles that value of the widget's own dimension (the
+	 * page keeps the choice and narrows the other widgets), `selected` is the value chosen now.
+	 * Not given in the popped-out window (`routes/panel/[id]`): the marks are not selectable there.
+	 */
+	onSelect?: (value: string) => void;
+	selected?: string;
+}
+
+/**
+ * What the page hands to whatever draws widgets for cross-filtering: the choice per dimension
+ * and the toggle. The frame gives each `selects` widget its own dimension's part.
+ */
+export interface DashboardSelect {
+	readonly selection: Partial<Record<DashboardDimension, string>>;
+	toggle(dimension: DashboardDimension, value: string): void;
 }
 
 export interface DashboardWidgetDef {
@@ -132,7 +149,9 @@ type WidgetEntry = Omit<DashboardWidgetDef, 'title'> & { titleKey: PlainMessageK
 
 const widgets: WidgetEntry[] = [];
 // [scaffold:charts] begin
-// Widgets drawn with `@banto/charts`. `spc` (histogram + Pareto + box plot, one SVG export
+// Widgets drawn with `@banto/charts`. #882 C2: the marks of `categoryStock` and `priceBuckets`
+// choose a value of their dimension (`selects`); every widget that follows the period is
+// narrowed by those choices too (`usesSelection`). `spc` (histogram + Pareto + box plot, one SVG export
 // button) and `trend` (streaming, zoom / pan, bands, markers, second y-axis) are roadmap M13.
 widgets.push(
 	{
@@ -142,7 +161,8 @@ widgets.push(
 		width: 420,
 		height: 320,
 		component: MonthlyWidget,
-		usesPeriod: true
+		usesPeriod: true,
+		usesSelection: true
 	},
 	{
 		id: 'categoryStock',
@@ -151,7 +171,9 @@ widgets.push(
 		width: 360,
 		height: 320,
 		component: CategoryStockWidget,
-		usesPeriod: true
+		usesPeriod: true,
+		usesSelection: true,
+		selects: 'category'
 	},
 	{
 		id: 'stackedBar',
@@ -160,7 +182,8 @@ widgets.push(
 		width: 420,
 		height: 320,
 		component: StackedBarWidget,
-		usesPeriod: true
+		usesPeriod: true,
+		usesSelection: true
 	},
 	{
 		id: 'priceBuckets',
@@ -169,7 +192,9 @@ widgets.push(
 		width: 360,
 		height: 320,
 		component: PriceBucketsWidget,
-		usesPeriod: true
+		usesPeriod: true,
+		usesSelection: true,
+		selects: 'priceBucket'
 	},
 	{
 		id: 'scatter',
@@ -178,7 +203,8 @@ widgets.push(
 		width: 420,
 		height: 320,
 		component: ScatterWidget,
-		usesPeriod: true
+		usesPeriod: true,
+		usesSelection: true
 	},
 	{
 		id: 'spc',
@@ -187,7 +213,8 @@ widgets.push(
 		width: 460,
 		height: 640,
 		component: SpcWidget,
-		usesPeriod: true
+		usesPeriod: true,
+		usesSelection: true
 	},
 	{
 		id: 'trend',
@@ -207,7 +234,10 @@ widgets.push({
 	width: 420,
 	height: 320,
 	component: LowStockWidget,
-	usesPeriod: true
+	usesPeriod: true,
+	// Narrowed by what the charts' marks choose. Without the charts nothing chooses, so this is
+	// the period's rows.
+	usesSelection: true
 });
 // [scaffold:dock] begin
 // The memo: its draft and its save belong to the page (`dashboardMemo.svelte.ts`, wired in the

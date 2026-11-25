@@ -20,6 +20,21 @@ export function onMarkDetached(node: Element, forget: () => void): () => void {
 	};
 }
 
+/**
+ * Did the mark get the focus in a way that shows a focus ring (the keyboard), not from a pointer
+ * press? Only then does the chart show the focused mark's tooltip: a mark that was clicked keeps
+ * the focus, and its tooltip would otherwise stay after the pointer has left (a mark that toggles
+ * a selection - `markSelected` - stays on the page after the click). An engine that does not know
+ * `:focus-visible` counts as the keyboard.
+ */
+export function isKeyboardFocus(node: Element): boolean {
+	try {
+		return node.matches(':focus-visible');
+	} catch {
+		return true;
+	}
+}
+
 /** Attribute that carries a mark's position in the linear mark order (the charts write it literally as `data-mark-index`). */
 const MARK_INDEX_ATTR = 'data-mark-index';
 

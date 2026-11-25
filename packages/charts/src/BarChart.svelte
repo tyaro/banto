@@ -25,7 +25,7 @@
 		truncateLabel
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
-	import { handleMarkKeydown, onMarkDetached } from './internal/mark-keys';
+	import { handleMarkKeydown, isKeyboardFocus, onMarkDetached } from './internal/mark-keys';
 	import {
 		getValue,
 		toNumber,
@@ -73,7 +73,8 @@
 		margins,
 		messages = {},
 		onMarkActivate,
-		markLabel
+		markLabel,
+		markSelected
 	}: Props = $props();
 
 	const RADIUS = 4;
@@ -386,6 +387,9 @@
 			)}
 			{@const navCount = navPos.size}
 			{@const navBars = [...navPos.keys()]}
+			{@const chosen = markSelected
+				? new Set(navBars.filter((b) => markSelected(markFor(b))))
+				: null}
 			{@const stop = Math.max(
 				0,
 				navBars.findIndex((b) => keyOf(b) === tabKey)
@@ -517,10 +521,12 @@
 					{@const idx = navPos.get(bar) ?? 0}
 					<g
 						class="mark"
+						class:dimmed={chosen !== null && chosen.size > 0 && !chosen.has(bar)}
 						{@attach (node: Element) => onMarkDetached(node, () => forgetMark(bar))}
 						role="button"
 						tabindex={idx === stop ? 0 : -1}
 						aria-label={markName(bar)}
+						aria-pressed={chosen ? chosen.has(bar) : undefined}
 						data-mark-index={idx}
 						onclick={() => onMarkActivate(markFor(bar))}
 						onkeydown={(e) =>
@@ -531,9 +537,11 @@
 								() => onMarkActivate(markFor(bar)),
 								(next) => (tabKey = keyOf(navBars[next]))
 							)}
-						onfocus={() => {
+						onfocus={(e) => {
 							tabKey = keyOf(bar);
-							focusedMark = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex };
+							if (isKeyboardFocus(e.currentTarget)) {
+								focusedMark = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex };
+							}
 						}}
 						onblur={() => (focusedMark = null)}
 						onpointerenter={() =>
@@ -626,6 +634,11 @@
 	.mark:focus-visible .bar {
 		stroke: var(--banto-text);
 		stroke-width: 3;
+	}
+
+	/* markSelected: while a mark is chosen, the others step back. */
+	.mark.dimmed .bar {
+		opacity: 0.35;
 	}
 
 	.hit {

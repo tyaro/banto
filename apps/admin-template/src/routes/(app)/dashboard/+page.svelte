@@ -71,7 +71,8 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { DASHBOARD_ROW_LIMIT, createDashboardData } from '#lib/banto/dashboardData.svelte.js';
 	import { drillHref, type DashboardDrill } from '#lib/banto/dashboardDrill.js';
-	import { DASHBOARD_WIDGETS } from '#lib/banto/dashboardWidgets.js';
+	import { DASHBOARD_WIDGETS, type DashboardSelect } from '#lib/banto/dashboardWidgets.js';
+	import DashboardSelectionBar from '#lib/components/dashboard/DashboardSelectionBar.svelte';
 	import DashboardWidgetStack from '#lib/components/dashboard/DashboardWidgetStack.svelte';
 	import DashboardKpiStrip from '#lib/components/DashboardKpiStrip.svelte';
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
@@ -80,6 +81,7 @@
 		DASHBOARD_PERIODS,
 		DEFAULT_DASHBOARD_FILTER,
 		latestDay,
+		toggleSelection,
 		type DashboardFilter,
 		type DashboardPeriod
 	} from '#lib/banto/dashboardPeriod.js';
@@ -91,6 +93,13 @@
 	 * page's state and nothing else: not saved (a reload starts at "all"), not part of the saved
 	 * arrangement, not sent to a popped-out window. The selection of #882 (cross-filtering, `selection`) lives in this
 	 * same object, with the same rules.
+	 *
+	 * #882 C2: a mark of a widget registered with `selects` toggles ONE value of its dimension
+	 * (`select.toggle`, handed to the widgets through the frame); the widgets registered with
+	 * `usesSelection` and the KPI strip are narrowed by it, and the band under the heading
+	 * (`DashboardSelectionBar`) shows what is chosen and takes it off. The band is drawn only while
+	 * something is chosen. Opening the items list from a choice (the drill-down of D3) is the
+	 * band's link, not the mark itself.
 	 */
 	let filter = $state<DashboardFilter>({ ...DEFAULT_DASHBOARD_FILTER, selection: {} });
 	const PERIOD_LABELS: Record<DashboardPeriod, () => string> = {
@@ -124,6 +133,18 @@
 	const anchorDay = $derived(latestDay(data.all.rows));
 	function onDrill(drill: DashboardDrill): void {
 		void goto(drillHref(drill, filter, anchorDay));
+	}
+	const select: DashboardSelect = {
+		get selection() {
+			return filter.selection;
+		},
+		toggle(dimension, value) {
+			filter.selection = toggleSelection(filter.selection, dimension, value);
+		}
+	};
+	/** The band emptied under the focus: the period control is the filter that is still there. */
+	function focusPeriod(): void {
+		document.querySelector<HTMLElement>('input[name="dashboard-period"]:checked')?.focus();
 	}
 	// The read left rows out (the limit): say so next to the count, in one sentence.
 	const summary = $derived.by(() => {
@@ -486,6 +507,15 @@
 		<p>{m['dashboard.aboutNote']({ count: data.totalCount.toLocaleString() })}</p>
 	</AnnotationDrawer>
 
+	<DashboardSelectionBar
+		{filter}
+		{anchorDay}
+		truncated={data.truncated}
+		onClear={(dimension) => select.toggle(dimension, '')}
+		onClearAll={() => (filter.selection = {})}
+		onEmptied={focusPeriod}
+	/>
+
 	<DashboardKpiStrip {data} {filter} />
 
 	<!-- [scaffold:dock] begin -->
@@ -518,7 +548,7 @@
 		{/if}
 		<!-- [scaffold:dock] end -->
 		{#if stacked}
-			<DashboardWidgetStack widgets={stackWidgets} {data} {onDrill} />
+			<DashboardWidgetStack widgets={stackWidgets} {data} {onDrill} {select} />
 		{/if}
 	{/if}
 	<!-- [scaffold:dock] begin -->
@@ -550,7 +580,7 @@
 	{@const widget = widgetOf(content.id)}
 	<div class="dock-panel">
 		{#if widget}
-			<DashboardWidgetFrame {widget} {data} {onDrill} />
+			<DashboardWidgetFrame {widget} {data} {onDrill} {select} />
 		{:else}
 			<p class="dock-status">{m['dashboard.unknownPanel']()}</p>
 		{/if}
