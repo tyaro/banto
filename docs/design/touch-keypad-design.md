@@ -1,7 +1,7 @@
 # タッチ向けの画面内テンキー・文字キーボード 設計書 — Issue #937
 
 作成日: 2026-11-25
-状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1〜T5 実装済み、T6・T7 未着手**（T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture、PR #954。T3 = `TextKeyboard`（英数・記号）・最大文字数・ホストの文字の経路・パスワードの入力欄。T4 = カナの配列（濁点・半濁点・小書き）。T5 = レシピ [touch-keys.md](../recipes/touch-keys.md)。T2 で決めた形は §15.1、T3 で決めた形は §15.2、T4 で決めた形は §15.3、実機の確かめ（§14.4）は未実施）
+状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1〜T5・T7 実装済み、T6 は別の設計（[grid-touch-edit-design](grid-touch-edit-design.md)、Issue #964。設計書だけ）**（T7 = `/ui-demo` のカード・scaffold の外す処理・e2e・基準画像。決めた形は §15.4。T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture、PR #954。T3 = `TextKeyboard`（英数・記号）・最大文字数・ホストの文字の経路・パスワードの入力欄。T4 = カナの配列（濁点・半濁点・小書き）。T5 = レシピ [touch-keys.md](../recipes/touch-keys.md)。T2 で決めた形は §15.1、T3 で決めた形は §15.2、T4 で決めた形は §15.3、実機の確かめ（§14.4）は未実施）
 トラック: 保守者向け（トラックA）
 関連: Issue #937、[template-scope](../template-scope.md) §1・§3・§3.1、
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui` と層の補助）、
@@ -35,7 +35,8 @@ conventions §3 / §4 / §5 / §8 / §9 / §13 / §14
 - 業種の知識を持たないので、banto-industrial（ドメイン特化）に置く理由が無い（template-scope §3.1「別リポジトリへの分離は
   ドメイン特化に限る」）。
 
-横断性の弱さは、**アプリに配線しない**（§4）ことで受ける。使わない利用者には、消す配線が無い。
+横断性の弱さは、**シェルに配線しない**（§4）ことで受ける。テンプレートの配線は `/ui-demo` の見本のカード 1 枚だけで（T7、§4.2 の b）、
+使わない利用者は `pnpm scaffold` で外せる（§16）。
 
 ## 1. 用語
 
@@ -161,6 +162,9 @@ B の「悪い点」が小さいことは、実コードで確かめた:
 | c. 設定に「画面内キーボードを使う」を足して全画面で効かせる | テンプレートのままタッチの端末で使える                                                               | シェルに常時の機能が入る（削除容易性が下がる）。設定・文言・試験・基準画像が増える。横断性が弱いのに全利用者が継承する                                                                                                             |
 
 **推奨: a。** API が固まった後（T4 の後）で b を別の判断にする（§18 の 2）。c はしない。
+
+**T7（2026-11-25、オーナー決定）で b を採った。** T5 までは a（配線しない）で進め、API が固まったので `/ui-demo` にカードを足した。
+決めた形は §15.4、外す手順は §16。c は引き続きしない（ルートのレイアウトにホストは置かない）。
 
 ## 5. 公開 API の案
 
@@ -734,12 +738,13 @@ Playwright の `hasTouch` は合成のタッチで、OS のキーボードも実
 
 ### 14.5 そのほか
 
-- **e2e・visual**（admin-template）: 配線しない間は足さない（基準画像は変わらない）。§4.2 の b を採るときは、`ui-demo` の基準画像を作り直す。
+- **e2e・visual**（admin-template）: T5 までは足さなかった（基準画像は変わらない）。T7 で §4.2 の b を採り、demo の e2e
+  （`e2e/demo/touch-keys.spec.ts`）を足して、`ui-demo` の基準画像を `visual-baselines.yml` で作り直した（§15.4）。
 - `pnpm verify:architecture`（`raw-colors`・`raw-dimensions`・`package-bare-imports`・`no-app-import`）は、新しいパッケージにも自動で当たる。
 
 ## 15. PR の分け方
 
-1 PR = 1 エージェントで済む大きさ。**T1 → T2 → T3 → T4 → T5** の順。T6・T7 は別の判断。
+1 PR = 1 エージェントで済む大きさ。**T1 → T2 → T3 → T4 → T5** の順。T6・T7 は別の判断（どちらも次のリリースに入れる。オーナー決定 2026-11-25）。
 
 | PR   | 範囲                                                                                                                                                                                                                                     | 完了条件                                                                 |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
@@ -865,9 +870,40 @@ T1 を小さく保つため、`NumberKeypad` は表示とキーの入力だけ�
   `#kana` を足した。タップで打ち、確定の値が合成済みで `bind:value` まで届く・360px・axe）。
 - **実機で確かめたいこと**: 5 行のカナの盤が下の固定でキーの大きさ（既定 48px）のまま収まるか、印のキーが押しやすいか。
 
+### 15.4 T7 で決めた形
+
+- **配線は `/ui-demo` のカード 1 枚だけ**（§4.2 の b）。ルートのレイアウトにホストは置かない。ナビ・設定・シェルは変わらない。
+  カードは DatePicker のカードの直前に置いた（最後のカードの位置を変えず、ポップアップを撮る基準画像への影響を小さくする）。
+- **ホストはカードの中**に置き、**`resolve` でカードの中の欄だけ**を対象にする（カードの外の欄には `false` を返す）。同じページの
+  ほかの見本（DateInput・BantoForm・BantoGrid など）の入力欄は素のまま。盤は popover（top layer）なので、Glass の
+  `backdrop-filter` を持つ `SurfaceCard` の中に置いても、画面に対して出る。
+- **欄は 4 つ**: 数量（`type="number"`・`min="0"`・`max="999"`。属性からの推定だけ）、ロット（`maxlength="12"` と `touchKeys({ kind: 'text', layouts: ['alnum'] })`。上限は属性から読むので、実キーボードでも同じ 12 文字）、
+  品名カナ（`layouts: ['kana', 'alnum']`）、パスワード（`type="password"`。画面には文字数だけを出す。§5.5）。
+- **切り替え**: カードの中のスイッチ（既定は入）が `enabled` に繋がる。端末ごとの設定（レシピ 3 節）の代わりで、保存はしない。
+  既定を入にしたのは、見本を開いた人がそのまま触って確かめられるようにするため。盤は入力欄を押すまで出ないので、基準画像には欄だけが写る。
+- **文言**: `apps/admin-template/src/lib/banto/touchKeysMessages.ts` の `touchKeysMessages()`（戻り値は `Required<TouchKeysMessages>`。
+  全部の項目を Paraglide のキー `touchKeys.*` に写す。範囲・刻み・文字数は、場合ごとに文が変わるのでキーを分けた:
+  `touchKeys.range.both` / `.min` / `.max`、`touchKeys.step.both` / `.one` / `.none`、`touchKeys.length.max` / `.count`）。
+  `i18n.ts` に足さず別のファイルにしたのは、scaffold がファイル 1 つを消すだけで済むようにするため。カードの文言は `uiDemo.touchKeys.*`。
+- **依存**: `apps/admin-template/package.json` に `@banto/touch-keys-svelte`。**`optimizeDeps.exclude` には足さない**（`.svelte.ts` を
+  持たないパッケージを足すと、`verify:architecture` の rule `optimizedeps-svelte-source` が「不要」で落とす。conventions §14）。
+  外部利用 fixture にも足さない（同じ理由で rule `external-consumer-fixture` の対象外。ADR-0036 §3）。
+- **scaffold**: 資産 `touchKeys`（`removeTouchKeys`）。`minimal`・`standard`・`display` が外し、`full` が残す。`+page.svelte` の
+  `[scaffold:touch-keys]` の 2 領域（script の import と状態、markup のカードとホスト）を `cutEveryMarked` で数を突き合わせて消す。
+  `scripts/scaffold.test.mjs` の `EXCLUDED` から外し、`ASSET_PACKAGES` に入れた。
+- **試験**: `e2e/demo/touch-keys.spec.ts`（`pnpm e2e:demo`。テンキーの確定が `bind:value` まで届く・範囲の外は確定できない・
+  英数は下の固定でカナが出ない・カナの濁点と小書き・パスワードの下書きに平文が出ない・スイッチを切ると素の欄・カードの外の欄では開かない）。
+  盤そのものの挙動（外のタップ・層・実キー・タッチ）は、引き続きパッケージの fixture（§14.3）で見る。
+- **基準画像**: 変わるのは `ui-demo` の系統だけ。`visual-baselines.yml` で作り直した。
+
 ## 16. 外す手順
 
-配線しない（§4.2 の a）ので、テンプレートのアプリに外す配線は無い。scaffold はどのプリセットでも触れない。
+テンプレートの配線は `/ui-demo` のカード 1 枚（§4.2 の b、§15.4）。`pnpm scaffold --preset minimal|standard|display` が外す（`full` は残す）。
+
+- **テンプレートの見本を外す**（scaffold の `removeTouchKeys` と同じ。手順の全量は `remove-optional-assets` の節）:
+  `routes/(app)/ui-demo/+page.svelte` の `[scaffold:touch-keys]` の 2 領域、`src/lib/banto/touchKeysMessages.ts`、
+  `messages/{ja,en}.json` の `touchKeys.*`・`uiDemo.touchKeys.*`、`package.json` の依存、`e2e/demo/touch-keys.spec.ts`。
+  パッケージ本体は残る。
 
 - **banto から外す**: `packages/touch-keys-svelte/` を消し、`pnpm install` で lockfile を更新する。docs の参照
   （template-scope §3 の行・`remove-optional-assets` の節・レシピ・README の表・この設計書への参照）を外す。
@@ -907,7 +943,7 @@ T1 を小さく保つため、`NumberKeypad` は表示とキーの入力だけ�
 | #   | 決めること                                                     | 推奨                                                                                                                                                                                                           |
 | --- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | 置き場所（§4.1）                                               | **新しいオプションのパッケージ `touch-keys-svelte`**。`@banto/ui`（コア）には足さない。別案: `@banto/ui` に足す（登録が要らないが、コアが太る）                                                         |
-| 2   | アプリへの配線（§4.2）                                         | **配線しない（recipe-only）**。T4 の後に、`/ui-demo` のカード（b）を別に判断する。b の利点は実ブラウザの e2e、代償は scaffold・template-scope の行・`ui-demo` の基準画像の作り直し                            |
+| 2   | アプリへの配線（§4.2）                                         | **配線しない（recipe-only）**。T4 の後に、`/ui-demo` のカード（b）を別に判断する（**T7 で b を採った**。§15.4）。b の利点は実ブラウザの e2e、代償は scaffold・template-scope の行・`ui-demo` の基準画像の作り直し                            |
 | 3   | カナの形（§9.2）                                               | **全角のカタカナだけを、IME を通さず直接**。濁点・半濁点・小書きは直前の 1 文字に後から掛ける。ひらがな・漢字・半角カナは入れない。半角が要る案件はアプリが確定の後に変換する                                 |
 | 4   | テンキーの最初の 1 打（§8.3）                                  | **いまの値を置き換える**（最初に「1 文字消す」を押したら、いまの値の末尾を消す）。別案: いつも末尾に足す                                                                                                       |
 | 5 | 盤の外をタップしたとき（§6.2・§7.2.1） | **取り消し。そのタップは下の画面に届かせない**（書くのは「確定」を押したときだけ。同じ操作で下の保存や閉じるが押されない。別の対象の入力欄へ移るときだけ 1 回で替わる）。別案: 確定として書く／何もしない（閉じるには取り消しを押す） |

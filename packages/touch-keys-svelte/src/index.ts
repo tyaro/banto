@@ -1,7 +1,7 @@
 /**
  * `@banto/touch-keys-svelte` — on-screen keys for touch panels
- * (docs/design/touch-keypad-design.md). Optional, recipe-only: not wired into
- * the template app (template-scope §3, ADR-0036).
+ * (docs/design/touch-keypad-design.md). Optional: the template app wires it only
+ * as a sample card on `/ui-demo` (template-scope §3, ADR-0036 §2).
  *
  * `TouchKeysHost` (once at the app root) opens the number keypad on numeric
  * `<input>`s and the text keyboard on text / password `<input>`s; `touchKeys` sets

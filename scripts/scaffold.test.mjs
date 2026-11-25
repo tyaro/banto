@@ -51,14 +51,14 @@ test('--interactive --dry-run はプリセット選択（1=minimal）を pipe st
 });
 
 test('--interactive --dry-run は custom（5）で資産ごとの残す/削除を pipe stdin から読む', () => {
-	// charts/dock は残す(Y)、それ以外（glass/commandPalette/attachments/report/tree/configDrafts）は
-	// 削除する(n)。custom で聞かれるのは**オプション資産8種だけ**（display の items/画面削除は
+	// charts/dock は残す(Y)、それ以外（glass/commandPalette/attachments/report/tree/configDrafts/touchKeys）は
+	// 削除する(n)。custom で聞かれるのは**オプション資産9種だけ**（display の items/画面削除は
 	// 一括適用なので個別トグルの対象外 — scaffold.mjs の `CUSTOM_TOGGLEABLE`）。
-	const res = run(['--interactive', '--dry-run'], '5\nY\nY\nn\nn\nn\nn\nn\nn\n');
+	const res = run(['--interactive', '--dry-run'], '5\nY\nY\nn\nn\nn\nn\nn\nn\nn\n');
 	assert.equal(res.status, 0, `非0終了:\n${res.stdout}\n${res.stderr}`);
 	assert.match(
 		res.stdout,
-		/削除する資産: glass, commandPalette, attachments, report, tree, configDrafts/
+		/削除する資産: glass, commandPalette, attachments, report, tree, configDrafts, touchKeys/
 	);
 });
 
@@ -84,10 +84,10 @@ test('--interactive は確認で n を選ぶと変更せずに正常終了する
 test('--preset display --dry-run --strict が全アンカー一致で通り、削除と追加の両方を計画する', () => {
 	const res = run(['--preset', 'display', '--dry-run', '--strict'], '');
 	assert.equal(res.status, 0, `非0終了:\n${res.stdout}\n${res.stderr}`);
-	// minimal の8資産 + display 固有の3 remover、そして唯一の「足す」工程。
+	// minimal の9資産 + display 固有の3 remover、そして唯一の「足す」工程。
 	assert.match(
 		res.stdout,
-		/削除する資産: charts, dock, glass, commandPalette, attachments, report, tree, configDrafts, items, adminPages, dashboard/
+		/削除する資産: charts, dock, glass, commandPalette, attachments, report, tree, configDrafts, touchKeys, items, adminPages, dashboard/
 	);
 	assert.match(res.stdout, /足す工程: displayDefaults/);
 	// display の「足す」側の要（plan §3.2）。どれが欠けても表示専用アプリとして
@@ -124,13 +124,19 @@ test('packages/ の全パッケージが scaffold の判断（remover / コア /
 	// コア（常在。scaffold は触れない前提のパッケージ）
 	const CORE = new Set(['admin-core', 'forms', 'theme', 'grid-svelte', 'ui']);
 	// 資産 → 対応パッケージ（アプリ内資産のみの glass/commandPalette はパッケージ無し）
-	const ASSET_PACKAGES = new Set(['charts', 'dock-svelte', 'attachments', 'report', 'tree-svelte']);
+	// touch-keys-svelte（ADR-0036、#937 T7）は `/ui-demo` のカードとして配線したので、remover（touchKeys）を持つ。
+	const ASSET_PACKAGES = new Set([
+		'charts',
+		'dock-svelte',
+		'attachments',
+		'report',
+		'tree-svelte',
+		'touch-keys-svelte'
+	]);
 	// 意図的な除外（レシピのみ・未配線。scaffold.mjs 冒頭 doc と plan §3 の決定）。
 	// image-assets（ADR-0020 §6）もアプリが依存しない未配線のオプションで、外すアプリ側の配線が無い。
 	// パッケージ本体は他の remover と同じく同梱のまま（消すと docs の参照が rule docs-package-refs に落ちる）。
-	// touch-keys-svelte（ADR-0036、#937、template-scope §3）も同じ: recipe-only で、アプリは依存せず配線も無い。
-	// scaffold はどのプリセットでも触れない。
-	const EXCLUDED = new Set(['scan-wedge', 'image-assets', 'touch-keys-svelte']);
+	const EXCLUDED = new Set(['scan-wedge', 'image-assets']);
 
 	const source = fs.readFileSync(path.join(repoRoot, 'scripts/scaffold.mjs'), 'utf8');
 	const dirs = fs
@@ -145,7 +151,8 @@ test('packages/ の全パッケージが scaffold の判断（remover / コア /
 		);
 		// 資産パッケージは remover 側の実在も確認（テスト表と scaffold 本体の両建てドリフト防止）
 		if (ASSET_PACKAGES.has(dir)) {
-			const asset = dir.replace(/-svelte$/, '').replace(/^dock$/, 'dock');
+			// REMOVERS のキーは camelCase（touch-keys-svelte → touchKeys）。
+			const asset = dir.replace(/-svelte$/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 			assert.match(
 				source,
 				new RegExp(`\\b${asset}: remove`),
@@ -161,8 +168,18 @@ test('packages/ の全パッケージが scaffold の判断（remover / コア /
 // あのモジュールはトップレベルで引数を解析し process.exit するため）。
 test('各プリセットの全工程が ORDER に載っていて、計画出力に現れる', () => {
 	const EXPECTED = {
-		minimal: ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report', 'tree'],
-		standard: ['attachments', 'report', 'tree'],
+		minimal: [
+			'charts',
+			'dock',
+			'glass',
+			'commandPalette',
+			'attachments',
+			'report',
+			'tree',
+			'configDrafts',
+			'touchKeys'
+		],
+		standard: ['attachments', 'report', 'tree', 'touchKeys'],
 		full: [],
 		display: [
 			'charts',
@@ -172,6 +189,8 @@ test('各プリセットの全工程が ORDER に載っていて、計画出力�
 			'attachments',
 			'report',
 			'tree',
+			'configDrafts',
+			'touchKeys',
 			'items',
 			'adminPages',
 			'dashboard',
