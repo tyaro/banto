@@ -142,8 +142,10 @@ OS のタッチキーボードが同時に出る環境があれば（`inputmode=
 - `NumberField`（`type="number"`、`min` / `max` が属性にある）は推定だけで、範囲つきのテンキーになる。
 - `TextField` は文字キーボードになる。
 - **`DraftNumberField`**（`type="text"` + `inputmode="decimal"`）はテンキーになるが、`min` / `max` が DOM に無いので、
-  **`resolve` で範囲を渡す**（書き忘れると範囲なしのテンキーになる。forms の検証は確定の後の `input` で走るが、
-  盤でその場で知らせることはできない）。`input.id` はフィールド名（`DraftNumberField` は `id` を省くと `def.name`）。
+  **`resolve` で範囲を渡す**（書き忘れると範囲なしのテンキーになる）。**限界**: `DraftNumberField` は `input` では
+  `draft.setRaw()` しか呼ばず、検証と値の確定は blur か Enter の `draft.commit()` で行う。盤の確定は入力欄へ書いて `input` を出す
+  までで、フォーカスは入力欄に残るため、**盤を閉じた直後には forms の検証・確定は走らない**（次の blur・Enter・フォーム送信で走る）。
+  grid のセルと同じ限界で、盤の範囲の知らせ（`resolve` の `min` / `max`）が、その場の唯一の検証になる。`input.id` はフィールド名（`DraftNumberField` は `id` を省くと `def.name`）。
 
 ```svelte
 <TouchKeysHost
