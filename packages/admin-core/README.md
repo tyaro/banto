@@ -189,6 +189,43 @@ const { value, revision } = await updateUiSetting(provider, 'items.pinned', (cur
 アカウントでも同じ revision なので、条件だけでは止まらない）。前のセッションで既に送った書き込みは、そのセッションの値として
 入っていることがある。
 
+## 設定の下書き → 反映 → 元に戻す（`ConfigDraftsProvider`）
+
+Issue #938（[設計書](../../docs/design/config-draft-publish-design.md) §4.11・§5）。サーバーの `/api/config/*`
+（`banto_server::routes::config_drafts_router`）を 1 対 1 で呼ぶ**薄い読み口**で、状態は持たない
+（キャッシュ・ロックの延長の timer・キューは無い）。`createHttpConfigDrafts({ getToken, baseUrl?, fetchFn? })`
+（REST）と `createTauriConfigDrafts({ invoke })`（`config_*` のコマンド。コマンドを配線したアプリだけで動く）。
+値は `unknown`（アプリが自分の対象の形を知っている）、revision は不透明な文字列で、`if…` に返すだけ。
+
+```ts
+const configs = createHttpConfigDrafts({ getToken: () => auth.getToken() });
+
+const lock = await configs.lockAcquire('site'); // { lease, expiresAtMs, .. }
+const saved = await configs.draftPut('site', {
+	value: next,
+	ifRevision: state.draft?.revision ?? CONFIG_DRAFT_ABSENT_REVISION, // 最初の保存は "0"
+	ifPublishedRevision: state.published.revision // 最初の保存だけ必須
+});
+if (saved.validation.length === 0) {
+	await configs.publish('site', { ifDraftRevision: saved.revision, comment: '閾値を上げた' });
+}
+await configs.lockRelease('site', lock.lease);
+```
+
+- 口: `list` / `get` / `diff(target, { toVersion? })` / `historyList(target, { before?, limit? })` / `historyGet` /
+  `lockAcquire` / `lockExtend` / `lockRelease` / `draftPut` / `draftRebase` / `draftDiscard` / `publish` / `revert` / `unlock`。
+  `lockRelease` と `unlock` は本文なし（204）で、`void` を返す。lease を使うのは `lockExtend`・`lockRelease`（自分のロック）と
+  `unlock` の `ifLease`（画面で見たほかの人のロック）。
+- **保存の検証の失敗はエラーではない**: `draftPut` / `draftRebase` の結果の `validation`（空なら反映できる）で見る。
+- **衝突**は `conflict`（409）。`configDraftConflict(error)` が理由ごとの型で取り出す（衝突でなければ `null`）:
+  `stale_base`（差分を見せて `draftRebase`）・`draft_changed`（読み直し。`draft` は今の下書きか `null`）・
+  `published_changed`（読み直し）・`lock_held`（`lock.holderName` を出す）・`lock_required`（ロックを取り直す。延長の再試行はしない）。
+- 差分・履歴の `changes` は監査と同じ形（パスは JSON Pointer、秘密は `masked`）。テンプレート由来のアプリは
+  `src/lib/resource/AuditChanges.svelte` に渡せる。
+- ロックの延長（期限の 1/3 ごと）と、`resource_changed` の `config:<対象>`（本番が変わった）・`config-draft:<対象>`
+  （下書き・ロックが変わった）での読み直しは、画面の側で行う。
+- 同梱の demo 実装は無い（本番のサーバーが無いと意味を持たないため）。
+
 ## UI 設定の現在値と保存済みの値を分ける（`createSavedSetting`）
 
 `UiSettingsProvider`（Local / Tauri / HTTP）の上に乗る helper。provider は置き換えない
