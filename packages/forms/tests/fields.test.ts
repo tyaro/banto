@@ -134,6 +134,26 @@ describe('DraftNumberField', () => {
 		expect(onCommit).toHaveBeenCalledTimes(1);
 	});
 
+	it('still commits after setRaw() from outside or a swapped draft', async () => {
+		const draft = setup();
+		const onCommit = vi.fn();
+		const view = render(DraftNumberField, { def, draft, onCommit });
+		const control = screen.getByRole('textbox');
+		await fireEvent.input(control, { target: { value: '3' } });
+		await fireEvent.change(control);
+		expect(draft.values.qty).toBe(3);
+		draft.setRaw('qty', '7');
+		await fireEvent.keyDown(control, { key: 'Enter' });
+		expect(draft.values.qty).toBe(7);
+		expect(onCommit).toHaveBeenCalledTimes(2);
+		const other = setup();
+		await view.rerender({ draft: other });
+		other.setRaw('qty', '7');
+		await fireEvent.blur(control);
+		expect(other.values.qty).toBe(7);
+		expect(onCommit).toHaveBeenCalledTimes(3);
+	});
+
 	it('ignores change while readonly or disabled', async () => {
 		const draft = setup();
 		const onCommit = vi.fn();

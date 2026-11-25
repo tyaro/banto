@@ -47,14 +47,16 @@
 	const inputId = $derived(id ?? def.name);
 	const described = $derived(describedByWithAffix(def, inputId, describedBy));
 
-	// True once the current text has been committed; typing clears it. Native
-	// edit + blur fires `change` and `blur`: only the first one notifies.
-	let settled = false;
+	// Native edit + blur fires `change` and `blur`: notify once per text. Remember
+	// which draft / field / text was committed last (not a DOM flag), so a
+	// `setRaw()` from elsewhere or a swapped `draft` still commits next time.
+	let last: { draft: FormDraft; name: string; text: string } | undefined;
 
 	function commit() {
-		if (disabled || def.readonly || settled) return;
-		settled = true;
+		if (disabled || def.readonly) return;
+		if (last && last.draft === draft && last.name === def.name && last.text === text) return;
 		const valid = draft.commit(def.name);
+		last = { draft, name: def.name, text }; // text after the commit (e.g. "007" -> "7")
 		onCommit?.(valid);
 	}
 
@@ -78,10 +80,7 @@
 		aria-invalid={!!error}
 		aria-describedby={described}
 		oninput={(event) => {
-			if (!disabled && !def.readonly) {
-				settled = false;
-				draft.setRaw(def.name, event.currentTarget.value);
-			}
+			if (!disabled && !def.readonly) draft.setRaw(def.name, event.currentTarget.value);
 		}}
 		onchange={commit}
 		onblur={commit}
