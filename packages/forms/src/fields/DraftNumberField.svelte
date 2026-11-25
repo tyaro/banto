@@ -12,7 +12,8 @@
 	 * decided in Issue #432's forms PR). The value is committed on blur / Enter
 	 * through `draft.commit`, exactly when `NumberField` users validate today. `change`
 	 * commits too, so a programmatic confirm that fires `input` + `change` (a touch
-	 * keypad) confirms the value; a second commit with no pending text only re-validates.
+	 * keypad) confirms the value; each text is committed (and `onCommit` notified) once, by whichever of
+	 * `change` / blur / Enter comes first.
 	 */
 	import type { FieldDef } from '../types';
 	import { formatDraftValue, type FormDraft } from '../draft.svelte';
@@ -46,8 +47,13 @@
 	const inputId = $derived(id ?? def.name);
 	const described = $derived(describedByWithAffix(def, inputId, describedBy));
 
+	// True once the current text has been committed; typing clears it. Native
+	// edit + blur fires `change` and `blur`: only the first one notifies.
+	let settled = false;
+
 	function commit() {
-		if (disabled || def.readonly) return;
+		if (disabled || def.readonly || settled) return;
+		settled = true;
 		const valid = draft.commit(def.name);
 		onCommit?.(valid);
 	}
@@ -72,7 +78,10 @@
 		aria-invalid={!!error}
 		aria-describedby={described}
 		oninput={(event) => {
-			if (!disabled && !def.readonly) draft.setRaw(def.name, event.currentTarget.value);
+			if (!disabled && !def.readonly) {
+				settled = false;
+				draft.setRaw(def.name, event.currentTarget.value);
+			}
 		}}
 		onchange={commit}
 		onblur={commit}

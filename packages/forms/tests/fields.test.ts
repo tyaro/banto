@@ -107,6 +107,33 @@ describe('DraftNumberField', () => {
 		expect(draft.errors.qty).toBeUndefined();
 	});
 
+	it('notifies onCommit once for change then blur (no Enter)', async () => {
+		const draft = setup();
+		const onCommit = vi.fn();
+		render(DraftNumberField, { def, draft, onCommit });
+		const control = screen.getByRole('textbox');
+		await fireEvent.input(control, { target: { value: '3' } });
+		await fireEvent.change(control);
+		await fireEvent.blur(control);
+		expect(onCommit).toHaveBeenCalledTimes(1);
+		await fireEvent.input(control, { target: { value: '4' } });
+		await fireEvent.keyDown(control, { key: 'Enter' });
+		await fireEvent.change(control);
+		await fireEvent.blur(control);
+		expect(onCommit).toHaveBeenCalledTimes(2);
+	});
+
+	it('commits once, immediately, on keypad input then change while focus stays', async () => {
+		const draft = setup();
+		const onCommit = vi.fn();
+		render(DraftNumberField, { def, draft, onCommit });
+		const control = screen.getByRole('textbox');
+		await fireEvent.input(control, { target: { value: '6' } });
+		await fireEvent.change(control);
+		expect(draft.values.qty).toBe(6);
+		expect(onCommit).toHaveBeenCalledTimes(1);
+	});
+
 	it('ignores change while readonly or disabled', async () => {
 		const draft = setup();
 		const onCommit = vi.fn();
