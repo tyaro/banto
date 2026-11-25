@@ -1,7 +1,7 @@
 # grid: タップで編集を始める・盤の確定でセルを確定する 設計書（草案） — Issue #964（#937 T6）
 
 作成日: 2026-11-25
-状態: **§11 はオーナー決定済み（2026-11-25、9 件とも推奨どおり）。F1・G1・K1・G2 実装済み。W1 は未着手**
+状態: **§11 はオーナー決定済み（2026-11-25、9 件とも推奨どおり）。すべて実装済み（F1・G1・K1・G2・W1。W1 で決めた形は §10.1）。実機の確かめ（touch-keypad-design §14.4）は未実施**
 トラック: 保守者向け（トラックA）
 関連: Issue #964、親の Issue #937、[touch-keypad-design](touch-keypad-design.md) §6.3・§6.4・§14・§15・§18 の 7、
 [recipes/touch-keys.md](../recipes/touch-keys.md)（「grid のセル」と `DraftNumberField` の限界）、
@@ -282,6 +282,31 @@ touch-keypad-design §14 と同じく、jsdom が持たないもの（当たり�
 
 順は **G1 ∥ K1 ∥ F1 → G2 → W1**。W1 は T7（admin-template への盤の配線）の後。CHANGELOG は各 PR で 1 行、G1 には
 「消費側への注意」（タッチのタップで編集が始まる。止めるなら `editOnTap={false}`）を書く。
+
+### 10.1 W1 で決めた形
+
+- **配線の置き場は `/ui-demo` の TouchKeysHost のカード**（ルートのレイアウトではない）。T7 が「テンプレートのホストは見本のカードの中の
+  1 つだけ」と決めた（touch-keypad-design §4.2 の b・§15.4）ので、§4.1 の ⑤ の「ルート」は、テンプレートではそのカードのホストを指す。
+  カードに編集できる grid（数量 = 数値、ロット = 文字）を足し、そのホストの `resolve` が `data-grid-editor` の欄に
+  `{ openOnFocus: true }` を返し、`onconfirm` がその欄だけを `blur()` する。ルートに 2 つ目のホストは置かない
+  （2 つあると盤が 2 つ開く）。アプリがルートに置くときの形は、レシピ「grid のセル」に書いた。
+- **scaffold**: grid の見本・配線は `[scaffold:touch-keys]` の 2 領域の中に収めたので、`removeTouchKeys` の印の数は変わらない。
+  足したのは e2e の削除 1 行（`e2e/demo/touch-keys-grid.spec.ts`）。文言は `uiDemo.touchKeys.*` の下で、今の remover が消す。
+- **組み合わせの e2e** は `e2e/demo/touch-keys-grid.spec.ts`（`demo` の project。`hasTouch: true`、盤のキーも `tap()`）:
+  マウスの 1 回のクリックでは始まらない／1 回のタップで編集と盤／確定でセルが確定し、元のセルがアクティブのまま grid にフォーカス／
+  保存の拒否（見本の数量は在庫 500 を超えると保存が失敗する）で下書きとエラーが残り、フォーカスがエディタに戻り、タップで盤が開き直す／
+  盤の取り消しでは編集が開いたまま／実キーボードの Esc 1 回で両方が閉じる／保存待ち（見本のロットは保存が少し遅い）の間に
+  別の場所をタップしたら、フォーカスはそちらに残る。ハイドレーション待ちの再試行は grid でなくカードの素の欄で行う
+  （セルのタップを再試行すると、「1 回目で編集だけ始まり、2 回目で盤が開く」退行を見逃すため）。
+  **本物の `TouchKeysHost` で `openOnFocus` の窓が足りる**ことは、この e2e で確かめた（Chromium、3 回続けて緑）。
+- **forms のほかの欄**（§7 の残り）: `TextField`・`NumberField`・`PasswordField`・`TextareaField`・`DateField`・`ReferenceField` は
+  `input` で `FormStore` に値が入るので、F1 と同じ穴は無い（`<textarea>` と `type="date"` などはそもそも盤の対象でない）。
+  `DraftDateField` は、注入した日付の入力欄（文字の欄）に盤で書くと `input` → `setRaw` までで、確定は blur・Enter を待つ
+  （F1 と同じ形の穴）。ただし日付・時刻の欄は、レシピで盤の対象から外す（`data-touch-keys="off"`）と決めているので、直さない。
+  直すなら、注入する入力欄の約束（`onTextInput`・`onValueChange`・`onblur`・`onkeydown`）に `change` を足すことになり、
+  `@banto/ui` の `DateInput` と date-time-pickers §5 の約束に触る（要る画面が出たら別の Issue）。
+- **基準画像**: カードが高くなるので、`ui-demo` の系統だけ `visual-baselines.yml` で作り直した（§9 の「変わらない見込み」は、
+  見本を足したので当たらなかった。パッケージの見た目は変えていない）。
 
 ## 11. 確かめたい点（オーナーの判断）
 

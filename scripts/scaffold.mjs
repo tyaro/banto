@@ -1478,9 +1478,10 @@ function removeConfigDrafts() {
 // docs/design/touch-keypad-design.md §16 と docs/recipes/remove-optional-assets.md の
 // 「`@banto/touch-keys-svelte`」を 1 対 1 で自動化する。テンプレートの配線は `/ui-demo` の
 // カード 1 枚だけ（ルートのレイアウトにホストは置いていない。ナビも変わらない）:
-// `+page.svelte` の 2 つの領域（script の import と状態、markup のカードとホスト。どちらも
+// `+page.svelte` の 2 つの領域（script の import と状態、markup のカードとホスト。grid の見本と、
+// grid のエディタへの `resolve`・`onconfirm` の配線（#964 W1）もこの中。どちらも
 // `[scaffold:touch-keys]` の印で囲む）、Paraglide の束（`touchKeysMessages.ts`）、文言キー
-// （`touchKeys.*` と `uiDemo.touchKeys.*`）、アプリの依存、demo の e2e。
+// （`touchKeys.*` と `uiDemo.touchKeys.*`）、アプリの依存、demo の e2e（2 本）。
 //
 // 残す物: パッケージ本体（`packages/touch-keys-svelte`。他の remover と同じ）と、その
 // ブラウザーの fixture・CI のジョブ（アプリに依らず、パッケージだけで走る）。`.svelte.ts` を
@@ -1502,6 +1503,7 @@ function removeTouchKeys() {
 
 	// (4) demo の e2e（カードが無いと落ちる。display は後でディレクトリごと消す）
 	removeFile('e2e/demo/touch-keys.spec.ts', 'e2e/demo/touch-keys.spec.ts 削除');
+	removeFile('e2e/demo/touch-keys-grid.spec.ts', 'e2e/demo/touch-keys-grid.spec.ts 削除');
 }
 
 // --- items（デモリソース一式、display プリセット専用）------------------------

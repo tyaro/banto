@@ -1,7 +1,7 @@
 # タッチ向けの画面内テンキー・文字キーボード 設計書 — Issue #937
 
 作成日: 2026-11-25
-状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1〜T5・T7 実装済み、T6 は別の設計（[grid-touch-edit-design](grid-touch-edit-design.md)、Issue #964。設計書だけ）**（T7 = `/ui-demo` のカード・scaffold の外す処理・e2e・基準画像。決めた形は §15.4。T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture、PR #954。T3 = `TextKeyboard`（英数・記号）・最大文字数・ホストの文字の経路・パスワードの入力欄。T4 = カナの配列（濁点・半濁点・小書き）。T5 = レシピ [touch-keys.md](../recipes/touch-keys.md)。T2 で決めた形は §15.1、T3 で決めた形は §15.2、T4 で決めた形は §15.3、実機の確かめ（§14.4）は未実施）
+状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1〜T7 実装済み（T6 は別の設計 [grid-touch-edit-design](grid-touch-edit-design.md)、Issue #964。F1・G1・K1・G2・W1）**（T7 = `/ui-demo` のカード・scaffold の外す処理・e2e・基準画像。決めた形は §15.4。T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture、PR #954。T3 = `TextKeyboard`（英数・記号）・最大文字数・ホストの文字の経路・パスワードの入力欄。T4 = カナの配列（濁点・半濁点・小書き）。T5 = レシピ [touch-keys.md](../recipes/touch-keys.md)。T2 で決めた形は §15.1、T3 で決めた形は §15.2、T4 で決めた形は §15.3、実機の確かめ（§14.4）は未実施）
 トラック: 保守者向け（トラックA）
 関連: Issue #937、[template-scope](../template-scope.md) §1・§3・§3.1、
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui` と層の補助）、
@@ -736,6 +736,23 @@ Playwright の `hasTouch` は合成のタッチで、OS のキーボードも実
 フォーカスが動かず取りこぼさない／パスワードの入力欄で OS のキーボードも、OS・ブラウザーのパスワードの補完の吹き出しも盤に重ならない／
 幅の狭いパネルで 10 列のキーが押せる大きさに収まる／`\` のキーが日本語のフォントで `¥` の形に見えても、入る文字は U+005C。
 
+**T6（grid のセル、#964）で足す項目**（どれも未実施。[grid-touch-edit-design](grid-touch-edit-design.md) §9・§12）:
+
+- **`openOnFocus`（K1）で OS のキーボードが一瞬出ないか**: セルのタップでは、盤が OS のキーボードを抑える（`inputmode="none"`）のが
+  フォーカスの**後**になる。フォーカス中に `inputmode` を変えて OS のタッチキーボードが出ずに済むか、出て引っ込むかを、WebView2 と
+  Chromium のキオスク表示で見る。出る端末があれば、対処（エディタを最初から `inputmode="none"` で作る口など）を別の Issue で決める。
+- **`openOnFocus` の窓が実機でも足りるか**: セルを 1 回タップして、編集と盤が 1 回で始まる（2 回のタップにならない）。
+  Chromium の実測では `click` からエディタのフォーカスまで 1.8〜6.1 ms で、e2e（`e2e/demo/touch-keys-grid.spec.ts`）でも 1 回で開く。
+  遅い端末・行の多い grid で取りこぼさないかを見る。
+- **スクロールの始まりで編集が始まらない・選択が動かない**（G1）: grid を指でなぞって縦・横にスクロールする。編集中のセルがあれば、
+  確定も取り消しもされない。
+- **長押し**: 編集は始まらず、`onRowContextMenu` を渡した grid ではメニューが出る。OS の長押しの吹き出し（選択・右クリックの輪）が
+  編集を始めない。
+- **盤の確定の後**: セルが確定し、次のセルへ動かず、もう 1 度別のセルをタップすると 1 回で編集と盤が始まる
+  （フォーカスが grid に戻っている）。抵抗膜のパネルで、確定のキーの押下がエディタのフォーカスを奪わない。
+- **盤の取り消し・外のタップ**: 盤だけが閉じ、セルの編集は開いたまま。その後に別の場所をタップすると、変えていなければ何も保存されない。
+- **ペン**（あれば）: タップで編集が始まる。ホバーでは始まらない。
+
 ### 14.5 そのほか
 
 - **e2e・visual**（admin-template）: T5 までは足さなかった（基準画像は変わらない）。T7 で §4.2 の b を採り、demo の e2e
@@ -902,7 +919,8 @@ T1 を小さく保つため、`NumberKeypad` は表示とキーの入力だけ�
 
 - **テンプレートの見本を外す**（scaffold の `removeTouchKeys` と同じ。手順の全量は `remove-optional-assets` の節）:
   `routes/(app)/ui-demo/+page.svelte` の `[scaffold:touch-keys]` の 2 領域、`src/lib/banto/touchKeysMessages.ts`、
-  `messages/{ja,en}.json` の `touchKeys.*`・`uiDemo.touchKeys.*`、`package.json` の依存、`e2e/demo/touch-keys.spec.ts`。
+  `messages/{ja,en}.json` の `touchKeys.*`・`uiDemo.touchKeys.*`、`package.json` の依存、`e2e/demo/touch-keys.spec.ts`・
+  `e2e/demo/touch-keys-grid.spec.ts`（#964 W1 で足した、grid のセルとの組み合わせ）。
   パッケージ本体は残る。
 
 - **banto から外す**: `packages/touch-keys-svelte/` を消し、`pnpm install` で lockfile を更新する。docs の参照
