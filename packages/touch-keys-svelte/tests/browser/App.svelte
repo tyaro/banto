@@ -15,6 +15,7 @@
 
 	const params = new URLSearchParams(location.search);
 	const placement: TouchKeysPlacement = params.get('placement') === 'bottom' ? 'bottom' : 'popup';
+	const textPlacement: TouchKeysPlacement = params.get('text') === 'popup' ? 'popup' : 'bottom';
 
 	const log: string[] = [];
 	(window as unknown as { __log: string[] }).__log = log;
@@ -22,6 +23,7 @@
 		target instanceof HTMLElement ? target.id : '';
 
 	let qty = $state<number | string>(12);
+	let memo = $state('abc');
 	let modalOpen = $state(false);
 
 	$effect(() => {
@@ -44,7 +46,7 @@
 
 <TouchKeysHost
 	enabled
-	placement={{ number: placement }}
+	placement={{ number: placement, text: textPlacement }}
 	onopen={(input) => log.push(`open:${input.id}`)}
 	onconfirm={({ input, value }) => log.push(`confirm:${input.id}=${value}`)}
 	oncancel={({ input, reason }) => log.push(`cancel:${input.id}:${reason}`)}
@@ -68,7 +70,15 @@
 		<input id="price" type="number" min="0.05" step="0.10" value="0.05" />
 
 		<label for="memo">メモ</label>
-		<input id="memo" type="text" />
+		<input id="memo" type="text" bind:value={memo} />
+		<output id="memo-bound">{memo}</output>
+
+		<label for="code">コード</label>
+		<input id="code" type="text" maxlength="4" />
+
+		<!-- the plain text of this field must never reach the log (onconfirm gets null, §5.5) -->
+		<label for="pw">パスワード</label>
+		<input id="pw" type="password" autocomplete="off" />
 
 		<button id="save" type="submit">保存</button>
 		<button id="open-modal" type="button" onclick={() => (modalOpen = true)}>明細を開く</button>

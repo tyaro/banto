@@ -6,16 +6,26 @@
 
 ## 状態
 
-T2 まで（テンキー）。文字キーボード・パスワード・カナ・レシピは後の段階（設計書 §15）。**タッチの実機・WebView2 での確かめは
+T3 まで（テンキー、文字キーボード（英数・記号）、パスワードの入力欄）。カナ・レシピは後の段階（設計書 §15）。**タッチの実機・WebView2 での確かめは
 まだ**（設計書 §14.4）。
 
 - `TouchKeysHost` — アプリのルートに 1 つ置く。`enabled`（必須。既定の自動判定は持たない）が true の間、数値の入力欄
-  （`type="number"`、`inputmode="numeric"` / `"decimal"`）のタップでテンキーを開く。確定で入力欄の `value` に書き、`input`・`change` を
+  （`type="number"`、`inputmode="numeric"` / `"decimal"`）のタップでテンキーを、文字の入力欄（`type="text"` など）と
+  パスワードの入力欄のタップで文字キーボードを開く。確定で入力欄の `value` に書き、`input`・`change` を
   出すので、`bind:value` も `oninput` もそのまま動く。フォーカスは入力欄に置いたまま。盤の外のタップは取り消しで、下の画面には届かない。
-  `placement`（`popup` / `bottom`）・`resolve`・`messages`・`onopen`・`onconfirm`・`oncancel`・`note`。
+  `placement`（`{ number, text }`。既定はテンキーが `popup`、文字が `bottom`）・`layouts`・`resolve`・`messages`・`onopen`・`onconfirm`・
+  `oncancel`・`note`。
 - `touchKeys(options | false)` — 入力欄ごとの指定（`{@attach touchKeys({ kind: 'number', min: 0, max: 999, editKey: row.id })}`）。
   同じ `<input>` を別のレコードに使い回す画面では `editKey` を渡す（開いたときと違えば書かない）。外すのは `touchKeys(false)` か、
   入力欄・その包みの `data-touch-keys="off"`。
+- **パスワードの入力欄**（`type="password"`）は、必ず伏せた文字キーボードになる。表示は `●` と文字数だけで、平文は盤の外へ出ない
+  （`onconfirm` の `value`・`previous` と `note` の `draft` は `null`。下書きは閉じれば残らない。空から始まり、確定で欄の値を置き換える）。
+  打てるのは ASCII の印字できる 95 文字（それ以外を含むパスワードは打てない）。
+- `touchKeys({ kind: 'text', maxLength: 20, layouts: ['alnum'] })` — 文字キーボードの指定。最大文字数は `maxlength` 属性との
+  小さいほう。配列は `alnum`（英数）・`symbol`（記号）。1 つだけなら切り替えのキーは出ない。
+- `TextKeyboard` — 文字キーボードの表示とキーの入力だけ（単体でも使える）。`draft`（`bind:`）・`maxLength`・`required`・`layouts`・
+  `initialLayout`・`masked`・`label`・`messages`・`note`・`onlength`・`onconfirm`・`oncancel`。`masked` では `draft` を読み書きせず、
+  文字列は `onconfirm` の 1 回だけで渡す。
 - `NumberKeypad` — テンキーの表示とキーの入力だけ（単体でも使える）。`draft`（`bind:`）・`rules`・`min`・`max`・`step`・`decimals`・
   `allowNegative`・`required`・`label`・`messages`・`note`・`onconfirm`・`oncancel`。
 - `resolveNumberRules(attrs, spec)` — 入力欄の属性（`type="number"`・`inputmode`・`min`・`max`・`step`・`value`）と
@@ -30,7 +40,8 @@ T2 まで（テンキー）。文字キーボード・パスワード・カナ�
 
 - `pnpm --filter @banto/touch-keys-svelte test` — 純粋な関数と、jsdom の部品の試験。
 - `pnpm e2e:touch-keys`（リポジトリのルートで）— ブラウザーの fixture（`tests/browser/`。Playwright のタッチの文脈で、本物の
-  `@banto/ui` の `Modal` と組んで、外のタップ・層・フォーカス・ブラウザーの数値の検証・実キーの Enter を確かめる）。
+  `@banto/ui` の `Modal` と組んで、外のタップ・層・フォーカス・ブラウザーの数値の検証・実キーの Enter・文字キーボード・
+  パスワードの 95 文字を確かめる）。
 
 ## 大きさ
 

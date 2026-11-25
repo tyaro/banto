@@ -1,9 +1,8 @@
 /**
  * Public option types of the touch keys host (touch-keypad-design §5.1 / §5.2).
- * T2 ships the number keypad only; the text keyboard (`kind: 'text'`) widens
- * {@link TouchKeysOptions} in T3.
  */
 import type { NumberSpec } from './core/number';
+import type { TextLayout } from './core/text';
 
 /** Where the keys appear: a centred popup over a scrim, or docked to the bottom edge. */
 export type TouchKeysPlacement = 'popup' | 'bottom';
@@ -46,13 +45,32 @@ export interface NumberKeysOptions extends CommonKeysOptions, NumberSpec {
 	kind: 'number';
 }
 
-export type TouchKeysOptions = NumberKeysOptions;
+/**
+ * Text keyboard for one field. On a `type="password"` field the keyboard is always
+ * masked and offers every layout, whatever `layouts` says (§5.5).
+ */
+export interface TextKeysOptions extends CommonKeysOptions {
+	kind: 'text';
+	/**
+	 * Upper bound in UTF-16 code units. With a `maxlength` attribute on the field the
+	 * smaller of the two applies (options can tighten, never loosen).
+	 */
+	maxLength?: number;
+	/** An empty draft cannot be confirmed (also read from the `required` attribute). */
+	required?: boolean;
+	/** Layouts to offer, in order. Default: the host's `layouts`. One layout = no switch keys. */
+	layouts?: TextLayout[];
+	/** The layout shown first. Default: the first of `layouts`. */
+	initialLayout?: TextLayout;
+}
+
+export type TouchKeysOptions = NumberKeysOptions | TextKeysOptions;
 
 export interface TouchKeysConfirmDetail {
 	input: HTMLInputElement;
-	/** The string written to the field. */
+	/** The string written to the field. **`null` for a password field** (§5.5). */
 	value: string | null;
-	/** The field's value when the keys opened. */
+	/** The field's value when the keys opened. **`null` for a password field** (§5.5). */
 	previous: string | null;
 }
 

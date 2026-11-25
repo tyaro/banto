@@ -1,7 +1,7 @@
 /**
  * DOM side of the host (touch-keypad-design §5.4, §6.5, §7.4, §8.3): which
- * `<input>` gets the keypad and with which rules, the `inputmode="none"`
- * bookkeeping, and the checked write. Package-internal; no Svelte.
+ * `<input>` gets which keys and with which rules, the `inputmode="none"`
+ * bookkeeping, and the checked writes. Package-internal; no Svelte.
  */
 import { attachedOptions } from './attach';
 import {
@@ -10,19 +10,35 @@ import {
 	resolveNumberRules,
 	type NumberRules
 } from './core/number';
+import { resolveTextRules, type TextLayout, type TextRules } from './core/text';
 import type { TouchKeysOptions, TouchKeysPlacement } from './types';
 
 export type ResolveFn = (input: HTMLInputElement) => TouchKeysOptions | false | undefined;
 
-/** A field the number keypad can open on, with everything decided at this moment. */
-export interface NumberTarget {
+interface TargetBase {
 	input: HTMLInputElement;
-	rules: NumberRules;
 	label: string;
 	placement: TouchKeysPlacement | undefined;
 	/** The edit key right now (`undefined` when the field declares none). */
 	editKey: string | number | null | undefined;
 }
+
+/** A field the number keypad can open on, with everything decided at this moment. */
+export interface NumberTarget extends TargetBase {
+	kind: 'number';
+	rules: NumberRules;
+}
+
+/** A field the text keyboard can open on. `masked` = a `type="password"` field (§5.5). */
+export interface TextTarget extends TargetBase {
+	kind: 'text';
+	rules: TextRules;
+	masked: boolean;
+	layouts: TextLayout[] | undefined;
+	initialLayout: TextLayout | undefined;
+}
+
+export type Target = NumberTarget | TextTarget;
 
 // ------------------------------------------------------------ inputmode (§7.4)
 
@@ -83,20 +99,25 @@ function readEditKey(options: TouchKeysOptions | undefined): string | number | n
 }
 
 /**
- * Decides whether `el` gets the number keypad: `readonly` / `disabled` /
+ * Decides whether `el` gets on-screen keys, and which: `readonly` / `disabled` /
  * `data-touch-keys="off"` (on the field or ANY ancestor) always win, then the
  * attachment, then `resolve`, then the attributes. `null` = leave the field alone.
+ *
+ * - A `type="password"` field always gets the MASKED text keyboard (§5.5), whatever
+ *   kind the options name; only `false` / "off" keep the keys away from it.
+ * - `kind: 'text'` on a `type="number"` field is refused (`null`): the browser would
+ *   turn most of what the text keys enter into an empty value.
  */
-export function resolveNumberTarget(
+export function resolveTarget(
 	el: EventTarget | null,
 	resolve: ResolveFn | undefined
-): NumberTarget | null {
+): Target | null {
 	if (!(el instanceof HTMLInputElement)) return null;
 	// An "off" marker on the field or ANY ancestor wins, whatever other markers sit in between.
 	const marker = el.closest('[data-touch-keys="off" i]')
 		? 'off'
 		: el.getAttribute('data-touch-keys');
-	const kind = inferTouchKind({
+	const inferred = inferTouchKind({
 		tagName: el.tagName,
 		type: el.getAttribute('type'),
 		inputmode: ownInputMode(el),
@@ -104,14 +125,35 @@ export function resolveNumberTarget(
 		disabled: el.matches(':disabled'),
 		touchKeys: marker
 	});
-	if (kind === 'off' || kind === 'password') return null;
+	if (inferred === 'off') return null;
 	if (el.closest('[inert]')) return null;
 
 	let options = attachedOptions(el);
 	if (options === undefined) options = resolve?.(el);
 	if (options === false) return null;
-	if (options === undefined && kind !== 'number') return null;
-	if (options !== undefined && options.kind !== 'number') return null;
+
+	const common = {
+		input: el,
+		label: options?.label ?? fieldLabel(el),
+		placement: options?.placement,
+		editKey: readEditKey(options)
+	};
+	const masked = inferred === 'password';
+	if (masked || (options?.kind ?? inferred) === 'text') {
+		if (el.type === 'number') return null;
+		const text = options?.kind === 'text' ? options : undefined;
+		return {
+			...common,
+			kind: 'text',
+			masked,
+			rules: resolveTextRules(
+				{ maxlength: el.getAttribute('maxlength'), required: el.required },
+				text ?? {}
+			),
+			layouts: text?.layouts,
+			initialLayout: text?.initialLayout
+		};
+	}
 
 	const rules = resolveNumberRules(
 		{
@@ -123,17 +165,11 @@ export function resolveNumberTarget(
 			value: el.getAttribute('value'),
 			required: el.required
 		},
-		options ?? {},
+		options?.kind === 'number' ? options : {},
 		{ force: true }
 	);
 	if (!rules) return null;
-	return {
-		input: el,
-		rules,
-		label: options?.label ?? fieldLabel(el),
-		placement: options?.placement,
-		editKey: readEditKey(options)
-	};
+	return { ...common, kind: 'number', rules };
 }
 
 // ------------------------------------------------------------ write (§8.3)
@@ -154,6 +190,22 @@ export function writeChecked(input: HTMLInputElement, value: string, previous: s
 		const v = input.validity;
 		ok = !(v.valueMissing || v.rangeUnderflow || v.rangeOverflow || v.stepMismatch || v.badInput);
 	}
+	if (!ok) input.value = previous;
+	return ok;
+}
+
+/**
+ * The text keyboard's write. A field may sanitize what it is given (`type="email"` /
+ * `"url"` trim white space): when the value did not stick exactly, the opening value is
+ * put back and `false` is returned. Arguments are never logged (password fields, §5.5).
+ */
+export function writeTextChecked(
+	input: HTMLInputElement,
+	value: string,
+	previous: string
+): boolean {
+	input.value = value;
+	const ok = input.value === value;
 	if (!ok) input.value = previous;
 	return ok;
 }
