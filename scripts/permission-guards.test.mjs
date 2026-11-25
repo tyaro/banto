@@ -8,10 +8,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
 	checkPermissionGuards,
 	collectRestPermissionGuards,
 	collectTauriPermissionGuards,
+	findSseHandlersWithoutPermission,
 	normalizePermissionExpr
 } from './lib/permission-guards.mjs';
 
@@ -172,4 +174,140 @@ test('ガードが 1 つも無い（テンプレートの今の姿）なら違�
 		}),
 		[]
 	);
+});
+
+// --- アプリ独自の SSE（#935 S3）: 権限の層の内側の sse_response は require_permission も呼ぶ ---
+
+const SSE_ROUTER = (handlerBody, layers = 'guard-after') => `
+async fn plant_stream(context: SseContext, Extension(values): Extension<Values>) -> Response {
+${handlerBody}
+}
+
+pub fn plant_router(audit: AuditLogService, auth: AuthState) -> Router {
+    Router::new()
+        .route("/api/plant/stream", get(plant_stream))
+        ${layers === 'guard-before' ? '' : '.layer(Extension(values))'}
+        .layer(middleware::from_fn_with_state(
+            PermissionGuard {
+                auth: auth.clone(),
+                permission: plant_view(),
+                resource: "plant",
+                audit,
+            },
+            require_permission,
+        ))
+        .layer(middleware::from_fn_with_state(auth, require_auth))
+}
+`;
+
+test('SSE: 層の内側で sse_response を呼ぶのに require_permission が無いハンドラーを返す', () => {
+	const src = SSE_ROUTER('    sse_response(context, frames(values))');
+	assert.deepEqual(findSseHandlersWithoutPermission(src), [
+		{ route: 'GET /api/plant/stream', handler: 'plant_stream' }
+	]);
+});
+
+test('SSE: require_permission か reauthorize_with を呼んでいれば違反なし', () => {
+	for (const call of [
+		'sse_response(context.require_permission(plant_view()), frames(values))',
+		'sse_response(context.reauthorize_with(|_s, p| p.has(&plant_view())), frames(values))',
+		'let context = context.require_permission(plant_view());\n    sse_response(context, frames(values))'
+	])
+		assert.deepEqual(findSseHandlersWithoutPermission(SSE_ROUTER(`    ${call}`)), [], call);
+});
+
+test('SSE: 権限の層が無いルータ・層より後ろのルートは見ない（誤検出しない）', () => {
+	const open = `
+async fn open_stream(context: SseContext) -> Response {
+    sse_response(context, frames())
+}
+pub fn open_router(auth: AuthState) -> Router {
+    Router::new()
+        .route("/api/open/stream", get(open_stream))
+        .layer(middleware::from_fn_with_state(auth, require_auth))
+}
+`;
+	assert.deepEqual(findSseHandlersWithoutPermission(open), []);
+	const after = `
+async fn open_stream(context: SseContext) -> Response {
+    sse_response(context, frames())
+}
+pub fn mixed_router(audit: AuditLogService, auth: AuthState) -> Router {
+    Router::new()
+        .layer(middleware::from_fn_with_state(
+            PermissionGuard { auth: auth.clone(), permission: plant_view(), resource: "plant", audit },
+            require_permission,
+        ))
+        .route("/api/open/stream", get(open_stream))
+}
+`;
+	assert.deepEqual(findSseHandlersWithoutPermission(after), []);
+});
+
+test('SSE: ハンドラーが別のファイルにある・sse_response を呼ばないなら見ない（見逃す側に倒れる）', () => {
+	const elsewhere = SSE_ROUTER('    plant::stream(context).await').replace(
+		/async fn plant_stream[\s\S]*?\n\}\n/,
+		''
+	);
+	assert.deepEqual(findSseHandlersWithoutPermission(elsewhere), []);
+	assert.deepEqual(
+		findSseHandlersWithoutPermission(SSE_ROUTER('    Json(values).into_response()')),
+		[]
+	);
+});
+
+test('SSE: レシピの見本（tests/sse_recipe/plant.rs）は違反なし、require_permission を抜くと違反', () => {
+	const recipe = fs.readFileSync(
+		new URL('../crates/banto-server/tests/sse_recipe/plant.rs', import.meta.url),
+		'utf8'
+	);
+	assert.deepEqual(findSseHandlersWithoutPermission(recipe), []);
+	const missing = recipe.replace(
+		'context.require_permission(plant_view()).counted_as_client()',
+		'context.counted_as_client()'
+	);
+	assert.notEqual(missing, recipe);
+	assert.deepEqual(findSseHandlersWithoutPermission(missing), [
+		{ route: 'GET /api/plant/stream', handler: 'plant_stream' }
+	]);
+});
+
+// --- レシピの見本のコードは、試験が動かすファイルと同じ文字列（#935・#936 S3） ---
+
+const RECIPE = fs
+	.readFileSync(new URL('../docs/recipes/app-sse-stream.md', import.meta.url), 'utf8')
+	.replace(/\r\n/g, '\n');
+
+/** レシピの、先頭行が `marker` のコードブロック（その行は除く）。 */
+function recipeBlock(lang, marker) {
+	const head = '```' + lang + '\n' + marker + '\n';
+	const start = RECIPE.indexOf(head);
+	assert.ok(start >= 0, `レシピに ${lang} のブロック「${marker}」が無い`);
+	const rest = RECIPE.slice(start + head.length);
+	return rest.slice(0, rest.indexOf('\n```'));
+}
+
+test('レシピの Rust の見本は crates/banto-server/tests/sse_recipe/plant.rs と同じ（その試験が動かす）', () => {
+	const shown = recipeBlock('rust', '// apps/<アプリ>/core/src/rest/plant.rs');
+	const tested = fs
+		.readFileSync(
+			new URL('../crates/banto-server/tests/sse_recipe/plant.rs', import.meta.url),
+			'utf8'
+		)
+		.replace(/\r\n/g, '\n');
+	assert.equal(shown.trimEnd(), tested.trimEnd());
+});
+
+test('レシピの TypeScript の見本は packages/admin-core/tests/fixtures/plantStream.ts と同じ（import の path だけ違う）', () => {
+	const shown = recipeBlock('ts', '// apps/<アプリ>/src/lib/banto/plantStream.ts').replace(
+		"'@banto/admin-core'",
+		"'../../src/index'"
+	);
+	const tested = fs
+		.readFileSync(
+			new URL('../packages/admin-core/tests/fixtures/plantStream.ts', import.meta.url),
+			'utf8'
+		)
+		.replace(/\r\n/g, '\n');
+	assert.equal(shown.trimEnd(), tested.trimEnd());
 });

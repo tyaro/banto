@@ -563,6 +563,22 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
     （`Account` / `AuthDisabledLocal`）。読むのは `current_session` だけで、合成
     セッションを `id` などの値で見分けない。
   - 保存先が答えられないときは要求を失敗させる。失効も素通りもさせない。
+- **アプリ独自の SSE は `SseContext` ＋ `sse_response` を使う（Issue #935、
+  [sse-stream-design](design/sse-stream-design.md)、[レシピ](recipes/app-sse-stream.md)）。**
+  `/api/events` 以外の長い配信（現在値など）を、自前の `Sse` で組まない。確かめ直し（失効したセッションを
+  15 秒ごとに閉じる、ADR-0014）・停止の知らせ・keepalive・接続数の規則が配信ごとに分かれるのを避けるため、
+  規則は `banto_server::sse` の 1 か所にあり、アプリは `SseContext`（`require_auth` の内側でだけ取り出せる）を受けて
+  `sse_response` に流れを渡すだけにする。レビューで担保する規約:
+  - **`require_auth` の内側に置く。** 外では `SseContext` が 500 を返す（token を確かめないまま開かない）。
+  - **権限で守る配信は、層の `PermissionGuard` と `context.require_permission(..)`（細かい条件は `reauthorize_with`）を組で付ける。**
+    層は開く 1 回しか見ないので、`require_permission` が無いと、権限を外しても開いている配信が続く。付け忘れは
+    `verify-architecture` の規則 8 が、同じファイルのハンドラーに限って検出する。
+  - **確かめられなければ閉じる**（条件を付けた配信は、セッション・権限の確かめ直しが失敗・時間切れなら閉じる。
+    条件の無い配信と `/api/events` は #230 のまま閉じない）。権限が外れてから閉じるまでは最大 20 秒。
+  - **値を作る側が周期ごとに送り、値に作った印を入れる。** 土台は値を送り直さない（作る側が止まったことを隠さないため）。
+    読み口は `createSseStream` を使い、`onSessionChange`・`onForbidden` で表示中の値を消す。
+  - **1 画面 1 本**にまとめ、種類は `event:` の名前で分ける。「接続 n 台」は既定で数えず、`/api/events` を開かない画面の
+    1 本だけ `counted_as_client()` で数える。
 
 ## 7. `{@html}` は自前生成の全エスケープ済み出力のみ [機械検査済み: 使用箇所の許可リスト]
 

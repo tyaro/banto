@@ -1,7 +1,7 @@
 # アプリ独自の SSE の配信と読み口 設計書 — Issue #935・#936
 
 作成日: 2026-11-25
-状態: **§10 の 1〜16 は推奨どおりで決定（2026-11-25、オーナー）。S1（server の土台、#935）・S2（admin-core の読み口、#936）は実装済み。S3（レシピ）は別 PR**
+状態: **§10 の 1〜16 は推奨どおりで決定（2026-11-25、オーナー）。S1（server の土台、#935）・S2（admin-core の読み口、#936）・S3（レシピ）は実装済み**
 トラック: 保守者向け（トラックA）
 関連: Issue #935（server の配信の部品）、Issue #936（admin-core の読み口）、
 #231 / [ADR-0014](../adr/0014-account-bound-session-revocation.md)（開いた配信の確かめ直し）、#239（`AuthState::revalidate` の公開）、
@@ -10,7 +10,7 @@ conventions §3 / §4 / §5 / §6 / §12 / §13
 
 この文書の `path` と型の名前は、2026-11-25 の main（`dc73f4c0`）で開いて確かめた。
 **新しく足す型・関数・ファイルの名前は見込み**で、各 PR で決める（決めた形はこの文書へ書き戻す）。
-server 側（§4）の名前は S1 で、admin-core 側（§5）の名前は S2 で決まった（下の「S1 で決まった形」「S2 で決まった形」）。S3 の分は見込みのまま。
+server 側（§4）の名前は S1 で、admin-core 側（§5）の名前は S2 で決まった（下の「S1 で決まった形」「S2 で決まった形」）。S3 はレシピ [recipes/app-sse-stream.md](../recipes/app-sse-stream.md) と検査で、名前は増やしていない（下の「S3 で決まった形」）。
 
 ### S1 で決まった形（設計とのずれと、未確定だった点）
 
@@ -116,6 +116,30 @@ server 側（§4）の名前は S1 で、admin-core 側（§5）の名前は S2 
   それは `signal()` の公開の形と、`/api/events`・HTTP の 401 を含む全部の出し手を変える（世代の取り違えは「失効を見逃す」側に倒れる）。
   得るものは、失効のたびに 1〜2 回の `GET /api/auth/identity`（中断済みで、答えは使わない）だけなので、見合わない。
 - **e2e**: 足していない（§6 のとおり）。`/api/events` の経路は CI の e2e が載せ替えの後も通ることで確かめる。
+
+### S3 で決まった形（設計とのずれと、確かめた点）
+
+- **レシピは [recipes/app-sse-stream.md](../recipes/app-sse-stream.md)。** server の見本と画面の見本の**コードのブロックを、試験が動かす
+  ファイルと同じ文字列に固定した**（「写せば動く」を、読み合わせでなく機械で担保する）。server は
+  `crates/banto-server/tests/sse_recipe/plant.rs`（`tests/sse_recipe.rs` が `#[path]` で読み込み、層の `PermissionGuard` の拒否と
+  `denied` の監査、周期ごとに新しい印が届くことを見る。`the_recipe_shows_the_code_that_is_tested` が、レシピのブロックと同じ文字列かを見る）、
+  画面は `packages/admin-core/tests/fixtures/plantStream.ts`（`tests/sseRecipe.test.ts` が、**値あり → 403 → 値が見えない → 権限が戻って再表示**・
+  送り直された古い値で stale が解けない・新しいログインで前の値が出ない、を見る。レシピの TS のブロックとの同じ文字列の照合は `scripts/permission-guards.test.mjs`。§5.2.2 の「見本の画面の単体試験」）。
+  レシピの Rust のブロックを直したら `plant.rs` も同じに直す。
+- **権限の層（`PermissionGuard`）は REST だけに付く**ので、規則 8 の「両経路の対」が要る。配信は REST のみ（Tauri は SSE を持たない）ため、
+  レシピは「同じ値を返す Tauri コマンドを対にして `PERMISSION_PAIRS`・`REST_READ`・`TAURI_READ` に足す」と書いた（手順 7）。
+  層を付けない選択はしない（開くときの拒否の `denied` の監査が要るため。§4.3.1）。
+- **`verify-architecture`（規則 8）に付け忘れの検査を入れた**（§9 の「S3 までに確かめる」の結論）。`scripts/lib/permission-guards.mjs` の
+  `findSseHandlersWithoutPermission`: 同じファイルの `fn *_router` の本体で、**最後の `PermissionGuard` より前の** `.route("..", get(handler))` の
+  `handler` が、**同じファイルの** `async fn` で、本体に `sse_response(` があるのに `require_permission` も `reauthorize_with` も含まない、ものを落とす。
+  誤検出を出さない形に絞った: 層より後ろのルート・層の無いルーター・別のファイルや別の関数へ組み立てを委ねるハンドラーは見ない（見逃す側に倒れる。
+  型で防げない付け忘れを、見える範囲で拾う）。試験は `scripts/permission-guards.test.mjs`（レシピの `plant.rs` が通り、`require_permission` を
+  抜くと落ちることを含む）。
+- **「20 秒」の言い方**（クロスレビューの助言）: 20 秒は**サーバーが配信を閉じるまでの上限**（確かめ直し 15 秒 + 時間切れ 5 秒）で、
+  **画面の表示が消えるのは、その後のつなぎ直し（既定 3 秒後）が 403 を受け取ったとき**。レシピと conventions §6 はこの区別で書いた。
+- **未実測のまま残した点**: HTTP/1.1 の同時接続の上限（§4.7・§10 の 10）。レシピでは「6 本ほど（一般に知られた値。banto では未実測）」と書いた。
+  実機で測るのは別の作業（実測した値が違えば、レシピの数字だけ直す）。
+- **コメントだけ直した**: `server.rs` の `SseConnections` の doc を「接続が実際に閉じて guard が捨てられたときに減る」の言い方にそろえた（挙動は変えていない）。
 
 ## 1. 用語
 
@@ -757,8 +781,9 @@ server とフロントは別々に移せる（線の上の形は変わらない�
 - **`SseContext` の「`require_auth` の内側」の判定**が、`require_auth` の入れる非公開の結びつけ（§4.3）に寄りかかる:
   `require_auth` がそれを入れなくなると全部 500 になる（開きすぎる側には倒れない）。単体試験で固定する。
 - **権限つきの配信で `require_permission` を付け忘れる**: 層の `PermissionGuard` だけだと、開いた後に権限が外れても続く（§4.3.1）。
-  型では防げないので、レシピの見本を「層 + `require_permission`」の組にし、S3 までに `verify-architecture` で
-  「`require_permission` の層の内側で `sse_response` を呼ぶなら `SseContext::require_permission` も呼ぶ」を機械で見られるか確かめる。
+  型では防げないので、レシピの見本を「層 + `require_permission`」の組にし、`verify-architecture` の規則 8 で
+  「権限の層の内側で `sse_response` を呼ぶなら `SseContext::require_permission`（か `reauthorize_with`）も呼ぶ」を見る
+  （S3 で入れた。同じファイルのハンドラーに限る。「S3 で決まった形」）。
 - **権限が外れた画面が 403 のつなぎ直しを続ける**: 3 秒ごとに監査へ `denied` が積もる（§5.2.2。間隔は §10 の 13 で決める）。
 - **呼ぶ側が `onForbidden` で値を消し忘れる**: 見る権限の無い値が残る。読み口からは表示を消せないので、レシピの見本と
   その試験（§5.2.2）で形を示す。`onForbidden` を渡さずに権限つきの配信を読む使い方は、レシピで「しない」と書く。
@@ -804,4 +829,4 @@ server とフロントは別々に移せる（線の上の形は変わらない�
 `SseFrame::event` を `&'static str` に絞れるか、`sessionStreamHooks` の置き場（`events.ts` か別ファイルか）、
 HTTP/1.1 の同時接続の上限の実測（§4.7）、grant のセッションの権限の読み直し（`revalidate` は grant では保存先を読まない。
 `require_permission` を付けた配信を grant で開いたときに、要求ごとの読み方と同じ結果になること）、
-結びつけの型の名前と置き場（`auth` か `sse` か）、`require_permission` の付け忘れを `verify-architecture` で見られるか（§9）。
+結びつけの型の名前と置き場（`auth` か `sse` か）、`require_permission` の付け忘れを `verify-architecture` で見られるか（§9。S3 で、同じファイルのハンドラーに限って入れた）。
