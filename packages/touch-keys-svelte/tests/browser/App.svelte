@@ -26,6 +26,8 @@
 	let memo = $state('abc');
 	let kanaValue = $state('');
 	let modalOpen = $state(false);
+	let revealed = $state(false);
+	let revealedPlain = $state(false);
 
 	$effect(() => {
 		const record = (event: Event): void => {
@@ -93,6 +95,29 @@
 		<!-- the browser's own validity is the authority on what an email field takes (§6.5) -->
 		<label for="mail">メール</label>
 		<input id="mail" type="email" />
+
+		<!-- openOnFocus (grid-touch-edit-design §4.2): a button shows a field that takes focus -->
+		<button id="reveal" type="button" onclick={() => (revealed = true)}>入力欄を出す</button>
+		{#if revealed}
+			<input
+				id="shown"
+				type="number"
+				aria-label="出した欄"
+				{@attach touchKeys({ kind: 'number', openOnFocus: true })}
+				{@attach (el: HTMLInputElement) => el.focus()}
+			/>
+		{/if}
+		<button id="reveal-plain" type="button" onclick={() => (revealedPlain = true)}>
+			入力欄を出す（印なし）
+		</button>
+		{#if revealedPlain}
+			<input
+				id="shown-plain"
+				type="number"
+				aria-label="印なしの欄"
+				{@attach (el: HTMLInputElement) => el.focus()}
+			/>
+		{/if}
 
 		<button id="save" type="submit">保存</button>
 		<button id="open-modal" type="button" onclick={() => (modalOpen = true)}>明細を開く</button>

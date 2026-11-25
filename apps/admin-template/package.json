@@ -28,6 +28,7 @@
     "@banto/grid-svelte": "workspace:*",
     "@banto/report": "workspace:*",
     "@banto/theme": "workspace:*",
+    "@banto/touch-keys-svelte": "workspace:*",
     "@banto/tree-svelte": "workspace:*",
     "@banto/ui": "workspace:*",
     "@lucide/svelte": "^1.76.0",

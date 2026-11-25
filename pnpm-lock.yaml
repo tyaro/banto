@@ -74,6 +74,9 @@ importers:
       '@banto/theme':
         specifier: workspace:*
         version: link:../../packages/theme
+      '@banto/touch-keys-svelte':
+        specifier: workspace:*
+        version: link:../../packages/touch-keys-svelte
       '@banto/tree-svelte':
         specifier: workspace:*
         version: link:../../packages/tree-svelte

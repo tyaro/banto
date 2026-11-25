@@ -22,6 +22,7 @@ pnpm install                       # 外れた依存の反映（lockfile も更�
 | ------------------------------------------------------------------------ | :-----: | :------: | :--: | :-----------: |
 | `@banto/charts` / `@banto/dock-svelte` / Glass テーマ / コマンドパレット |    ✗    |    ✓     |  ✓   |       ✗       |
 | `@banto/attachments` / `@banto/report` / `@banto/tree-svelte` のデモ     |    ✗    |    ✗     |  ✓   |       ✗       |
+| `@banto/touch-keys-svelte` の見本（`/ui-demo` のカード）                 |    ✗    |    ✗     |  ✓   |       ✗       |
 | `items` デモリソース一式                                                 |    ✓    |    ✓     |  ✓   | ✗（追加削除） |
 
 - テンプレートは `full` 相当で出荷され、scaffold は基本「引く」だけ。`display` だけが
@@ -30,8 +31,8 @@ pnpm install                       # 外れた依存の反映（lockfile も更�
   （[scan-wedge.md](scan-wedge.md)）。
 - `@banto/image-assets` もテンプレート未配線（アプリが依存しない）のため scaffold は触れない
   （下記「`@banto/image-assets`」、[ADR-0020](../adr/0020-image-assets-package.md)）。
-- `@banto/touch-keys-svelte` もテンプレート未配線のため scaffold は触れない
-  （下記「`@banto/touch-keys-svelte`」、[ADR-0036](../adr/0036-touch-keys-package.md)）。
+- `@banto/touch-keys-svelte` の配線は `/ui-demo` のカード 1 枚だけで、`full` 以外のプリセットが外す
+  （下記「`@banto/touch-keys-svelte`」、[ADR-0036](../adr/0036-touch-keys-package.md)）。パッケージ本体は残る。
 - 設計は [design/scaffold-presets-plan.md](../design/scaffold-presets-plan.md)、
   受け入れ検査は `.github/workflows/template-acceptance.yml`（4 プリセットの
   scaffold → verify:architecture → check → build → cargo test）。
@@ -279,17 +280,32 @@ DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の min
 
 ### `@banto/touch-keys-svelte`（タッチ向けの画面内キー、Issue #937）
 
-テンプレートのアプリには配線していない（`apps/admin-template/package.json` に依存が無い）ので、
-アプリ側に外す配線は無く、`pnpm scaffold` もどのプリセットでも触れない。パッケージ本体を
-同梱のままにしても他に影響しない。リポジトリから消したい場合は以下。
+`pnpm scaffold --preset minimal|standard|display` は自動で外す（`full` は残す。`--interactive` の
+custom では `touchKeys`）。テンプレートの配線は `/ui-demo` のカード 1 枚だけで（#937 T7）、ルートのレイアウトに
+ホストは置いていない。ナビも変わらない。手で外すなら以下（scaffold の `removeTouchKeys` と 1 対 1）。
 
-1. `packages/touch-keys-svelte/` を削除し、`pnpm install` で lockfile を更新する。
+1. `apps/admin-template/src/routes/(app)/ui-demo/+page.svelte` の `[scaffold:touch-keys]` の印で囲んだ
+   2 つの領域（script の import と状態、markup のカードと `<TouchKeysHost>`）を消す。
+2. `apps/admin-template/src/lib/banto/touchKeysMessages.ts`（Paraglide の束）を消す。
+3. `apps/admin-template/messages/{ja,en}.json` の `touchKeys.*` と `uiDemo.touchKeys.*` のキーを消す。
+4. `apps/admin-template/package.json` の `@banto/touch-keys-svelte` の依存を消し、`pnpm install` で
+   lockfile を更新する（`.svelte.ts` を持たないパッケージなので、`vite.config.ts` の `optimizeDeps.exclude` には
+   元から載っていない。conventions §14）。
+5. `e2e/demo/touch-keys.spec.ts` を消す。`ui-demo` の基準画像（`e2e/visual`）を使い続けるなら、
+   `visual-baselines.yml` で作り直す。
+
+パッケージ本体（`packages/touch-keys-svelte`）は scaffold では消えない。同梱のままにしても他に影響しない。
+リポジトリからも消したい場合は、上に続けて以下。
+
+1. `packages/touch-keys-svelte/` を削除し、`pnpm install` で lockfile を更新する。ルートの `package.json` の
+   `e2e:touch-keys`、`ci.yml` のジョブ `touch-keys-browser` とその判定（`changes` の出力 `touch`）、
+   `eslint.config.js`・`.gitignore` の fixture の出力の行も外す。
 2. `docs/` と README の `@banto/touch-keys-svelte` の参照（template-scope §3 の行・本節・
-   ADR-0036・設計書など）を消すか、スコープ無しの書き方に直す（rule `docs-package-refs`）。
+   ADR-0036・設計書・レシピなど）を消すか、スコープ無しの書き方に直す（rule `docs-package-refs`）。
 3. 外部利用 fixture に入れた後の段階（`.svelte.ts` を持つようになった後）では、fixture の
    `package.json` の依存・`+page.svelte` の import・`vite.config.ts` の `optimizeDeps.exclude` からも外す。
-4. 派生アプリが使っていたなら、ルートの `<TouchKeysHost>`・入力欄の指定・`package.json` の依存と
-   `optimizeDeps.exclude` の行を外す（設計書 §16。入力欄は素の `<input>` のまま動く）。
+4. 派生アプリが自分で配線していたなら、ルートの `<TouchKeysHost>`・入力欄の指定・端末ごとの設定を外す
+   （設計書 §16。入力欄は素の `<input>` のまま動く）。
 
 ### 設定の下書き → 反映 → 元に戻す（`configDrafts`、Issue #938）
 

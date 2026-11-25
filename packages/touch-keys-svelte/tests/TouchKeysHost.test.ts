@@ -177,6 +177,63 @@ describe('TouchKeysHost: open', () => {
 	});
 });
 
+describe('TouchKeysHost: openOnFocus', () => {
+	const onFocusFor = (ids: string[]) => (input: HTMLInputElement) =>
+		ids.includes(input.id) ? ({ openOnFocus: true } as const) : undefined;
+
+	it('opens for a field focused in the continuation of a pointer-made click', async () => {
+		render(HostHarness, { resolve: onFocusFor(['late']) });
+		await fireEvent.click(document.getElementById('reveal')!, { detail: 1 });
+		await tick();
+		expect(document.activeElement).toBe(field('late'));
+		expect(pad()).not.toBeNull();
+		// the kind is still inferred from the field (type="number": the keypad)
+		expect(screen.getByRole('group', { name: /^テンキー/ })).toBeTruthy();
+		expect(field('late').getAttribute('inputmode')).toBe('none');
+	});
+	it('does not open without the option, for a keyboard-made click, or for a later focus', async () => {
+		render(HostHarness, { resolve: onFocusFor(['late', 'later']) });
+		await fireEvent.click(document.getElementById('reveal-later')!, { detail: 1 });
+		await new Promise((r) => setTimeout(r, 60));
+		expect(document.activeElement).toBe(field('later'));
+		expect(pad()).toBeNull();
+		// the same button, a click made by the keyboard (detail 0)
+		await fireEvent.click(document.getElementById('reveal')!, { detail: 0 });
+		await tick();
+		expect(document.activeElement).toBe(field('late'));
+		expect(pad()).toBeNull();
+	});
+	it('another input between the tap and the focus (a key, a keyboard-made click) closes the window', async () => {
+		render(HostHarness, { resolve: onFocusFor(['late']) });
+		const reveal = document.getElementById('reveal')!;
+		reveal.addEventListener('click', () => fireEvent.keyDown(reveal, { key: 'Tab' }), {
+			once: true
+		});
+		await fireEvent.click(reveal, { detail: 1 });
+		await tick();
+		expect(document.activeElement).toBe(field('late'));
+		expect(pad()).toBeNull();
+	});
+	it('without the option a field focused after a tap stays closed; focus alone never opens', async () => {
+		render(HostHarness);
+		await fireEvent.click(document.getElementById('reveal')!, { detail: 1 });
+		await tick();
+		expect(document.activeElement).toBe(field('late'));
+		expect(pad()).toBeNull();
+		field('qty').focus();
+		expect(pad()).toBeNull();
+	});
+	it('an explicit kind and range still apply together with the option', async () => {
+		render(HostHarness, {
+			resolve: (i) => (i.id === 'late' ? { kind: 'number', max: 5, openOnFocus: true } : undefined)
+		});
+		await fireEvent.click(document.getElementById('reveal')!, { detail: 1 });
+		await tick();
+		await fireEvent.click(key('7'));
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(true);
+	});
+});
+
 describe('TouchKeysHost: confirm and cancel', () => {
 	it('confirm writes the value, emits input and change once each, and reaches bind:value', async () => {
 		const onconfirm = vi.fn();

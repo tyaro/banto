@@ -1,12 +1,12 @@
 # @banto/touch-keys-svelte
 
-タッチパネル端末向けの画面内キー（テンキー・文字キーボード）。**オプション・テンプレート未配線（recipe-only）**。
+タッチパネル端末向けの画面内キー（テンキー・文字キーボード）。**オプション**。テンプレートの配線は `/ui-demo` の見本のカードだけ（#937 T7。ルートのレイアウトには置いていない）。
 設計は [docs/design/touch-keypad-design.md](../../docs/design/touch-keypad-design.md)、判断は
 [ADR-0036](../../docs/adr/0036-touch-keys-package.md)。
 
 ## 状態
 
-T5 まで（テンキー、文字キーボード（英数・記号・カナ）、パスワードの入力欄、[レシピ](../../docs/recipes/touch-keys.md)）。**タッチの実機・WebView2 での確かめは
+T5 まで（テンキー、文字キーボード（英数・記号・カナ）、パスワードの入力欄、[レシピ](../../docs/recipes/touch-keys.md)）と、T7（`/ui-demo` のカード）。**タッチの実機・WebView2 での確かめは
 まだ**（設計書 §14.4）。
 
 - `TouchKeysHost` — アプリのルートに 1 つ置く。`enabled`（必須。既定の自動判定は持たない）が true の間、数値の入力欄
@@ -15,6 +15,10 @@ T5 まで（テンキー、文字キーボード（英数・記号・カナ）�
   出すので、`bind:value` も `oninput` もそのまま動く。フォーカスは入力欄に置いたまま。盤の外のタップは取り消しで、下の画面には届かない。
   `placement`（`{ number, text }`。既定はテンキーが `popup`、文字が `bottom`）・`layouts`・`resolve`・`messages`・`onopen`・`onconfirm`・
   `oncancel`・`note`。
+- 入力欄の指定（`touchKeys` / `resolve`）には共通で `openOnFocus`（既定 `false`）がある。ボタンやセルのタップ（ポインター由来の
+  `click`）の続き（同じタスク）でフォーカスが入ったその欄に、盤を OS のキーボードを抑えて開く（入力欄を出してフォーカスする画面向け。
+  キーボード由来の `click`〔Enter / Space〕・自動フォーカス・あとのフォーカスでは原則開かない。「同じタスク」は厳密なタスク境界ではなく、ポインター click 直後の短い判定窓（0 ms タイマー）での近似で、キー・次の pointerdown・キーボード由来の click で即失効する）。種類は属性から推定のままにしたいときは
+  `kind` なしで `{ openOnFocus: true }` を返す（型 `InferredKeysOptions`）。
 - `touchKeys(options | false)` — 入力欄ごとの指定（`{@attach touchKeys({ kind: 'number', min: 0, max: 999, editKey: row.id })}`）。
   同じ `<input>` を別のレコードに使い回す画面では `editKey` を渡す（開いたときと違えば書かない）。外すのは `touchKeys(false)` か、
   入力欄・その包みの `data-touch-keys="off"`。
@@ -56,4 +60,5 @@ CSS の `mm` は実寸を保証しないので、端末ごとに合わせる。
 
 ## 外す
 
+テンプレートの見本は `pnpm scaffold --preset minimal|standard|display` が外す。パッケージごと消すなら
 `packages/touch-keys-svelte/` を消す。手順は [remove-optional-assets](../../docs/recipes/remove-optional-assets.md)。

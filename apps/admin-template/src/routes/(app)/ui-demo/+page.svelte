@@ -109,6 +109,28 @@
 		gridMessages,
 		referenceFieldMessages
 	} from '#lib/banto/i18n.js';
+	// [scaffold:touch-keys] begin
+	// TouchKeysHost card (#937 T7, touch-keypad-design §4.2 b): the optional
+	// `@banto/touch-keys-svelte`. The host normally sits once in the root layout
+	// (docs/recipes/touch-keys.md); here it lives in the card and `resolve` limits it
+	// to the card's own fields, so the other samples on this page keep their plain
+	// inputs. The switch stands for the per-device setting behind `enabled`. The
+	// keys are closed on load, so the screenshot shows only the fields.
+	// `pnpm scaffold` removes the two `[scaffold:touch-keys]` regions of this file.
+	import { TouchKeysHost, touchKeys } from '@banto/touch-keys-svelte';
+	import { touchKeysMessages } from '#lib/banto/touchKeysMessages.js';
+
+	const touchKeysMessagesText = touchKeysMessages();
+	let touchKeysOn = $state(true);
+	let touchKeysCard = $state<HTMLElement>();
+	let touchQty = $state<number | string>(12);
+	let touchLot = $state('');
+	let touchKana = $state('');
+	let touchPassword = $state('');
+	// `undefined` = infer from the field's attributes; `false` = no keys on this field.
+	const touchKeysResolve = (input: HTMLInputElement): false | undefined =>
+		touchKeysCard?.contains(input) ? undefined : false;
+	// [scaffold:touch-keys] end
 
 	// HeaderNav card (nav-menubar-plan PR-2): one set of entries drawn twice -
 	// in a wide frame (groups, a badge) and a narrow one (entries moved into
@@ -1580,6 +1602,89 @@
 
 	<!-- Last on the page on purpose: the cards above keep their place, so the
 	     open-calendar screenshots of the simple pickers do not move. -->
+	<!-- [scaffold:touch-keys] begin -->
+	<SurfaceCard title="TouchKeysHost" description={m['uiDemo.touchKeys.desc']()}>
+		<div class="stack" data-testid="ui-demo-touch-keys" bind:this={touchKeysCard}>
+			<label class="banto-switch-field">
+				<input
+					type="checkbox"
+					role="switch"
+					class="banto-switch"
+					data-testid="ui-demo-touch-keys-enabled"
+					bind:checked={touchKeysOn}
+				/>
+				{m['uiDemo.touchKeys.enabled']()}
+			</label>
+			<div class="grid">
+				<div class="sample">
+					<label class="caption" for="ui-demo-touch-qty">{m['uiDemo.touchKeys.number']()}</label>
+					<input
+						id="ui-demo-touch-qty"
+						class="banto-input"
+						type="number"
+						min="0"
+						max="999"
+						bind:value={touchQty}
+					/>
+					<span class="caption" data-testid="ui-demo-touch-qty-value">
+						{m['uiDemo.date.value']()}: {touchQty}
+					</span>
+				</div>
+				<div class="sample">
+					<label class="caption" for="ui-demo-touch-lot">{m['uiDemo.touchKeys.alnum']()}</label>
+					<input
+						id="ui-demo-touch-lot"
+						maxlength="12"
+						class="banto-input"
+						type="text"
+						autocomplete="off"
+						bind:value={touchLot}
+						{@attach touchKeys({ kind: 'text', layouts: ['alnum'] })}
+					/>
+					<span class="caption" data-testid="ui-demo-touch-lot-value">
+						{m['uiDemo.date.value']()}: {touchLot}
+					</span>
+				</div>
+				<div class="sample">
+					<label class="caption" for="ui-demo-touch-kana">{m['uiDemo.touchKeys.kana']()}</label>
+					<input
+						id="ui-demo-touch-kana"
+						maxlength="12"
+						class="banto-input"
+						type="text"
+						autocomplete="off"
+						bind:value={touchKana}
+						{@attach touchKeys({ kind: 'text', layouts: ['kana', 'alnum'] })}
+					/>
+					<span class="caption" data-testid="ui-demo-touch-kana-value">
+						{m['uiDemo.date.value']()}: {touchKana}
+					</span>
+				</div>
+				<div class="sample">
+					<label class="caption" for="ui-demo-touch-password">
+						{m['uiDemo.touchKeys.password']()}
+					</label>
+					<!-- The value itself is never shown: only its length (design §5.5). -->
+					<input
+						id="ui-demo-touch-password"
+						class="banto-input"
+						type="password"
+						autocomplete="off"
+						bind:value={touchPassword}
+					/>
+					<span class="caption" data-testid="ui-demo-touch-password-length">
+						{m['uiDemo.touchKeys.passwordLength']()}: {touchPassword.length}
+					</span>
+				</div>
+			</div>
+		</div>
+		<TouchKeysHost
+			enabled={touchKeysOn}
+			messages={touchKeysMessagesText}
+			resolve={touchKeysResolve}
+		/>
+	</SurfaceCard>
+	<!-- [scaffold:touch-keys] end -->
 	<SurfaceCard title="DatePicker / DateRangePicker" description={m['uiDemo.picker.desc']()}>
 		<div class="grid">
 			<div class="sample">
