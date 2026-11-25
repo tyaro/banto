@@ -70,7 +70,8 @@ import { findRawDimensions } from './lib/raw-dimensions.mjs';
 import {
 	checkPermissionGuards,
 	collectRestPermissionGuards,
-	collectTauriPermissionGuards
+	collectTauriPermissionGuards,
+	findSseHandlersWithoutPermission
 } from './lib/permission-guards.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -690,9 +691,17 @@ const isAllowedPackageImport = (spec) =>
 	if (fs.existsSync(path.join(repoRoot, tauriLib))) {
 		const tauriGuards = collectTauriPermissionGuards(read(tauriLib));
 		const restGuards = new Map();
-		for (const file of restRouterDirs.flatMap((dir) => [...walk(dir, ['.rs'])]))
+		for (const file of restRouterDirs.flatMap((dir) => [...walk(dir, ['.rs'])])) {
 			for (const [route, permission] of collectRestPermissionGuards(read(file)))
 				restGuards.set(route, permission);
+			// アプリ独自の SSE（#935）: 層だけでは、開いた後に外れた権限で配信が続く。
+			for (const { route, handler } of findSseHandlersWithoutPermission(read(file)))
+				fail(
+					rule,
+					file,
+					`SSE の \`${route}\`（${handler}）は権限の層の内側で sse_response を呼ぶのに SseContext::require_permission / reauthorize_with を呼んでいない（開いた後に権限が外れても配信が続く。docs/recipes/app-sse-stream.md、§4.3.1）`
+				);
+		}
 		for (const problem of checkPermissionGuards({
 			tauriGuards,
 			restGuards,

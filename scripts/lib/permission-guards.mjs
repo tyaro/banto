@@ -90,6 +90,46 @@ export function collectRestPermissionGuards(src) {
 }
 
 /**
+ * REST: 権限の層（`PermissionGuard`）の内側で `sse_response` を呼ぶのに、`SseContext` の
+ * `require_permission` / `reauthorize_with` を呼んでいないハンドラー（Issue #935 S3、
+ * docs/design/sse-stream-design.md §9）。層が見るのは配信を開く 1 回だけなので、これが無いと
+ * 開いた後に権限を外しても配信が続く。
+ *
+ * 誤検出を出さないため、見るのは次の形だけ: 同じファイルの `fn *_router` の本体で、**最後の
+ * `PermissionGuard` より前に**書かれた `.route("path", get(handler))`（`.layer` は前の route にだけ
+ * 掛かる）の `handler` が、**同じファイルの** `async fn handler` で、本体に `sse_response(` を
+ * 含み、`require_permission` も `reauthorize_with` も**どちらの語も含まない**もの。別のファイルや
+ * 別の関数に作りを委ねるハンドラーは、見逃す側に倒れる（誤って落とさない）。
+ * 返り値は `{ route, handler }` の配列（`route` は "METHOD /path"）。
+ */
+export function findSseHandlersWithoutPermission(src) {
+	const out = [];
+	for (const fnM of src.matchAll(/\bfn \w+_router\b[\s\S]*?\n\}/g)) {
+		const body = fnM[0];
+		const guards = [...body.matchAll(/PermissionGuard\s*\{/g)];
+		if (guards.length === 0) continue;
+		const guarded = body.slice(0, guards[guards.length - 1].index);
+		for (const chunk of guarded.split('.route(').slice(1)) {
+			const pathM = chunk.match(/^\s*"([^"]+)"/);
+			if (!pathM) continue;
+			const methodsSeg = chunk.split(/\.with_state|\.layer|\.route\(/)[0];
+			for (const vm of methodsSeg.matchAll(/\b(get|post|put|delete|patch)\s*\(\s*([\w:]+)\s*\)/g)) {
+				const handler = vm[2].split('::').pop();
+				const fnDef = new RegExp(String.raw`\basync fn ${handler}\b[\s\S]*?\n\}`).exec(src);
+				if (!fnDef) continue;
+				const text = fnDef[0];
+				if (
+					/\bsse_response\s*\(/.test(text) &&
+					!/\b(require_permission|reauthorize_with)\b/.test(text)
+				)
+					out.push({ route: `${vm[1].toUpperCase()} ${pathM[1].split('?')[0].trim()}`, handler });
+			}
+		}
+	}
+	return out;
+}
+
+/**
  * 照合。`pairs` は `{ tauri, rest, permission }` の配列（`permission` は正規化前の式でよい）。
  * `tauri` は Tauri コマンド名（`<cmd>_body` へ委譲していればその本体も見る）、`rest` は
  * "METHOD /path"。違反の説明文の配列を返す（空なら合格）。

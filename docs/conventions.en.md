@@ -656,6 +656,29 @@ without a runtime guard are **upheld by reviewing every call site**.
     `AuthDisabledLocal`). It is read only through `current_session`, and
     synthetic sessions are never recognized by a value such as their `id`.
   - A store failure fails the request; it neither revokes nor passes.
+- **An app's own SSE stream uses `SseContext` + `sse_response` (Issue #935,
+  [sse-stream-design](design/sse-stream-design.md), [recipe](recipes/app-sse-stream.md), both Japanese).**
+  Streams other than `/api/events` (current values and the like) are not hand-built with a bare
+  `Sse`. So that the re-check (a revoked session is closed every 15 s, ADR-0014), the stop signal,
+  the keepalive and the connection count do not diverge per stream, the rules live in one place,
+  `banto_server::sse`: the app takes an `SseContext` (obtainable only inside `require_auth`) and
+  hands a stream to `sse_response`. Guaranteed by review:
+  - **Put it inside `require_auth`.** Outside, `SseContext` answers 500 (a stream never opens on an
+    unchecked token).
+  - **A stream guarded by a permission carries both the `PermissionGuard` layer and
+    `context.require_permission(..)` (`reauthorize_with` for a finer condition).** The layer looks
+    only when the stream opens; without `require_permission` a stream that is open stays open after
+    the permission is taken away. `verify-architecture` rule 8 catches a forgotten one, for
+    handlers in the same file only.
+  - **A stream that could not be re-checked is closed** (a conditioned stream closes when the
+    session / permission re-check fails or times out; an unconditioned one and `/api/events` stay
+    open, #230). From the permission being taken away to the close: 20 s at most.
+  - **The producer sends every cycle and puts a stamp of when it made the value into it.** The
+    foundation never re-sends a value (that would hide a stopped producer). The reader is
+    `createSseStream`; `onSessionChange` / `onForbidden` drop the value on display.
+  - **One stream per screen**, kinds told apart by `event:` name. The "n connections" count is off
+    by default; only the one stream of a screen that does not open `/api/events` calls
+    `counted_as_client()`.
 
 ## 7. `{@html}` only with self-generated, fully escaped output [machine-checked: allowlist of use sites]
 

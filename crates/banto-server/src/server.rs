@@ -72,7 +72,8 @@ impl ShutdownSignal {
 /// then nothing is counted.
 ///
 /// Each open stream holds one [`SseConnectionGuard`] and the count goes down
-/// when the guard is dropped - whichever way the stream ends: the client
+/// when the connection has actually closed and the guard is dropped (not when
+/// something merely asks it to end) - whichever way the stream ends: the client
 /// disconnects (axum drops the stream), the session re-check ends it, the
 /// event channel closes, the server stops ([`ShutdownSignal`]) or the server
 /// task is aborted (the stream is dropped with its connection). So the count
