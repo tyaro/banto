@@ -144,7 +144,7 @@ conventions §1 / §2 / §3 / §4 / §6 / §10 / §11 / §12、[template-scope](
 
 アプリの処理は**本番だけ**を読む。下書きを返す関数とは名前で分ける。
 
-- `published(target)` → 値（JSON）・版・**revision**・反映した時刻。`published_as::<T>(target)` → 型に写した値と版・revision。
+- `published(target)` → 値（JSON）・版・**revision**・反映した時刻。`published_as::<T>(target)` → 型に写した値・版・**revision**・反映した時刻（`PublishedConfigAs<T>`。`published` と同じ形で、同じ 1 行の 1 回の読み取りから返す。revision を別に読むと、並行の反映で古い値と新しい revision が組み合わさる）。
 - 読むのは `config_published` の 1 行（主キー）。途中の状態は見えない（反映は 1 トランザクション）。
 - 変わったことは、配線が送る `ServerEvent::ResourceChanged { resource: "config:<対象>" }` を同じ broadcast から受けて読み直す（§4.8）。
   **知らせは「すぐ読み直す合図」で、届くことを当てにしない**（コミットの後に送るので、切断・受け手の遅れ（broadcast の `Lagged`）・プロセスの終了で落ちうる）。
@@ -423,7 +423,7 @@ impl ConfigDraftsService {
 
     // アプリの処理の読み口（本番だけ）
     pub async fn published(&self, target: &str) -> Result<PublishedConfig, BantoError>;
-    pub async fn published_as<T: DeserializeOwned>(&self, target: &str) -> Result<(T, i64), BantoError>;
+    pub async fn published_as<T: DeserializeOwned>(&self, target: &str) -> Result<PublishedConfigAs<T>, BantoError>; // value: T は値の型だけ違い、version・revision・published_at は PublishedConfig と同じ
 
     // 画面のための読み取り
     pub async fn list(&self) -> Result<Vec<ConfigTargetSummary>, BantoError>;
@@ -514,6 +514,7 @@ Tauri のコマンドは `require_role`（または `require_permission`）→ �
   取り直しは、確かめた本番の revision が古ければ `published_changed` で付け替えない。成功の後は下書きの revision が変わり、取り直しの前の `ifDraftRevision` での反映は `draft_changed`。
   最初の保存も、開いた後に本番が進んでいれば `published_changed`。
 - T3 revision: 古い `ifRevision` の保存、古い `ifDraftRevision` の反映、古い `ifPublishedRevision` の元に戻す、がそれぞれ `conflict`。
+  `published_as::<T>()` も `published()` と同じ行から値・版・revision を返し、並行の反映を挟んでも別の時点の物が組み合わさらない（revision は値と一致）。
 - T4 ロックの取り合い: A が取得 → B の取得は `lock_held`（持ち主の名前と期限つき）→ B の保存は `lock_required` → B の反映は `lock_held`。 B が A の lease ID を知っていても（状態で読める）、B の延長・返却は A のロックに効かない。
   lease: A のタブ 1 が取得 → タブ 2 が取得（lease が変わる）→ タブ 1 の遅れた返却・延長は新しいロックを消さない・延ばさない。
   失効の後の延長は取り直さない。管理者の解除は、見た lease と違えば消さない。
