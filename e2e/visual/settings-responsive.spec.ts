@@ -55,13 +55,16 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 					for (const control of await page.locator('.settings-page .banto-field-control').all()) {
 						if (await control.isEnabled()) await control.focus();
 						const label = await control.evaluate(
-							(element) => element.nextElementSibling!.textContent
+							(element) =>
+								(element.closest('.banto-affix') ?? element).nextElementSibling!.textContent
 						);
 						const gap = await control.evaluate(
 							(element) =>
 								element.getBoundingClientRect().top +
 								parseFloat(getComputedStyle(element).paddingTop) -
-								element.nextElementSibling!.getBoundingClientRect().bottom
+								(
+									element.closest('.banto-affix') ?? element
+								).nextElementSibling!.getBoundingClientRect().bottom
 						);
 						expect(
 							gap,
