@@ -18,7 +18,8 @@
 	 */
 	import { onDestroy, untrack, type Component } from 'svelte';
 	import { BantoGrid, type GridColumn } from '@banto/grid-svelte';
-	import { BantoForm, createFormStore } from '@banto/forms';
+	import { BantoForm, PasswordInput, createFormStore } from '@banto/forms';
+	import { passwordInputMessages } from '#lib/banto/i18n.js';
 	import type { FormSchema } from '@banto/forms';
 	import { createRequestOwner, isProviderError } from '@banto/admin-core';
 	import {
@@ -65,6 +66,9 @@
 	} from '#lib/banto/usersAdmin.js';
 	import type { Role } from '#lib/permissions.js';
 	import PermissionsField from './PermissionsField.svelte';
+
+	// Ids for the password boxes' sibling labels (a wrapping <label> would take the eye button's name).
+	const uid = $props.id();
 
 	const roleOptions: { value: Role; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },
@@ -533,6 +537,7 @@
 							onSubmit={handleCreate}
 							submitting={creating}
 							submitLabel={m['common.create']()}
+							passwordMessages={passwordInputMessages()}
 						/>
 					</section>
 				</SurfaceCard>
@@ -632,15 +637,18 @@
 
 							<div class="danger-section">
 								<p class="note">{m['users.resetDesc']()}</p>
-								<label class="banto-field banto-field--stacked edit-field">
-									<input
+								<div class="banto-field banto-field--stacked edit-field">
+									<PasswordInput
+										id="{uid}-pw-1"
 										class="banto-field-control"
-										type="password"
 										bind:value={resetPassword}
 										autocomplete="new-password"
+										messages={passwordInputMessages()}
 									/>
-									<span class="banto-field-label">{m['common.newPasswordMinLabel']()}</span>
-								</label>
+									<label class="banto-field-label" for="{uid}-pw-1">
+										{m['common.newPasswordMinLabel']()}
+									</label>
+								</div>
 								<Button variant="danger" icon={KeyRound} onclick={saveReset} loading={resetting}>
 									{m['users.resetPassword']()}
 								</Button>

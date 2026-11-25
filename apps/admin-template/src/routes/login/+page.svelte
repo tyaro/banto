@@ -5,9 +5,14 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { bantoReady, getBantoMode } from '#lib/banto/setup.js';
 	import { Button, SurfaceCard } from '@banto/ui';
+	import { PasswordInput } from '@banto/forms';
+	import { passwordInputMessages } from '#lib/banto/i18n.js';
 	import { version as appVersion } from '../../../package.json';
 	import { loginBrand } from '#lib/banto/loginBrand.js';
 	import { getLoginNotice, loginConnection } from '#lib/banto/loginNotice.js';
+
+	// Ids for the password boxes' sibling labels (a wrapping <label> would take the eye button's name).
+	const uid = $props.id();
 
 	// There is one form: the login form. An app has no first-run setup
 	// (ADR-0034 §5) - a new database is entered without a login (the desktop
@@ -159,16 +164,17 @@
 						<span class="banto-field-label">{m['common.username']()}</span>
 					</label>
 
-					<label class="banto-field">
-						<input
+					<div class="banto-field">
+						<PasswordInput
+							id="{uid}-pw-1"
 							class="banto-field-control"
-							type="password"
 							placeholder=" "
 							bind:value={password}
 							autocomplete="current-password"
+							messages={passwordInputMessages()}
 						/>
-						<span class="banto-field-label">{m['common.password']()}</span>
-					</label>
+						<label class="banto-field-label" for="{uid}-pw-1">{m['common.password']()}</label>
+					</div>
 
 					{#if showRemember}
 						<label class="remember">

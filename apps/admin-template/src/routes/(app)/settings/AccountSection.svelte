@@ -12,7 +12,8 @@
 	 */
 	import { KeyRound } from '@lucide/svelte';
 	import { getAuthProvider } from '@banto/admin-core';
-	import { UnsavedChangesNotice } from '@banto/forms';
+	import { PasswordInput, UnsavedChangesNotice } from '@banto/forms';
+	import { passwordInputMessages } from '#lib/banto/i18n.js';
 	import * as m from '#lib/paraglide/messages.js';
 	import { Button, SurfaceCard } from '@banto/ui';
 	import { toastStore } from '#lib/toast.svelte.js';
@@ -22,6 +23,9 @@
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { errorMessage, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
+
+	// Ids for the password boxes' sibling labels (a wrapping <label> would take the eye button's name).
+	const uid = $props.id();
 
 	// Optional on `AuthProvider` (spec §3.3): older/custom providers may not
 	// implement it, in which case the section below shows a note instead of
@@ -145,36 +149,45 @@
 			</p>
 		{:else if changePassword}
 			<form onsubmit={submitChangePassword}>
-				<label class="banto-field banto-field--stacked">
-					<input
+				<div class="banto-field banto-field--stacked">
+					<PasswordInput
+						id="{uid}-pw-1"
 						class="banto-field-control"
-						type="password"
 						placeholder=" "
 						bind:value={currentPassword}
 						autocomplete="current-password"
+						messages={passwordInputMessages()}
 					/>
-					<span class="banto-field-label">{m['settings.currentPassword']()}</span>
-				</label>
-				<label class="banto-field banto-field--stacked">
-					<input
+					<label class="banto-field-label" for="{uid}-pw-1">
+						{m['settings.currentPassword']()}
+					</label>
+				</div>
+				<div class="banto-field banto-field--stacked">
+					<PasswordInput
+						id="{uid}-pw-2"
 						class="banto-field-control"
-						type="password"
 						placeholder=" "
 						bind:value={newPassword}
 						autocomplete="new-password"
+						messages={passwordInputMessages()}
 					/>
-					<span class="banto-field-label">{m['common.newPasswordMinLabel']()}</span>
-				</label>
-				<label class="banto-field banto-field--stacked">
-					<input
+					<label class="banto-field-label" for="{uid}-pw-2">
+						{m['common.newPasswordMinLabel']()}
+					</label>
+				</div>
+				<div class="banto-field banto-field--stacked">
+					<PasswordInput
+						id="{uid}-pw-3"
 						class="banto-field-control"
-						type="password"
 						placeholder=" "
 						bind:value={newPasswordConfirm}
 						autocomplete="new-password"
+						messages={passwordInputMessages()}
 					/>
-					<span class="banto-field-label">{m['settings.newPasswordConfirm']()}</span>
-				</label>
+					<label class="banto-field-label" for="{uid}-pw-3">
+						{m['settings.newPasswordConfirm']()}
+					</label>
+				</div>
 
 				{#if passwordError}
 					<p class="error">{passwordError}</p>
@@ -242,16 +255,17 @@
 							/>
 							<span class="banto-field-label">{m['common.username']()}</span>
 						</label>
-						<label class="banto-field">
-							<input
+						<div class="banto-field">
+							<PasswordInput
+								id="{uid}-pw-4"
 								class="banto-field-control"
-								type="password"
 								placeholder=" "
 								bind:value={autologinPassword}
 								autocomplete="current-password"
+								messages={passwordInputMessages()}
 							/>
-							<span class="banto-field-label">{m['common.password']()}</span>
-						</label>
+							<label class="banto-field-label" for="{uid}-pw-4">{m['common.password']()}</label>
+						</div>
 						<Button type="submit" variant="primary" loading={enablingAutologin}>
 							{m['settings.autologinEnable']()}
 						</Button>

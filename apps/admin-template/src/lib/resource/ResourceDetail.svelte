@@ -59,6 +59,7 @@
 	import { confirmAction } from '#lib/confirm.svelte.js';
 	import {
 		fileFieldMessages,
+		passwordInputMessages,
 		formValidationMessages,
 		referenceFieldMessages
 	} from '#lib/banto/i18n.js';
@@ -603,6 +604,7 @@
 			referenceMessages={referenceFieldMessages()}
 			fileParentId={isNew ? null : parsedId}
 			fileMessages={fileFieldMessages()}
+			passwordMessages={passwordInputMessages()}
 		>
 			<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
 			{#if !isNew && perms.delete}

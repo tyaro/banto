@@ -31,6 +31,7 @@
 	 */
 	import {
 		BantoForm,
+		PasswordInput,
 		createFormStore,
 		uploadPendingFiles,
 		type FileFieldClient,
@@ -105,6 +106,7 @@
 		dateRangePickerMessages,
 		dateTimeInputMessages,
 		fileFieldMessages,
+		passwordInputMessages,
 		formValidationMessages,
 		gridMessages,
 		referenceFieldMessages
@@ -1347,6 +1349,7 @@
 					: m['uiDemo.file.save']()}
 				fileParentId={fileDemoParentId}
 				fileMessages={fileFieldMessages()}
+				passwordMessages={passwordInputMessages()}
 				onSubmit={submitFileDemo}
 			>
 				<button type="button" class="banto-btn banto-btn--secondary" onclick={resetFileDemo}>
@@ -1733,12 +1736,13 @@
 						{m['uiDemo.touchKeys.password']()}
 					</label>
 					<!-- The value itself is never shown: only its length (design §5.5). -->
-					<input
+					<!-- The eye button shows the typed value in the box itself (#944); the keys stay masked
+					     until the box is reopened as a plain text box (touch-keys recipe). -->
+					<PasswordInput
 						id="ui-demo-touch-password"
-						class="banto-input"
-						type="password"
 						autocomplete="off"
 						bind:value={touchPassword}
+						messages={passwordInputMessages()}
 					/>
 					<span class="caption" data-testid="ui-demo-touch-password-length">
 						{m['uiDemo.touchKeys.passwordLength']()}: {touchPassword.length}

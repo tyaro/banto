@@ -34,7 +34,7 @@ export async function loginAsFirstAdmin(page: Page): Promise<void> {
 	await expect(page.getByLabel('パスワード（確認）')).toHaveCount(0);
 
 	await page.getByLabel('ユーザー名').fill(E2E_ADMIN.username);
-	await page.getByLabel('パスワード').fill(E2E_ADMIN.password);
+	await page.getByLabel('パスワード', { exact: true }).fill(E2E_ADMIN.password);
 	await page.getByRole('button', { name: 'ログイン', exact: true }).click();
 
 	await expect(page).toHaveURL(/\/dashboard$/);

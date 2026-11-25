@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- feat(forms): パスワード欄に表示・非表示の切り替え（目玉のアイコン、#944）。`@banto/forms` に `PasswordInput`（入力欄＋ボタン、押すたびに `type` が `password`⇔`text`、`aria-pressed`・状態に応じた `aria-label`、送信・リセット・画面を離れると非表示へ戻る、Edge の `::-ms-reveal` を隠す）と `PasswordInputMessages`・`defaultPasswordInputMessages`、`BantoForm` の `passwordMessages` を追加し、`PasswordField`・admin-template のログイン・設定・ユーザー管理・`/ui-demo` の password 欄をこれに寄せた。出さない指定は無い（すべてのパスワード欄に付く）。theme CSS は浮動ラベルが `.banto-affix` の中の入力にも効くようにした。touch-keys は変更なし（表示中の欄は `type="text"` なので平文の盤になる。伏せたいなら `masked: true`）。
 - chore(fixtures): v9.0.0 のタグ後の外部利用 fixture の ref を `v9.0.0` に更新し、`@banto/touch-keys-svelte` を依存と `+page.svelte` の import に追加した。[9.0.0] に「検証した組み合わせ」を追記。
 
 ## [9.0.0] - 2026-11-26

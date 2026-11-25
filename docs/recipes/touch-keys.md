@@ -95,7 +95,7 @@ true の間だけ、数値の欄（`type="number"`・`inputmode="numeric" | "dec
 - **パスワード**（`type="password"`）は必ず伏せた文字キーボード。表示は `●` と文字数だけで、未確定の下書きは盤の外へ出ない（確定した値は入力欄へ書く）
   （`onconfirm` の `value`・`previous` と `note` の `draft` は `null`）。開いて何も打たずに確定しても既存の値は消えない
   （空にするのは「全部消す」の直後だけ）。「パスワードを表示」で `type="text"` になる欄は、属性からはパスワードと分からないので
-  `touchKeys({ kind: 'text', masked: true })`（または `resolve`）で明示する。打てるのは ASCII の印字できる 95 文字だけ。
+  `touchKeys({ kind: 'text', masked: true })`（または `resolve`）で明示する。`@banto/forms` の `PasswordInput`（目玉のボタン付き）も同じで、**表示に切り替えた間は `type="text"` なので平文の盤になる**（利用者が見せると選んだ欄。表示中でも伏せたい欄は `masked: true` を付ける。盤は欄にフォーカスしたときに判定するので、盤を開いたまま切り替えても開いている盤の種類は変わらない）。打てるのは ASCII の印字できる 95 文字だけ。
 - **外す印**: 入力欄、またはその祖先に `data-touch-keys="off"`（日付・時刻の入力欄の包みなど、カレンダーのボタンが別にある欄に付ける）。
   `readonly`・`disabled`・この印は、`touchKeys(...)`・`resolve` より先に見る。
 - **挙動の約束**: 盤の外のタップは取り消しで、下の画面には届かない（下のボタンは 2 回のタップが要る）。実キーボード・スキャナの

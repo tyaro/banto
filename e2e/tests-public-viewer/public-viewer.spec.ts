@@ -196,7 +196,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 
 		// No account exists, and none logs in while the server needs no login.
 		await page.getByLabel('ユーザー名').fill(E2E_ADMIN.username);
-		await page.getByLabel('パスワード').fill(E2E_ADMIN.password);
+		await page.getByLabel('パスワード', { exact: true }).fill(E2E_ADMIN.password);
 		await page.getByRole('button', { name: 'ログイン', exact: true }).click();
 		await expect(page.locator('form').getByRole('alert')).toContainText('ログイン不要モード');
 		await expect(page).toHaveURL(/\/login$/);

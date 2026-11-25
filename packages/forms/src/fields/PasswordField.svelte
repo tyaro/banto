@@ -5,9 +5,12 @@
 	 * `type="password"` (masked input) and `autocomplete="new-password"` (a
 	 * password field in an admin form is always setting a NEW credential for
 	 * some account, never the current browser user's own login, so browsers
-	 * should not offer to autofill/save it as such).
+	 * should not offer to autofill/save it as such). The input is a `PasswordInput`:
+	 * it carries the show / hide (eye) button every password box gets (#944).
 	 */
 	import type { FieldDef } from '../types';
+	import PasswordInput from './PasswordInput.svelte';
+	import type { PasswordInputMessages } from './password';
 
 	interface Props {
 		def: FieldDef;
@@ -19,6 +22,8 @@
 		disabled?: boolean;
 		onInput: (value: string) => void;
 		onBlur?: () => void;
+		/** Texts of the show / hide button; defaults are Japanese. */
+		messages?: Partial<PasswordInputMessages>;
 	}
 
 	let {
@@ -30,22 +35,22 @@
 		error,
 		disabled = false,
 		onInput,
-		onBlur
+		onBlur,
+		messages
 	}: Props = $props();
 </script>
 
-<input
-	type="password"
+<PasswordInput
 	class={className}
 	id={id ?? def.name}
 	value={(value as string | undefined) ?? ''}
 	placeholder={def.placeholder}
 	{disabled}
 	readonly={def.readonly}
-	class:muted={def.readonly}
 	aria-invalid={!!error}
 	aria-describedby={describedBy}
 	autocomplete="new-password"
+	{messages}
 	oninput={(event) => {
 		if (!disabled && !def.readonly) onInput(event.currentTarget.value);
 	}}
@@ -53,33 +58,3 @@
 		if (!disabled && !def.readonly) onBlur?.();
 	}}
 />
-
-<style>
-	input {
-		height: var(--banto-control-height);
-		padding: 0 var(--banto-space-2);
-		border: var(--banto-border-width) solid var(--banto-border-strong);
-		border-radius: var(--banto-radius-md);
-		background: transparent;
-		color: var(--banto-text);
-		font: inherit;
-		width: 100%;
-		box-sizing: border-box;
-		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
-	}
-
-	input:focus-visible {
-		outline: var(--banto-border-width-strong) solid transparent;
-		outline-offset: var(--banto-border-width);
-		box-shadow: var(--banto-focus-ring);
-	}
-
-	input:disabled {
-		cursor: not-allowed;
-		opacity: 0.5;
-	}
-
-	input.muted {
-		color: var(--banto-text-muted);
-	}
-</style>

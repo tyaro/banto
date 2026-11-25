@@ -68,7 +68,7 @@ test.describe.serial('Banto viewer-public mode with accounts', () => {
 		// The login form (there is no setup form): the account `create-admin` made.
 		await expect(page.getByLabel('表示名')).toHaveCount(0);
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		await page.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 		await page.getByRole('button', { name: 'ログイン', exact: true }).click();
 
 		await expect(page).toHaveURL(/\/dashboard$/);
@@ -107,7 +107,7 @@ test.describe.serial('Banto viewer-public mode with accounts', () => {
 		await page.getByRole('menuitem', { name: 'ログアウト' }).click();
 		await expect(page).toHaveURL(/\/login$/);
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		await page.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 		await page.getByLabel('ログイン状態を保持する（30日間）').check();
 		await page.getByRole('button', { name: 'ログイン', exact: true }).click();
 		await expect(page).toHaveURL(/\/dashboard$/);
@@ -155,7 +155,7 @@ test.describe.serial('Banto viewer-public mode with accounts', () => {
 		await loginButton(page).click();
 		await expect(page).toHaveURL(/\/login$/);
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		await page.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 		await page.getByRole('button', { name: 'ログイン', exact: true }).click();
 		await expect(page).toHaveURL(/\/dashboard$/);
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
@@ -284,7 +284,7 @@ test.describe.serial('Banto viewer-public mode with accounts', () => {
 			await loginButton(page).click();
 			await expect(page).toHaveURL(/\/login$/);
 			await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-			await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await page.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 			await page.getByRole('button', { name: 'ログイン', exact: true }).click();
 			await expect(page).toHaveURL(/\/dashboard$/);
 			const userMenu = page.getByRole('button', { name: 'ユーザーメニューを開く' });

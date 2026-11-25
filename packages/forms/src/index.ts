@@ -90,6 +90,9 @@ export { default as DraftDateField } from './fields/DraftDateField.svelte';
 export { default as BantoForm } from './BantoForm.svelte';
 export { default as TextField } from './fields/TextField.svelte';
 export { default as PasswordField } from './fields/PasswordField.svelte';
+// The password box with its show / hide (eye) button (#944); PasswordField draws it, apps use it directly.
+export { default as PasswordInput } from './fields/PasswordInput.svelte';
+export { defaultPasswordInputMessages, type PasswordInputMessages } from './fields/password';
 export { default as NumberField } from './fields/NumberField.svelte';
 export { default as TextareaField } from './fields/TextareaField.svelte';
 export { default as SelectField } from './fields/SelectField.svelte';

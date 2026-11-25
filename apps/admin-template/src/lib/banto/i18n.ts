@@ -15,6 +15,7 @@ import {
 	fileErrorText,
 	formatFileSize,
 	type FileFieldMessages,
+	type PasswordInputMessages,
 	type ReferenceFieldMessages,
 	type ValidationMessages
 } from '@banto/forms';
@@ -136,6 +137,14 @@ export function fileFieldMessages(): FileFieldMessages {
 		removeFailed: (error) => fileErrorText(error) ?? m['fileField.removeFailed'](),
 		rejected: (fileName, reason) => m['fileField.rejected']({ fileName, reason }),
 		listLabel: (def) => m['fileField.listLabel']({ label: def.label })
+	};
+}
+
+/** @banto/forms `PasswordInputMessages` (`PasswordInput` / BantoForm `passwordMessages`): the show / hide button of a password box (#944). */
+export function passwordInputMessages(): PasswordInputMessages {
+	return {
+		show: () => m['passwordInput.show'](),
+		hide: () => m['passwordInput.hide']()
 	};
 }
 
