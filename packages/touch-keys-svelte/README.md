@@ -24,7 +24,7 @@ T3 まで（テンキー、文字キーボード（英数・記号）、パス�
   パスワードと分からないので、`touchKeys({ kind: 'text', masked: true })`（または `resolve`）で明示する。
   打てるのは ASCII の印字できる 95 文字（それ以外を含むパスワードは打てない）。
 - `touchKeys({ kind: 'text', maxLength: 20, layouts: ['alnum'] })` — 文字キーボードの指定。最大文字数は `maxlength` 属性との
-  小さいほう。`minLength` は `minlength` 属性との大きいほう（空でない下書きに掛かる）。配列は `alnum`（英数）・`symbol`（記号）。
+  小さいほう。`minLength` は `minlength` 属性との大きいほう（空でない下書きに掛かる。最小が最大を超える設定では、空でない下書きは確定できない）。配列は `alnum`（英数）・`symbol`（記号）。
   1 つだけなら切り替えのキーは出ない。`masked: true` で、`type` が password でない欄も伏せた盤にする。
 - **入力欄そのものの制約**: 文字の確定は、書いた後に入力欄の `validity`（`type="email"`・`"url"` の形式、`pattern`）を見る。
   合わなければ値を元に戻し、`input`・`change`・`onconfirm` を出さず、盤は開いたまま「入力の形式が合いません」を出す。

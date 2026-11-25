@@ -114,13 +114,31 @@ describe('resolveTextRules (§9.3)', () => {
 		expect(resolveTextRules({}, { required: true }).required).toBe(true);
 	});
 
-	it('minLength: the larger of options and attribute; 0 and a minimum above the maximum are dropped', () => {
+	it('minLength: the larger of options and attribute; 0 is dropped; a minimum above the maximum is KEPT', () => {
 		expect(resolveTextRules({ minlength: '2' }, { minLength: 4 }).minLength).toBe(4);
 		expect(resolveTextRules({ minlength: '6' }, { minLength: 4 }).minLength).toBe(6);
 		expect(resolveTextRules({}, { minLength: 4 }).minLength).toBe(4);
 		expect(resolveTextRules({ minlength: '0' }).minLength).toBeUndefined();
 		expect(resolveTextRules({ minlength: 'x' }).minLength).toBeUndefined();
-		expect(resolveTextRules({ minlength: '9', maxlength: '4' }).minLength).toBeUndefined();
+		expect(resolveTextRules({ minlength: '9', maxlength: '4' }).minLength).toBe(9);
+		// options can not loosen the field's own minlength by naming a smaller maximum
+		expect(resolveTextRules({ minlength: '8' }, { maxLength: 6 })).toEqual({
+			maxLength: 6,
+			minLength: 8,
+			required: false
+		});
+	});
+
+	it('minimum above maximum: no non-empty draft is confirmable (a conflict of the settings); empty follows required', () => {
+		const rules = resolveTextRules({ minlength: '8' }, { maxLength: 6 });
+		for (const text of ['a', 'abcdef', 'abcdefgh', 'abcdefghij']) {
+			expect(classifyText(text, rules)).toEqual({ canConfirm: false, notice: 'length-conflict' });
+		}
+		expect(classifyText('', rules)).toEqual({ canConfirm: true, notice: null });
+		expect(classifyText('', { ...rules, required: true })).toEqual({
+			canConfirm: false,
+			notice: 'required'
+		});
 	});
 });
 

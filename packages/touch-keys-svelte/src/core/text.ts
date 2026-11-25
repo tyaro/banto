@@ -46,8 +46,10 @@ function lengthBound(value: number | string | null | undefined): number | undefi
  * The rules of one field. `maxLength` comes from the options and the `maxlength`
  * attribute; when both exist the SMALLER one wins, so options can tighten but never
  * loosen what the field itself declares (same stance as `type="number"`, §5.4).
- * `minLength` likewise takes the LARGER one; a minimum above the maximum is dropped
- * (nothing could ever be confirmed). `required` is true when either side says so.
+ * `minLength` likewise takes the LARGER one. A minimum ABOVE the maximum is kept: both
+ * constraints stand (an HTML `minlength="8"` is not loosened by `maxLength: 6`), and
+ * `classifyText` then refuses every non-empty draft as a conflict of the settings.
+ * `required` is true when either side says so.
  *
  * The browser does not flag `maxlength` / `minlength` on a value set from script, so
  * these two are enforced by the keys themselves.
@@ -65,10 +67,7 @@ export function resolveTextRules(attrs: TextAttrs, spec: TextSpec = {}): TextRul
 		minSpec !== undefined && minAttr !== undefined
 			? Math.max(minSpec, minAttr)
 			: (minSpec ?? minAttr);
-	const minLength =
-		min === undefined || min === 0 || (maxLength !== undefined && min > maxLength)
-			? undefined
-			: min;
+	const minLength = min === undefined || min === 0 ? undefined : min;
 	return { maxLength, minLength, required: Boolean(spec.required || attrs.required) };
 }
 
@@ -152,7 +151,7 @@ export function pressTextKey(text: string, key: TextKey, rules: { maxLength?: nu
 export interface TextStatus {
 	canConfirm: boolean;
 	/** Why not / what to tell: an empty required draft, too short, or the upper bound reached or exceeded. */
-	notice: 'required' | 'min-length' | 'max-length' | null;
+	notice: 'required' | 'length-conflict' | 'min-length' | 'max-length' | null;
 }
 
 /**
@@ -164,6 +163,15 @@ export function classifyText(text: string, rules: TextRules): TextStatus {
 		return rules.required
 			? { canConfirm: false, notice: 'required' }
 			: { canConfirm: true, notice: null };
+	}
+	// The settings contradict each other (minimum above maximum): no non-empty text can satisfy
+	// both, so none is confirmable. An empty draft keeps the `required` rule above.
+	if (
+		rules.minLength !== undefined &&
+		rules.maxLength !== undefined &&
+		rules.minLength > rules.maxLength
+	) {
+		return { canConfirm: false, notice: 'length-conflict' };
 	}
 	if (rules.minLength !== undefined && text.length < rules.minLength) {
 		return { canConfirm: false, notice: 'min-length' };

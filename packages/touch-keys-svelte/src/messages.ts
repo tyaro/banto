@@ -39,6 +39,8 @@ export interface TouchKeysMessages {
 	maxLength?: (max: number) => string;
 	/** Notice for a non-empty draft shorter than the minimum length. */
 	minLength?: (min: number) => string;
+	/** Notice when the minimum length is above the maximum: no non-empty draft can be confirmed. */
+	lengthConflict?: (min: number, max: number) => string;
 	/** Notice after a confirm the field itself refused (its type or `pattern` does not accept the text). */
 	invalid?: () => string;
 }
@@ -74,5 +76,6 @@ export const defaultTouchKeysMessages: Required<TouchKeysMessages> = {
 	length: (length, max) => (max !== null ? `${length} / ${max}` : `${length} 文字`),
 	maxLength: (max) => `${max} 文字までです`,
 	minLength: (min) => `${min} 文字以上にしてください`,
+	lengthConflict: (min, max) => `文字数の設定が合っていません（最小 ${min}・最大 ${max}）`,
 	invalid: () => '入力の形式が合いません'
 };

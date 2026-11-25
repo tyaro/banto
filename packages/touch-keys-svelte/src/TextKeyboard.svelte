@@ -110,13 +110,17 @@
 	const notice = $derived(
 		status.notice === 'required'
 			? t.required()
-			: status.notice === 'min-length' && rules.minLength !== undefined
-				? t.minLength(rules.minLength)
-				: rejected
-					? t.invalid()
-					: status.notice === 'max-length' && rules.maxLength !== undefined
-						? t.maxLength(rules.maxLength)
-						: ''
+			: status.notice === 'length-conflict' &&
+				  rules.minLength !== undefined &&
+				  rules.maxLength !== undefined
+				? t.lengthConflict(rules.minLength, rules.maxLength)
+				: status.notice === 'min-length' && rules.minLength !== undefined
+					? t.minLength(rules.minLength)
+					: rejected
+						? t.invalid()
+						: status.notice === 'max-length' && rules.maxLength !== undefined
+							? t.maxLength(rules.maxLength)
+							: ''
 	);
 	const layoutName = (l: TextLayout): string => (l === 'symbol' ? t.symbol() : t.alnum());
 
