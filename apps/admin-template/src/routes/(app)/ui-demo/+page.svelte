@@ -162,7 +162,7 @@
 		lot: string;
 	}
 	const TOUCH_PICK_STOCK = 500;
-	const TOUCH_PICK_SAVE_MS = 400;
+	const TOUCH_PICK_SAVE_MS = 800;
 	let touchPicks = $state<TouchPick[]>([
 		{ code: 'P-001', qty: 12, lot: 'L24A' },
 		{ code: 'P-002', qty: 40, lot: 'L24B' },

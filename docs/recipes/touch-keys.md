@@ -155,6 +155,8 @@ OS のタッチキーボードが同時に出る環境があれば（`inputmode=
   **盤の確定で、値の確定と検証まで走る**（#964 F1）: `DraftNumberField` は blur・Enter に加えて `change` でも `draft.commit()` を呼び、
   盤の確定は `input` → `change` を出す。フォーカスは入力欄に残るが、確定値（`draft` の値）とエラーの表示は盤を閉じた時点で揃う
   （その後の blur は、文字が変わっていなければ確定し直さない。`onCommit` も 1 回）。配線は要らない。
+  **実キーボードで打っている途中の保存は別**: 打った文字は blur・Enter まで確定しない（`DraftNumberField` は submit を見ず、標準の `BantoForm` の送信は
+  `FormStore.validateAll()` で `FormDraft` を確定しない）。フォーカスが残ったまま送れる画面では、保存ハンドラーで `draft.commitAll()` が成功してから確定値を読む。
 - **ほかの欄**: `TextField`・`NumberField`・`PasswordField` は `input` のたびに `FormStore` へ値が入るので、盤の確定で値が入る
   （エラーの表示は、実キーボードで打ったときと同じく blur の後）。`DraftDateField` と日付・時刻の欄は盤の対象にしない
   （下の `data-touch-keys="off"`。注入した日付の入力欄に盤で書いても、確定は blur・Enter を待つ）。

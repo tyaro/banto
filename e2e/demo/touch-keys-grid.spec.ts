@@ -170,9 +170,24 @@ test('a text cell gets the text keyboard; focus moved during a slow save stays w
 
 	// The lot column saves after a short wait. The switch is tapped meanwhile:
 	// the save's end must not pull focus back to the grid.
-	await tapKeys(page, ['a', 'b', '確定']);
 	const toggle = card.getByTestId('ui-demo-touch-keys-enabled');
+	// Record, at the moment the switch takes focus, whether the save was still
+	// running: a tap that came after the save would prove nothing.
+	await toggle.evaluate((el) => {
+		el.addEventListener(
+			'focus',
+			() => {
+				const busy = document
+					.querySelector('[data-testid="ui-demo-touch-keys"] [data-cell-field="lot"][aria-busy]')
+					?.getAttribute('aria-busy');
+				el.setAttribute('data-save-busy-at-focus', busy ?? 'none');
+			},
+			{ once: true }
+		);
+	});
+	await tapKeys(page, ['a', 'b', '確定']);
 	await toggle.tap();
+	await expect(toggle).toHaveAttribute('data-save-busy-at-focus', 'true');
 	await expect(cell(2, 'lot')).toHaveText('ab');
 	await expect(grid.locator('[data-grid-editor]')).toHaveCount(0);
 	await expect(toggle).toBeFocused();
