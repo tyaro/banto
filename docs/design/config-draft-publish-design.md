@@ -1,7 +1,7 @@
 # 設定の下書き・反映・元に戻す 設計書 — Issue #938
 
 作成日: 2026-11-25
-状態: **S1a（土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分）は実装済み（PR #952）。S1b〜S5 は未着手（§7）。§12 の「確かめたい点」はオーナーの判断待ち**
+状態: **S1a・S1b 実装済み、S2〜S5 未着手**（§7。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験）。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
 トラック: 保守者向け（トラックA）
 関連: Issue #938、#638・#651（楽観ロックと `conflict`）、#786（`ui_settings` の revision）、#597（監査の差分）、
 #697（ユーザー個別の権限）、#935・#936（[アプリ独自の SSE](sse-stream-design.md)）、#793 / [ADR-0035](../adr/0035-detached-writes.md)（書き込みを切断から切り離す）、
@@ -124,6 +124,8 @@ conventions §1 / §2 / §3 / §4 / §6 / §10 / §11 / §12、[template-scope](
 ### 4.2 置き場所
 
 - サービス: `crates/banto-admin-services/src/config_drafts.rs`（`pub mod config_drafts`）。依存は増えないので、cargo の feature では囲まない（§12 の 2）。
+  S1b で、反映・元に戻す・取り直しを子の `config_drafts/publish.rs` に、一覧・差分・履歴の読み取りを `config_drafts/history.rs` に分けた
+  （公開の名前は `config_drafts::` の直下のまま。書き込みのマクロは親に置き、子が使う）。
 - パスごとの差分: `crates/banto-admin-services/src/audit/diff.rs` に `diff_changes` の隣の関数として足す（§4.7）。
 - REST: `crates/banto-server/src/routes/config_drafts.rs` の `config_drafts_router(..)`。アプリが `/api` の層の内側に載せる。
 - 表: アプリの `migrations-sqlite/0016_config_drafts.sql`・`migrations-postgres/0016_config_drafts.sql`（案 B。案 A ならレシピに本文を載せる）。
@@ -253,7 +255,7 @@ CREATE TABLE config_locks (
 - **時計は、書き込みが本番の行を固定した後に 1 回だけ読む**（`with_target_write!` が本体へ渡す `WriteTime`。S1a で決めた）。
   プールの空きや別の書き込みを待っている間に期限が過ぎることがあるので、待つ前に読んだ時刻では判定しない
   （古い時刻だと、切れたロックで保存・延長ができ、逆に切れた他人のロックで取得を断る）。有効かどうかの判定と新しい期限には同じ時刻を使う。
-  反映・元に戻す（S1b）も同じ `WriteTime` を使う。
+  反映・元に戻す・取り直し（S1b）も同じ `WriteTime` を使う（待っている間にほかの人のロックが切れれば、反映は通る）。
 - **延長は期限を前へ戻さない**（延長・下書きの保存。新しい期限は「今 + 期限の長さ」と行のいまの期限の大きい方）。時計が戻っても、先に延ばした期限を短くしない。
 - 期限の長さは `with_lock_ttl(..)`。既定は 5 分（§12 の 6）。画面は期限の 1/3 ごとに延長する（lease ID つき）（下書きの保存も期限を延ばす）。
 
@@ -319,6 +321,26 @@ CREATE TABLE config_locks (
 - 下書きがあれば残す。その下書きは「元にした版」が古くなるので、反映の前に取り直しが要る。
 - 戻す値も検証の関数を通す。**いまの検証を通らない古い値には戻せない**（§11）。
 
+**S1b で決めた形**（反映・元に戻す・取り直し）:
+
+- **調べる順**。反映: 下書きが無い（`not_found`、`resource: "config_draft"`）→ `draft_changed` → `stale_base` → `lock_held` → 検証（422）→ 本番と同じ値（`bad_request`）。
+  元に戻す: `published_changed` → `toVersion` の範囲（422、`field: "toVersion"`。負・いまの版以上）→ `lock_held` → その版の行が無い（`not_found`、`resource: "config_version"`、`id: "<対象>/<版>"`）→ 検証（422）→ 本番と同じ値（`bad_request`）。
+  取り直し: `lock_required` → `draft_changed` → `published_changed`。条件（revision・コメント）の形の検査はトランザクションの前。
+- **`stale_base` の `current`**: `{ reason, baseVersion, published: { version, revision } }`（本番の値は入れない）。
+- **同じ下書きを 2 つの接続から同時に反映**すると、通るのは先に本番の行を固定した方だけ。後の方は、固定が解けた後に下書きを読むので、**`not_found`**（下書きはもう反映されて無い）になる。
+  元に戻すどうしは後の方が `published_changed`、反映と元に戻すは後の方が `stale_base` / `published_changed`。どの組でも版は通った分だけ進む。
+- **履歴の行と本番の行の `published_at` は同じ文字列**にする。履歴の行を既定値で入れ、本番の `UPDATE` がその値を写す（SQLite は同じトランザクションでも文ごとに `now` が変わりうる）。
+  本番の `UPDATE` は `RETURNING published_at` で 1 行を確かめる（0 行なら失敗にして巻き戻す）。
+- **版の上限**: `i64` の上限に届いたら `bad_request` で断る（巻き戻さない）。
+- **コメント**: 前後の空白を落とし、空なら無し（`NULL`）。500 文字まで（`MAX_CONFIG_COMMENT_CHARS`。超えたら 422、`field: "comment"`）。
+- **誰が・どこから**（`PublishStamp`）はサービスが検査しない（配線がセッションから作る。conventions §2）。
+- **反映の戻り値**（`PublishOutcome`）: `{ target, kind, version, previousVersion, revision（新しい本番の revision）, publishedAt, revertedTo?, comment?, changes }`。
+  `changes` は切らない（マスクはする）。監査向けに切った物は同じ値の中に持ち（応答には出さない）、`publish_audit_detail(&outcome)` が
+  `{ version, previousVersion, revertedTo?, comment?, changes, changesTruncated? }` を作る（S2 の両経路が同じ関数を呼ぶ）。
+- **取り直し**は、下書きの保存と同じく**ロックの期限を延ばし**、同じ形（`ConfigDraftSaved`: 新しい revision・元にした版・検証の結果・ロック）を返す。
+  下書きの `updated_by`・`updated_at` も書き換える（値は変えない）。「元にした版」がすでに本番の版と同じでも通り、revision は変わる。
+- **元に戻すは下書きとロックに触れない**（自分がロックを持っていれば持ったまま）。反映は、期限切れのほかの人の行も含めてロックの行を消す。
+
 **エラーの形**: 新しい `kind` は足さない。衝突は全部 `conflict`（409）で、`current.reason` で分ける
 （`stale_base` / `draft_changed` / `published_changed` / `lock_held` / `lock_required`）。`current` には理由ごとのいまの状態を入れる。
 
@@ -344,6 +366,20 @@ CREATE TABLE config_locks (
   `before` / `after` は片側ごとに JSON の文字列で 1024 バイトまで（`MAX_PATH_VALUE_BYTES`。超えたら JSON の文字列の先頭 + `…` に置き換え、その 1 件に `beforeTruncated` / `afterTruncated: true`）、
   パスは 256 バイトまで（`MAX_PATH_FIELD_BYTES`。超えたら切って `fieldTruncated: true`）、`changes` の配列の全体は 32 KiB まで（`MAX_PATH_CHANGES_BYTES`。収まらない件は落とし、`changesTruncated: true`）。
   マスクは切る前に、切っていないパスで当てる。
+
+**差分・履歴・一覧の口**（S1b で決めた形。どれも **1 つの SQL 文**）:
+
+- `diff(target, None)`（本番 → 下書き）: `config_published` に `config_drafts` を `LEFT JOIN`。応答（`ConfigDiff`）は
+  `{ target, publishedVersion, publishedRevision, draftRevision, baseVersion, changes }`。`baseVersion` が `publishedVersion` と違えば、画面は取り直しを促す。下書きが無ければ `not_found`（`config_draft`）。
+- `diff(target, Some(N))`（本番 → 版 N。元に戻す前の確かめ）: `config_published` に `config_history`（版 N）を `LEFT JOIN`。応答は
+  `{ target, publishedVersion, publishedRevision, toVersion, changes }`。版が無ければ `not_found`（`config_version`）。いまの版を指すと `changes` は空（断らない。断るのは元に戻すの方）。
+- `history(target, before, limit)`: 新しい順、値なし。`limit` は 1〜100（`MAX_CONFIG_HISTORY_PAGE`）に寄せる。1 件は
+  `{ version, kind, revertedTo, actorUsername, actorId, actorKind, origin, comment, publishedAt }`（版 0 は誰の欄も `null`）。`kind` は `initial` / `publish` / `revert`（知らない値の行は壊れた行として失敗にする）。
+- `history_entry(target, version)`: 上の 1 件 + `value`（その版）・`previousValue`（1 つ前の版。版 0 は `null`）・`changes`（前 → その版。マスク済み）。
+  履歴の自己結合 1 文。**値は丸ごと返す**（元に戻すために要る物。読む権限つきの口で、マスクは `changes` だけ。§11）。
+- `list()`: 登録の順。`config_published` に下書きとロックを `LEFT JOIN`（対象を絞らない 1 文）。1 件は
+  `{ target, version, revision, publishedAt, draft?: { baseVersion, revision, updatedBy, updatedAt }, lock? }`（値は入れない。期限切れのロックは無し）。
+  登録から外したキーの行は出さない。登録済みで行が無い対象があれば失敗（`ensure_targets` の呼び忘れ）。
 
 ### 4.8 監査と知らせ
 
@@ -392,6 +428,8 @@ CREATE TABLE config_locks (
 pub const MAX_CONFIG_VALUE_BYTES: usize = 256 * 1024;
 pub const DEFAULT_LOCK_TTL: Duration = Duration::from_secs(300);
 pub const CONFIG_DRAFT_ABSENT_REVISION: &str = "0";
+pub const MAX_CONFIG_COMMENT_CHARS: usize = 500;   // S1b
+pub const MAX_CONFIG_HISTORY_PAGE: u32 = 100;      // S1b
 
 /// 対象 1 つの登録。`masked_paths` は必須（無ければ `&[]` と書く）。
 pub struct ConfigTarget { /* key, default, masked_paths, validate */ }
@@ -460,6 +498,15 @@ impl ConfigDraftsService {
 
 /// 両経路が同じ監査 detail を作るための関数（`users` の update の detail と同じ置き方）。
 pub fn publish_audit_detail(outcome: &PublishOutcome) -> serde_json::Value;
+
+// S1b で決めた戻り値の型（欄は §4.6・§4.7 の「S1b で決めた形」）:
+pub enum ConfigHistoryKind { Initial, Publish, Revert }   // 履歴の `kind`
+pub struct PublishOutcome { /* target, kind, version, previous_version, revision, published_at, reverted_to, comment, changes */ }
+pub struct ConfigDiff { /* target, published_version, published_revision, draft_revision, base_version, to_version, changes */ }
+pub struct ConfigHistoryEntry { /* version, kind, reverted_to, actor_username, actor_id, actor_kind, origin, comment, published_at */ }
+pub struct ConfigHistoryDetail { /* entry（flatten）, value, previous_value, changes */ }
+pub struct ConfigTargetSummary { /* target, version, revision, published_at, draft: Option<ConfigDraftSummary>, lock */ }
+pub struct ConfigDraftSummary { /* base_version, revision, updated_by, updated_at */ }
 ```
 
 ```rust
@@ -482,7 +529,7 @@ pub fn config_drafts_router(
 
 | 役目 | REST                                           | Tauri                  | 本文・応答（要点）                                                                                   |
 | ---- | ---------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| 読む | `GET /api/config`                              | `config_list`          | 対象ごとの `{ target, version, hasDraft, lock? }`                                                    |
+| 読む | `GET /api/config`                              | `config_list`          | 対象ごとの `{ target, version, revision, publishedAt, draft?: { baseVersion, revision, updatedBy, updatedAt }, lock? }`（値なし。S1b の `ConfigTargetSummary`） |
 | 読む | `GET /api/config/{target}`                     | `config_get`           | `{ published: { value, version, revision, publishedAt }, draft?: { value, baseVersion, revision, updatedBy, updatedAt }, lock?: { holderName, mine, leaseId, expiresAt } }`。1 回の読み取りで揃える |
 | 読む | `GET /api/config/{target}/diff`                | `config_diff`          | 既定は「本番 → 下書き」: `{ publishedVersion, publishedRevision, draftRevision, changes: [...] }`。`?toVersion=N` で「本番 → 版 N」（元に戻す前の確かめ）: `{ publishedVersion, publishedRevision, toVersion, changes: [...] }`。比べた値と印は 1 つの SQL 文で読む |
 | 読む | `GET /api/config/{target}/history`             | `config_history_list`  | 新しい順。`?before=<版>&limit=`。値は含めない（誰が・いつ・どこから・種類・コメント）                |
@@ -546,6 +593,13 @@ Tauri のコマンドは `require_role`（または `require_permission`）→ �
   その印で反映すると通り、1 つ前の印では `conflict` になる。
   加えて、**別々の接続 2 つから同時に反映**して、通るのは 1 つだけ・版は 1 つだけ進む、を確かめる（SQLite もファイルの DB と別々のプール 2 つで同じことを確かめる。`ui_settings_cases` の形）。
 - 案 B では、本物の migration `0016` に対して同じ場合を通す（表の写しとのずれを捕まえる）。
+- **S1b での置き方**: 両 DB で通す本文は `config_drafts/cases.rs` に 1 回だけ書き、`Bench`（同じ DB の別々のプール 2 つに載せたサービス 2 つ）を受ける。
+  T2・T3・T4・T7・T8・同じスナップショット・2 接続の同時反映の 7 件を、SQLite（ファイルの DB。`sqlite_two_pools::*`）と
+  PostgreSQL（試験ごとの専用スキーマ。`pg_config_drafts::*`。`BANTO_TEST_PG_URL` が無ければ飛ばす）の両方で走らせる。
+  CI は `app-postgres` の `cargo test -p banto-admin-services --features postgres pg_config_drafts`。表の写しは SQLite が `tests.rs` の `DDL`、PostgreSQL が `cases.rs` の `PG_DDL`（S4 で本物の migration と揃える）。
+  同じスナップショットの試験は、差分の `changes` が印の revision の値どうしの差分であることに加えて、**下書きの「元にした版」が同じ応答の本番の版と一致する**ことも見る
+  （この試験の書き手は必ずいまの本番から下書きを作るので、ずれた組は「無かった時点」。本番と下書きを別の文で読むと出る）。
+  SQLite だけで足りる物（一覧・応答の形・入力の検査・監査 detail の切り詰め・待った後の時刻での反映）は `tests.rs`。
 
 REST（`banto-server` の `routes/config_drafts.rs` の試験）:
 

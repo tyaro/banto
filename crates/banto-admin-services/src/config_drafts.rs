@@ -1,11 +1,21 @@
 //! Config drafts: edit a draft, publish it, go back to an earlier version
 //! (Issue #938, config-draft-publish-design §4).
 //!
-//! **This file is the base only (design §7, step S1a).** It has the target
-//! registry, [`ConfigDraftsService::ensure_targets`], the reads, the edit
-//! lock, and saving / discarding a draft. Publishing, reverting, rebasing a
-//! draft, the history and the diff come in the next step (S1b); until then
-//! nothing here can change the published value.
+//! This file is the base (design §7, step S1a): the target registry,
+//! [`ConfigDraftsService::ensure_targets`], the reads of the published value
+//! and the state, the edit lock, and saving / discarding a draft. Step S1b
+//! added two parts on top of it, as child modules:
+//!
+//! - `publish`: [`ConfigDraftsService::publish`],
+//!   [`ConfigDraftsService::revert`] and
+//!   [`ConfigDraftsService::draft_rebase`] - the only writes that change the
+//!   published value (each ONE transaction), and the rebase of a draft.
+//! - `history`: [`ConfigDraftsService::list`],
+//!   [`ConfigDraftsService::diff`], [`ConfigDraftsService::history`] and
+//!   [`ConfigDraftsService::history_entry`] - each ONE SQL statement.
+//!
+//! The REST routes, the guards, the audit rows and the events are the
+//! wiring's (S2).
 //!
 //! Words (design §1):
 //!
@@ -53,7 +63,7 @@
 //!
 //! Conflicts are all [`BantoError::Conflict`]; `current.reason` tells them
 //! apart (`draft_changed` / `published_changed` / `lock_held` /
-//! `lock_required`; S1b adds `stale_base`).
+//! `lock_required` / `stale_base`).
 //!
 //! Like every service here this one knows nothing about sessions, RBAC, HTTP,
 //! audit or events (conventions §2): the wiring builds the [`ConfigEditor`]
@@ -420,7 +430,7 @@ pub struct ConfigDraftsService {
 /// The time of one write: the service's clock read once, after the write
 /// fixed the target's published row (so after every wait), and the expiry a
 /// lock gets from it. Only `with_target_write!` makes one; every decision
-/// about a lock inside the write uses it (S1b's publish and revert too).
+/// about a lock inside the write uses it (publish and revert too).
 #[derive(Debug, Clone, Copy)]
 struct WriteTime {
     now_ms: i64,
@@ -1233,12 +1243,15 @@ fn published_sql(dialect: Dialect, fix: bool) -> String {
     )
 }
 
-/// The `updated_at` / `published_at` expression of each dialect (the
-/// columns' own defaults).
+/// The `updated_at` / `published_at` expression a write uses: the time of
+/// the STATEMENT, in the text form of the columns' defaults. A write runs
+/// this after it fixed the published row, so the time is after every wait.
+/// PostgreSQL's `now()` (the columns' default) is the time the transaction
+/// STARTED - before the wait for the row lock - so it is not used here.
 fn now_text(dialect: Dialect) -> &'static str {
     match dialect {
         Dialect::Sqlite => "datetime('now')",
-        Dialect::Postgres => "now()::text",
+        Dialect::Postgres => "statement_timestamp()::text",
     }
 }
 
@@ -1386,5 +1399,40 @@ fn published_changed(published: &PublishedConfig) -> BantoError {
     }
 }
 
+/// No draft where one is needed (publish, the draft's diff).
+fn no_draft(target: &str) -> BantoError {
+    BantoError::NotFound {
+        resource: "config_draft".to_string(),
+        id: target.to_string(),
+    }
+}
+
+/// A version that is not in the target's history.
+fn no_version(target: &str, version: i64) -> BantoError {
+    BantoError::NotFound {
+        resource: "config_version".to_string(),
+        id: format!("{target}/{version}"),
+    }
+}
+
+/// The target's secret paths in the shape `audit::diff` takes.
+fn masked_of(target: &ConfigTarget) -> Vec<&str> {
+    target.masked_paths().iter().map(String::as_str).collect()
+}
+
+// After the macros above: the child modules use them.
+mod history;
+mod publish;
+
+pub use history::{
+    ConfigDiff, ConfigDraftSummary, ConfigHistoryDetail, ConfigHistoryEntry, ConfigTargetSummary,
+    MAX_CONFIG_HISTORY_PAGE,
+};
+pub use publish::{
+    publish_audit_detail, ConfigHistoryKind, PublishOutcome, PublishStamp, MAX_CONFIG_COMMENT_CHARS,
+};
+
+#[cfg(test)]
+mod cases;
 #[cfg(test)]
 mod tests;

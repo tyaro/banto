@@ -488,6 +488,16 @@ jobs:
           BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_app_test
         run: cargo test -p banto-admin-services --features postgres pg_audit_spool
 
+      # #938（config-draft-publish-design §6 の T11）: 設定の下書き・反映・元に戻す。
+      # SQLite と同じ本文（`config_drafts/cases.rs`）を、別々のプール 2 つで通す:
+      # 版の衝突と取り直し・古い revision・ロック・反映が 1 つのまとまりであること・
+      # 元に戻す・状態と差分が同じスナップショットであること・2 接続の同時反映。
+      # 試験ごとに専用スキーマを作るので public には触れない。
+      - name: Cargo test (banto-admin-services, postgres config drafts)
+        env:
+          BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_app_test
+        run: cargo test -p banto-admin-services --features postgres pg_config_drafts
+
   e2e:
     name: E2E (Playwright smoke)
     needs: changes
