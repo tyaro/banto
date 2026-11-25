@@ -1,11 +1,12 @@
 //! Server lifecycle: bind, run, graceful-stop (spec §11.1, §11.4).
 
 use crate::detach::{detach_writes, DetachedWrites, RemainingWrites, StopOutcome, WriteBudget};
+use axum::serve::{Listener, ListenerExt};
 use axum::Router;
 use banto_core::BantoError;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -103,10 +104,69 @@ impl Drop for SseConnectionGuard {
     }
 }
 
+/// Asks one listener to stop, from anywhere: cloneable, and
+/// [`Self::request_stop`] is a plain (non-async) call that does not wait -
+/// for a caller that cannot own or await the [`RunningServer`], such as a
+/// watcher thread that learns a TLS certificate was revoked (Issue #947,
+/// ADR-0035 §9). Get it from [`RunningServer::stop_handle`].
+///
+/// It only REQUESTS the stop. The owner of the [`RunningServer`] still calls
+/// [`RunningServer::stop`] (or [`RunningServer::stop_all`]) afterwards: that
+/// is what waits for the writes the listener had accepted and reports the
+/// ones still running.
+#[derive(Clone)]
+pub struct StopHandle {
+    detached_writes: DetachedWrites,
+    /// Weak: holding a `StopHandle` must not keep a listener serving whose
+    /// [`RunningServer`] was dropped (dropping it stops the listener).
+    shutdown_tx: Weak<watch::Sender<bool>>,
+}
+
+impl StopHandle {
+    /// Starts the stop of the listener, exactly as the first step of
+    /// [`RunningServer::stop`] does, and returns at once:
+    ///
+    /// - the gate for writes is closed before this returns: a write that
+    ///   arrives from now on - also on a connection that is already open - is
+    ///   answered 503 and does not start;
+    /// - the listener is told to stop accepting (it is closed as soon as the
+    ///   serve task runs next, not necessarily before this returns) and the
+    ///   open connections are told to end: SSE streams close, the others
+    ///   finish the response they are in;
+    /// - writes that were already accepted are NOT stopped. They run to the
+    ///   end; wait for them with [`RunningServer::stop`].
+    ///
+    /// Open connections are not cut here. A listener that must cut them at
+    /// once (a revoked certificate) does that itself, in its `Io`.
+    ///
+    /// May be called any number of times, from any thread, and also after
+    /// the listener has stopped. There is no way to undo it.
+    pub fn request_stop(&self) {
+        self.detached_writes.close();
+        if let Some(shutdown_tx) = self.shutdown_tx.upgrade() {
+            let _ = shutdown_tx.send(true);
+        }
+    }
+
+    /// Whether a stop of the listener has begun (through this handle, any of
+    /// its clones, or [`RunningServer::stop`]): it starts no more writes.
+    pub fn is_stop_requested(&self) -> bool {
+        self.detached_writes.is_closed()
+    }
+}
+
+impl std::fmt::Debug for StopHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StopHandle")
+            .field("stop_requested", &self.is_stop_requested())
+            .finish()
+    }
+}
+
 /// A handle to a running server: its bound address, and a way to stop it.
 pub struct RunningServer {
     local_addr: SocketAddr,
-    shutdown_tx: watch::Sender<bool>,
+    shutdown_tx: Arc<watch::Sender<bool>>,
     join_handle: JoinHandle<()>,
     sse_connections: SseConnections,
     detached_writes: DetachedWrites,
@@ -139,6 +199,33 @@ impl RunningServer {
         self.detached_writes.budget()
     }
 
+    /// Whether this listener is serving right now: no stop was requested
+    /// ([`StopHandle::request_stop`]) AND the task that accepts its
+    /// connections is still running. Read-only; a snapshot.
+    ///
+    /// `false` without a requested stop means the accept task ended on its
+    /// own - which a listener from [`bind`] does not do, but a listener of the
+    /// app's own ([`BoundServer::from_listener`]) can cause, e.g. by a panic
+    /// in its `accept`. For an app that changes something inside its listener
+    /// while it keeps serving (a renewed certificate, swapped in behind the
+    /// same socket) and must not report that as done on a listener that has
+    /// stopped or is being stopped (Issue #947). After a requested stop this
+    /// is `false` at once, also while the task is still winding down.
+    pub fn is_serving(&self) -> bool {
+        !self.detached_writes.is_closed() && !self.join_handle.is_finished()
+    }
+
+    /// A cloneable handle that can ask this listener to stop without owning
+    /// or awaiting it ([`StopHandle::request_stop`]; Issue #947). The stop is
+    /// still finished - the accepted writes waited for and reported - by
+    /// [`Self::stop`] on this value.
+    pub fn stop_handle(&self) -> StopHandle {
+        StopHandle {
+            detached_writes: self.detached_writes.clone(),
+            shutdown_tx: Arc::downgrade(&self.shutdown_tx),
+        }
+    }
+
     /// Signal graceful shutdown and wait for the server task to finish.
     ///
     /// Open SSE streams - `/api/events` and every app stream served through
@@ -168,6 +255,10 @@ impl RunningServer {
     /// ([`StopOutcome::WritesRemaining`]) instead of reporting a clean stop:
     /// such a write may still change state after this returns. A caller that
     /// starts another listener afterwards must look at the result.
+    ///
+    /// When the stop was already requested through a [`StopHandle`], this is
+    /// the second half: it waits (the bound counts from this call) and
+    /// reports.
     pub async fn stop(self) -> StopOutcome {
         self.stop_waiting_writes_for(DETACHED_WRITES_STOP_TIMEOUT)
             .await
@@ -177,6 +268,53 @@ impl RunningServer {
     /// writes (e.g. a shorter one when the process is about to exit anyway).
     pub async fn stop_waiting_writes_for(self, writes_limit: Duration) -> StopOutcome {
         self.stop_within(STOP_TIMEOUT, writes_limit).await
+    }
+
+    /// Stops several listeners of one app together - the plain one and a TLS
+    /// listener of the app's own ([`BoundServer::from_listener`]), say
+    /// (Issue #947, ADR-0035 §9). The order is the one [`Self::stop`] keeps
+    /// for a single listener, over all of them: EVERY gate is closed first
+    /// (from then on none of them starts a write), then all are told to end,
+    /// and they are waited for side by side, so the whole stop takes as long
+    /// as the slowest one ([`DETACHED_WRITES_STOP_TIMEOUT`] at most), not the
+    /// sum. One result per listener, in the order given: each reports the
+    /// writes that came in on it.
+    ///
+    /// Stopping them one after the other with [`Self::stop`] is not the same:
+    /// the later ones keep accepting writes while the first is waited for,
+    /// and the waits add up.
+    ///
+    /// **Only the listeners given are waited for.** Writes that an EARLIER
+    /// generation left running - a listener that was stopped and replaced
+    /// before, and whose stop returned [`StopOutcome::WritesRemaining`] - are
+    /// not in any of these results: all `Finished` here does not mean the app
+    /// has no write running. An app that replaces listeners keeps each
+    /// [`RemainingWrites`] it was handed until it reports
+    /// [`RemainingWrites::is_finished`], and at its final stop waits for
+    /// those as well ([`RemainingWrites::wait`], against the same deadline)
+    /// or reports them as unfinished. [`WriteBudget::running`] of the shared
+    /// budget is the check over everything: 0 only when no write of any
+    /// generation is running.
+    pub async fn stop_all(servers: impl IntoIterator<Item = RunningServer>) -> Vec<StopOutcome> {
+        Self::stop_all_waiting_writes_for(servers, DETACHED_WRITES_STOP_TIMEOUT).await
+    }
+
+    /// [`Self::stop_all`] with another upper bound for the wait on running
+    /// writes (see [`Self::stop_waiting_writes_for`]).
+    pub async fn stop_all_waiting_writes_for(
+        servers: impl IntoIterator<Item = RunningServer>,
+        writes_limit: Duration,
+    ) -> Vec<StopOutcome> {
+        let servers: Vec<RunningServer> = servers.into_iter().collect();
+        for server in &servers {
+            server.detached_writes.close();
+        }
+        futures_util::future::join_all(
+            servers
+                .into_iter()
+                .map(|server| server.stop_within(STOP_TIMEOUT, writes_limit)),
+        )
+        .await
     }
 
     /// Counts one write as running on this listener until the returned value
@@ -228,13 +366,60 @@ impl RunningServer {
 /// other work that must finish before the listener can be reached (e.g.
 /// persisting the settings it was started from, Issue #294 review), and only
 /// then open it up. Dropping it releases the port without serving anything.
-pub struct BoundServer {
-    listener: TcpListener,
+///
+/// `L` is the listener the connections come from. [`bind`] and its siblings
+/// give the plain TCP one (the default, so `BoundServer` alone still names
+/// that type); [`BoundServer::from_listener`] takes any other
+/// [`axum::serve::Listener`] - a TLS listener of the app's own, for
+/// instance - and serves it through the very same [`BoundServer::serve`]
+/// (Issue #947, ADR-0035 §9).
+pub struct BoundServer<L = TcpListener> {
+    listener: L,
     local_addr: SocketAddr,
     write_budget: WriteBudget,
 }
 
-impl BoundServer {
+impl<L> BoundServer<L>
+where
+    L: Listener<Addr = SocketAddr>,
+{
+    /// Wrap a listener the app made itself, so it is served exactly like the
+    /// one [`bind`] makes (Issue #947, ADR-0035 §9): [`BoundServer::serve`]
+    /// installs the same layers on it - writes are detached from their
+    /// connection, the stop gate and the count of running writes
+    /// ([`StopOutcome`]), the stop signal and the count for SSE streams
+    /// ([`crate::sse`]), and `ConnectInfo<SocketAddr>` (the peer the listener
+    /// reported from `accept`).
+    ///
+    /// For an app that serves the same router on more than one listener - a
+    /// plain one from [`bind`] plus, say, a loopback TLS listener that does
+    /// its own handshake. Do NOT hand such a listener to `axum::serve`
+    /// directly: a write that arrives there is not detached, and no stop
+    /// counts it.
+    ///
+    /// Each listener gets a [`RunningServer`] of its own (its own gate, its
+    /// own running writes, its own stop), so one of them can be stopped and
+    /// replaced - a renewed or revoked certificate - while the others keep
+    /// serving. What they share is the room for new writes: pass every one of
+    /// them the same [`WriteBudget`] ([`Self::with_write_budget`]; take it
+    /// from the first with [`RunningServer::write_budget`]), also the one
+    /// that replaces a stopped listener. To stop them together, use
+    /// [`RunningServer::stop_all`].
+    ///
+    /// The listener must already be bound: nothing is accepted from it until
+    /// [`Self::serve`]. Fails only when the listener cannot tell its local
+    /// address.
+    pub fn from_listener(listener: L) -> Result<Self, BantoError> {
+        let local_addr = listener
+            .local_addr()
+            .map_err(|err| BantoError::Other(err.to_string()))?;
+        Ok(BoundServer {
+            listener,
+            local_addr,
+            write_budget: WriteBudget::default(),
+        })
+    }
+
     /// The actual bound address (useful when `port: 0` asked the OS to pick
     /// a free port).
     pub fn local_addr(&self) -> SocketAddr {
@@ -247,6 +432,8 @@ impl BoundServer {
     /// ([`RunningServer::write_budget`]): writes the old listener left
     /// running then still take up room, and at most
     /// [`crate::MAX_DETACHED_WRITES`] run at once over all generations.
+    /// An app with several listeners at once ([`Self::from_listener`]) passes
+    /// all of them the same budget, for the same reason.
     pub fn with_write_budget(mut self, budget: WriteBudget) -> Self {
         self.write_budget = budget;
         self
@@ -262,6 +449,7 @@ impl BoundServer {
             write_budget,
         } = self;
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let shutdown_tx = Arc::new(shutdown_tx);
         let sse_connections = SseConnections::default();
         let detached_writes = DetachedWrites::with_budget(write_budget);
         let router = router
@@ -269,7 +457,8 @@ impl BoundServer {
             .layer(axum::Extension(sse_connections.clone()))
             // Outermost, and the only place it is installed (Issue #793,
             // ADR-0035): every write served through here runs to completion
-            // even when its connection goes away.
+            // even when its connection goes away. Whatever the listener is
+            // (Issue #947): there is no other way to serve one.
             .layer(axum::middleware::from_fn_with_state(
                 detached_writes.clone(),
                 detach_writes,
@@ -282,8 +471,15 @@ impl BoundServer {
             // lockout on client IP + username. Handlers extract it as
             // `Option<ConnectInfo<..>>`, so this is purely additive: routers
             // served some other way still work, just with a username-only key.
+            //
+            // `tap_io` with a tap that does nothing: axum implements
+            // `Connected` for a listener's address only for `TcpListener` and
+            // for `TapIo<L, _>`, and a caller cannot add the impl for its own
+            // listener (orphan rule). Going through `TapIo` gives every
+            // listener - the plain TCP one too, one path - the peer address
+            // its `accept` reported.
             let server = axum::serve(
-                listener,
+                listener.tap_io(|_| {}),
                 router.into_make_service_with_connect_info::<SocketAddr>(),
             );
             let graceful = server.with_graceful_shutdown(async move {
@@ -327,14 +523,7 @@ fn bind_error(addr: &str, err: &std::io::Error) -> BantoError {
 }
 
 fn bound_from(listener: TcpListener) -> Result<BoundServer, BantoError> {
-    let local_addr = listener
-        .local_addr()
-        .map_err(|err| BantoError::Other(err.to_string()))?;
-    Ok(BoundServer {
-        listener,
-        local_addr,
-        write_budget: WriteBudget::default(),
-    })
+    BoundServer::from_listener(listener)
 }
 
 /// How many ports after the requested one [`bind_with_port_fallback`] tries
@@ -1331,5 +1520,153 @@ Connection: close
         tokio::time::timeout(Duration::from_secs(3), server.stop())
             .await
             .expect("idle stop is immediate");
+    }
+
+    /// A listener of the app's own whose `accept` panics.
+    struct BrokenListener(TcpListener);
+
+    impl Listener for BrokenListener {
+        type Io = tokio::net::TcpStream;
+        type Addr = SocketAddr;
+
+        async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+            panic!("accept panicked (expected in this test)");
+        }
+
+        fn local_addr(&self) -> std::io::Result<Self::Addr> {
+            self.0.local_addr()
+        }
+    }
+
+    #[tokio::test]
+    async fn is_serving_turns_false_when_the_accept_task_ends_on_its_own() {
+        let server = BoundServer::from_listener(BrokenListener(
+            TcpListener::bind("127.0.0.1:0").await.unwrap(),
+        ))
+        .unwrap()
+        .serve(Router::new());
+        let mut ended = false;
+        for _ in 0..300 {
+            if !server.is_serving() {
+                ended = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(ended, "the ended accept task is visible");
+        assert!(
+            !server.stop_handle().is_stop_requested(),
+            "nobody asked for a stop: this is what tells the two apart"
+        );
+        // The stop of such a listener still returns.
+        tokio::time::timeout(Duration::from_secs(3), server.stop())
+            .await
+            .expect("stop returns");
+    }
+
+    #[tokio::test]
+    async fn is_serving_is_false_at_once_after_a_requested_stop() {
+        let server = bind(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        })
+        .await
+        .unwrap()
+        .serve(Router::new());
+        assert!(server.is_serving());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(server.is_serving(), "it keeps serving while left alone");
+
+        // No `.await` between the request and the read.
+        server.stop_handle().request_stop();
+        assert!(!server.is_serving());
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_stop_handle_does_not_keep_a_dropped_server_serving() {
+        let server = bind(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        })
+        .await
+        .unwrap()
+        .serve(Router::new());
+        let addr = server.local_addr();
+        let handle = server.stop_handle();
+        assert!(!handle.is_stop_requested());
+
+        // Dropping the server stops the listener, handle or not.
+        drop(server);
+        let mut closed = false;
+        for _ in 0..300 {
+            if tokio::net::TcpStream::connect(addr).await.is_err() {
+                closed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(closed, "the listener closed although a StopHandle is alive");
+        // Still harmless to call.
+        handle.request_stop();
+        assert!(handle.is_stop_requested());
+    }
+
+    /// A listener that is not `TcpListener` (Issue #947).
+    struct OwnListener(TcpListener);
+
+    impl Listener for OwnListener {
+        type Io = tokio::net::TcpStream;
+        type Addr = SocketAddr;
+
+        async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+            loop {
+                if let Ok(accepted) = self.0.accept().await {
+                    return accepted;
+                }
+            }
+        }
+
+        fn local_addr(&self) -> std::io::Result<Self::Addr> {
+            self.0.local_addr()
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_all_closes_every_gate_before_it_waits_for_any_write() {
+        let plain = bind(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        })
+        .await
+        .unwrap()
+        .serve(Router::new());
+        let own = BoundServer::from_listener(OwnListener(
+            TcpListener::bind("127.0.0.1:0").await.unwrap(),
+        ))
+        .unwrap()
+        .with_write_budget(plain.write_budget())
+        .serve(Router::new());
+
+        // A write on the FIRST listener keeps the stop waiting.
+        let held = plain.hold_write_for_test("POST /held").expect("open gate");
+        let own_writes = own.detached_writes.clone();
+        let stop = tokio::spawn(RunningServer::stop_all([plain, own]));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!stop.is_finished(), "the held write is waited for");
+        assert!(
+            own_writes.enter("POST /late".to_string()).is_err(),
+            "the second listener starts no write while the first is waited for"
+        );
+
+        drop(held);
+        let outcomes = tokio::time::timeout(Duration::from_secs(3), stop)
+            .await
+            .expect("stop_all returns once the write is done")
+            .unwrap();
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, StopOutcome::Finished)));
     }
 }

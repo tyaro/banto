@@ -15,6 +15,11 @@
 //! - **Every** write is detached, login included; there is no opt-out
 //!   (plan §10, decision 8). A derived app gets this by being served through
 //!   `serve` - there is nothing to wrap per handler, so nothing to forget.
+//!   That holds for every listener served through `serve`, also one the app
+//!   made itself
+//!   ([`BoundServer::from_listener`](crate::BoundServer::from_listener),
+//!   Issue #947); the layer is not public, so there is no other way to
+//!   install it.
 //! - **Not idempotent.** A client that disconnected does not know the
 //!   outcome. An operation that takes effect twice when it is sent again (a
 //!   create) has to be guarded where it always was: a version, a unique
@@ -366,6 +371,15 @@ impl DetachedWrites {
 
     /// Refuse every write from now on. Never reopened: a stopped listener is
     /// replaced by a new one with its own gate.
+    /// Whether [`Self::close`] was called.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .closed
+    }
+
     pub(crate) fn close(&self) {
         self.state().closed = true;
     }

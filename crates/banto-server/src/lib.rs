@@ -67,7 +67,7 @@ pub use security_headers::{
 pub use server::{
     bind, bind_with_port_fallback, bind_without_fallback, lan_addrs_for_bind, lan_urls,
     lan_urls_for_bind, start, BoundServer, PortFallbackError, RunningServer, ServerConfig,
-    DETACHED_WRITES_STOP_TIMEOUT, PORT_FALLBACK_SPAN,
+    StopHandle, DETACHED_WRITES_STOP_TIMEOUT, PORT_FALLBACK_SPAN,
 };
 pub use sse::{
     broadcast_frames, sse_response, watch_frames, InvalidSseEventName, SseContext, SseFrame,
