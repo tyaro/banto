@@ -122,6 +122,41 @@ describe('TouchKeysHost: open', () => {
 		expect(dec.getAttribute('inputmode')).toBe('decimal');
 	});
 
+	it('a field that stops being a keypad field gets its own inputmode back (host still on)', async () => {
+		const { rerender } = render(HostHarness);
+		const dec = field('dec');
+		await fireEvent.pointerDown(dec);
+		expect(dec.getAttribute('inputmode')).toBe('none');
+		// an "off" ancestor, with another marker between it and the field
+		await rerender({ decOff: true });
+		await fireEvent.pointerDown(dec);
+		await fireEvent.click(dec);
+		expect(pad()).toBeNull();
+		expect(dec.getAttribute('inputmode')).toBe('decimal');
+
+		await rerender({ decOff: false });
+		await fireEvent.pointerDown(dec);
+		expect(dec.getAttribute('inputmode')).toBe('none');
+		// the same through the options: resolve now says "no keys here"
+		await rerender({
+			resolve: (input: HTMLInputElement) => (input.id === 'dec' ? false : undefined)
+		});
+		await fireEvent.pointerDown(dec);
+		await fireEvent.click(dec);
+		expect(pad()).toBeNull();
+		expect(dec.getAttribute('inputmode')).toBe('decimal');
+	});
+
+	it('an inputmode the app rewrote meanwhile is left alone when the field goes off', async () => {
+		const { rerender } = render(HostHarness);
+		const dec = field('dec');
+		await fireEvent.pointerDown(dec);
+		dec.setAttribute('inputmode', 'numeric');
+		await rerender({ decOff: true });
+		await fireEvent.pointerDown(dec);
+		expect(dec.getAttribute('inputmode')).toBe('numeric');
+	});
+
 	it('a tap on a label suppresses the OS keyboard of its field', async () => {
 		render(HostHarness);
 		await fireEvent.pointerDown(screen.getByText('数量'));
@@ -295,6 +330,20 @@ describe('TouchKeysHost: hardware keys (§6.3)', () => {
 		expect(await fireEvent.keyDown(qty, { key: 'Enter', repeat: true })).toBe(false);
 	});
 
+	it('held-down Enter with nothing pending: the first goes through, its repeats are swallowed until keyup', async () => {
+		const onkeydown = vi.fn();
+		render(HostHarness, { onkeydown });
+		const qty = await openOn('qty');
+		expect(await fireEvent.keyDown(qty, { key: 'Enter' })).toBe(true);
+		expect(pad()).toBeNull();
+		expect(await fireEvent.keyDown(qty, { key: 'Enter', repeat: true })).toBe(false);
+		expect(await fireEvent.keyDown(qty, { key: 'Enter', repeat: true })).toBe(false);
+		expect(onkeydown).toHaveBeenCalledOnce();
+		await fireEvent.keyUp(qty, { key: 'Enter' });
+		expect(await fireEvent.keyDown(qty, { key: 'Enter' })).toBe(true);
+		expect(onkeydown).toHaveBeenCalledTimes(2);
+	});
+
 	it('Enter with nothing pending closes the keys and goes through', async () => {
 		const onkeydown = vi.fn();
 		render(HostHarness, { onkeydown });
@@ -383,6 +432,50 @@ describe('TouchKeysHost: the target changed or went away (§6.2, §6.5, §8.3)',
 		await rerender({ editKey: 1 });
 		await fireEvent.click(key('確定'));
 		expect(rec.value).toBe('7');
+	});
+
+	it('the rules changed after open (max lowered): a value over the new max is not written', async () => {
+		const oncancel = vi.fn();
+		const { rerender } = render(HostHarness, { oncancel, recMax: 100 });
+		const rec = await openOn('rec');
+		const seen = watch(rec);
+		await fireEvent.click(key('8'));
+		await fireEvent.click(key('0'));
+		await rerender({ recMax: 50 });
+		await tick();
+		expect(pad()).not.toBeNull(); // same value, same editKey: still open
+		await fireEvent.click(key('確定'));
+		expect(pad()).toBeNull();
+		expect(rec.value).toBe('5');
+		expect(seen).toEqual({ input: 0, change: 0 });
+		expect(oncancel).toHaveBeenCalledWith({ input: rec, reason: 'target-changed' });
+	});
+
+	it('the rules changed after open, the value still satisfies them: written', async () => {
+		const { rerender } = render(HostHarness, { recMax: 100 });
+		const rec = await openOn('rec');
+		const seen = watch(rec);
+		await fireEvent.click(key('4'));
+		await fireEvent.click(key('0'));
+		await rerender({ recMax: 50 });
+		await tick();
+		await fireEvent.click(key('確定'));
+		expect(rec.value).toBe('40');
+		expect(seen).toEqual({ input: 1, change: 1 });
+	});
+
+	it('required was added after open: an empty value is not written, no event', async () => {
+		const oncancel = vi.fn();
+		const { rerender } = render(HostHarness, { oncancel });
+		const dec = await openOn('dec');
+		const seen = watch(dec);
+		await fireEvent.click(key('全部消す'));
+		await rerender({ decRequired: true });
+		await fireEvent.click(key('確定'));
+		expect(pad()).toBeNull();
+		expect(dec.value).toBe('1.5');
+		expect(seen).toEqual({ input: 0, change: 0 });
+		expect(oncancel).toHaveBeenCalledWith({ input: dec, reason: 'target-changed' });
 	});
 
 	it('form reset that changes the value closes as target-changed', async () => {

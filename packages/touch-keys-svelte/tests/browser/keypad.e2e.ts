@@ -226,6 +226,25 @@ test.describe('hardware Enter (§6.3)', () => {
 		expect(await log(page)).toEqual(['cancel:qty:hardware-input', 'submit:main=12']);
 	});
 
+	test('opened only, Enter held down: one submit; the next press submits once more', async ({
+		page
+	}) => {
+		await page.goto('/');
+		await openOn(page, 'qty');
+		await clearLog(page);
+		await page.keyboard.down('Enter');
+		await page.keyboard.down('Enter'); // repeat
+		await page.keyboard.down('Enter'); // repeat
+		await page.keyboard.up('Enter');
+		await expect(surface(page)).toHaveCount(0);
+		expect(await log(page)).toEqual(['cancel:qty:hardware-input', 'submit:main=12']);
+		await page.keyboard.press('Enter');
+		expect((await log(page)).filter((e) => e.startsWith('submit'))).toEqual([
+			'submit:main=12',
+			'submit:main=12'
+		]);
+	});
+
 	test('scanner shape: typed characters go into the field, the Enter submits once', async ({
 		page
 	}) => {

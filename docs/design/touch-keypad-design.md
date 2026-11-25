@@ -750,9 +750,17 @@ T1 を小さく保つため、`NumberKeypad` は表示とキーの入力だけ�
   `note`。`layouts` は T3。`note` は `NumberKeypad` の `note`（範囲の行の下）に出る。
 - **T2 の対象はテンキーの入力欄だけ**。文字の入力欄・パスワードには何もしない（`inputmode` も触らない）。T3 で足す。
 - **外す印は包みにも付けられる**: `data-touch-keys="off"` は、入力欄そのものか、その祖先のどれかにあれば効く（§6.4 の日付の包み）。
+  off の祖先そのものを探すので、間に別の印（`data-touch-keys="on"` など）があっても外れる。
   `readonly`・`disabled`・この印は、`touchKeys(...)`・`resolve` の指定より先に見る。
 - **`inputmode="none"`**: 対象の入力欄（とその `<label>`）の `pointerdown` の捕捉の段と、開くときに付ける。元の値を覚え、
   推定（§5.4）は元の値で行う。`enabled` が false になったとき・ホストの破棄で戻す（アプリがその間に書き換えた欄は触らない）。
+  ホストが有効なまま欄が対象外になった（`touchKeys(false)`・`resolve` が `false`・外す印・`readonly` など）ときは、その欄の次の
+  `pointerdown` の捕捉の段で、ホストが付けた `none` のときだけ元に戻す（戻さないと、OS のキーボードも出ない欄になる）。
+- **確定の直前に、規則も最新で確かめる**: 開いた後に規則が変わることがある（attachment の `max` が下がる、`required` が付く）。
+  §6.5 の照合に続けて、確定する値を**そのときに解決した規則**で判定し直し、確定できない値なら書かずに `target-changed` で取り消す
+  （盤の表示は開いたときの規則のまま。規則が変わっただけでは閉じない）。
+- **押し続けた Enter**: 盤を閉じた Enter（未確定の変更があって止めたものも、変更が無くて通したものも）に続く自動リピートは、
+  `keyup` まで捕捉の段で止める。変更が無いときに通るのは最初の 1 回だけ（押し続けで何度も送信されない）。
 - **閉じる合図**: `focusout`（対象から）・`submit`（対象のフォーム）・`MutationObserver`（対象が外れた・`readonly`・`disabled`・`type`・
   祖先の `inert`・`data-layer-inactive` = 閉じる途中の `Modal` / `Drawer`）は `target-gone`。`reset` は、値が戻った後（次のタスク）に
   照合して、違えば `target-changed`。attachment の付け直しは、その直後（マイクロタスク）に照合する。

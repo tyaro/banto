@@ -47,6 +47,16 @@ export function suppressOsKeyboard(input: HTMLInputElement): void {
 	input.setAttribute('inputmode', 'none');
 }
 
+/** Puts one field's `inputmode` back: it stopped being a keypad field while the host stays on. */
+export function releaseOsKeyboard(input: HTMLInputElement): void {
+	if (!savedInputMode.has(input)) return;
+	const original = savedInputMode.get(input) ?? null;
+	savedInputMode.delete(input);
+	if (input.getAttribute('inputmode') !== 'none') return; // the app rewrote it meanwhile
+	if (original === null) input.removeAttribute('inputmode');
+	else input.setAttribute('inputmode', original);
+}
+
 /** Puts every replaced `inputmode` back (the host was disabled or destroyed). */
 export function restoreOsKeyboard(): void {
 	for (const [input, original] of savedInputMode) {
@@ -74,7 +84,7 @@ function readEditKey(options: TouchKeysOptions | undefined): string | number | n
 
 /**
  * Decides whether `el` gets the number keypad: `readonly` / `disabled` /
- * `data-touch-keys="off"` (on the field or a wrapper) always win, then the
+ * `data-touch-keys="off"` (on the field or ANY ancestor) always win, then the
  * attachment, then `resolve`, then the attributes. `null` = leave the field alone.
  */
 export function resolveNumberTarget(
@@ -82,7 +92,10 @@ export function resolveNumberTarget(
 	resolve: ResolveFn | undefined
 ): NumberTarget | null {
 	if (!(el instanceof HTMLInputElement)) return null;
-	const marker = el.closest('[data-touch-keys]')?.getAttribute('data-touch-keys');
+	// An "off" marker on the field or ANY ancestor wins, whatever other markers sit in between.
+	const marker = el.closest('[data-touch-keys="off" i]')
+		? 'off'
+		: el.getAttribute('data-touch-keys');
 	const kind = inferTouchKind({
 		tagName: el.tagName,
 		type: el.getAttribute('type'),
@@ -136,8 +149,10 @@ export function writeChecked(input: HTMLInputElement, value: string, previous: s
 	input.value = value;
 	let ok = input.value === value;
 	if (ok && input.type === 'number') {
+		// The browser is the authority here. `valueMissing`: `required` can not be loosened on
+		// type=number (resolveNumberRules), so an empty value the browser flags is never written.
 		const v = input.validity;
-		ok = !(v.rangeUnderflow || v.rangeOverflow || v.stepMismatch || v.badInput);
+		ok = !(v.valueMissing || v.rangeUnderflow || v.rangeOverflow || v.stepMismatch || v.badInput);
 	}
 	if (!ok) input.value = previous;
 	return ok;

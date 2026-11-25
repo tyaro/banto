@@ -18,7 +18,10 @@ export type TouchKeysCancelReason =
 	| 'hardware-input'
 	/** The field went away, lost focus, became readonly / disabled, changed type, or its form was submitted. */
 	| 'target-gone'
-	/** The field's value or edit key differs from when the keys opened, or the write did not stick (§6.5, §8.3). */
+	/**
+	 * The field's value or edit key differs from when the keys opened, the value no longer
+	 * satisfies the field's rules as they are at confirm, or the write did not stick (§6.5, §8.3).
+	 */
 	| 'target-changed'
 	/** The host's `enabled` became false (or the host was destroyed). */
 	| 'disabled';

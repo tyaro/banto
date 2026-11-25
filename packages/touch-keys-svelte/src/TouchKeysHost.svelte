@@ -25,9 +25,10 @@
 	import { untrack, type Snippet } from 'svelte';
 	import NumberKeypad from './NumberKeypad.svelte';
 	import { onAttach } from './attach';
-	import type { NumberRules } from './core/number';
+	import { classifyDraft, type NumberRules } from './core/number';
 	import type { TouchKeysMessages } from './messages';
 	import {
+		releaseOsKeyboard,
 		resolveNumberTarget,
 		restoreOsKeyboard,
 		suppressOsKeyboard,
@@ -154,18 +155,29 @@
 		);
 	}
 
-	/** §6.5: same value and same edit key as at open. */
-	function matchesOpen(s: Session): boolean {
-		if (s.input.value !== s.openValue) return false;
+	/** §6.5: same value and same edit key as at open. Returns the field as it resolves NOW, or null. */
+	function currentIfSame(s: Session): ReturnType<typeof resolveNumberTarget> {
+		if (s.input.value !== s.openValue) return null;
 		const now = resolveNumberTarget(s.input, resolve);
-		return now !== null && Object.is(now.editKey, s.openEditKey);
+		return now !== null && Object.is(now.editKey, s.openEditKey) ? now : null;
+	}
+
+	function matchesOpen(s: Session): boolean {
+		return currentIfSame(s) !== null;
 	}
 
 	function confirm(value: string): void {
 		const s = session;
 		if (!s) return;
 		if (!isLive(s)) return cancel('target-gone');
-		if (!matchesOpen(s) || !writeChecked(s.input, value, s.openValue)) {
+		const now = currentIfSame(s);
+		// The rules may have changed while the keys were open (another setting lowered `max`,
+		// `required` was added): the value must satisfy the rules as they are NOW.
+		if (
+			!now ||
+			!classifyDraft(value, now.rules).canConfirm ||
+			!writeChecked(s.input, value, s.openValue)
+		) {
 			return cancel('target-changed');
 		}
 		close();
@@ -201,8 +213,12 @@
 	/** Before focus enters a keypad field: keep the OS keyboard away (§7.4). */
 	function onPointerdown(event: Event): void {
 		if (inSurface(event.target)) return;
-		const target = resolveNumberTarget(fieldOf(event.target), resolve);
+		const field = fieldOf(event.target);
+		const target = resolveNumberTarget(field, resolve);
 		if (target) suppressOsKeyboard(target.input);
+		// No longer a keypad field (touchKeys(false), data-touch-keys="off", readonly ...):
+		// give it its own inputmode back, or a touch-only device could not type into it.
+		else if (field instanceof HTMLInputElement) releaseOsKeyboard(field);
 	}
 
 	function onClick(event: MouseEvent): void {
@@ -237,7 +253,9 @@
 			cancel('hardware-input');
 			return;
 		}
-		// Any other key (and an Enter with nothing pending) goes to the field as usual.
+		// Any other key (and an Enter with nothing pending) goes to the field as usual - once:
+		// the auto-repeats of that Enter are swallowed until the key is released.
+		if (isEnter) swallowEnterRepeat = true;
 		cancel('hardware-input');
 	}
 

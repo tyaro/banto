@@ -14,6 +14,9 @@
 		enabled?: boolean;
 		show?: boolean;
 		editKey?: string | number;
+		recMax?: number;
+		decOff?: boolean;
+		decRequired?: boolean;
 		placement?: { number?: TouchKeysPlacement };
 		resolve?: ResolveFn;
 		messages?: TouchKeysMessages;
@@ -29,6 +32,9 @@
 		enabled = true,
 		show = true,
 		editKey = 1,
+		recMax = 100,
+		decOff = false,
+		decRequired = false,
 		placement,
 		resolve,
 		messages,
@@ -77,8 +83,25 @@
 		/>
 	{/if}
 	<output data-testid="bound">{qty}</output>
-	<input id="rec" type="text" value="5" {@attach touchKeys({ kind: 'number', editKey })} />
-	<input id="dec" type="text" inputmode="decimal" value="1.5" aria-label="重さ" />
+	<input
+		id="rec"
+		type="text"
+		value="5"
+		{@attach touchKeys({ kind: 'number', editKey, max: recMax })}
+	/>
+	<!-- the inner marker must not hide an "off" further out (§15.1) -->
+	<div data-touch-keys={decOff ? 'off' : undefined}>
+		<div data-touch-keys="on">
+			<input
+				id="dec"
+				type="text"
+				inputmode="decimal"
+				value="1.5"
+				aria-label="重さ"
+				required={decRequired}
+			/>
+		</div>
+	</div>
 	<input id="off" type="number" {@attach touchKeys(false)} />
 	<div data-touch-keys="off"><input id="wrapped" type="number" /></div>
 	<input id="name" type="text" />
