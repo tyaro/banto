@@ -83,6 +83,7 @@ corresponding ADR exists, be traced from there.
 | [0033](0033-dock-svelte-fast-check-devdep.en.md)       | Add `fast-check` to the devDependencies of `@banto/dock-svelte` for property tests (an exception to ADR-0002; tests only, no runtime effect)                                                                                         | Accepted                   |
 | [0034](0034-owner-identity-builtin-admin.en.md)        | Identify owners by a never-reused `accountId`, attribute login-less operations to the built-in `admin`, and remove first-run setup (v8.0.0; no compatibility, databases are recreated; addendum to ADR-0017)                         | Accepted                   |
 | [0035](0035-detached-writes.en.md)                     | Writes are detached from the connection and run to completion, and a stop never reports success with writes left behind (Issue #793; one layer in `BoundServer::serve`; a reconfiguration is split by the direction of the exposure) | Accepted                   |
+| [0036](0036-touch-keys-package.en.md)                  | On-screen keys for touch panels live in a new optional package `@banto/touch-keys-svelte` (Issue #937; not wired into the template, no `.svelte.ts` in T1)                                                                           |
 
 ## ADR candidates (unstarted; do not backfill)
 

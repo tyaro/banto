@@ -174,7 +174,7 @@ flowchart TB
     O1["dock-svelte / charts / Glass / コマンドパレット"]
     O2["attachments / report / tree-svelte"]
     O3["items デモリソース一式"]
-    O4["scan-wedge / image-assets（未配線）"]
+    O4["scan-wedge / image-assets / touch-keys-svelte（未配線）"]
   end
 
   subgraph display["display プリセットが追加で動かす"]
@@ -286,7 +286,7 @@ flowchart BT
 
 - **対象読者**: パッケージを外す・足すときに「誰が誰を import してよいか」を知りたい人。
 - **フロント**: `@banto/*` 同士に `dependencies` はない（単体ライブラリとしても使える）。依存はすべて `admin-template` が持つ。外すときはアプリ側の依存とデモ配線を切ればよい。
-- **`scan-wedge`・`image-assets`**: パッケージはモノレポにあるが、アプリの `package.json` には入っていない（使うアプリが直接組み込む）。
+- **`scan-wedge`・`image-assets`・`touch-keys-svelte`**: パッケージはモノレポにあるが、アプリの `package.json` には入っていない（使うアプリが直接組み込む）。
 - **Rust**: 矢印は「依存する先」（下位）。`banto-core` が最下位。`admin-template-core` がサービス＋REST 組み立て、`src-tauri` がその上の Tauri 配線。
 - **図の省略**: 開発用バイナリ `banto-serve` は `admin-template-core` の bin で、同じクレート DAG に乗る（別ノードとしては描いていない）。
 - **コア → オプションの逆依存は禁止**（例: `admin-core` が `charts` を import しない）。オプションはアプリまたは上位配線からのみ参照する。
