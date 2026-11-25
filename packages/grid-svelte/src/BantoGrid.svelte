@@ -87,6 +87,13 @@
 		totalRows?: number;
 		onRowClick?: (row: TRow) => void;
 		/**
+		 * Touch / pen only (grid-touch-edit-design §3): one tap on an editable
+		 * cell starts editing it. Default `true`; `false` keeps the double tap.
+		 * The mouse is not affected (click selects, double-click edits), nor is
+		 * the keyboard (Enter / F2).
+		 */
+		editOnTap?: boolean;
+		/**
 		 * A data row's context menu was requested: mouse right-click on a cell, or
 		 * (grid focused, active cell on a data row, not editing) the ContextMenu
 		 * key / Shift+F10 - keyboard `x`/`y` = the active cell's left / bottom edge.
@@ -206,6 +213,7 @@
 		mode = 'client',
 		totalRows,
 		onRowClick,
+		editOnTap = true,
 		onRowContextMenu,
 		onCellEdit,
 		onRangePaste,
@@ -1157,8 +1165,35 @@
 		return index === -1 ? undefined : ordered[index + delta];
 	}
 
+	// grid-touch-edit-design §3: a touch / pen press does nothing by itself -
+	// the browser may still turn it into a scroll (`pointercancel`, no
+	// `click`). Only the cell it landed on is remembered here; focus, the
+	// active cell and the start of editing all wait for the `click`.
+	// Never reactive: only event handlers read these.
+	let pendingTap: { pointerId: number; rowIndex: number; field: string } | null = null;
+	/** The tap the capture-phase `click` accepted, for the bubbling `click` on the same cell. */
+	let acceptedTap: { rowIndex: number; field: string } | null = null;
+
+	// A cell whose save is pending is not "being edited" here: a double-click
+	// or a tap on it opens a new session over the one waiting (#210; the
+	// earlier save's result stays with the earlier session).
+	function isCellBeingEdited(row: TRow, field: string): boolean {
+		return (
+			editing !== null &&
+			!editing.pending &&
+			editing.rowId === getRowId(row) &&
+			editing.field === field
+		);
+	}
+
 	function handleCellPointerDown(event: PointerEvent, rowIndex: number, field: string) {
+		pendingTap = null;
+		acceptedTap = null;
 		if (event.button !== 0) return;
+		if (event.pointerType === 'touch' || event.pointerType === 'pen') {
+			pendingTap = { pointerId: event.pointerId, rowIndex, field };
+			return;
+		}
 		// Move real DOM focus to the grid container so keyboard navigation
 		// keeps working after a click. This synchronously blurs whatever was
 		// previously focused (e.g. another cell's editor <input>), which is
@@ -1189,13 +1224,43 @@
 			if (Number.isNaN(r)) return;
 			selection.setActive(r, cellEl.dataset.cellField, true);
 		}
-		function onUp(upEvent: PointerEvent) {
-			if (upEvent.pointerId !== pointerId) return;
+		// `pointercancel` too: a press the browser takes over (a pan, a drag
+		// out of the window) never gets its `pointerup`.
+		function onEnd(endEvent: PointerEvent) {
+			if (endEvent.pointerId !== pointerId) return;
 			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
+			window.removeEventListener('pointerup', onEnd);
+			window.removeEventListener('pointercancel', onEnd);
 		}
 		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
+		window.addEventListener('pointerup', onEnd);
+		window.addEventListener('pointercancel', onEnd);
+	}
+
+	function handleCellPointerCancel(event: PointerEvent) {
+		if (pendingTap?.pointerId === event.pointerId) pendingTap = null;
+	}
+
+	// The tap's deferred half of `handleCellPointerDown` (focus + active cell).
+	// Capture phase: a link or a `render` control in the cell stops its click
+	// from bubbling, and the active cell follows a press on those too.
+	function handleCellClickCapture(event: MouseEvent, rowIndex: number, field: string, row: TRow) {
+		const tap = pendingTap;
+		pendingTap = null;
+		acceptedTap = null;
+		if (!tap || tap.rowIndex !== rowIndex || tap.field !== field) return;
+		// The cell being edited belongs to its editor: focusing the container
+		// here would blur (commit) it.
+		if (isCellBeingEdited(row, field)) return;
+		const cellEl = event.currentTarget as HTMLElement;
+		// A control inside the cell that took focus from this tap keeps it, as
+		// it does after a mouse press.
+		const focused = cellEl.ownerDocument.activeElement;
+		if (!focused || focused === cellEl || !cellEl.contains(focused)) {
+			containerEl?.focus({ preventScroll: true });
+		}
+		selection.setActive(rowIndex, field, event.shiftKey);
+		acceptedTap = { rowIndex, field };
 	}
 
 	// Single click: select the cell (already done on pointerdown above); for
@@ -1204,7 +1269,21 @@
 	// dedicated affordance instead (see the items page's `cell` link column
 	// and the double-click handler below), so a plain click never fires
 	// onRowClick there.
-	function handleCellClick(row: TRow) {
+	//
+	// A touch / pen tap (grid-touch-edit-design §3.3) on an editable cell
+	// starts editing instead, unless `editOnTap` is off.
+	function handleCellClick(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
+		const tap = acceptedTap;
+		acceptedTap = null;
+		if (
+			editOnTap &&
+			tap?.rowIndex === rowIndex &&
+			tap.field === column.id &&
+			isEditable(column, row)
+		) {
+			startEditing(rowIndex, column, row);
+			return;
+		}
 		if (!hasEditableColumns) onRowClick?.(row);
 	}
 
@@ -1213,6 +1292,8 @@
 	// keeps the native text menu; focus follows the click BEFORE the callback;
 	// the row selection and the cell range are left alone.
 	function handleCellContextMenu(event: MouseEvent, rowIndex: number, field: string, row: TRow) {
+		// A long press ends here, not in a `click`: it is not a tap.
+		pendingTap = null;
 		if (!onRowContextMenu) return;
 		// The whole injected editor (calendar buttons, popover) keeps its own menu,
 		// not just its text box.
@@ -1244,6 +1325,10 @@
 	}
 
 	function handleCellDoubleClick(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
+		// A double-click (or the second tap of a double tap) inside the open
+		// editor selects a word there; restarting the session would throw the
+		// draft away.
+		if (isCellBeingEdited(row, column.id)) return;
 		if (isEditable(column, row)) {
 			startEditing(rowIndex, column, row);
 		} else if (hasEditableColumns) {
@@ -1990,7 +2075,9 @@
 							class:editing={isEditingCell}
 							class:error={isEditingCell && !!editing?.error}
 							onpointerdown={(event) => handleCellPointerDown(event, rowIndex, column.id)}
-							onclick={() => handleCellClick(row)}
+							onpointercancel={handleCellPointerCancel}
+							onclickcapture={(event) => handleCellClickCapture(event, rowIndex, column.id, row)}
+							onclick={() => handleCellClick(rowIndex, column, row)}
 							oncontextmenu={(event) => handleCellContextMenu(event, rowIndex, column.id, row)}
 							ondblclick={() => handleCellDoubleClick(rowIndex, column, row)}
 						>
