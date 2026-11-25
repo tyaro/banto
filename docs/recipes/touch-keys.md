@@ -233,9 +233,39 @@ export function touchKeysMessages(): TouchKeysMessages {
 トーストが盤に隠れないよう、ホストは開いている間 `<html>` に盤の高さ（px）を `--banto-touch-keys-inset-bottom` として出す
 （閉じたら外す）。`ToastHost` は `--banto-toast-bottom`（既定 `var(--banto-space-4)`）を読むので、これに足す。
 
+ランチャー使用中は `packages/theme/src/css/banto.css` が、`:root` より詳細度の高い
+`:root[data-banto-shell-nav='launcher']`（位置の属性つきと、900px 以下の `@media` 内を含む）で同じ変数を宣言する。
+`:root` だけの上書きは負けるので、**それらのセレクターも上書きする**。盤の高さの変数は閉じていれば未設定（`0px`）なので、
+盤の開閉を表す属性やクラスは要らず、閉じているときはランチャーの余白（`--banto-shell-launcher-reserve`・
+`--banto-shell-launcher-tabbar-reserve`）がそのまま残る（touch-keys-svelte は開閉の属性やクラスを `<html>` に出さない）。
+
 ```css
 :root {
 	--banto-toast-bottom: calc(var(--banto-space-4) + var(--banto-touch-keys-inset-bottom, 0px));
+}
+
+/* ランチャーの下バー（既定の位置・bottom）。余白を保ったまま盤の高さを足す */
+:root[data-banto-shell-nav='launcher'] {
+	--banto-toast-bottom: calc(
+		var(--banto-shell-launcher-reserve) + 1rem + var(--banto-touch-keys-inset-bottom, 0px)
+	);
+}
+
+/* top・left・right のバーは下に余白を取らない */
+:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='top'],
+:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='left'],
+:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='right'] {
+	--banto-toast-bottom: calc(1rem + var(--banto-touch-keys-inset-bottom, 0px));
+}
+
+/* 900px 以下はどの位置でも下のタブバー */
+@media (max-width: 900px) {
+	:root[data-banto-shell-nav='launcher'],
+	:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position] {
+		--banto-toast-bottom: calc(
+			var(--banto-shell-launcher-tabbar-reserve) + 1rem + var(--banto-touch-keys-inset-bottom, 0px)
+		);
+	}
 }
 ```
 
