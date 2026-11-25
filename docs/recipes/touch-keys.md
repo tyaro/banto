@@ -8,14 +8,16 @@ OS のタッチキーボードは出さない（`inputmode="none"`）。パッ�
 [packages/touch-keys-svelte/README.md](../../packages/touch-keys-svelte/README.md)、設計と判断は
 [設計書](../design/touch-keypad-design.md)・[ADR-0036](../adr/0036-touch-keys-package.md)。
 
-> **テンプレートにはまだ配線されていない。** `apps/admin-template` は `@banto/touch-keys-svelte` に依存しない
-> （`pnpm scaffold` も触れない）。配線は別の判断（#937 T7）で、それまでは下の手順を**自分のアプリで**行う。
-> **タッチの実機・WebView2 での確かめも未実施**（設計書 §14.4）。出す前に、自分の端末で OS のキーボードが同時に出ないか・
+> **テンプレートの配線は `/ui-demo` の見本のカード 1 枚だけ**（#937 T7）。テンキー・英数・カナ・パスワードの欄を、マウスでも
+> タッチでも触って確かめられる（`apps/admin-template/src/routes/(app)/ui-demo/+page.svelte` の `[scaffold:touch-keys]` の領域。
+> `pnpm scaffold --preset minimal|standard|display` は外す）。**ルートのレイアウトにホストは置いていない**ので、
+> アプリ全体で使うには下の手順を**自分のアプリで**行う。見本のホストはカードの中にあり、`resolve` でカードの中の欄だけを対象にしている。
+> **タッチの実機・WebView2 での確かめは未実施**（設計書 §14.4）。出す前に、自分の端末で OS のキーボードが同時に出ないか・
 > キーの大きさを必ず確かめる。
 
 ## 1. 依存を足す
 
-利用するアプリの `package.json`（モノレポ内なら `workspace:*`、本リポジトリ外からは
+利用するアプリの `package.json`（テンプレートから作ったアプリで `full` のままなら、もう入っている。モノレポ内なら `workspace:*`、本リポジトリ外からは
 [../publishing.md](../publishing.md) の git 依存と `path:` 指定）:
 
 ```jsonc
@@ -37,7 +39,7 @@ true の間だけ、数値の欄（`type="number"`・`inputmode="numeric" | "dec
 <script lang="ts">
 	import { TouchKeysHost } from '@banto/touch-keys-svelte';
 	import { deviceSettings } from '#lib/deviceSettings.svelte'; // 3 節
-	import { touchKeysMessages } from '#lib/touchKeysMessages'; // 6 節
+	import { touchKeysMessages } from '#lib/banto/touchKeysMessages.js'; // 6 節
 
 	let { children } = $props();
 </script>
@@ -199,12 +201,16 @@ grid のセルの編集は、エディタが素の `<input>` なのでタップ�
 作って `messages` に渡す（conventions §13 のレイヤ①・②。`apps/admin-template/src/lib/banto/i18n.ts` の `gridMessages()` などと同じ形）。
 キーの字（`0`〜`9`・英字・カナ・記号）は文言ではないので束に入れない。
 
+**テンプレートには、全部の項目を写した束がもうある**: `apps/admin-template/src/lib/banto/touchKeysMessages.ts` の
+`touchKeysMessages()` と、`messages/{ja,en}.json` の `touchKeys.*` のキー（`/ui-demo` の見本が使う。scaffold で見本を
+外したアプリでは、このファイルとキーも消えているので、下の形で足し直す）。抜粋:
+
 ```ts
-// src/lib/touchKeysMessages.ts
+// src/lib/banto/touchKeysMessages.ts（抜粋。キーの名前は実物と同じ）
 import type { TouchKeysMessages } from '@banto/touch-keys-svelte';
 import * as m from '#lib/paraglide/messages.js';
 
-export function touchKeysMessages(): TouchKeysMessages {
+export function touchKeysMessages(): Required<TouchKeysMessages> {
 	return {
 		numberKeypad: () => m['touchKeys.numberKeypad'](),
 		textKeyboard: () => m['touchKeys.textKeyboard'](),
@@ -213,17 +219,29 @@ export function touchKeysMessages(): TouchKeysMessages {
 		backspace: () => m['touchKeys.backspace'](),
 		clearAll: () => m['touchKeys.clearAll'](),
 		sign: () => m['touchKeys.sign'](),
-		range: (min, max) => m['touchKeys.range']({ min: min ?? '', max: max ?? '' }),
-		length: (length, max) => m['touchKeys.length']({ length, max: max ?? '' })
-		// 使うものだけ書けばよい。残りは日本語の既定のまま
-		// （step・required・alnum・symbol・kana・dakuten・handakuten・small・upper・lower・space・
-		//  maxLength・minLength・lengthConflict・invalid）。
+		// 片方だけの範囲は文が変わるので、キーを分ける（`{min} 〜 {max}`・`{min} 以上`・`{max} 以下`）
+		range: (min, max) =>
+			min !== null && max !== null
+				? m['touchKeys.range.both']({ min, max })
+				: min !== null
+					? m['touchKeys.range.min']({ min })
+					: max !== null
+						? m['touchKeys.range.max']({ max })
+						: '',
+		length: (length, max) =>
+			max !== null
+				? m['touchKeys.length.max']({ length, max })
+				: m['touchKeys.length.count']({ length })
+		// 続き: step（`touchKeys.step.both`・`.one`・`.none`）・required・alnum・symbol・kana・dakuten・
+		// handakuten・small・upper・lower・space・maxLength・minLength・lengthConflict・invalid
+		// （キーは `touchKeys.<項目>`）。
 	};
 }
 ```
 
 - 全部の項目は `TouchKeysMessages`（`packages/touch-keys-svelte/src/messages.ts`）。**英語などに切り替えるアプリは、
-  使う盤に出る項目を漏らさず書く**（書かなかった項目は日本語の既定が出る）。
+  使う盤に出る項目を漏らさず書く**（書かなかった項目は日本語の既定が出る。テンプレートの束は戻り値を
+  `Required<TouchKeysMessages>` にして、項目が増えたときに型で気付けるようにしている）。
 - Paraglide のメッセージは呼び出しのたびに解決する閉包にする（`() => m[...]()`）。ロケールの切り替えに追従する。
 - `messages/*.json` に足したら、`pnpm --filter <app> paraglide:compile` を走らせる。
 
@@ -290,11 +308,14 @@ export function touchKeysMessages(): TouchKeysMessages {
 - **アプリから外す**: ルートのレイアウトの `<TouchKeysHost>`、各入力欄の `{@attach touchKeys(...)}` と `data-touch-keys`、
   端末ごとの設定とその文言（`touchKeysMessages` と Paraglide のキー）、`--banto-toast-bottom` の上書き、
   `package.json` の依存を外す。
-- **banto から外す**: [remove-optional-assets.md](remove-optional-assets.md) の「`@banto/touch-keys-svelte`」。
+- **テンプレートの見本（`/ui-demo` のカード）を外す・banto から外す**: `pnpm scaffold --preset minimal|standard|display`、
+  または [remove-optional-assets.md](remove-optional-assets.md) の「`@banto/touch-keys-svelte`」の手順。
 
 ## 確かめ方
 
 - `pnpm --filter @banto/touch-keys-svelte test` — 純粋な関数と jsdom の部品の試験。
+- `pnpm e2e:demo` — テンプレートの `/ui-demo` のカードの配線（`e2e/demo/touch-keys.spec.ts`。テンキー・英数・カナ・
+  パスワード・切り替え・カードの外の欄）。
 - `pnpm e2e:touch-keys` — ブラウザーの fixture（Playwright のタッチの文脈で、本物の `@banto/ui` の `Modal` と組んで、外のタップ・
   層・数値の検証・実キーの Enter・文字キーボード・カナ・パスワードの 95 文字を確かめる）。
 - **実機**: タッチパネルの端末で、OS のキーボードが同時に出ないこと・外のタップで盤が閉じること・キーの押しやすさ・
