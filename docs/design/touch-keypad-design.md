@@ -1,7 +1,7 @@
 # タッチ向けの画面内テンキー・文字キーボード 設計書 — Issue #937
 
 作成日: 2026-11-25
-状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1（パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示）は実装済み（PR #951）、T2〜T5 は未着手**
+状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1・T2 実装済み、T3〜T5 未着手**（T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture。T2 で決めた形は §15.1、実機の確かめ（§14.4）は未実施）
 トラック: 保守者向け（トラックA）
 関連: Issue #937、[template-scope](../template-scope.md) §1・§3・§3.1、
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui` と層の補助）、
@@ -380,7 +380,9 @@ doc コメントが同じ理由で `type="text"` にしている）。**下書�
 ### 6.3 実キーボードと同時に使われたとき
 
 盤が開いている間に、対象の入力欄へ**実キーボード（やスキャナ）からの入力**が届いたら、盤は取り消しで閉じる
-（`isTrusted` な `keydown`（修飾キーだけ・Esc を除く。Enter は下の表）か `beforeinput`）。値の持ち主を 2 つにしない。
+（`keydown`（修飾キーだけ・Esc を除く。Enter は下の表）か、対象の入力欄の `beforeinput`）。値の持ち主を 2 つにしない。
+**`isTrusted` は見ない**（T2 で決めた）: 盤のキーは `keydown` も `beforeinput` も出さないので、届いたものは盤の外からの入力と分かる。
+見ないことで、jsdom の部品の試験でも同じ経路を確かめられる。
 
 - `@banto/scan-wedge` は window の `keydown` を読む。盤のキーは `keydown` を出さないので、盤の入力がスキャンと誤認されることは無い。
   盤が開いている欄にスキャンが来たら、盤が閉じてスキャンの文字が入る。
@@ -402,6 +404,9 @@ doc コメントが同じ理由で `type="text"` にしている）。**下書�
   （スキャナは文字の後に Enter を送る。文字の 1 打目で盤が閉じ、最後の Enter でフォームが送られる。今までどおり）。
   実キーの文字で盤が閉じるときは、未確定の変更があっても、その文字はそのまま入力欄に入る（利用者が入力欄に直接打ち始めた）。
 - 盤の「確定」は、フォームを送信しない（入力欄に書くだけ）。送信は、利用者が保存のボタンを押す。
+- **押したままの Enter（自動リピート、`event.repeat`）では送らない**（T2 の受け入れ）。盤を閉じた Enter（未確定の変更があったとき）の
+  後に続くリピートは、キーを離す（`keyup`）まで捕捉の段で止める。盤が開いているときに届いたリピートの Enter は、未確定の変更が無くても
+  通さない（盤を閉じるだけ）。「もう 1 度の Enter」は、離してから押し直した Enter のこと。
 
 ### 6.4 既存の部品との繋ぎ方
 
@@ -543,6 +548,8 @@ doc コメントが同じ理由で `type="text"` にしている）。**下書�
 
 - **最初の 1 打**: 開いたとき、下書きは入力欄のいまの値。**最初に数字を打つと、いまの値を置き換える**（HMI のテンキーの慣習）。
   最初に 1 文字消すを押したら、いまの値の末尾を消す（§18 の 4）。
+- **符号キー**: 開いた直後に押すと、**いまの値に符号を付け、置き換えの扱いを終える**（続けて打つ数字は後ろに付く）。
+  いまの値が `7` なら、`±` で `-7`、続けて `3` で `-73`。もう 1 度押すと符号が外れる。
 - **確定で書く形**: 末尾の `.` を取る、先頭の `.` には `0` を足す、先頭の余分な `0` を取る、`-0` は `0`。
   `decimals` に満たない桁は足さない（`1.5` は `1.5` のまま）。
 - **書く前の検査**: 書く文字列は、空か、HTML の「正しい浮動小数点数」（`-?\d+(\.\d+)?`。盤は指数を作らない）に限る。
@@ -674,11 +681,15 @@ DOM の出入りと、呼ぶ・呼ばないだけを見る。
 
 パッケージの中に、**専用の最小の画面**を 1 つ置く（見込み: `packages/touch-keys-svelte/tests/browser/`。素の Svelte の 1 ページを
 vite で出し、Playwright の `hasTouch: true` の文脈で開く）。admin-template に依存させず、ナビも基準画像も変えない。
-`@banto/ui` を import できないので、**fixture の画面だけ**が `@banto/ui` の `Modal` を devDependency として使う
-（`src/` からは import しない。conventions §4 の「`dependencies` / `peerDependencies` は空」「`src` の素の import は svelte だけ」は変わらない。
-devDependency にワークスペースのパッケージを足す前例が無いので、T2 の最初に rule（`package-bare-imports` は `src` だけを見る）と
-`check:versions` を確かめ、難しければ fixture を `e2e/` の下に置く）。CI では、`packages/touch-keys-svelte/**` を触る PR で回す
-ジョブを 1 つ足す（どのジョブに載せるかは T2 で決める。§18 の 14）。
+`@banto/ui` を import できないので、**fixture の画面だけ**が `@banto/ui` の `Modal` と `@banto/theme` の CSS を使う。
+**T2 で決めた形: devDependency は足さず、相対パスで読む**（`tests/browser/App.svelte` が `../../../ui/src/Modal.svelte` と
+`../../../theme/src/css/banto.css` を import する）。`package.json` も lockfile も変わらず、conventions §4 の
+「`dependencies` / `peerDependencies` は空」「パッケージの間の `from '@banto/...'` は無い」「`src` の素の import は svelte だけ」は
+文字どおり保たれる（rule `package-bare-imports`・`raw-colors`・`raw-dimensions` は `/src/` の下だけを見るので、fixture は `src` という
+名前のフォルダを作らない）。Playwright と axe はルートの devDependency を使う（`fixtures/external-consumer` と同じ）。
+実行はルートで `pnpm e2e:touch-keys`（設定は `tests/browser/playwright.config.ts`、試験は vitest が拾わないよう `*.e2e.ts`）。
+CI は `ci.yml` のジョブ `touch-keys-browser`（§18 の 14）。`packages/touch-keys-svelte/`・`packages/ui/`・`packages/theme/` を触る PR と
+main への push で走り、ほかの PR では飛ばす。
 
 確かめること（jsdom では確かめられないもの）:
 
@@ -702,6 +713,9 @@ Playwright の `hasTouch` は合成のタッチで、OS のキーボードも実
   盤のキーを指で押してもフォーカスが動かない（タッチの合成イベントの順）／外のタップが下に抜けない／抵抗膜のパネルで取りこぼさない。
 - キーの実寸（定規で測り、`--banto-touch-key-size` をいくつにすれば 12 mm になるかをレシピの例にする）。
 
+**T2 の時点では未実施**（開発の環境にタッチの実機・WebView2 のキオスクが無い）。確かめる項目は T2 の PR の本文に並べ、
+実機の確かめの Issue（#757）に足す。結果が出たら、ここに書く。
+
 ### 14.5 そのほか
 
 - **e2e・visual**（admin-template）: 配線しない間は足さない（基準画像は変わらない）。§4.2 の b を採るときは、`ui-demo` の基準画像を作り直す。
@@ -723,6 +737,31 @@ Playwright の `hasTouch` は合成のタッチで、OS のキーボードも実
 | T7   | （§18 の 2 を採るとき）`/ui-demo` のカード、scaffold の外す処理、e2e、基準画像                                                                                                                                                            | `template-acceptance` の dry-run、`visual-baselines.yml`                 |
 
 T1 を小さく保つため、`NumberKeypad` は表示とキーの入力だけにし、入力欄との結びつけは T2 に置く。
+
+### 15.1 T2 で決めた形
+
+- **ファイル**: `src/TouchKeysHost.svelte`（ホスト。開いている回の状態は中の `$state`）、`src/attach.ts`（`touchKeys` と要素を鍵にした
+  `WeakMap`）、`src/target.ts`（どの入力欄にどの規則で出すか・`inputmode` の出し入れ・確かめつきの書き込み）、`src/types.ts`。
+  `.svelte.ts` は持たない（§17）。
+- **公開する名前**: `TouchKeysHost`・`touchKeys`、型 `TouchKeysOptions`（T2 は `NumberKeysOptions` だけ。T3 で `TextKeysOptions` との
+  合併にする）・`CommonKeysOptions`・`TouchKeysPlacement`・`TouchKeysCancelReason`・`TouchKeysEditKey`・`TouchKeysConfirmDetail`・
+  `TouchKeysCancelDetail`。`NumberKeysOptions` は `NumberSpec`（`min`・`max`・`step`・`decimals`・`allowNegative`・`required`）を継ぐ。
+- **ホストの prop**: `enabled`（必須）・`placement`（T2 は `{ number }` だけ）・`resolve`・`messages`・`onopen`・`onconfirm`・`oncancel`・
+  `note`。`layouts` は T3。`note` は `NumberKeypad` の `note`（範囲の行の下）に出る。
+- **T2 の対象はテンキーの入力欄だけ**。文字の入力欄・パスワードには何もしない（`inputmode` も触らない）。T3 で足す。
+- **外す印は包みにも付けられる**: `data-touch-keys="off"` は、入力欄そのものか、その祖先のどれかにあれば効く（§6.4 の日付の包み）。
+  `readonly`・`disabled`・この印は、`touchKeys(...)`・`resolve` の指定より先に見る。
+- **`inputmode="none"`**: 対象の入力欄（とその `<label>`）の `pointerdown` の捕捉の段と、開くときに付ける。元の値を覚え、
+  推定（§5.4）は元の値で行う。`enabled` が false になったとき・ホストの破棄で戻す（アプリがその間に書き換えた欄は触らない）。
+- **閉じる合図**: `focusout`（対象から）・`submit`（対象のフォーム）・`MutationObserver`（対象が外れた・`readonly`・`disabled`・`type`・
+  祖先の `inert`・`data-layer-inactive` = 閉じる途中の `Modal` / `Drawer`）は `target-gone`。`reset` は、値が戻った後（次のタスク）に
+  照合して、違えば `target-changed`。attachment の付け直しは、その直後（マイクロタスク）に照合する。
+- **確定は、値が同じでも書いて `input`・`change` を出す**（開いて、そのまま確定を押したとき。利用者が「この値でよい」と押した）。
+- **受け面を押した位置の下が、いまの対象の入力欄そのもの**のときは、取り消しで閉じるだけ（開き直さない）。
+- **下の固定**: 受け面は透明、盤は下の端の幅いっぱいの帯の中央。`<html>` の `--banto-touch-keys-inset-bottom` は帯の高さ（px）。
+- **`enabled` を同じ値で渡し直しても閉じない**（値が変わったときだけ聞き手を付け外しする）。ホストの破棄は `disabled` で取り消す。
+- **ブラウザーの fixture**: §14.3。`pointerdown`・`mousedown` の `preventDefault` を外すと「外のタップ」の 4 件が落ちることを確かめた
+  （試験が約束を実際に見ている）。
 
 ## 16. 外す手順
 

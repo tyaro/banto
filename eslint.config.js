@@ -23,6 +23,8 @@ export default tseslint.config(
 			// External-consumer fixture's Playwright output (#271).
 			'fixtures/external-consumer/test-results/**',
 			'fixtures/external-consumer/playwright-report/**',
+			// touch-keys browser fixture's Playwright output (#937 T2).
+			'packages/touch-keys-svelte/tests/browser/test-results/**',
 			'pnpm-lock.yaml'
 		]
 	},

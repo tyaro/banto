@@ -156,8 +156,10 @@ describe('hasVisibleLayerAbove: the stack', () => {
 		// jsdom has no top layer: stand in for `:popover-open` (and undo its `[popover]` display: none).
 		keys.style.display = 'block';
 		let open = false;
-		keys.matches = (selector: string) =>
-			selector === ':popover-open' ? open : Element.prototype.matches.call(keys, selector);
+		keys.matches = ((selector: string) =>
+			selector === ':popover-open'
+				? open
+				: Element.prototype.matches.call(keys, selector)) as typeof keys.matches;
 
 		expect(hasVisibleLayerAbove({ except: modal.panel })).toBe(false);
 		open = true;

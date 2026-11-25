@@ -175,9 +175,9 @@ test.describe('focus and writing (§6.2, §7.2)', () => {
 		await expect(key(page, '確定')).toBeEnabled();
 		await key(page, '確定').tap();
 		await expect(page.locator('#price')).toHaveValue('0.15');
-		expect(
-			await page.locator('#price').evaluate((el: HTMLInputElement) => el.validity.valid)
-		).toBe(true);
+		expect(await page.locator('#price').evaluate((el: HTMLInputElement) => el.validity.valid)).toBe(
+			true
+		);
 	});
 
 	test('bottom placement: docked to the bottom edge, publishes the inset while open', async ({

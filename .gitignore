@@ -181,6 +181,9 @@ e2e/.cache/
 fixtures/external-consumer/build/
 fixtures/external-consumer/test-results/
 fixtures/external-consumer/playwright-report/
+
+# @banto/touch-keys-svelte browser fixture (#937 T2) Playwright output.
+packages/touch-keys-svelte/tests/browser/test-results/
 fixtures/external-consumer/rust/Cargo.lock
 
 # Editor settings (personal)

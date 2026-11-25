@@ -285,14 +285,16 @@
 
 	$effect(() => {
 		if (!active) return;
-		const add = <K extends keyof DocumentEventMap>(
+		// Native listeners: Svelte's delegated ones run too late to stop a key before the field sees it.
+		const add = <E extends Event>(
 			target: Document | Window,
-			type: K,
-			fn: (event: DocumentEventMap[K]) => void,
+			type: string,
+			fn: (event: E) => void,
 			capture: boolean
 		): (() => void) => {
-			target.addEventListener(type, fn as EventListener, capture);
-			return () => target.removeEventListener(type, fn as EventListener, capture);
+			const listener = fn as (event: Event) => void;
+			target.addEventListener(type, listener, capture);
+			return () => target.removeEventListener(type, listener, capture);
 		};
 		const offs = [
 			add(document, 'pointerdown', onPointerdown, true),
