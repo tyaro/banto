@@ -165,7 +165,10 @@ export function resolveNumberRules(
 	decimals = Math.max(0, Math.min(MAX_DECIMALS, Math.trunc(decimals)));
 
 	const allowNegative = spec.allowNegative ?? !(min !== null && min.n >= 0n);
-	const required = spec.required ?? attrs.required ?? false;
+	// type=number: the attribute's `required` can not be loosened by a spec (the browser still flags it)
+	const required = isNumberType
+		? (attrs.required ?? false) || (spec.required ?? false)
+		: (spec.required ?? attrs.required ?? false);
 	return { min, max, steps, decimals, allowNegative, required };
 }
 
@@ -299,6 +302,49 @@ export function nearestSteps(value: Dec, rule: StepRule): { lower: Dec; upper: D
 	return { lower, upper: addDec(lower, rule.step) };
 }
 
+function satisfiesAll(v: Dec, rules: NumberRules): boolean {
+	if (rules.min && cmpDec(v, rules.min) < 0) return false;
+	if (rules.max && cmpDec(v, rules.max) > 0) return false;
+	if (!rules.allowNegative && v.n < 0n) return false;
+	return rules.steps.every((r) => cmpDec(nearestSteps(v, r).lower, v) === 0);
+}
+
+/** Search bound when walking the failing step's grid for a value every rule accepts. */
+const NEAREST_SEARCH_LIMIT = 1000;
+
+/**
+ * Nearest values below and above `value` that satisfy EVERY rule (range, sign and all
+ * steps), found by walking the failing rule's grid. `null` on a side when none is found.
+ */
+export function nearestValid(
+	value: Dec,
+	failing: StepRule,
+	rules: NumberRules
+): { lower: Dec | null; upper: Dec | null } {
+	const first = nearestSteps(value, failing);
+	let lower: Dec | null = null;
+	let upper: Dec | null = null;
+	let c = first.lower;
+	for (let i = 0; i < NEAREST_SEARCH_LIMIT; i++) {
+		if (rules.min && cmpDec(c, rules.min) < 0) break;
+		if (satisfiesAll(c, rules)) {
+			lower = c;
+			break;
+		}
+		c = subDec(c, failing.step);
+	}
+	c = first.upper;
+	for (let i = 0; i < NEAREST_SEARCH_LIMIT; i++) {
+		if (rules.max && cmpDec(c, rules.max) > 0) break;
+		if (satisfiesAll(c, rules)) {
+			upper = c;
+			break;
+		}
+		c = addDec(c, failing.step);
+	}
+	return { lower, upper };
+}
+
 /** Decides what the draft is and whether it can be confirmed (§8.2). */
 export function classifyDraft(text: string, rules: NumberRules): DraftStatus {
 	if (text === '') {
@@ -330,16 +376,17 @@ export function classifyDraft(text: string, rules: NumberRules): DraftStatus {
 		};
 	}
 	for (const rule of rules.steps) {
-		const { lower, upper } = nearestSteps(v, rule);
+		const { lower } = nearestSteps(v, rule);
 		if (cmpDec(lower, v) !== 0) {
+			const near = nearestValid(v, rule, rules);
 			return {
 				kind: 'invalid',
 				canConfirm: false,
 				reason: 'step',
 				min: minS,
 				max: maxS,
-				lower: formatDec(lower),
-				upper: formatDec(upper)
+				lower: near.lower ? formatDec(near.lower) : null,
+				upper: near.upper ? formatDec(near.upper) : null
 			};
 		}
 	}

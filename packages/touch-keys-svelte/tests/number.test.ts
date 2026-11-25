@@ -227,6 +227,26 @@ describe('resolveNumberRules (attributes)', () => {
 	});
 });
 
+describe('review fixes', () => {
+	it('type=number: a spec can not loosen the required attribute', () => {
+		const r = resolveNumberRules({ type: 'number', required: true }, { required: false })!;
+		expect(r.required).toBe(true);
+		expect(classifyDraft('', r)).toEqual({ kind: 'empty', canConfirm: false, notice: 'required' });
+		expect(resolveNumberRules({ type: 'number' }, { required: true })!.required).toBe(true);
+		expect(
+			resolveNumberRules({ inputmode: 'numeric', required: true }, { required: false })!.required
+		).toBe(false);
+	});
+	it('step suggestions satisfy every step and the range', () => {
+		const r = resolveNumberRules({ type: 'number', step: '2' }, { step: 3 })!;
+		expect(classifyDraft('3', r)).toMatchObject({ reason: 'step', lower: '0', upper: '6' });
+		const m = resolveNumberRules({ type: 'number', max: '10', step: '3' })!;
+		expect(classifyDraft('10', m)).toMatchObject({ reason: 'step', lower: '9', upper: null });
+		const n = resolveNumberRules({ type: 'number', min: '10', step: '3' }, { min: 10 })!;
+		expect(classifyDraft('11', n)).toMatchObject({ reason: 'step', lower: '10', upper: '13' });
+	});
+});
+
 describe('inferTouchKind', () => {
 	it.each([
 		[{ type: 'number' }, 'number'],

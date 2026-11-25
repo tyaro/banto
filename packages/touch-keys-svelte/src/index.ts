@@ -19,6 +19,7 @@ export {
 	isWritableNumber,
 	classifyDraft,
 	nearestSteps,
+	nearestValid,
 	type NumberRules,
 	type NumberSpec,
 	type InputAttrs,

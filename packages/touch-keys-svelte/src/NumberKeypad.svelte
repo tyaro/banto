@@ -7,10 +7,23 @@
 	 * Keys never take focus (`mousedown` is prevented) and enter on `click`; there is no
 	 * long-press, repeat or double-tap (§11). Sizing: `--banto-touch-key-size` (default 48px).
 	 */
-	import { classifyDraft, pressNumberKey, resolveNumberRules, type NumberKey } from './core/number';
+	import {
+		classifyDraft,
+		pressNumberKey,
+		resolveNumberRules,
+		type NumberKey,
+		type NumberRules
+	} from './core/number';
+	import { formatDec } from './core/decimal';
 	import { defaultTouchKeysMessages, type TouchKeysMessages } from './messages';
 
 	interface Props {
+		/**
+		 * Already-resolved rules (e.g. from `resolveNumberRules` on a real `<input>`). When given,
+		 * display, key entry and the confirm check all use it and `min`/`max`/`step`/`decimals`/
+		 * `allowNegative`/`required` are ignored, so the keypad never judges differently from the host.
+		 */
+		rules?: NumberRules;
 		/** The draft text. Starts as the field's current value; read it on confirm. */
 		draft?: string;
 		min?: number | string;
@@ -32,6 +45,7 @@
 	}
 
 	let {
+		rules: givenRules,
 		draft = $bindable(''),
 		min,
 		max,
@@ -47,24 +61,25 @@
 
 	const t = $derived({ ...defaultTouchKeysMessages, ...messages });
 	const rules = $derived(
-		resolveNumberRules(
-			{ required },
-			{ min, max, step, decimals, allowNegative, required },
-			{ force: true }
-		)!
+		givenRules ??
+			resolveNumberRules(
+				{ required },
+				{ min, max, step, decimals, allowNegative, required },
+				{ force: true }
+			)!
 	);
 	let fresh = $state(true);
 	const status = $derived(classifyDraft(draft, rules));
 
 	const rangeLine = $derived.by(() => {
-		const lo = min === undefined ? null : String(min);
-		const hi = max === undefined ? null : String(max);
+		const lo = rules.min ? formatDec(rules.min) : null;
+		const hi = rules.max ? formatDec(rules.max) : null;
 		return lo === null && hi === null ? '' : t.range(lo, hi);
 	});
 	const notice = $derived.by(() => {
 		if (status.kind === 'empty') return status.notice === 'required' ? t.required() : '';
 		if (status.kind !== 'invalid') return '';
-		if (status.reason === 'step') return t.step(status.lower ?? '', status.upper ?? '');
+		if (status.reason === 'step') return t.step(status.lower, status.upper);
 		return t.range(status.min, status.max);
 	});
 

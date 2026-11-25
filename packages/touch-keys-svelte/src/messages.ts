@@ -17,8 +17,8 @@ export interface TouchKeysMessages {
 	sign?: () => string;
 	/** Allowed range line; either side may be absent. */
 	range?: (min: string | null, max: string | null) => string;
-	/** Notice for a number that does not sit on the step grid. */
-	step?: (lower: string, upper: string) => string;
+	/** Notice for a number that does not sit on the step grid; a side is null when no valid value exists there. */
+	step?: (lower: string | null, upper: string | null) => string;
 	/** Notice for an empty draft of a required field. */
 	required?: () => string;
 }
@@ -38,6 +38,11 @@ export const defaultTouchKeysMessages: Required<TouchKeysMessages> = {
 				: max !== null
 					? `${max} 以下`
 					: '',
-	step: (lower, upper) => `${lower} か ${upper} にしてください`,
+	step: (lower, upper) =>
+		lower !== null && upper !== null
+			? `${lower} か ${upper} にしてください`
+			: lower !== null || upper !== null
+				? `${lower ?? upper} にしてください`
+				: '刻みに合いません',
 	required: () => '入力が必要です'
 };

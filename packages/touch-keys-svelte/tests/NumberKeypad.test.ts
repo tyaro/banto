@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
+import { resolveNumberRules } from '../src/core/number';
 import NumberKeypad from '../src/NumberKeypad.svelte';
 
 const key = (name: string | RegExp) => screen.getByRole('button', { name });
@@ -44,6 +45,17 @@ describe('NumberKeypad', () => {
 		await fireEvent.click(key('5'));
 		expect(screen.getByRole('status').textContent).toBe('');
 		expect((key('確定') as HTMLButtonElement).disabled).toBe(false);
+	});
+
+	it('uses resolved rules as given (value-attribute base, two steps)', async () => {
+		const rules = resolveNumberRules({ type: 'number', value: '1', step: '2' })!;
+		render(NumberKeypad, { draft: '', rules });
+		await fireEvent.click(key('3'));
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(false);
+		await fireEvent.click(key('全部消す'));
+		await fireEvent.click(key('2'));
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(true);
+		expect(screen.getByRole('status').textContent).toBe('1 か 3 にしてください');
 	});
 
 	it('hides the dot when decimals is 0 and the sign when negatives are not allowed', () => {
