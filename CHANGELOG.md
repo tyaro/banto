@@ -54,6 +54,7 @@
 - `@banto/charts`: `BarChart`・`PieChart` に `onMarkActivate`・`markLabel`（追加。渡さなければ DOM も見た目も変わらない。渡すと入れ物が `role="group"`・印が `role="button"` になり、Tab は 1 か所・矢印 / Home / End で移動・Enter / Space / クリックで選ぶ）、`ChartMark`・`MarkProps`・`nextMarkIndex` の export、`messages` に `markLabel`・`markLabelWithSeries`。見本は `/chart-gallery/marks`（#882 の D2）
 - CI: e2e の設定画面の表示言語の切り替え（`settings-controls.spec.ts`）と長いメニュー（`ui-overlays.spec.ts`）がハイドレーション前の操作で落ちる揺らぎを、操作と確認をまとめて `toPass()` で再試行する形に直した（#810）。
 - fix(theme): ダークでネイティブ `<select>` の選択肢（option）の背景が白・文字が薄くて読めない問題を直した（`.banto-field-control` と grid のフィルタの select の option を `--banto-surface-overlay` / `--banto-text` で明示、#928）
+- **touch-keys: 入力欄ごとのオプション `openOnFocus` を追加（#964、#937 T6 K1。[設計書 §4.2](docs/design/grid-touch-edit-design.md)）。** ボタンやセルのタップ（ポインター由来の `click`）の続き（同じタスク。厳密なタスク境界ではなく、click 直後の短い判定窓の近似で、別の入力で失効する）でフォーカスが入った入力欄で、盤が OS のキーボードを抑えて開く。既定は変わらない（`false`）。`resolve` / `touchKeys()` に `kind` なしの指定 `{ openOnFocus: true }`（型 `InferredKeysOptions`）を返せて、種類は属性から推定のまま。
 
 - **forms: `DraftNumberField` が `change` でも `draft.commit()` する（#964 F1。[設計書 §7](docs/design/grid-touch-edit-design.md)）。** `input` + `change` を出す確定（touch-keys の盤など）で検証と値の確定が走る。blur・Enter の動きは変わらない（確定済みの文字が無ければ検証だけ）。
 

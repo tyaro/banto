@@ -38,6 +38,14 @@ export interface CommonKeysOptions {
 	 * one `<input>` node is reused for different records.
 	 */
 	editKey?: TouchKeysEditKey;
+	/**
+	 * Open the keys when focus enters this field in the continuation of a tap (the same task
+	 * as a pointer-made `click`, e.g. a button / cell whose handler shows and focuses this
+	 * field), not only when the field itself is tapped. Default `false`: focus alone never (approximated by a zero-delay timer; a key, new pointerdown or keyboard-made click ends it)
+	 * opens the keys. A keyboard-made click (Enter / Space, `detail === 0`), a field that
+	 * autofocuses on its own, and focus moved later normally do not open them (a short window, not a strict task boundary).
+	 */
+	openOnFocus?: boolean;
 }
 
 /** Number keypad for one field. `min` / `max` / `step` / `decimals` as in `NumberSpec` (§5.4). */
@@ -72,7 +80,15 @@ export interface TextKeysOptions extends CommonKeysOptions {
 	initialLayout?: TextLayout;
 }
 
-export type TouchKeysOptions = NumberKeysOptions | TextKeysOptions;
+/**
+ * Options without a `kind`: the kind is inferred from the field's attributes as usual and
+ * only these common options are added. For `resolve`, e.g. `{ openOnFocus: true }`.
+ */
+export interface InferredKeysOptions extends CommonKeysOptions {
+	kind?: undefined;
+}
+
+export type TouchKeysOptions = NumberKeysOptions | TextKeysOptions | InferredKeysOptions;
 
 export interface TouchKeysConfirmDetail {
 	input: HTMLInputElement;

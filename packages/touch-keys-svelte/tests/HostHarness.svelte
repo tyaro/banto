@@ -59,6 +59,9 @@
 
 	let qty = $state<number | string>(12);
 	let title = $state('abc');
+	let revealed = $state(false);
+	let revealedLater = $state(false);
+	const focusOnMount = (el: HTMLInputElement): void => el.focus();
 </script>
 
 {#snippet unit({ draft }: { input: HTMLInputElement; draft: string | null })}
@@ -96,6 +99,17 @@
 		/>
 	{/if}
 	<output data-testid="bound">{qty}</output>
+	<!-- openOnFocus: a button shows a field that takes focus in the same task / a later one -->
+	<button id="reveal" type="button" onclick={() => (revealed = true)}>表示</button>
+	<button
+		id="reveal-later"
+		type="button"
+		onclick={() => setTimeout(() => (revealedLater = true), 20)}
+	>
+		あとで表示
+	</button>
+	{#if revealed}<input id="late" type="number" {@attach focusOnMount} />{/if}
+	{#if revealedLater}<input id="later" type="number" {@attach focusOnMount} />{/if}
 	<input
 		id="rec"
 		type="text"
