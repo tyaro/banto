@@ -754,7 +754,7 @@ Playwright の `hasTouch` は合成のタッチで、OS のキーボードも実
 | T3 | `TextKeyboard`（英数・記号）と最大文字数。ホストに文字の経路。パスワードの入力欄（§5.5。§18 の 6 を採るとき） | §14.1〜§14.3 の文字とパスワードの分。§14.4 の実機 |
 | T4   | カナの配列（濁点・半濁点・小書き）                                                                                                                                                                                                       | カナの表の試験                                                           |
 | T5   | レシピ `docs/recipes/touch-keys.md`（ルートへの置き方、端末ごとの設定、`BantoForm` と `resolve`、Paraglide の束、キーの大きさ、トーストの逃がし方、外し方）。README・AGENTS のレシピの一覧                                               | `check:doc-links`                                                        |
-| T6   | （別の Issue）grid: タップで編集を始める・盤の確定でセルを確定する                                                                                                                                                                       | grid の設計で決める                                                      |
+| T6   | （別の Issue #964。[設計書](grid-touch-edit-design.md)）grid: タップで編集を始める・盤の確定でセルを確定する                                                                                                                                                                       | grid の設計で決める                                                      |
 | T7   | （§18 の 2 を採るとき）`/ui-demo` のカード、scaffold の外す処理、e2e、基準画像                                                                                                                                                            | `template-acceptance` の dry-run、`visual-baselines.yml`                 |
 
 T1 を小さく保つため、`NumberKeypad` は表示とキーの入力だけにし、入力欄との結びつけは T2 に置く。
