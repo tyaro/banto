@@ -1,0 +1,39 @@
+{
+  "name": "@banto/touch-keys-svelte",
+  "version": "8.0.0",
+  "description": "Banto touch keys: on-screen number keypad for touch panels (pure-TS number-draft core + Svelte 5 NumberKeypad). Optional and recipe-only, not wired into the template (docs/design/touch-keypad-design.md)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tyaro/banto.git",
+    "directory": "packages/touch-keys-svelte"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@testing-library/svelte": "^5.4.2",
+    "jsdom": "^31.0.0",
+    "svelte": "^5.58.0",
+    "svelte-check": "^4.7.8",
+    "typescript": "^6.0.0",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  }
+}
