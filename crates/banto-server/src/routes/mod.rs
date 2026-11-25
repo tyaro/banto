@@ -1,6 +1,7 @@
 //! Domain-agnostic REST routers (docs/template-scope.md §7 移行順 ④, theme C
 //! PR-C4): the `/api/auth/*` extras, `/api/users/*`, `/api/audit-log/*`,
-//! `/api/backups/*` and `/api/ui-settings/*` sub-routers, plus the RBAC/audit
+//! `/api/backups/*`, `/api/ui-settings/*` and `/api/config/*` (Issue #938)
+//! sub-routers, plus the RBAC/audit
 //! wiring helpers they share with the app's own routers.
 //!
 //! These used to live in `admin-template-core::rest` - i.e. in the surface a
@@ -59,6 +60,7 @@ use crate::{
 mod audit;
 mod auth;
 mod backups;
+mod config_drafts;
 mod system_info;
 mod ui_settings;
 mod users;
@@ -69,6 +71,10 @@ pub use audit::{
 };
 pub use auth::{extra_auth_router, AuthStatusExtras};
 pub use backups::backups_router;
+pub use config_drafts::{
+    config_changed_event, config_draft_changed_event, config_drafts_router, ConfigDraftsAccess,
+    ConfigDraftsGate,
+};
 pub use system_info::{system_info_router, MetricsProbe, SystemInfo, SystemMetrics};
 pub use ui_settings::ui_settings_router;
 pub use users::{

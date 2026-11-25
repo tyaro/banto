@@ -15,7 +15,7 @@
 //!   [`ConfigDraftsService::history_entry`] - each ONE SQL statement.
 //!
 //! The REST routes, the guards, the audit rows and the events are the
-//! wiring's (S2).
+//! wiring's (S2: `banto-server`'s `routes::config_drafts_router`).
 //!
 //! Words (design §1):
 //!
@@ -416,6 +416,28 @@ pub struct ConfigDraftSaved {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigDraftDiscarded {
     pub revision: String,
+    /// The published version the discarded draft was started from; `None`
+    /// when there was no draft (nothing was discarded). For the wiring's
+    /// audit row ([`discard_audit_detail`]); not sent to clients.
+    #[serde(skip)]
+    pub discarded_base_version: Option<i64>,
+}
+
+/// The audit `detail` of a draft discard (design §4.8): `{ baseVersion }`.
+/// `None` when the call found no draft - nothing was discarded, so the
+/// wiring writes no audit row. Both paths (REST and Tauri) call this, so
+/// their audit rows cannot differ.
+pub fn discard_audit_detail(discarded: &ConfigDraftDiscarded) -> Option<Value> {
+    discarded
+        .discarded_base_version
+        .map(|base_version| json!({ "baseVersion": base_version }))
+}
+
+/// The audit `detail` of a forced unlock (design §4.8): whose lock was
+/// removed - `{ holder, holderName }`. `holder` is `acct:<users.id>` etc.;
+/// it goes to the audit log, never into a response. Both paths call this.
+pub fn unlock_audit_detail(removed: &ConfigLock) -> Value {
+    json!({ "holder": removed.holder, "holderName": removed.holder_name })
 }
 
 /// See the module doc.
@@ -1162,7 +1184,7 @@ impl ConfigDraftsService {
         self.target(target)?;
         check_token("ifRevision", if_revision)?;
         let dialect = self.db.dialect();
-        with_target_write!(self, target, |tx, _published, at| {
+        let discarded_base_version = with_target_write!(self, target, |tx, _published, at| {
             let current_lock = fetch_lock!(tx, dialect, target);
             if !current_lock
                 .as_ref()
@@ -1198,9 +1220,11 @@ impl ConfigDraftsService {
                     .map_err(storage_error)?;
                 expect_one_row(done.rows_affected(), "config_drafts")?;
             }
+            draft.map(|draft| draft.base_version)
         });
         Ok(ConfigDraftDiscarded {
             revision: CONFIG_DRAFT_ABSENT_REVISION.to_string(),
+            discarded_base_version,
         })
     }
 

@@ -8,7 +8,7 @@
 //! fallback serving, server lifecycle (bind/serve/graceful-shutdown), plus
 //! (since theme C PR-C4, docs/template-scope.md §7 移行順 ④) the REST
 //! routers for the resources that are themselves domain-agnostic
-//! ([`routes`]: auth extras, users, audit-log, backups, ui-settings, backed
+//! ([`routes`]: auth extras, users, audit-log, backups, ui-settings, config drafts, backed
 //! by `banto-admin-services`). Anything that knows about a specific APP
 //! resource (`items`, `attachments`) or the frontend build's on-disk
 //! location lives in the app crate (`apps/admin-template/core`), which
