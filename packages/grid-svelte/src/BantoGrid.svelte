@@ -1173,6 +1173,8 @@
 	let pendingTap: {
 		pointerId: number;
 		pointerType: string;
+		/** Its `pointerup` arrived, over the pressed cell: a `click` may follow. */
+		released: boolean;
 		rowIndex: number;
 		field: string;
 	} | null = null;
@@ -1196,7 +1198,13 @@
 		acceptedTap = null;
 		if (event.button !== 0) return;
 		if (event.pointerType === 'touch' || event.pointerType === 'pen') {
-			const tap = { pointerId: event.pointerId, pointerType: event.pointerType, rowIndex, field };
+			const tap = {
+				pointerId: event.pointerId,
+				pointerType: event.pointerType,
+				released: false,
+				rowIndex,
+				field
+			};
 			const cellEl = event.currentTarget as HTMLElement;
 			pendingTap = tap;
 			// A press that is cancelled (a pan), or released away from its cell,
@@ -1211,6 +1219,8 @@
 				if (pendingTap !== tap) return;
 				if (endEvent.type === 'pointercancel' || !pointerEndedOn(cellEl, endEvent)) {
 					pendingTap = null;
+				} else {
+					tap.released = true;
 				}
 			};
 			window.addEventListener('pointerup', onTapEnd, true);
@@ -1284,16 +1294,20 @@
 	}
 
 	/**
-	 * Whether `click` is the one `tap`'s pointer produced. A pointer's click
-	 * carries its `pointerId` / `pointerType` (Pointer Events 3); a click that
-	 * no pointer made has `-1` / `''`. Where `click` is still a plain
-	 * MouseEvent there is nothing to compare, and the press having ended on
-	 * its cell (above) is the only evidence.
+	 * Whether `click` is the one `tap`'s pointer produced. Never before the
+	 * press was released on its cell: a click during a held press is someone
+	 * else's. A pointer's click carries its `pointerId` / `pointerType`
+	 * (Pointer Events 3); a click that no pointer made has `-1` / `''`. Where
+	 * `click` is still a plain MouseEvent there is nothing to compare, and
+	 * only a click known to be synthetic (`detail` 0: `element.click()`, a
+	 * keyboard, assistive technology) can be told apart.
 	 */
 	function clickIsOfTap(click: MouseEvent, tap: NonNullable<typeof pendingTap>): boolean {
+		if (!tap.released) return false;
 		const pointer = click as Partial<PointerEvent>;
-		if (typeof pointer.pointerId !== 'number' || typeof pointer.pointerType !== 'string')
-			return true;
+		if (typeof pointer.pointerId !== 'number' || typeof pointer.pointerType !== 'string') {
+			return click.detail !== 0;
+		}
 		return pointer.pointerId === tap.pointerId && pointer.pointerType === tap.pointerType;
 	}
 

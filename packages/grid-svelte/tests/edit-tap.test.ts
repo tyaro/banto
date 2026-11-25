@@ -83,7 +83,7 @@ async function press(target: HTMLElement, pointerType: PointerType, pointerId = 
 async function tap(target: HTMLElement, pointerType: PointerType, pointerId = 1) {
 	await press(target, pointerType, pointerId);
 	await fireEvent.pointerUp(target, { pointerType, pointerId, button: 0 });
-	await fireEvent.click(target);
+	await fireEvent.click(target, { detail: 1 });
 }
 
 /** Counts the window listeners of the cell drag that are still attached. */
@@ -134,7 +134,7 @@ describe('BantoGrid tap to edit (#964 G1)', () => {
 
 	it('a click with no pointerdown (keyboard / assistive technology) does not start editing', async () => {
 		const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
-		await fireEvent.click(cellOf(container, 1, 'name'));
+		await fireEvent.click(cellOf(container, 1, 'name'), { detail: 1 });
 		expect(editorIn(container)).toBeNull();
 	});
 
@@ -163,7 +163,7 @@ describe('BantoGrid tap to edit (#964 G1)', () => {
 			pointerType: 'touch',
 			pointerId: 2
 		});
-		await fireEvent.click(cellOf(container, 2, 'price'));
+		await fireEvent.click(cellOf(container, 2, 'price'), { detail: 1 });
 		await tick();
 		expect(onCellEdit).toHaveBeenCalledTimes(1);
 		expect(onCellEdit.mock.calls[0][0]).toMatchObject({ rowId: 1, field: 'name', value: '万年筆' });
@@ -177,7 +177,7 @@ describe('BantoGrid tap to edit (#964 G1)', () => {
 		await press(target, 'touch');
 		await fireEvent.pointerCancel(target, { pointerType: 'touch', pointerId: 1 });
 		// A click that is not this press's (no pointerdown of its own).
-		await fireEvent.click(target);
+		await fireEvent.click(target, { detail: 1 });
 		expect(editorIn(container)).toBeNull();
 		expect(activeCell(container)).toBe(cellOf(container, 0, 'price'));
 	});
@@ -185,7 +185,7 @@ describe('BantoGrid tap to edit (#964 G1)', () => {
 	it('a tap that ends on another cell is not a tap on either', async () => {
 		const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
 		await press(cellOf(container, 0, 'name'), 'touch');
-		await fireEvent.click(cellOf(container, 1, 'name'));
+		await fireEvent.click(cellOf(container, 1, 'name'), { detail: 1 });
 		expect(editorIn(container)).toBeNull();
 		expect(activeCell(container)).toBeNull();
 	});
@@ -195,7 +195,24 @@ describe('BantoGrid tap to edit (#964 G1)', () => {
 		const target = cellOf(container, 1, 'name');
 		await press(target, 'pen');
 		await fireEvent.pointerUp(document.body, { pointerType: 'pen', pointerId: 1 });
-		await fireEvent.click(target);
+		await fireEvent.click(target, { detail: 1 });
+		expect(editorIn(container)).toBeNull();
+		expect(activeCell(container)).toBeNull();
+	});
+
+	it('where click is a plain MouseEvent, a click during a held press or a synthetic one is not its tap', async () => {
+		const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
+		const target = cellOf(container, 1, 'name');
+		// Held: no pointerup yet. `detail` 1 is a real click, 0 a synthetic one.
+		await press(target, 'pen');
+		await fireEvent.click(target, { detail: 1 });
+		expect(editorIn(container)).toBeNull();
+		expect(activeCell(container)).toBeNull();
+
+		// Released on the cell, then a click known to be synthetic.
+		await press(target, 'pen');
+		await fireEvent.pointerUp(target, { pointerType: 'pen', pointerId: 1 });
+		await fireEvent.click(target, { detail: 0 });
 		expect(editorIn(container)).toBeNull();
 		expect(activeCell(container)).toBeNull();
 	});
@@ -215,6 +232,7 @@ describe('BantoGrid tap to edit (#964 G1)', () => {
 		expect(activeCell(container)).toBeNull();
 
 		await press(target, 'touch', 4);
+		await fireEvent.pointerUp(target, { pointerType: 'touch', pointerId: 4 });
 		target.dispatchEvent(clickOf(5, 'touch'));
 		await tick();
 		expect(editorIn(container)).toBeNull();
@@ -262,7 +280,7 @@ describe('BantoGrid tap to edit (#964 G1)', () => {
 		expect(onRowContextMenu).toHaveBeenCalledWith(rows[1], { x: 40, y: 50 });
 		expect(editorIn(container)).toBeNull();
 		// A later stray click is not the long press's tap.
-		await fireEvent.click(target);
+		await fireEvent.click(target, { detail: 1 });
 		expect(editorIn(container)).toBeNull();
 	});
 
