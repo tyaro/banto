@@ -23,6 +23,8 @@ OS のタッチキーボードは出さない（`inputmode="none"`）。パッ�
 ```
 
 `.svelte.ts` を持たないので、`vite.config` の `optimizeDeps.exclude` への追加は要らない。
+盤の色・枠・角は `--banto-*`（`@banto/theme` のトークン）を読むので、テンプレート外のアプリでは `@banto/theme` の CSS を
+アプリ側で読み込んでおく（読まなくても動くのは、キーの大きさだけ）。
 
 ## 2. ルートに置く（`TouchKeysHost`・`touchKeys`）
 
@@ -41,7 +43,7 @@ true の間だけ、数値の欄（`type="number"`・`inputmode="numeric" | "dec
 </script>
 
 {@render children()}
-<ToastHost />
+<!-- ToastHost・ConfirmHost などが既にあるなら、その並びに足す -->
 <TouchKeysHost
 	enabled={deviceSettings.touchKeys}
 	messages={touchKeysMessages()}
@@ -81,7 +83,7 @@ true の間だけ、数値の欄（`type="number"`・`inputmode="numeric" | "dec
   （`layouts: ['kana', 'alnum']`。先頭が最初に出る）。`layouts` を指定しない既定は `alnum` + `symbol`。
   五十音 + ー の 5 行 × 10 列で、濁点・半濁点・小書きのキーは直前の 1 文字を置き換える（`カ` → `ガ`、`ツ` → `ッ`）。
   **パスワードの盤には入らない**（`layouts` が何でも、英数 + 記号のまま）。
-- **パスワード**（`type="password"`）は必ず伏せた文字キーボード。表示は `●` と文字数だけで、平文は盤の外へ出ない
+- **パスワード**（`type="password"`）は必ず伏せた文字キーボード。表示は `●` と文字数だけで、未確定の下書きは盤の外へ出ない（確定した値は入力欄へ書く）
   （`onconfirm` の `value`・`previous` と `note` の `draft` は `null`）。開いて何も打たずに確定しても既存の値は消えない
   （空にするのは「全部消す」の直後だけ）。「パスワードを表示」で `type="text"` になる欄は、属性からはパスワードと分からないので
   `touchKeys({ kind: 'text', masked: true })`（または `resolve`）で明示する。打てるのは ASCII の印字できる 95 文字だけ。
