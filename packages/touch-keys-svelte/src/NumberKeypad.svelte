@@ -16,6 +16,7 @@
 	} from './core/number';
 	import { formatDec } from './core/decimal';
 	import { defaultTouchKeysMessages, type TouchKeysMessages } from './messages';
+	import type { Snippet } from 'svelte';
 
 	interface Props {
 		/**
@@ -39,6 +40,8 @@
 		/** Heading shown above the draft. */
 		label?: string;
 		messages?: TouchKeysMessages;
+		/** One extra line under the draft and range (unit, caution). Receives the draft. */
+		note?: Snippet<[string]>;
 		/** Confirm pressed with a confirmable draft: the canonical string ('' for empty). */
 		onconfirm?: (value: string) => void;
 		oncancel?: () => void;
@@ -55,6 +58,7 @@
 		required,
 		label,
 		messages,
+		note,
 		onconfirm,
 		oncancel
 	}: Props = $props();
@@ -116,6 +120,7 @@
 		{#if label}<div class="label">{label}</div>{/if}
 		<div class="draft" data-testid="draft">{draft === '' ? ' ' : draft}</div>
 		{#if rangeLine}<div class="range">{rangeLine}</div>{/if}
+		{#if note}<div class="note">{@render note(draft)}</div>{/if}
 		<div class="notice" role="status" aria-live="polite">{notice}</div>
 	</div>
 
@@ -246,6 +251,11 @@
 		overflow-wrap: anywhere;
 	}
 	.range {
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-sm);
+		text-align: end;
+	}
+	.note {
 		color: var(--banto-text-muted);
 		font-size: var(--banto-font-size-sm);
 		text-align: end;
