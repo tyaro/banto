@@ -29,7 +29,7 @@ test('@banto/* を Git 依存で導入した dev サーバでページが描画�
 			.first()
 			.waitFor({ timeout: 90_000 });
 		await expect(page.getByTestId('banto-loaded')).toHaveText(
-			'function,function,function,function,function,function,function,function,function,function,0,light',
+			'function,function,function,function,function,function,function,function,function,function,function,function,0,light',
 			{ timeout: 5_000 }
 		);
 		// @banto/ui のストア（.svelte.ts）が積んだトーストが ToastHost に描画される。

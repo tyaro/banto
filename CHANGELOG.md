@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- chore(fixtures): v9.0.0 のタグ後の外部利用 fixture の ref を `v9.0.0` に更新し、`@banto/touch-keys-svelte` を依存と `+page.svelte` の import に追加した。[9.0.0] に「検証した組み合わせ」を追記。
+
 ## [9.0.0] - 2026-11-26
 
 **v9.0.0 — `@banto/grid-svelte` のタッチ・ペンのタップで編集を始める `editOnTap`（既定 `true`、#964）、新しいオプションのパッケージ `@banto/touch-keys-svelte`（タッチ向けのテンキー・文字キーボード、#937、[ADR-0036](docs/adr/0036-touch-keys-package.md)）、設定の下書き → 反映 → 元に戻す（#938、migration 0016）、アプリ独自の SSE の配信と読み口（#935・#936）、ダッシュボードのクロスフィルタとドリルダウン（#882）、書き込みの切り離しを自前の listener にも（#947）、`ThreePaneDock` の `defaultPlaces`（#939）ほか。** 版の種類: major。理由: `@banto/grid-svelte` の `editOnTap` が既定で `true` なので、**既存の `BantoGrid` を書き換えずにタグだけ上げても、タッチ・ペンのタップの意味が「選択」から「編集の開始」に変わる**（編集できる列を持つ grid）。さらに `editOnTap={false}` を渡しても、タッチ・ペンの選択とフォーカスは `pointerdown` ではなく `click` まで遅れる。[docs/publishing.md](docs/publishing.md)「バージョニング規約」の「既存の機能のままで実行時の値・意味が変わるものは `major`」に当たる。公開 API の削除・改名は無い（`crates/*/src` の `pub` の削除は、定義の移動と `BoundServer` への既定の型引数の追加だけ。`packages/*/src/index.ts` の export は並べ替えと追加だけ）。migration は 0016 の追加だけ（表 4 つを足す。既存の表・行は変えない。v8.0.0 の DB はそのまま使える）。
@@ -148,6 +150,26 @@
 - **touch-keys: 入力欄ごとのオプション `openOnFocus` を追加（#964、#937 T6 K1。[設計書 §4.2](docs/design/grid-touch-edit-design.md)）。** ボタンやセルのタップ（ポインター由来の `click`）の続き（同じタスク。厳密なタスク境界ではなく、click 直後の短い判定窓の近似で、別の入力で失効する）でフォーカスが入った入力欄で、盤が OS のキーボードを抑えて開く。既定は変わらない（`false`）。`resolve` / `touchKeys()` に `kind` なしの指定 `{ openOnFocus: true }`（型 `InferredKeysOptions`）を返せて、種類は属性から推定のまま。
 
 - **forms: `DraftNumberField` が `change` でも `draft.commit()` する（#964 F1。[設計書 §7](docs/design/grid-touch-edit-design.md)）。** `input` + `change` を出す確定（touch-keys の盤など）で検証と値の確定が走る。blur・Enter の動きは変わらない（確定済みの文字が無ければ検証だけ）。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `5c98a35f`、`workflow_dispatch`）: [run 45652713702](https://github.com/tyaro/banto/actions/runs/45652713702)（success）。
+  - タグの push（`v9.0.0`、main の `5c98a35f`）: [run 45653633994](https://github.com/tyaro/banto/actions/runs/45653633994)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 26.13.1                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.59.1                          |
+    | SvelteKit          | 3.4.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
+
+  - 出所: Node.js は `node: v26.13.1`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.59.1` など）、Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
 
 ## [8.0.0] - 2026-11-24
 
