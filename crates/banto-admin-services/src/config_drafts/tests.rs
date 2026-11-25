@@ -1,7 +1,9 @@
-//! Service-level cases of config-draft-publish-design §6 that the base (S1a)
-//! covers: T1 (seeding), T3 (the draft's revisions), T4-T6 (the lock), T10
-//! (input). T9 (the diff) is in `audit/diff.rs`. The cases that need a
-//! publish (T2, T7, T8, the rest of T1/T3/T4) come with S1b.
+//! Service-level cases of config-draft-publish-design §6 on SQLite
+//! (`:memory:`, or a file where a case needs a second pool): T1 (seeding,
+//! the version counter), T3 (the draft's revisions), T4-T6 (the lock), T10
+//! (input), and the reads and shapes S1b added. T9 (the diff) is in
+//! `audit/diff.rs`. The cases that need a publish on BOTH backends (T2, T3,
+//! T4, T7, T8, T11) are in `cases.rs`.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -10,7 +12,7 @@ use super::*;
 /// The four tables, SQLite form (design §4.5). MUST be kept in sync with the
 /// app's `migrations-sqlite/0016_config_drafts.sql` once the wiring adds it
 /// (design §7, S4).
-const DDL: [&str; 4] = [
+pub(super) const DDL: [&str; 4] = [
     "CREATE TABLE config_published (
         target       TEXT PRIMARY KEY,
         value        TEXT NOT NULL,
@@ -50,9 +52,9 @@ const DDL: [&str; 4] = [
     )",
 ];
 
-const TARGET: &str = "plc.line1";
-const START_MS: i64 = 1_000_000;
-const TTL_MS: i64 = 300_000;
+pub(super) const TARGET: &str = "plc.line1";
+pub(super) const START_MS: i64 = 1_000_000;
+pub(super) const TTL_MS: i64 = 300_000;
 
 struct Fixture {
     svc: ConfigDraftsService,
@@ -80,7 +82,8 @@ impl Fixture {
             .unwrap()
     }
 
-    /// Stand-in for a publish (S1b): move the published row on.
+    /// Move the published row on without a publish (only the row the
+    /// draft rules look at).
     async fn bump_published(&self) {
         sqlx::query(
             "UPDATE config_published SET version = version + 1, revision = 'moved' WHERE target = ?",
@@ -189,14 +192,14 @@ impl WaitFixture {
     }
 }
 
-fn alice() -> ConfigEditor {
+pub(super) fn alice() -> ConfigEditor {
     ConfigEditor {
         holder: "acct:1".to_string(),
         name: "alice".to_string(),
     }
 }
 
-fn bob() -> ConfigEditor {
+pub(super) fn bob() -> ConfigEditor {
     ConfigEditor {
         holder: "acct:2".to_string(),
         name: "bob".to_string(),
@@ -204,7 +207,7 @@ fn bob() -> ConfigEditor {
 }
 
 /// The `current` of a conflict with the expected reason.
-fn conflict<T: fmt::Debug>(result: Result<T, BantoError>, reason: &str) -> Value {
+pub(super) fn conflict<T: fmt::Debug>(result: Result<T, BantoError>, reason: &str) -> Value {
     match result {
         Err(BantoError::Conflict {
             current: Some(current),
@@ -217,7 +220,7 @@ fn conflict<T: fmt::Debug>(result: Result<T, BantoError>, reason: &str) -> Value
     }
 }
 
-fn validation_field<T: fmt::Debug>(result: Result<T, BantoError>) -> String {
+pub(super) fn validation_field<T: fmt::Debug>(result: Result<T, BantoError>) -> String {
     match result {
         Err(BantoError::Validation { field_errors }) => field_errors[0].field.clone(),
         other => panic!("expected a validation error, got {other:?}"),
@@ -941,6 +944,14 @@ async fn unknown_target_is_not_found_everywhere() {
             .map(drop),
     );
     not_found(f.svc.draft_discard("nope", &a, "0").await.map(drop));
+    let who = stamp(None);
+    not_found(f.svc.draft_rebase("nope", &a, "x", "x").await.map(drop));
+    not_found(f.svc.publish("nope", &a, "x", &who).await.map(drop));
+    not_found(f.svc.revert("nope", &a, 0, "x", &who).await.map(drop));
+    not_found(f.svc.diff("nope", None).await.map(drop));
+    not_found(f.svc.diff("nope", Some(0)).await.map(drop));
+    not_found(f.svc.history("nope", None, 10).await.map(drop));
+    not_found(f.svc.history_entry("nope", 0).await.map(drop));
 
     // a target whose rows exist but that is not registered any more
     sqlx::query("INSERT INTO config_published (target, value, version, revision) VALUES ('old', '{}', 3, 'r')")
@@ -1091,4 +1102,446 @@ async fn wire_shape_is_camel_case_without_the_holder_key() {
     assert!(wire["lock"]["lease"].is_string());
     assert_eq!(wire["lock"]["expiresAtMs"], START_MS + TTL_MS);
     assert!(wire["lock"].get("holder").is_none());
+}
+
+// --- S1b on SQLite only: the list, the shapes, the inputs ---
+// (what must hold on both backends is in `cases.rs`)
+
+fn stamp(comment: Option<&str>) -> PublishStamp<'_> {
+    PublishStamp {
+        actor_username: "alice",
+        actor_id: Some(1),
+        actor_kind: "account",
+        origin: "tauri",
+        comment,
+    }
+}
+
+/// Draft `value` and publish it.
+async fn publish_value(f: &Fixture, editor: &ConfigEditor, value: Value) -> PublishOutcome {
+    let (_, revision) = start_draft(f, editor, value).await;
+    f.svc
+        .publish(TARGET, editor, &revision, &stamp(None))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn every_publish_is_the_next_version() {
+    let f = fixture().await;
+    let a = alice();
+    for version in 1..=4 {
+        let done = publish_value(&f, &a, json!({"limit": version * 10})).await;
+        assert_eq!(
+            (done.version, done.previous_version),
+            (version, version - 1)
+        );
+    }
+    assert_eq!(f.count("config_history").await, 5);
+    // seeding again does not touch a target that has versions
+    f.svc.ensure_targets().await.unwrap();
+    assert_eq!(f.svc.published(TARGET).await.unwrap().version, 4);
+    assert_eq!(f.count("config_history").await, 5);
+}
+
+#[tokio::test]
+async fn a_publish_that_waited_judges_the_lock_at_the_time_it_ran() {
+    let w = wait_fixture().await;
+    let f = &w.f;
+    let (a, b) = (alice(), bob());
+    let (_, revision) = start_draft(f, &a, json!({"limit": 2})).await;
+    let expires = f.state(&a).await.lock.unwrap().expires_at_ms;
+
+    // bob calls 1 ms before alice's lock expires: refused if it ran then ...
+    f.set(expires - 1);
+    conflict(
+        f.svc.publish(TARGET, &b, &revision, &stamp(None)).await,
+        "lock_held",
+    );
+    // ... but it waits for the writer until the expiry, and runs then
+    let done = w
+        .run_after_wait(expires, {
+            let (b, revision) = (b.clone(), revision.clone());
+            |svc| async move { svc.publish(TARGET, &b, &revision, &stamp(None)).await }
+        })
+        .await
+        .unwrap();
+    assert_eq!(done.version, 1);
+}
+
+#[tokio::test]
+async fn list_gives_every_registered_target_in_order() {
+    let targets = ConfigTargetRegistry::empty()
+        .register(ConfigTarget::new("zeta", json!({"z": 1}), &[]).unwrap())
+        .unwrap()
+        .register(ConfigTarget::new(TARGET, json!({"limit": 1}), &[]).unwrap())
+        .unwrap();
+    let f = fixture_with(targets).await;
+    let a = alice();
+    // a row of a key that is not registered any more is left out
+    sqlx::query("INSERT INTO config_published (target, value, version, revision) VALUES ('old', '{}', 3, 'r')")
+        .execute(f.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+
+    let list = f.svc.list().await.unwrap();
+    assert_eq!(
+        list.iter()
+            .map(|row| (row.target.as_str(), row.version))
+            .collect::<Vec<_>>(),
+        vec![("zeta", 0), (TARGET, 0)]
+    );
+    assert!(list
+        .iter()
+        .all(|row| row.draft.is_none() && row.lock.is_none()));
+
+    let (lease, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+    let list = f.svc.list().await.unwrap();
+    assert!(list[0].draft.is_none() && list[0].lock.is_none());
+    let published = f.svc.published(TARGET).await.unwrap();
+    assert_eq!(
+        (list[1].revision.as_str(), list[1].published_at.as_str()),
+        (published.revision.as_str(), published.published_at.as_str())
+    );
+    let draft = list[1].draft.as_ref().unwrap();
+    assert_eq!(
+        (
+            draft.base_version,
+            draft.revision.as_str(),
+            draft.updated_by.as_str()
+        ),
+        (0, revision.as_str(), "alice")
+    );
+    assert_eq!(list[1].lock.as_ref().unwrap().lease, lease);
+    // no values in the list
+    let wire = serde_json::to_value(&list[1]).unwrap();
+    assert!(wire.get("value").is_none() && wire["draft"].get("value").is_none());
+    assert_eq!(wire["draft"]["baseVersion"], 0);
+    assert_eq!(wire["lock"]["holderName"], "alice");
+    assert!(wire["lock"].get("holder").is_none());
+
+    // an expired lock is no lock; the draft stays
+    f.advance(TTL_MS);
+    let list = f.svc.list().await.unwrap();
+    assert!(list[1].lock.is_none() && list[1].draft.is_some());
+}
+
+#[tokio::test]
+async fn list_fails_when_a_registered_target_was_not_seeded() {
+    let db = Db::connect_sqlite_memory().await.unwrap();
+    for sql in DDL {
+        sqlx::query(sql)
+            .execute(db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+    }
+    let svc = ConfigDraftsService::new(db, registry(json!({})));
+    let Err(BantoError::Other(message)) = svc.list().await else {
+        panic!("expected the startup error");
+    };
+    assert!(message.contains("ensure_targets"), "{message}");
+}
+
+#[tokio::test]
+async fn the_diff_masks_secrets_and_names_what_it_compared() {
+    let targets = ConfigTargetRegistry::empty()
+        .register(
+            ConfigTarget::new(
+                TARGET,
+                json!({"limit": 1, "devices": [{"name": "a", "token": "t0ken-old"}]}),
+                &["/devices/0/token"],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let f = fixture_with(targets).await;
+    let a = alice();
+    // no draft: nothing to compare
+    let missing = f.svc.diff(TARGET, None).await;
+    assert!(
+        matches!(&missing, Err(BantoError::NotFound { resource, .. }) if resource == "config_draft"),
+        "{missing:?}"
+    );
+
+    let value = json!({"limit": 2, "devices": [{"name": "a", "token": "t0ken-new"}]});
+    let (_, revision) = start_draft(&f, &a, value).await;
+    let published = f.svc.published(TARGET).await.unwrap();
+    let diff = f.svc.diff(TARGET, None).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&diff).unwrap(),
+        json!({
+            "target": TARGET,
+            "publishedVersion": 0,
+            "publishedRevision": published.revision,
+            "draftRevision": revision,
+            "baseVersion": 0,
+            "changes": [
+                // the array holds the secret, so the whole entry is masked
+                {"field": "/devices", "masked": true},
+                {"field": "/limit", "before": 1, "after": 2},
+            ],
+        })
+    );
+
+    let done = f
+        .svc
+        .publish(TARGET, &a, &revision, &stamp(None))
+        .await
+        .unwrap();
+    // published -> version 0: what a revert to 0 would change
+    let back = f.svc.diff(TARGET, Some(0)).await.unwrap();
+    let wire = serde_json::to_value(&back).unwrap();
+    assert_eq!(wire["publishedRevision"], done.revision.as_str());
+    assert_eq!(wire["toVersion"], 0);
+    assert!(wire.get("draftRevision").is_none() && wire.get("baseVersion").is_none());
+    assert_eq!(
+        wire["changes"],
+        json!([
+            {"field": "/devices", "masked": true},
+            {"field": "/limit", "before": 2, "after": 1},
+        ])
+    );
+    // the current version against itself: nothing
+    assert!(f
+        .svc
+        .diff(TARGET, Some(1))
+        .await
+        .unwrap()
+        .changes
+        .is_empty());
+    // the secret is in no diff, and not in the outcome or the audit detail
+    for text in [
+        serde_json::to_string(&diff).unwrap(),
+        wire.to_string(),
+        serde_json::to_string(&done).unwrap(),
+        publish_audit_detail(&done).to_string(),
+        json!(f.svc.history_entry(TARGET, 1).await.unwrap().changes).to_string(),
+    ] {
+        assert!(!text.contains("t0ken"), "{text}");
+    }
+}
+
+#[tokio::test]
+async fn the_audit_detail_is_cut_and_the_answer_is_not() {
+    let f = fixture().await;
+    let a = alice();
+    let mut value = serde_json::Map::new();
+    for n in 0..110 {
+        value.insert(format!("k{n:03}"), json!("x".repeat(1500)));
+    }
+    let done = publish_value(&f, &a, Value::Object(value)).await;
+    // the answer: every change (110 added keys + /limit removed), whole
+    assert_eq!(done.changes.len(), 111);
+    assert_eq!(done.changes[0]["after"].as_str().unwrap().len(), 1500);
+    // the audit detail: within the audit limits, and it says it was cut
+    let detail = publish_audit_detail(&done);
+    assert_eq!(detail["changesTruncated"], true);
+    let changes = serde_json::to_string(&detail["changes"]).unwrap();
+    assert!(
+        changes.len() <= crate::audit::diff::MAX_PATH_CHANGES_BYTES,
+        "{}",
+        changes.len()
+    );
+    assert!(detail.get("comment").is_none() && detail.get("revertedTo").is_none());
+    // the wire shape of the answer has no audit copy
+    let wire = serde_json::to_value(&done).unwrap();
+    let mut keys: Vec<_> = wire.as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec![
+            "changes",
+            "kind",
+            "previousVersion",
+            "publishedAt",
+            "revision",
+            "target",
+            "version"
+        ]
+    );
+    assert_eq!(wire["kind"], "publish");
+}
+
+#[tokio::test]
+async fn history_wire_shape_and_page_size() {
+    let f = fixture().await;
+    let a = alice();
+    let (_, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+    f.svc
+        .publish(TARGET, &a, &revision, &stamp(Some("first change")))
+        .await
+        .unwrap();
+
+    let detail = serde_json::to_value(f.svc.history_entry(TARGET, 1).await.unwrap()).unwrap();
+    assert_eq!(detail["version"], 1);
+    assert_eq!(detail["kind"], "publish");
+    assert_eq!(detail["revertedTo"], Value::Null);
+    assert_eq!(detail["actorUsername"], "alice");
+    assert_eq!(detail["actorId"], 1);
+    assert_eq!(detail["actorKind"], "account");
+    assert_eq!(detail["origin"], "tauri");
+    assert_eq!(detail["comment"], "first change");
+    assert!(detail["publishedAt"].is_string());
+    assert_eq!(detail["value"], json!({"limit": 2}));
+    assert_eq!(detail["previousValue"], json!({"limit": 1}));
+    assert_eq!(
+        detail["changes"],
+        json!([{"field": "/limit", "before": 1, "after": 2}])
+    );
+    // version 0 has nothing before it
+    let initial = f.svc.history_entry(TARGET, 0).await.unwrap();
+    assert_eq!(initial.entry.kind, ConfigHistoryKind::Initial);
+    assert!(initial.previous_value.is_none() && initial.changes.is_empty());
+    let missing = f.svc.history_entry(TARGET, 2).await;
+    assert!(
+        matches!(&missing, Err(BantoError::NotFound { resource, id })
+            if resource == "config_version" && id == "plc.line1/2"),
+        "{missing:?}"
+    );
+
+    // limit: 0 is 1, and a page is never over the maximum
+    assert_eq!(f.svc.history(TARGET, None, 0).await.unwrap().len(), 1);
+    let rows = i64::from(MAX_CONFIG_HISTORY_PAGE) + 20;
+    for version in 2..rows {
+        sqlx::query(
+            "INSERT INTO config_history (target, version, value, kind) VALUES (?, ?, '{}', 'publish')",
+        )
+        .bind(TARGET)
+        .bind(version)
+        .execute(f.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+    }
+    let page = f.svc.history(TARGET, None, u32::MAX).await.unwrap();
+    assert_eq!(page.len(), MAX_CONFIG_HISTORY_PAGE as usize);
+    assert_eq!(page[0].version, rows - 1);
+    let next = f
+        .svc
+        .history(TARGET, Some(page.last().unwrap().version), u32::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        (next.len(), next[0].version, next.last().unwrap().version),
+        (20, 19, 0)
+    );
+    // a kind this code does not know is a damaged row, not a guess
+    sqlx::query("UPDATE config_history SET kind = 'merge' WHERE version = 5")
+        .execute(f.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.svc.history(TARGET, Some(6), 1).await,
+        Err(BantoError::Storage(_))
+    ));
+}
+
+#[tokio::test]
+async fn publish_and_revert_check_their_input() {
+    let f = fixture().await;
+    let a = alice();
+    // no draft
+    let missing = f.svc.publish(TARGET, &a, "x", &stamp(None)).await;
+    assert!(
+        matches!(&missing, Err(BantoError::NotFound { resource, id })
+            if resource == "config_draft" && id == TARGET),
+        "{missing:?}"
+    );
+    let (_, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+    let published = f.svc.published(TARGET).await.unwrap();
+    let long = "x".repeat(MAX_CONFIG_COMMENT_CHARS + 1);
+    assert_eq!(
+        validation_field(f.svc.publish(TARGET, &a, "", &stamp(None)).await),
+        "ifDraftRevision"
+    );
+    assert_eq!(
+        validation_field(
+            f.svc
+                .publish(TARGET, &a, &revision, &stamp(Some(&long)))
+                .await
+        ),
+        "comment"
+    );
+    assert_eq!(
+        validation_field(
+            f.svc
+                .revert(TARGET, &a, 0, &published.revision, &stamp(Some(&long)))
+                .await
+        ),
+        "comment"
+    );
+    assert_eq!(
+        validation_field(f.svc.revert(TARGET, &a, 0, "", &stamp(None)).await),
+        "ifPublishedRevision"
+    );
+    assert_eq!(
+        validation_field(f.svc.draft_rebase(TARGET, &a, "", "x").await),
+        "ifRevision"
+    );
+    assert_eq!(
+        validation_field(f.svc.draft_rebase(TARGET, &a, "x", "").await),
+        "ifPublishedRevision"
+    );
+    assert_eq!(f.count("config_history").await, 1);
+
+    // a comment at the limit goes through; a blank one is no comment
+    let at_limit = "あ".repeat(MAX_CONFIG_COMMENT_CHARS);
+    let done = f
+        .svc
+        .publish(TARGET, &a, &revision, &stamp(Some(&at_limit)))
+        .await
+        .unwrap();
+    assert_eq!(done.comment.as_deref(), Some(at_limit.as_str()));
+    let back = f
+        .svc
+        .revert(TARGET, &a, 0, &done.revision, &stamp(Some("   ")))
+        .await
+        .unwrap();
+    assert_eq!(back.comment, None);
+    let entry = f.svc.history_entry(TARGET, 2).await.unwrap().entry;
+    assert_eq!((entry.comment, entry.reverted_to), (None, Some(0)));
+}
+
+#[tokio::test]
+async fn a_rebase_extends_the_lock_and_reports_the_validator() {
+    let targets = ConfigTargetRegistry::empty()
+        .register(
+            ConfigTarget::new(TARGET, json!({"limit": 1}), &[])
+                .unwrap()
+                .with_validator(|value| match value["limit"].as_i64() {
+                    Some(limit) if limit > 100 => Err(vec![FieldError {
+                        field: "limit".to_string(),
+                        message: "too large".to_string(),
+                    }]),
+                    _ => Ok(()),
+                }),
+        )
+        .unwrap();
+    let f = fixture_with(targets).await;
+    let a = alice();
+    let (lease, revision) = start_draft(&f, &a, json!({"limit": 500})).await;
+    f.bump_published().await;
+    f.advance(1_000);
+    let rebased = f
+        .svc
+        .draft_rebase(TARGET, &a, &revision, "moved")
+        .await
+        .unwrap();
+    assert_eq!(rebased.base_version, 1);
+    assert_eq!(rebased.validation[0].field, "limit");
+    assert_eq!(
+        (rebased.lock.lease.as_str(), rebased.lock.expires_at_ms),
+        (lease.as_str(), START_MS + 1_000 + TTL_MS)
+    );
+    assert_eq!(
+        f.state(&a).await.lock.unwrap().expires_at_ms,
+        START_MS + 1_000 + TTL_MS
+    );
+    // after the expiry: no rebase
+    f.advance(TTL_MS);
+    conflict(
+        f.svc
+            .draft_rebase(TARGET, &a, &rebased.revision, "moved")
+            .await,
+        "lock_required",
+    );
 }
