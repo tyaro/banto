@@ -167,7 +167,10 @@
 		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
+	/* The transparent outline is the forced-colors fallback (box-shadow is dropped there). */
 	.box.plain:has(input:focus-visible) {
+		outline: var(--banto-border-width-strong) solid transparent;
+		outline-offset: var(--banto-border-width);
 		box-shadow: var(--banto-focus-ring);
 	}
 
