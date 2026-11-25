@@ -328,11 +328,15 @@ async fn config_lock_release(
     Query(query): Query<LockReleaseQuery>,
 ) -> Result<StatusCode, ApiError> {
     let editor = editor_of(&session)?;
-    state
+    let removed = state
         .service
         .lock_release(&target, &editor, &query.lease)
         .await?;
-    state.notify(config_draft_changed_event(&target));
+    // A stale lease (an old tab's late release) removes nothing: 204 all the
+    // same, but there is nothing to announce.
+    if removed {
+        state.notify(config_draft_changed_event(&target));
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

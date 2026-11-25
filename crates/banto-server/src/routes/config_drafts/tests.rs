@@ -1221,3 +1221,51 @@ async fn a_grant_session_holds_the_lock_as_its_kind() {
         .unwrap();
     assert_eq!(holder, "grant:commissioning");
 }
+
+/// A release that removes nothing (an old tab's late release, after the same
+/// account took the lock again) is still `204`, but the lock stays and no
+/// event is sent.
+#[tokio::test]
+async fn a_stale_lease_release_is_204_without_an_event() {
+    let mut b = bench().await;
+    let alice = b.token("admin-user");
+    let lock_path = format!("{BASE}/lock");
+    let old = b.ok(&alice, "POST", &lock_path, None).await["lease"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let new = b.ok(&alice, "POST", &lock_path, None).await["lease"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(old, new);
+    b.drain_events();
+
+    let (status, ..) = b
+        .call(
+            Some(&alice),
+            "DELETE",
+            &format!("{lock_path}?lease={old}"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(b.drain_events().is_empty());
+    let locks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM config_locks")
+        .fetch_one(b.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(locks, 1);
+
+    // the current lease does remove it, and announces it once
+    let (status, ..) = b
+        .call(
+            Some(&alice),
+            "DELETE",
+            &format!("{lock_path}?lease={new}"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(b.drain_events(), [format!("config-draft:{TARGET}")]);
+}

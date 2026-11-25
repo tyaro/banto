@@ -595,7 +595,7 @@ async fn another_person_cannot_take_write_extend_or_release() {
     assert_eq!(seen.lock.as_ref().unwrap().lease, lease);
     f.advance(1_000);
     conflict(f.svc.lock_extend(TARGET, &b, &lease).await, "lock_required");
-    f.svc.lock_release(TARGET, &b, &lease).await.unwrap();
+    assert!(!f.svc.lock_release(TARGET, &b, &lease).await.unwrap());
 
     // nothing of alice's changed
     let after = f.state(&a).await;
@@ -614,7 +614,7 @@ async fn an_old_tab_cannot_release_or_extend_the_newer_tabs_lock() {
 
     f.advance(1_000);
     // late calls from tab 1
-    f.svc.lock_release(TARGET, &a, &tab1.lease).await.unwrap();
+    assert!(!f.svc.lock_release(TARGET, &a, &tab1.lease).await.unwrap());
     let current = conflict(
         f.svc.lock_extend(TARGET, &a, &tab1.lease).await,
         "lock_required",
@@ -629,7 +629,7 @@ async fn an_old_tab_cannot_release_or_extend_the_newer_tabs_lock() {
     assert_eq!(extended.expires_at_ms, START_MS + 2_000 + TTL_MS);
     assert_eq!(f.state(&a).await.lock.unwrap(), extended);
 
-    f.svc.lock_release(TARGET, &a, &tab2.lease).await.unwrap();
+    assert!(f.svc.lock_release(TARGET, &a, &tab2.lease).await.unwrap());
     assert!(f.state(&a).await.lock.is_none());
     assert_eq!(f.count("config_locks").await, 0);
 }
@@ -950,7 +950,7 @@ async fn unknown_target_is_not_found_everywhere() {
     not_found(f.svc.state("nope", &a).await.map(drop));
     not_found(f.svc.lock_acquire("nope", &a).await.map(drop));
     not_found(f.svc.lock_extend("nope", &a, "x").await.map(drop));
-    not_found(f.svc.lock_release("nope", &a, "x").await);
+    not_found(f.svc.lock_release("nope", &a, "x").await.map(drop));
     not_found(f.svc.lock_force_release("nope", "x").await.map(drop));
     not_found(
         f.svc
