@@ -203,6 +203,17 @@ describe('TouchKeysHost: openOnFocus', () => {
 		expect(document.activeElement).toBe(field('late'));
 		expect(pad()).toBeNull();
 	});
+	it('another input between the tap and the focus (a key, a keyboard-made click) closes the window', async () => {
+		render(HostHarness, { resolve: onFocusFor(['late']) });
+		const reveal = document.getElementById('reveal')!;
+		reveal.addEventListener('click', () => fireEvent.keyDown(reveal, { key: 'Tab' }), {
+			once: true
+		});
+		await fireEvent.click(reveal, { detail: 1 });
+		await tick();
+		expect(document.activeElement).toBe(field('late'));
+		expect(pad()).toBeNull();
+	});
 	it('without the option a field focused after a tap stays closed; focus alone never opens', async () => {
 		render(HostHarness);
 		await fireEvent.click(document.getElementById('reveal')!, { detail: 1 });

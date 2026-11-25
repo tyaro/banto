@@ -316,6 +316,7 @@
 
 	/** Before focus enters a keypad field: keep the OS keyboard away (§7.4). */
 	function onPointerdown(event: Event): void {
+		closeClickWindow();
 		if (inSurface(event.target)) return;
 		const field = fieldOf(event.target);
 		const target = resolveTarget(field, resolve);
@@ -329,6 +330,9 @@
 	 * `openOnFocus`: true from a pointer-made click until the end of its task. The app's click
 	 * handler (and the microtasks it queues, e.g. a Svelte flush) run inside that window, so a
 	 * field it shows and focuses is "the continuation of the tap"; a later focus is not.
+	 * It is an approximation of "same task" (a timer gives no ordering guarantee against other
+	 * task sources), so any other input - a key, a new pointerdown, a keyboard-made click -
+	 * closes it at once.
 	 */
 	let clickWindow = false;
 	let clickWindowTimer: ReturnType<typeof setTimeout> | undefined;
@@ -350,7 +354,8 @@
 
 	function onClick(event: MouseEvent): void {
 		if (inSurface(event.target)) return;
-		// A keyboard-made click (Enter / Space) has detail 0 and never starts the window.
+		// A keyboard-made click (Enter / Space) has detail 0: it never starts the window, and closes one.
+		closeClickWindow();
 		if (event.detail > 0) {
 			clickWindow = true;
 			clearTimeout(clickWindowTimer);
@@ -365,6 +370,7 @@
 
 	/** Capture phase on window: runs before the field's own handlers. */
 	function onKeydownCapture(event: KeyboardEvent): void {
+		closeClickWindow();
 		const isEnter = event.key === 'Enter';
 		if (!session) {
 			if (!isEnter) return;
