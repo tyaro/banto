@@ -19,7 +19,7 @@
  */
 
 /** `src` の `start` から、括弧の深さ 0 の `,` か閉じ括弧までの式を返す（文字列リテラル対応）。 */
-function readArgument(src, start) {
+export function readArgument(src, start) {
 	let depth = 0;
 	let i = start;
 	let inString = false;

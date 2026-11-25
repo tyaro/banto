@@ -13,6 +13,10 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 use tower::ServiceExt;
 
+// [scaffold:config-drafts] begin
+// Issue #938: `/api/config/*` as this app mounts it, on the real migration.
+mod config_drafts;
+// [scaffold:config-drafts] end
 // Issue #793: a write survives its client disconnecting (real socket).
 mod detach;
 

@@ -553,6 +553,9 @@ async fn app_layer_crud_round_trips_on_postgres() {
 
     concurrent_admin_removals_on_postgres(&url).await;
     ui_settings_conditional_writes_on_postgres(&url).await;
+    // [scaffold:config-drafts] begin
+    config_drafts_on_postgres(&db).await;
+    // [scaffold:config-drafts] end
 
     // --- backup: SQLite-only, so every op must Err (never panic) on Postgres --
     // V2 owner decision D3 (PR4): backup/restore is a SQLite-only feature.
@@ -1370,6 +1373,107 @@ async fn ui_settings_conditional_writes_on_postgres(url: &str) {
     pool.close().await;
     second.as_postgres().unwrap().close().await;
 }
+// [scaffold:config-drafts] begin
+
+/// Issue #938 (config-draft-publish-design §7, S4) on the REAL PostgreSQL
+/// migration (`migrations-postgres/0016_config_drafts.sql`): the wiring's
+/// `open_config_drafts`, then one target through seed -> lock -> draft ->
+/// publish -> revert. The rules themselves (conflicts, locks, two
+/// connections) run on a copy of these tables in `banto-admin-services`
+/// (`pg_config_drafts`); this is what shows the app's own migration is the
+/// schema the service writes. Leaves no row behind.
+async fn config_drafts_on_postgres(db: &banto_storage::Db) {
+    use admin_template_core::config_drafts::{
+        ConfigDraftsService, ConfigEditor, ConfigTarget, ConfigTargetRegistry, PublishStamp,
+        CONFIG_DRAFT_ABSENT_REVISION,
+    };
+    use serde_json::json;
+
+    // What the servers call at startup: the template registers no target.
+    let wired = admin_template_core::open_config_drafts(db)
+        .await
+        .expect("open_config_drafts on the migrated schema");
+    assert!(wired.list().await.expect("list").is_empty());
+
+    const TARGET: &str = "pgsmoke.config";
+    let targets = ConfigTargetRegistry::empty()
+        .register(ConfigTarget::new(TARGET, json!({"limit": 1}), &[]).expect("target"))
+        .expect("register");
+    let service = ConfigDraftsService::new(db.clone(), targets);
+    service.ensure_targets().await.expect("seed the target");
+    service
+        .ensure_targets()
+        .await
+        .expect("seeding twice is fine");
+
+    let editor = ConfigEditor {
+        holder: "acct:1".to_string(),
+        name: "pgsmoke".to_string(),
+    };
+    let stamp = PublishStamp {
+        actor_username: "pgsmoke",
+        actor_id: Some(1),
+        actor_kind: "account",
+        origin: "rest",
+        comment: Some("pg smoke"),
+    };
+    let state = service.state(TARGET, &editor).await.expect("state");
+    assert_eq!(state.published.version, 0);
+    assert!(state.draft.is_none() && state.lock.is_none());
+
+    service.lock_acquire(TARGET, &editor).await.expect("lock");
+    let saved = service
+        .draft_put(
+            TARGET,
+            &editor,
+            &json!({"limit": 2}),
+            CONFIG_DRAFT_ABSENT_REVISION,
+            Some(&state.published.revision),
+        )
+        .await
+        .expect("save the draft");
+    assert!(saved.validation.is_empty());
+    let published = service
+        .publish(TARGET, &editor, &saved.revision, &stamp)
+        .await
+        .expect("publish");
+    assert_eq!((published.version, published.previous_version), (1, 0));
+    let reverted = service
+        .revert(TARGET, &editor, 0, &published.revision, &stamp)
+        .await
+        .expect("revert");
+    assert_eq!((reverted.version, reverted.reverted_to), (2, Some(0)));
+    assert_eq!(
+        service.published(TARGET).await.expect("published").value,
+        json!({"limit": 1})
+    );
+    let history = service.history(TARGET, None, 10).await.expect("history");
+    assert_eq!(
+        history
+            .iter()
+            .map(|entry| (entry.version, entry.kind.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(2, "revert"), (1, "publish"), (0, "initial")]
+    );
+    assert_eq!(history[0].actor_id, Some(1));
+    let listed = service.list().await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].version, 2);
+
+    let pool = db.as_postgres().unwrap();
+    for table in [
+        "config_locks",
+        "config_drafts",
+        "config_history",
+        "config_published",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
+            .execute(pool)
+            .await
+            .expect("clean up");
+    }
+}
+// [scaffold:config-drafts] end
 
 // Issue #207 / roadmap M10: keep this in the existing smoke test so no other
 // test resets the shared schema while these concurrent transactions are live.

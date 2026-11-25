@@ -244,6 +244,8 @@ fn config_drafts_api_is_public(
     let _: serde_json::Value = unlock_audit_detail(removed);
     let _: Option<serde_json::Value> = discard_audit_detail(discarded);
     let _: Option<i64> = discarded.discarded_base_version;
+    // The page size both paths use when `limit` is left out.
+    let _: u32 = banto_server::routes::DEFAULT_CONFIG_HISTORY_PAGE;
 
     config_drafts_router(service, access, audit, auth, events)
 }

@@ -39,7 +39,7 @@
 //!
 //! Tables (design §4.5; owned by the app, conventions §11): `config_published`,
 //! `config_history`, `config_drafts`, `config_locks`. The app's migration is
-//! added with the wiring (design §7, S4); the tests here re-state the DDL.
+//! `0016_config_drafts.sql` (both dialects); the tests here re-state the DDL.
 //!
 //! **Every write first fixes the target's published row** (design §4.6):
 //! `BEGIN IMMEDIATE` on SQLite, `SELECT ... FOR UPDATE` on PostgreSQL. After

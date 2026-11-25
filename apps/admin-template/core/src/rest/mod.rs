@@ -54,6 +54,22 @@
 //! | GET    | `/api/attachments/{id}/thumbnail` | -   | `image/jpeg`, 404 if none (any role) |
 //! | POST   | `/api/attachments?resource=&resourceId=&fileName=` | raw bytes (`application/octet-stream`) | `AttachmentMeta` (editor+) |
 //! | DELETE | `/api/attachments/{id}` | -              | 204 (editor+)           |
+// [scaffold:config-drafts] begin (Route table doc rows)
+//! | GET    | `/api/config`        | -              | `ConfigTargetSummary[]` (admin; no values, #938) |
+//! | GET    | `/api/config/{target}` | -            | `ConfigState` (`{target,published,draft,lock,lockIsMine}`, admin) |
+//! | GET    | `/api/config/{target}/diff?toVersion=` | - | `ConfigDiff` (admin; published -> draft, or -> that version) |
+//! | GET    | `/api/config/{target}/history?before=&limit=` | - | `ConfigHistoryEntry[]` (admin; newest first, no values) |
+//! | GET    | `/api/config/{target}/history/{version}` | - | `ConfigHistoryDetail` (admin) |
+//! | POST   | `/api/config/{target}/lock` | -       | `ConfigLock` (admin; a new lease) |
+//! | PUT    | `/api/config/{target}/lock` | `{lease}` | `ConfigLock` (admin; expired -> 409) |
+//! | DELETE | `/api/config/{target}/lock?lease=` | - | 204 (admin) |
+//! | PUT    | `/api/config/{target}/draft` | `{value,ifRevision,ifPublishedRevision?}` | `ConfigDraftSaved` (admin; not audited) |
+//! | POST   | `/api/config/{target}/draft/rebase` | `{ifRevision,ifPublishedRevision}` | `ConfigDraftSaved` (admin; not audited) |
+//! | DELETE | `/api/config/{target}/draft?ifRevision=` | - | `{revision: "0"}` (admin) |
+//! | POST   | `/api/config/{target}/publish` | `{ifDraftRevision,comment?}` | `PublishOutcome` (admin) |
+//! | POST   | `/api/config/{target}/revert` | `{toVersion,ifPublishedRevision,comment?}` | `PublishOutcome` (admin) |
+//! | POST   | `/api/config/{target}/unlock` | `{ifLease}` | 204 (admin) |
+// [scaffold:config-drafts] end
 //!
 //! ## Where each router lives (theme C PR-C4, docs/template-scope.md §7 移行順 ④)
 //!
@@ -93,6 +109,21 @@
 //! they just cannot touch anyone else's (there is no way to name another
 //! owner over this wire - the owner always comes from the session the
 //! caller's own bearer token resolved to, never a request parameter).
+// [scaffold:config-drafts] begin (doc)
+//!
+//! `/api/config/*` (Issue #938, `docs/design/config-draft-publish-design.md`
+//! §4.9-§4.11): edit a draft of a config target, publish it, go back to an
+//! earlier version. The router is `banto_server::routes::config_drafts_router`
+//! and is NOT assembled by [`api_router`]: [`config_router`] mounts it, and
+//! the two servers merge that next to `api_router` (like
+//! [`resources_router`]), so the option comes off without touching
+//! [`Services`]. Its four gates are [`config_drafts_access`] - the ONE value
+//! both the router and `src-tauri`'s `config_*` commands judge by. The
+//! template registers no target (`crate::config_targets`), so the list is
+//! empty and every `{target}` is `404` until a derived app registers one.
+//! Audited (`resource: "config"`): `publish`, `revert`, `unlock` and a
+//! `discard` that removed a draft; saving a draft and the lock calls are not.
+// [scaffold:config-drafts] end
 //!
 //! `/api/auth/status` and `/api/auth/grant/{kind}` are deliberately NOT
 //! behind `require_auth` - the login page needs `status` before any session
@@ -238,6 +269,10 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+// [scaffold:config-drafts] begin
+use banto_admin_services::config_drafts::ConfigDraftsService;
+use banto_server::routes::{config_drafts_router, ConfigDraftsAccess, ConfigDraftsGate};
+// [scaffold:config-drafts] end
 
 use crate::audit::AuditLogService;
 use crate::backup::BackupService;
@@ -450,3 +485,46 @@ pub fn resources_router(
         // [banto:add-resource:rest-routers]
         .layer(middleware::from_fn(require_banto_client_header))
 }
+// [scaffold:config-drafts] begin
+
+/// Who may do what on `/api/config/*` (design §4.9): the ONE value both
+/// paths judge by - [`config_router`] hands it to the REST router, and
+/// `src-tauri`'s `require_config` applies the same gates to the `config_*`
+/// commands (conventions §1). All four duties are written out (never
+/// `ConfigDraftsAccess::default()`): `verify:architecture` rule 8 reads the
+/// role floors and the permissions of the two paths from this literal.
+///
+/// `read` is also a condition of the other three. A derived app that
+/// separates "who edits" from "who publishes" registers permissions
+/// (`crate::permission_catalog`) and writes e.g.
+/// `edit: ConfigDraftsGate::Permission(perms::config_edit())`; rule 8 then
+/// wants the pairs in `PERMISSION_PAIRS` (and the `role` of the `DUAL_PATH` /
+/// `ROLE_READ` rows to match the role gates).
+pub fn config_drafts_access() -> ConfigDraftsAccess {
+    ConfigDraftsAccess {
+        read: ConfigDraftsGate::Role(Role::Admin),
+        edit: ConfigDraftsGate::Role(Role::Admin),
+        publish: ConfigDraftsGate::Role(Role::Admin),
+        unlock: ConfigDraftsGate::Role(Role::Admin),
+    }
+}
+
+/// `/api/config/*` (Issue #938, design §4.11), behind the same CSRF header
+/// check as [`api_router`]. Kept apart from `api_router` (like
+/// [`resources_router`]) so the option does not change [`Services`] and its
+/// call sites: the two servers (`bin/banto-serve.rs`, `src-tauri`'s
+/// `start_embedded_server`) merge this next to `api_router`. `service` is the
+/// one `crate::open_config_drafts` built at startup; `events` is the sender
+/// `/api/events` is fed from. The layers inside
+/// (`require_auth` -> the read gate -> the duty's gate) are
+/// `config_drafts_router`'s own.
+pub fn config_router(
+    service: ConfigDraftsService,
+    audit: AuditLogService,
+    auth: AuthState,
+    events: broadcast::Sender<ServerEvent>,
+) -> Router {
+    config_drafts_router(service, config_drafts_access(), audit, auth, events)
+        .layer(middleware::from_fn(require_banto_client_header))
+}
+// [scaffold:config-drafts] end

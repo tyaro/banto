@@ -814,6 +814,10 @@ ordinary sessions.
 - **The app owns the table definitions.** `banto-attachments` has no migrations
   of its own and keeps its in-test `CREATE TABLE` in sync with
   `0006_attachments.sql` ("MUST be kept in sync").
+  The four config-draft tables (`0016_config_drafts.sql`, Issue #938) follow the
+  same rule: the tests of `banto-admin-services` and `banto-server` re-state
+  them. There are three copies (both dialects), so `verify:architecture`'s
+  `config-drafts-ddl-copies` compares them with the real migrations.
 - Restore validation (`REQUIRED_TABLES`) checks **only table existence** for the
   Banto-owned `settings`, `users`, `audit_log`, and `ui_settings` tables, not columns (a coarse
   but cheap "is this a Banto DB" judgment). Domain tables such as `items`, which

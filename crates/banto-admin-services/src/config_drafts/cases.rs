@@ -945,8 +945,9 @@ pub(super) async fn published_at_is_the_write_time(bench: &Bench) {
 // --- the runs ---
 
 /// The four tables, PostgreSQL form (design §4.5). MUST be kept in sync with
-/// the app's `migrations-postgres/0016_config_drafts.sql` once the wiring
-/// adds it (design §7, S4), like `tests::DDL` for SQLite.
+/// the app's `migrations-postgres/0016_config_drafts.sql`, like `tests::DDL`
+/// for SQLite (`verify:architecture`'s `config-drafts-ddl-copies` compares
+/// them).
 #[cfg(feature = "postgres")]
 const PG_DDL: [&str; 4] = [
     "CREATE TABLE config_published (

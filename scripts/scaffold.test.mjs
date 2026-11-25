@@ -51,12 +51,15 @@ test('--interactive --dry-run はプリセット選択（1=minimal）を pipe st
 });
 
 test('--interactive --dry-run は custom（5）で資産ごとの残す/削除を pipe stdin から読む', () => {
-	// charts/dock は残す(Y)、それ以外（glass/commandPalette/attachments/report/tree）は削除する(n)。
-	// custom で聞かれるのは**オプション資産7種だけ**（display の items/画面削除は
+	// charts/dock は残す(Y)、それ以外（glass/commandPalette/attachments/report/tree/configDrafts）は
+	// 削除する(n)。custom で聞かれるのは**オプション資産8種だけ**（display の items/画面削除は
 	// 一括適用なので個別トグルの対象外 — scaffold.mjs の `CUSTOM_TOGGLEABLE`）。
-	const res = run(['--interactive', '--dry-run'], '5\nY\nY\nn\nn\nn\nn\nn\n');
+	const res = run(['--interactive', '--dry-run'], '5\nY\nY\nn\nn\nn\nn\nn\nn\n');
 	assert.equal(res.status, 0, `非0終了:\n${res.stdout}\n${res.stderr}`);
-	assert.match(res.stdout, /削除する資産: glass, commandPalette, attachments, report, tree/);
+	assert.match(
+		res.stdout,
+		/削除する資産: glass, commandPalette, attachments, report, tree, configDrafts/
+	);
 });
 
 test('--interactive --dry-run は display（4）を選べる', () => {
@@ -81,10 +84,10 @@ test('--interactive は確認で n を選ぶと変更せずに正常終了する
 test('--preset display --dry-run --strict が全アンカー一致で通り、削除と追加の両方を計画する', () => {
 	const res = run(['--preset', 'display', '--dry-run', '--strict'], '');
 	assert.equal(res.status, 0, `非0終了:\n${res.stdout}\n${res.stderr}`);
-	// minimal の7資産 + display 固有の3 remover、そして唯一の「足す」工程。
+	// minimal の8資産 + display 固有の3 remover、そして唯一の「足す」工程。
 	assert.match(
 		res.stdout,
-		/削除する資産: charts, dock, glass, commandPalette, attachments, report, tree, items, adminPages, dashboard/
+		/削除する資産: charts, dock, glass, commandPalette, attachments, report, tree, configDrafts, items, adminPages, dashboard/
 	);
 	assert.match(res.stdout, /足す工程: displayDefaults/);
 	// display の「足す」側の要（plan §3.2）。どれが欠けても表示専用アプリとして

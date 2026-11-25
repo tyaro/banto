@@ -46,3 +46,35 @@ pub use banto_admin_services::{
 pub fn permission_catalog() -> users::PermissionCatalog {
     users::PermissionCatalog::empty()
 }
+// [scaffold:config-drafts] begin
+// Config drafts (Issue #938, docs/design/config-draft-publish-design.md):
+// edit a draft, publish it, go back to an earlier version. Optional - what
+// to remove with it is in the design's §10 (`pnpm scaffold --preset
+// minimal|display` does it).
+pub use banto_admin_services::config_drafts;
+
+/// The config targets this app registers (design §4.3): the groups of
+/// settings that are edited as a draft and then published. The template
+/// registers none (like [`permission_catalog`]), so `GET /api/config`
+/// answers `[]` and every `/api/config/{target}` is `404`. A derived app
+/// registers its own here, e.g.
+/// `ConfigTargetRegistry::empty().register(ConfigTarget::new("plc.line1", json!({"limit": 1}), &[])?)?`,
+/// and reads the published value with
+/// `ConfigDraftsService::published_as::<T>("plc.line1")`.
+pub fn config_targets() -> config_drafts::ConfigTargetRegistry {
+    config_drafts::ConfigTargetRegistry::empty()
+}
+
+/// The app's one `ConfigDraftsService`, with every registered target seeded
+/// (`ensure_targets`, design §4.3). Both servers (`banto-serve` and the
+/// desktop app) call this once at startup, AFTER the migrations, and hand
+/// clones to the REST router ([`rest::config_router`]) and the Tauri
+/// commands, so both paths write through the same registry (conventions §1).
+pub async fn open_config_drafts(
+    db: &banto_storage::Db,
+) -> Result<config_drafts::ConfigDraftsService, banto_core::BantoError> {
+    let service = config_drafts::ConfigDraftsService::new(db.clone(), config_targets());
+    service.ensure_targets().await?;
+    Ok(service)
+}
+// [scaffold:config-drafts] end

@@ -5,6 +5,10 @@
 
 use super::*;
 
+// [scaffold:config-drafts] begin
+// Issue #938: the `config_*` commands (`src/tests/config_drafts.rs`).
+mod config_drafts;
+// [scaffold:config-drafts] end
 // Issue #793: `server_apply` with writes of the stopped listener still
 // running (`src/tests/server_writes.rs`).
 mod server_writes;
@@ -44,6 +48,39 @@ macro_rules! wired_users {
         )
     };
 }
+// [scaffold:config-drafts] begin
+
+/// The one target of a test state's `config_drafts` (Issue #938).
+const CONFIG_TEST_TARGET: &str = "plc.line1";
+
+/// The `ConfigDraftsService` of a test state: built and seeded like
+/// `admin_template_core::open_config_drafts` does at startup, but with ONE
+/// registered target ([`CONFIG_TEST_TARGET`], with a secret path). The
+/// template itself registers none (`admin_template_core::config_targets`),
+/// and a command cannot be exercised without a target; this stands for what
+/// a derived app registers. A macro, like [`wired_users`]: this crate cannot
+/// name the pool's type.
+macro_rules! config_drafts_for_tests {
+    ($pool:expr) => {{
+        use admin_template_core::config_drafts::{ConfigTarget, ConfigTargetRegistry};
+        let target = ConfigTarget::new(
+            CONFIG_TEST_TARGET,
+            serde_json::json!({"limit": 1, "secret": "s0"}),
+            &["/secret"],
+        )
+        .expect("the test target");
+        let targets = ConfigTargetRegistry::empty()
+            .register(target)
+            .expect("register the test target");
+        let service = ConfigDraftsService::new($pool.clone(), targets);
+        service
+            .ensure_targets()
+            .await
+            .expect("seed the test target");
+        service
+    }};
+}
+// [scaffold:config-drafts] end
 
 /// The startup check of `run()` on a new database, then the database put in
 /// the LOGIN-REQUIRED mode with no account yet - the baseline most tests
@@ -129,6 +166,9 @@ async fn app_state() -> AppState {
         items: ItemsService::new(pool.clone()).with_events(events.clone()),
         // [scaffold:items] end
         resources: AppResources::new(&pool, &events),
+        // [scaffold:config-drafts] begin
+        config_drafts: config_drafts_for_tests!(pool),
+        // [scaffold:config-drafts] end
         auth: Mutex::new(AuthSlot::default()),
         firewall_change_running: std::sync::atomic::AtomicBool::new(false),
         auth_config_lock: AsyncMutex::new(()),
@@ -193,6 +233,9 @@ async fn app_state_in(dir: &tempfile::TempDir) -> AppState {
         items: ItemsService::new(pool.clone()).with_events(events.clone()),
         // [scaffold:items] end
         resources: AppResources::new(&pool, &events),
+        // [scaffold:config-drafts] begin
+        config_drafts: config_drafts_for_tests!(pool),
+        // [scaffold:config-drafts] end
         auth: Mutex::new(AuthSlot::default()),
         firewall_change_running: std::sync::atomic::AtomicBool::new(false),
         auth_config_lock: AsyncMutex::new(()),

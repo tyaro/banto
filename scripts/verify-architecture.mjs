@@ -27,7 +27,10 @@
  *   8. §1 REST/Tauri 両経路対称 … mutating 操作が両経路に存在するかを
  *      DUAL_PATH マニフェスト + 完全性チェックで担保（片側だけ足すのを捕捉）。
  *      maintainability-review-2026-07.md CR-1。ロール床（CR-6）と、ユーザーへ個別に
- *      付ける権限のガード（PERMISSION_PAIRS、Issue #697）も両経路で照合する
+ *      付ける権限のガード（PERMISSION_PAIRS、Issue #697）も両経路で照合する。
+ *      設定の下書き（Issue #938）の口とコマンドは、床と権限をアプリの配線の
+ *      `ConfigDraftsAccess { .. }` から読み、対の両端が同じ役目であることも見る
+ *      （scripts/lib/config-drafts-gates.mjs、テストあり）
  *   9. §6 セキュリティ不変条件（grep 可能なもの、CR-2）:
  *      NewAttachment に mime フィールド無し / settings_get·set は Admin 対称
  *  10. §13 app 層コンポーネントに生の日本語リテラルが無い
@@ -35,7 +38,9 @@
  *        コメント外の語構成日本語（ひらがな/カタカナ/CJK）が無いこと
  *  11. §11 マイグレーション方言のファイル名対称 … migrations-{sqlite,postgres}/
  *      のファイル名/連番が1対1（片系統だけ足すと該当 backend で静かに欠落）。
- *      中身の型差は §11 の意図的分岐でレビュー担保。ADR-0008
+ *      中身の型差は §11 の意図的分岐でレビュー担保。ADR-0008。
+ *      11b: クレートの試験が持つ設定の下書きの表の写し（3 つ）が、
+ *      `0016_config_drafts.sql`（両方言）と一致する（Issue #938）
  *  12. §6 CSP 2定義のディレクティブ単位一致 … security_headers.rs の const と
  *      tauri.conf.json の app.security.csp が connect-src の IPC 差分を除き一致。
  *      ADR-0008
@@ -73,6 +78,7 @@ import {
 	collectTauriPermissionGuards,
 	findSseHandlersWithoutPermission
 } from './lib/permission-guards.mjs';
+import { collectConfigDraftsGates } from './lib/config-drafts-gates.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -430,6 +436,21 @@ const isAllowedPackageImport = (spec) =>
 		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/restore', role: 'Admin' },
 		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/{fileName}/restore', role: 'Admin' },
 		{ tauri: 'backups_cancel_restore', rest: 'DELETE /api/backups/pending-restore', role: 'Admin' },
+		// [scaffold:config-drafts] begin
+		// 設定の下書き → 反映 → 元に戻す（Issue #938）の書き込み 9 つ。`role` は、アプリの配線の
+		// `ConfigDraftsAccess { .. }`（rest/mod.rs の `config_drafts_access`）から読んだ床と照合する
+		// （下の (e)。scripts/lib/config-drafts-gates.mjs）。ガードを権限に差し替えたら、
+		// `PERMISSION_PAIRS` にも対を足す。
+		{ tauri: 'config_lock_acquire', rest: 'POST /api/config/{target}/lock', role: 'Admin' },
+		{ tauri: 'config_lock_extend', rest: 'PUT /api/config/{target}/lock', role: 'Admin' },
+		{ tauri: 'config_lock_release', rest: 'DELETE /api/config/{target}/lock', role: 'Admin' },
+		{ tauri: 'config_draft_put', rest: 'PUT /api/config/{target}/draft', role: 'Admin' },
+		{ tauri: 'config_draft_rebase', rest: 'POST /api/config/{target}/draft/rebase', role: 'Admin' },
+		{ tauri: 'config_draft_discard', rest: 'DELETE /api/config/{target}/draft', role: 'Admin' },
+		{ tauri: 'config_publish', rest: 'POST /api/config/{target}/publish', role: 'Admin' },
+		{ tauri: 'config_revert', rest: 'POST /api/config/{target}/revert', role: 'Admin' },
+		{ tauri: 'config_unlock', rest: 'POST /api/config/{target}/unlock', role: 'Admin' },
+		// [scaffold:config-drafts] end
 		{ tauri: 'attachments_upload', rest: 'POST /api/attachments', role: 'Editor' },
 		{ tauri: 'attachments_delete', rest: 'DELETE /api/attachments/{id}', role: 'Editor' }
 	];
@@ -441,6 +462,18 @@ const isAllowedPackageImport = (spec) =>
 		{ tauri: 'audit_config_get', rest: 'GET /api/audit-log/config', role: 'Admin' },
 		{ tauri: 'audit_log_list', rest: 'POST /api/audit-log/list', role: 'Admin' },
 		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' },
+		// [scaffold:config-drafts] begin
+		// Issue #938: 設定の下書きの読み取り 5 つ（「読む」のガード。床は DUAL_PATH の 9 つと同じ読み方）。
+		{ tauri: 'config_list', rest: 'GET /api/config', role: 'Admin' },
+		{ tauri: 'config_get', rest: 'GET /api/config/{target}', role: 'Admin' },
+		{ tauri: 'config_diff', rest: 'GET /api/config/{target}/diff', role: 'Admin' },
+		{ tauri: 'config_history_list', rest: 'GET /api/config/{target}/history', role: 'Admin' },
+		{
+			tauri: 'config_history_get',
+			rest: 'GET /api/config/{target}/history/{version}',
+			role: 'Admin'
+		},
+		// [scaffold:config-drafts] end
 		// Issue #697: the app's permission catalog (admin only, both paths).
 		{ tauri: 'permissions_catalog', rest: 'GET /api/permissions', role: 'Admin' }
 	];
@@ -520,6 +553,13 @@ const isAllowedPackageImport = (spec) =>
 		'system_info',
 		'settings_get',
 		'ui_settings_get',
+		// [scaffold:config-drafts] begin
+		'config_list',
+		'config_get',
+		'config_diff',
+		'config_history_list',
+		'config_history_get',
+		// [scaffold:config-drafts] end
 		'users_list',
 		// Issue #697: the permission catalog (admin; REST twin in ROLE_READ).
 		'permissions_catalog',
@@ -538,6 +578,13 @@ const isAllowedPackageImport = (spec) =>
 		'GET /api/users',
 		'GET /api/permissions',
 		'GET /api/ui-settings/{key}',
+		// [scaffold:config-drafts] begin
+		'GET /api/config',
+		'GET /api/config/{target}',
+		'GET /api/config/{target}/diff',
+		'GET /api/config/{target}/history',
+		'GET /api/config/{target}/history/{version}',
+		// [scaffold:config-drafts] end
 		'GET /api/audit-log/config',
 		'GET /api/system/info',
 		'GET /api/backups',
@@ -625,6 +672,19 @@ const isAllowedPackageImport = (spec) =>
 			);
 	}
 
+	// 設定の下書き（Issue #938）のガード: (e) のロールの床と (f) の権限のガードの両方が使う。
+	// 配線していないアプリ（scaffold の minimal・display）では全部が空になる。
+	const configRouterFile = 'crates/banto-server/src/routes/config_drafts.rs';
+	const configGates = collectConfigDraftsGates({
+		appSources: [...walk('apps/admin-template/core/src/rest', ['.rs'])]
+			.filter((file) => !/\/tests(?:\.rs$|\/)/.test(file))
+			.map((file) => read(file)),
+		routerSrc: fs.existsSync(path.join(repoRoot, configRouterFile)) ? read(configRouterFile) : '',
+		libSrc: fs.existsSync(path.join(repoRoot, tauriLib)) ? read(tauriLib) : '',
+		pairs: [...DUAL_PATH, ...ROLE_READ],
+		routes: restRoutes
+	});
+
 	// (e) ロール床の対称（CR-6, 2026-07-22 / maintainability-review CR-6）。
 	// rule 8 の (a)〜(d) は「両経路に在るか」までで、**同じロール床か**は見ない
 	// （＝ `audit_config_get` の Tauri=Viewer / REST=Admin 非対称を素通しした）。
@@ -669,6 +729,14 @@ const isAllowedPackageImport = (spec) =>
 			}
 		}
 
+		// 設定の下書き（Issue #938）: `/api/config/*` の床は `config_drafts_router` の本体に無く、
+		// アプリの配線の `ConfigDraftsAccess { .. }` で決まる（上の読み方だと `require_auth` だけ＝
+		// Viewer と読んでしまう）。口とコマンドの役目を読み、リテラルのガードから床を上書きする。
+		// 対の両端が同じ役目であることもここで見る（判定は scripts/lib/config-drafts-gates.mjs）。
+		for (const [route, role] of configGates.restRoles) restRouteRole[route] = role;
+		for (const [fn, role] of configGates.tauriRoles) tauriRoles[fn] = role;
+		for (const problem of configGates.problems) fail(rule, tauriLib, problem);
+
 		// `require_auth` のみ（RoleGuard 無し）は最下位ロール = Viewer 床と同値。
 		const normRole = (r) => (r === 'Auth' ? 'Viewer' : r);
 		const roleChecks = [...DUAL_PATH.filter((d) => d.role), ...ROLE_READ];
@@ -702,6 +770,10 @@ const isAllowedPackageImport = (spec) =>
 					`SSE の \`${route}\`（${handler}）は権限の層の内側で sse_response を呼ぶのに SseContext::require_permission / reauthorize_with を呼んでいない（開いた後に権限が外れても配信が続く。docs/recipes/app-sse-stream.md、§4.3.1）`
 				);
 		}
+		// 設定の下書きのガードを権限にしたアプリ: 口とコマンドの権限を、リテラルから足す。
+		for (const [route, permission] of configGates.restPermissions)
+			restGuards.set(route, permission);
+		for (const [fn, permission] of configGates.tauriPermissions) tauriGuards.set(fn, permission);
 		for (const problem of checkPermissionGuards({
 			tauriGuards,
 			restGuards,
@@ -904,6 +976,58 @@ const isAllowedPackageImport = (spec) =>
 				`方言2系統のマイグレーション ${sq.length} 本がファイル名一致（同名ペア内の型差は §11 の意図的分岐でレビュー担保。本検査はファイル名/連番の対称のみ）`
 			);
 	}
+}
+
+// --- rule 11b: 設定の下書きの表の写し（conventions §11、Issue #938） ---------------
+// 表はアプリが持つ（`0016_config_drafts.sql`、両方言）。クレートの試験は migration を
+// 持たないので、同じ `CREATE TABLE` を写して持つ（`banto-attachments` の「MUST be kept in
+// sync」と同じ流儀）。写しは 3 つあり、手で揃えると片方だけ変えても試験は通ってしまう
+// （写しに対して通るだけ）ので、ここで本物と突き合わせる。比べるのは `config_*` の 4 表の
+// 本文（コメントと空白は無視）。migration かクレートが無いコピー（scaffold の minimal・
+// display、クレートを git 依存にした派生アプリ）では飛ばす。
+{
+	const rule = 'config-drafts-ddl-copies';
+	const base = 'apps/admin-template/core';
+	const name = '0016_config_drafts.sql';
+	const copies = [
+		['migrations-sqlite', 'crates/banto-admin-services/src/config_drafts/tests.rs'],
+		['migrations-sqlite', 'crates/banto-server/src/routes/config_drafts/tests.rs'],
+		['migrations-postgres', 'crates/banto-admin-services/src/config_drafts/cases.rs']
+	];
+	const exists = (rel) => fs.existsSync(path.join(repoRoot, rel));
+	const tables = (src) => {
+		const out = new Map();
+		for (const m of src
+			.replace(/--[^\n]*/g, '')
+			.matchAll(/CREATE TABLE (config_\w+) \(([\s\S]*?)\n[\t ]*\)/g))
+			out.set(m[1], m[2].replace(/\s+/g, ' ').trim());
+		return out;
+	};
+	let compared = 0;
+	for (const [dialect, copy] of copies) {
+		const migration = `${base}/${dialect}/${name}`;
+		if (!exists(migration) || !exists(copy)) continue;
+		compared += 1;
+		const real = tables(read(migration));
+		const copied = tables(read(copy));
+		if (real.size !== 4)
+			fail(rule, migration, `config_* の表が 4 つではない（${real.size}）— 本検査を更新`);
+		for (const [table, body] of real) {
+			if (!copied.has(table))
+				fail(rule, copy, `表 \`${table}\` の写しが無い（${migration} と揃える、§11）`);
+			else if (copied.get(table) !== body)
+				fail(
+					rule,
+					copy,
+					`表 \`${table}\` の写しが ${migration} と違う（列・型・既定値を揃える、§11）`
+				);
+		}
+		for (const table of copied.keys())
+			if (!real.has(table)) fail(rule, copy, `表 \`${table}\` が ${migration} に無い（§11）`);
+	}
+	if (compared === 0) skip(rule, '設定の下書きの migration か、写しを持つクレートが無い');
+	else if (!results.some((r) => r.includes(`[${rule}]`)))
+		pass(rule, `設定の下書きの表の写し ${compared} つが migration（両方言）と一致`);
 }
 
 // --- rule 12: CSP 2定義のディレクティブ単位一致（conventions §6、ADR-0008） ------

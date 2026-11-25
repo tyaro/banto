@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use super::*;
 
 /// The four tables, SQLite form (design §4.5). MUST be kept in sync with the
-/// app's `migrations-sqlite/0016_config_drafts.sql` once the wiring adds it
-/// (design §7, S4).
+/// app's `migrations-sqlite/0016_config_drafts.sql` (`verify:architecture`'s
+/// `config-drafts-ddl-copies` compares them).
 pub(super) const DDL: [&str; 4] = [
     "CREATE TABLE config_published (
         target       TEXT PRIMARY KEY,

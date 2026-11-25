@@ -47,7 +47,12 @@
 //! ## Both paths (conventions §1)
 //!
 //! The app that mounts this router adds the Tauri twins, the route table and
-//! the `verify:architecture` rule 8 entries (design §7, S4). The twins call
+//! the `verify:architecture` rule 8 entries (design §7, S4; the template's are
+//! `admin_template_core::rest::config_router` and `src-tauri`'s `config_*`
+//! commands). Rule 8 reads each route's duty from the four `let read` / `edit`
+//! / `publish` / `unlock` routers of [`config_drafts_router`] below, and the
+//! gates from the app's `ConfigDraftsAccess { .. }` literal - keep those
+//! names when editing. The twins call
 //! the same service methods and the same detail / event functions as the
 //! handlers here, so the two paths cannot record different rows.
 //!
@@ -72,8 +77,9 @@ const RESOURCE: &str = "config";
 
 /// How many history entries `GET /api/config/{target}/history` answers with
 /// when `limit` is left out (the service caps a larger `limit` at
-/// `MAX_CONFIG_HISTORY_PAGE`).
-const DEFAULT_HISTORY_PAGE: u32 = 50;
+/// `MAX_CONFIG_HISTORY_PAGE`). Public so the Tauri twin (`config_history_list`)
+/// uses the same number.
+pub const DEFAULT_CONFIG_HISTORY_PAGE: u32 = 50;
 
 /// What one duty asks of the session (design §4.9): a role floor
 /// ([`RoleGuard`]) or a per-user permission ([`PermissionGuard`], Issue
@@ -260,7 +266,7 @@ async fn config_history_list(
     Path(target): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<Vec<ConfigHistoryEntry>>, ApiError> {
-    let limit = query.limit.unwrap_or(DEFAULT_HISTORY_PAGE);
+    let limit = query.limit.unwrap_or(DEFAULT_CONFIG_HISTORY_PAGE);
     Ok(Json(
         state.service.history(&target, query.before, limit).await?,
     ))

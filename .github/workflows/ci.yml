@@ -229,7 +229,7 @@ jobs:
       # 誤検知が起きやすいので、判定の関数のテストも同じ場所で回す。
       - name: Verify architecture invariants
         run: |
-          node --test scripts/raw-dimensions.test.mjs scripts/permission-guards.test.mjs
+          node --test scripts/raw-dimensions.test.mjs scripts/permission-guards.test.mjs scripts/config-drafts-gates.test.mjs
           pnpm verify:architecture
 
       # リリース済み migration は追記のみ（#312 の P1 の再発防止）。SQLx は本文を
