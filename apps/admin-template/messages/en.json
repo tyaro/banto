@@ -375,7 +375,7 @@
   "dashboard.selectionClearAll": "Clear all",
   "dashboard.selectionOpenListShort": "Open in the list",
   "dashboard.selectionOpenList": "Open in the list: items in {value}",
-  "dashboard.selectionNotCarried": "What is chosen in the charts is not carried to this list (only the period is)",
+  "dashboard.selectionNotCarried": "The list opens low stock of every category and price band (only the period is carried)",
   "dashboard.spcHistogramTitle": "Price distribution (normal curve)",
   "dashboard.svgExport": "Export SVG",
   "dashboard.spcHistogramAria": "Histogram of price distribution (with normal curve overlay)",

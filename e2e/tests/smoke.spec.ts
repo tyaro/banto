@@ -4564,6 +4564,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				.poll(async () => (await readBandCounts()).reduce((a, b) => a + b, 0))
 				.toBe(inCategory);
 			await expect.poll(() => monthly.innerHTML()).not.toBe(monthlyBefore);
+			// The low-stock tile's link carries the period only: while something is chosen the tile
+			// says so in words that are seen (and so are part of the link's name).
+			const lowTile = page.getByRole('link', { name: /^在庫僅少/ });
+			await expect(lowTile.locator('[data-stat-note]')).toHaveText(
+				'一覧は全カテゴリ・全価格帯の在庫僅少を開きます（期間のみ引き継ぎます）'
+			);
+			await expect(lowTile).toHaveAccessibleName(/期間のみ引き継ぎます/);
 			// The list cannot narrow by a category: no link to it for this choice.
 			await expect(page.locator(OPEN_LIST)).toHaveCount(0);
 
@@ -4598,6 +4605,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			// Clear all: the band goes away and everything is as at the start.
 			await bar.locator('[data-selection-clear-all]').click();
 			await expect(bar).toHaveCount(0);
+			await expect(lowTile.locator('[data-stat-note]')).toHaveCount(0);
 			await expect.poll(number).toBe(allCount);
 			await expect.poll(readBandCounts).toEqual(allBands);
 			await expect(page.locator(`${CATEGORY_MARKS}[aria-pressed="true"]`)).toHaveCount(0);

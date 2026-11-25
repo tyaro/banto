@@ -25,7 +25,8 @@
 	/**
 	 * `filter` is the page's period: a tile that opens the list carries it (#882 D3). The selection
 	 * (#882 C2) narrows the numbers here but is NOT carried by the link (the list's view takes the
-	 * period only), so the link's tooltip says so while something is chosen.
+	 * period only), so the tile says so in words that are SEEN while something is chosen (not in the
+	 * tooltip alone: a keyboard or touch user does not get a tooltip. #963 review).
 	 */
 	let { data, filter }: { data: DashboardPageData; filter: DashboardFilter } = $props();
 	const anchorDay = $derived(latestDay(data.all.rows));
@@ -42,7 +43,7 @@
 	);
 </script>
 
-{#snippet tile(kpi: DashboardKpiDef)}
+{#snippet tile(kpi: DashboardKpiDef, note: string = '')}
 	<span class="stat-icon" aria-hidden="true"><kpi.icon size={18} /></span>
 	<div class="stat-body">
 		<span class="stat-label">{kpi.label}</span>
@@ -56,6 +57,9 @@
 		{:else}
 			<span class="stat-value">{kpi.value(data)}</span>
 		{/if}
+		{#if note}
+			<span class="stat-note" data-stat-note>{note}</span>
+		{/if}
 	</div>
 {/snippet}
 
@@ -66,9 +70,9 @@
 				class="stat-tile stat-link"
 				href={waiting ? undefined : drillHref(kpi.link.drill, filter, anchorDay)}
 				aria-disabled={waiting ? 'true' : undefined}
-				title={[kpi.link.title, selectionNote, truncatedNote].filter(Boolean).join('\n')}
+				title={[kpi.link.title, truncatedNote].filter(Boolean).join('\n')}
 			>
-				{@render tile(kpi)}
+				{@render tile(kpi, selectionNote)}
 				<ChevronRight class="stat-link-icon" size={16} aria-hidden="true" />
 			</a>
 		{:else}
@@ -146,6 +150,13 @@
 	.stat-label {
 		color: var(--banto-text-muted);
 		font-size: var(--banto-font-size-sm);
+	}
+
+	/* While marks are chosen: what the tile's link opens differs from the number (#882 C2). */
+	.stat-note {
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-xs);
+		text-wrap: pretty;
 	}
 
 	.stat-value {
