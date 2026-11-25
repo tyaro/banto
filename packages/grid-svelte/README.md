@@ -100,9 +100,12 @@ grid はほかのパッケージを知らないまま、アプリが「セルの
   残して、フォーカスがエディタへ戻る。
 
 ```ts
-// 例: 画面のキーボードの確定の後に、セルのエディタだけ blur する（アプリのルートの 1 か所）
-function onconfirm(field: HTMLInputElement) {
-	if (field.closest('[data-grid-editor]')) field.blur();
+// 例: 画面のキーボード（@banto/touch-keys-svelte の TouchKeysHost）の確定の後に、
+// セルのエディタだけ blur する（アプリのルートの 1 か所。grid はこの import を持たない）
+import type { TouchKeysConfirmDetail } from '@banto/touch-keys-svelte';
+
+function onconfirm({ input }: TouchKeysConfirmDetail) {
+	if (input.closest('[data-grid-editor]')) input.blur();
 }
 ```
 
