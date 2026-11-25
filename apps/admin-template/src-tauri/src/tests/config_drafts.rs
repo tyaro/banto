@@ -226,6 +226,81 @@ async fn only_an_admin_passes_the_templates_gates() {
     }
 }
 
+/// Cross-review of PR #960: the read gate and the duty's gate are decided on
+/// ONE authorization. A slot re-bound while that authorization is being read
+/// refuses the command (`Unauthorized`) - it is not decided again as the
+/// session the slot holds by then, whichever way the two sessions differ:
+///
+/// - an admin's publish overtaken by ANOTHER admin's session: nothing is
+///   published, recorded or announced as either of them;
+/// - a viewer's command overtaken by an admin's session: it does not pass as
+///   the admin, and no `denied` row is written for a subject that was not
+///   decided on.
+#[tokio::test]
+async fn a_session_replaced_during_the_authorization_refuses_the_command() {
+    let mut state = config_state_as("manager", Role::Admin).await;
+    let draft = start_draft(&state, json!({"limit": 5})).await;
+    let other = state
+        .users
+        .create_user("other", REVOCATION_PASSWORD, "other", Role::Admin)
+        .await
+        .expect("create_user");
+    let mut events = state.events.subscribe();
+
+    let mut hold = hold_permissions(&mut state);
+    {
+        let publish = config_publish_body(&state, TARGET, &draft, None);
+        tokio::pin!(publish);
+        tokio::select! {
+            biased;
+            out = &mut publish => panic!("finished before the permissions read: {:?}", out.map(drop)),
+            _ = &mut hold.entered => {}
+        }
+        state.set_session_for_test(Some(DesktopSession::Account(other)));
+        hold.release.send(()).unwrap();
+        let result = publish.await.map(drop);
+        assert!(
+            matches!(result, Err(BantoError::Unauthorized)),
+            "{result:?}"
+        );
+    }
+    assert!(config_audit(&state).await.is_empty());
+    assert!(announced(&mut events).is_empty());
+    // The new session is an admin: its own command passes, and sees that
+    // nothing was published (the draft is still there, at its revision).
+    let seen = config_get_body(&state, TARGET).await.expect("state");
+    assert_eq!(seen.draft.expect("the draft is kept").revision, draft);
+
+    // The other way round: a viewer's command, overtaken by an admin.
+    let mut state = config_state_as("watcher", Role::Viewer).await;
+    let admin = state
+        .users
+        .create_user("manager", REVOCATION_PASSWORD, "manager", Role::Admin)
+        .await
+        .expect("create_user");
+    let mut hold = hold_permissions(&mut state);
+    {
+        let list = config_list_body(&state);
+        tokio::pin!(list);
+        tokio::select! {
+            biased;
+            out = &mut list => panic!("finished before the permissions read: {:?}", out.map(drop)),
+            _ = &mut hold.entered => {}
+        }
+        state.set_session_for_test(Some(DesktopSession::Account(admin)));
+        hold.release.send(()).unwrap();
+        let result = list.await.map(drop);
+        assert!(
+            matches!(result, Err(BantoError::Unauthorized)),
+            "{result:?}"
+        );
+    }
+    assert!(
+        config_audit(&state).await.is_empty(),
+        "neither the viewer nor the admin was decided on"
+    );
+}
+
 /// The whole flow as an admin: lock -> save -> diff -> publish -> history ->
 /// revert. What is recorded and announced is what the REST handlers record
 /// and announce, with `origin: "tauri"`.

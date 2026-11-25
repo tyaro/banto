@@ -457,7 +457,8 @@ CREATE TABLE config_locks (
 
 - **ガードの値は 1 つ**: `admin_template_core::rest::config_drafts_access()` が `ConfigDraftsAccess { read: ConfigDraftsGate::Role(Role::Admin), .. }` を 4 つとも書き出して返す。
   REST は `config_router` がこれを `config_drafts_router` に渡し、Tauri は `require_config(state, ConfigDuty::X)` が同じ値のガードを「読む」→ 役目の順に当てる
-  （`require_role` / `require_permission` をそのまま呼ぶので、拒否の 403 相当と `denied` の監査は既存のとおり）。両経路で別々にロールを書く場所が無い。
+  （セッションと権限は `authorized_session` で 1 回だけ取り、両方のガードをその値に当てる。取っている間にセッションが差し替わった操作は
+  `Unauthorized` で拒否し、履歴・監査の `Caller` も同じ値から作る。拒否の 403 相当と `denied` の監査は `require_role` / `require_permission` と同じ形）。両経路で別々にロールを書く場所が無い。
 - **rule 8 の読み方**（`scripts/lib/config-drafts-gates.mjs`、テストは `scripts/config-drafts-gates.test.mjs`）: (1) アプリの配線（`core/src/rest/` のテスト以外）の
   `ConfigDraftsAccess { .. }` のリテラルからガードを読む（`default()`・`..` での省略・その場に書かない値は「読めない」で落とす）、
   (2) `fn config_drafts_router` の本体の `let read|edit|publish|unlock = Router::new()…` から口の役目を読む、

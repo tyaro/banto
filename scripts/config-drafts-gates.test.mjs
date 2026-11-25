@@ -92,7 +92,7 @@ test(
 		assert.equal(tauriDuties.get('config_publish_body'), 'publish');
 		// コメントの中の見本・ガードの関数そのものは拾わない。
 		assert.equal(tauriDuties.has('require_config'), false);
-		assert.equal(tauriDuties.has('require_config_gate'), false);
+		assert.equal(tauriDuties.has('config_gate_passes'), false);
 
 		const result = collect();
 		assert.deepEqual(result.problems, []);

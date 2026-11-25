@@ -4009,42 +4009,58 @@ enum ConfigDuty {
     Unlock,
 }
 
-/// One gate of [`config_drafts_access`]: a role floor ([`require_role`]) or a
-/// per-user permission ([`require_permission`]). A refusal is `Forbidden`
-/// plus one `denied` audit row with `resource: "config"`.
-///
-/// The parameter is `app`, not `state`, on purpose: `verify:architecture`
-/// rule 8 reads a command's guard from its `require_role` /
-/// `require_permission` call whose first argument is `state`, and this
-/// helper is not a command - the commands' guards are read from their
-/// `require_config` calls.
-async fn require_config_gate(
-    app: &AppState,
+/// Whether `session` - with the `permissions` read for it - passes one gate
+/// of [`config_drafts_access`]: a role floor (as [`require_role`] decides it)
+/// or a per-user permission (as [`require_permission`] decides it). Pure: it
+/// reads nothing, so every gate of one command is decided on the same
+/// snapshot ([`require_config`]).
+fn config_gate_passes(
     gate: &ConfigDraftsGate,
-) -> Result<Caller, BantoError> {
+    session: &DesktopSession,
+    permissions: &SessionPermissions,
+) -> bool {
     match gate {
-        ConfigDraftsGate::Role(min) => require_role(app, *min, CONFIG_RESOURCE).await,
-        ConfigDraftsGate::Permission(permission) => {
-            require_permission(app, permission, CONFIG_RESOURCE).await
-        }
+        ConfigDraftsGate::Role(min) => session.identity().role.at_least(*min),
+        ConfigDraftsGate::Permission(permission) => permissions.has(permission),
     }
 }
 
 /// The Tauri twin of the layers `config_drafts_router` stacks: the READ gate
 /// first, for every duty, then the duty's own gate. A session that may not
 /// read cannot edit, publish or unlock, whatever those gates say, and its
-/// refusal is the read gate's one `denied` row (design §4.9). The [`Caller`]
-/// is the one the last gate authorized.
+/// refusal is the read gate's one `denied` row (design §4.9). A refusal is
+/// `Forbidden` plus one `denied` audit row with `resource: "config"`.
+///
+/// Both gates are decided on ONE authorization (cross-review of PR #960):
+/// the session and its permissions are taken once ([`authorized_session`],
+/// as [`require_permission`] takes them) and each gate is applied to that
+/// snapshot - never to the slot read again. So the subject that may read IS
+/// the subject that may edit / publish / unlock (design §4.9: the operating
+/// session itself needs the read gate), and the [`Caller`] returned - the
+/// history row's "who" and the audit actor - is that same subject. A slot
+/// re-bound while the authorization was being read is "no session"
+/// (`Unauthorized`, nothing recorded): the command is not decided again as
+/// whoever the slot holds by then.
 async fn require_config(state: &AppState, duty: ConfigDuty) -> Result<Caller, BantoError> {
     let access = config_drafts_access();
-    let reader = require_config_gate(state, &access.read).await?;
-    let gate = match duty {
-        ConfigDuty::Read => return Ok(reader),
-        ConfigDuty::Edit => &access.edit,
-        ConfigDuty::Publish => &access.publish,
-        ConfigDuty::Unlock => &access.unlock,
+    let Some((session, permissions)) = authorized_session(state).await? else {
+        return Err(BantoError::Unauthorized);
     };
-    require_config_gate(state, gate).await
+    let caller = Caller::of(state, &session);
+    let duty_gate = match duty {
+        ConfigDuty::Read => None,
+        ConfigDuty::Edit => Some(&access.edit),
+        ConfigDuty::Publish => Some(&access.publish),
+        ConfigDuty::Unlock => Some(&access.unlock),
+    };
+    let allowed = std::iter::once(&access.read)
+        .chain(duty_gate)
+        .all(|gate| config_gate_passes(gate, &session, &permissions));
+    if allowed {
+        return Ok(caller);
+    }
+    record_denied_as(&state.audit, &caller.actor, "tauri", CONFIG_RESOURCE, None).await;
+    Err(BantoError::Forbidden)
 }
 
 /// Who is editing, from the session the guard authorized - the Tauri twin of
