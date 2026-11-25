@@ -38,21 +38,20 @@ async fn read_sensor() -> Option<f64> {
 
 /// 値を作る側。周期ごとに、値が同じでも `send_replace` する。
 /// 読めなかった周期は送らない（止まったことを、新しい値が来ないことで見せる）。
-pub fn spawn_producer(period: Duration) -> watch::Sender<Reading> {
-    let (tx, _) = watch::channel(Reading {
-        made_at: now_ms(),
-        value: 0.0,
-    });
+/// チャネルの初期値は「値なし」（`None`）。最初の読み取りが成功するまで、
+/// 作り物の値と今の時刻の印を配信しない。
+pub fn spawn_producer(period: Duration) -> watch::Sender<Option<Reading>> {
+    let (tx, _) = watch::channel(None);
     let sender = tx.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(period);
         loop {
             tick.tick().await;
             if let Some(value) = read_sensor().await {
-                sender.send_replace(Reading {
+                sender.send_replace(Some(Reading {
                     made_at: now_ms(),
                     value,
-                });
+                }));
             }
         }
     });
@@ -61,10 +60,11 @@ pub fn spawn_producer(period: Duration) -> watch::Sender<Reading> {
 
 async fn plant_stream(
     context: SseContext,
-    Extension(values): Extension<watch::Sender<Reading>>,
+    Extension(values): Extension<watch::Sender<Option<Reading>>>,
 ) -> Response {
     let frames = watch_frames(values.subscribe(), |reading| {
-        SseFrame::json(reading).ok()?.event("values").ok()
+        // 値がまだ無い間（最初の読み取りの前）は送らない。
+        SseFrame::json(reading.as_ref()?).ok()?.event("values").ok()
     });
     // 開いた後も権限を読み直す（外れたら次の確かめ直しで閉じる）。
     // この画面は /api/events を開かないので、接続 n 台に数える。
@@ -75,7 +75,7 @@ async fn plant_stream(
 }
 
 pub fn plant_router(
-    values: watch::Sender<Reading>,
+    values: watch::Sender<Option<Reading>>,
     audit: AuditLogService,
     auth: AuthState,
 ) -> Router {

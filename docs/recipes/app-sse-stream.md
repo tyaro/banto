@@ -78,21 +78,20 @@ async fn read_sensor() -> Option<f64> {
 
 /// 値を作る側。周期ごとに、値が同じでも `send_replace` する。
 /// 読めなかった周期は送らない（止まったことを、新しい値が来ないことで見せる）。
-pub fn spawn_producer(period: Duration) -> watch::Sender<Reading> {
-    let (tx, _) = watch::channel(Reading {
-        made_at: now_ms(),
-        value: 0.0,
-    });
+/// チャネルの初期値は「値なし」（`None`）。最初の読み取りが成功するまで、
+/// 作り物の値と今の時刻の印を配信しない。
+pub fn spawn_producer(period: Duration) -> watch::Sender<Option<Reading>> {
+    let (tx, _) = watch::channel(None);
     let sender = tx.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(period);
         loop {
             tick.tick().await;
             if let Some(value) = read_sensor().await {
-                sender.send_replace(Reading {
+                sender.send_replace(Some(Reading {
                     made_at: now_ms(),
                     value,
-                });
+                }));
             }
         }
     });
@@ -101,10 +100,11 @@ pub fn spawn_producer(period: Duration) -> watch::Sender<Reading> {
 
 async fn plant_stream(
     context: SseContext,
-    Extension(values): Extension<watch::Sender<Reading>>,
+    Extension(values): Extension<watch::Sender<Option<Reading>>>,
 ) -> Response {
     let frames = watch_frames(values.subscribe(), |reading| {
-        SseFrame::json(reading).ok()?.event("values").ok()
+        // 値がまだ無い間（最初の読み取りの前）は送らない。
+        SseFrame::json(reading.as_ref()?).ok()?.event("values").ok()
     });
     // 開いた後も権限を読み直す（外れたら次の確かめ直しで閉じる）。
     // この画面は /api/events を開かないので、接続 n 台に数える。
@@ -115,7 +115,7 @@ async fn plant_stream(
 }
 
 pub fn plant_router(
-    values: watch::Sender<Reading>,
+    values: watch::Sender<Option<Reading>>,
     audit: AuditLogService,
     auth: AuthState,
 ) -> Router {
@@ -138,7 +138,8 @@ pub fn plant_router(
 
 - **値を作る側（`spawn_producer`）は周期ごとに送る。** 値が前と同じでも `send_replace` する（`watch` は同じ値でも
   「変わった」と知らせる）。土台は送り直しをしない。作る側が止まれば、イベントも止まる。それを画面が「古い」と見分ける。
-  読めなかった周期は送らない。
+  読めなかった周期は送らない。チャネルの初期値は「値なし」（`None`）にし、最初の読み取りが成功するまで配信しない
+  （作り物の値と今の時刻の印を、本物の新しい値として画面に出さない。読み取りが失敗し続けるなら、何も届かず stale になる）。
 - **値に作った印を入れる。** `made_at`（作った時刻）のように、周期ごとに変わるもの。`watch_frames` は**つなぎ直すたびに
   最後に作られた値を 1 件出す**ので、作る側が止まっていても、画面を開き直すたびに古い値が「新しいイベント」として届く。
   それを画面が見分ける手がかりが印（下の「5. 古い値の見分け方」）。時刻はサーバーのものを使い、クライアントの時計とは比べない。
