@@ -1634,11 +1634,12 @@
 					<label class="caption" for="ui-demo-touch-lot">{m['uiDemo.touchKeys.alnum']()}</label>
 					<input
 						id="ui-demo-touch-lot"
+						maxlength="12"
 						class="banto-input"
 						type="text"
 						autocomplete="off"
 						bind:value={touchLot}
-						{@attach touchKeys({ kind: 'text', layouts: ['alnum'], maxLength: 12 })}
+						{@attach touchKeys({ kind: 'text', layouts: ['alnum'] })}
 					/>
 					<span class="caption" data-testid="ui-demo-touch-lot-value">
 						{m['uiDemo.date.value']()}: {touchLot}
@@ -1648,11 +1649,12 @@
 					<label class="caption" for="ui-demo-touch-kana">{m['uiDemo.touchKeys.kana']()}</label>
 					<input
 						id="ui-demo-touch-kana"
+						maxlength="12"
 						class="banto-input"
 						type="text"
 						autocomplete="off"
 						bind:value={touchKana}
-						{@attach touchKeys({ kind: 'text', layouts: ['kana', 'alnum'], maxLength: 12 })}
+						{@attach touchKeys({ kind: 'text', layouts: ['kana', 'alnum'] })}
 					/>
 					<span class="caption" data-testid="ui-demo-touch-kana-value">
 						{m['uiDemo.date.value']()}: {touchKana}

@@ -877,7 +877,7 @@ T1 を小さく保つため、`NumberKeypad` は表示とキーの入力だけ�
 - **ホストはカードの中**に置き、**`resolve` でカードの中の欄だけ**を対象にする（カードの外の欄には `false` を返す）。同じページの
   ほかの見本（DateInput・BantoForm・BantoGrid など）の入力欄は素のまま。盤は popover（top layer）なので、Glass の
   `backdrop-filter` を持つ `SurfaceCard` の中に置いても、画面に対して出る。
-- **欄は 4 つ**: 数量（`type="number"`・`min="0"`・`max="999"`。属性からの推定だけ）、ロット（`touchKeys({ kind: 'text', layouts: ['alnum'], maxLength: 12 })`）、
+- **欄は 4 つ**: 数量（`type="number"`・`min="0"`・`max="999"`。属性からの推定だけ）、ロット（`maxlength="12"` と `touchKeys({ kind: 'text', layouts: ['alnum'] })`。上限は属性から読むので、実キーボードでも同じ 12 文字）、
   品名カナ（`layouts: ['kana', 'alnum']`）、パスワード（`type="password"`。画面には文字数だけを出す。§5.5）。
 - **切り替え**: カードの中のスイッチ（既定は入）が `enabled` に繋がる。端末ごとの設定（レシピ 3 節）の代わりで、保存はしない。
   既定を入にしたのは、見本を開いた人がそのまま触って確かめられるようにするため。盤は入力欄を押すまで出ないので、基準画像には欄だけが写る。

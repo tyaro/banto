@@ -12,6 +12,8 @@ OS のタッチキーボードは出さない（`inputmode="none"`）。パッ�
 > タッチでも触って確かめられる（`apps/admin-template/src/routes/(app)/ui-demo/+page.svelte` の `[scaffold:touch-keys]` の領域。
 > `pnpm scaffold --preset minimal|standard|display` は外す）。**ルートのレイアウトにホストは置いていない**ので、
 > アプリ全体で使うには下の手順を**自分のアプリで**行う。見本のホストはカードの中にあり、`resolve` でカードの中の欄だけを対象にしている。
+> **ルートにホストを置くときは、見本のカードの `<TouchKeysHost>` を外す**（`[scaffold:touch-keys]` の markup の領域のホスト。束 `touchKeysMessages.ts` は残す）。
+> ホストが 2 つあると、見本の欄を押したときに盤が 2 つ開く。
 > **タッチの実機・WebView2 での確かめは未実施**（設計書 §14.4）。出す前に、自分の端末で OS のキーボードが同時に出ないか・
 > キーの大きさを必ず確かめる。
 
@@ -53,6 +55,10 @@ true の間だけ、数値の欄（`type="number"`・`inputmode="numeric" | "dec
 />
 ```
 
+- **ホストは 1 つだけ。** テンプレートの `/ui-demo` の見本を残しているアプリ（`full`）は、ルートに置くのと同時に、見本のカードの
+  `<TouchKeysHost ... />`（`routes/(app)/ui-demo/+page.svelte` の `[scaffold:touch-keys]` の markup の領域）と、それだけが使う
+  `touchKeysOn`・`touchKeysCard`・`touchKeysResolve`・スイッチを消す。束 `src/lib/banto/touchKeysMessages.ts` と `touchKeys.*` のキーは
+  ルートのホストが使うので残す。2 つあると、どちらも document で押下を聞くので、見本の欄で盤が 2 つ開き、片方を閉じてももう片方が残る。
 - 既定の出し方は、テンキーが中央のポップアップ（`popup`）、文字キーボードが下の固定（`bottom`）。`placement` で変える。
 - 入力欄ごとの指定は attachment `touchKeys(...)`（入力欄が自分のアプリのものなら、これが一番素直）:
 
