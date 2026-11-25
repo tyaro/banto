@@ -1,7 +1,7 @@
 # ダッシュボードのクロスフィルタとドリルダウン 設計書（草案） — Issue #882
 
 作成日: 2026-11-24
-状態: **D1〜D3 は実装済み（D1 = PR #934、D2 = PR #933、D3 = ダッシュボードの配線。第 1 段のドリルダウンはここまで）。C1・C2（クロスフィルタ）は保留（合図待ち。#882 は v8 に入れていない）。判断 1〜9 はオーナーが 2026-11-24 に決定済み（§10）**
+状態: **D1〜D3 は実装済み（D1 = PR #934、D2 = PR #933、D3 = ダッシュボードの配線。第 1 段のドリルダウンはここまで）。**C1（クロスフィルタの選択の状態と絞り込み）は実装済み**。C2（選択の帯・charts の `markSelected`・ウィジェットの配線・e2e・基準画像）は未着手。C1・C2 は次のリリースに入れる（オーナーが 2026-11-25 に決定。#882 は v8 に入れていない）。判断 1〜9 はオーナーが 2026-11-24 に決定済み（§10）**
 トラック: 保守者向け（トラックA）
 関連: Issue #882（#716 の「やること 3」からの切り出し。親は #559）、
 [#716 のオーナー決定](https://github.com/tyaro/banto/issues/716#issuecomment-7092223963) の 4、
@@ -368,10 +368,10 @@ CHANGELOG の「消費側への注意」と recipe に書く。どちらにな�
 | D1 | 一覧のビューの引数（`lib/resource/types.ts`・`listViews.ts`・`ResourceListPage.svelte`）: `arg.` の接頭辞、値の検査、「適用できないとき」の規則、`'required'` の引数を持つビューをメニューに出さない。価格帯の区切りを `resources/items.ts` へ移す。items に見本のビュー（価格帯、`low-stock` の `after`）。`docs/recipes/add-resource.md` に 1 節。**ダッシュボードの画面は触らない** | 単体: 引数の読み取り・検査、適用できない場合の全部（必須の欠落・重複・空値・`filtersFor` が `null`・格子に無い列）、引数の名前の形、区切りの表から作った集計と条件が同じ行を選ぶ（価格 99 / 100 / 149 / 150 / 199 / 200、`after` の日とその次の日）。e2e: リンクで絞られ、`view` と `arg.*` だけが消える（`id` は残る）／適用できないリンクは**今の条件を保ったまま**知らせを出す／境界の行（`after` の日・次の日・価格の区切り）の件数が**クライアント・サーバーの両方式**で集計と合う／必須の引数のビューがメニューに無い。`pnpm check`・`pnpm lint`・`pnpm format:check`・`pnpm e2e`。CHANGELOG [Unreleased] |
 | D2 | `@banto/charts` の `onMarkActivate`・`markLabel`（`BarChart`・`PieChart`）。矢印キーの移動の純関数。`messages.ts` の既定の文。README。ui-demo に見本 1 つ | 単体: 移動の関数、既定の読み上げ。e2e: クリック・Tab・矢印・Enter / Space で呼ばれる。a11y の spec（axe）。**`onMarkActivate` を渡さない既存の画面の基準画像が 1 枚も変わらない**。external-consumer が緑。CHANGELOG [Unreleased]（追加。minor） |
 | D3 | `dashboardDrill.ts`、枠とページの `onDrill`、ウィジェットの配線（価格帯。カテゴリは §10 の判断 8 による）、KPI の「在庫少」に期間。取得の上限を超えたときの画面の断り（§7.2）。`docs/recipes/dashboard-widgets.md` に「印から一覧へ移る」。plan §4.13.10 の「残したこと」を済みに | 単体: `drillHref`（`periodStart` の値をそのまま `arg.after` に載せる・エンコード）、上限を超えたかの判定。e2e: 印 → 一覧の件数が印の値と合う（期間あり / なし、両方式）／上限を超えたときだけ断りが出る（期間で絞っただけでは出ない）／キーボードだけで移れる／切り離した窓のルートでは印にフォーカスが止まらない。scaffold の 4 プリセットと charts だけ・dock だけを外す `--dry-run`（外した後に `@banto/charts` の参照なし、在庫少のリンクは残る）。**基準画像が変わらない**。CHANGELOG [Unreleased] |
-| C1（保留） | 選択の状態と絞り込み（`DashboardFilter.selection`・次元を除いた行・`selects` / `usesSelection`）。template-scope §4.2 の 1 文 | 単体: 自分の次元では絞られない／期間と重ねて絞る／選択が配置の保存値に入らない |
-| C2（保留） | 選択の帯、`markSelected`（charts）、ウィジェットの配線、操作の意味の変更（§7.4） | e2e: 選ぶ・解除・すべて解除・キーボード。charts を外しても帯が出ず壊れない。基準画像の再生成（`visual-baselines.yml` を dispatch。command-palette も）。CHANGELOG「消費側への注意」 |
+| C1（実装済み） | 選択の状態と絞り込み（`DashboardFilter.selection`・次元を除いた行・`selects` / `usesSelection`）。template-scope §4.2 の 1 文 | 単体: 自分の次元では絞られない／期間と重ねて絞る／選択が配置の保存値に入らない |
+| C2（未着手） | 選択の帯、`markSelected`（charts）、ウィジェットの配線、操作の意味の変更（§7.4） | e2e: 選ぶ・解除・すべて解除・キーボード。charts を外しても帯が出ず壊れない。基準画像の再生成（`visual-baselines.yml` を dispatch。command-palette も）。CHANGELOG「消費側への注意」 |
 
-順序: D1 ∥ D2 → D3。C1 → C2 は合図の後。
+順序: D1 ∥ D2 → D3。C1 → C2（2026-11-25 に、次のリリースに入れると決まった）。
 
 ## 9. 試験の方針
 
@@ -396,7 +396,7 @@ CHANGELOG の「消費側への注意」と recipe に書く。どちらにな�
 
 | # | 決めること | 推奨 |
 | --- | --- | --- |
-| 1 | 範囲（§2.2） | **b**: ドリルダウンだけ（D1〜D3）。クロスフィルタ（C1・C2）は保留し、要望が出たら着手 |
+| 1 | 範囲（§2.2） | **b**: ドリルダウンだけ（D1〜D3）で決めたが、2026-11-25 にオーナーが「C1・C2 は次のリリースに入れる」と改めた（C1 は実装済み、C2 は未着手） |
 | 2 | §4.2 の線引き（§3） | **a**: 次元・出どころ・移る先は作者がコードで登録。利用者は見えている値を 1 つ選ぶだけ。template-scope への 1 文は第 2 段で足す |
 | 3 | 選択のイベントの置き場（§4） | **A**: `@banto/charts` に `onMarkActivate` を足す（`BarChart`・`PieChart` から）。渡さなければ今と同じ |
 | 4 | 切り離した窓（§5） | **a**: 届けない。印も選べない・ドリルダウンもしない、と明記 |

@@ -9,9 +9,11 @@ import {
 	DASHBOARD_PERIODS,
 	DEFAULT_DASHBOARD_FILTER,
 	DEFAULT_DASHBOARD_PERIOD,
+	DASHBOARD_DIMENSIONS,
 	latestDay,
 	narrowRows,
-	periodStart
+	periodStart,
+	type DashboardFilter
 } from './dashboardPeriod';
 import type { Item } from './sampleData';
 
@@ -28,7 +30,7 @@ describe('periodStart (#716 W3)', () => {
 	it('has four fixed choices and starts at "all"', () => {
 		expect(DASHBOARD_PERIODS).toEqual(['all', '30d', '90d', '12m']);
 		expect(DEFAULT_DASHBOARD_PERIOD).toBe('all');
-		expect(DEFAULT_DASHBOARD_FILTER).toEqual({ period: 'all' });
+		expect(DEFAULT_DASHBOARD_FILTER).toEqual({ period: 'all', selection: {} });
 	});
 
 	it('counts back from the anchor: days, or calendar months', () => {
@@ -59,7 +61,7 @@ describe('narrowRows (#716 W3)', () => {
 		item(8, '2024-01-01')
 	];
 	const ids = (period: (typeof DASHBOARD_PERIODS)[number]) =>
-		narrowRows(rows, { period }).map((row) => row.id);
+		narrowRows(rows, { period, selection: {} }).map((row) => row.id);
 
 	it('counts from the newest updatedAt in the rows, not from the wall clock', () => {
 		expect(latestDay(rows)).toBe('2026-07-02');
@@ -73,15 +75,15 @@ describe('narrowRows (#716 W3)', () => {
 	it('clamps a day that overflows the target month (leap day, 12 months back)', () => {
 		expect(periodStart('12m', '2024-02-29')).toBe('2023-02-28');
 		const leap = [item(1, '2024-02-29'), item(2, '2023-03-01'), item(3, '2023-02-28')];
-		expect(narrowRows(leap, { period: '12m' }).map((row) => row.id)).toEqual([1, 2]);
+		expect(narrowRows(leap, { period: '12m', selection: {} }).map((row) => row.id)).toEqual([1, 2]);
 		// Days back are not clamped: 30 days before 2024-03-31 is 2024-03-01.
 		expect(periodStart('30d', '2024-03-31')).toBe('2024-03-01');
 	});
 
 	it('returns the rows themselves when there is nothing to narrow by', () => {
-		expect(narrowRows(rows, { period: 'all' })).toBe(rows);
+		expect(narrowRows(rows, { period: 'all', selection: {} })).toBe(rows);
 		const none: Item[] = [];
-		expect(narrowRows(none, { period: '30d' })).toBe(none);
+		expect(narrowRows(none, { period: '30d', selection: {} })).toBe(none);
 	});
 });
 
@@ -100,4 +102,57 @@ describe('the period is not saved (#716 W3, §4.13.7 b)', () => {
 			);
 		}
 	);
+});
+
+describe('the selection (#882 C1)', () => {
+	const row = (id: number, name: string, price: number, updatedAt: string): Item => ({
+		...item(id, updatedAt),
+		name,
+		price
+	});
+	// category = the first word of the name; price bands: 0-99 / 100-149 / 150-199 / 200-
+	const rows = [
+		row(1, 'Alpha one', 50, '2026-07-02'),
+		row(2, 'Alpha two', 120, '2026-06-20'),
+		row(3, 'Beta one', 120, '2026-06-25'),
+		row(4, 'Beta two', 250, '2024-01-01')
+	];
+	const ids = (list: Item[]) => list.map((r) => r.id);
+	const filter = (
+		selection: DashboardFilter['selection'],
+		period: DashboardFilter['period'] = 'all'
+	): DashboardFilter => ({ period, selection });
+
+	it('has the two dimensions, and an empty selection narrows nothing (the same array)', () => {
+		expect(DASHBOARD_DIMENSIONS).toEqual(['category', 'priceBucket']);
+		expect(narrowRows(rows, filter({}))).toBe(rows);
+		expect(narrowRows(rows, filter({ category: '' }))).toBe(rows);
+	});
+
+	it('narrows by one dimension, and by two together', () => {
+		expect(ids(narrowRows(rows, filter({ category: 'Alpha' })))).toEqual([1, 2]);
+		expect(ids(narrowRows(rows, filter({ priceBucket: '100-149' })))).toEqual([2, 3]);
+		expect(ids(narrowRows(rows, filter({ category: 'Beta', priceBucket: '100-149' })))).toEqual([
+			3
+		]);
+	});
+
+	it('does not narrow by the dimension it is asked to leave out (a mark does not hide its siblings)', () => {
+		const both = filter({ category: 'Alpha', priceBucket: '100-149' });
+		expect(ids(narrowRows(rows, both))).toEqual([2]);
+		expect(ids(narrowRows(rows, both, 'category'))).toEqual([2, 3]);
+		expect(ids(narrowRows(rows, both, 'priceBucket'))).toEqual([1, 2]);
+		// Only one dimension chosen and it is the one left out: nothing narrows.
+		expect(narrowRows(rows, filter({ category: 'Alpha' }), 'category')).toBe(rows);
+	});
+
+	it('stacks on the period', () => {
+		// 30d from 2026-07-02 leaves rows 1-3; the selection then narrows them.
+		expect(ids(narrowRows(rows, filter({ category: 'Beta' }, '30d')))).toEqual([3]);
+		expect(ids(narrowRows(rows, filter({ category: 'Beta' }, 'all')))).toEqual([3, 4]);
+		// Leaving the dimension out still keeps the period.
+		expect(ids(narrowRows(rows, filter({ category: 'Beta' }, '30d'), 'category'))).toEqual([
+			1, 2, 3
+		]);
+	});
 });
