@@ -43,6 +43,14 @@
 //! it. A lock is valid while `expires_at_ms > now`; an expired row is the
 //! same as no row and is not cleaned up (the next acquire overwrites it).
 //!
+//! **A write reads the clock once, AFTER it fixed the published row**
+//! ([`WriteTime`], handed to the body by `with_target_write!`). A write can
+//! wait for the pool or for another write of the target; a time read before
+//! that wait would be stale - an expired lock would pass as valid (or
+//! someone's expired lock would still block an acquire). The same `now`
+//! decides validity and the new expiry. An extension (an explicit one or a
+//! draft save) never moves the expiry backwards.
+//!
 //! Conflicts are all [`BantoError::Conflict`]; `current.reason` tells them
 //! apart (`draft_changed` / `published_changed` / `lock_held` /
 //! `lock_required`; S1b adds `stale_base`).
@@ -131,7 +139,11 @@ impl ConfigTarget {
     ///   code changes nothing.
     /// - `masked_paths`: required (write `&[]` for none). JSON Pointers
     ///   (`/auth/token`) whose values must not appear in a diff or an audit
-    ///   record ([`crate::audit::diff::diff_paths`]). The history and the
+    ///   record ([`crate::audit::diff::diff_paths`]). The syntax is checked
+    ///   (RFC 6901): a leading `/`, and `~` only as `~0` (a `~` in a key) or
+    ///   `~1` (a `/` in a key). The diff compares against paths it escapes
+    ///   that way, so a malformed pointer would be a mask that never
+    ///   matches. The history and the
     ///   draft still store the whole value, so real secrets (passwords, keys)
     ///   do not belong in a target at all (design §11).
     ///
@@ -153,9 +165,10 @@ impl ConfigTarget {
                 "config target {key}: the default is larger than {MAX_CONFIG_VALUE_BYTES} bytes"
             )));
         }
-        if let Some(bad) = masked_paths.iter().find(|path| !path.starts_with('/')) {
+        if let Some(bad) = masked_paths.iter().find(|path| !is_masked_pointer(path)) {
             return Err(BantoError::Other(format!(
-                "config target {key}: masked path {bad:?} is not a JSON Pointer (it must start with '/')"
+                "config target {key}: masked path {bad:?} is not a JSON Pointer \
+                 (it must start with '/', and '~' must be followed by '0' or '1')"
             )));
         }
         Ok(Self {
@@ -202,6 +215,23 @@ impl ConfigTarget {
             None => Ok(()),
         }
     }
+}
+
+/// Is `raw` a JSON Pointer (RFC 6901) that names something below the root?
+/// It starts with `/`, and every `~` is the start of `~0` or `~1`. The empty
+/// pointer (the whole document) is refused: masking everything is not a
+/// mask.
+fn is_masked_pointer(raw: &str) -> bool {
+    if !raw.starts_with('/') {
+        return false;
+    }
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c == '~' && !matches!(chars.next(), Some('0' | '1')) {
+            return false;
+        }
+    }
+    true
 }
 
 fn is_target_key(raw: &str) -> bool {
@@ -387,15 +417,35 @@ pub struct ConfigDraftsService {
     clock: Clock,
 }
 
+/// The time of one write: the service's clock read once, after the write
+/// fixed the target's published row (so after every wait), and the expiry a
+/// lock gets from it. Only `with_target_write!` makes one; every decision
+/// about a lock inside the write uses it (S1b's publish and revert too).
+#[derive(Debug, Clone, Copy)]
+struct WriteTime {
+    now_ms: i64,
+    expires_at_ms: i64,
+}
+
+impl WriteTime {
+    /// The expiry an extension sets: now + ttl, but never before the expiry
+    /// the row already has (the clock may have stepped back).
+    fn extended(&self, lock: &ConfigLock) -> i64 {
+        self.expires_at_ms.max(lock.expires_at_ms)
+    }
+}
+
 /// Start a write on `$target`: open the transaction, fix the target's
-/// published row and read it into `$published` ([`PublishedConfig`]), run
-/// `$body` with the transaction as `$tx`, commit. A `?` inside the body
-/// leaves the function and drops the transaction, which rolls it back.
+/// published row and read it into `$published` ([`PublishedConfig`]), read
+/// the clock into `$at` ([`WriteTime`]; from here on no other write of the
+/// target can run, so this is the time the write happens), run `$body` with
+/// the transaction as `$tx`, commit. A `?` inside the body leaves the
+/// function and drops the transaction, which rolls it back.
 ///
 /// The body is expanded once per backend, without a generic SQL layer (the
 /// shape of `users.rs`'s `with_users_write_transaction!`).
 macro_rules! with_target_write {
-    ($service:expr, $target:expr, |$tx:ident, $published:ident| $body:block) => {{
+    ($service:expr, $target:expr, |$tx:ident, $published:ident, $at:ident| $body:block) => {{
         let fix_sql = published_sql($service.db.dialect(), true);
         match &$service.db {
             Db::Sqlite(pool) => {
@@ -411,6 +461,7 @@ macro_rules! with_target_write {
                     .await
                     .map_err(storage_error)?;
                 let $published = published_from_row($target, row)?;
+                let $at: WriteTime = $service.write_time();
                 #[allow(clippy::let_unit_value)]
                 let result = $body;
                 $tx.commit().await.map_err(storage_error)?;
@@ -431,6 +482,7 @@ macro_rules! with_target_write {
                     .await
                     .map_err(storage_error)?;
                 let $published = published_from_row($target, row)?;
+                let $at: WriteTime = $service.write_time();
                 #[allow(clippy::let_unit_value)]
                 let result = $body;
                 $tx.commit().await.map_err(storage_error)?;
@@ -809,20 +861,20 @@ impl ConfigDraftsService {
     ) -> Result<ConfigLock, BantoError> {
         self.target(target)?;
         let dialect = self.db.dialect();
-        let now = self.now_ms();
-        let lock = ConfigLock {
-            holder: editor.holder.clone(),
-            holder_name: editor.name.clone(),
-            lease: new_revision(),
-            acquired_at_ms: now,
-            expires_at_ms: self.expiry_from(now),
-        };
-        with_target_write!(self, target, |tx, _published| {
+        let lease = new_revision();
+        let lock = with_target_write!(self, target, |tx, _published, at| {
             if let Some(current) = fetch_lock!(tx, dialect, target) {
-                if current.is_valid(now) && current.holder != editor.holder {
+                if current.is_valid(at.now_ms) && current.holder != editor.holder {
                     return Err(lock_conflict("lock_held", Some(&current)));
                 }
             }
+            let lock = ConfigLock {
+                holder: editor.holder.clone(),
+                holder_name: editor.name.clone(),
+                lease,
+                acquired_at_ms: at.now_ms,
+                expires_at_ms: at.expires_at_ms,
+            };
             let sql = format!(
                 "INSERT INTO config_locks \
                      (target, holder, holder_name, lease, acquired_at_ms, expires_at_ms) \
@@ -843,12 +895,15 @@ impl ConfigDraftsService {
                 .execute(&mut *tx)
                 .await
                 .map_err(storage_error)?;
+            lock
         });
         Ok(lock)
     }
 
-    /// Move the expiry to now + ttl. Only when the lock is valid, the holder
-    /// is `editor` AND `lease` is the row's lease; the lease stays the same.
+    /// Move the expiry to now + ttl (never backwards). Only when the lock is
+    /// valid, the holder is `editor` AND `lease` is the row's lease; the
+    /// lease stays the same. "Valid" is judged when the write runs, not when
+    /// it was called: an extension that waited past the expiry is refused.
     /// Anything else - expired, another holder, a lease from an earlier
     /// acquire - is a conflict (`lock_required`). **Extending never takes the
     /// lock again**: after it expired the screen must acquire, and learns
@@ -862,19 +917,18 @@ impl ConfigDraftsService {
         self.target(target)?;
         check_token("lease", lease)?;
         let dialect = self.db.dialect();
-        let now = self.now_ms();
-        let expires_at_ms = self.expiry_from(now);
-        let lock = with_target_write!(self, target, |tx, _published| {
+        let lock = with_target_write!(self, target, |tx, _published, at| {
             let current = fetch_lock!(tx, dialect, target);
             let Some(mut mine) = current
                 .clone()
-                .filter(|lock| lock.held_by(editor, now) && lock.lease == lease)
+                .filter(|lock| lock.held_by(editor, at.now_ms) && lock.lease == lease)
             else {
                 return Err(lock_conflict(
                     "lock_required",
-                    current.as_ref().filter(|lock| lock.is_valid(now)),
+                    current.as_ref().filter(|lock| lock.is_valid(at.now_ms)),
                 ));
             };
+            let expires_at_ms = at.extended(&mine);
             set_lock_expiry!(tx, dialect, target, expires_at_ms);
             mine.expires_at_ms = expires_at_ms;
             mine
@@ -895,7 +949,7 @@ impl ConfigDraftsService {
         self.target(target)?;
         check_token("lease", lease)?;
         let dialect = self.db.dialect();
-        with_target_write!(self, target, |tx, _published| {
+        with_target_write!(self, target, |tx, _published, _at| {
             let current = fetch_lock!(tx, dialect, target);
             if current.is_some_and(|lock| lock.holder == editor.holder && lock.lease == lease) {
                 delete_lock!(tx, dialect, target);
@@ -919,13 +973,12 @@ impl ConfigDraftsService {
         self.target(target)?;
         check_token("ifLease", if_lease)?;
         let dialect = self.db.dialect();
-        let now = self.now_ms();
-        let removed = with_target_write!(self, target, |tx, _published| {
+        let removed = with_target_write!(self, target, |tx, _published, at| {
             let current = fetch_lock!(tx, dialect, target);
             let Some(seen) = current.clone().filter(|lock| lock.lease == if_lease) else {
                 return Err(lock_conflict(
                     "lock_held",
-                    current.as_ref().filter(|lock| lock.is_valid(now)),
+                    current.as_ref().filter(|lock| lock.is_valid(at.now_ms)),
                 ));
             };
             delete_lock!(tx, dialect, target);
@@ -1001,20 +1054,21 @@ impl ConfigDraftsService {
 
         let dialect = self.db.dialect();
         let now_text = now_text(dialect);
-        let now = self.now_ms();
-        let expires_at_ms = self.expiry_from(now);
         let revision = new_revision();
-        let (base_version, lock) = with_target_write!(self, target, |tx, published| {
+        let (base_version, lock) = with_target_write!(self, target, |tx, published, at| {
             let current_lock = fetch_lock!(tx, dialect, target);
             let Some(mut lock) = current_lock
                 .clone()
-                .filter(|lock| lock.held_by(editor, now))
+                .filter(|lock| lock.held_by(editor, at.now_ms))
             else {
                 return Err(lock_conflict(
                     "lock_required",
-                    current_lock.as_ref().filter(|lock| lock.is_valid(now)),
+                    current_lock
+                        .as_ref()
+                        .filter(|lock| lock.is_valid(at.now_ms)),
                 ));
             };
+            let expires_at_ms = at.extended(&lock);
             let draft = fetch_draft!(tx, dialect, target);
             let base_version = if creates {
                 if draft.is_some() {
@@ -1098,16 +1152,17 @@ impl ConfigDraftsService {
         self.target(target)?;
         check_token("ifRevision", if_revision)?;
         let dialect = self.db.dialect();
-        let now = self.now_ms();
-        with_target_write!(self, target, |tx, _published| {
+        with_target_write!(self, target, |tx, _published, at| {
             let current_lock = fetch_lock!(tx, dialect, target);
             if !current_lock
                 .as_ref()
-                .is_some_and(|lock| lock.held_by(editor, now))
+                .is_some_and(|lock| lock.held_by(editor, at.now_ms))
             {
                 return Err(lock_conflict(
                     "lock_required",
-                    current_lock.as_ref().filter(|lock| lock.is_valid(now)),
+                    current_lock
+                        .as_ref()
+                        .filter(|lock| lock.is_valid(at.now_ms)),
                 ));
             }
             let draft = fetch_draft!(tx, dialect, target);
@@ -1153,8 +1208,13 @@ impl ConfigDraftsService {
         (self.clock)()
     }
 
-    fn expiry_from(&self, now_ms: i64) -> i64 {
-        now_ms.saturating_add(self.lock_ttl_ms)
+    /// Only for `with_target_write!` (see [`WriteTime`]).
+    fn write_time(&self) -> WriteTime {
+        let now_ms = self.now_ms();
+        WriteTime {
+            now_ms,
+            expires_at_ms: now_ms.saturating_add(self.lock_ttl_ms),
+        }
     }
 }
 

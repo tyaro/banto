@@ -83,9 +83,29 @@ pub fn diff_changes(
 /// stay small; config-draft-publish-design §4.7).
 pub const MAX_PATH_CHANGES: usize = 100;
 
+/// The most bytes [`diff_paths_clipped`]'s `changes` take as JSON text (the
+/// whole array, serialized compactly). Entries that do not fit are dropped.
+pub const MAX_PATH_CHANGES_BYTES: usize = 32 * 1024;
+
+/// The most bytes ONE side (`before` / `after`) of a
+/// [`diff_paths_clipped`] entry takes as JSON text. [`MAX_VALUE_CHARS`] only
+/// cuts single strings; an array or an object that was added or replaced is
+/// one entry with the whole value, and this bounds it. A larger side is
+/// replaced by the start of its JSON text (a string that ends in `…`) and the
+/// entry gets `beforeTruncated: true` / `afterTruncated: true`.
+pub const MAX_PATH_VALUE_BYTES: usize = 1024;
+
+/// The most bytes of a [`diff_paths_clipped`] entry's `field` (keys are the
+/// user's data and can be long). A longer path is cut (a trailing `…`) and
+/// the entry gets `fieldTruncated: true`.
+pub const MAX_PATH_FIELD_BYTES: usize = 256;
+
 /// The result of [`diff_paths_clipped`]: the entries that were kept, and
-/// whether some were dropped (the audit `detail` then carries
-/// `changesTruncated: true`).
+/// whether some were dropped - over [`MAX_PATH_CHANGES`] entries or over
+/// [`MAX_PATH_CHANGES_BYTES`] (the audit `detail` then carries
+/// `changesTruncated: true`). A value or a path that was cut INSIDE a kept
+/// entry is marked on that entry instead (`beforeTruncated` /
+/// `afterTruncated` / `fieldTruncated`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClippedPathChanges {
     pub changes: Vec<Value>,
@@ -179,24 +199,97 @@ pub fn diff_paths(before: &Value, after: &Value, masked_paths: &[&str]) -> Vec<V
     out
 }
 
-/// [`diff_paths`] for an audit `detail`: strings are cut at
-/// [`MAX_VALUE_CHARS`] (nested ones too) and at most [`MAX_PATH_CHANGES`]
-/// entries are kept; `truncated` says whether entries were dropped. Masking
-/// is done before anything is dropped or cut.
+/// The longest prefix of `text` that is at most `max_bytes` long (cut
+/// between characters).
+fn prefix_within(text: &str, max_bytes: usize) -> &str {
+    let mut end = max_bytes.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// `value` when its JSON text is within [`MAX_PATH_VALUE_BYTES`]; otherwise
+/// the start of that text as a string ending in `…`, sized so that the
+/// string's own JSON text is within the limit too.
+fn fit_value(value: Value) -> (Value, bool) {
+    let text = value.to_string();
+    if text.len() <= MAX_PATH_VALUE_BYTES {
+        return (value, false);
+    }
+    // What the preview costs once it is serialized as a JSON string: the two
+    // quotes, the mark, and each character (`"` and `\` get a backslash;
+    // `text` is JSON, so it holds no raw control character).
+    let mut cost = 2 + '…'.len_utf8();
+    let mut preview = String::new();
+    for c in text.chars() {
+        cost += match c {
+            '"' | '\\' => 2,
+            other => other.len_utf8(),
+        };
+        if cost > MAX_PATH_VALUE_BYTES {
+            break;
+        }
+        preview.push(c);
+    }
+    preview.push('…');
+    (Value::String(preview), true)
+}
+
+/// [`diff_paths`] for an audit `detail`, bounded in every direction:
+///
+/// - strings are cut at [`MAX_VALUE_CHARS`] (nested ones too);
+/// - a `before` / `after` whose JSON text is still over
+///   [`MAX_PATH_VALUE_BYTES`] (a big array or object is ONE entry) becomes
+///   the start of that text, marked `beforeTruncated` / `afterTruncated`;
+/// - a `field` over [`MAX_PATH_FIELD_BYTES`] is cut, marked `fieldTruncated`;
+/// - at most [`MAX_PATH_CHANGES`] entries are kept, and only while the
+///   `changes` array as JSON text stays within [`MAX_PATH_CHANGES_BYTES`];
+///   `truncated` says whether entries were dropped.
+///
+/// So `serde_json::to_string(&changes)` is never longer than
+/// [`MAX_PATH_CHANGES_BYTES`], whatever the documents hold. Masking is done
+/// before anything is dropped or cut (on the whole path), and a masked entry
+/// carries no value to cut.
 pub fn diff_paths_clipped(
     before: &Value,
     after: &Value,
     masked_paths: &[&str],
 ) -> ClippedPathChanges {
-    let mut changes = diff_paths(before, after, masked_paths);
-    let truncated = changes.len() > MAX_PATH_CHANGES;
-    changes.truncate(MAX_PATH_CHANGES);
-    for change in &mut changes {
-        for side in ["before", "after"] {
-            if let Some(value) = change.get_mut(side) {
-                *value = clip(value);
+    let all = diff_paths(before, after, masked_paths);
+    let mut truncated = all.len() > MAX_PATH_CHANGES;
+    let mut changes = Vec::new();
+    // The array's own brackets.
+    let mut used = 2;
+    for mut change in all.into_iter().take(MAX_PATH_CHANGES) {
+        if let Some(entry) = change.as_object_mut() {
+            for (side, mark) in [("before", "beforeTruncated"), ("after", "afterTruncated")] {
+                if let Some(value) = entry.get_mut(side) {
+                    let (fitted, cut) = fit_value(clip(value));
+                    *value = fitted;
+                    if cut {
+                        entry.insert(mark.to_string(), Value::Bool(true));
+                    }
+                }
+            }
+            let short = entry
+                .get("field")
+                .and_then(Value::as_str)
+                .filter(|field| field.len() > MAX_PATH_FIELD_BYTES)
+                .map(|field| format!("{}…", prefix_within(field, MAX_PATH_FIELD_BYTES)));
+            if let Some(short) = short {
+                entry.insert("field".to_string(), Value::String(short));
+                entry.insert("fieldTruncated".to_string(), Value::Bool(true));
             }
         }
+        // The entry and the comma before it.
+        let size = change.to_string().len() + usize::from(!changes.is_empty());
+        if used + size > MAX_PATH_CHANGES_BYTES {
+            truncated = true;
+            break;
+        }
+        used += size;
+        changes.push(change);
     }
     ClippedPathChanges { changes, truncated }
 }
@@ -448,5 +541,140 @@ mod tests {
         assert_eq!(over.changes.len(), MAX_PATH_CHANGES);
         assert!(over.truncated);
         assert_eq!(over.changes[0]["field"], "/k0000");
+    }
+
+    fn changes_bytes(clipped: &ClippedPathChanges) -> usize {
+        serde_json::to_string(&clipped.changes).unwrap().len()
+    }
+
+    #[test]
+    fn paths_clipped_bounds_one_big_array_or_object() {
+        // One entry each: a 10 000-item array, and an object added whole.
+        let items: Vec<Value> = (0..10_000).map(|i| json!(format!("item-{i}"))).collect();
+        let whole: serde_json::Map<String, Value> = (0..5_000)
+            .map(|i| (format!("key{i}"), json!({"n": i})))
+            .collect();
+        let b = json!({"list": ["old"], "small": 1});
+        let a = json!({"list": items, "added": whole, "small": 2});
+        assert!(
+            serde_json::to_string(&diff_paths(&b, &a, &[]))
+                .unwrap()
+                .len()
+                > 100_000
+        );
+
+        let clipped = diff_paths_clipped(&b, &a, &[]);
+        assert!(!clipped.truncated, "no entry was dropped");
+        assert_eq!(clipped.changes.len(), 3);
+        assert!(changes_bytes(&clipped) <= MAX_PATH_CHANGES_BYTES);
+        for (entry, field) in [
+            (&clipped.changes[0], "/added"),
+            (&clipped.changes[1], "/list"),
+        ] {
+            assert_eq!(entry["field"], field);
+            assert_eq!(entry["afterTruncated"], true, "{field}");
+            let preview = entry["after"].as_str().expect("the start of the JSON text");
+            assert!(preview.ends_with('…'));
+            assert!(entry["after"].to_string().len() <= MAX_PATH_VALUE_BYTES);
+            // the small side is kept as it is, unmarked
+            assert!(entry.get("beforeTruncated").is_none());
+        }
+        assert!(clipped.changes[1]["after"]
+            .as_str()
+            .unwrap()
+            .starts_with(r#"["item-0","item-1","#));
+        assert_eq!(clipped.changes[1]["before"], json!(["old"]));
+        // a value within the limit: the same entry as before
+        assert_eq!(
+            clipped.changes[2],
+            json!({"field": "/small", "before": 1, "after": 2})
+        );
+
+        // the worst text for a preview (every character is escaped again)
+        let quotes = json!({"q": vec!["\"\\"; 2_000]});
+        let clipped = diff_paths_clipped(&json!({}), &quotes, &[]);
+        assert_eq!(clipped.changes[0]["afterTruncated"], true);
+        assert!(clipped.changes[0]["after"].to_string().len() <= MAX_PATH_VALUE_BYTES);
+        // exactly at the limit: kept as a value
+        let list = vec!["a".repeat(100); 9];
+        let room = MAX_PATH_VALUE_BYTES - json!({"s": list, "t": ""}).to_string().len();
+        let fits = json!({"s": list, "t": "b".repeat(room)});
+        assert_eq!(fits.to_string().len(), MAX_PATH_VALUE_BYTES);
+        let clipped = diff_paths_clipped(&json!({"v": 1}), &json!({"v": fits}), &[]);
+        assert_eq!(clipped.changes[0]["after"], fits);
+        assert!(clipped.changes[0].get("afterTruncated").is_none());
+    }
+
+    #[test]
+    fn paths_clipped_bounds_long_keys_and_the_whole_list() {
+        // one very long key (multi-byte, with characters JSON escapes)
+        let key = format!("{}\"/~", "キ".repeat(20_000));
+        let clipped = diff_paths_clipped(&json!({}), &json!({ key.as_str(): 1 }), &[]);
+        let entry = &clipped.changes[0];
+        assert_eq!(entry["fieldTruncated"], true);
+        let field = entry["field"].as_str().unwrap();
+        assert!(field.starts_with("/キキ") && field.ends_with('…'));
+        assert!(field.len() <= MAX_PATH_FIELD_BYTES + '…'.len_utf8());
+        assert_eq!(entry["after"], 1);
+        assert!(changes_bytes(&clipped) < 1_000);
+
+        // 100 entries, each with a long key and two big values: the count
+        // fits, the bytes do not - entries are dropped from the end
+        let big = |tag: &str| -> Value {
+            Value::Object(
+                (0..MAX_PATH_CHANGES)
+                    .map(|i| (format!("{i:03}{}", "k".repeat(400)), json!(vec![tag; 500])))
+                    .collect(),
+            )
+        };
+        let clipped = diff_paths_clipped(&big("before"), &big("after"), &[]);
+        assert!(clipped.truncated);
+        assert!(!clipped.changes.is_empty() && clipped.changes.len() < MAX_PATH_CHANGES);
+        assert!(changes_bytes(&clipped) <= MAX_PATH_CHANGES_BYTES);
+        // one more entry would not have fit
+        let next = MAX_PATH_VALUE_BYTES * 2 + MAX_PATH_FIELD_BYTES;
+        assert!(changes_bytes(&clipped) + next > MAX_PATH_CHANGES_BYTES);
+        assert!(clipped.changes[0]["field"]
+            .as_str()
+            .unwrap()
+            .starts_with("/000k"));
+    }
+
+    #[test]
+    fn paths_clipped_masks_before_it_cuts() {
+        // The mask is matched on the whole path and the whole value: a
+        // secret in a big array, under a long key, or behind dropped entries
+        // never reaches the output, and neither does a cut copy of it.
+        let long_key = "s".repeat(1_000);
+        let secret_path = format!("/{long_key}/token");
+        let masked = ["/devices/0/token", secret_path.as_str()];
+        let devices: Vec<Value> = (0..2_000)
+            .map(|i| json!({"token": format!("RAW-{i}"), "name": "d"}))
+            .collect();
+        let filler: serde_json::Map<String, Value> = (0..200)
+            .map(|i| (format!("a{i:03}"), json!(vec!["pad"; 400])))
+            .collect();
+        let mut after = filler;
+        after.insert("devices".to_string(), json!(devices));
+        after.insert(long_key.clone(), json!({"token": "RAW-LONG"}));
+        let clipped = diff_paths_clipped(&json!({}), &Value::Object(after), &masked);
+        assert!(clipped.truncated);
+        let text = serde_json::to_string(&clipped.changes).unwrap();
+        assert!(!text.contains("RAW"), "{text}");
+        assert!(text.len() <= MAX_PATH_CHANGES_BYTES);
+
+        // and when the masked entries are the ones that are kept
+        let after = json!({"devices": devices, long_key.as_str(): {"token": "RAW-LONG"}});
+        let clipped = diff_paths_clipped(&json!({}), &after, &masked);
+        assert_eq!(
+            clipped.changes[0],
+            json!({"field": "/devices", "masked": true})
+        );
+        assert_eq!(clipped.changes[1]["masked"], true);
+        assert_eq!(clipped.changes[1]["fieldTruncated"], true);
+        assert!(clipped.changes[1].get("after").is_none());
+        assert!(!serde_json::to_string(&clipped.changes)
+            .unwrap()
+            .contains("RAW"));
     }
 }

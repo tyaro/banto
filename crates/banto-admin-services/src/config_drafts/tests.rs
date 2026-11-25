@@ -121,6 +121,74 @@ async fn fixture() -> Fixture {
     fixture_with(registry(json!({"limit": 1}))).await
 }
 
+/// A database in a file with TWO pools: the service's, and `other`, which
+/// stands for another transaction that holds the write (SQLite has one
+/// writer for the whole file). `:memory:` cannot do this - every pool would
+/// be its own database.
+struct WaitFixture {
+    f: Fixture,
+    other: Db,
+    _dir: tempfile::TempDir,
+}
+
+async fn wait_fixture() -> WaitFixture {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("config.db");
+    let db = Db::connect_sqlite(&path).await.expect("connect");
+    let other = Db::connect_sqlite(&path)
+        .await
+        .expect("connect the other pool");
+    for sql in DDL {
+        sqlx::query(sql)
+            .execute(db.as_sqlite().expect("sqlite handle"))
+            .await
+            .expect("create table");
+    }
+    let (svc, clock) = with_test_clock(ConfigDraftsService::new(
+        db.clone(),
+        registry(json!({"limit": 1})),
+    ));
+    svc.ensure_targets().await.expect("ensure targets");
+    WaitFixture {
+        f: Fixture { svc, db, clock },
+        other,
+        _dir: dir,
+    }
+}
+
+impl WaitFixture {
+    /// Start `call` (a write of the service) while the other pool holds the
+    /// writer, so it waits in `BEGIN IMMEDIATE`; move the clock to
+    /// `during_wait_ms` WHILE it waits; let go and return what the call
+    /// answers. The call was made at the clock's earlier value and runs at
+    /// the later one.
+    async fn run_after_wait<T, Fut>(
+        &self,
+        during_wait_ms: i64,
+        call: impl FnOnce(ConfigDraftsService) -> Fut,
+    ) -> T
+    where
+        Fut: std::future::Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let held = self
+            .other
+            .as_sqlite()
+            .unwrap()
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .expect("hold the writer");
+        let waiting = tokio::spawn(call(self.f.svc.clone()));
+        // Long enough for the call to reach the wait (it has nothing else to
+        // do first), far below SQLite's busy timeout.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!waiting.is_finished(), "the call must be waiting");
+        self.f.set(during_wait_ms);
+        held.rollback().await.expect("let go of the writer");
+        waiting.await.expect("join")
+    }
+}
+
 fn alice() -> ConfigEditor {
     ConfigEditor {
         holder: "acct:1".to_string(),
@@ -641,6 +709,138 @@ async fn saving_the_draft_extends_the_lock() {
     assert_eq!(state.lock.unwrap(), saved.lock);
 }
 
+/// The clock is read when the write RUNS (after the wait for the writer),
+/// not when it was called: a lock that expired during the wait is expired.
+#[tokio::test]
+async fn a_write_that_waited_past_the_expiry_sees_the_lock_expired() {
+    let w = wait_fixture().await;
+    let f = &w.f;
+    let (a, b) = (alice(), bob());
+    let (lease, revision) = start_draft(f, &a, json!({"limit": 2})).await;
+    let expires = f.state(&a).await.lock.unwrap().expires_at_ms;
+    assert_eq!(expires, START_MS + TTL_MS);
+
+    // extend: called 1 ms before the expiry, runs at the expiry
+    f.set(expires - 1);
+    let extended = w
+        .run_after_wait(expires, {
+            let (a, lease) = (a.clone(), lease.clone());
+            |svc| async move { svc.lock_extend(TARGET, &a, &lease).await }
+        })
+        .await;
+    assert_eq!(conflict(extended, "lock_required")["lock"], Value::Null);
+    // the expired lease was not revived
+    assert!(f.state(&a).await.lock.is_none());
+
+    // save and discard: the same
+    f.set(expires - 1);
+    let saved = w
+        .run_after_wait(expires, {
+            let (a, revision) = (a.clone(), revision.clone());
+            |svc| async move {
+                svc.draft_put(TARGET, &a, &json!({"limit": 3}), &revision, None)
+                    .await
+            }
+        })
+        .await;
+    conflict(saved, "lock_required");
+    f.set(expires - 1);
+    let discarded = w
+        .run_after_wait(expires, {
+            let (a, revision) = (a.clone(), revision.clone());
+            |svc| async move { svc.draft_discard(TARGET, &a, &revision).await }
+        })
+        .await;
+    conflict(discarded, "lock_required");
+    let draft = f.state(&a).await.draft.unwrap();
+    assert_eq!(
+        (draft.value, draft.revision),
+        (json!({"limit": 2}), revision)
+    );
+
+    // acquire, the other way round: alice's lock was valid when bob called
+    // and expired when his write ran - he gets it, dated at the later time
+    f.set(expires - 1);
+    conflict(f.svc.lock_acquire(TARGET, &b).await, "lock_held");
+    let taken = w
+        .run_after_wait(expires, {
+            let b = b.clone();
+            |svc| async move { svc.lock_acquire(TARGET, &b).await }
+        })
+        .await
+        .unwrap();
+    assert_eq!(taken.holder, "acct:2");
+    assert_eq!(
+        (taken.acquired_at_ms, taken.expires_at_ms),
+        (expires, expires + TTL_MS)
+    );
+
+    // the administrator's release reports the lock as it is when it runs:
+    // bob's lock expires during the wait, so the conflict names nobody
+    f.set(expires + TTL_MS - 1);
+    let released = w
+        .run_after_wait(expires + TTL_MS, |svc| async move {
+            svc.lock_force_release(TARGET, "not-the-lease").await
+        })
+        .await;
+    assert_eq!(conflict(released, "lock_held")["lock"], Value::Null);
+}
+
+/// A write that waited but still runs before the expiry succeeds, and the
+/// new expiry counts from the time it ran (the same time that judged it).
+#[tokio::test]
+async fn a_write_that_waited_extends_from_the_time_it_ran() {
+    let w = wait_fixture().await;
+    let f = &w.f;
+    let a = alice();
+    let (lease, revision) = start_draft(f, &a, json!({"limit": 2})).await;
+
+    let extended = w
+        .run_after_wait(START_MS + 1_000, {
+            let (a, lease) = (a.clone(), lease.clone());
+            |svc| async move { svc.lock_extend(TARGET, &a, &lease).await }
+        })
+        .await
+        .unwrap();
+    assert_eq!(extended.expires_at_ms, START_MS + 1_000 + TTL_MS);
+
+    let saved = w
+        .run_after_wait(START_MS + 2_000, {
+            let a = a.clone();
+            |svc| async move {
+                svc.draft_put(TARGET, &a, &json!({"limit": 3}), &revision, None)
+                    .await
+            }
+        })
+        .await
+        .unwrap();
+    assert_eq!(saved.lock.expires_at_ms, START_MS + 2_000 + TTL_MS);
+    assert_eq!(f.state(&a).await.lock.unwrap(), saved.lock);
+}
+
+/// An extension never replaces the expiry with an earlier one, even when
+/// the clock stepped back between two writes.
+#[tokio::test]
+async fn an_extension_never_moves_the_expiry_backwards() {
+    let f = fixture().await;
+    let a = alice();
+    let (lease, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+    f.set(START_MS + 100_000);
+    let newest = f.svc.lock_extend(TARGET, &a, &lease).await.unwrap();
+    assert_eq!(newest.expires_at_ms, START_MS + 100_000 + TTL_MS);
+
+    f.set(START_MS + 50_000);
+    let again = f.svc.lock_extend(TARGET, &a, &lease).await.unwrap();
+    assert_eq!(again, newest);
+    let saved = f
+        .svc
+        .draft_put(TARGET, &a, &json!({"limit": 3}), &revision, None)
+        .await
+        .unwrap();
+    assert_eq!(saved.lock, newest);
+    assert_eq!(f.state(&a).await.lock.unwrap(), newest);
+}
+
 #[tokio::test]
 async fn lock_ttl_is_kept_within_its_bounds() {
     let f = fixture().await;
@@ -839,6 +1039,28 @@ fn target_registration_rejects_bad_input() {
     assert!(ConfigTarget::new("plc", json!({}), &["/auth/token"]).is_ok());
     assert!(ConfigTarget::new("plc", json!({}), &["auth.token"]).is_err());
     assert!(ConfigTarget::new("plc", json!({}), &[""]).is_err());
+    // ... with the escapes of RFC 6901 only: `~0` is `~`, `~1` is `/`
+    for path in ["/", "/a~0b", "/a~1b", "/~0~1", "/a/~01", "/a.b/c d"] {
+        assert!(
+            ConfigTarget::new("plc", json!({}), &[path]).is_ok(),
+            "{path}"
+        );
+    }
+    for path in ["/a~", "/~", "/a~2", "/a~b", "/a~/b", "/a/~~0", "/ok/~1/~x"] {
+        assert!(
+            ConfigTarget::new("plc", json!({}), &["/fine", path]).is_err(),
+            "{path}"
+        );
+    }
+    // a well-formed escape is a mask that works: the key `a/b~c`
+    let escaped = ConfigTarget::new("plc", json!({}), &["/a~1b~0c"]).unwrap();
+    let masks: Vec<&str> = escaped.masked_paths().iter().map(String::as_str).collect();
+    let changes = crate::audit::diff::diff_paths(
+        &json!({"a/b~c": "RAW-ONE"}),
+        &json!({"a/b~c": "RAW-TWO"}),
+        &masks,
+    );
+    assert_eq!(changes, vec![json!({"field": "/a~1b~0c", "masked": true})]);
 
     let registry = ConfigTargetRegistry::empty()
         .register(ConfigTarget::new("b", json!({}), &["/x"]).unwrap())
