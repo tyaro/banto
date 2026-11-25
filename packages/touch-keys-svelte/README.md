@@ -1,12 +1,12 @@
 # @banto/touch-keys-svelte
 
-タッチパネル端末向けの画面内キー（テンキー・文字キーボード）。**オプション・テンプレート未配線（recipe-only）**。
+タッチパネル端末向けの画面内キー（テンキー・文字キーボード）。**オプション**。テンプレートの配線は `/ui-demo` の見本のカードだけ（#937 T7。ルートのレイアウトには置いていない）。
 設計は [docs/design/touch-keypad-design.md](../../docs/design/touch-keypad-design.md)、判断は
 [ADR-0036](../../docs/adr/0036-touch-keys-package.md)。
 
 ## 状態
 
-T5 まで（テンキー、文字キーボード（英数・記号・カナ）、パスワードの入力欄、[レシピ](../../docs/recipes/touch-keys.md)）。**タッチの実機・WebView2 での確かめは
+T5 まで（テンキー、文字キーボード（英数・記号・カナ）、パスワードの入力欄、[レシピ](../../docs/recipes/touch-keys.md)）と、T7（`/ui-demo` のカード）。**タッチの実機・WebView2 での確かめは
 まだ**（設計書 §14.4）。
 
 - `TouchKeysHost` — アプリのルートに 1 つ置く。`enabled`（必須。既定の自動判定は持たない）が true の間、数値の入力欄
@@ -60,4 +60,5 @@ CSS の `mm` は実寸を保証しないので、端末ごとに合わせる。
 
 ## 外す
 
+テンプレートの見本は `pnpm scaffold --preset minimal|standard|display` が外す。パッケージごと消すなら
 `packages/touch-keys-svelte/` を消す。手順は [remove-optional-assets](../../docs/recipes/remove-optional-assets.md)。

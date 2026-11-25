@@ -24,10 +24,16 @@
 - 文言は関数の束 `TouchKeysMessages`（日本語の既定つき）を `messages` で受ける。辞書も Paraglide も持たない（conventions §13）。
 - キーの大きさは部品の CSS 変数 `--banto-touch-key-size`（既定 48px）。theme には足さない（設計書 §10）。
 
-### 2. テンプレートのアプリには配線しない（recipe-only）
+### 2. テンプレートのアプリには、`/ui-demo` のカード 1 枚だけを配線する
 
-アプリは依存しない。scaffold はどのプリセットでも触れず、基準画像も変わらない（設計書 §4.2 の a）。
-外す手順は [remove-optional-assets](../recipes/remove-optional-assets.md) に書く。
+**T5 までは配線しなかった**（recipe-only。アプリは依存せず、scaffold はどのプリセットでも触れず、基準画像も変わらない。
+設計書 §4.2 の a）。API が固まった後の **T7（2026-11-25、オーナー決定）で、設計書 §4.2 の b を採った**:
+
+- 配線は `/ui-demo` のカード 1 枚だけ。**ルートのレイアウトにホストは置かない**（シェルに常時の機能を入れない。
+  設計書 §4.2 の c はしない）。ホストはカードの中に置き、`resolve` でカードの中の欄だけを対象にする。
+- admin-template は `@banto/touch-keys-svelte` に依存する。`pnpm scaffold` は `minimal`・`standard`・`display` で
+  カードと配線を外し、`full` だけが残す（パッケージ本体は残る）。変わる基準画像は `ui-demo` だけ。
+- 外す手順は [remove-optional-assets](../recipes/remove-optional-assets.md) と template-scope §3 の行に書く（conventions §4）。
 
 ### 3. 外部利用 fixture（rule `external-consumer-fixture`）の扱い
 
@@ -39,7 +45,7 @@ fixture の ref は直近のタグ（v8.0.0）で、このパッケージはそ�
 ### 4. 段階
 
 T1（本 ADR・登録・数値の純粋な関数・`NumberKeypad` の表示）→ T2（ホストと `touchKeys`）→ T3（文字キーボード）→
-T4（カナ）→ T5（レシピ）。範囲は設計書 §15。
+T4（カナ）→ T5（レシピ）→ T7（`/ui-demo` のカード。上の 2）。範囲は設計書 §15。T6（grid）は別の設計。
 
 ## 帰結
 

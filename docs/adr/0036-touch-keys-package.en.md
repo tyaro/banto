@@ -24,10 +24,18 @@ business input. We want an on-screen number keypad and text keyboard that safely
 - Strings come as a bundle of functions, `TouchKeysMessages` (Japanese defaults), via `messages`; no dictionary and no Paraglide (conventions §13).
 - Key size is the component CSS variable `--banto-touch-key-size` (default 48px); not added to theme (design §10).
 
-### 2. Not wired into the template app (recipe-only)
+### 2. Wired into the template app as one card on `/ui-demo` only
 
-The app does not depend on it. Scaffold never touches it in any preset and no baseline images change (design §4.2 a).
-The removal steps are in [remove-optional-assets](../recipes/remove-optional-assets.md).
+**Up to T5 it was not wired** (recipe-only: the app did not depend on it, scaffold never touched it and no baseline
+images changed; design §4.2 a). Once the API had settled, **T7 (2026-11-25, owner decision) took design §4.2 b**:
+
+- The wiring is one card on `/ui-demo`. **No host in the root layout** (nothing always-on enters the shell; design
+  §4.2 c stays rejected). The host sits inside the card and `resolve` limits it to the card's own fields.
+- admin-template depends on `@banto/touch-keys-svelte`. `pnpm scaffold` removes the card and its wiring in
+  `minimal`, `standard` and `display`; only `full` keeps it (the package itself stays). The only baseline images
+  that change are the `ui-demo` ones.
+- The removal steps are in [remove-optional-assets](../recipes/remove-optional-assets.md) and the template-scope §3
+  row (conventions §4).
 
 ### 3. External-consumer fixture (rule `external-consumer-fixture`)
 
@@ -39,7 +47,8 @@ step (T2 onward) needs `.svelte.ts`, follow ADR-0020 §6 (add the fixture depend
 ### 4. Stages
 
 T1 (this ADR, registration, pure number functions, the `NumberKeypad` display) -> T2 (host and `touchKeys`) ->
-T3 (text keyboard) -> T4 (kana) -> T5 (recipe). Scope is in design §15.
+T3 (text keyboard) -> T4 (kana) -> T5 (recipe) -> T7 (the `/ui-demo` card, item 2 above). Scope is in design §15.
+T6 (grid) is a separate design.
 
 ## Consequences
 

@@ -9,15 +9,15 @@
  * 決定）。コア（auth/RBAC/audit/settings/backup/CSV/shell）には一切触れない。
  *
  * プリセット（✓＝残す / ✗＝削除。plan §3）:
- *   - minimal  … コアのみ（charts/dock/glass/commandPalette/attachments/report/tree/configDrafts を全削除）
- *   - standard … ダッシュボード体験を残す（attachments/report/tree を削除。configDrafts は残す）
+ *   - minimal  … コアのみ（charts/dock/glass/commandPalette/attachments/report/tree/configDrafts/touchKeys を全削除）
+ *   - standard … ダッシュボード体験を残す（attachments/report/tree/touchKeys を削除。configDrafts は残す）
  *   - full     … 何も削除しない（検証のみ）
  *   - display  … 表示専用アプリ（カンバン/常設ダッシュボード/展示デモ）。
  *                minimal が外すもの全部 + items デモリソース一式 + users /
  *                audit-log **画面** + /dashboard を外し、`/monitor` を足して
  *                既定値を反転する（docs/design/display-preset-plan.md §3.2、Issue #190）。
  *   ※ scan-wedge は現状レシピのみ・未配線なので scaffold は一切触れない（plan §3）。
- *     image-assets（ADR-0020 §6）・touch-keys-svelte（ADR-0036）も同じく未配線（アプリが依存しない）なので触れない。
+ *     image-assets（ADR-0020 §6）も同じく未配線（アプリが依存しない）なので触れない。
  *
  * 各資産の削除は docs/recipes/remove-optional-assets.md（旧 README「3. オプション
  * 資産の削除」）の手動手順を 1 対 1 で自動化した
@@ -102,13 +102,16 @@ const OPTIONAL_ASSETS = [
 	'tree',
 	// 設定の下書き → 反映 → 元に戻す（Issue #938）。画面を持たないサーバー側の配線だけ。
 	// minimal・display は外し、standard・full は残す（config-draft-publish-design §10・§12 の 11）。
-	'configDrafts'
+	'configDrafts',
+	// タッチ向けの画面内キー（Issue #937 T7）。`/ui-demo` のカードとその配線だけ（パッケージは残す）。
+	// full だけが残す（touch-keypad-design §4.2・§16）。
+	'touchKeys'
 ];
 
 const PRESETS = {
 	// 値 = 削除する資産の集合（残すものは書かない）。
 	minimal: [...OPTIONAL_ASSETS],
-	standard: ['attachments', 'report', 'tree'],
+	standard: ['attachments', 'report', 'tree', 'touchKeys'],
 	full: [],
 	// display だけ「デモ資産」（items / 管理画面 / ダッシュボード）にも及ぶ。
 	// 末尾の `displayDefaults` は唯一の「足す」工程（ファイル冒頭 doc 参照）。
@@ -120,7 +123,8 @@ function usage(code) {
 		'使い方: node scripts/scaffold.mjs --preset minimal|standard|full|display [--dry-run] [--strict]\n' +
 			'       node scripts/scaffold.mjs --interactive|-i [--dry-run]\n' +
 			'  minimal     … コアのみ（全オプション資産を削除）\n' +
-			'  standard    … dock/charts/コマンドパレット/Glass・設定の下書きを残し、添付・帳票・ツリーを削除\n' +
+			'  standard    … dock/charts/コマンドパレット/Glass・設定の下書きを残し、添付・帳票・ツリー・\n' +
+			'                画面内キーの見本を削除\n' +
 			'  full        … オプション資産を何も削除しない（banto 本体専用の検証\n' +
 			'                fixture の除去だけ。全プリセット共通）\n' +
 			'  display     … 表示専用アプリ: minimal の削除 + items デモ一式 + users/audit-log 画面\n' +
@@ -366,6 +370,8 @@ const SETTINGS_STORE = `${APP}/src/lib/settings.svelte.ts`;
 const ROOT_PAGE_TS = `${APP}/src/routes/+page.ts`;
 const LOGIN = `${APP}/src/routes/login/+page.svelte`;
 const THEME_LAB = `${APP}/src/routes/(app)/theme-lab/+page.svelte`;
+const UI_DEMO = `${APP}/src/routes/(app)/ui-demo/+page.svelte`;
+const TOUCH_KEYS_MESSAGES = `${APP}/src/lib/banto/touchKeysMessages.ts`;
 const ROOT_PKG = 'package.json';
 const PLAYWRIGHT_CONFIG = 'e2e/playwright.config.ts';
 const E2E_SMOKE = 'e2e/tests/smoke.spec.ts';
@@ -1467,6 +1473,37 @@ function removeConfigDrafts() {
 	);
 }
 
+// --- タッチ向けの画面内キー（Issue #937 T7）----------------------------------
+//
+// docs/design/touch-keypad-design.md §16 と docs/recipes/remove-optional-assets.md の
+// 「`@banto/touch-keys-svelte`」を 1 対 1 で自動化する。テンプレートの配線は `/ui-demo` の
+// カード 1 枚だけ（ルートのレイアウトにホストは置いていない。ナビも変わらない）:
+// `+page.svelte` の 2 つの領域（script の import と状態、markup のカードとホスト。どちらも
+// `[scaffold:touch-keys]` の印で囲む）、Paraglide の束（`touchKeysMessages.ts`）、文言キー
+// （`touchKeys.*` と `uiDemo.touchKeys.*`）、アプリの依存、demo の e2e。
+//
+// 残す物: パッケージ本体（`packages/touch-keys-svelte`。他の remover と同じ）と、その
+// ブラウザーの fixture・CI のジョブ（アプリに依らず、パッケージだけで走る）。`.svelte.ts` を
+// 持たないので、`optimizeDeps.exclude` には元から載っていない（conventions §14）。
+function removeTouchKeys() {
+	// (1) /ui-demo のカード（script と markup の 2 領域）と Paraglide の束
+	cutEveryMarked(UI_DEMO, 'ui-demo: TouchKeysHost のカードと import・状態を除去', 'touch-keys', 2);
+	removeFile(TOUCH_KEYS_MESSAGES, 'touchKeysMessages.ts 削除');
+
+	// (2) 文言キー（盤の文言とカードの文言）
+	for (const rel of [MSG_JA, MSG_EN])
+		removeMessageKeys(rel, `${path.basename(rel)}: touchKeys.* / uiDemo.touchKeys.* キー除去`, [
+			'touchKeys',
+			'uiDemo.touchKeys'
+		]);
+
+	// (3) 依存
+	removeAppDep('@banto/touch-keys-svelte');
+
+	// (4) demo の e2e（カードが無いと落ちる。display は後でディレクトリごと消す）
+	removeFile('e2e/demo/touch-keys.spec.ts', 'e2e/demo/touch-keys.spec.ts 削除');
+}
+
 // --- items（デモリソース一式、display プリセット専用）------------------------
 //
 // docs/design/display-preset-plan.md §3.2 / template-scope §3。items は長らく「コア」
@@ -2187,6 +2224,7 @@ const REMOVERS = {
 	report: removeReport,
 	tree: removeTree,
 	configDrafts: removeConfigDrafts,
+	touchKeys: removeTouchKeys,
 	// display 専用（PRESETS.display からのみ選ばれる）。
 	items: removeItems,
 	adminPages: removeAdminPages,
@@ -2200,7 +2238,8 @@ const REMOVERS = {
 // 後半（display 専用）は**順序依存**なので、この並びを崩さないこと:
 //   - `items` は attachments / report / tree より後（それらが items のファイル
 //     やマニフェスト行を先に触るアンカーを持つ）。configDrafts も items より前に置く
-//     （同じ Rust のファイルを触るが、印の領域は重ならない）。
+//     （同じ Rust のファイルを触るが、印の領域は重ならない）。touchKeys も items より前
+//     （display の e2e の置き換えが `e2e/demo` を丸ごと消す前に、自分の spec を消す）。
 //   - `adminPages` / `dashboard` は `items` より後（navigation.ts の union を
 //     順番に縮めていくため）。
 //   - `displayDefaults` は最後（縮み切った union に /monitor を足す）。
@@ -2213,6 +2252,7 @@ const ORDER = [
 	'report',
 	'tree',
 	'configDrafts',
+	'touchKeys',
 	'items',
 	'adminPages',
 	'dashboard',
@@ -2242,6 +2282,7 @@ const STEP_MARKERS = {
 	report: `${APP}/src/lib/banto/reports`,
 	tree: `${APP}/src/lib/banto/treeSample.ts`,
 	configDrafts: `${APP}/core/migrations-sqlite/0016_config_drafts.sql`,
+	touchKeys: TOUCH_KEYS_MESSAGES,
 	items: `${APP}/core/src/items.rs`,
 	adminPages: `${APP}/src/lib/banto/usersAdmin.ts`,
 	dashboard: `${APP}/src/routes/(app)/dashboard`,
@@ -2274,8 +2315,9 @@ function describeSelection(toRemove) {
 // 「対話は入力を作るだけ、削除ロジックは単一」という要件）。
 
 const PRESET_DESCRIPTIONS = {
-	minimal: 'コアのみ（charts/dock/Glass/コマンドパレット/添付/帳票/ツリーを全削除）',
-	standard: 'dock+charts+パレット+Glass 同梱（添付・帳票・ツリーを削除）',
+	minimal:
+		'コアのみ（charts/dock/Glass/コマンドパレット/添付/帳票/ツリー/画面内キーの見本を全削除）',
+	standard: 'dock+charts+パレット+Glass 同梱（添付・帳票・ツリー・画面内キーの見本を削除）',
 	full: '全オプション同梱（何も削除しない）',
 	display:
 		'表示専用（minimal + items デモ/users・audit-log 画面/ダッシュボードを削除、' +
