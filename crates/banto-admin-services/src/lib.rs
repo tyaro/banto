@@ -26,6 +26,10 @@
 //! `["system"]` only) - a deliberate exception to §3's "add no dependency"
 //! stance, see the ADR for the alternatives considered.
 //!
+//! [`config_drafts`] (Issue #938, config-draft-publish-design §4) adds the
+//! draft -> publish -> revert flow for app-registered config targets. It adds
+//! no dependency, so it is not behind a feature.
+//!
 //! Like every Banto service (conventions §2), the services here take a
 //! `banto_storage::Db` handle, return `Result<_, banto_core::BantoError>`,
 //! and know nothing about `axum`/`tauri`/RBAC/HTTP - authorization, audit,
@@ -41,6 +45,7 @@
 
 pub mod audit;
 pub mod backup;
+pub mod config_drafts;
 pub mod permissions;
 pub mod rbac;
 pub mod settings;

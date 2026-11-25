@@ -1,0 +1,872 @@
+//! Service-level cases of config-draft-publish-design §6 that the base (S1a)
+//! covers: T1 (seeding), T3 (the draft's revisions), T4-T6 (the lock), T10
+//! (input). T9 (the diff) is in `audit/diff.rs`. The cases that need a
+//! publish (T2, T7, T8, the rest of T1/T3/T4) come with S1b.
+
+use std::sync::atomic::{AtomicI64, Ordering};
+
+use super::*;
+
+/// The four tables, SQLite form (design §4.5). MUST be kept in sync with the
+/// app's `migrations-sqlite/0016_config_drafts.sql` once the wiring adds it
+/// (design §7, S4).
+const DDL: [&str; 4] = [
+    "CREATE TABLE config_published (
+        target       TEXT PRIMARY KEY,
+        value        TEXT NOT NULL,
+        version      INTEGER NOT NULL,
+        revision     TEXT NOT NULL,
+        published_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )",
+    "CREATE TABLE config_history (
+        target         TEXT NOT NULL,
+        version        INTEGER NOT NULL,
+        value          TEXT NOT NULL,
+        kind           TEXT NOT NULL,
+        reverted_to    INTEGER,
+        actor_username TEXT,
+        actor_id       INTEGER,
+        actor_kind     TEXT,
+        origin         TEXT,
+        comment        TEXT,
+        published_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (target, version)
+    )",
+    "CREATE TABLE config_drafts (
+        target       TEXT PRIMARY KEY,
+        value        TEXT NOT NULL,
+        base_version INTEGER NOT NULL,
+        revision     TEXT NOT NULL,
+        updated_by   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    )",
+    "CREATE TABLE config_locks (
+        target         TEXT PRIMARY KEY,
+        holder         TEXT NOT NULL,
+        holder_name    TEXT NOT NULL,
+        lease          TEXT NOT NULL,
+        acquired_at_ms INTEGER NOT NULL,
+        expires_at_ms  INTEGER NOT NULL
+    )",
+];
+
+const TARGET: &str = "plc.line1";
+const START_MS: i64 = 1_000_000;
+const TTL_MS: i64 = 300_000;
+
+struct Fixture {
+    svc: ConfigDraftsService,
+    db: Db,
+    clock: Arc<AtomicI64>,
+}
+
+impl Fixture {
+    fn advance(&self, ms: i64) {
+        self.clock.fetch_add(ms, Ordering::SeqCst);
+    }
+
+    fn set(&self, ms: i64) {
+        self.clock.store(ms, Ordering::SeqCst);
+    }
+
+    async fn state(&self, viewer: &ConfigEditor) -> ConfigState {
+        self.svc.state(TARGET, viewer).await.unwrap()
+    }
+
+    async fn count(&self, table: &str) -> i64 {
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+            .fetch_one(self.db.as_sqlite().unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// Stand-in for a publish (S1b): move the published row on.
+    async fn bump_published(&self) {
+        sqlx::query(
+            "UPDATE config_published SET version = version + 1, revision = 'moved' WHERE target = ?",
+        )
+        .bind(TARGET)
+        .execute(self.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+    }
+}
+
+fn registry(default: Value) -> ConfigTargetRegistry {
+    ConfigTargetRegistry::empty()
+        .register(ConfigTarget::new(TARGET, default, &[]).unwrap())
+        .unwrap()
+}
+
+fn with_test_clock(svc: ConfigDraftsService) -> (ConfigDraftsService, Arc<AtomicI64>) {
+    let clock = Arc::new(AtomicI64::new(START_MS));
+    let read = clock.clone();
+    (svc.with_clock(move || read.load(Ordering::SeqCst)), clock)
+}
+
+async fn fixture_with(targets: ConfigTargetRegistry) -> Fixture {
+    let db = Db::connect_sqlite_memory().await.expect("connect");
+    for sql in DDL {
+        sqlx::query(sql)
+            .execute(db.as_sqlite().expect("sqlite handle"))
+            .await
+            .expect("create table");
+    }
+    let (svc, clock) = with_test_clock(ConfigDraftsService::new(db.clone(), targets));
+    svc.ensure_targets().await.expect("ensure targets");
+    Fixture { svc, db, clock }
+}
+
+async fn fixture() -> Fixture {
+    fixture_with(registry(json!({"limit": 1}))).await
+}
+
+fn alice() -> ConfigEditor {
+    ConfigEditor {
+        holder: "acct:1".to_string(),
+        name: "alice".to_string(),
+    }
+}
+
+fn bob() -> ConfigEditor {
+    ConfigEditor {
+        holder: "acct:2".to_string(),
+        name: "bob".to_string(),
+    }
+}
+
+/// The `current` of a conflict with the expected reason.
+fn conflict<T: fmt::Debug>(result: Result<T, BantoError>, reason: &str) -> Value {
+    match result {
+        Err(BantoError::Conflict {
+            current: Some(current),
+            ..
+        }) => {
+            assert_eq!(current["reason"], reason, "{current}");
+            current
+        }
+        other => panic!("expected a {reason} conflict, got {other:?}"),
+    }
+}
+
+fn validation_field<T: fmt::Debug>(result: Result<T, BantoError>) -> String {
+    match result {
+        Err(BantoError::Validation { field_errors }) => field_errors[0].field.clone(),
+        other => panic!("expected a validation error, got {other:?}"),
+    }
+}
+
+/// Acquire and create the draft; returns (lease, draft revision).
+async fn start_draft(f: &Fixture, editor: &ConfigEditor, value: Value) -> (String, String) {
+    let lock = f.svc.lock_acquire(TARGET, editor).await.unwrap();
+    let published = f.svc.published(TARGET).await.unwrap();
+    let saved = f
+        .svc
+        .draft_put(
+            TARGET,
+            editor,
+            &value,
+            CONFIG_DRAFT_ABSENT_REVISION,
+            Some(&published.revision),
+        )
+        .await
+        .unwrap();
+    (lock.lease, saved.revision)
+}
+
+// --- T1: seeding ---
+
+#[tokio::test]
+async fn ensure_targets_seeds_version_0_once() {
+    let f = fixture().await;
+    let first = f.svc.published(TARGET).await.unwrap();
+    assert_eq!(first.version, 0);
+    assert_eq!(first.value, json!({"limit": 1}));
+    assert_eq!(first.revision.len(), 32);
+    let history: (i64, String, String) =
+        sqlx::query_as("SELECT version, value, kind FROM config_history WHERE target = ?")
+            .bind(TARGET)
+            .fetch_one(f.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+    assert_eq!(history.0, 0);
+    assert_eq!(history.2, "initial");
+    // the published value is the latest history row's value
+    assert_eq!(
+        serde_json::from_str::<Value>(&history.1).unwrap(),
+        first.value
+    );
+
+    // again: nothing is made again
+    f.svc.ensure_targets().await.unwrap();
+    assert_eq!(f.svc.published(TARGET).await.unwrap(), first);
+    assert_eq!(f.count("config_history").await, 1);
+
+    // another default in the code (and one more target): the published value
+    // stays, only the new target is seeded
+    let targets = registry(json!({"limit": 99}))
+        .register(ConfigTarget::new("simple", json!({"on": true}), &[]).unwrap())
+        .unwrap();
+    let changed = ConfigDraftsService::new(f.db.clone(), targets);
+    changed.ensure_targets().await.unwrap();
+    assert_eq!(changed.published(TARGET).await.unwrap(), first);
+    let simple = changed.published("simple").await.unwrap();
+    assert_eq!((simple.version, simple.value), (0, json!({"on": true})));
+    assert_eq!(f.count("config_history").await, 2);
+    assert_eq!(f.count("config_published").await, 2);
+}
+
+#[tokio::test]
+async fn a_registered_target_without_its_row_is_not_a_404() {
+    let f = fixture().await;
+    let targets = registry(json!({}))
+        .register(ConfigTarget::new("late", json!({}), &[]).unwrap())
+        .unwrap();
+    // `ensure_targets` not called for the new registry
+    let svc = ConfigDraftsService::new(f.db.clone(), targets);
+    assert!(matches!(
+        svc.published("late").await,
+        Err(BantoError::Other(_))
+    ));
+    assert!(matches!(
+        svc.state("late", &alice()).await,
+        Err(BantoError::Other(_))
+    ));
+    assert!(matches!(
+        svc.lock_acquire("late", &alice()).await,
+        Err(BantoError::Other(_))
+    ));
+    assert_eq!(f.count("config_locks").await, 0);
+}
+
+// --- T3: revisions (the draft's share) ---
+
+#[derive(Debug, PartialEq, serde::Deserialize)]
+struct Limits {
+    limit: i64,
+}
+
+#[tokio::test]
+async fn published_as_is_the_same_row_as_published() {
+    let f = fixture().await;
+    let raw = f.svc.published(TARGET).await.unwrap();
+    let typed = f.svc.published_as::<Limits>(TARGET).await.unwrap();
+    assert_eq!(typed.value, Limits { limit: 1 });
+    assert_eq!(
+        (typed.version, typed.revision, typed.published_at),
+        (raw.version, raw.revision, raw.published_at)
+    );
+
+    // a type the value does not fit: an error that does not quote the value
+    #[derive(Debug, serde::Deserialize)]
+    struct Other {
+        #[allow(dead_code)]
+        limit: String,
+    }
+    let Err(BantoError::Other(message)) = f.svc.published_as::<Other>(TARGET).await else {
+        panic!("expected an error");
+    };
+    assert!(message.contains(TARGET) && !message.contains("integer"));
+}
+
+#[tokio::test]
+async fn draft_save_needs_the_current_revision() {
+    let f = fixture().await;
+    let a = alice();
+    let published = f.svc.published(TARGET).await.unwrap();
+    f.svc.lock_acquire(TARGET, &a).await.unwrap();
+
+    // no draft yet: a revision that is not "0" does not create one
+    let current = conflict(
+        f.svc
+            .draft_put(TARGET, &a, &json!({"limit": 2}), "abc", None)
+            .await,
+        "draft_changed",
+    );
+    assert_eq!(current["revision"], CONFIG_DRAFT_ABSENT_REVISION);
+    assert_eq!(current["draft"], Value::Null);
+    assert_eq!(f.count("config_drafts").await, 0);
+
+    // the creating save must say which published revision it saw
+    assert_eq!(
+        validation_field(
+            f.svc
+                .draft_put(TARGET, &a, &json!({"limit": 2}), "0", None)
+                .await
+        ),
+        "ifPublishedRevision"
+    );
+
+    let first = f
+        .svc
+        .draft_put(
+            TARGET,
+            &a,
+            &json!({"limit": 2}),
+            "0",
+            Some(&published.revision),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.base_version, 0);
+    assert_eq!(first.revision.len(), 32);
+
+    // "0" again: the draft exists now
+    let current = conflict(
+        f.svc
+            .draft_put(
+                TARGET,
+                &a,
+                &json!({"limit": 3}),
+                "0",
+                Some(&published.revision),
+            )
+            .await,
+        "draft_changed",
+    );
+    assert_eq!(current["revision"], first.revision);
+    assert_eq!(current["draft"]["value"], json!({"limit": 2}));
+    assert_eq!(current["draft"]["baseVersion"], 0);
+
+    // the next save moves the revision; the old one no longer writes
+    let second = f
+        .svc
+        .draft_put(TARGET, &a, &json!({"limit": 3}), &first.revision, None)
+        .await
+        .unwrap();
+    assert_ne!(second.revision, first.revision);
+    assert_eq!(second.base_version, 0);
+    let current = conflict(
+        f.svc
+            .draft_put(TARGET, &a, &json!({"limit": 4}), &first.revision, None)
+            .await,
+        "draft_changed",
+    );
+    assert_eq!(current["revision"], second.revision);
+
+    let state = f.state(&a).await;
+    let draft = state.draft.unwrap();
+    assert_eq!(draft.value, json!({"limit": 3}));
+    assert_eq!(draft.revision, second.revision);
+    assert_eq!(draft.updated_by, "alice");
+    // the published value is untouched by all of it
+    assert_eq!(state.published, published);
+    assert_eq!(f.count("config_history").await, 1);
+}
+
+#[tokio::test]
+async fn first_save_is_refused_when_published_moved_on() {
+    let f = fixture().await;
+    let a = alice();
+    let seen = f.svc.published(TARGET).await.unwrap();
+    f.svc.lock_acquire(TARGET, &a).await.unwrap();
+    f.bump_published().await;
+
+    let current = conflict(
+        f.svc
+            .draft_put(TARGET, &a, &json!({"limit": 2}), "0", Some(&seen.revision))
+            .await,
+        "published_changed",
+    );
+    assert_eq!(
+        current["published"],
+        json!({"version": 1, "revision": "moved"})
+    );
+    assert_eq!(f.count("config_drafts").await, 0);
+
+    // with the revision of what is published now, the base is that version
+    let saved = f
+        .svc
+        .draft_put(TARGET, &a, &json!({"limit": 2}), "0", Some("moved"))
+        .await
+        .unwrap();
+    assert_eq!(saved.base_version, 1);
+    // a later save does not look at the published revision again
+    f.bump_published().await;
+    let again = f
+        .svc
+        .draft_put(TARGET, &a, &json!({"limit": 5}), &saved.revision, None)
+        .await
+        .unwrap();
+    assert_eq!(again.base_version, 1);
+}
+
+#[tokio::test]
+async fn discard_needs_the_current_revision_and_keeps_the_lock() {
+    let f = fixture().await;
+    let a = alice();
+    let (_lease, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+    let expires = f.state(&a).await.lock.unwrap().expires_at_ms;
+    f.advance(1_000);
+
+    conflict(
+        f.svc.draft_discard(TARGET, &a, "stale").await,
+        "draft_changed",
+    );
+    // "0" says "there is no draft" - there is one
+    conflict(f.svc.draft_discard(TARGET, &a, "0").await, "draft_changed");
+    assert_eq!(f.count("config_drafts").await, 1);
+
+    let gone = f.svc.draft_discard(TARGET, &a, &revision).await.unwrap();
+    assert_eq!(gone.revision, CONFIG_DRAFT_ABSENT_REVISION);
+    let state = f.state(&a).await;
+    assert!(state.draft.is_none());
+    assert!(state.lock_is_mine);
+    // the discard did not move the expiry
+    assert_eq!(state.lock.unwrap().expires_at_ms, expires);
+
+    // nothing there: "0" is fine, a revision is not
+    f.svc.draft_discard(TARGET, &a, "0").await.unwrap();
+    let current = conflict(
+        f.svc.draft_discard(TARGET, &a, &revision).await,
+        "draft_changed",
+    );
+    assert_eq!(current["revision"], "0");
+
+    // a draft made again has a new revision
+    let published = f.svc.published(TARGET).await.unwrap();
+    let again = f
+        .svc
+        .draft_put(
+            TARGET,
+            &a,
+            &json!({"limit": 2}),
+            "0",
+            Some(&published.revision),
+        )
+        .await
+        .unwrap();
+    assert_ne!(again.revision, revision);
+}
+
+#[tokio::test]
+async fn the_validator_is_reported_but_does_not_stop_a_save() {
+    let target = ConfigTarget::new(TARGET, json!({"limit": 1}), &[])
+        .unwrap()
+        .with_validator(|value| {
+            if value["limit"].as_i64().is_some_and(|limit| limit > 0) {
+                Ok(())
+            } else {
+                Err(vec![FieldError {
+                    field: "/limit".to_string(),
+                    message: "must be positive".to_string(),
+                }])
+            }
+        });
+    let f = fixture_with(ConfigTargetRegistry::empty().register(target).unwrap()).await;
+    let a = alice();
+    let published = f.svc.published(TARGET).await.unwrap();
+    f.svc.lock_acquire(TARGET, &a).await.unwrap();
+    let bad = f
+        .svc
+        .draft_put(
+            TARGET,
+            &a,
+            &json!({"limit": -1}),
+            "0",
+            Some(&published.revision),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad.validation.len(), 1);
+    assert_eq!(bad.validation[0].field, "/limit");
+    assert_eq!(f.state(&a).await.draft.unwrap().value, json!({"limit": -1}));
+    let good = f
+        .svc
+        .draft_put(TARGET, &a, &json!({"limit": 5}), &bad.revision, None)
+        .await
+        .unwrap();
+    assert!(good.validation.is_empty());
+}
+
+// --- T4: two people, two tabs ---
+
+#[tokio::test]
+async fn another_person_cannot_take_write_extend_or_release() {
+    let f = fixture().await;
+    let (a, b) = (alice(), bob());
+    let (lease, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+    let before = f.state(&a).await;
+    assert!(before.lock_is_mine);
+
+    let current = conflict(f.svc.lock_acquire(TARGET, &b).await, "lock_held");
+    assert_eq!(current["lock"]["holderName"], "alice");
+    assert_eq!(current["lock"]["expiresAtMs"], START_MS + TTL_MS);
+    // the conflict does not hand out the lease
+    assert!(current["lock"].get("lease").is_none());
+
+    let current = conflict(
+        f.svc
+            .draft_put(TARGET, &b, &json!({"limit": 9}), &revision, None)
+            .await,
+        "lock_required",
+    );
+    assert_eq!(current["lock"]["holderName"], "alice");
+    conflict(
+        f.svc.draft_discard(TARGET, &b, &revision).await,
+        "lock_required",
+    );
+
+    // bob can read alice's lease in the state; it does not let him act
+    let seen = f.state(&b).await;
+    assert!(!seen.lock_is_mine);
+    assert_eq!(seen.lock.as_ref().unwrap().lease, lease);
+    f.advance(1_000);
+    conflict(f.svc.lock_extend(TARGET, &b, &lease).await, "lock_required");
+    f.svc.lock_release(TARGET, &b, &lease).await.unwrap();
+
+    // nothing of alice's changed
+    let after = f.state(&a).await;
+    assert_eq!(after, before);
+}
+
+#[tokio::test]
+async fn an_old_tab_cannot_release_or_extend_the_newer_tabs_lock() {
+    let f = fixture().await;
+    let a = alice();
+    let tab1 = f.svc.lock_acquire(TARGET, &a).await.unwrap();
+    f.advance(1_000);
+    let tab2 = f.svc.lock_acquire(TARGET, &a).await.unwrap();
+    assert_ne!(tab2.lease, tab1.lease);
+    assert_eq!(tab2.expires_at_ms, START_MS + 1_000 + TTL_MS);
+
+    f.advance(1_000);
+    // late calls from tab 1
+    f.svc.lock_release(TARGET, &a, &tab1.lease).await.unwrap();
+    let current = conflict(
+        f.svc.lock_extend(TARGET, &a, &tab1.lease).await,
+        "lock_required",
+    );
+    assert_eq!(current["lock"]["holderName"], "alice");
+    assert_eq!(f.state(&a).await.lock.unwrap(), tab2);
+
+    // tab 2's own lease works; the lease stays the same
+    let extended = f.svc.lock_extend(TARGET, &a, &tab2.lease).await.unwrap();
+    assert_eq!(extended.lease, tab2.lease);
+    assert_eq!(extended.acquired_at_ms, tab2.acquired_at_ms);
+    assert_eq!(extended.expires_at_ms, START_MS + 2_000 + TTL_MS);
+    assert_eq!(f.state(&a).await.lock.unwrap(), extended);
+
+    f.svc.lock_release(TARGET, &a, &tab2.lease).await.unwrap();
+    assert!(f.state(&a).await.lock.is_none());
+    assert_eq!(f.count("config_locks").await, 0);
+}
+
+#[tokio::test]
+async fn extend_after_expiry_does_not_take_the_lock_again() {
+    let f = fixture().await;
+    let a = alice();
+    let lock = f.svc.lock_acquire(TARGET, &a).await.unwrap();
+    f.set(lock.expires_at_ms);
+    let current = conflict(
+        f.svc.lock_extend(TARGET, &a, &lock.lease).await,
+        "lock_required",
+    );
+    assert_eq!(current["lock"], Value::Null);
+    let state = f.state(&a).await;
+    assert!(state.lock.is_none() && !state.lock_is_mine);
+    // a late release of the expired lock still removes the row (it is hers)
+    f.svc.lock_release(TARGET, &a, &lock.lease).await.unwrap();
+    assert_eq!(f.count("config_locks").await, 0);
+}
+
+// --- T5: the expiry ---
+
+#[tokio::test]
+async fn lock_expires_exactly_at_its_expiry() {
+    let f = fixture().await;
+    let (a, b) = (alice(), bob());
+    let (_lease, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+    // the save moved the expiry to now + ttl (same instant here)
+    let expires = f.state(&a).await.lock.unwrap().expires_at_ms;
+    assert_eq!(expires, START_MS + TTL_MS);
+
+    // 1 ms before: valid
+    f.set(expires - 1);
+    assert!(f.state(&a).await.lock_is_mine);
+    conflict(f.svc.lock_acquire(TARGET, &b).await, "lock_held");
+
+    // at the expiry: gone
+    f.set(expires);
+    assert!(f.state(&a).await.lock.is_none());
+    let current = conflict(
+        f.svc
+            .draft_put(TARGET, &a, &json!({"limit": 3}), &revision, None)
+            .await,
+        "lock_required",
+    );
+    assert_eq!(current["lock"], Value::Null);
+    conflict(
+        f.svc.draft_discard(TARGET, &a, &revision).await,
+        "lock_required",
+    );
+
+    // after: bob takes it, alice's save still fails (now it names bob)
+    f.set(expires + 1);
+    let taken = f.svc.lock_acquire(TARGET, &b).await.unwrap();
+    assert_eq!(taken.holder, "acct:2");
+    assert_eq!(taken.expires_at_ms, expires + 1 + TTL_MS);
+    let current = conflict(
+        f.svc
+            .draft_put(TARGET, &a, &json!({"limit": 3}), &revision, None)
+            .await,
+        "lock_required",
+    );
+    assert_eq!(current["lock"]["holderName"], "bob");
+    // the draft alice left is still there, unchanged
+    let draft = f.state(&b).await.draft.unwrap();
+    assert_eq!(
+        (draft.value, draft.revision),
+        (json!({"limit": 2}), revision)
+    );
+}
+
+#[tokio::test]
+async fn saving_the_draft_extends_the_lock() {
+    let f = fixture().await;
+    let a = alice();
+    let (lease, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+    f.advance(200_000);
+    let saved = f
+        .svc
+        .draft_put(TARGET, &a, &json!({"limit": 3}), &revision, None)
+        .await
+        .unwrap();
+    assert_eq!(saved.lock.expires_at_ms, START_MS + 200_000 + TTL_MS);
+    assert_eq!(saved.lock.lease, lease);
+    // past the first expiry, still held
+    f.set(START_MS + TTL_MS + 1);
+    let state = f.state(&a).await;
+    assert!(state.lock_is_mine);
+    assert_eq!(state.lock.unwrap(), saved.lock);
+}
+
+#[tokio::test]
+async fn lock_ttl_is_kept_within_its_bounds() {
+    let f = fixture().await;
+    let a = alice();
+    for (ttl, expected_ms) in [
+        (Duration::from_secs(60), 60_000),
+        (Duration::from_millis(1), 1_000),
+        (Duration::from_secs(86_400), 3_600_000),
+    ] {
+        let svc = f.svc.clone().with_lock_ttl(ttl);
+        let lock = svc.lock_acquire(TARGET, &a).await.unwrap();
+        assert_eq!(lock.expires_at_ms - lock.acquired_at_ms, expected_ms);
+    }
+}
+
+// --- T6: the administrator's release ---
+
+#[tokio::test]
+async fn force_release_removes_only_the_lock_that_was_seen() {
+    let f = fixture().await;
+    let (a, b) = (alice(), bob());
+    let (lease, revision) = start_draft(&f, &a, json!({"limit": 2})).await;
+
+    // a lease that is not the row's: nothing is removed
+    let current = conflict(
+        f.svc.lock_force_release(TARGET, "not-the-lease").await,
+        "lock_held",
+    );
+    assert_eq!(current["lock"]["holderName"], "alice");
+    assert!(f.state(&a).await.lock_is_mine);
+
+    let removed = f.svc.lock_force_release(TARGET, &lease).await.unwrap();
+    assert_eq!(removed.holder, "acct:1");
+    assert_eq!(removed.holder_name, "alice");
+    assert_eq!(removed.lease, lease);
+
+    // the draft stays; alice can no longer write it; bob can take over
+    let state = f.state(&a).await;
+    assert!(state.lock.is_none());
+    assert_eq!(state.draft.as_ref().unwrap().revision, revision);
+    conflict(
+        f.svc
+            .draft_put(TARGET, &a, &json!({"limit": 3}), &revision, None)
+            .await,
+        "lock_required",
+    );
+    f.svc.lock_acquire(TARGET, &b).await.unwrap();
+    f.svc
+        .draft_put(TARGET, &b, &json!({"limit": 7}), &revision, None)
+        .await
+        .unwrap();
+    let draft = f.state(&b).await.draft.unwrap();
+    assert_eq!(draft.value, json!({"limit": 7}));
+    assert_eq!(draft.updated_by, "bob");
+    assert_eq!(draft.base_version, 0);
+
+    // the lease the administrator saw is gone: releasing it again must not
+    // remove bob's lock
+    let current = conflict(f.svc.lock_force_release(TARGET, &lease).await, "lock_held");
+    assert_eq!(current["lock"]["holderName"], "bob");
+    assert!(f.state(&b).await.lock_is_mine);
+}
+
+#[tokio::test]
+async fn force_release_with_no_lock_is_a_conflict_with_no_holder() {
+    let f = fixture().await;
+    let current = conflict(
+        f.svc.lock_force_release(TARGET, "anything").await,
+        "lock_held",
+    );
+    assert_eq!(current["lock"], Value::Null);
+}
+
+// --- T10: input ---
+
+#[tokio::test]
+async fn unknown_target_is_not_found_everywhere() {
+    let f = fixture().await;
+    let a = alice();
+    let value = json!({});
+    let not_found = |result: Result<(), BantoError>| match result {
+        Err(BantoError::NotFound { resource, id }) => {
+            assert_eq!((resource.as_str(), id.as_str()), ("config", "nope"));
+        }
+        other => panic!("expected not found, got {other:?}"),
+    };
+    not_found(f.svc.published("nope").await.map(drop));
+    not_found(f.svc.published_as::<Value>("nope").await.map(drop));
+    not_found(f.svc.state("nope", &a).await.map(drop));
+    not_found(f.svc.lock_acquire("nope", &a).await.map(drop));
+    not_found(f.svc.lock_extend("nope", &a, "x").await.map(drop));
+    not_found(f.svc.lock_release("nope", &a, "x").await);
+    not_found(f.svc.lock_force_release("nope", "x").await.map(drop));
+    not_found(
+        f.svc
+            .draft_put("nope", &a, &value, "0", Some("x"))
+            .await
+            .map(drop),
+    );
+    not_found(f.svc.draft_discard("nope", &a, "0").await.map(drop));
+
+    // a target whose rows exist but that is not registered any more
+    sqlx::query("INSERT INTO config_published (target, value, version, revision) VALUES ('old', '{}', 3, 'r')")
+        .execute(f.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.svc.published("old").await,
+        Err(BantoError::NotFound { .. })
+    ));
+    // a long unknown key is cut in the answer
+    let long = "x".repeat(500);
+    let Err(BantoError::NotFound { id, .. }) = f.svc.published(&long).await else {
+        panic!("expected not found");
+    };
+    assert_eq!(id.len(), MAX_CONFIG_TARGET_KEY_LEN);
+}
+
+#[tokio::test]
+async fn value_must_be_an_object_within_the_size_limit() {
+    let f = fixture().await;
+    let a = alice();
+    let published = f.svc.published(TARGET).await.unwrap();
+    f.svc.lock_acquire(TARGET, &a).await.unwrap();
+    let put = |value: Value| {
+        let (svc, a, revision) = (f.svc.clone(), a.clone(), published.revision.clone());
+        async move {
+            svc.draft_put(TARGET, &a, &value, "0", Some(&revision))
+                .await
+        }
+    };
+
+    for bad in [json!([1]), json!("text"), json!(1), json!(null)] {
+        assert_eq!(validation_field(put(bad).await), "value");
+    }
+    // {"k":"<n bytes>"} is n + 8 bytes
+    let sized = |bytes: usize| json!({"k": "a".repeat(bytes - 8)});
+    assert_eq!(
+        validation_field(put(sized(MAX_CONFIG_VALUE_BYTES + 1)).await),
+        "value"
+    );
+    assert_eq!(f.count("config_drafts").await, 0);
+    put(sized(MAX_CONFIG_VALUE_BYTES)).await.unwrap();
+
+    // empty and overlong conditions are refused before the database
+    assert_eq!(
+        validation_field(f.svc.draft_put(TARGET, &a, &json!({}), "", None).await),
+        "ifRevision"
+    );
+    assert_eq!(
+        validation_field(f.svc.draft_discard(TARGET, &a, &"r".repeat(65)).await),
+        "ifRevision"
+    );
+    assert_eq!(
+        validation_field(f.svc.draft_put(TARGET, &a, &json!({}), "0", Some("")).await),
+        "ifPublishedRevision"
+    );
+    assert_eq!(
+        validation_field(f.svc.lock_extend(TARGET, &a, "").await),
+        "lease"
+    );
+    assert_eq!(
+        validation_field(f.svc.lock_release(TARGET, &a, "").await),
+        "lease"
+    );
+    assert_eq!(
+        validation_field(f.svc.lock_force_release(TARGET, "").await),
+        "ifLease"
+    );
+}
+
+#[test]
+fn target_registration_rejects_bad_input() {
+    for key in ["plc", "plc.line1", "a_b.c2", &"a".repeat(64)] {
+        assert!(ConfigTarget::new(key, json!({}), &[]).is_ok(), "{key}");
+    }
+    for key in [
+        "",
+        "Plc",
+        "1plc",
+        "plc.",
+        ".plc",
+        "plc..line",
+        "plc-line",
+        "plc line",
+        &"a".repeat(65),
+    ] {
+        assert!(ConfigTarget::new(key, json!({}), &[]).is_err(), "{key}");
+    }
+    // the default: an object, within the size limit
+    assert!(ConfigTarget::new("plc", json!([]), &[]).is_err());
+    assert!(ConfigTarget::new("plc", json!(null), &[]).is_err());
+    let big = json!({"k": "a".repeat(MAX_CONFIG_VALUE_BYTES)});
+    assert!(ConfigTarget::new("plc", big, &[]).is_err());
+    // masked paths are JSON Pointers
+    assert!(ConfigTarget::new("plc", json!({}), &["/auth/token"]).is_ok());
+    assert!(ConfigTarget::new("plc", json!({}), &["auth.token"]).is_err());
+    assert!(ConfigTarget::new("plc", json!({}), &[""]).is_err());
+
+    let registry = ConfigTargetRegistry::empty()
+        .register(ConfigTarget::new("b", json!({}), &["/x"]).unwrap())
+        .unwrap()
+        .register(ConfigTarget::new("a", json!({}), &[]).unwrap())
+        .unwrap();
+    // registration order, and no duplicates
+    let keys: Vec<&str> = registry.targets().iter().map(ConfigTarget::key).collect();
+    assert_eq!(keys, vec!["b", "a"]);
+    assert_eq!(registry.get("b").unwrap().masked_paths(), ["/x"]);
+    assert!(registry
+        .register(ConfigTarget::new("a", json!({}), &[]).unwrap())
+        .is_err());
+}
+
+#[tokio::test]
+async fn wire_shape_is_camel_case_without_the_holder_key() {
+    let f = fixture().await;
+    let a = alice();
+    start_draft(&f, &a, json!({"limit": 2})).await;
+    let wire = serde_json::to_value(f.state(&a).await).unwrap();
+    assert_eq!(wire["target"], TARGET);
+    assert_eq!(wire["lockIsMine"], true);
+    assert!(wire["published"]["publishedAt"].is_string());
+    assert_eq!(wire["draft"]["baseVersion"], 0);
+    assert_eq!(wire["draft"]["updatedBy"], "alice");
+    assert_eq!(wire["lock"]["holderName"], "alice");
+    assert!(wire["lock"]["lease"].is_string());
+    assert_eq!(wire["lock"]["expiresAtMs"], START_MS + TTL_MS);
+    assert!(wire["lock"].get("holder").is_none());
+}
