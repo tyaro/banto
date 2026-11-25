@@ -17,7 +17,7 @@ export interface TouchKeysMessages {
 	sign?: () => string;
 	/** Allowed range line; either side may be absent. */
 	range?: (min: string | null, max: string | null) => string;
-	/** Notice for a number that does not sit on the step grid; a side is null when no valid value exists there. */
+	/** Notice for a number that does not sit on the step grid; a side is null when no candidate can be offered there. */
 	step?: (lower: string | null, upper: string | null) => string;
 	/** Notice for an empty draft of a required field. */
 	required?: () => string;

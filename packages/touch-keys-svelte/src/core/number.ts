@@ -302,7 +302,15 @@ export function nearestSteps(value: Dec, rule: StepRule): { lower: Dec; upper: D
 	return { lower, upper: addDec(lower, rule.step) };
 }
 
+/** Whether the keys can enter `v` (fraction digits within `decimals`, at most 15 significant digits). */
+function enterable(v: Dec, rules: NumberRules): boolean {
+	if (decPlaces(v) > rules.decimals) return false;
+	const digits = formatDec(v).replace('-', '').replace('.', '').replace(/^0+/, '');
+	return digits.length <= MAX_DIGITS;
+}
+
 function satisfiesAll(v: Dec, rules: NumberRules): boolean {
+	if (!enterable(v, rules)) return false;
 	if (rules.min && cmpDec(v, rules.min) < 0) return false;
 	if (rules.max && cmpDec(v, rules.max) > 0) return false;
 	if (!rules.allowNegative && v.n < 0n) return false;
@@ -314,7 +322,8 @@ const NEAREST_SEARCH_LIMIT = 1000;
 
 /**
  * Nearest values below and above `value` that satisfy EVERY rule (range, sign and all
- * steps), found by walking the failing rule's grid. `null` on a side when none is found.
+ * steps) and that the keys can enter (decimals, 15 digits), found by walking the failing rule's grid.
+ * `null` on a side when no candidate can be offered there (none exists, or none within the search bound).
  */
 export function nearestValid(
 	value: Dec,

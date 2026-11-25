@@ -247,6 +247,16 @@ describe('review fixes', () => {
 	});
 });
 
+describe('step suggestions only offer values the keys can enter', () => {
+	it('min=0 step=0.25 decimals=1: 0.3 suggests 0 and 0.5, not 0.25', () => {
+		const r = resolveNumberRules(
+			{ inputmode: 'decimal', min: '0', step: '0.25' },
+			{ decimals: 1 }
+		)!;
+		expect(classifyDraft('0.3', r)).toMatchObject({ reason: 'step', lower: '0', upper: '0.5' });
+	});
+});
+
 describe('inferTouchKind', () => {
 	it.each([
 		[{ type: 'number' }, 'number'],
