@@ -216,6 +216,9 @@ await configs.lockRelease('site', lock.lease);
   `lockAcquire` / `lockExtend` / `lockRelease` / `draftPut` / `draftRebase` / `draftDiscard` / `publish` / `revert` / `unlock`。
   `lockRelease` と `unlock` は本文なし（204）で、`void` を返す。lease を使うのは `lockExtend`・`lockRelease`（自分のロック）と
   `unlock` の `ifLease`（画面で見たほかの人のロック）。
+  lease は「どの取得か」の識別子で、権限でも持ち主の証明でもない（サーバーは持ち主と lease を別々に確かめる）。`get` の `lock`・`list` の
+  各行の `lock` は、ほかの人の有効なロックでも lease を含む（`unlock` の `ifLease` に渡す）。409 の `current.lock` だけは lease を含まない。
+  `draftPut` などの本文を JSON にできない値（`bigint` など）は、送らずに `bad_request`（手元の入力のエラー）で拒む。`isNetworkError` は偽。
 - **保存の検証の失敗はエラーではない**: `draftPut` / `draftRebase` の結果の `validation`（空なら反映できる）で見る。
 - **衝突**は `conflict`（409）。`configDraftConflict(error)` が理由ごとの型で取り出す（衝突でなければ `null`）:
   `stale_base`（差分を見せて `draftRebase`）・`draft_changed`（読み直し。`draft` は今の下書きか `null`）・

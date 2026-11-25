@@ -29,14 +29,19 @@ import { ProviderError, type ErrorBody, type FieldError } from '../errors';
 /** The revision of "no draft" (what `draftDiscard` answers, and the `ifRevision` of a first save). */
 export const CONFIG_DRAFT_ABSENT_REVISION = '0';
 
-/** What the editing lock shows other people (the lease is never in it). */
+/** What the editing lock shows other people. A conflict's `current.lock` carries only this (never a lease). */
 export interface ConfigLockInfo {
 	holderName: string;
 	acquiredAtMs: number;
 	expiresAtMs: number;
 }
 
-/** The caller's own lock, as `lockAcquire` / `lockExtend` answer. `lease` proves ownership: keep it, send it back. */
+/**
+ * A lock as `lockAcquire` / `lockExtend` answer, and as `get` / `list` show it (also another person's valid lock).
+ * `lease` names ONE acquire: send it back to `lockExtend` / `lockRelease` (your own lock), or as `unlock`'s
+ * `ifLease` (the lock the screen saw). It is neither a permission nor a proof of the holder: the server checks both
+ * separately.
+ */
 export interface ConfigLock extends ConfigLockInfo {
 	lease: string;
 }
@@ -57,23 +62,23 @@ export interface ConfigDraft {
 	updatedAt: string;
 }
 
-/** `get(target)`: published, draft and lock from one read. `lock` carries no lease unless it is yours (`lockIsMine`). */
+/** `get(target)`: published, draft and lock from one read. `lock` is the valid lock of anybody, with its lease (`lockIsMine`: yours). */
 export interface ConfigState {
 	target: string;
 	published: ConfigPublished;
 	draft: ConfigDraft | null;
-	lock: (ConfigLockInfo & { lease?: string }) | null;
+	lock: ConfigLock | null;
 	lockIsMine: boolean;
 }
 
-/** One row of `list()`: no values. */
+/** One row of `list()`: no values. `lock` is the valid lock with its lease (what `unlock` needs). */
 export interface ConfigTargetSummary {
 	target: string;
 	version: number;
 	revision: string;
 	publishedAt: string;
 	draft: { baseVersion: number; revision: string; updatedBy: string; updatedAt: string } | null;
-	lock: ConfigLockInfo | null;
+	lock: ConfigLock | null;
 }
 
 /**
@@ -622,12 +627,31 @@ export function createHttpConfigDrafts(options: HttpConfigDraftsOptions): Config
 	}
 
 	return build(async (call) => {
+		// Prepare the body first: a value JSON cannot hold (a `bigint`, a cycle) is the
+		// caller's input, not a lost connection - nothing was sent.
+		let body: string | undefined;
+		if (call.body !== undefined) {
+			try {
+				body = JSON.stringify(call.body);
+			} catch {
+				throw new ProviderError({
+					kind: 'bad_request',
+					message: '送る内容を JSON にできません'
+				});
+			}
+			if (body === undefined) {
+				throw new ProviderError({
+					kind: 'bad_request',
+					message: '送る内容を JSON にできません'
+				});
+			}
+		}
 		let response: Response;
 		try {
 			response = await fetchFn(`${baseUrl}${call.path}${queryString(call.params)}`, {
 				method: call.method,
-				headers: headers(call.body !== undefined),
-				...(call.body !== undefined ? { body: JSON.stringify(call.body) } : {})
+				headers: headers(body !== undefined),
+				...(body !== undefined ? { body } : {})
 			});
 		} catch {
 			throw new ProviderError(

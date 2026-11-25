@@ -596,6 +596,9 @@ S2 でサービス側に足した物（両経路が同じ監査 detail を作る
 
 - **ロック**は `{ holderName, lease, acquiredAtMs, expiresAtMs }`（`ConfigLock`。持ち主のキーは出さない）。状態（`GET /api/config/{target}`）は
   `{ target, published, draft, lock, lockIsMine }`（`mine` は `lock` の中ではなく `lockIsMine`。`draft`・`lock` は無ければ `null`）。
+- **lease は状態（`GET /api/config/{target}`）と一覧（`GET /api/config`）の `lock` にも出る**（ほかの人の有効なロックでも。解除の権限を持つ画面が `unlock(target, ifLease)` に使う）。
+  lease は取得の回の識別子で、権限・持ち主の証明ではない。lease を含まないのは 409 の `current.lock` だけ（S1a の決定）。admin-core の型は `ConfigLock`（lease あり）と、衝突用の `ConfigLockInfo`（なし）に分ける。
+  HTTP の provider は本文の JSON 化の失敗（`bigint` など）を fetch の失敗と分け、送らずに `bad_request` で拒む（`isNetworkError` は偽）。
 - **lease の欄名は `lease`**（`leaseId` ではない）: 延長の本文 `{ lease }`、返却は `?lease=`、解除の本文は `{ ifLease }`。延長の応答はロックの全体。返却と解除の応答は 204（本文なし）。
 - **下書きの保存・取り直しの応答**は `{ revision, baseVersion, validation: [...], lock }`（`ConfigDraftSaved`。検証の結果は `validation` で、空なら反映できる。422 ではない）。
   破棄の応答は `{ revision: "0" }`。

@@ -170,6 +170,37 @@ describe('createHttpConfigDrafts (T16)', () => {
 		const bad = http(200, 'nope').provider;
 		await expect(bad.get('site')).rejects.toBeInstanceOf(ProviderError);
 	});
+
+	it('another account holds the lock: list and get show its lease and an administrator unlocks with it', async () => {
+		const lock = { holderName: 'B', lease: 'LB', acquiredAtMs: 1, expiresAtMs: 2 };
+		const { fetchFn, provider } = http(200, [{ target: 'site', lock }]);
+		const rows = await provider.list();
+		const seen = rows[0]!.lock!;
+		expect(seen.lease).toBe('LB');
+		fetchFn.mockImplementationOnce(async () =>
+			jsonResponse(200, { target: 'site', lock, lockIsMine: false })
+		);
+		const state = await provider.get('site');
+		expect(state.lockIsMine).toBe(false);
+		expect(state.lock?.lease).toBe('LB');
+		fetchFn.mockImplementationOnce(async () => new Response(null, { status: 204 }));
+		await provider.unlock('site', seen.lease);
+		expect(fetchFn.mock.calls[2]).toEqual([
+			'http://h:8721/api/config/site/unlock',
+			{ method: 'POST', headers: WRITE_HEADERS, body: JSON.stringify({ ifLease: 'LB' }) }
+		]);
+	});
+
+	it('a body JSON cannot hold is an input error of the caller: nothing is sent, not a network failure', async () => {
+		const { fetchFn, provider } = http();
+		const error = await provider
+			.draftPut('site', { value: { n: 1n }, ifRevision: '0', ifPublishedRevision: 'r' })
+			.catch((e: unknown) => e);
+		expect(error).toBeInstanceOf(ProviderError);
+		expect(isNetworkError(error)).toBe(false);
+		expect((error as ProviderError).body.kind).toBe('bad_request');
+		expect(fetchFn).not.toHaveBeenCalled();
+	});
 });
 
 describe('createTauriConfigDrafts (T16)', () => {
