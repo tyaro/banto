@@ -55,6 +55,8 @@
 - CI: e2e の設定画面の表示言語の切り替え（`settings-controls.spec.ts`）と長いメニュー（`ui-overlays.spec.ts`）がハイドレーション前の操作で落ちる揺らぎを、操作と確認をまとめて `toPass()` で再試行する形に直した（#810）。
 - fix(theme): ダークでネイティブ `<select>` の選択肢（option）の背景が白・文字が薄くて読めない問題を直した（`.banto-field-control` と grid のフィルタの select の option を `--banto-surface-overlay` / `--banto-text` で明示、#928）
 
+- **forms: `DraftNumberField` が `change` でも `draft.commit()` する（#964 F1。[設計書 §7](docs/design/grid-touch-edit-design.md)）。** `input` + `change` を出す確定（touch-keys の盤など）で検証と値の確定が走る。blur・Enter の動きは変わらない（確定済みの文字が無ければ検証だけ）。
+
 ## [8.0.0] - 2026-11-24
 
 **v8.0.0 — 基準の作り直し（DB を作り直す。組み込みユーザー `admin`・初回セットアップの廃止・持ち主のキー `accountId`・`ui_settings` の revision、[ADR-0034](docs/adr/0034-owner-identity-builtin-admin.md)）、Node の基準を 26 へ、`@banto/dock-svelte` の影の木への移行（`dockSlot` の廃止・保存形式 `version` 4）、`UiSettingsProvider` の置き換え、`banto-server` の `ReachCheckClock` の削除、ダッシュボードの dock 盤化、`libsqlite3-sys` 0.40.0（RUSTSEC-2026-0459）ほか。** 版の種類: major。公開 API の削除・改名・意味変更がある（`ReachCheckClock` 系・`dockSlot`・`AuthProvider.setup`・`UiSettingsProvider` の形ほか）うえ、v7.11.0 以前の DB を読まない（データの移行が無く、移行手順なしでは動かなくなる変更。[docs/publishing.md](docs/publishing.md)「バージョニング規約」の major の基準）。migration は 0003・0005 の差し替えと 0014 の追加（DB を作り直す）。詳細は下の各項目と [docs/upgrading.md](docs/upgrading.md) 4.2 節。

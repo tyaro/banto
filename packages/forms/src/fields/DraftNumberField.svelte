@@ -10,7 +10,10 @@
 	 * The cost is no spin buttons / arrow-key stepping, which is why this is a
 	 * separate field and `NumberField` keeps its behaviour (plan §3.5 "未決",
 	 * decided in Issue #432's forms PR). The value is committed on blur / Enter
-	 * through `draft.commit`, exactly when `NumberField` users validate today.
+	 * through `draft.commit`, exactly when `NumberField` users validate today. `change`
+	 * commits too, so a programmatic confirm that fires `input` + `change` (a touch
+	 * keypad) confirms the value; each text is committed (and `onCommit` notified) once, by whichever of
+	 * `change` / blur / Enter comes first.
 	 */
 	import type { FieldDef } from '../types';
 	import { formatDraftValue, type FormDraft } from '../draft.svelte';
@@ -24,7 +27,7 @@
 		'aria-describedby'?: string;
 		draft: FormDraft;
 		disabled?: boolean;
-		/** Called after each commit (blur / Enter) with whether the field is valid. */
+		/** Called after each commit (blur / Enter / change) with whether the field is valid. */
 		onCommit?: (valid: boolean) => void;
 	}
 
@@ -44,9 +47,17 @@
 	const inputId = $derived(id ?? def.name);
 	const described = $derived(describedByWithAffix(def, inputId, describedBy));
 
+	// Native edit + blur fires `change` and `blur`: notify once per commit. Skip
+	// only while the draft's `revision` is exactly what our last commit left, so
+	// any input, `setRaw()`, `discard()` or swapped `draft` commits again.
+	let last: { draft: FormDraft; name: string; revision: number } | undefined;
+
 	function commit() {
 		if (disabled || def.readonly) return;
+		if (last && last.draft === draft && last.name === def.name && last.revision === draft.revision)
+			return;
 		const valid = draft.commit(def.name);
+		last = { draft, name: def.name, revision: draft.revision };
 		onCommit?.(valid);
 	}
 
@@ -72,6 +83,7 @@
 		oninput={(event) => {
 			if (!disabled && !def.readonly) draft.setRaw(def.name, event.currentTarget.value);
 		}}
+		onchange={commit}
 		onblur={commit}
 		onkeydown={handleKeydown}
 	/>
