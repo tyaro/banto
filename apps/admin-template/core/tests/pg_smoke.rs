@@ -39,6 +39,9 @@ async fn reset_schema(url: &str) {
         .expect("connect for schema reset");
     for stmt in [
         "DROP TABLE IF EXISTS attachments, audit_log, ui_settings, user_permissions, users, settings, items CASCADE",
+        // Issue #938 (`0016_config_drafts.sql`). `IF EXISTS`, so this also holds
+        // in an app that removed the option.
+        "DROP TABLE IF EXISTS config_locks, config_drafts, config_history, config_published CASCADE",
         "DROP FUNCTION IF EXISTS banto_audit_parent_detail(TEXT, TEXT)",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
