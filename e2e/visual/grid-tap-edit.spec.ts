@@ -2,6 +2,10 @@
  * #964 G1 (grid-touch-edit-design §3): tap to edit with a real browser's touch
  * input. jsdom has no default actions: only here does a tap's compatibility
  * `mousedown` try to move focus to the grid before the `click`.
+ *
+ * #964 G2 (§4.1 ②③ / §5.1): the fixture's "Write" key stands in for an
+ * on-screen keypad the app wired (its press leaves focus on the editor, its
+ * click writes into it and blurs it). Real focus, real default actions.
  */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -174,4 +178,113 @@ test('a touch pan over the cells neither saves the open editor nor moves the act
 	await expect(editor).toHaveValue('Draft');
 	await expect(editor).toBeFocused();
 	await expect(cell(0, 'name')).toHaveClass(/active/);
+});
+
+test('a write into the focused editor and the app’s blur: the cell commits and the grid has focus', async ({
+	page
+}) => {
+	const { grid, cell, edits } = await start(page);
+	await cell(2, 'name').tap();
+	const editor = cell(2, 'name').getByRole('textbox');
+	await expect(editor).toBeFocused();
+	await expect(editor).toHaveAttribute('data-grid-editor', '');
+
+	await page.getByTestId('write-and-blur').tap();
+	await expect(edits).toHaveText('1');
+	await expect(cell(2, 'name')).toHaveText('Written');
+	await expect(grid.locator('.cell-editor')).toHaveCount(0);
+	// No move: the edited cell stays active, and keys go on from it.
+	await expect(grid).toBeFocused();
+	await expect(cell(2, 'name')).toHaveClass(/active/);
+	await page.keyboard.press('ArrowDown');
+	await expect(cell(3, 'name')).toHaveClass(/active/);
+});
+
+test('a refused save keeps the draft and puts focus back in the editor', async ({ page }) => {
+	const { cell, edits } = await start(page);
+	await page.getByTestId('write-text').fill('refuse');
+	await cell(1, 'name').tap();
+	await expect(cell(1, 'name').getByRole('textbox')).toBeFocused();
+	await page.getByTestId('write-and-blur').tap();
+
+	const editor = cell(1, 'name').getByRole('textbox');
+	await expect(editor).toHaveValue('refuse');
+	await expect(editor).toHaveAttribute('aria-invalid', 'true');
+	await expect(editor).toBeFocused();
+	await expect(edits).toHaveText('0');
+});
+
+test('leaving for plain page commits without pulling focus back to the grid', async ({ page }) => {
+	const { grid, cell, edits } = await start(page);
+	await cell(0, 'name').tap();
+	await cell(0, 'name').getByRole('textbox').fill('Renamed');
+	await page.getByTestId('plain').tap();
+	await expect(edits).toHaveText('1');
+	await expect(grid.locator('.cell-editor')).toHaveCount(0);
+	await expect(grid).not.toBeFocused();
+	expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+});
+
+test('a physical Escape cancels the edit once and the grid keeps focus', async ({ page }) => {
+	const { grid, cell, edits } = await start(page);
+	await cell(0, 'name').tap();
+	const editor = cell(0, 'name').getByRole('textbox');
+	await editor.fill('Draft');
+	await page.keyboard.press('Escape');
+	await expect(grid.locator('.cell-editor')).toHaveCount(0);
+	await expect(cell(0, 'name')).toHaveText('Name 1');
+	await expect(edits).toHaveText('0');
+	await expect(grid).toBeFocused();
+});
+
+/**
+ * touch-keys' `openOnFocus` (K1, #968) opens for a field that takes focus
+ * "in the continuation of a click": from the document's capture `click` until
+ * a `setTimeout(0)` it starts there. The grid does not know the keypad, so the
+ * same window is rebuilt here and the tap's editor focus is checked against it.
+ */
+test('the editor a tap opens takes focus inside the click’s task (the openOnFocus window)', async ({
+	page
+}, testInfo) => {
+	const { cell } = await start(page);
+	await page.evaluate(() => {
+		const log: { inWindow: boolean; ms: number }[] = [];
+		(window as unknown as { __focusLog: typeof log }).__focusLog = log;
+		let open = false;
+		let at = 0;
+		document.addEventListener(
+			'click',
+			() => {
+				open = true;
+				at = performance.now();
+				setTimeout(() => (open = false), 0);
+			},
+			true
+		);
+		document.addEventListener(
+			'focusin',
+			(event) => {
+				if (event.target instanceof Element && event.target.closest('[data-grid-editor]'))
+					log.push({ inWindow: open, ms: performance.now() - at });
+			},
+			true
+		);
+	});
+	for (const [row, field] of [
+		[0, 'name'],
+		[3, 'name'],
+		[1, 'done'],
+		[5, 'name'],
+		[2, 'name']
+	] as const) {
+		await cell(row, field).tap();
+		await expect(cell(row, field).locator('[data-grid-editor]')).toBeFocused();
+	}
+	const log = await page.evaluate(
+		() => (window as unknown as { __focusLog: { inWindow: boolean; ms: number }[] }).__focusLog
+	);
+	testInfo.annotations.push({ type: 'openOnFocus window', description: JSON.stringify(log) });
+	console.log(`[grid-tap-edit] editor focus after click: ${JSON.stringify(log)}`);
+	expect(log).toHaveLength(5);
+	expect(log.every((entry) => entry.inWindow)).toBe(true);
 });

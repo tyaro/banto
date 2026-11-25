@@ -124,6 +124,27 @@ describe('injection and the native fallback (D1-a / D3-a)', () => {
 		expect(stub.dataset.max).toBe('2026-11-27');
 	});
 
+	it('the injected editor’s wrapper carries the editor marker; its input renews the focus claim (#964 G2)', async () => {
+		const { cell, grid, onCellEdit } = setup({ provided: { date: StubDateEditor } });
+		await fireEvent.doubleClick(cell());
+		const stub = screen.getByTestId('stub-date') as HTMLInputElement;
+		// Not on the injected control (the app's own markup), on the grid's wrapper.
+		expect(stub.hasAttribute('data-grid-editor')).toBe(false);
+		expect(stub.closest('[data-grid-editor]')).toBe(cell().querySelector('.cell-editor-host'));
+		// A press outside (focus stays), a write into the focused box, the app's blur.
+		const blank = document.createElement('p');
+		document.body.append(blank);
+		await fireEvent.pointerDown(blank, { button: 0 });
+		await fireEvent.input(stub, { target: { value: '2026-11-09' } });
+		stub.blur();
+		await tick();
+		await tick();
+		blank.remove();
+		expect(onCellEdit).toHaveBeenCalledTimes(1);
+		expect(document.activeElement).toBe(grid);
+		expect(cell().classList.contains('active')).toBe(true);
+	});
+
 	it('the cellEditors prop wins over the context', async () => {
 		const { cell } = setup({
 			provided: { date: StubDateEditor },

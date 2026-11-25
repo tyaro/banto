@@ -1776,6 +1776,24 @@
 			else selection.moveActive(0, 1, false, rowCount, orderedFieldIds);
 			scrollActiveIntoView();
 			containerEl.focus({ preventScroll: true });
+			return;
+		}
+		// A blur that left focus nowhere (a programmatic `blur()`: the app
+		// committing the cell after something wrote into the focused editor,
+		// grid-touch-edit-design §5.1) while the session still owns focus: the
+		// grid takes it back, on the edited cell. A blur the user made by going
+		// elsewhere gave the claim up (or put focus there), so it stays (#212).
+		if (
+			closed &&
+			!moveAfter &&
+			edit.isLatest(sessionId) &&
+			edit.ownsFocus(sessionId) &&
+			containerEl?.isConnected
+		) {
+			const doc = containerEl.ownerDocument;
+			const active = doc.activeElement;
+			if ((active === null || active === doc.body) && doc.hasFocus())
+				containerEl.focus({ preventScroll: true });
 		}
 	}
 
@@ -1852,6 +1870,20 @@
 			else void commitFromEditor(column, row, event.shiftKey ? 'left' : 'right');
 			return;
 		}
+	}
+
+	/**
+	 * Something wrote into the focused editor without moving focus (an
+	 * on-screen keypad, grid-touch-edit-design §5.1): its press outside the
+	 * editor gave the focus claim up, yet the user is still editing this cell.
+	 * Same rule as a key on the focused editor; a press that really took focus
+	 * away brings no `input`, so abandoned focus is still never reclaimed (#212).
+	 */
+	function handleEditorInput(event: Event) {
+		if (!editing || editing.pending) return;
+		const editor = editorEl;
+		if (!editor || event.target !== editor || editor.ownerDocument.activeElement !== editor) return;
+		edit.renewFocus(editing.sessionId);
 	}
 
 	function handleEditorBlur(event: FocusEvent, column: GridColumn<TRow>, row: TRow) {
@@ -2192,6 +2224,7 @@
 										edit.setDraft(value);
 									}}
 									onToggle={(checked) => handleCheckboxToggle(column, row, checked)}
+									onInput={handleEditorInput}
 									onKeydown={(event) => handleEditorKeydown(event, column, row)}
 									onBlur={(event) => handleEditorBlur(event, column, row)}
 								/>

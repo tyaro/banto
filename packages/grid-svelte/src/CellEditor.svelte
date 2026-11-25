@@ -17,6 +17,11 @@
 	 * cell's selection / row click / start-editing handlers (§5.8 promise 4),
 	 * and neither do keys from anything but the text box (whose keys the grid
 	 * handles through `onKeydown`).
+	 *
+	 * Every editor carries `data-grid-editor` (a public promise, spec §4.5): on
+	 * the control itself, or on the wrapper of an injected editor. An app tells
+	 * a cell's editor from its other fields by it (grid-touch-edit-design §4.1).
+	 * `onInput` reports an `input` event that reached the editor's own control.
 	 */
 	import type { Component } from 'svelte';
 	import type { CellEditorType } from './types';
@@ -54,6 +59,7 @@
 		editorRootEl = $bindable(),
 		onDraftChange,
 		onToggle,
+		onInput,
 		onKeydown,
 		onBlur
 	}: {
@@ -80,6 +86,8 @@
 		editorRootEl?: HTMLElement | null;
 		onDraftChange: (value: unknown) => void;
 		onToggle: (checked: boolean) => void;
+		/** An `input` event whose target is the editor's own control (`editorEl`). */
+		onInput: (event: Event) => void;
 		onKeydown: (event: KeyboardEvent) => void;
 		onBlur: (event: FocusEvent) => void;
 	} = $props();
@@ -152,6 +160,8 @@
 		'aria-invalid': invalid,
 		'aria-describedby': describedBy,
 		class: 'cell-editor',
+		'data-grid-editor': '',
+		oninput: onInput,
 		onpointerdown: (event: PointerEvent) => event.stopPropagation(),
 		onkeydown: onKeydown,
 		onblur: onBlur
@@ -192,6 +202,10 @@
 		class="cell-editor-host"
 		class:pending
 		bind:this={editorRootEl}
+		data-grid-editor
+		oninput={(event) => {
+			if (event.target === editorEl) onInput(event);
+		}}
 		onpointerdown={stop}
 		onclick={stop}
 		ondblclick={stop}
@@ -224,7 +238,10 @@
 		max={isTemporal ? max : undefined}
 		step={nativeStep}
 		value={String(draft ?? '')}
-		oninput={(event) => onDraftChange(event.currentTarget.value)}
+		oninput={(event) => {
+			onDraftChange(event.currentTarget.value);
+			onInput(event);
+		}}
 	/>
 {/if}
 
