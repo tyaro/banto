@@ -17,9 +17,10 @@ use tower::ServiceExt;
 const TARGET: &str = "plc.line1";
 const BASE: &str = "/api/config/plc.line1";
 
-/// The tables the two services write. The config tables re-state the
-/// service tests' DDL (design §4.5); the app's migration comes with the
-/// wiring (design §7, S4).
+/// The tables the two services write. The config tables re-state the app's
+/// `migrations-sqlite/0016_config_drafts.sql` (design §4.5) and MUST be kept
+/// in sync with it (`verify:architecture`'s `config-drafts-ddl-copies`
+/// compares them).
 const DDL: [&str; 6] = [
     "CREATE TABLE audit_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

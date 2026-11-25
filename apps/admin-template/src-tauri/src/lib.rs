@@ -30,6 +30,17 @@ use admin_template_core::audit::{
     ActorSession, AuditActor, AuditLogList, AuditLogService, ACTOR_KIND_ACCOUNT, ACTOR_KIND_LOCAL,
 };
 use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo};
+// [scaffold:config-drafts] begin
+use admin_template_core::config_drafts::{
+    discard_audit_detail, publish_audit_detail, unlock_audit_detail, ConfigDiff,
+    ConfigDraftDiscarded, ConfigDraftSaved, ConfigDraftsService, ConfigEditor, ConfigHistoryDetail,
+    ConfigHistoryEntry, ConfigLock, ConfigState, ConfigTargetSummary, PublishOutcome, PublishStamp,
+};
+use admin_template_core::rest::{config_drafts_access, config_router};
+use banto_server::routes::{
+    config_changed_event, config_draft_changed_event, ConfigDraftsGate, DEFAULT_CONFIG_HISTORY_PAGE,
+};
+// [scaffold:config-drafts] end
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::first_boot::seed_first_boot_settings;
@@ -88,6 +99,13 @@ struct AppState {
     /// generated commands read `state.resources.<name>`; the embedded server
     /// gets a clone for `resources_router`.
     resources: AppResources,
+    // [scaffold:config-drafts] begin
+    /// Config drafts (Issue #938): the one service `run()` opened
+    /// (`admin_template_core::open_config_drafts`). The `config_*` commands
+    /// write through it, and the embedded server's `/api/config/*` gets a
+    /// clone, so both paths share the registry and the tables.
+    config_drafts: ConfigDraftsService,
+    // [scaffold:config-drafts] end
     /// The webview window's own session identity, set by `auth_login`
     /// and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -2701,6 +2719,9 @@ async fn start_embedded_server(
     items: ItemsService,
     // [scaffold:items] end
     resources: AppResources,
+    // [scaffold:config-drafts] begin
+    config_drafts: ConfigDraftsService,
+    // [scaffold:config-drafts] end
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -2719,6 +2740,16 @@ async fn start_embedded_server(
     // this embedded server produces carries the baseline security headers.
     // The resources added by `pnpm banto add resource` (none in the template).
     let added_resources = resources_router(resources, audit.clone(), auth.clone());
+    // [scaffold:config-drafts] begin
+    // `/api/config/*` (Issue #938), next to `api_router` like the added
+    // resources - the same `config_router` `banto-serve` merges.
+    let added_resources = added_resources.merge(config_router(
+        config_drafts,
+        audit.clone(),
+        auth.clone(),
+        events.clone(),
+    ));
+    // [scaffold:config-drafts] end
     let services = Services {
         // [scaffold:items] begin
         items,
@@ -3369,6 +3400,9 @@ async fn server_apply_body(
                 state.items.clone(),
                 // [scaffold:items] end
                 state.resources.clone(),
+                // [scaffold:config-drafts] begin
+                state.config_drafts.clone(),
+                // [scaffold:config-drafts] end
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -3932,6 +3966,568 @@ async fn ui_settings_delete_body(
         .ui_delete(&caller.ui_owner, key, if_revision)
         .await
 }
+// [scaffold:config-drafts] begin
+
+// --- #938: config drafts (edit a draft, publish it, go back) -----------------
+//
+// The Tauri twins of `/api/config/*` (`banto_server::routes::config_drafts_router`,
+// docs/design/config-draft-publish-design.md §4.8-§4.11). Same service, same
+// gates, same audit rows and same events as the REST handlers; only `origin`
+// differs (conventions §1):
+//
+// - the gates are `admin_template_core::rest::config_drafts_access()` - the
+//   ONE value the REST router is built with - applied by [`require_config`];
+// - the audit detail comes from the service's `publish_audit_detail` /
+//   `unlock_audit_detail` / `discard_audit_detail`, and the events from
+//   `banto_server::routes::config_changed_event` / `config_draft_changed_event`;
+// - the order in a command is the handlers': the service call (the commit) ->
+//   the audit row -> the event. The audit actor and the history row's "who"
+//   are the snapshot the guard made ([`Caller`]).
+//
+// The arguments are `target` plus the REST body / query fields (camelCase on
+// the wire), which is what `@banto/admin-core`'s `createTauriConfigDrafts`
+// sends. A condition REST takes from the query string (`?lease=`,
+// `?ifRevision=`) is optional here too, and left out it is the same field
+// error from the service.
+
+/// The audit `resource` of every row written here, refusals included (the
+/// REST router's `RESOURCE`).
+const CONFIG_RESOURCE: &str = "config";
+
+/// The four duties of design §4.9. Each command names the duty of its REST
+/// route; `verify:architecture` rule 8 reads it from the
+/// `require_config(state, ConfigDuty::X)` call and compares the two paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfigDuty {
+    /// List, state, diff, history.
+    Read,
+    /// Lock acquire / extend / release, draft save / rebase / discard.
+    Edit,
+    /// Publish, revert.
+    Publish,
+    /// Remove another editor's lock.
+    Unlock,
+}
+
+/// Whether `session` - with the `permissions` read for it - passes one gate
+/// of [`config_drafts_access`]: a role floor (as [`require_role`] decides it)
+/// or a per-user permission (as [`require_permission`] decides it). Pure: it
+/// reads nothing, so every gate of one command is decided on the same
+/// snapshot ([`require_config`]).
+fn config_gate_passes(
+    gate: &ConfigDraftsGate,
+    session: &DesktopSession,
+    permissions: &SessionPermissions,
+) -> bool {
+    match gate {
+        ConfigDraftsGate::Role(min) => session.identity().role.at_least(*min),
+        ConfigDraftsGate::Permission(permission) => permissions.has(permission),
+    }
+}
+
+/// The Tauri twin of the layers `config_drafts_router` stacks: the READ gate
+/// first, for every duty, then the duty's own gate. A session that may not
+/// read cannot edit, publish or unlock, whatever those gates say, and its
+/// refusal is the read gate's one `denied` row (design §4.9). A refusal is
+/// `Forbidden` plus one `denied` audit row with `resource: "config"`.
+///
+/// Both gates are decided on ONE authorization (cross-review of PR #960):
+/// the session and its permissions are taken once ([`authorized_session`],
+/// as [`require_permission`] takes them) and each gate is applied to that
+/// snapshot - never to the slot read again. So the subject that may read IS
+/// the subject that may edit / publish / unlock (design §4.9: the operating
+/// session itself needs the read gate), and the [`Caller`] returned - the
+/// history row's "who" and the audit actor - is that same subject. A slot
+/// re-bound while the authorization was being read is "no session"
+/// (`Unauthorized`, nothing recorded): the command is not decided again as
+/// whoever the slot holds by then.
+async fn require_config(state: &AppState, duty: ConfigDuty) -> Result<Caller, BantoError> {
+    let access = config_drafts_access();
+    let Some((session, permissions)) = authorized_session(state).await? else {
+        return Err(BantoError::Unauthorized);
+    };
+    let caller = Caller::of(state, &session);
+    let duty_gate = match duty {
+        ConfigDuty::Read => None,
+        ConfigDuty::Edit => Some(&access.edit),
+        ConfigDuty::Publish => Some(&access.publish),
+        ConfigDuty::Unlock => Some(&access.unlock),
+    };
+    let allowed = std::iter::once(&access.read)
+        .chain(duty_gate)
+        .all(|gate| config_gate_passes(gate, &session, &permissions));
+    if allowed {
+        return Ok(caller);
+    }
+    record_denied_as(&state.audit, &caller.actor, "tauri", CONFIG_RESOURCE, None).await;
+    Err(BantoError::Forbidden)
+}
+
+/// Who is editing, from the session the guard authorized - the Tauri twin of
+/// the REST router's `editor_of`, decided from the session's VARIANT
+/// (conventions §10): an account by its `users.id` (`acct:<id>`, so a new
+/// account with a reused name never holds the deleted account's lock), the
+/// no-login session as `local`. The name the other editors see is the
+/// session's own name (the username; `local` for the no-login session), as on
+/// REST - not the audit attribution.
+fn config_editor_of(caller: &Caller) -> ConfigEditor {
+    let holder = match &caller.ui_owner {
+        UiSettingsOwner::Account(id) => format!("acct:{id}"),
+        UiSettingsOwner::Grant(kind) => format!("grant:{kind}"),
+        UiSettingsOwner::Local => "local".to_string(),
+    };
+    ConfigEditor {
+        holder,
+        name: caller.username.clone(),
+    }
+}
+
+/// "Who and from where" of a history row: the audit actor's snapshot, so the
+/// history and the audit row name the same actor (the REST router's
+/// `stamp_of`, with `origin: "tauri"`).
+fn config_stamp<'a>(caller: &'a Caller, comment: Option<&'a str>) -> PublishStamp<'a> {
+    PublishStamp {
+        actor_username: &caller.actor.username,
+        actor_id: caller.actor.id,
+        actor_kind: &caller.actor.kind,
+        origin: "tauri",
+        comment,
+    }
+}
+
+/// Announce that the draft or the lock of `target` changed. A send fails
+/// only when nobody listens.
+fn notify_config_draft_changed(state: &AppState, target: &str) {
+    let _ = state.events.send(config_draft_changed_event(target));
+}
+
+/// The audit row and the event of a publish or a revert: the action is the
+/// outcome's own kind, and the detail is the service's - nothing of the
+/// arguments is added (the REST router's `record_published`).
+async fn record_config_published(
+    state: &AppState,
+    caller: &Caller,
+    target: &str,
+    outcome: &PublishOutcome,
+) {
+    record_ok(
+        &state.audit,
+        caller,
+        outcome.kind.as_str(),
+        CONFIG_RESOURCE,
+        Some(target),
+        Some(publish_audit_detail(outcome)),
+    )
+    .await;
+    let _ = state.events.send(config_changed_event(target));
+}
+
+/// Every target's summary, no values (`GET /api/config`).
+#[tauri::command]
+async fn config_list(state: State<'_, AppState>) -> Result<Vec<ConfigTargetSummary>, BantoError> {
+    config_list_body(&state).await
+}
+
+/// Body of [`config_list`] (testable with a plain `&AppState`).
+async fn config_list_body(state: &AppState) -> Result<Vec<ConfigTargetSummary>, BantoError> {
+    require_config(state, ConfigDuty::Read).await?;
+    state.config_drafts.list().await
+}
+
+/// Published, draft and lock of one target, from one read
+/// (`GET /api/config/{target}`).
+#[tauri::command]
+async fn config_get(state: State<'_, AppState>, target: String) -> Result<ConfigState, BantoError> {
+    config_get_body(&state, &target).await
+}
+
+/// Body of [`config_get`].
+async fn config_get_body(state: &AppState, target: &str) -> Result<ConfigState, BantoError> {
+    let caller = require_config(state, ConfigDuty::Read).await?;
+    state
+        .config_drafts
+        .state(target, &config_editor_of(&caller))
+        .await
+}
+
+/// Published -> draft, or with `to_version` (wire `toVersion`) published ->
+/// that version (`GET /api/config/{target}/diff`).
+#[tauri::command]
+async fn config_diff(
+    state: State<'_, AppState>,
+    target: String,
+    to_version: Option<i64>,
+) -> Result<ConfigDiff, BantoError> {
+    config_diff_body(&state, &target, to_version).await
+}
+
+/// Body of [`config_diff`].
+async fn config_diff_body(
+    state: &AppState,
+    target: &str,
+    to_version: Option<i64>,
+) -> Result<ConfigDiff, BantoError> {
+    require_config(state, ConfigDuty::Read).await?;
+    state.config_drafts.diff(target, to_version).await
+}
+
+/// The history, newest first, no values
+/// (`GET /api/config/{target}/history`). `limit` left out is
+/// `DEFAULT_CONFIG_HISTORY_PAGE`, as on REST.
+#[tauri::command]
+async fn config_history_list(
+    state: State<'_, AppState>,
+    target: String,
+    before: Option<i64>,
+    limit: Option<u32>,
+) -> Result<Vec<ConfigHistoryEntry>, BantoError> {
+    config_history_list_body(&state, &target, before, limit).await
+}
+
+/// Body of [`config_history_list`].
+async fn config_history_list_body(
+    state: &AppState,
+    target: &str,
+    before: Option<i64>,
+    limit: Option<u32>,
+) -> Result<Vec<ConfigHistoryEntry>, BantoError> {
+    require_config(state, ConfigDuty::Read).await?;
+    let limit = limit.unwrap_or(DEFAULT_CONFIG_HISTORY_PAGE);
+    state.config_drafts.history(target, before, limit).await
+}
+
+/// One version's value and the diff from the version before it
+/// (`GET /api/config/{target}/history/{version}`).
+#[tauri::command]
+async fn config_history_get(
+    state: State<'_, AppState>,
+    target: String,
+    version: i64,
+) -> Result<ConfigHistoryDetail, BantoError> {
+    config_history_get_body(&state, &target, version).await
+}
+
+/// Body of [`config_history_get`].
+async fn config_history_get_body(
+    state: &AppState,
+    target: &str,
+    version: i64,
+) -> Result<ConfigHistoryDetail, BantoError> {
+    require_config(state, ConfigDuty::Read).await?;
+    state.config_drafts.history_entry(target, version).await
+}
+
+/// Take the edit lock: a new lease (`POST /api/config/{target}/lock`). Not
+/// audited.
+#[tauri::command]
+async fn config_lock_acquire(
+    state: State<'_, AppState>,
+    target: String,
+) -> Result<ConfigLock, BantoError> {
+    config_lock_acquire_body(&state, &target).await
+}
+
+/// Body of [`config_lock_acquire`].
+async fn config_lock_acquire_body(
+    state: &AppState,
+    target: &str,
+) -> Result<ConfigLock, BantoError> {
+    let caller = require_config(state, ConfigDuty::Edit).await?;
+    let lock = state
+        .config_drafts
+        .lock_acquire(target, &config_editor_of(&caller))
+        .await?;
+    notify_config_draft_changed(state, target);
+    Ok(lock)
+}
+
+/// Extend the caller's own lock of that lease
+/// (`PUT /api/config/{target}/lock`). After the expiry it is a conflict -
+/// never a new acquire. Not audited.
+#[tauri::command]
+async fn config_lock_extend(
+    state: State<'_, AppState>,
+    target: String,
+    lease: String,
+) -> Result<ConfigLock, BantoError> {
+    config_lock_extend_body(&state, &target, &lease).await
+}
+
+/// Body of [`config_lock_extend`].
+async fn config_lock_extend_body(
+    state: &AppState,
+    target: &str,
+    lease: &str,
+) -> Result<ConfigLock, BantoError> {
+    let caller = require_config(state, ConfigDuty::Edit).await?;
+    let lock = state
+        .config_drafts
+        .lock_extend(target, &config_editor_of(&caller), lease)
+        .await?;
+    notify_config_draft_changed(state, target);
+    Ok(lock)
+}
+
+/// Give the caller's own lock of that lease back
+/// (`DELETE /api/config/{target}/lock?lease=`). `lease` left out is the
+/// service's field error, as on REST. Not audited.
+#[tauri::command]
+async fn config_lock_release(
+    state: State<'_, AppState>,
+    target: String,
+    lease: Option<String>,
+) -> Result<(), BantoError> {
+    config_lock_release_body(&state, &target, lease.as_deref().unwrap_or_default()).await
+}
+
+/// Body of [`config_lock_release`].
+async fn config_lock_release_body(
+    state: &AppState,
+    target: &str,
+    lease: &str,
+) -> Result<(), BantoError> {
+    let caller = require_config(state, ConfigDuty::Edit).await?;
+    let removed = state
+        .config_drafts
+        .lock_release(target, &config_editor_of(&caller), lease)
+        .await?;
+    // A stale lease (an old window's late release) removes nothing: success
+    // all the same, but there is nothing to announce.
+    if removed {
+        notify_config_draft_changed(state, target);
+    }
+    Ok(())
+}
+
+/// Save the draft (`PUT /api/config/{target}/draft`). `if_revision` (wire
+/// `ifRevision`) is the draft's revision the editor has, `"0"` = there is
+/// none yet; `if_published_revision` is required for the first save. Not
+/// audited (a save per keystroke would fill the log).
+#[tauri::command]
+async fn config_draft_put(
+    state: State<'_, AppState>,
+    target: String,
+    value: serde_json::Value,
+    if_revision: String,
+    if_published_revision: Option<String>,
+) -> Result<ConfigDraftSaved, BantoError> {
+    config_draft_put_body(
+        &state,
+        &target,
+        &value,
+        &if_revision,
+        if_published_revision.as_deref(),
+    )
+    .await
+}
+
+/// Body of [`config_draft_put`].
+async fn config_draft_put_body(
+    state: &AppState,
+    target: &str,
+    value: &serde_json::Value,
+    if_revision: &str,
+    if_published_revision: Option<&str>,
+) -> Result<ConfigDraftSaved, BantoError> {
+    let caller = require_config(state, ConfigDuty::Edit).await?;
+    let saved = state
+        .config_drafts
+        .draft_put(
+            target,
+            &config_editor_of(&caller),
+            value,
+            if_revision,
+            if_published_revision,
+        )
+        .await?;
+    notify_config_draft_changed(state, target);
+    Ok(saved)
+}
+
+/// Mark the draft as started from the published version the editor has now
+/// seen (`POST /api/config/{target}/draft/rebase`). Not audited.
+#[tauri::command]
+async fn config_draft_rebase(
+    state: State<'_, AppState>,
+    target: String,
+    if_revision: String,
+    if_published_revision: String,
+) -> Result<ConfigDraftSaved, BantoError> {
+    config_draft_rebase_body(&state, &target, &if_revision, &if_published_revision).await
+}
+
+/// Body of [`config_draft_rebase`].
+async fn config_draft_rebase_body(
+    state: &AppState,
+    target: &str,
+    if_revision: &str,
+    if_published_revision: &str,
+) -> Result<ConfigDraftSaved, BantoError> {
+    let caller = require_config(state, ConfigDuty::Edit).await?;
+    let saved = state
+        .config_drafts
+        .draft_rebase(
+            target,
+            &config_editor_of(&caller),
+            if_revision,
+            if_published_revision,
+        )
+        .await?;
+    notify_config_draft_changed(state, target);
+    Ok(saved)
+}
+
+/// Discard the draft (`DELETE /api/config/{target}/draft?ifRevision=`).
+/// Audited (`discard`) when a draft was discarded; a call that only
+/// confirmed there is none (`ifRevision: "0"`) changes nothing and records
+/// nothing. `if_revision` left out is the service's field error, as on REST.
+#[tauri::command]
+async fn config_draft_discard(
+    state: State<'_, AppState>,
+    target: String,
+    if_revision: Option<String>,
+) -> Result<ConfigDraftDiscarded, BantoError> {
+    config_draft_discard_body(&state, &target, if_revision.as_deref().unwrap_or_default()).await
+}
+
+/// Body of [`config_draft_discard`].
+async fn config_draft_discard_body(
+    state: &AppState,
+    target: &str,
+    if_revision: &str,
+) -> Result<ConfigDraftDiscarded, BantoError> {
+    let caller = require_config(state, ConfigDuty::Edit).await?;
+    let discarded = state
+        .config_drafts
+        .draft_discard(target, &config_editor_of(&caller), if_revision)
+        .await?;
+    if let Some(detail) = discard_audit_detail(&discarded) {
+        record_ok(
+            &state.audit,
+            &caller,
+            "discard",
+            CONFIG_RESOURCE,
+            Some(target),
+            Some(detail),
+        )
+        .await;
+        notify_config_draft_changed(state, target);
+    }
+    Ok(discarded)
+}
+
+/// The draft becomes the published value, one transaction in the service
+/// (`POST /api/config/{target}/publish`). Audited (`publish`).
+#[tauri::command]
+async fn config_publish(
+    state: State<'_, AppState>,
+    target: String,
+    if_draft_revision: String,
+    comment: Option<String>,
+) -> Result<PublishOutcome, BantoError> {
+    config_publish_body(&state, &target, &if_draft_revision, comment.as_deref()).await
+}
+
+/// Body of [`config_publish`].
+async fn config_publish_body(
+    state: &AppState,
+    target: &str,
+    if_draft_revision: &str,
+    comment: Option<&str>,
+) -> Result<PublishOutcome, BantoError> {
+    let caller = require_config(state, ConfigDuty::Publish).await?;
+    let outcome = state
+        .config_drafts
+        .publish(
+            target,
+            &config_editor_of(&caller),
+            if_draft_revision,
+            &config_stamp(&caller, comment),
+        )
+        .await?;
+    record_config_published(state, &caller, target, &outcome).await;
+    Ok(outcome)
+}
+
+/// Publish the value of an earlier version again, as a new version
+/// (`POST /api/config/{target}/revert`). Audited (`revert`).
+#[tauri::command]
+async fn config_revert(
+    state: State<'_, AppState>,
+    target: String,
+    to_version: i64,
+    if_published_revision: String,
+    comment: Option<String>,
+) -> Result<PublishOutcome, BantoError> {
+    config_revert_body(
+        &state,
+        &target,
+        to_version,
+        &if_published_revision,
+        comment.as_deref(),
+    )
+    .await
+}
+
+/// Body of [`config_revert`].
+async fn config_revert_body(
+    state: &AppState,
+    target: &str,
+    to_version: i64,
+    if_published_revision: &str,
+    comment: Option<&str>,
+) -> Result<PublishOutcome, BantoError> {
+    let caller = require_config(state, ConfigDuty::Publish).await?;
+    let outcome = state
+        .config_drafts
+        .revert(
+            target,
+            &config_editor_of(&caller),
+            to_version,
+            if_published_revision,
+            &config_stamp(&caller, comment),
+        )
+        .await?;
+    record_config_published(state, &caller, target, &outcome).await;
+    Ok(outcome)
+}
+
+/// Remove the lock the caller saw (`if_lease`, wire `ifLease`), whoever
+/// holds it; the draft stays (`POST /api/config/{target}/unlock`). Audited
+/// (`unlock`).
+#[tauri::command]
+async fn config_unlock(
+    state: State<'_, AppState>,
+    target: String,
+    if_lease: String,
+) -> Result<(), BantoError> {
+    config_unlock_body(&state, &target, &if_lease).await
+}
+
+/// Body of [`config_unlock`].
+async fn config_unlock_body(
+    state: &AppState,
+    target: &str,
+    if_lease: &str,
+) -> Result<(), BantoError> {
+    let caller = require_config(state, ConfigDuty::Unlock).await?;
+    let removed = state
+        .config_drafts
+        .lock_force_release(target, if_lease)
+        .await?;
+    record_ok(
+        &state.audit,
+        &caller,
+        "unlock",
+        CONFIG_RESOURCE,
+        Some(target),
+        Some(unlock_audit_detail(&removed)),
+    )
+    .await;
+    notify_config_draft_changed(state, target);
+    Ok(())
+}
+// [scaffold:config-drafts] end
 
 /// Settings key for the desktop vibrancy toggle (spec M12): a GLOBAL
 /// setting ("true"/"false", default off), not a per-user `ui.*` one - it
@@ -4975,6 +5571,23 @@ pub fn run() {
                 }
             };
             let builtin_admin_id = started.users.builtin_admin_id;
+            // [scaffold:config-drafts] begin
+            // Config drafts (Issue #938, config-draft-publish-design §4.3):
+            // the app's targets, each seeded at version 0 the first time -
+            // after the migrations and the checks above, as in `banto-serve`.
+            // A failure stops the start: without the published rows every
+            // write of a target would fail later.
+            let config_drafts = match tauri::async_runtime::block_on(
+                admin_template_core::open_config_drafts(&db),
+            ) {
+                Ok(service) => service,
+                Err(err) => {
+                    exit_startup_refused(format_args!(
+                        "設定の対象を用意できませんでした: {err}"
+                    ));
+                }
+            };
+            // [scaffold:config-drafts] end
             let backup = BackupService::new(db_path.clone(), db.clone()).with_migrations(
                 admin_template_core::startup::sqlite_restore_manifest(
                     admin_template_core::startup::Wiring::Desktop,
@@ -5213,6 +5826,9 @@ pub fn run() {
                     items.clone(),
                     // [scaffold:items] end
                     resources.clone(),
+                    // [scaffold:config-drafts] begin
+                    config_drafts.clone(),
+                    // [scaffold:config-drafts] end
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
@@ -5267,6 +5883,9 @@ pub fn run() {
                 items,
                 // [scaffold:items] end
                 resources,
+                // [scaffold:config-drafts] begin
+                config_drafts,
+                // [scaffold:config-drafts] end
                 auth: Mutex::new(AuthSlot::new(initial_auth)),
                 firewall_change_running: std::sync::atomic::AtomicBool::new(false),
                 auth_io: AuthIo::production(&users, &settings),
@@ -5334,6 +5953,22 @@ pub fn run() {
             ui_settings_get,
             ui_settings_set,
             ui_settings_delete,
+            // [scaffold:config-drafts] begin
+            config_list,
+            config_get,
+            config_diff,
+            config_history_list,
+            config_history_get,
+            config_lock_acquire,
+            config_lock_extend,
+            config_lock_release,
+            config_draft_put,
+            config_draft_rebase,
+            config_draft_discard,
+            config_publish,
+            config_revert,
+            config_unlock,
+            // [scaffold:config-drafts] end
             vibrancy_apply,
             vibrancy_status,
             users_list,

@@ -9,8 +9,8 @@
  * 決定）。コア（auth/RBAC/audit/settings/backup/CSV/shell）には一切触れない。
  *
  * プリセット（✓＝残す / ✗＝削除。plan §3）:
- *   - minimal  … コアのみ（charts/dock/glass/commandPalette/attachments/report/tree を全削除）
- *   - standard … ダッシュボード体験を残す（attachments/report/tree を削除）
+ *   - minimal  … コアのみ（charts/dock/glass/commandPalette/attachments/report/tree/configDrafts を全削除）
+ *   - standard … ダッシュボード体験を残す（attachments/report/tree を削除。configDrafts は残す）
  *   - full     … 何も削除しない（検証のみ）
  *   - display  … 表示専用アプリ（カンバン/常設ダッシュボード/展示デモ）。
  *                minimal が外すもの全部 + items デモリソース一式 + users /
@@ -99,7 +99,10 @@ const OPTIONAL_ASSETS = [
 	'commandPalette',
 	'attachments',
 	'report',
-	'tree'
+	'tree',
+	// 設定の下書き → 反映 → 元に戻す（Issue #938）。画面を持たないサーバー側の配線だけ。
+	// minimal・display は外し、standard・full は残す（config-draft-publish-design §10・§12 の 11）。
+	'configDrafts'
 ];
 
 const PRESETS = {
@@ -117,7 +120,7 @@ function usage(code) {
 		'使い方: node scripts/scaffold.mjs --preset minimal|standard|full|display [--dry-run] [--strict]\n' +
 			'       node scripts/scaffold.mjs --interactive|-i [--dry-run]\n' +
 			'  minimal     … コアのみ（全オプション資産を削除）\n' +
-			'  standard    … dock/charts/コマンドパレット/Glass を残し、添付・帳票・ツリーを削除\n' +
+			'  standard    … dock/charts/コマンドパレット/Glass・設定の下書きを残し、添付・帳票・ツリーを削除\n' +
 			'  full        … オプション資産を何も削除しない（banto 本体専用の検証\n' +
 			'                fixture の除去だけ。全プリセット共通）\n' +
 			'  display     … 表示専用アプリ: minimal の削除 + items デモ一式 + users/audit-log 画面\n' +
@@ -354,6 +357,7 @@ const I18N = `${APP}/src/lib/banto/i18n.ts`;
 const MSG_JA = `${APP}/messages/ja.json`;
 const MSG_EN = `${APP}/messages/en.json`;
 const CORE_LIB = `${APP}/core/src/lib.rs`;
+const PG_SMOKE = `${APP}/core/tests/pg_smoke.rs`;
 const CORE_DB = `${APP}/core/src/db.rs`;
 const FIRST_BOOT = `${APP}/core/src/first_boot.rs`;
 const SETUP_TS = `${APP}/src/lib/banto/setup.ts`;
@@ -1397,6 +1401,72 @@ function removeTree() {
 	drop(VITE, 'vite: optimizeDeps.exclude から tree-svelte 除去', `\t\t\t'@banto/tree-svelte',\n`);
 }
 
+// --- 設定の下書き → 反映 → 元に戻す（Issue #938）-----------------------------
+//
+// docs/design/config-draft-publish-design.md §10 の「派生アプリが使わないとき」を 1 対 1 で
+// 自動化する。テンプレートは画面を持たない（ルート・ナビ・文言キーは無い）ので、外すのは
+// サーバー側の配線だけ: migration `0016`（両方言）、REST の載せ（`config_router`）、Tauri の
+// コマンド、起動時の `open_config_drafts`、verify-architecture の分類、それぞれの試験。
+// 全部 `[scaffold:config-drafts]` の印で囲んであるので、ファイルごとに領域の数を突き合わせて
+// まとめて消す（数が合わなければ「見つかりません」で落ちる＝印を足した・消したのに
+// ここを直していない）。
+//
+// 残す物: クレートの中の実装（`banto-admin-services` の `config_drafts`、`banto-server` の
+// `config_drafts_router`、`@banto/admin-core` の読み口）と、verify-architecture の読み取り
+// （scripts/lib/config-drafts-gates.mjs。配線が無ければ何も見ない）。依存として残るだけで、
+// アプリからの参照は無くなる。
+//
+// **順序の前提**: `items` より前に走る（ORDER）。display は items のあとで `rest/tests.rs` や
+// `src-tauri` の同じファイルを縮めるが、領域は重ならない。
+function removeConfigDrafts() {
+	// (1) 表: まだ DB を作っていないアプリ向け（作った後に外すなら、表は残して (2) 以降だけ）。
+	removeFile(
+		`${APP}/core/migrations-sqlite/0016_config_drafts.sql`,
+		'migrations-sqlite/0016_config_drafts.sql 削除'
+	);
+	removeFile(
+		`${APP}/core/migrations-postgres/0016_config_drafts.sql`,
+		'migrations-postgres/0016_config_drafts.sql 削除'
+	);
+
+	// (2) コア: 対象の登録と起動時の用意（`config_targets`・`open_config_drafts`）。
+	cutEveryMarked(CORE_LIB, 'core: 設定の対象の登録と open_config_drafts 除去', 'config-drafts', 1);
+
+	// (3) REST: Route table の行・説明・import・`config_drafts_access` と `config_router`。
+	cutEveryMarked(REST_MOD, 'rest: /api/config の Route table・説明・配線除去', 'config-drafts', 4);
+	cutEveryMarked(REST_TESTS, 'rest/tests: mod config_drafts 除去', 'config-drafts', 1);
+	removeFile(`${APP}/core/src/rest/tests/config_drafts.rs`, 'rest/tests/config_drafts.rs 削除');
+	cutEveryMarked(
+		BANTO_SERVE,
+		'banto-serve: 設定の下書きの用意と /api/config の合流除去',
+		'config-drafts',
+		2
+	);
+	cutEveryMarked(PG_SMOKE, 'pg_smoke: 設定の下書きの確認除去', 'config-drafts', 2);
+
+	// (4) Tauri: import・AppState の欄・コマンド 14 個・起動時の用意・埋め込みサーバーへの受け渡し・
+	//     invoke_handler の登録。
+	cutEveryMarked(LIB_RS, 'lib.rs: config_* コマンドと配線除去', 'config-drafts', 10);
+	cutEveryMarked(
+		TAURI_TESTS,
+		'tests.rs: 設定の下書きの試験の配線除去（mod・対象つきのサービス・AppState の欄）',
+		'config-drafts',
+		4
+	);
+	removeFile(
+		`${APP}/src-tauri/src/tests/config_drafts.rs`,
+		'src-tauri/src/tests/config_drafts.rs 削除'
+	);
+
+	// (5) アーキテクチャ検査（rule 8）: DUAL_PATH の 9 対・ROLE_READ の 5 対・TAURI_READ・REST_READ。
+	cutEveryMarked(
+		VERIFY_ARCH,
+		'verify: 設定の下書きの分類（DUAL_PATH・ROLE_READ・TAURI_READ・REST_READ）除去',
+		'config-drafts',
+		4
+	);
+}
+
 // --- items（デモリソース一式、display プリセット専用）------------------------
 //
 // docs/design/display-preset-plan.md §3.2 / template-scope §3。items は長らく「コア」
@@ -2116,6 +2186,7 @@ const REMOVERS = {
 	attachments: removeAttachments,
 	report: removeReport,
 	tree: removeTree,
+	configDrafts: removeConfigDrafts,
 	// display 専用（PRESETS.display からのみ選ばれる）。
 	items: removeItems,
 	adminPages: removeAdminPages,
@@ -2128,7 +2199,8 @@ const REMOVERS = {
 //
 // 後半（display 専用）は**順序依存**なので、この並びを崩さないこと:
 //   - `items` は attachments / report / tree より後（それらが items のファイル
-//     やマニフェスト行を先に触るアンカーを持つ）。
+//     やマニフェスト行を先に触るアンカーを持つ）。configDrafts も items より前に置く
+//     （同じ Rust のファイルを触るが、印の領域は重ならない）。
 //   - `adminPages` / `dashboard` は `items` より後（navigation.ts の union を
 //     順番に縮めていくため）。
 //   - `displayDefaults` は最後（縮み切った union に /monitor を足す）。
@@ -2140,6 +2212,7 @@ const ORDER = [
 	'attachments',
 	'report',
 	'tree',
+	'configDrafts',
 	'items',
 	'adminPages',
 	'dashboard',
@@ -2168,6 +2241,7 @@ const STEP_MARKERS = {
 	attachments: 'crates/banto-attachments',
 	report: `${APP}/src/lib/banto/reports`,
 	tree: `${APP}/src/lib/banto/treeSample.ts`,
+	configDrafts: `${APP}/core/migrations-sqlite/0016_config_drafts.sql`,
 	items: `${APP}/core/src/items.rs`,
 	adminPages: `${APP}/src/lib/banto/usersAdmin.ts`,
 	dashboard: `${APP}/src/routes/(app)/dashboard`,

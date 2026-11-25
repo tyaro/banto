@@ -374,6 +374,19 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    // [scaffold:config-drafts] begin
+    // Config drafts (Issue #938, config-draft-publish-design §4.3): the app's
+    // targets, each seeded at version 0 the first time - after the migrations
+    // and the checks above. A failure stops the start: without the published
+    // rows every write of a target would fail later.
+    let config_drafts = match admin_template_core::open_config_drafts(&db).await {
+        Ok(service) => service,
+        Err(err) => {
+            eprintln!("banto-serve: 起動できません: 設定の対象を用意できませんでした: {err}");
+            std::process::exit(1);
+        }
+    };
+    // [scaffold:config-drafts] end
     let backup = BackupService::new(db_path_buf.clone(), db.clone())
         .with_migrations(sqlite_restore_manifest(wiring));
     // M20 attachments (spec docs/design/attachments-plan.md §3.3): base_dir is the
@@ -521,6 +534,16 @@ async fn main() {
     // the baseline security headers, regardless of which inner router
     // produced it.
     let added_resources = resources_router(resources, audit.clone(), auth.clone());
+    // [scaffold:config-drafts] begin
+    // `/api/config/*` (Issue #938), next to `api_router` like the added
+    // resources.
+    let added_resources = added_resources.merge(admin_template_core::rest::config_router(
+        config_drafts,
+        audit.clone(),
+        auth.clone(),
+        events.clone(),
+    ));
+    // [scaffold:config-drafts] end
     let settings_for_messages = settings.clone();
     let services = Services {
         items,

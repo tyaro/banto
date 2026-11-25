@@ -110,6 +110,13 @@ desktop-only / read の分類判断は maintainability-review-2026-07.md §3 に
 宣言の無い権限のガード（片方の経路だけに足したもの）も捕捉する
 （判定は `scripts/lib/permission-guards.mjs`、user-permissions-plan §5）。
 権限での拒否も 403 `forbidden` + `denied` の監査で、ロールの拒否と同じ形にする。
+設定の下書き → 反映 → 元に戻す（Issue #938）の `/api/config/*` は、床をルーターの本体に書かず、
+アプリの配線が渡す `ConfigDraftsAccess { read, edit, publish, unlock }` で決める。rule 8 はこの
+リテラル（テンプレートは `rest/mod.rs` の `config_drafts_access()`。**4 つとも書き出す** —
+`default()` や `..` は読めないので落ちる）からガードを読み、REST の口と Tauri のコマンド
+（`require_config(state, ConfigDuty::X)`）の床・権限に直して同じ照合に乗せる。対の両端が
+**同じ役目**であることも見る（判定は `scripts/lib/config-drafts-gates.mjs`、
+config-draft-publish-design §4.9）。両経路は同じ 1 つの値を使うので、ロールを 2 か所に書かない。
 
 **監査記録の canonical 形状**（機械検査外＝コード+テストで揃える規約。逸脱は
 maintenance-review-2026-08 §5.3 で実測・是正済み）:
@@ -699,6 +706,9 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
 - **テーブル定義はアプリが所有**。`banto-attachments` は自前マイグレーションを
   持たず、テスト内の `CREATE TABLE` を `0006_attachments.sql` と同期させる
   （「MUST be kept in sync」）。
+  設定の下書き（Issue #938）の 4 表（`0016_config_drafts.sql`）も同じで、`banto-admin-services` と
+  `banto-server` の試験が写しを持つ。こちらは写しが 3 つ（両方言）あるので、
+  `verify:architecture` の `config-drafts-ddl-copies` が本物と突き合わせる。
 - リストア検証（`REQUIRED_TABLES`）は Banto 基盤が所有する `settings` / `users` /
   `audit_log` / `ui_settings` の**テーブル存在のみ**確認し、列は見ない（粗いが安価な「Banto の
   DB か」判定）。派生アプリが差し替え・削除する `items` 等のドメインテーブルは

@@ -73,7 +73,7 @@ pub use auth::{extra_auth_router, AuthStatusExtras};
 pub use backups::backups_router;
 pub use config_drafts::{
     config_changed_event, config_draft_changed_event, config_drafts_router, ConfigDraftsAccess,
-    ConfigDraftsGate,
+    ConfigDraftsGate, DEFAULT_CONFIG_HISTORY_PAGE,
 };
 pub use system_info::{system_info_router, MetricsProbe, SystemInfo, SystemMetrics};
 pub use ui_settings::ui_settings_router;

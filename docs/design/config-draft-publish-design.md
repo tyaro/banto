@@ -1,7 +1,7 @@
 # 設定の下書き・反映・元に戻す 設計書 — Issue #938
 
 作成日: 2026-11-25
-状態: **S1a〜S3 実装済み、S4・S5 未着手**（§7。S3 = admin-core の読み口 `providers/configDrafts.ts`。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験（PR #953）。S2 = `banto-server` の `config_drafts_router`（4 役目のガード・監査・イベント）。**REST では使えるが、テンプレートへの配線（migration・Tauri・rule 8）は S4**）。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
+状態: **S1a〜S4 実装済み、S5 未着手**（§7。S4 = テンプレートへの配線: migration `0016_config_drafts.sql`（両方言）・REST の載せ（`rest::config_router`）・Tauri のコマンド 14 個・rule 8 の読み方・scaffold で外す処理（§4.9・§4.11 の「S4 で決めた形」）。S3 = admin-core の読み口 `providers/configDrafts.ts`。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験（PR #953）。S2 = `banto-server` の `config_drafts_router`（4 役目のガード・監査・イベント）。**S2 の時点では REST だけ。テンプレートへの配線（migration・Tauri・rule 8）は S4 で入った**）。**残りは S5（レシピ・template-scope §3 の表・remove-optional-assets の節）**。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
 トラック: 保守者向け（トラックA）
 関連: Issue #938、#638・#651（楽観ロックと `conflict`）、#786（`ui_settings` の revision）、#597（監査の差分）、
 #697（ユーザー個別の権限）、#935・#936（[アプリ独自の SSE](sse-stream-design.md)）、#793 / [ADR-0035](../adr/0035-detached-writes.md)（書き込みを切断から切り離す）、
@@ -453,6 +453,21 @@ CREATE TABLE config_locks (
   S4 で、アプリの配線が書く `ConfigDraftsAccess { read: ConfigDraftsGate::Role(Role::Admin), .. }` を rule 8 が読む形を足す
   （欄を公開にしたのはこのため。`default()` で済ませると読めないので、テンプレートの配線は 4 つとも書き出す）。権限のガード（`PERMISSION_PAIRS`）も同じ。
 
+**S4 で決めた形**（テンプレートの配線と rule 8）:
+
+- **ガードの値は 1 つ**: `admin_template_core::rest::config_drafts_access()` が `ConfigDraftsAccess { read: ConfigDraftsGate::Role(Role::Admin), .. }` を 4 つとも書き出して返す。
+  REST は `config_router` がこれを `config_drafts_router` に渡し、Tauri は `require_config(state, ConfigDuty::X)` が同じ値のガードを「読む」→ 役目の順に当てる
+  （セッションと権限は `authorized_session` で 1 回だけ取り、両方のガードをその値に当てる。取っている間にセッションが差し替わった操作は
+  `Unauthorized` で拒否し、履歴・監査の `Caller` も同じ値から作る。拒否の 403 相当と `denied` の監査は `require_role` / `require_permission` と同じ形）。両経路で別々にロールを書く場所が無い。
+- **rule 8 の読み方**（`scripts/lib/config-drafts-gates.mjs`、テストは `scripts/config-drafts-gates.test.mjs`）: (1) アプリの配線（`core/src/rest/` のテスト以外）の
+  `ConfigDraftsAccess { .. }` のリテラルからガードを読む（`default()`・`..` での省略・その場に書かない値は「読めない」で落とす）、
+  (2) `fn config_drafts_router` の本体の `let read|edit|publish|unlock = Router::new()…` から口の役目を読む、
+  (3) `src-tauri/src/lib.rs` の各コマンド（と `<cmd>_body`）の `require_config(state, ConfigDuty::X)` から役目を読む。
+  口・コマンドの床は「読む」と役目のガードの高い方で、(e) のロールの床（`DUAL_PATH` の `role`・`ROLE_READ`）に上書きで入る。
+  ガードが権限なら (f) の権限のガード（`PERMISSION_PAIRS`）に入る。
+- **対の両端が同じ役目であることも見る**。4 つとも admin（テンプレートの既定）だと、床の照合だけでは「反映のコマンドが編集のガードで通る」ずれを拾えないため。
+- 順の分からないロール（`add-role` で足した物）どうしを「読む」と役目に混ぜたときは、床を `A+B` と読んで宣言と一致させない（`config-drafts-gates.mjs` の `ROLE_ORDER` に足す）。
+
 ### 4.10 公開 API の案（Rust）
 
 ```rust
@@ -620,7 +635,26 @@ S2 でサービス側に足した物（両経路が同じ監査 detail を作る
 - `configDraftConflict(error)` は 5 つの理由ごとの判別つきの型を返す（`stale_base` / `draft_changed` / `published_changed` / `lock_held` / `lock_required`）。
   `current` の形が合わなければ `null`。`CONFIG_DRAFT_ABSENT_REVISION` (`"0"`) も輸出する。
 
-書き込み 9 つは `DUAL_PATH` の対、読み取り 5 つは `ROLE_READ` の対（ロールの床の対称を見る）に足す（案 B。S4。rule 8 の読み方は §4.9 の「S4 の前提」）。
+**S4 で決めた形**（テンプレートの配線。上の S2・S3 の形をそのまま使う）:
+
+- **REST の載せ**は `api_router` の外: `admin_template_core::rest::config_router(service, audit, auth, events)`（`resources_router` と同じ形。CSRF の層つき）を、
+  2 つのサーバー（`banto-serve`・`src-tauri` の `start_embedded_server`）が `api_router` の隣に合流させる。`rest::Services` には欄を足さない（外すときに呼び出し側を触らない）。
+- **対象の登録と起動時の用意**は `admin_template_core::config_targets()`（テンプレートは空）と `open_config_drafts(&db)`（サービスを作って `ensure_targets()`）。
+  2 つのサーバーが migration と起動の検査の後で 1 回呼び、失敗したら起動を止める。
+- **Tauri のコマンド 14 個**の引数は S3 の読み口が送る形のまま（`target` + camelCase の欄）: `config_diff(target, toVersion?)`・`config_history_list(target, before?, limit?)`・
+  `config_history_get(target, version)`・`config_lock_extend(target, lease)`・`config_lock_release(target, lease?)`・`config_draft_put(target, value, ifRevision, ifPublishedRevision?)`・
+  `config_draft_rebase(target, ifRevision, ifPublishedRevision)`・`config_draft_discard(target, ifRevision?)`・`config_publish(target, ifDraftRevision, comment?)`・
+  `config_revert(target, toVersion, ifPublishedRevision, comment?)`・`config_unlock(target, ifLease)`。S3 の読み口とのずれは無かった。
+  REST がクエリで受ける条件（`lease`・`ifRevision`）は Tauri でも省けて、省くと REST と同じくサービスの欄の検査（`validation`）になる。返却・解除の戻り値は `null`（REST の 204）。
+- **履歴の既定の件数**は両経路で同じ定数（`banto_server::routes::DEFAULT_CONFIG_HISTORY_PAGE` = 50。S4 で公開にした）。
+- **編集する人（Tauri）**: アカウントは `acct:<users.id>`、ログインなしのセッションは `local`（`Caller::ui_owner` と同じ、セッションの種類から決める）。見せる名前はセッションの名前
+  （ユーザー名 / `local`）。監査と履歴の「誰が」は監査の主体のスナップショット（ログインなしは組み込みの `admin`・kind `local`）で、履歴の `origin` は `"tauri"`。
+  同じアカウントなら、ウィンドウで取ったロックは LAN のブラウザーでも自分のロック（両経路で持ち主のキーが同じ）。
+- **試験**: REST は `core/src/rest/tests/config_drafts.rs`（本物の migration・既定のガード・CSRF）、Tauri は `src-tauri/src/tests/config_drafts.rs`
+  （無セッション・拒否・監査 detail が同じ関数の値であること・両経路を 1 つの DB に並べた照合）、PostgreSQL の本物の migration は `core/tests/pg_smoke.rs`。
+  クレートの試験が持つ表の写し 3 つは、`verify:architecture` の `config-drafts-ddl-copies` が `0016_config_drafts.sql`（両方言）と突き合わせる。
+
+書き込み 9 つは `DUAL_PATH` の対、読み取り 5 つは `ROLE_READ` の対（ロールの床の対称を見る）に足した（案 B。S4。rule 8 の読み方は §4.9 の「S4 で決めた形」）。
 Tauri のコマンドは `require_role`（または `require_permission`）→ サービス → `record_ok` → `state.events.send(..)` の順で、REST の handler と同じ。
 
 ## 5. フロント側
@@ -733,11 +767,14 @@ S1 は大きいので 2 つに割る。S1a だけでは反映できないので�
 
 **派生アプリが使わないとき（案 B の配線を外す）**。scaffold の `minimal`・`display` はこれを自動で行う（`standard`・`full` は残す。§12 の 11）。
 
+S4 で、消す所は全部 `// [scaffold:config-drafts] begin` … `end` の印で囲んだ（手で外すときも、印の区画を消せばよい。scaffold は `removeConfigDrafts()`）。
+
 1. `core/migrations-sqlite/0016_config_drafts.sql`・`core/migrations-postgres/0016_config_drafts.sql` を消す（まだ DB を作っていないアプリ。作った後なら、表を残したまま 2 以降だけ行う）。
-2. REST の載せ（`config_drafts_router` の 1 行）と、`rest/mod.rs` の対応表の行を消す。
-3. `src-tauri/src/lib.rs` の `// [scaffold:config-drafts]` の区画（コマンド・`invoke_handler` の行・状態の欄）を消す。
-4. `scripts/verify-architecture.mjs` の `DUAL_PATH`・`ROLE_READ` の config の行を消す。
-5. 起動の `ensure_targets()` の呼び出しと、対象の登録を消す。
+2. REST の載せ: `core/src/rest/mod.rs` の印の区画 4 つ（対応表の行・説明・import・`config_drafts_access` と `config_router`）と、`core/src/bin/banto-serve.rs` の区画 2 つ（起動時の用意・合流）を消す。
+3. `src-tauri/src/lib.rs` の印の区画 10 個（import・状態の欄・コマンド・起動時の用意・埋め込みサーバーへの受け渡し・`invoke_handler` の行）を消す。
+4. `scripts/verify-architecture.mjs` の印の区画 4 つ（`DUAL_PATH`・`ROLE_READ`・`TAURI_READ`・`REST_READ` の config の行）を消す。
+5. 起動の `ensure_targets()` の呼び出しと対象の登録: `core/src/lib.rs` の区画（`config_targets`・`open_config_drafts`）を消す。
+5b. 試験: `core/src/rest/tests/config_drafts.rs`・`src-tauri/src/tests/config_drafts.rs` と、`core/src/rest/tests.rs`・`src-tauri/src/tests.rs`・`core/tests/pg_smoke.rs` の印の区画を消す。
 6. フロントで読み口を作っていれば、その provider のファイルを消す（テンプレートは画面を持たないので、ルート・ナビ・文言キーは無い）。
 
 **案 A のとき**: 配線していないので、アプリ側に外す物は無い。
