@@ -84,6 +84,38 @@ describe('DraftNumberField', () => {
 		expect(draft.raw.qty).toBe('7');
 	});
 
+	it('commits and validates on change, and a repeated commit is harmless', async () => {
+		const draft = setup();
+		const onCommit = vi.fn();
+		render(DraftNumberField, { def, draft, onCommit });
+		const control = screen.getByRole('textbox');
+		await fireEvent.input(control, { target: { value: '7' } });
+		expect(draft.values.qty).toBe(1);
+		await fireEvent.change(control);
+		expect(draft.values.qty).toBe(7);
+		expect(onCommit).toHaveBeenLastCalledWith(true);
+		await fireEvent.input(control, { target: { value: '99' } });
+		await fireEvent.change(control);
+		expect(draft.errors.qty).toBeTruthy();
+		expect(onCommit).toHaveBeenLastCalledWith(false);
+		// Enter + change + blur on the same text: no extra damage.
+		await fireEvent.input(control, { target: { value: '5' } });
+		await fireEvent.keyDown(control, { key: 'Enter' });
+		await fireEvent.change(control);
+		await fireEvent.blur(control);
+		expect(draft.values.qty).toBe(5);
+		expect(draft.errors.qty).toBeUndefined();
+	});
+
+	it('ignores change while readonly or disabled', async () => {
+		const draft = setup();
+		const onCommit = vi.fn();
+		render(DraftNumberField, { def, draft, onCommit, disabled: true });
+		const control = screen.getByRole('textbox');
+		await fireEvent.change(control);
+		expect(onCommit).not.toHaveBeenCalled();
+	});
+
 	it('ignores composing Enter and commits on ordinary Enter', async () => {
 		const draft = setup();
 		const onCommit = vi.fn();

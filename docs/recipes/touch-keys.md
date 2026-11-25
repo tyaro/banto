@@ -145,7 +145,7 @@ OS のタッチキーボードが同時に出る環境があれば（`inputmode=
   **`resolve` で範囲を渡す**（書き忘れると範囲なしのテンキーになる）。**限界**: `DraftNumberField` は `input` では
   `draft.setRaw()` しか呼ばず、検証と値の確定は blur か Enter の `draft.commit()` で行う。盤の確定は入力欄へ書いて `input` を出す
   までで、フォーカスは入力欄に残るため、**盤を閉じた直後には forms の検証・確定は走らない**（次の blur・Enter で走る。`DraftNumberField` は submit を見ず、標準の `BantoForm` の送信は `FormStore.validateAll()` で `FormDraft` を確定しない。`FormDraft` を使うフォームは、フォーカスが残ったまま送れる画面なら、保存ハンドラーで `draft.commitAll()` が成功してから確定値を読む）。
-  grid のセルと同じ限界で、盤の範囲の知らせ（`resolve` の `min` / `max`）が、その場の唯一の検証になる。`input.id` はフィールド名（`DraftNumberField` は `id` を省くと `def.name`）。
+  **（`DraftNumberField` の側は F1（#964）で直り、`change` でも `draft.commit()` が走る。この記述の書き直しは W1 で行う。）** grid のセルと同じ限界で、盤の範囲の知らせ（`resolve` の `min` / `max`）が、その場の唯一の検証になる。`input.id` はフィールド名（`DraftNumberField` は `id` を省くと `def.name`）。
 
 ```svelte
 <TouchKeysHost

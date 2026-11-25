@@ -10,7 +10,9 @@
 	 * The cost is no spin buttons / arrow-key stepping, which is why this is a
 	 * separate field and `NumberField` keeps its behaviour (plan §3.5 "未決",
 	 * decided in Issue #432's forms PR). The value is committed on blur / Enter
-	 * through `draft.commit`, exactly when `NumberField` users validate today.
+	 * through `draft.commit`, exactly when `NumberField` users validate today. `change`
+	 * commits too, so a programmatic confirm that fires `input` + `change` (a touch
+	 * keypad) confirms the value; a second commit with no pending text only re-validates.
 	 */
 	import type { FieldDef } from '../types';
 	import { formatDraftValue, type FormDraft } from '../draft.svelte';
@@ -24,7 +26,7 @@
 		'aria-describedby'?: string;
 		draft: FormDraft;
 		disabled?: boolean;
-		/** Called after each commit (blur / Enter) with whether the field is valid. */
+		/** Called after each commit (blur / Enter / change) with whether the field is valid. */
 		onCommit?: (valid: boolean) => void;
 	}
 
@@ -72,6 +74,7 @@
 		oninput={(event) => {
 			if (!disabled && !def.readonly) draft.setRaw(def.name, event.currentTarget.value);
 		}}
+		onchange={commit}
 		onblur={commit}
 		onkeydown={handleKeydown}
 	/>
