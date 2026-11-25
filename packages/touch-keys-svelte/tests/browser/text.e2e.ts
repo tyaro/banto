@@ -282,6 +282,25 @@ test.describe('kana (§9.2)', () => {
 		// precomposed: ガ is U+30AC, one UTF-16 unit each
 		expect(value.length).toBe(6);
 		expect(value.charCodeAt(0)).toBe(0x30ac);
+		await expect(page.locator('#kana-bound')).toHaveText('ガッパーヴx');
+	});
+
+	test('switching alnum / kana never moves confirm and cancel (narrow screen)', async ({
+		page
+	}) => {
+		for (const width of [360, 320]) {
+			await page.setViewportSize({ width, height: 700 });
+			await page.goto('/');
+			await openOn(page, 'kana');
+			const seen: string[] = [];
+			for (const layout of ['カナ', '英数', 'カナ']) {
+				await key(page, layout).tap();
+				const ok = await key(page, '確定').boundingBox();
+				const no = await key(page, '取り消し').boundingBox();
+				seen.push(JSON.stringify([ok!.y, no!.y, ok!.height]));
+			}
+			expect(new Set(seen).size, `width ${width}`).toBe(1);
+		}
 	});
 
 	test('ten columns shrink to fit a 360px screen like the other layouts', async ({ page }) => {
