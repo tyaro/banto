@@ -1423,5 +1423,7 @@
   "touchKeys.maxLength": "{max} 文字までです",
   "touchKeys.minLength": "{min} 文字以上にしてください",
   "touchKeys.lengthConflict": "文字数の設定が合っていません（最小 {min}・最大 {max}）",
-  "touchKeys.invalid": "入力の形式が合いません"
+  "touchKeys.invalid": "入力の形式が合いません",
+  "passwordInput.show": "パスワードを表示",
+  "passwordInput.hide": "パスワードを隠す"
 }

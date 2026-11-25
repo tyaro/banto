@@ -8,7 +8,9 @@ test('settings labels stay above selected values and password input', async ({ p
 	const language = page.getByLabel('表示言語');
 	await expect(language).toHaveValue('ja');
 	const selected = await language.evaluate((control) => {
-		const label = control.nextElementSibling!.getBoundingClientRect();
+		const label = (
+			control.closest('.banto-affix') ?? control
+		).nextElementSibling!.getBoundingClientRect();
 		const field = control.getBoundingClientRect();
 		return {
 			labelBottom: label.bottom,
@@ -21,7 +23,10 @@ test('settings labels stay above selected values and password input', async ({ p
 	const password = page.getByLabel('現在のパスワード');
 	await expect(password).toBeVisible();
 	const labelTop = () =>
-		password.evaluate((control) => control.nextElementSibling!.getBoundingClientRect().top);
+		password.evaluate(
+			(control) =>
+				(control.closest('.banto-affix') ?? control).nextElementSibling!.getBoundingClientRect().top
+		);
 	const emptyTop = await labelTop();
 	await password.focus();
 	const focusedTop = await labelTop();
@@ -50,7 +55,9 @@ test('settings labels stay above selected values and password input', async ({ p
 	await newPassword.fill('abcdefgh');
 	await newPassword.blur();
 	const narrow = await newPassword.evaluate((control) => {
-		const label = control.nextElementSibling!.getBoundingClientRect();
+		const label = (
+			control.closest('.banto-affix') ?? control
+		).nextElementSibling!.getBoundingClientRect();
 		const field = control.getBoundingClientRect();
 		return {
 			labelBottom: label.bottom,

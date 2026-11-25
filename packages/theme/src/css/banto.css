@@ -841,6 +841,9 @@ html[data-theme='dark'] {
 
 .banto-field > input.banto-field-control:focus + .banto-field-label,
 .banto-field > input.banto-field-control:not(:placeholder-shown) + .banto-field-label,
+/* A password input wraps its box in `.banto-affix` (PasswordInput): same float, one level down. */
+.banto-field > .banto-affix:has(> input.banto-field-control:focus) + .banto-field-label,
+.banto-field > .banto-affix:has(> input.banto-field-control:not(:placeholder-shown)) + .banto-field-label,
 .banto-field > select.banto-field-control + .banto-field-label {
 	inset-block-start: var(--banto-space-1);
 	transform: none;

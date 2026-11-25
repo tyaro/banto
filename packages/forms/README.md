@@ -24,6 +24,38 @@ textarea/number/date/select/checkbox/password の各フィールド
 <BantoForm {schema} {store} onSubmit={handleSubmit} />
 ```
 
+## パスワード欄の表示・非表示（Issue #944）
+
+`type: 'password'` の項目と、アプリが自前で置くパスワード欄には、入力欄の右端に目玉のボタンが付く。
+押すたびに表示（`type="text"`）と非表示（`type="password"`）が入れ替わる（押している間だけではない）。
+出さない指定は無い。既定は非表示で、フォームの送信・リセットと画面を離れたときに非表示へ戻る。
+値とカーソル位置は切り替えても変わらない。`disabled` / `readonly` の欄ではボタンも無効。
+
+ボタンの名前は `passwordMessages`（`BantoForm`）か `messages`（`PasswordInput`）で差し替える。
+既定は「パスワードを表示」／「パスワードを隠す」。
+
+```svelte
+<script lang="ts">
+	import { PasswordInput } from '@banto/forms';
+	let password = $state('');
+</script>
+
+<!-- ラベルは入力を包まず、兄弟の <label for>（ボタンの名前が入力の名前に混ざらないように） -->
+<div class="banto-field">
+	<PasswordInput
+		id="pw"
+		class="banto-field-control"
+		placeholder=" "
+		bind:value={password}
+		autocomplete="current-password"
+	/>
+	<label class="banto-field-label" for="pw">パスワード</label>
+</div>
+```
+
+`class` は `<input>` に付く。省略すると `PasswordInput` が自分で枠を描く。タッチの盤との関係は
+[touch-keys のレシピ](../../docs/recipes/touch-keys.md)。
+
 ## 下線型表示を選ぶ（次リリース、ADR-0024）
 
 `BantoForm` に `appearance="underline"` を渡すと、対応版の `@banto/theme/css` の共有スタイルを使う。

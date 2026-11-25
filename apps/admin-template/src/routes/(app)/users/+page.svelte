@@ -18,7 +18,8 @@
 	 */
 	import { onDestroy, untrack, type Component } from 'svelte';
 	import { BantoGrid, type GridColumn } from '@banto/grid-svelte';
-	import { BantoForm, createFormStore } from '@banto/forms';
+	import { BantoForm, PasswordInput, createFormStore } from '@banto/forms';
+	import { passwordInputMessages } from '#lib/banto/i18n.js';
 	import type { FormSchema } from '@banto/forms';
 	import { createRequestOwner, isProviderError } from '@banto/admin-core';
 	import {
@@ -65,6 +66,9 @@
 	} from '#lib/banto/usersAdmin.js';
 	import type { Role } from '#lib/permissions.js';
 	import PermissionsField from './PermissionsField.svelte';
+
+	// Ids for the password boxes' sibling labels (a wrapping <label> would take the eye button's name).
+	const uid = $props.id();
 
 	const roleOptions: { value: Role; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },
@@ -272,6 +276,7 @@
 		editVersion = user.version;
 		editPermissions = [...(user.permissions ?? [])];
 		resetPassword = '';
+		resetBoxKey++;
 		if (catalogStatus === 'error') void loadCatalog();
 	}
 
@@ -413,6 +418,9 @@
 	}
 
 	let resetPassword = $state('');
+	// Bumped to remount the reset box, so a shown password goes back to hidden (PasswordInput only
+	// resets on a form submit or unmount; this box sits outside any form).
+	let resetBoxKey = $state(0);
 	let resetting = $state(false);
 
 	async function saveReset(): Promise<void> {
@@ -430,6 +438,7 @@
 			toastStore.push('success', m['users.passwordReset']());
 			if (epoch === selectionEpoch && selected?.id === targetId && resetPassword === password) {
 				resetPassword = '';
+				resetBoxKey++;
 			}
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -533,6 +542,7 @@
 							onSubmit={handleCreate}
 							submitting={creating}
 							submitLabel={m['common.create']()}
+							passwordMessages={passwordInputMessages()}
 						/>
 					</section>
 				</SurfaceCard>
@@ -632,15 +642,20 @@
 
 							<div class="danger-section">
 								<p class="note">{m['users.resetDesc']()}</p>
-								<label class="banto-field banto-field--stacked edit-field">
-									<input
-										class="banto-field-control"
-										type="password"
-										bind:value={resetPassword}
-										autocomplete="new-password"
-									/>
-									<span class="banto-field-label">{m['common.newPasswordMinLabel']()}</span>
-								</label>
+								<div class="banto-field banto-field--stacked edit-field">
+									{#key resetBoxKey}
+										<PasswordInput
+											id="{uid}-pw-1"
+											class="banto-field-control"
+											bind:value={resetPassword}
+											autocomplete="new-password"
+											messages={passwordInputMessages()}
+										/>
+									{/key}
+									<label class="banto-field-label" for="{uid}-pw-1">
+										{m['common.newPasswordMinLabel']()}
+									</label>
+								</div>
 								<Button variant="danger" icon={KeyRound} onclick={saveReset} loading={resetting}>
 									{m['users.resetPassword']()}
 								</Button>

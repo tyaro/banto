@@ -6,7 +6,9 @@ import { DIAGONAL_MATRIX, primeTheme } from './theme';
 
 async function labelBounds(control: Locator) {
 	return control.evaluate((element) => {
-		const label = element.nextElementSibling!.getBoundingClientRect();
+		// A password box sits in a `.banto-affix` wrapper (PasswordInput): its label follows the wrapper.
+		const anchor = element.closest('.banto-affix') ?? element;
+		const label = anchor.nextElementSibling!.getBoundingClientRect();
 		const field = element.getBoundingClientRect();
 		return {
 			top: label.top,
@@ -93,8 +95,25 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await username.press('Tab');
 			await expect(password).toBeFocused();
 			await password.fill('password-for-test');
-			const remember = page.getByRole('checkbox', { name: copy['auth.remember'], exact: true });
+			// The eye button (#944): Tab after the box, a press swaps the type, never submits.
+			await expect(password).toHaveAttribute('type', 'password');
+			const reveal = page.getByRole('button', { name: copy['passwordInput.show'], exact: true });
+			await expect(reveal).toHaveAttribute('aria-pressed', 'false');
 			await password.press('Tab');
+			await expect(reveal).toBeFocused();
+			await reveal.press('Enter');
+			await expect(password).toHaveAttribute('type', 'text');
+			await expect(password).toHaveValue('password-for-test');
+			const hide = page.getByRole('button', { name: copy['passwordInput.hide'], exact: true });
+			await expect(hide).toHaveAttribute('aria-pressed', 'true');
+			expect(submissions).toEqual([]);
+			expect(
+				(await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations
+			).toEqual([]);
+			await hide.press('Space');
+			await expect(password).toHaveAttribute('type', 'password');
+			const remember = page.getByRole('checkbox', { name: copy['auth.remember'], exact: true });
+			await reveal.press('Tab');
 			await expect(remember).toBeFocused();
 			await page.getByText(copy['auth.remember'], { exact: true }).click();
 			await expect(remember).toBeChecked();

@@ -1423,5 +1423,7 @@
   "touchKeys.maxLength": "Up to {max} characters",
   "touchKeys.minLength": "At least {min} characters",
   "touchKeys.lengthConflict": "The length settings conflict (min {min}, max {max})",
-  "touchKeys.invalid": "The format is not accepted"
+  "touchKeys.invalid": "The format is not accepted",
+  "passwordInput.show": "Show password",
+  "passwordInput.hide": "Hide password"
 }

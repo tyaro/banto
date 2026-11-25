@@ -358,7 +358,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.locator('.login-context')).toContainText('バージョン');
 
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		await page.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 		await page.getByRole('button', { name: 'ログイン' }).click();
 
 		await expect(page).toHaveURL(/\/dashboard$/);
@@ -1079,7 +1079,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			// detail page's captured scope is stale) and the page's own
 			// teardown keep the old save from writing its marker.
 			await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-			await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await page.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 			await page.getByRole('button', { name: 'ログイン' }).click();
 			await expect(page).toHaveURL(/\/dashboard$/);
 
@@ -1733,7 +1733,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// which makes an unscoped getByLabel ambiguous once the grid is on
 		// the same page (users/+page.svelte's "section.create").
 		const createForm = page.locator('section.create');
-		await expect(createForm.getByLabel('パスワード（8文字以上）')).toHaveCSS(
+		// The password box's underline sits on its `.banto-affix` wrapper (PasswordInput, #944).
+		await expect(createForm.getByLabel('パスワード（8文字以上）').locator('xpath=..')).toHaveCSS(
 			'border-bottom-width',
 			'2px'
 		);
@@ -1864,7 +1865,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await selectUserRow(VIEWER_USERNAME);
 		const password = panel.getByLabel('新しいパスワード（8文字以上）', { exact: true });
 		await expect(password).toHaveCSS('font-size', createFont);
-		await expect(password).toHaveCSS('border-bottom-width', '2px');
+		// The underline sits on the `.banto-affix` wrapper (PasswordInput, #944).
+		await expect(password.locator('xpath=..')).toHaveCSS('border-bottom-width', '2px');
 		await password.fill(VIEWER_PASSWORD);
 		let releaseReset!: () => void;
 		const resetGate = new Promise<void>((resolve) => (releaseReset = resolve));
@@ -2089,7 +2091,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/login$/);
 
 		await page.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
-		await page.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+		await page.getByLabel('パスワード', { exact: true }).fill(VIEWER_PASSWORD);
 		await page.getByRole('button', { name: 'ログイン' }).click();
 		await expect(page).toHaveURL(/\/dashboard$/);
 
@@ -2161,7 +2163,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 			await first.goto('/login');
 			await first.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-			await first.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await first.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 			await first.getByLabel('ログイン状態を保持する（30日間）').check();
 			await first.getByRole('button', { name: 'ログイン' }).click();
 			await expect(first).toHaveURL(/\/dashboard$/);
@@ -2200,7 +2202,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			// (generation check), which sends it to /login too.
 			await expect(first).toHaveURL(/\/login$/);
 			await second.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
-			await second.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await second.getByLabel('パスワード', { exact: true }).fill(VIEWER_PASSWORD);
 			await second.getByLabel('ログイン状態を保持する（30日間）').check();
 			await second.getByRole('button', { name: 'ログイン' }).click();
 			await expect(second).toHaveURL(/\/dashboard$/);
@@ -2262,7 +2264,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/login$/);
 
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		await page.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 		await page.getByRole('button', { name: 'ログイン' }).click();
 		await expect(page).toHaveURL(/\/dashboard$/);
 
@@ -2379,7 +2381,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await logout(page);
 			await expect(page).toHaveURL(/\/login$/);
 			await page.getByLabel('ユーザー名').fill(username);
-			await page.getByLabel('パスワード').fill(password);
+			await page.getByLabel('パスワード', { exact: true }).fill(password);
 			await page.getByRole('button', { name: 'ログイン' }).click();
 			await expect(page).toHaveURL(/\/dashboard$/);
 		}
@@ -2983,7 +2985,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		await page.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 		await page.getByLabel('ログイン状態を保持する（30日間）').check();
 		await page.getByRole('button', { name: 'ログイン' }).click();
 		await expect(page).toHaveURL(/\/dashboard$/);
@@ -3148,7 +3150,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		try {
 			await other.goto('/login');
 			await other.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-			await other.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await other.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 			await other.getByRole('button', { name: 'ログイン' }).click();
 			await expect(other).toHaveURL(/\/dashboard$/);
 
@@ -3283,7 +3285,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 			await other.goto('/login');
 			await other.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
-			await other.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await other.getByLabel('パスワード', { exact: true }).fill(VIEWER_PASSWORD);
 			await other.getByLabel('ログイン状態を保持する（30日間）').check();
 			const streamOpened = other.waitForResponse(
 				(response) =>
@@ -3370,7 +3372,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 			await first.goto('/login');
 			await first.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
-			await first.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await first.getByLabel('パスワード', { exact: true }).fill(VIEWER_PASSWORD);
 			await first.getByLabel('ログイン状態を保持する（30日間）').check();
 			const firstStream = first.waitForResponse(
 				(response) => isEvents(response.url()) && response.status() === 200
@@ -3449,7 +3451,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			const isPath = (url: string, path: string) => new URL(url).pathname === path;
 			await tab.goto('/login');
 			await tab.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
-			await tab.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await tab.getByLabel('パスワード', { exact: true }).fill(VIEWER_PASSWORD);
 			await tab.getByLabel('ログイン状態を保持する（30日間）').check();
 			await tab.getByRole('button', { name: 'ログイン' }).click();
 			await expect(tab).toHaveURL(/\/dashboard$/);
@@ -3556,7 +3558,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	async function loginRemembered(tab: Page, username: string, password: string): Promise<void> {
 		await tab.goto('/login');
 		await tab.getByLabel('ユーザー名').fill(username);
-		await tab.getByLabel('パスワード').fill(password);
+		await tab.getByLabel('パスワード', { exact: true }).fill(password);
 		await tab.getByLabel('ログイン状態を保持する（30日間）').check();
 		await tab.getByRole('button', { name: 'ログイン' }).click();
 		await expect(tab).toHaveURL(/\/dashboard$/);
@@ -3808,7 +3810,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await tab.getByRole('link', { name: 'トップへ戻る' }).click();
 			await expect(tab).toHaveURL(/\/login$/);
 			await tab.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-			await tab.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await tab.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 			await tab.getByRole('button', { name: 'ログイン' }).click();
 			await expect(tab).toHaveURL(/\/dashboard$/);
 			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toContainText(
@@ -3939,7 +3941,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await logout(tab);
 			await expect(tab).toHaveURL(/\/login$/);
 			await tab.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
-			await tab.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await tab.getByLabel('パスワード', { exact: true }).fill(VIEWER_PASSWORD);
 			await tab.getByRole('button', { name: 'ログイン' }).click();
 			await expect(tab).toHaveURL(/\/dashboard$/);
 			await expect(tab.locator('aside')).toBeVisible();
@@ -3950,7 +3952,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await logout(tab);
 			await expect(tab).toHaveURL(/\/login$/);
 			await tab.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
-			await tab.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await tab.getByLabel('パスワード', { exact: true }).fill(ADMIN_PASSWORD);
 			await tab.getByRole('button', { name: 'ログイン' }).click();
 			await expect(tab).toHaveURL(/\/dashboard$/);
 			await expect(tab.locator('.launcher')).toBeVisible();
