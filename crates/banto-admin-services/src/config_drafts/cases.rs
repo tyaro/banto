@@ -879,6 +879,69 @@ pub(super) async fn two_connections_publish_at_once(bench: &Bench) {
     );
 }
 
+// --- #953 review: `published_at` is the time of the write, not of the wait ---
+
+/// A publish that waits for the published row's lock records when it ran
+/// (after the wait), not when its transaction began; the published row, the
+/// history row and the answer carry the same text. On SQLite only the
+/// sameness is checked.
+pub(super) async fn published_at_is_the_write_time(bench: &Bench) {
+    let a = alice();
+    let revision = start_draft(&bench.a, &a, json!({"limit": 30})).await;
+    let outcome = match &bench.db {
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => {
+            let (locked_tx, locked_rx) = tokio::sync::oneshot::channel::<()>();
+            let holder = async {
+                let mut tx = pool.begin().await.unwrap();
+                sqlx::query("SELECT 1 FROM config_published WHERE target = $1 FOR UPDATE")
+                    .bind(TARGET)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .unwrap();
+                locked_tx.send(()).unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                let released: String = sqlx::query_scalar("SELECT clock_timestamp()::text")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .unwrap();
+                tx.commit().await.unwrap();
+                released
+            };
+            let writer = async {
+                locked_rx.await.unwrap();
+                bench
+                    .b
+                    .publish(TARGET, &a, &revision, &stamp(None))
+                    .await
+                    .unwrap()
+            };
+            let (released, outcome) = tokio::join!(holder, writer);
+            let later: bool = sqlx::query_scalar("SELECT $1::timestamptz >= $2::timestamptz")
+                .bind(&outcome.published_at)
+                .bind(&released)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert!(
+                later,
+                "published_at {} is before the lock was released at {released}",
+                outcome.published_at
+            );
+            outcome
+        }
+        _ => bench
+            .a
+            .publish(TARGET, &a, &revision, &stamp(None))
+            .await
+            .unwrap(),
+    };
+    let published = bench.a.published(TARGET).await.unwrap();
+    assert_eq!(published.published_at, outcome.published_at);
+    let history = bench.a.history(TARGET, None, 10).await.unwrap();
+    assert_eq!(history[0].published_at, outcome.published_at);
+}
+
 // --- the runs ---
 
 /// The four tables, PostgreSQL form (design §4.5). MUST be kept in sync with
@@ -1025,4 +1088,5 @@ on_both_backends!(
     revert_adds_a_version,
     reads_are_one_snapshot,
     two_connections_publish_at_once,
+    published_at_is_the_write_time,
 );

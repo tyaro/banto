@@ -1243,12 +1243,15 @@ fn published_sql(dialect: Dialect, fix: bool) -> String {
     )
 }
 
-/// The `updated_at` / `published_at` expression of each dialect (the
-/// columns' own defaults).
+/// The `updated_at` / `published_at` expression a write uses: the time of
+/// the STATEMENT, in the text form of the columns' defaults. A write runs
+/// this after it fixed the published row, so the time is after every wait.
+/// PostgreSQL's `now()` (the columns' default) is the time the transaction
+/// STARTED - before the wait for the row lock - so it is not used here.
 fn now_text(dialect: Dialect) -> &'static str {
     match dialect {
         Dialect::Sqlite => "datetime('now')",
-        Dialect::Postgres => "now()::text",
+        Dialect::Postgres => "statement_timestamp()::text",
     }
 }
 

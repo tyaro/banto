@@ -162,9 +162,10 @@ fn refuse_if_held_by_other(
 ///   back.
 /// - The UPDATE names the version it read (`AND version = <read>`) and must
 ///   write one row - a second guard on top of the row lock.
-/// - Both rows get the SAME `published_at` text: the published row copies
-///   the history row's (two `now` expressions in one transaction can differ
-///   on SQLite).
+/// - `published_at` is the time of the INSERT ([`now_text`]): after the
+///   published row was fixed, so a write that waited for another one records
+///   when it ran, not when it started waiting. Both rows get the SAME text:
+///   the published row copies the history row's.
 macro_rules! write_next_version {
     ($tx:ident, $dialect:expr, $target:expr, $published:expr, $text:expr,
      $kind:expr, $reverted_to:expr, $stamp:expr, $comment:expr) => {{
@@ -177,9 +178,10 @@ macro_rules! write_next_version {
         let sql = format!(
             "INSERT INTO config_history \
                  (target, version, value, kind, reverted_to, \
-                  actor_username, actor_id, actor_kind, origin, comment) \
-             VALUES ({})",
-            $dialect.placeholders(10)
+                  actor_username, actor_id, actor_kind, origin, comment, published_at) \
+             VALUES ({}, {})",
+            $dialect.placeholders(10),
+            now_text($dialect)
         );
         sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind($target)
