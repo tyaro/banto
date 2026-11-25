@@ -509,9 +509,13 @@ test('チャートと dock を外す minimal では、ダッシュボードの�
 			'登録に残る id が一覧だけでない'
 		);
 		assert.ok(
-			files.page.includes('<DashboardWidgetStack widgets={stackWidgets} {data} {onDrill} />'),
+			files.page.includes(
+				'<DashboardWidgetStack widgets={stackWidgets} {data} {onDrill} {select} />'
+			),
 			'「積む」表示が消えた'
 		);
+		// #882 C2: 選択の帯は charts を import しないので残る（選ぶウィジェットが無いので出ない）。
+		assert.ok(files.page.includes('<DashboardSelectionBar'), '選択の帯が消えた');
 		for (const kept of [
 			'DashboardWidgetStack.svelte',
 			'DashboardWidgetFrame.svelte',
