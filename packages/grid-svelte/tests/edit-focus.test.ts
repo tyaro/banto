@@ -292,3 +292,136 @@ it('a pointer-selected cell remains selected when a keyboard save completes', as
 	expect(document.activeElement).toBe(grid);
 	expect(cell(1).classList.contains('active')).toBe(true);
 });
+
+/**
+ * #964 G2 (grid-touch-edit-design §4.1 ②③ / §5.1): something that writes into
+ * the focused editor without moving focus (an on-screen keypad), and an app
+ * that then commits the cell by blurring the editor.
+ */
+describe('a writer that leaves focus on the editor (#964 G2)', () => {
+	/** A keypad key: a press outside the editor that leaves focus where it is. */
+	async function pressOutside() {
+		await fireEvent.pointerDown(outside('div'));
+	}
+	/** What the keypad's confirm does to the field (the value, then `input`). */
+	async function write(editor: HTMLInputElement, value: string) {
+		await fireEvent.input(editor, { target: { value } });
+	}
+
+	it('every editor carries the public marker attribute', async () => {
+		const { cell } = setup(undefined, 'client', [
+			columns[0],
+			{ id: 'category', header: 'Category', accessor: 'category', editable: true, editor: 'select' }
+		]);
+		await fireEvent.doubleClick(cell());
+		expect(screen.getByRole('textbox').hasAttribute('data-grid-editor')).toBe(true);
+		await fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+		await fireEvent.doubleClick(cell(0, 'category'));
+		expect(screen.getByRole('combobox').hasAttribute('data-grid-editor')).toBe(true);
+	});
+
+	it.each(['client', 'server'] as const)(
+		'input on the focused editor takes the claim back; the blur commit returns focus to the grid (%s)',
+		async (mode) => {
+			const save = deferred();
+			const onCellEdit = vi.fn(() => save.promise);
+			const { grid, cell } = setup(onCellEdit, mode);
+			await fireEvent.doubleClick(cell());
+			const editor = screen.getByRole('textbox') as HTMLInputElement;
+			await pressOutside();
+			expect(document.activeElement).toBe(editor);
+			await write(editor, 'Typed');
+			editor.blur();
+			expect(document.activeElement).toBe(document.body);
+			await finish(save, 'success');
+			expect(onCellEdit).toHaveBeenCalledTimes(1);
+			expect(screen.queryByRole('textbox')).toBeNull();
+			expect(document.activeElement).toBe(grid);
+			// No move: the edited cell stays the active one.
+			expect(cell().classList.contains('active')).toBe(true);
+		}
+	);
+
+	it('without an input the press outside keeps the claim given up', async () => {
+		const { cell } = setup(vi.fn());
+		const editor = await draft(cell());
+		await pressOutside();
+		editor.blur();
+		await tick();
+		await tick();
+		expect(screen.queryByRole('textbox')).toBeNull();
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('an input on an editor that lost focus does not take the claim back', async () => {
+		const first = deferred();
+		const onCellEdit = vi.fn<() => Promise<void> | void>(() => first.promise);
+		const { cell } = setup(onCellEdit);
+		const editor = await draft(cell());
+		await pressOutside();
+		editor.blur();
+		await finish(first, 'failure');
+		// The refused draft stays open, unfocused (the claim was given up).
+		expect(document.activeElement).toBe(document.body);
+		await write(editor, 'Late');
+		onCellEdit.mockImplementation(() => {});
+		await fireEvent.blur(editor);
+		await tick();
+		expect(onCellEdit).toHaveBeenCalledTimes(2);
+		expect(screen.queryByRole('textbox')).toBeNull();
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('a blur towards another control never pulls focus back to the grid', async () => {
+		const { cell } = setup(vi.fn());
+		const editor = await draft(cell());
+		const button = outside();
+		button.focus();
+		await tick();
+		await tick();
+		expect(editor.isConnected).toBe(false);
+		expect(document.activeElement).toBe(button);
+	});
+
+	it('an input while the save is pending does not take the claim back', async () => {
+		const save = deferred();
+		const { cell } = setup(() => save.promise);
+		const editor = await draft(cell());
+		await fireEvent.keyDown(editor, { key: 'Enter' });
+		await pressOutside();
+		expect(document.activeElement).toBe(editor);
+		await write(editor, 'While saving');
+		await finish(save, 'success');
+		// The owner's Enter would have moved down and focused the grid.
+		expect(screen.queryByRole('textbox')).toBeNull();
+		expect(cell(1).classList.contains('active')).toBe(false);
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('acting elsewhere while the save is pending wins when it completes', async () => {
+		const save = deferred();
+		const { cell } = setup(() => save.promise);
+		const editor = await draft(cell());
+		await pressOutside();
+		await write(editor, 'Typed');
+		editor.blur();
+		await pressOutside();
+		await finish(save, 'success');
+		expect(screen.queryByRole('textbox')).toBeNull();
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('a rejected save leaves the draft and focuses it again for the owner', async () => {
+		const save = deferred();
+		const { cell } = setup(() => save.promise);
+		const editor = await draft(cell());
+		await pressOutside();
+		await write(editor, 'Refused');
+		editor.blur();
+		await finish(save, 'failure');
+		const failed = screen.getByRole('textbox') as HTMLInputElement;
+		expect(failed.value).toBe('Refused');
+		expect(document.activeElement).toBe(failed);
+		expect(screen.getByText('Save failed')).toBeTruthy();
+	});
+});

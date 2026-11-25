@@ -31,6 +31,7 @@ function renderSelect(draft: unknown, onDraftChange = vi.fn()) {
 		onDraftChange,
 		onToggle: vi.fn(),
 		onKeydown: vi.fn(),
+		onInput: vi.fn(),
 		onBlur: vi.fn()
 	});
 	return { select: container.querySelector('select')!, onDraftChange };
