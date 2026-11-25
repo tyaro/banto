@@ -147,7 +147,13 @@ conventions §1 / §2 / §3 / §4 / §6 / §10 / §11 / §12、[template-scope](
 - `published(target)` → 値（JSON）・版・反映した時刻。`published_as::<T>(target)` → 型に写した値と版。
 - 読むのは `config_published` の 1 行（主キー）。途中の状態は見えない（反映は 1 トランザクション）。
 - 変わったことは、配線が送る `ServerEvent::ResourceChanged { resource: "config:<対象>" }` を同じ broadcast から受けて読み直す（§4.8）。
-  周期で動く処理なら、周期ごとに版だけ比べてもよい。サービスは通知の口を持たない（§2）。
+  **知らせは「すぐ読み直す合図」で、届くことを当てにしない**（コミットの後に送るので、切断・受け手の遅れ（broadcast の `Lagged`）・プロセスの終了で落ちうる）。
+  動作中に本番へ追いつく処理は、次の 4 つを全部持つ: (1) 起動のときに読む、(2) 知らせで読む、(3) 受け手が遅れた・つなぎ直したら読む、
+  (4) **周期でも版を比べる**（知らせを全部落としても、周期 1 回ぶんの遅れで追いつく）。
+- 読み直しの結果は、**いま持っている版より新しいときだけ**採る（遅れて返った古い読み取りで、新しい値を上書きしない。版は単調なので比べられる）。
+- **DB の反映の成功は、装置・処理への適用の成功ではない**。反映の応答・履歴・監査が言うのは「本番の JSON が変わった」まで。
+  処理が実際に採った版を見せたいアプリは、採った版を自分の状態として持って出す（banto はその欄を持たない）。
+  サービスは通知の口を持たない（§2）。
 
 ### 4.4 版と revision
 
@@ -157,7 +163,9 @@ conventions §1 / §2 / §3 / §4 / §6 / §10 / §11 / §12、[template-scope](
   （`i64` の上限には届かない。届いたら反映を断る）。
 - **revision**（乱数 32 桁の 16 進。`ui_settings.rs` の `new_revision` と同じ作り）を、本番の行と下書きの行がそれぞれ持つ。書き込みのたびに作り直す。
 - **クライアントが送る条件は revision だけ**にする:
-  - 下書きの保存・破棄・取り直し → `ifRevision`（下書きの revision。下書きが無いときは `"0"`）。**省略できない**。
+  - 下書きの保存・破棄 → `ifRevision`（下書きの revision。下書きが無いときは `"0"`）。**省略できない**。
+  - **最初の保存（`ifRevision: "0"`）と取り直し → `ifPublishedRevision` も要る**（画面が編集・比較に使った本番の revision）。
+    サーバーが採る「元にした版」を、利用者が実際に見た本番に結び付けるため（§4.6）。
   - 反映 → `ifDraftRevision`（差分を確かめた下書きの revision）。
   - 元に戻す → `ifPublishedRevision`（画面が見ていた本番の revision）。
 - 版の番号を条件にしない理由は conventions §6 と同じ: バックアップの復元で番号が戻ると、開いたままの画面が持つ古い番号が、別の中身の同じ番号に一致しうる。
@@ -209,6 +217,7 @@ CREATE TABLE config_locks (
     target        TEXT PRIMARY KEY,
     holder        TEXT NOT NULL,           -- 'acct:<users.id>' | 'grant:<kind>' | 'local'
     holder_name   TEXT NOT NULL,           -- 表示用の名前（スナップショット）
+    lease         TEXT NOT NULL,           -- 取得のたびに作る乱数（lease ID。延長では変えない）
     acquired_at_ms BIGINT NOT NULL,
     expires_at_ms BIGINT NOT NULL          -- Unix ミリ秒（サービスの時計。§4.6）
 );
@@ -233,29 +242,40 @@ CREATE TABLE config_locks (
 
 - 既定は `SystemTime::now()`。`ConfigDraftsService::with_clock(..)` で差し替える（試験は `AtomicI64` を進める。眠らない）。
 - DB の時計（`datetime('now')` / `now()`）を使わない理由: SQLite は秒の刻みで、試験で差し替えられない。
-- 期限の長さは `with_lock_ttl(..)`。既定は 5 分（§12 の 6）。画面は期限の 1/3 ごとに取り直す（下書きの保存も期限を延ばす）。
+- 期限の長さは `with_lock_ttl(..)`。既定は 5 分（§12 の 6）。画面は期限の 1/3 ごとに延長する（lease ID つき）（下書きの保存も期限を延ばす）。
 
 **ロックの規則**:
 
 | 操作                         | 条件                                                                                 | 結果                                                                                   |
 | ---------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| 取得・延長（同じ口）         | 行が無い、期限切れ、または持ち主が自分                                               | 持ち主を自分にし、期限を `now + ttl` にする。ほかの人が有効に持っていれば `conflict`（`reason: "lock_held"`、`current` に持ち主の名前と期限） |
-| 返す                         | 持ち主が自分                                                                         | 行を消す。自分の物でなければ何もしない（成功）                                         |
-| 解除（管理者）               | 権限だけ（持ち主を問わない）                                                         | 行を消す。監査に残す。下書きは消さない                                                 |
+| 取得                         | 行が無い、期限切れ、または持ち主が自分                                               | 持ち主を自分にし、**新しい lease ID** を作り、期限を `now + ttl` にする。ほかの人が有効に持っていれば `conflict`（`reason: "lock_held"`、`current` に持ち主の名前と期限） |
+| 延長                         | **送った lease ID が、有効な（期限内の）行と一致する**                               | 期限を `now + ttl` にする。lease ID は変えない。一致しない・期限切れなら `conflict`（`lock_required`）。**延長は取り直さない**（失効の後は、画面が改めて取得する） |
+| 返す                         | 送った lease ID が行と一致する                                                       | 行を消す。一致しなければ何もしない（成功。古いタブの遅れた返却が、取り直した新しいロックを消さない） |
+| 解除（管理者）               | 権限 + **画面で見た lease ID が行と一致する**                                        | 行を消す。監査に残す。下書きは消さない。一致しなければ `conflict`（`lock_held`、`current` にいまの持ち主。見た相手と違う人のロックを消さない） |
 | 下書きの保存・破棄・取り直し | **自分が有効に持っている**                                                           | 持っていなければ `conflict`（`reason: "lock_required"`。期限切れもこれ）               |
 | 反映・元に戻す               | ほかの人が有効に持って**いない**（空き、期限切れ、または自分）                       | ほかの人が持っていれば `conflict`（`reason: "lock_held"`）                             |
 
-- 持ち主は**アカウント**（`acct:<users.id>` など）で、セッションやタブではない（§12 の 5）。同じ人の 2 つのタブは両方ともロックを通るが、
+- 持ち主は**アカウント**（`acct:<users.id>` など）で、セッションやタブではない（§12 の 5）。同じ人の 2 つのタブは両方とも下書きの書き込みを通るが、
+  下書きの `ifRevision`（必須）が、後から書いた方を `conflict` にする。
+- **ロックそのものの操作（延長・返却・解除）は、取得ごとの lease ID で限る**。持ち主だけで決めると、古いタブの遅れた返却や延長が、
+  同じ人が取り直した新しいロックを消したり延ばしたりする。下書きの revision は文書の衝突のための物で、これは防げない。
+  同じ人がもう 1 度取得すると lease ID が変わるので、前のタブの延長は `lock_required` で止まる（画面は「ほかの画面で編集を始めた」と出す）。
   下書きの `ifRevision`（必須）が、後から書いた方を `conflict` にする。
 - 期限切れの行は掃除しない（次の取得が上書きする）。サーバーが止まっても、行は期限で自然に無効になる。
 
 **下書きの規則**:
 
-- 最初の保存（`ifRevision: "0"`）が下書きを作る。そのときの本番の版が「元にした版」。
+- 最初の保存（`ifRevision: "0"`）が下書きを作る。**`ifPublishedRevision` が本番の revision と一致するときだけ**作り、その本番の版が「元にした版」になる。
+  違えば `conflict`（`reason: "published_changed"`、`current` に本番の版と revision）。画面が開いてから保存までに本番が進んだ場合を、ここで止める。
+- 状態（`GET /api/config/{target}`）と差分は、**1 回の読み取り（1 つのトランザクション）**で本番・下書き・ロックを読み、本番と下書きの revision を必ず添えて返す。
+  画面はそこで受け取った revision を、次の書き込みの条件にそのまま使う（別々に読んだ値を組み合わせない）。
 - 保存は、ロックを確かめ、revision を比べ（違えば `conflict`、`reason: "draft_changed"`、`current` にいまの下書き）、値と revision を書き、ロックの期限を延ばす。
 - 保存のときは**大きさと形（最上位がオブジェクト）だけ**を確かめる。検証の関数は呼ぶが、結果は返すだけで保存は通す（書きかけを保存できるように）。**反映では検証を通らなければ断る**（422 `validation`）。
 - 破棄は下書きの行を消す（ロックは持ったまま）。
-- **取り直し**（rebase）: 本番が先に進んだ下書きの「元にした版」を、いまの本番の版に付け替える（値は変えない）。
+- **取り直し**（rebase）: 本番が先に進んだ下書きの「元にした版」を、**画面が差分で確かめた本番**の版に付け替える（値は変えない）。
+  条件は `ifRevision`（下書き）と `ifPublishedRevision`（確かめた本番）の両方で、トランザクションの中で照合する。本番がその後さらに進んでいれば
+  `conflict`（`published_changed`）で、付け替えない（確かめていない変更を「見た」ことにしない）。
+  **成功すると下書きの revision を作り直す**（取り直しの前に開いた反映の画面の `ifDraftRevision` は、古くなって通らない）。
   差分はいつも「いまの本番 → 下書き」なので、付け替える前に見れば「反映すると相手の変更をどう上書きするか」が見える。
   人が見て確かめた、という操作を 1 つの口にする（自動のマージはしない）。
 
@@ -292,7 +312,10 @@ CREATE TABLE config_locks (
   同じ形なので、`AuditChanges.svelte`・`auditChanges.ts` がそのまま読める（`field` がパスになるだけ）。
 - パスは **JSON Pointer**（RFC 6901。`/limits/high`）。キーに `.` を含んでも曖昧にならない。
 - オブジェクトは中へ降りる。**配列は 1 つの値として比べる**（中へ降りない。要素の挿入・削除で、番号ごとの差分は読めなくなるため。§12 の 8）。
-- 秘密のパスは前方一致（そのパスより下は全部 `masked`）。必須の引数。
+- 秘密のパスは**出す側で**当てる。差分の 1 件のパス P と秘密のパス S について、**P が S と同じ・S より下・S より上のどれかなら、その 1 件を丸ごと `masked` にする**。
+  「S より上」が要る: 配列は 1 つの値として出すので、`/devices/0/token` が秘密でも差分のパスは `/devices` になる。オブジェクトの丸ごとの追加・削除、
+  型の変更（オブジェクト → 文字列など）でも、親のパスで値を出す。どの場合も、秘密を含みうる値は出さない（部分だけ伏せる処理は作らない。漏れの余地を残さないため）。
+  配列の中の番号つきのパスは、番号を見ずに「その配列が秘密を含む」として扱う。必須の引数。
 - 並びはパスの順（安定）。
 
 使い道は 2 つで、切り詰めだけが違う。
@@ -308,7 +331,7 @@ CREATE TABLE config_locks (
 | 元に戻す                     | `action: "revert"`、同上 + `revertedTo`                                                                            | 同上                                                |
 | ロックの解除（管理者）       | `action: "unlock"`、detail = `{ holder: <名前> }`                                                                  | `ResourceChanged { resource: "config-draft:<対象>" }` |
 | 下書きの破棄                 | `action: "discard"`、detail = `{ baseVersion }`                                                                    | 同上                                                |
-| 下書きの保存・取り直し、ロックの取得・返却 | **書かない**（本番を変えない。打つたびの保存で監査が埋まる。§12 の 9）                               | 同上（ほかの画面が持ち主・下書きの有無を読み直す）  |
+| 下書きの保存・取り直し、ロックの取得・延長・返却 | **書かない**（本番を変えない。打つたびの保存で監査が埋まる。§12 の 9）                               | 同上（ほかの画面が持ち主・下書きの有無を読み直す）  |
 | 拒否                         | ガードが `denied` を書く（既存のとおり）                                                                           | —                                                   |
 
 - 「誰が・いつ・どこから・何を」は**履歴の行**（反映と同じトランザクション）と**監査**の両方に残る。監査の保存が遅れても（spool）、履歴は確定している。
@@ -329,6 +352,10 @@ CREATE TABLE config_locks (
 | 反映   | 反映、元に戻す                                             | admin |
 | 解除   | ほかの人のロックの解除                                     | admin |
 
+- **「読む」は、編集・反映・解除の必要条件にする**（その 3 つの口には「読む」のガードも重ねる。両経路とも）。
+  編集・反映の口は値を返す（衝突の `current` にいまの下書き、反映の応答に値つきの差分）ので、読めない人に編集・反映だけを許す組み合わせは作らない。
+  こうすると「読めない相手には値の無い応答を返す」という分岐が要らず、REST と Tauri で境界がずれない。配線は、役目ごとのガードを渡すときにこの重ねを自動で付ける
+  （`ConfigDraftsAccess` が組み立てる。アプリが付け忘れる余地を作らない）。
 - ガードは、ロールの床（`RoleGuard`）か権限（`PermissionGuard`、#697）のどちらかを、配線が役目ごとに選ぶ。
   テンプレートは権限を登録しないので、既定は 4 つとも admin。派生アプリは `config.edit`・`config.publish` のような権限を登録して差し替える
   （「編集する人」と「反映する人」を分けられる）。
@@ -393,13 +420,15 @@ impl ConfigDraftsService {
     pub async fn history_entry(&self, target: &str, version: i64) -> Result<ConfigHistoryDetail, BantoError>;
 
     // ロック
-    pub async fn lock_acquire(&self, target: &str, editor: &ConfigEditor) -> Result<ConfigLock, BantoError>;
-    pub async fn lock_release(&self, target: &str, editor: &ConfigEditor) -> Result<(), BantoError>;
-    pub async fn lock_force_release(&self, target: &str) -> Result<Option<ConfigLock>, BantoError>;
+    pub async fn lock_acquire(&self, target: &str, editor: &ConfigEditor) -> Result<ConfigLock, BantoError>; // 新しい lease
+    pub async fn lock_extend(&self, target: &str, lease: &str) -> Result<ConfigLock, BantoError>; // 一致する有効なロックだけ
+    pub async fn lock_release(&self, target: &str, lease: &str) -> Result<(), BantoError>;
+    pub async fn lock_force_release(&self, target: &str, if_lease: &str) -> Result<ConfigLock, BantoError>;
 
     // 下書き（自分のロックが要る）
-    pub async fn draft_put(&self, target: &str, editor: &ConfigEditor, value: &serde_json::Value, if_revision: &str) -> Result<ConfigDraftSaved, BantoError>;
-    pub async fn draft_rebase(&self, target: &str, editor: &ConfigEditor, if_revision: &str) -> Result<ConfigDraftSaved, BantoError>;
+    /// `if_published_revision` は最初の保存（`if_revision == "0"`）で必須。
+    pub async fn draft_put(&self, target: &str, editor: &ConfigEditor, value: &serde_json::Value, if_revision: &str, if_published_revision: Option<&str>) -> Result<ConfigDraftSaved, BantoError>;
+    pub async fn draft_rebase(&self, target: &str, editor: &ConfigEditor, if_revision: &str, if_published_revision: &str) -> Result<ConfigDraftSaved, BantoError>;
     pub async fn draft_discard(&self, target: &str, editor: &ConfigEditor, if_revision: &str) -> Result<ConfigDraftDiscarded, BantoError>;
 
     // 反映（1 トランザクション）
@@ -432,20 +461,21 @@ pub fn config_drafts_router(
 | 役目 | REST                                           | Tauri                  | 本文・応答（要点）                                                                                   |
 | ---- | ---------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------- |
 | 読む | `GET /api/config`                              | `config_list`          | 対象ごとの `{ target, version, hasDraft, lock? }`                                                    |
-| 読む | `GET /api/config/{target}`                     | `config_get`           | `{ published: { value, version, revision, publishedAt }, draft?: { value, baseVersion, revision, updatedBy, updatedAt }, lock?: { holderName, mine, expiresAt } }` |
+| 読む | `GET /api/config/{target}`                     | `config_get`           | `{ published: { value, version, revision, publishedAt }, draft?: { value, baseVersion, revision, updatedBy, updatedAt }, lock?: { holderName, mine, leaseId, expiresAt } }`。1 回の読み取りで揃える |
 | 読む | `GET /api/config/{target}/diff`                | `config_diff`          | 既定は「本番 → 下書き」。`?toVersion=N` で「本番 → 版 N」（元に戻す前の確かめ）。`{ changes: [...] }` |
 | 読む | `GET /api/config/{target}/history`             | `config_history_list`  | 新しい順。`?before=<版>&limit=`。値は含めない（誰が・いつ・どこから・種類・コメント）                |
 | 読む | `GET /api/config/{target}/history/{version}`   | `config_history_get`   | その版の値と、1 つ前の版からの差分                                                                   |
-| 編集 | `PUT /api/config/{target}/lock`                | `config_lock_acquire`  | 取得・延長。`{ expiresAt }`                                                                          |
-| 編集 | `DELETE /api/config/{target}/lock`             | `config_lock_release`  | 自分のロックを返す                                                                                   |
-| 編集 | `PUT /api/config/{target}/draft`               | `config_draft_put`     | `{ value, ifRevision }` → `{ revision, baseVersion, fieldErrors? }`                                  |
-| 編集 | `POST /api/config/{target}/draft/rebase`       | `config_draft_rebase`  | `{ ifRevision }` → `{ revision, baseVersion }`                                                       |
+| 編集 | `POST /api/config/{target}/lock`               | `config_lock_acquire`  | 取得。`{ leaseId, expiresAt }`                                                                       |
+| 編集 | `PUT /api/config/{target}/lock`                | `config_lock_extend`   | 延長。`{ leaseId }` → `{ expiresAt }`。失効の後は `conflict`（取り直さない）                         |
+| 編集 | `DELETE /api/config/{target}/lock`             | `config_lock_release`  | `?leaseId=`。一致するロックだけ返す                                                                  |
+| 編集 | `PUT /api/config/{target}/draft`               | `config_draft_put`     | `{ value, ifRevision, ifPublishedRevision? }`（最初の保存では必須）→ `{ revision, baseVersion, fieldErrors? }` |
+| 編集 | `POST /api/config/{target}/draft/rebase`       | `config_draft_rebase`  | `{ ifRevision, ifPublishedRevision }` → `{ revision（新しい）, baseVersion }`                        |
 | 編集 | `DELETE /api/config/{target}/draft`            | `config_draft_discard` | `?ifRevision=`                                                                                       |
 | 反映 | `POST /api/config/{target}/publish`            | `config_publish`       | `{ ifDraftRevision, comment? }` → `{ version, previousVersion, changes }`                            |
 | 反映 | `POST /api/config/{target}/revert`             | `config_revert`        | `{ toVersion, ifPublishedRevision, comment? }` → 同上                                                |
-| 解除 | `POST /api/config/{target}/unlock`             | `config_unlock`        | ほかの人のロックを外す                                                                               |
+| 解除 | `POST /api/config/{target}/unlock`             | `config_unlock`        | `{ ifLeaseId }`。画面で見たロックだけ外す                                                            |
 
-書き込み 8 つは `DUAL_PATH` の対、読み取り 5 つは `ROLE_READ` の対（ロールの床の対称を見る）に足す（案 B）。
+書き込み 9 つは `DUAL_PATH` の対、読み取り 5 つは `ROLE_READ` の対（ロールの床の対称を見る）に足す（案 B）。
 Tauri のコマンドは `require_role`（または `require_permission`）→ サービス → `record_ok` → `state.events.send(..)` の順で、REST の handler と同じ。
 
 ## 5. フロント側
@@ -468,14 +498,19 @@ Tauri のコマンドは `require_role`（または `require_permission`）→ �
 
 - T1 版: 反映のたびに 1 ずつ増える。`ensure_targets` は 2 回呼んでも版 0 を作り直さない。初期値を変えて呼んでも本番は変わらない。
 - T2 版の衝突: 下書きを作る → 別の反映（元に戻す）で本番が進む → 反映は `conflict`（`stale_base`）で、本番・履歴・下書きが変わらない → 取り直し → 反映できる。
+  取り直しは、確かめた本番の revision が古ければ `published_changed` で付け替えない。成功の後は下書きの revision が変わり、取り直しの前の `ifDraftRevision` での反映は `draft_changed`。
+  最初の保存も、開いた後に本番が進んでいれば `published_changed`。
 - T3 revision: 古い `ifRevision` の保存、古い `ifDraftRevision` の反映、古い `ifPublishedRevision` の元に戻す、がそれぞれ `conflict`。
 - T4 ロックの取り合い: A が取得 → B の取得は `lock_held`（持ち主の名前と期限つき）→ B の保存は `lock_required` → B の反映は `lock_held`。
+  lease: A のタブ 1 が取得 → タブ 2 が取得（lease が変わる）→ タブ 1 の遅れた返却・延長は新しいロックを消さない・延ばさない。
+  失効の後の延長は取り直さない。管理者の解除は、見た lease と違えば消さない。
 - T5 ロックの期限: 時計を期限の 1 ミリ秒前・ちょうど・後に進め、境界を確かめる。期限切れの後は B が取得でき、A の保存は `lock_required`。保存が期限を延ばす。
 - T6 解除: 管理者の解除の後、B が取得できる。下書きは残る。
 - T7 反映が 1 つのまとまりであること: 検証で落ちる・途中で失敗させる（履歴の主キーを先に埋める）→ 本番・履歴・下書き・ロックのどれも変わらない。
   成功の後は「本番の値 = 履歴の最新の行の値」。
 - T8 元に戻す: 版 3 まで反映 → `toVersion: 1` → 版 4 ができ、値は版 1 と同じ、履歴は 5 行（0〜4）で 1 行も消えない。いまの検証を通らない値には戻せない。
 - T9 差分: 入れ子・追加・削除・`null` と欠けの違い・配列は 1 つの値・秘密のパスより下は `masked` で値が文字列に出ない・切り詰め。
+  **秘密を含む親**: 配列の中の秘密（`/devices/0/token`）、秘密を含むオブジェクトの丸ごとの追加・削除、型の変更で、その 1 件が丸ごと `masked` になり、原値が出力の文字列のどこにも無い。
 - T10 入力: 知らない対象は `not_found`、オブジェクトでない値・大きすぎる値は断る。
 
 両 DB:
@@ -489,6 +524,8 @@ REST（`banto-server` の `routes/config_drafts.rs` の試験）:
 - T12 役目ごとのガード（読む・編集・反映・解除）の許可と拒否。拒否は 403 + `denied` の監査。
 - T13 409 の本文が `{ kind: "conflict", current: { reason, .. } }` であること（理由ごと）。
 - T14 反映・元に戻すで、監査が 1 行（`changes` はマスク・切り詰め済みで、秘密の値を含まない）、`ResourceChanged { resource: "config:<対象>" }` が 1 回。
+  T9 の「秘密を含む親」の場合を、REST の差分の応答・反映の応答・監査の detail の 3 つで通し、原値が入らないことを確かめる（Tauri は同じ関数を呼ぶ）。
+  「読む」を持たないセッションは、編集・反映・解除の口でも 403（409 の `current` や差分から値を読めない）。
   下書きの保存では監査が増えない。
 - T15 `tests/public_api.rs` に公開の項目の固定を足す。
 
@@ -516,7 +553,7 @@ S1 は大きいので 2 つに割る。S1a だけでは反映できないので�
 ## 8. 下流の使い方の概略
 
 1. 対象を登録する（キー・初期値・秘密のパス・検証）。起動時に migration の後で `ensure_targets()`。
-2. 処理は `published_as::<T>()` で読む。`config:<対象>` の `ResourceChanged` で読み直す。
+2. 処理は `published_as::<T>()` で読む。起動・`config:<対象>` の `ResourceChanged`・受け手の遅れとつなぎ直し・周期の版の比較、の 4 つで読み直し、新しい版だけを採る（§4.3）。
 3. 権限を分けたいなら `config.edit`・`config.publish` などを登録し、`ConfigDraftsAccess` と Tauri のガードを差し替え、`PERMISSION_PAIRS` に対を足す。
 4. 画面を作る: 開く → ロックを取る → 編集して保存（`ifRevision`）→ 差分を見る → 反映。衝突は理由で出し分ける（§5）。
 5. 既に自前の設定の表がある下流は、最初の起動で値を初期値として渡して種にする（移行の仕組みは banto に作らない）。
@@ -571,7 +608,7 @@ S1 は大きいので 2 つに割る。S1a だけでは反映できないので�
 | 2   | cargo の feature で囲むか（§4.2）                                  | **囲まない**。依存が増えないので、囲んでも得るものが無い（`system-metrics` は `sysinfo` を外すための feature）                                                                                       |
 | 3   | 知らせの形（§4.8）                                                 | **`ResourceChanged { resource: "config:<対象>" }` だけ**。誰が・どこからは履歴の口で読む。`ServerEvent` に変種は足さない（下流の `match` が壊れる・閲覧公開にも名前が届く）                          |
 | 4   | 権限を対象ごとに分けるか（§4.9）                                   | **v1 は分けない**（役目 4 つに 1 組）。分ける要望が出たら、対象の登録にガードを持たせる形で足す（rule 8 の照合の作りも変える）                                                                       |
-| 5   | ロックの持ち主（§4.6）                                             | **アカウント**（セッション・タブではない）。同じ人の 2 つのタブは下書きの `ifRevision`（必須）で防ぐ。別案: ロックに合い言葉を持たせてタブ単位にする（リロードで編集できなくなる）                   |
+| 5   | ロックの持ち主（§4.6）                                             | **アカウント**（セッション・タブではない）。同じ人の 2 つのタブは下書きの `ifRevision`（必須）で防ぐ。ロックそのものの操作（延長・返却・解除）だけは取得ごとの lease ID で限る（クロスレビューを受けて足した）。別案: 下書きの書き込みも lease でタブ単位にする（リロードで編集できなくなる）                   |
 | 6   | ロックの期限の既定（§4.6）                                         | **5 分**、画面は 1/3 ごとに延長、保存でも延長。上限 1 時間                                                                                                                                           |
 | 7   | 元に戻すの指定のしかた（§4.6）                                     | **`toVersion`（その版の時点の本番に戻す）**。Issue の「版 N の反映前」は `toVersion = N − 1` と同じ。画面の「版 3 に戻す」と素直に合う                                                               |
 | 8   | 配列の差分（§4.7）                                                 | **配列は 1 つの値として比べる**。別案: 番号ごと（挿入・削除で読めない差分になる）                                                                                                                    |
@@ -585,3 +622,11 @@ S1 は大きいので 2 つに割る。S1a だけでは反映できないので�
 未確定のまま残る点（実装で確かめる）: 監査の `changes` の件数の上限、`ConfigDraftsAccess` の形（rule 8 がロールの床・権限を読める書き方）、
 `ConfigEditor` と `UiSettingsOwner` の作り方の共通化、下書きの保存の応答に検証の結果をどう載せるか、`history` のページの切り方、
 SQLite のファイルの DB で 2 つのプールから同時に反映する試験の安定（`busy_timeout`）。
+
+決めた点（クロスレビュー `b5cd9cfb` を受けて。オーナーの判断は要らない見込み）:
+
+- 最初の保存と取り直しは、画面が確かめた本番の revision（`ifPublishedRevision`）も条件にする。取り直しの成功で下書きの revision を作り直す（§4.4・§4.6）。
+- ロックの延長・返却・解除は、取得ごとの lease ID で限る。延長は失効の後に取り直さない（§4.6）。
+- 「読む」を編集・反映・解除の必要条件にする（値を返す口を、読めない人に開けない。§4.9）。
+- 差分のマスクは出す側で当て、秘密を含みうる親の 1 件は丸ごと伏せる（§4.7）。
+- 知らせは合図で、処理は起動・知らせ・遅れとつなぎ直し・周期の 4 つで追いつき、新しい版だけを採る。DB の反映の成功は適用の成功ではない（§4.3）。
