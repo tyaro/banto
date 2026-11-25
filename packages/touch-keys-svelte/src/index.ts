@@ -48,7 +48,11 @@ export {
 	type DraftStatus
 } from './core/number';
 export {
+	DEFAULT_TEXT_LAYOUTS,
 	TEXT_LAYOUTS,
+	applyKanaMark,
+	kanaMarked,
+	type KanaMark,
 	resolveTextRules,
 	resolveTextLayouts,
 	textKeyRows,

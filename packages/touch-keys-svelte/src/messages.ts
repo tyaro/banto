@@ -27,6 +27,14 @@ export interface TouchKeysMessages {
 	alnum?: () => string;
 	/** Layout switch: symbols. */
 	symbol?: () => string;
+	/** Layout switch: katakana. */
+	kana?: () => string;
+	/** Kana mark key: voiced mark (濁点), applied to the last character. Spoken name; the key shows the glyph. */
+	dakuten?: () => string;
+	/** Kana mark key: semi-voiced mark (半濁点). */
+	handakuten?: () => string;
+	/** Kana mark key: small form (ッ ャ ァ …). */
+	small?: () => string;
 	/** Case toggle while lower case is shown (pressing it switches to upper case). */
 	upper?: () => string;
 	/** Case toggle while upper case is shown. */
@@ -70,6 +78,10 @@ export const defaultTouchKeysMessages: Required<TouchKeysMessages> = {
 	textKeyboard: () => '文字キーボード',
 	alnum: () => '英数',
 	symbol: () => '記号',
+	kana: () => 'カナ',
+	dakuten: () => '濁点',
+	handakuten: () => '半濁点',
+	small: () => '小書き',
 	upper: () => '大文字',
 	lower: () => '小文字',
 	space: () => '空白',

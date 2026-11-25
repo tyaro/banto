@@ -24,6 +24,7 @@
 
 	let qty = $state<number | string>(12);
 	let memo = $state('abc');
+	let kanaValue = $state('');
 	let modalOpen = $state(false);
 
 	$effect(() => {
@@ -73,8 +74,17 @@
 		<input id="memo" type="text" bind:value={memo} />
 		<output id="memo-bound">{memo}</output>
 
+		<output id="kana-bound">{kanaValue}</output>
 		<label for="code">コード</label>
 		<input id="code" type="text" maxlength="4" />
+
+		<label for="kana">カナ</label>
+		<input
+			id="kana"
+			type="text"
+			bind:value={kanaValue}
+			{@attach touchKeys({ kind: 'text', layouts: ['kana', 'alnum'], maxLength: 12 })}
+		/>
 
 		<!-- the plain text of this field must never reach the log (onconfirm gets null, §5.5) -->
 		<label for="pw">パスワード</label>
