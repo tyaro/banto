@@ -20,6 +20,9 @@
 	// @banto/image-assets（#438 PR-14）はアプリに配線しないオプションだが、`createImageStore`
 	// が `.svelte.ts` なので exclude の対象。ストアを作り、`$state` を持つ実体が動くことも確かめる。
 	import { createImageStore } from '@banto/image-assets';
+	// @banto/touch-keys-svelte（#937）は `.svelte.ts` を持たない（optimizeDeps.exclude は不要）が、
+	// `.svelte` をソース配布するので、Git 依存（path:）で入り import が解決することを確かめる。
+	import { NumberKeypad, touchKeys } from '@banto/touch-keys-svelte';
 	import { BantoTree, TreeState } from '@banto/tree-svelte';
 	import { resolveTheme } from '@banto/theme';
 	// @banto/ui（#220）は `createToastStore()`（段階 2c）が `.svelte.ts` なので 6 つ目の
@@ -37,6 +40,8 @@
 		typeof BantoForm,
 		typeof GridState,
 		typeof BantoGrid,
+		typeof NumberKeypad,
+		typeof touchKeys,
 		typeof TreeState,
 		typeof BantoTree,
 		typeof createToastStore,
