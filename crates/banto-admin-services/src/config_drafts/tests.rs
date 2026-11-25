@@ -480,6 +480,16 @@ async fn discard_needs_the_current_revision_and_keeps_the_lock() {
 
     let gone = f.svc.draft_discard(TARGET, &a, &revision).await.unwrap();
     assert_eq!(gone.revision, CONFIG_DRAFT_ABSENT_REVISION);
+    // the wiring's audit detail: the version the discarded draft started
+    // from. It is not in the response.
+    assert_eq!(
+        discard_audit_detail(&gone),
+        Some(json!({ "baseVersion": 0 }))
+    );
+    assert_eq!(
+        serde_json::to_value(&gone).unwrap(),
+        json!({ "revision": "0" })
+    );
     let state = f.state(&a).await;
     assert!(state.draft.is_none());
     assert!(state.lock_is_mine);
@@ -487,7 +497,8 @@ async fn discard_needs_the_current_revision_and_keeps_the_lock() {
     assert_eq!(state.lock.unwrap().expires_at_ms, expires);
 
     // nothing there: "0" is fine, a revision is not
-    f.svc.draft_discard(TARGET, &a, "0").await.unwrap();
+    let nothing = f.svc.draft_discard(TARGET, &a, "0").await.unwrap();
+    assert_eq!(discard_audit_detail(&nothing), None);
     let current = conflict(
         f.svc.draft_discard(TARGET, &a, &revision).await,
         "draft_changed",
@@ -877,6 +888,10 @@ async fn force_release_removes_only_the_lock_that_was_seen() {
 
     let removed = f.svc.lock_force_release(TARGET, &lease).await.unwrap();
     assert_eq!(removed.holder, "acct:1");
+    assert_eq!(
+        unlock_audit_detail(&removed),
+        json!({ "holder": "acct:1", "holderName": "alice" })
+    );
     assert_eq!(removed.holder_name, "alice");
     assert_eq!(removed.lease, lease);
 

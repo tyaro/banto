@@ -1,7 +1,7 @@
 # 設定の下書き・反映・元に戻す 設計書 — Issue #938
 
 作成日: 2026-11-25
-状態: **S1a・S1b 実装済み、S2〜S5 未着手**（§7。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験）。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
+状態: **S1a・S1b・S2 実装済み、S3〜S5 未着手**（§7。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験（PR #953）。S2 = `banto-server` の `config_drafts_router`（4 役目のガード・監査・イベント）。**REST では使えるが、テンプレートへの配線（migration・Tauri・rule 8）は S4**）。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
 トラック: 保守者向け（トラックA）
 関連: Issue #938、#638・#651（楽観ロックと `conflict`）、#786（`ui_settings` の revision）、#597（監査の差分）、
 #697（ユーザー個別の権限）、#935・#936（[アプリ独自の SSE](sse-stream-design.md)）、#793 / [ADR-0035](../adr/0035-detached-writes.md)（書き込みを切断から切り離す）、
@@ -399,6 +399,23 @@ CREATE TABLE config_locks (
   Issue の「誰が・どこから・どの対象」を知らせそのものに載せたい場合は、権限つきのアプリの配信（[sse-stream-design](sse-stream-design.md) の土台）で出す道がある（今回は作らない）。
 - Tauri の画面には、既存の転送のタスクが同じイベントを届ける（足す物は無い）。
 
+**S2 で決めた形**（`crates/banto-server/src/routes/config_drafts.rs`）:
+
+- **handler の中の順序は「サービス（確定）→ 監査 → イベント」**。監査の主体と履歴の「誰が」（`PublishStamp`）は、どちらもガードが作ったスナップショット
+  （`Extension<AuditActor>`）から作る（書き込みの後に引き直さない。conventions §1）。履歴の `origin` は `"rest"`。
+- **監査の `action` は戻り値の種類**（`PublishOutcome.kind` の `publish` / `revert`）、detail は `publish_audit_detail(&outcome)` だけ（handler は要求の本文から何も足さない）。
+- **解除の detail は `{ holder, holderName }`**（`unlock_audit_detail(&removed)`）。`holder` は `acct:<users.id>` などの持ち主のキーで、同じ名前の人を区別するために監査にだけ残す
+  （応答・409 の本文・イベントには出さない。表の `{ holder: <名前> }` から変えた）。
+- **破棄の監査とイベントは、下書きが実際に消えたときだけ**（`discard_audit_detail(&discarded)` が `Some`）。`ifRevision=0`（「下書きは無い」の確かめ）が通った呼び出しは、何も変えないので何も書かない。
+  `baseVersion` はサービスが戻り値に持たせる（`ConfigDraftDiscarded.discarded_base_version`。応答には出さない）。
+- **失敗（409・422・404）は監査もイベントも無い**。拒否（403）は、落としたガードが `denied` を **1 行だけ**書く（`resource: "config"`。「読む」のガードが先に落とせば、役目のガードは走らない）。
+- **イベントを作る関数は公開**（`config_changed_event(target)`＝`config:<対象>`、`config_draft_changed_event(target)`＝`config-draft:<対象>`）。
+  監査 detail の 3 つの関数（`publish_audit_detail`・`unlock_audit_detail`・`discard_audit_detail`）と合わせて、S4 の Tauri のコマンドが同じ物を呼ぶ。
+- 反映・元に戻すは `config:<対象>` を **1 回だけ**送る（`config-draft:<対象>` は重ねない。編集の画面は `config:<対象>` でも状態を読み直す）。
+  ロックの延長も `config-draft:<対象>` を送る（期限が変わる。画面が 1/3 ごとに延長するので、既定では対象 1 つにつき 100 秒に 1 回ほど）。
+- **差分の計算をコミットの後へ移す件**（S1b の任意の残り）は入れていない。S2 は配線だけにし、反映のトランザクションの中身は変えない
+  （値は 256 KiB まで・差分は純粋な計算で、本番の行を止める時間は検証の関数と同じ程度。困る実測が出たら、戻り値の形を変えずに移せる）。
+
 ### 4.9 権限
 
 口を 4 つの役目に分け、それぞれにガードを 1 つ付ける。
@@ -420,6 +437,21 @@ CREATE TABLE config_locks (
 - **v1 は対象ごとに権限を分けない**（ルーター全体で 1 組。§12 の 4）。ルートの層のガードのままなので、rule 8 の照合（`DUAL_PATH` の `role` / `PERMISSION_PAIRS`）に乗る。
 - 権限での拒否は 403 `forbidden` + `denied` の監査（既存のとおり）。
 - アプリの処理の読み口（`published`）はプロセスの中の関数で、認可は無い。
+
+**S2 で決めた形**:
+
+- `ConfigDraftsAccess { read, edit, publish, unlock }`（4 つとも公開の欄）で、欄の型は `ConfigDraftsGate`（`Role(Role)`＝ロールの床 / `Permission(PermissionKey)`＝権限）。
+  `ConfigDraftsAccess::default()` は 4 つとも `Role(Role::Admin)`。ロールの床と権限は役目ごとに混ぜられる。
+- **層の順は `require_auth` → 「読む」のガード → 役目のガード → handler**。`config_drafts_router` が自分で重ねる（アプリは `access` を渡すだけで、「読む」を外す書き方は無い）。
+  「読む」を持たないセッションは、編集・反映・解除の権限を持っていても全部の口で 403 になり、`denied` は「読む」のガードの 1 行だけ。
+- ガードの後で本文を待つ口は無い（どの口も本文の上限を上げない。値は 256 KiB まで）ので、照合し直し（`recheck_role_at_least`）は要らない。
+- **編集する人（`ConfigEditor`）** は、`require_auth` が通したセッションから作る（`ui_settings` の `owner_of` と同じ規則）: grant は `grant:<kind>`、アカウントは `acct:<users.id>`、
+  stamp の無いアカウントのセッション（照合の無い `AuthState`）は 401（持ち主の行が無い。fail closed）。**ほかの人に見せる名前はセッションの id**
+  （ユーザー名、grant は固定の id）で、監査・履歴の `actor_username` と同じ見え方にする（表示名は重なりうる）。`UiSettingsOwner` との共通化はしていない（型が違い、作る場所は 1 つずつ）。
+- **S4 の前提（rule 8）**: `verify:architecture` の rule 8 (e) は `fn *_router` の本体の `min: Role::X` を読むが、このルーターの床は `access` で決まるので本体に無い
+  （今は Route table に載せていないので検査の対象外。載せると `require_auth` だけ＝Viewer の床と読まれて、`ROLE_READ`・`DUAL_PATH` の `Admin` と合わない）。
+  S4 で、アプリの配線が書く `ConfigDraftsAccess { read: ConfigDraftsGate::Role(Role::Admin), .. }` を rule 8 が読む形を足す
+  （欄を公開にしたのはこのため。`default()` で済ませると読めないので、テンプレートの配線は 4 つとも書き出す）。権限のガード（`PERMISSION_PAIRS`）も同じ。
 
 ### 4.10 公開 API の案（Rust）
 
@@ -511,8 +543,17 @@ pub struct ConfigDraftSummary { /* base_version, revision, updated_by, updated_a
 
 ```rust
 // crates/banto-server/src/routes/config_drafts.rs
-/// 役目ごとのガード（§4.9）。既定は 4 つとも admin。
-pub struct ConfigDraftsAccess { /* read, edit, publish, unlock: ロールの床か PermissionKey */ }
+// S2 で決めた形。どれも `banto_server::routes::` から輸出する。
+/// 1 つの役目が求めるもの。
+pub enum ConfigDraftsGate { Role(Role), Permission(PermissionKey) }
+
+/// 役目ごとのガード（§4.9）。`Default` は 4 つとも `Role(Role::Admin)`。
+pub struct ConfigDraftsAccess {
+    pub read: ConfigDraftsGate,
+    pub edit: ConfigDraftsGate,
+    pub publish: ConfigDraftsGate,
+    pub unlock: ConfigDraftsGate,
+}
 
 pub fn config_drafts_router(
     service: ConfigDraftsService,
@@ -521,7 +562,14 @@ pub fn config_drafts_router(
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
 ) -> Router;
+
+/// `ResourceChanged { resource: "config:<対象>" }` / `"config-draft:<対象>"`。両経路が同じ関数を呼ぶ。
+pub fn config_changed_event(target: &str) -> ServerEvent;
+pub fn config_draft_changed_event(target: &str) -> ServerEvent;
 ```
+
+S2 でサービス側に足した物（両経路が同じ監査 detail を作るため）: `unlock_audit_detail(&ConfigLock) -> Value`、
+`discard_audit_detail(&ConfigDraftDiscarded) -> Option<Value>`、`ConfigDraftDiscarded.discarded_base_version: Option<i64>`（`#[serde(skip)]`）。
 
 ### 4.11 REST の口と Tauri のコマンド
 
@@ -544,7 +592,19 @@ pub fn config_drafts_router(
 | 反映 | `POST /api/config/{target}/revert`             | `config_revert`        | `{ toVersion, ifPublishedRevision, comment? }` → 同上                                                |
 | 解除 | `POST /api/config/{target}/unlock`             | `config_unlock`        | `{ ifLeaseId }`。画面で見たロックだけ外す                                                            |
 
-書き込み 9 つは `DUAL_PATH` の対、読み取り 5 つは `ROLE_READ` の対（ロールの床の対称を見る）に足す（案 B）。
+**S2 で決めた形**（上の表の欄名は見込みで、実装はサービスの型をそのまま返す。違う所だけ）:
+
+- **ロック**は `{ holderName, lease, acquiredAtMs, expiresAtMs }`（`ConfigLock`。持ち主のキーは出さない）。状態（`GET /api/config/{target}`）は
+  `{ target, published, draft, lock, lockIsMine }`（`mine` は `lock` の中ではなく `lockIsMine`。`draft`・`lock` は無ければ `null`）。
+- **lease の欄名は `lease`**（`leaseId` ではない）: 延長の本文 `{ lease }`、返却は `?lease=`、解除の本文は `{ ifLease }`。延長の応答はロックの全体。返却と解除の応答は 204（本文なし）。
+- **下書きの保存・取り直しの応答**は `{ revision, baseVersion, validation: [...], lock }`（`ConfigDraftSaved`。検証の結果は `validation` で、空なら反映できる。422 ではない）。
+  破棄の応答は `{ revision: "0" }`。
+- **反映・元に戻すの応答**は `PublishOutcome` の全体（`{ target, kind, version, previousVersion, revision, publishedAt, revertedTo?, comment?, changes }`）。
+- **履歴の一覧**は配列そのまま（包まない）。`limit` を省くと 50 件、上限は 100（`MAX_CONFIG_HISTORY_PAGE`）。次のページは、最後の行の版を `before` に渡す。
+- **クエリの条件を省いた DELETE**（`?lease=`・`?ifRevision=`）は 422（`validation`。サービスの欄の検査が断る）。知らない対象は 404（`not_found`、ガードの後）。
+- 409 の本文は既存の `{ kind: "conflict", message, current: { reason, .. } }`（`ApiError`）。`current` の中身は §4.6 のとおりで、ロックの lease・持ち主のキーは入らない。
+
+書き込み 9 つは `DUAL_PATH` の対、読み取り 5 つは `ROLE_READ` の対（ロールの床の対称を見る）に足す（案 B。S4。rule 8 の読み方は §4.9 の「S4 の前提」）。
 Tauri のコマンドは `require_role`（または `require_permission`）→ サービス → `record_ok` → `state.events.send(..)` の順で、REST の handler と同じ。
 
 ## 5. フロント側
@@ -610,6 +670,11 @@ REST（`banto-server` の `routes/config_drafts.rs` の試験）:
   「読む」を持たないセッションは、編集・反映・解除の口でも 403（409 の `current` や差分から値を読めない）。
   下書きの保存では監査が増えない。
 - T15 `tests/public_api.rs` に公開の項目の固定を足す。
+- **S2 での置き方**: `crates/banto-server/src/routes/config_drafts/tests.rs`（SQLite の `:memory:` に本物のサービスを載せ、`oneshot` で叩く。表の写しは 3 つ目になる。S4 で本物の migration と揃える）。
+  T12 は既定（admin）・権限 4 つ・ロールの床と権限の混在の 3 通りで、拒否ごとに `denied` が 1 行であることまで見る。「読む」を持たない場合は、
+  値を返すはずの要求（古い revision の保存・本物の revision の反映・本物の lease の解除）でも本文が `{"kind":"forbidden"}` だけで、下書き・ロック・本番が変わらないことを見る。
+  T13 は 5 つの理由を全部通し、本文に lease と持ち主のキーが無いことも見る。T14 は、呼び出しごとにイベントを数え（1 回ずつ）、失敗では監査もイベントも無いこと、
+  監査の `changes` が切られていること（301 件の変更 → 100 件以下 + `changesTruncated`）も見る。
 
 Tauri（案 B）: rule 8 の対の照合と `tauri-check`。コマンドの本文は REST と同じ関数（detail・イベント）を呼ぶ形にして、違いを作れなくする。
 
@@ -706,6 +771,7 @@ S1 は大きいので 2 つに割る。S1a だけでは反映できないので�
 未確定のまま残る点（実装で確かめる）: 監査の `changes` の件数の上限、`ConfigDraftsAccess` の形（rule 8 がロールの床・権限を読める書き方）、
 `ConfigEditor` と `UiSettingsOwner` の作り方の共通化、下書きの保存の応答に検証の結果をどう載せるか、`history` のページの切り方、
 SQLite のファイルの DB で 2 つのプールから同時に反映する試験の安定（`busy_timeout`）。
+→ S2 までに決まった: `ConfigDraftsAccess` の形と `ConfigEditor` の作り方は §4.9、検証の結果の載せ方と `history` のページは §4.11（rule 8 の読み方だけ S4 に残る）。
 
 決めた点（クロスレビュー `b5cd9cfb` を受けて。オーナーの判断は要らない見込み）:
 

@@ -199,3 +199,51 @@ fn sse_context_is_an_extractor() -> axum::Router {
         .route("/api/app/stream", axum::routing::get(handler))
         .with_state(0u8)
 }
+
+/// Issue #938 (design `docs/design/config-draft-publish-design.md` §4.9-§4.11,
+/// T15): what an app needs to mount `/api/config/*` and to write the Tauri
+/// twins. The router takes the service, the four gates, the audit log, the
+/// `AuthState` and the events sender - in that order; a gate is a role floor
+/// or a permission, and the fields of the access are public (the app's
+/// wiring writes them out, where `verify:architecture` can read them). The
+/// event and audit-detail functions are the ones the router's handlers call,
+/// so a Tauri command that calls them cannot record or announce differently.
+/// Narrowing or re-shaping any of these must fail compilation.
+#[allow(clippy::too_many_arguments)]
+fn config_drafts_api_is_public(
+    service: banto_admin_services::config_drafts::ConfigDraftsService,
+    audit: banto_admin_services::audit::AuditLogService,
+    auth: AuthState,
+    events: tokio::sync::broadcast::Sender<banto_server::ServerEvent>,
+    permission: banto_admin_services::permissions::PermissionKey,
+    removed: &banto_admin_services::config_drafts::ConfigLock,
+    discarded: &banto_admin_services::config_drafts::ConfigDraftDiscarded,
+    outcome: &banto_admin_services::config_drafts::PublishOutcome,
+) -> axum::Router {
+    use banto_admin_services::config_drafts::{
+        discard_audit_detail, publish_audit_detail, unlock_audit_detail,
+    };
+    use banto_admin_services::users::Role;
+    use banto_server::routes::{
+        config_changed_event, config_draft_changed_event, config_drafts_router, ConfigDraftsAccess,
+        ConfigDraftsGate,
+    };
+
+    let default: ConfigDraftsAccess = ConfigDraftsAccess::default();
+    let _: bool = default.read == ConfigDraftsGate::Role(Role::Admin);
+    let access = ConfigDraftsAccess {
+        read: ConfigDraftsGate::Role(Role::Viewer),
+        edit: ConfigDraftsGate::Role(Role::Editor),
+        publish: ConfigDraftsGate::Permission(permission),
+        unlock: default.unlock.clone(),
+    };
+
+    let _: banto_server::ServerEvent = config_changed_event("plc.line1");
+    let _: banto_server::ServerEvent = config_draft_changed_event("plc.line1");
+    let _: serde_json::Value = publish_audit_detail(outcome);
+    let _: serde_json::Value = unlock_audit_detail(removed);
+    let _: Option<serde_json::Value> = discard_audit_detail(discarded);
+    let _: Option<i64> = discarded.discarded_base_version;
+
+    config_drafts_router(service, access, audit, auth, events)
+}
