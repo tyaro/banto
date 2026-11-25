@@ -12,7 +12,10 @@ use tokio::sync::watch;
 /// この配信を見る権限。層とハンドラーで同じ定数を使う（名前を 2 回書かない）。
 pub const PLANT_VIEW: &str = "plant.view";
 
-fn plant_view() -> PermissionKey {
+/// 権限の式。REST の層・ハンドラーも、Tauri コマンドの `require_permission` も、
+/// マニフェストの `PERMISSION_PAIRS` も、この関数の呼び出し `plant_view()` をそのまま書く
+/// （規則 8 は式の文字列を比べるだけで、関数の戻り値までは追わない）。
+pub fn plant_view() -> PermissionKey {
     PermissionKey::parse(PLANT_VIEW).expect("a well-formed key")
 }
 

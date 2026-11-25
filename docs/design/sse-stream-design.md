@@ -126,6 +126,7 @@ server 側（§4）の名前は S1 で、admin-core 側（§5）の名前は S2 
   画面は `packages/admin-core/tests/fixtures/plantStream.ts`（`tests/sseRecipe.test.ts` が、**値あり → 403 → 値が見えない → 権限が戻って再表示**・
   送り直された古い値で stale が解けない・新しいログインで前の値が出ない、を見る。レシピの TS のブロックとの同じ文字列の照合は `scripts/permission-guards.test.mjs`。§5.2.2 の「見本の画面の単体試験」）。
   レシピの Rust のブロックを直したら `plant.rs` も同じに直す。
+- **レシピのレビューで直した 3 点**（#946）: 画面はセッションの変化（`sessionGeneration()`）を `$effect` で見て、値を消して購読し直す（読み口の `onSessionChange` は応答待ち・再試行待ちの間は呼ばれない）。欠けてはいけない知らせに `broadcast_frames` を勧めない（`Lagged` は同じ接続のまま飛ぶので、つなぎ直しでは回収できない）。規則 8 の権限の式は共有の `plant_view()` を 3 か所に同じ文字列で書き、その組み合わせを `permission-guards.test.mjs` で固定した。
 - **権限の層（`PermissionGuard`）は REST だけに付く**ので、規則 8 の「両経路の対」が要る。配信は REST のみ（Tauri は SSE を持たない）ため、
   レシピは「同じ値を返す Tauri コマンドを対にして `PERMISSION_PAIRS`・`REST_READ`・`TAURI_READ` に足す」と書いた（手順 7）。
   層を付けない選択はしない（開くときの拒否の `denied` の監査が要るため。§4.3.1）。

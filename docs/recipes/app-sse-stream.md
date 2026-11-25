@@ -52,7 +52,10 @@ use tokio::sync::watch;
 /// この配信を見る権限。層とハンドラーで同じ定数を使う（名前を 2 回書かない）。
 pub const PLANT_VIEW: &str = "plant.view";
 
-fn plant_view() -> PermissionKey {
+/// 権限の式。REST の層・ハンドラーも、Tauri コマンドの `require_permission` も、
+/// マニフェストの `PERMISSION_PAIRS` も、この関数の呼び出し `plant_view()` をそのまま書く
+/// （規則 8 は式の文字列を比べるだけで、関数の戻り値までは追わない）。
+pub fn plant_view() -> PermissionKey {
     PermissionKey::parse(PLANT_VIEW).expect("a well-formed key")
 }
 
@@ -149,14 +152,15 @@ pub fn plant_router(
   - **層の `PermissionGuard`**: 開くときの拒否を `denied` の監査に残す。`verify-architecture` の規則 8 もこれを見る。
   - **ハンドラーの `context.require_permission(..)`**: **開いた後**も、確かめ直しのたび（15 秒ごと）に権限を読み直し、
     外れていたら配信を閉じる。層だけだと、権限を外しても開いている配信は続く（層が見るのは開く 1 回だけ）。
-  - 権限の名前は定数 1 つ（`PLANT_VIEW`）を両方で使う。
+  - 権限の式は `plant_view()` 1 つを、層・ハンドラー・Tauri 側・マニフェストの全部で同じ文字列として書く。
   - 権限を持たない配信（誰でも見てよい値）なら、層もハンドラーの条件も要らない。
 - **確かめられなければ閉じる。** `require_permission`（`reauthorize_with` も）を付けた配信は、確かめ直し（セッションと権限の読み取り）が
   失敗・時間切れのとき、1 回目で閉じる。保存先が答えない間に「許可」を残し続けない。つなぎ直しは `require_auth` が 500 を返し、
   保存先が戻れば開く。条件の無い配信（と `/api/events`）は、保存先の一時の不調では閉じない。
 - **「20 秒」はサーバー側の上限で、画面の表示が消えるのは次の 403 を受け取ったとき。** 権限を外してから、サーバーが配信を閉じるまで
   最大 20 秒（確かめ直しの間隔 15 秒 + 時間切れ 5 秒）。画面の値が消えるのは、その後の**つなぎ直しが 403 で断られた**ときで、
-  つなぎ直しは既定で 3 秒後。外してから表示が消えるまで、合わせて最大 23 秒ほどを見込む（外した直後に消えるわけではない）。
+  つなぎ直しは既定で 3 秒後。外してから表示が消えるまで、**通信が平常で、次の接続がすぐ 403 を返す場合の目安**として 23 秒ほど
+  （外した直後に消えるわけではない）。通信断・応答待ちの間は、つなぎ直しも 403 も届かないので、**上限ではない**。
 - **ルートの内側に別の条件（設備ごとなど）が要るときは `reauthorize_with(|session, permissions| ..)`**。同期の関数で、
   保存先を読まない（渡されるのは土台が読み直したセッションと権限）。
 
@@ -188,8 +192,12 @@ fn frames(&self) -> impl futures_util::Stream<Item = SseFrame> + Send + 'static 
 読み口は `parse(data, event)` の第 2 引数で名前を受ける（見本の `event === 'values'`）。種類が増えたら `T` を和型にして、
 `parse` が名前で作り分ける。この形は `crates/banto-server/tests/sse_stream.rs`（複数の名前を 1 本に混ぜて届ける試験）と同じ。
 
-- **現在値は `watch_frames`、1 件も落とせない知らせは `broadcast_frames`。** `watch` は最新の値だけを持つので、遅い画面は途中の値を
-  飛ばす（現在値の配信では望ましい）。`broadcast` は遅れて取りこぼした分（`Lagged`）を飛ばして続けるので、**つなぎ直した後は読み直す**。
+- **現在値は `watch_frames`。** `watch` は最新の値だけを持つので、遅い画面は途中の値を飛ばす（現在値の配信では望ましい）。
+- **`broadcast_frames` は速報（欠けてもよい知らせ）だけに使う。** バッファを超えて遅れると、同じ接続のまま `Lagged` を飛ばして
+  続く。接続は切れないので、**つなぎ直したときの読み直しでは抜けた分を回収できない**。
+- **警報の履歴のような、欠けてはいけないものは `broadcast_frames` だけに頼らない。** 次のどちらかにする。
+  - 永続の記録（DB など）を正とし、配信は「新しいものがある」合図にして、画面はカーソル（最後に見た id・時刻）から記録を取り直す。
+  - 取りこぼしを検知したら、再同期の知らせ（専用の `event:`）を送る。画面はそれを受けて、記録から読み直す。
 
 ## 4〜5. 画面（`apps/<アプリ>/src/lib/banto/plantStream.ts` と画面）
 
@@ -250,16 +258,21 @@ export function openPlantStream(
 
 ```svelte
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { getAuthProvider } from '@banto/admin-core';
+	import { getAuthProvider, sessionGeneration } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
 	import { openPlantStream, type PlantView } from '#lib/banto/plantStream.js';
 
-	let view = $state<PlantView>({ reading: null, stale: false, forbidden: false });
+	const empty: PlantView = { reading: null, stale: false, forbidden: false };
+	let view = $state<PlantView>(empty);
 
-	onMount(() => {
+	// セッションが変わるたび（ログアウト・別の人のログイン）に、この効果が走り直る。
+	// 読み口の onSessionChange だけに任せない（切断後の再試行を待つ間・応答待ちの間は呼ばれない）。
+	$effect(() => {
+		sessionGeneration(); // 読むだけ。値は使わず、変化を追う印にする。
+		// 1 前の購読は下の戻り値（cleanup）で止まっている。先に表示と保持している値を消す。
+		view = empty;
 		const auth = getAuthProvider() as { getToken?: () => string | null };
-		// 戻り値は止める関数。画面を離れるときに呼ばれる。
+		// 新しいセッションで購読し直す。戻り値は止める関数で、次の実行の前と画面を離れるときに呼ばれる。
 		return openPlantStream(
 			() => auth.getToken?.() ?? null,
 			(next) => (view = next)
@@ -307,6 +320,15 @@ export function openPlantStream(
 - **権限つきの配信を `onForbidden` なしで読まない。** 値が残る。
 - stale の時計は、403 でもセッションの入れ替わりでも変えない（値の古さは作る側のもの）。
 
+**`onSessionChange` だけに任せない。画面の側でもセッションの変化を見る。** 読み口がトークンの変化に気づくのは、配信が
+つながっている間の周期（`tokenWaitDelayMs`）だけ。切断後の再試行を待つ間や、応答待ちの接続中は、呼ばれるまで前のユーザーの値が
+画面に残る。同じ画面を新しいユーザーが引き継ぐアプリでは、見本のように `sessionGeneration()`（admin-core。セッションが変わると
+`generation` が進む。リアクティブ）を `$effect` で読み、変わったら**先に表示と保持している値を消し**、前の購読を止めて
+（`$effect` の戻り値）、新しく購読し直す。
+
+- 切断の帯や stale の表示は、**権限の確認の代わりにならない**。帯は「サーバーに届かない」、stale は「作る側が止まった」の表示で、
+  どちらが出ていても、前の値を読む権限があるかは何も言っていない。値を出す・消すのは、セッションと `onForbidden` で決める。
+
 ### 6. 401 の配線
 
 `/api/events` を開かない画面（アプリの配信だけを読む画面）は、`...sessionStreamHooks()` を**必ず**渡す。渡さないと、
@@ -321,8 +343,12 @@ export function openPlantStream(
 
 - `rest/mod.rs` の Route table（doc）に `GET /api/plant/stream` の行。
 - `verify-architecture.mjs` の `REST_READ` に `'GET /api/plant/stream'`、`TAURI_READ` に `plant_current`、
-  `PERMISSION_PAIRS` に `{ tauri: 'plant_current', rest: 'GET /api/plant/stream', permission: 'PLANT_VIEW' }`
-  （権限の式は両経路で同じに書く。見本の定数なら `PLANT_VIEW` を共有する）。
+  `PERMISSION_PAIRS` に `{ tauri: 'plant_current', rest: 'GET /api/plant/stream', permission: 'plant_view()' }`。
+  検査は式の**文字列**（空白・先頭の `&`・末尾の `.clone()` を除いた形）を比べるだけで、関数の戻り値までは追わない。
+  そのため REST の層は `permission: plant_view()`、Tauri は `require_permission(&state, &plant_view(), "plant")`、
+  マニフェストは `'plant_view()'` と、**同じ共有の式（見本の `pub fn plant_view()`）**を 3 か所に書く。
+  `PLANT_VIEW`（定数）と `plant_view()` を混ぜると、同じ権限でも規則 8 が食い違いとして落とす。
+  この組み合わせが検査を通ることは `scripts/permission-guards.test.mjs` が固定している。
 
 また規則 8 は、**権限の層の内側で `sse_response` を呼ぶハンドラーが、`require_permission`（または `reauthorize_with`）を
 呼んでいない**ものを落とす（開いた後に権限が外れても配信が続く付け忘れ。同じファイルにあるハンドラーだけを見る）。

@@ -311,3 +311,35 @@ test('レシピの TypeScript の見本は packages/admin-core/tests/fixtures/pl
 		.replace(/\r\n/g, '\n');
 	assert.equal(shown.trimEnd(), tested.trimEnd());
 });
+
+test('レシピの組み合わせ（REST の層・Tauri・マニフェストが同じ plant_view() の式）は規則 8 を通る', () => {
+	const rest = recipeBlock('rust', '// apps/<アプリ>/core/src/rest/plant.rs');
+	const tauri = `
+#[tauri::command]
+async fn plant_current(state: State<'_, AppState>) -> Result<Reading, BantoError> {
+    require_permission(&state, &plant_view(), "plant").await?;
+    Ok(read_current().await)
+}
+async fn require_permission(state: &AppState, permission: &PermissionKey, resource: &str) {}
+`;
+	const pairs = [
+		{ tauri: 'plant_current', rest: 'GET /api/plant/stream', permission: 'plant_view()' }
+	];
+	assert.deepEqual(
+		checkPermissionGuards({
+			tauriGuards: collectTauriPermissionGuards(tauri),
+			restGuards: collectRestPermissionGuards(rest),
+			pairs
+		}),
+		[]
+	);
+	// 定数（PLANT_VIEW）と関数の呼び出しを混ぜると、同じ権限でも食い違いとして落ちる。
+	assert.notDeepEqual(
+		checkPermissionGuards({
+			tauriGuards: collectTauriPermissionGuards(tauri.replace('plant_view()', 'PLANT_VIEW')),
+			restGuards: collectRestPermissionGuards(rest),
+			pairs
+		}),
+		[]
+	);
+});
