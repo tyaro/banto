@@ -277,10 +277,9 @@ describe('the selection of the page (#882 C1)', () => {
 	});
 
 	it('is the page state only: nothing of it is in the saved arrangement', () => {
-		const layout = readFileSync(
-			fileURLToPath(new URL('./dashboardLayout.ts', import.meta.url)),
-			'utf8'
-		);
+		// No file: a preset that removed the dock (scripts/scaffold.mjs) has no saved arrangement.
+		const file = fileURLToPath(new URL('./dashboardLayout.ts', import.meta.url));
+		const layout = existsSync(file) ? readFileSync(file, 'utf8') : '';
 		expect(layout).not.toMatch(/selection|DashboardFilter|dashboardPeriod/);
 	});
 });
