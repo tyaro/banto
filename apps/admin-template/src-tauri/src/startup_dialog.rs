@@ -7,16 +7,19 @@
 //! No log file is written (decision on #975).
 
 /// Title of the message box.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) const DIALOG_TITLE: &str = "banto - 起動できません";
 
 /// Body of the message box: the reason (which already carries what to do
 /// next, e.g. the `create-admin` hint) as is. Pure, so it can be tested.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn dialog_message(reason: &str) -> String {
     format!("banto を起動できませんでした。\n\n{}", reason.trim())
 }
 
 /// UTF-16, NUL-terminated, for the wide Win32 APIs. An interior NUL would
 /// cut the text short, so it is replaced by a space.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn to_wide_nul(text: &str) -> Vec<u16> {
     text.chars()
         .map(|c| if c == '\0' { ' ' } else { c })
