@@ -5,7 +5,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+	DEFAULT_TEXT_LAYOUTS,
+	applyKanaMark,
 	classifyText,
+	kanaMarked,
 	pressTextKey,
 	reachableChars,
 	resolveTextLayouts,
@@ -74,8 +77,8 @@ describe('resolveTextLayouts', () => {
 	it('defaults to all, keeps the given order, drops unknown names and duplicates', () => {
 		expect(resolveTextLayouts(undefined)).toEqual(['alnum', 'symbol']);
 		expect(resolveTextLayouts(['symbol', 'alnum', 'symbol'])).toEqual(['symbol', 'alnum']);
-		expect(resolveTextLayouts(['kana', 'alnum'])).toEqual(['alnum']);
-		expect(resolveTextLayouts(['kana'])).toEqual(['alnum', 'symbol']);
+		expect(resolveTextLayouts(['hira', 'alnum'])).toEqual(['alnum']);
+		expect(resolveTextLayouts(['hira'])).toEqual(['alnum', 'symbol']);
 		expect(resolveTextLayouts([])).toEqual(['alnum', 'symbol']);
 	});
 
@@ -190,5 +193,122 @@ describe('classifyText', () => {
 		['abc', rules(3, false, 3), true, 'max-length']
 	] as const)('%j with %j -> canConfirm %s, notice %s', (text, r, canConfirm, notice) => {
 		expect(classifyText(text, r)).toEqual({ canConfirm, notice });
+	});
+});
+
+describe('kana (§9.2)', () => {
+	const rows = textKeyRows('kana');
+	const keys = rows.flat().filter((k) => k !== '');
+
+	it('the table holds all 46 katakana of the syllabary and the long-vowel mark, once each', () => {
+		const gojuon = [
+			...'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン'
+		];
+		expect(gojuon).toHaveLength(46);
+		expect([...keys].sort()).toEqual([...gojuon, 'ー'].sort());
+		expect(rows.every((r) => r.length === 10)).toBe(true);
+	});
+
+	it('every key is one precomposed UTF-16 unit (no combining marks, no half-width)', () => {
+		for (const k of keys) {
+			expect(k.length, k).toBe(1);
+			expect(k.normalize('NFC'), k).toBe(k);
+			expect(k.charCodeAt(0), k).toBeGreaterThanOrEqual(0x30a0);
+			expect(k.charCodeAt(0), k).toBeLessThanOrEqual(0x30ff);
+		}
+	});
+
+	it('voiced marks: every voiceable character, composed (カ → ガ is U+30AC), and a second press undoes it', () => {
+		const pairs: Record<string, string> = {};
+		for (const [a, b] of [
+			'カガ',
+			'キギ',
+			'クグ',
+			'ケゲ',
+			'コゴ',
+			'サザ',
+			'シジ',
+			'スズ',
+			'セゼ',
+			'ソゾ',
+			'タダ',
+			'チヂ',
+			'ツヅ',
+			'テデ',
+			'トド',
+			'ハバ',
+			'ヒビ',
+			'フブ',
+			'ヘベ',
+			'ホボ',
+			'ウヴ'
+		])
+			pairs[a] = b;
+		expect(Object.keys(pairs)).toHaveLength(21);
+		for (const [plain, voiced] of Object.entries(pairs)) {
+			expect(kanaMarked(plain, 'dakuten'), plain).toBe(voiced);
+			expect(kanaMarked(voiced, 'dakuten'), voiced).toBe(plain);
+		}
+		expect(applyKanaMark('カ', 'dakuten')).toBe('ガ');
+		expect(pressTextKey('アカ', { mark: 'dakuten' }, {})).toBe('アガ');
+		expect(pressTextKey('アガ', { mark: 'dakuten' }, {})).toBe('アカ');
+	});
+
+	it('semi-voiced: ハ行 only; バ ↔ パ swap with the other mark', () => {
+		for (const [plain, semi] of ['ハパ', 'ヒピ', 'フプ', 'ヘペ', 'ホポ']) {
+			expect(kanaMarked(plain, 'handakuten')).toBe(semi);
+			expect(kanaMarked(semi, 'handakuten')).toBe(plain);
+		}
+		expect(kanaMarked('バ', 'handakuten')).toBe('パ');
+		expect(kanaMarked('パ', 'dakuten')).toBe('バ');
+		expect(kanaMarked('カ', 'handakuten')).toBeUndefined();
+	});
+
+	it('small forms: ア行・ツ・ヤ行, and back', () => {
+		for (const [plain, small] of [
+			'アァ',
+			'イィ',
+			'ウゥ',
+			'エェ',
+			'オォ',
+			'ツッ',
+			'ヤャ',
+			'ユュ',
+			'ヨョ'
+		]) {
+			expect(kanaMarked(plain, 'small')).toBe(small);
+			expect(kanaMarked(small, 'small')).toBe(plain);
+		}
+	});
+
+	it('a mark does not apply to a character that cannot take it, to an empty draft, or to a non-kana tail', () => {
+		for (const [last, mark] of [
+			['ア', 'dakuten'],
+			['ン', 'dakuten'],
+			['ー', 'small'],
+			['ナ', 'handakuten'],
+			['ガ', 'small'],
+			['a', 'dakuten'],
+			[' ', 'small']
+		] as const) {
+			expect(kanaMarked(last, mark), `${last} ${mark}`).toBeUndefined();
+		}
+		expect(applyKanaMark('', 'dakuten')).toBeUndefined();
+		// a refused mark leaves the draft as it is
+		expect(pressTextKey('アン', { mark: 'dakuten' }, {})).toBe('アン');
+	});
+
+	it('only the last character changes; the length stays, so a mark works at maxLength', () => {
+		expect(pressTextKey('ハシ', { mark: 'dakuten' }, { maxLength: 2 })).toBe('ハジ');
+		expect(pressTextKey('ハシ', { char: 'ア' }, { maxLength: 2 })).toBe('ハシ');
+	});
+
+	it('kana is opt-in: not in the default layouts and not in a password keyboard', () => {
+		expect(DEFAULT_TEXT_LAYOUTS).toEqual(['alnum', 'symbol']);
+		expect(resolveTextLayouts(undefined)).toEqual(['alnum', 'symbol']);
+		expect(resolveTextLayouts(['kana', 'alnum', 'kana'])).toEqual(['kana', 'alnum']);
+		expect(resolveTextLayouts(['kana'], true)).toEqual(['alnum', 'symbol']);
+		expect(reachableChars(['kana']).has('ガ')).toBe(false);
+		expect(reachableChars(['kana']).has('ン')).toBe(true);
 	});
 });

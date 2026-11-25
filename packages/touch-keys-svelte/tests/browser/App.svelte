@@ -76,6 +76,13 @@
 		<label for="code">コード</label>
 		<input id="code" type="text" maxlength="4" />
 
+		<label for="kana">カナ</label>
+		<input
+			id="kana"
+			type="text"
+			{@attach touchKeys({ kind: 'text', layouts: ['kana', 'alnum'], maxLength: 12 })}
+		/>
+
 		<!-- the plain text of this field must never reach the log (onconfirm gets null, §5.5) -->
 		<label for="pw">パスワード</label>
 		<input id="pw" type="password" autocomplete="off" />

@@ -209,4 +209,50 @@ describe('TextKeyboard masked (§5.5)', () => {
 		expect(draft()).toBe('●●●');
 		expect(board().outerHTML).not.toContain('abc');
 	});
+
+	it('kana: types katakana, marks the last character, disables a mark that does not apply', async () => {
+		const onconfirm = vi.fn();
+		render(TextKeyboard, { draft: '', layouts: ['kana'], onconfirm });
+		// one layout: no layout keys, no case toggle
+		expect(screen.queryByRole('button', { name: '英数' })).toBeNull();
+		expect(screen.queryByRole('button', { name: '大文字' })).toBeNull();
+		expect((key('濁点') as HTMLButtonElement).disabled).toBe(true);
+		await type(['ハ']);
+		expect((key('濁点') as HTMLButtonElement).disabled).toBe(false);
+		expect((key('半濁点') as HTMLButtonElement).disabled).toBe(false);
+		expect((key('小書き') as HTMLButtonElement).disabled).toBe(true);
+		await type(['半濁点', 'ツ', '小書き', 'カ', '濁点', 'ー']);
+		expect(draft()).toBe('パッガー');
+		expect((key('濁点') as HTMLButtonElement).disabled).toBe(true);
+		await type(['1文字消す', '濁点']);
+		expect(draft()).toBe('パッカ');
+		await type(['濁点']);
+		expect(draft()).toBe('パッガ');
+		await type(['確定']);
+		expect(onconfirm).toHaveBeenCalledWith('パッガ');
+	});
+
+	it('kana: a mark works at maxLength, characters do not', async () => {
+		render(TextKeyboard, { draft: 'ア', layouts: ['kana'], maxLength: 2 });
+		await type(['カ', 'サ']);
+		expect(draft()).toBe('アカ');
+		await type(['濁点']);
+		expect(draft()).toBe('アガ');
+	});
+
+	it('kana with other layouts: a switch key, the mark keys only on kana, the gaps are not keys', async () => {
+		render(TextKeyboard, { draft: '', layouts: ['alnum', 'kana'] });
+		expect(screen.queryByRole('button', { name: '濁点' })).toBeNull();
+		await type(['カナ', 'ア']);
+		expect(key('カナ').getAttribute('aria-pressed')).toBe('true');
+		expect(draft()).toBe('ア');
+		// 46 katakana + the long-vowel mark; gaps carry no button
+		const keyNames = screen
+			.getAllByRole('button')
+			.map((b) => b.textContent?.trim() ?? '')
+			.filter((n) => n.length === 1 && n.charCodeAt(0) >= 0x30a0 && n.charCodeAt(0) <= 0x30ff);
+		expect(keyNames).toHaveLength(47);
+		await type(['英数', 'a']);
+		expect(draft()).toBe('アa');
+	});
 });

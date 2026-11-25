@@ -257,6 +257,48 @@ test.describe('the field decides (§6.5, §5.5)', () => {
 	});
 });
 
+test.describe('kana (§9.2)', () => {
+	test('katakana by tap: marks apply to the last character, composed, and reach the field and bind', async ({
+		page
+	}) => {
+		await page.goto('/');
+		await openOn(page, 'kana');
+		await expect(key(page, 'カナ')).toHaveAttribute('aria-pressed', 'true');
+		await expect(key(page, '濁点')).toBeDisabled();
+		// ガ ッ パ ー ヴ ; the mark keys act on the last character only
+		await press(page, ['カ', '濁点', 'ツ', '小書き', 'ハ', '半濁点', 'ー', 'ウ', '濁点']);
+		await expect(surface(page).getByTestId('draft')).toHaveText('ガッパーヴ');
+		await expect(key(page, '小書き')).toBeDisabled();
+		// a second press undoes it
+		await press(page, ['濁点']);
+		await expect(surface(page).getByTestId('draft')).toHaveText('ガッパーウ');
+		await press(page, ['濁点', '英数', 'x']);
+		await expect(surface(page).getByTestId('count')).toHaveText('6 / 12');
+		expect(await activeId(page)).toBe('kana');
+		await key(page, '確定').tap();
+		await expect(surface(page)).toHaveCount(0);
+		const value = await page.locator('#kana').inputValue();
+		expect(value).toBe('ガッパーヴx');
+		// precomposed: ガ is U+30AC, one UTF-16 unit each
+		expect(value.length).toBe(6);
+		expect(value.charCodeAt(0)).toBe(0x30ac);
+	});
+
+	test('ten columns shrink to fit a 360px screen like the other layouts', async ({ page }) => {
+		await page.setViewportSize({ width: 360, height: 700 });
+		await page.goto('/');
+		await openOn(page, 'kana');
+		const panel = await surface(page).locator('.panel').boundingBox();
+		expect(panel!.x).toBeGreaterThanOrEqual(0);
+		expect(panel!.x + panel!.width).toBeLessThanOrEqual(360);
+		for (const name of ['ア', 'ン', 'ー', '濁点']) {
+			const box = await key(page, name).boundingBox();
+			expect(box!.width, name).toBeGreaterThanOrEqual(24);
+			expect(box!.height, name).toBeGreaterThanOrEqual(40);
+		}
+	});
+});
+
 test('axe: no WCAG A / AA violation with the text keyboard open (plain, symbols, masked)', async ({
 	page
 }) => {
@@ -267,6 +309,12 @@ test('axe: no WCAG A / AA violation with the text keyboard open (plain, symbols,
 	await key(page, '記号').tap();
 	results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 	expect(results.violations, 'symbol').toEqual([]);
+	await key(page, '取り消し').tap();
+
+	await openOn(page, 'kana');
+	await press(page, ['カ']);
+	results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+	expect(results.violations, 'kana').toEqual([]);
 	await key(page, '取り消し').tap();
 
 	await page.goto('/?text=popup');

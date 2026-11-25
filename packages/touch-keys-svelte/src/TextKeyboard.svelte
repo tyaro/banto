@@ -22,11 +22,13 @@
 	 */
 	import { untrack, type Snippet } from 'svelte';
 	import {
+		applyKanaMark,
 		classifyText,
 		pressTextKey,
 		resolveTextLayouts,
 		resolveTextRules,
 		textKeyRows,
+		type KanaMark,
 		type TextKey,
 		type TextLayout
 	} from './core/text';
@@ -122,7 +124,18 @@
 							? t.maxLength(rules.maxLength)
 							: ''
 	);
-	const layoutName = (l: TextLayout): string => (l === 'symbol' ? t.symbol() : t.alnum());
+	const layoutName = (l: TextLayout): string =>
+		l === 'symbol' ? t.symbol() : l === 'kana' ? t.kana() : t.alnum();
+	/** The mark keys of the kana layout: glyph shown, spoken name from the messages. Disabled when the last character cannot take the mark. */
+	const marks = $derived<{ mark: KanaMark; glyph: string; name: string }[]>([
+		{ mark: 'dakuten', glyph: '゛', name: t.dakuten() },
+		{ mark: 'handakuten', glyph: '゜', name: t.handakuten() },
+		{ mark: 'small', glyph: '小', name: t.small() }
+	]);
+	/** Rows of the tallest offered layout, so the keys below do not jump on a layout switch. */
+	const rowCount = $derived(
+		Math.max(...offered.map((l) => textKeyRows(l, { fullSymbols: isMasked }).length))
+	);
 
 	function press(key: TextKey) {
 		const next = pressTextKey(text, key, rules);
@@ -157,19 +170,23 @@
 		<div class="notice" role="status" aria-live="polite">{notice}</div>
 	</div>
 
-	<div class="rows">
+	<div class="rows" style:--_rows={rowCount}>
 		{#each rows as row, index (index)}
 			<div class="row">
-				{#each row as k (k)}
-					<button
-						type="button"
-						class="key"
-						tabindex="-1"
-						onmousedown={keepFocus}
-						onclick={() => press({ char: k })}
-					>
-						{k}
-					</button>
+				{#each row as k, col (col)}
+					{#if k === ''}
+						<span class="gap" aria-hidden="true"></span>
+					{:else}
+						<button
+							type="button"
+							class="key"
+							tabindex="-1"
+							onmousedown={keepFocus}
+							onclick={() => press({ char: k })}
+						>
+							{k}
+						</button>
+					{/if}
 				{/each}
 			</div>
 		{/each}
@@ -186,6 +203,22 @@
 			>
 				{upper ? t.lower() : t.upper()}
 			</button>
+		{/if}
+		{#if layout === 'kana'}
+			{#each marks as m (m.mark)}
+				<button
+					type="button"
+					class="key fn mark"
+					tabindex="-1"
+					aria-label={m.name}
+					title={m.name}
+					disabled={applyKanaMark(text, m.mark) === undefined}
+					onmousedown={keepFocus}
+					onclick={() => press({ mark: m.mark })}
+				>
+					{m.glyph}
+				</button>
+			{/each}
 		{/if}
 		{#if offered.length > 1}
 			{#each offered as l (l)}
@@ -311,13 +344,17 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--_gap);
-		/* Four rows whatever the layout, so the keys below do not jump on a layout switch. */
-		min-height: calc(4 * var(--_size) + 3 * var(--_gap));
+		/* As many rows as the tallest offered layout, so the keys below do not jump on a layout switch. */
+		min-height: calc(var(--_rows, 4) * var(--_size) + (var(--_rows, 4) - 1) * var(--_gap));
 	}
 	.row {
 		display: flex;
 		justify-content: center;
 		gap: var(--_gap);
+		min-width: 0;
+	}
+	.gap {
+		flex: 0 1 var(--_size);
 		min-width: 0;
 	}
 	.key {

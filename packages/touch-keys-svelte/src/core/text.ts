@@ -8,10 +8,17 @@
  * unit, so `maxLength` counts exactly like the HTML `maxlength` attribute.
  */
 
-/** A key layout of the text keyboard. (`kana` joins in a later stage, design §15 T4.) */
-export type TextLayout = 'alnum' | 'symbol';
+/** A key layout of the text keyboard. */
+export type TextLayout = 'alnum' | 'symbol' | 'kana';
 
-export const TEXT_LAYOUTS: readonly TextLayout[] = ['alnum', 'symbol'];
+/** Every layout the keyboard knows (the names `resolveTextLayouts` accepts). */
+export const TEXT_LAYOUTS: readonly TextLayout[] = ['alnum', 'symbol', 'kana'];
+
+/**
+ * The layouts offered when nothing says otherwise (and always on a password field,
+ * §5.5). `kana` is opt-in: a field that takes katakana names it in `layouts`.
+ */
+export const DEFAULT_TEXT_LAYOUTS: readonly TextLayout[] = ['alnum', 'symbol'];
 
 export interface TextRules {
 	/** Upper bound in UTF-16 code units (as `maxlength`). `undefined` = no bound. */
@@ -77,6 +84,19 @@ const ALNUM_ROWS: readonly string[] = ['1234567890', 'qwertyuiop', 'asdfghjkl', 
 /** The short symbol set of ordinary text fields (§9.1). */
 const SYMBOL_ROWS: readonly string[] = ['-_.,/:@#()', '+*=%&!?'];
 /** Every printable ASCII symbol (32), for password fields (§5.5). */
+/**
+ * Katakana, one row per vowel and one column per consonant line (ア カ サ タ ナ ハ マ ヤ ラ ワ),
+ * so ten columns like the other layouts. `''` is a gap where the syllabary has no letter.
+ * Only the plain katakana: the voiced, semi-voiced and small forms come from the mark keys.
+ */
+const KANA_ROWS: readonly (readonly string[])[] = [
+	['ア', 'カ', 'サ', 'タ', 'ナ', 'ハ', 'マ', 'ヤ', 'ラ', 'ワ'],
+	['イ', 'キ', 'シ', 'チ', 'ニ', 'ヒ', 'ミ', '', 'リ', ''],
+	['ウ', 'ク', 'ス', 'ツ', 'ヌ', 'フ', 'ム', 'ユ', 'ル', 'ン'],
+	['エ', 'ケ', 'セ', 'テ', 'ネ', 'ヘ', 'メ', '', 'レ', 'ー'],
+	['オ', 'コ', 'ソ', 'ト', 'ノ', 'ホ', 'モ', 'ヨ', 'ロ', 'ヲ']
+];
+
 const SYMBOL_ROWS_FULL: readonly string[] = ['!"#$%&\'()*', '+,-./:;<=>', '?@[\\]^_`{|', '}~'];
 
 export interface TextKeyRowsOptions {
@@ -86,8 +106,12 @@ export interface TextKeyRowsOptions {
 	fullSymbols?: boolean;
 }
 
-/** The character keys of one layout, row by row. The space key is separate (always present). */
+/**
+ * The character keys of one layout, row by row. The space key is separate (always present).
+ * In `kana` an empty string is a gap (no key there).
+ */
 export function textKeyRows(layout: TextLayout, options: TextKeyRowsOptions = {}): string[][] {
+	if (layout === 'kana') return KANA_ROWS.map((row) => [...row]);
 	const rows =
 		layout === 'symbol' ? (options.fullSymbols ? SYMBOL_ROWS_FULL : SYMBOL_ROWS) : ALNUM_ROWS;
 	return rows.map((row) => {
@@ -105,7 +129,7 @@ export function reachableChars(
 	for (const layout of layouts) {
 		for (const upper of [false, true]) {
 			for (const row of textKeyRows(layout, { upper, fullSymbols: options.fullSymbols })) {
-				for (const k of row) chars.add(k);
+				for (const k of row) if (k !== '') chars.add(k);
 			}
 		}
 	}
@@ -114,24 +138,77 @@ export function reachableChars(
 
 /**
  * The layouts a keyboard offers, in order: unknown names and duplicates dropped,
- * never empty (falls back to all). A password field always gets `alnum` + `symbol`
+ * never empty (falls back to `DEFAULT_TEXT_LAYOUTS`: `kana` is opt-in). A password field always gets `alnum` + `symbol`
  * so that every printable ASCII character stays reachable (§5.5).
  */
 export function resolveTextLayouts(
 	layouts: readonly string[] | undefined,
 	masked = false
 ): TextLayout[] {
-	if (masked) return [...TEXT_LAYOUTS];
-	const known = (layouts ?? TEXT_LAYOUTS).filter((l): l is TextLayout =>
+	if (masked) return [...DEFAULT_TEXT_LAYOUTS];
+	const known = (layouts ?? DEFAULT_TEXT_LAYOUTS).filter((l): l is TextLayout =>
 		(TEXT_LAYOUTS as readonly string[]).includes(l)
 	);
 	const unique = [...new Set(known)];
-	return unique.length > 0 ? unique : [...TEXT_LAYOUTS];
+	return unique.length > 0 ? unique : [...DEFAULT_TEXT_LAYOUTS];
 }
 
 // ---------------------------------------------------------------- key entry
 
-export type TextKey = { char: string } | 'backspace' | 'clear';
+/** A mark key of the kana layout: applied to the LAST character, not appended (§9.2). */
+export type KanaMark = 'dakuten' | 'handakuten' | 'small';
+
+export type TextKey = { char: string } | { mark: KanaMark } | 'backspace' | 'clear';
+
+// Pairs [plain, marked]; each mark toggles. Composed single characters (U+30AC, never カ + U+3099).
+const MARK_PAIRS: Record<KanaMark, readonly (readonly [string, string])[]> = {
+	dakuten: [
+		...[...'カキクケコサシスセソタチツテトハヒフヘホ'].map(
+			(c) => [c, String.fromCharCode(c.charCodeAt(0) + 1)] as const
+		),
+		['ウ', 'ヴ']
+	],
+	handakuten: [...'ハヒフヘホ'].map((c) => [c, String.fromCharCode(c.charCodeAt(0) + 2)] as const),
+	small: [
+		['ア', 'ァ'],
+		['イ', 'ィ'],
+		['ウ', 'ゥ'],
+		['エ', 'ェ'],
+		['オ', 'ォ'],
+		['ツ', 'ッ'],
+		['ヤ', 'ャ'],
+		['ユ', 'ュ'],
+		['ヨ', 'ョ']
+	]
+};
+
+/** The voiced form of ハ行 and its semi-voiced form (バ ↔ パ in one step: the other mark swaps them). */
+const HA_VOICED = [...'バビブベボ'];
+const HA_SEMI = [...'パピプペポ'];
+
+/**
+ * The character a mark key turns `last` into, or `undefined` when the mark does not apply
+ * (the key is disabled). Pressing the same mark again undoes it (`カ` → `ガ` → `カ`).
+ * `ハ` → `バ` (濁点) / `パ` (半濁点); `バ` ↔ `パ` swap with the other mark.
+ */
+export function kanaMarked(last: string, mark: KanaMark): string | undefined {
+	for (const [plain, marked] of MARK_PAIRS[mark]) {
+		if (last === plain) return marked;
+		if (last === marked) return plain;
+	}
+	const voiced = HA_VOICED.indexOf(last);
+	if (voiced >= 0 && mark === 'handakuten') return HA_SEMI[voiced];
+	const semi = HA_SEMI.indexOf(last);
+	if (semi >= 0 && mark === 'dakuten') return HA_VOICED[semi];
+	return undefined;
+}
+
+/** The text with `mark` applied to its last character, or `undefined` when it does not apply. */
+export function applyKanaMark(text: string, mark: KanaMark): string | undefined {
+	if (text === '') return undefined;
+	const marked = kanaMarked(text.slice(-1), mark);
+	return marked === undefined ? undefined : text.slice(0, -1) + marked;
+}
 
 /** One key press -> the next draft. A key that cannot enter returns the draft unchanged. */
 export function pressTextKey(text: string, key: TextKey, rules: { maxLength?: number }): string {
@@ -144,6 +221,7 @@ export function pressTextKey(text: string, key: TextKey, rules: { maxLength?: nu
 		const pair = last >= 0xdc00 && last <= 0xdfff && before >= 0xd800 && before <= 0xdbff;
 		return text.slice(0, pair ? -2 : -1);
 	}
+	if ('mark' in key) return applyKanaMark(text, key.mark) ?? text;
 	if (rules.maxLength !== undefined && text.length + key.char.length > rules.maxLength) return text;
 	return text + key.char;
 }
