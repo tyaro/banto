@@ -291,6 +291,27 @@ DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の min
 4. 派生アプリが使っていたなら、ルートの `<TouchKeysHost>`・入力欄の指定・`package.json` の依存と
    `optimizeDeps.exclude` の行を外す（設計書 §16。入力欄は素の `<input>` のまま動く）。
 
+### 設定の下書き → 反映 → 元に戻す（`configDrafts`、Issue #938）
+
+`pnpm scaffold --preset minimal|display` は自動で外す（`standard`・`full` は残す。
+スクリプトは `removeConfigDrafts()`）。使い方は [config-draft-publish.md](config-draft-publish.md)、
+設計は [design/config-draft-publish-design.md](../design/config-draft-publish-design.md) §10。
+消す所は全部 `// [scaffold:config-drafts] begin` … `end` の印で囲んである（手で外すときも、
+印の区画を消せばよい）。コアからの参照は無いので、外しても残りは壊れない。
+
+1. `core/migrations-sqlite/0016_config_drafts.sql`・`core/migrations-postgres/0016_config_drafts.sql`
+   を消す（まだ DB を作っていないアプリ。作った後なら表を残したまま 2 以降だけ行う）。
+2. `core/src/rest/mod.rs` の印の区画 4 つ（対応表の行・説明・import・`config_drafts_access` と
+   `config_router`）と、`core/src/bin/banto-serve.rs` の区画 2 つ（起動時の用意・合流）を消す。
+3. `src-tauri/src/lib.rs` の印の区画 10 個（import・状態の欄・`config_*` コマンド・起動時の用意・
+   埋め込みサーバーへの受け渡し・`invoke_handler` の行）を消す。
+4. `scripts/verify-architecture.mjs` の印の区画 4 つ（`DUAL_PATH`・`ROLE_READ`・`TAURI_READ`・
+   `REST_READ` の config の行）を消す。
+5. `core/src/lib.rs` の区画（`config_targets`・`open_config_drafts`）を消す。
+6. 試験: `core/src/rest/tests/config_drafts.rs`・`src-tauri/src/tests/config_drafts.rs` と、
+   `core/src/rest/tests.rs`・`src-tauri/src/tests.rs`・`core/tests/pg_smoke.rs` の印の区画を消す。
+7. フロントで読み口（`createHttpConfigDrafts` など）を使っていれば、その呼び出しを消す。
+
 ### システムメトリクス（`sysinfo`）を外す（ADR-0013、Issue #185）
 
 `apps/admin-template/core/Cargo.toml` と `apps/admin-template/src-tauri/Cargo.toml`

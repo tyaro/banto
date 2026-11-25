@@ -1,7 +1,7 @@
 # 設定の下書き・反映・元に戻す 設計書 — Issue #938
 
 作成日: 2026-11-25
-状態: **S1a〜S4 実装済み、S5 未着手**（§7。S4 = テンプレートへの配線: migration `0016_config_drafts.sql`（両方言）・REST の載せ（`rest::config_router`）・Tauri のコマンド 14 個・rule 8 の読み方・scaffold で外す処理（§4.9・§4.11 の「S4 で決めた形」）。S3 = admin-core の読み口 `providers/configDrafts.ts`。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験（PR #953）。S2 = `banto-server` の `config_drafts_router`（4 役目のガード・監査・イベント）。**S2 の時点では REST だけ。テンプレートへの配線（migration・Tauri・rule 8）は S4 で入った**）。**残りは S5（レシピ・template-scope §3 の表・remove-optional-assets の節）**。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
+状態: **S1a〜S5 実装済み**（§7。S4 = テンプレートへの配線: migration `0016_config_drafts.sql`（両方言）・REST の載せ（`rest::config_router`）・Tauri のコマンド 14 個・rule 8 の読み方・scaffold で外す処理（§4.9・§4.11 の「S4 で決めた形」）。S3 = admin-core の読み口 `providers/configDrafts.ts`。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験（PR #953）。S2 = `banto-server` の `config_drafts_router`（4 役目のガード・監査・イベント）。**S2 の時点では REST だけ。テンプレートへの配線（migration・Tauri・rule 8）は S4 で入った**）。**残りは S5（レシピ・template-scope §3 の表・remove-optional-assets の節）**。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
 トラック: 保守者向け（トラックA）
 関連: Issue #938、#638・#651（楽観ロックと `conflict`）、#786（`ui_settings` の revision）、#597（監査の差分）、
 #697（ユーザー個別の権限）、#935・#936（[アプリ独自の SSE](sse-stream-design.md)）、#793 / [ADR-0035](../adr/0035-detached-writes.md)（書き込みを切断から切り離す）、
