@@ -1282,3 +1282,49 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
   - ルートの `package.json` を取り込むなら、`check` に `check:e2e`（`tsc -p e2e/tsconfig.json --noEmit`）、devDependencies に `@types/node`・`typescript`・`axe-core` を足し、`e2e/tsconfig.json` を写す（#774）。取り込まなければ今までどおり。
   - `pnpm banto add resource` を使うなら、`scripts/banto.mjs` ほか生成器のファイルと、アンカー `[banto:add-resource:*]` を持つファイルを写す。テンプレートの `core/src/lib.rs`・`core/src/resources.rs`（`AppResources`）・`core/src/rest/mod.rs`（`resources_router`）・`src-tauri/src/lib.rs`・`src/lib/banto/resources/index.ts` と、ルートの `scripts/verify-architecture.mjs`（`dual-path`・`tauri-read`・`rest-read`）。あわせて配線の `core/src/bin/banto-serve.rs` と型の `src/lib/appPath.ts` も写す。アンカーが 1 つでも欠けていると生成器は何も書かずに止まる（v7.10.0 の `verify-architecture.mjs` のままだと、上の 3 つの欠落で止まる）。派生側でこれらのファイルを書き換えているなら、上書きせず、アンカーの行を対応する箇所へ移す。使い方は [docs/recipes/add-resource.md](recipes/add-resource.md)。
 - 確認: `pnpm check`・`cargo test`。dock を使うアプリは、隠したパネルを戻したときの位置と比率、据え置き pane のスクロールが組み替え後も残ることを確かめる。
+
+### 例 12: v8.0.x → v9.0.0（grid のタッチ・ペンのタップで編集・touch-keys・設定の下書き。A と B と C・挙動の変更）
+
+`@banto/grid-svelte` の `editOnTap`（#964）、新しいオプションのパッケージ `@banto/touch-keys-svelte`（#937、
+[ADR-0036](adr/0036-touch-keys-package.md)）、設定の下書き → 反映 → 元に戻す（#938）、アプリ独自の SSE（#935・#936）、
+ダッシュボードのクロスフィルタとドリルダウン（#882）が入る。API の削除・改名はなく、公開の union への種類の追加もない。
+それでも **major**: `editOnTap` の既定が `true` なので、既存の `BantoGrid` を書き換えずにタグだけ上げても、
+タッチ・ペンのタップの意味が「選択」から「編集の開始」に変わる（[publishing.md「バージョニング規約」](publishing.md#バージョニング規約)の
+「既存の機能のままで実行時の値・意味が変わるものは `major`」）。DB の作り直しは要らない（v8.0.0 の DB をそのまま使える）。
+
+| 経路 | 項目 | 取り込み |
+| ---- | ---- | -------- |
+| A | `@banto/grid-svelte` を上げる | **タッチ・ペンでは、編集できるセルの 1 回のタップで編集が始まる**（今まではタップは選択だけ、編集はダブルタップ）。タップで編集させたくない grid は `<BantoGrid editOnTap={false}>`。**`editOnTap={false}` でも、タッチ・ペンの選択とフォーカスは `pointerdown` ではなく `click` まで遅れる**（指を置いてスクロールしても選択が動かない。タッチ・ペンのドラッグで範囲選択は伸びない。v8.0.0 の動きに戻す口は無い）。マウスとキーボードの操作は変わらない。注入したエディタの包みに `data-grid-editor` が付く |
+| A | `@banto/forms` を上げる | `DraftNumberField` が `change` でも確定する。入力欄へ自前で `change` を出している処理があれば確かめる |
+| A | `@banto/charts`・`@banto/dock-svelte`・`@banto/admin-core`・`@banto/theme`・`banto-server`・`banto-admin-services` を上げる | 追加だけ（`onMarkActivate`・`markSelected`、`defaultPlaces`、`createSseStream`・`ConfigDraftsProvider`、`banto_server::sse`・`config_drafts_router`・`BoundServer::from_listener`、`config_drafts`）。`BoundServer` は `BoundServer<L = TcpListener>` になったが、型引数を書いていないコードはそのままコンパイルできる。dock-svelte は、続けて隠した pane を出し直したときの幅が直る（以前の幅を期待値にしたテストは更新する） |
+| A | `@banto/touch-keys-svelte`（新設。オプション） | 使うアプリだけ、依存に `"@banto/touch-keys-svelte": "github:tyaro/banto#v9.0.0&path:packages/touch-keys-svelte"` を足し、[recipes/touch-keys.md](recipes/touch-keys.md) の手順でルートに `TouchKeysHost` を置く。使わないアプリは何もしない |
+| B | ダッシュボード（`src/lib/banto/dashboard*.ts`・`src/lib/components/dashboard/`・`DashboardKpiStrip.svelte`・`routes/(app)/dashboard/+page.svelte`） | クロスフィルタ（印で絞る・選択の帯）とドリルダウン（一覧へ移る）。取り込みは任意。取り込むと、チャートの印を選ぶと**絞る**動きになる（一覧へは帯の「一覧で開く」から）。印から直接一覧へ移したいウィジェットは `selects` を登録せず `onDrill` を `onMarkActivate` に渡す（[recipes/dashboard-widgets.md](recipes/dashboard-widgets.md)） |
+| B | 一覧のビューの引数（`src/lib/resource/listViews.ts`・`ResourceListPage.svelte`・`types.ts`・`src/lib/banto/resources/items.ts`） | `?view=<id>&arg.<名前>=<値>`。ダッシュボードのドリルダウンが使うので、ダッシュボードを取り込むなら先に写す |
+| B | 見本（`routes/(app)/ui-demo/+page.svelte`・`routes/(app)/chart-gallery/marks/`・`src/lib/banto/touchKeysMessages.ts`）・`messages/{ja,en}.json` | 取り込みは任意。`/ui-demo` を写すなら `package.json` に `@banto/touch-keys-svelte` を足す |
+| B | 設定の下書きの配線（`core/src/lib.rs`・`core/src/rest/mod.rs`・`core/src/bin/banto-serve.rs`・`src-tauri/src/lib.rs`） | 使うアプリだけ、migration 0016 と一緒に写して、[recipes/config-draft-publish.md](recipes/config-draft-publish.md) の手順で対象を登録する。テンプレートは対象を登録しないので、写しただけでは画面も挙動も変わらない |
+| B | `scripts/scaffold.mjs`・`scripts/verify-architecture.mjs`・`scripts/lib/config-drafts-gates.mjs`・`scripts/lib/permission-guards.mjs` | scaffold に `touchKeys`・`configDrafts` が増える（`minimal`・`display` は設定の下書きの配線と migration 0016 を外す）。rule 8 に、設定の下書きの口とコマンドの対と、`sse_response` を呼ぶのに権限を確かめないハンドラーの検出が加わる。`verify-architecture.mjs` を写すなら `scripts/lib/` の 2 ファイルも一緒に写す |
+| C | DB | **migration 0016（`config_published`・`config_history`・`config_drafts`・`config_locks` の 4 表、SQLite・PostgreSQL の両方）が増える**。表を足すだけで、既存の表・列・行は変えない。取り込んだアプリでは起動時に自動適用され、戻せるのは新版を最初に起動するまで（4 節）。v8.0.0 で取ったバックアップは v9.0.0 でも復元でき、次の起動で 0016 が当たる。設定の下書きを使わないアプリは、0016 を取り込まなくてよい。自分の migration に 0016 番をもう使っているアプリは、空いている次の番号で両方言に入れる |
+| C | 設定キー・配布物 | 変更なし（`tauri.conf.json` は版数のみ） |
+
+進め方:
+
+1. A のタグを上げ、`pnpm check`・`cargo test` を通す（型エラーになる変更は無い）。
+2. 編集できる列を持つ `BantoGrid` をタッチ・ペンで使う画面を洗い、タップで編集させたくない grid に `editOnTap={false}` を渡す。
+   タッチの `pointerdown` の時点で選択が動くことを前提にした E2E・自前の処理は、`click` を待つ形に直す
+   （`editOnTap={false}` でも要る）。
+3. コピーしたテンプレートは、B の差分を機能ごとに読んで写す（どれも任意）。「取り込まなくても動く」のは、
+   `@banto/*`・`banto-*` を Git 依存で引いているアプリの話。モノレポごとコピーして `packages/`・`crates/` も写すアプリは、
+   `/ui-demo` を写すなら `packages/touch-keys-svelte` も一緒に写す。
+4. migration 0016 を取り込むアプリは、本番 DB より前に、バックアップを取り、検証用のコピーで起動して 0016 が当たることを確かめる（4 節）。
+
+確認項目:
+
+1. `pnpm check`・`pnpm build`・`pnpm verify:architecture`・`cargo test`。
+2. `BantoGrid` を使う画面をタッチ端末（またはブラウザーのタッチのエミュレーション）で: 編集できるセルのタップで編集が始まること
+   （`editOnTap={false}` の grid では選択だけ）、指を置いてスクロールしても選択が動かないこと、マウスとキーボードの操作が
+   今までどおりであること。
+3. touch-keys を使うアプリは、数値の欄・文字の欄のタップで盤が開き、確定で値が入ること。
+4. ダッシュボードを取り込んだアプリは、印を選ぶと絞られ、もう一度で外れ、「一覧で開く」で一覧へ移ること。
+   visual の基準画像（`ui-demo`・`dashboard-selection`）を Linux で作り直す。
+5. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
+6. 同期記録に「v9.0.0 取込済（`editOnTap` の方針・migration 0016 の有無）」を書く。
