@@ -29,7 +29,7 @@ export interface NumberTarget extends TargetBase {
 	rules: NumberRules;
 }
 
-/** A field the text keyboard can open on. `masked` = a `type="password"` field (§5.5). */
+/** A field the text keyboard can open on. `masked` = a `type="password"` field, or `masked: true` (§5.5). */
 export interface TextTarget extends TargetBase {
 	kind: 'text';
 	rules: TextRules;
@@ -105,6 +105,7 @@ function readEditKey(options: TouchKeysOptions | undefined): string | number | n
  *
  * - A `type="password"` field always gets the MASKED text keyboard (§5.5), whatever
  *   kind the options name; only `false` / "off" keep the keys away from it.
+ *   `{ kind: 'text', masked: true }` masks a field of another type too.
  * - `kind: 'text'` on a `type="number"` field is refused (`null`): the browser would
  *   turn most of what the text keys enter into an empty value.
  */
@@ -138,16 +139,20 @@ export function resolveTarget(
 		placement: options?.placement,
 		editKey: readEditKey(options)
 	};
-	const masked = inferred === 'password';
+	const text = options?.kind === 'text' ? options : undefined;
+	const masked = inferred === 'password' || text?.masked === true;
 	if (masked || (options?.kind ?? inferred) === 'text') {
 		if (el.type === 'number') return null;
-		const text = options?.kind === 'text' ? options : undefined;
 		return {
 			...common,
 			kind: 'text',
 			masked,
 			rules: resolveTextRules(
-				{ maxlength: el.getAttribute('maxlength'), required: el.required },
+				{
+					maxlength: el.getAttribute('maxlength'),
+					minlength: el.getAttribute('minlength'),
+					required: el.required
+				},
 				text ?? {}
 			),
 			layouts: text?.layouts,
@@ -195,17 +200,28 @@ export function writeChecked(input: HTMLInputElement, value: string, previous: s
 }
 
 /**
- * The text keyboard's write. A field may sanitize what it is given (`type="email"` /
- * `"url"` trim white space): when the value did not stick exactly, the opening value is
- * put back and `false` is returned. Arguments are never logged (password fields, §5.5).
+ * The text keyboard's write, with the field itself as the authority:
+ * - `'changed'`: the value did not stick exactly (`type="email"` / `"url"` trim white space);
+ * - `'invalid'`: the field's own constraints refuse it (`type` / `pattern` mismatch, a missing
+ *   required value). `customError` is not looked at: an app-set message does not depend on
+ *   this value and would only clear on an `input` event.
+ * In both cases the opening value is put back and the caller emits no `input` / `change`.
+ * (`maxlength` / `minlength` are not flagged by the browser for a value set from script;
+ * `classifyText` enforces them.) Arguments are never logged (password fields, §5.5).
  */
 export function writeTextChecked(
 	input: HTMLInputElement,
 	value: string,
 	previous: string
-): boolean {
+): 'ok' | 'changed' | 'invalid' {
 	input.value = value;
-	const ok = input.value === value;
-	if (!ok) input.value = previous;
-	return ok;
+	let result: 'ok' | 'changed' | 'invalid' = input.value === value ? 'ok' : 'changed';
+	if (result === 'ok') {
+		const v = input.validity;
+		if (v.typeMismatch || v.patternMismatch || v.valueMissing || v.tooLong || v.tooShort) {
+			result = 'invalid';
+		}
+	}
+	if (result !== 'ok') input.value = previous;
+	return result;
 }

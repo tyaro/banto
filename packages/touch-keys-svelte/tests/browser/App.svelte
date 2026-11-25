@@ -80,6 +80,10 @@
 		<label for="pw">パスワード</label>
 		<input id="pw" type="password" autocomplete="off" />
 
+		<!-- the browser's own validity is the authority on what an email field takes (§6.5) -->
+		<label for="mail">メール</label>
+		<input id="mail" type="email" />
+
 		<button id="save" type="submit">保存</button>
 		<button id="open-modal" type="button" onclick={() => (modalOpen = true)}>明細を開く</button>
 	</form>

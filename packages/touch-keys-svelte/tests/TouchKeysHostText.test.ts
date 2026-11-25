@@ -287,6 +287,59 @@ describe('TouchKeysHost: text fields, the target changed (§6.5)', () => {
 	});
 });
 
+describe("TouchKeysHost: text fields and the field's own constraints", () => {
+	it('type="email": a text the field refuses is not written and emits nothing; the keys stay open and say so', async () => {
+		const onconfirm = vi.fn();
+		const oncancel = vi.fn();
+		render(HostHarness, { onconfirm, oncancel });
+		const mail = await openOn('mail');
+		const seen = watch(mail);
+		await type(['a', 'b', '確定']);
+		expect(pad()).not.toBeNull();
+		expect(draft()).toBe('ab'); // the draft is kept
+		expect(pad()!.querySelector('[role="status"]')!.textContent).toBe('入力の形式が合いません');
+		expect(mail.value).toBe('');
+		expect(seen).toEqual({ input: 0, change: 0 });
+		expect(onconfirm).not.toHaveBeenCalled();
+		expect(oncancel).not.toHaveBeenCalled();
+
+		// the notice goes away with the next key; a valid address is written
+		await type(['記号', '@']);
+		expect(pad()!.querySelector('[role="status"]')!.textContent).toBe('');
+		await type(['英数', 'c', '確定']);
+		expect(pad()).toBeNull();
+		expect(mail.value).toBe('ab@c');
+		expect(seen).toEqual({ input: 1, change: 1 });
+		expect(onconfirm).toHaveBeenCalledWith({ input: mail, value: 'ab@c', previous: '' });
+	});
+
+	it('pattern: a mismatch is not written; a match is', async () => {
+		const onconfirm = vi.fn();
+		render(HostHarness, { onconfirm });
+		const lot = await openOn('lot');
+		const seen = watch(lot);
+		await type(['a', '1', '確定']);
+		expect(pad()).not.toBeNull();
+		expect(lot.value).toBe('');
+		expect(seen).toEqual({ input: 0, change: 0 });
+		expect(onconfirm).not.toHaveBeenCalled();
+		await type(['全部消す', '大文字', 'A', '1', '確定']);
+		expect(pad()).toBeNull();
+		expect(lot.value).toBe('A1');
+		expect(seen).toEqual({ input: 1, change: 1 });
+	});
+
+	it('minlength: enforced by the keys (the browser does not flag a value set from script)', async () => {
+		render(HostHarness);
+		const pin = await openOn('pin');
+		await type(['1', '2', '3']);
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(true);
+		expect(pad()!.querySelector('[role="status"]')!.textContent).toBe('4 文字以上にしてください');
+		await type(['4', '確定']);
+		expect(pin.value).toBe('1234');
+	});
+});
+
 describe('TouchKeysHost: password fields (§5.5)', () => {
 	const SECRET = 'pA5$ w';
 	const SECRET_KEYS = ['p', '大文字', 'A', '5', '記号', '$', '空白', '英数', '小文字', 'w'];
@@ -453,6 +506,73 @@ describe('TouchKeysHost: password fields (§5.5)', () => {
 		expect(pw.value).toBe('from-elsewhere');
 		expect(seen).toEqual({ input: 0, change: 0 });
 		expect(oncancel.mock.calls).toEqual([[{ input: pw, reason: 'target-changed' }]]);
+	});
+
+	it('opening and pressing confirm does not wipe the value; clearing takes the clear-all key', async () => {
+		const onkeydown = vi.fn();
+		render(HostHarness, { onkeydown });
+		const pw = await openOn('pw');
+		const seen = watch(pw);
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(true);
+		await fireEvent.click(key('確定'));
+		expect(pad()).not.toBeNull();
+		expect(pw.value).toBe(OLD);
+
+		// an explicit clear is an unconfirmed change: a hardware Enter only closes
+		await type(['全部消す']);
+		expect(await fireEvent.keyDown(pw, { key: 'Enter' })).toBe(false);
+		expect(onkeydown).not.toHaveBeenCalled();
+		expect(pw.value).toBe(OLD);
+		await fireEvent.keyUp(pw, { key: 'Enter' });
+
+		await openOn('pw');
+		await type(['全部消す', '確定']);
+		expect(pad()).toBeNull();
+		expect(pw.value).toBe('');
+		expect(seen).toEqual({ input: 1, change: 1 });
+	});
+
+	it('masked or not is decided AFTER focus: a focus handler turning the field into a password field gets masked keys', async () => {
+		render(HostHarness);
+		const title = field('title');
+		title.addEventListener('focus', () => {
+			title.type = 'password';
+		});
+		// not focused yet: the click resolves a plain text field, focusing changes it
+		await fireEvent.click(title);
+		expect(document.activeElement).toBe(title);
+		expect(draft()).toBe(' ');
+		expect(screen.getByTestId('count').textContent).toBe('0 文字');
+		expect(pad()!.outerHTML).not.toContain('abc');
+		// and the session knows the type it really opened with: nothing closes it now
+		await tick();
+		expect(pad()).not.toBeNull();
+	});
+
+	it('a focus handler that takes the field out (readonly) means nothing opens', async () => {
+		const onopen = vi.fn();
+		render(HostHarness, { onopen });
+		const title = field('title');
+		title.addEventListener('focus', () => {
+			title.readOnly = true;
+		});
+		await fireEvent.pointerDown(title);
+		await fireEvent.click(title);
+		expect(pad()).toBeNull();
+		expect(onopen).not.toHaveBeenCalled();
+		expect(title.getAttribute('inputmode')).toBeNull();
+	});
+
+	it('masked: true keeps a "shown" password (type="text") masked: nothing is copied or handed out', async () => {
+		const onconfirm = vi.fn();
+		render(HostHarness, { onconfirm, withNote: true });
+		const shown = await openOn('shown');
+		expect(draft()).toBe(' ');
+		expect(pad()!.outerHTML).not.toContain('visible-secret');
+		expect(screen.getByTestId('note').dataset.draftNull).toBe('yes');
+		await type(['a', 'b', '確定']);
+		expect(shown.value).toBe('ab');
+		expect(onconfirm.mock.calls).toEqual([[{ input: shown, value: null, previous: null }]]);
 	});
 
 	it('a password field is masked whatever kind its options name; maxlength still applies', async () => {

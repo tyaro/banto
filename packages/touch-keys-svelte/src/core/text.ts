@@ -16,18 +16,22 @@ export const TEXT_LAYOUTS: readonly TextLayout[] = ['alnum', 'symbol'];
 export interface TextRules {
 	/** Upper bound in UTF-16 code units (as `maxlength`). `undefined` = no bound. */
 	maxLength: number | undefined;
+	/** Lower bound of a NON-EMPTY draft (as `minlength`). `undefined` = no bound. */
+	minLength: number | undefined;
 	/** An empty draft cannot be confirmed. */
 	required: boolean;
 }
 
 export interface TextSpec {
 	maxLength?: number;
+	minLength?: number;
 	required?: boolean;
 }
 
 /** What the `<input>` says about its text (attribute strings as written). */
 export interface TextAttrs {
 	maxlength?: string | null;
+	minlength?: string | null;
 	required?: boolean;
 }
 
@@ -42,7 +46,11 @@ function lengthBound(value: number | string | null | undefined): number | undefi
  * The rules of one field. `maxLength` comes from the options and the `maxlength`
  * attribute; when both exist the SMALLER one wins, so options can tighten but never
  * loosen what the field itself declares (same stance as `type="number"`, §5.4).
- * `required` is true when either side says so.
+ * `minLength` likewise takes the LARGER one; a minimum above the maximum is dropped
+ * (nothing could ever be confirmed). `required` is true when either side says so.
+ *
+ * The browser does not flag `maxlength` / `minlength` on a value set from script, so
+ * these two are enforced by the keys themselves.
  */
 export function resolveTextRules(attrs: TextAttrs, spec: TextSpec = {}): TextRules {
 	const fromSpec = lengthBound(spec.maxLength);
@@ -51,7 +59,17 @@ export function resolveTextRules(attrs: TextAttrs, spec: TextSpec = {}): TextRul
 		fromSpec !== undefined && fromAttr !== undefined
 			? Math.min(fromSpec, fromAttr)
 			: (fromSpec ?? fromAttr);
-	return { maxLength, required: Boolean(spec.required || attrs.required) };
+	const minSpec = lengthBound(spec.minLength);
+	const minAttr = lengthBound(attrs.minlength);
+	const min =
+		minSpec !== undefined && minAttr !== undefined
+			? Math.max(minSpec, minAttr)
+			: (minSpec ?? minAttr);
+	const minLength =
+		min === undefined || min === 0 || (maxLength !== undefined && min > maxLength)
+			? undefined
+			: min;
+	return { maxLength, minLength, required: Boolean(spec.required || attrs.required) };
 }
 
 // ---------------------------------------------------------------- key tables
@@ -133,16 +151,22 @@ export function pressTextKey(text: string, key: TextKey, rules: { maxLength?: nu
 
 export interface TextStatus {
 	canConfirm: boolean;
-	/** Why not / what to tell: an empty required draft, or the length bound reached or exceeded. */
-	notice: 'required' | 'max-length' | null;
+	/** Why not / what to tell: an empty required draft, too short, or the upper bound reached or exceeded. */
+	notice: 'required' | 'min-length' | 'max-length' | null;
 }
 
-/** Whether the draft can be written as it is (§9.3: never longer than `maxLength`). */
+/**
+ * Whether the draft can be written as it is (§9.3: never longer than `maxLength`, and
+ * like `minlength` a non-empty draft is never shorter than `minLength`).
+ */
 export function classifyText(text: string, rules: TextRules): TextStatus {
 	if (text === '') {
 		return rules.required
 			? { canConfirm: false, notice: 'required' }
 			: { canConfirm: true, notice: null };
+	}
+	if (rules.minLength !== undefined && text.length < rules.minLength) {
+		return { canConfirm: false, notice: 'min-length' };
 	}
 	if (rules.maxLength === undefined || text.length < rules.maxLength) {
 		return { canConfirm: true, notice: null };

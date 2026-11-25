@@ -211,6 +211,52 @@ test.describe('password (§5.5)', () => {
 	});
 });
 
+test.describe('the field decides (§6.5, §5.5)', () => {
+	test('type="email": a text the browser refuses is not written and emits nothing; the keys stay open', async ({
+		page
+	}) => {
+		await page.goto('/');
+		await openOn(page, 'mail');
+		await clearLog(page);
+		await typeText(page, 'ab');
+		await key(page, '確定').tap();
+		await expect(surface(page)).toBeVisible();
+		await expect(surface(page).getByRole('status')).toHaveText('入力の形式が合いません');
+		await expect(page.locator('#mail')).toHaveValue('');
+		expect(await log(page)).toEqual([]);
+
+		await typeText(page, '@c');
+		await expect(surface(page).getByRole('status')).toHaveText('');
+		await key(page, '確定').tap();
+		await expect(surface(page)).toHaveCount(0);
+		await expect(page.locator('#mail')).toHaveValue('ab@c');
+		expect(await log(page)).toEqual(['input:mail', 'change:mail', 'confirm:mail=ab@c']);
+	});
+
+	test('password: confirm is off until something is typed or cleared; only the clear-all key empties the field', async ({
+		page
+	}) => {
+		await page.goto('/');
+		await page.locator('#pw').evaluate((el) => {
+			(el as HTMLInputElement).value = 'kept-1';
+		});
+		await openOn(page, 'pw');
+		await clearLog(page);
+		await expect(key(page, '確定')).toBeDisabled();
+		await key(page, '取り消し').tap();
+		await expect(page.locator('#pw')).toHaveValue('kept-1');
+
+		await openOn(page, 'pw');
+		await clearLog(page);
+		await key(page, '全部消す').tap();
+		await expect(key(page, '確定')).toBeEnabled();
+		await key(page, '確定').tap();
+		await expect(surface(page)).toHaveCount(0);
+		await expect(page.locator('#pw')).toHaveValue('');
+		expect(await log(page)).toEqual(['input:pw', 'change:pw', 'confirm:pw=null']);
+	});
+});
+
 test('axe: no WCAG A / AA violation with the text keyboard open (plain, symbols, masked)', async ({
 	page
 }) => {

@@ -54,15 +54,15 @@ describe('TextKeyboard', () => {
 	});
 
 	it('maxLength: keys stop entering, the count and a status notice say so', async () => {
-		const onlength = vi.fn();
-		render(TextKeyboard, { draft: 'ab', maxLength: 3, onlength });
+		const onedit = vi.fn();
+		render(TextKeyboard, { draft: 'ab', maxLength: 3, onedit });
 		expect(screen.getByTestId('count').textContent).toBe('2 / 3');
 		expect(screen.getByRole('status').textContent).toBe('');
 		await type(['c', 'd']);
 		expect(draft()).toBe('abc');
 		expect(screen.getByTestId('count').textContent).toBe('3 / 3');
 		expect(screen.getByRole('status').textContent).toBe('3 文字までです');
-		expect(onlength).toHaveBeenLastCalledWith(3);
+		expect(onedit).toHaveBeenLastCalledWith({ length: 3, cleared: false });
 		expect((key('確定') as HTMLButtonElement).disabled).toBe(false);
 	});
 
@@ -80,6 +80,24 @@ describe('TextKeyboard', () => {
 		expect(screen.getByRole('status').textContent).toBe('入力が必要です');
 		await fireEvent.click(key('確定'));
 		expect(onconfirm).not.toHaveBeenCalled();
+	});
+
+	it('minLength: a non-empty draft that is too short cannot be confirmed and says why', async () => {
+		render(TextKeyboard, { draft: '', minLength: 3 });
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(false); // empty is not "too short"
+		await type(['a', 'b']);
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(true);
+		expect(screen.getByRole('status').textContent).toBe('3 文字以上にしてください');
+		await type(['c']);
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(false);
+		expect(screen.getByRole('status').textContent).toBe('');
+	});
+
+	it('rejected: the owner refused the text, said in the status line', async () => {
+		const { rerender } = render(TextKeyboard, { draft: 'ab', rejected: true });
+		expect(screen.getByRole('status').textContent).toBe('入力の形式が合いません');
+		await rerender({ rejected: false });
+		expect(screen.getByRole('status').textContent).toBe('');
 	});
 
 	it('keys are buttons outside the tab order that do not take focus; messages can be replaced', async () => {
@@ -128,9 +146,9 @@ describe('TextKeyboard masked (§5.5)', () => {
 		expect(props.draft).toBe('old-secret');
 	});
 
-	it('hands the text out exactly once, to onconfirm; onlength gets numbers, note gets null', async () => {
+	it('hands the text out exactly once, to onconfirm; onedit gets the length, note gets null', async () => {
 		const onconfirm = vi.fn();
-		const onlength = vi.fn();
+		const onedit = vi.fn();
 		const seen: (string | null)[] = [];
 		const note = createRawSnippet<[string | null]>((text) => ({
 			render: () => {
@@ -138,14 +156,42 @@ describe('TextKeyboard masked (§5.5)', () => {
 				return '<span data-testid="note">note</span>';
 			}
 		}));
-		render(TextKeyboard, { masked: true, onconfirm, onlength, note });
+		render(TextKeyboard, { masked: true, onconfirm, onedit, note });
 		await type(SECRET_KEYS);
 		expect(seen.length).toBeGreaterThan(0);
 		expect(seen.every((text) => text === null)).toBe(true);
-		expect(onlength.mock.calls.map(([n]) => n)).toEqual([1, 2, 3, 4, 5, 6]);
+		expect(onedit.mock.calls.map(([edit]) => edit)).toEqual(
+			[1, 2, 3, 4, 5, 6].map((length) => ({ length, cleared: false }))
+		);
 		expect(onconfirm).not.toHaveBeenCalled();
 		await type(['確定']);
 		expect(onconfirm.mock.calls).toEqual([[SECRET]]);
+	});
+
+	it('an empty draft is confirmable only after the clear-all key (never wipes a password by accident)', async () => {
+		const onconfirm = vi.fn();
+		const onedit = vi.fn();
+		render(TextKeyboard, { masked: true, onconfirm, onedit });
+		const confirm = () => key('確定') as HTMLButtonElement;
+		expect(confirm().disabled).toBe(true);
+		// typed and deleted back to empty is still not an explicit clear
+		await type(['a', '1文字消す']);
+		expect(confirm().disabled).toBe(true);
+		expect(onedit).toHaveBeenLastCalledWith({ length: 0, cleared: false });
+		await type(['全部消す']);
+		expect(onedit).toHaveBeenLastCalledWith({ length: 0, cleared: true });
+		expect(confirm().disabled).toBe(false);
+		await type(['確定']);
+		expect(onconfirm.mock.calls).toEqual([['']]);
+		// typing again takes the "cleared" mark away
+		await type(['a', '1文字消す']);
+		expect(confirm().disabled).toBe(true);
+	});
+
+	it('required wins over the clear-all key', async () => {
+		render(TextKeyboard, { masked: true, required: true });
+		await type(['全部消す']);
+		expect((key('確定') as HTMLButtonElement).disabled).toBe(true);
 	});
 
 	it('offers every layout and the full symbol set, whatever `layouts` says', async () => {

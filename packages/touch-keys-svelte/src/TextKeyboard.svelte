@@ -11,8 +11,10 @@
 	 * `masked` (password fields, §5.5) is a contract, not only a look:
 	 * - the draft lives inside this component and starts EMPTY; `draft` is neither read nor written,
 	 * - the display shows one dot per character (never the last character), plus the count,
-	 * - `note` receives `null`, `onlength` only the length; the plain text leaves exactly once,
+	 * - `note` receives `null`, `onedit` only the length; the plain text leaves exactly once,
 	 *   as the argument of `onconfirm`,
+	 * - an EMPTY draft is confirmable only after the clear-all key: opening the keys and pressing
+	 *   confirm must not wipe the password that is already in the field,
 	 * - every printable ASCII character is reachable (all layouts, the full symbol set).
 	 * `masked` is read once, when the keyboard is created: flipping it later reveals nothing.
 	 *
@@ -35,8 +37,15 @@
 		draft?: string;
 		/** Upper bound in UTF-16 code units (as the `maxlength` attribute). */
 		maxLength?: number;
+		/** Lower bound of a non-empty draft (as the `minlength` attribute). */
+		minLength?: number;
 		/** An empty draft cannot be confirmed. */
 		required?: boolean;
+		/**
+		 * The owner refused the last confirm because of the text's form (a field's `type` /
+		 * `pattern`): shown as a notice until `rejected` is turned off again (do so in `onedit`).
+		 */
+		rejected?: boolean;
 		/** Layouts to offer, in order (default: all). With one layout there are no switch keys. */
 		layouts?: TextLayout[];
 		/** The layout shown first (default: the first of `layouts`). */
@@ -48,8 +57,11 @@
 		messages?: TouchKeysMessages;
 		/** One extra line under the draft (unit, caution). Receives the draft, or `null` when `masked`. */
 		note?: Snippet<[string | null]>;
-		/** After every key: the draft's length (never its text). */
-		onlength?: (length: number) => void;
+		/**
+		 * After every key that edits the draft: its length (never its text), and `cleared` =
+		 * the draft is empty because the clear-all key was pressed.
+		 */
+		onedit?: (edit: { length: number; cleared: boolean }) => void;
 		/** Confirm pressed with a confirmable draft. */
 		onconfirm?: (value: string) => void;
 		oncancel?: () => void;
@@ -58,14 +70,16 @@
 	let {
 		draft = $bindable(''),
 		maxLength,
+		minLength,
 		required,
+		rejected,
 		layouts,
 		initialLayout,
 		masked,
 		label,
 		messages,
 		note,
-		onlength,
+		onedit,
 		onconfirm,
 		oncancel
 	}: Props = $props();
@@ -76,13 +90,18 @@
 	const text = $derived(isMasked ? secret : draft);
 
 	const t = $derived({ ...defaultTouchKeysMessages, ...messages });
-	const rules = $derived(resolveTextRules({}, { maxLength, required }));
+	const rules = $derived(resolveTextRules({}, { maxLength, minLength, required }));
+	/** The draft is empty because the clear-all key emptied it (not merely "nothing typed yet"). */
+	let cleared = $state(false);
 	const offered = $derived(resolveTextLayouts(layouts, isMasked));
 	let chosen = $state<TextLayout | undefined>(untrack(() => initialLayout));
 	const layout = $derived(chosen !== undefined && offered.includes(chosen) ? chosen : offered[0]);
 	let upper = $state(false);
 	const rows = $derived(textKeyRows(layout, { upper, fullSymbols: isMasked }));
 	const status = $derived(classifyText(text, rules));
+	// Masked: an empty draft says nothing about the value in the field, so "confirm" on it
+	// would silently erase a password. Erasing takes the explicit clear-all key first.
+	const canConfirm = $derived(status.canConfirm && !(isMasked && text === '' && !cleared));
 
 	const shown = $derived(isMasked ? '●'.repeat(text.length) : text);
 	const countLine = $derived(
@@ -91,9 +110,13 @@
 	const notice = $derived(
 		status.notice === 'required'
 			? t.required()
-			: status.notice === 'max-length' && rules.maxLength !== undefined
-				? t.maxLength(rules.maxLength)
-				: ''
+			: status.notice === 'min-length' && rules.minLength !== undefined
+				? t.minLength(rules.minLength)
+				: rejected
+					? t.invalid()
+					: status.notice === 'max-length' && rules.maxLength !== undefined
+						? t.maxLength(rules.maxLength)
+						: ''
 	);
 	const layoutName = (l: TextLayout): string => (l === 'symbol' ? t.symbol() : t.alnum());
 
@@ -101,11 +124,12 @@
 		const next = pressTextKey(text, key, rules);
 		if (isMasked) secret = next;
 		else draft = next;
-		onlength?.(next.length);
+		cleared = key === 'clear';
+		onedit?.({ length: next.length, cleared });
 	}
 
 	function confirm() {
-		if (!status.canConfirm) return;
+		if (!canConfirm) return;
 		onconfirm?.(text);
 	}
 
@@ -216,7 +240,7 @@
 			type="button"
 			class="key confirm"
 			tabindex="-1"
-			disabled={!status.canConfirm}
+			disabled={!canConfirm}
 			onmousedown={keepFocus}
 			onclick={confirm}
 		>

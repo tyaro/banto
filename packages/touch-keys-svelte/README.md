@@ -19,13 +19,19 @@ T3 まで（テンキー、文字キーボード（英数・記号）、パス�
   同じ `<input>` を別のレコードに使い回す画面では `editKey` を渡す（開いたときと違えば書かない）。外すのは `touchKeys(false)` か、
   入力欄・その包みの `data-touch-keys="off"`。
 - **パスワードの入力欄**（`type="password"`）は、必ず伏せた文字キーボードになる。表示は `●` と文字数だけで、平文は盤の外へ出ない
-  （`onconfirm` の `value`・`previous` と `note` の `draft` は `null`。下書きは閉じれば残らない。空から始まり、確定で欄の値を置き換える）。
+  （`onconfirm` の `value`・`previous` と `note` の `draft` は `null`。下書きは閉じれば残らない。空から始まり、確定で欄の値を置き換える）。**開いて何も打たずに確定しても、既存の値は消えない**
+  （空で確定できるのは、盤の「全部消す」を押した直後だけ）。「パスワードを表示」で `type="text"` になる欄は、属性からは
+  パスワードと分からないので、`touchKeys({ kind: 'text', masked: true })`（または `resolve`）で明示する。
   打てるのは ASCII の印字できる 95 文字（それ以外を含むパスワードは打てない）。
 - `touchKeys({ kind: 'text', maxLength: 20, layouts: ['alnum'] })` — 文字キーボードの指定。最大文字数は `maxlength` 属性との
-  小さいほう。配列は `alnum`（英数）・`symbol`（記号）。1 つだけなら切り替えのキーは出ない。
-- `TextKeyboard` — 文字キーボードの表示とキーの入力だけ（単体でも使える）。`draft`（`bind:`）・`maxLength`・`required`・`layouts`・
-  `initialLayout`・`masked`・`label`・`messages`・`note`・`onlength`・`onconfirm`・`oncancel`。`masked` では `draft` を読み書きせず、
-  文字列は `onconfirm` の 1 回だけで渡す。
+  小さいほう。`minLength` は `minlength` 属性との大きいほう（空でない下書きに掛かる）。配列は `alnum`（英数）・`symbol`（記号）。
+  1 つだけなら切り替えのキーは出ない。`masked: true` で、`type` が password でない欄も伏せた盤にする。
+- **入力欄そのものの制約**: 文字の確定は、書いた後に入力欄の `validity`（`type="email"`・`"url"` の形式、`pattern`）を見る。
+  合わなければ値を元に戻し、`input`・`change`・`onconfirm` を出さず、盤は開いたまま「入力の形式が合いません」を出す。
+- `TextKeyboard` — 文字キーボードの表示とキーの入力だけ（単体でも使える）。`draft`（`bind:`）・`maxLength`・`minLength`・`required`・
+  `rejected`（持ち主が直前の確定を断った。知らせを出す）・`layouts`・`initialLayout`・`masked`・`label`・`messages`・`note`・
+  `onedit({ length, cleared })`・`onconfirm`・`oncancel`。`masked` では `draft` を読み書きせず、文字列は `onconfirm` の 1 回だけで
+  渡す（空の確定は「全部消す」の直後だけ）。
 - `NumberKeypad` — テンキーの表示とキーの入力だけ（単体でも使える）。`draft`（`bind:`）・`rules`・`min`・`max`・`step`・`decimals`・
   `allowNegative`・`required`・`label`・`messages`・`note`・`onconfirm`・`oncancel`。
 - `resolveNumberRules(attrs, spec)` — 入力欄の属性（`type="number"`・`inputmode`・`min`・`max`・`step`・`value`）と

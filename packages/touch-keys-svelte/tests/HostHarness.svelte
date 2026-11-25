@@ -137,15 +137,25 @@
 		})}
 	/>
 	<input id="mail" type="email" value="" aria-label="メール" required />
+	<input id="lot" type="text" pattern="[A-Z][0-9]" aria-label="ロット" />
 	<input id="numtext" type="number" {@attach touchKeys({ kind: 'text' })} />
 	<input id="ro-text" type="text" readonly />
 	<!-- password fields (§5.5) -->
 	<input id="pw" type={pwType} value="old-secret" aria-label="パスワード" {onkeydown} />
+	<!-- type="text" while "shown": the app keeps it masked for the keys -->
+	<input
+		id="shown"
+		type="text"
+		value="visible-secret"
+		aria-label="表示中のパスワード"
+		{@attach touchKeys({ kind: 'text', masked: true })}
+	/>
 	<input
 		id="pin"
 		type="password"
 		inputmode="numeric"
 		maxlength="4"
+		minlength="4"
 		aria-label="暗証番号"
 		{@attach touchKeys({ kind: 'number', max: 9999 })}
 	/>

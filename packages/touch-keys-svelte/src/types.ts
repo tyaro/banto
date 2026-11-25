@@ -47,7 +47,7 @@ export interface NumberKeysOptions extends CommonKeysOptions, NumberSpec {
 
 /**
  * Text keyboard for one field. On a `type="password"` field the keyboard is always
- * masked and offers every layout, whatever `layouts` says (§5.5).
+ * masked and offers every layout, whatever `layouts` / `masked` say (§5.5).
  */
 export interface TextKeysOptions extends CommonKeysOptions {
 	kind: 'text';
@@ -56,8 +56,16 @@ export interface TextKeysOptions extends CommonKeysOptions {
 	 * smaller of the two applies (options can tighten, never loosen).
 	 */
 	maxLength?: number;
+	/** Lower bound of a non-empty draft; with a `minlength` attribute the larger of the two applies. */
+	minLength?: number;
 	/** An empty draft cannot be confirmed (also read from the `required` attribute). */
 	required?: boolean;
+	/**
+	 * `true`: treat the field as a password field (masked keys, nothing handed out, §5.5)
+	 * even while its `type` is not `password` - for a field with a "show password" toggle,
+	 * which is `type="text"` while shown. It cannot turn masking OFF on a `type="password"` field.
+	 */
+	masked?: boolean;
 	/** Layouts to offer, in order. Default: the host's `layouts`. One layout = no switch keys. */
 	layouts?: TextLayout[];
 	/** The layout shown first. Default: the first of `layouts`. */

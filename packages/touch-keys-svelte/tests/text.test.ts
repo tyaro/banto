@@ -86,11 +86,16 @@ describe('resolveTextLayouts', () => {
 
 describe('resolveTextRules (§9.3)', () => {
 	it('reads maxlength and required from the attributes', () => {
-		expect(resolveTextRules({ maxlength: '20', required: true })).toEqual({
+		expect(resolveTextRules({ maxlength: '20', minlength: '2', required: true })).toEqual({
 			maxLength: 20,
+			minLength: 2,
 			required: true
 		});
-		expect(resolveTextRules({})).toEqual({ maxLength: undefined, required: false });
+		expect(resolveTextRules({})).toEqual({
+			maxLength: undefined,
+			minLength: undefined,
+			required: false
+		});
 	});
 
 	it('ignores a maxlength that is not a non-negative integer', () => {
@@ -107,6 +112,15 @@ describe('resolveTextRules (§9.3)', () => {
 		expect(resolveTextRules({}, { maxLength: 8 }).maxLength).toBe(8);
 		expect(resolveTextRules({ required: true }, { required: false }).required).toBe(true);
 		expect(resolveTextRules({}, { required: true }).required).toBe(true);
+	});
+
+	it('minLength: the larger of options and attribute; 0 and a minimum above the maximum are dropped', () => {
+		expect(resolveTextRules({ minlength: '2' }, { minLength: 4 }).minLength).toBe(4);
+		expect(resolveTextRules({ minlength: '6' }, { minLength: 4 }).minLength).toBe(6);
+		expect(resolveTextRules({}, { minLength: 4 }).minLength).toBe(4);
+		expect(resolveTextRules({ minlength: '0' }).minLength).toBeUndefined();
+		expect(resolveTextRules({ minlength: 'x' }).minLength).toBeUndefined();
+		expect(resolveTextRules({ minlength: '9', maxlength: '4' }).minLength).toBeUndefined();
 	});
 });
 
@@ -138,7 +152,11 @@ describe('pressTextKey (§9.4: the end of the draft only)', () => {
 });
 
 describe('classifyText', () => {
-	const rules = (maxLength?: number, required = false) => ({ maxLength, required });
+	const rules = (maxLength?: number, required = false, minLength?: number) => ({
+		maxLength,
+		minLength,
+		required
+	});
 	it.each([
 		['', rules(), true, null],
 		['', rules(undefined, true), false, 'required'],
@@ -146,7 +164,12 @@ describe('classifyText', () => {
 		['ab', rules(3), true, null],
 		['abc', rules(3), true, 'max-length'],
 		['abcd', rules(3), false, 'max-length'],
-		[' ', rules(undefined, true), true, null]
+		[' ', rules(undefined, true), true, null],
+		// like `minlength`: only a non-empty draft can be too short
+		['', rules(undefined, false, 3), true, null],
+		['ab', rules(undefined, false, 3), false, 'min-length'],
+		['abc', rules(undefined, false, 3), true, null],
+		['abc', rules(3, false, 3), true, 'max-length']
 	] as const)('%j with %j -> canConfirm %s, notice %s', (text, r, canConfirm, notice) => {
 		expect(classifyText(text, r)).toEqual({ canConfirm, notice });
 	});

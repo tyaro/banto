@@ -21,7 +21,7 @@
 	 *   open, and the written value must stick and satisfy the browser's own validity —
 	 *   otherwise nothing is written and no event is emitted (`target-changed`, §6.5 / §8.3).
 	 * - Password fields (§5.5): the plain text is never handed out. The draft lives inside the
-	 *   masked `TextKeyboard` (this host holds only its length), starts empty and dies with
+	 *   masked `TextKeyboard` (this host holds only whether it is pending), starts empty and dies with
 	 *   that keyboard on every way of closing; `onconfirm` gets `value: null, previous: null`
 	 *   and `note` gets `draft: null`. Nothing here logs a draft or a value.
 	 *
@@ -110,8 +110,10 @@
 	let session = $state.raw<Session | null>(null);
 	/** The draft of the open keys. Stays '' for a password field: its draft never leaves the keyboard. */
 	let draft = $state('');
-	/** Password fields only: how many characters the masked keyboard holds. */
-	let maskedLength = $state(0);
+	/** Password fields only: the masked keyboard holds typed characters, or was explicitly cleared. */
+	let maskedPending = $state(false);
+	/** The field refused the last text confirm (type / pattern): the keyboard says so until the next key. */
+	let rejected = $state(false);
 	let sessionCount = 0;
 	/** A hardware Enter just closed the keys: swallow its auto-repeats until the key is released. */
 	let swallowEnterRepeat = false;
@@ -138,13 +140,23 @@
 
 	const isMasked = (target: Target): boolean => target.kind === 'text' && target.masked;
 
-	function open(target: Target): void {
-		const { input } = target;
+	function open(candidate: Target): void {
+		const { input } = candidate;
 		suppressOsKeyboard(input);
 		if (document.activeElement !== input) input.focus({ preventScroll: true });
+		// A focus handler may have changed the field (its type, readonly, its options): everything
+		// about this session - masked or not, the draft, the opening value and type - is decided
+		// HERE, after focus, from one moment. Deciding "masked" before focus and the type after it
+		// could copy a password into unmasked keys.
+		const target = resolveTarget(input, resolve);
+		if (!target) {
+			releaseOsKeyboard(input);
+			return;
+		}
 		// A password field starts from an empty draft: its current value is not copied (§5.5).
 		draft = isMasked(target) ? '' : input.value;
-		maskedLength = 0;
+		maskedPending = false;
+		rejected = false;
 		session = {
 			id: ++sessionCount,
 			target,
@@ -164,7 +176,8 @@
 		const closed = session;
 		session = null;
 		draft = '';
-		maskedLength = 0;
+		maskedPending = false;
+		rejected = false;
 		return closed;
 	}
 
@@ -194,7 +207,7 @@
 
 	/** An unconfirmed change (§6.3): the keys changed the draft away from the opening value. */
 	function hasPending(s: Session): boolean {
-		return isMasked(s.target) ? maskedLength > 0 : draft !== s.openValue;
+		return isMasked(s.target) ? maskedPending : draft !== s.openValue;
 	}
 
 	function matchesOpen(s: Session): boolean {
@@ -238,21 +251,33 @@
 	 * The text keyboard's confirm: the same checks as `confirm` (§6.5, rules as they are NOW,
 	 * the write must stick). `value` is the only place a password draft passes through this
 	 * host; it goes into the field and nowhere else.
+	 *
+	 * A text the field itself refuses (`type="email"` / `"url"`, `pattern`) is not written and
+	 * emits nothing either, but the keys STAY OPEN with a notice: unlike the number keypad the
+	 * keys cannot know a field's pattern beforehand, and closing would throw the draft away.
 	 */
 	function confirmText(value: string): void {
 		const s = session;
 		if (!s || s.target.kind !== 'text') return;
+		// A password field is emptied only after the clear-all key (§5.5): an untouched empty
+		// draft says nothing about the value in the field. The keyboard already refuses this.
+		if (s.target.masked && value === '' && !maskedPending) return;
 		if (!isLive(s)) return cancel('target-gone');
 		const now = currentIfSame(s);
 		if (
 			!now ||
 			now.kind !== 'text' ||
 			now.masked !== s.target.masked ||
-			!classifyText(value, now.rules).canConfirm ||
-			!writeTextChecked(s.input, value, s.openValue)
+			!classifyText(value, now.rules).canConfirm
 		) {
 			return cancel('target-changed');
 		}
+		const written = writeTextChecked(s.input, value, s.openValue);
+		if (written === 'invalid') {
+			rejected = true;
+			return;
+		}
+		if (written !== 'ok') return cancel('target-changed');
 		const masked = s.target.masked;
 		close();
 		s.input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -513,15 +538,18 @@
 					<TextKeyboard
 						bind:draft
 						maxLength={session.target.rules.maxLength}
+						minLength={session.target.rules.minLength}
 						required={session.target.rules.required}
+						{rejected}
 						layouts={session.target.layouts ?? layouts}
 						initialLayout={session.target.initialLayout}
 						masked={session.target.masked}
 						label={session.target.label}
 						{messages}
 						note={noteLine ? keysNote : undefined}
-						onlength={(length) => {
-							if (session && isMasked(session.target)) maskedLength = length;
+						onedit={({ length, cleared }) => {
+							rejected = false;
+							if (session && isMasked(session.target)) maskedPending = length > 0 || cleared;
 						}}
 						onconfirm={confirmText}
 						oncancel={() => cancel('cancel-key')}
