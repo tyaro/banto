@@ -20,6 +20,8 @@
  *
  * App layer, items demo: removed with the dashboard page by `scripts/scaffold.mjs` (`removeDashboard`).
  */
+import { categoryOf } from './dashboard';
+import { PRICE_BANDS, priceBandIndex } from './resources/items';
 import type { Item } from './sampleData';
 
 /** The choices, in the order the control shows them. */
@@ -30,12 +32,28 @@ export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number];
 /** What the page starts with, and what a document that is not told the period draws. */
 export const DEFAULT_DASHBOARD_PERIOD: DashboardPeriod = 'all';
 
-/** The conditions the page's rows are narrowed by. #882 adds its own fields here. */
+/** The dimensions a mark can select (#882 C1). The author registers them in code (`selects`). */
+export const DASHBOARD_DIMENSIONS = ['category', 'priceBucket'] as const;
+
+export type DashboardDimension = (typeof DASHBOARD_DIMENSIONS)[number];
+
+/** The value each row has on a dimension: the category word, or the id of its price band. */
+const DIMENSION_VALUE: Record<DashboardDimension, (row: Item) => string> = {
+	category: (row) => categoryOf(row.name),
+	priceBucket: (row) => PRICE_BANDS[priceBandIndex(row.price)]!.id
+};
+
+/** The conditions the page's rows are narrowed by. */
 export interface DashboardFilter {
 	period: DashboardPeriod;
+	/** The value chosen per dimension (one each). A dimension without a value does not narrow. */
+	selection: Partial<Record<DashboardDimension, string>>;
 }
 
-export const DEFAULT_DASHBOARD_FILTER: DashboardFilter = { period: DEFAULT_DASHBOARD_PERIOD };
+export const DEFAULT_DASHBOARD_FILTER: DashboardFilter = {
+	period: DEFAULT_DASHBOARD_PERIOD,
+	selection: {}
+};
 
 /** `YYYY-MM-DD` of a stored date / timestamp (`2026-07-02`, `2026-07-02T10:00:00Z`, `2026-07-02 10:00:00`). */
 const dayOf = (value: string) => value.slice(0, 10);
@@ -74,12 +92,24 @@ export function latestDay(rows: readonly Item[]): string | null {
 }
 
 /**
- * The rows the filter leaves. With nothing to narrow by it returns `rows` ITSELF (the same
- * array), so the data that is not narrowed and the data that is are one object at `all`.
+ * The rows the filter leaves: the period, then the selection of every dimension except `except`
+ * (the dimension the asking widget shows itself). With nothing to narrow by it returns `rows`
+ * ITSELF (the same array), so the data that is not narrowed and the data that is are one object
+ * at `all`.
  */
-export function narrowRows(rows: Item[], filter: DashboardFilter): Item[] {
+export function narrowRows(
+	rows: Item[],
+	filter: DashboardFilter,
+	except?: DashboardDimension
+): Item[] {
 	const anchor = filter.period === DEFAULT_DASHBOARD_PERIOD ? null : latestDay(rows);
 	const start = anchor === null ? null : periodStart(filter.period, anchor);
-	if (start === null) return rows;
-	return rows.filter((row) => dayOf(row.updatedAt) > start);
+	let result = start === null ? rows : rows.filter((row) => dayOf(row.updatedAt) > start);
+	for (const dimension of DASHBOARD_DIMENSIONS) {
+		const chosen = filter.selection[dimension];
+		if (dimension === except || chosen === undefined || chosen === '') continue;
+		const valueOf = DIMENSION_VALUE[dimension];
+		result = result.filter((row) => valueOf(row) === chosen);
+	}
+	return result;
 }

@@ -8,8 +8,8 @@ import { latestDay, periodStart, type DashboardFilter } from './dashboardPeriod'
 import { PRICE_BANDS } from './resources/items';
 import type { Item } from './sampleData';
 
-const all: DashboardFilter = { period: 'all' };
-const days30: DashboardFilter = { period: '30d' };
+const all: DashboardFilter = { period: 'all', selection: {} };
+const days30: DashboardFilter = { period: '30d', selection: {} };
 
 /** The query of a link, as the list reads it. */
 const queryOf = (href: string) => Object.fromEntries(new URL(href, 'http://x').searchParams);
@@ -29,9 +29,11 @@ describe('drillHref', () => {
 			'arg.after': '2026-06-02'
 		});
 		for (const period of ['90d', '12m'] as const) {
-			expect(queryOf(drillHref({ kind: 'lowStock' }, { period }, '2026-07-02'))['arg.after']).toBe(
-				periodStart(period, '2026-07-02')
-			);
+			expect(
+				queryOf(drillHref({ kind: 'lowStock' }, { period, selection: {} }, '2026-07-02'))[
+					'arg.after'
+				]
+			).toBe(periodStart(period, '2026-07-02'));
 		}
 	});
 
