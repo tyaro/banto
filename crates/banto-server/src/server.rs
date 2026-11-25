@@ -199,6 +199,22 @@ impl RunningServer {
         self.detached_writes.budget()
     }
 
+    /// Whether this listener is serving right now: no stop was requested
+    /// ([`StopHandle::request_stop`]) AND the task that accepts its
+    /// connections is still running. Read-only; a snapshot.
+    ///
+    /// `false` without a requested stop means the accept task ended on its
+    /// own - which a listener from [`bind`] does not do, but a listener of the
+    /// app's own ([`BoundServer::from_listener`]) can cause, e.g. by a panic
+    /// in its `accept`. For an app that changes something inside its listener
+    /// while it keeps serving (a renewed certificate, swapped in behind the
+    /// same socket) and must not report that as done on a listener that has
+    /// stopped or is being stopped (Issue #947). After a requested stop this
+    /// is `false` at once, also while the task is still winding down.
+    pub fn is_serving(&self) -> bool {
+        !self.detached_writes.is_closed() && !self.join_handle.is_finished()
+    }
+
     /// A cloneable handle that can ask this listener to stop without owning
     /// or awaiting it ([`StopHandle::request_stop`]; Issue #947). The stop is
     /// still finished - the accepted writes waited for and reported - by
@@ -1504,6 +1520,67 @@ Connection: close
         tokio::time::timeout(Duration::from_secs(3), server.stop())
             .await
             .expect("idle stop is immediate");
+    }
+
+    /// A listener of the app's own whose `accept` panics.
+    struct BrokenListener(TcpListener);
+
+    impl Listener for BrokenListener {
+        type Io = tokio::net::TcpStream;
+        type Addr = SocketAddr;
+
+        async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+            panic!("accept panicked (expected in this test)");
+        }
+
+        fn local_addr(&self) -> std::io::Result<Self::Addr> {
+            self.0.local_addr()
+        }
+    }
+
+    #[tokio::test]
+    async fn is_serving_turns_false_when_the_accept_task_ends_on_its_own() {
+        let server = BoundServer::from_listener(BrokenListener(
+            TcpListener::bind("127.0.0.1:0").await.unwrap(),
+        ))
+        .unwrap()
+        .serve(Router::new());
+        let mut ended = false;
+        for _ in 0..300 {
+            if !server.is_serving() {
+                ended = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(ended, "the ended accept task is visible");
+        assert!(
+            !server.stop_handle().is_stop_requested(),
+            "nobody asked for a stop: this is what tells the two apart"
+        );
+        // The stop of such a listener still returns.
+        tokio::time::timeout(Duration::from_secs(3), server.stop())
+            .await
+            .expect("stop returns");
+    }
+
+    #[tokio::test]
+    async fn is_serving_is_false_at_once_after_a_requested_stop() {
+        let server = bind(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        })
+        .await
+        .unwrap()
+        .serve(Router::new());
+        assert!(server.is_serving());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(server.is_serving(), "it keeps serving while left alone");
+
+        // No `.await` between the request and the read.
+        server.stop_handle().request_stop();
+        assert!(!server.is_serving());
+        server.stop().await;
     }
 
     #[tokio::test]

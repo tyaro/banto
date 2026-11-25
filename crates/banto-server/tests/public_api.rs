@@ -105,6 +105,7 @@ where
     let watcher = handle.clone();
     std::thread::spawn(move || watcher.request_stop());
     let _: bool = handle.is_stop_requested();
+    let _: bool = own.is_serving();
     Ok(banto_server::RunningServer::stop_all([plain, own]).await)
 }
 

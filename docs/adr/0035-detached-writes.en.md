@@ -211,6 +211,14 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
   Finishing the stop (waiting for the remaining writes and reporting them) is still the owner's `stop()` /
   `stop_all()`. Cutting open connections on the spot stays the job of the app's `Io` (below). A `StopHandle` does
   not keep a listener alive (dropping the `RunningServer` stops it even while handles remain).
+- **Whether it is serving**: `RunningServer::is_serving()` (read-only) is true only while no stop was requested AND
+  the task that accepts connections is running (added in the re-review of PR #950). It is false from the moment a
+  stop is requested. False without a request means the accept task ended on its own (a panic in the `accept` of the
+  app's own listener, for instance). An operation that changes something inside a listener without stopping it (an
+  ordinary certificate renewal that swaps the certificate behind the same socket) is outside banto and leaves the
+  `RunningServer` as it is; reading this before and after lets the app refuse to report such a swap as done on a
+  listener that stopped or raced with a revocation. A listener is rebuilt only for a revocation or a real
+  re-creation.
 - **Writes left by an earlier generation stay with the app**: `stop_all` waits only for the listeners it is given.
   The `RemainingWrites` of a `StopOutcome::WritesRemaining` returned when a listener was replaced is kept by the
   app until it reports `is_finished()`; at the final stop the app waits for those too, against the same deadline
@@ -275,7 +283,8 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
   write on a listener of the app's own is detached and has `ConnectInfo` / stopping two listeners together waits
   for the writes of both / a write left running is reported by the listener it came in on / while one listener is
   replaced the other's writes stay detached / the budget is shared across listeners), the unit test in `server.rs`
-  (`stop_all` closes every gate before it waits / a `StopHandle` does not keep a dropped listener serving), in the
+  (`stop_all` closes every gate before it waits / a `StopHandle` does not keep a dropped listener serving /
+  `is_serving` turns false when the accept task ends on its own, and at once after a requested stop), in the
   same `detach_writes.rs`: after a stop requested from outside neither a connection nor a write is accepted / a
   write detached before the request runs to the end / writes left by an earlier generation are not in the results
   of `stop_all`, the unit
