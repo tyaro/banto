@@ -107,7 +107,7 @@ Architecture overview (Japanese, Mermaid diagrams):
   demo, reachable on the live demo too); scan-wedge is recipe-only (not wired
   into the demo app). Per-package integration recipes live under
   [docs/recipes/](docs/recipes/) (scan-wedge, notifications, tree-svelte,
-  image-assets, app-sse-stream: an app's own value-carrying SSE stream).
+  image-assets, touch-keys: on-screen number keypad / text keyboard for touch panels, app-sse-stream: an app's own value-carrying SSE stream).
 
 ## Try it first: browser demo (in-memory)
 
