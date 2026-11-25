@@ -1865,7 +1865,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await selectUserRow(VIEWER_USERNAME);
 		const password = panel.getByLabel('新しいパスワード（8文字以上）', { exact: true });
 		await expect(password).toHaveCSS('font-size', createFont);
-		await expect(password).toHaveCSS('border-bottom-width', '2px');
+		// The underline sits on the `.banto-affix` wrapper (PasswordInput, #944).
+		await expect(password.locator('xpath=..')).toHaveCSS('border-bottom-width', '2px');
 		await password.fill(VIEWER_PASSWORD);
 		let releaseReset!: () => void;
 		const resetGate = new Promise<void>((resolve) => (releaseReset = resolve));
