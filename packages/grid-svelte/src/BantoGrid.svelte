@@ -1170,7 +1170,12 @@
 	// `click`). Only the cell it landed on is remembered here; focus, the
 	// active cell and the start of editing all wait for the `click`.
 	// Never reactive: only event handlers read these.
-	let pendingTap: { pointerId: number; rowIndex: number; field: string } | null = null;
+	let pendingTap: {
+		pointerId: number;
+		pointerType: string;
+		rowIndex: number;
+		field: string;
+	} | null = null;
 	/** The tap the capture-phase `click` accepted, for the bubbling `click` on the same cell. */
 	let acceptedTap: { rowIndex: number; field: string } | null = null;
 
@@ -1191,7 +1196,25 @@
 		acceptedTap = null;
 		if (event.button !== 0) return;
 		if (event.pointerType === 'touch' || event.pointerType === 'pen') {
-			pendingTap = { pointerId: event.pointerId, rowIndex, field };
+			const tap = { pointerId: event.pointerId, pointerType: event.pointerType, rowIndex, field };
+			const cellEl = event.currentTarget as HTMLElement;
+			pendingTap = tap;
+			// A press that is cancelled (a pan), or released away from its cell,
+			// gets no `click` here: drop it, so that a later click that is not a
+			// pointer's (a keyboard, assistive technology) cannot pass for its tap.
+			// On window: a touch `pointerup` goes to the pressed element wherever
+			// the finger is, a mouse-like one to whatever is under it.
+			const onTapEnd = (endEvent: PointerEvent) => {
+				if (endEvent.pointerId !== tap.pointerId) return;
+				window.removeEventListener('pointerup', onTapEnd, true);
+				window.removeEventListener('pointercancel', onTapEnd, true);
+				if (pendingTap !== tap) return;
+				if (endEvent.type === 'pointercancel' || !pointerEndedOn(cellEl, endEvent)) {
+					pendingTap = null;
+				}
+			};
+			window.addEventListener('pointerup', onTapEnd, true);
+			window.addEventListener('pointercancel', onTapEnd, true);
 			return;
 		}
 		// Move real DOM focus to the grid container so keyboard navigation
@@ -1237,8 +1260,41 @@
 		window.addEventListener('pointercancel', onEnd);
 	}
 
-	function handleCellPointerCancel(event: PointerEvent) {
-		if (pendingTap?.pointerId === event.pointerId) pendingTap = null;
+	// A tap's compatibility `mousedown` comes after its `pointerdown` and
+	// before its `click`, and its default action moves focus to the nearest
+	// focusable ancestor - the grid container. On the room around the editor
+	// of the cell being edited (a checkbox editor does not fill its cell) that
+	// would blur, and so commit, the draft before the `click` guard below can
+	// keep it. The mouse is left alone: its press on that room commits, as before.
+	function handleCellMouseDown(event: MouseEvent, rowIndex: number, field: string, row: TRow) {
+		if (pendingTap?.rowIndex !== rowIndex || pendingTap.field !== field) return;
+		if (!isCellBeingEdited(row, field)) return;
+		const editorRoot = editorRootEl ?? editorEl;
+		if (editorRoot && event.target instanceof Node && editorRoot.contains(event.target)) return;
+		event.preventDefault();
+	}
+
+	function pointerEndedOn(cellEl: HTMLElement, event: PointerEvent): boolean {
+		if (!(event.target instanceof Node) || !cellEl.contains(event.target)) return false;
+		// jsdom has no hit testing; there the target above is all there is.
+		const document = cellEl.ownerDocument;
+		if (typeof document.elementFromPoint !== 'function') return true;
+		const under = document.elementFromPoint(event.clientX, event.clientY);
+		return under !== null && cellEl.contains(under);
+	}
+
+	/**
+	 * Whether `click` is the one `tap`'s pointer produced. A pointer's click
+	 * carries its `pointerId` / `pointerType` (Pointer Events 3); a click that
+	 * no pointer made has `-1` / `''`. Where `click` is still a plain
+	 * MouseEvent there is nothing to compare, and the press having ended on
+	 * its cell (above) is the only evidence.
+	 */
+	function clickIsOfTap(click: MouseEvent, tap: NonNullable<typeof pendingTap>): boolean {
+		const pointer = click as Partial<PointerEvent>;
+		if (typeof pointer.pointerId !== 'number' || typeof pointer.pointerType !== 'string')
+			return true;
+		return pointer.pointerId === tap.pointerId && pointer.pointerType === tap.pointerType;
 	}
 
 	// The tap's deferred half of `handleCellPointerDown` (focus + active cell).
@@ -1249,6 +1305,7 @@
 		pendingTap = null;
 		acceptedTap = null;
 		if (!tap || tap.rowIndex !== rowIndex || tap.field !== field) return;
+		if (!clickIsOfTap(event, tap)) return;
 		// The cell being edited belongs to its editor: focusing the container
 		// here would blur (commit) it.
 		if (isCellBeingEdited(row, field)) return;
@@ -2075,7 +2132,7 @@
 							class:editing={isEditingCell}
 							class:error={isEditingCell && !!editing?.error}
 							onpointerdown={(event) => handleCellPointerDown(event, rowIndex, column.id)}
-							onpointercancel={handleCellPointerCancel}
+							onmousedown={(event) => handleCellMouseDown(event, rowIndex, column.id, row)}
 							onclickcapture={(event) => handleCellClickCapture(event, rowIndex, column.id, row)}
 							onclick={() => handleCellClick(rowIndex, column, row)}
 							oncontextmenu={(event) => handleCellContextMenu(event, rowIndex, column.id, row)}

@@ -190,24 +190,65 @@ describe('BantoGrid tap to edit (#964 G1)', () => {
 		expect(activeCell(container)).toBeNull();
 	});
 
-	it('leaves no window listener behind: touch adds none, a cancelled mouse drag removes its own', async () => {
-		const liveCount = trackWindowListeners();
+	it('a press released away from its cell is dropped: a later non-pointer click does not edit', async () => {
 		const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
 		const target = cellOf(container, 1, 'name');
-		const before = ['pointermove', 'pointerup', 'pointercancel'].map(liveCount);
+		await press(target, 'pen');
+		await fireEvent.pointerUp(document.body, { pointerType: 'pen', pointerId: 1 });
+		await fireEvent.click(target);
+		expect(editorIn(container)).toBeNull();
+		expect(activeCell(container)).toBeNull();
+	});
+
+	it('where click is a PointerEvent, only the click of the pressing pointer is its tap', async () => {
+		const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
+		const target = cellOf(container, 1, 'name');
+		const clickOf = (pointerId: number, pointerType: string) =>
+			new PointerEvent('click', { bubbles: true, cancelable: true, pointerId, pointerType });
+
+		// The press is still held (no pointerup yet): a synthetic click
+		// (`element.click()`, a keyboard, assistive technology) is not its tap.
+		await press(target, 'touch', 4);
+		target.dispatchEvent(clickOf(-1, ''));
+		await tick();
+		expect(editorIn(container)).toBeNull();
+		expect(activeCell(container)).toBeNull();
+
+		await press(target, 'touch', 4);
+		target.dispatchEvent(clickOf(5, 'touch'));
+		await tick();
+		expect(editorIn(container)).toBeNull();
+
+		await press(target, 'touch', 4);
+		await fireEvent.pointerUp(target, { pointerType: 'touch', pointerId: 4 });
+		target.dispatchEvent(clickOf(4, 'touch'));
+		await tick();
+		expect(editorIn(container)).not.toBeNull();
+	});
+
+	it('leaves no window listener behind after a tap, a cancelled press or a cancelled mouse drag', async () => {
+		const liveCount = trackWindowListeners();
+		const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
+		const target = cellOf(container, 1, 'price');
+		const types = ['pointermove', 'pointerup', 'pointercancel'];
+		const before = types.map(liveCount);
 
 		await press(target, 'touch');
-		expect(['pointermove', 'pointerup', 'pointercancel'].map(liveCount)).toEqual(before);
+		expect(liveCount('pointermove')).toBe(before[0]);
 		await fireEvent.pointerCancel(target, { pointerType: 'touch', pointerId: 1 });
+		expect(types.map(liveCount)).toEqual(before);
+
+		await tap(target, 'touch', 2);
+		expect(types.map(liveCount)).toEqual(before);
 
 		await press(target, 'mouse', 7);
 		expect(liveCount('pointermove')).toBe(before[0] + 1);
 		await fireEvent.pointerCancel(window, { pointerType: 'mouse', pointerId: 7 });
-		expect(['pointermove', 'pointerup', 'pointercancel'].map(liveCount)).toEqual(before);
+		expect(types.map(liveCount)).toEqual(before);
 
 		await press(target, 'mouse', 8);
 		await fireEvent.pointerUp(window, { pointerType: 'mouse', pointerId: 8 });
-		expect(['pointermove', 'pointerup', 'pointercancel'].map(liveCount)).toEqual(before);
+		expect(types.map(liveCount)).toEqual(before);
 	});
 
 	it('a long press (contextmenu, no click) calls onRowContextMenu and does not start editing', async () => {
@@ -295,6 +336,23 @@ describe('BantoGrid: the cell being edited keeps its draft (#964 G1)', () => {
 		expect(editor.value).toBe('手帳');
 		expect(document.activeElement).toBe(editor);
 		expect(onCellEdit).not.toHaveBeenCalled();
+	});
+
+	it('the compatibility mousedown of a tap on that padding does not move focus; a mouse press still does', async () => {
+		const { cell, editor } = await startWithDraft('touch');
+		await press(cell, 'touch', 2);
+		const compat = createEvent.mouseDown(cell);
+		cell.dispatchEvent(compat);
+		expect(compat.defaultPrevented).toBe(true);
+		// Inside the editor the press is the input's own (caret placement).
+		const inside = createEvent.mouseDown(editor);
+		editor.dispatchEvent(inside);
+		expect(inside.defaultPrevented).toBe(false);
+
+		await press(cell, 'mouse', 3);
+		const mouse = createEvent.mouseDown(cell);
+		cell.dispatchEvent(mouse);
+		expect(mouse.defaultPrevented).toBe(false);
 	});
 
 	it('a tap on a cell whose save is pending opens a new session, as a double-click does (#210)', async () => {
