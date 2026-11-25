@@ -141,6 +141,32 @@ describe('hasVisibleLayerAbove: the stack', () => {
 		sidebar.setAttribute(LAYER_MARKER_ATTR, '');
 		expect(hasVisibleLayerAbove({ except: modal.panel })).toBe(true);
 	});
+
+	// The promise `@banto/touch-keys-svelte` relies on without importing this module
+	// (touch-keypad-design §7.3 / §17): its keys are a `popover="manual"` carrying
+	// `data-esc-layer`, with no z-index and no role. Changing LAYER_SELECTOR or the
+	// open-popover rule breaks it silently, so it is pinned here.
+	it('a `data-esc-layer` inside an open popover is above an `aria-modal` layer, whatever its z-index', () => {
+		const modal = layer(900);
+		modal.panel.setAttribute('aria-modal', 'true');
+		const keys = document.createElement('div');
+		keys.setAttribute('popover', 'manual');
+		keys.setAttribute(LAYER_MARKER_ATTR, '');
+		document.body.prepend(keys); // earlier in the document and z 0: only the top layer puts it above
+		// jsdom has no top layer: stand in for `:popover-open` (and undo its `[popover]` display: none).
+		keys.style.display = 'block';
+		let open = false;
+		keys.matches = ((selector: string) =>
+			selector === ':popover-open'
+				? open
+				: Element.prototype.matches.call(keys, selector)) as typeof keys.matches;
+
+		expect(hasVisibleLayerAbove({ except: modal.panel })).toBe(false);
+		open = true;
+		expect(hasVisibleLayerAbove({ except: modal.panel })).toBe(true);
+		// ... and it is not a modal layer itself: shortcuts are not silenced by it.
+		expect(hasVisibleModalLayer({ except: modal.panel })).toBe(false);
+	});
 });
 
 describe('hasVisibleLayerAbove: layers that are "not there" (promise 6)', () => {

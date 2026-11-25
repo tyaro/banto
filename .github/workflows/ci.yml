@@ -59,6 +59,10 @@ jobs:
   # git の失敗は true（総当たりを全部走らせる）。判定の理由はログに出す。docs / full の判定とは独立。
   # 浅い既定で通した PR のあとの崩れは、週次の `.github/workflows/dock-exhaustive.yml`（全部の深さ、
   # 失敗したら追跡 Issue）が拾う。
+  # touch-keys のブラウザーの fixture（#937 T2、touch-keypad-design §14.3）: 出力 `touch` が `false` のとき、
+  # ジョブ `touch-keys-browser` を飛ばす。dock と同じ判定で、見るパスは fixture が読むもの
+  # （`packages/touch-keys-svelte/`・`packages/ui/`（本物の Modal）・`packages/theme/`（CSS））と、
+  # `pnpm-lock.yaml`・このワークフロー。push（main）・fork・git の失敗は true。
   # changes が失敗しても下流は `!cancelled()` で動き、出力が空なので全部走る
   # （`dock` が空 = `!= 'false'` なので総当たりも全部走る）。
   changes:
@@ -72,6 +76,7 @@ jobs:
       full: ${{ steps.decide.outputs.full }}
       docs: ${{ steps.decide.outputs.docs }}
       dock: ${{ steps.dock.outputs.dock }}
+      touch: ${{ steps.touch.outputs.touch }}
     steps:
       # 既定の ref（pull_request では refs/pull/N/merge）= ほかのジョブが検証する
       # merge commit と同じものを取る。
@@ -100,6 +105,22 @@ jobs:
           [ "$rc" -ne 1 ] || dock "dock-svelte を触る差分: 総当たりを全部走らせる" true
           [ "$rc" -eq 0 ] || dock "git diff に失敗（終了コード $rc）" true
           dock "dock-svelte を触らない差分: 総当たりは浅い既定" false
+
+      # touch-keys のブラウザーの fixture を回すか（上のコメント）。
+      - name: Decide touch-keys browser fixture
+        id: touch
+        env:
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          touch() { echo "touch: $2（$1）"; echo "touch=$2" >> "$GITHUB_OUTPUT"; exit 0; }
+          [ "$EVENT" = pull_request ] || touch "pull_request 以外: $EVENT" true
+          [ "$HEAD_REPO" = "$REPO" ] || touch "fork からの PR" true
+          rc=0; git diff --quiet HEAD^1 HEAD -- packages/touch-keys-svelte/ packages/ui/ packages/theme/ pnpm-lock.yaml .github/workflows/ci.yml || rc=$?
+          [ "$rc" -ne 1 ] || touch "fixture が読むパスを触る差分: 回す" true
+          [ "$rc" -eq 0 ] || touch "git diff に失敗（終了コード $rc）" true
+          touch "fixture が読むパスを触らない差分: 飛ばす" false
 
       - name: Decide
         id: decide
@@ -551,6 +572,47 @@ jobs:
         with:
           name: playwright-test-results
           path: e2e/test-results/
+          retention-days: 3
+
+  # @banto/touch-keys-svelte のブラウザーの fixture（#937 T2、touch-keypad-design §14.3）。
+  # パッケージの中の最小の画面（tests/browser/。テンプレートには配線しない）を vite で出し、
+  # Playwright のタッチの文脈で、当たり判定・top layer・フォーカス・ブラウザーの数値の検証・
+  # 本物の @banto/ui の Modal との組み合わせを確かめる（jsdom では確かめられない約束）。
+  # アプリのビルドも Rust も要らない。fixture が読むパスを触らない PR では飛ばす（changes の `touch`）。
+  touch-keys-browser:
+    name: touch-keys (browser fixture)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.full != 'false' && needs.changes.outputs.touch != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run touch-keys browser fixture
+        run: pnpm e2e:touch-keys
+
+      - name: Upload Playwright test results (traces)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: touch-keys-browser-test-results
+          path: packages/touch-keys-svelte/tests/browser/test-results/
           retention-days: 3
 
   e2e-visual:

@@ -125,7 +125,8 @@ test('packages/ の全パッケージが scaffold の判断（remover / コア /
 	// 意図的な除外（レシピのみ・未配線。scaffold.mjs 冒頭 doc と plan §3 の決定）。
 	// image-assets（ADR-0020 §6）もアプリが依存しない未配線のオプションで、外すアプリ側の配線が無い。
 	// パッケージ本体は他の remover と同じく同梱のまま（消すと docs の参照が rule docs-package-refs に落ちる）。
-	// touch-keys-svelte（ADR-0036、#937）も同じ: アプリは依存せず、scaffold はどのプリセットでも触れない。
+	// touch-keys-svelte（ADR-0036、#937、template-scope §3）も同じ: recipe-only で、アプリは依存せず配線も無い。
+	// scaffold はどのプリセットでも触れない。
 	const EXCLUDED = new Set(['scan-wedge', 'image-assets', 'touch-keys-svelte']);
 
 	const source = fs.readFileSync(path.join(repoRoot, 'scripts/scaffold.mjs'), 'utf8');

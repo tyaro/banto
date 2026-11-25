@@ -6,11 +6,18 @@
 
 ## 状態
 
-T1（本パッケージの新設）まで。入力欄との結びつけ（`TouchKeysHost`・`touchKeys`）・文字キーボード・カナ・
-レシピは後の段階（設計書 §15）。
+T2 まで（テンキー）。文字キーボード・パスワード・カナ・レシピは後の段階（設計書 §15）。**タッチの実機・WebView2 での確かめは
+まだ**（設計書 §14.4）。
 
-- `NumberKeypad` — テンキーの表示とキーの入力だけ。`draft`（`bind:`）・`min`・`max`・`step`・`decimals`・
-  `allowNegative`・`required`・`label`・`messages`・`onconfirm`・`oncancel`。
+- `TouchKeysHost` — アプリのルートに 1 つ置く。`enabled`（必須。既定の自動判定は持たない）が true の間、数値の入力欄
+  （`type="number"`、`inputmode="numeric"` / `"decimal"`）のタップでテンキーを開く。確定で入力欄の `value` に書き、`input`・`change` を
+  出すので、`bind:value` も `oninput` もそのまま動く。フォーカスは入力欄に置いたまま。盤の外のタップは取り消しで、下の画面には届かない。
+  `placement`（`popup` / `bottom`）・`resolve`・`messages`・`onopen`・`onconfirm`・`oncancel`・`note`。
+- `touchKeys(options | false)` — 入力欄ごとの指定（`{@attach touchKeys({ kind: 'number', min: 0, max: 999, editKey: row.id })}`）。
+  同じ `<input>` を別のレコードに使い回す画面では `editKey` を渡す（開いたときと違えば書かない）。外すのは `touchKeys(false)` か、
+  入力欄・その包みの `data-touch-keys="off"`。
+- `NumberKeypad` — テンキーの表示とキーの入力だけ（単体でも使える）。`draft`（`bind:`）・`rules`・`min`・`max`・`step`・`decimals`・
+  `allowNegative`・`required`・`label`・`messages`・`note`・`onconfirm`・`oncancel`。
 - `resolveNumberRules(attrs, spec)` — 入力欄の属性（`type="number"`・`inputmode`・`min`・`max`・`step`・`value`）と
   明示の指定から、範囲・刻み・小数の桁を読む（HTML の `type=number` の検証に合わせる）。
 - `classifyDraft(text, rules)` — 下書きを「空・途中・確定できない・確定できる値」に分ける。範囲と刻みは
@@ -18,6 +25,12 @@ T1（本パッケージの新設）まで。入力欄との結びつけ（`Touch
 - `pressNumberKey`・`normalizeDraft`・`isWritableNumber`・`inferTouchKind` — キー 1 打の遷移、書く形、書く前の検査、
   属性から盤の種類の推定。
 - `TouchKeysMessages` / `defaultTouchKeysMessages` — 文言は関数の束（日本語の既定）。アプリが Paraglide から作って渡す。
+
+## 試験
+
+- `pnpm --filter @banto/touch-keys-svelte test` — 純粋な関数と、jsdom の部品の試験。
+- `pnpm e2e:touch-keys`（リポジトリのルートで）— ブラウザーの fixture（`tests/browser/`。Playwright のタッチの文脈で、本物の
+  `@banto/ui` の `Modal` と組んで、外のタップ・層・フォーカス・ブラウザーの数値の検証・実キーの Enter を確かめる）。
 
 ## 大きさ
 
