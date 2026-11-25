@@ -31,7 +31,6 @@
 	 */
 	import {
 		BantoForm,
-		PasswordInput,
 		createFormStore,
 		uploadPendingFiles,
 		type FileFieldClient,
@@ -112,6 +111,7 @@
 		referenceFieldMessages
 	} from '#lib/banto/i18n.js';
 	// [scaffold:touch-keys] begin
+	import { PasswordInput } from '@banto/forms';
 	// TouchKeysHost card (#937 T7, touch-keypad-design §4.2 b): the optional
 	// `@banto/touch-keys-svelte`. The host normally sits once in the root layout
 	// (docs/recipes/touch-keys.md); here it lives in the card and `resolve` limits it
