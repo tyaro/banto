@@ -3,7 +3,7 @@
 作成日: 2026-11-25（#937 T5。トラックB＝アプリ作者向け）
 
 タッチパネルの端末（キーボードの無い現場の端末）で、入力欄のタップに **画面内のテンキー・文字キーボード** を出す。
-確定で入力欄の `value` に書き、`input`・`change` を出すので、`bind:value` も `oninput` も `BantoForm` の検証もそのまま動く。
+確定で入力欄の `value` に書き、`input`・`change` を出すので、`bind:value` も `oninput` も `BantoForm` の検証も（`DraftNumberField` を除き）そのまま動く（4 節の制約）。
 OS のタッチキーボードは出さない（`inputmode="none"`）。パッケージ単体の API は
 [packages/touch-keys-svelte/README.md](../../packages/touch-keys-svelte/README.md)、設計と判断は
 [設計書](../design/touch-keypad-design.md)・[ADR-0036](../adr/0036-touch-keys-package.md)。
@@ -144,7 +144,7 @@ OS のタッチキーボードが同時に出る環境があれば（`inputmode=
 - **`DraftNumberField`**（`type="text"` + `inputmode="decimal"`）はテンキーになるが、`min` / `max` が DOM に無いので、
   **`resolve` で範囲を渡す**（書き忘れると範囲なしのテンキーになる）。**限界**: `DraftNumberField` は `input` では
   `draft.setRaw()` しか呼ばず、検証と値の確定は blur か Enter の `draft.commit()` で行う。盤の確定は入力欄へ書いて `input` を出す
-  までで、フォーカスは入力欄に残るため、**盤を閉じた直後には forms の検証・確定は走らない**（次の blur・Enter・フォーム送信で走る）。
+  までで、フォーカスは入力欄に残るため、**盤を閉じた直後には forms の検証・確定は走らない**（次の blur・Enter で走る。`DraftNumberField` は submit を見ず、標準の `BantoForm` の送信は `FormStore.validateAll()` で `FormDraft` を確定しない。`FormDraft` を使うフォームは、フォーカスが残ったまま送れる画面なら、保存ハンドラーで `draft.commitAll()` が成功してから確定値を読む）。
   grid のセルと同じ限界で、盤の範囲の知らせ（`resolve` の `min` / `max`）が、その場の唯一の検証になる。`input.id` はフィールド名（`DraftNumberField` は `id` を省くと `def.name`）。
 
 ```svelte
