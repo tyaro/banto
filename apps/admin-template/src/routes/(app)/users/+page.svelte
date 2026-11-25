@@ -276,6 +276,7 @@
 		editVersion = user.version;
 		editPermissions = [...(user.permissions ?? [])];
 		resetPassword = '';
+		resetBoxKey++;
 		if (catalogStatus === 'error') void loadCatalog();
 	}
 
@@ -417,6 +418,9 @@
 	}
 
 	let resetPassword = $state('');
+	// Bumped to remount the reset box, so a shown password goes back to hidden (PasswordInput only
+	// resets on a form submit or unmount; this box sits outside any form).
+	let resetBoxKey = $state(0);
 	let resetting = $state(false);
 
 	async function saveReset(): Promise<void> {
@@ -434,6 +438,7 @@
 			toastStore.push('success', m['users.passwordReset']());
 			if (epoch === selectionEpoch && selected?.id === targetId && resetPassword === password) {
 				resetPassword = '';
+				resetBoxKey++;
 			}
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -638,13 +643,15 @@
 							<div class="danger-section">
 								<p class="note">{m['users.resetDesc']()}</p>
 								<div class="banto-field banto-field--stacked edit-field">
-									<PasswordInput
-										id="{uid}-pw-1"
-										class="banto-field-control"
-										bind:value={resetPassword}
-										autocomplete="new-password"
-										messages={passwordInputMessages()}
-									/>
+									{#key resetBoxKey}
+										<PasswordInput
+											id="{uid}-pw-1"
+											class="banto-field-control"
+											bind:value={resetPassword}
+											autocomplete="new-password"
+											messages={passwordInputMessages()}
+										/>
+									{/key}
 									<label class="banto-field-label" for="{uid}-pw-1">
 										{m['common.newPasswordMinLabel']()}
 									</label>
