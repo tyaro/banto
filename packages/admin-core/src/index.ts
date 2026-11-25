@@ -176,6 +176,38 @@ export {
 } from './connectionMonitor.svelte';
 
 export {
+	createHttpConfigDrafts,
+	createTauriConfigDrafts,
+	configDraftConflict,
+	CONFIG_DRAFT_ABSENT_REVISION,
+	type ConfigChange,
+	type ConfigDiff,
+	type ConfigDiffOptions,
+	type ConfigDraft,
+	type ConfigDraftConflict,
+	type ConfigDraftDiscarded,
+	type ConfigDraftPutInput,
+	type ConfigDraftRebaseInput,
+	type ConfigDraftSaved,
+	type ConfigDraftsProvider,
+	type ConfigHistoryDetail,
+	type ConfigHistoryEntry,
+	type ConfigHistoryKind,
+	type ConfigHistoryListOptions,
+	type ConfigLock,
+	type ConfigLockInfo,
+	type ConfigPublishInput,
+	type ConfigPublished,
+	type ConfigPublishedStamp,
+	type ConfigPublishOutcome,
+	type ConfigRevertInput,
+	type ConfigState,
+	type ConfigTargetSummary,
+	type HttpConfigDraftsOptions,
+	type TauriConfigDraftsOptions
+} from './providers/configDrafts';
+
+export {
 	createLocalUiSettings,
 	createTauriUiSettings,
 	createHttpUiSettings,

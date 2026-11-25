@@ -972,22 +972,28 @@ impl ConfigDraftsService {
     /// `lease` is the row's lease. Otherwise it does nothing and still
     /// succeeds - a late release from an old tab must not remove the lock a
     /// newer tab (or someone else) took since. The draft stays.
+    ///
+    /// Returns whether a lock was removed (`false` for a stale lease), so the
+    /// wiring announces a change only when there was one.
     pub async fn lock_release(
         &self,
         target: &str,
         editor: &ConfigEditor,
         lease: &str,
-    ) -> Result<(), BantoError> {
+    ) -> Result<bool, BantoError> {
         self.target(target)?;
         check_token("lease", lease)?;
         let dialect = self.db.dialect();
-        with_target_write!(self, target, |tx, _published, _at| {
+        let removed = with_target_write!(self, target, |tx, _published, _at| {
             let current = fetch_lock!(tx, dialect, target);
-            if current.is_some_and(|lock| lock.holder == editor.holder && lock.lease == lease) {
+            let mine =
+                current.is_some_and(|lock| lock.holder == editor.holder && lock.lease == lease);
+            if mine {
                 delete_lock!(tx, dialect, target);
             }
+            mine
         });
-        Ok(())
+        Ok(removed)
     }
 
     /// Remove someone's lock (an administrator's action; the wiring checks

@@ -1,7 +1,7 @@
 # 設定の下書き・反映・元に戻す 設計書 — Issue #938
 
 作成日: 2026-11-25
-状態: **S1a・S1b・S2 実装済み、S3〜S5 未着手**（§7。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験（PR #953）。S2 = `banto-server` の `config_drafts_router`（4 役目のガード・監査・イベント）。**REST では使えるが、テンプレートへの配線（migration・Tauri・rule 8）は S4**）。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
+状態: **S1a〜S3 実装済み、S4・S5 未着手**（§7。S3 = admin-core の読み口 `providers/configDrafts.ts`。S1a = 土台: 対象の登録・本番の読み口・ロック・下書きの保存と破棄・パスごとの差分（PR #952）。S1b = 反映・元に戻す・取り直し・履歴・差分の口・一覧と、PostgreSQL の試験（PR #953）。S2 = `banto-server` の `config_drafts_router`（4 役目のガード・監査・イベント）。**REST では使えるが、テンプレートへの配線（migration・Tauri・rule 8）は S4**）。**§12 はオーナー決定済み（PR #948 issuecomment-7151041816、14 件とも推奨どおり）**
 トラック: 保守者向け（トラックA）
 関連: Issue #938、#638・#651（楽観ロックと `conflict`）、#786（`ui_settings` の revision）、#597（監査の差分）、
 #697（ユーザー個別の権限）、#935・#936（[アプリ独自の SSE](sse-stream-design.md)）、#793 / [ADR-0035](../adr/0035-detached-writes.md)（書き込みを切断から切り離す）、
@@ -514,7 +514,7 @@ impl ConfigDraftsService {
     // ロック
     pub async fn lock_acquire(&self, target: &str, editor: &ConfigEditor) -> Result<ConfigLock, BantoError>; // 新しい lease
     pub async fn lock_extend(&self, target: &str, editor: &ConfigEditor, lease: &str) -> Result<ConfigLock, BantoError>; // 持ち主と lease の両方が一致する有効なロックだけ
-    pub async fn lock_release(&self, target: &str, editor: &ConfigEditor, lease: &str) -> Result<(), BantoError>; // 同上
+    pub async fn lock_release(&self, target: &str, editor: &ConfigEditor, lease: &str) -> Result<bool, BantoError>; // 同上。消したかを返す（古い lease の再送は false。配線は true のときだけ知らせる）
     pub async fn lock_force_release(&self, target: &str, if_lease: &str) -> Result<ConfigLock, BantoError>;
 
     // 下書き（自分のロックが要る）
@@ -596,6 +596,9 @@ S2 でサービス側に足した物（両経路が同じ監査 detail を作る
 
 - **ロック**は `{ holderName, lease, acquiredAtMs, expiresAtMs }`（`ConfigLock`。持ち主のキーは出さない）。状態（`GET /api/config/{target}`）は
   `{ target, published, draft, lock, lockIsMine }`（`mine` は `lock` の中ではなく `lockIsMine`。`draft`・`lock` は無ければ `null`）。
+- **lease は状態（`GET /api/config/{target}`）と一覧（`GET /api/config`）の `lock` にも出る**（ほかの人の有効なロックでも。解除の権限を持つ画面が `unlock(target, ifLease)` に使う）。
+  lease は取得の回の識別子で、権限・持ち主の証明ではない。lease を含まないのは 409 の `current.lock` だけ（S1a の決定）。admin-core の型は `ConfigLock`（lease あり）と、衝突用の `ConfigLockInfo`（なし）に分ける。
+  HTTP の provider は本文の JSON 化の失敗（`bigint` など）を fetch の失敗と分け、送らずに `bad_request` で拒む（`isNetworkError` は偽）。
 - **lease の欄名は `lease`**（`leaseId` ではない）: 延長の本文 `{ lease }`、返却は `?lease=`、解除の本文は `{ ifLease }`。延長の応答はロックの全体。返却と解除の応答は 204（本文なし）。
 - **下書きの保存・取り直しの応答**は `{ revision, baseVersion, validation: [...], lock }`（`ConfigDraftSaved`。検証の結果は `validation` で、空なら反映できる。422 ではない）。
   破棄の応答は `{ revision: "0" }`。
@@ -603,6 +606,19 @@ S2 でサービス側に足した物（両経路が同じ監査 detail を作る
 - **履歴の一覧**は配列そのまま（包まない）。`limit` を省くと 50 件、上限は 100（`MAX_CONFIG_HISTORY_PAGE`）。次のページは、最後の行の版を `before` に渡す。
 - **クエリの条件を省いた DELETE**（`?lease=`・`?ifRevision=`）は 422（`validation`。サービスの欄の検査が断る）。知らない対象は 404（`not_found`、ガードの後）。
 - 409 の本文は既存の `{ kind: "conflict", message, current: { reason, .. } }`（`ApiError`）。`current` の中身は §4.6 のとおりで、ロックの lease・持ち主のキーは入らない。
+- **返却で何も消えなかったとき**（古い lease の再送など）も 204（冪等）だが、`config-draft:<対象>` は送らない（サービスの `lock_release` が消したかを返す）。S3 で直した。
+
+**S3 で決めた形**（admin-core の読み口。上の S2 の形をそのまま写す）:
+
+- 置き場所は §5 のとおり `providers/configDrafts.ts`。オプションは既存の `createHttpUiSettings` に合わせ、`createHttpConfigDrafts({ baseUrl?, getToken, fetchFn? })`
+  （CSRF の `X-Banto-Client` と `Authorization: Bearer` は同じ）、`createTauriConfigDrafts({ invoke })`。
+- 口は 14 個（`list` / `get` / `diff(target, { toVersion? })` / `historyList(target, { before?, limit? })` / `historyGet` / `lockAcquire` / `lockExtend(target, lease)` /
+  `lockRelease(target, lease)` / `draftPut` / `draftRebase` / `draftDiscard(target, ifRevision)` / `publish` / `revert` / `unlock(target, ifLease)`）。
+  `lockRelease`・`unlock` は `void`。REST の DELETE の条件はクエリ（`?lease=`・`?ifRevision=`）、`lockAcquire` は本文なしの POST。
+- Tauri の引数は `target` に REST の本文・クエリの欄（camelCase）を足した平らな 1 つの組。コマンドを配線するのは S4（それまで呼ぶと reject）。
+- 応答は形の軽い検査だけ（オブジェクト・配列か）。違えば `other`（`unexpected config response`）。`fetch` が答えを得られなかったときは `networkFailure: 'network'`。
+- `configDraftConflict(error)` は 5 つの理由ごとの判別つきの型を返す（`stale_base` / `draft_changed` / `published_changed` / `lock_held` / `lock_required`）。
+  `current` の形が合わなければ `null`。`CONFIG_DRAFT_ABSENT_REVISION` (`"0"`) も輸出する。
 
 書き込み 9 つは `DUAL_PATH` の対、読み取り 5 つは `ROLE_READ` の対（ロールの床の対称を見る）に足す（案 B。S4。rule 8 の読み方は §4.9 の「S4 の前提」）。
 Tauri のコマンドは `require_role`（または `require_permission`）→ サービス → `record_ok` → `state.events.send(..)` の順で、REST の handler と同じ。
@@ -612,7 +628,7 @@ Tauri のコマンドは `require_role`（または `require_permission`）→ �
 画面はアプリごとに作る（Issue の補足）。banto が足すのは、admin-core の**薄い読み口**だけ。
 
 - 置き場所: `packages/admin-core/src/providers/configDrafts.ts`（`uiSettings.ts` と同じ並び）。ほかの部品から import しない。
-- `ConfigDraftsProvider`（型）と、`createHttpConfigDrafts({ baseUrl, fetch, .. })`・`createTauriConfigDrafts({ invoke })`。
+- `ConfigDraftsProvider`（型）と、`createHttpConfigDrafts({ baseUrl, getToken, fetchFn })`・`createTauriConfigDrafts({ invoke })`。
   §4.11 の口を 1 対 1 で呼ぶだけで、状態は持たない。demo の実装は作らない（conventions §10）。
 - `configDraftConflict(error)`: `conflict` の `current.reason` を型つきで取り出す（`uiSettingConflict` と同じ役目）。画面は理由で出し分ける
   （`stale_base` → 差分を見せて取り直し、`lock_held` → 持ち主の名前を出す、`lock_required` → 取り直す、`draft_changed` → 読み直す）。
