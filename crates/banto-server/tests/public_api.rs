@@ -84,6 +84,24 @@ async fn stop_outcome_and_exposure_api_is_public(server: banto_server::RunningSe
     restoring_previous_stays_within(&ServerExposure::closed(), &requested)
 }
 
+/// Issue #947 (ADR-0035 §9): a derived app serves a listener of its own (a
+/// TLS listener) through the same `serve`, on the budget of its plain
+/// listener, and stops them together.
+async fn serving_a_listener_of_the_apps_own_is_public<L>(
+    listener: L,
+    plain: banto_server::RunningServer,
+    router: axum::Router,
+) -> Result<Vec<banto_server::StopOutcome>, BantoError>
+where
+    L: axum::serve::Listener<Addr = std::net::SocketAddr>,
+{
+    let bound: banto_server::BoundServer<L> = banto_server::BoundServer::from_listener(listener)?;
+    let _: std::net::SocketAddr = bound.local_addr();
+    let own: banto_server::RunningServer =
+        bound.with_write_budget(plain.write_budget()).serve(router);
+    Ok(banto_server::RunningServer::stop_all([plain, own]).await)
+}
+
 /// ADR-0035 §7: an app that replaces its listener shares one write budget
 /// over the generations.
 fn write_budget_api_is_public(

@@ -9,8 +9,8 @@
 use axum::routing::{get, post};
 use axum::Router;
 use banto_server::{
-    start, RunningServer, ServerConfig, StopOutcome, BUFFERED_BODY_MAX_BYTES, MAX_DETACHED_WRITES,
-    MAX_STREAMED_WRITES, RECEIVING_BODIES_MAX_BYTES,
+    bind, start, BoundServer, RunningServer, ServerConfig, StopOutcome, WriteBudget,
+    BUFFERED_BODY_MAX_BYTES, MAX_DETACHED_WRITES, MAX_STREAMED_WRITES, RECEIVING_BODIES_MAX_BYTES,
 };
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -61,10 +61,21 @@ impl TwoSteps {
     }
 }
 
+fn local() -> ServerConfig {
+    ServerConfig {
+        bind: "127.0.0.1".to_string(),
+        port: 0,
+    }
+}
+
 async fn serve(steps: &TwoSteps) -> RunningServer {
+    start(local(), router(steps)).await.expect("start")
+}
+
+fn router(steps: &TwoSteps) -> Router {
     let write = steps.clone();
     let read = steps.clone();
-    let router = Router::new()
+    Router::new()
         .route(
             "/work",
             post(move || write.clone().run()).get(move || read.clone().run()),
@@ -79,16 +90,15 @@ async fn serve(steps: &TwoSteps) -> RunningServer {
             }),
         )
         .route("/plain", post(|| async { "plain" }))
-        .route("/read", get(|| async { "read" }));
-    start(
-        ServerConfig {
-            bind: "127.0.0.1".to_string(),
-            port: 0,
-        },
-        router,
-    )
-    .await
-    .expect("start")
+        .route(
+            "/peer",
+            post(
+                |axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>| async move {
+                    format!("peer={}", peer.ip())
+                },
+            ),
+        )
+        .route("/read", get(|| async { "read" }))
 }
 
 async fn until(what: &str, condition: impl Fn() -> bool) {
@@ -411,4 +421,204 @@ async fn stalled_bodies_hold_a_bounded_number_of_bytes_together() {
         .expect("read");
     assert_eq!(&start, b"HTTP/1.1 200");
     assert!(matches!(server.stop().await, StopOutcome::Finished));
+}
+
+// --- Issue #947 (ADR-0035 §9): a listener of the app's own ---
+
+/// A listener that is not `tokio::net::TcpListener`, standing in for an
+/// app's own (a TLS listener that does its handshake in `accept`).
+struct OwnListener {
+    inner: tokio::net::TcpListener,
+    accepted: Arc<AtomicUsize>,
+}
+
+impl axum::serve::Listener for OwnListener {
+    type Io = TcpStream;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            if let Ok(accepted) = self.inner.accept().await {
+                self.accepted.fetch_add(1, Ordering::SeqCst);
+                return accepted;
+            }
+        }
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.inner.local_addr()
+    }
+}
+
+/// Serves `steps`' router on a new [`OwnListener`], counted against `budget`.
+async fn serve_own(steps: &TwoSteps, budget: WriteBudget) -> (RunningServer, Arc<AtomicUsize>) {
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let listener = OwnListener {
+        inner: tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind"),
+        accepted: accepted.clone(),
+    };
+    let server = BoundServer::from_listener(listener)
+        .expect("local address")
+        .with_write_budget(budget)
+        .serve(router(steps));
+    (server, accepted)
+}
+
+/// The plain listener and one of the app's own, same router, one budget.
+async fn serve_both(steps: &TwoSteps) -> (RunningServer, RunningServer, WriteBudget) {
+    let plain = bind(local()).await.expect("bind").serve(router(steps));
+    let budget = plain.write_budget();
+    let (own, _) = serve_own(steps, budget.clone()).await;
+    (plain, own, budget)
+}
+
+#[tokio::test]
+async fn a_write_on_a_listener_of_the_apps_own_is_detached_too() {
+    let steps = TwoSteps::default();
+    let (server, accepted) = serve_own(&steps, WriteBudget::default()).await;
+
+    disconnect_mid_request(server.local_addr(), "POST", &steps).await;
+    assert_eq!(accepted.load(Ordering::SeqCst), 1, "served by OwnListener");
+    assert_eq!(steps.audited(), 0);
+    steps.release(1);
+    until("the second step to run", || steps.audited() == 1).await;
+
+    // The peer the listener reported is there for the handlers (the login
+    // rate limit, the loopback checks), as on the plain listener.
+    let response = request(server.local_addr(), "POST", "/peer").await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("peer=127.0.0.1"), "{response}");
+
+    // A read is still dropped with its connection, here as well.
+    disconnect_mid_request(server.local_addr(), "GET", &steps).await;
+    steps.release(1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(steps.audited(), 1, "the GET did not go on");
+
+    assert!(matches!(server.stop().await, StopOutcome::Finished));
+}
+
+#[tokio::test]
+async fn stopping_both_listeners_waits_for_the_writes_of_both() {
+    let steps = TwoSteps::default();
+    let (plain, own, budget) = serve_both(&steps).await;
+
+    disconnect_mid_request(plain.local_addr(), "POST", &steps).await;
+    disconnect_mid_request(own.local_addr(), "POST", &steps).await;
+    assert_eq!(budget.running(), 2, "one budget counts both listeners");
+
+    // Together, not one after the other: both gates close before either
+    // waits, and the two waits share the same 10 seconds.
+    let stop = tokio::spawn(RunningServer::stop_all([plain, own]));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!stop.is_finished(), "both stops wait for their write");
+    assert_eq!(steps.audited(), 0);
+
+    steps.release(2);
+    let outcomes = tokio::time::timeout(Duration::from_secs(5), stop)
+        .await
+        .expect("the stop returns once the writes are done")
+        .unwrap();
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes
+        .iter()
+        .all(|outcome| matches!(outcome, StopOutcome::Finished)));
+    assert_eq!(steps.audited(), 2);
+    assert_eq!(budget.running(), 0);
+}
+
+#[tokio::test]
+async fn each_listener_reports_the_writes_it_left_running() {
+    let steps = TwoSteps::default();
+    let (plain, own, budget) = serve_both(&steps).await;
+
+    disconnect_mid_request(own.local_addr(), "POST", &steps).await;
+    let mut outcomes =
+        RunningServer::stop_all_waiting_writes_for([plain, own], Duration::from_millis(200)).await;
+    let own_outcome = outcomes.pop().expect("one outcome per listener");
+    let plain_outcome = outcomes.pop().expect("in the order given");
+    assert!(
+        matches!(plain_outcome, StopOutcome::Finished),
+        "the plain listener accepted no write"
+    );
+    let remaining = own_outcome
+        .remaining()
+        .expect("the write came in on the app's own listener");
+    assert_eq!(remaining.operations(), vec!["POST /work".to_string()]);
+    assert_eq!(budget.running(), 1, "it still takes up room in the budget");
+
+    steps.release(1);
+    assert!(remaining.wait(Duration::from_secs(5)).await);
+    assert_eq!(steps.audited(), 1);
+    assert_eq!(budget.running(), 0);
+}
+
+#[tokio::test]
+async fn replacing_one_listener_leaves_the_writes_of_the_other_detached() {
+    let steps = TwoSteps::default();
+    let (plain, own, budget) = serve_both(&steps).await;
+
+    // One write running on each, both without a connection by now.
+    disconnect_mid_request(plain.local_addr(), "POST", &steps).await;
+    disconnect_mid_request(own.local_addr(), "POST", &steps).await;
+
+    // Only the app's own listener is stopped (a renewed certificate). Its
+    // write is not aborted and is reported.
+    let own_addr = own.local_addr();
+    let left = own
+        .stop_waiting_writes_for(Duration::from_millis(200))
+        .await
+        .remaining()
+        .expect("the old generation's write is still running");
+    assert_eq!(left.count(), 1);
+    assert!(
+        TcpStream::connect(own_addr).await.is_err(),
+        "the stopped listener is closed"
+    );
+
+    // Meanwhile the plain listener is untouched: its gate is open, and a
+    // write whose client goes away now is detached as before.
+    let response = request(plain.local_addr(), "POST", "/plain").await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    disconnect_mid_request(plain.local_addr(), "POST", &steps).await;
+    assert_eq!(steps.created(), 3);
+    assert_eq!(budget.running(), 3, "old generation included");
+
+    // The next generation, on the same budget.
+    let (renewed, _) = serve_own(&steps, budget.clone()).await;
+    disconnect_mid_request(renewed.local_addr(), "POST", &steps).await;
+    assert_eq!(budget.running(), 4);
+    assert_eq!(steps.audited(), 0);
+
+    steps.release(4);
+    until("all four writes to finish", || steps.audited() == 4).await;
+    assert!(left.wait(Duration::from_secs(5)).await);
+    let (plain_outcome, renewed_outcome) = tokio::join!(plain.stop(), renewed.stop());
+    assert!(matches!(plain_outcome, StopOutcome::Finished));
+    assert!(matches!(renewed_outcome, StopOutcome::Finished));
+    assert_eq!(budget.running(), 0);
+}
+
+#[tokio::test]
+async fn listeners_that_share_a_budget_share_the_room_for_new_writes() {
+    let steps = TwoSteps::default();
+    let (plain, own, budget) = serve_both(&steps).await;
+
+    // The app's own listener uses up the whole budget.
+    let held: Vec<_> = (0..MAX_DETACHED_WRITES)
+        .map(|n| own.hold_write_for_test(&format!("POST /held/{n}")).unwrap())
+        .collect();
+    assert_eq!(budget.running(), MAX_DETACHED_WRITES);
+    let response = request(plain.local_addr(), "POST", "/plain").await;
+    assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+
+    drop(held);
+    let response = request(plain.local_addr(), "POST", "/plain").await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+    let (plain_outcome, own_outcome) = tokio::join!(plain.stop(), own.stop());
+    assert!(matches!(plain_outcome, StopOutcome::Finished));
+    assert!(matches!(own_outcome, StopOutcome::Finished));
 }

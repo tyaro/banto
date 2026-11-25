@@ -176,8 +176,52 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
   nothing writes after the process is gone. Waiting before exit, if wanted, is to be decided separately and for
   commands too.
 
+### 9. A listener the app made itself goes through `serve` too (Issue #947, added 2026-11-25)
+
+The layer of §1 is only installed inside `serve`. When the same router is handed straight to `axum::serve` on an
+`axum::serve::Listener` of the app's own (a listener that does the TLS handshake in `accept` - the loopback TLS
+listener of banto-industrial's Hub), the writes that arrive there are not detached and no stop counts them. So
+**`serve` takes any listener**.
+
+- **The entry point**: `BoundServer::from_listener(listener)` (`L: axum::serve::Listener<Addr = SocketAddr>`). It
+  returns a `BoundServer<L>` whose `serve(router)` runs **the very same code** as for the listener `bind` makes: the
+  detaching layer, the stop gate, the count (`StopOutcome`), the stop signal and the SSE connection count (`sse.rs`),
+  and `ConnectInfo<SocketAddr>` (the peer the listener returned from `accept`). `BoundServer` became
+  `BoundServer<L = TcpListener>`; the bare type name `BoundServer` still means the plain listener (existing callers
+  do not change).
+- **One `RunningServer` per listener.** The gate, the list of running writes and the stop are per listener; only the
+  room for new writes (the `WriteBudget` of §7) is shared by all listeners of the app (pass the first listener's
+  `write_budget()` to the others, and to the next generation of a replaced one, with `with_write_budget`). A TLS
+  listener is stopped and rebuilt on its own when its certificate is renewed or revoked, which is exactly the
+  "shared over generations" shape of §7. While one is being replaced, the gate of the other stays open and its
+  writes stay detached. Writes left running by a stopped generation keep their share of the budget until they
+  finish and show up in that generation's `StopOutcome`.
+- **Stopping them together**: `RunningServer::stop_all(servers)` (`stop_all_waiting_writes_for` for another bound).
+  It keeps the order of §4 over all listeners: **every gate is closed first** (from then on none of them starts a
+  write), then they are waited for side by side. The wait is that of the slowest one (10 seconds at most), not the
+  sum. One result per listener, in the order given. Calling `stop()` on one after the other lets the later
+  listeners accept writes while the first is waited for, and adds the waits up.
+- **How far the promise reaches**: "nothing to forget to wrap" (§1) covers **every listener served through
+  `serve`**. The layer itself (`detach_writes`, `DetachedWrites`) stays private, so `serve` is the only way to
+  install it and there is no way to install it wrongly. The only way out of the promise is to hand the router
+  straight to `axum::serve` or the like (banto cannot prevent that; the docs say not to).
+- **What stays with the app**: the TLS handshake, cutting open connections at once when a certificate is revoked
+  (the wrapper around `Io`), and the decision to rebuild a listener. `stop()` waits up to 5 seconds for the
+  connections and then aborts the serve task, but does not guarantee that the sockets left are closed at that point
+  (as before). A connection that must be cut at once is cut by the app's `Io`.
+- The peer address must be a `SocketAddr` (the login rate limit and the loopback checks read
+  `ConnectInfo<SocketAddr>`). Listeners with another address type, such as Unix sockets, are out of scope.
+
 ## Alternatives considered
 
+- **Make the layer public** (`DetachedWrites` and a function that installs the layer on a router; option 2 of
+  Issue #947): the caller would install the layer, share the gate and close-then-wait at a stop by itself, so a
+  forgotten install or a forgotten close remains (the hole §1 closed for "wrap every handler" reopens per
+  listener). `ConnectInfo`, the stop signal and the SSE connection count would need wiring of their own. Rejected.
+- **Add and remove listeners on one `RunningServer`** (another shape of option 1 of Issue #947): with one shared
+  gate, the gate cannot be closed while only the TLS listener is stopped and rebuilt, so "count and wait for that
+  generation's writes" is not possible. With a gate per listener inside it, it rebuilds a `RunningServer` per
+  listener within one type. Rejected (one per listener, sharing the budget; §9).
 - **A function `run_detached(label, work)` called by each handler** (downstream's current shape): handlers get
   forgotten. Rejected.
 - **An opt-out (by method or path)**: nothing needs it today, and an opt-out is the same hole as a forgotten wrap.
@@ -211,7 +255,11 @@ of transport; the symmetry of authorization and audit (conventions §1) is uncha
     account lookup (`AuthState::settle_lookup`). REST's `record_write`, which looks the audit actor up again after the write, is fixed in C2
     (ADR-0034 §3).
 - Tests: `crates/banto-server/tests/detach_writes.rs` (both steps run after a disconnect / a GET is still dropped /
-  a panic is 500 / a stop waits for a running write / a write that does not end is reported as remaining), the unit
+  a panic is 500 / a stop waits for a running write / a write that does not end is reported as remaining / §9: a
+  write on a listener of the app's own is detached and has `ConnectInfo` / stopping two listeners together waits
+  for the writes of both / a write left running is reported by the listener it came in on / while one listener is
+  replaced the other's writes stay detached / the budget is shared across listeners), the unit test in `server.rs`
+  (`stop_all` closes every gate before it waits), the unit
   tests in `detach.rs` (after the gate closed: 503 and the handler never runs) and `exposure.rs` (the direction;
   mixed changes count as narrowing), `apps/admin-template/core/src/rest/tests/detach.rs` (the real
   `POST /api/users`: account and audit row survive the disconnect),

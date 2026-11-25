@@ -4,9 +4,10 @@
 
 - 状態: Accepted（2026-11-22。方針は同日のオーナー決定 8 と計画書 §10 の 6・17。
   この ADR で新しく決めた細目 — 停止時に待つ上限、panic と停止中の応答の形、新規の受付の数の上限、
-  デスクトップの終了の扱い — は同日にオーナーが「オーナーの確定」の 5 点を推奨どおりで確定）
+  デスクトップの終了の扱い — は同日にオーナーが「オーナーの確定」の 5 点を推奨どおりで確定）。
+  2026-11-25: §9（アプリが自前で作った listener）を追記（Issue #947）
 - 日付: 2026-11-22
-- 関連: Issue #793 / tyaro/banto-industrial#600 /
+- 関連: Issue #793 / Issue #947 / tyaro/banto-industrial#600 /
   [design/downstream-requests-2026-11-plan](../design/downstream-requests-2026-11-plan.md) §4.5・§7（S1・S2）・§10 の 6・8・17 /
   [ADR-0001](0001-rest-tauri-two-path-symmetry.md)（両経路の対称）/ [ADR-0002](0002-minimal-dependencies.md) /
   [ADR-0004](0004-server-logging-eprintln.md) / conventions §1・§3
@@ -160,8 +161,47 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
   条件なので、この PR では変えない。DB のトランザクションは確定か取り消しのどちらかで、プロセスが消えた後に
   書くものは無い。「終了の前に待つ」を足すなら、コマンドの側も含めて別に決める。
 
+### 9. アプリが自前で作った listener も `serve` を通す（Issue #947、2026-11-25 追記）
+
+§1 の層は `serve` の中でしか掛からない。同じ router を、自前の `axum::serve::Listener`（TLS の handshake を
+`accept` の中で済ませる listener など。banto-industrial の Hub の loopback の TLS の口）で `axum::serve` に直に
+渡すと、その口の書き込みは切り離されず、停止の数え上げにも入らない。そこで **`serve` が任意の listener を
+受ける**。
+
+- **口**: `BoundServer::from_listener(listener)`（`L: axum::serve::Listener<Addr = SocketAddr>`）。返るのは
+  `BoundServer<L>` で、その `serve(router)` は `bind` の listener と**同じ 1 本のコード**を通る: 切り離しの層・
+  停止の門・数え上げ（`StopOutcome`）・停止の知らせと SSE の接続数（`sse.rs`）・`ConnectInfo<SocketAddr>`
+  （listener が `accept` で返した相手）。`BoundServer` は `BoundServer<L = TcpListener>` になったが、型の名前
+  `BoundServer` はそのまま平文の listener を指す（既存の呼び手は変えなくてよい）。
+- **listener ごとに `RunningServer` を 1 つ**。門・走っている書き込みの一覧・停止は listener ごと、新規の受付の
+  枠（§7 の `WriteBudget`）だけをアプリの全 listener で共有する（最初の listener の `write_budget()` を、ほかの
+  listener と、作り直した次の世代に `with_write_budget` で渡す）。TLS の listener は証明書の差し替え・失効で
+  その listener だけを止めて作り直すので、§7 の「世代をまたぐ共有」と同じ形にそのまま載る。片方を止めて
+  作り直している間、もう片方の門は開いたままで、書き込みは切り離されたまま。止めた世代に残った書き込みは、
+  終わるまで枠を使い続け、その世代の `StopOutcome` に出る。
+- **まとめて止める**: `RunningServer::stop_all(servers)`（上限を変える `stop_all_waiting_writes_for`）。§4 の
+  順序を全 listener に対して守る: **全部の門を先に閉じ**（以後どの口も書き込みを始めない）、それから並行に
+  待つ。待ちは合計ではなく最も遅い 1 つ分（長くて 10 秒）。結果は渡した順に listener ごと。`stop()` を 1 つずつ
+  順に呼ぶと、先の listener を待つ間に後の listener が書き込みを受け付け、待ちも足し算になる。
+- **約束の範囲**: 「包み忘れが起きない」（§1）は、**`serve` を通した listener の全部**に及ぶ。層そのもの
+  （`detach_writes`・`DetachedWrites`）は公開しないままなので、層を掛ける方法は `serve` しか無く、掛け方を
+  間違える余地も無い。約束の外に出るのは、router を `axum::serve` などへ直に渡したときだけ（banto からは
+  止められない。doc に「渡さない」と書く）。
+- **アプリの側に残るもの**: TLS の handshake、証明書の失効で開いている接続をすぐ切ること（`Io` の包み）、
+  listener を作り直す判断。`stop()` は接続を 5 秒まで待ってから serve のタスクを中断するが、残ったソケットを
+  その時点で閉じることまでは保証しない（今までどおり）。すぐ切りたい接続は、アプリの `Io` が切る。
+- 相手のアドレスは `SocketAddr` に限る（ログインの回数制限・ループバックの判定が `ConnectInfo<SocketAddr>` を
+  読む）。Unix ソケットなど別のアドレスの listener は対象外。
+
 ## 検討した代替案
 
+- **層を公開する**（`DetachedWrites` と、router に層を掛ける関数。Issue #947 の案 2）: 呼び手が層を掛け、同じ門を
+  共有し、停止で門を閉じて待つ、を自分で組むことになり、掛け忘れ・閉じ忘れが残る（§1 で倒した「handler ごとに
+  包む」と同じ穴が、listener の単位で開く）。`ConnectInfo`・停止の知らせ・SSE の接続数も別に配線が要る。不採用。
+- **1 つの `RunningServer` に listener を後から足す・外す**（Issue #947 の案 1 の別の形）: 門を共有すると、TLS の
+  listener だけを止めて作り直す間も門を閉じられず、「その世代の書き込みを数えて待つ」ができない。listener ごとの
+  門を中に持てば、結局 listener ごとの `RunningServer` と同じものを 1 つの型の中に作り直すことになる。不採用
+  （listener ごとに作り、枠を共有する。§9）。
 - **関数 `run_detached(label, work)` を handler ごとに呼ぶ**（下流の今の形）: 包み忘れが残る。不採用。
 - **除外の口（メソッドや経路で外す）**: 外したい書き込みが今は無く、口があると外し忘れと同じ穴になる。不採用
   （決定 8）。
@@ -191,7 +231,10 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
     存在・期限・stamp を 1 つのロックの下で確定する（`AuthState::settle_lookup`）。
     監査の主体を書き込みの後に引き直す REST の `record_write` は、C2（ADR-0034 §3）で直す。
 - 試験: `crates/banto-server/tests/detach_writes.rs`（切断しても 2 段目まで走る／GET は今も捨てられる／panic は
-  500／停止は走っている書き込みを待つ／終わらない書き込みは「残っている」）、`detach.rs` の単体（門を閉じた後は
+  500／停止は走っている書き込みを待つ／終わらない書き込みは「残っている」／§9: 自前の listener でも切り離される・
+  `ConnectInfo` が付く／2 つの listener をまとめて止めると両方の書き込みを待つ／残った書き込みは受けた listener の
+  結果に出る／片方を止めて作り直す間ももう片方は切り離されたまま／枠は listener をまたいで共有）、`server.rs` の
+  単体（`stop_all` は全部の門を閉じてから待つ）、`detach.rs` の単体（門を閉じた後は
   503 で handler が走らない）、`exposure.rs` の単体（向き。混ざった変更は狭める側）、
   `apps/admin-template/core/src/rest/tests/detach.rs`（実物の `POST /api/users` で、切断しても作成と監査が残る）、
   `apps/admin-template/src-tauri/src/tests/server_writes.rs`（再設定の 2 方向）。

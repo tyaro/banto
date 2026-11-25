@@ -56,7 +56,10 @@ CI の frontend ジョブで強制）が検査する。対象は各節に **[機
 
 **書き込みを接続の切断から切り離す層は REST だけにある**（Issue #793、
 [ADR-0035](adr/0035-detached-writes.md)）。`BoundServer::serve` が POST・PUT・PATCH・DELETE を
-別のタスクで最後まで走らせる（除外の口は無い。冪等にはしない）。Tauri のコマンドは接続に
+別のタスクで最後まで走らせる（除外の口は無い。冪等にはしない）。**同じ router を別の listener（自前の TLS の
+listener など）でも出すアプリは、その listener も `BoundServer::from_listener(..).serve(..)` を通す**（router を
+`axum::serve` に直に渡さない。渡すと、その口の書き込みは切り離されず、停止の数え上げにも入らない。枠は
+`with_write_budget` で共有し、まとめて止めるときは `RunningServer::stop_all`。Issue #947、ADR-0035 §9）。Tauri のコマンドは接続に
 結び付いていないので層が要らない。これは輸送の違いで、認可と監査の対称は変わらない。
 handler を足すときに包む必要は無いが、**handler の中の順序（確定 → 失効 → 監査）は層では
 直らない**。順序の約束（Issue #793 の S2 で点検）:

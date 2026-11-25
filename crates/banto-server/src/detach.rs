@@ -15,6 +15,11 @@
 //! - **Every** write is detached, login included; there is no opt-out
 //!   (plan §10, decision 8). A derived app gets this by being served through
 //!   `serve` - there is nothing to wrap per handler, so nothing to forget.
+//!   That holds for every listener served through `serve`, also one the app
+//!   made itself
+//!   ([`BoundServer::from_listener`](crate::BoundServer::from_listener),
+//!   Issue #947); the layer is not public, so there is no other way to
+//!   install it.
 //! - **Not idempotent.** A client that disconnected does not know the
 //!   outcome. An operation that takes effect twice when it is sent again (a
 //!   create) has to be guarded where it always was: a version, a unique

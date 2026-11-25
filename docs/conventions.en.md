@@ -65,7 +65,12 @@ Tauri paths**. Only the origin (`"rest"` / `"tauri"`) differs.
 **The layer that detaches writes from the connection exists on REST only**
 (Issue #793, [ADR-0035](adr/0035-detached-writes.en.md)). `BoundServer::serve`
 runs POST, PUT, PATCH and DELETE to completion in their own task (no opt-out;
-not idempotent). A Tauri command is not tied to a connection, so it needs no
+not idempotent). **An app that serves the same router on another listener as
+well (a TLS listener of its own, say) sends that listener through
+`BoundServer::from_listener(..).serve(..)` too** (never hand the router
+straight to `axum::serve`: the writes arriving there would not be detached and
+no stop would count them. Share the budget with `with_write_budget`, and stop
+them together with `RunningServer::stop_all`. Issue #947, ADR-0035 §9). A Tauri command is not tied to a connection, so it needs no
 layer. This is a difference of transport; the symmetry of authorization and
 audit is unchanged. A new handler needs no wrapping, but **the order inside a
 handler (commit -> revoke -> audit) is not fixed by the layer**. The rules of
