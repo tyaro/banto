@@ -22,7 +22,94 @@
 
 ## [Unreleased]
 
-消費側への注意:
+## [9.0.0] - 2026-11-26
+
+**v9.0.0 — `@banto/grid-svelte` のタッチ・ペンのタップで編集を始める `editOnTap`（既定 `true`、#964）、新しいオプションのパッケージ `@banto/touch-keys-svelte`（タッチ向けのテンキー・文字キーボード、#937、[ADR-0036](docs/adr/0036-touch-keys-package.md)）、設定の下書き → 反映 → 元に戻す（#938、migration 0016）、アプリ独自の SSE の配信と読み口（#935・#936）、ダッシュボードのクロスフィルタとドリルダウン（#882）、書き込みの切り離しを自前の listener にも（#947）、`ThreePaneDock` の `defaultPlaces`（#939）ほか。** 版の種類: major。理由: `@banto/grid-svelte` の `editOnTap` が既定で `true` なので、**既存の `BantoGrid` を書き換えずにタグだけ上げても、タッチ・ペンのタップの意味が「選択」から「編集の開始」に変わる**（編集できる列を持つ grid）。さらに `editOnTap={false}` を渡しても、タッチ・ペンの選択とフォーカスは `pointerdown` ではなく `click` まで遅れる。[docs/publishing.md](docs/publishing.md)「バージョニング規約」の「既存の機能のままで実行時の値・意味が変わるものは `major`」に当たる。公開 API の削除・改名は無い（`crates/*/src` の `pub` の削除は、定義の移動と `BoundServer` への既定の型引数の追加だけ。`packages/*/src/index.ts` の export は並べ替えと追加だけ）。migration は 0016 の追加だけ（表 4 つを足す。既存の表・行は変えない。v8.0.0 の DB はそのまま使える）。
+
+移行の手順（v8.0.0 から）:
+
+1. 依存のタグを `v8.0.0` から `v9.0.0` に上げる（npm と Rust を同じタグに）。
+2. **編集できる列を持つ `BantoGrid` をタッチ・ペンで使う画面を洗う。** タップで編集させたくない grid には `<BantoGrid editOnTap={false}>` を渡す（タップは選択だけ、編集はダブルタップに戻る）。**それでも、タッチ・ペンでは選択とフォーカスが動くのは `click` のとき**（指を離したとき）で、`pointerdown` では動かない。指を置いてスクロールしても選択は動かず、編集中のセルも確定しない。タッチ・ペンのドラッグで範囲選択は伸びない。この部分を v8.0.0 の動きに戻す口は無い。マウスとキーボードの操作は変わらない。
+3. タッチの `pointerdown`・`touchstart` の時点で選択が動くことを前提にした E2E・自前の処理（`onRowClick` をタッチで受けている画面を含む）があれば、`click`（タップの完了）を待つ形に直す。
+4. コピーしたテンプレートを取り込むなら下の B、DB は下の C（migration 0016）。詳しい手順は [docs/upgrading.md](docs/upgrading.md) の例 12。
+
+派生アプリへの影響: 依存のタグを上げるだけで動きが変わるのは、上の grid のタッチ・ペンの操作と、下の A の「挙動の変化」に挙げたもの（いずれもコードの書き換えは要らない）。型エラーになる変更は無い（公開の union に種類は足していない。`ChartMessages` のキーは省略可で足した）。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v8.0.0` → `v9.0.0`（npm と Rust を同じタグに）。**grid-svelte のタッチ・ペンのタップの意味が変わる（major の理由）。** API の削除・改名は無い。追加: 新しいパッケージ `@banto/touch-keys-svelte`、grid-svelte（`editOnTap`・`data-grid-editor`）、charts（`onMarkActivate`・`markSelected` ほか）、dock-svelte（`defaultPlaces`）、admin-core（`createSseStream`・`ConfigDraftsProvider` ほか）、`banto-server`（`sse`・`config_drafts_router`・`BoundServer::from_listener`）、`banto-admin-services`（`config_drafts`）。 |
+| B. コピーしたテンプレート        | あり | ダッシュボードのクロスフィルタ（印で絞る・選択の帯・一覧へ移る）、一覧のビューの引数、`/ui-demo` の touch-keys のカード、`/chart-gallery/marks`、設定の下書きの配線（REST・Tauri のコマンド 14 個）、`scaffold.mjs`・`verify-architecture.mjs`、辞書。取り込みは任意（下の B）。**取り込むと、価格帯のドーナツの片を選んだときの意味が「一覧へ移る」から「絞る」に変わる**（v8.0.0 のテンプレートには印を選ぶ操作が無いので、v8.0.0 からの取り込みでは追加になる）。                                                         |
+| C. DB・設定・配布資産            | あり | **migration 0016（`config_published`・`config_history`・`config_drafts`・`config_locks` の 4 表、SQLite・PostgreSQL）が増える**。起動時に自動適用。設定キーの追加は無い。`tauri.conf.json` は版数のみ。                                                                                                                                                                                                                                                                                                                      |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/grid-svelte`・`@banto/touch-keys-svelte`（新設）・`@banto/charts`・`@banto/forms`・`@banto/dock-svelte`・`@banto/admin-core`・`@banto/theme`・`banto-server`・`banto-admin-services`（ほかのパッケージ・クレートは版数のみ）。
+- 更新: `v8.0.0` → `v9.0.0`（npm と Rust を同じタグに）。
+- **新しいパッケージ `@banto/touch-keys-svelte` の取り込み方**（オプション。使わないアプリは何もしない。既存のパッケージはこれに依存しない）:
+  1. 依存に足す。Git 依存なら `"@banto/touch-keys-svelte": "github:tyaro/banto#v9.0.0&path:packages/touch-keys-svelte"`（ほかの `@banto/*` と同じタグに揃える。モノレポの中なら `workspace:*`）。`.svelte.ts` を持たないので、`vite.config` の `optimizeDeps.exclude` への追加は要らない。盤の色は `--banto-*` を読むので、`@banto/theme` の CSS が要る。
+  2. ルートのレイアウトに `TouchKeysHost` を 1 つ置き、対象の欄を `resolve` か `use:touchKeys` で決める。端末ごとの有効・無効（`enabled`）、`BantoForm` との組み合わせ、Paraglide の束、トーストの逃がし方、外し方は [レシピ touch-keys.md](docs/recipes/touch-keys.md)。
+  3. grid のセルとつなぐなら、`resolve` が grid のエディタ（`data-grid-editor`）に `{ openOnFocus: true }` を返し、`onconfirm` でそのエディタを blur する（同レシピ「grid のセル」）。
+  4. テンプレートは `/ui-demo` の見本のカードにだけ配線している（ルートのレイアウトには置いていない）。テンプレートをコピーしたアプリで `full` のままなら依存はもう入っている。`pnpm scaffold` の `touchKeys` が見本と依存を外す。
+- 追加 API（いずれも任意。渡さなければ・呼ばなければ今までどおり。ただし `editOnTap` だけは既定が `true`）:
+  - grid-svelte: `BantoGrid` の `editOnTap`（既定 `true`）、セルのエディタの印 `data-grid-editor`（公開の約束）。
+  - touch-keys-svelte: `TouchKeysHost`・`touchKeys`（`openOnFocus` を含む）・`NumberKeypad`・`TextKeyboard`（英数・記号・カナ）ほか。
+  - charts: `BarChart`・`PieChart` の `onMarkActivate`・`markLabel`・`markSelected`、`ChartMark`・`MarkProps`・`nextMarkIndex` ほかの export、`ChartMessages` の `markLabel`・`markLabelWithSeries`（省略可）。
+  - dock-svelte: `ThreePaneDock` の `defaultPlaces`。
+  - admin-core: `createSseStream<T>`・`createSseMessageParser`・`sessionStreamHooks`、`ConfigDraftsProvider`・`createHttpConfigDrafts`・`createTauriConfigDrafts` ほか。
+  - banto-server: `sse`（`SseContext`・`sse_response`・`watch_frames`・`broadcast_frames`・`SseFrame`）、`routes::config_drafts_router` ほか、`BoundServer::from_listener`（`BoundServer` は `BoundServer<L = TcpListener>` になった。型引数を書いていないコードはそのままコンパイルできる）。
+  - banto-admin-services: `config_drafts`（`ConfigTarget`・`ConfigTargetRegistry`・`ConfigDraftsService` ほか）。**サービスを使うアプリは 4 つの表が要る**（下の C）。使わなければ表は要らない。
+- 挙動の変化（タグを上げるだけで変わるもの。コードの書き換えは要らない）:
+  - **grid-svelte（major の理由）**: タッチ・ペンでは、編集できるセルの 1 回のタップで編集が始まる（今まではタップは選択だけ、編集はダブルタップ）。編集できる列がある grid の編集できないセルのタップは選択だけ。戻すなら `editOnTap={false}`。**`editOnTap` の値によらず**、タッチ・ペンでは `pointerdown` でフォーカスもアクティブセルも動かず、`click` で動く。
+  - grid-svelte: 編集中でフォーカスのあるエディタに `input` が届いた後の blur の確定で、フォーカスがどこにも無い（`body`）ときは grid へフォーカスを戻す（アクティブセルは編集したセルのまま）。別の場所へ移った blur では戻さない。物理キーボードの Esc・Enter・Tab は変わらない。
+  - grid-svelte（修正）: 編集中のセルのエディタの中のダブルクリックで、下書きが元の値に戻らなくなった（マウスでも起きていた）。
+  - forms: `DraftNumberField` が `change` でも `draft.commit()` する（`input` + `change` を出す確定で検証と値の確定が走る。blur・Enter の動きは変わらない）。入力欄へ自前で `change` を dispatch している処理があれば、その時点で確定することを確かめる。
+  - charts: `onMarkActivate` を渡した（選べる印の）チャートで、クリックで入ったフォーカスではツールチップを残さない（キーボードのフォーカスのときだけ出す）。`onMarkActivate` は v8.0.0 に無いので、v8.0.0 から上げるだけのアプリには当たらない。
+  - dock-svelte（修正）: 同じ分割の pane を続けて隠し、隠した順と逆でない順で出し直したときの幅が直る（左・右を隠して左から戻すと、左が 240px → 約 202px になっていた）。以前の幅を期待値にしたテスト・基準画像があれば更新する。
+  - theme（修正）: ダークで、ネイティブ `<select>` の選択肢（option）の背景と文字の色を明示した。
+- 移行注意（ソース互換の破壊）: なし。公開の型に必須のフィールドは足していない。公開の union に種類は足していない。
+- 消費側への注意（確かめるもの）:
+  1. **編集できる列を持つ `BantoGrid` をタッチ・ペンで使う画面**: タップで編集が始まってよいかを画面ごとに決め、だめなら `editOnTap={false}`。
+  2. **タッチの `pointerdown` の時点で選択が動くことを前提にした E2E・自前の処理**: `click` を待つ形に直す（`editOnTap={false}` でも要る）。
+  3. **`BantoGrid` のセルに注入したエディタ**: grid の包みに `data-grid-editor` が付く（属性が増えるだけ）。同じ名前の属性を自前で使っていないことを確かめる。
+  4. **`DraftNumberField` の入力欄へ自前で `change` を出している処理**: その時点で確定する。
+  5. **`banto-server` の `BoundServer` の型を自分で書いているコード**: 型引数なしの `BoundServer` は `BoundServer<TcpListener>` のままで、書き換えは要らない。
+- 依存を上げずに留まれるか: できる（`v8.0.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 変更あり（取り込みは任意。取り込まなくても、A のタグを上げたテンプレートは今までどおり動く。`git diff --stat v8.0.0 v9.0.0 -- apps/admin-template/src` で洗った一式）:
+  - **ダッシュボードのクロスフィルタとドリルダウン（#882）**: `src/lib/banto/dashboard.ts`・`dashboardData.svelte.ts`・`dashboardDrill.ts`（新）・`dashboardKpis.ts`・`dashboardPeriod.ts`・`dashboardWidgets.ts`、`src/lib/components/DashboardKpiStrip.svelte`、`src/lib/components/dashboard/DashboardSelectionBar.svelte`（新）・`DashboardWidgetFrame.svelte`・`DashboardWidgetStack.svelte`・`charts/CategoryStockWidget.svelte`・`charts/PriceBucketsWidget.svelte`、`src/routes/(app)/dashboard/+page.svelte`。試験は `dashboardData.svelte.test.ts`・`dashboardDrill.test.ts`（新）・`dashboardPeriod.test.ts`・`dashboardWidgets.test.ts`。
+  - **一覧のビューの引数（`?view=<id>&arg.<名前>=<値>`）**: `src/lib/resource/listViews.ts`（新）・`ResourceListPage.svelte`・`types.ts`、`src/lib/banto/resources/items.ts`（見本の `price-band`・`low-stock` の `after`）。試験は `listViews.test.ts`（新）・`resources/items.test.ts`（新）。
+  - **見本のページ**: `src/routes/(app)/chart-gallery/marks/+page.svelte`（新。選べる印）、`src/routes/(app)/ui-demo/+page.svelte`（touch-keys のカードと、grid のセルとつなぐ見本）、`src/lib/banto/touchKeysMessages.ts`（新。Paraglide の束）、`package.json` の `@banto/touch-keys-svelte`。
+  - **設定の下書き → 反映 → 元に戻す（#938）の配線**: `core/migrations-{sqlite,postgres}/0016_config_drafts.sql`、`core/src/lib.rs`（`config_targets()`・`open_config_drafts`）、`core/src/rest/mod.rs`（`config_router`・`config_drafts_access()`）、`core/src/bin/banto-serve.rs`、`src-tauri/src/lib.rs`（コマンド 14 個 `config_list` … `config_unlock`）。試験は `core/src/rest/tests/config_drafts.rs`・`src-tauri/src/tests/config_drafts.rs`・`core/tests/pg_smoke.rs`。**テンプレートは対象を登録しない**（`config_targets()` が空）ので、取り込んでも画面も挙動も変わらない。
+  - **辞書**: `messages/{ja,en}.json`（`touchKeys.*`・`uiDemo.touchKeys.*`・`chartGallery.marks*`・`dashboard.selection*`・`dashboard.dimension*`・`dashboard.truncatedNote` ほか・`items.viewPriceBand`・`resource.viewLinkNotApplicable` ほか。足すだけで、消したキーは無い。`dashboard.aboutNote` は文言を変えた）。
+  - **ルートのスクリプト**: `scripts/scaffold.mjs`（`touchKeys`・`configDrafts` の remover）、`scripts/verify-architecture.mjs` と `scripts/lib/config-drafts-gates.mjs`（新）・`scripts/lib/permission-guards.mjs`（rule 8: 設定の下書きの口とコマンドの対、`sse_response` を呼ぶのに権限を確かめないハンドラーの検出）、ルートの `package.json` の `e2e:touch-keys`。
+  - **E2E**: `e2e/demo/items-view-args.spec.ts`・`touch-keys.spec.ts`・`touch-keys-grid.spec.ts`、`e2e/visual/chart-marks.spec.ts`・`grid-tap-edit.spec.ts`、`e2e/tests/smoke.spec.ts`（一覧のビューの引数・ダッシュボードの印）、`visual.spec.ts` の `dashboard-selection`（新）と `ui-demo` の基準画像。
+- **取り込むと意味が変わる操作（ダッシュボード、#882 C2）**: 「価格帯分布」の片と「カテゴリ別在庫」の棒を選ぶと、ほかのウィジェットが**絞られる**（もう一度で外れる）。一覧へは、価格帯だけを選んでいる間に出る帯の「一覧で開く」から移る。v8.0.0 のテンプレートには印を選ぶ操作が無いので、v8.0.0 からの取り込みでは追加になる。v8.0.0 より後の main（#882 D3 の時点。印を選ぶと一覧へ移る）を先に取り込んだアプリでは、同じ操作の意味が変わる。印から直接一覧へ移したいウィジェットは `selects` を登録せず、`onDrill` を `onMarkActivate` に渡す（[recipe](docs/recipes/dashboard-widgets.md)「印から一覧へ移る」の 3）。`DashboardWidgetProps` に `onSelect`・`selected`・`onDrill` が増える（どれも省略可）。
+- 取り込む手順: ① 依存を `v9.0.0` に上げる。② ダッシュボード・一覧のビューの引数は、上のファイルを機能ごとにまとめて写す（ダッシュボードの一式は `listViews.ts` と `items.ts` のビューに依る。一覧だけを先に取り込める）。③ 設定の下書きを使う派生アプリは、migration 0016（両方言）と配線の一式を一緒に写し、[レシピ config-draft-publish.md](docs/recipes/config-draft-publish.md) の手順で対象を登録する。使わないなら、migration ごと取り込まなくてよい。④ touch-keys を使うなら [レシピ touch-keys.md](docs/recipes/touch-keys.md)（`/ui-demo` のカードは見本で、取り込みは任意）。⑤ scaffold を使う派生アプリは `scripts/scaffold.mjs` を取り込む（`minimal`・`display` は設定の下書きの配線と migration 0016 を外し、`standard`・`full` は残す）。⑥ `verify-architecture.mjs` を取り込むなら `scripts/lib/` の 2 ファイルも一緒に写す。
+- **「取り込まなくても動く」が当てはまる範囲**: テンプレートをコピーして `@banto/*`・`banto-*` を Git 依存で引いているアプリ。v8.0.0 のテンプレートのコードは、依存を `v9.0.0` に上げてもそのままコンパイルでき、画面も変わらない（grid のタッチ・ペンの操作だけは A のとおり変わる）。モノレポごとコピーして `packages/`・`crates/` も写すアプリは、`apps/admin-template/package.json` の `@banto/touch-keys-svelte`（`/ui-demo` を写すなら）と `packages/touch-keys-svelte` を一緒に写す。
+- 詳しい手順と確認項目は [upgrading.md の例 12](docs/upgrading.md)。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: **0016 `config_drafts`（SQLite・PostgreSQL の両方）が増える**。`config_published`・`config_history`・`config_drafts`・`config_locks` の 4 表を足すだけで、既存の表・列・行は変えない。**適用**: テンプレートの migration を取り込んだアプリ（`standard`・`full`、または手で写したアプリ）では、新しいバイナリを DB で最初に起動した時点で自動で当たる。v8.0.0 の DB はそのまま使える（作り直しは要らない）。テンプレートは対象を登録しないので、当たった後も 4 表は空のまま。**当たらないアプリ**: `minimal`・`display` で作ったアプリと、0016 を取り込まないアプリ（`banto-admin-services` の `config_drafts` を使わなければ表は要らない）。自分の migration に 0016 番をもう使っている派生アプリは、番号を空いている次の番号に替えて両方言に入れる（適用済みの migration は編集しない）。
+- **戻せる条件**: マイグレーションは前進のみ（down は無い）。0016 が当たった DB を v8.0.0 のバイナリで起動すると、起動時の migration の検証が拒否する。戻すには、適用前のバックアップを復元し、旧版のバイナリで起動する（更新後に書いたデータは失われる）。戻せる境界は「新版を本番 DB で最初に起動するまで」（[upgrading.md 4 節](docs/upgrading.md)）。v8.0.0 で取ったバックアップは v9.0.0 でも復元でき、次の起動で 0016 が当たる。v9.0.0 で取ったバックアップ（0016 を含む）は、v8.0.0 のアプリの復元の検証が受け付けない。本番 DB の前に、検証用のコピーで起動して確かめる。
+- 応答の形: 既存の口の応答は変わらない。新しい口: 設定の下書きの REST（`config_drafts_router`。テンプレートでは `/api` の下）と Tauri のコマンド `config_*`（14 個）、アプリ独自の SSE（アプリが足した経路だけ）。
+- 設定キー: 追加・変更なし。`tauri.conf.json` は版数のみ。
+- 配布物: 変更なし。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm verify:architecture` / `cargo test` / `pnpm dev`（画面が描画される）。
+2. **`BantoGrid` を使う画面をタッチ端末（またはブラウザーのタッチのエミュレーション）で**: 編集できるセルのタップで編集が始まること（`editOnTap={false}` を渡した grid では選択だけ）。指を置いてスクロールしても選択が動かないこと。マウスとキーボードの操作が今までどおりであること。
+3. touch-keys を使うアプリ: 数値の欄・文字の欄のタップで盤が開き、確定で値が入ること。grid のセルとつないだ画面では、盤の確定でセルが確定すること（実機での確かめの項目は [touch-keypad-design §14.4](docs/design/touch-keypad-design.md)）。
+4. migration 0016 を取り込んだアプリ: 検証用のコピーで起動して 0016 が当たること。
+5. ダッシュボードを取り込んだアプリ: 印を選ぶと絞られ、もう一度で外れ、「一覧で開く」で一覧へ移ること。visual の基準画像（Linux で生成）は `ui-demo`・`dashboard-selection` の作り直しが要る。
+6. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
+
+### 変更の一覧
+
+消費側への注意（開発中の記録。上の A・B の元になった文）:
 
 - **`@banto/grid-svelte`: タッチ・ペンでは、編集できるセルの 1 回のタップで編集が始まる（#964 G1。[設計書 §3](docs/design/grid-touch-edit-design.md)）。** 今までは、タップは選択だけで、編集はダブルタップだった。タップを選択だけに戻すなら `<BantoGrid editOnTap={false}>`。あわせて、タッチ・ペンでは `pointerdown` ではフォーカスもアクティブセルも動かず、`click` で動く（`editOnTap={false}` でも同じ。指を置いてスクロールしても選択が動かない・編集中のセルが確定しない。タッチ・ペンのドラッグで範囲選択は伸びない）。マウスとキーボードの操作は変わらない。
 - **テンプレートのダッシュボードで、チャートの印の操作の意味が変わる（#882 C2。[設計書 §7.4](docs/design/crossfilter-drilldown-design.md)）。** 価格帯のドーナツの片は、これまで（#882 D3）は選ぶと一覧へ移ったが、**選ぶと「絞る」**になった（もう一度で外れる）。一覧へは、価格帯だけを選んでいる間に見出しの下の帯に出る「一覧で開く」から移る（URL は D3 と同じ `?view=price-band&arg.band=…&arg.after=…`）。カテゴリ別在庫の棒も選べるようになった。テンプレートをコピーしたアプリは、取り込まなければ今までどおり。取り込む場合、印から直接一覧へ移したいウィジェットは `selects` を登録せず、`onDrill` を `onMarkActivate` に渡す（[recipe](docs/recipes/dashboard-widgets.md)「印から一覧へ移る」の 3）。`DashboardWidgetProps` に `onSelect`・`selected` が増えた（どちらも省略可。`onDrill` は残る）。取得の上限の断りは、印の読み上げから帯のリンクの title へ移った。
