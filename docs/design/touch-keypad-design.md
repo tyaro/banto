@@ -1,7 +1,7 @@
 # タッチ向けの画面内テンキー・文字キーボード 設計書 — Issue #937
 
 作成日: 2026-11-25
-状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1〜T5・T7 実装済み、T6 は別の設計**（T7 = `/ui-demo` のカード・scaffold の外す処理・e2e・基準画像。決めた形は §15.4。T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture、PR #954。T3 = `TextKeyboard`（英数・記号）・最大文字数・ホストの文字の経路・パスワードの入力欄。T4 = カナの配列（濁点・半濁点・小書き）。T5 = レシピ [touch-keys.md](../recipes/touch-keys.md)。T2 で決めた形は §15.1、T3 で決めた形は §15.2、T4 で決めた形は §15.3、実機の確かめ（§14.4）は未実施）
+状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1〜T5・T7 実装済み、T6 は別の設計（[grid-touch-edit-design](grid-touch-edit-design.md)、Issue #964。設計書だけ）**（T7 = `/ui-demo` のカード・scaffold の外す処理・e2e・基準画像。決めた形は §15.4。T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture、PR #954。T3 = `TextKeyboard`（英数・記号）・最大文字数・ホストの文字の経路・パスワードの入力欄。T4 = カナの配列（濁点・半濁点・小書き）。T5 = レシピ [touch-keys.md](../recipes/touch-keys.md)。T2 で決めた形は §15.1、T3 で決めた形は §15.2、T4 で決めた形は §15.3、実機の確かめ（§14.4）は未実施）
 トラック: 保守者向け（トラックA）
 関連: Issue #937、[template-scope](../template-scope.md) §1・§3・§3.1、
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui` と層の補助）、
