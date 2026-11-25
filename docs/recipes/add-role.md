@@ -59,6 +59,9 @@ cargo test                 # rbac の順序テスト + REST の認可テスト
 
 ## やってはいけないこと
 
+- 新ロールを設定の下書き（[config-draft-publish.md](config-draft-publish.md)）の「読む」や役目のガードに
+  使うのに、`scripts/lib/config-drafts-gates.mjs` の `ROLE_ORDER` へ足さない（順の分からないロールの
+  混在は rule 8 が落ちる）。
 - 片方の経路（REST or Tauri）だけに新ロールの床を設定する（conventions §1）。
 - 既存マイグレーション `0004_user_roles.sql` を書き換えて CHECK 制約を変える
   （適用済み DB と食い違う。必ず新しい連番マイグレーションで足す。conventions §11）。

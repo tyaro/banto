@@ -64,6 +64,7 @@ side of step 3 with code review plus the weekly Tauri CI, and note it as
 
 ## What not to do
 
+- Use the new role in the read gate or a duty gate of the config drafts (see [config-draft-publish.md](config-draft-publish.md), Japanese) without adding it to `ROLE_ORDER` in `scripts/lib/config-drafts-gates.mjs` (mixing roles of unknown order fails rule 8).
 - Set the new role's floor on only one path (REST or Tauri) (conventions §1).
 - Rewrite the existing `0004_user_roles.sql` to change the CHECK constraint (it
   would diverge from already-applied DBs; always add a new sequential migration,
