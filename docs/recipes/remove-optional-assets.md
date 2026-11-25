@@ -291,7 +291,7 @@ custom では `touchKeys`）。テンプレートの配線は `/ui-demo` のカ�
 4. `apps/admin-template/package.json` の `@banto/touch-keys-svelte` の依存を消し、`pnpm install` で
    lockfile を更新する（`.svelte.ts` を持たないパッケージなので、`vite.config.ts` の `optimizeDeps.exclude` には
    元から載っていない。conventions §14）。
-5. `e2e/demo/touch-keys.spec.ts` を消す。`ui-demo` の基準画像（`e2e/visual`）を使い続けるなら、
+5. `e2e/demo/touch-keys.spec.ts` と `e2e/demo/touch-keys-grid.spec.ts` を消す。`ui-demo` の基準画像（`e2e/visual`）を使い続けるなら、
    `visual-baselines.yml` で作り直す。
 
 パッケージ本体（`packages/touch-keys-svelte`）は scaffold では消えない。同梱のままにしても他に影響しない。

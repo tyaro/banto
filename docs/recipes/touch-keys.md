@@ -3,7 +3,7 @@
 作成日: 2026-11-25（#937 T5。トラックB＝アプリ作者向け）
 
 タッチパネルの端末（キーボードの無い現場の端末）で、入力欄のタップに **画面内のテンキー・文字キーボード** を出す。
-確定で入力欄の `value` に書き、`input`・`change` を出すので、`bind:value` も `oninput` も `BantoForm` の検証も（`DraftNumberField` を除き）そのまま動く（4 節の制約）。
+確定で入力欄の `value` に書き、`input`・`change` を出すので、`bind:value` も `oninput` も `BantoForm` の検証もそのまま動く（`DraftNumberField` は盤の確定で確定・検証する。grid のセルはホストに 2 つ書く。どちらも 4 節）。
 OS のタッチキーボードは出さない（`inputmode="none"`）。パッケージ単体の API は
 [packages/touch-keys-svelte/README.md](../../packages/touch-keys-svelte/README.md)、設計と判断は
 [設計書](../design/touch-keypad-design.md)・[ADR-0036](../adr/0036-touch-keys-package.md)。
@@ -57,7 +57,8 @@ true の間だけ、数値の欄（`type="number"`・`inputmode="numeric" | "dec
 
 - **ホストは 1 つだけ。** テンプレートの `/ui-demo` の見本を残しているアプリ（`full`）は、ルートに置くのと同時に、見本のカードの
   `<TouchKeysHost ... />`（`routes/(app)/ui-demo/+page.svelte` の `[scaffold:touch-keys]` の markup の領域）と、それだけが使う
-  `touchKeysOn`・`touchKeysCard`・`touchKeysResolve`・スイッチを消す。束 `src/lib/banto/touchKeysMessages.ts` と `touchKeys.*` のキーは
+  `touchKeysOn`・`touchKeysCard`・`touchKeysResolve`・`touchKeysConfirm`・スイッチを消す（見本の grid を残すなら、grid のセルの
+  `resolve`・`onconfirm`（4 節）はルートのホストに書く）。束 `src/lib/banto/touchKeysMessages.ts` と `touchKeys.*` のキーは
   ルートのホストが使うので残す。2 つあると、どちらも document で押下を聞くので、見本の欄で盤が 2 つ開き、片方を閉じてももう片方が残る。
 - 既定の出し方は、テンキーが中央のポップアップ（`popup`）、文字キーボードが下の固定（`bottom`）。`placement` で変える。
 - 入力欄ごとの指定は attachment `touchKeys(...)`（入力欄が自分のアプリのものなら、これが一番素直）:
@@ -150,10 +151,15 @@ OS のタッチキーボードが同時に出る環境があれば（`inputmode=
 - `NumberField`（`type="number"`、`min` / `max` が属性にある）は推定だけで、範囲つきのテンキーになる。
 - `TextField` は文字キーボードになる。
 - **`DraftNumberField`**（`type="text"` + `inputmode="decimal"`）はテンキーになるが、`min` / `max` が DOM に無いので、
-  **`resolve` で範囲を渡す**（書き忘れると範囲なしのテンキーになる）。**限界（F1・#964 より前の挙動。F1 以降は `change` でも `draft.commit()` が走り、盤の確定で検証・確定する。この段落の書き直しは W1）**: `DraftNumberField` は `input` では
-  `draft.setRaw()` しか呼ばず、検証と値の確定は blur か Enter の `draft.commit()` で行う。盤の確定は入力欄へ書いて `input` を出す
-  までで、フォーカスは入力欄に残るため、**盤を閉じた直後には forms の検証・確定は走らない**（次の blur・Enter で走る。`DraftNumberField` は submit を見ず、標準の `BantoForm` の送信は `FormStore.validateAll()` で `FormDraft` を確定しない。`FormDraft` を使うフォームは、フォーカスが残ったまま送れる画面なら、保存ハンドラーで `draft.commitAll()` が成功してから確定値を読む）。
-  grid のセルと同じ限界で、盤の範囲の知らせ（`resolve` の `min` / `max`）が、その場の唯一の検証になる。`input.id` はフィールド名（`DraftNumberField` は `id` を省くと `def.name`）。
+  **`resolve` で範囲を渡す**（書き忘れると範囲なしのテンキーになる）。`input.id` はフィールド名（`DraftNumberField` は `id` を省くと `def.name`）。
+  **盤の確定で、値の確定と検証まで走る**（#964 F1）: `DraftNumberField` は blur・Enter に加えて `change` でも `draft.commit()` を呼び、
+  盤の確定は `input` → `change` を出す。フォーカスは入力欄に残るが、確定値（`draft` の値）とエラーの表示は盤を閉じた時点で揃う
+  （その後の blur は、文字が変わっていなければ確定し直さない。`onCommit` も 1 回）。配線は要らない。
+  **実キーボードで打っている途中の保存は別**: 打った文字は blur・Enter まで確定しない（`DraftNumberField` は submit を見ず、標準の `BantoForm` の送信は
+  `FormStore.validateAll()` で `FormDraft` を確定しない）。フォーカスが残ったまま送れる画面では、保存ハンドラーで `draft.commitAll()` が成功してから確定値を読む。
+- **ほかの欄**: `TextField`・`NumberField`・`PasswordField` は `input` のたびに `FormStore` へ値が入るので、盤の確定で値が入る
+  （エラーの表示は、実キーボードで打ったときと同じく blur の後）。`DraftDateField` と日付・時刻の欄は盤の対象にしない
+  （下の `data-touch-keys="off"`。注入した日付の入力欄に盤で書いても、確定は blur・Enter を待つ）。
 
 ```svelte
 <TouchKeysHost
@@ -186,8 +192,45 @@ OS のタッチキーボードが同時に出る環境があれば（`inputmode=
 入力欄が自分のものなら `touchKeys(...)` のほうが近くに書けて素直。日付・時刻の入力欄は文字の欄なので、何もしなければ
 文字キーボードの対象になる。アプリの包み（`FormDateInput.svelte` など）に `data-touch-keys="off"` を付ける。
 
-grid のセルの編集は、エディタが素の `<input>` なのでタップで盤が開くが、**編集の開始がダブルクリック**（タッチだけでは始められない）、
-**確定の後にセルの確定が blur か Enter を待つ**ため、盤の確定だけでセルは確定しない。grid 側の対応は別の Issue（設計書 §18 の 7）。
+### grid のセル（`@banto/grid-svelte`）
+
+grid と盤は互いを知らない。**繋ぐのはホストの 2 つの props だけ**（#964。grid はセルのエディタに印 `data-grid-editor` を付ける。
+組み込みのエディタは `<input>` 自身、注入したエディタはその包み）:
+
+```svelte
+<script lang="ts">
+	const isGridEditor = (input: HTMLInputElement) => input.closest('[data-grid-editor]') !== null;
+</script>
+
+<TouchKeysHost
+	enabled={deviceSettings.touchKeys}
+	messages={touchKeysMessages()}
+	resolve={(input) => (isGridEditor(input) ? { openOnFocus: true } : undefined)}
+	onconfirm={({ input }) => {
+		if (isGridEditor(input)) input.blur();
+	}}
+/>
+```
+
+`resolve` を欄ごとに書き分けているなら、その `default` の枝を `isGridEditor(input) ? { openOnFocus: true } : undefined` にする。
+ホスト 1 つで、アプリの中の全部の grid に効く（grid ごとの配線は無い）。テンプレートの見本は `/ui-demo` の TouchKeysHost のカード。
+
+- **1 回のタップで編集と盤が始まる。** タッチ・ペンは、編集できるセルのタップで編集が始まり（grid の `editOnTap`、既定 `true`）、
+  その続きでエディタがフォーカスを受けるので、`openOnFocus` で盤が開く。マウスのダブルクリックで始めた編集でも開く。
+  キーボード（Enter / F2）で始めた編集では開かない。`openOnFocus` を書かないと 2 回のタップになる（1 回目で編集、2 回目で盤）。
+- **盤の確定でセルが確定する。** `onconfirm` の `blur()` が grid の「blur で確定」の経路に入る。**次のセルへは動かない**
+  （編集したセルがアクティブのまま、フォーカスは grid に戻る。矢印キーはそこから続く）。blur するのは grid のエディタだけにする
+  （全部の欄で blur すると、フォーカスが外れると閉じるポップアップの中の欄で、盤の確定がポップアップを閉じる）。
+- **確定に失敗したとき**（列の `validate`・`onCellEdit` の拒否）は、セルの編集は開いたまま、下書きとエラーが残り、フォーカスは
+  エディタに戻る。エディタをタップすれば、盤がいまの下書きで開く。保存を待つ間に利用者が別の場所を操作したら、保存が終わっても
+  フォーカスは取り返さない。
+- **盤の取り消し（取り消しのキー・外のタップ）は盤だけを閉じる。** セルの編集は開いたまま、下書きは盤を開く前のまま。
+  **実キーボードの Esc は 1 回で両方を閉じる**（セルの編集を取り消し、盤は対象が消えて閉じる。値は変わらない）。
+- **数値の列はテンキー、文字の列は文字キーボード**（推定のまま）。grid の数値のエディタは `min` / `max` を DOM に出さないので、
+  **盤に範囲は付かない**。範囲は列の `validate` が確定のときに見る（盤で範囲も見せたいなら、`resolve` で
+  `{ kind: 'number', min, max, openOnFocus: true }` を返す。どの列かは `input.closest('[data-cell-field]')` などアプリの印で引く）。
+- **日付・時刻の列**は、注入したエディタの包みに `data-touch-keys="off"`（上と同じ）。`<select>`・checkbox は盤の対象でない。
+- 盤が開いている間は、別のセルのタップは届かない（1 回目は盤を閉じるだけ。「挙動の約束」の外のタップ）。
 
 ## 5. キーの大きさ
 
@@ -327,8 +370,10 @@ export function touchKeysMessages(): Required<TouchKeysMessages> {
 
 - `pnpm --filter @banto/touch-keys-svelte test` — 純粋な関数と jsdom の部品の試験。
 - `pnpm e2e:demo` — テンプレートの `/ui-demo` のカードの配線（`e2e/demo/touch-keys.spec.ts`。テンキー・英数・カナ・
-  パスワード・切り替え・カードの外の欄）。
+  パスワード・切り替え・カードの外の欄）と、grid のセルとの組み合わせ（`e2e/demo/touch-keys-grid.spec.ts`。タッチの文脈で、
+  1 回のタップで盤が開く・確定でセルが確定して grid にフォーカスが戻る・保存の拒否・取り消し・実キーボードの Esc）。
 - `pnpm e2e:touch-keys` — ブラウザーの fixture（Playwright のタッチの文脈で、本物の `@banto/ui` の `Modal` と組んで、外のタップ・
   層・数値の検証・実キーの Enter・文字キーボード・カナ・パスワードの 95 文字を確かめる）。
 - **実機**: タッチパネルの端末で、OS のキーボードが同時に出ないこと・外のタップで盤が閉じること・キーの押しやすさ・
-  5 行のカナの盤が収まることを自分の目で確かめる。
+  5 行のカナの盤が収まることを自分の目で確かめる。grid を使う画面では、セルのタップで OS のキーボードが一瞬も出ないこと・
+  スクロールの始まりで編集が始まらないことも見る（項目は設計書 §14.4）。

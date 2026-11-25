@@ -116,8 +116,19 @@
 	// to the card's own fields, so the other samples on this page keep their plain
 	// inputs. The switch stands for the per-device setting behind `enabled`. The
 	// keys are closed on load, so the screenshot shows only the fields.
+	//
+	// Grid wiring (#964 W1, grid-touch-edit-design §4.1 ⑤ / §5.1): the host is the
+	// one place that knows both packages. `resolve` gives every grid cell editor
+	// (the grid's public mark `data-grid-editor`) `openOnFocus`, so the tap that
+	// starts the edit also opens the keys; `onconfirm` blurs that editor, which is
+	// the grid's own commit-without-moving path. Neither package imports the other.
 	// `pnpm scaffold` removes the two `[scaffold:touch-keys]` regions of this file.
-	import { TouchKeysHost, touchKeys } from '@banto/touch-keys-svelte';
+	import {
+		TouchKeysHost,
+		touchKeys,
+		type TouchKeysConfirmDetail,
+		type TouchKeysOptions
+	} from '@banto/touch-keys-svelte';
 	import { touchKeysMessages } from '#lib/banto/touchKeysMessages.js';
 
 	const touchKeysMessagesText = touchKeysMessages();
@@ -127,9 +138,66 @@
 	let touchLot = $state('');
 	let touchKana = $state('');
 	let touchPassword = $state('');
+	const isGridEditor = (input: HTMLInputElement): boolean =>
+		input.closest('[data-grid-editor]') !== null;
 	// `undefined` = infer from the field's attributes; `false` = no keys on this field.
-	const touchKeysResolve = (input: HTMLInputElement): false | undefined =>
-		touchKeysCard?.contains(input) ? undefined : false;
+	// A grid cell editor keeps the inferred kind and only gains `openOnFocus`.
+	const touchKeysResolve = (input: HTMLInputElement): TouchKeysOptions | false | undefined => {
+		if (!touchKeysCard?.contains(input)) return false;
+		return isGridEditor(input) ? { openOnFocus: true } : undefined;
+	};
+	// The keys' confirm becomes the cell's commit: blur the grid editor only (a
+	// blur on every field would close popups that close on focus loss, §5.1 E).
+	const touchKeysConfirm = ({ input }: TouchKeysConfirmDetail): void => {
+		if (isGridEditor(input)) input.blur();
+	};
+
+	// The grid of the card: quantity (number keypad) and lot (text keyboard).
+	// A quantity over the stock is refused by the save, and the lot saves after a
+	// short wait like a server would - both so the sample (and its e2e) shows what
+	// the keys' confirm does when the save fails or is still running.
+	interface TouchPick {
+		code: string;
+		qty: number;
+		lot: string;
+	}
+	const TOUCH_PICK_STOCK = 500;
+	const TOUCH_PICK_SAVE_MS = 800;
+	let touchPicks = $state<TouchPick[]>([
+		{ code: 'P-001', qty: 12, lot: 'L24A' },
+		{ code: 'P-002', qty: 40, lot: 'L24B' },
+		{ code: 'P-003', qty: 8, lot: '' }
+	]);
+	const touchPickColumns: GridColumn<TouchPick>[] = [
+		{ id: 'code', header: m['uiDemo.touchKeys.gridCode'](), accessor: 'code', width: 120 },
+		{
+			id: 'qty',
+			header: m['uiDemo.touchKeys.gridQty'](),
+			accessor: 'qty',
+			width: 140,
+			align: 'right',
+			editable: true,
+			editor: 'number'
+		},
+		{
+			id: 'lot',
+			header: m['uiDemo.touchKeys.gridLot'](),
+			accessor: 'lot',
+			width: 180,
+			editable: true
+		}
+	];
+	async function saveTouchPick(edit: CellEdit<TouchPick>) {
+		if (edit.field === 'qty' && typeof edit.value === 'number' && edit.value > TOUCH_PICK_STOCK) {
+			throw new Error(m['uiDemo.touchKeys.gridOverStock']({ max: TOUCH_PICK_STOCK }));
+		}
+		if (edit.field === 'lot') {
+			await new Promise((resolve) => setTimeout(resolve, TOUCH_PICK_SAVE_MS));
+		}
+		touchPicks = touchPicks.map((row) =>
+			row.code === edit.rowId ? { ...row, [edit.field]: edit.value } : row
+		);
+	}
 	// [scaffold:touch-keys] end
 
 	// HeaderNav card (nav-menubar-plan PR-2): one set of entries drawn twice -
@@ -1677,11 +1745,22 @@
 					</span>
 				</div>
 			</div>
+			<span class="caption">{m['uiDemo.touchKeys.gridCaption']()}</span>
+			<div class="grid-sample" data-testid="ui-demo-touch-keys-grid">
+				<BantoGrid
+					rows={touchPicks}
+					columns={touchPickColumns}
+					getRowId={(row) => row.code}
+					onCellEdit={saveTouchPick}
+					messages={gridMessages()}
+				/>
+			</div>
 		</div>
 		<TouchKeysHost
 			enabled={touchKeysOn}
 			messages={touchKeysMessagesText}
 			resolve={touchKeysResolve}
+			onconfirm={touchKeysConfirm}
 		/>
 	</SurfaceCard>
 	<!-- [scaffold:touch-keys] end -->
