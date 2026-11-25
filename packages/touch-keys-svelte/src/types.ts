@@ -43,7 +43,7 @@ export interface CommonKeysOptions {
 	 * as a pointer-made `click`, e.g. a button / cell whose handler shows and focuses this
 	 * field), not only when the field itself is tapped. Default `false`: focus alone never (approximated by a zero-delay timer; a key, new pointerdown or keyboard-made click ends it)
 	 * opens the keys. A keyboard-made click (Enter / Space, `detail === 0`), a field that
-	 * autofocuses on its own, and focus moved later do not open them.
+	 * autofocuses on its own, and focus moved later normally do not open them (a short window, not a strict task boundary).
 	 */
 	openOnFocus?: boolean;
 }
