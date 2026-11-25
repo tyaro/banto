@@ -622,3 +622,107 @@ async fn listeners_that_share_a_budget_share_the_room_for_new_writes() {
     assert!(matches!(plain_outcome, StopOutcome::Finished));
     assert!(matches!(own_outcome, StopOutcome::Finished));
 }
+
+// --- A stop requested from outside (a revoked certificate), `StopHandle` ---
+
+/// Asks for the stop the way a watcher thread does: from a plain thread,
+/// through a clone, without the `RunningServer`.
+fn request_stop_from_a_thread(server: &RunningServer) {
+    let handle = server.stop_handle();
+    std::thread::spawn(move || handle.request_stop())
+        .join()
+        .expect("request_stop does not panic outside the runtime");
+}
+
+#[tokio::test]
+async fn after_a_requested_stop_no_connection_and_no_write_is_accepted() {
+    let steps = TwoSteps::default();
+    let (plain, own, _budget) = serve_both(&steps).await;
+    let own_addr = own.local_addr();
+    assert!(!own.stop_handle().is_stop_requested());
+
+    request_stop_from_a_thread(&own);
+
+    // The gate is closed by the time `request_stop` returned: the listener
+    // starts no write, whatever connection it would arrive on.
+    assert!(own.stop_handle().is_stop_requested());
+    assert!(
+        own.hold_write_for_test("POST /late").is_none(),
+        "no write starts after the requested stop"
+    );
+    // And it stops accepting: the port closes without anyone awaiting the
+    // server.
+    let mut closed = false;
+    for _ in 0..300 {
+        if TcpStream::connect(own_addr).await.is_err() {
+            closed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(closed, "the listener is closed after the requested stop");
+    assert_eq!(steps.created(), 0, "nothing reached a handler");
+
+    // The other listener is not touched.
+    let response = request(plain.local_addr(), "POST", "/plain").await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+    // Asking again changes nothing, and the owner's stop finishes it.
+    request_stop_from_a_thread(&own);
+    assert!(matches!(own.stop().await, StopOutcome::Finished));
+    assert!(matches!(plain.stop().await, StopOutcome::Finished));
+}
+
+#[tokio::test]
+async fn a_write_detached_before_a_requested_stop_runs_to_the_end() {
+    let steps = TwoSteps::default();
+    let (server, _) = serve_own(&steps, WriteBudget::default()).await;
+
+    // Between its two steps, its connection already gone.
+    disconnect_mid_request(server.local_addr(), "POST", &steps).await;
+    request_stop_from_a_thread(&server);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(steps.audited(), 0, "still running, not aborted");
+
+    // The owner waits afterwards, and is told when it does not finish.
+    let remaining = server
+        .stop_waiting_writes_for(Duration::from_millis(200))
+        .await
+        .remaining()
+        .expect("the write accepted before the request is still running");
+    assert_eq!(remaining.operations(), vec!["POST /work".to_string()]);
+
+    steps.release(1);
+    assert!(remaining.wait(Duration::from_secs(5)).await);
+    assert_eq!(steps.audited(), 1, "it ran to the end");
+}
+
+#[tokio::test]
+async fn writes_left_by_an_earlier_generation_are_not_in_stop_all() {
+    let steps = TwoSteps::default();
+    let (plain, own, budget) = serve_both(&steps).await;
+
+    // The app's own listener is replaced while one of its writes runs.
+    disconnect_mid_request(own.local_addr(), "POST", &steps).await;
+    let left = own
+        .stop_waiting_writes_for(Duration::from_millis(100))
+        .await
+        .remaining()
+        .expect("left running by the replaced generation");
+    let (renewed, _) = serve_own(&steps, budget.clone()).await;
+
+    // The final stop of the listeners that are running now is clean...
+    let outcomes = RunningServer::stop_all([plain, renewed]).await;
+    assert!(outcomes
+        .iter()
+        .all(|outcome| matches!(outcome, StopOutcome::Finished)));
+    // ...but the app still has a write running: the handle it kept, and the
+    // shared budget, say so.
+    assert!(!left.is_finished());
+    assert_eq!(budget.running(), 1);
+    assert!(!left.wait(Duration::from_millis(100)).await);
+
+    steps.release(1);
+    assert!(left.wait(Duration::from_secs(5)).await);
+    assert_eq!(budget.running(), 0);
+}

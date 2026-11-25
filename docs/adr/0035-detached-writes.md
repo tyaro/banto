@@ -183,6 +183,19 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
   順序を全 listener に対して守る: **全部の門を先に閉じ**（以後どの口も書き込みを始めない）、それから並行に
   待つ。待ちは合計ではなく最も遅い 1 つ分（長くて 10 秒）。結果は渡した順に listener ごと。`stop()` を 1 つずつ
   順に呼ぶと、先の listener を待つ間に後の listener が書き込みを受け付け、待ちも足し算になる。
+- **外からの停止要求（証明書の失効）**: `RunningServer::stop_handle()` が返す `StopHandle` は複製でき、
+  `request_stop()` は**同期で、待たない**（監視のスレッドなど、`RunningServer` を持たず `.await` もできない所から
+  呼べる。PR #950 のクロスレビューで追加）。やることは `stop()` の最初の 1 手と同じ: 戻るまでに書き込みの門を
+  閉じ（以後の書き込みは、開いたままの接続に来たものも 503 で始まらない）、listener に受付の終了を、開いている
+  接続に終了を知らせる（listener が閉じるのは serve のタスクが次に動いたとき）。**受理済みの書き込みは止めない**。
+  何度呼んでもよく、取り消せない。停止を終える（残った書き込みを待って報告する）のは、今までどおり所有者の
+  `stop()` / `stop_all()`。開いている接続をその場で切るのはアプリの `Io` の仕事のまま（下）。`StopHandle` は
+  listener を生かし続けない（`RunningServer` を捨てれば、ハンドルが残っていても止まる）。
+- **以前の世代に残った書き込みは、アプリが持ち続ける**: `stop_all` が待つのは渡した listener だけ。作り直しの
+  ときに返った `StopOutcome::WritesRemaining` の `RemainingWrites` は、`is_finished()` になるまでアプリが保持し、
+  全体の停止では同じ期限でそれも待つ（`RemainingWrites::wait`）か、未完了として報告する。渡した listener が全部
+  `Finished` でも、それだけで「書き込みは残っていない」とは言えない。全世代を通した確かめは、共有の枠の
+  `WriteBudget::running()` が 0 であること。
 - **約束の範囲**: 「包み忘れが起きない」（§1）は、**`serve` を通した listener の全部**に及ぶ。層そのもの
   （`detach_writes`・`DetachedWrites`）は公開しないままなので、層を掛ける方法は `serve` しか無く、掛け方を
   間違える余地も無い。約束の外に出るのは、router を `axum::serve` などへ直に渡したときだけ（banto からは
@@ -234,7 +247,9 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
   500／停止は走っている書き込みを待つ／終わらない書き込みは「残っている」／§9: 自前の listener でも切り離される・
   `ConnectInfo` が付く／2 つの listener をまとめて止めると両方の書き込みを待つ／残った書き込みは受けた listener の
   結果に出る／片方を止めて作り直す間ももう片方は切り離されたまま／枠は listener をまたいで共有）、`server.rs` の
-  単体（`stop_all` は全部の門を閉じてから待つ）、`detach.rs` の単体（門を閉じた後は
+  単体（`stop_all` は全部の門を閉じてから待つ／`StopHandle` は捨てた listener を生かさない）、同じ
+  `detach_writes.rs` に、外からの停止要求の後は接続も書き込みも受けない／要求の前に切り離した書き込みは最後まで
+  走る／以前の世代に残った書き込みは `stop_all` の結果に入らない、`detach.rs` の単体（門を閉じた後は
   503 で handler が走らない）、`exposure.rs` の単体（向き。混ざった変更は狭める側）、
   `apps/admin-template/core/src/rest/tests/detach.rs`（実物の `POST /api/users` で、切断しても作成と監査が残る）、
   `apps/admin-template/src-tauri/src/tests/server_writes.rs`（再設定の 2 方向）。

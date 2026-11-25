@@ -99,6 +99,12 @@ where
     let _: std::net::SocketAddr = bound.local_addr();
     let own: banto_server::RunningServer =
         bound.with_write_budget(plain.write_budget()).serve(router);
+    // A revocation watcher asks for the stop from a plain thread; the owner
+    // finishes it.
+    let handle: banto_server::StopHandle = own.stop_handle();
+    let watcher = handle.clone();
+    std::thread::spawn(move || watcher.request_stop());
+    let _: bool = handle.is_stop_requested();
     Ok(banto_server::RunningServer::stop_all([plain, own]).await)
 }
 

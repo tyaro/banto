@@ -70,7 +70,9 @@ well (a TLS listener of its own, say) sends that listener through
 `BoundServer::from_listener(..).serve(..)` too** (never hand the router
 straight to `axum::serve`: the writes arriving there would not be detached and
 no stop would count them. Share the budget with `with_write_budget`, and stop
-them together with `RunningServer::stop_all`. Issue #947, ADR-0035 §9). A Tauri command is not tied to a connection, so it needs no
+them together with `RunningServer::stop_all`. Keep the `RemainingWrites` a
+replaced listener returned until they finish, and wait for them too at the
+final stop. Issue #947, ADR-0035 §9). A Tauri command is not tied to a connection, so it needs no
 layer. This is a difference of transport; the symmetry of authorization and
 audit is unchanged. A new handler needs no wrapping, but **the order inside a
 handler (commit -> revoke -> audit) is not fixed by the layer**. The rules of

@@ -201,6 +201,22 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
   write), then they are waited for side by side. The wait is that of the slowest one (10 seconds at most), not the
   sum. One result per listener, in the order given. Calling `stop()` on one after the other lets the later
   listeners accept writes while the first is waited for, and adds the waits up.
+- **A stop requested from outside (a revoked certificate)**: `RunningServer::stop_handle()` returns a `StopHandle`
+  that can be cloned, and its `request_stop()` is **synchronous and does not wait** (callable from a watcher thread
+  or anywhere else that neither owns the `RunningServer` nor can `.await`; added in the cross review of PR #950).
+  It does what the first step of `stop()` does: the write gate is closed by the time it returns (a later write,
+  also one on a connection that is still open, is answered 503 and does not start), the listener is told to stop
+  accepting and the open connections are told to end (the listener closes when the serve task runs next).
+  **Writes already accepted are not stopped.** It may be called any number of times and cannot be undone.
+  Finishing the stop (waiting for the remaining writes and reporting them) is still the owner's `stop()` /
+  `stop_all()`. Cutting open connections on the spot stays the job of the app's `Io` (below). A `StopHandle` does
+  not keep a listener alive (dropping the `RunningServer` stops it even while handles remain).
+- **Writes left by an earlier generation stay with the app**: `stop_all` waits only for the listeners it is given.
+  The `RemainingWrites` of a `StopOutcome::WritesRemaining` returned when a listener was replaced is kept by the
+  app until it reports `is_finished()`; at the final stop the app waits for those too, against the same deadline
+  (`RemainingWrites::wait`), or reports them as unfinished. All `Finished` for the listeners given does not by
+  itself mean "no write is running". The check over all generations is that `WriteBudget::running()` of the shared
+  budget is 0.
 - **How far the promise reaches**: "nothing to forget to wrap" (§1) covers **every listener served through
   `serve`**. The layer itself (`detach_writes`, `DetachedWrites`) stays private, so `serve` is the only way to
   install it and there is no way to install it wrongly. The only way out of the promise is to hand the router
@@ -259,7 +275,10 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
   write on a listener of the app's own is detached and has `ConnectInfo` / stopping two listeners together waits
   for the writes of both / a write left running is reported by the listener it came in on / while one listener is
   replaced the other's writes stay detached / the budget is shared across listeners), the unit test in `server.rs`
-  (`stop_all` closes every gate before it waits), the unit
+  (`stop_all` closes every gate before it waits / a `StopHandle` does not keep a dropped listener serving), in the
+  same `detach_writes.rs`: after a stop requested from outside neither a connection nor a write is accepted / a
+  write detached before the request runs to the end / writes left by an earlier generation are not in the results
+  of `stop_all`, the unit
   tests in `detach.rs` (after the gate closed: 503 and the handler never runs) and `exposure.rs` (the direction;
   mixed changes count as narrowing), `apps/admin-template/core/src/rest/tests/detach.rs` (the real
   `POST /api/users`: account and audit row survive the disconnect),

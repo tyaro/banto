@@ -371,6 +371,15 @@ impl DetachedWrites {
 
     /// Refuse every write from now on. Never reopened: a stopped listener is
     /// replaced by a new one with its own gate.
+    /// Whether [`Self::close`] was called.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .closed
+    }
+
     pub(crate) fn close(&self) {
         self.state().closed = true;
     }
