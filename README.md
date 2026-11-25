@@ -351,7 +351,7 @@ npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスはリ
 | `@banto/tree-svelte`       | ツリービュー（展開/選択/チェックボックス/遅延/ドラッグ/リネーム/tree-grid/tree-select）                                        |
 | `@banto/ui`                | 汎用 UI 部品（PageHeader・SurfaceCard（`tone` で主役／標準／補助の 3 段）・StatusBadge・IconButton・Empty/Error/LoadingState） |
 | `@banto/image-assets`      | ブラウザ側の画像の原本・取込検査・object URL の寿命（ADR-0020、オプション・未配線）                                            |
-| `@banto/touch-keys-svelte` | タッチ向けの画面内テンキー（ADR-0036、オプション・未配線。文字キーボード等は順次）                                             |
+| `@banto/touch-keys-svelte` | タッチ向けの画面内テンキー・文字キーボード（ADR-0036、オプション・未配線。カナ等は順次）                                       |
 
 Rust クレート（`crates/`、MIT）:
 

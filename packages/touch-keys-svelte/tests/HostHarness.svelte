@@ -3,6 +3,7 @@
 	import TouchKeysHost from '../src/TouchKeysHost.svelte';
 	import { touchKeys } from '../src/attach';
 	import type { TouchKeysMessages } from '../src/messages';
+	import type { TextLayout } from '../src/core/text';
 	import type { ResolveFn } from '../src/target';
 	import type {
 		TouchKeysCancelDetail,
@@ -18,7 +19,11 @@
 		recDecimals?: number;
 		decOff?: boolean;
 		decRequired?: boolean;
-		placement?: { number?: TouchKeysPlacement };
+		memoMax?: number;
+		memoLayouts?: TextLayout[];
+		pwType?: string;
+		placement?: { number?: TouchKeysPlacement; text?: TouchKeysPlacement };
+		layouts?: TextLayout[];
 		resolve?: ResolveFn;
 		messages?: TouchKeysMessages;
 		withNote?: boolean;
@@ -37,7 +42,11 @@
 		recDecimals,
 		decOff = false,
 		decRequired = false,
+		memoMax,
+		memoLayouts,
+		pwType = 'password',
 		placement,
+		layouts,
 		resolve,
 		messages,
 		withNote = false,
@@ -49,15 +58,17 @@
 	}: Props = $props();
 
 	let qty = $state<number | string>(12);
+	let title = $state('abc');
 </script>
 
 {#snippet unit({ draft }: { input: HTMLInputElement; draft: string | null })}
-	<span data-testid="note">{draft} kg</span>
+	<span data-testid="note" data-draft-null={draft === null ? 'yes' : 'no'}>{draft} kg</span>
 {/snippet}
 
 <TouchKeysHost
 	{enabled}
 	{placement}
+	{layouts}
 	{resolve}
 	{messages}
 	{onopen}
@@ -108,5 +119,45 @@
 	<div data-touch-keys="off"><input id="wrapped" type="number" /></div>
 	<input id="name" type="text" />
 	<input id="ro" type="number" readonly />
+	<!-- text keyboard fields (T3) -->
+	<label for="title">題名</label>
+	<input id="title" type="text" bind:value={title} {onkeydown} />
+	<output data-testid="bound-title">{title}</output>
+	<input id="code" type="text" maxlength="5" value="ab" aria-label="コード" />
+	<input
+		id="memo"
+		type="text"
+		value="x"
+		aria-label="メモ"
+		{@attach touchKeys({
+			kind: 'text',
+			editKey: () => editKey,
+			maxLength: memoMax,
+			layouts: memoLayouts
+		})}
+	/>
+	<input id="mail" type="email" value="" aria-label="メール" required />
+	<input id="lot" type="text" pattern="[A-Z][0-9]" aria-label="ロット" />
+	<input id="numtext" type="number" {@attach touchKeys({ kind: 'text' })} />
+	<input id="ro-text" type="text" readonly />
+	<!-- password fields (§5.5) -->
+	<input id="pw" type={pwType} value="old-secret" aria-label="パスワード" {onkeydown} />
+	<!-- type="text" while "shown": the app keeps it masked for the keys -->
+	<input
+		id="shown"
+		type="text"
+		value="visible-secret"
+		aria-label="表示中のパスワード"
+		{@attach touchKeys({ kind: 'text', masked: true })}
+	/>
+	<input
+		id="pin"
+		type="password"
+		inputmode="numeric"
+		maxlength="4"
+		minlength="4"
+		aria-label="暗証番号"
+		{@attach touchKeys({ kind: 'number', max: 9999 })}
+	/>
 	<button type="submit">保存</button>
 </form>

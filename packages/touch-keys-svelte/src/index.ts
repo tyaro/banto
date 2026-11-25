@@ -4,15 +4,18 @@
  * the template app (template-scope §3, ADR-0036).
  *
  * `TouchKeysHost` (once at the app root) opens the number keypad on numeric
- * `<input>`s; `touchKeys` sets one field's options. `NumberKeypad` and the pure
- * number-draft core are usable on their own. The text keyboard comes later.
+ * `<input>`s and the text keyboard on text / password `<input>`s; `touchKeys` sets
+ * one field's options. `NumberKeypad`, `TextKeyboard` and the pure draft cores are
+ * usable on their own. Password fields never hand their plain text out (design §5.5).
  */
 export { default as TouchKeysHost } from './TouchKeysHost.svelte';
 export { default as NumberKeypad } from './NumberKeypad.svelte';
+export { default as TextKeyboard } from './TextKeyboard.svelte';
 export { touchKeys } from './attach';
 export type {
 	TouchKeysOptions,
 	NumberKeysOptions,
+	TextKeysOptions,
 	CommonKeysOptions,
 	TouchKeysPlacement,
 	TouchKeysCancelReason,
@@ -44,3 +47,19 @@ export {
 	type KeyRules,
 	type DraftStatus
 } from './core/number';
+export {
+	TEXT_LAYOUTS,
+	resolveTextRules,
+	resolveTextLayouts,
+	textKeyRows,
+	reachableChars,
+	pressTextKey,
+	classifyText,
+	type TextLayout,
+	type TextRules,
+	type TextSpec,
+	type TextAttrs,
+	type TextKey,
+	type TextKeyRowsOptions,
+	type TextStatus
+} from './core/text';

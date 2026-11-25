@@ -2,7 +2,7 @@
  * i18n message bundle for the touch keys (conventions §13, layer 1). The package
  * carries no dictionary and no Paraglide: every message is a FUNCTION with a
  * Japanese default, and the app passes a bundle built from its own (Paraglide)
- * keys via the `messages` prop. Key glyphs (`0`-`9`, `.`) are not messages.
+ * keys via the `messages` prop. Key glyphs (`0`-`9`, letters, symbols) are not messages.
  */
 export interface TouchKeysMessages {
 	/** `aria-label` of the number keypad group. */
@@ -21,6 +21,28 @@ export interface TouchKeysMessages {
 	step?: (lower: string | null, upper: string | null) => string;
 	/** Notice for an empty draft of a required field. */
 	required?: () => string;
+	/** `aria-label` of the text keyboard group. */
+	textKeyboard?: () => string;
+	/** Layout switch: letters and digits. */
+	alnum?: () => string;
+	/** Layout switch: symbols. */
+	symbol?: () => string;
+	/** Case toggle while lower case is shown (pressing it switches to upper case). */
+	upper?: () => string;
+	/** Case toggle while upper case is shown. */
+	lower?: () => string;
+	/** The space key. */
+	space?: () => string;
+	/** Character count line; `max` is null when the field has no upper bound. */
+	length?: (length: number, max: number | null) => string;
+	/** Notice once the draft has reached (or is over) the maximum length. */
+	maxLength?: (max: number) => string;
+	/** Notice for a non-empty draft shorter than the minimum length. */
+	minLength?: (min: number) => string;
+	/** Notice when the minimum length is above the maximum: no non-empty draft can be confirmed. */
+	lengthConflict?: (min: number, max: number) => string;
+	/** Notice after a confirm the field itself refused (its type or `pattern` does not accept the text). */
+	invalid?: () => string;
 }
 
 export const defaultTouchKeysMessages: Required<TouchKeysMessages> = {
@@ -44,5 +66,16 @@ export const defaultTouchKeysMessages: Required<TouchKeysMessages> = {
 			: lower !== null || upper !== null
 				? `${lower ?? upper} にしてください`
 				: '刻みに合いません',
-	required: () => '入力が必要です'
+	required: () => '入力が必要です',
+	textKeyboard: () => '文字キーボード',
+	alnum: () => '英数',
+	symbol: () => '記号',
+	upper: () => '大文字',
+	lower: () => '小文字',
+	space: () => '空白',
+	length: (length, max) => (max !== null ? `${length} / ${max}` : `${length} 文字`),
+	maxLength: (max) => `${max} 文字までです`,
+	minLength: (min) => `${min} 文字以上にしてください`,
+	lengthConflict: (min, max) => `文字数の設定が合っていません（最小 ${min}・最大 ${max}）`,
+	invalid: () => '入力の形式が合いません'
 };

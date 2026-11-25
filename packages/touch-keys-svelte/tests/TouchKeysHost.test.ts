@@ -72,9 +72,9 @@ describe('TouchKeysHost: open', () => {
 		expect(screen.getByRole('button', { name: '.' })).toBeTruthy();
 	});
 
-	it('leaves text, readonly, touchKeys(false) and data-touch-keys="off" fields alone', async () => {
+	it('leaves readonly, touchKeys(false), data-touch-keys="off" and text-on-number fields alone', async () => {
 		render(HostHarness);
-		for (const id of ['name', 'ro', 'off', 'wrapped']) {
+		for (const id of ['ro', 'ro-text', 'off', 'wrapped', 'numtext']) {
 			await fireEvent.pointerDown(field(id));
 			await fireEvent.click(field(id));
 			expect(pad(), id).toBeNull();

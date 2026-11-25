@@ -1,7 +1,7 @@
 # タッチ向けの画面内テンキー・文字キーボード 設計書 — Issue #937
 
 作成日: 2026-11-25
-状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1・T2 実装済み、T3〜T5 未着手**（T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture。T2 で決めた形は §15.1、実機の確かめ（§14.4）は未実施）
+状態: **§18 はオーナー決定済み（2026-11-25、推奨どおり）。T1〜T3 実装済み、T4〜T7 未着手**（T1 = パッケージ登録・数値の純粋な関数・`NumberKeypad` の表示、PR #951。T2 = `TouchKeysHost`・`touchKeys`（テンキー）・ブラウザーの fixture、PR #954。T3 = `TextKeyboard`（英数・記号）・最大文字数・ホストの文字の経路・パスワードの入力欄。T2 で決めた形は §15.1、T3 で決めた形は §15.2、実機の確かめ（§14.4）は未実施）
 トラック: 保守者向け（トラックA）
 関連: Issue #937、[template-scope](../template-scope.md) §1・§3・§3.1、
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui` と層の補助）、
@@ -274,6 +274,10 @@ interface NumberKeysOptions extends CommonKeysOptions {
 interface TextKeysOptions extends CommonKeysOptions {
 	kind: 'text';
 	maxLength?: number;
+	minLength?: number;
+	required?: boolean;
+	/** true: `type` が password でない間も、パスワードの入力欄として扱う（§5.5。「表示する」で `type="text"` になる欄）。 */
+	masked?: boolean;
 	layouts?: TextLayout[];
 	initialLayout?: TextLayout;
 }
@@ -302,7 +306,8 @@ interface NumberKeypadProps {
 }
 ```
 
-`TextKeyboard` も同じ形（`maxLength`・`layouts`・`initialLayout`・`masked`）。公開するかは §18 の 9。
+`TextKeyboard` も同じ形（`maxLength`・`minLength`・`required`・`rejected`・`layouts`・`initialLayout`・`masked`・`onedit`）。公開するかは §18 の 9
+（公開した。T3 で決めた形は §15.2）。
 
 ### 5.4 推定（属性から読む）
 
@@ -342,6 +347,13 @@ interface NumberKeypadProps {
   **ASCII の印字できる文字（U+0020〜U+007E）の全部を打てる**ことを受け入れの試験にする（既にある認証情報を入れられること）。
   ASCII の外の文字を含むパスワードは打てない（レシピに書く）。
 - `type="password"` かどうかは、**開いたとき**に決める。開いている間に `type` が変わったら（「表示する」の切り替え）、取り消す。
+  「開いたとき」は**フォーカスを入力欄に置いた後**（フォーカスの処理が `type` を変える欄があるため。伏せるかどうか・下書き・
+  照合に使う値と `type` を、同じ時点の欄から決める。§15.2）。
+- **明示の指定 `masked: true`**（`touchKeys({ kind: 'text', masked: true })`・`resolve`）: 「パスワードを表示」で一時的に
+  `type="text"` になる欄は、属性からはパスワードと分からない。この指定を付けると、`type` が何であっても上の契約の全部が効く
+  （伏せた盤・空から始める・平文を渡さない）。`type="password"` の欄の伏せを外すことはできない（`masked: false` は無視）。
+- **空の確定で既存の値を消さない**（オーナー決定 2026-11-25）: 下書きは空から始まるので、開いて何も打たずに確定を押すと値を
+  消してしまう。空の下書きを確定できるのは、盤の「全部消す」を押した直後だけ（それ以外の空は、確定のキーが無効）。
 
 ## 6. 入力欄からの呼び出し方
 
@@ -582,7 +594,9 @@ doc コメントが同じ理由で `type="text"` にしている）。**下書�
 
 ### 9.3 最大文字数
 
-`maxLength`（指定 → `maxlength` 属性）に達したら、文字のキーは入らない。表示の行に `3 / 20` を出す。
+`maxLength`（指定と `maxlength` 属性の小さいほう。§15.2）に達したら、文字のキーは入らない。表示の行に `3 / 20` を出す。
+最小の文字数（指定の `minLength` と `minlength` 属性の大きいほう）に届かない、空でない下書きは確定できない。ブラウザーは
+スクリプトから代入した値に `maxlength`・`minlength` を掛けないので、どちらも盤が長さで判定する。
 数え方は HTML の `maxlength` と同じ（UTF-16 の符号単位）。盤が入れる文字はどれも 1 単位なので、文字数と一致する。
 
 ### 9.4 下書き
@@ -713,8 +727,10 @@ Playwright の `hasTouch` は合成のタッチで、OS のキーボードも実
   盤のキーを指で押してもフォーカスが動かない（タッチの合成イベントの順）／外のタップが下に抜けない／抵抗膜のパネルで取りこぼさない。
 - キーの実寸（定規で測り、`--banto-touch-key-size` をいくつにすれば 12 mm になるかをレシピの例にする）。
 
-**T2 の時点では未実施**（開発の環境にタッチの実機・WebView2 のキオスクが無い）。確かめる項目は T2 の PR の本文に並べ、
-実機の確かめの Issue（#757）に足す。結果が出たら、ここに書く。
+**T2・T3 の時点では未実施**（開発の環境にタッチの実機・WebView2 のキオスクが無い）。確かめる項目は T2・T3 の PR の本文に並べ、
+実機の確かめの Issue（#757）に足す。結果が出たら、ここに書く。T3 で足す項目: 文字キーボード（下の固定）を指で続けて打っても
+フォーカスが動かず取りこぼさない／パスワードの入力欄で OS のキーボードも、OS・ブラウザーのパスワードの補完の吹き出しも盤に重ならない／
+幅の狭いパネルで 10 列のキーが押せる大きさに収まる／`\` のキーが日本語のフォントで `¥` の形に見えても、入る文字は U+005C。
 
 ### 14.5 そのほか
 
@@ -771,6 +787,61 @@ T1 を小さく保つため、`NumberKeypad` は表示とキーの入力だけ�
 - **`enabled` を同じ値で渡し直しても閉じない**（値が変わったときだけ聞き手を付け外しする）。ホストの破棄は `disabled` で取り消す。
 - **ブラウザーの fixture**: §14.3。`pointerdown`・`mousedown` の `preventDefault` を外すと「外のタップ」の 4 件が落ちることを確かめた
   （試験が約束を実際に見ている）。
+
+### 15.2 T3 で決めた形
+
+- **ファイル**: `src/TextKeyboard.svelte`（盤）、`src/core/text.ts`（配列の表・1 打の遷移・最大文字数・確定できるかの純粋な関数）。
+  `src/target.ts` の `resolveNumberTarget` は `resolveTarget` になり、テンキーの対象と文字の対象の合併（`kind`）を返す。
+  `.svelte.ts` は持たないまま。
+- **公開する名前**: `TextKeyboard`、型 `TextKeysOptions`（`TouchKeysOptions` は `NumberKeysOptions | TextKeysOptions`）・`TextLayout`、
+  純粋な関数 `resolveTextRules`・`resolveTextLayouts`・`textKeyRows`・`reachableChars`・`pressTextKey`・`classifyText`・`TEXT_LAYOUTS`。
+  **`TextLayout` は T3 では `'alnum' | 'symbol'`**（`'kana'` は T4 で足す。知らない名前は捨て、空になれば全部に戻す）。
+- **ホストの prop**: `placement` に `text`（既定 `'bottom'`）、`layouts`（文字キーボードの配列の既定。入力欄ごとの `layouts` が勝つ）を足した。
+- **文字の経路はテンキーと同じ規則**: 開くのは `click`、`inputmode="none"`、外のタップ、実キー・Enter・リピート、`focusout`・`submit`・`reset`・
+  `MutationObserver`、確定の直前の照合（値・`editKey`）と**その時点の規則での再検証**（`maxLength`・`required`。開いた後に種類が変わった
+  ——テンキー ↔ 文字、パスワード ↔ 文字——ときも `target-changed`）、書いた後の確かめ（`type="email"`・`"url"` は前後の空白を削るので、
+  書いた値がそのまま残らなければ戻して、イベントを出さない）。テンキーの欄と文字の欄は、外のタップ 1 回で盤ごと替わる。
+- **開く時点**（レビューで直した）: `click` で見つけた対象は候補で、**フォーカスを置いた後に対象を解決し直し**、その結果から
+  伏せるかどうか・下書き・照合に使う値と `type` を決める。フォーカスの処理が欄を `type="password"` に変えても、伏せない盤に
+  値が写らない。解決し直して対象でなくなっていれば（`readonly` になった など）、開かずに `inputmode` を戻す。
+- **入力欄そのものの制約**（レビューで直した）: 書いた後に `validity` の `typeMismatch`（`type="email"`・`"url"` の形式）・
+  `patternMismatch`（`pattern`）・`valueMissing` を見る。合わなければ元の値に戻し、`input`・`change`・`onconfirm` を出さない。
+  テンキーと違い、盤は `pattern` を前もって知れず、閉じると打った下書きを捨てることになるので、**盤は開いたまま、知らせの行に
+  `invalid` の文言を出す**（次の 1 打で消える。`oncancel` も呼ばない）。`customError` は見ない（アプリが付けた文言は、この値に
+  依らない）。`minlength` はブラウザーがスクリプトの代入に掛けないので、純粋な関数（`classifyText` の `minLength`）で書く前に
+  判定する（指定の `minLength` と属性の大きいほう。0 は捨てる。空の下書きには掛けない）。**最小が最大を超えるときも、どちらも残す**
+  （`minlength="8"` に指定の `maxLength: 6` を重ねても、下限は緩まない）。そのときは設定の矛盾として、空でない下書きを
+  どれも確定させず、`lengthConflict` の文言を出す（空は `required` の規則のまま）。
+- **推定と指定**: `type="text"` などは文字キーボード（§5.4）。`touchKeys({ kind: 'text' })`・`resolve` で、`inputmode="numeric"` の欄を
+  文字キーボードにもできる。**`type="number"` に `kind: 'text'` は出さない**（ブラウザーが数でない文字列を空にするため。欄は素のまま）。
+- **最大文字数**: 指定の `maxLength` と `maxlength` 属性の**小さいほう**（指定で狭められるが、属性より緩められない。`type="number"` の
+  数値の属性と同じ考え方。§9.3 の「指定 → 属性」の順をこの形に決めた）。開いたときの値が上限を超えているときは、文字は入らず、
+  上限に収まるまで確定できない。`required`（属性か指定）で空の下書きは確定できない。知らせは `role="status"` の行（`maxLength` の文言）。
+- **文言**: `textKeyboard`・`alnum`・`symbol`・`upper`・`lower`・`space`・`length(length, max)`・`maxLength(max)`・`minLength(min)`・
+  `lengthConflict(min, max)`・`invalid` を足した。
+  大文字・小文字のキーは、押すと切り替わる先の名前を見せる。配列のキーは `aria-pressed` でいまの配列を示す。
+- **配列**: 英数は数字の段 + QWERTY の 3 段。記号は 17 個（§9.1）、パスワードでは ASCII の印字できる記号の 32 個。空白・1 文字消す・
+  全部消すは、どの配列でも同じ位置。行は最大 10 列で、幅が足りなければキーが縮む（盤の幅は 10 列ぶんを CSS で明示する）。
+- **パスワード**（§5.5）:
+  - `type="password"` の欄は、**指定の種類が何であっても伏せた文字キーボード**になる（`kind: 'number'` を付けても、テンキーにはしない。
+    テンキーは下書きをそのまま見せ、`onconfirm` に値を渡すため）。出さないのは `touchKeys(false)`・`resolve` の `false`・外す印だけ。
+    配列は常に英数 + 記号（全部）。`maxlength`・`minlength`・`required`・`label`・`placement`・`editKey`・`initialLayout` は効く。
+  - **`masked: true`**（`touchKeys({ kind: 'text', masked: true })`・`resolve`）で、`type` が password でない欄も同じ扱いにする
+    （「パスワードを表示」の間の `type="text"`。§5.5）。開いている間に `type` が変われば、これまでどおり閉じる。
+  - **下書きは盤（`TextKeyboard`）の中だけにある**。`masked` のとき、盤は `draft`（`$bindable`）を読みも書きもせず、空から始め、
+    外へは `onedit`（文字数と、「全部消す」で空にしたか、だけ）と、確定の 1 回の `onconfirm` で渡す。ホストが持つのは
+    「未確定の変更があるか」の真偽だけ（文字数 > 0、または「全部消す」の直後。Enter の扱いに使う）。盤は開いた回ごとに作り直す（`{#key}`）ので、閉じ方がどれでも、次の盤に前の下書きは無い。
+    `masked` は盤を作ったときに 1 度だけ読む（後から外しても、下書きは見えない）。
+  - 表示は `●` を文字数ぶんと、文字数の行（`6 文字`、上限があれば `6 / 20`）。`note` の `draft` は `null`、`onconfirm` の
+    `value`・`previous` は `null`。記録（`console`）には何も出さない。
+  - **開いて何もせずに確定しても、既存の値を消さない**（オーナー決定 2026-11-25）。空の下書きを確定できるのは「全部消す」を
+    押した直後だけで、そのときは空を書く（`required` があれば確定できない）。打ってから 1 文字ずつ消して空にしたときも
+    確定できない（消すなら「全部消す」）。ホストも、伏せた欄の「変更のない空」の確定は書かずに捨てる。
+  - 受け入れの試験: 盤の `outerHTML`（表示・属性を含む）に打った文字列が無い／口（`onopen`・`onconfirm`・`oncancel`・`resolve`・`note`）の
+    引数に平文が無い／`console` に出ない／取り消し・別の欄への切り替え・`enabled` を false・ホストの破棄の後、次の盤が空／
+    `type` を変えると閉じる（部品）。95 文字を盤で打って値が一致する・`onconfirm` が `null`・ページのどこにも下書きが無い（ブラウザー）。
+- **試験の置き場**: 単体 `tests/text.test.ts`、部品 `tests/TextKeyboard.test.ts`・`tests/TouchKeysHostText.test.ts`、
+  ブラウザー `tests/browser/text.e2e.ts`（fixture の画面にメモ・コード・パスワードの欄を足した）。
 
 ## 16. 外す手順
 
