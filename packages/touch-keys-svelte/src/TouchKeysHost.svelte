@@ -7,7 +7,8 @@
 	 * and `oninput` fields receive it unchanged.
 	 *
 	 * Promises kept here:
-	 * - Opens on `click`, never on `focus`. Focus stays on the field the whole time
+	 * - Opens on `click`, never on `focus` (the one exception: a field with `openOnFocus` opens when
+	 *   focus enters it in the continuation of a pointer-made click). Focus stays on the field the whole time
 	 *   (keys and the catch surface never take it), so nothing blurs and no focus is restored.
 	 * - The keys live in a `popover="manual"` (top layer, above any Modal) whose element
 	 *   is a full-viewport catch surface: a tap outside cancels and does NOT reach the page
@@ -324,8 +325,37 @@
 		else if (field instanceof HTMLInputElement) releaseOsKeyboard(field);
 	}
 
+	/**
+	 * `openOnFocus`: true from a pointer-made click until the end of its task. The app's click
+	 * handler (and the microtasks it queues, e.g. a Svelte flush) run inside that window, so a
+	 * field it shows and focuses is "the continuation of the tap"; a later focus is not.
+	 */
+	let clickWindow = false;
+	let clickWindowTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function closeClickWindow(): void {
+		clickWindow = false;
+		clearTimeout(clickWindowTimer);
+	}
+
+	function onFocusin(event: FocusEvent): void {
+		if (!clickWindow || inSurface(event.target)) return;
+		if (session && event.target === session.input) return;
+		const target = resolveTarget(event.target, resolve);
+		if (!target?.openOnFocus) return;
+		closeClickWindow();
+		if (session) cancel('outside');
+		open(target);
+	}
+
 	function onClick(event: MouseEvent): void {
 		if (inSurface(event.target)) return;
+		// A keyboard-made click (Enter / Space) has detail 0 and never starts the window.
+		if (event.detail > 0) {
+			clickWindow = true;
+			clearTimeout(clickWindowTimer);
+			clickWindowTimer = setTimeout(closeClickWindow, 0);
+		}
 		if (session && event.target === session.input) return;
 		const target = resolveTarget(event.target, resolve);
 		if (!target) return;
@@ -420,6 +450,7 @@
 		const offs = [
 			add(document, 'pointerdown', onPointerdown, true),
 			add(document, 'click', onClick, true),
+			add(document, 'focusin', onFocusin, true),
 			add(window, 'keydown', onKeydownCapture, true),
 			add(window, 'keydown', onKeydown, false),
 			add(window, 'keyup', onKeyup, true),
@@ -444,6 +475,7 @@
 		return () => {
 			for (const off of offs) off();
 			swallowEnterRepeat = false;
+			closeClickWindow();
 			untrack(() => cancel('disabled'));
 			restoreOsKeyboard();
 		};

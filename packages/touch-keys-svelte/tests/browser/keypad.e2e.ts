@@ -283,3 +283,30 @@ test('axe: no WCAG A / AA violation with the keys open', async ({ page }) => {
 		expect(results.violations, url).toEqual([]);
 	}
 });
+
+test.describe('openOnFocus (grid-touch-edit-design §4.2)', () => {
+	test('one tap on a button opens the keys on the field it shows and focuses', async ({ page }) => {
+		await page.goto('/');
+		await clearLog(page);
+		await page.locator('#reveal').tap();
+		await expect(surface(page)).toBeVisible();
+		expect(await activeId(page)).toBe('shown');
+		expect(await page.locator('#shown').getAttribute('inputmode')).toBe('none');
+		expect(await log(page)).toContain('open:shown');
+		await key(page, '4').tap();
+		await key(page, '確定').tap();
+		await expect(page.locator('#shown')).toHaveValue('4');
+	});
+	test('a field without the option stays closed, and a keyboard-made click does not open', async ({
+		page
+	}) => {
+		await page.goto('/');
+		await page.locator('#reveal-plain').tap();
+		await expect(page.locator('#shown-plain')).toBeFocused();
+		await expect(surface(page)).toBeHidden();
+		await page.locator('#reveal').focus();
+		await page.keyboard.press('Enter');
+		await expect(page.locator('#shown')).toBeFocused();
+		await expect(surface(page)).toBeHidden();
+	});
+});

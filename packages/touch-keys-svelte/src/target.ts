@@ -21,6 +21,8 @@ interface TargetBase {
 	placement: TouchKeysPlacement | undefined;
 	/** The edit key right now (`undefined` when the field declares none). */
 	editKey: string | number | null | undefined;
+	/** `openOnFocus` of the field's options (§4.2 of grid-touch-edit-design). */
+	openOnFocus: boolean;
 }
 
 /** A field the number keypad can open on, with everything decided at this moment. */
@@ -137,7 +139,8 @@ export function resolveTarget(
 		input: el,
 		label: options?.label ?? fieldLabel(el),
 		placement: options?.placement,
-		editKey: readEditKey(options)
+		editKey: readEditKey(options),
+		openOnFocus: options?.openOnFocus === true
 	};
 	const text = options?.kind === 'text' ? options : undefined;
 	const masked = inferred === 'password' || text?.masked === true;

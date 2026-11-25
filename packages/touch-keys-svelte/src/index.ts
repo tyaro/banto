@@ -14,6 +14,7 @@ export { default as TextKeyboard } from './TextKeyboard.svelte';
 export { touchKeys } from './attach';
 export type {
 	TouchKeysOptions,
+	InferredKeysOptions,
 	NumberKeysOptions,
 	TextKeysOptions,
 	CommonKeysOptions,
