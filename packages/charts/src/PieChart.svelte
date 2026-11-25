@@ -6,7 +6,7 @@
 	 */
 	import { pieSlices, arcPath } from './core/pie';
 	import { seriesColorVar } from './core/color';
-	import { handleMarkKeydown, onMarkDetached } from './internal/mark-keys';
+	import { handleMarkKeydown, isKeyboardFocus, onMarkDetached } from './internal/mark-keys';
 	import {
 		getValue,
 		toNumber,
@@ -42,7 +42,8 @@
 		formatValue,
 		messages = {},
 		onMarkActivate,
-		markLabel
+		markLabel,
+		markSelected
 	}: Props = $props();
 
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
@@ -109,6 +110,11 @@
 		};
 	}
 
+	// `markSelected`: the `data` indexes of the chosen slices; `null` when the prop is not given (no `aria-pressed` then).
+	const chosen = $derived(
+		markSelected ? new Set(navOrder.filter((i) => markSelected(markFor(i)))) : null
+	);
+
 	function markName(i: number): string {
 		const mark = markFor(i);
 		return markLabel ? markLabel(mark) : t.markLabel(mark.category, formatValueDisplay(values[i]));
@@ -141,10 +147,12 @@
 					{@const pos = navOrder.indexOf(i)}
 					<g
 						class="mark"
+						class:dimmed={chosen !== null && chosen.size > 0 && !chosen.has(i)}
 						{@attach (node: Element) => onMarkDetached(node, () => forgetMark(i))}
 						role="button"
 						tabindex={pos === activeMark ? 0 : -1}
 						aria-label={markName(i)}
+						aria-pressed={chosen ? chosen.has(i) : undefined}
 						data-mark-index={pos}
 						onclick={() => onMarkActivate(markFor(i))}
 						onkeydown={(e) =>
@@ -155,9 +163,9 @@
 								() => onMarkActivate(markFor(i)),
 								(next) => (tabIdx = navOrder[next])
 							)}
-						onfocus={() => {
+						onfocus={(e) => {
 							tabIdx = i;
-							focusedIndex = i;
+							if (isKeyboardFocus(e.currentTarget)) focusedIndex = i;
 						}}
 						onblur={() => (focusedIndex = null)}
 						onpointerenter={() => (pointedIndex = i)}
@@ -230,5 +238,10 @@
 	.mark:focus-visible .slice {
 		stroke: var(--banto-text);
 		stroke-width: 3;
+	}
+
+	/* markSelected: while a slice is chosen, the others step back. */
+	.mark.dimmed .slice {
+		opacity: 0.35;
 	}
 </style>

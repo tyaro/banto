@@ -4158,11 +4158,16 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect.poll(number).toBe(allCount);
 	});
 
-	// #882 D3 (crossfilter-drilldown-design §7.2): a mark of the 価格帯分布 donut opens the items list
-	// on that band, and the list holds as many rows as the mark says - with and without a period,
-	// on the client grid and on the server grid. Needs the charts (the marks) and the dock (the
-	// default layout shows the donut).
+	// #882 D3 (crossfilter-drilldown-design §7.2): a mark of the 価格帯分布 donut leads to the items
+	// list on that band, and the list holds as many rows as the mark says - with and without a
+	// period, on the client grid and on the server grid. Needs the charts (the marks) and the dock
+	// (the default layout shows the donut).
+	// #882 C2 (§7.4): the mark itself now CHOOSES the band (cross-filtering); the list is opened
+	// from the band under the heading ("一覧で開く"), which carries the same link.
 	const PRICE_MARKS = '[data-dock-drop-id="priceBuckets"] g.mark[role="button"]';
+	const CATEGORY_MARKS = '[data-dock-drop-id="categoryStock"] g.mark[role="button"]';
+	const SELECTION_BAR = '[data-dashboard-selection]';
+	const OPEN_LIST = `${SELECTION_BAR} [data-selection-open]`;
 
 	const PRICE_CHART = '[data-dock-drop-id="priceBuckets"]';
 	const PRICE_CHART_NAME = '価格帯分布のドーナツグラフ';
@@ -4227,7 +4232,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 	}
 
-	test('13k7. dashboard: a mark opens the list with as many rows as it counts (period or not, client and server)', async () => {
+	test('13k7. dashboard: a chosen mark opens the list with as many rows as it counts (period or not, client and server)', async () => {
 		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
 		test.setTimeout(300_000);
 		const PERIOD = '直近30日';
@@ -4326,7 +4331,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 						await expect.poll(lowValue).toBe(want.low);
 						const answer = server ? filteredListAnswer() : null;
 						// The click event itself: the centre of a thin slice of a donut is in its hole.
-						await page.locator(`${PRICE_MARKS}[aria-label^="${label}: "]`).dispatchEvent('click');
+						// The mark chooses the band; the band under the heading opens the list on it.
+						const mark = page.locator(`${PRICE_MARKS}[aria-label^="${label}: "]`);
+						await mark.dispatchEvent('click');
+						await expect(mark).toHaveAttribute('aria-pressed', 'true');
+						// The donut is not narrowed by its own choice: the mark still says the same number.
+						expect(await readBandCounts()).toEqual(want.bands);
+						await page.locator(OPEN_LIST).click();
 						await expectListRows(want.bands[i]!, answer);
 						if (period) {
 							// Inside the 30 days the list is short: the rows of the band are there, the
@@ -4363,7 +4374,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
-	test('13k8. dashboard: a mark can be reached and opened with the keyboard alone', async () => {
+	test('13k8. dashboard: a mark can be reached, chosen, cleared and opened in the list with the keyboard alone', async () => {
 		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
 		try {
 			await page.goto('/items');
@@ -4380,16 +4391,39 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				'aria-label',
 				new RegExp(`^${marks[1]!.label}: `)
 			);
+			// Enter chooses the focused mark: it is pressed, the focus stays on it, the band shows it.
+			await page.keyboard.press('Enter');
+			const focused = page.locator(`${PRICE_MARKS}:focus`);
+			await expect(focused).toHaveAttribute('aria-pressed', 'true');
+			await expect(focused).toHaveAttribute('aria-label', new RegExp(`^${marks[1]!.label}: `));
+			const bar = page.locator(SELECTION_BAR);
+			await expect(bar.locator('[data-selection-chip="priceBucket"]')).toHaveText(
+				new RegExp(`価格帯: ${marks[1]!.label}`)
+			);
+			// Space on the same mark takes the choice off again; the band goes away.
+			await page.keyboard.press('Space');
+			await expect(focused).toHaveAttribute('aria-pressed', 'false');
+			await expect(bar).toHaveCount(0);
+			// Chosen again, the band's link is reached and followed with the keyboard: the list
+			// holds as many rows as the mark says.
+			await page.keyboard.press('Space');
+			await expect(focused).toHaveAttribute('aria-pressed', 'true');
+			await page.locator(OPEN_LIST).focus();
 			await page.keyboard.press('Enter');
 			await expectListRows(marks[1]!.count, null);
 			await clearListState();
 
-			// Space opens the focused mark as well.
+			// The band's own buttons with the keyboard: a chip takes its choice off and the focus
+			// does not fall out of the page (it goes to the period control when the band is gone).
 			await page.goto('/dashboard');
 			await expect(page.locator(PRICE_MARKS).first()).toBeVisible();
 			await page.locator(`${PRICE_MARKS}[tabindex="0"]`).focus();
-			await page.keyboard.press('Space');
-			await expectListRows(marks[0]!.count, null);
+			await page.keyboard.press('Enter');
+			await page.locator(`${SELECTION_BAR} [data-selection-chip="priceBucket"]`).focus();
+			await page.keyboard.press('Enter');
+			await expect(page.locator(SELECTION_BAR)).toHaveCount(0);
+			await expect(page.locator(`${PRICE_MARKS}[aria-pressed="true"]`)).toHaveCount(0);
+			await expect(page.locator('input[name="dashboard-period"]:checked')).toBeFocused();
 		} finally {
 			await clearListState();
 		}
@@ -4429,12 +4463,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(page.getByText(note).first()).toBeVisible();
 			// The list shows every matching row only in the server mode: the page must not promise it for all.
 			await expect(page.getByText('一覧は条件に合う全件を表示します')).toHaveCount(0);
-			// The tile's tooltip and the marks' names say it too.
+			// The tile's tooltip says it too, and so does the link that opens the list for a chosen
+			// mark (#882 C2: the mark chooses, the band's link opens).
 			await expect(tile).toHaveAttribute('title', new RegExp(note));
-			await expect(page.locator(PRICE_MARKS).first()).toHaveAttribute(
-				'aria-label',
-				new RegExp(note)
-			);
+			await page.locator(PRICE_MARKS).first().dispatchEvent('click');
+			await expect(page.locator(OPEN_LIST)).toHaveAttribute('title', new RegExp(note));
 		} finally {
 			await page.unroute('**/api/items/list', patch);
 		}
@@ -4448,16 +4481,183 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	test('13k10. dashboard: the panel route has no selectable marks and nothing takes the focus', async () => {
 		// `/panel/[id]` goes with the dock (removeDock).
 		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
-		await page.goto('/panel/priceBuckets');
-		const chart = page.getByRole('img', { name: '価格帯分布のドーナツグラフ' });
-		await expect(chart).toBeVisible();
-		await expect(chart.locator('[role="button"], [data-mark-index], [tabindex]')).toHaveCount(0);
-		// Tabbing through the document never stops inside the chart.
-		for (let i = 0; i < 6; i++) {
-			await page.keyboard.press('Tab');
-			expect(
-				await page.evaluate(() => document.activeElement?.closest('svg, [role="img"]') !== null)
-			).toBe(false);
+		// Both widgets whose marks choose on the dashboard (#882 C2) are plain images here.
+		for (const [id, name] of [
+			['priceBuckets', '価格帯分布のドーナツグラフ'],
+			['categoryStock', 'カテゴリ別在庫の横棒グラフ']
+		] as const) {
+			await page.goto(`/panel/${id}`);
+			const chart = page.getByRole('img', { name });
+			await expect(chart).toBeVisible();
+			await expect(
+				chart.locator('[role="button"], [data-mark-index], [tabindex], [aria-pressed]')
+			).toHaveCount(0);
+			await expect(page.locator(SELECTION_BAR)).toHaveCount(0);
+			// Tabbing through the document never stops inside the chart.
+			for (let i = 0; i < 6; i++) {
+				await page.keyboard.press('Tab');
+				expect(
+					await page.evaluate(() => document.activeElement?.closest('svg, [role="img"]') !== null)
+				).toBe(false);
+			}
+		}
+	});
+
+	// #882 C2 (crossfilter-drilldown-design §6.3・§7.3): a mark chooses one value of its dimension;
+	// the KPI strip and the other widgets are narrowed by it (the choosing widget keeps all its
+	// marks), the band under the heading shows the choices and takes them off, nothing is read
+	// again and nothing is saved.
+	test('13k11. dashboard: marks cross-filter the page; the band clears one choice or all', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		const count = page.locator('.stat-value').first();
+		const number = async () => Number(((await count.textContent()) ?? '').replace(/[^\d]/g, ''));
+		await expect(count).not.toHaveText('0');
+		const allCount = await number();
+		const allBands = await readBandCounts();
+		expect(allBands.reduce((a, b) => a + b, 0)).toBe(allCount);
+		const bar = page.locator(SELECTION_BAR);
+		await expect(bar).toHaveCount(0);
+		const categoryMarks = page.locator(CATEGORY_MARKS);
+		const categoryCount = await categoryMarks.count();
+		expect(categoryCount).toBeGreaterThan(1);
+		// Nothing chosen: the marks are toggles that are off, none is faded.
+		await expect(page.locator(`${CATEGORY_MARKS}[aria-pressed="false"]`)).toHaveCount(
+			categoryCount
+		);
+		await expect(page.locator(`${CATEGORY_MARKS}.dimmed`)).toHaveCount(0);
+		const monthly = page.getByRole('img', { name: '月別更新件数の面グラフ' });
+		const monthlyBefore = await monthly.innerHTML();
+
+		const counter = countItemsReads();
+		// What is written to the saved settings meanwhile (the reset above saves the arrangement a
+		// moment later): none of it may hold a choice.
+		const writes: string[] = [];
+		const onRequest = (request: Request) => {
+			if (
+				request.method() !== 'GET' &&
+				new URL(request.url()).pathname.startsWith('/api/ui-settings/')
+			)
+				writes.push(request.postData() ?? '');
+		};
+		page.on('request', onRequest);
+		try {
+			// Choose the first category bar.
+			const first = categoryMarks.first();
+			const category = /^(.+): /.exec((await first.getAttribute('aria-label')) ?? '')?.[1];
+			expect(category).toBeTruthy();
+			await first.click();
+			await expect(first).toHaveAttribute('aria-pressed', 'true');
+			await expect(bar).toBeVisible();
+			await expect(bar.locator('[data-selection-chip="category"]')).toHaveText(
+				new RegExp(`カテゴリ: ${category}`)
+			);
+			// Its own chart keeps every bar (the others step back); the rest is narrowed.
+			await expect(categoryMarks).toHaveCount(categoryCount);
+			await expect(page.locator(`${CATEGORY_MARKS}.dimmed`)).toHaveCount(categoryCount - 1);
+			await expect.poll(number).toBeLessThan(allCount);
+			const inCategory = await number();
+			expect(inCategory).toBeGreaterThan(0);
+			// The donut counts the category's rows only: its bands add up to the KPI.
+			await expect
+				.poll(async () => (await readBandCounts()).reduce((a, b) => a + b, 0))
+				.toBe(inCategory);
+			await expect.poll(() => monthly.innerHTML()).not.toBe(monthlyBefore);
+			// The low-stock tile's link carries the period only: while something is chosen the tile
+			// says so in words that are seen (and so are part of the link's name).
+			const lowTile = page.getByRole('link', { name: /^在庫僅少/ });
+			await expect(lowTile.locator('[data-stat-note]')).toHaveText(
+				'一覧は全カテゴリ・全価格帯の在庫僅少を開きます（期間のみ引き継ぎます）'
+			);
+			await expect(lowTile).toHaveAccessibleName(/期間のみ引き継ぎます/);
+			// The list cannot narrow by a category: no link to it for this choice.
+			await expect(page.locator(OPEN_LIST)).toHaveCount(0);
+
+			// Choose a price band as well (the first slice the narrowed donut has).
+			const bandsInCategory = await readPriceMarks();
+			const band = bandsInCategory[0]!;
+			await page.locator(`${PRICE_MARKS}[aria-label^="${band.label}: "]`).dispatchEvent('click');
+			await expect(bar.locator('[data-selection-chip="priceBucket"]')).toHaveText(
+				new RegExp(`価格帯: ${band.label}`)
+			);
+			// Both choices: the KPI is the chosen slice (the donut still shows its siblings).
+			await expect.poll(number).toBe(band.count);
+			expect(await readPriceMarks()).toEqual(bandsInCategory);
+			await expect(page.locator(OPEN_LIST)).toHaveCount(0);
+
+			// Take the category off with its chip: the band stays, the focus stays inside it.
+			await bar.locator('[data-selection-chip="category"]').click();
+			await expect(bar.locator('[data-selection-chip="category"]')).toHaveCount(0);
+			await expect(bar.locator('[data-selection-clear-all]')).toBeFocused();
+			await expect(page.locator(`${CATEGORY_MARKS}[aria-pressed="true"]`)).toHaveCount(0);
+			const bandAll = allBands[BAND_LABELS.indexOf(band.label)]!;
+			await expect.poll(number).toBe(bandAll);
+			// Only a price band is chosen now: the list link is offered.
+			await expect(page.locator(OPEN_LIST)).toBeVisible();
+
+			// Choosing another bar of the same chart replaces the choice (one value per dimension).
+			await categoryMarks.first().click();
+			await categoryMarks.nth(1).click();
+			await expect(page.locator(`${CATEGORY_MARKS}[aria-pressed="true"]`)).toHaveCount(1);
+			await expect(bar.locator('[data-selection-chip]')).toHaveCount(2);
+
+			// Clear all: the band goes away and everything is as at the start.
+			await bar.locator('[data-selection-clear-all]').click();
+			await expect(bar).toHaveCount(0);
+			await expect(lowTile.locator('[data-stat-note]')).toHaveCount(0);
+			await expect.poll(number).toBe(allCount);
+			await expect.poll(readBandCounts).toEqual(allBands);
+			await expect(page.locator(`${CATEGORY_MARKS}[aria-pressed="true"]`)).toHaveCount(0);
+			await expect(page.locator(`${PRICE_MARKS}[aria-pressed="true"]`)).toHaveCount(0);
+			await expect.poll(() => monthly.innerHTML()).toBe(monthlyBefore);
+
+			// The period stacks on a choice, and a choice stays when the period changes.
+			await categoryMarks.first().click();
+			await expect.poll(number).toBe(inCategory);
+			const period = page.getByRole('radiogroup', { name: '期間（更新日）' });
+			await period.getByText('直近12か月', { exact: true }).click();
+			await expect.poll(number).toBeLessThan(inCategory);
+			await expect(bar.locator('[data-selection-chip="category"]')).toBeVisible();
+
+			// Choosing read nothing and saved nothing.
+			await page.waitForTimeout(500);
+			expect(counter.reads).toHaveLength(0);
+			for (const written of writes) {
+				expect(written).not.toMatch(/selection|"category"|"priceBucket"/);
+				expect(written).not.toContain(category!);
+			}
+		} finally {
+			counter.stop();
+			page.off('request', onRequest);
+		}
+		// Not saved: a reload starts with nothing chosen.
+		await page.reload();
+		await expect(count).not.toHaveText('0');
+		await expect.poll(number).toBe(allCount);
+		await expect(bar).toHaveCount(0);
+	});
+
+	// Runs in every copy: with nothing chosen there is no band, and in a copy without the charts
+	// (scripts/scaffold.mjs `removeCharts`) nothing can choose - the page is the KPI strip and the
+	// list, drawn from the period's rows as before.
+	test('13k12. dashboard: no selection band while nothing is chosen (and nothing chooses without the charts)', async () => {
+		await page.goto('/dashboard');
+		await expect(page.locator('.stat-value').first()).not.toHaveText('0');
+		await expect(page.locator(SELECTION_BAR)).toHaveCount(0);
+		if (!HAS_CHARTS) {
+			await expect(page.locator('g.mark[role="button"], [aria-pressed]')).toHaveCount(0);
+			// The list widget still shows rows of the one read.
+			await expect(page.getByRole('row').nth(1)).toBeVisible();
+			// The period still narrows the strip.
+			const count = page.locator('.stat-value').first();
+			const before = await count.textContent();
+			await page
+				.getByRole('radiogroup', { name: '期間（更新日）' })
+				.getByText('直近30日', { exact: true })
+				.click();
+			await expect(count).not.toHaveText(before ?? '');
+			await expect(page.locator(SELECTION_BAR)).toHaveCount(0);
 		}
 	});
 

@@ -51,6 +51,11 @@ test('click selects a bar and a slice', async ({ page }) => {
 	}).toPass({ timeout: 30_000 });
 	await marks(page, PIE_GROUP).nth(2).click();
 	await expect(selected(page)).toHaveText('選んだ印: C（45）');
+	// A clicked mark keeps the focus, but its tooltip does not stay once the pointer has left
+	// (only a keyboard focus shows the tooltip; #882 C2: a mark that toggles stays on the page).
+	await expect(marks(page, PIE_GROUP).nth(2)).toBeFocused();
+	await page.mouse.move(0, 0);
+	await expect(page.locator('.chart-tooltip')).toHaveCount(0);
 });
 
 test('keyboard only: Tab stops once per chart, arrows move, Enter / Space select', async ({

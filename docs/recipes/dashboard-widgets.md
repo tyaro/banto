@@ -102,9 +102,10 @@
 
 ## 印から一覧へ移る
 
-チャートの印（価格帯のドーナツの 1 片）を選ぶと、その印が数えた行を持つ一覧（`/items`）へ移れる（Issue #882。設計は
-[crossfilter-drilldown-design.md](../design/crossfilter-drilldown-design.md) §7.2）。クリック・Tab で入って矢印・Enter / Space で選べる。
-**第 1 段はドリルダウンだけ**で、チャート同士の絞り込み（クロスフィルタ）は入っていない。
+チャートの印（価格帯のドーナツの 1 片）が数えた行を持つ一覧（`/items`）へ移れる（Issue #882。設計は
+[crossfilter-drilldown-design.md](../design/crossfilter-drilldown-design.md) §7.2）。
+**見本のダッシュボードでは、印そのものは「絞る」操作（次の節）で、一覧へは、価格帯を選んだときに見出しの下に出る帯の「一覧で開く」から移る**
+（#882 C2 で意味を変えた。設計書 §7.4）。絞り込みを使わないウィジェット（`selects` を登録しないもの）は、下の 3 のとおり印から直接移ってよい。
 
 流れ: 部品が「何を選んだか」だけを言い（`onDrill({ kind: 'priceBucket', bucket })`）、期間を足して URL を作るのはページ
 （`banto/dashboardDrill.ts` の `drillHref`）。部品は期間を知らないままでよい。
@@ -113,18 +114,20 @@
    `price-band`（`arg.band`）と `low-stock`（`arg.after`）。区切りの表は 1 か所（`resources/items.ts` の `PRICE_BANDS`）で、集計もビューもそれを読む。
 2. **`DashboardDrill` に種類を足し**、`drillHref` に移る先を書く。期間が「全期間」でなければ、`periodStart` が返した日（`latestDay` から数えた日。
    **その日は含まない**下限）をそのまま `arg.after` に載せる。一覧の側で基準の日を数え直さない。
-3. **部品**: `DashboardWidgetProps` の `onDrill` があるときだけ、チャートに `onMarkActivate` を渡す
-   （`components/dashboard/charts/PriceBucketsWidget.svelte` が見本）。**`onMarkActivate`・`markLabel` は `components/dashboard/charts/` の中だけで使う**
-   （charts を外すと部品ごと消える。登録・ページ・枠は `@banto/charts` を import しない）。
+3. **部品**: 印から直接移すウィジェットは、`DashboardWidgetProps` の `onDrill` があるときだけ、チャートに `onMarkActivate` を渡す
+   （`onMarkActivate={onDrill ? (mark) => onDrill({ kind: 'priceBucket', bucket: PRICE_BANDS[mark.index].id }) : undefined}`）。
+   印で絞り込むウィジェット（次の節）では、移る口は選択の帯（`DashboardSelectionBar.svelte` が `drillHref` でリンクを作る）。
+   **`onMarkActivate`・`markLabel`・`markSelected` は `components/dashboard/charts/` の中だけで使う**
+   （charts を外すと部品ごと消える。登録・ページ・枠・帯は `@banto/charts` を import しない）。
 4. **KPI のタイル**: `dashboardKpis.ts` の `link` に `drill` を書くと、帯が `drillHref` で URL を作る（期間つき。「在庫少」が見本）。
 
 決まっていること:
 
 - **カテゴリは入れない**。items に実在のカテゴリの列が無い（名前の先頭の語からの派生）ため、価格帯と在庫少だけ（オーナー決定）。
-- **切り離した窓（Tauri のポップアウト、`/panel/[id]`）では印を選べず、ドリルダウンもしない**。ページが `onDrill` を渡さないので、部品は `onMarkActivate`
-  を渡さず、フォーカスも止まらない。シェルの無い小さな窓の中で `/items` へ移らないため。
+- **切り離した窓（Tauri のポップアウト、`/panel/[id]`）では印を選べず、ドリルダウンも絞り込みもしない**。ページが `onDrill`・`select` を渡さないので、
+  部品は `onMarkActivate` を渡さず、フォーカスも止まらない。シェルの無い小さな窓の中で `/items` へ移らないため（選択も窓へは届けない）。
 - **取得の上限を超えたときだけ画面で断る**。ダッシュボードは最大 20,000 行（`DASHBOARD_ROW_LIMIT`）を読んで集計し、一覧は（サーバー方式なら）条件に合う全件に対して絞るので、
-  それを超えるデータでは印の値と一覧の件数が合わない。サーバーの総数が読んだ行数（期間で絞る前）より多いときだけ、見出し・印の読み上げ・
+  それを超えるデータでは印の値と一覧の件数が合わない。サーバーの総数が読んだ行数（期間で絞る前）より多いときだけ、見出し・帯の「一覧で開く」の title・
   KPI のリンクの title に「ダッシュボードは取得した範囲の集計。一覧は、サーバー方式（少しずつ読み込む）なら条件に合う全件に対して絞る（全件を読み込む方式は、同じ範囲の外の行を出さない）」と出す（`DashboardData.truncated`）。期間で絞っただけでは出ない。
 - リンクは 1 回きりの指示で、保存しない・ダッシュボードの URL に載せない（一覧が適用して `view` と `arg.*` を消す）。
 
@@ -133,3 +136,28 @@
 - charts / dock を外す: `pnpm scaffold`（[remove-optional-assets.md](remove-optional-assets.md)）。charts を外すと、期間は KPI の帯と
   一覧に効く。dock を外すと、ウィジェットは登録の順に 1 列で積まれる（期間の操作は同じ）。
 - ダッシュボードごと外す: `--preset display`。
+
+## 印で絞り込む（クロスフィルタ）
+
+チャートの印を選ぶと、ほかのウィジェットと数値の帯が、その値の行だけで描き直される（Issue #882 C1・C2。設計は
+[crossfilter-drilldown-design.md](../design/crossfilter-drilldown-design.md) §6.3・§7.3・§7.4）。見本は「カテゴリ別在庫」の棒（次元 `category`）と
+「価格帯分布」の片（次元 `priceBucket`）。もう一度選ぶと外れ、同じチャートの別の印を選ぶと置き換わる（次元ごとに 1 値）。
+選択があるときだけ、見出しの下に帯が出る（次元ごとのチップと「すべて解除」）。選択はページの状態で、保存しない（再読み込みで消える。配置の保存値にも入らない）。
+
+流れ: 印 → `onSelect(value)` → ページの `filter.selection`（`toggleSelection`）→ `createDashboardData` が行を絞る → 枠が登録に応じて渡す。
+
+1. **次元を足す**（新しい次元のとき）: `banto/dashboardPeriod.ts` の `DASHBOARD_DIMENSIONS` と `DIMENSION_VALUE`（行からその次元の値を出す関数）。
+   帯の表示名は `DashboardSelectionBar.svelte` の `DIMENSION_LABELS`（文言はキー経由）、値の読みは `selectionValueLabel`。
+2. **登録**（`dashboardWidgets.ts`）: 印で選ばせるウィジェットに `selects: '<次元>'` と `usesSelection: true`。選択で絞られるだけのウィジェットは
+   `usesSelection: true`。**自分の次元では絞られない**（選んだ棒以外も残り、選んだ棒が目立つ）。`usesSelection` を付けないウィジェットには選択が届かない
+   （`usesPeriod` だけなら期間の行、どちらも無ければ読んだままの行）。
+3. **部品**: `DashboardWidgetProps` の `onSelect` があるときだけ、チャートに `onMarkActivate`（`onSelect(その印の値)`）と `markSelected`
+   （その印の値 === `selected`）を渡す（`CategoryStockWidget.svelte`・`PriceBucketsWidget.svelte` が見本）。`markSelected` を渡すと、印は
+   切り替えのボタン（`aria-pressed`）になり、選ばれていない印が薄くなる。
+
+決まっていること:
+
+- **印の操作は「絞る」**。一覧へ移るのは、選択の帯の「一覧で開く」から（価格帯だけを選んでいる間だけ出る。カテゴリは一覧で絞れないので、選んでいる間は出さない）。
+- **KPI の「在庫少」のリンクは選択を持って行かない**（期間だけ）。選択がある間は、タイルの中に見える文言でそう断る。
+- **charts を外した構成**では選ぶウィジェットが無いので、帯は出ず、一覧のウィジェットは期間の行を描く（`DashboardSelectionBar.svelte` は `@banto/charts` を import しない）。
+- 使わないなら: 登録から `selects` / `usesSelection` を消し、ページの `DashboardSelectionBar` と `select` を消す（印に `onDrill` を渡せば、D3 の「印から一覧へ」に戻る）。

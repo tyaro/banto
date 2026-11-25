@@ -89,6 +89,17 @@ describe('DASHBOARD_WIDGETS (#716 W1)', () => {
 			)
 		).toEqual(['monthly', 'categoryStock', 'stackedBar', 'priceBuckets', 'scatter', 'spc']);
 	});
+
+	it('marks which chart widgets choose a dimension, and that they are narrowed by the others (#882 C2)', () => {
+		expect(
+			DASHBOARD_WIDGETS.filter((def) => def.selects).map((def) => [def.id, def.selects])
+		).toEqual([
+			['categoryStock', 'category'],
+			['priceBuckets', 'priceBucket']
+		]);
+		// A widget that chooses is narrowed by the other dimension, so it must use the selection.
+		for (const def of DASHBOARD_WIDGETS) if (def.selects) expect(def.usesSelection).toBe(true);
+	});
 	// [scaffold:charts] end
 
 	it('registers the list (W2): in every preset, after the charts, following the shared period', () => {
@@ -97,6 +108,13 @@ describe('DASHBOARD_WIDGETS (#716 W1)', () => {
 		expect(index).toBeGreaterThanOrEqual(0);
 		expect(ids.slice(index + 1).filter((id) => id !== 'memo')).toEqual([]);
 		expect(findDashboardWidget('lowStock')?.usesPeriod).toBe(true);
+	});
+
+	it('narrows by the selection exactly the widgets that follow the period (#882 C2)', () => {
+		// Holds for any preset: without the charts nothing chooses, and the list draws the period's rows.
+		for (const def of DASHBOARD_WIDGETS) {
+			expect(def.usesSelection ?? false, def.id).toBe(def.usesPeriod ?? false);
+		}
 	});
 	// [scaffold:dock] begin
 

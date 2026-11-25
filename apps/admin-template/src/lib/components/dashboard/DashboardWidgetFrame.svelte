@@ -13,21 +13,37 @@
 	 */
 	import type { DashboardPageData } from '#lib/banto/dashboardData.svelte.js';
 	import type { DashboardDrill } from '#lib/banto/dashboardDrill.js';
-	import { dashboardDataFor, type DashboardWidgetDef } from '#lib/banto/dashboardWidgets.js';
+	import {
+		dashboardDataFor,
+		type DashboardSelect,
+		type DashboardWidgetDef
+	} from '#lib/banto/dashboardWidgets.js';
 
 	interface Props {
 		widget: DashboardWidgetDef;
 		data: DashboardPageData;
 		/** Handed to the widget as it is. Omitted in the popped-out window: no drill-down there (#882 D3). */
 		onDrill?: (drill: DashboardDrill) => void;
+		/**
+		 * The page's selection and its toggle (#882 C2). A widget registered with `selects` gets its
+		 * own dimension's part (`selected` / `onSelect`); the others get nothing. Omitted in the
+		 * popped-out window: no selecting there.
+		 */
+		select?: DashboardSelect;
 	}
 
-	let { widget, data, onDrill }: Props = $props();
+	let { widget, data, onDrill, select }: Props = $props();
+
+	const dimension = $derived(widget.selects);
+	const onSelect = $derived(
+		select && dimension ? (value: string) => select.toggle(dimension, value) : undefined
+	);
+	const selected = $derived(select && dimension ? select.selection[dimension] : undefined);
 
 	/**
 	 * #716 W3: the rows narrowed by the page's shared period only for a widget registered with
 	 * `usesPeriod`; every other widget gets the read as it is, so a change of the period does not
-	 * reach it.
+	 * reach it. #882: a `usesSelection` widget's rows are narrowed by the selection too.
 	 */
 	const widgetData = $derived(dashboardDataFor(widget, data));
 
@@ -41,7 +57,7 @@
 </script>
 
 <div class="widget-frame" bind:clientHeight={measured}>
-	<widget.component data={widgetData} {height} {onDrill} />
+	<widget.component data={widgetData} {height} {onDrill} {onSelect} {selected} />
 </div>
 
 <style>

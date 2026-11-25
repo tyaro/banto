@@ -131,3 +131,67 @@ describe('PieChart', () => {
 		});
 	});
 });
+
+describe('markSelected', () => {
+	const pressed = (container: HTMLElement) =>
+		[...container.querySelectorAll('[role="button"]')].map((b) => b.getAttribute('aria-pressed'));
+	const dimmed = (container: HTMLElement) =>
+		[...container.querySelectorAll('[role="button"]')].map((b) => b.classList.contains('dimmed'));
+
+	it('BarChart: no aria-pressed without it; with it the chosen mark is pressed and the others fade', async () => {
+		const base = {
+			data: rows,
+			category: (r: unknown) => (r as Row).name,
+			series: [{ id: 'a', label: 'A', value: (r: unknown) => (r as Row).a }],
+			label: '棒',
+			onMarkActivate: () => {}
+		};
+		const plain = render(BarChart, base);
+		await flush();
+		expect(pressed(plain.container)).toEqual([null, null, null]);
+		expect(dimmed(plain.container)).toEqual([false, false, false]);
+		cleanup();
+
+		// Nothing chosen: every mark is a toggle that is off, none fades.
+		const none = render(BarChart, { ...base, markSelected: () => false });
+		await flush();
+		expect(pressed(none.container)).toEqual(['false', 'false', 'false']);
+		expect(dimmed(none.container)).toEqual([false, false, false]);
+		cleanup();
+
+		const one = render(BarChart, {
+			...base,
+			markSelected: (mark: { category: string }) => mark.category === 'B'
+		});
+		await flush();
+		expect(pressed(one.container)).toEqual(['false', 'true', 'false']);
+		expect(dimmed(one.container)).toEqual([true, false, true]);
+	});
+
+	it('PieChart: the chosen slice is pressed and the others fade', async () => {
+		const { container } = render(PieChart, {
+			data: rows,
+			category: (r: unknown) => (r as Row).name,
+			value: (r: unknown) => (r as Row).a,
+			label: '円',
+			onMarkActivate: () => {},
+			markSelected: (mark: { index: number }) => mark.index === 0
+		});
+		await flush();
+		expect(pressed(container)).toEqual(['true', 'false', 'false']);
+		expect(dimmed(container)).toEqual([false, true, true]);
+	});
+
+	it('is ignored without onMarkActivate (still a plain image)', async () => {
+		const { container } = render(PieChart, {
+			data: rows,
+			category: (r: unknown) => (r as Row).name,
+			value: (r: unknown) => (r as Row).a,
+			label: '円',
+			markSelected: () => true
+		});
+		await flush();
+		expect(container.querySelector('[role="img"]')).not.toBeNull();
+		expect(container.querySelectorAll('[aria-pressed], .dimmed').length).toBe(0);
+	});
+});

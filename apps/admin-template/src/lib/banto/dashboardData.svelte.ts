@@ -91,6 +91,9 @@ export interface DashboardDataOptions {
 	filter?: () => DashboardFilter;
 }
 
+/** The selection of the period-only view: one object, so that view's filter never changes with a choice. */
+const NO_SELECTION: DashboardFilter['selection'] = Object.freeze({});
+
 /** One narrowing of the read: the rows, and the KPI numbers computed from them on first use. */
 class Narrowed {
 	readonly rows: Item[];
@@ -122,7 +125,9 @@ export function createDashboardData(options: DashboardDataOptions = {}): Dashboa
 			except
 		);
 	const page = narrowed(filterNow);
-	const byPeriod = narrowed(() => ({ ...filterNow(), selection: {} }));
+	// Reads `period` ONLY (not a spread of the filter, which would read `selection` too): choosing
+	// a mark does not compute the period-only rows again (#959 review).
+	const byPeriod = narrowed(() => ({ period: filterNow().period, selection: NO_SELECTION }));
 	const without = Object.fromEntries(
 		DASHBOARD_DIMENSIONS.map((dimension) => [dimension, narrowed(filterNow, dimension)])
 	) as Record<DashboardDimension, Narrowed>;

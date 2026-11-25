@@ -127,6 +127,28 @@ for (const combo of DIAGONAL_MATRIX) {
 	});
 }
 
+// #882 C2: the dashboard with marks chosen - the band under the heading (chips, clear all) and
+// the marks as pressed / not pressed toggles.
+for (const combo of DIAGONAL_MATRIX) {
+	test(`a11y ${comboLabel(combo)} dashboard with a selection has no wcag2a/wcag2aa violations`, async ({
+		page
+	}) => {
+		await primeThemeAndAuth(page, combo);
+		await gotoScanned(page, PAGES[0]);
+		const price = page.locator('[data-dock-drop-id="priceBuckets"] g.mark[role="button"]');
+		// A hydration-late first click is retried (#810).
+		await expect(async () => {
+			await price.first().dispatchEvent('click');
+			await expect(price.first()).toHaveAttribute('aria-pressed', 'true', { timeout: 2_000 });
+		}).toPass({ timeout: 30_000 });
+		await expect(page.locator('[data-dashboard-selection] [data-selection-open]')).toBeVisible();
+
+		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+
+		expect(results.violations, formatViolations(results.violations)).toEqual([]);
+	});
+}
+
 // A vertical dock (D4): one side and one combo - the same markup as the
 // bottom bar, but the tooltips, the active dot and the separator move.
 test(`a11y ${comboLabel(DIAGONAL_MATRIX[1])} dashboard with a left dock has no wcag2a/wcag2aa violations`, async ({
