@@ -199,6 +199,12 @@
 		 * `matchingCount`. The grid runs no bulk operation itself.
 		 */
 		bulkActions?: Snippet<[GridBulkActionsContext]>;
+		/**
+		 * Replaces the plain `messages.emptyState` text when the grid has no rows to
+		 * show (also when a filter leaves none), e.g. a page-level empty state with
+		 * next-step buttons. The grid decides nothing about why it is empty.
+		 */
+		empty?: Snippet;
 	}
 
 	// Aliased to avoid clashing with the `$state` rune (a local binding named
@@ -228,7 +234,8 @@
 		selectAllMatching = false,
 		onSelectionChange,
 		getRowLabel,
-		bulkActions
+		bulkActions,
+		empty
 	}: Props = $props();
 
 	const providedCellEditors = getCellEditors();
@@ -2273,7 +2280,18 @@
 			{/snippet}
 
 			{#if effectiveRowCount === 0}
-				<div class="empty-row">{t.emptyState()}</div>
+				{#if empty}
+					<div
+						class="empty-custom"
+						style:width={viewportWidth > 0 ? `${viewportWidth}px` : undefined}
+					>
+						{@render empty()}
+					</div>
+				{:else}
+					<div class="empty-row" style:width={viewportWidth > 0 ? `${viewportWidth}px` : undefined}>
+						{t.emptyState()}
+					</div>
+				{/if}
 			{:else}
 				<div
 					class="rows-viewport"
@@ -2901,7 +2919,23 @@
 		white-space: nowrap;
 	}
 
+	/* Pinned to the visible frame (width set inline from the measured viewport),
+	   so the message and actions are in view even when the columns are wider. */
+	.empty-custom {
+		position: sticky;
+		left: 0;
+		box-sizing: border-box;
+		max-width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 8rem;
+	}
+
 	.empty-row {
+		position: sticky;
+		left: 0;
+		box-sizing: border-box;
 		display: flex;
 		align-items: center;
 		justify-content: center;
