@@ -2061,17 +2061,17 @@
 	.views-trigger,
 	.view-trigger,
 	.columns-trigger,
+	.more-trigger {
+		height: var(--banto-control-height-sm);
+		padding: 0 var(--banto-space-3);
+		font-size: var(--banto-font-size-sm);
+	}
+
 	.empty-actions {
 		display: flex;
 		flex-wrap: wrap;
 		justify-content: center;
 		gap: var(--banto-space-2);
-	}
-
-	.more-trigger {
-		height: var(--banto-control-height-sm);
-		padding: 0 var(--banto-space-3);
-		font-size: var(--banto-font-size-sm);
 	}
 
 	.columns-count {
