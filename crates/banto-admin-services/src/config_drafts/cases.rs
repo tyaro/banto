@@ -911,7 +911,10 @@ pub(super) async fn published_at_is_the_write_time(bench: &Bench) {
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
                 loop {
                     let waiting: i64 = sqlx::query_scalar(
-                        "SELECT count(*) FROM pg_stat_activity                          WHERE wait_event_type = 'Lock' AND pid <> $1                            AND datname = current_database()                            AND query LIKE '%config_published%FOR UPDATE%'",
+                        "SELECT count(*) FROM pg_stat_activity \
+                         WHERE wait_event_type = 'Lock' AND pid <> $1 \
+                         AND datname = current_database() \
+                         AND query LIKE '%config_published%FOR UPDATE%'",
                     )
                     .bind(holder_pid)
                     .fetch_one(pool)
