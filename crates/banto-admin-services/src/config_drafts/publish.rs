@@ -85,6 +85,19 @@ pub struct PublishOutcome {
     audit_changes: ClippedPathChanges,
 }
 
+impl PublishOutcome {
+    /// Fill `changes` and `audit_changes` from the committed values. Called
+    /// AFTER the commit: the diff costs time in proportion to the value, and
+    /// inside the transaction it would hold the target's write lock (on
+    /// SQLite the whole database's) for that time. The two values are the
+    /// ones the transaction wrote and read, so nothing is read again.
+    fn with_changes(mut self, before: &Value, after: &Value, masked: &[&str]) -> Self {
+        self.changes = diff_paths(before, after, masked);
+        self.audit_changes = diff_paths_clipped(before, after, masked);
+        self
+    }
+}
+
 /// The audit `detail` of a publish or a revert (design §4.8):
 /// `{ version, previousVersion, revertedTo?, comment?, changes,
 /// changesTruncated? }`. `changes` is masked and cut to the audit limits
@@ -345,6 +358,9 @@ impl ConfigDraftsService {
     /// 7. the published row is rewritten (value, version, a new revision);
     /// 8. the draft and the lock rows are deleted.
     ///
+    /// After the commit the diff (`changes`) is computed from the two values the
+    /// transaction used; it is not part of the transaction.
+    ///
     /// When any step fails nothing is changed. The validator runs inside the
     /// transaction (see [`ConfigTarget::with_validator`]: pure and fast).
     pub async fn publish(
@@ -359,7 +375,7 @@ impl ConfigDraftsService {
         let comment = stamp_comment(stamp)?;
         let masked = masked_of(registered);
         let dialect = self.db.dialect();
-        let outcome = with_target_write!(self, target, |tx, published, at| {
+        let (outcome, before, after) = with_target_write!(self, target, |tx, published, at| {
             let Some(draft) = fetch_draft!(tx, dialect, target) else {
                 return Err(no_draft(target));
             };
@@ -404,7 +420,7 @@ impl ConfigDraftsService {
                 .map_err(storage_error)?;
             expect_one_row(done.rows_affected(), "config_drafts")?;
             delete_lock!(tx, dialect, target);
-            PublishOutcome {
+            let outcome = PublishOutcome {
                 target: target.to_string(),
                 kind: ConfigHistoryKind::Publish,
                 version,
@@ -413,11 +429,12 @@ impl ConfigDraftsService {
                 published_at,
                 reverted_to: None,
                 comment: comment.clone(),
-                changes: diff_paths(&published.value, &draft.value, &masked),
-                audit_changes: diff_paths_clipped(&published.value, &draft.value, &masked),
-            }
+                changes: Vec::new(),
+                audit_changes: ClippedPathChanges::default(),
+            };
+            (outcome, published.value, draft.value)
         });
-        Ok(outcome)
+        Ok(outcome.with_changes(&before, &after, &masked))
     }
 
     /// Publish the value of an earlier version again, as a NEW version
@@ -453,7 +470,7 @@ impl ConfigDraftsService {
         let comment = stamp_comment(stamp)?;
         let masked = masked_of(registered);
         let dialect = self.db.dialect();
-        let outcome = with_target_write!(self, target, |tx, published, at| {
+        let (outcome, before, after) = with_target_write!(self, target, |tx, published, at| {
             if published.revision != if_published_revision {
                 return Err(published_changed(&published));
             }
@@ -499,7 +516,7 @@ impl ConfigDraftsService {
                 stamp,
                 comment.as_deref()
             );
-            PublishOutcome {
+            let outcome = PublishOutcome {
                 target: target.to_string(),
                 kind: ConfigHistoryKind::Revert,
                 version,
@@ -508,10 +525,11 @@ impl ConfigDraftsService {
                 published_at,
                 reverted_to: Some(to_version),
                 comment: comment.clone(),
-                changes: diff_paths(&published.value, &value, &masked),
-                audit_changes: diff_paths_clipped(&published.value, &value, &masked),
-            }
+                changes: Vec::new(),
+                audit_changes: ClippedPathChanges::default(),
+            };
+            (outcome, published.value, value)
         });
-        Ok(outcome)
+        Ok(outcome.with_changes(&before, &after, &masked))
     }
 }

@@ -884,7 +884,8 @@ pub(super) async fn two_connections_publish_at_once(bench: &Bench) {
 /// A publish that waits for the published row's lock records when it ran
 /// (after the wait), not when its transaction began; the published row, the
 /// history row and the answer carry the same text. On SQLite only the
-/// sameness is checked.
+/// sameness is checked. The lock is released only after the publish is seen
+/// waiting for it (`pg_stat_activity`), so the order does not depend on timing.
 pub(super) async fn published_at_is_the_write_time(bench: &Bench) {
     let a = alice();
     let revision = start_draft(&bench.a, &a, json!({"limit": 30})).await;
@@ -899,8 +900,32 @@ pub(super) async fn published_at_is_the_write_time(bench: &Bench) {
                     .fetch_one(&mut *tx)
                     .await
                     .unwrap();
+                let holder_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .unwrap();
                 locked_tx.send(()).unwrap();
-                tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                // Release only once the writer is waiting on the row lock
+                // (not after a fixed sleep that a slow machine could beat);
+                // a bounded poll, and the test fails when it never waits.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                loop {
+                    let waiting: i64 = sqlx::query_scalar(
+                        "SELECT count(*) FROM pg_stat_activity                          WHERE wait_event_type = 'Lock' AND pid <> $1                            AND datname = current_database()                            AND query LIKE '%config_published%FOR UPDATE%'",
+                    )
+                    .bind(holder_pid)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+                    if waiting > 0 {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "the publish never started waiting for the row lock"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
                 let released: String = sqlx::query_scalar("SELECT clock_timestamp()::text")
                     .fetch_one(&mut *tx)
                     .await
