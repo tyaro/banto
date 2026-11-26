@@ -106,7 +106,7 @@ pub const MAX_PATH_FIELD_BYTES: usize = 256;
 /// `changesTruncated: true`). A value or a path that was cut INSIDE a kept
 /// entry is marked on that entry instead (`beforeTruncated` /
 /// `afterTruncated` / `fieldTruncated`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClippedPathChanges {
     pub changes: Vec<Value>,
     pub truncated: bool,
