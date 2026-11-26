@@ -602,7 +602,7 @@
 						{/if}
 					</span>
 				{/if}
-				<span class="title">{active?.title}</span>
+				<span class="title" title={active?.title}>{active?.title}</span>
 			{:else}
 				<div class="tab-strip" role="tablist" bind:this={tabStripEl}>
 					{#each node.children as child, i (child.id)}
@@ -614,6 +614,12 @@
 							tabindex={i === node.activeIndex ? 0 : -1}
 							aria-selected={i === node.activeIndex}
 							aria-label={child.title}
+							style:--_icon={child.icon ? 1 : 0}
+							style:--_controls={i === node.activeIndex
+								? 1 +
+									(onPopOut && capsOf(child.id).undock ? 1 : 0) +
+									(capsOf(child.id).close ? 1 : 0)
+								: 0}
 							onpointerdown={(event) =>
 								tabsFrameEl &&
 								armDrag(
@@ -633,7 +639,7 @@
 									{/if}
 								</span>
 							{/if}
-							<span class="title">{child.title}</span>
+							<span class="title" title={child.title}>{child.title}</span>
 							{#if i === node.activeIndex}
 								<DockPanelMenu panelId={child.id} title={child.title} {t} />
 								{#if onPopOut && capsOf(child.id).undock}
@@ -833,8 +839,19 @@
 		overflow-y: hidden;
 	}
 
+	/* Shrinks when the strip is too narrow (#986): the title (`.title`) turns into an ellipsis and
+	   the full text stays in its `title` attribute. The icon and the buttons never shrink. The
+	   minimum is built from what the tab renders (the template sets `--_icon` and `--_controls`,
+	   the count of ⋯/⧉/✕ on the active tab) and the real button size (`--banto-dock-button-size`,
+	   40px in the touch density), plus about two characters of title; below it the strip scrolls
+	   as before. */
 	.tab {
-		flex: 0 0 auto;
+		flex: 0 1 auto;
+		min-width: calc(
+			var(--banto-space-3) + var(--banto-space-2) + 2em + var(--_icon, 0) *
+				(1.25 * var(--banto-font-size-md) + var(--banto-space-1)) + var(--_controls, 0) *
+				(var(--banto-dock-button-size, 20px) + var(--banto-space-1))
+		);
 		display: flex;
 		align-items: center;
 		gap: var(--banto-space-1);
