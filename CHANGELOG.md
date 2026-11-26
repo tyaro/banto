@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- chore(fixtures): v9.2.0 のタグ後の外部利用 fixture の ref を `v9.2.0` に更新した。[9.2.0] に「検証した組み合わせ」を追記。
+
 ## [9.2.0] - 2026-11-26
 
 **v9.2.0 — 一覧が 0 件のときの次の一手の導線と `BantoGrid` の `empty` snippet（#712）、ブラウザ単体のデモでユーザー一覧と監査ログを読み取り専用の見本で表示（#712）、dock の区画へのドロップ後のフォーカスの復帰（#694）、`computeDropRegion` の非推奨、テンプレートの PowerShell の起動の一本化（#817）と paraglide の `outputStructure` の明示（#806）。** 共通パッケージ・クレートの API の削除・改名は無く、公開の union に種類も足していない（v9.1.1 からの `crates/*/src` に `pub` の削除・変更なし、`packages/*/src/index.ts` に export の削除なし。差分はコメント 1 行）。migration も増えない。**minor にした理由**: `@banto/grid-svelte` の `BantoGrid` に任意の `empty` snippet を足した（後方互換の機能追加）。既存のコードはそのままコンパイルでき、DB の作り直しも要らない（[publishing.md「バージョニング規約」](docs/publishing.md#バージョニング規約)）。改名（`isUsersAdminAvailable` → `isUsersAdminWritable`）と辞書キーの削除は、コピーしたテンプレートの中だけで、共通パッケージの API ではない（下の B）。
@@ -104,6 +106,24 @@
 - refactor(admin-template): PowerShell の起動を `elev` の `win::run_powershell` に一本化した（#817）。`src-tauri` の `firewall_status.rs` の独自の起動処理をやめ、昇格ヘルパーと同じ実行器（`GetSystemDirectoryW` 配下の絶対パス・`env_clear` の後の最小の環境・システムディレクトリで起動・`CREATE_NO_WINDOW`・タイムアウト・出力の上限）を使う。stdout の読み取りの失敗は部分的な出力を成功扱いにせず、`RunError::ReadOutput`（照会の側は `UnreadableOutput`）で返す。stderr は診断用で、読めなければ空として扱う。
 - chore(i18n): paraglide の `outputStructure` を `message-modules` に明示した（#806）。Vite プラグイン（`vite.config.ts`）と CLI（`paraglide:compile` の `--output-structure`）の両方に書き、プラグインの既定（virtual-modules）と CLI の既定のずれをなくす。
 - chore(fixtures): v9.1.1 のタグ後の外部利用 fixture の ref を `v9.1.1` に更新した。[9.1.1] に「検証した組み合わせ」を追記。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `708e427f`、`workflow_dispatch`）: [run 45784472516](https://github.com/tyaro/banto/actions/runs/45784472516)（success）。
+  - タグの push（`v9.2.0`、main の `708e427f0e9afadc024f2a9200e0d94868d7d534`）: [run 45784838657](https://github.com/tyaro/banto/actions/runs/45784838657)（success）。npm（Git 依存 → dev + Playwright → check → build）、npm diagnostic、Rust（Git 依存 → cargo check）の各ジョブとも success。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った。v9.1.1 と同じ）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 26.13.1                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.59.1                          |
+    | SvelteKit          | 3.4.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
 
 ## [9.1.1] - 2026-11-26
 
