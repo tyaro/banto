@@ -13,9 +13,9 @@
 	 *  - as this route rendered in a plain browser tab (Playwright-verifiable
 	 *    in this dev environment, which has no webkit2gtk to run the real
 	 *    Tauri multiwindow path);
-	 *  - as the actual content of the native `WebviewWindow` src-tauri's
-	 *    `panel_open` command opens (`WebviewUrl::App("panel/{id}")`) - not
-	 *    verifiable here, verify on a machine with webkit2gtk.
+	 *  - as the actual content of the native `WebviewWindow` the
+	 *    `banto-tauri-panel` plugin opens (its default route `panel/{id}`,
+	 *    ADR-0037) - not verifiable here, verify on a machine with webkit2gtk.
 	 */
 	import { page } from '$app/state';
 	import { getSessionController, resolveSettled } from '@banto/admin-core';

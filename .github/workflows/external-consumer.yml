@@ -16,7 +16,7 @@
 # - npm-no-exclude（診断。成功条件にしない）: `optimizeDeps.exclude` を外して
 #   dev + Playwright だけを流し、#150 がまだ再現するかを step summary に残す。
 #   再現しなくなったら exclude が不要になった可能性 → ADR-0007 を見直す合図。
-# - rust: 公開対象の 5 crate（`crates/*`）を Git 依存で `cargo check`。feature の
+# - rust: 公開対象の 6 crate（`crates/*`）を Git 依存で `cargo check`。feature の
 #   経路（postgres・system-metrics）も `--all-features` で 1 回。
 #
 # 検証する commit:

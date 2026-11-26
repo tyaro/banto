@@ -249,6 +249,10 @@ lockfile に増えるのは `fast-check` と `pure-rand` の 2 つ）。
 `windows-sys`（Windows の `SetConsoleMode`）と `libc`（Unix の `termios`）を直接の依存にして、約 60 行の `unsafe` を
 `banto-serve` 専用の非公開モジュール `password_input.rs` 1 ファイルに閉じる（6 件目。どちらも `Cargo.lock` に既にある版で、ビルドに入る crate は増えない。
 `rpassword` は新しい crate 2 つと別版の `windows-sys` を足すため）。
+pop-out のパネルの窓の plugin `banto-tauri-panel`（Issue #1006）が、ビルド時の依存に `tauri-plugin` を足す判断は
+[ADR-0037](adr/0037-tauri-panel-plugin.md)（7 件目。plugin の permission を生成する、Tauri の plugin の決まった作り。
+`Cargo.lock` に増えるのは `tauri-plugin` 1 つで、その依存は `tauri-build` の経路で既にある。crate の feature `tauri` の内側なので、
+tauri を含まない headless のビルドには入らない。窓の位置を覚える `tauri-plugin-window-state` は引かず、自前で持つ）。
 
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 

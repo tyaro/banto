@@ -6,6 +6,7 @@ members = [
   "crates/banto-server",
   "crates/banto-attachments",
   "crates/banto-admin-services",
+  "crates/banto-tauri-panel",
   "apps/admin-template/core",
   "apps/admin-template/src-tauri",
   "apps/admin-template/elev",
@@ -98,6 +99,11 @@ banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }
 banto-attachments = { path = "crates/banto-attachments" }
 banto-admin-services = { path = "crates/banto-admin-services" }
+# ADR-0037 (Issue #1006): the pop-out panel windows of the Tauri shell. Its
+# `tauri` feature (on by default) links tauri, so - like `keyring` above - it
+# is referenced only from `apps/admin-template/src-tauri`; CI's headless job
+# tests its pure half with `--no-default-features`.
+banto-tauri-panel = { path = "crates/banto-tauri-panel" }
 
 # テスト・開発ビルドで argon2id のパスワードハッシュが opt-level 0 だと極端に遅く、
 # admin-template-core の rest::tests（ユーザー作成・ログインのたびにハッシュ）が

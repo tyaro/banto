@@ -440,13 +440,14 @@ VSCode/Rider等のエディタに近い、本格的なドッキング・タブ�
   （実装コストと確実性を優先）。§5.2 のフローティングはこの疑似ウィンドウ。
 - **「ウィンドウ分離」モード（実装済み）**: フローティングパネルを実際の
   Tauri `WebviewWindow` として切り出す。`@banto/dock-svelte` は `onPopOut`
-  拡張ポイントを提供し、`admin-template` がそれを薄い Tauri コマンド
-  `panel_open`（`apps/admin-template/src-tauri/src/lib.rs`）に配線して、
+  拡張ポイントを提供し、`admin-template` がそれを Tauri の plugin
+  `banto-tauri-panel`（`crates/banto-tauri-panel`、[ADR-0037](adr/0037-tauri-panel-plugin.md)）に配線して、
   ドックのパネルをネイティブウィンドウ（`routes/panel/[id]`）として開く。
-  ウィンドウが閉じられると `banto://panel-closed` を emit し、パネルを
-  ドックへ復帰させる。フロント側の配線は
-  `apps/admin-template/src/lib/banto/popout.ts`（`openPanelWindow` /
-  `listenPanelClosed`）。いずれも `isTauri()` ガード付きで、ブラウザ配信では
+  同じ id の窓が開いていれば前に出すだけ。ウィンドウが閉じられると `banto://panel-closed` を emit し、パネルを
+  ドックへ復帰させる。plugin は位置・大きさをパネルの id ごとに覚え（画面の外なら既定に戻す）、
+  メインの窓を閉じるとパネルの窓も閉じる（どちらもアプリの設定で切れる）。フロント側の口は
+  `@banto/admin-core` の `openPanelWindow` / `listenPanelClosed` / `createPanelPopOut`
+  （`admin-template` の束ね先は `src/lib/banto/popout.ts`）。いずれも `isTauri()` ガード付きで、ブラウザ配信では
   ポップアウトボタン自体が描画されない（`onPopOut` が未配線）ため、
   両経路対称の不変条件を破らない。
 

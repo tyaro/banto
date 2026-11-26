@@ -17,6 +17,7 @@ dependencies = [
  "banto-attachments",
  "banto-core",
  "banto-server",
+ "banto-tauri-panel",
  "futures-util",
  "keyring",
  "qrcode",
@@ -308,6 +309,17 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "banto-tauri-panel"
+version = "9.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "tempfile",
 ]
 
 [[package]]
@@ -4089,6 +4101,22 @@ dependencies = [
  "syn 2.0.118",
  "tauri-codegen",
  "tauri-utils",
+]
+
+[[package]]
+name = "tauri-plugin"
+version = "2.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c18076d9b04211cb4899387aab97497e8edd0d02cd21710623afcdde27145d1"
+dependencies = [
+ "anyhow",
+ "glob",
+ "plist",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tauri-utils",
+ "walkdir",
 ]
 
 [[package]]
