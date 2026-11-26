@@ -82,3 +82,31 @@ test('narrower: a group moved into その他 keeps its heading, links listed fla
 	await expect(page).toHaveURL(/\/ui-demo$/);
 	await expect(more).toHaveClass(/active/);
 });
+
+test('opening and closing the menus logs no Svelte reactivity warnings', async ({ page }) => {
+	// `bind:this` into a plain object warns `binding_property_non_reactive`; a deep
+	// `$state` proxy around a Menu instance would log `state_proxy_equality_mismatch`.
+	const noisy: string[] = [];
+	page.on('console', (message) => {
+		const text = message.text();
+		if (/binding_property_non_reactive|state_proxy_equality_mismatch/.test(text)) noisy.push(text);
+	});
+	await page.goto('/dashboard');
+	const nav = mainNav(page);
+	const group = nav.getByRole('button', { name: '見本' });
+	const uiDemo = nav.getByRole('link', { name: 'UI 部品の見本' });
+	await openDropdown(group, uiDemo);
+	await page.keyboard.press('Escape');
+	await expect(uiDemo).toBeHidden();
+	await expect(group).toBeFocused();
+	// The overflow path ("その他") re-lays out the bar and re-anchors its menus.
+	await page.addStyleTag({ content: 'header .menubar { max-width: 280px; }' });
+	const more = nav.getByRole('button', { name: /その他/ });
+	const moved = nav
+		.getByRole('group', { name: '見本' })
+		.getByRole('link', { name: 'UI 部品の見本' });
+	await openDropdown(more, moved);
+	await page.keyboard.press('Escape');
+	await expect(more).toBeFocused();
+	expect(noisy).toEqual([]);
+});
