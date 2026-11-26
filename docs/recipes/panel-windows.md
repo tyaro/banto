@@ -131,9 +131,11 @@ $effect(() => popOut.connect());
 窓にも無い。`storage` を渡すと、`connect()` が覚えている id を plugin の `list` と突き合わせ、**窓が開いていないもの**を
 `restore` で dock に戻す（窓が開いているもの＝メインの再読み込みや画面の出入りは、そのまま。窓を閉じたときに戻る）。
 
-- `connect()` は、**保存した dock のレイアウトを読み終え、dock が画面に載ってから**呼ぶ。先に呼ぶと、戻したパネルが
-  後から読んだレイアウトで上書きされたり、戻した結果が保存されなかったりする（テンプレートのダッシュボードは、
-  `dockLayout.load()` の完了と `DockHost` の mount を待つ）。
+- `connect()` は、**保存した dock のレイアウトを読み終えてから**呼ぶ。先に呼ぶと、戻したパネルが後から読んだ
+  レイアウトで上書きされる（テンプレートのダッシュボードは `dockLayout.load()` の完了を待つ）。
+- `connect()` を dock の mount に結び付けない。狭い画面などで `DockHost` を外している間も、閉じた窓のパネルは
+  戻す必要がある。`DockHost` が無い間は `onLayoutCommit` が来ないので、`restore` の中で自分で保存する
+  （テンプレートは `if (!dockHost) dockLayout.commit(dock.layout, 'user')`）。
 - `list` に失敗したら何も戻さない（`onListError`）。確かめずに戻すと、窓が開いたままのとき（再読み込み・画面の出入り）に
   同じパネルが dock と窓の両方に出るため。
 

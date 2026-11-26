@@ -459,7 +459,13 @@
 		// window hidden from the dock - the same path as the pane's ✕.
 		// `dock.open` opens it floating; the View menu's `showPanel` would dock
 		// it at its default place.) Also runs if the window could not be opened.
-		restore: (id) => dock.open(id),
+		restore: (id) => {
+			dock.open(id);
+			// The host reports a settled layout to be saved (`onLayoutCommit`), but the one-column
+			// display (900px or less) unmounts it: report this one ourselves there, so a widget put
+			// back while the page is narrow is saved - and shown by the stack, which reads `dock`.
+			if (!dockHost) dockLayout.commit(dock.layout, 'user');
+		},
 		// The pop-out did not happen: the window could not be opened (then
 		// `restore` has already run), or the closed-notice subscription failed
 		// (then nothing was detached, so the panel is still here). A real app
@@ -474,11 +480,12 @@
 
 	// No-op in browser mode. Connecting also puts back the widgets that were out in a window whose
 	// window is gone (#1013: the app was closed with it open), so it waits until that sticks: the
-	// provider's layout has been read (it replaces what is shown, a restored widget included) and
-	// the host is mounted (it is what reports the restored layout to be saved). A pop-out pressed
-	// before that is remembered and reconciled by this same `connect()`.
+	// provider's layout has been read (it replaces what is shown, a restored widget included). It
+	// does NOT wait for the host: the one-column display (900px or less) has no `DockHost`, and a
+	// window closed there must still come back (`restore` saves the layout itself then). A pop-out
+	// pressed before that is remembered and reconciled by this same `connect()`.
 	$effect(() => {
-		if (!layoutLoaded || !dockHost) return;
+		if (!layoutLoaded) return;
 		return untrack(() => popOut.connect());
 	});
 

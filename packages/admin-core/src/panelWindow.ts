@@ -271,8 +271,10 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
  * main window was only reloaded, or the screen was left and entered again)
  * stays out, and comes back on its closed notice as usual. So call
  * `connect()` when `restore` can do its work for good: after a saved dock
- * layout has been loaded (a later load would overwrite the restored panel)
- * and while the dock that saves the layout is mounted.
+ * layout has been loaded (a later load would overwrite the restored panel),
+ * and make sure `restore` saves what it changed even while the dock UI is
+ * not mounted (e.g. a narrow display without one): keep `connect()` running
+ * then too, or a window closed meanwhile does not bring its panel back.
  *
  * If `list` fails, nothing is restored and `onListError` gets the reason.
  * Restoring blindly would be the other choice, and it is the worse one:
