@@ -747,6 +747,7 @@ fn run_script(script: &str, timeout: Duration) -> Result<String, UnknownReason> 
         RunError::Launch(_) => UnknownReason::LaunchFailed,
         RunError::Timeout => UnknownReason::Timeout,
         RunError::Wait(_) => UnknownReason::QueryFailed,
+        RunError::ReadOutput(_) => UnknownReason::UnreadableOutput,
     })?;
     if output.code != Some(0) {
         return Err(UnknownReason::QueryFailed);

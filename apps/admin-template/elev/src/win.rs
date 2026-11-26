@@ -412,6 +412,9 @@ pub enum RunError {
     Timeout,
     /// Waiting for the child failed (it was killed).
     Wait(String),
+    /// Reading stdout failed (a read error or the reader thread died), so the
+    /// output may be partial. stderr is only a diagnostic and is best effort.
+    ReadOutput(String),
 }
 
 impl fmt::Display for RunError {
@@ -420,6 +423,7 @@ impl fmt::Display for RunError {
             Self::Launch(e) => write!(f, "powershell.exe could not be started: {e}"),
             Self::Timeout => f.write_str("PowerShell did not finish in time"),
             Self::Wait(e) => write!(f, "waiting for PowerShell failed: {e}"),
+            Self::ReadOutput(e) => write!(f, "reading PowerShell output failed: {e}"),
         }
     }
 }
@@ -457,12 +461,9 @@ pub fn run_powershell(
     // Read on other threads so a full pipe cannot stall the child while this
     // one waits for it.
     let reader = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(pipe) = pipe {
-                let _ = pipe.take(max_output).read_to_end(&mut bytes);
-            }
-            bytes
+        std::thread::spawn(move || match pipe {
+            Some(pipe) => read_limited(pipe, max_output),
+            None => Ok(Vec::new()),
         })
     };
     let stdout = reader(child.stdout.take().map(|p| Box::new(p) as _));
@@ -486,11 +487,35 @@ pub fn run_powershell(
             }
         }
     };
+    // stdout must be read completely (a failure is reported, never turned
+    // into a partial buffer); stderr is only a diagnostic, so a failed read
+    // of it leaves whatever bytes came before (or none).
+    let stdout = join_output(stdout.join()).map_err(RunError::ReadOutput)?;
+    let stderr = stderr.join().ok().and_then(Result::ok).unwrap_or_default();
     Ok(RunOutput {
         code: status.code(),
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
+        stdout,
+        stderr,
     })
+}
+
+/// Reads up to `max` bytes; a read error is an `Err`, not a short buffer.
+fn read_limited(reader: impl Read, max: u64) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(max)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
+/// Folds a reader thread's result: a read error and a thread panic are both
+/// failures.
+fn join_output(joined: std::thread::Result<Result<Vec<u8>, String>>) -> Result<Vec<u8>, String> {
+    match joined {
+        Ok(result) => result,
+        Err(_) => Err("the output reader thread failed".to_string()),
+    }
 }
 
 /// Runs a script that must exit 0.
@@ -536,6 +561,38 @@ impl FirewallOps for PowerShellFirewall {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Yields `data`, then fails.
+    struct FailingReader(Vec<u8>);
+    impl Read for FailingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Err(std::io::Error::other("broken pipe"));
+            }
+            let n = self.0.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.0[..n]);
+            self.0.drain(..n);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn read_limited_returns_what_was_read() {
+        assert_eq!(read_limited(&b"abcdef"[..], 4), Ok(b"abcd".to_vec()));
+    }
+
+    #[test]
+    fn read_limited_reports_a_failed_read_not_a_partial_buffer() {
+        assert!(read_limited(FailingReader(b"abc".to_vec()), 100).is_err());
+    }
+
+    #[test]
+    fn join_output_treats_a_thread_failure_as_an_error() {
+        assert_eq!(join_output(Ok(Ok(b"x".to_vec()))), Ok(b"x".to_vec()));
+        assert!(join_output(Ok(Err("e".into()))).is_err());
+        let panicked = std::thread::spawn(|| -> Result<Vec<u8>, String> { panic!("x") }).join();
+        assert!(join_output(panicked).is_err());
+    }
 
     /// Read-only: the system directories and the Program Files known folders
     /// resolve to plain drive paths. Changes nothing.
