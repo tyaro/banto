@@ -217,7 +217,10 @@ export function dateRangePickerMessages(): UiMessages {
 		dateRangePickerChange: (from, to) => m['dateRangePicker.change']({ from, to }),
 		dateRangePickerDialog: () => m['dateRangePicker.dialog'](),
 		dateRangePickerPickStart: () => m['dateRangePicker.pickStart'](),
-		dateRangePickerPickEnd: (from) => m['dateRangePicker.pickEnd']({ from })
+		dateRangePickerPickEnd: (from) => m['dateRangePicker.pickEnd']({ from }),
+		dateRangePickerDayStart: (date) => m['dateRangePicker.dayStart']({ date }),
+		dateRangePickerDayEnd: (date) => m['dateRangePicker.dayEnd']({ date }),
+		dateRangePickerDayBoth: (date) => m['dateRangePicker.dayBoth']({ date })
 	};
 }
 

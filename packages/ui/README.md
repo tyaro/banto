@@ -113,6 +113,8 @@ blur・Enter で正規の形に直す。表示は全ロケールで `HH:mm`（�
   端に選べるのは `min`・`max` の内で `isDateDisabled` でない日（間の日は問わない）。期間は `aria-selected`（グリッドは
   `aria-multiselectable`）。文言は `dateRangePickerOpen`・`dateRangePickerChange(from, to)`・`dateRangePickerDialog`・
   `dateRangePickerPickStart`・`dateRangePickerPickEnd(from)`（ダイアログの下の案内。読み上げる）と、`DateRangeInput` の文言。
+  期間の両端の日は、日の名前に「開始日」「終了日」（同じ日は「開始日・終了日」）が付く: `dateRangePickerDayStart(date)`・
+  `dateRangePickerDayEnd(date)`・`dateRangePickerDayBoth(date)`（`date` は日の全文。仮の期間の間は起点の日だけが開始日）。
   `orientation` は無い。よく使う期間のボタン（今週・今月など）は持たない（アプリごとに違うため）。
 
 入力欄の幅は CSS カスタムプロパティで調整できる（公開の調整点）: `DateInput`・`DatePicker` と `DateRangeInput` の各欄は
