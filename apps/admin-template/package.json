@@ -7,7 +7,7 @@
     "i18n": "keys"
   },
   "scripts": {
-    "paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --strategy custom-banto baseLocale --emit-ts-declarations && node ../../scripts/check-i18n-nonempty.mjs",
+    "paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --strategy custom-banto baseLocale --emit-ts-declarations --output-structure message-modules && node ../../scripts/check-i18n-nonempty.mjs",
     "predev": "pnpm paraglide:compile",
     "dev": "vite dev",
     "prebuild": "pnpm paraglide:compile",
