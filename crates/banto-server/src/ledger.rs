@@ -97,7 +97,10 @@ impl WriteLedger {
     /// listeners counting against it ([`RunningServer::write_budget`]) before
     /// it makes the ledger. Listeners that share the budget without being
     /// entered in the ledger are counted in [`LedgerOutcome::running`], but
-    /// the ledger cannot close their gates or name their writes.
+    /// the ledger cannot close their gates or name their writes. So while
+    /// such a listener is not stopped by its owner too, a `running` of 0 is
+    /// only the value of that moment: that listener may start a write after
+    /// it, and 0 is no ground to close the database.
     pub fn from_budget(budget: WriteBudget) -> Self {
         Self(Arc::new(Inner {
             budget,
@@ -206,9 +209,11 @@ impl WriteLedger {
         servers: impl IntoIterator<Item = RunningServer>,
         deadline: Instant,
     ) -> LedgerOutcome {
+        // Absolute deadlines: the collecting and the closing of the gates
+        // inside count against `deadline` too.
+        let connections_deadline = deadline.min(Instant::now() + STOP_TIMEOUT);
         self.close_all();
-        let left = deadline.saturating_duration_since(Instant::now());
-        let servers = RunningServer::stop_all_within(servers, STOP_TIMEOUT.min(left), left).await;
+        let servers = RunningServer::stop_all_until(servers, connections_deadline, deadline).await;
         self.0.budget.wait_idle_until(deadline).await;
         // The names first: a write that finishes in between is then missing
         // from the names rather than from the count.
@@ -246,7 +251,11 @@ pub struct LedgerOutcome {
     pub servers: Vec<StopOutcome>,
     /// The writes still running under the ledger's budget
     /// ([`WriteBudget::running`]), over all generations. 0: every write is
-    /// done, and - the gates being closed - none will start.
+    /// done, and - the gates being closed - none will start. That holds for
+    /// the listeners entered in the ledger; when a listener that is not
+    /// entered shares the budget ([`WriteLedger::from_budget`]) and its owner
+    /// has not stopped it too, 0 is only the value of that moment and no
+    /// ground to close the database.
     pub running: usize,
     /// `METHOD path` of the writes still running on the listeners of the
     /// ledger, for a log or an audit detail. Bounded per generation;
@@ -344,5 +353,26 @@ mod tests {
         assert!(waiting.await.expect("join"));
         assert!(budget.wait_idle_until(past).await, "idle is seen at once");
         server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_deadline_that_passed_before_the_gates_closed_does_not_wait() {
+        let ledger = WriteLedger::new();
+        let server = serve_in(&ledger).await;
+        let write = server.hold_write_for_test("POST /late").expect("accepted");
+        let deadline = Instant::now();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            ledger.stop_all_until([server], deadline),
+        )
+        .await
+        .expect("returns at once instead of waiting for the write");
+        assert_eq!(outcome.running, 1);
+        assert_eq!(outcome.remaining, vec!["POST /late".to_string()]);
+        assert!(matches!(
+            outcome.servers[0],
+            StopOutcome::WritesRemaining(_)
+        ));
+        drop(write);
     }
 }

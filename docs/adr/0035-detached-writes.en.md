@@ -256,7 +256,8 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
     closed, and `stop_all_until` is what can promise that.
   - Writes of a listener that shares the budget without being entered in the ledger (`with_write_budget`) are
     in `running`, but the ledger can neither close its gate nor name them. Every listener that is rebuilt goes
-    through `with_write_ledger`.
+    through `with_write_ledger`. Unless such a listener is stopped separately, `running == 0` is only the value
+    of that moment and no ground to close the database.
 - **How far the promise reaches**: "nothing to forget to wrap" (§1) covers **every listener served through
   `serve`**. The layer itself (`detach_writes`, `DetachedWrites`) stays private, so `serve` is the only way to
   install it and there is no way to install it wrongly. The only way out of the promise is to hand the router

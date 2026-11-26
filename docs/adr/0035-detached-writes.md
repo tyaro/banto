@@ -226,7 +226,8 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
     見落とす。枠の待ち（`give_back` で起こす）は公開しない: 「今 0」が「全部終わった」を意味するのは全部の門を
     閉じた後だけで、それを約束できるのは `stop_all_until` だから。
   - 台帳に登録せず枠だけを共有する listener（`with_write_budget`）の書き込みは、`running` には入るが、台帳は
-    その門を閉じられず、名前も出せない。作り直す listener は全部 `with_write_ledger` に通す。
+    その門を閉じられず、名前も出せない。作り直す listener は全部 `with_write_ledger` に通す。そのような listener を
+    別に止めていないなら、`running == 0` はその瞬間の値にすぎず、DB を閉じてよい根拠にはならない。
 - **約束の範囲**: 「包み忘れが起きない」（§1）は、**`serve` を通した listener の全部**に及ぶ。層そのもの
   （`detach_writes`・`DetachedWrites`）は公開しないままなので、層を掛ける方法は `serve` しか無く、掛け方を
   間違える余地も無い。約束の外に出るのは、router を `axum::serve` などへ直に渡したときだけ（banto からは

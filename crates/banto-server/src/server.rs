@@ -309,25 +309,39 @@ impl RunningServer {
     /// # let _ = outcome;
     /// # }
     /// ```
-    pub async fn stop_within(mut self, connections: Duration, writes: Duration) -> StopOutcome {
+    pub async fn stop_within(self, connections: Duration, writes: Duration) -> StopOutcome {
+        self.stop_until(deadline_after(connections), deadline_after(writes))
+            .await
+    }
+
+    /// [`Self::stop_within`] with absolute deadlines. The relative form
+    /// counts from its call; a caller that has other work before the stop
+    /// (collecting listeners, closing gates) must not lose that time, so
+    /// [`crate::WriteLedger::stop_all_until`] comes in here.
+    pub(crate) async fn stop_until(
+        mut self,
+        connections_deadline: tokio::time::Instant,
+        writes_deadline: tokio::time::Instant,
+    ) -> StopOutcome {
+        let started = tokio::time::Instant::now();
         // Order: refuse new writes first, then tell the connections to end.
         self.detached_writes.close();
         let _ = self.shutdown_tx.send(true);
         let gate = self.detached_writes.clone();
         let connections = async {
-            if tokio::time::timeout(connections, &mut self.join_handle)
+            if tokio::time::timeout_at(connections_deadline, &mut self.join_handle)
                 .await
                 .is_err()
             {
                 eprintln!(
                     "banto-server: 停止が{:?}以内に完了しなかったためサーバタスクを中断します",
-                    connections
+                    connections_deadline.saturating_duration_since(started)
                 );
                 self.join_handle.abort();
                 let _ = self.join_handle.await;
             }
         };
-        let (idle, ()) = tokio::join!(gate.wait_idle(writes), connections);
+        let (idle, ()) = tokio::join!(gate.wait_idle_until(writes_deadline), connections);
         if idle {
             return StopOutcome::Finished;
         }
@@ -335,7 +349,7 @@ impl RunningServer {
         eprintln!(
             "banto-server: 停止の後も書き込みが{}件残っています（{:?}待ちました）: {}",
             remaining.count(),
-            writes,
+            started.elapsed(),
             remaining.operations().join(", ")
         );
         StopOutcome::WritesRemaining(remaining)
@@ -406,6 +420,25 @@ impl RunningServer {
         .await
     }
 
+    /// [`Self::stop_all_within`] with absolute deadlines, counted from before
+    /// the listeners are collected and the gates closed.
+    pub(crate) async fn stop_all_until(
+        servers: impl IntoIterator<Item = RunningServer>,
+        connections_deadline: tokio::time::Instant,
+        writes_deadline: tokio::time::Instant,
+    ) -> Vec<StopOutcome> {
+        let servers: Vec<RunningServer> = servers.into_iter().collect();
+        for server in &servers {
+            server.detached_writes.close();
+        }
+        futures_util::future::join_all(
+            servers
+                .into_iter()
+                .map(|server| server.stop_until(connections_deadline, writes_deadline)),
+        )
+        .await
+    }
+
     /// Counts one write as running on this listener until the returned value
     /// is dropped, exactly as a request held by the layer would be - for
     /// tests of what a caller does with [`StopOutcome::WritesRemaining`]
@@ -415,6 +448,14 @@ impl RunningServer {
     pub fn hold_write_for_test(&self, label: &str) -> Option<impl Send + 'static> {
         self.detached_writes.enter(label.to_string()).ok()
     }
+}
+
+/// `now + limit`, kept far from overflow for a very large `limit` (the
+/// relative `timeout` of tokio accepts any duration, so this does too).
+pub(crate) fn deadline_after(limit: Duration) -> tokio::time::Instant {
+    let now = tokio::time::Instant::now();
+    now.checked_add(limit)
+        .unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30))
 }
 
 /// A listener that is bound (the port is reserved, the OS may queue incoming

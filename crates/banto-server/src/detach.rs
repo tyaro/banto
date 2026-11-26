@@ -431,10 +431,18 @@ impl DetachedWrites {
     /// Waits until no write is running, for at most `limit`. `true` when
     /// none is.
     pub(crate) async fn wait_idle(&self, limit: Duration) -> bool {
+        self.wait_idle_until(crate::server::deadline_after(limit))
+            .await
+    }
+
+    /// Waits until no write is running, for at most until `deadline`. `true`
+    /// when none is. A `deadline` that has passed still reports the current
+    /// state, without waiting.
+    pub(crate) async fn wait_idle_until(&self, deadline: tokio::time::Instant) -> bool {
         let mut count = self.0.running_count.subscribe();
         // `wait_for` checks the current value first. The sender lives in
         // `self`, so it cannot close while this waits.
-        let idle = tokio::time::timeout(limit, count.wait_for(|running| *running == 0)).await;
+        let idle = tokio::time::timeout_at(deadline, count.wait_for(|running| *running == 0)).await;
         matches!(idle, Ok(Ok(_)))
     }
 }
