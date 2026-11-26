@@ -116,7 +116,7 @@ divider）は、host ごとに 1 つの持ち主が 1 回の操作として扱�
   ボタンの上にいる間は、入る場所（区画の全体か半分）の枠が出て、ボタンが塗られる。
 - **ボタンの外で離すと**、区画の上でも浮動になる（浮動 window はその位置へ動き、docked の pane は undock。
   `undock: false` の pane は何も起きない）。host の外で離したら何もしない。これまでの「区画の端 25% の帯へ落とすと
-  分割、残りは中央」の判定はやめた（`computeDropRegion` は互換のために export だけ残る）。
+  分割、残りは中央」の判定はやめた（`computeDropRegion` は非推奨。export は次の major で消す。十字の配置と当たり判定は `crossButtons` と `hitGuideButton`）。
 - ボタンは 32px 角・間隔 4px（`GUIDE_BUTTON_SIZE` / `GUIDE_BUTTON_GAP`）。区画が小さいときは、十字と区画の縁の
   余白 8px（`GUIDE_INSET`）が収まるまで小さくし、16px（`GUIDE_BUTTON_MIN`）を下回るなら十字を出さない（その区画へは
   ドッキングできない。浮動になる）。

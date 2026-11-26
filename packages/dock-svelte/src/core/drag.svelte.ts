@@ -28,6 +28,11 @@
  * Both are laid out and hit-tested by geometry here, only while a drag is in
  * progress. A release in the host off every button floats the pane (or moves the
  * floating window), like a release on free space.
+ * A drop that re-builds the docked tree (an outer-edge button, a cross button, a docked
+ * pane floated) can re-mount docked panes and drop the DOM focus on `<body>`: it is handed
+ * back to the pane frame it was in, else to the moved pane (`#withFocus` / `refocus`, #694).
+ * A focus that is still somewhere is never taken, and the keyboard menu (`core/move.svelte.ts`)
+ * turns this off to place the focus itself.
  * The one thing this requires of callers: the drag ghost, the guide buttons and
  * the snap-guide overlay MUST be `pointer-events: none` (see `DockHost.svelte`), otherwise
  * they'd be the element under the cursor and everything below would be
@@ -194,6 +199,36 @@ export class DragController {
 			(run) => lifecycle?.requestPlacement(panelId, own, preview, run, target),
 			apply
 		);
+	}
+
+	/**
+	 * `apply`, then the focus repair of a drop that re-builds the docked tree (#694: an outer-edge
+	 * drop, a drop on a cross button, a docked pane floated): where the DOM focus is, is read right
+	 * before the apply (so a focus the host / a hook moved while the answer waited counts), and a
+	 * focus that was in the host and is lost after it is handed back (`refocus`). Both the frame
+	 * and the pane the focus was in are read: a tab group is one frame for all its tabs, so the
+	 * frame alone cannot tell the moved tab from the ones that stay (#694 review). `repair: false`
+	 * = only `apply` (the caller places the focus itself).
+	 */
+	#withFocus(panelId: string, repair: boolean, apply: () => void): () => void {
+		if (!repair) return apply;
+		const hostEl = this.#getHostEl();
+		return () => {
+			const active = document.activeElement;
+			const inHost = !!hostEl && !!active && hostEl.contains(active);
+			const frame = inHost ? active!.closest<HTMLElement>('[data-dock-drop-id]') : null;
+			const frameId = frame?.dataset.dockDropId ?? null;
+			// The pane in that frame: the tab the focus is on, else the shown tab of a tab group
+			// (the focus is in its content or its controls), else the frame is the pane itself.
+			const tab =
+				(inHost ? active!.closest<HTMLElement>('[role="tab"][data-dock-tab-id]') : null) ??
+				frame?.querySelector<HTMLElement>('[role="tab"][data-dock-tab-id][aria-selected="true"]');
+			const focusedId =
+				(tab && frame?.contains(tab) ? tab.dataset.dockTabId : undefined) ?? frameId;
+			apply();
+			// The focus was not in the host: nothing to hand back.
+			if (inHost && hostEl) void tick().then(() => refocus(hostEl, focusedId, frameId, panelId));
+		};
 	}
 
 	/** `remount` of the moved pane's own change: `false` for a `persistent` pane (#663 ④). */
@@ -387,18 +422,7 @@ export class DragController {
 		const target = { edge };
 		// The tree the move makes: the one prediction of it (`DockState.droppedAtEdgeTree`, #782 PR6).
 		const after = () => dock.droppedAtEdgeTree(panelId, edge, () => `${panelId}:dropped`);
-		const hostEl = this.#getHostEl();
-		const withFocus = (apply: () => void) => () => {
-			const active = document.activeElement;
-			const frameId =
-				hostEl && active && hostEl.contains(active)
-					? (active.closest<HTMLElement>('[data-dock-drop-id]')?.dataset.dockDropId ?? null)
-					: undefined;
-			apply();
-			// `undefined` = the focus was not in the host: nothing to hand back.
-			if (repair && frameId !== undefined && hostEl)
-				void tick().then(() => refocus(hostEl, frameId, panelId));
-		};
+		const withFocus = (apply: () => void) => this.#withFocus(panelId, repair, apply);
 		if (source === 'floating')
 			return this.#placement(
 				panelId,
@@ -435,16 +459,21 @@ export class DragController {
 	 * A drop onto the docked pane / tab group `targetId` (a cross button, #694 PR-2): the docked
 	 * panes it pushes out are asked first (#666), then the moved pane (`dock` / `move-docked`).
 	 * Does not check the target's `dropCenter` / `dropSplit` (the caller offered only allowed
-	 * buttons; see `dropOptions`). Also the keyboard path (`DockHost.movePanel`, #663 ④).
+	 * buttons; see `dropOptions`). A split wraps the target in a new split and a tab drop in a
+	 * new tab group, so a focus lost to the re-mount is handed back as in `placeAtEdge` (#694).
+	 * Also the keyboard path (`DockHost.movePanel`, #663 ④); from the menu it passes
+	 * `refocus: false` (the mover alone places the focus, #720 review).
 	 */
 	placeOnto(
 		panelId: string,
 		source: DragSource,
 		targetId: string,
 		region: DropRegion,
-		guard?: MoveGuard
+		guard?: MoveGuard,
+		{ refocus: repair = true }: { refocus?: boolean } = {}
 	): Promise<DockPanelChangeOutcome> {
 		const dock = this.#dock;
+		const withFocus = (apply: () => void) => this.#withFocus(panelId, repair, apply);
 		const target = { to: targetId, region };
 		// The tree the drop makes, for asking the panes it pushes out (#666): the one prediction
 		// of it (`DockState.droppedTree`, #782 PR6). A fixed id for a new split / tab group keeps it
@@ -457,7 +486,7 @@ export class DragController {
 				() =>
 					dock.layout.floating.some((w) => w.id === panelId) ? (after() ?? undefined) : undefined,
 				target,
-				() => dock.dockPanel(panelId, targetId, region),
+				withFocus(() => dock.dockPanel(panelId, targetId, region)),
 				guard
 			);
 		return this.#placement(
@@ -468,7 +497,7 @@ export class DragController {
 					? (after() ?? undefined)
 					: undefined,
 			target,
-			() => dock.dockExisting(panelId, targetId, region),
+			withFocus(() => dock.dockExisting(panelId, targetId, region)),
 			guard
 		);
 	}
@@ -477,13 +506,16 @@ export class DragController {
 	 * Float the docked pane `panelId` (a drop on free space): asks the pane a shrinking split /
 	 * tab group leaves first (`reparent`, #682), then `undock`. Its docked place is remembered
 	 * for `placeBack` (`DockState.hasHome`, set by `undockPanel`: #734). `null` = its `undock`
-	 * capability withholds it: nothing changes. Also the keyboard path (`DockHost.movePanel`,
-	 * #663 ④).
+	 * capability withholds it: nothing changes. The split / tab group it leaves can collapse and
+	 * re-mount the pane that stays, so a focus lost to that is handed back as in `placeAtEdge`
+	 * (#694; one that was in the floated pane goes to its new window). Also the keyboard path
+	 * (`DockHost.movePanel`, #663 ④); from the menu it passes `refocus: false` (#720 review).
 	 */
 	floatDocked(
 		panelId: string,
 		geometry?: { x: number; y: number; width: number; height: number },
-		guard?: MoveGuard
+		guard?: MoveGuard,
+		{ refocus: repair = true }: { refocus?: boolean } = {}
 	): Promise<DockPanelChangeOutcome> | null {
 		const policy = this.#getPolicy();
 		// `undock: false` panes stay docked: a drop on free space is ignored.
@@ -491,7 +523,7 @@ export class DragController {
 		const dock = this.#dock;
 		// The panes hidden or floated from the dock before are counted by `undockPanel` (#720
 		// review, #734), so they keep their old order whichever goes back first.
-		const apply = () => dock.undockPanel(panelId, geometry);
+		const apply = this.#withFocus(panelId, repair, () => dock.undockPanel(panelId, geometry));
 		const lifecycle = this.#getLifecycle();
 		return guarded(
 			guard,
@@ -642,23 +674,45 @@ export class DragController {
 }
 
 /**
- * After an outer-edge drop (#694 PR-1) re-mounted the docked panes: if the DOM focus was in the
- * host and is now lost (on `<body>` / nothing - the focused element was re-created), hand it to the
- * pane frame it was in (same `data-dock-drop-id`: a pane or a tab group keeps its id when wrapped),
- * else to the moved pane. In the frame: its active tab (roving tabindex) or its body region. A
- * focus that is still somewhere (the element survived, or the host / a hook moved it) is left alone.
+ * After a drop re-built the docked tree and re-mounted docked panes (#694: an outer-edge drop, a
+ * drop on a cross button - a split or a new tab - or a docked pane floated): if the DOM focus was
+ * in the host and is now lost (on `<body>` / nothing - the focused element was re-created), hand
+ * it back, to the first of these that is still there:
+ * 1. the pane it was in (`focusedId`; in a tab group, the shown tab: #694 review), wherever that
+ *    pane is now - its own frame (also when its tab group collapsed to it), the tab group holding
+ *    it, or its floating window (it is the moved pane and was floated);
+ * 2. the frame it was in (`frameId`, same `data-dock-drop-id`: a pane or a tab group keeps its id
+ *    when wrapped in a split);
+ * 3. the moved pane (its frame, the tab group holding it, or its floating window).
+ * In a frame: its active tab (roving tabindex) or its body region. A focus that is still somewhere
+ * (the element survived, or the host / a hook moved it) is left alone.
  */
-function refocus(hostEl: HTMLElement, frameId: string | null, movedId: string): void {
+function refocus(
+	hostEl: HTMLElement,
+	focusedId: string | null,
+	frameId: string | null,
+	movedId: string
+): void {
 	const active = document.activeElement;
 	if (active && active !== document.body) return;
 	if (!hostEl.isConnected) return;
-	const frames = [...hostEl.querySelectorAll<HTMLElement>('[data-dock-drop-id]')];
-	const frame =
-		(frameId !== null ? frames.find((el) => el.dataset.dockDropId === frameId) : undefined) ??
-		frames.find((el) => el.dataset.dockDropId === movedId);
-	const target =
-		frame?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]') ??
-		frame?.querySelector<HTMLElement>('[role="region"]');
+	const all = (selector: string) => [...hostEl.querySelectorAll<HTMLElement>(selector)];
+	// Where the pane / tab group `id` is now: in its frame, else in the tab group that holds the
+	// pane `id` as a tab (the active tab, else the body), else its floating window.
+	const placeOf = (id: string | null): HTMLElement | undefined => {
+		if (id === null) return undefined;
+		const frame =
+			all('[data-dock-drop-id]').find((el) => el.dataset.dockDropId === id) ??
+			all('[role="tab"][data-dock-tab-id]')
+				.find((el) => el.dataset.dockTabId === id)
+				?.closest<HTMLElement>('[data-dock-drop-id]');
+		return (
+			frame?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]') ??
+			frame?.querySelector<HTMLElement>('[role="region"]') ??
+			all('[data-dock-window-id]').find((el) => el.dataset.dockWindowId === id)
+		);
+	};
+	const target = placeOf(focusedId) ?? placeOf(frameId) ?? placeOf(movedId);
 	target?.focus();
 }
 
