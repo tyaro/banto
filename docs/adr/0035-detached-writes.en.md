@@ -198,7 +198,7 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
   finish and show up in that generation's `StopOutcome`.
 - **Stopping them together**: `RunningServer::stop_all(servers)` (`stop_all_waiting_writes_for` for another writes bound, `stop_all_within(servers, connections, writes)` to choose both, #980).
   It keeps the order of §4 over all listeners: **every gate is closed first** (from then on none of them starts a
-  write), then they are waited for side by side. The wait is that of the slowest one (10 seconds at most), not the
+  write), then they are waited for side by side. The wait is that of the slowest one (10 seconds at most with the default `stop_all`; `stop_all_within` and `stop_all_waiting_writes_for` change the bounds), not the
   sum. One result per listener, in the order given. Calling `stop()` on one after the other lets the later
   listeners accept writes while the first is waited for, and adds the waits up.
 - **A stop requested from outside (a revoked certificate)**: `RunningServer::stop_handle()` returns a `StopHandle`

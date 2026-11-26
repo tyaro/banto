@@ -181,7 +181,7 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
   終わるまで枠を使い続け、その世代の `StopOutcome` に出る。
 - **まとめて止める**: `RunningServer::stop_all(servers)`（書き込みの上限を変える `stop_all_waiting_writes_for`、接続の上限も選ぶ `stop_all_within(servers, connections, writes)`、#980）。§4 の
   順序を全 listener に対して守る: **全部の門を先に閉じ**（以後どの口も書き込みを始めない）、それから並行に
-  待つ。待ちは合計ではなく最も遅い 1 つ分（長くて 10 秒）。結果は渡した順に listener ごと。`stop()` を 1 つずつ
+  待つ。待ちは合計ではなく最も遅い 1 つ分（既定の `stop_all` なら長くて 10 秒。上限は `stop_all_within`・`stop_all_waiting_writes_for` で変えられる）。結果は渡した順に listener ごと。`stop()` を 1 つずつ
   順に呼ぶと、先の listener を待つ間に後の listener が書き込みを受け付け、待ちも足し算になる。
 - **外からの停止要求（証明書の失効）**: `RunningServer::stop_handle()` が返す `StopHandle` は複製でき、
   `request_stop()` は**同期で、待たない**（監視のスレッドなど、`RunningServer` を持たず `.await` もできない所から

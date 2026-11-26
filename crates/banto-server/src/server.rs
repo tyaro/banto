@@ -1549,12 +1549,15 @@ Connection: close
     async fn stop_all_within_returns_after_the_short_limit_when_connections_hang() {
         use axum::routing::get;
         use tokio::io::AsyncWriteExt;
+        let started = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut servers = Vec::new();
         let mut conns = Vec::new();
         for _ in 0..2 {
+            let entered = started.clone();
             let router = Router::new().route(
                 "/hang",
-                get(|| async {
+                get(move || async move {
+                    entered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     std::future::pending::<()>().await;
                     "never"
                 }),
@@ -1582,7 +1585,15 @@ Host: localhost
             conns.push(conn);
             servers.push(server);
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Both handlers must have started before stopping, or a loaded machine
+        // could stop before the requests arrive and never exercise the limit.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while started.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("both handlers started");
 
         let outcomes = tokio::time::timeout(
             Duration::from_secs(3),
