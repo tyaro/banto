@@ -133,6 +133,9 @@
 
 ## 外すとき
 
+- **charts 専用のウィジェットの部品は `components/dashboard/charts/` に置く**。`pnpm scaffold` の `removeCharts` はこのディレクトリを
+  ごと消す（個々のファイルは数えない）。登録の行と import は `dashboardWidgets.ts` の `[scaffold:charts]` の領域の中に書く（領域の外に置くと、
+  外した後に参照が残る）。
 - charts / dock を外す: `pnpm scaffold`（[remove-optional-assets.md](remove-optional-assets.md)）。charts を外すと、期間は KPI の帯と
   一覧に効く。dock を外すと、ウィジェットは登録の順に 1 列で積まれる（期間の操作は同じ）。
 - ダッシュボードごと外す: `--preset display`。
