@@ -243,7 +243,13 @@
 	let composing = $state(false);
 	$effect(() => {
 		const start = () => (composing = true);
-		const end = () => (composing = false);
+		// Only when it changes: removing the focused element (the pane's pop-out / ✕ button)
+		// fires `focusout` synchronously inside Svelte's block teardown, where writing `$state`
+		// throws `state_unsafe_mutation` and aborts the close / pop-out. A composition open at
+		// that moment is cleared on the next microtask instead.
+		const end = () => {
+			if (composing) queueMicrotask(() => (composing = false));
+		};
 		document.addEventListener('compositionstart', start, true);
 		document.addEventListener('compositionend', end, true);
 		document.addEventListener('focusout', end, true);
