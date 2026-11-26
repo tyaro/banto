@@ -1328,3 +1328,36 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
    visual の基準画像（`ui-demo`・`dashboard-selection`）を Linux で作り直す。
 5. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
 6. 同期記録に「v9.0.0 取込済（`editOnTap` の方針・migration 0016 の有無）」を書く。
+
+### 例 13: v9.0.x → v9.1.0（パスワード欄の表示・非表示・`WriteLedger`・`stop_within`。A と B・挙動の変更）
+
+`@banto/forms` のパスワード欄に表示・非表示のボタン `PasswordInput`（#944）、`banto-server` の書き込みの台帳 `WriteLedger`
+（#981）と `RunningServer::stop_within`・`stop_all_within`（#980）、Windows で起動を止めるときのダイアログ（#975）、
+タッチキーの盤が Glass で透ける件の修正（#977）が入る。API の削除・改名はなく、公開の union への種類の追加もない。
+**minor**: 追加が中心で、DB の作り直しは要らない（migration の追加なし）。ただし #944 は既存の `PasswordField` の DOM を変えるので、
+[publishing.md「バージョニング規約」](publishing.md#バージョニング規約)の「2.x 以降の運用上の変更」（運用上の挙動変更は、
+消費側への注意を明記した上で `minor`、オーナー判断）に当てた。
+
+| 経路 | 項目 | 取り込み |
+| ---- | ---- | -------- |
+| A | `@banto/forms` を上げる | **すべてのパスワード欄に表示・非表示のボタンが付き、入力欄が `.banto-affix` の包みに入る。** 試験が `getByLabel('パスワード')` と部分一致で探していると、ボタンにも当たって複数一致で落ちる → `getByLabel('パスワード', { exact: true })` か `id` で探す。入力欄の `nextElementSibling` をラベルとみなす検査、入力欄そのものの `border-bottom` を見る検査は、`.banto-affix` を見るように直す。visual の基準画像（パスワード欄のある画面）は作り直す。追加: `PasswordInput`・`PasswordInputMessages`・`defaultPasswordInputMessages`、`BantoForm` の `passwordMessages` |
+| A | `@banto/touch-keys-svelte`・`@banto/theme` を上げる | `TouchKeysHost` の中だけ、盤の背景が Glass でも不透明になる（標準・ライト・ダークは変わらない）。theme は浮動ラベルが `.banto-affix` の中の入力にも効く |
+| A | `banto-server` を上げる | 追加だけ（`WriteLedger`・`LedgerOutcome`・`BoundServer::with_write_ledger`・`RunningServer::stop_within`・`stop_all_within`）。自前で `ListenerWrites` と接続の待ちの 5 秒を書いている下流（banto-industrial の Hub など）は、`WriteLedger` と `stop_within` に置き換えられる（任意）。`stop`・`stop_all`・`RemainingWrites`・`with_write_budget` の動きは変わらない。停止のログの上限は 1 秒未満でも `300ms` のように出る |
+| B | パスワード欄（`routes/login/+page.svelte`・`routes/(app)/settings/AccountSection.svelte`・`routes/(app)/users/+page.svelte`・`routes/(app)/ui-demo/+page.svelte`・`src/lib/resource/ResourceDetail.svelte`・`src/lib/banto/i18n.ts`）・`messages/{ja,en}.json` | 取り込みは任意。写すなら辞書の `passwordInput.show`・`passwordInput.hide` と `passwordInputMessages()` も一緒に。E2E（`e2e/first-admin.ts` ほか）は `{ exact: true }` に直す |
+| B | Windows の起動失敗のダイアログ（`src-tauri/src/startup_dialog.rs`・`src-tauri/src/lib.rs`） | 取り込みは任意。リリース版の Windows で、起動を止める理由（データフォルダの作成失敗など）がダイアログで出る。macOS・Linux は従来どおり stderr のみ |
+| C | DB・設定キー・配布物 | 変更なし（migration は 0016 のまま。`tauri.conf.json` は版数のみ） |
+
+進め方:
+
+1. A のタグを上げ、`pnpm check`・`cargo test` を通す（型エラーになる変更は無い）。
+2. パスワード欄を探している試験・検査を洗い、`{ exact: true }` か `id` に直す。visual の基準画像（Linux で生成）を作り直す。
+3. コピーしたテンプレートは、B の差分を機能ごとに読んで写す（どれも任意）。
+4. 自前の書き込みの台帳・停止の待ちを持つ `banto-server` の利用者は、`WriteLedger`・`stop_within` への置き換えを検討する（任意）。
+
+確認項目:
+
+1. `pnpm check`・`pnpm build`・`pnpm verify:architecture`・`cargo test`。
+2. パスワード欄のある画面で、ボタンで表示・非表示が切り替わり、送信・リセット・画面を離れると非表示へ戻ること。
+3. Glass で `TouchKeysHost` を使うアプリは、盤のパネルが透けないこと。
+4. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
+5. 同期記録に「v9.1.0 取込済（パスワード欄の方針）」を書く。

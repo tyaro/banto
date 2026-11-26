@@ -22,6 +22,73 @@
 
 ## [Unreleased]
 
+## [9.1.0] - 2026-11-26
+
+**v9.1.0 — `banto-server` の書き込みの台帳 `WriteLedger`（#981）と `RunningServer::stop_within`・`stop_all_within`（#980）、`@banto/forms` のパスワード欄の表示・非表示の切り替え `PasswordInput`（#944）、Windows で起動を止めるときのダイアログ（#975）、タッチキーの盤が Glass で透ける件の修正（#977）。** API の削除・改名は無く、公開の union に種類も足していない（v9.0.0 からの `crates/*/src` に `pub` の削除なし、`packages/*/src/index.ts` に export の削除なし）。migration も増えない。**minor にした理由**: 追加が中心で、既存のコードはそのままコンパイルでき、DB の作り直しも要らないため。ただし #944 は既存の `PasswordField` の DOM を変える（パスワード欄の隣にボタンが並び、入力欄が `.banto-affix` の包みに入る）。[publishing.md「バージョニング規約」](docs/publishing.md#バージョニング規約)の「2.x 以降の運用上の変更」（運用上の挙動変更は、消費側への注意を明記した上で `minor` としてよい。オーナー判断、2026-11-26）に当てた。
+
+移行の手順（v9.0.x から）:
+
+1. 依存のタグを `v9.0.0` から `v9.1.0` に上げる（npm と Rust を同じタグに）。
+2. **パスワード欄を試験や自前の処理で探している画面を洗う（#944 の消費側への注意）。** パスワード欄の隣に「パスワードを表示」のボタンが並ぶので、`getByLabel('パスワード')` のように部分一致で探していると、ボタンにも当たって複数一致で落ちる → `getByLabel('パスワード', { exact: true })` か欄の `id` で探す。入力欄の `nextElementSibling` をラベルとみなす検査や、入力欄そのものの下線（`border-bottom`）を見る検査は、ラッパーの `.banto-affix` を見るように直す。visual の基準画像（ログイン・設定・ユーザー管理のパスワード欄）は作り直しが要る。
+3. `banto-server` を使い、自前の listener の書き込みの台帳や停止の待ちを書いているアプリ（banto-industrial の `ListenerWrites` と 5 秒の受け入れなど）は、下の A のとおり `WriteLedger`・`stop_within` に置き換えられる（任意）。
+4. コピーしたテンプレートを取り込むなら下の B、DB は下の C（変更なし）。詳しい手順は [docs/upgrading.md](docs/upgrading.md) の例 13。
+
+派生アプリへの影響: 依存のタグを上げるだけで動きが変わるのは、パスワード欄の見た目と DOM（#944）、Glass の `TouchKeysHost` の盤の背景（#977）、停止のログの上限の表記（1 秒未満）。型エラーになる変更は無い。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v9.0.0` → `v9.1.0`（npm と Rust を同じタグに）。**パスワード欄の DOM が変わる（消費側への注意あり）。** API の削除・改名は無い。追加: forms（`PasswordInput`・`PasswordInputMessages`・`defaultPasswordInputMessages`・`BantoForm` の `passwordMessages`）、`banto-server`（`WriteLedger`・`LedgerOutcome`・`BoundServer::with_write_ledger`・`RunningServer::stop_within`・`stop_all_within`）。修正: touch-keys-svelte（Glass の盤）。 |
+| B. コピーしたテンプレート        | あり | ログイン・設定・ユーザー管理・`ResourceDetail`・`/ui-demo` のパスワード欄、辞書（`passwordInput.*`）、`i18n.ts`、Windows の起動失敗のダイアログ（`src-tauri` の `startup_dialog.rs`・`lib.rs`）、E2E。取り込みは任意（下の B）。                                                                                                                                                                                                          |
+| C. DB・設定・配布資産            | なし | migration の追加は無い。設定キーの追加・変更なし。`tauri.conf.json` は版数のみ。                                                                                                                                                                                                                                                                                                                                                          |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/forms`・`@banto/theme`・`@banto/touch-keys-svelte`・`banto-server`（ほかのパッケージ・クレートは版数のみ）。
+- 更新: `v9.0.0` → `v9.1.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。使わなければ今までどおり）:
+  - forms: `PasswordInput`（入力欄＋表示・非表示のボタン）、`PasswordInputMessages`・`defaultPasswordInputMessages`、`BantoForm` の `passwordMessages`（#944）。
+  - banto-server: `WriteLedger`（`new()`・`from_budget(WriteBudget)`・`close_all()`・`stop_all_until(servers, deadline)`）・`LedgerOutcome { servers, running, remaining }`・`BoundServer::with_write_ledger(&ledger)`（#981）、`RunningServer::stop_within(connections, writes)`・`RunningServer::stop_all_within(servers, connections, writes)`（#980）。
+  - **banto-industrial など下流が自前で書いている `ListenerWrites` と、接続の待ちの 5 秒の固定は、`WriteLedger`（世代をまたぐ書き込みの枠の共有と門の登録・全体の停止）と `stop_within`（接続の待ちと書き込みの待ちの上限を呼び手が選ぶ）で置き換えられる。** 置き換えは任意で、`stop`・`stop_all`・`RemainingWrites`・`with_write_budget` の動きは変わらない（[ADR-0035 §9](docs/adr/0035-detached-writes.md)）。
+- 挙動の変化（タグを上げるだけで変わるもの。コードの書き換えは要らない）:
+  - **forms（#944）**: すべてのパスワード欄（`PasswordField`）に表示・非表示のボタン（目玉のアイコン）が付く。出さない指定は無い。入力欄は `.banto-affix` の中に入り、送信・リセット・画面を離れると非表示へ戻る。theme CSS は浮動ラベルが `.banto-affix` の中の入力にも効くようにした。
+  - banto-server: 停止のログの上限が 1 秒未満でも「0秒」とならず `300ms` のように出る（#980）。
+  - touch-keys-svelte（修正）: `TouchKeysHost` の中だけ、盤のパネルの背景を `--banto-surface-overlay`（Glass でも不透明）に寄せた。標準・ライト・ダークは見た目が変わらない（#977）。
+- 移行注意（ソース互換の破壊）: なし。公開の型に必須のフィールドは足していない。公開の union に種類は足していない。
+- 消費側への注意（確かめるもの）:
+  1. **パスワード欄を `getByLabel('パスワード')` など部分一致で探している試験**: ボタンにも当たって複数一致で落ちる → `{ exact: true }` か `id` で探す。
+  2. **入力欄の `nextElementSibling` をラベルとみなす検査、入力欄そのものの `border-bottom` を見る検査**: ラッパーの `.banto-affix` を見るように直す。
+  3. **パスワード欄の visual の基準画像**: ボタンが加わるので作り直す。
+  4. **touch-keys でパスワード欄を開くアプリ**: 表示中の欄は `type="text"` なので平文の盤になる。伏せたいなら `masked: true`。
+- 依存を上げずに留まれるか: できる（`v9.0.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 変更あり（取り込みは任意。取り込まなくても、A のタグを上げたテンプレートは今までどおり動く。`git diff --stat v9.0.0 HEAD -- apps/admin-template/src` で洗った一式）:
+  - **パスワード欄（#944）**: `src/routes/login/+page.svelte`・`src/routes/(app)/settings/AccountSection.svelte`・`src/routes/(app)/users/+page.svelte`・`src/routes/(app)/ui-demo/+page.svelte`・`src/lib/resource/ResourceDetail.svelte`（`passwordMessages`）、`src/lib/banto/i18n.ts`（`passwordInputMessages()`）。
+  - **辞書**: `messages/{ja,en}.json`（`passwordInput.show`・`passwordInput.hide` を足すだけ）。
+  - **Windows の起動失敗のダイアログ（#975）**: `src-tauri/src/startup_dialog.rs`（新）・`src-tauri/src/lib.rs`（`exit_startup_refused`。データフォルダ・exports 用フォルダの作成、サーバー設定の読み込み、`.run()` の失敗を同じ経路に寄せた）。
+  - **E2E**: `e2e/first-admin.ts`・`e2e/tests/smoke.spec.ts`・`e2e/tests-public-viewer/*`・`e2e/visual/{login-controls,settings-controls,settings-responsive}.spec.ts`（パスワード欄を `{ exact: true }` で探す）、visual の基準画像（Linux で生成）。
+  - core・`crates/` のテンプレート側の変更は無い（`banto-server` は A の共通クレート）。
+- 取り込む手順: ① 依存を `v9.1.0` に上げる。② パスワード欄は、上のファイルを写す（`@banto/forms` を上げるだけでも `PasswordField` は新しい形になる）。辞書の 2 キーと `passwordInputMessages()` を足す。③ Windows の起動ダイアログは、`startup_dialog.rs` と `lib.rs` の差分を写す（macOS・Linux は従来どおり stderr のみ）。
+- **「取り込まなくても動く」が当てはまる範囲**: テンプレートをコピーして `@banto/*`・`banto-*` を Git 依存で引いているアプリ。v9.0.0 のテンプレートのコードは、依存を `v9.1.0` に上げてもそのままコンパイルでき、画面もそのまま動く（パスワード欄にボタンが付く点だけは A のとおり）。
+- 詳しい手順と確認項目は [upgrading.md の例 13](docs/upgrading.md)。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: **なし**（0016 のまま。v9.0.0 の DB はそのまま使える）。
+- 戻せる条件: DB の変更が無いので、旧版のバイナリへそのまま戻せる。
+- 応答の形・設定キー・配布物: 変更なし。`tauri.conf.json` は版数のみ。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm verify:architecture` / `cargo test` / `pnpm dev`（画面が描画される）。
+2. パスワード欄のある画面（ログイン・設定のアカウント・ユーザー管理）: ボタンで表示・非表示が切り替わり、送信・リセット・画面を離れると非表示へ戻ること。試験が `{ exact: true }` で通ること。
+3. Glass のテーマで `TouchKeysHost` を使うアプリ: 盤のパネルが透けず、下の画面が読めること。
+4. `banto-server` の停止を自前で書いているアプリ: `WriteLedger`・`stop_within` に置き換える場合は、停止の試験（接続の待ち・書き込みの待ち）を通すこと。
+5. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
+
+### 変更の一覧
+
 - feat(server): 作り直しの世代をまたぐ書き込みの台帳 `WriteLedger` を足した（#981、ADR-0035 §9。追加のみ）。`WriteLedger::new()` / `from_budget(WriteBudget)` を作り、各世代の listener を `BoundServer::with_write_ledger(&ledger)` で `serve` に通すと、枠の共有と門の登録をひとりでに行う。`close_all()` は全世代の門を閉じ、その後に登録された世代は止まった状態で返る（`is_serving()` は偽）。`stop()` の系列が `WritesRemaining` を返した世代の書き込みは、終わるまで台帳に残る。全体の停止は `stop_all_until(servers, deadline)`（`tokio::time::Instant`）で、渡した listener の停止の後、共有の枠の `running()` が 0 になるまで締め切りまで待ち、`LedgerOutcome { servers, running, remaining }` を返す（停止の途中で止められた世代の残りも取りこぼさない）。下流（banto-industrial の Hub）が自前で書いていた `ListenerWrites` を置き換えられる。`stop_all`・`RemainingWrites`・`with_write_budget` の動きは変わらない。
 - feat(server): `RunningServer::stop_within(connections, writes)` を公開し、`RunningServer::stop_all_within(servers, connections, writes)` を足した（#980）。接続の待ち（既定 5 秒、超えたら serve のタスクを中断、#283）と書き込みの待ちの両方の上限を呼び手が選べる。`stop()`・`stop_waiting_writes_for`・`stop_all`・`stop_all_waiting_writes_for` の動きは変わらない（追加のみ）。停止のログの上限は 1 秒未満でも「0秒」とならず `300ms` のように出る。
 - fix(touch-keys): ダーク（ライトも）の Glass で盤のパネルが透けて下の画面が読みにくい件を直した（#977）。`TouchKeysHost` の中だけ `--banto-surface-raised` を浮く面用の `--banto-surface-overlay`（Glass でも不透明。Modal・コマンドパレットと同じ）に寄せた。標準・ライト・ダークは両トークンが同じ値なので見た目は変わらない。単体で置いた `NumberKeypad` / `TextKeyboard` は従来どおり。
