@@ -16,6 +16,7 @@
 //! variants); the object ACE layouts keep `sid: None`, which the judgement
 //! refuses when the ACE grants a write right (file systems do not use them).
 
+use std::fmt;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -393,19 +394,54 @@ pub fn windows_directory() -> Result<String, String> {
     directory(GetSystemWindowsDirectoryW)
 }
 
-/// What a PowerShell run returned.
-struct RunOutput {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
+/// What a PowerShell run returned. The output is raw bytes: each caller
+/// decides how strictly to decode it.
+pub struct RunOutput {
+    pub code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
-/// Runs `script` in the in-box Windows PowerShell with a rebuilt minimal
-/// environment, the system directory as its working directory, and a time
-/// limit.
-fn run_powershell(script: &str) -> Result<RunOutput, String> {
-    let system = system_directory()?;
-    let windows = windows_directory()?;
+/// Why [`run_powershell`] produced no [`RunOutput`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum RunError {
+    /// The system directories could not be read or `powershell.exe` did not
+    /// start.
+    Launch(String),
+    /// The child did not finish within the limit (it was killed).
+    Timeout,
+    /// Waiting for the child failed (it was killed).
+    Wait(String),
+}
+
+impl fmt::Display for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Launch(e) => write!(f, "powershell.exe could not be started: {e}"),
+            Self::Timeout => f.write_str("PowerShell did not finish in time"),
+            Self::Wait(e) => write!(f, "waiting for PowerShell failed: {e}"),
+        }
+    }
+}
+
+/// Runs `script` in the in-box Windows PowerShell: the program by absolute
+/// path under the system directory (`GetSystemDirectoryW`, not `PATH` or the
+/// inherited environment), a rebuilt minimal environment, the system
+/// directory as its working directory, no console window, and `timeout`.
+/// Each of stdout and stderr is read up to `max_output` bytes. This is the
+/// one place PowerShell is started: the elevated helper and the main app's
+/// firewall read (`src-tauri/src/firewall_status.rs`) both go through it.
+pub fn run_powershell(
+    script: &str,
+    timeout: Duration,
+    max_output: u64,
+) -> Result<RunOutput, RunError> {
+    use std::os::windows::process::CommandExt;
+    /// No console window flashes up for the child.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let system = system_directory().map_err(RunError::Launch)?;
+    let windows = windows_directory().map_err(RunError::Launch)?;
     let paths = powershell::powershell_paths(&system);
     let mut child = Command::new(&paths.exe)
         .args(powershell::arguments(script))
@@ -415,32 +451,39 @@ fn run_powershell(script: &str) -> Result<RunOutput, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .map_err(|e| format!("powershell.exe could not be started: {e}"))?;
+        .map_err(|e| RunError::Launch(e.to_string()))?;
+    // Read on other threads so a full pipe cannot stall the child while this
+    // one waits for it.
     let reader = |pipe: Option<Box<dyn Read + Send>>| {
         std::thread::spawn(move || {
-            let mut text = Vec::new();
+            let mut bytes = Vec::new();
             if let Some(pipe) = pipe {
-                let _ = pipe.take(MAX_OUTPUT).read_to_end(&mut text);
+                let _ = pipe.take(max_output).read_to_end(&mut bytes);
             }
-            String::from_utf8_lossy(&text).into_owned()
+            bytes
         })
     };
     let stdout = reader(child.stdout.take().map(|p| Box::new(p) as _));
     let stderr = reader(child.stderr.take().map(|p| Box::new(p) as _));
-    let deadline = Instant::now() + POWERSHELL_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(50));
             }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("PowerShell did not finish in time".into());
+                return Err(RunError::Timeout);
             }
-            Err(e) => return Err(format!("waiting for PowerShell failed: {e}")),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RunError::Wait(e.to_string()));
+            }
         }
     };
     Ok(RunOutput {
@@ -453,12 +496,13 @@ fn run_powershell(script: &str) -> Result<RunOutput, String> {
 /// Runs a script that must exit 0.
 fn run_checked(script: Option<String>) -> Result<String, String> {
     let script = script.ok_or("a value could not be written into the script")?;
-    let out = run_powershell(&script)?;
+    let out = run_powershell(&script, POWERSHELL_TIMEOUT, MAX_OUTPUT).map_err(|e| e.to_string())?;
     if out.code != Some(0) {
-        let detail = out.stderr.lines().next().unwrap_or("").trim().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let detail = stderr.lines().next().unwrap_or("").trim().to_string();
         return Err(format!("PowerShell exited with {:?}: {detail}", out.code));
     }
-    Ok(out.stdout)
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// [`FirewallOps`] through the fixed PowerShell scripts.
