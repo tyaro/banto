@@ -36,3 +36,12 @@ test('audit-log: sample rows are listed read-only', async ({ page }) => {
 	});
 	await expect(page.getByTestId('audit-count-note')).toContainText(/40\s*件/);
 });
+
+test('audit-log: a sample row detail has no link to the target record', async ({ page }) => {
+	await page.goto('/audit-log');
+	await expect(page.getByTestId('audit-count-note')).toContainText(/40\s*件/, { timeout: 60_000 });
+	// The sample ids do not match the demo items, so the link would open an unrelated record.
+	await page.getByRole('row').filter({ hasText: '更新' }).first().click();
+	await expect(page.locator('section.detail')).toBeVisible();
+	await expect(page.getByTestId('audit-open-target')).toHaveCount(0);
+});

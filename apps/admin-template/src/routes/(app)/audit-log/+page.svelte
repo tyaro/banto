@@ -291,9 +291,12 @@
 	// the raw JSON (the rest of detail stays below); older records and other operations keep the JSON.
 	const selectedChanges = $derived.by(() => parseAuditChanges(selected?.action, selected?.detail));
 	// #597 stage 2: the link to the record the audit record is about (none for
-	// delete, an unregistered resource, or no entity id).
+	// delete, an unregistered resource, or no entity id). Sample rows (demo) have
+	// no link either: their entity ids do not match any record shown elsewhere (#712).
 	const selectedTargetHref = $derived.by(() =>
-		selected ? auditTargetHref(selected.resource, selected.entityId, selected.action) : null
+		selected && !sampleData
+			? auditTargetHref(selected.resource, selected.entityId, selected.action)
+			: null
 	);
 	const selectedRest = $derived.by(() => auditDetailRest(selected?.detail, selected?.resource));
 
