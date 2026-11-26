@@ -375,4 +375,31 @@ mod tests {
         ));
         drop(write);
     }
+
+    /// The deadline passes WHILE the listeners are collected: the waits must
+    /// still end at the deadline, not a full relative limit after it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_deadline_that_passes_while_collecting_the_listeners_is_kept() {
+        struct Slow(Option<RunningServer>);
+        impl Iterator for Slow {
+            type Item = RunningServer;
+            fn next(&mut self) -> Option<RunningServer> {
+                if self.0.is_some() {
+                    std::thread::sleep(Duration::from_millis(800));
+                }
+                self.0.take()
+            }
+        }
+        let ledger = WriteLedger::new();
+        let server = serve_in(&ledger).await;
+        let write = server.hold_write_for_test("POST /slow").expect("accepted");
+        let deadline = Instant::now() + Duration::from_millis(600);
+        let outcome = ledger.stop_all_until(Slow(Some(server)), deadline).await;
+        assert!(
+            Instant::now() < deadline + Duration::from_millis(500),
+            "the wait went on past the deadline"
+        );
+        assert_eq!(outcome.running, 1);
+        drop(write);
+    }
 }
