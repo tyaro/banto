@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- fix(admin-template): ダッシュボードでドッキングしたペインの ✕・⧉ を押すと Svelte の `state_unsafe_mutation` が出ていたのを直した。IME の見張りの `focusout` が、ボタンと一緒にペインが消える後片付けの中で `$state` を書いていた。値が変わるときだけ microtask で書く（#1012）。
 - chore(fixtures): v9.3.0 のタグ後の外部利用 fixture の ref を `v9.3.0` に更新した。[9.3.0] に「検証した組み合わせ」を追記。
 
 ## [9.3.0] - 2026-11-27
