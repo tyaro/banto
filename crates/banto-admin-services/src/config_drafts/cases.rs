@@ -906,14 +906,16 @@ pub(super) async fn published_at_is_the_write_time(bench: &Bench) {
                     .unwrap();
                 locked_tx.send(()).unwrap();
                 // Release only once the writer is waiting on the row lock
-                // (not after a fixed sleep that a slow machine could beat);
+                // THIS connection holds (`pg_blocking_pids`, so a test in
+                // another schema waiting on its own lock does not count;
+                // not after a fixed sleep that a slow machine could beat);
                 // a bounded poll, and the test fails when it never waits.
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
                 loop {
                     let waiting: i64 = sqlx::query_scalar(
                         "SELECT count(*) FROM pg_stat_activity \
-                         WHERE wait_event_type = 'Lock' AND pid <> $1 \
-                         AND datname = current_database() \
+                         WHERE wait_event_type = 'Lock' \
+                         AND $1 = ANY(pg_blocking_pids(pid)) \
                          AND query LIKE '%config_published%FOR UPDATE%'",
                     )
                     .bind(holder_pid)
