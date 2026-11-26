@@ -304,4 +304,85 @@ describe('createPanelPopOut and the closed-notice subscription', () => {
 		expect(onError).toHaveBeenCalledTimes(1);
 		expect(detach).not.toHaveBeenCalled();
 	});
+
+	it('drops a pop-out that was waiting when connect() was stopped', async () => {
+		const gate = deferredListen();
+		const invoke = vi.fn(async () => undefined as unknown);
+		const detach = vi.fn(async () => true);
+		const onError = vi.fn();
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke,
+			listen: gate.listen,
+			detach,
+			restore: vi.fn(),
+			onError
+		});
+		const stop = popOut.connect();
+		popOut.onPopOut!(MEMO);
+		await tick();
+		stop();
+
+		const unlisten = vi.fn();
+		gate.resolve(unlisten);
+		for (let i = 0; i < 5; i++) await tick();
+
+		expect(unlisten).toHaveBeenCalled();
+		expect(detach).not.toHaveBeenCalled();
+		expect(invoke).not.toHaveBeenCalled();
+		expect(onError).not.toHaveBeenCalled();
+	});
+
+	it('also drops it when connect() was stopped and started again meanwhile', async () => {
+		const gate = deferredListen();
+		const invoke = vi.fn(async () => undefined as unknown);
+		const detach = vi.fn(async () => true);
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke,
+			listen: gate.listen,
+			detach,
+			restore: vi.fn()
+		});
+		const stop = popOut.connect();
+		popOut.onPopOut!(MEMO);
+		await tick();
+		stop();
+		popOut.connect();
+
+		gate.resolve(vi.fn());
+		for (let i = 0; i < 5; i++) await tick();
+
+		expect(detach).not.toHaveBeenCalled();
+		expect(invoke).not.toHaveBeenCalled();
+	});
+
+	it('opens no window and restores the panel when connect() stops during the detach', async () => {
+		const fake = fakeListen();
+		const invoke = vi.fn(async () => undefined as unknown);
+		const restore = vi.fn();
+		let finishDetach!: (ok: boolean) => void;
+		const detach = vi.fn(() => new Promise<boolean>((res) => (finishDetach = res)));
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke,
+			listen: fake.listen,
+			detach,
+			restore
+		});
+		const stop = popOut.connect();
+		await tick();
+
+		popOut.onPopOut!(MEMO);
+		await tick();
+		await tick();
+		expect(detach).toHaveBeenCalled();
+		stop();
+
+		finishDetach(true);
+		for (let i = 0; i < 5; i++) await tick();
+
+		expect(invoke).not.toHaveBeenCalled();
+		expect(restore).toHaveBeenCalledWith('memo');
+	});
 });

@@ -179,7 +179,10 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
  * is known to work, because the notice is the only way it comes back. If
  * `onPopOut` runs while `connect()`'s registration is still pending it waits
  * for it; if the registration failed, nothing is detached and `onError`
- * gets the reason. (If `connect()` was never called, or has been stopped,
+ * gets the reason. If `connect()` is stopped (or replaced) while the pop-out
+ * waits, or while `detach` runs, no window is opened: nothing was detached
+ * yet in the first case, and `restore` puts the panel back in the second;
+ * `onError` is not called, as leaving the screen is not a failure. (If `connect()` was never called, or has been stopped,
  * there is nothing to wait for and the pop-out proceeds - wiring `connect()`
  * is the caller's part.)
  *
@@ -201,15 +204,30 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	let subscription: Promise<SubscriptionResult> | null = null;
 
 	const popOut = async (content: C): Promise<void> => {
-		if (subscription) {
-			const result = await subscription;
+		const awaited = subscription;
+		// The subscription this pop-out relied on is gone (stopped, or replaced
+		// by a reconnect): its notices no longer reach `restore`.
+		const stale = () => awaited !== null && subscription !== awaited;
+		if (awaited) {
+			const result = await awaited;
 			if (!result.ok) {
 				// No notice would ever bring the panel back: leave it in the dock.
 				options.onError?.(result.error, content);
 				return;
 			}
+			// Stopped while it waited (the registration is torn down as soon as
+			// it lands): nothing would bring the panel back. Quietly drop it.
+			if (stale()) return;
 		}
-		if (options.detach && !(await options.detach(content))) return;
+		if (options.detach) {
+			if (!(await options.detach(content))) return;
+			if (stale()) {
+				// Stopped while the detach ran: the panel is out of the dock but no
+				// window will open, so put it back.
+				options.restore(content.id);
+				return;
+			}
+		}
 		try {
 			await openPanelWindow(content, options);
 		} catch (error) {

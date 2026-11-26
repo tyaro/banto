@@ -79,7 +79,7 @@ id は webview から来て、窓のラベル・読み込むルート・記憶�
   ブラウザでは `onPopOut` が `undefined` になる。**ブラウザでは `onPopOut` を渡さない（ボタンを出さない）**という
   `@banto/dock-svelte` との約束はそのまま。
 - パネルを dock から外すのは、`connect()` の購読が成功したとわかってから。閉じた知らせが戻る唯一の道だから。
-  登録の途中で pop-out が押されたら済むのを待つ。登録に失敗していたら何も外さず、`onError` に理由を渡す。
+  登録の途中で pop-out が押されたら済むのを待つ。登録に失敗していたら何も外さず、`onError` に理由を渡す。待つ間や `detach` の間に `connect()` が止まったら窓を開かない（`detach` 済みなら `restore` で戻す）。
 - `@banto/dock-svelte` は import しない（conventions §4）。`PanelWindowContent`（`id` と `title`）は、dock の
   `PanelContent` のうちこのモジュールが読む部分。
 

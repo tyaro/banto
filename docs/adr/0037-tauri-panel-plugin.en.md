@@ -92,7 +92,8 @@ from the frontend.
   **a browser does not pass `onPopOut` (no button is drawn)** - is unchanged.
 - A panel is detached only once the `connect()` subscription is known to work, since the closed notice is the only
   way it comes back. A pop-out pressed while the registration is pending waits for it; if it failed, nothing is
-  detached and `onError` gets the reason.
+  detached and `onError` gets the reason. If `connect()` is stopped while it waits or while `detach` runs, no window
+  is opened (`restore` puts a detached panel back).
 - It does not import `@banto/dock-svelte` (conventions §4). `PanelWindowContent` (`id` and `title`) is the part of
   the dock's `PanelContent` this module reads.
 
