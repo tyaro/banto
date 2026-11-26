@@ -22,10 +22,87 @@
 
 ## [Unreleased]
 
+## [9.2.0] - 2026-11-26
+
+**v9.2.0 — 一覧が 0 件のときの次の一手の導線と `BantoGrid` の `empty` snippet（#712）、ブラウザ単体のデモでユーザー一覧と監査ログを読み取り専用の見本で表示（#712）、dock の区画へのドロップ後のフォーカスの復帰（#694）、`computeDropRegion` の非推奨、テンプレートの PowerShell の起動の一本化（#817）と paraglide の `outputStructure` の明示（#806）。** 共通パッケージ・クレートの API の削除・改名は無く、公開の union に種類も足していない（v9.1.1 からの `crates/*/src` に `pub` の削除・変更なし、`packages/*/src/index.ts` に export の削除なし。差分はコメント 1 行）。migration も増えない。**minor にした理由**: `@banto/grid-svelte` の `BantoGrid` に任意の `empty` snippet を足した（後方互換の機能追加）。既存のコードはそのままコンパイルでき、DB の作り直しも要らない（[publishing.md「バージョニング規約」](docs/publishing.md#バージョニング規約)）。改名（`isUsersAdminAvailable` → `isUsersAdminWritable`）と辞書キーの削除は、コピーしたテンプレートの中だけで、共通パッケージの API ではない（下の B）。
+
+移行の手順（v9.1.x から）:
+
+1. 依存のタグを `v9.1.1` から `v9.2.0` に上げる（npm と Rust を同じタグに）。
+2. **`computeDropRegion`（`@banto/dock-svelte`）を呼んでいるアプリを洗う（#995 の消費側への注意）。** `@deprecated` を付けた。動きは変わらないが、次の major で消す。十字のボタンの配置は `crossButtons`、当たり判定は `hitGuideButton`（外周は `edgeButtons` / `computeEdgeDrop`）へ移す。
+3. **コピーしたテンプレートのユーザー管理・監査ログを取り込むなら（#994 の消費側への注意）**: `usersAdmin.ts` の `isUsersAdminAvailable` は `isUsersAdminWritable` に改名した（意味も「使えるか」から「書き込めるか」に変わる。デモでは読み取りが見本データを返す）。辞書の `users.unavailableTitle`・`users.unavailableDesc`・`audit.unavailableTitle`・`audit.unavailableDesc` は消し、`users.demoNotice`・`audit.demoNotice` を足した。自前の画面や試験がこの関数・キーを使っていれば直す。取り込まなければ今までどおり動く。
+4. **コピーしたテンプレートの一覧（`ResourceListPage`）を取り込むなら（#993 の消費側への注意）**: 0 件の一覧に「最初の 1 件を作成」「CSV から取り込む」のボタンが出る。ヘッダの「新規作成」とは別の名前なので、`getByRole('button', { name: '新規作成' })` の試験は 0 件の一覧でも 1 つに当たる。0 件の一覧を写す visual の基準画像は作り直しが要る。
+5. コピーしたテンプレートのそのほかの取り込みは下の B、DB は下の C（変更なし）。詳しい手順は [docs/upgrading.md](docs/upgrading.md) の例 15。
+
+派生アプリへの影響: 依存のタグを上げるだけで動きが変わるのは、dock の区画へのドロップ・浮動にするドロップの後のフォーカスの位置（#694）と、`BantoGrid` の 0 件の文字が横スクロールしても見える枠の中に留まること（#712）。型エラーになる変更は無い（`computeDropRegion` はエディタと lint が非推奨の印を出す）。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v9.1.1` → `v9.2.0`（npm と Rust を同じタグに）。追加: grid-svelte（`BantoGrid` の `empty` snippet）。修正: dock-svelte（ドロップ後のフォーカス）。**非推奨: dock-svelte の `computeDropRegion`（次の major で消す）。** API の削除・改名は無い。                                                                                                                                                                                                                         |
+| B. コピーしたテンプレート        | あり | 一覧の 0 件の導線（`ResourceListPage`・`ResourceClientGrid`・`ResourceServerGrid`）、デモのユーザー一覧・監査ログの見本（`usersAdmin.ts`・`auditLogAdmin.ts`・`providers/demoUsers.ts`・`providers/demoAuditLog.ts`・`/users`・`/audit-log`）、辞書、PowerShell の起動の一本化（`elev`・`src-tauri` の `firewall_status.rs`）、paraglide の `outputStructure`（`vite.config.ts`・`package.json`）、E2E。**改名と辞書キーの削除あり（消費側への注意）。** 取り込みは任意。 |
+| C. DB・設定・配布資産            | なし | migration の追加は無い。設定キーの追加・変更なし。`tauri.conf.json` は版数のみ。                                                                                                                                                                                                                                                                                                                                                                                          |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/grid-svelte`・`@banto/dock-svelte`（ほかのパッケージ・クレートは版数のみ）。
+- 更新: `v9.1.1` → `v9.2.0`（npm と Rust を同じタグに）。
+- 追加 API（任意。使わなければ今までどおり）:
+  - grid-svelte: `BantoGrid` の `empty`（snippet）。行が 1 件も無いとき（絞り込みで 0 件になったときも）、`messages.emptyState` の文字の代わりに描く。グリッドは「本当に空」か「絞り込みの結果」かを決めないので、ページ側で出し分ける（#712）。
+- 挙動の変化（タグを上げるだけで変わるもの。コードの書き換えは要らない）:
+  - **dock-svelte（#694 の拾い残し）**: 区画へのドロップ（十字のガイドの中央＝タブ化、矢印＝分割）と、docked の pane を浮動にするドロップでも、`<body>` に落ちたフォーカスを戻す。戻す先はフォーカスのあった pane の今の場所、無ければ元の区画、それも無ければ動かした pane。フォーカスがまだどこかにあるときは動かさない。「パネルの操作」メニューからの移動は変わらない。
+  - grid-svelte: 0 件の文字（`messages.emptyState`）が、列の合計が枠より広くても見える枠の中に留まる（`position: sticky`、幅は viewport）。
+- **非推奨（次の major で消す）**: dock-svelte の `computeDropRegion`（#694 PR-2 より前の「端 25% の帯」の判定。ドラッグはもう使っていない）。動きは変わらない。代わりは `crossButtons` + `hitGuideButton`（外周は `edgeButtons` / `computeEdgeDrop`）。
+- 移行注意（ソース互換の破壊）: なし。公開の型に必須のフィールドは足していない。公開の union に種類は足していない。
+- 消費側への注意（確かめるもの）:
+  1. **`computeDropRegion` を呼んでいるアプリ**: 次の major までに `crossButtons` + `hitGuideButton` へ移す。
+  2. **dock を使うアプリで、ドロップの後のフォーカスを自前で置いているもの**: フォーカスがすでにどこかにあれば dock は動かさないので、そのままでよい。`<body>` に落ちたままを前提にした試験があれば直す。
+  3. **`BantoGrid` の 0 件を写す visual の基準画像**: 横に広い表では文字の位置が変わりうる。
+- 依存を上げずに留まれるか: できる（`v9.1.1` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 変更あり（取り込みは任意。取り込まなくても、A のタグを上げたテンプレートは今までどおり動く。`git diff --stat v9.1.1 HEAD -- apps/admin-template/src` で洗った一式）:
+  - **一覧が 0 件のときの導線（#712）**: `src/lib/resource/ResourceListPage.svelte`（`emptyActions`・`emptyList` snippet。検索・絞り込みの結果が 0 件のときは導線を出さず、条件を変える案内）・`src/lib/resource/ResourceClientGrid.svelte`・`src/lib/resource/ResourceServerGrid.svelte`（`empty` を `BantoGrid` へ渡す。読み込み中とエラーのときは渡さない）。`BantoGrid` の `empty` を使うので、A の `v9.2.0` が要る。
+  - **デモのユーザー一覧・監査ログの見本（#712）**: `src/lib/banto/usersAdmin.ts`（**`isUsersAdminAvailable` → `isUsersAdminWritable` に改名**。デモでは `listUsers` が見本を、`listPermissionCatalog` が空の一覧を返し、書き込みは `DEMO_MODE_MESSAGE` で拒否のまま）・`src/lib/banto/auditLogAdmin.ts`（デモでは `listAuditLog`・`getAuditConfig` が見本を返す。`isAuditLogAvailable()` はデモで偽のまま）・`src/lib/banto/providers/demoUsers.ts`（新）・`src/lib/banto/providers/demoAuditLog.ts`（新）・`src/lib/banto/providers/demo.ts`（コメントのみ）・`src/routes/(app)/users/+page.svelte`・`src/routes/(app)/audit-log/+page.svelte`、単体試験（`usersAdmin.test.ts`・`auditLogAdmin.test.ts`）。Tauri・LAN（組み込みサーバー）での動きは変わらない。
+  - **辞書**: `messages/{ja,en}.json`。追加は `resource.emptyCreate`・`resource.emptyImport`・`resource.emptyTitle`・`resource.emptyDesc`・`resource.emptyFilteredTitle`・`resource.emptyFilteredDesc`・`users.demoNotice`・`audit.demoNotice`。**削除は `users.unavailableTitle`・`users.unavailableDesc`・`audit.unavailableTitle`・`audit.unavailableDesc`。**
+  - **PowerShell の起動の一本化（#817、Windows）**: `elev/src/win.rs`（`run_powershell`・`RunOutput`・`RunError` を公開）・`elev/src/powershell.rs`・`src-tauri/src/firewall_status.rs`（独自の起動処理をやめて `admin_template_fw_elev::win::run_powershell` を使う）。**挙動の変化**: `src-tauri` 側のファイアウォールの状態の照会も、`GetSystemDirectoryW` 配下の絶対パスの PowerShell を、最小の環境（`env_clear` の後に要るものだけ）・システムディレクトリを作業ディレクトリにして起動する（これまでは `%SystemRoot%` から組み立てたパスで、環境と作業ディレクトリは親のまま）。stdout の読み取りの失敗は、部分的な出力を成功扱いにせず `UnreadableOutput`（「結果を読み取れませんでした」）になる。昇格ヘルパーの側も、読み取りの失敗を `RunError::ReadOutput` で返す。
+  - **paraglide の `outputStructure`（#806）**: `vite.config.ts`（`paraglideVitePlugin` に `outputStructure: 'message-modules'`）と `package.json` の `paraglide:compile`（`--output-structure message-modules`）。Vite プラグインの既定（virtual-modules）と CLI の既定のずれをなくす。生成物の形は CLI のこれまでの形と同じ。
+  - **scaffold**: `scripts/scaffold.mjs` は、管理画面（`/users` など）を外すプリセットで `providers/demoUsers.ts` も消す。
+  - **E2E**: `e2e/demo/admin-readonly.spec.ts`（新）・`e2e/demo/items-empty-state.spec.ts`（新）・`e2e/tests-add-resource/orders.spec.ts`（空の画面のボタンから作成へ入る）・`e2e/tests/smoke.spec.ts`、visual の基準画像（`users-*`。Linux で生成）。
+  - core・`crates/` のテンプレート側の変更は無い。
+- 取り込む手順: ① 依存を `v9.2.0` に上げる。② 一覧の 0 件の導線は、`src/lib/resource/` の 3 ファイルと辞書の `resource.empty*` の 6 キーを写す。③ デモの見本は、上のファイルを写し、`isUsersAdminAvailable` の呼び出しを `isUsersAdminWritable` に直し、辞書の `*.demoNotice` を足して `*.unavailable*` を消す。④ PowerShell の起動は、`elev/src/` と `firewall_status.rs` の差分を写す。⑤ paraglide は、`vite.config.ts` と `paraglide:compile` の両方に同じ指定を足す（片方だけにしない）。
+- **消費側への注意（取り込むとき）**:
+  1. **`isUsersAdminAvailable` を自前の画面・試験で呼んでいるアプリ**: `isUsersAdminWritable` に直す。デモで「利用できません」の表示を前提にした試験は、見本の一覧と読み取り専用の注記（`users.demoNotice`・`audit.demoNotice`）に直す。
+  2. **`users.unavailable*`・`audit.unavailable*` の辞書キーを自前の画面で使っているアプリ**: キーを残すか、使う側を直す（辞書だけ写すと `m['users.unavailableTitle']` が型エラーになる）。
+  3. **0 件の一覧の試験**: 空の画面のボタンは「最初の 1 件を作成」「CSV から取り込む」（`data-empty-action="create"` / `"import"`）。ヘッダの「新規作成」とは別の名前なので、`getByRole('button', { name: '新規作成' })` は 0 件の一覧でも 1 つに当たる。権限が無い・取り込みが使えないときは、そのボタンは出ない。
+  4. **`banto add resource` の生成物**: `ResourceListPage` を使うので、取り込めば同じ導線が出る。
+  5. **PowerShell の起動（Windows）**: 最小の環境で起動するので、`PATH` や自前の環境変数に頼る script を足しているアプリは、絶対パスで呼ぶように直す。
+- **「取り込まなくても動く」が当てはまる範囲**: テンプレートをコピーして `@banto/*`・`banto-*` を Git 依存で引いているアプリ。v9.1.1 のテンプレートのコードは、依存を `v9.2.0` に上げてもそのままコンパイルでき、画面もそのまま動く。
+- 詳しい手順と確認項目は [upgrading.md の例 15](docs/upgrading.md)。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: **なし**（0016 のまま。v9.1.x の DB はそのまま使える）。
+- 戻せる条件: DB の変更が無いので、旧版のバイナリへそのまま戻せる。
+- 応答の形・設定キー・配布物: 変更なし。`tauri.conf.json` は版数のみ。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm verify:architecture` / `cargo test` / `pnpm dev`（画面が描画される）。
+2. dock を使う画面: pane を区画へドロップ（タブ化・分割）した後と、浮動にした後に、フォーカスが `<body>` に落ちず pane の側にあること。
+3. 一覧の導線を取り込んだアプリ: 0 件の一覧にボタンが出て、検索・絞り込みで 0 件のときは出ないこと。権限の無いロールでは「最初の 1 件を作成」が出ないこと。
+4. デモの見本を取り込んだアプリ: ブラウザ単体のデモで `/users` と `/audit-log` が見本を表示し、書き込みが拒否されること。Tauri・LAN では今までどおり動くこと。
+5. PowerShell の起動を取り込んだ Windows のアプリ: 設定のファイアウォールの状態が今までどおり出ること。
+6. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
+
+### 変更の一覧
+
 - fix(dock-svelte): 区画へのドロップ（十字のガイドの中央＝タブ化、矢印＝分割）と、docked の pane を浮動にするドロップでも、木の作り直しで `<body>` に落ちたフォーカスを戻す（#694 の拾い残し。外周へのドロップだけが直していた）。戻す先はフォーカスのあった pane（タブの組の中では表示中のタブの pane）の今の場所（その区画、タブになったならそのタブの組、浮動にした pane 自身ならその window）、無ければ元の区画、それも無ければ動かした pane。タブの組から 1 枚を動かしても、フォーカスは残ったタブや動かした側へ取り違えない。フォーカスがまだどこかにある（要素が生き残った、ホストや `beforePanelChange` が移した）ときは動かさない。「パネルの操作」メニューからの移動は、これまでどおり移動の側だけがフォーカスを置く。`DockHost.movePanel` は外周と同じ扱い。
 - chore(dock-svelte): **非推奨（次の major で消す）**: `computeDropRegion`（#694 PR-2 より前の「端 25% の帯」の判定。ドラッグはもう使っていない）に `@deprecated` を付けた。動きは変わらない。十字のボタンの配置は `crossButtons`、当たり判定は `hitGuideButton`（外周は `edgeButtons` / `computeEdgeDrop`）を使う。
 - feat(admin-template): ブラウザ単体のデモで `/users` と `/audit-log` を「利用できません」ではなく読み取り専用の見本データで表示する（書き込みは `DEMO_MODE_MESSAGE` で拒否のまま、#712）。conventions §10 を「管理系は拒否、ユーザー一覧と監査ログの読み取りだけ見本を許す」に改訂。
 - feat(resource): 一覧が 0 件のとき、使える操作（新規作成・CSV 取り込み）の導線を出す（#712）。検索・絞り込みの結果が 0 件のときは導線を出さず、条件を変える案内にする。`banto add resource` の生成物にも効く（`ResourceListPage`）。`BantoGrid` に 0 件の表示を差し替える `empty` snippet を追加した。空の画面のボタンはヘッダと別の名前（「最初の 1 件を作成」「CSV から取り込む」）なので、`getByRole('button', { name: '新規作成' })` の試験は 0 件の一覧でも 1 つに当たる。
+- refactor(admin-template): PowerShell の起動を `elev` の `win::run_powershell` に一本化した（#817）。`src-tauri` の `firewall_status.rs` の独自の起動処理をやめ、昇格ヘルパーと同じ実行器（`GetSystemDirectoryW` 配下の絶対パス・`env_clear` の後の最小の環境・システムディレクトリで起動・`CREATE_NO_WINDOW`・タイムアウト・出力の上限）を使う。stdout の読み取りの失敗は部分的な出力を成功扱いにせず、`RunError::ReadOutput`（照会の側は `UnreadableOutput`）で返す。stderr は診断用で、読めなければ空として扱う。
+- chore(i18n): paraglide の `outputStructure` を `message-modules` に明示した（#806）。Vite プラグイン（`vite.config.ts`）と CLI（`paraglide:compile` の `--output-structure`）の両方に書き、プラグインの既定（virtual-modules）と CLI の既定のずれをなくす。
 - chore(fixtures): v9.1.1 のタグ後の外部利用 fixture の ref を `v9.1.1` に更新した。[9.1.1] に「検証した組み合わせ」を追記。
 
 ## [9.1.1] - 2026-11-26

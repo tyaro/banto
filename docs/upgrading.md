@@ -1387,3 +1387,37 @@ dock のタブの帯が狭いときにタブを縮めて題名を省略記号に
 2. 幅の狭い dock のタブの帯で、題名が省略記号になり、タブの選択と ⋯・✕ が効くこと。
 3. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
 4. 同期記録に「v9.1.1 取込済」を書く。
+
+### 例 15: v9.1.x → v9.2.0（一覧の 0 件の導線・デモの見本・dock のドロップ後のフォーカス。A と B・非推奨あり）
+
+一覧が 0 件のときの次の一手の導線と `BantoGrid` の `empty` snippet（#712）、ブラウザ単体のデモのユーザー一覧・監査ログの
+読み取り専用の見本（#712）、dock の区画へのドロップ後のフォーカスの復帰（#694）、`computeDropRegion` の非推奨、
+テンプレートの PowerShell の起動の一本化（#817）と paraglide の `outputStructure` の明示（#806）が入る。
+共通パッケージ・クレートの API の削除・改名はなく、公開の union への種類の追加もない。migration もない。
+**minor**: `BantoGrid` の `empty` は任意の追加で、既存のコードはそのままコンパイルできる。改名と辞書キーの削除は
+コピーしたテンプレートの中だけ（B）。
+
+| 経路 | 項目 | 取り込み |
+| ---- | ---- | -------- |
+| A | `@banto/grid-svelte` を上げる | 追加だけ（`BantoGrid` の `empty` snippet。0 件のとき `messages.emptyState` の代わりに描く）。0 件の文字は、列が枠より広くても見える枠の中に留まる |
+| A | `@banto/dock-svelte` を上げる | 区画へのドロップ（タブ化・分割）と浮動にするドロップの後、`<body>` に落ちたフォーカスを pane の側へ戻す。フォーカスがすでにどこかにあれば動かさない。**`computeDropRegion` は非推奨（次の major で消す）** → `crossButtons` + `hitGuideButton`（外周は `edgeButtons` / `computeEdgeDrop`）へ移す |
+| B | 一覧の 0 件の導線（`src/lib/resource/ResourceListPage.svelte`・`ResourceClientGrid.svelte`・`ResourceServerGrid.svelte`）・辞書の `resource.empty*` の 6 キー | 取り込みは任意（A の `v9.2.0` が要る）。空の画面のボタンは「最初の 1 件を作成」「CSV から取り込む」で、ヘッダの「新規作成」とは別の名前（`getByRole('button', { name: '新規作成' })` は 0 件でも 1 つに当たる）。検索・絞り込みで 0 件のときは導線を出さない |
+| B | デモの見本（`src/lib/banto/usersAdmin.ts`・`auditLogAdmin.ts`・`providers/demoUsers.ts`・`providers/demoAuditLog.ts`・`routes/(app)/users/+page.svelte`・`routes/(app)/audit-log/+page.svelte`）・辞書 | 取り込みは任意。**`isUsersAdminAvailable` → `isUsersAdminWritable` に改名、辞書の `users.unavailable*`・`audit.unavailable*` を削除**（`users.demoNotice`・`audit.demoNotice` を追加）。自前の画面・試験がこれらを使っていれば直す。Tauri・LAN の動きは変わらない |
+| B | PowerShell の起動（`elev/src/win.rs`・`elev/src/powershell.rs`・`src-tauri/src/firewall_status.rs`） | 取り込みは任意（Windows）。ファイアウォールの状態の照会も、`GetSystemDirectoryW` 配下の絶対パス・最小の環境・システムディレクトリで起動する。stdout の読み取りの失敗は `UnreadableOutput` になる |
+| B | paraglide（`vite.config.ts`・`package.json` の `paraglide:compile`） | 取り込みは任意。`outputStructure: 'message-modules'` と `--output-structure message-modules` を両方に書く（片方だけにしない） |
+| C | DB・設定キー・配布物 | 変更なし（migration は 0016 のまま。`tauri.conf.json` は版数のみ） |
+
+進め方:
+
+1. A のタグを上げ、`pnpm check`・`cargo test` を通す（型エラーになる変更は無い）。
+2. `computeDropRegion` を呼んでいる箇所を洗い、`crossButtons` + `hitGuideButton` へ移す（次の major までに）。
+3. コピーしたテンプレートは、B の差分を機能ごとに読んで写す（どれも任意）。デモの見本を写すなら、改名と辞書キーの削除を一緒に。
+4. 0 件の一覧や `/users` を写す visual の基準画像は、差が出たら（Linux で）作り直す。
+
+確認項目:
+
+1. `pnpm check`・`pnpm build`・`pnpm verify:architecture`・`cargo test`。
+2. dock を使う画面で、区画へのドロップ・浮動にするドロップの後、フォーカスが `<body>` に落ちないこと。
+3. 取り込んだなら: 0 件の一覧のボタン（権限・絞り込みでの出し分け）、デモの `/users`・`/audit-log` の見本と書き込みの拒否、Windows のファイアウォールの状態の表示。
+4. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
+5. 同期記録に「v9.2.0 取込済」を書く。
