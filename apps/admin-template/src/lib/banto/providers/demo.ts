@@ -27,7 +27,7 @@ const AUTH_KEY = 'banto.auth.demo';
 /**
  * Spec M10 RBAC: the demo provider's one fixed account is always full
  * 'admin' - this is the only environment where usersAdmin.ts is
- * unconditionally unavailable anyway (see isUsersAdminAvailable()), so this
+ * read-only anyway (see isUsersAdminWritable()), so this
  * only matters for permissions.ts-gated UI elsewhere (nav, items page,
  * settings page), which should behave exactly as if a real admin were
  * logged in.
