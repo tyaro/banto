@@ -3,9 +3,9 @@
 //! environment, and parsing the query's output.
 //!
 //! - `powershell.exe` is run by absolute path under the system directory
-//!   (`GetSystemDirectoryW`), with `-NoProfile -NonInteractive
-//!   -EncodedCommand <base64 of UTF-16LE>` (the same flags as stage 1's
-//!   `firewall_status.rs`), so the script never passes through a command
+//!   (`GetSystemDirectoryW`), with `-NoLogo -NoProfile -NonInteractive
+//!   -EncodedCommand <base64 of UTF-16LE>` (one flag set shared with the main
+//!   app's read, `win::run_powershell`), so the script never passes through a command
 //!   line that cmd / PowerShell parse.
 //! - The child's environment is cleared and rebuilt with only the values
 //!   the helper derives from the system / Windows directories
@@ -79,6 +79,7 @@ pub fn child_environment(system_dir: &str, windows_dir: &str) -> Vec<(String, St
 /// The arguments for `powershell.exe` (after the program name).
 pub fn arguments(script: &str) -> Vec<String> {
     vec![
+        "-NoLogo".into(),
         "-NoProfile".into(),
         "-NonInteractive".into(),
         "-EncodedCommand".into(),
@@ -396,6 +397,7 @@ mod tests {
         assert_eq!(
             args,
             [
+                "-NoLogo",
                 "-NoProfile",
                 "-NonInteractive",
                 "-EncodedCommand",

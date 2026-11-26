@@ -16,6 +16,7 @@
 //! variants); the object ACE layouts keep `sid: None`, which the judgement
 //! refuses when the ACE grants a write right (file systems do not use them).
 
+use std::fmt;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -393,19 +394,58 @@ pub fn windows_directory() -> Result<String, String> {
     directory(GetSystemWindowsDirectoryW)
 }
 
-/// What a PowerShell run returned.
-struct RunOutput {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
+/// What a PowerShell run returned. The output is raw bytes: each caller
+/// decides how strictly to decode it.
+pub struct RunOutput {
+    pub code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
-/// Runs `script` in the in-box Windows PowerShell with a rebuilt minimal
-/// environment, the system directory as its working directory, and a time
-/// limit.
-fn run_powershell(script: &str) -> Result<RunOutput, String> {
-    let system = system_directory()?;
-    let windows = windows_directory()?;
+/// Why [`run_powershell`] produced no [`RunOutput`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum RunError {
+    /// The system directories could not be read or `powershell.exe` did not
+    /// start.
+    Launch(String),
+    /// The child did not finish within the limit (it was killed).
+    Timeout,
+    /// Waiting for the child failed (it was killed).
+    Wait(String),
+    /// Reading stdout failed (a read error or the reader thread died), so the
+    /// output may be partial. stderr is only a diagnostic and is best effort.
+    ReadOutput(String),
+}
+
+impl fmt::Display for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Launch(e) => write!(f, "powershell.exe could not be started: {e}"),
+            Self::Timeout => f.write_str("PowerShell did not finish in time"),
+            Self::Wait(e) => write!(f, "waiting for PowerShell failed: {e}"),
+            Self::ReadOutput(e) => write!(f, "reading PowerShell output failed: {e}"),
+        }
+    }
+}
+
+/// Runs `script` in the in-box Windows PowerShell: the program by absolute
+/// path under the system directory (`GetSystemDirectoryW`, not `PATH` or the
+/// inherited environment), a rebuilt minimal environment, the system
+/// directory as its working directory, no console window, and `timeout`.
+/// Each of stdout and stderr is read up to `max_output` bytes. This is the
+/// one place PowerShell is started: the elevated helper and the main app's
+/// firewall read (`src-tauri/src/firewall_status.rs`) both go through it.
+pub fn run_powershell(
+    script: &str,
+    timeout: Duration,
+    max_output: u64,
+) -> Result<RunOutput, RunError> {
+    use std::os::windows::process::CommandExt;
+    /// No console window flashes up for the child.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let system = system_directory().map_err(RunError::Launch)?;
+    let windows = windows_directory().map_err(RunError::Launch)?;
     let paths = powershell::powershell_paths(&system);
     let mut child = Command::new(&paths.exe)
         .args(powershell::arguments(script))
@@ -415,50 +455,79 @@ fn run_powershell(script: &str) -> Result<RunOutput, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .map_err(|e| format!("powershell.exe could not be started: {e}"))?;
+        .map_err(|e| RunError::Launch(e.to_string()))?;
+    // Read on other threads so a full pipe cannot stall the child while this
+    // one waits for it.
     let reader = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut text = Vec::new();
-            if let Some(pipe) = pipe {
-                let _ = pipe.take(MAX_OUTPUT).read_to_end(&mut text);
-            }
-            String::from_utf8_lossy(&text).into_owned()
+        std::thread::spawn(move || match pipe {
+            Some(pipe) => read_limited(pipe, max_output),
+            None => Ok(Vec::new()),
         })
     };
     let stdout = reader(child.stdout.take().map(|p| Box::new(p) as _));
     let stderr = reader(child.stderr.take().map(|p| Box::new(p) as _));
-    let deadline = Instant::now() + POWERSHELL_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(50));
             }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("PowerShell did not finish in time".into());
+                return Err(RunError::Timeout);
             }
-            Err(e) => return Err(format!("waiting for PowerShell failed: {e}")),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RunError::Wait(e.to_string()));
+            }
         }
     };
+    // stdout must be read completely (a failure is reported, never turned
+    // into a partial buffer); stderr is only a diagnostic, so a failed read
+    // of it is treated as empty.
+    let stdout = join_output(stdout.join()).map_err(RunError::ReadOutput)?;
+    let stderr = stderr.join().ok().and_then(Result::ok).unwrap_or_default();
     Ok(RunOutput {
         code: status.code(),
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
+        stdout,
+        stderr,
     })
+}
+
+/// Reads up to `max` bytes; a read error is an `Err`, not a short buffer.
+fn read_limited(reader: impl Read, max: u64) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(max)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
+/// Folds a reader thread's result: a read error and a thread panic are both
+/// failures.
+fn join_output(joined: std::thread::Result<Result<Vec<u8>, String>>) -> Result<Vec<u8>, String> {
+    match joined {
+        Ok(result) => result,
+        Err(_) => Err("the output reader thread failed".to_string()),
+    }
 }
 
 /// Runs a script that must exit 0.
 fn run_checked(script: Option<String>) -> Result<String, String> {
     let script = script.ok_or("a value could not be written into the script")?;
-    let out = run_powershell(&script)?;
+    let out = run_powershell(&script, POWERSHELL_TIMEOUT, MAX_OUTPUT).map_err(|e| e.to_string())?;
     if out.code != Some(0) {
-        let detail = out.stderr.lines().next().unwrap_or("").trim().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let detail = stderr.lines().next().unwrap_or("").trim().to_string();
         return Err(format!("PowerShell exited with {:?}: {detail}", out.code));
     }
-    Ok(out.stdout)
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// [`FirewallOps`] through the fixed PowerShell scripts.
@@ -492,6 +561,38 @@ impl FirewallOps for PowerShellFirewall {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Yields `data`, then fails.
+    struct FailingReader(Vec<u8>);
+    impl Read for FailingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Err(std::io::Error::other("broken pipe"));
+            }
+            let n = self.0.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.0[..n]);
+            self.0.drain(..n);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn read_limited_returns_what_was_read() {
+        assert_eq!(read_limited(&b"abcdef"[..], 4), Ok(b"abcd".to_vec()));
+    }
+
+    #[test]
+    fn read_limited_reports_a_failed_read_not_a_partial_buffer() {
+        assert!(read_limited(FailingReader(b"abc".to_vec()), 100).is_err());
+    }
+
+    #[test]
+    fn join_output_treats_a_thread_failure_as_an_error() {
+        assert_eq!(join_output(Ok(Ok(b"x".to_vec()))), Ok(b"x".to_vec()));
+        assert!(join_output(Ok(Err("e".into()))).is_err());
+        let panicked = std::thread::spawn(|| -> Result<Vec<u8>, String> { panic!("x") }).join();
+        assert!(join_output(panicked).is_err());
+    }
 
     /// Read-only: the system directories and the Program Files known folders
     /// resolve to plain drive paths. Changes nothing.

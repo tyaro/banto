@@ -22,7 +22,8 @@
 //! (Codex review on PR #465).
 //!
 //! How it reads: a child `powershell.exe` (the in-box Windows PowerShell,
-//! by absolute path under `%SystemRoot%`, never `PATH`) runs a FIXED script
+//! by absolute path under the system directory, never `PATH`; started by the
+//! shared `admin_template_fw_elev::win::run_powershell`) runs a FIXED script
 //! passed as `-EncodedCommand` (base64 of UTF-16LE), so nothing goes through
 //! a command line that cmd/PowerShell would parse. The only values in the
 //! script are the rule names, built from an identifier checked against
@@ -37,9 +38,7 @@
 //!
 //! Codes and values only: the frontend builds every text (conventions §13).
 
-use admin_template_fw_elev::powershell::{
-    encode_command, quote_literal as quote_powershell_literal,
-};
+use admin_template_fw_elev::powershell::quote_literal as quote_powershell_literal;
 use admin_template_fw_elev::rules::rule_names as elev_rule_names;
 use serde::Serialize;
 use serde_json::Value;
@@ -724,97 +723,42 @@ fn compare(
 /// the script's stdout; [`evaluate`] interprets it.
 pub(crate) fn probe(names: &RuleNames) -> Result<String, UnknownReason> {
     let script = probe_script(names).ok_or(UnknownReason::InvalidIdentifier)?;
-    run_encoded(&encode_command(&script), PROBE_TIMEOUT)
+    run_script(&script, PROBE_TIMEOUT)
 }
-
 #[cfg(not(windows))]
-fn run_encoded(_encoded: &str, _timeout: Duration) -> Result<String, UnknownReason> {
+fn run_script(_script: &str, _timeout: Duration) -> Result<String, UnknownReason> {
     Err(UnknownReason::NotWindows)
 }
 
-/// The in-box Windows PowerShell under `%SystemRoot%`, so neither `PATH` nor
-/// the working directory decides which program runs.
-#[cfg(windows)]
-fn windows_powershell() -> Option<std::path::PathBuf> {
-    let root = std::path::PathBuf::from(std::env::var_os("SystemRoot")?);
-    if !root.is_absolute() {
-        return None;
-    }
-    let exe = root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
-    exe.is_file().then_some(exe)
-}
-
+/// Runs `script` through the elevated helper's shared PowerShell runner
+/// ([`admin_template_fw_elev::win::run_powershell`]: the in-box Windows
+/// PowerShell by absolute path under the system directory, minimal
+/// environment, no console window, killed at `timeout`). Only stdout is used;
+/// stderr is dropped.
+///
 /// `timeout` is [`PROBE_TIMEOUT`] for the real read; the Windows-only tests
 /// pass a longer one, since a cold CI runner can take more than 10 s just to
 /// start PowerShell and load the NetSecurity module.
 #[cfg(windows)]
-fn run_encoded(encoded: &str, timeout: Duration) -> Result<String, UnknownReason> {
-    use std::io::Read;
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    use std::time::Instant;
-    /// No console window flashes up for the child.
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+fn run_script(script: &str, timeout: Duration) -> Result<String, UnknownReason> {
+    use admin_template_fw_elev::win::{run_powershell, RunError};
 
-    let exe = windows_powershell().ok_or(UnknownReason::LaunchFailed)?;
-    let mut child = Command::new(exe)
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-EncodedCommand",
-            encoded,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|_| UnknownReason::LaunchFailed)?;
-    let Some(stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(UnknownReason::LaunchFailed);
-    };
-    // Read on another thread so a full pipe cannot stall the child while
-    // this one waits for it.
-    let reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        stdout.take(MAX_OUTPUT).read_to_end(&mut buf).map(|_| buf)
-    });
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(UnknownReason::Timeout);
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(UnknownReason::QueryFailed);
-            }
-        }
-    };
-    let output = reader
-        .join()
-        .ok()
-        .and_then(Result::ok)
-        .ok_or(UnknownReason::UnreadableOutput)?;
-    if !status.success() {
+    let output = run_powershell(script, timeout, MAX_OUTPUT).map_err(|e| match e {
+        RunError::Launch(_) => UnknownReason::LaunchFailed,
+        RunError::Timeout => UnknownReason::Timeout,
+        RunError::Wait(_) => UnknownReason::QueryFailed,
+        RunError::ReadOutput(_) => UnknownReason::UnreadableOutput,
+    })?;
+    if output.code != Some(0) {
         return Err(UnknownReason::QueryFailed);
     }
-    String::from_utf8(output).map_err(|_| UnknownReason::UnreadableOutput)
+    String::from_utf8(output.stdout).map_err(|_| UnknownReason::UnreadableOutput)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use admin_template_fw_elev::powershell::encode_command;
     use admin_template_fw_elev::rules::is_valid_identifier;
     use serde_json::json;
 
@@ -1562,7 +1506,7 @@ mod tests {
         // Generous: these tests check what the script reports, not how fast a
         // cold CI runner loads the module (PR #465's Windows CI timed out at
         // the 10 s of the real read).
-        run_encoded(&encode_command(&script), Duration::from_secs(120))
+        run_script(&script, Duration::from_secs(120))
     }
 
     /// `Get-NetFirewallRule` cannot be found (module auto-loading off, as
