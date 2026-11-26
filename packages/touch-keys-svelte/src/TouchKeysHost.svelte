@@ -627,6 +627,13 @@
 		box-sizing: border-box;
 		background: var(--banto-scrim);
 		color: var(--banto-text);
+		/*
+		 * The keys float above page content, so the panel (the bottom strip, or the keypad /
+		 * keyboard itself in the popup placement) uses the OPAQUE floating step like Modal and
+		 * the command palette: glass makes --banto-surface-raised translucent but keeps
+		 * --banto-surface-overlay opaque. Standard, light and dark: the two tokens are equal.
+		 */
+		--banto-surface-raised: var(--banto-surface-overlay);
 		overflow: hidden;
 		touch-action: none;
 		align-items: center;
