@@ -5,6 +5,7 @@
 //! build this file; `tauri-check.yml` compiles and lints it, and the
 //! behaviour is checked on a real desktop (the PR's checklist).
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
@@ -27,9 +28,38 @@ struct PanelState {
     config: PanelConfig,
     /// `None` when the memory is off, or no place to keep it was found.
     store: Mutex<Option<GeometryStore>>,
+    /// Windows this plugin built: label -> panel id. Only these are focused,
+    /// remembered, announced and closed with the main window; a window of
+    /// the app that merely shares the prefix is not ours.
+    windows: Mutex<HashMap<String, String>>,
 }
 
 impl PanelState {
+    fn track(&self, label: &str, id: &str) {
+        let mut guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        guard.insert(label.to_string(), id.to_string());
+    }
+
+    fn is_tracked(&self, label: &str) -> bool {
+        let guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        guard.contains_key(label)
+    }
+
+    fn id_of(&self, label: &str) -> Option<String> {
+        let guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        guard.get(label).cloned()
+    }
+
+    fn untrack(&self, label: &str) {
+        let mut guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        guard.remove(label);
+    }
+
+    fn tracked_labels(&self) -> Vec<String> {
+        let guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        guard.keys().cloned().collect()
+    }
+
     fn saved(&self, id: &str) -> Option<PanelGeometry> {
         let guard = self.store.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().and_then(|store| store.get(id))
@@ -75,6 +105,10 @@ async fn open<R: Runtime>(
     let label = config.label_for(&id);
 
     if let Some(window) = app.get_webview_window(&label) {
+        if !state.is_tracked(&label) {
+            // A window of the app's own with this label: not ours to focus.
+            return Err(format!("window label {label} is already in use"));
+        }
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -113,6 +147,7 @@ async fn open<R: Runtime>(
         builder = builder.visible(false);
     }
     let window = builder.build().map_err(|err| err.to_string())?;
+    state.track(&label, &id);
 
     if let Some(geometry) = restore {
         let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
@@ -160,10 +195,13 @@ fn on_window_event<R: Runtime>(app: &AppHandle<R>, label: &str, event: &WindowEv
     };
     let config = &state.config;
 
-    if let Some(id) = config.panel_id_from_label(label) {
+    // Only windows this plugin built (`validate` keeps the main label out
+    // of that set).
+    if let Some(id) = state.id_of(label) {
         match event {
-            WindowEvent::Moved(_) | WindowEvent::Resized(_) => record(app, &state, label, id),
+            WindowEvent::Moved(_) | WindowEvent::Resized(_) => record(app, &state, label, &id),
             WindowEvent::Destroyed => {
+                state.untrack(label);
                 state.persist();
                 // Best effort: the main window may already be gone (the app
                 // is closing) - then nobody needs the notice.
@@ -181,8 +219,8 @@ fn on_window_event<R: Runtime>(app: &AppHandle<R>, label: &str, event: &WindowEv
         // Written here as well: the app may exit before the panels'
         // own `Destroyed` events are delivered.
         state.persist();
-        for (other, window) in app.webview_windows() {
-            if config.panel_id_from_label(&other).is_some() {
+        for other in state.tracked_labels() {
+            if let Some(window) = app.get_webview_window(&other) {
                 // `destroy`, not `close`: nothing in a panel can veto it.
                 let _ = window.destroy();
             }
@@ -263,6 +301,9 @@ impl Builder {
         PluginBuilder::new(PLUGIN_NAME)
             .invoke_handler(tauri::generate_handler![open])
             .setup(move |app, _api| {
+                // A bad configuration stops the app at start-up with the
+                // reason (an `Err`, not a panic).
+                config.validate()?;
                 let store = if config.remember_geometry {
                     config
                         .store_path
@@ -280,6 +321,7 @@ impl Builder {
                 app.manage(PanelState {
                     config,
                     store: Mutex::new(store),
+                    windows: Mutex::new(HashMap::new()),
                 });
                 Ok(())
             })

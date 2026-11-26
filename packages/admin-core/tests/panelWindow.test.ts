@@ -213,3 +213,95 @@ describe('createPanelPopOut', () => {
 		expect(events.unlisten).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe('createPanelPopOut and the closed-notice subscription', () => {
+	function deferredListen() {
+		let resolve!: (fn: () => void) => void;
+		let reject!: (e: unknown) => void;
+		const pending = new Promise<() => void>((res, rej) => {
+			resolve = res;
+			reject = rej;
+		});
+		const listen = vi.fn(() => pending);
+		return { listen, resolve, reject };
+	}
+
+	it('waits for the registration before it detaches and opens', async () => {
+		const gate = deferredListen();
+		const invoke = vi.fn(async () => undefined as unknown);
+		const detach = vi.fn(async () => true);
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke,
+			listen: gate.listen,
+			detach,
+			restore: vi.fn()
+		});
+		popOut.connect();
+
+		popOut.onPopOut!(MEMO);
+		await tick();
+		await tick();
+		expect(detach).not.toHaveBeenCalled();
+		expect(invoke).not.toHaveBeenCalled();
+
+		gate.resolve(vi.fn());
+		await tick();
+		await tick();
+		await tick();
+		expect(detach).toHaveBeenCalledWith(MEMO);
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, MEMO);
+	});
+
+	it('detaches nothing and reports the reason when the registration failed', async () => {
+		const gate = deferredListen();
+		const invoke = vi.fn(async () => undefined as unknown);
+		const detach = vi.fn(async () => true);
+		const restore = vi.fn();
+		const onError = vi.fn();
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke,
+			listen: gate.listen,
+			detach,
+			restore,
+			onError
+		});
+		popOut.connect();
+		gate.reject('no event permission');
+		await tick();
+
+		popOut.onPopOut!(MEMO);
+		await tick();
+		await tick();
+
+		expect(onError).toHaveBeenCalledWith('no event permission', MEMO);
+		expect(detach).not.toHaveBeenCalled();
+		expect(invoke).not.toHaveBeenCalled();
+		expect(restore).not.toHaveBeenCalled();
+	});
+
+	it('also refuses a pop-out that was waiting when the registration failed', async () => {
+		const gate = deferredListen();
+		const detach = vi.fn(async () => true);
+		const onError = vi.fn();
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke: vi.fn(async () => undefined as unknown),
+			listen: gate.listen,
+			detach,
+			restore: vi.fn(),
+			onError
+		});
+		popOut.connect();
+		popOut.onPopOut!(MEMO);
+		await tick();
+
+		gate.reject(new Error('boom'));
+		await tick();
+		await tick();
+
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(detach).not.toHaveBeenCalled();
+	});
+});

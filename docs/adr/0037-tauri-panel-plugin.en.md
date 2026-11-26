@@ -47,6 +47,11 @@ capability. The plugin owns:
   `main`), the prefix of the panel windows' labels (default `panel-`), default and minimum size, **memory off**
   (`remember_geometry(false)`), **closing together off** (`close_with_main(false)`), where the memory is kept
   (`store_path`). The title is passed from the frontend on every open.
+- The plugin tracks **only the windows it built itself (label -> id)** and limits focusing, the closed notice,
+  the memory and closing with the main window to them. An app window that merely has a label with the prefix is left
+  alone. The settings are checked by the pure `PanelConfig::validate`: an empty prefix, invalid characters, an empty
+  main label, or a main label that starts with the prefix make `setup` return an `Err` and stop the app at start-up
+  (no panic).
 
 ### 2. Everything with a rule in it is a pure module, separated by a feature
 
@@ -85,6 +90,9 @@ from the frontend.
 - `createPanelPopOut` combines the `onPopOut` to hand to a dock and the subscription that puts the panel back when
   its window is gone (`connect()`). In a browser `onPopOut` is `undefined`. The contract with `@banto/dock-svelte` -
   **a browser does not pass `onPopOut` (no button is drawn)** - is unchanged.
+- A panel is detached only once the `connect()` subscription is known to work, since the closed notice is the only
+  way it comes back. A pop-out pressed while the registration is pending waits for it; if it failed, nothing is
+  detached and `onError` gets the reason.
 - It does not import `@banto/dock-svelte` (conventions §4). `PanelWindowContent` (`id` and `title`) is the part of
   the dock's `PanelContent` this module reads.
 

@@ -38,6 +38,39 @@ impl fmt::Display for PanelIdError {
 
 impl std::error::Error for PanelIdError {}
 
+/// Why a [`PanelConfig`] was refused by [`PanelConfig::validate`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigError {
+    /// `label_prefix` is empty: every window would look like a panel's.
+    EmptyLabelPrefix,
+    /// `label_prefix` has something other than ASCII letters, digits, `-`
+    /// and `_` (Tauri would refuse the labels).
+    InvalidLabelPrefix,
+    /// `main_label` is empty.
+    EmptyMainLabel,
+    /// `main_label` starts with `label_prefix`: the main window could not be
+    /// told from a panel's.
+    MainLabelHasPanelPrefix,
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigError::EmptyLabelPrefix => write!(f, "label_prefix is empty"),
+            ConfigError::InvalidLabelPrefix => write!(
+                f,
+                "label_prefix may only contain ASCII letters, digits, '-' and '_'"
+            ),
+            ConfigError::EmptyMainLabel => write!(f, "main_label is empty"),
+            ConfigError::MainLabelHasPanelPrefix => {
+                write!(f, "main_label starts with label_prefix")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
 /// A panel id comes from the webview and ends up in a window label, in the
 /// route the window loads and as a key of the geometry file. Only ASCII
 /// letters, digits, `-` and `_` pass, so it can never change the route's
@@ -105,6 +138,29 @@ impl Default for PanelConfig {
 }
 
 impl PanelConfig {
+    /// Checks the settings that would make the plugin act on windows it did
+    /// not create. The plugin calls it in `setup`, so a bad configuration
+    /// stops the app at start-up instead of misbehaving later.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.label_prefix.is_empty() {
+            return Err(ConfigError::EmptyLabelPrefix);
+        }
+        if !self
+            .label_prefix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(ConfigError::InvalidLabelPrefix);
+        }
+        if self.main_label.is_empty() {
+            return Err(ConfigError::EmptyMainLabel);
+        }
+        if self.main_label.starts_with(self.label_prefix.as_str()) {
+            return Err(ConfigError::MainLabelHasPanelPrefix);
+        }
+        Ok(())
+    }
+
     /// Label of the window that shows panel `id`.
     pub fn label_for(&self, id: &str) -> String {
         format!("{}{id}", self.label_prefix)
@@ -186,6 +242,41 @@ mod tests {
         assert_eq!(c.panel_id_from_label(&c.label_for("memo")), Some("memo"));
         // The id itself may contain the separator.
         assert_eq!(c.panel_id_from_label("panel-low-stock"), Some("low-stock"));
+    }
+
+    #[test]
+    fn default_config_is_valid() {
+        assert_eq!(PanelConfig::default().validate(), Ok(()));
+    }
+
+    #[test]
+    fn configs_that_would_confuse_windows_are_refused() {
+        let with = |prefix: &str, main: &str| PanelConfig {
+            label_prefix: prefix.to_string(),
+            main_label: main.to_string(),
+            ..PanelConfig::default()
+        };
+        assert_eq!(
+            with("", "main").validate(),
+            Err(ConfigError::EmptyLabelPrefix)
+        );
+        assert_eq!(
+            with("panel/", "main").validate(),
+            Err(ConfigError::InvalidLabelPrefix)
+        );
+        assert_eq!(
+            with("panel-", "").validate(),
+            Err(ConfigError::EmptyMainLabel)
+        );
+        assert_eq!(
+            with("panel-", "panel-main").validate(),
+            Err(ConfigError::MainLabelHasPanelPrefix)
+        );
+        assert_eq!(
+            with("m", "main").validate(),
+            Err(ConfigError::MainLabelHasPanelPrefix)
+        );
+        assert_eq!(with("panel-", "shell").validate(), Ok(()));
     }
 
     #[test]

@@ -40,6 +40,10 @@ plugin が持つもの:
 - 設定（`banto_tauri_panel::Builder`）: ルートの形（既定 `panel/{id}`）、メインの窓のラベル（既定 `main`）、パネルの窓のラベルの接頭辞
   （既定 `panel-`）、既定と最小の大きさ、**記憶を切る**（`remember_geometry(false)`）、**一緒に閉じるのを切る**
   （`close_with_main(false)`）、記憶の保存先（`store_path`）。題名は開くたびにフロントから渡す。
+- plugin は**自分が作った窓（ラベル → id）だけ**を追跡し、前に出す・閉じた知らせ・記憶・メインと一緒に閉じる、の対象を
+  それに限る。ラベルが接頭辞に合うだけの、アプリ自身の窓には触らない。設定は `PanelConfig::validate`（純粋）で
+  検査し、空の接頭辞・不正な文字・空のメインのラベル・接頭辞で始まるメインのラベルは `setup` が `Err` を返して
+  起動で止める（panic はしない）。
 
 ### 2. 規則のある部分は tauri に依存しない純粋なモジュールに分け、feature で切る
 
@@ -74,6 +78,8 @@ id は webview から来て、窓のラベル・読み込むルート・記憶�
 - `createPanelPopOut` は dock に渡す `onPopOut` と、閉じた知らせで dock に戻す購読（`connect()`）を 1 つにまとめる。
   ブラウザでは `onPopOut` が `undefined` になる。**ブラウザでは `onPopOut` を渡さない（ボタンを出さない）**という
   `@banto/dock-svelte` との約束はそのまま。
+- パネルを dock から外すのは、`connect()` の購読が成功したとわかってから。閉じた知らせが戻る唯一の道だから。
+  登録の途中で pop-out が押されたら済むのを待つ。登録に失敗していたら何も外さず、`onError` に理由を渡す。
 - `@banto/dock-svelte` は import しない（conventions §4）。`PanelWindowContent`（`id` と `title`）は、dock の
   `PanelContent` のうちこのモジュールが読む部分。
 

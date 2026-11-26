@@ -37,6 +37,12 @@
 //!   half. Covered by code review, `tauri-check.yml` (compile + clippy) and a
 //!   check on a real desktop.
 //!
+//! The plugin only touches windows it built itself (it tracks their labels);
+//! an app window that merely shares the prefix is never focused, remembered
+//! or closed. A bad configuration ([`PanelConfig::validate`]: empty prefix,
+//! main label starting with the prefix, ...) makes the plugin's `setup`
+//! return an error, so the app stops at start-up with the reason (no panic).
+//!
 //! What the panel window draws, and how it holds its session, stays in the
 //! app.
 
@@ -47,7 +53,7 @@ pub mod store;
 #[cfg(feature = "tauri")]
 mod plugin;
 
-pub use config::{validate_panel_id, PanelConfig, PanelIdError};
+pub use config::{validate_panel_id, ConfigError, PanelConfig, PanelIdError};
 pub use geometry::{is_on_screen, restorable, MonitorRect, PanelGeometry};
 pub use store::GeometryStore;
 

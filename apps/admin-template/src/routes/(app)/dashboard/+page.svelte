@@ -469,7 +469,12 @@
 		// window hidden from the dock - the same path as the pane's ✕.
 		// `dock.open` opens it floating; the View menu's `showPanel` would dock
 		// it at its default place.) Also runs if the window could not be opened.
-		restore: (id) => dock.open(id)
+		restore: (id) => dock.open(id),
+		// The pop-out did not happen: the window could not be opened (then
+		// `restore` has already run), or the closed-notice subscription failed
+		// (then nothing was detached, so the panel is still here). A real app
+		// shows this in its own notification surface.
+		onError: (error, content) => console.error(`pop-out of "${content.id}" failed`, error)
 	});
 	const onPopOut = popOut.onPopOut;
 

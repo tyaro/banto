@@ -89,29 +89,48 @@ export function listenPanelClosed(
 	cb: (id: string) => void,
 	options: ListenPanelClosedOptions
 ): () => void {
-	if (!options.isTauri()) return () => {};
+	return subscribePanelClosed(cb, options).stop;
+}
+
+/** How a subscription turned out: `error` is set when `listen()` failed. */
+type SubscriptionResult = { ok: true } | { ok: false; error: unknown };
+
+/**
+ * `listenPanelClosed`, plus `ready`: it settles (never rejects) once the
+ * registration has finished, so `createPanelPopOut` can wait for it before it
+ * takes a panel out of the dock.
+ */
+function subscribePanelClosed(
+	cb: (id: string) => void,
+	options: ListenPanelClosedOptions
+): { stop: () => void; ready: Promise<SubscriptionResult> } {
+	if (!options.isTauri()) return { stop: () => {}, ready: Promise.resolve({ ok: true }) };
 
 	let disposed = false;
 	let unlisten: (() => void) | null = null;
 
-	void options
+	const ready = options
 		.listen(PANEL_CLOSED_EVENT, (e) => {
 			if (!disposed && typeof e.payload === 'string') cb(e.payload);
 		})
 		.then(
-			(fn) => {
+			(fn): SubscriptionResult => {
 				if (disposed) fn();
 				else unlisten = fn;
+				return { ok: true };
 			},
 			// The subscription could not be made (no event permission, the
-			// import failed): the panel then stays out of the dock until the user
-			// reopens it from the app's own menu. Nothing to tear down.
-			() => {}
+			// import failed). Nothing to tear down; `createPanelPopOut` refuses to
+			// pop panels out meanwhile, since nothing would bring them back.
+			(error: unknown): SubscriptionResult => ({ ok: false, error })
 		);
 
-	return () => {
-		disposed = true;
-		unlisten?.();
+	return {
+		stop: () => {
+			disposed = true;
+			unlisten?.();
+		},
+		ready
 	};
 }
 
@@ -130,7 +149,11 @@ export interface PanelPopOutOptions<C extends PanelWindowContent = PanelWindowCo
 	 * opened after `detach` had already taken the panel out.
 	 */
 	restore: (id: string) => void;
-	/** The window could not be opened (after `restore` has run). */
+	/**
+	 * The pop-out did not happen: the window could not be opened (after
+	 * `restore` has run), or the closed-notice subscription failed, in which
+	 * case the panel was not detached at all.
+	 */
 	onError?: (error: unknown, content: C) => void;
 }
 
@@ -152,6 +175,14 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
  * The round trip in one piece: `onPopOut` detaches the panel and opens its
  * window; `connect()` restores the panel when the window is gone.
  *
+ * A panel is only taken out of the dock once the closed-notice subscription
+ * is known to work, because the notice is the only way it comes back. If
+ * `onPopOut` runs while `connect()`'s registration is still pending it waits
+ * for it; if the registration failed, nothing is detached and `onError`
+ * gets the reason. (If `connect()` was never called, or has been stopped,
+ * there is nothing to wait for and the pop-out proceeds - wiring `connect()`
+ * is the caller's part.)
+ *
  * ```ts
  * const popOut = createPanelPopOut<PanelContent>({
  * 	isTauri,
@@ -167,7 +198,17 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
 export function createPanelPopOut<C extends PanelWindowContent = PanelWindowContent>(
 	options: PanelPopOutOptions<C>
 ): PanelPopOut<C> {
+	let subscription: Promise<SubscriptionResult> | null = null;
+
 	const popOut = async (content: C): Promise<void> => {
+		if (subscription) {
+			const result = await subscription;
+			if (!result.ok) {
+				// No notice would ever bring the panel back: leave it in the dock.
+				options.onError?.(result.error, content);
+				return;
+			}
+		}
 		if (options.detach && !(await options.detach(content))) return;
 		try {
 			await openPanelWindow(content, options);
@@ -181,6 +222,13 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 
 	return {
 		onPopOut: options.isTauri() ? (content) => void popOut(content) : undefined,
-		connect: () => listenPanelClosed(options.restore, options)
+		connect: () => {
+			const { stop, ready } = subscribePanelClosed(options.restore, options);
+			subscription = ready;
+			return () => {
+				if (subscription === ready) subscription = null;
+				stop();
+			};
+		}
 	};
 }
