@@ -1207,25 +1207,53 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// Open the link and read the count the server answered for ITS conditions (the list request
 		// that carries filters), then wait for the grid to show exactly that: the response only
 		// says the answer arrived, the grid shows it a moment later (an empty grid and a grid that
-		// has not heard yet both read as a header row only).
+		// has not heard yet both read as a header row only). The link swaps the URL to `/items` once
+		// applied, and a response body read after that navigation is gone ("No resource with given
+		// identifier"), so the body is read inside a route, before the page ever sees the answer.
 		const settled = async (href: string): Promise<number> => {
 			const filtered = href.includes('view=');
-			const [response] = await Promise.all([
-				page.waitForResponse((res) => {
-					const req = res.request();
-					if (new URL(res.url()).pathname !== '/api/items/list' || req.method() !== 'POST') {
-						return false;
-					}
+			const isList = (url: URL) => url.pathname === '/api/items/list';
+			let answered = false;
+			let onCount!: (count: number) => void;
+			const counted = new Promise<number>((resolve) => {
+				onCount = resolve;
+			});
+			const handler = async (route: Route) => {
+				const req = route.request();
+				if (req.method() !== 'POST') {
+					await route.fallback();
+					return;
+				}
+				const response = await route.fetch();
+				if (!answered && response.ok()) {
 					const sent = (req.postDataJSON()?.filters ?? []) as unknown[];
-					return res.ok() && sent.length > 0 === filtered;
-				}),
-				page.goto(href)
-			]);
-			const { totalCount } = (await response.json()) as { totalCount: number };
-			await expect(grid).toHaveAttribute('aria-rowcount', String(totalCount + 1));
-			// The link's own parameters are gone once applied.
-			await expect(page).toHaveURL(/\/items$/);
-			return totalCount;
+					if (sent.length > 0 === filtered) {
+						answered = true;
+						onCount(((await response.json()) as { totalCount: number }).totalCount);
+					}
+				}
+				await route.fulfill({ response });
+			};
+			await page.route(isList, handler);
+			try {
+				await page.goto(href);
+				let timer: NodeJS.Timeout | undefined;
+				const totalCount = await Promise.race([
+					counted,
+					new Promise<never>((_, reject) => {
+						timer = setTimeout(
+							() => reject(new Error(`no list answer for ${href} within 30s`)),
+							30_000
+						);
+					})
+				]).finally(() => clearTimeout(timer));
+				await expect(grid).toHaveAttribute('aria-rowcount', String(totalCount + 1));
+				// The link's own parameters are gone once applied.
+				await expect(page).toHaveURL(/\/items$/);
+				return totalCount;
+			} finally {
+				await page.unroute(isList, handler);
+			}
 		};
 
 		// Counts before and after this test puts its own boundary rows (stock 1, price 99 / 100 /
