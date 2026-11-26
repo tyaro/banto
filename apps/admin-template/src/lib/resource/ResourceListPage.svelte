@@ -1402,7 +1402,7 @@
 		if (perms.create) {
 			actions.push({
 				key: 'create',
-				label: m['resource.create'](),
+				label: m['resource.emptyCreate'](),
 				icon: Plus,
 				primary: true,
 				run: () => void goto(createHref)
@@ -1413,7 +1413,7 @@
 		if (canImport && importOption && (importOption.available?.() ?? true)) {
 			actions.push({
 				key: 'import',
-				label: m['resource.importCsv'](),
+				label: m['resource.emptyImport'](),
 				icon: Upload,
 				primary: false,
 				run: handleImportButtonClick

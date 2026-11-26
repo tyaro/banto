@@ -214,6 +214,8 @@
   "resource.exportCsv": "Export CSV",
   "resource.importCsv": "Import CSV",
   "resource.create": "New",
+  "resource.emptyCreate": "Create the first one",
+  "resource.emptyImport": "Import from CSV",
   "resource.emptyTitle": "No {resource} yet",
   "resource.emptyDesc": "Add data and it will show up here.",
   "resource.emptyFilteredTitle": "No matching data",

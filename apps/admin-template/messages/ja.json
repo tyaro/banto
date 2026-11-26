@@ -214,6 +214,8 @@
   "resource.exportCsv": "CSVエクスポート",
   "resource.importCsv": "CSVインポート",
   "resource.create": "新規作成",
+  "resource.emptyCreate": "最初の 1 件を作成",
+  "resource.emptyImport": "CSV から取り込む",
   "resource.emptyTitle": "{resource}はまだありません",
   "resource.emptyDesc": "データを追加すると、ここに一覧が表示されます。",
   "resource.emptyFilteredTitle": "該当するデータがありません",
