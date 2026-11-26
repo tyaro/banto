@@ -110,7 +110,13 @@
 		if (anchor) return { start: anchor, end: hover ?? focusDate, preview: true };
 		const start = from ?? to;
 		const end = to ?? from;
-		return start && end ? { start, end, preview: false } : null;
+		if (!start || !end) return null;
+		return {
+			start,
+			end,
+			preview: false,
+			...(!from ? { only: 'end' } : !to ? { only: 'start' } : {})
+		};
 	});
 
 	export function focusCell(): void {

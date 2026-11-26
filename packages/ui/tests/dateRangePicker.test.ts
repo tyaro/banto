@@ -320,6 +320,16 @@ describe('DateRangePicker day names (Issue #997)', () => {
 		expect(name('2026-11-10')).toBe('2026年11月10日火曜日、開始日・終了日');
 	});
 
+	it('names a one-ended value as the end it is', () => {
+		const first = setup({ value: { from: '2026-11-10', to: null } });
+		fireEvent.click(first.button);
+		expect(name('2026-11-10')).toBe('2026年11月10日火曜日、開始日');
+		cleanup();
+		const second = setup({ value: { from: null, to: '2026-11-12' } });
+		fireEvent.click(second.button);
+		expect(name('2026-11-12')).toBe('2026年11月12日木曜日、終了日');
+	});
+
 	it('while the end is a preview, only the anchor is the start', () => {
 		const { button } = setup();
 		fireEvent.click(button);

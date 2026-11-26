@@ -164,8 +164,10 @@
 	function dayLabel(date: string): string {
 		const full = formatFullDate(date, locale);
 		if (selectionMode !== 'range' || !range || !rangeEnds) return full;
-		const isStart = range.preview ? date === range.start : date === rangeEnds[0];
-		const isEnd = !range.preview && date === rangeEnds[1];
+		const isStart = range.preview
+			? date === range.start
+			: date === rangeEnds[0] && range.only !== 'end';
+		const isEnd = !range.preview && date === rangeEnds[1] && range.only !== 'start';
 		if (isStart && isEnd) return t.dateRangePickerDayBoth(full);
 		if (isStart) return t.dateRangePickerDayStart(full);
 		if (isEnd) return t.dateRangePickerDayEnd(full);

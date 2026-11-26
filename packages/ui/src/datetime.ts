@@ -428,6 +428,8 @@ export interface CalendarRange {
 	start: string;
 	end: string;
 	preview: boolean;
+	/** A value with one end only: `start`/`end` hold that day twice, but the day is named only as the end it is. */
+	only?: 'start' | 'end';
 }
 
 /** A year as the locale writes it alone ("2026年", "2026"). */
