@@ -28,6 +28,14 @@ import { refreshPanelTitles } from './dockTitles';
 export const DASHBOARD_LAYOUT_SETTING_KEY = 'dashboard.widgets';
 export const DASHBOARD_LAYOUT_STORAGE_KEY = 'banto.dashboard.widgets';
 
+/**
+ * The localStorage key (`${key}:<owner>`, the layout's owner) of the ids of the widgets that are
+ * out in a window of their own (Tauri's pop-out, #1013): such a widget is saved as closed in the
+ * layout above, and this is what brings it back into the dock when its window did not live to say
+ * that it closed (the app was closed with the window open).
+ */
+export const DASHBOARD_POPOUT_STORAGE_KEY = 'banto.dashboard.popout';
+
 /** One pane of the default arrangement: a registered widget's id and its share of the row's width. */
 interface DefaultCell {
 	id: string;

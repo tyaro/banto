@@ -42,6 +42,7 @@
 	import {
 		DASHBOARD_LAYOUT_SETTING_KEY,
 		DASHBOARD_LAYOUT_STORAGE_KEY,
+		DASHBOARD_POPOUT_STORAGE_KEY,
 		dashboardDockHeight,
 		defaultDashboardLayout,
 		validateDashboardLayout
@@ -373,7 +374,8 @@
 	// M12: after the first paint, read the provider's copy once - it wins
 	// (also over a move made meanwhile); nothing saved / a failure restores the
 	// default. A read for a session that has ended is dropped.
-	$effect(() => untrack(() => void dockLayout.load()));
+	let layoutLoaded = $state(false);
+	$effect(() => untrack(() => void dockLayout.load().finally(() => (layoutLoaded = true))));
 
 	// Autosave (#791): `DockHost` reports a settled layout to `dockLayout.commit`
 	// (`onLayoutCommit` below) - the end of a move / resize, a dock / undock / tab /
@@ -408,6 +410,7 @@
 	 * how one is ADDED (§4.13.3): it opens as a floating window, to be docked
 	 * where the user wants it. Not offered in kiosk mode, nor while the page
 	 * shows the one-column display (nothing can be rearranged there).
+	 * (`viewMenuItems` itself is below the pop-out wiring, which it reads.)
 	 */
 	function setPanelVisible(id: string, visible: boolean): void {
 		if (!dockHost) return;
@@ -424,29 +427,6 @@
 		void dockHost.setPanelVisible(id, visible);
 	}
 
-	const viewMenuItems: PageViewMenuItem[] = $derived.by(() => {
-		const visible = new Map(dock.panels.map((row) => [row.id, row.visible]));
-		return [
-			...DASHBOARD_WIDGETS.map((def): PageViewMenuItem => {
-				const checked = visible.get(def.id) ?? false;
-				return {
-					kind: 'checkbox',
-					id: `panel:${def.id}`,
-					label: def.title,
-					checked,
-					onSelect: () => setPanelVisible(def.id, !checked)
-				};
-			}),
-			{ kind: 'separator', id: 'reset-separator' },
-			{
-				kind: 'action',
-				id: 'reset-layout',
-				label: m['dashboard.resetLayout'](),
-				onSelect: resetDockLayout
-			}
-		];
-	});
-
 	/**
 	 * v2 pop-out (spec §5.3, Tauri only): dragging a panel out via
 	 * dock-svelte's `onPopOut` affordance (⧉ button) opens it as a REAL
@@ -459,7 +439,11 @@
 	 * The plugin remembers each window's position and size and closes the
 	 * panel windows with the main window (ADR-0037); nothing here does.
 	 */
+	const popOutOwner = currentSessionScope().owner;
 	const popOut = createAppPanelPopOut<PanelContent>({
+		// Which widgets are out in a window, kept for the next start (#1013), per user like the
+		// layout that lacks them. Without a confirmed owner nothing is kept.
+		storageKey: popOutOwner === null ? null : `${DASHBOARD_POPOUT_STORAGE_KEY}:${popOutOwner}`,
 		// Popping out leaves this dock like a close does, so it goes through the
 		// host's lifecycle (`closePanel`: beforePanelChange settles the memo's
 		// unapplied input, and a structure change made while that waits makes
@@ -480,12 +464,61 @@
 		// `restore` has already run), or the closed-notice subscription failed
 		// (then nothing was detached, so the panel is still here). A real app
 		// shows this in its own notification surface.
-		onError: (error, content) => console.error(`pop-out of "${content.id}" failed`, error)
+		onError: (error, content) => console.error(`pop-out of "${content.id}" failed`, error),
+		// The plugin could not say which windows are open (the capability lacks
+		// `banto-tauri-panel:allow-list`): nothing was put back, the widgets stay "in a window" in
+		// the View menu, where selecting one opens its window again.
+		onListError: (error) => console.error('listing the pop-out windows failed', error)
 	});
 	const onPopOut = popOut.onPopOut;
 
-	// No-op in browser mode.
-	$effect(() => popOut.connect());
+	// No-op in browser mode. Connecting also puts back the widgets that were out in a window whose
+	// window is gone (#1013: the app was closed with it open), so it waits until that sticks: the
+	// provider's layout has been read (it replaces what is shown, a restored widget included) and
+	// the host is mounted (it is what reports the restored layout to be saved). A pop-out pressed
+	// before that is remembered and reconciled by this same `connect()`.
+	$effect(() => {
+		if (!layoutLoaded || !dockHost) return;
+		return untrack(() => popOut.connect());
+	});
+
+	const viewMenuItems: PageViewMenuItem[] = $derived.by(() => {
+		const visible = new Map(dock.panels.map((row) => [row.id, row.visible]));
+		return [
+			...DASHBOARD_WIDGETS.map((def): PageViewMenuItem => {
+				// #1014: a widget that is out in a window of its own is on screen too, though this
+				// dock holds it as closed. Selecting it brings that window to the front - showing
+				// it here would put a second copy into the dock. Its window's ✕ is what closes it.
+				if (popOut.isPoppedOut(def.id)) {
+					return {
+						kind: 'checkbox',
+						id: `panel:${def.id}`,
+						label: def.title,
+						checked: true,
+						onSelect: () =>
+							void popOut
+								.focus(def)
+								.catch((error) => console.error(`focusing "${def.id}" failed`, error))
+					};
+				}
+				const checked = visible.get(def.id) ?? false;
+				return {
+					kind: 'checkbox',
+					id: `panel:${def.id}`,
+					label: def.title,
+					checked,
+					onSelect: () => setPanelVisible(def.id, !checked)
+				};
+			}),
+			{ kind: 'separator', id: 'reset-separator' },
+			{
+				kind: 'action',
+				id: 'reset-layout',
+				label: m['dashboard.resetLayout'](),
+				onSelect: resetDockLayout
+			}
+		];
+	});
 	// [scaffold:dock] end
 </script>
 

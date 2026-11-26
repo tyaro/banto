@@ -5409,8 +5409,9 @@ pub fn run() {
     if let Err(err) = tauri::Builder::default()
         // Pop-out panel windows of the dock (spec §5.3 v2, ADR-0037):
         // `banto-tauri-panel` owns the Tauri half - open / focus
-        // (`plugin:banto-tauri-panel|open`, allowed in
-        // capabilities/default.json), the `banto://panel-closed` notice to
+        // (`plugin:banto-tauri-panel|open`), the list of the open panel
+        // windows (`|list`; both allowed in capabilities/default.json),
+        // the `banto://panel-closed` notice to
         // the main window, the per-id position / size memory
         // (`panel-windows.json` in the app data dir) and closing the panels
         // with the main window. Its defaults fit this app (route

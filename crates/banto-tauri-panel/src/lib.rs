@@ -12,6 +12,9 @@
 //!   monitor falls back to the default placement.
 //! - **close with the main window**: closing the main window closes the
 //!   panel windows (their geometry stays remembered).
+//! - **list**: the ids of the panels whose window is open right now, so the
+//!   frontend can put back a panel whose window went away while nobody was
+//!   listening (`@banto/admin-core`'s `createPanelPopOut` asks on `connect()`).
 //!
 //! Register it in the app's `tauri::Builder`:
 //!
@@ -21,9 +24,10 @@
 //!     // or: banto_tauri_panel::Builder::new().route("tags/panel/{id}").build()
 //! ```
 //!
-//! and allow its one command in the capability file
-//! (`"banto-tauri-panel:allow-open"`). The frontend calls it through
-//! `@banto/admin-core`'s `openPanelWindow`.
+//! and allow its commands in the capability file
+//! (`"banto-tauri-panel:allow-open"`, `"banto-tauri-panel:allow-list"`). The
+//! frontend calls them through `@banto/admin-core`'s `openPanelWindow` /
+//! `listPanelWindows` (`createPanelPopOut` uses both).
 //!
 //! # Two halves
 //!

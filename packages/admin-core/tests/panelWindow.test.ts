@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	PANEL_CLOSED_EVENT,
+	PANEL_LIST_COMMAND,
 	PANEL_OPEN_COMMAND,
 	createPanelPopOut,
+	listPanelWindows,
 	listenPanelClosed,
 	openPanelWindow
 } from '../src/panelWindow';
@@ -384,5 +386,322 @@ describe('createPanelPopOut and the closed-notice subscription', () => {
 
 		expect(invoke).not.toHaveBeenCalled();
 		expect(restore).toHaveBeenCalledWith('memo');
+	});
+});
+
+describe('listPanelWindows', () => {
+	it('asks the plugin for the open panel ids', async () => {
+		const invoke = vi.fn(async () => ['memo', 'trend'] as unknown);
+		await expect(listPanelWindows({ isTauri: () => true, invoke })).resolves.toEqual([
+			'memo',
+			'trend'
+		]);
+		expect(invoke).toHaveBeenCalledWith(PANEL_LIST_COMMAND);
+		expect(PANEL_LIST_COMMAND).toBe('plugin:banto-tauri-panel|list');
+	});
+
+	it('answers nothing outside Tauri, without asking', async () => {
+		const invoke = vi.fn(async () => ['memo'] as unknown);
+		await expect(listPanelWindows({ isTauri: () => false, invoke })).resolves.toEqual([]);
+		expect(invoke).not.toHaveBeenCalled();
+	});
+
+	it('rejects an answer that is not a list of ids', async () => {
+		const invoke = vi.fn(async () => [1, 'memo'] as unknown);
+		await expect(listPanelWindows({ isTauri: () => true, invoke })).rejects.toThrow(
+			/did not answer/
+		);
+	});
+});
+
+describe('createPanelPopOut: which panels are out (#1013, #1014)', () => {
+	/** A storage in memory; `state.ids` is what a restart would find. */
+	function fakeStorage(initial: string[] = []) {
+		const state = { ids: initial };
+		return {
+			state,
+			storage: {
+				load: vi.fn(() => [...state.ids]),
+				save: vi.fn((ids: string[]) => {
+					state.ids = [...ids];
+				})
+			}
+		};
+	}
+
+	/** `invoke` of a plugin whose open windows are `open` (or whose `list` fails). */
+	function fakePlugin(open: string[] | Error = []) {
+		return vi.fn(async (command: string): Promise<unknown> => {
+			if (command !== PANEL_LIST_COMMAND) return undefined;
+			if (open instanceof Error) throw open;
+			return open;
+		});
+	}
+
+	function setup(overrides: Partial<Parameters<typeof createPanelPopOut>[0]> = {}) {
+		const events = fakeListen();
+		const restore = vi.fn();
+		const invoke = fakePlugin();
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke,
+			listen: events.listen,
+			restore,
+			...overrides
+		});
+		return { popOut, invoke, restore, events };
+	}
+
+	it('remembers a popped-out panel until its window is closed', async () => {
+		const { state, storage } = fakeStorage();
+		const { popOut, restore, events } = setup({ storage, detach: () => true });
+		popOut.connect();
+		await tick();
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+
+		popOut.onPopOut?.(MEMO);
+		await tick();
+		await tick();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect(state.ids).toEqual(['memo']);
+
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledWith('memo');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual([]);
+	});
+
+	it('is already forgotten when restore runs', async () => {
+		const seen: boolean[] = [];
+		const ctx = setup({ restore: (id) => seen.push(ctx.popOut.isPoppedOut(id)) });
+		ctx.popOut.connect();
+		await tick();
+		ctx.popOut.onPopOut?.(MEMO);
+		await tick();
+		ctx.events.fire('memo');
+		expect(seen).toEqual([false]);
+	});
+
+	it('remembers nothing when the detach is refused', async () => {
+		const { state, storage } = fakeStorage();
+		const { popOut } = setup({ storage, detach: () => false });
+		popOut.onPopOut?.(MEMO);
+		await tick();
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(storage.save).not.toHaveBeenCalled();
+		expect(state.ids).toEqual([]);
+	});
+
+	it('forgets the panel when its window could not be opened', async () => {
+		const { state, storage } = fakeStorage();
+		const invoke = vi.fn(async () => {
+			throw 'no permission';
+		});
+		const { popOut, restore } = setup({ storage, invoke, detach: () => true });
+		popOut.onPopOut?.(MEMO);
+		await tick();
+		await tick();
+		expect(restore).toHaveBeenCalledWith('memo');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual([]);
+	});
+
+	it('tells subscribers when the answer changes, until they unsubscribe', async () => {
+		const { popOut, events } = setup();
+		const cb = vi.fn();
+		const stop = popOut.subscribe(cb);
+		popOut.connect();
+		await tick();
+		expect(cb).not.toHaveBeenCalled();
+
+		popOut.onPopOut?.(MEMO);
+		await tick();
+		expect(cb).toHaveBeenCalledTimes(1);
+
+		events.fire('memo');
+		expect(cb).toHaveBeenCalledTimes(2);
+		// A notice for a panel that was not out changes nothing.
+		events.fire('memo');
+		expect(cb).toHaveBeenCalledTimes(2);
+
+		stop();
+		popOut.onPopOut?.(MEMO);
+		await tick();
+		expect(cb).toHaveBeenCalledTimes(2);
+	});
+
+	it('focus brings the window of a popped-out panel to the front', async () => {
+		const { popOut, invoke } = setup();
+		popOut.onPopOut?.(MEMO);
+		await tick();
+		invoke.mockClear();
+
+		await popOut.focus(MEMO);
+		expect(invoke).toHaveBeenCalledTimes(1);
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, { id: 'memo', title: 'Memo' });
+	});
+
+	it('focus opens nothing for a panel that is not popped out', async () => {
+		const { popOut, invoke } = setup();
+		await popOut.focus(MEMO);
+		expect(invoke).not.toHaveBeenCalled();
+	});
+
+	it("focus rejects with the plugin's error", async () => {
+		const { storage } = fakeStorage(['memo']);
+		const invoke = vi.fn(async () => {
+			throw 'no permission';
+		});
+		const { popOut } = setup({ storage, invoke });
+		await expect(popOut.focus(MEMO)).rejects.toBe('no permission');
+	});
+
+	it('connect() restores a remembered panel whose window is not open (the app was closed with it out)', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const invoke = fakePlugin([]);
+		const { popOut, restore } = setup({ storage, invoke });
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+
+		popOut.connect();
+		await tick();
+		await tick();
+		expect(invoke).toHaveBeenCalledWith(PANEL_LIST_COMMAND);
+		expect(restore).toHaveBeenCalledTimes(1);
+		expect(restore).toHaveBeenCalledWith('memo');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual([]);
+	});
+
+	it('connect() leaves a remembered panel whose window is still open (a reload), and its closing restores it', async () => {
+		const { state, storage } = fakeStorage(['memo', 'trend']);
+		const { popOut, restore, events } = setup({ storage, invoke: fakePlugin(['memo']) });
+
+		popOut.connect();
+		await tick();
+		await tick();
+		expect(restore).toHaveBeenCalledTimes(1);
+		expect(restore).toHaveBeenCalledWith('trend');
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect(state.ids).toEqual(['memo']);
+
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledWith('memo');
+		expect(state.ids).toEqual([]);
+	});
+
+	it('connect() does not ask the plugin when nothing is remembered', async () => {
+		const { storage } = fakeStorage();
+		const { popOut, invoke } = setup({ storage });
+		popOut.connect();
+		await tick();
+		await tick();
+		expect(invoke).not.toHaveBeenCalled();
+	});
+
+	it('restores nothing and reports the reason when the list fails (the panel stays popped out)', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const failure = new Error('banto-tauri-panel.list not allowed');
+		const onListError = vi.fn();
+		const invoke = fakePlugin(failure);
+		const { popOut, restore } = setup({ storage, invoke, onListError });
+
+		popOut.connect();
+		await tick();
+		await tick();
+		expect(onListError).toHaveBeenCalledWith(failure);
+		expect(restore).not.toHaveBeenCalled();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect(state.ids).toEqual(['memo']);
+
+		// Not lost: the menu's focus opens its window again.
+		invoke.mockClear();
+		await popOut.focus(MEMO);
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, { id: 'memo', title: 'Memo' });
+	});
+
+	it('also restores the panels without a window when the closed-notice subscription failed', async () => {
+		const { storage } = fakeStorage(['memo']);
+		const listen = vi.fn(async () => {
+			throw new Error('event.listen not allowed');
+		});
+		const { popOut, restore } = setup({ storage, listen });
+		popOut.connect();
+		await tick();
+		await tick();
+		expect(restore).toHaveBeenCalledWith('memo');
+	});
+
+	it('restores nothing when connect() was stopped before the list answered', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		let answer!: (ids: string[]) => void;
+		const invoke = vi.fn(() => new Promise<unknown>((resolve) => (answer = resolve)));
+		const { popOut, restore } = setup({ storage, invoke });
+
+		const stop = popOut.connect();
+		await tick();
+		stop();
+		answer([]);
+		await tick();
+		expect(restore).not.toHaveBeenCalled();
+		expect(state.ids).toEqual(['memo']);
+	});
+
+	it('does not restore twice when the closed notice comes before the list answers', async () => {
+		const { storage } = fakeStorage(['memo']);
+		let answer!: (ids: string[]) => void;
+		const invoke = vi.fn(() => new Promise<unknown>((resolve) => (answer = resolve)));
+		const { popOut, restore, events } = setup({ storage, invoke });
+
+		popOut.connect();
+		await tick();
+		events.fire('memo');
+		answer([]);
+		await tick();
+		expect(restore).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves alone a pop-out that is still opening its window when the list answers', async () => {
+		const { storage } = fakeStorage(['trend']);
+		let opened!: () => void;
+		const invoke = vi.fn(async (command: string): Promise<unknown> => {
+			if (command === PANEL_LIST_COMMAND) return [];
+			await new Promise<void>((resolve) => (opened = resolve));
+			return undefined;
+		});
+		const { popOut, restore } = setup({ storage, invoke });
+
+		// Pressed before connect(): remembered, its window not built yet.
+		popOut.onPopOut?.(MEMO);
+		await tick();
+		popOut.connect();
+		await tick();
+		await tick();
+		expect(restore).toHaveBeenCalledTimes(1);
+		expect(restore).toHaveBeenCalledWith('trend');
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		opened();
+	});
+
+	it('reads no memory and reports nothing popped out outside Tauri', () => {
+		const { storage } = fakeStorage(['memo']);
+		const { popOut } = setup({ storage, isTauri: () => false });
+		expect(storage.load).not.toHaveBeenCalled();
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+	});
+
+	it('survives a storage that throws', async () => {
+		const storage = {
+			load: (): string[] => {
+				throw new Error('blocked');
+			},
+			save: () => {
+				throw new Error('quota');
+			}
+		};
+		const { popOut, invoke } = setup({ storage });
+		popOut.onPopOut?.(MEMO);
+		await tick();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, { id: 'memo', title: 'Memo' });
 	});
 });

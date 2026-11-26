@@ -519,7 +519,7 @@ const isAllowedPackageImport = (spec) =>
 		'settings_set',
 		'auth_config_apply',
 		// pop-out のパネルの窓を開くコマンドは、ここには無い（ADR-0037）。plugin
-		// `banto-tauri-panel` の `open`（`plugin:banto-tauri-panel|open`）で、lib.rs の
+		// `banto-tauri-panel` の `open`（`plugin:banto-tauri-panel|open`。開いている窓の id を返す `list` も同じ）で、lib.rs の
 		// トップレベルのコマンドではないので rule 8 の走査に入らない。データを書かず監査も無い
 		// desktop-only の操作（旧 `panel_open` と同じ分類）で、REST の対は作らない。
 		'backups_open_folder',
