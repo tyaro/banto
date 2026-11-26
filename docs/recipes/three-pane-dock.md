@@ -115,6 +115,18 @@
   「保存してよい配置の確定」「配置の保存」。
 - 一覧の「ビュー」（絞り込み・並び）には入れない。ビューは何を見るか、レイアウトはどう並べるか。
 
+## 隠した pane の既定の場所（`defaultPlaces`）
+
+`initialLayout` で追加パネルを左パネルとタブの組にしても、隠してから出し直すと、既定では追加パネルの `initial` の端に別の区画として積まれる。
+**アプリの初期の配置のとおりに戻したいときは、同じ配置を `defaultPlaces` にも渡す**（#939。`initialLayout` と同じ形）。
+
+- 隠した pane は、その木での兄弟の隣（タブの組の仲間がドックにあればその組）へ戻る。その木に無い pane は浮動で開く。
+- 使える配置でない・中央が docked に無い・中央がタブの組に入っている値は無視して、既定（`threePaneDockLayout`）を使う。
+- `resetLayout` が入れる配置は変わらない。`defaultPlaces` は保存もされない。
+- `dock.defaultLayout` へ直に入れても `ThreePaneDock` が入れ直す（パネルの集合が変わるたび）ので、この prop を使う。
+
+細かい約束は `@banto/dock-svelte` の README。
+
 ## 狭い表示・`arrange={false}`・touch
 
 - **狭い表示**: 部品自身の幅が `narrowBreakpoint`（既定 900）以下、または `narrowOverride` が `true` のとき（`false` なら幅に関係なく広い表示）、保存済みの
