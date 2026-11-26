@@ -1,57 +1,42 @@
 /**
- * Tauri-only pop-out window orchestration (spec §5.3 v2: "ウィンドウ分離"
- * モード). Turns a dock panel into a REAL native `WebviewWindow` via the thin
- * `panel_open` Tauri command (apps/admin-template/src-tauri/src/lib.rs), and
- * notifies the dashboard when that window closes so the panel can be
- * restored to the dock (`banto://panel-closed`, emitted by that same
- * command's `WindowEvent::Destroyed` handler).
+ * Pop-out panel windows (spec §5.3 v2 "ウィンドウ分離", Tauri only): this
+ * app's binding of `@banto/admin-core`'s `createPanelPopOut` (ADR-0037).
  *
- * Both exports are `isTauri()`-guarded and are never called in plain-browser
- * mode: the dashboard page only wires `onPopOut`/`listenPanelClosed` when
- * `isTauri()` is true (see its doc comment), so `@banto/dock-svelte`'s
- * pop-out button doesn't even render there in the first place (`DockHost`'s
- * `onPopOut` prop is left `undefined`). These guards are a second line of
- * defense, not the primary one.
+ * The behaviour is not here any more. The frontend half - open the window,
+ * hear that it closed, put the panel back - is `@banto/admin-core`'s
+ * `panelWindow.ts`; the Tauri half - one window per id, the
+ * `banto://panel-closed` notice, the position / size memory, closing with
+ * the main window - is the plugin `banto-tauri-panel`, registered in
+ * `src-tauri/src/lib.rs` and allowed in `src-tauri/capabilities/default.json`
+ * (`banto-tauri-panel:allow-open`).
+ *
+ * This file only hands over the three things admin-core does not import
+ * itself: `isTauri`, `invoke` and `listen`. It keeps the `@tauri-apps/api`
+ * imports in `lib/banto` (conventions §10), out of the route.
  */
 import { invoke } from '@tauri-apps/api/core'; // safe to import outside Tauri (see setup.ts) - only ever CALLED when isTauri()
-import type { PanelContent } from '@banto/dock-svelte';
+import {
+	createPanelPopOut,
+	type PanelPopOut,
+	type PanelPopOutOptions,
+	type PanelWindowContent
+} from '@banto/admin-core';
 import { isTauri } from './setup';
 
 /**
- * Ask src-tauri to open (or, if already open, just focus) a native window
- * showing `content` at `routes/panel/[id]`. No-op outside Tauri.
+ * `createPanelPopOut` with this app's Tauri functions filled in. In a plain
+ * browser the result's `onPopOut` is `undefined` (the dock then draws no
+ * pop-out button) and `connect()` registers nothing.
  */
-export async function openPanelWindow(content: PanelContent): Promise<void> {
-	if (!isTauri()) return;
-	await invoke('panel_open', { id: content.id, title: content.title });
-}
-
-/**
- * Subscribe to a popped-out panel window's closure. Returns an unlisten
- * function. Outside Tauri this is a no-op: the listener is never actually
- * registered (`@tauri-apps/api/event`'s `listen()` talks to a Tauri IPC
- * channel that doesn't exist in a plain browser tab - same reasoning as
- * `packages/admin-core/src/events.ts`'s `createTauriEventProvider`, which is
- * why the dynamic import below mirrors its disposal-race handling: if the
- * caller unsubscribes before the async `listen()` resolves, tear the
- * just-registered listener down immediately instead of leaking it).
- */
-export function listenPanelClosed(cb: (id: string) => void): () => void {
-	if (!isTauri()) return () => {};
-
-	let disposed = false;
-	let unlisten: (() => void) | null = null;
-
-	void import('@tauri-apps/api/event').then(({ listen }) => {
-		if (disposed) return;
-		void listen('banto://panel-closed', (e) => cb(e.payload as string)).then((fn) => {
-			if (disposed) fn();
-			else unlisten = fn;
-		});
+export function createAppPanelPopOut<C extends PanelWindowContent>(
+	options: Pick<PanelPopOutOptions<C>, 'detach' | 'restore' | 'onError'>
+): PanelPopOut<C> {
+	return createPanelPopOut<C>({
+		isTauri,
+		invoke,
+		// Dynamic import: `listen` talks to a Tauri IPC channel that does not
+		// exist in a browser tab (same reasoning as setup.ts's event provider).
+		listen: async (event, cb) => (await import('@tauri-apps/api/event')).listen(event, cb),
+		...options
 	});
-
-	return () => {
-		disposed = true;
-		unlisten?.();
-	};
 }

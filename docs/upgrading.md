@@ -820,7 +820,7 @@ conventions §11 の 1 回だけの例外）。4 節の「前進のみ」の例�
 - **fixture**: SvelteKit（adapter-static・SSR なし）。`.svelte.ts` をソース配布する 5 パッケージ（admin-core・
   dock-svelte・forms・grid-svelte・tree-svelte）と theme と ui（`.svelte` と `.ts` だけで `.svelte.ts` を持たないので exclude の対象外。
 Git 依存の導入と svelte-check・vite build を確かめるために、部品を 1 つ描画する）を `github:tyaro/banto#<ref>&path:packages/<x>` で入れ、
-  `+page.svelte` で import して `data-testid="banto-loaded"` に描画する。Rust 側（`rust/`）は公開対象の 5 crate
+  `+page.svelte` で import して `data-testid="banto-loaded"` に描画する。Rust 側（`rust/`）は公開対象の 6 crate
   （`crates/*`）を `git = ..., rev = "<ref>"` で入れる。対象の一覧は `verify:architecture`（rule
   `external-consumer-fixture`）が workspace から洗い出して突き合わせ、漏れがあれば落とす。
 - **検証する commit**: PR は head SHA（同じリポジトリのブランチからの PR だけ。fork からの PR はスキップ）、

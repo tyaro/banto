@@ -1,4 +1,4 @@
-# 外部利用 fixture（#271）の Rust 側。公開対象の 5 crate（`crates/*`）を、派生アプリと
+# 外部利用 fixture（#271）の Rust 側。公開対象の 6 crate（`crates/*`）を、派生アプリと
 # 同じ Git 依存で導入して `cargo check` する。commit してある値は派生アプリと同じ
 # `tag = "<現行リリースタグ>"`。CI は `node scripts/external-fixture-set-ref.mjs <ref>` で
 # 書き換える（PR・dispatch は `rev = "<sha>"`、タグの push はそのタグ名の `tag`）。
@@ -30,3 +30,7 @@ banto-attachments = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0"
 banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0" }
 banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0" }
 banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0", features = ["sqlite"] }
+# ADR-0037: 既定の feature `tauri` は tauri をリンクする（この job の実行環境には webkit2gtk が無い）。
+# ここでは純粋な半分（`default-features = false`）が外部から解決・ビルドできることだけを確かめる。
+# Tauri の配線の半分は tauri-check.yml がモノレポの中でコンパイルする。
+banto-tauri-panel = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0", default-features = false }

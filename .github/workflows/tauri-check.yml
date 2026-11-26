@@ -1,6 +1,7 @@
 # Tauri compile check (improvement-plan-2026-07.md P3-2).
 #
-# Scope: `cargo check` + `cargo clippy` + `cargo test` (`-p admin-template`)
+# Scope: `cargo check` + `cargo clippy` + `cargo test` (`-p admin-template`
+# and the Tauri plugin crate it uses, `-p banto-tauri-panel`, ADR-0037)
 # (apps/admin-template/src-tauri) on ubuntu + windows. The main CI (ci.yml)
 # deliberately excludes this crate to keep every-PR pipelines fast and
 # system-dependency-free, which left Tauri command signatures / feature wiring
@@ -102,12 +103,12 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Cargo check
-        run: cargo check -p admin-template --all-targets
+        run: cargo check -p admin-template -p banto-tauri-panel --all-targets
 
       # ci.yml's clippy step excludes this crate (native deps), so lint it
       # here where the system deps are already installed (#346).
       - name: Clippy
-        run: cargo clippy -p admin-template --all-targets -- -D warnings
+        run: cargo clippy -p admin-template -p banto-tauri-panel --all-targets -- -D warnings
 
       # `--all-targets` above already compiles the test binaries; running them
       # is what actually exercises every Tauri command handler's authz/audit
@@ -115,7 +116,7 @@ jobs:
       # levels/records being identical is guaranteed by these tests, not the
       # architecture verifier). Extra cost here is just the run time.
       - name: Cargo test
-        run: cargo test -p admin-template
+        run: cargo test -p admin-template -p banto-tauri-panel
 
       # #219 段階 2（ADR-0021、E4）: Windows のインストーラは helper を Tauri の externalBin
       # として本体 exe の隣に同梱する（`pnpm --filter admin-template tauri:build:windows` =

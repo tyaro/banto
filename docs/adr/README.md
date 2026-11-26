@@ -82,6 +82,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0034](0034-owner-identity-builtin-admin.md)        | 持ち主は再利用されない `accountId` で識別し、ログインなしの操作は組み込みの `admin` に帰属させ、初回セットアップを無くす（v8.0.0。互換不要・DB 作り直し。ADR-0017 に追記）                      | Accepted                   |
 | [0035](0035-detached-writes.md)                     | 書き込みは接続の切断から切り離して最後まで走らせ、停止は残った書き込みを成功にしない（Issue #793。`BoundServer::serve` の層 1 つ。再設定は露出の向きで分ける）                                  | Accepted                   |
 | [0036](0036-touch-keys-package.md)                  | タッチ向けの画面内キーは、新しいオプションのパッケージ `@banto/touch-keys-svelte` に置く（Issue #937。テンプレートの配線は `/ui-demo` のカードだけ、`.svelte.ts` を持たない）                   |
+| [0037](0037-tauri-panel-plugin.md)                  | pop-out のパネルの窓は、Tauri の plugin の crate `banto-tauri-panel` に置く（Issue #1006。規則のある部分は tauri 非依存にして headless の CI で試験、TS の口は `@banto/admin-core`）            | Accepted                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 

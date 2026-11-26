@@ -125,10 +125,16 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とそ�
 残すと呼び出し元のない孤立コード + 不要なウィンドウ権限になる
 （`pnpm scaffold` は `src-tauri` を書き換えないため、ここは常に手作業）:
 
-- `apps/admin-template/src-tauri/src/lib.rs` の `panel_open` コマンド
-  （関数本体と `invoke_handler` への登録の2箇所）
-- `apps/admin-template/src-tauri/capabilities/default.json` の `"windows"`
-  配列内 `"panel-*"` エントリ（ポップアウトウィンドウのケイパビリティ許可）
+- `apps/admin-template/src-tauri/src/lib.rs` の `.plugin(banto_tauri_panel::init())`
+  （パネルの窓の plugin の登録。[ADR-0037](../adr/0037-tauri-panel-plugin.md)）
+- `apps/admin-template/src-tauri/Cargo.toml` の `banto-tauri-panel` の依存
+- `apps/admin-template/src-tauri/capabilities/default.json` の `"permissions"` の
+  `"banto-tauri-panel:allow-open"`（依存を外した後に残すと、`tauri-build` が「知らない permission」で落ちる）と、
+  `"windows"` 配列内 `"panel-*"` エントリ（ポップアウトウィンドウのケイパビリティ許可）
+
+crate 本体（`crates/banto-tauri-panel`）は、モノレポを写したアプリなら workspace の member として残してよい
+（どこからも依存されなければビルドに入らない）。消すなら、ルートの `Cargo.toml` の `members` と
+`[workspace.dependencies]` の行も外す。
 
 ### `@banto/charts`（SVGチャート）
 

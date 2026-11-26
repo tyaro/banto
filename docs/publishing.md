@@ -152,7 +152,7 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 ## Rust クレート: git タグ参照（crates.io へは発行しない）
 
 `banto-core` / `banto-storage` / `banto-server` / `banto-admin-services` /
-`banto-attachments` は **crates.io へ発行しない**。
+`banto-attachments` / `banto-tauri-panel` は **crates.io へ発行しない**。
 理由と再検討条件は [ADR-0011](adr/0011-git-tag-distribution.md)。
 消費側（banto-industrial 等）は `Cargo.toml` で **git タグ参照**する:
 

@@ -387,6 +387,20 @@ jobs:
         if: needs.changes.outputs.full != 'false'
         run: cargo test -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core -p admin-template-fw-elev
 
+      # ADR-0037: `banto-tauri-panel`（pop-out のパネルの窓の plugin）は、既定の feature
+      # `tauri` で tauri をリンクするので、上の一覧には入れない（入れると webkit2gtk が要る）。
+      # 規則のある純粋な半分（id・ルート・画面の外の判定・位置と大きさの記憶の読み書き）は
+      # `--no-default-features` でここでビルド・lint・試験する。`--no-default-features` は
+      # 同じ呼び出しの全 `-p` に効くので、上の step とは分ける。Tauri の配線の半分は
+      # tauri-check.yml（コンパイルと clippy）と実機の確認で見る。
+      - name: Clippy (banto-tauri-panel, pure half)
+        if: needs.changes.outputs.full != 'false'
+        run: cargo clippy -p banto-tauri-panel --no-default-features --all-targets -- -D warnings
+
+      - name: Cargo test (banto-tauri-panel, pure half)
+        if: needs.changes.outputs.full != 'false'
+        run: cargo test -p banto-tauri-panel --no-default-features
+
   # banto-storage の PostgreSQL 接続ヘルパ（feature `postgres`）向け統合テスト。
   # 上の `rust` ジョブは default feature（sqlite のみ）でビルドしているため
   # ここに切り出す。実 PostgreSQL への接続が要る唯一のテスト

@@ -491,7 +491,8 @@ function removeCharts() {
 
 /**
  * `@banto/dock-svelte`（ダッシュボードのドッキング）。remove-optional-assets.md「`@banto/dock-svelte`」。
- * ダッシュボードの Dock 配線一式・メモのウィジェット・popout.ts・@banto/dock-svelte 依存に
+ * ダッシュボードの Dock 配線一式・メモのウィジェット・popout.ts（admin-core の `createPanelPopOut` の束ね。
+ * ADR-0037。src-tauri の plugin の登録・依存・capability は手作業で外す。レシピ参照）・@banto/dock-svelte 依存に
  * 加え、pop-out 先の `routes/panel/[id]`（登録と dock のアイコンに依存）も削除。
  *
  * #716 W1・W2（downstream-requests-2026-11-plan §4.13）: ダッシュボードのページ（+page.svelte）は、dock に

@@ -67,6 +67,10 @@ keyring = { workspace = true }
 # neither the helper's bin nor its manifest into this exe (its build.rs
 # links the manifest into that `[[bin]]` only).
 admin-template-fw-elev = { path = "../elev" }
+# Pop-out panel windows of the dock (spec §5.3 v2, ADR-0037): the Tauri
+# plugin registered in `run()`. Dock-only - remove it together with the dock
+# (docs/recipes/remove-optional-assets.md).
+banto-tauri-panel = { workspace = true }
 
 # `#[tokio::test]` for this crate's own unit tests (spec M14: the
 # `change_own_password` audit-recording test) - the runtime/macros features

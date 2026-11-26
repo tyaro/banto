@@ -242,6 +242,23 @@ export {
 	sessionStreamHooks
 } from './events';
 
+// Pop-out panel windows (ADR-0037): the frontend half of `banto-tauri-panel`.
+export type {
+	PanelWindowContent,
+	PanelWindowEnvironment,
+	OpenPanelWindowOptions,
+	ListenPanelClosedOptions,
+	PanelPopOutOptions,
+	PanelPopOut
+} from './panelWindow';
+export {
+	PANEL_CLOSED_EVENT,
+	PANEL_OPEN_COMMAND,
+	openPanelWindow,
+	listenPanelClosed,
+	createPanelPopOut
+} from './panelWindow';
+
 export type { SseParser, SseMessage, SseMessageParser } from './sse-parser';
 export { createSseParser, createSseMessageParser } from './sse-parser';
 

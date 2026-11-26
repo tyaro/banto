@@ -35,8 +35,8 @@
 		createDockState,
 		type PanelContent
 	} from '@banto/dock-svelte';
-	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
-	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
+	import { getUiSettings } from '#lib/banto/setup.js';
+	import { createAppPanelPopOut } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import { dockMessages } from '#lib/banto/dockMessages.js';
 	import {
@@ -444,41 +444,37 @@
 	/**
 	 * v2 pop-out (spec §5.3, Tauri only): dragging a panel out via
 	 * dock-svelte's `onPopOut` affordance (⧉ button) opens it as a REAL
-	 * native window (`panel_open` Tauri command -> routes/panel/[id]) instead
-	 * of a pseudo-window. The panel is hidden from THIS dock - undocked (if
-	 * docked) then closed (if floating) - but its floating geometry is
-	 * preserved, so `dock.open(id)` (below, on window-close) restores it
-	 * exactly where it was. `undefined` in browser mode: DockHost then
-	 * renders no pop-out button at all (see its doc comment), so this is
-	 * never called there - `isTauri()` guards it anyway as a second line of
-	 * defense.
+	 * native window (the `banto-tauri-panel` plugin -> routes/panel/[id])
+	 * instead of a pseudo-window. The panel is hidden from THIS dock - undocked
+	 * (if docked) then closed (if floating) - but its floating geometry is
+	 * preserved, so `dock.open(id)` (`restore`, on window-close) restores it
+	 * exactly where it was. `popOut.onPopOut` is `undefined` in browser mode:
+	 * DockHost then renders no pop-out button at all (see its doc comment).
+	 * The plugin remembers each window's position and size and closes the
+	 * panel windows with the main window (ADR-0037); nothing here does.
 	 */
-	const onPopOut = isTauri()
-		? async (content: PanelContent) => {
-				// Popping out leaves this dock like a close does, so it goes through the
-				// host's lifecycle (`closePanel`: beforePanelChange settles the memo's
-				// unapplied input, and a structure change made while that waits makes
-				// it `stale`). Only an applied close pops out; the close already
-				// undocked + closed the pane with its geometry kept. (The pop-out
-				// window shows MemoWidget's static memo text, not this page's draft.)
-				if ((await dockHost?.closePanel(content.id)) !== 'applied') return;
-				void openPanelWindow(content);
-			}
-		: undefined;
-
-	// Round-trip contract (spec §5.3 v2): when a popped-out panel's native
-	// window is closed, src-tauri emits `banto://panel-closed` with that
-	// panel's id (see popout.ts's listenPanelClosed) - `dock.open` brings it
-	// back as a floating pseudo-window at its preserved geometry. (If the
-	// panel had been docked, `onPopOut`'s `closePanel` above took it out of
-	// the docked tree as a closed floating window hidden from the dock - the
-	// same path as the pane's ✕. `dock.open` opens it floating; the View
-	// menu's `showPanel` would dock it at its default place.) No-op in
-	// browser mode.
-	$effect(() => {
-		if (!isTauri()) return;
-		return listenPanelClosed((id) => dock.open(id));
+	const popOut = createAppPanelPopOut<PanelContent>({
+		// Popping out leaves this dock like a close does, so it goes through the
+		// host's lifecycle (`closePanel`: beforePanelChange settles the memo's
+		// unapplied input, and a structure change made while that waits makes
+		// it `stale`). Only an applied close pops out; the close already
+		// undocked + closed the pane with its geometry kept. (The pop-out
+		// window shows MemoWidget's static memo text, not this page's draft.)
+		detach: async (content) => (await dockHost?.closePanel(content.id)) === 'applied',
+		// Round-trip contract (spec §5.3 v2): when a popped-out panel's native
+		// window is closed, the plugin emits `banto://panel-closed` with that
+		// panel's id - `dock.open` brings it back as a floating pseudo-window at
+		// its preserved geometry. (If the panel had been docked, `detach`'s
+		// `closePanel` above took it out of the docked tree as a closed floating
+		// window hidden from the dock - the same path as the pane's ✕.
+		// `dock.open` opens it floating; the View menu's `showPanel` would dock
+		// it at its default place.) Also runs if the window could not be opened.
+		restore: (id) => dock.open(id)
 	});
+	const onPopOut = popOut.onPopOut;
+
+	// No-op in browser mode.
+	$effect(() => popOut.connect());
 	// [scaffold:dock] end
 </script>
 
