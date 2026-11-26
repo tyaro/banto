@@ -74,7 +74,7 @@ A detached write keeps running even when the server task is aborted, so the stop
    `WritesRemaining(RemainingWrites)` (the current count, a list of `METHOD path` - no query string, bounded in
    length and number - and a way to wait for the end). The remaining writes are not aborted (aborting would cause
    the very half-done state this ADR prevents). It is also logged with `eprintln!`.
-4. `stop_waiting_writes_for(limit)` exists for a caller that wants another bound.
+4. `stop_waiting_writes_for(limit)` exists for a caller that wants another bound. A caller that also wants to choose the bound on the connection wait has the public `stop_within(connections, writes)` (#980).
 
 The return type of `stop()` changes from `()` to `StopOutcome` (breaking; `server.stop().await;` still compiles).
 It is not `#[must_use]`: many callers (tests, an exit path) need not look. A caller that starts another listener
@@ -196,7 +196,7 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
   "shared over generations" shape of §7. While one is being replaced, the gate of the other stays open and its
   writes stay detached. Writes left running by a stopped generation keep their share of the budget until they
   finish and show up in that generation's `StopOutcome`.
-- **Stopping them together**: `RunningServer::stop_all(servers)` (`stop_all_waiting_writes_for` for another bound).
+- **Stopping them together**: `RunningServer::stop_all(servers)` (`stop_all_waiting_writes_for` for another writes bound, `stop_all_within(servers, connections, writes)` to choose both, #980).
   It keeps the order of §4 over all listeners: **every gate is closed first** (from then on none of them starts a
   write), then they are waited for side by side. The wait is that of the slowest one (10 seconds at most), not the
   sum. One result per listener, in the order given. Calling `stop()` on one after the other lets the later
