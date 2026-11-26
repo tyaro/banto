@@ -33,6 +33,7 @@ import {
 	type Locator,
 	type Page,
 	type Request,
+	type Response,
 	type Route
 } from '@playwright/test';
 import fs from 'node:fs';
@@ -3293,13 +3294,37 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			expect(bumped.price).toBe(100);
 
 			const dialog = page.getByRole('dialog', { name: CONFLICT_TITLE, exact: true });
-			await drawer.getByRole('button', { name: '保存', exact: true }).click();
-			await expect
-				.poll(async () => {
-					const saved = await api('GET', `/api/items/${id}`);
-					return { price: saved.price, newer: Number(saved.version) > Number(bumped.version) };
-				})
-				.toEqual({ price: 150, newer: true });
+			// Watch only the drawer's own PUTs from here (the other client's PUT
+			// above is already done). REST accepts a PUT without a matching version,
+			// so the end state alone cannot tell "409, then resent" from "saved at
+			// once": the order of the requests is what proves the silent resend.
+			const drawerPuts: { status: number; version: unknown }[] = [];
+			const onResponse = (res: Response) => {
+				const req = res.request();
+				if (req.method() !== 'PUT' || new URL(res.url()).pathname !== `/api/items/${id}`) return;
+				const sent = req.postDataJSON() as { version?: unknown } | null;
+				drawerPuts.push({ status: res.status(), version: sent?.version });
+			};
+			page.on('response', onResponse);
+			try {
+				await drawer.getByRole('button', { name: '保存', exact: true }).click();
+				await expect
+					.poll(async () => {
+						const saved = await api('GET', `/api/items/${id}`);
+						return { price: saved.price, newer: Number(saved.version) > Number(bumped.version) };
+					})
+					.toEqual({ price: 150, newer: true });
+				// Exactly twice: the stale version is refused (409), then the same
+				// save goes out on the version the other client left (2xx).
+				await expect
+					.poll(() => drawerPuts)
+					.toEqual([
+						{ status: 409, version: version0 },
+						{ status: 200, version: bumped.version }
+					]);
+			} finally {
+				page.off('response', onResponse);
+			}
 			await expect(dialog).toHaveCount(0);
 			await expect(drawer.getByText('未保存の変更があります')).toHaveCount(0);
 			await expect(price).toHaveValue('150');
