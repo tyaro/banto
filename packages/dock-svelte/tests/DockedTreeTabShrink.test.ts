@@ -59,7 +59,10 @@ describe('tab strip shrinking (#986)', () => {
 	it('lets the tab shrink and ellipsizes the title in the shipped CSS', () => {
 		const css = source.slice(source.indexOf('<style>'));
 		expect(rule(css, '.tab')).toMatch(/flex:\s*0 1 auto/);
-		expect(rule(css, '.tab')).toMatch(/min-width:\s*3rem/);
+		// The minimum is built from the rendered controls at their real size (touch: 40px).
+		expect(rule(css, '.tab')).toMatch(/min-width:\s*calc\(/);
+		expect(rule(css, '.tab')).toMatch(/var\(--_controls, 0\)/);
+		expect(rule(css, '.tab')).toMatch(/var\(--banto-dock-button-size/);
 		expect(rule(css, '.title')).toMatch(/overflow:\s*hidden/);
 		expect(rule(css, '.title')).toMatch(/text-overflow:\s*ellipsis/);
 		expect(rule(css, '.title')).toMatch(/white-space:\s*nowrap/);
