@@ -2281,9 +2281,16 @@
 
 			{#if effectiveRowCount === 0}
 				{#if empty}
-					<div class="empty-custom">{@render empty()}</div>
+					<div
+						class="empty-custom"
+						style:width={viewportWidth > 0 ? `${viewportWidth}px` : undefined}
+					>
+						{@render empty()}
+					</div>
 				{:else}
-					<div class="empty-row">{t.emptyState()}</div>
+					<div class="empty-row" style:width={viewportWidth > 0 ? `${viewportWidth}px` : undefined}>
+						{t.emptyState()}
+					</div>
 				{/if}
 			{:else}
 				<div
@@ -2912,7 +2919,13 @@
 		white-space: nowrap;
 	}
 
+	/* Pinned to the visible frame (width set inline from the measured viewport),
+	   so the message and actions are in view even when the columns are wider. */
 	.empty-custom {
+		position: sticky;
+		left: 0;
+		box-sizing: border-box;
+		max-width: 100%;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -2920,6 +2933,9 @@
 	}
 
 	.empty-row {
+		position: sticky;
+		left: 0;
+		box-sizing: border-box;
 		display: flex;
 		align-items: center;
 		justify-content: center;

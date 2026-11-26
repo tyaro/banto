@@ -25,3 +25,23 @@ test('items: a search with no match shows no first-step buttons', async ({ page 
 	}).toPass({ timeout: 60_000 });
 	await expect(page.locator('[data-empty-action]')).toHaveCount(0);
 });
+
+test('items: the empty message stays inside a narrow grid frame without scrolling', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 360, height: 800 });
+	await page.goto('/items');
+	await expect(page.getByRole('checkbox', { name: /を選択$/ }).first()).toBeVisible({
+		timeout: 60_000
+	});
+	const box = page.getByPlaceholder('検索…').first();
+	await expect(async () => {
+		await box.fill('zzzz-no-such-item');
+		await expect(page.getByText('該当するデータがありません')).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 60_000 });
+	const frame = await page.getByRole('grid').boundingBox();
+	const text = await page.getByText('該当するデータがありません').boundingBox();
+	expect(frame && text).toBeTruthy();
+	expect(text!.x).toBeGreaterThanOrEqual(frame!.x - 1);
+	expect(text!.x + text!.width).toBeLessThanOrEqual(frame!.x + frame!.width + 1);
+});
