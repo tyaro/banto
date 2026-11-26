@@ -205,7 +205,9 @@ export class DragController {
 	 * `apply`, then the focus repair of a drop that re-builds the docked tree (#694: an outer-edge
 	 * drop, a drop on a cross button, a docked pane floated): where the DOM focus is, is read right
 	 * before the apply (so a focus the host / a hook moved while the answer waited counts), and a
-	 * focus that was in the host and is lost after it is handed back (`refocus`). `repair: false`
+	 * focus that was in the host and is lost after it is handed back (`refocus`). Both the frame
+	 * and the pane the focus was in are read: a tab group is one frame for all its tabs, so the
+	 * frame alone cannot tell the moved tab from the ones that stay (#694 review). `repair: false`
 	 * = only `apply` (the caller places the focus itself).
 	 */
 	#withFocus(panelId: string, repair: boolean, apply: () => void): () => void {
@@ -213,14 +215,19 @@ export class DragController {
 		const hostEl = this.#getHostEl();
 		return () => {
 			const active = document.activeElement;
-			const frameId =
-				hostEl && active && hostEl.contains(active)
-					? (active.closest<HTMLElement>('[data-dock-drop-id]')?.dataset.dockDropId ?? null)
-					: undefined;
+			const inHost = !!hostEl && !!active && hostEl.contains(active);
+			const frame = inHost ? active!.closest<HTMLElement>('[data-dock-drop-id]') : null;
+			const frameId = frame?.dataset.dockDropId ?? null;
+			// The pane in that frame: the tab the focus is on, else the shown tab of a tab group
+			// (the focus is in its content or its controls), else the frame is the pane itself.
+			const tab =
+				(inHost ? active!.closest<HTMLElement>('[role="tab"][data-dock-tab-id]') : null) ??
+				frame?.querySelector<HTMLElement>('[role="tab"][data-dock-tab-id][aria-selected="true"]');
+			const focusedId =
+				(tab && frame?.contains(tab) ? tab.dataset.dockTabId : undefined) ?? frameId;
 			apply();
-			// `undefined` = the focus was not in the host: nothing to hand back.
-			if (frameId !== undefined && hostEl)
-				void tick().then(() => refocus(hostEl, frameId, panelId));
+			// The focus was not in the host: nothing to hand back.
+			if (inHost && hostEl) void tick().then(() => refocus(hostEl, focusedId, frameId, panelId));
 		};
 	}
 
@@ -670,31 +677,42 @@ export class DragController {
  * After a drop re-built the docked tree and re-mounted docked panes (#694: an outer-edge drop, a
  * drop on a cross button - a split or a new tab - or a docked pane floated): if the DOM focus was
  * in the host and is now lost (on `<body>` / nothing - the focused element was re-created), hand
- * it to the pane frame it was in (same `data-dock-drop-id`: a pane or a tab group keeps its id
- * when wrapped in a split; a pane that became a tab = the tab group holding it), else to the moved
- * pane (its frame, the tab group holding it, or its floating window). In the frame: its active tab
- * (roving tabindex) or its body region. A focus that is still somewhere (the element survived, or
- * the host / a hook moved it) is left alone.
+ * it back, to the first of these that is still there:
+ * 1. the pane it was in (`focusedId`; in a tab group, the shown tab: #694 review), wherever that
+ *    pane is now - its own frame (also when its tab group collapsed to it), the tab group holding
+ *    it, or its floating window (it is the moved pane and was floated);
+ * 2. the frame it was in (`frameId`, same `data-dock-drop-id`: a pane or a tab group keeps its id
+ *    when wrapped in a split);
+ * 3. the moved pane (its frame, the tab group holding it, or its floating window).
+ * In a frame: its active tab (roving tabindex) or its body region. A focus that is still somewhere
+ * (the element survived, or the host / a hook moved it) is left alone.
  */
-function refocus(hostEl: HTMLElement, frameId: string | null, movedId: string): void {
+function refocus(
+	hostEl: HTMLElement,
+	focusedId: string | null,
+	frameId: string | null,
+	movedId: string
+): void {
 	const active = document.activeElement;
 	if (active && active !== document.body) return;
 	if (!hostEl.isConnected) return;
-	const frames = [...hostEl.querySelectorAll<HTMLElement>('[data-dock-drop-id]')];
-	// The frame of the pane / tab group `id`, else the tab group that holds the pane `id` as a tab.
-	const frameOf = (id: string) =>
-		frames.find((el) => el.dataset.dockDropId === id) ??
-		[...hostEl.querySelectorAll<HTMLElement>('[role="tab"][data-dock-tab-id]')]
-			.find((el) => el.dataset.dockTabId === id)
-			?.closest<HTMLElement>('[data-dock-drop-id]') ??
-		undefined;
-	const frame = (frameId !== null ? frameOf(frameId) : undefined) ?? frameOf(movedId);
-	const target =
-		frame?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]') ??
-		frame?.querySelector<HTMLElement>('[role="region"]') ??
-		[...hostEl.querySelectorAll<HTMLElement>('[data-dock-window-id]')].find(
-			(el) => el.dataset.dockWindowId === movedId
+	const all = (selector: string) => [...hostEl.querySelectorAll<HTMLElement>(selector)];
+	// Where the pane / tab group `id` is now: in its frame, else in the tab group that holds the
+	// pane `id` as a tab (the active tab, else the body), else its floating window.
+	const placeOf = (id: string | null): HTMLElement | undefined => {
+		if (id === null) return undefined;
+		const frame =
+			all('[data-dock-drop-id]').find((el) => el.dataset.dockDropId === id) ??
+			all('[role="tab"][data-dock-tab-id]')
+				.find((el) => el.dataset.dockTabId === id)
+				?.closest<HTMLElement>('[data-dock-drop-id]');
+		return (
+			frame?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]') ??
+			frame?.querySelector<HTMLElement>('[role="region"]') ??
+			all('[data-dock-window-id]').find((el) => el.dataset.dockWindowId === id)
 		);
+	};
+	const target = placeOf(focusedId) ?? placeOf(frameId) ?? placeOf(movedId);
 	target?.focus();
 }
 

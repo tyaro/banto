@@ -157,9 +157,10 @@ function mixed(): DockLayout {
 
 function mount(
 	capabilities?: (id: string) => DockCapabilities | undefined,
-	beforePanelChange?: (change: DockPanelChange) => boolean
+	beforePanelChange?: (change: DockPanelChange) => boolean,
+	layout: DockLayout = mixed()
 ) {
-	const dock = createDockState(mixed());
+	const dock = createDockState(layout);
 	render(DockHostHarness, { dock, capabilities, beforePanelChange });
 	return { dock };
 }
@@ -351,5 +352,90 @@ describe('the focus after a drop that re-mounts docked panes (DockHost)', () => 
 		release(300, 300);
 		await tick();
 		expect(document.activeElement).toBe(document.querySelector('[data-dock-window-id="p"]'));
+	});
+
+	// #694 review: a tab group is ONE frame for all its tabs, so the focus is handed back by the
+	// pane it was in (the shown tab), not by the frame alone.
+
+	/** `mixed()` with a third tab z in the group t: the group stays when one tab leaves. */
+	function threeTabs(): DockLayout {
+		const layout = mixed();
+		const split = layout.docked;
+		if (split?.type !== 'split') throw new Error('mixed() is a split');
+		const group = split.children[0];
+		if (group?.type !== 'tabs') throw new Error('mixed() starts with a tab group');
+		group.children.push({ type: 'panel', id: 'z', title: 'Z' });
+		return layout;
+	}
+
+	it('a tab floated out of a group that stays, with the focus in it: the focus goes to its window', async () => {
+		const { dock } = mount(undefined, undefined, threeTabs());
+		inputOf('X').focus();
+		dragTo(tabOf('x'), 300, 300);
+		release(300, 300);
+		await tick();
+		// The group t is still there (y, z): its frame id alone would take the focus to a tab of it.
+		expect(dock.layout.docked).toMatchObject({
+			children: [{ id: 't', children: [{ id: 'y' }, { id: 'z' }] }, { id: 'p' }]
+		});
+		expect(document.activeElement).toBe(document.querySelector('[data-dock-window-id="x"]'));
+	});
+
+	it('the other tab of a 2-tab group floated: the group is gone, the focus goes to the pane that stays', async () => {
+		const { dock } = mount();
+		const before = inputOf('X');
+		before.focus();
+		dragTo(tabOf('y'), 300, 300);
+		release(300, 300);
+		await tick();
+		// The group t collapsed to the plain pane x (re-mounted): no frame `t` to go back to.
+		expect(dock.layout.docked).toMatchObject({
+			children: [{ type: 'panel', id: 'x' }, { id: 'p' }]
+		});
+		expect(dock.layout.floating.map((w) => w.id)).toContain('y');
+		expect(inputOf('X')).not.toBe(before);
+		expect(document.activeElement).toBe(frameOf('x').querySelector('[role="region"]'));
+	});
+
+	it('the other tab of a 2-tab group split off: the focus goes to the pane that stays, not the moved one', async () => {
+		const { dock } = mount();
+		inputOf('X').focus();
+		hit = onPane('p');
+		dragTo(tabOf('y'), 500, 336);
+		release(500, 336);
+		await tick();
+		expect(dock.layout.docked).toMatchObject({
+			children: [{ type: 'panel', id: 'x' }, { children: [{ id: 'p' }, { id: 'y' }] }]
+		});
+		expect(document.activeElement).toBe(frameOf('x').querySelector('[role="region"]'));
+	});
+
+	it('the other tab of a 2-tab group tabbed elsewhere: the focus goes to the pane that stays', async () => {
+		const { dock } = mount();
+		inputOf('X').focus();
+		hit = onPane('p');
+		dragTo(tabOf('y'), 500, 300);
+		release(500, 300);
+		await tick();
+		expect(dock.layout.docked).toMatchObject({
+			children: [
+				{ type: 'panel', id: 'x' },
+				{ type: 'tabs', children: [{ id: 'p' }, { id: 'y' }] }
+			]
+		});
+		expect(document.activeElement).toBe(frameOf('x').querySelector('[role="region"]'));
+	});
+
+	it('the focused tab tabbed elsewhere out of a group that stays: the focus follows it to its new group', async () => {
+		mount(undefined, undefined, threeTabs());
+		inputOf('X').focus();
+		hit = onPane('p');
+		dragTo(tabOf('x'), 500, 300);
+		release(500, 300);
+		await tick();
+		const active = document.activeElement as HTMLElement;
+		expect(active.getAttribute('role')).toBe('tab');
+		expect(active.closest('[data-dock-drop-id]')).toBe(tabOf('x').closest('[data-dock-drop-id]'));
+		expect(active.closest('[data-dock-drop-id]')).not.toBe(frameOf('t'));
 	});
 });
