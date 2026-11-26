@@ -25,12 +25,12 @@ postgres = [
 system-metrics = ["banto-admin-services/system-metrics"]
 
 [dependencies]
-banto-admin-services = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0" }
-banto-attachments = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0" }
-banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0" }
-banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0" }
-banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0", features = ["sqlite"] }
+banto-admin-services = { git = "https://github.com/tyaro/banto.git", tag = "v9.3.0" }
+banto-attachments = { git = "https://github.com/tyaro/banto.git", tag = "v9.3.0" }
+banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v9.3.0" }
+banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v9.3.0" }
+banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v9.3.0", features = ["sqlite"] }
 # ADR-0037: 既定の feature `tauri` は tauri をリンクする（この job の実行環境には webkit2gtk が無い）。
 # ここでは純粋な半分（`default-features = false`）が外部から解決・ビルドできることだけを確かめる。
 # Tauri の配線の半分は tauri-check.yml がモノレポの中でコンパイルする。
-banto-tauri-panel = { git = "https://github.com/tyaro/banto.git", tag = "v9.2.0", default-features = false }
+banto-tauri-panel = { git = "https://github.com/tyaro/banto.git", tag = "v9.3.0", default-features = false }

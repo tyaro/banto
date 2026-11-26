@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- chore(fixtures): v9.3.0 のタグ後の外部利用 fixture の ref を `v9.3.0` に更新した。[9.3.0] に「検証した組み合わせ」を追記。
+
 ## [9.3.0] - 2026-11-27
 
 **v9.3.0 — pop-out のパネルの窓を再利用できる Tauri v2 の plugin の crate `banto-tauri-panel` と `@banto/admin-core` の口（`openPanelWindow`・`listenPanelClosed`・`createPanelPopOut`）に置いた（#1006、[ADR-0037](docs/adr/0037-tauri-panel-plugin.md)）。`DateRangePicker` のカレンダーの日の読み上げに開始日・終了日を足した（#997）。テンプレートの pop-out を上の plugin に置き換えた。** 既存の公開 API の削除・改名は無く、公開の union に種類も足していない。migration も増えない。**minor にした理由**: 新しい crate・公開の口・`UiMessages` の省略できるキーを足しただけの後方互換の機能追加（[publishing.md「バージョニング規約」](docs/publishing.md#バージョニング規約)）。
@@ -48,6 +50,24 @@
 - feat(admin-core): `openPanelWindow`・`listenPanelClosed`・`createPanelPopOut`（と `PANEL_OPEN_COMMAND`・`PANEL_CLOSED_EVENT`、型）を公開した（#1006）。`isTauri`・`invoke`・`listen` は注入する（`@tauri-apps/api` に依存しない）。`createPanelPopOut` は dock に渡す `onPopOut` と、閉じた知らせでパネルを dock に戻す購読（`connect()`）を 1 つにまとめ、窓を開けなかったときもパネルを dock に戻す。ブラウザでは `onPopOut` が `undefined`（pop-out のボタンを出さない約束はそのまま）。使い方は [docs/recipes/panel-windows.md](docs/recipes/panel-windows.md)。
 - refactor(template): admin-template の自前の `panel_open` コマンドと `popout.ts` の中身を、上の plugin と admin-core の口に置き換えた（#1006）。`src-tauri` は `.plugin(banto_tauri_panel::init())` と capability の `banto-tauri-panel:allow-open`、`popout.ts` は `createAppPanelPopOut`（`isTauri`・`invoke`・`listen` を束ねるだけ）になった。**テンプレートを写したアプリ（経路 B）で pop-out を使っているなら**: `src-tauri/Cargo.toml` に `banto-tauri-panel` を足し、`lib.rs` の `panel_open`（本体と `invoke_handler` の登録）を `.plugin(...)` に替え、capability に `banto-tauri-panel:allow-open` を足し、`popout.ts` とダッシュボードの `onPopOut` の配線をテンプレートの形に合わせる。写しのままでも動く（`panel_open` はアプリの中のコマンドで、banto の公開の口ではない）が、位置・大きさの記憶とメインと一緒に閉じる振る舞いは plugin に替えたときに入る。
 - chore(fixtures): v9.2.0 のタグ後の外部利用 fixture の ref を `v9.2.0` に更新した。[9.2.0] に「検証した組み合わせ」を追記。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `8e795a2c`、`workflow_dispatch`）: [run 45848833245](https://github.com/tyaro/banto/actions/runs/45848833245)（success）。
+  - タグの push（`v9.3.0`、main の `8e795a2ca72682c6463c2b501f863a2991d36937`）: [run 45849283321](https://github.com/tyaro/banto/actions/runs/45849283321)（success）。npm（Git 依存 → dev + Playwright → check → build）、npm diagnostic、Rust（Git 依存 → cargo check）の各ジョブとも success。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った。v9.2.0 と同じ）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 26.13.1                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.59.1                          |
+    | SvelteKit          | 3.4.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
 
 ## [9.2.0] - 2026-11-26
 
