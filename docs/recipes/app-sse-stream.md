@@ -193,8 +193,9 @@ fn frames(&self) -> impl futures_util::Stream<Item = SseFrame> + Send + 'static 
 `parse` が名前で作り分ける。この形は `crates/banto-server/tests/sse_stream.rs`（複数の名前を 1 本に混ぜて届ける試験）と同じ。
 
 - **`watch<Option<Reading>>` を流用するときは、`None` を `null` で送らない。** `watch_frames` の `encode` が `None` を返した値は送られない
-  （除外される）ので、`|reading| { let reading = reading.as_ref()?; … }` と書き、「値なし」の間は何も配信しない。`null` を `data:` に載せると、
-  読み口の `parse` が「値なし」を値として扱う分岐を持つことになり、その分岐を忘れると最初の読み取りの前に空の値が画面へ出うる。
+  （除外される）ので、`|reading| { let reading = reading.as_ref()?; … }` と書き、「値なし」の間はサーバー側で配信を省く。
+  掲載例の読み口でも JSON の `null` は `createSseStream` が `onEvent` に渡さず捨てるので、`null` を送っても何も起きない（無駄な送信になるだけ）。
+  値のクリアを知らせたいなら、別の `event:` の名前か、明示的なデータの型にする。
 - **`onStale` は配信全体の指標。** どの `event:` の名前でも、最後に新しい値が届いてからの経過で決まる（`staleAfterMs`・`valueStamp` は上の「5.」）。
   種類ごとの鮮度（値は届くが、警報だけ長く来ない、など）は `onStale` では分からないので、種類ごとの最終受信の時刻や作った印を、アプリが種類ごとに持つ。
 
