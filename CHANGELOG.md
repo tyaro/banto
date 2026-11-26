@@ -23,6 +23,7 @@
 ## [Unreleased]
 
 - fix(dock-svelte): タブの帯が狭いとき、タブを縮めて題名を省略記号（…）にするようにした。幅 240px の 3 タブでも帯がはみ出さない。題名の全文は `title` 属性と `aria-label` に残る。最小幅より狭いときは従来どおり横にスクロールする（#986）。
+- fix(ui): `HeaderNav` が開発時に出していた Svelte の警告 `binding_property_non_reactive`（`bind:this={buttons[key]}`・`menus[id]` など）を、関数形の `bind:this` に替えて消した。動きは変わらない。メニューバーの表示メニューを開閉してもこの警告と `state_proxy_equality_mismatch` が出ないことを demo の e2e（`menubar-groups.spec.ts`）で守る。
 - fix(touch-keys): 幅 480px 以下で文字キーボードの盤の余白と隙間を `--banto-space-1` に狭め、幅 400px で文字キーが 30px に縮んでいたのを約 34〜35px に改めた（アプリが決めた `--banto-touch-key-gap` は優先。#937 の任意）。
 - refactor(admin-services): 設定の反映・元に戻すの差分（`changes`・監査用の差分）を、コミットの後で計算するようにした（#938）。戻り値・監査の内容は変わらない。PostgreSQL の待ちの試験は、行ロックの待ちに入ったことを確かめてから放す形にした。
 - chore(fixtures): v9.1.0 のタグ後の外部利用 fixture の ref を `v9.1.0` に更新した。[9.1.0] に「検証した組み合わせ」を追記。

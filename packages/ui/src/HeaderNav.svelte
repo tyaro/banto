@@ -124,9 +124,11 @@
 	let openKey = $state<string | null>(null);
 	let coords = $state<{ key: string; top: number; left: number } | null>(null);
 	const popovers: Record<string, HTMLElement> = {};
-	const buttons: Record<string, HTMLElement> = {};
-	// Menu entries' `Menu` instances, to re-anchor an open one after a re-layout.
-	const menus: Record<string, { reposition: () => void } | undefined> = {};
+	const buttons: Record<string, HTMLElement | null> = {};
+	// Plain objects on purpose: they only hold elements and instances that are read in
+	// events and effects. Function bindings (not `bind:this={obj[k]}`) keep Svelte from
+	// warning `binding_property_non_reactive`, and nothing wraps a `Menu` in a proxy.
+	const menus: Record<string, { reposition: () => void } | null> = {};
 	let focusIntent: 'first' | 'last' | 'none' = 'none';
 
 	function groupKey(id: string): string {
@@ -628,7 +630,11 @@
 				onkeydown={entry.kind === 'menu' ? handleMenuCellKeydown : undefined}
 			>
 				{#if entry.kind === 'menu'}
-					<Menu bind:this={menus[entry.id]} label={entry.label} placement="bottom-start">
+					<Menu
+						bind:this={() => menus[entry.id] ?? null, (menu) => (menus[entry.id] = menu)}
+						label={entry.label}
+						placement="bottom-start"
+					>
 						{#snippet trigger(props)}
 							<button
 								type="button"
@@ -685,7 +691,7 @@
 				{:else}
 					{@const key = groupKey(entry.id)}
 					<button
-						bind:this={buttons[key]}
+						bind:this={() => buttons[key] ?? null, (el) => (buttons[key] = el)}
 						type="button"
 						class="item"
 						class:active={entryActive(entry)}
@@ -710,7 +716,7 @@
 		{#if moved.length > 0}
 			<li class="cell" onfocusout={(event) => handleCellFocusout(MORE, event)}>
 				<button
-					bind:this={buttons[MORE]}
+					bind:this={() => buttons[MORE] ?? null, (el) => (buttons[MORE] = el)}
 					type="button"
 					class="item"
 					class:active={moreActive}
