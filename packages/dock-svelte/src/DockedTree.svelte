@@ -602,7 +602,7 @@
 						{/if}
 					</span>
 				{/if}
-				<span class="title">{active?.title}</span>
+				<span class="title" title={active?.title}>{active?.title}</span>
 			{:else}
 				<div class="tab-strip" role="tablist" bind:this={tabStripEl}>
 					{#each node.children as child, i (child.id)}
@@ -633,7 +633,7 @@
 									{/if}
 								</span>
 							{/if}
-							<span class="title">{child.title}</span>
+							<span class="title" title={child.title}>{child.title}</span>
 							{#if i === node.activeIndex}
 								<DockPanelMenu panelId={child.id} title={child.title} {t} />
 								{#if onPopOut && capsOf(child.id).undock}
@@ -833,8 +833,12 @@
 		overflow-y: hidden;
 	}
 
+	/* Shrinks when the strip is too narrow (#986): the title (`.title`) turns into an ellipsis and
+	   the full text stays in its `title` attribute. The icon and the buttons never shrink; the
+	   minimum widths keep a tab usable, and below them the strip scrolls as before. */
 	.tab {
-		flex: 0 0 auto;
+		flex: 0 1 auto;
+		min-width: 3rem;
 		display: flex;
 		align-items: center;
 		gap: var(--banto-space-1);
@@ -858,6 +862,7 @@
 	}
 
 	.tab.active {
+		min-width: 7rem;
 		color: var(--banto-text);
 		background: var(--banto-dock-tab-active-bg);
 		box-shadow: inset 0 calc(-1 * var(--banto-border-width-strong)) 0 var(--banto-primary);
