@@ -666,9 +666,16 @@ Tailwind のクラスは見ないので、そこはレビューで守る。
 
 環境分岐は `tauri` / `server` / `demo` の3種を `getBantoMode()` で判定し、
 **provider 層（`*Admin.ts` / setup）に閉じる**。UI コンポーネントは環境分岐を
-持たない。demo モードは InMemory 実装を作らず `DEMO_MODE_MESSAGE` で拒否する
-（ブラウザ単体で backend 機能を使わせない）。一部操作のモード制限
-（download/upload は server 限定、folder は tauri 限定 等）も provider 層で表現。
+持たない。demo モードの扱いは次のとおり（#712）:
+
+- 業務のリソース（items など）は demo で InMemory の `DataProvider` を使ってよい。
+- 管理系は既定で `DEMO_MODE_MESSAGE` で明示拒否する（ブラウザ単体で backend 機能を使わせない）。
+  例外は**ユーザー一覧と監査ログの読み取りだけ**で、demo 専用の固定の見本データ（`providers/demoUsers.ts`・
+  `providers/demoAuditLog.ts`）を返す。**書き込みは `DEMO_MODE_MESSAGE` で明示拒否のまま**。
+  バックアップ・システム設定・添付・CSV 取り込みも拒否のまま。
+- 画面は環境を見ない。「見本である旨の注意書き」を出すかは provider が返す（`isUsersAdminWritable()` など）。
+
+一部操作のモード制限（download/upload は server 限定、folder は tauri 限定 等）も provider 層で表現。
 
 LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではない**。これは
 `server` モードの中で「ログイン済みか、合成 viewer セッションか」を区別する

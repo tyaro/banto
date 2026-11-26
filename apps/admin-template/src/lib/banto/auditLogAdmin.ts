@@ -15,9 +15,12 @@
  * CRUD resource.
  *
  * Plain `vite dev`/`vite preview` (spec §11.1's third environment, no Rust
- * backend at all): there is no audit-log database to read, so every export
- * here throws/rejects with a `ProviderError` carrying `DEMO_MODE_MESSAGE`,
- * mirroring `usersAdmin.ts`'s `isUsersAdminAvailable()`/`demoModeError()`.
+ * backend at all): there is no audit-log database. The two reads
+ * (`listAuditLog`, `getAuditConfig`) answer with fixed sample data
+ * (`providers/demoAuditLog.ts`; Issue #712, conventions §10); the write
+ * (`setAuditConfig`) throws a `ProviderError` carrying `DEMO_MODE_MESSAGE`.
+ * `isAuditLogAvailable()` stays false there: it gates the settings screen's
+ * retention form and the record drawer's history tab, which need real data.
  */
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -29,6 +32,7 @@ import {
 	type SnapshotListResult
 } from '@banto/admin-core';
 import { CSRF_HEADER, getBantoMode } from './setup';
+import { DEMO_AUDIT_SETTINGS, demoAuditLogList } from './providers/demoAuditLog';
 
 /** Mirrors `admin_template_core::audit::AuditLogEntry` (camelCase on the wire). */
 export interface AuditLogEntry {
@@ -78,7 +82,7 @@ function demoModeError(): ProviderError {
 	return new ProviderError({ kind: 'other', message: DEMO_MODE_MESSAGE });
 }
 
-/** Is this environment backed by a real audit-log database (Tauri or the embedded server)? False in plain-browser demo mode. */
+/** Is this environment backed by a real audit-log database (Tauri or the embedded server)? False in plain-browser demo mode (the audit-log screen still shows sample rows there, read-only). */
 export function isAuditLogAvailable(): boolean {
 	return getBantoMode() !== 'demo';
 }
@@ -185,7 +189,7 @@ export async function listAuditLog(
 	asOfId: number | null = null,
 	signal?: AbortSignal
 ): Promise<AuditLogList> {
-	if (!isAuditLogAvailable()) throw demoModeError();
+	if (getBantoMode() === 'demo') return demoAuditLogList(params, asOfId);
 	if (getBantoMode() === 'tauri') {
 		return invokeCommand<AuditLogList>(
 			'audit_log_list',
@@ -202,7 +206,7 @@ export async function listAuditLog(
 
 /** Current audit-log retention policy. Any authenticated role may call this (it only feeds a settings-screen display) - see `audit_config_get`'s Rust doc comment. */
 export async function getAuditConfig(): Promise<AuditSettings> {
-	if (!isAuditLogAvailable()) throw demoModeError();
+	if (getBantoMode() === 'demo') return { ...DEMO_AUDIT_SETTINGS };
 	if (getBantoMode() === 'tauri') return invokeCommand<AuditSettings>('audit_config_get');
 	return httpRequest<AuditSettings>('/api/audit-log/config', { method: 'GET' });
 }

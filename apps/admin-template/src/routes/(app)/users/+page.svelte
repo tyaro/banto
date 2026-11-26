@@ -2,8 +2,9 @@
 	/**
 	 * ユーザー管理画面（spec M10 RBAC）。`admin` のみ到達（+page.ts が非adminを
 	 * ダッシュボードへリダイレクト）。デモモード（プレーンな vite dev/preview、
-	 * バックエンドなし）ではアカウントDBそのものが存在しないため、案内文のみ表示
-	 * する（isUsersAdminAvailable()）。
+	 * バックエンドなし）ではアカウントDBそのものが存在しないため、読み取り専用の
+	 * 見本ユーザーを表示し、書き込みは provider が拒否する（#712。注意書きの出し分けは
+	 * isUsersAdminWritable() で、画面は環境を見ない）。
 	 *
 	 * 一覧はBantoGrid（クライアントモード、全件を一度に取得）。BantoGridの
 	 * セル編集は「1カラム=1値」のインライン編集向けで、行ごとの複数ボタン（削除
@@ -49,7 +50,7 @@
 	import {
 		createUser,
 		deleteUser,
-		isUsersAdminAvailable,
+		isUsersAdminWritable,
 		listPermissionCatalog,
 		listUsers,
 		permissionRows,
@@ -99,7 +100,7 @@
 		return isProviderError(err) ? err.message : String(err);
 	}
 
-	const available = isUsersAdminAvailable();
+	const demoReadOnly = !isUsersAdminWritable();
 
 	const createSchema: FormSchema = {
 		fields: [
@@ -144,7 +145,6 @@
 	let loadToken = 0;
 
 	async function reload(): Promise<void> {
-		if (!available) return;
 		const token = ++loadToken;
 		loading = true;
 		try {
@@ -167,7 +167,7 @@
 	onDestroy(() => catalogRequests.dispose());
 
 	async function loadCatalog(): Promise<void> {
-		if (!available || catalogStatus === 'loading' || catalogStatus === 'ready') return;
+		if (catalogStatus === 'loading' || catalogStatus === 'ready') return;
 		const request = catalogRequests.begin('catalog');
 		catalogStatus = 'loading';
 		try {
@@ -514,171 +514,170 @@
 <div class="page">
 	<PageHeader hideTitle title={m['nav.users']()} description={m['users.pageDescription']()} />
 
-	{#if !available}
-		<EmptyState title={m['users.unavailableTitle']()} description={m['users.unavailableDesc']()} />
-	{:else}
-		<!-- >=1100px: list (create + grid) and edit panel side by side; below
+	{#if demoReadOnly}
+		<p class="demo-note">{m['users.demoNotice']()}</p>
+	{/if}
+	<!-- >=1100px: list (create + grid) and edit panel side by side; below
 		     that, stacked (plan Phase 5 "作成、一覧、選択ユーザー編集の関係を明確
 		     にする" / "広い画面では一覧と編集を2カラム、狭い画面では縦積み"). -->
-		<div class="workspace">
-			<div class="list-column">
-				<SurfaceCard>
-					<div class="card-head">
-						<UserRoundPlus size={20} aria-hidden="true" />
-						<div>
-							<h2>{m['users.createHeading']()}</h2>
-							<p>{m['users.createDesc']()}</p>
-						</div>
+	<div class="workspace">
+		<div class="list-column">
+			<SurfaceCard>
+				<div class="card-head">
+					<UserRoundPlus size={20} aria-hidden="true" />
+					<div>
+						<h2>{m['users.createHeading']()}</h2>
+						<p>{m['users.createDesc']()}</p>
 					</div>
-					<!-- class="create" kept as a literal <section> (not SurfaceCard's
+				</div>
+				<!-- class="create" kept as a literal <section> (not SurfaceCard's
 					     own <section>) - e2e smoke scenario 5 scopes its locators to
 					     `section.create` to avoid ambiguity with the grid's column
 					     filter buttons below. -->
-					<section class="create">
-						<BantoForm
-							appearance="underline"
-							schema={createSchema}
-							store={createStore}
-							onSubmit={handleCreate}
-							submitting={creating}
-							submitLabel={m['common.create']()}
-							passwordMessages={passwordInputMessages()}
-						/>
-					</section>
-				</SurfaceCard>
+				<section class="create">
+					<BantoForm
+						appearance="underline"
+						schema={createSchema}
+						store={createStore}
+						onSubmit={handleCreate}
+						submitting={creating}
+						submitLabel={m['common.create']()}
+						passwordMessages={passwordInputMessages()}
+					/>
+				</section>
+			</SurfaceCard>
 
+			<SurfaceCard>
+				<div class="card-head">
+					<Users size={20} aria-hidden="true" />
+					<div>
+						<h2>{m['users.listHeading']()}</h2>
+						<p>{m['users.listDesc']()}</p>
+					</div>
+				</div>
+				{#if loading && users.length === 0}
+					<LoadingState label={m['common.loading']()} />
+				{:else}
+					<div class="grid-wrap">
+						<BantoGrid
+							rows={users}
+							{columns}
+							getRowId={(user) => user.id}
+							onRowClick={selectUser}
+							onRowContextMenu={openRowMenu}
+						/>
+						<Menu
+							bind:this={rowMenu}
+							label={m['users.rowMenu']({ username: menuUser?.username ?? '' })}
+						>
+							<MenuItem
+								label={m['users.rowMenuEdit']()}
+								icon={Pencil}
+								disabled={menuUser?.kind === 'builtin'}
+								onSelect={editFromMenu}
+							/>
+							<MenuItem
+								label={m['common.delete']()}
+								icon={Trash2}
+								danger
+								disabled={menuUser?.kind === 'builtin'}
+								onSelect={deleteFromMenu}
+							/>
+						</Menu>
+					</div>
+				{/if}
+			</SurfaceCard>
+		</div>
+
+		<div class="edit-column">
+			{#if selected}
 				<SurfaceCard>
 					<div class="card-head">
-						<Users size={20} aria-hidden="true" />
+						<Pencil size={20} aria-hidden="true" />
 						<div>
-							<h2>{m['users.listHeading']()}</h2>
-							<p>{m['users.listDesc']()}</p>
+							<h2>{m['users.editHeading']({ username: selected.username })}</h2>
+							<p>{m['users.editDesc']()}</p>
 						</div>
 					</div>
-					{#if loading && users.length === 0}
-						<LoadingState label={m['common.loading']()} />
-					{:else}
-						<div class="grid-wrap">
-							<BantoGrid
-								rows={users}
-								{columns}
-								getRowId={(user) => user.id}
-								onRowClick={selectUser}
-								onRowContextMenu={openRowMenu}
-							/>
-							<Menu
-								bind:this={rowMenu}
-								label={m['users.rowMenu']({ username: menuUser?.username ?? '' })}
-							>
-								<MenuItem
-									label={m['users.rowMenuEdit']()}
-									icon={Pencil}
-									disabled={menuUser?.kind === 'builtin'}
-									onSelect={editFromMenu}
-								/>
-								<MenuItem
-									label={m['common.delete']()}
-									icon={Trash2}
-									danger
-									disabled={menuUser?.kind === 'builtin'}
-									onSelect={deleteFromMenu}
-								/>
-							</Menu>
-						</div>
+
+					<div class="role-row">
+						<StatusBadge
+							variant={roleBadgeVariant[selected.role]}
+							label={roleLabel(selected.role)}
+							icon={roleBadgeIcon[selected.role]}
+						/>
+					</div>
+
+					<label class="banto-field banto-field--stacked edit-field">
+						<input class="banto-field-control" type="text" bind:value={editDisplayName} />
+						<span class="banto-field-label">{m['common.displayName']()}</span>
+					</label>
+					<label class="banto-field banto-field--stacked edit-field">
+						<select class="banto-field-control" bind:value={editRole}>
+							{#each roleOptions as option (option.value)}
+								<option value={option.value}>{option.label}</option>
+							{/each}
+						</select>
+						<span class="banto-field-label">{m['common.role']()}</span>
+					</label>
+					{#if catalog.length > 0}
+						<PermissionsField
+							rows={permissionList}
+							checked={editPermissions ?? basePermissions}
+							disabled={editPermissions === null}
+							onchange={(key, on) => {
+								if (editPermissions) editPermissions = withPermission(editPermissions, key, on);
+							}}
+						/>
 					{/if}
-				</SurfaceCard>
-			</div>
+					<Button variant="primary" onclick={saveEdit} loading={saving}>
+						{m['common.save']()}
+					</Button>
 
-			<div class="edit-column">
-				{#if selected}
-					<SurfaceCard>
-						<div class="card-head">
-							<Pencil size={20} aria-hidden="true" />
-							<div>
-								<h2>{m['users.editHeading']({ username: selected.username })}</h2>
-								<p>{m['users.editDesc']()}</p>
-							</div>
-						</div>
-
-						<div class="role-row">
-							<StatusBadge
-								variant={roleBadgeVariant[selected.role]}
-								label={roleLabel(selected.role)}
-								icon={roleBadgeIcon[selected.role]}
-							/>
-						</div>
-
-						<label class="banto-field banto-field--stacked edit-field">
-							<input class="banto-field-control" type="text" bind:value={editDisplayName} />
-							<span class="banto-field-label">{m['common.displayName']()}</span>
-						</label>
-						<label class="banto-field banto-field--stacked edit-field">
-							<select class="banto-field-control" bind:value={editRole}>
-								{#each roleOptions as option (option.value)}
-									<option value={option.value}>{option.label}</option>
-								{/each}
-							</select>
-							<span class="banto-field-label">{m['common.role']()}</span>
-						</label>
-						{#if catalog.length > 0}
-							<PermissionsField
-								rows={permissionList}
-								checked={editPermissions ?? basePermissions}
-								disabled={editPermissions === null}
-								onchange={(key, on) => {
-									if (editPermissions) editPermissions = withPermission(editPermissions, key, on);
-								}}
-							/>
-						{/if}
-						<Button variant="primary" onclick={saveEdit} loading={saving}>
-							{m['common.save']()}
-						</Button>
-
-						<!-- Danger zone (plan Phase 5): delete + password reset are
+					<!-- Danger zone (plan Phase 5): delete + password reset are
 						     visually separated from the normal save action above.
 						     Confirmation is still required before deletion. -->
-						<div class="danger-zone">
-							<h3><ShieldAlert size={16} aria-hidden="true" />Danger zone</h3>
+					<div class="danger-zone">
+						<h3><ShieldAlert size={16} aria-hidden="true" />Danger zone</h3>
 
-							<div class="danger-section">
-								<p class="note">{m['users.resetDesc']()}</p>
-								<div class="banto-field banto-field--stacked edit-field">
-									{#key resetBoxKey}
-										<PasswordInput
-											id="{uid}-pw-1"
-											class="banto-field-control"
-											bind:value={resetPassword}
-											autocomplete="new-password"
-											messages={passwordInputMessages()}
-										/>
-									{/key}
-									<label class="banto-field-label" for="{uid}-pw-1">
-										{m['common.newPasswordMinLabel']()}
-									</label>
-								</div>
-								<Button variant="danger" icon={KeyRound} onclick={saveReset} loading={resetting}>
-									{m['users.resetPassword']()}
-								</Button>
+						<div class="danger-section">
+							<p class="note">{m['users.resetDesc']()}</p>
+							<div class="banto-field banto-field--stacked edit-field">
+								{#key resetBoxKey}
+									<PasswordInput
+										id="{uid}-pw-1"
+										class="banto-field-control"
+										bind:value={resetPassword}
+										autocomplete="new-password"
+										messages={passwordInputMessages()}
+									/>
+								{/key}
+								<label class="banto-field-label" for="{uid}-pw-1">
+									{m['common.newPasswordMinLabel']()}
+								</label>
 							</div>
-
-							<div class="danger-section">
-								<p class="note">{m['users.deleteDesc']()}</p>
-								<Button variant="danger" icon={Trash2} onclick={handleDelete} loading={deleting}>
-									{m['common.delete']()}
-								</Button>
-							</div>
+							<Button variant="danger" icon={KeyRound} onclick={saveReset} loading={resetting}>
+								{m['users.resetPassword']()}
+							</Button>
 						</div>
-					</SurfaceCard>
-				{:else}
-					<EmptyState
-						icon={Users}
-						title={m['users.selectPrompt']()}
-						description={m['users.selectHint']()}
-					/>
-				{/if}
-			</div>
+
+						<div class="danger-section">
+							<p class="note">{m['users.deleteDesc']()}</p>
+							<Button variant="danger" icon={Trash2} onclick={handleDelete} loading={deleting}>
+								{m['common.delete']()}
+							</Button>
+						</div>
+					</div>
+				</SurfaceCard>
+			{:else}
+				<EmptyState
+					icon={Users}
+					title={m['users.selectPrompt']()}
+					description={m['users.selectHint']()}
+				/>
+			{/if}
 		</div>
-	{/if}
+	</div>
 </div>
 
 <style>
@@ -686,6 +685,12 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--banto-space-4);
+	}
+
+	.demo-note {
+		margin: 0;
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-sm);
 	}
 
 	.workspace {

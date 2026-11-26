@@ -19,8 +19,9 @@
 	 * 応答しない要求に期限が無く、境界も無かった（#248）。
 	 *
 	 * デモモード（プレーンな vite dev/preview、バックエンドなし）では
-	 * 監査ログDBそのものが存在しないため、案内文のみ表示する
-	 * （isAuditLogAvailable()、usersAdmin.ts と同じ流儀）。
+	 * 監査ログDBそのものが存在しないため、provider が読み取り専用の見本を返し、
+	 * 画面は見本である旨の注意書きだけを出す（#712。環境は見ず、
+	 * isAuditLogAvailable() の否定を「見本データ」の合図に使う）。
 	 */
 	import { untrack } from 'svelte';
 	import {
@@ -32,11 +33,10 @@
 		type SortState
 	} from '@banto/grid-svelte';
 	import { createSnapshotListResource } from '@banto/admin-core';
-	import { Info } from '@lucide/svelte';
 	import { replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
-	import { PageHeader, EmptyState, StatusBadge } from '@banto/ui';
+	import { PageHeader, StatusBadge } from '@banto/ui';
 	import {
 		getAuditConfig,
 		isAuditLogAvailable,
@@ -53,7 +53,7 @@
 	import { auditDetailRest, parseAuditChanges } from '#lib/resource/auditChanges.js';
 	import { auditTargetHref } from '#lib/resource/auditTarget.js';
 
-	const available = isAuditLogAvailable();
+	const sampleData = !isAuditLogAvailable();
 
 	const actionLabels: Record<string, string> = {
 		create: m['audit.actionCreate'](),
@@ -212,7 +212,6 @@
 	// the state `ensureRange()` publishes (`loading` etc.) either. The cleanup
 	// aborts whatever is still in flight when the page is left.
 	$effect(() => {
-		if (!available) return;
 		untrack(() => auditLog.ensureRange(0, 100));
 		return () => auditLog.dispose();
 	});
@@ -237,7 +236,7 @@
 		const url = page.url;
 		if (!hasAuditLogQuery(url.searchParams)) return;
 		untrack(() => {
-			if (url !== initialUrl && available) {
+			if (url !== initialUrl) {
 				gridState.filters = auditLogFiltersFromQuery(url.searchParams);
 				auditLog.setParams({ sort: gridState.sort, filters: gridState.filters });
 			}
@@ -311,7 +310,6 @@
 	let retentionNote: string | null = $state(null);
 
 	$effect(() => {
-		if (!available) return;
 		void (async () => {
 			try {
 				const config = await getAuditConfig();
@@ -335,126 +333,121 @@
 <div class="page" bind:this={pageEl}>
 	<PageHeader hideTitle title={m['nav.auditLog']()} description={m['audit.pageDescription']()} />
 
-	{#if !available}
-		<EmptyState
-			icon={Info}
-			title={m['audit.unavailableTitle']()}
-			description={m['audit.unavailableDesc']()}
-		/>
-	{:else}
-		{#if retentionNote}
-			<p class="note">{retentionNote}</p>
-		{/if}
+	{#if sampleData}
+		<p class="note">{m['audit.demoNotice']()}</p>
+	{/if}
+	{#if retentionNote}
+		<p class="note">{retentionNote}</p>
+	{/if}
 
-		<!--
+	<!--
 			「まだ読めていない」「読めなかった」「0 件」を別々に出す（#248）。件数が
 			`null` のうちは件数を言わない（0 件と言い切らない）。
 		-->
-		<p class="note" data-testid="audit-count-note">
-			{#if auditLog.totalCount === null}
-				{auditLog.failures.length > 0 ? m['audit.notLoadedNote']() : m['audit.loadingNote']()}
-			{:else if auditLog.totalCount === 0}
-				{m['audit.emptyNote']()}
-			{:else}
-				{m['audit.recordCountNote']({ count: auditLog.totalCount.toLocaleString() })}
-			{/if}
-		</p>
-
-		{#if loadFailure?.kind === 'error'}
-			<div class="load-error" role="alert">
-				<p>
-					<strong>{m['audit.loadError']()}</strong>
-					<span>{m['audit.loadErrorDesc']()}</span>
-					<span class="load-error-detail">{loadFailure.error.message}</span>
-				</p>
-			</div>
+	<p class="note" data-testid="audit-count-note">
+		{#if auditLog.totalCount === null}
+			{auditLog.failures.length > 0 ? m['audit.notLoadedNote']() : m['audit.loadingNote']()}
+		{:else if auditLog.totalCount === 0}
+			{m['audit.emptyNote']()}
+		{:else}
+			{m['audit.recordCountNote']({ count: auditLog.totalCount.toLocaleString() })}
 		{/if}
-		{#if auditLog.expired}
-			<div class="load-error" role="alert">
-				<p>{m['audit.snapshotExpired']()}</p>
-			</div>
-		{/if}
+	</p>
 
-		<!--
+	{#if loadFailure?.kind === 'error'}
+		<div class="load-error" role="alert">
+			<p>
+				<strong>{m['audit.loadError']()}</strong>
+				<span>{m['audit.loadErrorDesc']()}</span>
+				<span class="load-error-detail">{loadFailure.error.message}</span>
+			</p>
+		</div>
+	{/if}
+	{#if auditLog.expired}
+		<div class="load-error" role="alert">
+			<p>{m['audit.snapshotExpired']()}</p>
+		</div>
+	{/if}
+
+	<!--
 			「再読み込み」は常に出す（#248）: 失敗からの再試行だけでなく、境界を固定
 			しているので新しい記録を取り込む唯一の導線でもある。処理中でも押せる。
 		-->
-		<div class="actions">
-			<button type="button" class="banto-btn banto-btn--secondary" onclick={reload}>
-				{m['common.reload']()}
-			</button>
-			<span class="note">{m['audit.reloadNote']()}</span>
-		</div>
-		<FilterChips
+	<div class="actions">
+		<button type="button" class="banto-btn banto-btn--secondary" onclick={reload}>
+			{m['common.reload']()}
+		</button>
+		<span class="note">{m['audit.reloadNote']()}</span>
+	</div>
+	<FilterChips
+		state={gridState}
+		messages={gridMessages()}
+		onEmpty={focusGrid}
+		onchange={() => handleParamsChange({ sort: gridState.sort, filters: gridState.filters })}
+	/>
+
+	<section class="grid-wrap">
+		<BantoGrid
+			mode="server"
 			state={gridState}
-			messages={gridMessages()}
-			onEmpty={focusGrid}
-			onchange={() => handleParamsChange({ sort: gridState.sort, filters: gridState.filters })}
+			rows={auditLog.rows}
+			totalRows={auditLog.totalCount ?? 0}
+			{columns}
+			getRowId={(row) => row.id}
+			rowClass={auditRowClass}
+			onRowClick={selectRow}
+			onParamsChange={handleParamsChange}
+			onVisibleRangeChange={handleVisibleRangeChange}
 		/>
+	</section>
 
-		<section class="grid-wrap">
-			<BantoGrid
-				mode="server"
-				state={gridState}
-				rows={auditLog.rows}
-				totalRows={auditLog.totalCount ?? 0}
-				{columns}
-				getRowId={(row) => row.id}
-				rowClass={auditRowClass}
-				onRowClick={selectRow}
-				onParamsChange={handleParamsChange}
-				onVisibleRangeChange={handleVisibleRangeChange}
-			/>
-		</section>
-
-		{#if selected}
-			<section class="detail">
-				<h3>{m['audit.detailHeading']({ id: selected.id })}</h3>
-				<dl>
-					<dt>{m['audit.colTs']()}</dt>
-					<dd>{selected.ts}</dd>
-					<dt>{m['audit.colUser']()}</dt>
-					<dd>{selected.actorUsername ?? '-'}</dd>
-					<dt>{m['common.role']()}</dt>
-					<dd>{selected.actorRole ?? '-'}</dd>
-					<dt>{m['audit.colActorKind']()}</dt>
-					<dd>{selected.actorKind ?? '-'}</dd>
-					<dt>{m['audit.colAction']()}</dt>
-					<dd>{actionLabel(selected.action)}</dd>
-					<dt>{m['audit.colResource']()}</dt>
-					<dd>{selected.resource}</dd>
-					<dt>{m['audit.colEntityId']()}</dt>
-					<dd>
-						{selected.entityId ?? '-'}
-						{#if selectedTargetHref}
-							<a class="open-target" href={selectedTargetHref} data-testid="audit-open-target">
-								{m['audit.openTarget']()}
-							</a>
-						{/if}
-					</dd>
-					<dt>{m['audit.colOrigin']()}</dt>
-					<dd>{originLabel(selected.origin)}</dd>
-					<dt>{m['audit.colResult']()}</dt>
-					<dd>
-						<StatusBadge
-							variant={selected.result === 'ok' ? 'success' : 'danger'}
-							label={resultLabel(selected.result)}
-						/>
-					</dd>
-				</dl>
-				{#if selectedChanges}
-					<h4>{m['resource.changesCaption']()}</h4>
-					<AuditChanges resource={selected.resource} changes={selectedChanges} />
-					{#if selectedRest}
-						<h4>{m['audit.detailJson']()}</h4>
-						<pre>{selectedRest}</pre>
+	{#if selected}
+		<section class="detail">
+			<h3>{m['audit.detailHeading']({ id: selected.id })}</h3>
+			<dl>
+				<dt>{m['audit.colTs']()}</dt>
+				<dd>{selected.ts}</dd>
+				<dt>{m['audit.colUser']()}</dt>
+				<dd>{selected.actorUsername ?? '-'}</dd>
+				<dt>{m['common.role']()}</dt>
+				<dd>{selected.actorRole ?? '-'}</dd>
+				<dt>{m['audit.colActorKind']()}</dt>
+				<dd>{selected.actorKind ?? '-'}</dd>
+				<dt>{m['audit.colAction']()}</dt>
+				<dd>{actionLabel(selected.action)}</dd>
+				<dt>{m['audit.colResource']()}</dt>
+				<dd>{selected.resource}</dd>
+				<dt>{m['audit.colEntityId']()}</dt>
+				<dd>
+					{selected.entityId ?? '-'}
+					{#if selectedTargetHref}
+						<a class="open-target" href={selectedTargetHref} data-testid="audit-open-target">
+							{m['audit.openTarget']()}
+						</a>
 					{/if}
-				{:else if selectedDetail}
+				</dd>
+				<dt>{m['audit.colOrigin']()}</dt>
+				<dd>{originLabel(selected.origin)}</dd>
+				<dt>{m['audit.colResult']()}</dt>
+				<dd>
+					<StatusBadge
+						variant={selected.result === 'ok' ? 'success' : 'danger'}
+						label={resultLabel(selected.result)}
+					/>
+				</dd>
+			</dl>
+			{#if selectedChanges}
+				<h4>{m['resource.changesCaption']()}</h4>
+				<AuditChanges resource={selected.resource} changes={selectedChanges} />
+				{#if selectedRest}
 					<h4>{m['audit.detailJson']()}</h4>
-					<pre>{selectedDetail}</pre>
+					<pre>{selectedRest}</pre>
 				{/if}
-			</section>
-		{/if}
+			{:else if selectedDetail}
+				<h4>{m['audit.detailJson']()}</h4>
+				<pre>{selectedDetail}</pre>
+			{/if}
+		</section>
 	{/if}
 </div>
 

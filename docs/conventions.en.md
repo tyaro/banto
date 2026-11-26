@@ -761,10 +761,16 @@ check, so remove the entry then.
 
 Environment branching is decided by `getBantoMode()` across the three kinds
 `tauri` / `server` / `demo`, and is **confined to the provider layer
-(`*Admin.ts` / setup)**. UI components hold no environment branching. Demo mode
-does not create an InMemory implementation but refuses with `DEMO_MODE_MESSAGE`
-(do not let a standalone browser use backend features). Mode restrictions on
-some operations (download/upload are server-only, folder is tauri-only, etc.)
+(`*Admin.ts` / setup)**. UI components hold no environment branching. Demo mode is handled as follows (#712):
+
+- Business resources (items, etc.) may use the InMemory `DataProvider` in demo.
+- Admin features are explicitly refused with `DEMO_MODE_MESSAGE` by default (do not let a standalone browser use backend features).
+  The only exception is **reading the user list and the audit log**, which return fixed, demo-only sample data
+  (`providers/demoUsers.ts`, `providers/demoAuditLog.ts`). **Writes stay explicitly refused with `DEMO_MODE_MESSAGE`.**
+  Backups, system settings, attachments and CSV import also stay refused.
+- Screens do not look at the environment. Whether to show a "this is sample data" notice is answered by the provider (`isUsersAdminWritable()`, etc.).
+
+Mode restrictions on some operations (download/upload are server-only, folder is tauri-only, etc.)
 are also expressed in the provider layer.
 
 LAN public viewing (#189) adds no fourth mode. `publicViewer` is **session-layer

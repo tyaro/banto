@@ -172,10 +172,41 @@ describe('permissions client (Issue #697)', () => {
 		]);
 	});
 
-	it('demo mode rejects the catalog like every other users call', async () => {
+	it('demo mode answers the catalog with an empty list (a read)', async () => {
 		setupMock.mode = 'demo';
 		const { listPermissionCatalog } = await import('./usersAdmin');
-		await expect(listPermissionCatalog()).rejects.toMatchObject({ message: expect.any(String) });
+		await expect(listPermissionCatalog()).resolves.toEqual([]);
+	});
+});
+
+describe('demo mode: read-only sample users (Issue #712)', () => {
+	it('lists the fixed sample users, without calling the network', async () => {
+		setupMock.mode = 'demo';
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const { listUsers, isUsersAdminWritable } = await import('./usersAdmin');
+		const users = await listUsers();
+		expect(users.length).toBeGreaterThanOrEqual(3);
+		expect(users.filter((u) => u.kind === 'builtin')).toHaveLength(1);
+		expect(await listUsers()).toEqual(users);
+		expect(isUsersAdminWritable()).toBe(false);
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(invokeMock).not.toHaveBeenCalled();
+	});
+
+	it('refuses every write with the demo message', async () => {
+		setupMock.mode = 'demo';
+		const { createUser, updateUser, deleteUser, resetUserPassword, DEMO_MODE_MESSAGE } =
+			await import('./usersAdmin');
+		const expected = { message: DEMO_MODE_MESSAGE };
+		await expect(
+			createUser({ username: 'x', password: 'password1', displayName: 'X', role: 'viewer' })
+		).rejects.toMatchObject(expected);
+		await expect(updateUser(2, { displayName: 'Y', role: 'viewer' })).rejects.toMatchObject(
+			expected
+		);
+		await expect(deleteUser(2)).rejects.toMatchObject(expected);
+		await expect(resetUserPassword(2, 'password2')).rejects.toMatchObject(expected);
 	});
 });
 

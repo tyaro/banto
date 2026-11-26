@@ -18,15 +18,18 @@
  * clearer than bending the generic contract to fit.
  *
  * Plain `vite dev`/`vite preview` (spec §11.1's third environment, no Rust
- * backend at all): there is no account database to manage, so every export
- * here throws/rejects with a `ProviderError` carrying `DEMO_MODE_MESSAGE`;
- * `isUsersAdminAvailable()` lets the users page check this up front instead
- * of always trying and catching.
+ * backend at all): there is no account database to manage. Reads
+ * (`listUsers`, `listPermissionCatalog`) answer with fixed sample data
+ * (`providers/demoUsers.ts`; Issue #712, conventions §10); every write
+ * throws/rejects with a `ProviderError` carrying `DEMO_MODE_MESSAGE`.
+ * `isUsersAdminWritable()` lets the users page show that the screen is a
+ * read-only demo without branching on the environment itself.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { getAuthProvider, isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 import { CSRF_HEADER, getBantoMode } from './setup';
 import type { Role } from '../permissions';
+import { DEMO_USERS } from './providers/demoUsers';
 
 /**
  * The per-user permission types (Issue #697) live in `authAdmin.ts`, which
@@ -96,8 +99,8 @@ function demoModeError(): ProviderError {
 	return new ProviderError({ kind: 'other', message: DEMO_MODE_MESSAGE });
 }
 
-/** Is this environment backed by a real account database (Tauri or the embedded server)? False in plain-browser demo mode. */
-export function isUsersAdminAvailable(): boolean {
+/** Is this environment backed by a real account database (Tauri or the embedded server), so writes work? False in plain-browser demo mode, which shows read-only sample users. */
+export function isUsersAdminWritable(): boolean {
 	return getBantoMode() !== 'demo';
 }
 
@@ -189,13 +192,13 @@ async function httpRequest<T>(path: string, init: HttpInit): Promise<T> {
 }
 
 export async function listUsers(): Promise<UserSummary[]> {
-	if (!isUsersAdminAvailable()) throw demoModeError();
+	if (getBantoMode() === 'demo') return DEMO_USERS.map((user) => ({ ...user, permissions: [] }));
 	if (getBantoMode() === 'tauri') return invokeCommand<UserSummary[]>('users_list');
 	return httpRequest<UserSummary[]>('/api/users', { method: 'GET' });
 }
 
 export async function createUser(input: CreateUserInput): Promise<CreatedUser> {
-	if (!isUsersAdminAvailable()) throw demoModeError();
+	if (!isUsersAdminWritable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') {
 		return invokeCommand<CreatedUser>('users_create', {
 			username: input.username,
@@ -208,7 +211,7 @@ export async function createUser(input: CreateUserInput): Promise<CreatedUser> {
 }
 
 export async function updateUser(id: number, input: UpdateUserInput): Promise<UserSummary> {
-	if (!isUsersAdminAvailable()) throw demoModeError();
+	if (!isUsersAdminWritable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') {
 		return invokeCommand<UserSummary>('users_update', {
 			id,
@@ -227,13 +230,13 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<Us
  * template itself - the users screen then shows no permission field at all.
  */
 export async function listPermissionCatalog(): Promise<PermissionEntry[]> {
-	if (!isUsersAdminAvailable()) throw demoModeError();
+	if (getBantoMode() === 'demo') return [];
 	if (getBantoMode() === 'tauri') return invokeCommand<PermissionEntry[]>('permissions_catalog');
 	return httpRequest<PermissionEntry[]>('/api/permissions', { method: 'GET' });
 }
 
 export async function resetUserPassword(id: number, newPassword: string): Promise<void> {
-	if (!isUsersAdminAvailable()) throw demoModeError();
+	if (!isUsersAdminWritable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') {
 		await invokeCommand<void>('users_reset_password', { id, newPassword });
 		return;
@@ -249,7 +252,7 @@ export async function resetUserPassword(id: number, newPassword: string): Promis
 
 /** `version` (Issue #651): the version the row had when it was last read; a stale one is a `conflict` ProviderError and nothing is deleted. */
 export async function deleteUser(id: number, version?: number): Promise<void> {
-	if (!isUsersAdminAvailable()) throw demoModeError();
+	if (!isUsersAdminWritable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') {
 		await invokeCommand<void>('users_delete', { id, version: version ?? null });
 		return;

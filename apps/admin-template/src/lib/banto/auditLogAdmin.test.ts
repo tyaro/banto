@@ -1,4 +1,9 @@
-import { initBanto, type CredentialRevision, type DataProvider } from '@banto/admin-core';
+import {
+	initBanto,
+	type CredentialRevision,
+	type DataProvider,
+	type ListParams
+} from '@banto/admin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -73,5 +78,62 @@ describe('listAuditLog (Issue #248)', () => {
 
 		await expect(listAuditLog(params, asOfId)).resolves.toEqual(answer);
 		expect(invokeMock).toHaveBeenCalledWith('audit_log_list', args);
+	});
+});
+
+describe('demo mode: read-only sample audit log (Issue #712)', () => {
+	const demoParams = (extra: Partial<ListParams> = {}): ListParams => ({ ...params, ...extra });
+
+	it('pages the fixed sample rows newest first, without calling the network', async () => {
+		setupMock.mode = 'demo';
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const { listAuditLog, isAuditLogAvailable } = await import('./auditLogAdmin');
+
+		const first = await listAuditLog(demoParams({ pagination: { offset: 0, limit: 10 } }), null);
+		expect(first.rows).toHaveLength(10);
+		expect(first.totalCount).toBeGreaterThanOrEqual(30);
+		expect(first.asOfId).toBe(first.totalCount);
+		expect(first.rows[0].id).toBe(first.asOfId);
+		expect(first.rows[0].ts >= first.rows[1].ts).toBe(true);
+
+		const second = await listAuditLog(
+			demoParams({ pagination: { offset: 10, limit: 10 } }),
+			first.asOfId
+		);
+		expect(second.rows[0].id).toBe(first.rows[9].id - 1);
+
+		expect(isAuditLogAvailable()).toBe(false);
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(invokeMock).not.toHaveBeenCalled();
+	});
+
+	it('honours filters and the snapshot boundary', async () => {
+		setupMock.mode = 'demo';
+		const { listAuditLog } = await import('./auditLogAdmin');
+		const all = await listAuditLog(demoParams({ pagination: { offset: 0, limit: 500 } }), null);
+		const logins = await listAuditLog(
+			demoParams({
+				pagination: { offset: 0, limit: 500 },
+				filters: [{ field: 'action', op: 'eq', value: 'login' }]
+			}),
+			null
+		);
+		expect(logins.totalCount).toBeGreaterThan(0);
+		expect(logins.totalCount).toBeLessThan(all.totalCount);
+		expect(logins.rows.every((row) => row.action === 'login')).toBe(true);
+
+		const bounded = await listAuditLog(demoParams({ pagination: { offset: 0, limit: 500 } }), 5);
+		expect(bounded.totalCount).toBe(5);
+		expect(bounded.asOfId).toBe(5);
+	});
+
+	it('reads the retention config, and refuses to change it', async () => {
+		setupMock.mode = 'demo';
+		const { getAuditConfig, setAuditConfig, DEMO_MODE_MESSAGE } = await import('./auditLogAdmin');
+		await expect(getAuditConfig()).resolves.toMatchObject({ retentionDays: expect.any(Number) });
+		await expect(setAuditConfig({ retentionDays: 1, retentionRows: 1 })).rejects.toMatchObject({
+			message: DEMO_MODE_MESSAGE
+		});
 	});
 });
