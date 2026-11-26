@@ -489,7 +489,7 @@ pub fn run_powershell(
     };
     // stdout must be read completely (a failure is reported, never turned
     // into a partial buffer); stderr is only a diagnostic, so a failed read
-    // of it leaves whatever bytes came before (or none).
+    // of it is treated as empty.
     let stdout = join_output(stdout.join()).map_err(RunError::ReadOutput)?;
     let stderr = stderr.join().ok().and_then(Result::ok).unwrap_or_default();
     Ok(RunOutput {
