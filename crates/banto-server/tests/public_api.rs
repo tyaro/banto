@@ -118,6 +118,30 @@ where
     Ok(banto_server::RunningServer::stop_all([plain, own]).await)
 }
 
+/// Issue #981 (ADR-0035 §9): an app that rebuilds a listener keeps one
+/// ledger over the generations and makes its final stop through it.
+async fn write_ledger_api_is_public(
+    plain: banto_server::BoundServer,
+    old: &banto_server::RunningServer,
+    router: axum::Router,
+) -> usize {
+    use banto_server::{LedgerOutcome, StopOutcome, WriteBudget, WriteLedger};
+    let _: WriteLedger = WriteLedger::from_budget(old.write_budget());
+    let ledger: WriteLedger = WriteLedger::new();
+    let _: WriteBudget = ledger.budget();
+    let server: banto_server::RunningServer = plain.with_write_ledger(&ledger).serve(router);
+    // Any thread may begin the stop of everything.
+    let closer = ledger.clone();
+    std::thread::spawn(move || closer.close_all());
+    let _: bool = ledger.is_closed();
+    let deadline: tokio::time::Instant =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let outcome: LedgerOutcome = ledger.stop_all_until([server], deadline).await;
+    let _: &Vec<StopOutcome> = &outcome.servers;
+    let _: &Vec<String> = &outcome.remaining;
+    outcome.running
+}
+
 /// ADR-0035 §7: an app that replaces its listener shares one write budget
 /// over the generations.
 fn write_budget_api_is_public(

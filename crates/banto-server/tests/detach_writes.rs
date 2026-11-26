@@ -9,7 +9,7 @@
 use axum::routing::{get, post};
 use axum::Router;
 use banto_server::{
-    bind, start, BoundServer, RunningServer, ServerConfig, StopOutcome, WriteBudget,
+    bind, start, BoundServer, RunningServer, ServerConfig, StopOutcome, WriteBudget, WriteLedger,
     BUFFERED_BODY_MAX_BYTES, MAX_DETACHED_WRITES, MAX_STREAMED_WRITES, RECEIVING_BODIES_MAX_BYTES,
 };
 use std::net::SocketAddr;
@@ -725,4 +725,248 @@ async fn writes_left_by_an_earlier_generation_are_not_in_stop_all() {
     steps.release(1);
     assert!(left.wait(Duration::from_secs(5)).await);
     assert_eq!(budget.running(), 0);
+}
+
+// --- Issue #981 (ADR-0035 §9): the ledger over the generations ---
+
+/// Serves `steps`' router on a new [`OwnListener`], entered in `ledger`.
+async fn serve_in(ledger: &WriteLedger, steps: &TwoSteps) -> RunningServer {
+    let listener = OwnListener {
+        inner: tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind"),
+        accepted: Arc::default(),
+    };
+    BoundServer::from_listener(listener)
+        .expect("local address")
+        .with_write_ledger(ledger)
+        .serve(router(steps))
+}
+
+/// A deadline no test here is meant to reach.
+fn far_deadline() -> tokio::time::Instant {
+    tokio::time::Instant::now() + Duration::from_secs(30)
+}
+
+/// `POST /plain` to a listener that may be closed already: the status line,
+/// or `None` when no response came (refused, reset, closed).
+async fn try_post(addr: SocketAddr) -> Option<String> {
+    let mut stream = TcpStream::connect(addr).await.ok()?;
+    let request =
+        "POST /plain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    stream.write_all(request.as_bytes()).await.ok()?;
+    let mut bytes = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut bytes)).await;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    match read {
+        Ok(_) if !text.is_empty() => text.lines().next().map(str::to_string),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn a_listener_entered_after_close_all_comes_up_stopped() {
+    let steps = TwoSteps::default();
+    let ledger = WriteLedger::new();
+    assert!(!ledger.is_closed());
+    ledger.close_all();
+    ledger.close_all();
+    assert!(ledger.is_closed());
+
+    // A generation that was being rebuilt while the app's stop began.
+    let late = serve_in(&ledger, &steps).await;
+    assert!(!late.is_serving(), "it is not serving");
+    assert!(late.stop_handle().is_stop_requested());
+    assert!(
+        late.hold_write_for_test("POST /late").is_none(),
+        "it starts no write"
+    );
+    // A write sent to it is refused (503) for as long as a connection is
+    // still taken at all; then the port is closed.
+    let addr = late.local_addr();
+    let mut closed = false;
+    for _ in 0..300 {
+        match try_post(addr).await {
+            Some(status) => assert!(status.starts_with("HTTP/1.1 503"), "{status}"),
+            None => {
+                if TcpStream::connect(addr).await.is_err() {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(closed, "the listener is closed");
+    assert_eq!(ledger.budget().running(), 0, "nothing was started");
+
+    assert!(matches!(late.stop().await, StopOutcome::Finished));
+}
+
+#[tokio::test]
+async fn close_all_closes_the_gate_of_every_listener_in_the_ledger() {
+    let steps = TwoSteps::default();
+    let ledger = WriteLedger::new();
+    let first = serve_in(&ledger, &steps).await;
+    let second = serve_in(&ledger, &steps).await;
+    assert!(first.is_serving() && second.is_serving());
+
+    ledger.close_all();
+
+    for server in [&first, &second] {
+        assert!(!server.is_serving());
+        assert!(server.hold_write_for_test("POST /late").is_none());
+    }
+    let outcome = ledger.stop_all_until([first, second], far_deadline()).await;
+    assert_eq!(outcome.servers.len(), 2);
+    assert_eq!(outcome.running, 0);
+    assert!(outcome.remaining.is_empty());
+}
+
+#[tokio::test]
+async fn the_final_stop_waits_for_a_write_an_earlier_generation_left() {
+    let steps = TwoSteps::default();
+    let ledger = WriteLedger::new();
+
+    // A generation is replaced while one of its writes runs. The app does
+    // not keep what its stop returned.
+    let old = serve_in(&ledger, &steps).await;
+    let write = old.hold_write_for_test("POST /old").expect("accepted");
+    assert!(matches!(
+        old.stop_within(Duration::ZERO, Duration::ZERO).await,
+        StopOutcome::WritesRemaining(_)
+    ));
+    let current = serve_in(&ledger, &steps).await;
+
+    let stopping = {
+        let ledger = ledger.clone();
+        tokio::spawn(async move { ledger.stop_all_until([current], far_deadline()).await })
+    };
+    until("the final stop to begin", || ledger.is_closed()).await;
+    // The listener given stops cleanly; the stop goes on waiting for the
+    // write of the generation before it.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!stopping.is_finished(), "it waits for the earlier write");
+
+    drop(write);
+    let outcome = stopping.await.expect("join");
+    assert!(matches!(outcome.servers[..], [StopOutcome::Finished]));
+    assert_eq!(outcome.running, 0);
+    assert!(outcome.remaining.is_empty());
+}
+
+#[tokio::test]
+async fn the_final_stop_names_the_earlier_write_that_outlives_the_deadline() {
+    let steps = TwoSteps::default();
+    let ledger = WriteLedger::new();
+    let old = serve_in(&ledger, &steps).await;
+    let write = old.hold_write_for_test("POST /old").expect("accepted");
+    // Stopped with the plain `stop` family; what it returns is dropped, the
+    // ledger has it all the same.
+    drop(old.stop_waiting_writes_for(Duration::ZERO).await);
+    let current = serve_in(&ledger, &steps).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(100);
+    let outcome = ledger.stop_all_until([current], deadline).await;
+
+    assert!(tokio::time::Instant::now() >= deadline, "waited until then");
+    assert!(matches!(outcome.servers[..], [StopOutcome::Finished]));
+    assert_eq!(outcome.running, 1);
+    assert_eq!(outcome.remaining, vec!["POST /old".to_string()]);
+
+    // Asked again once it is done, the ledger has nothing left.
+    drop(write);
+    let outcome = ledger.stop_all_until([], tokio::time::Instant::now()).await;
+    assert_eq!(outcome.running, 0);
+    assert!(outcome.remaining.is_empty());
+}
+
+#[tokio::test]
+async fn the_final_stop_waits_for_writes_left_while_it_was_running() {
+    let steps = TwoSteps::default();
+    let ledger = WriteLedger::new();
+    let revoked = serve_in(&ledger, &steps).await;
+    let revoked_write = revoked.hold_write_for_test("POST /revoked").expect("ok");
+    let current = serve_in(&ledger, &steps).await;
+    let current_write = current.hold_write_for_test("POST /current").expect("ok");
+
+    let stopping = {
+        let ledger = ledger.clone();
+        tokio::spawn(async move { ledger.stop_all_until([current], far_deadline()).await })
+    };
+    until("the final stop to begin", || ledger.is_closed()).await;
+
+    // Only now - the final stop is under way, held by the write of the
+    // listener it was given - the other generation's owner stops it, without
+    // waiting for its write at all (a revoked certificate).
+    assert!(matches!(
+        revoked.stop_within(Duration::ZERO, Duration::ZERO).await,
+        StopOutcome::WritesRemaining(_)
+    ));
+    drop(current_write);
+    // The listener given is done now. What was left meanwhile still holds
+    // the final stop.
+    until("the write of the listener given to finish", || {
+        ledger.budget().running() == 1
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !stopping.is_finished(),
+        "it waits for the write that was left during the stop"
+    );
+
+    drop(revoked_write);
+    let outcome = stopping.await.expect("join");
+    assert_eq!(outcome.running, 0);
+    assert!(outcome.remaining.is_empty());
+}
+
+#[tokio::test]
+async fn a_deadline_that_has_passed_is_not_waited_for() {
+    let steps = TwoSteps::default();
+    let ledger = WriteLedger::new();
+    let server = serve_in(&ledger, &steps).await;
+    // A request whose handler does not return: its connection would hold a
+    // plain stop for 5 seconds, its write for 10.
+    let _stream = send(server.local_addr(), "POST", "/work").await;
+    until("the handler to reach its first step", || {
+        steps.created() == 1
+    })
+    .await;
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(2),
+        ledger.stop_all_until([server], tokio::time::Instant::now()),
+    )
+    .await
+    .expect("returns without waiting");
+
+    assert!(matches!(
+        outcome.servers[..],
+        [StopOutcome::WritesRemaining(_)]
+    ));
+    assert_eq!(outcome.running, 1);
+    assert_eq!(outcome.remaining, vec!["POST /work".to_string()]);
+
+    steps.release(1);
+    until("the write to finish", || ledger.budget().running() == 0).await;
+}
+
+#[tokio::test]
+async fn a_listener_dropped_without_a_stop_keeps_its_write_in_the_ledger() {
+    let steps = TwoSteps::default();
+    let ledger = WriteLedger::new();
+    let server = serve_in(&ledger, &steps).await;
+    let write = server.hold_write_for_test("POST /dropped").expect("ok");
+    drop(server);
+
+    let outcome = ledger.stop_all_until([], tokio::time::Instant::now()).await;
+    assert_eq!(outcome.running, 1);
+    assert_eq!(outcome.remaining, vec!["POST /dropped".to_string()]);
+
+    drop(write);
+    let outcome = ledger.stop_all_until([], far_deadline()).await;
+    assert_eq!(outcome.running, 0);
+    assert!(outcome.remaining.is_empty());
 }

@@ -225,6 +225,39 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
   (`RemainingWrites::wait`), or reports them as unfinished. All `Finished` for the listeners given does not by
   itself mean "no write is running". The check over all generations is that `WriteBudget::running()` of the shared
   budget is 0.
+- **Leave that bookkeeping to the ledger (`WriteLedger`, Issue #981, added 2026-11-26)**: an app that writes the
+  item above itself meets two traps. (1) Waiting on a list of the leftovers taken once misses what a generation
+  leaves when it is stopped while the final stop is under way (a revoked generation returns without waiting for
+  its writes). (2) A generation that finishes being built after the final stop began comes up with an open gate.
+  So banto-server keeps the ledger. The app makes one `WriteLedger::new()` (`from_budget` over a budget that
+  exists already) and serves every listener, every generation of it, with
+  `BoundServer::with_write_ledger(&ledger)`.
+  - The listener counts against the ledger's budget (what `with_write_budget` does; when both are called the
+    ledger's budget wins), and `serve` enters it in the ledger.
+  - `close_all()` requests the stop of every listener entered (as `StopHandle::request_stop` does: plain, no
+    waiting) and latches. **A listener entered afterwards comes up stopped** (no write, no connection,
+    `is_serving()` is false). Entering a listener and reading or setting the latch happen under one lock, so no
+    gate can stay open in between.
+  - Stopping one generation to replace it is still the `stop()` family. What comes back as `WritesRemaining`
+    stays in the ledger even when the caller drops the `StopOutcome` (the ledger holds a reference to each
+    listener's running writes and lets go of it once the listener is stopped and no write of it is running, so
+    it does not grow with the number of generations. A listener dropped without a stop is treated the same,
+    and the ledger closes its gate).
+  - The final stop is `stop_all_until(servers, deadline)` (`deadline` is a `tokio::time::Instant`):
+    `close_all()`, then the listeners given are stopped in the order of `stop_all_within` (connections for
+    `min(5 seconds, time left)`, writes for the time left), then **it waits until `running()` of the shared
+    budget is 0, up to the deadline**. The result is `LedgerOutcome { servers, running, remaining }` (`running`
+    0: the writes of every generation are done; `remaining`: `METHOD path` of the ones still running). A
+    deadline that has passed is not waited for.
+  - **The last wait looks at the count of the budget, not at a list in the ledger**: that is the answer to
+    (1). The budget counts every write of every generation, whenever its listener was stopped; an
+    implementation that copies a list misses, by construction, what is added after the copy. The wait on the
+    budget (woken by `give_back`) is not public: "0 right now" means "all done" only after every gate was
+    closed, and `stop_all_until` is what can promise that.
+  - Writes of a listener that shares the budget without being entered in the ledger (`with_write_budget`) are
+    in `running`, but the ledger can neither close its gate nor name them. Every listener that is rebuilt goes
+    through `with_write_ledger`. Unless such a listener is stopped separately, `running == 0` is only the value
+    of that moment and no ground to close the database.
 - **How far the promise reaches**: "nothing to forget to wrap" (§1) covers **every listener served through
   `serve`**. The layer itself (`detach_writes`, `DetachedWrites`) stays private, so `serve` is the only way to
   install it and there is no way to install it wrongly. The only way out of the promise is to hand the router
@@ -287,7 +320,13 @@ listener of banto-industrial's Hub), the writes that arrive there are not detach
   `is_serving` turns false when the accept task ends on its own, and at once after a requested stop), in the
   same `detach_writes.rs`: after a stop requested from outside neither a connection nor a write is accepted / a
   write detached before the request runs to the end / writes left by an earlier generation are not in the results
-  of `stop_all`, the unit
+  of `stop_all` / `WriteLedger` (#981): a generation entered after `close_all` comes up stopped / `close_all`
+  closes the gate of every generation / the leftovers of an earlier generation are waited for until the
+  deadline / when they do not finish, `running` and the names say so / **what is left while the stop is running
+  is waited for too** / a deadline that has passed is not waited for / the write of a listener dropped without
+  a stop stays in the ledger, the unit tests in `ledger.rs` (finished generations leave the ledger / a listener
+  in a ledger uses the ledger's budget only / the wait on the budget ends when the last write gives its place
+  back), the unit
   tests in `detach.rs` (after the gate closed: 503 and the handler never runs) and `exposure.rs` (the direction;
   mixed changes count as narrowing), `apps/admin-template/core/src/rest/tests/detach.rs` (the real
   `POST /api/users`: account and audit row survive the disconnect),

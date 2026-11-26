@@ -1,6 +1,7 @@
 //! Server lifecycle: bind, run, graceful-stop (spec §11.1, §11.4).
 
 use crate::detach::{detach_writes, DetachedWrites, RemainingWrites, StopOutcome, WriteBudget};
+use crate::ledger::WriteLedger;
 use axum::serve::{Listener, ListenerExt};
 use axum::Router;
 use banto_core::BantoError;
@@ -33,7 +34,7 @@ impl Default for ServerConfig {
 /// aborts the server task (Issue #283). Graceful shutdown waits for every open
 /// connection to finish; long-lived ones (SSE, slow downloads) must not be
 /// able to hold a settings change or app exit hostage.
-const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long [`RunningServer::stop`] waits for the writes the listener
 /// accepted ([`crate::detach`]) to finish, counted from the stop signal
@@ -152,6 +153,17 @@ impl StopHandle {
     /// its clones, or [`RunningServer::stop`]): it starts no more writes.
     pub fn is_stop_requested(&self) -> bool {
         self.detached_writes.is_closed()
+    }
+
+    /// Whether the [`RunningServer`] this came from is gone (stopped or
+    /// dropped): no stop of it can report anything any more.
+    pub(crate) fn listener_gone(&self) -> bool {
+        self.shutdown_tx.strong_count() == 0
+    }
+
+    /// The writes of the listener (for [`crate::WriteLedger`]).
+    pub(crate) fn writes(&self) -> &DetachedWrites {
+        &self.detached_writes
     }
 }
 
@@ -297,25 +309,39 @@ impl RunningServer {
     /// # let _ = outcome;
     /// # }
     /// ```
-    pub async fn stop_within(mut self, connections: Duration, writes: Duration) -> StopOutcome {
+    pub async fn stop_within(self, connections: Duration, writes: Duration) -> StopOutcome {
+        self.stop_until(deadline_after(connections), deadline_after(writes))
+            .await
+    }
+
+    /// [`Self::stop_within`] with absolute deadlines. The relative form
+    /// counts from its call; a caller that has other work before the stop
+    /// (collecting listeners, closing gates) must not lose that time, so
+    /// [`crate::WriteLedger::stop_all_until`] comes in here.
+    pub(crate) async fn stop_until(
+        mut self,
+        connections_deadline: tokio::time::Instant,
+        writes_deadline: tokio::time::Instant,
+    ) -> StopOutcome {
+        let started = tokio::time::Instant::now();
         // Order: refuse new writes first, then tell the connections to end.
         self.detached_writes.close();
         let _ = self.shutdown_tx.send(true);
         let gate = self.detached_writes.clone();
         let connections = async {
-            if tokio::time::timeout(connections, &mut self.join_handle)
+            if tokio::time::timeout_at(connections_deadline, &mut self.join_handle)
                 .await
                 .is_err()
             {
                 eprintln!(
                     "banto-server: 停止が{:?}以内に完了しなかったためサーバタスクを中断します",
-                    connections
+                    connections_deadline.saturating_duration_since(started)
                 );
                 self.join_handle.abort();
                 let _ = self.join_handle.await;
             }
         };
-        let (idle, ()) = tokio::join!(gate.wait_idle(writes), connections);
+        let (idle, ()) = tokio::join!(gate.wait_idle_until(writes_deadline), connections);
         if idle {
             return StopOutcome::Finished;
         }
@@ -323,7 +349,7 @@ impl RunningServer {
         eprintln!(
             "banto-server: 停止の後も書き込みが{}件残っています（{:?}待ちました）: {}",
             remaining.count(),
-            writes,
+            started.elapsed(),
             remaining.operations().join(", ")
         );
         StopOutcome::WritesRemaining(remaining)
@@ -354,6 +380,12 @@ impl RunningServer {
     /// or reports them as unfinished. [`WriteBudget::running`] of the shared
     /// budget is the check over everything: 0 only when no write of any
     /// generation is running.
+    ///
+    /// [`WriteLedger`] does that bookkeeping (Issue #981): serve every
+    /// generation with [`BoundServer::with_write_ledger`] and make the final
+    /// stop with [`WriteLedger::stop_all_until`] - it closes the gates of all
+    /// generations, waits for the writes earlier ones left running against
+    /// the same deadline, and reports what is still running.
     pub async fn stop_all(servers: impl IntoIterator<Item = RunningServer>) -> Vec<StopOutcome> {
         Self::stop_all_waiting_writes_for(servers, DETACHED_WRITES_STOP_TIMEOUT).await
     }
@@ -388,6 +420,25 @@ impl RunningServer {
         .await
     }
 
+    /// [`Self::stop_all_within`] with absolute deadlines, counted from before
+    /// the listeners are collected and the gates closed.
+    pub(crate) async fn stop_all_until(
+        servers: impl IntoIterator<Item = RunningServer>,
+        connections_deadline: tokio::time::Instant,
+        writes_deadline: tokio::time::Instant,
+    ) -> Vec<StopOutcome> {
+        let servers: Vec<RunningServer> = servers.into_iter().collect();
+        for server in &servers {
+            server.detached_writes.close();
+        }
+        futures_util::future::join_all(
+            servers
+                .into_iter()
+                .map(|server| server.stop_until(connections_deadline, writes_deadline)),
+        )
+        .await
+    }
+
     /// Counts one write as running on this listener until the returned value
     /// is dropped, exactly as a request held by the layer would be - for
     /// tests of what a caller does with [`StopOutcome::WritesRemaining`]
@@ -397,6 +448,14 @@ impl RunningServer {
     pub fn hold_write_for_test(&self, label: &str) -> Option<impl Send + 'static> {
         self.detached_writes.enter(label.to_string()).ok()
     }
+}
+
+/// `now + limit`, kept far from overflow for a very large `limit` (the
+/// relative `timeout` of tokio accepts any duration, so this does too).
+pub(crate) fn deadline_after(limit: Duration) -> tokio::time::Instant {
+    let now = tokio::time::Instant::now();
+    now.checked_add(limit)
+        .unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30))
 }
 
 /// A listener that is bound (the port is reserved, the OS may queue incoming
@@ -416,6 +475,7 @@ pub struct BoundServer<L = TcpListener> {
     listener: L,
     local_addr: SocketAddr,
     write_budget: WriteBudget,
+    write_ledger: Option<WriteLedger>,
 }
 
 impl<L> BoundServer<L>
@@ -456,6 +516,7 @@ where
             listener,
             local_addr,
             write_budget: WriteBudget::default(),
+            write_ledger: None,
         })
     }
 
@@ -473,8 +534,37 @@ where
     /// [`crate::MAX_DETACHED_WRITES`] run at once over all generations.
     /// An app with several listeners at once ([`Self::from_listener`]) passes
     /// all of them the same budget, for the same reason.
+    ///
+    /// Ignored for a listener that is also given a ledger
+    /// ([`Self::with_write_ledger`]), in whichever order the two are called:
+    /// such a listener always counts against the ledger's budget.
     pub fn with_write_budget(mut self, budget: WriteBudget) -> Self {
         self.write_budget = budget;
+        self
+    }
+
+    /// Enter this listener in `ledger` (Issue #981, ADR-0035 §9) - for an
+    /// app that stops and replaces listeners (a TLS listener rebuilt for each
+    /// renewed or revoked certificate) and must, at its final stop, account
+    /// for the writes of every generation. It does what
+    /// [`Self::with_write_budget`] does with the ledger's budget
+    /// ([`WriteLedger::budget`]), and [`Self::serve`] then registers the
+    /// listener:
+    ///
+    /// - [`WriteLedger::close_all`] closes its gate together with all the
+    ///   others;
+    /// - when the ledger was ALREADY closed (the app's final stop began while
+    ///   this listener was being rebuilt), `serve` returns a listener whose
+    ///   stop is requested: it starts no write, accepts no connection, and
+    ///   [`RunningServer::is_serving`] is `false`. Stop it like any other;
+    /// - the writes it still has running after its stop (any of
+    ///   [`RunningServer::stop`], `stop_within`, `stop_all`...) stay in the
+    ///   ledger until they finish. The [`StopOutcome`] is returned to the
+    ///   caller as before; it need not be kept for the ledger's sake.
+    ///
+    /// The ledger is cloneable; every listener gets a clone of the same one.
+    pub fn with_write_ledger(mut self, ledger: &WriteLedger) -> Self {
+        self.write_ledger = Some(ledger.clone());
         self
     }
 
@@ -486,7 +576,14 @@ where
             listener,
             local_addr,
             write_budget,
+            write_ledger,
         } = self;
+        // A listener in a ledger counts against the ledger's budget, always:
+        // the ledger's final wait reads that one count.
+        let write_budget = match &write_ledger {
+            Some(ledger) => ledger.budget(),
+            None => write_budget,
+        };
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         let shutdown_tx = Arc::new(shutdown_tx);
         let sse_connections = SseConnections::default();
@@ -502,6 +599,15 @@ where
                 detached_writes.clone(),
                 detach_writes,
             ));
+        // Before the serve task exists: a listener registered after
+        // `close_all` has its stop requested here, so it never serves a
+        // request with an open gate.
+        if let Some(ledger) = &write_ledger {
+            ledger.register(StopHandle {
+                detached_writes: detached_writes.clone(),
+                shutdown_tx: Arc::downgrade(&shutdown_tx),
+            });
+        }
         let join_handle = tokio::spawn(async move {
             // `into_make_service_with_connect_info::<SocketAddr>()` (rather than
             // the plain `into_make_service()`) makes each connection's peer
