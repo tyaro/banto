@@ -1,6 +1,6 @@
 {
   "name": "@banto/touch-keys-svelte",
-  "version": "9.0.0",
+  "version": "9.1.0",
   "description": "Banto touch keys: on-screen number keypad and text keyboard for touch panels (pure-TS draft cores + Svelte 5 host and keys). Optional; the template wires it only as a /ui-demo sample card (docs/design/touch-keypad-design.md)",
   "license": "MIT",
   "repository": {
