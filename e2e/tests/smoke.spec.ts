@@ -75,6 +75,10 @@ const VIEWER_DISPLAY_NAME = 'E2E閲覧者';
 // name doubling as the grid-filter needle makes it worth being paranoid)
 // can never collide with the row this run creates.
 const ITEM_NAME = `E2Eテスト商品-${Date.now()}`;
+
+// #757: items 4c imports and 4d deletes these (own prefix; more rows than the first 200-row block the grid loads).
+const E2E_IMPORT_PREFIX = `E2E取込-${Date.now()}`;
+const E2E_IMPORT_ROWS = 250;
 const ITEM_PRICE = 1200;
 const ITEM_PRICE_UPDATED = 1500;
 const ITEM_STOCK = 10;
@@ -1721,6 +1725,139 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		await panel.getByRole('button', { name: 'キャンセル' }).click();
 		await expect(panel).toHaveCount(0);
+	});
+
+	// #757: the import's run -> reload path. Its rows (E2E_IMPORT_PREFIX) are the
+	// ones 4d later selects and deletes, so nothing here outlives that test.
+	test('4c. CSV import: a file with an error row cannot run; a clean one imports and the list reloads with the new rows', async () => {
+		test.setTimeout(120_000);
+		await page.goto('/items');
+		await chooseItemsMode(page, SERVER_MODE);
+		const grid = page.getByRole('grid').first();
+		const fileInput = page.locator('input[type="file"][accept=".csv,.txt"]');
+		const panel = page.locator('section.import-panel');
+		const runButton = panel.getByRole('button', { name: 'インポート実行' });
+
+		// One row's price is not a number: the panel counts and names it, the run
+		// button stays disabled, and cancelling imports nothing.
+		const withError = [
+			'name,price,stock',
+			`${E2E_IMPORT_PREFIX}-ok,100,1`,
+			`${E2E_IMPORT_PREFIX}-bad,abc,1`
+		];
+		await fileInput.setInputFiles({
+			name: 'with-error.csv',
+			mimeType: 'text/csv',
+			buffer: Buffer.from(withError.join('\n'), 'utf-8')
+		});
+		await expect(panel).toBeVisible();
+		await expect(panel.getByText('新規 2件 / 更新 0件 / エラー 1件（全2行）')).toBeVisible();
+		await expect(panel.getByRole('listitem').filter({ hasText: '3行目' })).toBeVisible();
+		await expect(runButton).toBeDisabled();
+		await panel.getByRole('button', { name: 'キャンセル' }).click();
+		await expect(panel).toHaveCount(0);
+		await applyColumnFilter(page, '商品名', E2E_IMPORT_PREFIX);
+		await expect(grid).toHaveAttribute('aria-rowcount', '1');
+
+		// A clean file: preview, run, and the list (already filtered to the prefix)
+		// reloads by itself with every imported row.
+		const lines = ['name,price,stock'];
+		for (let i = 1; i <= E2E_IMPORT_ROWS; i++) {
+			lines.push(`${E2E_IMPORT_PREFIX}-${String(i).padStart(3, '0')},${100 + i},${i}`);
+		}
+		await fileInput.setInputFiles({
+			name: 'clean.csv',
+			mimeType: 'text/csv',
+			buffer: Buffer.from(lines.join('\n'), 'utf-8')
+		});
+		await expect(
+			panel.getByText(`新規 ${E2E_IMPORT_ROWS}件 / 更新 0件 / エラー 0件`)
+		).toBeVisible();
+		await expect(runButton).toBeEnabled();
+		await runButton.click();
+		await expect(
+			page.getByText(`インポートしました（新規${E2E_IMPORT_ROWS}件・更新0件）`)
+		).toBeVisible();
+		await expect(panel).toHaveCount(0);
+		await expect(grid).toHaveAttribute('aria-rowcount', String(E2E_IMPORT_ROWS + 1));
+		await expect(rowWithText(page, `${E2E_IMPORT_PREFIX}-001`)).toBeVisible();
+		await clearColumnFilter(page, '商品名');
+	});
+
+	// #749-#753: "select all M matching" in server mode, through the screen. Works
+	// only on the rows 4c imported (filtered by their prefix), so the other
+	// scenarios' items are never selected or deleted.
+	test('4d. items: select all matching covers rows beyond the loaded ones, only for the filter; clear drops it; bulk delete removes exactly those', async () => {
+		test.setTimeout(180_000);
+		await page.goto('/items');
+		await chooseItemsMode(page, SERVER_MODE);
+		const grid = page.getByRole('grid').first();
+		const bar = page.getByRole('group', { name: '一括操作' });
+		const headerBox = grid.getByRole('checkbox', { name: /をすべて選択/ });
+		const offer = bar.getByRole('button', { name: /該当する全\d+件を選択/ });
+		const dialog = page.getByRole('alertdialog').or(page.getByRole('dialog'));
+
+		// The whole list before any filter: the delete below must take exactly the
+		// imported rows out of it and leave every other item.
+		await expect
+			.poll(async () => Number(await grid.getAttribute('aria-rowcount')))
+			.toBeGreaterThan(E2E_IMPORT_ROWS);
+		const rowCountBefore = Number(await grid.getAttribute('aria-rowcount'));
+
+		await applyColumnFilter(page, '商品名', E2E_IMPORT_PREFIX);
+		await expect(grid).toHaveAttribute('aria-rowcount', String(E2E_IMPORT_ROWS + 1));
+
+		// Select every loaded row with the header box: with rows beyond the loaded
+		// ones the bar offers the whole filtered count.
+		await expect(async () => {
+			if (!(await headerBox.isChecked())) await headerBox.click({ timeout: 1000 });
+			await expect(offer).toBeVisible({ timeout: 1000 });
+		}).toPass({ timeout: 30_000 });
+		await expect(offer).toHaveText(`該当する全${E2E_IMPORT_ROWS}件を選択`);
+
+		// Clearing drops the selection, the bar and the offer.
+		await bar.getByRole('button', { name: '選択を解除' }).click();
+		await expect(bar).toHaveCount(0);
+
+		// Narrow the filter to a handful of rows: all of them are loaded, so
+		// nothing is left beyond them and there is no offer.
+		await clearColumnFilter(page, '商品名');
+		await applyColumnFilter(page, '商品名', `${E2E_IMPORT_PREFIX}-00`);
+		await expect(grid).toHaveAttribute('aria-rowcount', '10');
+		await expect(async () => {
+			if (!(await headerBox.isChecked())) await headerBox.click({ timeout: 1000 });
+			await expect(bar).toContainText('9件を選択中', { timeout: 1000 });
+		}).toPass({ timeout: 30_000 });
+		await expect(offer).toHaveCount(0);
+		await bar.getByRole('button', { name: '選択を解除' }).click();
+		await expect(bar).toHaveCount(0);
+
+		// Back to the whole import: take the offer. The count is the filtered
+		// total, not just the loaded rows.
+		await clearColumnFilter(page, '商品名');
+		await applyColumnFilter(page, '商品名', E2E_IMPORT_PREFIX);
+		await expect(grid).toHaveAttribute('aria-rowcount', String(E2E_IMPORT_ROWS + 1));
+		await expect(async () => {
+			if (!(await headerBox.isChecked())) await headerBox.click({ timeout: 1000 });
+			await expect(offer).toBeVisible({ timeout: 1000 });
+		}).toPass({ timeout: 30_000 });
+		await offer.click();
+		await expect(bar).toContainText(`${E2E_IMPORT_ROWS}件を選択中`);
+		await expect(offer).toHaveCount(0);
+
+		// Delete: the dialog counts the matching rows; afterwards the list reloads
+		// with none of them.
+		await bar.getByRole('button', { name: `${E2E_IMPORT_ROWS}件を削除` }).click();
+		await expect(
+			dialog.getByText(`条件に該当する${E2E_IMPORT_ROWS}件を削除しますか？`)
+		).toBeVisible();
+		await dialog.getByRole('button', { name: '削除', exact: true }).click();
+		await expect(page.getByText(`${E2E_IMPORT_ROWS}件を削除しました`)).toBeVisible();
+		await expect(bar).toHaveCount(0);
+		await expect(grid).toHaveAttribute('aria-rowcount', '1');
+
+		await clearColumnFilter(page, '商品名');
+		await expect(grid).toHaveAttribute('aria-rowcount', String(rowCountBefore - E2E_IMPORT_ROWS));
 	});
 
 	test('5. user management: create a viewer account and preserve selection across replies', async () => {
