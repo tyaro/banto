@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- feat(server): 作り直しの世代をまたぐ書き込みの台帳 `WriteLedger` を足した（#981、ADR-0035 §9。追加のみ）。`WriteLedger::new()` / `from_budget(WriteBudget)` を作り、各世代の listener を `BoundServer::with_write_ledger(&ledger)` で `serve` に通すと、枠の共有と門の登録をひとりでに行う。`close_all()` は全世代の門を閉じ、その後に登録された世代は止まった状態で返る（`is_serving()` は偽）。`stop()` の系列が `WritesRemaining` を返した世代の書き込みは、終わるまで台帳に残る。全体の停止は `stop_all_until(servers, deadline)`（`tokio::time::Instant`）で、渡した listener の停止の後、共有の枠の `running()` が 0 になるまで締め切りまで待ち、`LedgerOutcome { servers, running, remaining }` を返す（停止の途中で止められた世代の残りも取りこぼさない）。下流（banto-industrial の Hub）が自前で書いていた `ListenerWrites` を置き換えられる。`stop_all`・`RemainingWrites`・`with_write_budget` の動きは変わらない。
 - feat(server): `RunningServer::stop_within(connections, writes)` を公開し、`RunningServer::stop_all_within(servers, connections, writes)` を足した（#980）。接続の待ち（既定 5 秒、超えたら serve のタスクを中断、#283）と書き込みの待ちの両方の上限を呼び手が選べる。`stop()`・`stop_waiting_writes_for`・`stop_all`・`stop_all_waiting_writes_for` の動きは変わらない（追加のみ）。停止のログの上限は 1 秒未満でも「0秒」とならず `300ms` のように出る。
 - fix(touch-keys): ダーク（ライトも）の Glass で盤のパネルが透けて下の画面が読みにくい件を直した（#977）。`TouchKeysHost` の中だけ `--banto-surface-raised` を浮く面用の `--banto-surface-overlay`（Glass でも不透明。Modal・コマンドパレットと同じ）に寄せた。標準・ライト・ダークは両トークンが同じ値なので見た目は変わらない。単体で置いた `NumberKeypad` / `TextKeyboard` は従来どおり。
 - feat(desktop): Windows で起動を止めるときに、理由をダイアログ（`MessageBoxW`、依存追加なし）で知らせる（#975）。リリース版は console が無く、stderr の「起動できません」が見えなかった（create-admin 前の起動など）。debug ビルドでも出す。macOS・Linux は従来どおり stderr のみ。データフォルダ・exports 用フォルダの作成、サーバー設定の読み込み、`.run()` の失敗も `expect` の panic をやめて同じ経路に寄せた。ログファイルは足さない。

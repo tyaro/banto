@@ -72,7 +72,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 
 /// How many detached writes run at once under one [`WriteBudget`] (ADR-0035
 /// §7) - one listener, or every listener generation that shares the budget.
@@ -134,6 +134,9 @@ struct Counts {
     /// The bytes of the bodies being received for writes that have not
     /// started yet.
     receiving_bytes: AtomicUsize,
+    /// Woken whenever a write gives its place back, so a waiter can sleep
+    /// until `running` is 0 ([`WriteBudget::wait_idle_until`]).
+    given_back: Notify,
 }
 
 /// Adds one to `count` unless it is already `max`.
@@ -192,6 +195,31 @@ impl WriteBudget {
         self.0.running.fetch_sub(1, Ordering::SeqCst);
         if streamed {
             self.0.streamed.fetch_sub(1, Ordering::SeqCst);
+        }
+        self.0.given_back.notify_waiters();
+    }
+
+    /// Waits until no write is running under this budget - of any listener
+    /// and any generation that shares it - or until `deadline`. `true` when
+    /// none is running.
+    ///
+    /// Not public: "0 right now" only means "all done" when nothing can start
+    /// a write any more, i.e. after every gate was closed. The one caller
+    /// that can promise that is [`crate::WriteLedger::stop_all_until`]
+    /// (Issue #981).
+    pub(crate) async fn wait_idle_until(&self, deadline: tokio::time::Instant) -> bool {
+        loop {
+            // Registered BEFORE the count is read: a `give_back` between the
+            // read and the sleep still wakes this.
+            let given_back = self.0.given_back.notified();
+            tokio::pin!(given_back);
+            given_back.as_mut().enable();
+            if self.running() == 0 {
+                return true;
+            }
+            if tokio::time::timeout_at(deadline, given_back).await.is_err() {
+                return self.running() == 0;
+            }
         }
     }
 }

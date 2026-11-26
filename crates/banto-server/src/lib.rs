@@ -29,6 +29,7 @@ pub mod detach;
 pub mod events;
 pub mod exposure;
 pub mod grant;
+pub mod ledger;
 pub mod reach_check;
 pub mod response;
 pub mod routes;
@@ -53,6 +54,7 @@ pub use grant::{
     grant_router, is_loopback_peer, GrantCondition, GrantGeneration, GrantKind, GrantRegistry,
     GrantSpec, DEFAULT_GRANT_MAX_SESSIONS, PUBLIC_VIEWER_ID,
 };
+pub use ledger::{LedgerOutcome, WriteLedger};
 pub use reach_check::{
     reach_check_router, CheckOutcome, LastIssue, ReachCheckResult, ReachCheckState,
     ReachCheckStatus, ReachIssue, ReachIssueError, ReachOutcome, ReachRecord, ReachTarget,

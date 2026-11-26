@@ -202,6 +202,31 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
   全体の停止では同じ期限でそれも待つ（`RemainingWrites::wait`）か、未完了として報告する。渡した listener が全部
   `Finished` でも、それだけで「書き込みは残っていない」とは言えない。全世代を通した確かめは、共有の枠の
   `WriteBudget::running()` が 0 であること。
+- **その持ち続けを台帳に任せる（`WriteLedger`、Issue #981、2026-11-26 追記）**: 上の項をアプリが自前で書くと、
+  落とし穴が 2 つある。(1) 残りの一覧を 1 回だけ写して待つと、全体の停止の途中で止められた世代の残り（失効した
+  世代は書き込みを待たずに戻る）を取りこぼす。(2) 全体の停止が始まった後に作り終わった世代の門が、開いたまま
+  残る。そこで banto-server が台帳を持つ。アプリは `WriteLedger::new()`（既にある枠の上なら `from_budget`）を
+  1 つ作り、全部の listener を世代ごとに `BoundServer::with_write_ledger(&ledger)` で `serve` に通す。
+  - 枠は台帳のものを使う（`with_write_budget` と同じ働き。両方を呼んでも台帳の枠が勝つ）。`serve` がその
+    listener を台帳に登録する。
+  - `close_all()` は、登録済みの全 listener に停止を要求し（`StopHandle::request_stop` と同じ。同期で待たない）、
+    「閉じた」を覚える。**その後に登録された listener は、止まった状態で返る**（書き込みも接続も受けず、
+    `is_serving()` は偽）。登録と、この印の確認・設定は同じロックの下なので、門が開いたまま残る隙間は無い。
+  - 作り直しで 1 世代を止めるのは今までどおり `stop()` の系列。`WritesRemaining` で返った分は、呼び手が
+    `StopOutcome` を捨てても台帳に残る（台帳は listener ごとに書き込みの一覧への参照を持ち、listener が止まり、
+    かつ書き込みが 0 件になったときに外す。世代の数だけ伸び続けはしない。`stop` せずに捨てた listener も
+    同じ扱いで、台帳が門を閉じる）。
+  - 全体の停止は `stop_all_until(servers, deadline)`（`deadline` は `tokio::time::Instant`）。`close_all()` →
+    渡した listener を `stop_all_within` の順序で止める（接続は `min(5 秒, 残り)`、書き込みは残り）→ **共有の枠の
+    `running()` が 0 になるまで、締め切りまで待つ**。結果は `LedgerOutcome { servers, running, remaining }`
+    （`running` が 0 なら全世代の書き込みが終わっている。`remaining` は残っている書き込みの `METHOD path`）。
+    締め切りを過ぎていれば待たずに戻る。
+  - **最後の待ちを「台帳の一覧」ではなく「枠の数」で見る**のが (1) への答え。枠は、どの世代の書き込みも、
+    その世代がいつ止められたかに関係なく数えている。一覧を写す実装は、写した後に足された分を構造として
+    見落とす。枠の待ち（`give_back` で起こす）は公開しない: 「今 0」が「全部終わった」を意味するのは全部の門を
+    閉じた後だけで、それを約束できるのは `stop_all_until` だから。
+  - 台帳に登録せず枠だけを共有する listener（`with_write_budget`）の書き込みは、`running` には入るが、台帳は
+    その門を閉じられず、名前も出せない。作り直す listener は全部 `with_write_ledger` に通す。
 - **約束の範囲**: 「包み忘れが起きない」（§1）は、**`serve` を通した listener の全部**に及ぶ。層そのもの
   （`detach_writes`・`DetachedWrites`）は公開しないままなので、層を掛ける方法は `serve` しか無く、掛け方を
   間違える余地も無い。約束の外に出るのは、router を `axum::serve` などへ直に渡したときだけ（banto からは
@@ -256,7 +281,11 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
   単体（`stop_all` は全部の門を閉じてから待つ／`StopHandle` は捨てた listener を生かさない／
   `is_serving` は受け付けのタスクが自分で終わると偽・停止の要求の直後から偽）、同じ
   `detach_writes.rs` に、外からの停止要求の後は接続も書き込みも受けない／要求の前に切り離した書き込みは最後まで
-  走る／以前の世代に残った書き込みは `stop_all` の結果に入らない、`detach.rs` の単体（門を閉じた後は
+  走る／以前の世代に残った書き込みは `stop_all` の結果に入らない／`WriteLedger`（#981）: `close_all` の後に
+  登録した世代は止まった状態で返る・`close_all` は全世代の門を閉じる・前の世代の残りを締め切りまで待つ・
+  終わらなければ `running` と名前に出る・**停止の途中で足された残りも待つ**・過ぎた締め切りは待たない・
+  `stop` せずに捨てた listener の書き込みも台帳に残る、`ledger.rs` の単体（終わった世代は台帳から外れる／
+  台帳の listener は台帳の枠だけを使う／枠の待ちは最後の 1 件が返った時に終わる）、`detach.rs` の単体（門を閉じた後は
   503 で handler が走らない）、`exposure.rs` の単体（向き。混ざった変更は狭める側）、
   `apps/admin-template/core/src/rest/tests/detach.rs`（実物の `POST /api/users` で、切断しても作成と監査が残る）、
   `apps/admin-template/src-tauri/src/tests/server_writes.rs`（再設定の 2 方向）。

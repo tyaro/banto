@@ -1,6 +1,7 @@
 //! Server lifecycle: bind, run, graceful-stop (spec §11.1, §11.4).
 
 use crate::detach::{detach_writes, DetachedWrites, RemainingWrites, StopOutcome, WriteBudget};
+use crate::ledger::WriteLedger;
 use axum::serve::{Listener, ListenerExt};
 use axum::Router;
 use banto_core::BantoError;
@@ -33,7 +34,7 @@ impl Default for ServerConfig {
 /// aborts the server task (Issue #283). Graceful shutdown waits for every open
 /// connection to finish; long-lived ones (SSE, slow downloads) must not be
 /// able to hold a settings change or app exit hostage.
-const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long [`RunningServer::stop`] waits for the writes the listener
 /// accepted ([`crate::detach`]) to finish, counted from the stop signal
@@ -152,6 +153,17 @@ impl StopHandle {
     /// its clones, or [`RunningServer::stop`]): it starts no more writes.
     pub fn is_stop_requested(&self) -> bool {
         self.detached_writes.is_closed()
+    }
+
+    /// Whether the [`RunningServer`] this came from is gone (stopped or
+    /// dropped): no stop of it can report anything any more.
+    pub(crate) fn listener_gone(&self) -> bool {
+        self.shutdown_tx.strong_count() == 0
+    }
+
+    /// The writes of the listener (for [`crate::WriteLedger`]).
+    pub(crate) fn writes(&self) -> &DetachedWrites {
+        &self.detached_writes
     }
 }
 
@@ -354,6 +366,12 @@ impl RunningServer {
     /// or reports them as unfinished. [`WriteBudget::running`] of the shared
     /// budget is the check over everything: 0 only when no write of any
     /// generation is running.
+    ///
+    /// [`WriteLedger`] does that bookkeeping (Issue #981): serve every
+    /// generation with [`BoundServer::with_write_ledger`] and make the final
+    /// stop with [`WriteLedger::stop_all_until`] - it closes the gates of all
+    /// generations, waits for the writes earlier ones left running against
+    /// the same deadline, and reports what is still running.
     pub async fn stop_all(servers: impl IntoIterator<Item = RunningServer>) -> Vec<StopOutcome> {
         Self::stop_all_waiting_writes_for(servers, DETACHED_WRITES_STOP_TIMEOUT).await
     }
@@ -416,6 +434,7 @@ pub struct BoundServer<L = TcpListener> {
     listener: L,
     local_addr: SocketAddr,
     write_budget: WriteBudget,
+    write_ledger: Option<WriteLedger>,
 }
 
 impl<L> BoundServer<L>
@@ -456,6 +475,7 @@ where
             listener,
             local_addr,
             write_budget: WriteBudget::default(),
+            write_ledger: None,
         })
     }
 
@@ -473,8 +493,37 @@ where
     /// [`crate::MAX_DETACHED_WRITES`] run at once over all generations.
     /// An app with several listeners at once ([`Self::from_listener`]) passes
     /// all of them the same budget, for the same reason.
+    ///
+    /// Ignored for a listener that is also given a ledger
+    /// ([`Self::with_write_ledger`]), in whichever order the two are called:
+    /// such a listener always counts against the ledger's budget.
     pub fn with_write_budget(mut self, budget: WriteBudget) -> Self {
         self.write_budget = budget;
+        self
+    }
+
+    /// Enter this listener in `ledger` (Issue #981, ADR-0035 §9) - for an
+    /// app that stops and replaces listeners (a TLS listener rebuilt for each
+    /// renewed or revoked certificate) and must, at its final stop, account
+    /// for the writes of every generation. It does what
+    /// [`Self::with_write_budget`] does with the ledger's budget
+    /// ([`WriteLedger::budget`]), and [`Self::serve`] then registers the
+    /// listener:
+    ///
+    /// - [`WriteLedger::close_all`] closes its gate together with all the
+    ///   others;
+    /// - when the ledger was ALREADY closed (the app's final stop began while
+    ///   this listener was being rebuilt), `serve` returns a listener whose
+    ///   stop is requested: it starts no write, accepts no connection, and
+    ///   [`RunningServer::is_serving`] is `false`. Stop it like any other;
+    /// - the writes it still has running after its stop (any of
+    ///   [`RunningServer::stop`], `stop_within`, `stop_all`...) stay in the
+    ///   ledger until they finish. The [`StopOutcome`] is returned to the
+    ///   caller as before; it need not be kept for the ledger's sake.
+    ///
+    /// The ledger is cloneable; every listener gets a clone of the same one.
+    pub fn with_write_ledger(mut self, ledger: &WriteLedger) -> Self {
+        self.write_ledger = Some(ledger.clone());
         self
     }
 
@@ -486,7 +535,14 @@ where
             listener,
             local_addr,
             write_budget,
+            write_ledger,
         } = self;
+        // A listener in a ledger counts against the ledger's budget, always:
+        // the ledger's final wait reads that one count.
+        let write_budget = match &write_ledger {
+            Some(ledger) => ledger.budget(),
+            None => write_budget,
+        };
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         let shutdown_tx = Arc::new(shutdown_tx);
         let sse_connections = SseConnections::default();
@@ -502,6 +558,15 @@ where
                 detached_writes.clone(),
                 detach_writes,
             ));
+        // Before the serve task exists: a listener registered after
+        // `close_all` has its stop requested here, so it never serves a
+        // request with an open gate.
+        if let Some(ledger) = &write_ledger {
+            ledger.register(StopHandle {
+                detached_writes: detached_writes.clone(),
+                shutdown_tx: Arc::downgrade(&shutdown_tx),
+            });
+        }
         let join_handle = tokio::spawn(async move {
             // `into_make_service_with_connect_info::<SocketAddr>()` (rather than
             // the plain `into_make_service()`) makes each connection's peer
