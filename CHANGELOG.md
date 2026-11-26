@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- chore(fixtures): v9.1.0 のタグ後の外部利用 fixture の ref を `v9.1.0` に更新した。[9.1.0] に「検証した組み合わせ」を追記。
+
 ## [9.1.0] - 2026-11-26
 
 **v9.1.0 — `banto-server` の書き込みの台帳 `WriteLedger`（#981）と `RunningServer::stop_within`・`stop_all_within`（#980）、`@banto/forms` のパスワード欄の表示・非表示の切り替え `PasswordInput`（#944）、Windows で起動を止めるときのダイアログ（#975）、タッチキーの盤が Glass で透ける件の修正（#977）。** API の削除・改名は無く、公開の union に種類も足していない（v9.0.0 からの `crates/*/src` に `pub` の削除なし、`packages/*/src/index.ts` に export の削除なし）。migration も増えない。**minor にした理由**: 追加が中心で、既存のコードはそのままコンパイルでき、DB の作り直しも要らないため。ただし #944 は既存の `PasswordField` の DOM を変える（パスワード欄の隣にボタンが並び、入力欄が `.banto-affix` の包みに入る）。[publishing.md「バージョニング規約」](docs/publishing.md#バージョニング規約)の「2.x 以降の運用上の変更」（運用上の挙動変更は、消費側への注意を明記した上で `minor` としてよい。オーナー判断、2026-11-26）に当てた。
@@ -95,6 +97,26 @@
 - feat(desktop): Windows で起動を止めるときに、理由をダイアログ（`MessageBoxW`、依存追加なし）で知らせる（#975）。リリース版は console が無く、stderr の「起動できません」が見えなかった（create-admin 前の起動など）。debug ビルドでも出す。macOS・Linux は従来どおり stderr のみ。データフォルダ・exports 用フォルダの作成、サーバー設定の読み込み、`.run()` の失敗も `expect` の panic をやめて同じ経路に寄せた。ログファイルは足さない。
 - feat(forms): パスワード欄に表示・非表示の切り替え（目玉のアイコン、#944）。`@banto/forms` に `PasswordInput`（入力欄＋ボタン、押すたびに `type` が `password`⇔`text`、`aria-pressed`・状態に応じた `aria-label`、送信・リセット・画面を離れると非表示へ戻る、Edge の `::-ms-reveal` を隠す）と `PasswordInputMessages`・`defaultPasswordInputMessages`、`BantoForm` の `passwordMessages` を追加し、`PasswordField`・admin-template のログイン・設定・ユーザー管理・`/ui-demo` の password 欄をこれに寄せた。出さない指定は無い（すべてのパスワード欄に付く）。theme CSS は浮動ラベルが `.banto-affix` の中の入力にも効くようにした。touch-keys は変更なし（表示中の欄は `type="text"` なので平文の盤になる。伏せたいなら `masked: true`）。**消費側への注意**: パスワード欄の隣に「パスワードを表示」のボタンが並ぶため、試験で `getByLabel('パスワード')` のように部分一致でパスワード欄を探していると、ボタンにも当たって複数一致で落ちる → `getByLabel('パスワード', { exact: true })` か欄の `id` で探す。入力欄の `nextElementSibling` をラベルとみなす検査や、入力欄そのものの下線（`border-bottom`）を見る検査は、ラッパーの `.banto-affix` を見るように直す。
 - chore(fixtures): v9.0.0 のタグ後の外部利用 fixture の ref を `v9.0.0` に更新し、`@banto/touch-keys-svelte` を依存と `+page.svelte` の import に追加した。[9.0.0] に「検証した組み合わせ」を追記。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `e30ea8b2`、`workflow_dispatch`）: [run 45738474464](https://github.com/tyaro/banto/actions/runs/45738474464)（success）。
+  - タグの push（`v9.1.0`、main の `e30ea8b2`）: [run 45738752123](https://github.com/tyaro/banto/actions/runs/45738752123)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った。v9.0.0 と同じ）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 26.13.1                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.59.1                          |
+    | SvelteKit          | 3.4.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
+
+  - 出所: Node.js は `node: v26.13.1`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.59.1` など）、Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
 
 ## [9.0.0] - 2026-11-26
 
