@@ -298,10 +298,11 @@
 	.keyboard {
 		--_size: var(--banto-touch-key-size, 48px);
 		--_gap: var(--banto-touch-key-gap, var(--banto-space-2));
+		--_pad: var(--banto-space-3);
 		display: inline-flex;
 		flex-direction: column;
 		gap: var(--_gap);
-		padding: var(--banto-space-3);
+		padding: var(--_pad);
 		box-sizing: border-box;
 		background: var(--banto-surface-raised);
 		color: var(--banto-text);
@@ -315,10 +316,20 @@
 		 * content, not from their flex-basis, so without it the rows would squeeze the keys.
 		 */
 		width: calc(
-			10 * var(--_size) + 9 * var(--_gap) + 2 * var(--banto-space-3) + 2 * var(--banto-border-width)
+			10 * var(--_size) + 9 * var(--_gap) + 2 * var(--_pad) + 2 * var(--banto-border-width)
 		);
 		max-width: 100%;
 		min-width: 0;
+	}
+	/*
+	 * Narrow panel (§10): ten keys cannot reach the key size, so spend less on the gutters first. The
+	 * gap's fallback only changes, so an app's own `--banto-touch-key-gap` still wins.
+	 */
+	@media (max-width: 480px) {
+		.keyboard {
+			--_gap: var(--banto-touch-key-gap, var(--banto-space-1));
+			--_pad: var(--banto-space-1);
+		}
 	}
 	.display {
 		display: flex;
