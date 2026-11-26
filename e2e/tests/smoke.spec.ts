@@ -33,6 +33,7 @@ import {
 	type Locator,
 	type Page,
 	type Request,
+	type Response,
 	type Route
 } from '@playwright/test';
 import fs from 'node:fs';
@@ -3236,6 +3237,208 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		} finally {
 			await context.close();
 		}
+	});
+
+	// Issue #757 (#641 / #642 / #652): the optimistic lock in the list's detail
+	// drawer (#591). When the other side only moved `version` (a PUT that writes
+	// the same values) there is no field to choose, so the save goes through on
+	// the latest version without a dialog; when they changed a field, the
+	// dialog opens and "自分の値で上書き" saves the drawer's draft.
+	test('13a6. #757: the detail drawer - a version-only conflict saves silently, a changed field opens the dialog', async () => {
+		test.setTimeout(90_000);
+		const NAME = `E2Eドロワー衝突商品-${Date.now()}`;
+		const CONFLICT_TITLE = '他の人が先に変更しました';
+
+		async function api(
+			method: string,
+			path: string,
+			body?: unknown
+		): Promise<Record<string, unknown>> {
+			return page.evaluate(
+				async ({ method, path, body }) => {
+					const token =
+						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+					const res = await fetch(path, {
+						method,
+						headers: {
+							'Content-Type': 'application/json',
+							'X-Banto-Client': 'banto',
+							Authorization: `Bearer ${token}`
+						},
+						body: body === undefined ? undefined : JSON.stringify(body)
+					});
+					if (!res.ok) throw new Error(`${method} ${path} failed: ${res.status}`);
+					return res.status === 204 ? {} : ((await res.json()) as Record<string, unknown>);
+				},
+				{ method, path, body }
+			);
+		}
+
+		await page.goto('/items');
+		const created = await api('POST', '/api/items', { name: NAME, price: 100, stock: 10 });
+		const id = String(created.id);
+		const version0 = created.version;
+		try {
+			await applyColumnFilter(page, '商品名', NAME);
+			const row = rowWithText(page, NAME);
+			const drawer = await openInDrawer(page, row, id);
+			const price = drawer.getByRole('spinbutton', { name: /^価格/ });
+			await expect(price).toHaveValue('100');
+			await price.fill('150');
+
+			// The other client writes the same values: only `version` moves. No
+			// field differs from what the drawer loaded, so there is nothing to
+			// choose: the save is sent again on the latest version, no dialog.
+			const bumped = await api('PUT', `/api/items/${id}`, { name: NAME, price: 100, stock: 10 });
+			expect(bumped.version).not.toBe(version0);
+			expect(bumped.price).toBe(100);
+
+			const dialog = page.getByRole('dialog', { name: CONFLICT_TITLE, exact: true });
+			// Watch only the drawer's own PUTs from here (the other client's PUT
+			// above is already done). REST accepts a PUT without a matching version,
+			// so the end state alone cannot tell "409, then resent" from "saved at
+			// once": the order of the requests is what proves the silent resend.
+			const drawerPuts: { status: number; version: unknown }[] = [];
+			const onResponse = (res: Response) => {
+				const req = res.request();
+				if (req.method() !== 'PUT' || new URL(res.url()).pathname !== `/api/items/${id}`) return;
+				const sent = req.postDataJSON() as { version?: unknown } | null;
+				drawerPuts.push({ status: res.status(), version: sent?.version });
+			};
+			page.on('response', onResponse);
+			try {
+				await drawer.getByRole('button', { name: '保存', exact: true }).click();
+				await expect
+					.poll(async () => {
+						const saved = await api('GET', `/api/items/${id}`);
+						return { price: saved.price, newer: Number(saved.version) > Number(bumped.version) };
+					})
+					.toEqual({ price: 150, newer: true });
+				// Exactly twice: the stale version is refused (409), then the same
+				// save goes out on the version the other client left (2xx).
+				await expect
+					.poll(() => drawerPuts)
+					.toEqual([
+						{ status: 409, version: version0 },
+						{ status: 200, version: bumped.version }
+					]);
+			} finally {
+				page.off('response', onResponse);
+			}
+			await expect(dialog).toHaveCount(0);
+			await expect(drawer.getByText('未保存の変更があります')).toHaveCount(0);
+			await expect(price).toHaveValue('150');
+
+			// A field the other client really changed does open the dialog (here
+			// 在庫: one row), and "自分の値で上書き" saves this form's draft.
+			await price.fill('160');
+			await api('PUT', `/api/items/${id}`, { name: NAME, price: 150, stock: 77 });
+			await drawer.getByRole('button', { name: '保存', exact: true }).click();
+			await expect(dialog).toBeVisible();
+			const table = dialog.getByTestId('conflict-changes');
+			await expect(table.getByRole('row')).toHaveCount(2);
+			await expect(table.getByRole('row', { name: /在庫/ })).toContainText('77');
+			// Nothing is saved yet, and the drawer keeps the unsaved edit.
+			expect((await api('GET', `/api/items/${id}`)).price).toBe(150);
+			await expect(price).toHaveValue('160');
+
+			await dialog.getByRole('button', { name: '自分の値で上書き', exact: true }).click();
+			await expect(dialog).toBeHidden();
+			await expect
+				.poll(async () => {
+					const saved = await api('GET', `/api/items/${id}`);
+					return { price: saved.price, stock: saved.stock };
+				})
+				.toEqual({ price: 160, stock: 10 });
+			await expect(drawer.getByText('未保存の変更があります')).toHaveCount(0);
+		} finally {
+			await api('DELETE', `/api/items/${id}`).catch(() => {});
+		}
+	});
+
+	// Issue #757 (#645 / #646): the columns menu after a header drag. The menu
+	// lists the columns in the grid's order (hidden ones included), so a drag
+	// shows up in it, and hiding / showing a column from the menu leaves the
+	// order the drag made. The layout is not persisted in the list (only saved
+	// views keep it), so a reload gives the default order back.
+	test('13a7. #757: the columns menu follows a header drag and keeps the order when toggling', async () => {
+		await page.goto('/items');
+		const headers = page.getByRole('columnheader');
+		const grid = page.getByRole('grid');
+		/** The visible, non-empty column headers, left to right. */
+		const headerLabels = async (): Promise<string[]> =>
+			(await headers.locator('.label').allInnerTexts())
+				.map((t) => t.trim())
+				.filter((t) => t !== '');
+		await expect(grid).toBeVisible();
+		await expect.poll(async () => (await headerLabels()).length).toBeGreaterThan(3);
+		const initial = await headerLabels();
+
+		// Drag the third column to the left half of the first one.
+		const moved = initial[2];
+		const target = initial[0];
+		const source = headers.filter({ hasText: moved }).first();
+		const dest = headers.filter({ hasText: target }).first();
+		const destBox = await dest.boundingBox();
+		if (!destBox) throw new Error('header not visible');
+		const sourceBox = await source.boundingBox();
+		if (!sourceBox) throw new Error('header not visible');
+		const dragged = [moved, initial[0], initial[1], ...initial.slice(3)];
+		await expect(async () => {
+			if ((await headerLabels()).join('|') !== dragged.join('|')) {
+				const y = sourceBox.y + sourceBox.height / 2;
+				await page.mouse.move(sourceBox.x + 20, y);
+				await page.mouse.down();
+				await page.mouse.move(sourceBox.x + 8, y, { steps: 3 });
+				await page.mouse.move(destBox.x + 4, y, { steps: 12 });
+				await page.mouse.up();
+			}
+			await expect.poll(headerLabels, { timeout: 1_000 }).toEqual(dragged);
+		}).toPass();
+
+		const trigger = page.getByRole('button', { name: /^列/ });
+		const menu = page.getByRole('menu', { name: '列の表示', exact: true });
+		const show = menu.getByRole('group', { name: '表示する列', exact: true });
+		async function openMenu(): Promise<void> {
+			await expect(async () => {
+				if (!(await menu.isVisible())) {
+					await trigger.focus();
+					await trigger.press('Enter');
+				}
+				await expect(menu).toBeVisible({ timeout: 1_000 });
+			}).toPass();
+		}
+		/** The menu's names in listed order, narrowed to the columns that have a header. */
+		const menuLabels = async (): Promise<string[]> =>
+			(await show.getByRole('menuitemcheckbox').allInnerTexts())
+				.map((t) => t.trim())
+				.filter((t) => dragged.includes(t));
+
+		await openMenu();
+		// The menu lists the grid's order.
+		expect(await menuLabels()).toEqual(dragged);
+
+		// Hide a column from the menu: it leaves the grid, the others keep their order.
+		const hidden = dragged[1];
+		const hiddenItem = show.getByRole('menuitemcheckbox', { name: hidden, exact: true });
+		await hiddenItem.click();
+		await expect(hiddenItem).toHaveAttribute('aria-checked', 'false');
+		await expect(menu).toBeVisible();
+		await expect.poll(headerLabels).toEqual(dragged.filter((t) => t !== hidden));
+		expect(await menuLabels()).toEqual(dragged);
+
+		// Show it again: it comes back where it was, not at the end.
+		await hiddenItem.click();
+		await expect(hiddenItem).toHaveAttribute('aria-checked', 'true');
+		await expect.poll(headerLabels).toEqual(dragged);
+		expect(await menuLabels()).toEqual(dragged);
+		await page.keyboard.press('Escape');
+		await expect(menu).toBeHidden();
+
+		// Not persisted in the list: a reload gives the default order back.
+		await page.reload();
+		await expect(grid).toBeVisible();
+		await expect.poll(headerLabels).toEqual(initial);
 	});
 
 	// Issue #637: the browser's own offline state is its own banner, and it goes
