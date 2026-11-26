@@ -100,12 +100,14 @@
 		PanelRightOpen,
 		Plus,
 		Search,
+		SearchX,
 		SlidersHorizontal,
 		Upload
 	} from '@lucide/svelte';
 	import {
 		Button,
 		Drawer,
+		EmptyState,
 		IconButton,
 		Menu,
 		MenuGroup,
@@ -1384,6 +1386,48 @@
 		importFileInput?.click();
 	}
 
+	// --- Empty list: next steps (#712) ---------------------------------------
+	// What the grid shows when the list has no rows at all. The actions are the
+	// header's own (same handlers, same permission / availability checks) and are
+	// kept in ONE list, so a further first step can be added here later.
+	interface EmptyAction {
+		key: string;
+		label: string;
+		icon: typeof Plus;
+		primary: boolean;
+		run: () => void;
+	}
+	const emptyActions = $derived.by((): EmptyAction[] => {
+		const actions: EmptyAction[] = [];
+		if (perms.create) {
+			actions.push({
+				key: 'create',
+				label: m['resource.create'](),
+				icon: Plus,
+				primary: true,
+				run: () => void goto(createHref)
+			});
+		}
+		// Unlike the header menu (which explains an unavailable import with a
+		// toast), a first step that cannot work here is simply not offered.
+		if (canImport && importOption && (importOption.available?.() ?? true)) {
+			actions.push({
+				key: 'import',
+				label: m['resource.importCsv'](),
+				icon: Upload,
+				primary: false,
+				run: handleImportButtonClick
+			});
+		}
+		return actions;
+	});
+	// A search term or filter is narrowing the list: "no rows" then means "no
+	// match", and the way on is to loosen the condition, not to add data.
+	const listNarrowed = $derived(
+		search.trim() !== '' ||
+			(mode === 'client' ? clientGridState.filters : serverGridState.filters).length > 0
+	);
+
 	async function handleImportFileChange(event: Event): Promise<void> {
 		const input = event.currentTarget as HTMLInputElement;
 		const file = input.files?.[0];
@@ -1820,6 +1864,7 @@
 			bind:selectedRowIds={selectedIds}
 			onSelectionChange={handleSelectionChange}
 			bulkActions={canBulkDelete ? bulkDeleteActions : undefined}
+			empty={emptyList}
 		/>
 	{:else}
 		<ResourceServerGrid
@@ -1841,9 +1886,45 @@
 			bind:selectedRowIds={selectedIds}
 			onSelectionChange={handleSelectionChange}
 			bulkActions={canBulkDelete ? bulkDeleteActions : undefined}
+			empty={emptyList}
 		/>
 	{/if}
 </div>
+
+<!-- #712: the grid's "no rows" body. Narrowed by a search / filter: say so, no
+     first-step buttons. Otherwise the list is really empty: offer the actions
+     that work here (`emptyActions`). -->
+{#snippet emptyList()}
+	{#if listNarrowed}
+		<EmptyState
+			icon={SearchX}
+			title={m['resource.emptyFilteredTitle']()}
+			description={m['resource.emptyFilteredDesc']()}
+		/>
+	{:else}
+		<EmptyState
+			title={m['resource.emptyTitle']({ resource: def.label })}
+			description={emptyActions.length > 0 ? m['resource.emptyDesc']() : undefined}
+			action={emptyActions.length > 0 ? emptyActionButtons : undefined}
+		/>
+	{/if}
+{/snippet}
+
+{#snippet emptyActionButtons()}
+	<div class="empty-actions">
+		{#each emptyActions as action (action.key)}
+			<button
+				type="button"
+				class={['banto-btn', action.primary ? 'banto-btn--primary' : 'banto-btn--secondary']}
+				data-empty-action={action.key}
+				onclick={action.run}
+			>
+				<action.icon size={16} aria-hidden="true" />
+				{action.label}
+			</button>
+		{/each}
+	</div>
+{/snippet}
 
 <!-- #713: the bulk bar's action. Only rendered when `canBulkDelete`. In "all
      matching" mode the count is the list's total (`matchingCount`); the
@@ -1980,6 +2061,13 @@
 	.views-trigger,
 	.view-trigger,
 	.columns-trigger,
+	.empty-actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: var(--banto-space-2);
+	}
+
 	.more-trigger {
 		height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);

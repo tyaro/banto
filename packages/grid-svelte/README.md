@@ -330,6 +330,16 @@ sparkline は組み込みの `renderer` にしていない（`@banto/grid-svelte
 - 外から `state`（`GridState`）を渡しているときも、`columns` の変化はその `state` に渡る（`state.setColumns(columns)` を直接呼んでもよい）。初めに渡した `columns` は `state` に押し込まない（今までどおり `state` を作ったときの列が使われる）。`state.columns` は今の定義（定義の順、非表示も含む）。
 - 同じ配列を書き換えても（`push` など）反映しない。新しい配列を渡す。
 
+## 行が 0 件のときの表示（`empty`、#712）
+
+行が 1 件も無いとき、グリッドは `messages.emptyState` の文字を出す。次の一手のボタンなど、ページ側の表示に置き換えたいときは `empty`（snippet）を渡す。絞り込みで 0 件になったときも同じ場所に出るので、「本当に空」か「絞り込みの結果」かはページ側で見分ける（グリッドは理由を判断しない）。
+
+```svelte
+<BantoGrid {rows} {columns} {state}>
+	{#snippet empty()}<MyEmptyState />{/snippet}
+</BantoGrid>
+```
+
 ## 列の固定（左端、#713）
 
 列に `pinned: 'left'` を付けると、その列は左端に固定され、ほかの列だけが横にスクロールする（既定は固定なし）。

@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- feat(resource): 一覧が 0 件のとき、使える操作（新規作成・CSV 取り込み）の導線を出す（#712）。検索・絞り込みの結果が 0 件のときは導線を出さず、条件を変える案内にする。`banto add resource` の生成物にも効く（`ResourceListPage`）。`BantoGrid` に 0 件の表示を差し替える `empty` snippet を追加した。
 - chore(fixtures): v9.1.1 のタグ後の外部利用 fixture の ref を `v9.1.1` に更新した。[9.1.1] に「検証した組み合わせ」を追記。
 
 ## [9.1.1] - 2026-11-26

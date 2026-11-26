@@ -199,6 +199,12 @@
 		 * `matchingCount`. The grid runs no bulk operation itself.
 		 */
 		bulkActions?: Snippet<[GridBulkActionsContext]>;
+		/**
+		 * Replaces the plain `messages.emptyState` text when the grid has no rows to
+		 * show (also when a filter leaves none), e.g. a page-level empty state with
+		 * next-step buttons. The grid decides nothing about why it is empty.
+		 */
+		empty?: Snippet;
 	}
 
 	// Aliased to avoid clashing with the `$state` rune (a local binding named
@@ -228,7 +234,8 @@
 		selectAllMatching = false,
 		onSelectionChange,
 		getRowLabel,
-		bulkActions
+		bulkActions,
+		empty
 	}: Props = $props();
 
 	const providedCellEditors = getCellEditors();
@@ -2273,7 +2280,11 @@
 			{/snippet}
 
 			{#if effectiveRowCount === 0}
-				<div class="empty-row">{t.emptyState()}</div>
+				{#if empty}
+					<div class="empty-custom">{@render empty()}</div>
+				{:else}
+					<div class="empty-row">{t.emptyState()}</div>
+				{/if}
 			{:else}
 				<div
 					class="rows-viewport"
@@ -2899,6 +2910,13 @@
 		overflow: hidden;
 		clip-path: inset(50%);
 		white-space: nowrap;
+	}
+
+	.empty-custom {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 8rem;
 	}
 
 	.empty-row {
