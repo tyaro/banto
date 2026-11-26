@@ -32,7 +32,10 @@ export default defineConfig({
 			project: './project.inlang',
 			outdir: './src/lib/paraglide',
 			strategy: ['custom-banto', 'baseLocale'],
-			emitTsDeclarations: true
+			emitTsDeclarations: true,
+			// CLI (`paraglide:compile`) の既定と揃える（#806）。Vite 既定の virtual-modules だと
+			// 出力の形が CLI とずれ、check-i18n-nonempty も messages/*.js を数える前提のため。
+			outputStructure: 'message-modules'
 		}),
 		sveltekit({
 			preprocess: vitePreprocess(),
