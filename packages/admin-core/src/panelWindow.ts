@@ -317,6 +317,12 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	// Pop-outs between "remembered" and "the window exists": the plugin does
 	// not list their window yet, so the reconciliation leaves them alone.
 	const opening = new Set<string>();
+	// Per id, how many times an operation that opens its window has started
+	// (`popOut`, `focus`). A list answer asked for before such a start does not
+	// know that window, so `reconcile` does not trust it for that id.
+	const generation = new Map<string, number>();
+	const generationOf = (id: string) => generation.get(id) ?? 0;
+	const startOpening = (id: string) => generation.set(id, generationOf(id) + 1);
 	const listeners = new Set<() => void>();
 
 	const changed = () => {
@@ -351,6 +357,7 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 		// way is not in the answer either.
 		const candidates = [...popped].filter((id) => !opening.has(id));
 		if (candidates.length === 0) return;
+		const asked = new Map(candidates.map((id) => [id, generationOf(id)]));
 		let open: string[];
 		try {
 			open = await listPanelWindows(options);
@@ -361,9 +368,25 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 		// Stopped meanwhile: the screen is going away. The next `connect()` asks again.
 		if (!live()) return;
 		for (const id of candidates) {
+			// A window started opening after the question: the answer is stale for it.
+			if (generationOf(id) !== asked.get(id)) continue;
 			// Still remembered (its closed notice may have come first), and no window.
 			if (popped.has(id) && !open.includes(id)) putBack(id);
 		}
+	};
+
+	/** After a failed open: puts the panel back when the plugin lists no window for it. */
+	const confirmNoWindow = async (id: string): Promise<void> => {
+		const asked = generationOf(id);
+		let open: string[];
+		try {
+			open = await listPanelWindows(options);
+		} catch (error) {
+			options.onListError?.(error);
+			return;
+		}
+		if (generationOf(id) !== asked) return;
+		if (popped.has(id) && !open.includes(id)) putBack(id);
 	};
 
 	const popOut = async (content: C): Promise<void> => {
@@ -384,6 +407,7 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 		}
 		const { id } = content;
 		opening.add(id);
+		startOpening(id);
 		try {
 			if (options.detach) {
 				if (!(await options.detach(content))) return;
@@ -435,8 +459,23 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 			};
 		},
 		focus: async (content) => {
-			if (!options.isTauri() || !popped.has(content.id)) return;
-			await openPanelWindow(content, options);
+			const { id } = content;
+			if (!options.isTauri() || !popped.has(id)) return;
+			// Like a pop-out: a reconciliation must not take the window that is
+			// being opened for one that is missing.
+			const owns = !opening.has(id);
+			opening.add(id);
+			startOpening(id);
+			try {
+				await openPanelWindow(content, options);
+			} catch (error) {
+				// No window came of it: do not leave the panel nowhere. Ask again
+				// (it may have been opened by someone else) and put it back if not.
+				await confirmNoWindow(id);
+				throw error;
+			} finally {
+				if (owns) opening.delete(id);
+			}
 		}
 	};
 }

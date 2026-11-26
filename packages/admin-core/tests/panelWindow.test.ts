@@ -556,6 +556,56 @@ describe('createPanelPopOut: which panels are out (#1013, #1014)', () => {
 		await expect(popOut.focus(MEMO)).rejects.toBe('no permission');
 	});
 
+	it('a list answer asked for before focus opened the window does not put the panel back (no dock-and-window double)', async () => {
+		const { storage } = fakeStorage(['memo']);
+		let answerList: (ids: string[]) => void = () => {};
+		const invoke = vi.fn(async (command: string): Promise<unknown> => {
+			if (command !== PANEL_LIST_COMMAND) return undefined;
+			return new Promise<string[]>((resolve) => {
+				answerList = resolve;
+			});
+		});
+		const { popOut, restore } = setup({ storage, invoke });
+		popOut.connect();
+		await tick();
+		await tick();
+		expect(invoke).toHaveBeenCalledWith(PANEL_LIST_COMMAND);
+
+		// The menu opens the window while the answer is on its way.
+		await popOut.focus(MEMO);
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, { id: 'memo', title: 'Memo' });
+		answerList([]);
+		await tick();
+		await tick();
+		expect(restore).not.toHaveBeenCalled();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+	});
+
+	it('focus that fails to open a window puts the panel back when the plugin lists none, and still rejects', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const invoke = vi.fn(async (command: string): Promise<unknown> => {
+			if (command === PANEL_LIST_COMMAND) return [];
+			throw 'no permission';
+		});
+		const { popOut, restore } = setup({ storage, invoke });
+		await expect(popOut.focus(MEMO)).rejects.toBe('no permission');
+		expect(restore).toHaveBeenCalledWith('memo');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual([]);
+	});
+
+	it('focus that fails keeps the panel popped out when the plugin still lists its window', async () => {
+		const { storage } = fakeStorage(['memo']);
+		const invoke = vi.fn(async (command: string): Promise<unknown> => {
+			if (command === PANEL_LIST_COMMAND) return ['memo'];
+			throw 'no permission';
+		});
+		const { popOut, restore } = setup({ storage, invoke });
+		await expect(popOut.focus(MEMO)).rejects.toBe('no permission');
+		expect(restore).not.toHaveBeenCalled();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+	});
+
 	it('connect() restores a remembered panel whose window is not open (the app was closed with it out)', async () => {
 		const { state, storage } = fakeStorage(['memo']);
 		const invoke = fakePlugin([]);
