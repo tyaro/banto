@@ -194,7 +194,7 @@ fn frames(&self) -> impl futures_util::Stream<Item = SseFrame> + Send + 'static 
 
 - **`watch<Option<Reading>>` を流用するときは、`None` を `null` で送らない。** `watch_frames` の `encode` が `None` を返した値は送られない
   （除外される）ので、`|reading| { let reading = reading.as_ref()?; … }` と書き、「値なし」の間は何も配信しない。`null` を `data:` に載せると、
-  読み口の `parse` が「値なし」を値として扱う分岐を持つことになり、最初の読み取りの前に空の値が画面へ出る。
+  読み口の `parse` が「値なし」を値として扱う分岐を持つことになり、その分岐を忘れると最初の読み取りの前に空の値が画面へ出うる。
 - **`onStale` は配信全体の指標。** どの `event:` の名前でも、最後に新しい値が届いてからの経過で決まる（`staleAfterMs`・`valueStamp` は上の「5.」）。
   種類ごとの鮮度（値は届くが、警報だけ長く来ない、など）は `onStale` では分からないので、種類ごとの最終受信の時刻や作った印を、アプリが種類ごとに持つ。
 
