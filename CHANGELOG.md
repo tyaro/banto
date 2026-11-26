@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- chore(fixtures): v9.1.1 のタグ後の外部利用 fixture の ref を `v9.1.1` に更新した。[9.1.1] に「検証した組み合わせ」を追記。
+
 ## [9.1.1] - 2026-11-26
 
 **v9.1.1 — dock のタブの帯が狭いときタブを縮めて題名を省略記号にする（#986、temp-scada の要請）、`HeaderNav` の Svelte の警告の解消、タッチキーの文字キーボードの幅 480px 以下の余白、`banto-admin-services` の反映・元に戻すの差分の計算の順序の整理（#938）。** 修正と内部の改善だけで、API の追加・削除・改名は無い（v9.1.0 からの `crates/*/src` に `pub` の削除・変更なし、`packages/*/src/index.ts` に export の削除なし）。migration も増えない。**patch にした理由**: 公開の型・関数・DB に変更が無く、見た目の調整と内部の整理だけのため（[publishing.md「バージョニング規約」](docs/publishing.md#バージョニング規約)）。
@@ -82,6 +84,24 @@
 - fix(touch-keys): 幅 480px 以下で文字キーボードの盤の余白と隙間を `--banto-space-1` に狭め、幅 400px で文字キーが 30px に縮んでいたのを約 34〜35px に改めた（アプリが決めた `--banto-touch-key-gap` は優先。#937 の任意）。
 - refactor(admin-services): 設定の反映・元に戻すの差分（`changes`・監査用の差分）を、コミットの後で計算するようにした（#938）。戻り値・監査の内容は変わらない。PostgreSQL の待ちの試験は、行ロックの待ちに入ったことを確かめてから放す形にした。
 - chore(fixtures): v9.1.0 のタグ後の外部利用 fixture の ref を `v9.1.0` に更新した。[9.1.0] に「検証した組み合わせ」を追記。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `c9c72ab4`、`workflow_dispatch`）: [run 45752304781](https://github.com/tyaro/banto/actions/runs/45752304781)（success）。
+  - タグの push（`v9.1.1`、main の `c9c72ab4`）: [run 45753045126](https://github.com/tyaro/banto/actions/runs/45753045126)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った。v9.1.0 と同じ）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 26.13.1                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.59.1                          |
+    | SvelteKit          | 3.4.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
 
 ## [9.1.0] - 2026-11-26
 
