@@ -92,6 +92,12 @@ export interface UiMessages {
 	dateRangePickerPickStart?: () => string;
 	/** DateRangePicker: the dialog's status line once the start day is picked; `from` is its full date. */
 	dateRangePickerPickEnd?: (from: string) => string;
+	/** DateRangePicker: a day's name when it is the range's start (an anchor still waiting for its end too); `date` is its full date. */
+	dateRangePickerDayStart?: (date: string) => string;
+	/** DateRangePicker: a day's name when it is the range's end; `date` is its full date. */
+	dateRangePickerDayEnd?: (date: string) => string;
+	/** DateRangePicker: a day's name when it is both the start and the end (a one-day range); `date` is its full date. */
+	dateRangePickerDayBoth?: (date: string) => string;
 	/** ThreePaneLayout: the left pane's name (its region and the band's toggle). */
 	threePaneLeft?: () => string;
 	/** ThreePaneLayout: the right pane's name (its region and the band's toggle). */
@@ -143,6 +149,9 @@ export const defaultUiMessages: Required<UiMessages> = {
 	dateRangePickerDialog: () => '期間の選択',
 	dateRangePickerPickStart: () => '開始日を選んでください',
 	dateRangePickerPickEnd: (from) => `開始日 ${from}。終了日を選んでください`,
+	dateRangePickerDayStart: (date) => `${date}、開始日`,
+	dateRangePickerDayEnd: (date) => `${date}、終了日`,
+	dateRangePickerDayBoth: (date) => `${date}、開始日・終了日`,
 	threePaneLeft: () => '左のペイン',
 	threePaneRight: () => '右のペイン',
 	threePaneResizeLeft: () => '左のペインの幅',

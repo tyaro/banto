@@ -160,6 +160,20 @@
 		return date >= rangeEnds[0] && date <= rangeEnds[1];
 	}
 
+	/** A day's accessible name: its full date, plus (range) "start date" / "end date" on the range's ends. While the end is a preview only the anchor is the start. */
+	function dayLabel(date: string): string {
+		const full = formatFullDate(date, locale);
+		if (selectionMode !== 'range' || !range || !rangeEnds) return full;
+		const isStart = range.preview
+			? date === range.start
+			: date === rangeEnds[0] && range.only !== 'end';
+		const isEnd = !range.preview && date === rangeEnds[1] && range.only !== 'start';
+		if (isStart && isEnd) return t.dateRangePickerDayBoth(full);
+		if (isStart) return t.dateRangePickerDayStart(full);
+		if (isEnd) return t.dateRangePickerDayEnd(full);
+		return full;
+	}
+
 	function inRange(date: string): boolean {
 		return !!rangeEnds && date >= rangeEnds[0] && date <= rangeEnds[1];
 	}
@@ -530,7 +544,7 @@
 						<td
 							data-date={date ?? undefined}
 							tabindex={date === null ? undefined : date === focusDate ? 0 : -1}
-							aria-label={date === null ? undefined : formatFullDate(date, locale)}
+							aria-label={date === null ? undefined : dayLabel(date)}
 							aria-selected={date === null ? undefined : isSelected(date) ? 'true' : 'false'}
 							aria-current={date !== null && date === today ? 'date' : undefined}
 							aria-disabled={date === null || isSelectable(date) ? undefined : 'true'}

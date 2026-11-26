@@ -301,3 +301,48 @@ describe('DateRangePicker mixed pointer and keyboard (PR #912 review)', () => {
 		expect(onValueChange).not.toHaveBeenCalled();
 	});
 });
+
+describe('DateRangePicker day names (Issue #997)', () => {
+	const name = (date: string) => cell(date).getAttribute('aria-label');
+
+	it('names the start and the end day, and nothing else', () => {
+		const { button } = setup({ value: { from: '2026-11-10', to: '2026-11-12' } });
+		fireEvent.click(button);
+		expect(name('2026-11-10')).toBe('2026年11月10日火曜日、開始日');
+		expect(name('2026-11-11')).toBe('2026年11月11日水曜日');
+		expect(name('2026-11-12')).toBe('2026年11月12日木曜日、終了日');
+		expect(name('2026-11-13')).toBe('2026年11月13日金曜日');
+	});
+
+	it('names a one-day range once, as both', () => {
+		const { button } = setup({ value: { from: '2026-11-10', to: '2026-11-10' } });
+		fireEvent.click(button);
+		expect(name('2026-11-10')).toBe('2026年11月10日火曜日、開始日・終了日');
+	});
+
+	it('names a one-ended value as the end it is', () => {
+		const first = setup({ value: { from: '2026-11-10', to: null } });
+		fireEvent.click(first.button);
+		expect(name('2026-11-10')).toBe('2026年11月10日火曜日、開始日');
+		cleanup();
+		const second = setup({ value: { from: null, to: '2026-11-12' } });
+		fireEvent.click(second.button);
+		expect(name('2026-11-12')).toBe('2026年11月12日木曜日、終了日');
+	});
+
+	it('while the end is a preview, only the anchor is the start', () => {
+		const { button } = setup();
+		fireEvent.click(button);
+		fireEvent.click(cell('2026-11-10'));
+		fireEvent.mouseEnter(cell('2026-11-13'));
+		flushSync();
+		expect(name('2026-11-10')).toBe('2026年11月10日火曜日、開始日');
+		expect(name('2026-11-13')).toBe('2026年11月13日金曜日');
+		expect(name('2026-11-11')).toBe('2026年11月11日水曜日');
+		// Previewing backwards: the anchor is still the start, the hovered day is not named.
+		fireEvent.mouseEnter(cell('2026-11-08'));
+		flushSync();
+		expect(name('2026-11-10')).toBe('2026年11月10日火曜日、開始日');
+		expect(name('2026-11-08')).toBe('2026年11月8日日曜日');
+	});
+});

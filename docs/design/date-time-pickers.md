@@ -382,7 +382,7 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 | D10 閉じた後のフォーカス | **a: 入力欄に戻す** |
 | D11 grid で日を選んだとき | **a: draft に入れて入力欄へ戻る。確定は Enter・Tab・blur** |
 | D12 期間の絞り込みの表し方 | **a: `FilterOp::between`、半開区間 `[from, to)`、UI は終了日を含めて見せる** |
-| D13 期間の部品 | **a: 開始・終了の 2 つの DateInput から始める（範囲の強調表示は後で）** |
+| D13 期間の部品 | **a: 開始・終了の 2 つの DateInput から始めた。b（範囲の強調表示）は #910（PR #912）の `DateRangePicker` で入り、開始日・終了日の読み上げは #997 で足した** |
 | D14 forms に期間の型 | **a: 足さない（2 フィールド ＋ `validate`）** |
 | D15 ロケールと週の始まり | **a: `locale` 既定 `'ja-JP'`、週の始まりは prop → `Intl` → 日曜** |
 | D16 DB の列型 | **a: TEXT（SQLite・PostgreSQL とも）** |
@@ -460,6 +460,13 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 - **a（推奨）**: 2 つの DateInput。a11y はそれぞれの部品で済む。
 - b: 1 枚のカレンダーで開始・終了を続けて選び、間を強調する。見た目は良いが、キー操作と読み上げ（「範囲の中」）の
   設計が別に要る。要望が出たら足す。
+- **状態（追記。上の決定は消さない）**: a で始め、b は #910（PR #912）の `DateRangePicker`（`DateRangeInput` と同じ 2 つの入力欄 ＋
+  1 枚のカレンダー）で入った。1 回目が開始・2 回目が終了、2 回目までは仮の期間を塗り、期間は `aria-selected`
+  （グリッドは `aria-multiselectable`）、案内は `aria-live`。残っていた読み上げは #997 で足した: 期間の両端の日の
+  `aria-label` に「開始日」「終了日」（同じ日は「開始日・終了日」を 1 回）を付ける（`dateRangePickerDayStart`・
+  `dateRangePickerDayEnd`・`dateRangePickerDayBoth`）。仮の期間の間は起点（anchor）の日だけが開始日で、ポインター・フォーカスの
+  日は終了日とは読まない（まだ決まっていないため）。間の日は付けない（`aria-selected` で足りる）。単一の日（`DatePicker`）と
+  シンプルな 3 部品の DOM は変えない。実機のスクリーンリーダー（NVDA・VoiceOver 等）での読み上げは未確認。
 
 ### D14. forms に期間の型
 
