@@ -228,9 +228,12 @@ export class PanelMover {
 			const targetId = this.#targetOf(panelId, otherId);
 			if (targetId === null) return null;
 			const region = 'tabWith' in target ? 'center' : target.side;
-			return this.#drag.placeOnto(panelId, source, targetId, region, guard);
+			return this.#drag.placeOnto(panelId, source, targetId, region, guard, {
+				refocus: !fromMenu
+			});
 		}
-		if ('float' in target) return this.#drag.floatDocked(panelId, undefined, guard);
+		if ('float' in target)
+			return this.#drag.floatDocked(panelId, undefined, guard, { refocus: !fromMenu });
 		if ('back' in target) return this.#drag.placeBack(panelId, guard);
 		return null;
 	}

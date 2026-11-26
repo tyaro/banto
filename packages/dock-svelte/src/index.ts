@@ -130,7 +130,7 @@ export {
 	type DockLayoutValidation
 } from './core/validate';
 
-/** The cross guide on a docked pane (#694 PR-2; `computeDropRegion` is the pre-PR-2 band rule, kept for compatibility). */
+/** The cross guide on a docked pane (#694 PR-2; `computeDropRegion` is the pre-PR-2 band rule: deprecated, removed in the next major - use `crossButtons` + `hitGuideButton`). */
 export {
 	computeDropRegion,
 	crossButtons,

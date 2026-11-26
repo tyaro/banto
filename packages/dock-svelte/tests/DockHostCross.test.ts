@@ -5,17 +5,19 @@
 // split), and a drop happens ONLY on a button; off the buttons the pane floats
 // (or the floating window moves). The target's `dropCenter` / `dropSplit`
 // capabilities withhold buttons (a tab group: every pane must allow it). The
-// buttons exist only during a drag and are `aria-hidden`.
+// buttons exist only during a drag and are `aria-hidden`. A focus lost to the
+// re-mount a drop causes (a split, a new tab group, a pane floated) is handed back.
 //
 // jsdom has no layout engine: every element's rect is 1000 x 600 at the origin
 // (the cross is around (500, 300), 32 px buttons 36 px apart) and
 // `elementFromPoint` returns `hit()`; all restored in afterAll (same harness as
 // DockHostEdge.test.ts).
 import { cleanup, render } from '@testing-library/svelte';
-import { flushSync } from 'svelte';
+import { flushSync, tick } from 'svelte';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import DockHostHarness from './DockHostHarness.svelte';
 import { crossButtons, guideButtonSize, hitGuideButton } from '../src/core/dropzones';
+import type { DockPanelChange } from '../src/core/lifecycle';
 import type { DockCapabilities } from '../src/core/policy';
 import { createDockState } from '../src/state.svelte';
 import type { DockLayout } from '../src/types';
@@ -153,9 +155,12 @@ function mixed(): DockLayout {
 	};
 }
 
-function mount(capabilities?: (id: string) => DockCapabilities | undefined) {
+function mount(
+	capabilities?: (id: string) => DockCapabilities | undefined,
+	beforePanelChange?: (change: DockPanelChange) => boolean
+) {
 	const dock = createDockState(mixed());
-	render(DockHostHarness, { dock, capabilities });
+	render(DockHostHarness, { dock, capabilities, beforePanelChange });
 	return { dock };
 }
 
@@ -257,5 +262,94 @@ describe('the cross guide on a docked pane (DockHost)', () => {
 		dragTo(titlebarF(), 500, 300);
 		expect(crossRegions()).toEqual(['left', 'right', 'top', 'bottom']);
 		release(500, 300);
+	});
+});
+
+// #694 (left over from PR-1, which repaired only the outer-edge drop): a drop on a cross button
+// re-builds the docked tree too, and the re-mount drops the DOM focus on <body>.
+describe('the focus after a drop that re-mounts docked panes (DockHost)', () => {
+	const inputOf = (name: string) =>
+		document.querySelector<HTMLInputElement>(`input[aria-label="${name} input"]`)!;
+	const frameOf = (id: string) =>
+		document.querySelector<HTMLElement>(`[data-dock-drop-id="${id}"]`)!;
+	const tabOf = (id: string) => document.querySelector<HTMLElement>(`[data-dock-tab-id="${id}"]`)!;
+
+	it('a split: a focus lost to the re-mount goes back to the frame it was in (the body of p)', async () => {
+		const { dock } = mount();
+		const before = inputOf('P');
+		before.focus();
+		hit = onPane('p');
+		dragTo(titlebarF(), 500, 336);
+		release(500, 336);
+		await tick();
+		// P is wrapped in a new column split with F under it: re-mounted.
+		expect(dock.layout.docked).toMatchObject({
+			children: [{ id: 't' }, { direction: 'column', children: [{ id: 'p' }, { id: 'f' }] }]
+		});
+		expect(inputOf('P')).not.toBe(before);
+		expect(document.activeElement).toBe(frameOf('p').querySelector('[role="region"]'));
+	});
+
+	it('a new tab: the pane became a tab, the focus goes to the active tab of its group', async () => {
+		const { dock } = mount();
+		inputOf('P').focus();
+		hit = onPane('p');
+		dragTo(titlebarF(), 500, 300);
+		release(500, 300);
+		await tick();
+		expect(dock.layout.docked).toMatchObject({
+			children: [{ id: 't' }, { type: 'tabs', children: [{ id: 'p' }, { id: 'f' }] }]
+		});
+		const active = document.activeElement as HTMLElement;
+		expect(active.getAttribute('role')).toBe('tab');
+		expect(active.tabIndex).toBe(0);
+		expect(active.closest('[data-dock-drop-id]')).toBe(tabOf('p').closest('[data-dock-drop-id]'));
+	});
+
+	it('a focus that survived is left alone (in the tab group the split does not touch)', async () => {
+		mount();
+		const input = inputOf('X');
+		input.focus();
+		hit = onPane('p');
+		dragTo(titlebarF(), 500, 336);
+		release(500, 336);
+		await tick();
+		expect(document.activeElement).toBe(input);
+	});
+
+	it('a focus a hook moved elsewhere while the answer waited is left alone', async () => {
+		const outside = document.createElement('button');
+		document.body.append(outside);
+		mount(undefined, (c) => (c.kind === 'dock' && outside.focus(), true));
+		inputOf('P').focus();
+		hit = onPane('p');
+		dragTo(titlebarF(), 500, 336);
+		release(500, 336);
+		await tick();
+		expect(document.activeElement).toBe(outside);
+		outside.remove();
+	});
+
+	it('a docked pane floated: the pane that stays is re-mounted, its focus goes back to its frame', async () => {
+		const { dock } = mount();
+		const before = inputOf('X');
+		before.focus();
+		// Off every button, over the host: P floats and the split collapses to the tab group.
+		dragTo(frameOf('p').querySelector('.titlebar')!, 300, 300);
+		release(300, 300);
+		await tick();
+		expect(dock.layout.docked).toMatchObject({ type: 'tabs', id: 't' });
+		expect(dock.layout.floating.map((w) => w.id)).toContain('p');
+		expect(inputOf('X')).not.toBe(before);
+		expect(document.activeElement).toBe(tabOf('x'));
+	});
+
+	it('a docked pane floated with the focus in it: the focus goes to its new window', async () => {
+		mount();
+		inputOf('P').focus();
+		dragTo(frameOf('p').querySelector('.titlebar')!, 300, 300);
+		release(300, 300);
+		await tick();
+		expect(document.activeElement).toBe(document.querySelector('[data-dock-window-id="p"]'));
 	});
 });

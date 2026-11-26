@@ -142,9 +142,10 @@ export type DockNode = DockPanelNode | DockTabGroupNode | DockSplitNode;
  * Which region of a drop target's rect a pointer is over (spec §5.2:
  * "画面端・グループ端にドロップして分割（上下左右スナップ）"). `center` means
  * "add as a tab to the target panel/group"; the 4 edges mean "split the
- * target in that direction". Computed by `core/dropzones.ts#computeDropRegion`
- * and consumed by `core/tree.ts#dockPanelIntoTree` - Phase B renders the
- * corresponding snap-guide overlay from the same value.
+ * target in that direction". During a drag it is the cross button under the pointer
+ * (`core/dropzones.ts#crossButtons` + `hitGuideButton`, #694 PR-2; the old band rule
+ * `computeDropRegion` is deprecated), consumed by `core/tree.ts#dockPanelIntoTree`; the
+ * snap-guide overlay is drawn from the same value.
  */
 export type DropRegion = 'center' | 'left' | 'right' | 'top' | 'bottom';
 

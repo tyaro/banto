@@ -139,8 +139,10 @@ export function hitGuideButton<R extends DropRegion>(
  * is NOT in that edge's band (strict `<`), so it resolves to `'center'`
  * unless it's within another edge's band.
  *
- * Not used by the drag since #694 PR-2 (a drop needs a guide button, see the module
- * doc); kept as a pure helper for compatibility.
+ * @deprecated Removed in the next major. The pre-#694 PR-2 rule (an edge band of 25%); the
+ * drag does not use it any more: a drop needs a guide button (module doc). Lay the buttons out
+ * with `crossButtons` (a docked pane) / `edgeButtons` (the host's outer edges) and hit-test them
+ * with `hitGuideButton` (`computeEdgeDrop` for the outer edges).
  */
 export function computeDropRegion(
 	localX: number,

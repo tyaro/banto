@@ -272,6 +272,53 @@ describe('movePanel through the menu: every target', () => {
 		expect(document.activeElement).toBe(menuButton('a'));
 	});
 
+	// #694: the drag repairs the focus after a drop on a pane too (a split / a new tab / a float);
+	// from the menu it stays off, as for the outer edge above, so the focus moves once (to the
+	// moved pane) and not first to the group left behind.
+	it.each([
+		['split', ['Dの隣にドッキング', '下に']],
+		['float', ['浮かせる']]
+	])(
+		'%s from a tab group: the focus is on the moved pane, not on the group left behind',
+		async (_how, path) => {
+			const dock = createDockState({
+				version: 4,
+				docked: {
+					type: 'split',
+					id: 's',
+					direction: 'row',
+					sizes: [0.5, 0.5],
+					children: [
+						{
+							type: 'tabs',
+							id: 'g',
+							activeIndex: 0,
+							children: [panel('a'), panel('b'), panel('c')]
+						},
+						panel('d')
+					]
+				},
+				floating: []
+			});
+			mount({ dock });
+			const focused: (string | null)[] = [];
+			const onFocus = (event: FocusEvent) => {
+				const el = event.target as HTMLElement;
+				if (el.closest('[role="menu"]')) return;
+				focused.push(el.dataset.dockTabId ?? el.dataset.dockMenuFor ?? el.tagName);
+			};
+			await openWithKeyboard('a');
+			document.addEventListener('focusin', onFocus);
+			for (const label of path) await chooseByKeyboard(label);
+			document.removeEventListener('focusin', onFocus);
+			expect(findParent(dock.layout.docked, 'a')?.type).not.toBe('tabs');
+			expect(document.activeElement).toBe(menuButton('a'));
+			// Only the moved pane took it (the menu's button, then the mover): the drag's own repair
+			// did not put it on the group left behind first.
+			expect(focused.filter((id) => id !== 'a')).toEqual([]);
+		}
+	);
+
 	it('tabs: the pane joins the target as a tab; the focus is on its tab', async () => {
 		const { dock } = mount();
 		await openWithKeyboard('tree');
