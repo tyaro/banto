@@ -1815,7 +1815,22 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}).toPass({ timeout: 30_000 });
 		await expect(offer).toHaveText(`該当する全${E2E_IMPORT_ROWS}件を選択`);
 
-		// Clearing drops the selection, the bar and the offer.
+		// Widen to the whole filtered set (a flag apart from the ordinary selection,
+		// #752), then clear: the bar, the header check and the all-matching mode go.
+		await offer.click();
+		await expect(bar).toContainText(`${E2E_IMPORT_ROWS}件を選択中`);
+		await expect(offer).toHaveCount(0);
+		await bar.getByRole('button', { name: '選択を解除' }).click();
+		await expect(bar).toHaveCount(0);
+		await expect(headerBox).not.toBeChecked();
+
+		// Selecting again must offer the whole set afresh: had clearing left the
+		// all-matching mode on, the bar would already read 250 and offer nothing.
+		await expect(async () => {
+			if (!(await headerBox.isChecked())) await headerBox.click({ timeout: 1000 });
+			await expect(offer).toBeVisible({ timeout: 1000 });
+		}).toPass({ timeout: 30_000 });
+		await expect(bar).not.toContainText(`${E2E_IMPORT_ROWS}件を選択中`);
 		await bar.getByRole('button', { name: '選択を解除' }).click();
 		await expect(bar).toHaveCount(0);
 
