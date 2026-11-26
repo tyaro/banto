@@ -270,6 +270,65 @@ impl RunningServer {
         self.stop_within(STOP_TIMEOUT, writes_limit).await
     }
 
+    /// [`Self::stop`] with both bounds chosen by the caller (Issue #980).
+    ///
+    /// - `connections`: how long the wait for the open connections to finish
+    ///   may last. When it is exceeded, the wait is given up and the task
+    ///   that runs the server is aborted (Issue #283); a connection that did
+    ///   not finish is then not guaranteed to be closed.
+    /// - `writes`: how long the writes the listener accepted
+    ///   ([`crate::detach`]) are waited for, from the stop signal. It is a
+    ///   bound of its own and runs alongside `connections`, not after it.
+    ///   Writes are never aborted: past it the result is
+    ///   [`StopOutcome::WritesRemaining`].
+    ///
+    /// `stop()` is `stop_within(5 seconds, DETACHED_WRITES_STOP_TIMEOUT)`.
+    ///
+    /// The "the task of a server that does not finish is aborted" guarantee
+    /// can be checked from outside this crate: send a raw request to a
+    /// handler that never answers, then stop with a short `connections`.
+    ///
+    /// ```no_run
+    /// # async fn demo(server: banto_server::RunningServer) {
+    /// use std::time::Duration;
+    /// let outcome = server
+    ///     .stop_within(Duration::from_millis(300), Duration::from_secs(10))
+    ///     .await;
+    /// # let _ = outcome;
+    /// # }
+    /// ```
+    pub async fn stop_within(mut self, connections: Duration, writes: Duration) -> StopOutcome {
+        // Order: refuse new writes first, then tell the connections to end.
+        self.detached_writes.close();
+        let _ = self.shutdown_tx.send(true);
+        let gate = self.detached_writes.clone();
+        let connections = async {
+            if tokio::time::timeout(connections, &mut self.join_handle)
+                .await
+                .is_err()
+            {
+                eprintln!(
+                    "banto-server: 停止が{:?}以内に完了しなかったためサーバタスクを中断します",
+                    connections
+                );
+                self.join_handle.abort();
+                let _ = self.join_handle.await;
+            }
+        };
+        let (idle, ()) = tokio::join!(gate.wait_idle(writes), connections);
+        if idle {
+            return StopOutcome::Finished;
+        }
+        let remaining = RemainingWrites::new(gate);
+        eprintln!(
+            "banto-server: 停止の後も書き込みが{}件残っています（{:?}待ちました）: {}",
+            remaining.count(),
+            writes,
+            remaining.operations().join(", ")
+        );
+        StopOutcome::WritesRemaining(remaining)
+    }
+
     /// Stops several listeners of one app together - the plain one and a TLS
     /// listener of the app's own ([`BoundServer::from_listener`]), say
     /// (Issue #947, ADR-0035 §9). The order is the one [`Self::stop`] keeps
@@ -305,6 +364,18 @@ impl RunningServer {
         servers: impl IntoIterator<Item = RunningServer>,
         writes_limit: Duration,
     ) -> Vec<StopOutcome> {
+        Self::stop_all_within(servers, STOP_TIMEOUT, writes_limit).await
+    }
+
+    /// [`Self::stop_all`] with both bounds chosen by the caller (Issue #980;
+    /// see [`Self::stop_within`] for what `connections` and `writes` bound).
+    /// The order is the one of [`Self::stop_all`]: every gate is closed
+    /// first, then all are waited for side by side.
+    pub async fn stop_all_within(
+        servers: impl IntoIterator<Item = RunningServer>,
+        connections: Duration,
+        writes: Duration,
+    ) -> Vec<StopOutcome> {
         let servers: Vec<RunningServer> = servers.into_iter().collect();
         for server in &servers {
             server.detached_writes.close();
@@ -312,7 +383,7 @@ impl RunningServer {
         futures_util::future::join_all(
             servers
                 .into_iter()
-                .map(|server| server.stop_within(STOP_TIMEOUT, writes_limit)),
+                .map(|server| server.stop_within(connections, writes)),
         )
         .await
     }
@@ -325,38 +396,6 @@ impl RunningServer {
     #[doc(hidden)]
     pub fn hold_write_for_test(&self, label: &str) -> Option<impl Send + 'static> {
         self.detached_writes.enter(label.to_string()).ok()
-    }
-
-    async fn stop_within(mut self, limit: Duration, writes_limit: Duration) -> StopOutcome {
-        // Order: refuse new writes first, then tell the connections to end.
-        self.detached_writes.close();
-        let _ = self.shutdown_tx.send(true);
-        let writes = self.detached_writes.clone();
-        let connections = async {
-            if tokio::time::timeout(limit, &mut self.join_handle)
-                .await
-                .is_err()
-            {
-                eprintln!(
-                    "banto-server: 停止が{}秒以内に完了しなかったためサーバタスクを中断します",
-                    limit.as_secs()
-                );
-                self.join_handle.abort();
-                let _ = self.join_handle.await;
-            }
-        };
-        let (idle, ()) = tokio::join!(writes.wait_idle(writes_limit), connections);
-        if idle {
-            return StopOutcome::Finished;
-        }
-        let remaining = RemainingWrites::new(writes);
-        eprintln!(
-            "banto-server: 停止の後も書き込みが{}件残っています（{}秒待ちました）: {}",
-            remaining.count(),
-            writes_limit.as_secs(),
-            remaining.operations().join(", ")
-        );
-        StopOutcome::WritesRemaining(remaining)
     }
 }
 
@@ -1504,6 +1543,73 @@ Connection: close
         )
         .await
         .expect("the safety net bounds stop()");
+    }
+
+    #[tokio::test]
+    async fn stop_all_within_returns_after_the_short_limit_when_connections_hang() {
+        use axum::routing::get;
+        use tokio::io::AsyncWriteExt;
+        let started = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut servers = Vec::new();
+        let mut conns = Vec::new();
+        for _ in 0..2 {
+            let entered = started.clone();
+            let router = Router::new().route(
+                "/hang",
+                get(move || async move {
+                    entered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    std::future::pending::<()>().await;
+                    "never"
+                }),
+            );
+            let server = start(
+                ServerConfig {
+                    bind: "127.0.0.1".to_string(),
+                    port: 0,
+                },
+                router,
+            )
+            .await
+            .unwrap();
+            let mut conn = tokio::net::TcpStream::connect(server.local_addr())
+                .await
+                .unwrap();
+            conn.write_all(
+                b"GET /hang HTTP/1.1
+Host: localhost
+
+",
+            )
+            .await
+            .unwrap();
+            conns.push(conn);
+            servers.push(server);
+        }
+        // Both handlers must have started before stopping, or a loaded machine
+        // could stop before the requests arrive and never exercise the limit.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while started.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("both handlers started");
+
+        let outcomes = tokio::time::timeout(
+            Duration::from_secs(3),
+            RunningServer::stop_all_within(
+                servers,
+                Duration::from_millis(300),
+                DETACHED_WRITES_STOP_TIMEOUT,
+            ),
+        )
+        .await
+        .expect("the short connections limit bounds the stop");
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, StopOutcome::Finished)));
+        drop(conns);
     }
 
     #[tokio::test]

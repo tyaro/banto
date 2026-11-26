@@ -84,6 +84,15 @@ async fn stop_outcome_and_exposure_api_is_public(server: banto_server::RunningSe
     restoring_previous_stays_within(&ServerExposure::closed(), &requested)
 }
 
+/// Issue #980: both bounds of a stop - the wait for connections and the wait
+/// for writes - are the caller's to choose, for one listener and for several.
+async fn stop_with_both_bounds_is_public(server: banto_server::RunningServer) {
+    use banto_server::{RunningServer, StopOutcome};
+    let short = std::time::Duration::from_millis(300);
+    let _: StopOutcome = server.stop_within(short, short).await;
+    let _: Vec<StopOutcome> = RunningServer::stop_all_within(Vec::new(), short, short).await;
+}
+
 /// Issue #947 (ADR-0035 §9): a derived app serves a listener of its own (a
 /// TLS listener) through the same `serve`, on the budget of its plain
 /// listener, and stops them together.

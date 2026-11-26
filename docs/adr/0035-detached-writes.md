@@ -72,7 +72,7 @@ kind を足すと `BantoError` と TS の写しの両方に手が入る。
    `WritesRemaining(RemainingWrites)`（今の数、`METHOD path` の一覧 — query は含めず、長さと件数に上限 —、
    終わりを待つ口）。残った書き込みは中断しない（中断すれば、防ぎたかった「途中で止まる」を自分で起こす）。
    `eprintln!` にも残す。
-4. 上限を変えたい呼び手のために `stop_waiting_writes_for(limit)` を置く。
+4. 上限を変えたい呼び手のために `stop_waiting_writes_for(limit)` を置く。接続の待ちの上限も選びたい呼び手には `stop_within(connections, writes)` を公開している（#980）。
 
 `stop()` の戻り値は `()` から `StopOutcome` に変わる（破壊的変更。`server.stop().await;` はそのまま通る）。
 `#[must_use]` は付けない: 試験や終了の経路のように、結果を見なくてよい呼び手が多い。別の listener を
@@ -179,9 +179,9 @@ future は捨てられない。これは輸送の違いで、認可と監査の�
   その listener だけを止めて作り直すので、§7 の「世代をまたぐ共有」と同じ形にそのまま載る。片方を止めて
   作り直している間、もう片方の門は開いたままで、書き込みは切り離されたまま。止めた世代に残った書き込みは、
   終わるまで枠を使い続け、その世代の `StopOutcome` に出る。
-- **まとめて止める**: `RunningServer::stop_all(servers)`（上限を変える `stop_all_waiting_writes_for`）。§4 の
+- **まとめて止める**: `RunningServer::stop_all(servers)`（書き込みの上限を変える `stop_all_waiting_writes_for`、接続の上限も選ぶ `stop_all_within(servers, connections, writes)`、#980）。§4 の
   順序を全 listener に対して守る: **全部の門を先に閉じ**（以後どの口も書き込みを始めない）、それから並行に
-  待つ。待ちは合計ではなく最も遅い 1 つ分（長くて 10 秒）。結果は渡した順に listener ごと。`stop()` を 1 つずつ
+  待つ。待ちは合計ではなく最も遅い 1 つ分（既定の `stop_all` なら長くて 10 秒。上限は `stop_all_within`・`stop_all_waiting_writes_for` で変えられる）。結果は渡した順に listener ごと。`stop()` を 1 つずつ
   順に呼ぶと、先の listener を待つ間に後の listener が書き込みを受け付け、待ちも足し算になる。
 - **外からの停止要求（証明書の失効）**: `RunningServer::stop_handle()` が返す `StopHandle` は複製でき、
   `request_stop()` は**同期で、待たない**（監視のスレッドなど、`RunningServer` を持たず `.await` もできない所から
