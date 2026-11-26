@@ -310,3 +310,26 @@ test.describe('openOnFocus (grid-touch-edit-design §4.2)', () => {
 		await expect(surface(page)).toBeHidden();
 	});
 });
+
+test.describe('glass preset keeps the floating panel opaque', () => {
+	const backgroundOf = (target: Locator): Promise<string> =>
+		target.evaluate((el) => getComputedStyle(el).backgroundColor);
+
+	for (const theme of ['light', 'dark']) {
+		test(`${theme}: popup keypad and bottom panel have no alpha`, async ({ page }) => {
+			await page.goto('/');
+			await page.evaluate((t) => {
+				document.documentElement.dataset.bantoPreset = 'glass';
+				document.documentElement.dataset.theme = t;
+			}, theme);
+			// Popup placement: the keypad itself is the visible panel.
+			await openOn(page, 'qty');
+			expect(await backgroundOf(surface(page).locator('.keypad'))).not.toMatch(/\/|rgba/);
+			await page.keyboard.press('Escape');
+			await expect(surface(page)).toBeHidden();
+			// Bottom placement: the strip around the keyboard.
+			await openOn(page, 'memo');
+			expect(await backgroundOf(surface(page).locator('.panel'))).not.toMatch(/\/|rgba/);
+		});
+	}
+});
