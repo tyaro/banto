@@ -23,6 +23,7 @@
 ## [Unreleased]
 
 - feat(admin-template): ブラウザ単体のデモで `/users` と `/audit-log` を「利用できません」ではなく読み取り専用の見本データで表示する（書き込みは `DEMO_MODE_MESSAGE` で拒否のまま、#712）。conventions §10 を「管理系は拒否、ユーザー一覧と監査ログの読み取りだけ見本を許す」に改訂。
+- feat(resource): 一覧が 0 件のとき、使える操作（新規作成・CSV 取り込み）の導線を出す（#712）。検索・絞り込みの結果が 0 件のときは導線を出さず、条件を変える案内にする。`banto add resource` の生成物にも効く（`ResourceListPage`）。`BantoGrid` に 0 件の表示を差し替える `empty` snippet を追加した。空の画面のボタンはヘッダと別の名前（「最初の 1 件を作成」「CSV から取り込む」）なので、`getByRole('button', { name: '新規作成' })` の試験は 0 件の一覧でも 1 つに当たる。
 - chore(fixtures): v9.1.1 のタグ後の外部利用 fixture の ref を `v9.1.1` に更新した。[9.1.1] に「検証した組み合わせ」を追記。
 
 ## [9.1.1] - 2026-11-26

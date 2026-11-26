@@ -91,6 +91,8 @@
 		/** Called on every selection change, while the rows are still loaded. */
 		onSelectionChange?: (ids: RowId[]) => void;
 		bulkActions?: Snippet<[GridBulkActionsContext]>;
+		/** Shown in place of the grid's plain "no data" text once a load has settled without error. */
+		empty?: Snippet;
 	}
 
 	let {
@@ -110,7 +112,8 @@
 		selectable = false,
 		selectedRowIds = $bindable([]),
 		onSelectionChange,
-		bulkActions
+		bulkActions,
+		empty
 	}: Props = $props();
 
 	// The resource name is fixed for this instance (the page remounts per route).
@@ -191,6 +194,7 @@
 			bind:selectedRowIds
 			{onSelectionChange}
 			{bulkActions}
+			empty={!list.loading && list.error === null ? empty : undefined}
 		/>
 	</div>
 {/if}

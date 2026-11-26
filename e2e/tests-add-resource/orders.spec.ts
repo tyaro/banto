@@ -35,9 +35,11 @@ test('生成した orders: ナビから一覧が開き、フォームで作っ�
 		.click();
 	await expect(page).toHaveURL(/\/orders$/);
 	await expect(page.getByRole('grid')).toBeVisible();
+	// 0 件の一覧には次の一手（#712）。管理者なので「新規作成」が出る。
+	await expect(page.locator('[data-empty-action="create"]')).toBeVisible();
 
-	// フォームで必須欄を埋めて 1 件作る。
-	await page.getByRole('button', { name: '新規作成' }).click();
+	// 空の画面のボタンを押してフォームへ入る。
+	await page.locator('[data-empty-action="create"]').click();
 	await expect(page).toHaveURL(/\/orders\/new$/);
 	await page.getByLabel(FIELD_CUSTOMER).fill(CUSTOMER);
 	await page.getByLabel(FIELD_SUMMARY).fill('E2E の注文');

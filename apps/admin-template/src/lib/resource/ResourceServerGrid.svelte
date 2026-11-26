@@ -91,6 +91,8 @@
 		/** True while "all matching" is selected; bindable so the page sees the mode change. */
 		allMatchingSelected?: boolean;
 		bulkActions?: Snippet<[GridBulkActionsContext]>;
+		/** Shown in place of the grid's plain "no data" text once a load has settled without error. */
+		empty?: Snippet;
 	}
 
 	let {
@@ -110,7 +112,8 @@
 		onSelectionChange,
 		selectAllMatching = false,
 		allMatchingSelected = $bindable(false),
-		bulkActions
+		bulkActions,
+		empty
 	}: Props = $props();
 
 	// The resource name is fixed for this instance (the page remounts per route).
@@ -320,6 +323,7 @@
 		{selectAllMatching}
 		bind:allMatchingSelected
 		{bulkActions}
+		empty={!windowed.loading && windowed.failures.length === 0 ? empty : undefined}
 	/>
 </div>
 
