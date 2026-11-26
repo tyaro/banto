@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [9.3.0] - 2026-11-27
+
+**v9.3.0 — pop-out のパネルの窓を再利用できる Tauri v2 の plugin の crate `banto-tauri-panel` と `@banto/admin-core` の口（`openPanelWindow`・`listenPanelClosed`・`createPanelPopOut`）に置いた（#1006、[ADR-0037](docs/adr/0037-tauri-panel-plugin.md)）。`DateRangePicker` のカレンダーの日の読み上げに開始日・終了日を足した（#997）。テンプレートの pop-out を上の plugin に置き換えた。** 既存の公開 API の削除・改名は無く、公開の union に種類も足していない。migration も増えない。**minor にした理由**: 新しい crate・公開の口・`UiMessages` の省略できるキーを足しただけの後方互換の機能追加（[publishing.md「バージョニング規約」](docs/publishing.md#バージョニング規約)）。
+
+移行の手順（v9.2.x から）:
+
+1. 依存のタグを `v9.2.0` から `v9.3.0` に上げる（npm と Rust を同じタグに）。
+2. **pop-out を使うなら新 crate を足す（任意）**: `banto-tauri-panel = { git = "https://github.com/tyaro/banto.git", tag = "v9.3.0" }`。使い方は [docs/recipes/panel-windows.md](docs/recipes/panel-windows.md)。
+3. **コピーしたテンプレートの pop-out（経路 B）**: 自前の `panel_open` コマンドと `popout.ts` の中身を plugin と `createPanelPopOut` に置き換えられる（任意。写しのままでも動く）。置き換えの手順は下の「消費側への注意」。
+4. DB・設定は変更なし。詳しい手順は [docs/upgrading.md](docs/upgrading.md) の例 16。
+
+消費側への注意（確かめるもの）:
+
+- **パネルの id の文字の制限**: `banto-tauri-panel` が通す id は ASCII の英数字と `-`・`_`（64 文字まで）だけ。日本語や `/`・空白を含む id のパネルを pop-out に出していると、窓を開けない（`createPanelPopOut` は窓を開けなかったときパネルを dock に戻す）。id を制限に合わせる。
+- **テンプレートを写したアプリで pop-out を使っているなら**: `src-tauri/Cargo.toml` に `banto-tauri-panel` を足し、`lib.rs` の `panel_open`（本体と `invoke_handler` の登録）を `.plugin(banto_tauri_panel::init())` に替え、capability に `banto-tauri-panel:allow-open` を足し、`popout.ts` とダッシュボードの `onPopOut` の配線をテンプレートの形に合わせる。capability を残したまま依存を外すと `tauri-build` が「知らない permission」で落ちる（[remove-optional-assets.md](docs/recipes/remove-optional-assets.md)）。位置・大きさの記憶とメインの窓と一緒に閉じる振る舞いは、plugin に替えたときに入る。
+- **新しい `UiMessages` のキー**: `dateRangePickerDayStart(date)`・`dateRangePickerDayEnd(date)`・`dateRangePickerDayBoth(date)`。どれも省略でき、既定は日本語。自前の `UiMessages` を渡しているアプリは、他の言語の読み上げが要るなら 3 つを足す（足さなくてもコンパイルでき、日本語の既定で読まれる）。
+- **外部利用 fixture は `default-features = false`** で `banto-tauri-panel` を導入する（tauri の配線を引かず、規則の部分だけを試験する形）。
+- 依存を上げずに留まれるか: できる（`v9.2.0` のタグに固定したまま使える）。DB の変更は無く、旧版のバイナリへそのまま戻せる。
+
+### 変更の一覧
+
 - feat(ui): `DateRangePicker` のカレンダーで、期間の開始日・終了日の日の読み上げに「開始日」「終了日」を足した（#997、D13 の b）。同じ日は「開始日・終了日」を 1 回、仮の期間（終了日を選ぶ前）は起点の日だけが開始日。`UiMessages` に省略できる `dateRangePickerDayStart(date)`・`dateRangePickerDayEnd(date)`・`dateRangePickerDayBoth(date)` を足した（既定は日本語、テンプレートは ja・en と `dateRangePickerMessages()`）。`DatePicker` とシンプルな 3 部品の DOM は変えない。実機のスクリーンリーダーでの確認はまだ。
 - feat(tauri): pop-out のパネルの窓を、再利用できる Tauri v2 の plugin の crate **`banto-tauri-panel`**（`crates/banto-tauri-panel`）に置いた（#1006、[ADR-0037](docs/adr/0037-tauri-panel-plugin.md)。下流の banto-industrial#1281 の前提）。plugin は、パネルの窓を開く（同じ id の窓が開いていれば前に出すだけ）・閉じたら `banto://panel-closed`（payload は id）・**位置と大きさを id ごとに覚える**（app の data dir の `panel-windows.json`。画面の外なら既定の位置・大きさで開く）・**メインの窓を閉じたらパネルの窓も閉じる**、を持つ。ルートの形（既定 `panel/{id}`）・ラベル・大きさ・記憶の保存先を `Builder` で渡せ、記憶と「一緒に閉じる」は切れる（`remember_geometry(false)`・`close_with_main(false)`）。パネルの id は ASCII の英数字と `-`・`_`（64 文字まで）だけを通す。規則のある部分（id・ルート・画面の外の判定・記憶の読み書き）は tauri に依存しないモジュールで、CI の rust の job が `cargo test -p banto-tauri-panel --no-default-features` で試験する。Tauri の配線は tauri-check.yml（コンパイル・clippy）と実機で確かめる。外部利用 fixture は `default-features = false` で導入する。
 - feat(admin-core): `openPanelWindow`・`listenPanelClosed`・`createPanelPopOut`（と `PANEL_OPEN_COMMAND`・`PANEL_CLOSED_EVENT`、型）を公開した（#1006）。`isTauri`・`invoke`・`listen` は注入する（`@tauri-apps/api` に依存しない）。`createPanelPopOut` は dock に渡す `onPopOut` と、閉じた知らせでパネルを dock に戻す購読（`connect()`）を 1 つにまとめ、窓を開けなかったときもパネルを dock に戻す。ブラウザでは `onPopOut` が `undefined`（pop-out のボタンを出さない約束はそのまま）。使い方は [docs/recipes/panel-windows.md](docs/recipes/panel-windows.md)。

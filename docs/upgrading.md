@@ -1421,3 +1421,49 @@ dock のタブの帯が狭いときにタブを縮めて題名を省略記号に
 3. 取り込んだなら: 0 件の一覧のボタン（権限・絞り込みでの出し分け）、デモの `/users`・`/audit-log` の見本と書き込みの拒否、Windows のファイアウォールの状態の表示。
 4. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
 5. 同期記録に「v9.2.0 取込済」を書く。
+
+### 例 16: v9.2.x → v9.3.0（パネルの窓の plugin `banto-tauri-panel`・`DateRangePicker` の開始日・終了日の読み上げ。A と B）
+
+pop-out のパネルの窓を、再利用できる Tauri v2 の plugin の crate `banto-tauri-panel` と `@banto/admin-core` の口
+（`openPanelWindow`・`listenPanelClosed`・`createPanelPopOut`）に置いた（#1006、ADR-0037）。`DateRangePicker` の
+カレンダーの日の読み上げに開始日・終了日を足した（#997。`UiMessages` に省略できるキーを 3 つ）。
+既存の公開 API の削除・改名はなく、公開の union への種類の追加もない。migration もない。
+**minor**: 新しい crate・口・省略できるキーの追加だけで、既存のコードはそのままコンパイルできる。
+
+| 経路 | 項目 | 取り込み |
+| ---- | ---- | -------- |
+| A | `@banto/admin-core` を上げる | 追加だけ（`openPanelWindow`・`listenPanelClosed`・`createPanelPopOut`・`PANEL_OPEN_COMMAND`・`PANEL_CLOSED_EVENT`）。`isTauri`・`invoke`・`listen` は注入で、`@tauri-apps/api` には依存しない |
+| A | `@banto/ui` を上げる | `UiMessages` に省略できる `dateRangePickerDayStart`・`dateRangePickerDayEnd`・`dateRangePickerDayBoth`（既定は日本語）。`DatePicker` とシンプルな 3 部品の DOM は変えない |
+| A | 新 crate `banto-tauri-panel` | pop-out を使うなら足す（任意）。位置・大きさの記憶とメインの窓と一緒に閉じる振る舞いを持つ。パネルの id は ASCII の英数字と `-`・`_`（64 文字まで） |
+| B | pop-out の置き換え（`src-tauri/Cargo.toml`・`lib.rs`・capability・`popout.ts`・ダッシュボードの `onPopOut`） | 取り込みは任意（A の `v9.3.0` が要る）。写しのままでも動く |
+| C | DB・設定キー・配布物 | 変更なし（`tauri.conf.json` は版数のみ） |
+
+新 crate を使う手順の例（Rust の側。フロントの配線は [panel-windows.md](recipes/panel-windows.md)）:
+
+```toml
+# src-tauri/Cargo.toml
+banto-tauri-panel = { git = "https://github.com/tyaro/banto.git", tag = "v9.3.0" }
+```
+
+```rust
+// src-tauri/src/lib.rs
+tauri::Builder::default().plugin(banto_tauri_panel::init())
+```
+
+```json
+// src-tauri/capabilities/default.json の permissions に追加
+"banto-tauri-panel:allow-open"
+```
+
+進め方:
+
+1. A のタグを上げ、`pnpm check`・`cargo test` を通す（型エラーになる変更は無い）。
+2. pop-out を使うなら、上の 3 点（依存・`.plugin(...)`・capability）を足し、自前の `panel_open` を外して `createPanelPopOut` に替える。
+3. コピーしたテンプレートは、`popout.ts` とダッシュボードの `onPopOut` の差分を写す（任意）。パネルの id が制限に合うか確かめる。
+
+確認項目:
+
+1. `pnpm check`・`pnpm build`・`pnpm verify:architecture`・`cargo test`。
+2. 取り込んだなら: pop-out の窓が開き、同じ id では前に出るだけ、閉じるとパネルが dock に戻り、メインを閉じると窓も閉じること。
+3. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
+4. 同期記録に「v9.3.0 取込済」を書く。
