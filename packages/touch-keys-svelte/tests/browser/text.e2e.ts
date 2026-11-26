@@ -143,6 +143,19 @@ test.describe('text keyboard (§9)', () => {
 	});
 });
 
+test('a 400px panel keeps letter keys at 34px or wider (§10)', async ({ page }) => {
+	await page.setViewportSize({ width: 400, height: 800 });
+	await page.goto('/');
+	await openOn(page, 'memo');
+	const widths = await surface(page)
+		.locator('.row')
+		.first()
+		.locator('button')
+		.evaluateAll((buttons) => buttons.map((b) => b.getBoundingClientRect().width));
+	expect(widths).toHaveLength(10);
+	for (const w of widths) expect(w).toBeGreaterThanOrEqual(34);
+});
+
 test.describe('narrow screen (§10)', () => {
 	test.use({ viewport: { width: 360, height: 800 } });
 
