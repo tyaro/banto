@@ -4888,6 +4888,128 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await resetDashboardLayout(page);
 	});
 
+	// #694 PR-3b: a real `@banto/ui` Modal opened from inside a slid-out pane. The memo's close
+	// prompt (a Modal in the top layer, outside the flyout's DOM) is the one a pane opens. Its
+	// inside is not "outside" for the flyout's outside-click / focusout / Esc, so the flyout stays,
+	// Esc closes only the Modal, and the focus goes back into the flyout.
+	test('13l3. dashboard dock: a Modal opened from a slid-out pane keeps the flyout; Esc closes only the Modal', async () => {
+		const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
+		const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
+		const wrapper = page.locator('.dock-wrapper');
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		await wrapper.scrollIntoViewIfNeeded();
+
+		await wrapper.getByRole('button', { name: 'メモを自動で隠す（ピンを外す）' }).click();
+		const band = wrapper.locator('[aria-label$="に自動で隠したパネル"]');
+		const tab = band.getByRole('button', { name: 'メモ', exact: true });
+		await expect(tab).toBeVisible();
+		await tab.click();
+		const flyout = wrapper.locator('[data-dock-flyout="memo"]');
+		await expect(flyout).toBeVisible();
+
+		// An unapplied input makes the close button ask. A click before hydration does nothing,
+		// so the open is retried.
+		await memoInput.fill('flyout draft');
+		const closeButton = flyout.getByRole('button', { name: 'メモを閉じる' });
+		await expect(async () => {
+			await closeButton.click();
+			await expect(settleDialog).toBeVisible({ timeout: 1000 });
+		}).toPass();
+		await expect(flyout).toBeVisible();
+
+		// Clicks and Tab inside the Modal: the flyout stays, the focus stays in the Modal.
+		await settleDialog.getByText('メモに保存していない入力があります').click();
+		await expect(flyout).toBeVisible();
+		await page.keyboard.press('Tab');
+		await expect(settleDialog.locator(':focus')).toHaveCount(1);
+		await expect(flyout).toBeVisible();
+
+		// Esc closes the Modal only (the cancel answer), the flyout is still open and holds the focus.
+		await page.keyboard.press('Escape');
+		await expect(settleDialog).toHaveCount(0);
+		await expect(flyout).toBeVisible();
+		await expect(flyout.locator(':focus')).toHaveCount(1);
+		await expect(memoInput).toHaveValue('flyout draft');
+
+		// The Modal again, closed by its cancel button this time: the flyout is untouched.
+		await closeButton.click();
+		await expect(settleDialog).toBeVisible();
+		await settleDialog.getByRole('button', { name: 'キャンセル' }).click();
+		await expect(settleDialog).toHaveCount(0);
+		await expect(flyout).toBeVisible();
+		await expect(flyout.locator(':focus')).toHaveCount(1);
+
+		// The second Esc is the flyout's own: it slides back and the focus returns to the tab.
+		await page.keyboard.press('Escape');
+		await expect(flyout).toHaveCount(0);
+		await expect(tab).toBeFocused();
+
+		// Put the memo back in its place, with the draft cleared.
+		await tab.click();
+		await expect(flyout).toBeVisible();
+		await flyout.getByRole('button', { name: 'メモを元の場所に固定（ピンを留める）' }).click();
+		await expect(band).toHaveCount(0);
+		await expect(memoInput).toHaveValue('flyout draft');
+		await memoInput.fill('');
+		await resetDashboardLayout(page);
+	});
+
+	// #694 PR-3b: the same Modal over a FLOATING window - clicking in it, and closing it, does not
+	// move or close the window, and the focus comes back into the window.
+	test('13l4. dashboard dock: a Modal opened from a floating window leaves the window as it was', async () => {
+		const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
+		const memoWindow = page.getByRole('dialog', { name: 'メモ', exact: true });
+		const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
+		const host = page.locator('.dock-wrapper [data-dock-host]');
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
+		await floatDashboardMemo(page);
+
+		// The window's place inside the dock host (the page itself may scroll under a Modal's lock).
+		const placeInHost = async () => {
+			const [box, hostBox] = [await memoWindow.boundingBox(), await host.boundingBox()];
+			if (!box || !hostBox) throw new Error('not visible');
+			return { x: box.x - hostBox.x, y: box.y - hostBox.y, width: box.width, height: box.height };
+		};
+		await memoInput.fill('window draft');
+		const before = await placeInHost();
+		const closeButton = memoWindow.getByRole('button', { name: 'メモを閉じる' });
+		await expect(async () => {
+			await closeButton.click();
+			await expect(settleDialog).toBeVisible({ timeout: 1000 });
+		}).toPass();
+
+		await settleDialog.getByText('メモに保存していない入力があります').click();
+		await settleDialog.getByRole('heading', { name: '保存していないメモ' }).click();
+		await expect(memoWindow).toBeVisible();
+
+		await page.keyboard.press('Escape');
+		await expect(settleDialog).toHaveCount(0);
+		await expect(memoWindow).toBeVisible();
+		await expect(memoWindow.locator(':focus')).toHaveCount(1);
+		expect(await placeInHost()).toEqual(before);
+		await expect(memoWindow).toHaveClass(/frontmost/);
+		await expect(memoInput).toHaveValue('window draft');
+
+		// Cancel button path; then the window is still in front (a click lands on its textarea).
+		await closeButton.click();
+		await expect(settleDialog).toBeVisible();
+		await settleDialog.getByRole('button', { name: 'キャンセル' }).click();
+		await expect(settleDialog).toHaveCount(0);
+		await expect(memoWindow.locator(':focus')).toHaveCount(1);
+		expect(await placeInHost()).toEqual(before);
+		await memoInput.click();
+		await expect(memoInput).toBeFocused();
+
+		// Leave clean: discard and close, then put the layout back.
+		await closeButton.click();
+		await settleDialog.getByRole('button', { name: '破棄して閉じる' }).click();
+		await expect(memoWindow).toHaveCount(0);
+		await resetDashboardLayout(page);
+	});
+
 	// Issue #435 PR-11: Ctrl+S in the memo is the pane's save button as a
 	// command of the app's shortcut dispatcher - taken inside the textarea, the
 	// same serialized save. With nothing to save (or a held key) it is still
