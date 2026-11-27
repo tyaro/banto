@@ -445,7 +445,9 @@ VSCode/Rider等のエディタに近い、本格的なドッキング・タブ�
   ドックのパネルをネイティブウィンドウ（`routes/panel/[id]`）として開く。
   同じ id の窓が開いていれば前に出すだけ。ウィンドウが閉じられると `banto://panel-closed` を emit し、パネルを
   ドックへ復帰させる。plugin は位置・大きさをパネルの id ごとに覚え（画面の外なら既定に戻す）、
-  メインの窓を閉じるとパネルの窓も閉じる（どちらもアプリの設定で切れる）。フロント側の口は
+  メインの窓を閉じるとパネルの窓も閉じる（どちらもアプリの設定で切れる）。窓に出したままメインの窓を閉じたパネルは、
+  次の起動でドックへ戻す（`createPanelPopOut` が出している id を覚え、plugin の `list` と突き合わせる。#1013）。
+  窓に出しているパネルは表示メニューでチェック付きで、選ぶと窓が前に出る（#1014）。フロント側の口は
   `@banto/admin-core` の `openPanelWindow` / `listenPanelClosed` / `createPanelPopOut`
   （`admin-template` の束ね先は `src/lib/banto/popout.ts`）。いずれも `isTauri()` ガード付きで、ブラウザ配信では
   ポップアウトボタン自体が描画されない（`onPopOut` が未配線）ため、

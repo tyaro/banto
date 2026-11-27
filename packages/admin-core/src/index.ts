@@ -249,12 +249,15 @@ export type {
 	OpenPanelWindowOptions,
 	ListenPanelClosedOptions,
 	PanelPopOutOptions,
+	PanelPopOutStorage,
 	PanelPopOut
 } from './panelWindow';
 export {
 	PANEL_CLOSED_EVENT,
 	PANEL_OPEN_COMMAND,
+	PANEL_LIST_COMMAND,
 	openPanelWindow,
+	listPanelWindows,
 	listenPanelClosed,
 	createPanelPopOut
 } from './panelWindow';

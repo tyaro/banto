@@ -129,7 +129,7 @@ Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とそ�
   （パネルの窓の plugin の登録。[ADR-0037](../adr/0037-tauri-panel-plugin.md)）
 - `apps/admin-template/src-tauri/Cargo.toml` の `banto-tauri-panel` の依存
 - `apps/admin-template/src-tauri/capabilities/default.json` の `"permissions"` の
-  `"banto-tauri-panel:allow-open"`（依存を外した後に残すと、`tauri-build` が「知らない permission」で落ちる）と、
+  `"banto-tauri-panel:allow-open"`・`"banto-tauri-panel:allow-list"`（依存を外した後に残すと、`tauri-build` が「知らない permission」で落ちる）と、
   `"windows"` 配列内 `"panel-*"` エントリ（ポップアウトウィンドウのケイパビリティ許可）
 
 crate 本体（`crates/banto-tauri-panel`）は、モノレポを写したアプリなら workspace の member として残してよい

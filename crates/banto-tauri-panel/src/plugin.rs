@@ -1,5 +1,5 @@
-//! The Tauri half (ADR-0037): the plugin, its one command and its event
-//! handling. Wiring only - every rule (which id is valid, which label is a
+//! The Tauri half (ADR-0037): the plugin, its commands (`open`, `list`) and
+//! its event handling. Wiring only - every rule (which id is valid, which label is a
 //! panel's, where the window goes, what the file holds) is decided by the
 //! pure modules, which is where the tests are. CI's headless job does not
 //! build this file; `tauri-check.yml` compiles and lints it, and the
@@ -20,7 +20,8 @@ use crate::store::GeometryStore;
 use crate::PANEL_CLOSED_EVENT;
 
 /// The plugin's name: the frontend invokes `plugin:banto-tauri-panel|open`
-/// and the capability file allows `banto-tauri-panel:allow-open`. Must equal
+/// (and `|list`) and the capability file allows `banto-tauri-panel:allow-open`
+/// (and `allow-list`). Must equal
 /// `links` in Cargo.toml (Tauri derives the ACL's plugin name from it).
 pub const PLUGIN_NAME: &str = "banto-tauri-panel";
 
@@ -58,6 +59,14 @@ impl PanelState {
     fn tracked_labels(&self) -> Vec<String> {
         let guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
         guard.keys().cloned().collect()
+    }
+
+    /// The panel ids of the tracked windows, sorted (the map has no order).
+    fn tracked_ids(&self) -> Vec<String> {
+        let guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        let mut ids: Vec<String> = guard.values().cloned().collect();
+        ids.sort();
+        ids
     }
 
     fn saved(&self, id: &str) -> Option<PanelGeometry> {
@@ -156,6 +165,19 @@ async fn open<R: Runtime>(
         let _ = window.set_focus();
     }
     Ok(())
+}
+
+/// The ids of the panels whose window is open right now - the windows this
+/// plugin built and has not yet seen destroyed. The frontend asks when the
+/// main window starts (or is reloaded) to tell a panel that is still out in
+/// its window from one whose window went away with the last run
+/// (`@banto/admin-core`'s `createPanelPopOut`, Issue #1013).
+///
+/// Read-only, like `open` outside conventions §1: no data is written, there
+/// is no REST twin.
+#[tauri::command]
+fn list(state: State<'_, PanelState>) -> Vec<String> {
+    state.tracked_ids()
 }
 
 /// Takes the window's current place into the memory. Skipped while the
@@ -299,7 +321,7 @@ impl Builder {
     pub fn build<R: Runtime>(self) -> TauriPlugin<R> {
         let config = self.config;
         PluginBuilder::new(PLUGIN_NAME)
-            .invoke_handler(tauri::generate_handler![open])
+            .invoke_handler(tauri::generate_handler![open, list])
             .setup(move |app, _api| {
                 // A bad configuration stops the app at start-up with the
                 // reason (an `Err`, not a panic).

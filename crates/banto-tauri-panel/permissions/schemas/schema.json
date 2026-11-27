@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the list command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list",
+          "markdownDescription": "Enables the list command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list",
+          "markdownDescription": "Denies the list command without any pre-configured scope."
+        },
+        {
           "description": "Enables the open command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open",

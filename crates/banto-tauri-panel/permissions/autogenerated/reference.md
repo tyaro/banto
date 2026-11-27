@@ -10,6 +10,32 @@
 <tr>
 <td>
 
+`banto-tauri-panel:allow-list`
+
+</td>
+<td>
+
+Enables the list command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`banto-tauri-panel:deny-list`
+
+</td>
+<td>
+
+Denies the list command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `banto-tauri-panel:allow-open`
 
 </td>

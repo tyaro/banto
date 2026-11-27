@@ -12,7 +12,9 @@ plugin がすること（アプリは書かなくてよい）:
 - 窓が閉じたら、メインの窓へ `banto://panel-closed`（payload はパネルの id）を出す。
 - **位置・大きさをパネルの id ごとに覚える**。次に開くときは同じ所に出す。モニタが外れたなどで画面の外になるなら、
   既定の位置・大きさで開く。
-- **メインの窓を閉じたら、パネルの窓も一緒に閉じる**（記憶は残る。次に起動したとき、パネルは dock に戻っている）。
+- **メインの窓を閉じたら、パネルの窓も一緒に閉じる**（位置・大きさの記憶は残る）。
+- **今開いているパネルの窓の id を答える**（コマンド `list`）。`createPanelPopOut` が、窓に出していたパネルを次の起動で
+  dock に戻すのに使う（下の 4.）。
 
 アプリの側に残るもの: **パネルの窓で何を描くか**（ルートの中身）と、**別の窓で購読・認証のセッションをどう持つか**。
 
@@ -59,17 +61,20 @@ tauri::Builder::default()
 
 ## 2. Tauri: capability
 
-`src-tauri/capabilities/default.json` の `permissions` に、plugin のコマンドの許可を足す。パネルの窓が自分のコマンド
-（データの取得など）を呼ぶなら、`windows` にパネルの窓のラベル（接頭辞 + `*`）も要る:
+`src-tauri/capabilities/default.json` の `permissions` に、plugin のコマンドの許可を足す（`open` と `list` の 2 つ）。
+パネルの窓が自分のコマンド（データの取得など）を呼ぶなら、`windows` にパネルの窓のラベル（接頭辞 + `*`）も要る:
 
 ```jsonc
 {
 	"windows": ["main", "panel-*"],
-	"permissions": ["core:default", "banto-tauri-panel:allow-open"]
+	"permissions": ["core:default", "banto-tauri-panel:allow-open", "banto-tauri-panel:allow-list"]
 }
 ```
 
-許可を足し忘れると、窓を開く操作が「not allowed」で失敗する（`createPanelPopOut` はパネルを dock に戻し、`onError` を呼ぶ）。
+`allow-open` を足し忘れると、窓を開く操作が「not allowed」で失敗する（`createPanelPopOut` はパネルを dock に戻し、`onError` を呼ぶ）。
+`allow-list` を足し忘れると（v9.3.0 から上げたアプリは足す）、**窓に出したままアプリを閉じたパネルが、次の起動で dock に
+戻らない**（`onListError` に理由が渡る。パネルは「窓に出している」扱いのまま残るので、表示メニューなどから `focus` すれば
+窓が開き、その窓を閉じれば dock に戻る）。
 閉じた知らせの購読（`connect()` の `listen`）が失敗したとき（event の許可が無いなど）は、パネルを dock から外さず、
 `onError` に理由を渡す（戻す知らせが届かないので、外すとパネルの行き場がなくなる）。購読の登録が済む前に押されたときは、
 済むのを待ってから進む。待っている間（や `detach` の間）に `connect()` が止まったら窓は開かず（`detach` 済みなら `restore` で戻す。`onError` は呼ばない）。
@@ -107,11 +112,44 @@ const popOut = createPanelPopOut<PanelContent>({
 	// 窓を開く前に、パネルを dock から外す。false を返すと取りやめ（窓は開かない）
 	detach: async (content) => (await dockHost?.closePanel(content.id)) === 'applied',
 	// 窓が閉じたら（開けなかったときも）、パネルを dock に戻す
-	restore: (id) => dock.open(id)
+	restore: (id) => dock.open(id),
+	// 窓に出しているパネルの id の覚え（次の起動まで残す所）。キーは dock ごと・利用者ごとに分ける
+	storage: {
+		load: () => JSON.parse(localStorage.getItem('myapp.dock.popout') ?? '[]'),
+		save: (ids) => localStorage.setItem('myapp.dock.popout', JSON.stringify(ids))
+	},
+	// 開いている窓を plugin に聞けなかった（capability に allow-list が無い、など）
+	onListError: (error) => console.error(error)
 });
 
-// 閉じた知らせの購読。ブラウザでは何もしない
+// 閉じた知らせの購読と、窓が無くなっているパネルを dock に戻す突き合わせ。ブラウザでは何もしない
 $effect(() => popOut.connect());
+```
+
+**窓に出しているパネルを覚える**（`storage`）: pop-out はパネルを dock から外すので、dock の保存には「閉じた」状態が入る。
+窓に出したままメインの窓を閉じると、閉じた知らせを受ける相手がいないので、覚えが無ければ次の起動でパネルが dock にも
+窓にも無い。`storage` を渡すと、`connect()` が覚えている id を plugin の `list` と突き合わせ、**窓が開いていないもの**を
+`restore` で dock に戻す（窓が開いているもの＝メインの再読み込みや画面の出入りは、そのまま。窓を閉じたときに戻る）。
+
+- `connect()` は、**保存した dock のレイアウトを読み終えてから**呼ぶ。先に呼ぶと、戻したパネルが後から読んだ
+  レイアウトで上書きされる（テンプレートのダッシュボードは `dockLayout.load()` の完了を待つ）。
+- `connect()` を dock の mount に結び付けない。狭い画面などで `DockHost` を外している間も、閉じた窓のパネルは
+  戻す必要がある。`DockHost` が無い間は `onLayoutCommit` が来ないので、`restore` の中で自分で保存する
+  （テンプレートは `if (!dockHost) dockLayout.commit(dock.layout, 'user')`）。
+- `list` に失敗したら何も戻さない（`onListError`）。確かめずに戻すと、窓が開いたままのとき（再読み込み・画面の出入り）に
+  同じパネルが dock と窓の両方に出るため。
+
+**窓に出しているパネルを「表示中」として扱う**: dock から見ると、窓に出したパネルは閉じたパネルと区別がつかない。
+パネルの一覧（表示メニューなど）を持つ画面は、`popOut.isPoppedOut(id)` が真のパネルを**チェック付き**で出し、選ばれたら
+dock に出さずに `popOut.focus({ id, title })` で**窓を前に出す**（dock に出すと、窓と dock の二重になる）。
+`isPoppedOut` の変化は `popOut.subscribe(cb)` で知らせる。Svelte 5 なら `svelte/reactivity` の `createSubscriber` で包む
+（テンプレートの `createAppPanelPopOut` は包んだ `isPoppedOut` を返す）:
+
+```ts
+import { createSubscriber } from 'svelte/reactivity';
+
+const track = createSubscriber((update) => popOut.subscribe(update));
+const isPoppedOut = (id: string) => (track(), popOut.isPoppedOut(id));
 ```
 
 ```svelte
@@ -120,7 +158,7 @@ $effect(() => popOut.connect());
 ```
 
 dock を使わない画面から窓を開くだけなら `openPanelWindow({ id, title }, { isTauri, invoke })`、閉じた知らせだけ聞くなら
-`listenPanelClosed((id) => ..., { isTauri, listen })`。
+`listenPanelClosed((id) => ..., { isTauri, listen })`、今開いている窓の id は `listPanelWindows({ isTauri, invoke })`。
 
 ## 5. 実機で確かめること
 
@@ -130,8 +168,14 @@ Tauri の配線は CI ではコンパイルまでしか見ない。出す前に�
 2. 窓を閉じると、パネルが dock に戻る。
 3. 窓を動かして大きさを変え、閉じて開き直すと、同じ位置・大きさで開く。アプリを再起動した後も同じ。
 4. 2 台目のモニタに置いて閉じ、モニタを外してから開くと、既定の位置・大きさで開く（画面の外に出ない）。
-5. パネルの窓を開いたままメインの窓を閉じると、パネルの窓も閉じてアプリが終わる。次の起動ではパネルは dock にある。
-6. ブラウザ（LAN 配信）では pop-out のボタンが出ない。
+5. パネルの窓を開いたままメインの窓を閉じると、パネルの窓も閉じてアプリが終わる。次の起動ではパネルは dock にある
+   （`storage` を渡し、capability に `banto-tauri-panel:allow-list` があるとき。出していた浮動の窓の位置に戻る）。
+   もう一度終了して起動しても dock にある（戻した結果が dock の保存に入っている）。
+6. パネルを窓に出したままメインの窓を再読み込みする（または別の画面へ行って戻る）と、窓は開いたままで、dock には
+   同じパネルが出ない。そのあと窓を閉じると dock に戻る。
+7. 窓に出しているパネルは、表示メニュー（パネルの一覧）でチェックが付いている。選ぶと窓が前に出るだけで、dock には
+   出ない。
+8. ブラウザ（LAN 配信）では pop-out のボタンが出ない。
 
 ## 外すとき
 

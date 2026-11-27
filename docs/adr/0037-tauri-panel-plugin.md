@@ -30,10 +30,13 @@
 
 ### 1. Rust の側は、新しい crate `crates/banto-tauri-panel`（Tauri v2 の plugin）に置く
 
-アプリは `tauri::Builder` に `.plugin(banto_tauri_panel::init())` を足し、capability に `banto-tauri-panel:allow-open` を足す。
+アプリは `tauri::Builder` に `.plugin(banto_tauri_panel::init())` を足し、capability に `banto-tauri-panel:allow-open` と
+`banto-tauri-panel:allow-list`（#1013 で追加）を足す。
 plugin が持つもの:
 
 - コマンド `open`（`plugin:banto-tauri-panel|open`、引数は `id` と `title`）。同じ id の窓が開いていれば前に出すだけ。
+- コマンド `list`（`plugin:banto-tauri-panel|list`、引数なし。#1013 で追加）。今開いているパネルの窓の id を返す
+  （plugin が作って、まだ閉じたのを見ていない窓）。
 - 窓が無くなったら、メインの窓へ `banto://panel-closed`（payload はパネルの id）を出す。
 - 位置・大きさを id ごとに覚える（既定は app の data dir の `panel-windows.json`）。画面の外なら既定の位置・大きさで開く。
 - メインの窓が無くなったら、パネルの窓も閉じる（記憶は残す）。
@@ -80,12 +83,25 @@ id は webview から来て、窓のラベル・読み込むルート・記憶�
   `@banto/dock-svelte` との約束はそのまま。
 - パネルを dock から外すのは、`connect()` の購読が成功したとわかってから。閉じた知らせが戻る唯一の道だから。
   登録の途中で pop-out が押されたら済むのを待つ。登録に失敗していたら何も外さず、`onError` に理由を渡す。待つ間や `detach` の間に `connect()` が止まったら窓を開かない（`detach` 済みなら `restore` で戻す）。
+- **窓に出しているパネルの id を覚える**（#1013・#1014）。`detach` で dock から外した時から、`restore` で戻すまで。
+  保存先は注入する（`storage: { load, save }`。テンプレートは利用者ごとの localStorage）。`connect()` のたびに plugin の
+  `list` と突き合わせ、覚えているのに**窓が開いていない**パネルを `restore` する（窓に出したままメインの窓を閉じると、
+  閉じた知らせを受ける相手がおらず、dock の保存には「閉じた」状態が残るため）。窓が開いているもの（メインの再読み込み・
+  画面の出入り）は覚えに残し、閉じた知らせで戻す。
+  - **`list` に失敗したら何も戻さず、`onListError` に理由を渡す**。確かめずに戻す案は退けた: 窓が開いたままのとき、
+    画面に入るたびに同じパネルが dock と窓の両方に出る。戻さない側は、パネルが「窓に出している」扱いで残るので失われない
+    （`focus` で窓が開き、その窓を閉じれば dock に戻る）。
+  - メインの窓の `CloseRequested` で先に dock へ戻してから閉じる案は退けた: 強制終了・クラッシュでは走らず、
+    戻した dock の保存（非同期）が終わる前に窓が閉じることもある。起動時の突き合わせは、どの終わり方でも効く。
+  - `isPoppedOut(id)`・`subscribe(cb)`・`focus(content)` を持つ。dock から見ると窓に出したパネルは閉じたパネルと区別が
+    つかないので、パネルの一覧（表示メニュー）はこれを見て「表示中」にし、選ばれたら窓を前に出す（dock に出すと二重になる）。
+    `focus` は窓に出していないパネルには何もしない。変化の知らせは購読関数（admin-core は Svelte に依存しない）。
 - `@banto/dock-svelte` は import しない（conventions §4）。`PanelWindowContent`（`id` と `title`）は、dock の
   `PanelContent` のうちこのモジュールが読む部分。
 
 ### 6. REST との対称（conventions §1）の対象にしない
 
-`open` はデータを書かず、監査も無い。この PC の窓を開くだけの desktop-only の操作で、REST の対は作らない
+`open`・`list` はデータを書かず、監査も無い。この PC の窓を開くだけの desktop-only の操作で、REST の対は作らない
 （テンプレートの旧 `panel_open` と同じ分類）。plugin のコマンドは `lib.rs` のトップレベルのコマンドではないので、
 `verify:architecture` の rule 8 の走査には入らない。
 
@@ -121,11 +137,13 @@ id は webview から来て、窓のラベル・読み込むルート・記憶�
 - 公開 crate が 1 つ増える（6 個目）。版は workspace に揃う。外部利用 fixture は `default-features = false` で導入する
   （rule `external-consumer-fixture`）。
 - Tauri の配線（`src/plugin.rs`）を変える PR は、実機で確かめる: 開く・前に出す・閉じて dock に戻る・位置と大きさが戻る・
-  モニタを外すと既定に戻る・メインを閉じるとパネルも閉じる。CI はコンパイルと clippy までしか見ない。
+  モニタを外すと既定に戻る・メインを閉じるとパネルも閉じる・出したままメインを閉じた次の起動で dock に戻る・
+  出したままメインを再読み込みしても二重にならない。CI はコンパイルと clippy までしか見ない。
 - plugin の名前（`banto-tauri-panel`）は、`Cargo.toml` の `links`・`PLUGIN_NAME`・admin-core の `PANEL_OPEN_COMMAND`・
   アプリの capability の 4 か所で同じでなければならない。変えるときは全部を同じ PR で変える（下流の capability も変わる）。
 - `permissions/` は build が生成するファイルで、コミットしておく（Tauri の plugin の慣習。手で直さない）。コマンドを足したら
-  `build.rs` の `COMMANDS` に足す。
+  `build.rs` の `COMMANDS` に足す。**コマンドを足すと、下流の capability に許可が 1 行増える**（`list` は v9.3.0 の後に
+  足した。許可が無いアプリでは `list` が失敗し、上の「何も戻さない」側に倒れる）。
 - 記憶のファイルの形（`version` 1）を変えるときは `version` を上げる。古い版のファイルは空として読まれ、次の保存で置き換わる
   （記憶は便利のためのもので、失われても困らない）。
 - dock を外すアプリは、`src-tauri` の依存・`.plugin(...)`・capability の行を手で外す
