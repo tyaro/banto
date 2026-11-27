@@ -530,6 +530,11 @@ function removeDock() {
 		'e2e/demo/dashboard-layout-commit.spec.ts',
 		'e2e/demo/dashboard-layout-commit.spec.ts 削除'
 	);
+	// #1043: ダッシュボードの dock でドラッグのガイドと slide-out の重なりを見る demo の spec。同上。
+	removeFile(
+		'e2e/demo/dock-guides-on-screen.spec.ts',
+		'e2e/demo/dock-guides-on-screen.spec.ts 削除'
+	);
 	for (const [file, label] of [
 		[MSG_JA, 'messages/ja'],
 		[MSG_EN, 'messages/en']

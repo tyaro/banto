@@ -399,6 +399,21 @@
 	);
 	setDragController(drag);
 
+	// A page scrolled (wheel, auto-scroll) or resized under a drag (#1043): the outer-edge buttons
+	// sit in the part of the host that is on screen, which just changed without a pointer move.
+	// `capture`: a scroll does not bubble, and the scroller may be any container around the host.
+	const dragging = $derived(drag.state !== null);
+	$effect(() => {
+		if (!dragging) return;
+		const relayout = () => drag.refresh();
+		window.addEventListener('scroll', relayout, { capture: true, passive: true });
+		window.addEventListener('resize', relayout);
+		return () => {
+			window.removeEventListener('scroll', relayout, { capture: true });
+			window.removeEventListener('resize', relayout);
+		};
+	});
+
 	// The keyboard path for re-docking (#663 ④): the same drop methods as `drag`.
 	// svelte-ignore state_referenced_locally
 	const mover = new PanelMover(
@@ -758,7 +773,8 @@
 		</div>
 	{/if}
 
-	<!-- Edge bands and slide-outs of auto-hidden regions (#694 PR-3): above the docked tree, below floating windows. -->
+	<!-- Edge bands and slide-outs of auto-hidden regions (#694 PR-3): above the docked tree. The bands
+	     stay below the floating windows; an open slide-out is above them (#1043, `.flyout-area`). -->
 	<DockAutoHide {dock} panel={treePanel} {iconContent} {messages} />
 
 	<div class="floating-layer">
@@ -894,7 +910,7 @@
 
 	/* Its own stacking context (#694 PR-3): a pane's positioned content with a positive
 	   z-index (e.g. a chart's reset-zoom button) stays inside the docked layer, below the
-	   auto-hide slide-out (later in the DOM) and the floating layer (z-index 1). Except while
+	   auto-hide slide-out (z-index 2, `DockAutoHide`) and the floating layer (z-index 1). Except while
 	   a pane shows a modal (`@banto/ui` OverlayPanel renders in place, `position: fixed` +
 	   `--banto-z-modal`): the layer is not isolated then, so the modal and its scrim stay
 	   above the floating windows (the scrim covers the rest anyway). */
@@ -925,8 +941,11 @@
 	}
 
 	/* Its own stacking context (z-index 1) so the windows' z-index (1..n) stays
-	   below the snap guide / ghost and never competes with the page; it lets
-	   pointers through to the docked tree, the windows opt back in. */
+	   below the auto-hide slide-out (z-index 2, #1043) and the snap guide / ghost, and never
+	   competes with the page; it lets pointers through to the docked tree, the windows opt
+	   back in. The layers of the host, bottom to top: docked tree and edge bands (auto) <
+	   floating windows (1) < slide-out (2) < snap guide (20) < guide buttons (21) < drag
+	   ghost (30) < panel actions menu (40). */
 	.floating-layer {
 		position: absolute;
 		inset: 0;
