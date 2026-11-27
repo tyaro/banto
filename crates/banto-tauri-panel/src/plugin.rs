@@ -6,17 +6,19 @@
 //! behaviour is checked on a real desktop (the PR's checklist).
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
+use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, Runtime, State,
-    WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
 use crate::config::{parse_background, validate_panel_id, PanelConfig, DEFAULT_STORE_FILE};
 use crate::geometry::{restorable, MonitorRect, PanelGeometry};
+use crate::reveal::{reveal_timeout, Reveal, RevealSignal};
 use crate::store::GeometryStore;
 use crate::title::document_title_script;
 use crate::PANEL_CLOSED_EVENT;
@@ -97,9 +99,23 @@ impl PanelState {
     }
 }
 
+/// Shows a window that was built hidden and gives it the focus. Called
+/// once per window: [`Reveal::signal`] answers `true` a single time.
+fn reveal_window<R: Runtime>(window: &WebviewWindow<R>) {
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
 /// Opens panel `id` in its own window, or brings the window to the front if
 /// it is already open. `async` on purpose: creating a window from a
 /// synchronous command deadlocks on Windows.
+///
+/// A new window is built hidden and shown (and focused) once its page has
+/// finished loading (Issue #1024): a screen reader reads a document as soon
+/// as its window has the focus, and a window shown earlier was read as the
+/// loading document ("undefined" and the URL). A page that never reports its
+/// load is shown after [`PanelConfig::reveal_timeout_ms`]. When to show is
+/// decided by the pure [`Reveal`].
 ///
 /// Not a mutating operation in the sense of conventions §1 (no data is
 /// written, nothing is audited): it is desktop integration, with no REST
@@ -171,20 +187,67 @@ async fn open<R: Runtime>(
     if let Some((r, g, b)) = background {
         builder = builder.background_color(Color(r, g, b, 255));
     }
-    if restore.is_some() {
-        // Built hidden, moved, then shown: the window never flashes at the
-        // default place first. Position before size, so the size is applied
-        // on the monitor (and scale factor) the window ends up on.
-        builder = builder.visible(false);
-    }
+    // Always built hidden. It is shown once it is BOTH placed (below) and
+    // loaded - or the wait for the page is over (Issue #1024):
+    // - a window shown while its page is loading hands a screen reader the
+    //   loading document;
+    // - a restored window never flashes at the default place first.
+    // `reveal` answers "show now" exactly once, whoever asks: the page's
+    // report (the main thread), this command, or the timeout's thread.
+    let reveal = Arc::new(Reveal::new());
+    let on_loaded = Arc::clone(&reveal);
+    let builder = builder.visible(false).on_page_load(move |window, payload| {
+        // `Finished` comes again on every later full load of the page;
+        // `reveal` ignores those.
+        if matches!(payload.event(), PageLoadEvent::Finished)
+            && on_loaded.signal(RevealSignal::Loaded)
+        {
+            reveal_window(&window);
+        }
+    });
     let window = builder.build().map_err(|err| err.to_string())?;
     state.track(&label, &id);
 
     if let Some(geometry) = restore {
+        // Position before size, so the size is applied on the monitor (and
+        // scale factor) the window ends up on. The window is still hidden,
+        // so `record` does not take these moves for the user's.
         let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
         let _ = window.set_size(PhysicalSize::new(geometry.width, geometry.height));
-        let _ = window.show();
-        let _ = window.set_focus();
+    }
+
+    // The way out: a window must not stay invisible because its page never
+    // reported a finished load (or failed without one).
+    match reveal_timeout(config.reveal_timeout_ms) {
+        Some(timeout) => {
+            let on_timeout = Arc::clone(&reveal);
+            // The thread holds this window, not its label: after a quick
+            // close and reopen the label names another window, which has a
+            // wait of its own. Showing a window that is gone is an `Err`,
+            // ignored.
+            let waiting = window.clone();
+            let spawned = std::thread::Builder::new()
+                .name(format!("{label}-reveal"))
+                .spawn(move || {
+                    std::thread::sleep(timeout);
+                    if on_timeout.signal(RevealSignal::TimedOut) {
+                        reveal_window(&waiting);
+                    }
+                });
+            if spawned.is_err() {
+                // No thread, no timeout: do not wait for the page at all.
+                reveal.signal(RevealSignal::TimedOut);
+            }
+        }
+        // Configured not to wait.
+        None => {
+            reveal.signal(RevealSignal::TimedOut);
+        }
+    }
+    // The page may have finished loading already (its report comes on
+    // another thread); then this is the call that shows the window.
+    if reveal.signal(RevealSignal::Placed) {
+        reveal_window(&window);
     }
     Ok(())
 }
@@ -240,7 +303,7 @@ async fn close<R: Runtime>(
 }
 
 /// Takes the window's current place into the memory. Skipped while the
-/// window is hidden (the restore above is still moving it), minimised,
+/// window is hidden (it is being restored, or waits for its page), minimised,
 /// maximised or fullscreen - none of those is a place to reopen at.
 fn record<R: Runtime>(app: &AppHandle<R>, state: &PanelState, label: &str, id: &str) {
     if !state.config.remember_geometry {
@@ -382,6 +445,15 @@ impl Builder {
     /// the plugin's `setup` fail ([`PanelConfig::validate`]).
     pub fn background(mut self, color: impl Into<String>) -> Self {
         self.config.background = Some(color.into());
+        self
+    }
+
+    /// How long (milliseconds) a panel window waits for its page to finish
+    /// loading before it is shown anyway (default 3000; `0` = do not wait).
+    /// More than 60000 makes the plugin's `setup` fail
+    /// ([`PanelConfig::validate`]). Issue #1024.
+    pub fn reveal_timeout_ms(mut self, timeout_ms: u64) -> Self {
+        self.config.reveal_timeout_ms = timeout_ms;
         self
     }
 

@@ -4,6 +4,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::reveal::{DEFAULT_REVEAL_TIMEOUT_MS, MAX_REVEAL_TIMEOUT_MS};
+
 /// Longest panel id accepted.
 pub const MAX_PANEL_ID_LEN: usize = 64;
 /// Placeholder in [`PanelConfig::route`] that the panel id replaces.
@@ -53,6 +55,9 @@ pub enum ConfigError {
     MainLabelHasPanelPrefix,
     /// `background` is not `#rrggbb` (see [`parse_background`]).
     InvalidBackground,
+    /// `reveal_timeout_ms` is over [`MAX_REVEAL_TIMEOUT_MS`]: a window whose
+    /// page never reports its load would stay invisible that long.
+    RevealTimeoutTooLong,
 }
 
 impl fmt::Display for ConfigError {
@@ -70,6 +75,10 @@ impl fmt::Display for ConfigError {
             ConfigError::InvalidBackground => {
                 write!(f, "background must be a colour like \"#rrggbb\"")
             }
+            ConfigError::RevealTimeoutTooLong => write!(
+                f,
+                "reveal_timeout_ms must be at most {MAX_REVEAL_TIMEOUT_MS}"
+            ),
         }
     }
 }
@@ -170,6 +179,12 @@ pub struct PanelConfig {
     /// webview's own default. A colour the frontend passes to `open` wins over
     /// this one (Issue #1015).
     pub background: Option<String>,
+    /// How long (milliseconds) a panel window, built hidden, waits for its
+    /// page to finish loading before it is shown anyway - the way out for a
+    /// page that never reports its load (Issue #1024; see [`crate::reveal`]).
+    /// `0` = do not wait: the window is shown as soon as it is placed. At
+    /// most [`MAX_REVEAL_TIMEOUT_MS`].
+    pub reveal_timeout_ms: u64,
 }
 
 impl Default for PanelConfig {
@@ -184,6 +199,7 @@ impl Default for PanelConfig {
             close_with_main: true,
             store_path: None,
             background: None,
+            reveal_timeout_ms: DEFAULT_REVEAL_TIMEOUT_MS,
         }
     }
 }
@@ -211,6 +227,9 @@ impl PanelConfig {
         }
         if let Some(background) = &self.background {
             parse_background(background).map_err(|_| ConfigError::InvalidBackground)?;
+        }
+        if self.reveal_timeout_ms > MAX_REVEAL_TIMEOUT_MS {
+            return Err(ConfigError::RevealTimeoutTooLong);
         }
         Ok(())
     }
@@ -280,6 +299,21 @@ mod tests {
         assert!(c.close_with_main);
         assert_eq!(c.store_path, None);
         assert_eq!(c.background, None);
+        assert_eq!(c.reveal_timeout_ms, 3_000);
+    }
+
+    #[test]
+    fn a_reveal_timeout_that_would_hide_the_window_too_long_is_refused() {
+        let with = |reveal_timeout_ms: u64| PanelConfig {
+            reveal_timeout_ms,
+            ..PanelConfig::default()
+        };
+        assert_eq!(with(0).validate(), Ok(()));
+        assert_eq!(with(MAX_REVEAL_TIMEOUT_MS).validate(), Ok(()));
+        assert_eq!(
+            with(MAX_REVEAL_TIMEOUT_MS + 1).validate(),
+            Err(ConfigError::RevealTimeoutTooLong)
+        );
     }
 
     #[test]
