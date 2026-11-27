@@ -259,6 +259,23 @@ describe('BantoGrid action keys while the active cell is off screen (#1036)', ()
 		expect(opened.map((row) => row.id)).toEqual([2]);
 	});
 
+	it('another key pressed while the key is held does not lift the hold', async () => {
+		const { container, grid, opened } = renderGrid();
+		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+		await scrollTo(grid, 500 * ROW);
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		await fireEvent.scroll(grid);
+		// Shift goes down (and up) while Enter is still held.
+		await fireEvent.keyDown(grid, { key: 'Shift', shiftKey: true });
+		await fireEvent.keyUp(grid, { key: 'Shift' });
+		const notPrevented = await fireEvent.keyDown(grid, { key: 'Enter', repeat: true });
+		expect(notPrevented).toBe(false);
+		expect(opened).toEqual([]);
+		// Enter pressed anew acts.
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		expect(opened.map((row) => row.id)).toEqual([2]);
+	});
+
 	it('holding Space does not toggle the selection, and another key is not held back', async () => {
 		const { container, grid } = renderGrid({ selectable: true, onRowClick: undefined });
 		await fireEvent.pointerDown(cellAt(container, 1, 'name'));

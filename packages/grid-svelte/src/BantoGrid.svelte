@@ -1895,10 +1895,12 @@
 		// move the active cell are not held back: they bring it into view anyway.
 		//
 		// Holding the key down must not act either: the auto-repeat of the press
-		// that only scrolled is swallowed until the key is released (`keyup`) or
-		// pressed anew (a keydown that is not a repeat). Only a separate press acts.
-		if (scrollOnlyKey !== null) {
-			if (event.repeat && event.key === scrollOnlyKey) {
+		// that only scrolled is swallowed until that key is released (`keyup`) or
+		// pressed anew (a keydown of the same key that is not a repeat). Another
+		// key pressed meanwhile (Shift, an arrow) acts as usual but does not lift
+		// the hold: the held key's repeats may still arrive after it.
+		if (scrollOnlyKey !== null && event.key === scrollOnlyKey) {
+			if (event.repeat) {
 				event.preventDefault();
 				return;
 			}
