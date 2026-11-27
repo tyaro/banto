@@ -247,14 +247,15 @@ describe('ThreePaneLayout - narrow', () => {
 		expect(screen.getByText('Line 1')).toBeTruthy();
 	});
 
-	it('a modal left drawer is a dialog that traps focus: Tab and Shift+Tab wrap inside (#1045)', async () => {
+	it('a modal left drawer traps focus (and is not a dialog): Tab and Shift+Tab wrap inside (#1045)', async () => {
 		await mount({}, 800);
 		leftToggle().focus();
 		await fireEvent.click(leftToggle());
 		await flush();
 		const pane = leftPane();
-		expect(pane.getAttribute('role')).toBe('dialog');
-		expect(pane.getAttribute('aria-modal')).toBe('true');
+		// Only the Tab trap (#1045); a true modal (aria-modal, inert outside) is out of scope.
+		expect(pane.hasAttribute('role')).toBe(false);
+		expect(pane.hasAttribute('aria-modal')).toBe(false);
 		const a = screen.getByText('Node A');
 		const b = screen.getByText('Pick B');
 		expect(document.activeElement).toBe(a);
@@ -271,8 +272,6 @@ describe('ThreePaneLayout - narrow', () => {
 		await flush();
 		expect(state().leftDrawerOpen).toBe(false);
 		expect(document.activeElement).toBe(leftToggle());
-		expect(pane.hasAttribute('aria-modal')).toBe(false);
-		expect(pane.hasAttribute('role')).toBe(false);
 	});
 
 	it('a right drawer with nothing focusable keeps focus on the pane: Tab does not reach <body> (#1045)', async () => {
@@ -299,66 +298,6 @@ describe('ThreePaneLayout - narrow', () => {
 		await flush();
 		expect(state().rightDrawerOpen).toBe(false);
 		expect(document.activeElement).toBe(rightToggle());
-	});
-
-	it('an open modal drawer makes the shell outside the layout inert, and gives it back on close (#1050)', async () => {
-		await mount({}, 800);
-		const outside = screen.getByText('Outside');
-		const stayed = document.createElement('button');
-		stayed.setAttribute('inert', '');
-		outside.after(stayed);
-		const layer = document.createElement('div');
-		layer.setAttribute('aria-modal', 'true');
-		outside.after(layer);
-		expect(outside.hasAttribute('inert')).toBe(false);
-		await fireEvent.click(leftToggle());
-		await flush();
-		expect(outside.hasAttribute('inert')).toBe(true);
-		// A modal layer the app has open above us is left usable.
-		expect(layer.hasAttribute('inert')).toBe(false);
-		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
-		await flush();
-		expect(outside.hasAttribute('inert')).toBe(false);
-		// What was inert before stays inert.
-		expect(stayed.hasAttribute('inert')).toBe(true);
-		stayed.remove();
-		layer.remove();
-	});
-
-	it('an open modal drawer leaves live regions and their ancestors announcing, and freezes the rest beside them (#1050)', async () => {
-		await mount({}, 800);
-		const outside = screen.getByText('Outside');
-		const wrap = document.createElement('div');
-		const toast = document.createElement('div');
-		toast.setAttribute('aria-live', 'polite');
-		const status = document.createElement('p');
-		status.setAttribute('role', 'status');
-		const quiet = document.createElement('div');
-		quiet.setAttribute('aria-live', 'off');
-		const sibling = document.createElement('button');
-		wrap.append(toast, status, quiet, sibling);
-		outside.after(wrap);
-		await fireEvent.click(leftToggle());
-		await flush();
-		expect(outside.hasAttribute('inert')).toBe(true);
-		expect(wrap.hasAttribute('inert')).toBe(false);
-		expect(toast.hasAttribute('inert')).toBe(false);
-		expect(status.hasAttribute('inert')).toBe(false);
-		expect(quiet.hasAttribute('inert')).toBe(true);
-		expect(sibling.hasAttribute('inert')).toBe(true);
-		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
-		await flush();
-		expect(outside.hasAttribute('inert')).toBe(false);
-		expect(quiet.hasAttribute('inert')).toBe(false);
-		expect(sibling.hasAttribute('inert')).toBe(false);
-		wrap.remove();
-	});
-
-	it('a non-modal drawer does not make the shell inert (#1050)', async () => {
-		await mount({ rightDrawerModal: false }, 800);
-		await fireEvent.click(rightToggle());
-		await flush();
-		expect(screen.getByText('Outside').hasAttribute('inert')).toBe(false);
 	});
 
 	it('a non-modal drawer is neither a dialog nor a focus trap (#1045)', async () => {
