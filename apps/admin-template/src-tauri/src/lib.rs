@@ -5415,9 +5415,18 @@ pub fn run() {
         // the main window, the per-id position / size memory
         // (`panel-windows.json` in the app data dir) and closing the panels
         // with the main window. Its defaults fit this app (route
-        // `panel/{id}` = `routes/panel/[id]`, main window `main`); the
-        // frontend half is `@banto/admin-core`'s `createPanelPopOut`.
-        .plugin(banto_tauri_panel::init())
+        // `panel/{id}` = `routes/panel/[id]`, main window `main`), except
+        // when a window is shown (below); the frontend half is
+        // `@banto/admin-core`'s `createPanelPopOut`.
+        // `RevealOn::Ready` (#1024): the panel page is a client-rendered
+        // route, so its document is still empty when the load ends. The
+        // window is shown once the page says it has drawn
+        // (`notifyAppPanelReady` in `routes/panel/[id]/+page.svelte`).
+        .plugin(
+            banto_tauri_panel::Builder::new()
+                .reveal_on(banto_tauri_panel::RevealOn::Ready)
+                .build(),
+        )
         .setup(|app| {
             // Process start, for the `system_info` command's `uptime_secs`
             // (M-review 2026-08 §2.4). Captured first thing so it reflects app

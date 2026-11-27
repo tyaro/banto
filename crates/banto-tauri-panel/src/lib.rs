@@ -11,10 +11,16 @@
 //!   before the page's own scripts run, so a screen reader that reads the
 //!   document while the app is still starting reads the panel's name (Issue
 //!   #1024).
-//! - **shown when loaded**: a panel window is built hidden and shown (and
-//!   focused) once its page has finished loading, so a screen reader is not
-//!   handed the loading document (Issue #1024). A page that never reports its
-//!   load is shown after `PanelConfig::reveal_timeout_ms` (3 seconds).
+//! - **shown when its page is there**: a panel window is built hidden and
+//!   shown (and focused) once its page is there, so a screen reader is not
+//!   handed the loading document (Issue #1024). `PanelConfig::reveal_on`
+//!   says what "there" is: the page finished loading (`RevealOn::PageLoad`,
+//!   the default - nothing is asked of the page), or the page told that it
+//!   has drawn (`RevealOn::Ready`: the page emits `banto://panel-ready` with
+//!   its panel id, `@banto/admin-core`'s `notifyPanelReady` - for a page
+//!   that draws itself after the load, whose document is still empty when
+//!   the load ends). Either way the window is shown after
+//!   `PanelConfig::reveal_timeout_ms` (3 seconds) at the latest.
 //! - **geometry memory**: position and size are remembered per panel id and
 //!   restored on the next open; a remembered place that is no longer on any
 //!   monitor falls back to the default placement.
@@ -81,7 +87,8 @@ pub use config::{
 };
 pub use geometry::{is_on_screen, restorable, MonitorRect, PanelGeometry};
 pub use reveal::{
-    reveal_timeout, Reveal, RevealSignal, DEFAULT_REVEAL_TIMEOUT_MS, MAX_REVEAL_TIMEOUT_MS,
+    ready_panel_id, reveal_timeout, Reveal, RevealOn, RevealSignal, DEFAULT_REVEAL_TIMEOUT_MS,
+    MAX_REVEAL_TIMEOUT_MS,
 };
 pub use store::GeometryStore;
 pub use title::document_title_script;
@@ -93,3 +100,12 @@ pub use plugin::{init, Builder, PLUGIN_NAME};
 /// payload is the panel id (a string). Mirrored by `@banto/admin-core`'s
 /// `PANEL_CLOSED_EVENT`.
 pub const PANEL_CLOSED_EVENT: &str = "banto://panel-closed";
+
+/// Tauri event a panel window's page emits once it has drawn its first
+/// content, for an app that shows its panel windows on that
+/// ([`RevealOn::Ready`], Issue #1024). The payload is the panel id (a
+/// string) - the same id `open` took, which the page knows from its route.
+/// Mirrored by `@banto/admin-core`'s `PANEL_READY_EVENT` (`notifyPanelReady`
+/// emits it). Emitting an event is part of `core:default`; the panel windows
+/// only have to be listed in the capability (`<prefix>*`).
+pub const PANEL_READY_EVENT: &str = "banto://panel-ready";

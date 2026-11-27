@@ -37,6 +37,13 @@ import type { TauriEventListenOptions } from './events';
  */
 export const PANEL_CLOSED_EVENT = 'banto://panel-closed';
 
+/**
+ * Tauri event a panel window's page emits once it has drawn its first
+ * content; the payload is the panel id. Mirrors
+ * `banto_tauri_panel::PANEL_READY_EVENT`. `notifyPanelReady` emits it.
+ */
+export const PANEL_READY_EVENT = 'banto://panel-ready';
+
 /** The plugin's command, as `invoke` takes it (`plugin:<name>|<command>`). */
 export const PANEL_OPEN_COMMAND = 'plugin:banto-tauri-panel|open';
 
@@ -88,6 +95,43 @@ export interface ListenPanelClosedOptions extends PanelWindowEnvironment {
 	 * lazily and calls it).
 	 */
 	listen: TauriEventListenOptions['listen'];
+}
+
+export interface NotifyPanelReadyOptions extends PanelWindowEnvironment {
+	/**
+	 * Pass `@tauri-apps/api/event`'s `emit` (or a function that imports it
+	 * lazily and calls it).
+	 */
+	emit: (event: string, payload?: unknown) => Promise<unknown>;
+}
+
+/**
+ * Called by the PAGE of a panel window, once, after its first content is in
+ * the DOM: tells the plugin that the window of panel `id` can be shown
+ * (Issue #1024). For an app whose plugin waits for it
+ * (`banto_tauri_panel::RevealOn::Ready`) - the window is built hidden, and a
+ * page that does not call this only appears when the plugin's
+ * `reveal_timeout_ms` (3 seconds by default) is over. With the plugin's
+ * default (`RevealOn::PageLoad`) the notice is ignored, so calling it is
+ * harmless.
+ *
+ * Why the page has to tell: a page that draws itself after the load (a
+ * client-rendered route) still has an empty document when the webview
+ * reports the load as finished, and a screen reader reads whatever document
+ * the shown window holds.
+ *
+ * `id` is the panel id the window was opened with (the page knows it from
+ * its route). Emitting an event needs no permission beyond `core:default`,
+ * as long as the capability lists the panel windows. Rejects with `emit`'s
+ * error (the window then appears on the plugin's timeout). No-op outside
+ * Tauri. Calling it again does nothing: the plugin shows a window once.
+ */
+export async function notifyPanelReady(
+	id: string,
+	options: NotifyPanelReadyOptions
+): Promise<void> {
+	if (!options.isTauri()) return;
+	await options.emit(PANEL_READY_EVENT, id);
 }
 
 /**

@@ -4,10 +4,12 @@ import {
 	PANEL_CLOSE_COMMAND,
 	PANEL_LIST_COMMAND,
 	PANEL_OPEN_COMMAND,
+	PANEL_READY_EVENT,
 	closePanelWindow,
 	createPanelPopOut,
 	listPanelWindows,
 	listenPanelClosed,
+	notifyPanelReady,
 	openPanelWindow
 } from '../src/panelWindow';
 
@@ -113,6 +115,31 @@ describe('openPanelWindow: background (Issue #1015)', () => {
 		const background = vi.fn(() => '#000000');
 		await openPanelWindow(MEMO, { isTauri: () => false, invoke: vi.fn(), background });
 		expect(background).not.toHaveBeenCalled();
+	});
+});
+
+describe('notifyPanelReady (Issue #1024)', () => {
+	it('emits the ready event with the panel id', async () => {
+		const emit = vi.fn(async () => {});
+		await notifyPanelReady('memo', { isTauri: () => true, emit });
+		expect(PANEL_READY_EVENT).toBe('banto://panel-ready');
+		expect(emit).toHaveBeenCalledTimes(1);
+		expect(emit).toHaveBeenCalledWith(PANEL_READY_EVENT, 'memo');
+	});
+
+	it('does nothing outside Tauri', async () => {
+		const emit = vi.fn(async () => {});
+		await expect(notifyPanelReady('memo', { isTauri: () => false, emit })).resolves.toBeUndefined();
+		expect(emit).not.toHaveBeenCalled();
+	});
+
+	it("rejects with emit's error", async () => {
+		const emit = vi.fn(async () => {
+			throw new Error('event.emit not allowed');
+		});
+		await expect(notifyPanelReady('memo', { isTauri: () => true, emit })).rejects.toThrow(
+			'event.emit not allowed'
+		);
 	});
 });
 

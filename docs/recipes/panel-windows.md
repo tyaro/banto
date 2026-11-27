@@ -106,9 +106,52 @@ plugin が開くのは、アプリの**同じフロントのビルド**の中の
 題名が読まれる）。ページが後から別の題名を付ければそちらが残るが、同じ文字列にしておけば読まれる名前が途中で
 変わらない。
 
-plugin は窓を隠して作り、**ページの読み込みが終わってから見せてフォーカスする**（#1024。読み込み中の文書を
-スクリーンリーダーに読ませない）。ルートの側ですることは無い。読み込みの知らせが来ないときは 3 秒で見せる
-（`Builder::reveal_timeout_ms`）。
+plugin は窓を隠して作り、**ページが出来てから見せてフォーカスする**（#1024。読み込み中の文書・まだ何も描いていない
+文書をスクリーンリーダーに読ませない。NVDA はそれを「未定義」と URL で読む）。何を待つかは plugin の登録で選ぶ
+（`Builder::reveal_on`）:
+
+- `RevealOn::PageLoad`（既定）: 読み込みが終わったとき。ルートの側ですることは無い。読み込みが終わった時点で文書に
+  中身があるページ向け。
+- `RevealOn::Ready`: **ページが「描けた」と知らせたとき**。読み込みの後に自分で描くページ（SvelteKit の `ssr = false`
+  など。読み込みが終わった時点では文書が空）はこちらにする。テンプレートはこちら。
+
+`RevealOn::Ready` のときは、**パネルの窓のページが、最初の中身を DOM に入れた後に `notifyPanelReady` を 1 回呼ぶ**
+（`@banto/admin-core`。event `banto://panel-ready` をパネルの id 付きで emit する。`emit` は注入）:
+
+```rust
+// src-tauri/src/lib.rs
+.plugin(
+    banto_tauri_panel::Builder::new()
+        .reveal_on(banto_tauri_panel::RevealOn::Ready)
+        .build(),
+)
+```
+
+```ts
+// lib/banto/popout.ts（テンプレートの notifyAppPanelReady）
+await notifyPanelReady(id, {
+	isTauri,
+	emit: async (event, payload) => (await import('@tauri-apps/api/event')).emit(event, payload)
+});
+```
+
+```svelte
+<!-- routes/panel/[id]/+page.svelte -->
+<script lang="ts">
+	onMount(() => {
+		void tick().then(() => notifyAppPanelReady(page.params.id ?? ''));
+	});
+</script>
+```
+
+- 呼ぶのは「最初の中身」（状態の文言でよい）が入った後。セッションの確かめやデータの読み込みを待つと、その間
+  窓が出ない。`requestAnimationFrame` は待たない（隠れている窓にはフレームが来ないことがある）。
+- **呼ばないと、窓は逃げ道の時間（`Builder::reveal_timeout_ms`、既定 3 秒）まで出ない**。どちらの選び方でも、
+  知らせが来ないときはこの時間で見せる。
+- event の emit は `core:default` に含まれるので、capability は増えない（パネルの窓が `windows` に入っていること。
+  上の「2. Tauri: capability」の `"panel-*"`）。
+- plugin は窓ごとに listener を 1 つ張り、その窓のパネルの id を名乗る知らせだけを受ける（窓が壊れたら外す）。
+  id はルートのパラメータ（`open` に渡したのと同じもの）を渡す。
 
 **`app.html` の `%sveltekit.body%` を包む `<div>` には `role="presentation"` を付ける**（テンプレートの `app.html`
 が見本。#1024）。Svelte は click などの listener をこの要素にまとめて付け、Chromium は click の listener を持つ要素を
@@ -285,7 +328,8 @@ Tauri の配線は CI ではコンパイルまでしか見ない。出す前に�
 11. スクリーンリーダー（NVDA など）を動かして窓を開くと、文書がパネルの名前で読まれる（`app.html` の固定の題名で
     読まれない）。読み込み中の文書（「未定義」やページの URL）が読まれない。窓の中を読み進めたとき、押せない
     見出しの前で「クリック可能」と読まれない。
-12. 窓は、ページの読み込みが終わってから出る（#1024。出たときには中身が描かれていて、フォーカスがその窓にある）。
+12. 窓は、ページが「描けた」と知らせてから出る（#1024。テンプレートは `RevealOn::Ready`。約 1 秒。3 秒かかるなら
+    知らせが届いていない。出たときには中身が描かれていて、フォーカスがその窓にある）。
     覚えた位置があるパネルは、最初からその位置・大きさで出る（既定の位置に一瞬出てから動かない）。開いた直後に
     動かしていない窓を閉じても、覚えた位置は変わらない。
 

@@ -14,7 +14,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPanelPopOut, type PanelPopOutStorage } from '@banto/admin-core';
 import { createDockLayoutStore, createDockState, type DockLayout } from '@banto/dock-svelte';
-import { createLayoutSaveWatch, cssColorToHex, readPageBackground } from './popout';
+import {
+	createLayoutSaveWatch,
+	cssColorToHex,
+	notifyAppPanelReady,
+	readPageBackground
+} from './popout';
 
 const SETTING_KEY = 'dock.test';
 const LAYOUT_STORAGE_KEY = 'banto.dock.test';
@@ -220,6 +225,13 @@ describe('a widget put back into the dock and the saved layout (Issue #1019)', (
 		await vi.advanceTimersByTimeAsync(0);
 		expect(world.writes).toBe(1);
 		expect(world.popped).toEqual([]);
+	});
+});
+
+describe('notifyAppPanelReady (Issue #1024)', () => {
+	it('does nothing, and does not fail, in a plain browser', async () => {
+		// The panel route also renders in a browser tab; no Tauri IPC exists there.
+		await expect(notifyAppPanelReady('memo')).resolves.toBeUndefined();
 	});
 });
 
