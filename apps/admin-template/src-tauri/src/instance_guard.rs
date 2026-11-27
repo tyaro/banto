@@ -6,7 +6,8 @@
 //!
 //! 1. **Single instance** - the same app (`identifier`) at the same version
 //!    starts once. A second start asks the running one to bring its main
-//!    window to the front and exits with code 0.
+//!    window to the front and exits with code 0 - only when the running one
+//!    answers that it did (see "Order" below).
 //! 2. **Data folder lock** - a different version (or a debug build next to
 //!    an installed one) may run at the same time as far as guard 1 goes, but
 //!    it shares the data folder, so the database is exclusive: whoever does
@@ -18,6 +19,25 @@
 //! with the handle, so a crashed process never leaves a stale lock. The data
 //! dir comes from the `identifier`, so a renamed app (`scripts/rename.mjs`)
 //! gets its own keys without touching this file.
+//!
+//! A build from before #1028 takes neither lock, so nothing here keeps it
+//! off the database: stop every old build before the first start of a new
+//! one (same as `banto-serve`, which does not take the lock either).
+//!
+//! # Order
+//!
+//! single-instance lock -> remove the old endpoint file -> data folder lock
+//! -> publish the endpoint (listener, then the file) and start serving.
+//!
+//! The endpoint is published only by a process that already holds the
+//! database, so "the running one answered" never comes from a process that
+//! is about to give up on the data folder lock. And the listener answers
+//! `ok` only when the main window exists and was raised; while the window is
+//! still being built it answers `notready`. A second start therefore keeps
+//! retrying for [`ACTIVATE_WAIT`]: each round it tries the single-instance
+//! lock again (the first one may have gone away - then this start goes on as
+//! a normal one) and asks again. No `ok` in that time = the "already
+//! running" dialog, exit code 1.
 //!
 //! The "come to the front" request travels over a loopback TCP port the
 //! first instance listens on; the port and a random token sit in a file next
@@ -31,7 +51,7 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::{Manager, Runtime};
@@ -40,15 +60,26 @@ use tauri::{Manager, Runtime};
 /// desktop app spells it (`run()` joins it too).
 pub(crate) const DB_FILE_NAME: &str = "admin-template.sqlite3";
 
-/// How long a second start keeps trying to reach the first one (the first
-/// may still be writing its endpoint file).
-const ACTIVATE_ATTEMPTS: u32 = 15;
+/// How long a second start keeps trying to get `ok` from the first one.
+///
+/// The first one publishes its endpoint only after the data folder lock and
+/// answers `ok` only once its main window exists; the window is created in
+/// `tauri::Builder::build` right after the plugins' `setup`, so the gap is
+/// normally well under a second. 8 seconds leaves room for a cold start
+/// (WebView2 not yet loaded, antivirus scanning the new executable) without
+/// keeping a double click waiting noticeably longer than a slow start does
+/// anyway. A first one that never gets a window (it is showing a startup
+/// dialog, or hangs) ends this wait with the "already running" dialog.
+const ACTIVATE_WAIT: Duration = Duration::from_secs(8);
 const ACTIVATE_RETRY_WAIT: Duration = Duration::from_millis(200);
 /// Per-connection limit, both sides.
 const ACTIVATE_IO_TIMEOUT: Duration = Duration::from_secs(1);
 
 const ACTIVATE_VERB: &str = "activate";
+/// The main window exists and was brought to the front.
 const ACTIVATE_OK: &str = "ok";
+/// The request was valid, but there is no main window to raise (yet).
+const ACTIVATE_NOT_READY: &str = "notready";
 
 // ---------------------------------------------------------------------------
 // Keys and paths (pure)
@@ -257,16 +288,33 @@ fn read_line(stream: &mut TcpStream) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
-/// Answers one connection: `true` if it carried the right request.
-fn answer(stream: &mut TcpStream, token: &str) -> io::Result<bool> {
+/// The reply line to a valid request: `ok` only when the window was raised.
+pub(crate) fn activation_reply(raised: bool) -> &'static str {
+    if raised {
+        ACTIVATE_OK
+    } else {
+        ACTIVATE_NOT_READY
+    }
+}
+
+/// Whether a reply line says the window was raised. Anything else
+/// (`notready`, nothing, another program on that port) is a no.
+pub(crate) fn is_activation_ok(reply: &str) -> bool {
+    reply.trim() == ACTIVATE_OK
+}
+
+/// Answers one connection. A valid request runs `on_activate` first and
+/// reports its result, so `ok` is never sent for a window that is not
+/// there. Anything else gets no reply and does not run it.
+fn answer(stream: &mut TcpStream, token: &str, on_activate: &impl Fn() -> bool) -> io::Result<()> {
     stream.set_read_timeout(Some(ACTIVATE_IO_TIMEOUT))?;
     stream.set_write_timeout(Some(ACTIVATE_IO_TIMEOUT))?;
     let line = read_line(stream)?;
     if !is_activation_request(&line, token) {
-        return Ok(false);
+        return Ok(());
     }
-    stream.write_all(format!("{ACTIVATE_OK}\n").as_bytes())?;
-    Ok(true)
+    let reply = activation_reply(on_activate());
+    stream.write_all(format!("{reply}\n").as_bytes())
 }
 
 /// Binds the loopback listener of the running instance. Port 0: the OS
@@ -281,25 +329,29 @@ pub(crate) fn bind_activation_listener() -> io::Result<(TcpListener, Endpoint)> 
 }
 
 /// Serves requests until the process ends (blocks; run it on a thread of its
-/// own). `on_activate` runs once per valid request.
-pub(crate) fn serve_activation(listener: TcpListener, token: String, on_activate: impl Fn()) {
+/// own). `on_activate` runs once per valid request and returns whether the
+/// main window was there and was raised.
+pub(crate) fn serve_activation(
+    listener: TcpListener,
+    token: String,
+    on_activate: impl Fn() -> bool,
+) {
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
-        if matches!(answer(&mut stream, &token), Ok(true)) {
-            on_activate();
-        }
+        let _ = answer(&mut stream, &token, &on_activate);
     }
 }
 
 /// Asks the instance at `endpoint` to come to the front. `Ok(true)` = it
-/// said yes; `Ok(false)` = something else answered on that port.
+/// raised its window; `Ok(false)` = it has no window yet, or something else
+/// answered on that port.
 pub(crate) fn request_activation(endpoint: &Endpoint) -> io::Result<bool> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port));
     let mut stream = TcpStream::connect_timeout(&addr, ACTIVATE_IO_TIMEOUT)?;
     stream.set_read_timeout(Some(ACTIVATE_IO_TIMEOUT))?;
     stream.set_write_timeout(Some(ACTIVATE_IO_TIMEOUT))?;
     stream.write_all(activation_request(&endpoint.token).as_bytes())?;
-    Ok(read_line(&mut stream)?.trim() == ACTIVATE_OK)
+    Ok(is_activation_ok(&read_line(&mut stream)?))
 }
 
 /// Publishes the endpoint: written to a temporary file, then renamed, so a
@@ -329,17 +381,44 @@ fn activate_once(endpoint_path: &Path) -> bool {
         .is_some_and(|endpoint| matches!(request_activation(&endpoint), Ok(true)))
 }
 
-/// A second start: keeps asking the running instance for a short while.
-pub(crate) fn activate_running_instance(endpoint_path: &Path) -> bool {
-    for attempt in 0..ACTIVATE_ATTEMPTS {
-        if attempt > 0 {
-            std::thread::sleep(ACTIVATE_RETRY_WAIT);
+/// How a start stands towards other starts of the same key.
+#[derive(Debug)]
+pub(crate) enum SingleInstance {
+    /// Nobody else holds the key (any more): this process is the instance.
+    /// Go on with a normal start and keep the lock.
+    First(FileLock),
+    /// The running instance raised its main window: exit quietly.
+    Activated,
+    /// Someone holds the key, but nobody said `ok` within the wait.
+    NoAnswer,
+}
+
+/// Takes the single-instance lock, or hands over to whoever holds it.
+///
+/// Each round: try the lock (so a holder that went away - it lost the data
+/// folder lock, the user closed its startup dialog - makes this start the
+/// first one), then ask the holder to raise its window. Rounds repeat every
+/// `retry` until `wait` has passed; there is always at least one.
+/// `Err` = the lock itself could not be tried.
+pub(crate) fn acquire_or_activate(
+    lock_path: &Path,
+    endpoint_path: &Path,
+    wait: Duration,
+    retry: Duration,
+) -> io::Result<SingleInstance> {
+    let deadline = Instant::now() + wait;
+    loop {
+        if let LockAttempt::Acquired(lock) = try_lock_file(lock_path)? {
+            return Ok(SingleInstance::First(lock));
         }
         if activate_once(endpoint_path) {
-            return true;
+            return Ok(SingleInstance::Activated);
         }
+        if Instant::now() >= deadline {
+            return Ok(SingleInstance::NoAnswer);
+        }
+        std::thread::sleep(retry);
     }
-    false
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +431,7 @@ pub(crate) fn activate_running_instance(endpoint_path: &Path) -> bool {
 pub(crate) struct InstanceGuards {
     /// `None` when the single-instance lock could not be tried at all (the
     /// data folder lock still protects the database).
-    _single_instance: Option<FileLock>,
+    _single_instance: Option<SingleInstanceHold>,
     _data: FileLock,
 }
 
@@ -360,21 +439,31 @@ pub(crate) struct InstanceGuards {
 /// window has no explicit label, so Tauri names it `main`).
 const MAIN_WINDOW_LABEL: &str = "main";
 
-fn raise_main_window<R: Runtime>(app: &tauri::AppHandle<R>) {
-    // Not there yet (still starting): nothing to raise, it will appear.
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+/// Brings the main window to the front. `false` = there is no main window
+/// (this process is still starting), or it could not be shown: the second
+/// start must not report success then.
+fn raise_main_window<R: Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return false;
+    };
+    // Not minimized is not a failure of the raise.
+    let _ = window.unminimize();
+    window.show().is_ok() && window.set_focus().is_ok()
+}
+
+/// The single-instance lock of this process and where its endpoint file
+/// goes (published later, by [`publish_endpoint`]).
+struct SingleInstanceHold {
+    _lock: FileLock,
+    endpoint_path: PathBuf,
 }
 
 /// Takes the single-instance lock, or hands over to the running instance
-/// and exits.
+/// and exits. `None` = the lock could not be tried (no check, no endpoint).
 fn guard_single_instance<R: Runtime>(
     app: &tauri::AppHandle<R>,
     data_dir: &Path,
-) -> Option<FileLock> {
+) -> Option<SingleInstanceHold> {
     let key = single_instance_key(
         &app.config().identifier,
         &app.package_info().version.to_string(),
@@ -382,15 +471,18 @@ fn guard_single_instance<R: Runtime>(
     );
     let lock_path = single_instance_lock_path(data_dir, &key);
     let endpoint_path = single_instance_endpoint_path(data_dir, &key);
-    let lock = match try_lock_file(&lock_path) {
-        Ok(LockAttempt::Acquired(lock)) => lock,
-        Ok(LockAttempt::Held) => {
-            if activate_running_instance(&endpoint_path) {
-                println!("banto: すでに起動しています。起動中の窓を前に出しました");
-                std::process::exit(0);
-            }
-            crate::exit_startup_refused(already_running_message());
+    let lock = match acquire_or_activate(
+        &lock_path,
+        &endpoint_path,
+        ACTIVATE_WAIT,
+        ACTIVATE_RETRY_WAIT,
+    ) {
+        Ok(SingleInstance::First(lock)) => lock,
+        Ok(SingleInstance::Activated) => {
+            println!("banto: すでに起動しています。起動中の窓を前に出しました");
+            std::process::exit(0);
         }
+        Ok(SingleInstance::NoAnswer) => crate::exit_startup_refused(already_running_message()),
         Err(err) => {
             // Not a reason to refuse the start: the data folder lock below
             // is the guard that protects the database.
@@ -401,11 +493,33 @@ fn guard_single_instance<R: Runtime>(
             return None;
         }
     };
-    // Without the listener a second start cannot raise this window; it then
-    // shows `already_running_message` instead.
+    // The endpoint of the previous holder (it crashed, or lost the data
+    // folder lock) must not be read by a second start while this process has
+    // not published its own yet.
+    if let Err(err) = std::fs::remove_file(&endpoint_path) {
+        if err.kind() != io::ErrorKind::NotFound {
+            eprintln!(
+                "banto: 古い二重起動の連絡先 {} を消せません: {err}",
+                endpoint_path.display()
+            );
+        }
+    }
+    Some(SingleInstanceHold {
+        _lock: lock,
+        endpoint_path,
+    })
+}
+
+/// Opens the listener, writes the endpoint file and starts serving. Call it
+/// only once the data folder lock is held: from here on a second start may
+/// get `ok` and exit, so this process must be the one that stays.
+///
+/// Without the listener a second start cannot raise this window; it then
+/// shows `already_running_message` instead.
+fn publish_endpoint<R: Runtime>(app: &tauri::AppHandle<R>, endpoint_path: &Path) {
     match bind_activation_listener() {
         Ok((listener, endpoint)) => {
-            if let Err(err) = write_endpoint_file(&endpoint_path, &endpoint) {
+            if let Err(err) = write_endpoint_file(endpoint_path, &endpoint) {
                 eprintln!(
                     "banto: 二重起動の連絡先 {} を書けません: {err}",
                     endpoint_path.display()
@@ -415,14 +529,15 @@ fn guard_single_instance<R: Runtime>(
             let token = endpoint.token;
             if let Err(err) = std::thread::Builder::new()
                 .name("banto-single-instance".into())
-                .spawn(move || serve_activation(listener, token, || raise_main_window(&handle)))
+                .spawn(move || {
+                    serve_activation(listener, token, move || raise_main_window(&handle))
+                })
             {
                 eprintln!("banto: 二重起動の連絡用のスレッドを起動できません: {err}");
             }
         }
         Err(err) => eprintln!("banto: 二重起動の連絡用のポートを開けません: {err}"),
     }
-    Some(lock)
 }
 
 /// The plugin that takes both guards. Register it on the builder before
@@ -451,6 +566,11 @@ pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
                 }
                 Err(err) => crate::exit_startup_refused(data_lock_error_message(&lock_path, &err)),
             };
+            // Only now, with the database secured (see "Order" in the
+            // module doc).
+            if let Some(hold) = &single_instance {
+                publish_endpoint(app, &hold.endpoint_path);
+            }
             app.manage(InstanceGuards {
                 _single_instance: single_instance,
                 _data: data,
@@ -463,7 +583,8 @@ pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
 
     #[test]
     fn key_has_identifier_version_and_dev_suffix() {
@@ -609,19 +730,39 @@ mod tests {
         ));
     }
 
-    /// A listener on a thread, sending one message per valid request. The
-    /// listener writes `ok` before it calls `on_activate`, so a test waits on
-    /// the channel instead of reading a counter right after the answer.
-    fn serving() -> (Endpoint, mpsc::Receiver<()>) {
+    #[test]
+    fn reply_is_ok_only_when_the_window_was_raised() {
+        assert_eq!(activation_reply(true), "ok");
+        assert_eq!(activation_reply(false), "notready");
+        assert!(is_activation_ok("ok"));
+        assert!(is_activation_ok("ok\r"));
+        assert!(is_activation_ok(activation_reply(true)));
+        assert!(!is_activation_ok(activation_reply(false)));
+        assert!(!is_activation_ok(""));
+        assert!(!is_activation_ok("okay"));
+        assert!(!is_activation_ok("OK"));
+    }
+
+    /// A listener on a thread, sending one message per valid request; its
+    /// callback answers what `window_ready` holds at that moment (the
+    /// stand-in for "the main window exists"). Tests wait on the channel
+    /// instead of reading a counter.
+    fn serving_with(window_ready: Arc<AtomicBool>) -> (Endpoint, mpsc::Receiver<()>) {
         let (listener, endpoint) = bind_activation_listener().unwrap();
         let (tx, rx) = mpsc::channel();
         let token = endpoint.token.clone();
         std::thread::spawn(move || {
             serve_activation(listener, token, move || {
                 let _ = tx.send(());
+                window_ready.load(Ordering::SeqCst)
             })
         });
         (endpoint, rx)
+    }
+
+    /// A listener whose window is there.
+    fn serving() -> (Endpoint, mpsc::Receiver<()>) {
+        serving_with(Arc::new(AtomicBool::new(true)))
     }
 
     const CALLBACK_WAIT: Duration = Duration::from_secs(5);
@@ -667,5 +808,134 @@ mod tests {
         assert!(!activate_once(&path));
         std::fs::write(&path, "not an endpoint").unwrap();
         assert!(!activate_once(&path));
+    }
+    #[test]
+    fn no_window_yet_is_not_a_success() {
+        let ready = Arc::new(AtomicBool::new(false));
+        let (endpoint, asked) = serving_with(ready.clone());
+        // Valid request, callback ran, but the answer is not `ok`.
+        assert!(matches!(request_activation(&endpoint), Ok(false)));
+        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+        // Same listener, once the window is there.
+        ready.store(true, Ordering::SeqCst);
+        assert!(matches!(request_activation(&endpoint), Ok(true)));
+        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(asked.try_recv().is_err());
+    }
+
+    const RETRY: Duration = Duration::from_millis(20);
+
+    #[test]
+    fn free_key_makes_this_start_the_first_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = single_instance_lock_path(dir.path(), "k");
+        let endpoint_path = single_instance_endpoint_path(dir.path(), "k");
+        // A leftover endpoint of a live listener is not even asked.
+        let (endpoint, asked) = serving();
+        write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+        let got = acquire_or_activate(&lock_path, &endpoint_path, Duration::ZERO, RETRY).unwrap();
+        assert!(matches!(got, SingleInstance::First(_)));
+        assert!(asked.try_recv().is_err());
+    }
+
+    #[test]
+    fn held_key_with_a_window_is_activated() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = single_instance_lock_path(dir.path(), "k");
+        let endpoint_path = single_instance_endpoint_path(dir.path(), "k");
+        let LockAttempt::Acquired(_held) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the first lock must be acquired");
+        };
+        let (endpoint, asked) = serving();
+        write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+        let got = acquire_or_activate(&lock_path, &endpoint_path, Duration::ZERO, RETRY).unwrap();
+        assert!(matches!(got, SingleInstance::Activated));
+        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+    }
+
+    #[test]
+    fn held_key_is_retried_until_the_window_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = single_instance_lock_path(dir.path(), "k");
+        let endpoint_path = single_instance_endpoint_path(dir.path(), "k");
+        let LockAttempt::Acquired(_held) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the first lock must be acquired");
+        };
+        // The first one: no endpoint yet, then an endpoint without a window,
+        // then the window - which appears only after one `notready` went
+        // out, so the order does not depend on timing.
+        let ready = Arc::new(AtomicBool::new(false));
+        let (endpoint, asked) = serving_with(ready.clone());
+        let first = std::thread::spawn({
+            let endpoint_path = endpoint_path.clone();
+            move || {
+                std::thread::sleep(RETRY * 3);
+                write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+                // One `notready` went out.
+                asked.recv_timeout(CALLBACK_WAIT).unwrap();
+                ready.store(true, Ordering::SeqCst);
+            }
+        });
+        let got = acquire_or_activate(&lock_path, &endpoint_path, CALLBACK_WAIT, RETRY).unwrap();
+        assert!(matches!(got, SingleInstance::Activated));
+        first.join().unwrap();
+    }
+
+    #[test]
+    fn held_key_that_never_gets_a_window_is_no_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = single_instance_lock_path(dir.path(), "k");
+        let endpoint_path = single_instance_endpoint_path(dir.path(), "k");
+        let LockAttempt::Acquired(_held) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the first lock must be acquired");
+        };
+        // No endpoint at all (the first one has not secured the database).
+        let got = acquire_or_activate(&lock_path, &endpoint_path, RETRY * 3, RETRY).unwrap();
+        assert!(matches!(got, SingleInstance::NoAnswer));
+        // An endpoint, but never a window.
+        let (endpoint, asked) = serving_with(Arc::new(AtomicBool::new(false)));
+        write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+        let got = acquire_or_activate(&lock_path, &endpoint_path, RETRY * 3, RETRY).unwrap();
+        assert!(matches!(got, SingleInstance::NoAnswer));
+        // It was asked more than once before giving up.
+        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+    }
+
+    #[test]
+    fn key_freed_during_the_retries_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = single_instance_lock_path(dir.path(), "k");
+        let endpoint_path = single_instance_endpoint_path(dir.path(), "k");
+        let LockAttempt::Acquired(held) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the first lock must be acquired");
+        };
+        // The first one never publishes an endpoint (it did not get the
+        // data folder lock) and goes away while the second one retries.
+        let first = std::thread::spawn(move || {
+            std::thread::sleep(RETRY * 5);
+            drop(held);
+        });
+        let got = acquire_or_activate(&lock_path, &endpoint_path, CALLBACK_WAIT, RETRY).unwrap();
+        assert!(matches!(got, SingleInstance::First(_)));
+        first.join().unwrap();
+        // Still held by the value we got.
+        assert!(matches!(
+            try_lock_file(&lock_path).unwrap(),
+            LockAttempt::Held
+        ));
+    }
+
+    #[test]
+    fn lock_that_cannot_be_tried_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-folder");
+        let got = acquire_or_activate(
+            &single_instance_lock_path(&missing, "k"),
+            &single_instance_endpoint_path(&missing, "k"),
+            Duration::ZERO,
+            RETRY,
+        );
+        assert!(got.is_err());
     }
 }
