@@ -409,7 +409,9 @@ describe('chart wiring', () => {
 		expect(src).toMatch(/trackFontSize\(/);
 		expect(src).toMatch(/\{@attach \w+ === 0 \? track\w+Font : null\}/);
 		const calls =
-			src.match(/(leftMarginFor(Ticks)?|rightMarginFor(Ticks|LastTick|BandLabel))\(/g) ?? [];
+			src.match(
+				/(leftMarginFor(Ticks)?|rightMarginFor(Ticks|LastTick|BandLabel)|fitBandLabels)\(/g
+			) ?? [];
 		const withFont = src.match(/fontSize: \w+FontSize/g) ?? [];
 		expect(calls.length).toBeGreaterThan(0);
 		expect(withFont.length).toBe(calls.length);

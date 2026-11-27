@@ -5,7 +5,8 @@ import {
 	leftMarginForTicks,
 	rightMarginForTicks,
 	rightMarginForLastTick,
-	rightMarginForBandLabel
+	rightMarginForBandLabel,
+	fitBandLabels
 } from '../src/core/labels';
 import { thinCategoryLabels } from '../src/core/ticks-time';
 // @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
@@ -123,13 +124,56 @@ describe('x label thinning on band axes (#1047)', () => {
 	});
 });
 
+describe('fitBandLabels (#1047 review)', () => {
+	it('keeps the last label, inside the svg, on a 320px chart at 22px with a 12 fullwidth char end label', () => {
+		const total = 320;
+		const left = 48;
+		const count = 12;
+		const last = 'あいうえおかきくけこさし';
+		const labels = Array.from({ length: count }, (_, i) => (i === count - 1 ? last : `${i + 1}月`));
+		const right = rightMarginForBandLabel(last, count, {
+			baseRight: 16,
+			left,
+			totalWidth: total,
+			fontSize: 22
+		});
+		expect(right).toBe(128);
+		const step = (total - left - right) / count;
+		const centers = labels.map((_, i) => left + step * (i + 0.5));
+		const out = fitBandLabels(labels, centers, { fontSize: 22, totalWidth: total });
+		const lastOut = out[out.length - 1];
+		expect(lastOut.index).toBe(count - 1);
+		expect(lastOut.full).toBe(last);
+		expect(lastOut.text).not.toBe(last);
+		const half = estimateLabelWidth(lastOut.text, 22) / 2;
+		expect(centers[count - 1] + half).toBeLessThanOrEqual(total);
+		for (const l of out) {
+			const w = estimateLabelWidth(l.text, 22) / 2;
+			expect(centers[l.index] - w).toBeGreaterThanOrEqual(0);
+			expect(centers[l.index] + w).toBeLessThanOrEqual(total);
+		}
+	});
+
+	it('does not cut labels that fit, and returns nothing for no labels', () => {
+		const out = fitBandLabels(['a', 'b', 'c'], [40, 100, 160], { totalWidth: 200 });
+		expect(out.map((l) => l.text)).toEqual(['a', 'b', 'c']);
+		expect(fitBandLabels([], [], { totalWidth: 200 })).toEqual([]);
+	});
+});
+
+describe('ComboChart with no data (#1047 review)', () => {
+	it('does not call formatX for the last category when there is none', () => {
+		expect(ComboChartSrc).toContain('categories.length > 0 ? formatXValue(');
+	});
+});
+
 describe('Heatmap / ComboChart / BoxPlot use the shared x label handling (#1047)', () => {
 	it.each([
 		['Heatmap', HeatmapSrc],
 		['ComboChart', ComboChartSrc],
 		['BoxPlot', BoxPlotSrc]
 	])('%s thins labels and reserves the last band label', (_n, src) => {
-		expect(src).toContain('thinCategoryLabels(');
+		expect(src).toContain('fitBandLabels(');
 		expect(src).toContain('rightMarginForBandLabel(');
 	});
 });

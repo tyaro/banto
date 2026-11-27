@@ -18,8 +18,7 @@
 	import { boxStats, type BoxStats } from './core/boxplot';
 	import { linearScale, bandScale, niceTicks } from './core/scale';
 	import { seriesColorVar } from './core/color';
-	import { estimateLabelWidth, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
-	import { thinCategoryLabels } from './core/ticks-time';
+	import { fitBandLabels, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -151,19 +150,16 @@
 					{formatValueDisplay(tick)}
 				</text>
 			{/each}
-			<!-- Group labels are thinned when crowded (same `thinCategoryLabels` as BarChart). -->
-			{@const shownGroups = thinCategoryLabels(
-				groups.map((_, i) => catScale.center(i)),
-				groups.map((g) => estimateLabelWidth(g.label, tickFontSize))
-			)}
-			{#each shownGroups as i (i)}
+			<!-- Group labels are thinned when crowded (same `thinCategoryLabels` as BarChart;
+			 end labels cut to the svg edge, the last one always kept). -->
+			{#each fitBandLabels( groups.map((g) => g.label), groups.map( (_, i) => catScale.center(i) ), { fontSize: tickFontSize, totalWidth: width } ) as lb (lb.index)}
 				<text
-					x={catScale.center(i)}
+					x={catScale.center(lb.index)}
 					y={m.innerTop + m.innerHeight + 16}
 					class="tick-label"
 					text-anchor="middle"
 				>
-					{groups[i].label}
+					{lb.text}{#if lb.text !== lb.full}<title>{lb.full}</title>{/if}
 				</text>
 			{/each}
 

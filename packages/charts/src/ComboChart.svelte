@@ -19,10 +19,9 @@
 	 * combined series list).
 	 */
 	import { linearScale, bandScale, niceTicks } from './core/scale';
-	import { estimateLabelWidth, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
+	import { fitBandLabels, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { roundedTopBarPath, linePath } from './core/path';
-	import { thinCategoryLabels } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
 	import {
 		getValue,
@@ -104,7 +103,7 @@
 		// The last category label is centred in the last band; reserve room so a
 		// large font on a narrow chart doesn't clip it (never below `margins.right`).
 		const right = rightMarginForBandLabel(
-			formatXValue(categories[categories.length - 1]),
+			categories.length > 0 ? formatXValue(categories[categories.length - 1]) : '',
 			categories.length,
 			{ baseRight: m.right, left, totalWidth: plotWidth, fontSize: tickFontSize }
 		);
@@ -274,20 +273,17 @@
 				class="axis-line"
 			/>
 
-			<!-- X category labels, thinned when crowded (same `thinCategoryLabels` as BarChart). -->
+			<!-- X category labels, thinned when crowded (same `thinCategoryLabels` as BarChart;
+			     end labels cut to the svg edge, the last one always kept). -->
 			{@const xLabels = categories.map((c) => formatXValue(c))}
-			{@const xTickIndices = thinCategoryLabels(
-				xLabels.map((_, i) => catScale.center(i)),
-				xLabels.map((t) => estimateLabelWidth(t, tickFontSize))
-			)}
-			{#each xTickIndices as i (i)}
+			{#each fitBandLabels( xLabels, xLabels.map( (_, i) => catScale.center(i) ), { fontSize: tickFontSize, totalWidth: width } ) as lb (lb.index)}
 				<text
-					x={catScale.center(i)}
+					x={catScale.center(lb.index)}
 					y={m.innerTop + m.innerHeight + 18}
 					class="tick-label"
 					text-anchor="middle"
 				>
-					{xLabels[i]}
+					{lb.text}{#if lb.text !== lb.full}<title>{lb.full}</title>{/if}
 				</text>
 			{/each}
 

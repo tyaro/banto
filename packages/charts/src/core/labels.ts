@@ -1,3 +1,5 @@
+import { thinCategoryLabels } from './ticks-time';
+
 /**
  * Axis-label width estimation (pure, Vitest-covered - spec §6.2 keeps number
  * logic out of the components). SVG <text> cannot be measured before render
@@ -190,4 +192,52 @@ export function rightMarginForBandLabel(
 	const half = estimateLabelWidth(lastLabel, fontSize) / 2 + gap;
 	const needed = Math.ceil((half - (totalWidth - left) / (2 * count)) / (1 - 1 / (2 * count)));
 	return Math.max(baseRight, Math.min(needed, widthCap(Infinity, totalWidth)));
+}
+
+export interface BandLabel {
+	/** Index into the input labels. */
+	index: number;
+	/** Text to draw (the end labels are cut with an ellipsis when they would leave the svg). */
+	text: string;
+	/** The full text; draw a `<title>` with it when it differs from `text`. */
+	full: string;
+}
+
+/**
+ * Picks and fits the x labels of a band (categorical) axis whose labels are
+ * centred on `centers`. The FIRST and LAST labels are cut with an ellipsis
+ * (`truncateLabel`) to the width that is left between their centre and the svg
+ * edge (needs `totalWidth`; without it nothing is cut), then the labels are
+ * thinned by their drawn widths (`thinCategoryLabels`). When even the first and
+ * last collide only the LAST is kept (the latest category matters most), so a
+ * narrow chart never loses its end label. Labels whose text is cut to nothing
+ * are dropped.
+ */
+export function fitBandLabels(
+	labels: string[],
+	centers: number[],
+	options: { fontSize?: number; totalWidth?: number; gap?: number } = {}
+): BandLabel[] {
+	const { fontSize = 11, totalWidth = 0, gap = 4 } = options;
+	const n = labels.length;
+	if (n === 0) return [];
+	const edge = 2;
+	const texts = labels.slice();
+	if (totalWidth > 0) {
+		texts[0] = truncateLabel(labels[0], 2 * Math.max(0, centers[0] - edge), fontSize);
+		texts[n - 1] = truncateLabel(
+			labels[n - 1],
+			2 * Math.max(0, totalWidth - centers[n - 1] - edge),
+			fontSize
+		);
+	}
+	let kept = thinCategoryLabels(
+		centers,
+		texts.map((t) => estimateLabelWidth(t, fontSize)),
+		gap
+	);
+	if (n > 1 && kept.length === 1 && kept[0] === 0) kept = [n - 1];
+	return kept
+		.filter((i) => texts[i] !== '')
+		.map((i) => ({ index: i, text: texts[i], full: labels[i] }));
 }

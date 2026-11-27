@@ -12,9 +12,8 @@
 	import { bandScale } from './core/scale';
 	import { heatmapGrid, heatmapCellKey } from './core/heatmap';
 	import { sequentialColor, SEQ_RAMP } from './core/color';
-	import { thinCategoryLabels } from './core/ticks-time';
 	import {
-		estimateLabelWidth,
+		fitBandLabels,
 		leftMarginFor,
 		rightMarginForBandLabel,
 		truncateLabel
@@ -66,7 +65,8 @@
 	const MARGIN = $derived.by((): ChartMargin => {
 		const left = leftMarginFor(grid.yCats, { fontSize: tickFontSize, totalWidth: plotWidth });
 		// The last x label is centred in the last cell column; reserve room so a
-		// large font on a narrow chart doesn't clip it.
+		// large font on a narrow chart doesn't clip it. (Heatmap has no `margins`
+		// prop, so the base is the fixed 16.)
 		const right = rightMarginForBandLabel(
 			String(grid.xCats[grid.xCats.length - 1] ?? ''),
 			grid.xCats.length,
@@ -139,18 +139,16 @@
 					{shown}{#if shown !== yCat}<title>{yCat}</title>{/if}
 				</text>
 			{/each}
-			{@const xTickIndices = thinCategoryLabels(
-				grid.xCats.map((_, i) => xScale.center(i)),
-				grid.xCats.map((c) => estimateLabelWidth(String(c), tickFontSize))
-			)}
-			{#each xTickIndices as i (i)}
+			<!-- End labels are cut to the room left to the svg edge (full text in <title>);
+			     the last one is always kept. -->
+			{#each fitBandLabels( grid.xCats.map( (c) => String(c) ), grid.xCats.map( (_, i) => xScale.center(i) ), { fontSize: tickFontSize, totalWidth: width } ) as lb (lb.index)}
 				<text
-					x={xScale.center(i)}
+					x={xScale.center(lb.index)}
 					y={m.innerTop + m.innerHeight + 16}
 					class="tick-label"
 					text-anchor="middle"
 				>
-					{grid.xCats[i]}
+					{lb.text}{#if lb.text !== lb.full}<title>{lb.full}</title>{/if}
 				</text>
 			{/each}
 		{/snippet}

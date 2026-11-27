@@ -76,6 +76,8 @@ export {
 	leftMarginFor,
 	rightMarginForLastTick,
 	rightMarginForBandLabel,
+	fitBandLabels,
+	type BandLabel,
 	type AxisMarginOptions
 } from './core/labels';
 export {
