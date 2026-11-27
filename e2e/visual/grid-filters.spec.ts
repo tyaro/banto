@@ -61,7 +61,8 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			const header = grid.getByRole('columnheader').filter({ hasText: copy['items.fieldName'] });
 			await header.locator('.cell-body').focus();
 			await expectSolidFocus(header.locator('.cell-body'));
-			await page.keyboard.press('Tab');
+			// #1016: the header row is one tab stop; ArrowRight moves to the next control.
+			await page.keyboard.press('ArrowRight');
 			const label = copy['grid.filterAriaLabel'].replace('{header}', copy['items.fieldName']);
 			const trigger = grid.getByRole('button', { name: label, exact: true });
 			await expectSolidFocus(trigger);

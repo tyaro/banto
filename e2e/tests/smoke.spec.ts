@@ -513,29 +513,52 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.keyboard.press('End');
 		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'updatedAt');
 
-		// Keep header sort/filter controls and the row's open button reachable. Tab
-		// events bubbling from those controls must not move the selected cell
-		// or trap focus either; the non-sortable actions header is not a tab stop.
+		// #1016: the grid is three tab stops - the grid element (the body), the
+		// header row (a roving tabindex; arrows / Home / End walk its controls)
+		// and, while rows are selected, the bulk bar. The row's checkbox and its
+		// open button are not tab stops; the non-sortable actions header is not
+		// one of the header's controls. Keys bubbling from those controls must
+		// not move the selected cell or trap focus either.
 		// #713: items offers the bulk delete, so the grid is `selectable` - the
-		// header's "select all" checkbox is the first tab stop of the header row
-		// and the row's checkbox comes before its open button.
+		// header's "select all" checkbox is the first control of the header row.
 		const headerControls = await grid
 			.getByRole('row')
 			.first()
-			.locator('[tabindex="0"], button, input[type="checkbox"]')
+			.locator('[data-banto-grid-header-stop]')
 			.all();
-		expect(headerControls.length).toBeGreaterThan(0);
+		expect(headerControls.length).toBeGreaterThan(4);
 		await expect(headerControls[0]).toHaveAttribute('type', 'checkbox');
+		const lastHeaderControl = headerControls.at(-1)!;
 		const rowCheckbox = row.getByRole('checkbox');
 		await expect(rowCheckbox).toHaveCount(1);
-		const gridTabStops = [...headerControls, rowCheckbox, openButton];
-		for (const control of gridTabStops) {
-			await page.keyboard.press('Tab');
+		await expect(grid.locator('.header-row [tabindex="0"]')).toHaveCount(1);
+		await expect(rowCheckbox).toHaveAttribute('tabindex', '-32768');
+		await expect(openButton).toHaveAttribute('tabindex', '-32768');
+		// One Tab into the header: the control touched last (a filter was applied
+		// above), not necessarily the first one. Home goes to the first.
+		await page.keyboard.press('Tab');
+		await expect(grid.locator('.header-row :focus')).toHaveAttribute('tabindex', '0');
+		await page.keyboard.press('Home');
+		await expect(headerControls[0]).toBeFocused();
+		for (const control of headerControls.slice(1)) {
+			await page.keyboard.press('ArrowRight');
 			await expect(control).toBeFocused();
 		}
+		await page.keyboard.press('ArrowRight');
+		await expect(lastHeaderControl).toBeFocused();
+		await page.keyboard.press('Home');
+		await expect(headerControls[0]).toBeFocused();
+		await page.keyboard.press('ArrowLeft');
+		await expect(headerControls[0]).toBeFocused();
+		await page.keyboard.press('End');
+		await expect(lastHeaderControl).toBeFocused();
+		await expect(grid.locator('.header-row [tabindex="0"]')).toHaveCount(1);
+		// One more Tab leaves the grid: nothing in the rows takes it.
 		await page.keyboard.press('Tab');
 		await expect(grid.locator(':focus')).toHaveCount(0);
-		for (const control of [...[...gridTabStops].reverse(), grid, chipRemove, createButton]) {
+		await expect(grid).not.toBeFocused();
+		// Back: the header control touched last, the grid element, then out.
+		for (const control of [lastHeaderControl, grid, chipRemove, createButton]) {
 			await page.keyboard.press('Shift+Tab');
 			await expect(control).toBeFocused();
 		}
@@ -544,10 +567,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// Activate controls reached by Tab while an editable cell remains
 		// selected: Enter must act on the focused control, not start editing.
 		await row.locator('[data-cell-field="name"]').click();
-		// The "select all" checkbox, then the ID header.
+		// Into the header, to the "select all" checkbox, then the ID header.
 		await page.keyboard.press('Tab');
+		await expect(lastHeaderControl).toBeFocused();
+		await page.keyboard.press('Home');
 		await expect(headerControls[0]).toBeFocused();
-		await page.keyboard.press('Tab');
+		await page.keyboard.press('ArrowRight');
 		await expect(grid.getByRole('button', { name: 'ID', exact: true })).toBeFocused();
 		await page.keyboard.press('Enter');
 		// Column headers: "select all", the open button's, then ID.
@@ -555,9 +580,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(grid.locator('.cell-editor')).toHaveCount(0);
 		await expect(row).toBeVisible();
 		await row.locator('[data-cell-field="name"]').click();
-		// Checkbox, ID sort, ID filter, name sort, name filter.
-		for (const control of headerControls.slice(0, 5)) {
-			await page.keyboard.press('Tab');
+		// Tab comes back to the ID sort button (touched last); then the ID
+		// filter, the name sort, the name filter.
+		await page.keyboard.press('Tab');
+		await expect(headerControls[1]).toBeFocused();
+		for (const control of headerControls.slice(2, 5)) {
+			await page.keyboard.press('ArrowRight');
 			await expect(control).toBeFocused();
 		}
 		await expect(grid.getByRole('button', { name: '商品名の絞り込み', exact: true })).toBeFocused();
@@ -610,10 +638,21 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(grid.locator('.cell-editor')).toHaveCount(0);
 		await expect(row).toBeVisible();
 		await row.locator('[data-cell-field="name"]').click();
-		for (const control of gridTabStops) {
-			await page.keyboard.press('Tab');
-			await expect(control).toBeFocused();
-		}
+		// The filter button (touched last) is still the header's tab stop.
+		await page.keyboard.press('Tab');
+		await expect(headerControls[4]).toBeFocused();
+		// The row's open button from the keyboard (#1016): F2 on its cell moves
+		// the focus into the cell's control; Escape comes back to the grid.
+		await page.keyboard.press('Shift+Tab');
+		await expect(grid).toBeFocused();
+		await page.keyboard.press('Home');
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'open');
+		await page.keyboard.press('F2');
+		await expect(openButton).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(grid).toBeFocused();
+		await page.keyboard.press('F2');
+		await expect(openButton).toBeFocused();
 
 		// Edit in the drawer (#591): Enter on the focused open button opens it
 		// next to the list with `?id=`; a save keeps it open and refreshes the

@@ -113,12 +113,12 @@ test('the active row outside the window stays in the DOM without moving anything
 });
 
 /**
- * Review of #1031: the kept row's controls — the row's "open" button here,
- * which the list draws with `column.render` — are no tab stops while the row
- * is out of sight, so Tab from the header goes on to what is on screen and
- * the view does not jump back to the kept row.
+ * Nothing inside a row is a tab stop (#1016 item 5: the body's tab stop is the
+ * grid element), and that holds for the active row kept outside the window
+ * too: Tab from the grid element goes to the header and then out of the grid,
+ * never into the kept row, and the view stays where it was scrolled to.
  */
-test('Tab skips the controls of the active row kept outside the window', async ({ page }) => {
+test('Tab never lands in the active row kept outside the window', async ({ page }) => {
 	await page.goto('/items');
 	const grid = page.getByRole('grid').first();
 	await expect(grid).toBeVisible({ timeout: 60_000 });
@@ -126,33 +126,29 @@ test('Tab skips the controls of the active row kept outside the window', async (
 
 	interface Stop {
 		scrollTop: number;
-		/** Display index of the row the focus is in, or null (header, outside the grid). */
-		rowIndex: number | null;
-		inOutsideRow: boolean;
+		inRow: boolean;
+		inHeader: boolean;
 		inGrid: boolean;
-		isOpenButton: boolean;
 	}
 	const stop = (): Promise<Stop> =>
 		grid.evaluate((el) => {
 			const focused = document.activeElement as HTMLElement | null;
-			const row = focused?.closest<HTMLElement>('.rows-block > .row') ?? null;
 			return {
 				scrollTop: el.scrollTop,
-				rowIndex: row ? Number(row.getAttribute('aria-rowindex')) - 2 : null,
-				inOutsideRow: row?.classList.contains('outside-window') ?? false,
-				inGrid: !!focused && el.contains(focused) && focused !== el,
-				isOpenButton: !!focused?.closest('[data-resource-open]')
+				inRow: !!focused?.closest('.rows-block > .row'),
+				inHeader: !!focused?.closest('.header-row'),
+				inGrid: !!focused && el.contains(focused) && focused !== el
 			};
 		});
-	/** Tab from the grid element until the focus is in a data row (or has left the grid). */
-	const tabIntoRows = async (): Promise<Stop[]> => {
+	/** Tab from the grid element until the focus has left the grid. */
+	const tabThrough = async (): Promise<Stop[]> => {
 		await grid.focus();
 		const stops: Stop[] = [];
-		for (let i = 0; i < 80; i++) {
+		for (let i = 0; i < 10; i++) {
 			await page.keyboard.press('Tab');
 			const at = await stop();
 			stops.push(at);
-			if (at.rowIndex !== null || !at.inGrid) break;
+			if (!at.inGrid) break;
 		}
 		return stops;
 	};
@@ -166,15 +162,20 @@ test('Tab skips the controls of the active row kept outside the window', async (
 			].map((control) => control.getAttribute('tabindex'))
 		);
 
-	// Row 0 is the active row, in the window: its controls are tab stops.
+	// Row 0 is the active row, in the window: its controls are not tab stops.
 	await grid.focus();
 	await expect(grid).toHaveAttribute('aria-activedescendant', /.+/);
+	await expect
+		.poll(async () => {
+			const values = await controlTabindexes();
+			return values.length > 0 && values.every((value) => value === '-32768');
+		})
+		.toBe(true);
 	const original = await controlTabindexes();
-	expect(original.length).toBeGreaterThan(0);
-	expect(original).not.toContain('-32768');
-	const firstStops = await tabIntoRows();
-	const first = firstStops.at(-1)!;
-	expect(first.rowIndex).toBe(0);
+	const firstStops = await tabThrough();
+	// One stop in the header, then out.
+	expect(firstStops.map((at) => at.inHeader)).toEqual([true, false]);
+	expect(firstStops.some((at) => at.inRow)).toBe(false);
 
 	const rowHeight = await grid.evaluate(
 		(el) => el.querySelector<HTMLElement>('.rows-block > .row')!.getBoundingClientRect().height
@@ -194,34 +195,20 @@ test('Tab skips the controls of the active row kept outside the window', async (
 	).toHaveCount(0);
 	await expect(grid.locator('.row.outside-window [data-resource-open] button')).toHaveCount(1);
 
-	// Tab from the grid element, through the header, into the rows: never into
-	// the kept row, and the view stays where it was scrolled to.
-	const stops = await tabIntoRows();
-	const landed = stops.at(-1)!;
-	expect(stops.some((at) => at.inOutsideRow)).toBe(false);
-	expect(landed.rowIndex).not.toBeNull();
-	expect(landed.rowIndex!).toBeGreaterThan(100);
-	// Through the header nothing scrolls. The first tab stop of the rows is the
-	// window's first row, which is overscan just above the fold: the browser
-	// brings it into view (as it did before #1016). The jump this guards
-	// against is the one all the way back to row 0.
-	for (const at of stops.slice(0, -1)) expect(at.scrollTop).toBe(far);
-	expect(far - landed.scrollTop).toBeGreaterThanOrEqual(0);
-	expect(far - landed.scrollTop).toBeLessThan(rowHeight * 30);
+	// The same two stops, and nothing scrolls: not back to row 0, not anywhere.
+	const stops = await tabThrough();
+	expect(stops.map((at) => at.inHeader)).toEqual([true, false]);
+	expect(stops.some((at) => at.inRow)).toBe(false);
+	for (const at of stops) expect(at.scrollTop).toBe(far);
 	await expect(grid.locator('.row.outside-window')).toHaveCount(1);
 
-	// Back in the window, the row's controls are tab stops again, as before.
+	// Back in the window nothing changed for the row's controls.
 	await grid.evaluate((el) => {
 		el.scrollTop = 0;
 	});
 	await expect(grid.locator('.row.outside-window')).toHaveCount(0);
-	await expect(grid.locator('[data-banto-grid-tabindex]')).toHaveCount(0);
 	expect(await controlTabindexes()).toEqual(original);
-	const backStops = await tabIntoRows();
-	const back = backStops.at(-1)!;
-	expect(back.rowIndex).toBe(0);
-	expect(back.isOpenButton).toBe(first.isOpenButton);
-	expect(backStops).toHaveLength(firstStops.length);
+	expect((await tabThrough()).map((at) => at.inHeader)).toEqual([true, false]);
 });
 
 /**
@@ -270,7 +257,10 @@ test.describe('focus does not stay in the active row kept outside the window', (
 				(el, selector) => document.activeElement === el.querySelector(selector),
 				openButtonOfRow0
 			);
-		for (let i = 0; i < 80 && !(await isOnOpenButton()); i++) await page.keyboard.press('Tab');
+		// The button is not a tab stop (#1016 item 5): F2 on its cell, the first
+		// of the row, moves the focus into it.
+		await page.keyboard.press('Home');
+		await page.keyboard.press('F2');
 		expect(await isOnOpenButton()).toBe(true);
 
 		const box = (await grid.boundingBox())!;

@@ -9,7 +9,7 @@ import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
 import { cellDomId, domIdPart, groupRowDomId } from '../src/core/domId';
-import { SUPPRESSED_TABINDEX } from '../src/outsideRowTabStops';
+import { SAVED_TABINDEX_ATTR, SUPPRESSED_TABINDEX, cellControls } from '../src/rowTabStops';
 import { GridState } from '../src/state.svelte';
 import type { GridColumn } from '../src/types';
 
@@ -271,11 +271,13 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			expect(box.tabIndex).toBe(Number(SUPPRESSED_TABINDEX));
 			await scrollTo(grid, 0);
 			expect(box.isConnected).toBe(true);
-			expect(box.hasAttribute('tabindex')).toBe(false);
+			// Nor is it one in the window: the body's tab stop is the grid element (item 5).
+			expect(box.tabIndex).toBe(Number(SUPPRESSED_TABINDEX));
 		});
 
 		// What the host draws with `render` / `cell` is out of the Tab order too
-		// while the row is out of sight (review of #1031), and comes back as it was.
+		// (review of #1031). Since item 5 that holds for every row, in the window
+		// or not (tab-stops.test.ts); here: nothing changes on the way out and back.
 		describe('tab stops inside it', () => {
 			const controls = createRawSnippet<[Row]>((row) => ({
 				render: () =>
@@ -332,38 +334,48 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				box: null
 			};
 
-			it('takes every focusable element out of the Tab order, and puts each back as it was', async () => {
+			/** The values the elements had before they were taken out ('' = no attribute). */
+			function originals(row: HTMLElement): Record<string, string | null> {
+				const out: Record<string, string | null> = {};
+				for (const key of KEYS) {
+					out[key] = row.querySelector(`[data-k="${key}"]`)!.getAttribute(SAVED_TABINDEX_ATTR);
+				}
+				out.link = row.querySelector('a.cell-link')!.getAttribute(SAVED_TABINDEX_ATTR);
+				out.box = row.querySelector('input[type="checkbox"]')!.getAttribute(SAVED_TABINDEX_ATTR);
+				return out;
+			}
+			const allOut = (row: HTMLElement) =>
+				Object.values(tabindexes(row)).every((value) => value === SUPPRESSED_TABINDEX);
+
+			it('keeps every focusable element out of the Tab order, out of the window and back in it', async () => {
 				const { container, grid } = setup();
 				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
 				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
-				expect(tabindexes(row)).toEqual(ORIGINAL);
+				expect(allOut(row)).toBe(true);
+				expect(originals(row)).toEqual(
+					Object.fromEntries(Object.entries(ORIGINAL).map(([key, value]) => [key, value ?? '']))
+				);
 
 				await scrollTo(grid, HEADER + 500 * ROW);
 				expect(row.classList.contains('outside-window')).toBe(true);
 				expect(row.isConnected).toBe(true);
-				expect(Object.values(tabindexes(row)).every((value) => value === SUPPRESSED_TABINDEX)).toBe(
-					true
-				);
+				expect(allOut(row)).toBe(true);
 				// Still exposed to assistive technology: only `tabindex` changed.
 				expect(row.hasAttribute('inert')).toBe(false);
 				expect(row.closest('[aria-hidden="true"]')).toBeNull();
-				// Rows of the window are untouched.
-				const inWindow = inFlowRows(container)[0];
-				expect(inWindow.querySelector('[data-k="plain"]')!.hasAttribute('tabindex')).toBe(false);
-				expect(inWindow.querySelector('[data-k="two"]')!.getAttribute('tabindex')).toBe('2');
+				// The rows of the window are the same.
+				expect(allOut(inFlowRows(container)[0])).toBe(true);
 
 				await scrollTo(grid, 0);
 				expect(row.classList.contains('outside-window')).toBe(false);
-				expect(tabindexes(row)).toEqual(ORIGINAL);
-				expect(row.querySelector('[data-banto-grid-tabindex]')).toBeNull();
+				expect(allOut(row)).toBe(true);
 
-				// And again: nothing is left over from the first round.
+				// And again: nothing piles up over the rounds.
 				await scrollTo(grid, HEADER + 500 * ROW);
-				expect(Object.values(tabindexes(row)).every((value) => value === SUPPRESSED_TABINDEX)).toBe(
-					true
-				);
 				await scrollTo(grid, 0);
-				expect(tabindexes(row)).toEqual(ORIGINAL);
+				expect(allOut(row)).toBe(true);
+				expect(originals(row).two).toBe('2');
+				expect(originals(row).plain).toBe('');
 			});
 
 			it('treats what is drawn or changed while the row is out there the same way', async () => {
@@ -385,66 +397,52 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				// MutationObserver callbacks are microtasks.
 				await Promise.resolve();
 				await tick();
-				expect(row.querySelector('[data-k="late"]')!.getAttribute('tabindex')).toBe(
-					SUPPRESSED_TABINDEX
-				);
-				expect(row.querySelector('[data-k="late-three"]')!.getAttribute('tabindex')).toBe(
-					SUPPRESSED_TABINDEX
-				);
-				expect(row.querySelector('[data-k="plain"]')!.getAttribute('tabindex')).toBe(
-					SUPPRESSED_TABINDEX
-				);
-				expect(row.querySelector('[data-k="zero"]')!.getAttribute('tabindex')).toBe(
-					SUPPRESSED_TABINDEX
-				);
+				for (const key of ['late', 'late-three', 'plain', 'zero']) {
+					expect(row.querySelector(`[data-k="${key}"]`)!.getAttribute('tabindex')).toBe(
+						SUPPRESSED_TABINDEX
+					);
+				}
+				// The value the host wrote last is the one that is remembered.
+				expect(row.querySelector('[data-k="plain"]')!.getAttribute(SAVED_TABINDEX_ATTR)).toBe('5');
+				expect(row.querySelector('[data-k="zero"]')!.getAttribute(SAVED_TABINDEX_ATTR)).toBe('');
 
+				// Back in the window they stay out, and what is drawn there is taken out too.
 				await scrollTo(grid, 0);
-				expect(row.querySelector('[data-k="late"]')!.hasAttribute('tabindex')).toBe(false);
-				expect(row.querySelector('[data-k="late-three"]')!.getAttribute('tabindex')).toBe('3');
-				// The value written while it was out is the one that comes back.
-				expect(row.querySelector('[data-k="plain"]')!.getAttribute('tabindex')).toBe('5');
-				expect(row.querySelector('[data-k="zero"]')!.hasAttribute('tabindex')).toBe(false);
-
-				// Inside the window nothing is watched any more.
 				host.insertAdjacentHTML('beforeend', '<button type="button" data-k="inside">in</button>');
 				await Promise.resolve();
-				expect(row.querySelector('[data-k="inside"]')!.hasAttribute('tabindex')).toBe(false);
+				await tick();
+				for (const key of ['late', 'late-three', 'plain', 'zero', 'inside']) {
+					expect(row.querySelector(`[data-k="${key}"]`)!.getAttribute('tabindex')).toBe(
+						SUPPRESSED_TABINDEX
+					);
+				}
 			});
 
-			it('keeps a -1 the host writes while the row is out there (a mode switch), until the host writes again', async () => {
+			it('remembers a -1 the host writes (a mode switch): F2 does not walk into it', async () => {
 				const { container, grid } = setup();
 				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
 				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
 				const zero = row.querySelector<HTMLElement>('[data-k="zero"]')!;
-				const plain = row.querySelector<HTMLElement>('[data-k="plain"]')!;
 				await scrollTo(grid, HEADER + 500 * ROW);
 				await Promise.resolve();
 				await tick();
 
 				// Originally tabindex="0"; the host turns it off while it is out.
 				zero.setAttribute('tabindex', '-1');
-				// Originally none; the host writes -1 on it.
-				plain.setAttribute('tabindex', '-1');
 				await Promise.resolve();
 				await tick();
 				expect(zero.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
-				expect(plain.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
-
+				expect(zero.getAttribute(SAVED_TABINDEX_ATTR)).toBe('-1');
 				await scrollTo(grid, 0);
-				expect(zero.getAttribute('tabindex')).toBe('-1');
-				expect(plain.getAttribute('tabindex')).toBe('-1');
+				expect(zero.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+				expect(cellControls(zero.closest('.cell')!)).not.toContain(zero);
 
-				// Out again: the host switches it back on.
-				await scrollTo(grid, HEADER + 500 * ROW);
-				await Promise.resolve();
-				await tick();
+				// The host switches it back on.
 				zero.setAttribute('tabindex', '0');
 				await Promise.resolve();
 				await tick();
 				expect(zero.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
-				await scrollTo(grid, 0);
-				expect(zero.getAttribute('tabindex')).toBe('0');
-				expect(plain.getAttribute('tabindex')).toBe('-1');
+				expect(cellControls(zero.closest('.cell')!)).toContain(zero);
 			});
 
 			describe('focus never stays inside it', () => {

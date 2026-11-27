@@ -1,16 +1,20 @@
 // @vitest-environment jsdom
 /**
- * The action that takes the controls of an out-of-window row out of the Tab
- * order (#1016), driven directly on a DOM row so the order of the writes and
- * of the MutationObserver reports can be built exactly.
+ * The action that takes the controls of a row out of the Tab order (#1016),
+ * driven directly on a DOM row so the order of the writes and of the
+ * MutationObserver reports can be built exactly. The first block is about the
+ * cell editor, the one part whose `tabindex` follows `outside` (taken out
+ * while the row is outside the window, put back inside it); the second about
+ * everything else in the row, which is taken out all the time.
  */
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
 	SAVED_TABINDEX_ATTR,
 	SUPPRESSED_TABINDEX,
-	outsideRowTabStops
-} from '../src/outsideRowTabStops';
+	cellControls,
+	rowTabStops
+} from '../src/rowTabStops';
 
 let rows: HTMLElement[] = [];
 
@@ -21,10 +25,11 @@ afterEach(() => {
 
 function setup(html: string) {
 	const row = document.createElement('div');
-	row.innerHTML = html;
+	// The cell being edited: the part of a row whose `tabindex` follows `outside`.
+	row.innerHTML = `<div class="cell editing">${html}</div>`;
 	document.body.append(row);
 	rows.push(row);
-	const action = outsideRowTabStops(row, true);
+	const action = rowTabStops(row, true);
 	const el = row.querySelector<HTMLElement>('[data-k]')!;
 	return { row, action, el };
 }
@@ -35,7 +40,7 @@ async function reported() {
 	await tick();
 }
 
-describe('outsideRowTabStops', () => {
+describe('rowTabStops: the cell editor, by `outside`', () => {
 	it('parks the original and writes the sentinel; puts the original back', () => {
 		const { row, action } = setup(
 			'<button data-k="a">a</button><span data-k="b" tabindex="2">b</span>' +
@@ -117,7 +122,7 @@ describe('outsideRowTabStops', () => {
 	it('treats a later-added element and a newly focusable one like the rest', async () => {
 		const { row, action } = setup('<span data-k="a">a</span><a data-k="l">l</a>');
 		await reported();
-		row.insertAdjacentHTML('beforeend', '<button data-k="late">late</button>');
+		row.firstElementChild!.insertAdjacentHTML('beforeend', '<button data-k="late">late</button>');
 		row.querySelector('[data-k="l"]')!.setAttribute('href', '/x');
 		await reported();
 		expect(row.querySelector('[data-k="late"]')!.getAttribute('tabindex')).toBe(
@@ -133,5 +138,83 @@ describe('outsideRowTabStops', () => {
 		const { el, action } = setup('<button data-k="a">a</button>');
 		action.destroy();
 		expect(el.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+	});
+});
+
+describe('rowTabStops: the rest of the row, always', () => {
+	function setupRow(html: string, outside = false) {
+		const row = document.createElement('div');
+		row.innerHTML = html;
+		document.body.append(row);
+		rows.push(row);
+		const action = rowTabStops(row, outside);
+		const get = (k: string) => row.querySelector<HTMLElement>(`[data-k="${k}"]`)!;
+		return { row, action, get };
+	}
+
+	it('takes every control out inside the window, except the cell editor', () => {
+		const { get } = setupRow(
+			'<div class="select-cell"><input type="checkbox" data-k="box" /></div>' +
+				'<div class="cell"><a href="/x" data-k="link">x</a></div>' +
+				'<div class="cell"><button data-k="btn">b</button><span tabindex="0" data-k="span">s</span></div>' +
+				'<div class="cell editing"><input data-k="editor" /></div>'
+		);
+		for (const k of ['box', 'link', 'btn', 'span'])
+			expect(get(k).getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+		expect(get('editor').hasAttribute('tabindex')).toBe(false);
+		expect(get('editor').hasAttribute(SAVED_TABINDEX_ATTR)).toBe(false);
+	});
+
+	it('stays out when the row goes out of the window and comes back', () => {
+		const { action, get } = setupRow(
+			'<div class="cell"><button data-k="btn">b</button></div>' +
+				'<div class="cell editing"><input data-k="editor" /></div>'
+		);
+		action.update(true);
+		expect(get('btn').getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+		expect(get('editor').getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+		action.update(false);
+		expect(get('btn').getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+		expect(get('editor').hasAttribute('tabindex')).toBe(false);
+	});
+
+	it('takes out what the host draws or makes focusable later, and a tabindex it writes', async () => {
+		const { row, get } = setupRow(
+			'<div class="cell"><a data-k="l">l</a><button data-k="btn">b</button></div>'
+		);
+		await reported();
+		row.firstElementChild!.insertAdjacentHTML('beforeend', '<button data-k="late">late</button>');
+		get('l').setAttribute('href', '/x');
+		get('btn').setAttribute('tabindex', '0');
+		await reported();
+		for (const k of ['late', 'l', 'btn'])
+			expect(get(k).getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+		expect(get('btn').getAttribute(SAVED_TABINDEX_ATTR)).toBe('0');
+	});
+
+	it('leaves an editor that is drawn later alone, and takes out the view drawn after it', async () => {
+		const { row, get } = setupRow('<div class="cell" data-k="cell"><a href="/x">x</a></div>');
+		const cell = get('cell');
+		// What Svelte does when the cell enters its editor, in one task.
+		cell.classList.add('editing');
+		cell.innerHTML = '<input data-k="editor" />';
+		await reported();
+		expect(get('editor').hasAttribute('tabindex')).toBe(false);
+		cell.classList.remove('editing');
+		cell.innerHTML = '<a href="/x" data-k="link">x</a>';
+		await reported();
+		expect(row.querySelector('[data-k="link"]')!.getAttribute('tabindex')).toBe(
+			SUPPRESSED_TABINDEX
+		);
+	});
+
+	it('cellControls: what was a tab stop, in order; not a disabled one, not one the host kept out', () => {
+		const { get } = setupRow(
+			'<div class="cell" data-k="cell"><button data-k="a">a</button>' +
+				'<button data-k="off" disabled>off</button>' +
+				'<span tabindex="-1" data-k="minus">m</span>' +
+				'<a href="/x" data-k="b">b</a><span tabindex="0" data-k="c">c</span></div>'
+		);
+		expect(cellControls(get('cell')).map((el) => el.dataset.k)).toEqual(['a', 'b', 'c']);
 	});
 });
