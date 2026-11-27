@@ -354,8 +354,8 @@
 						confirmAction({
 							title: m['resource.bulkDeleteTitle'](),
 							message: allMatching
-								? m['resource.bulkDeleteConfirmMatching']({ count: count.toLocaleString() })
-								: m['resource.bulkDeleteConfirm']({ count: count.toLocaleString() }),
+								? m['resource.bulkDeleteConfirmMatching']({ count: formatCount(count) })
+								: m['resource.bulkDeleteConfirm']({ count: formatCount(count) }),
 							confirmLabel: m['common.delete'](),
 							danger: true
 						}),
@@ -371,10 +371,7 @@
 				case 'cancelled':
 					break;
 				case 'done':
-					notify(
-						'success',
-						m['resource.bulkDeleteDone']({ count: outcome.deleted.toLocaleString() })
-					);
+					notify('success', m['resource.bulkDeleteDone']({ count: formatCount(outcome.deleted) }));
 					if (sameView()) {
 						context.clear();
 						clearSelection();
@@ -390,7 +387,7 @@
 				case 'tooMany':
 					notify(
 						'error',
-						m['resource.bulkDeleteTooMany']({ max: BULK_DELETE_MAX_ROWS.toLocaleString() })
+						m['resource.bulkDeleteTooMany']({ max: formatCount(BULK_DELETE_MAX_ROWS) })
 					);
 					break;
 				case 'versionMissing':
