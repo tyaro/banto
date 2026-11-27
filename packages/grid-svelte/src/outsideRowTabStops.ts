@@ -40,23 +40,32 @@ const FOCUSABLE = [
 /** Attributes whose change can turn an element into a tab stop. */
 const WATCHED = ['tabindex', 'href', 'contenteditable', 'controls'];
 
-function takeOut(el: Element): void {
+/**
+ * How many `tabindex` writes of ours the observer has not reported yet, per
+ * element. The observer reports every attribute write (even one that stores
+ * the same value) in write order, so a report that finds this count above
+ * zero is our own echo; one that finds none is the host writing `tabindex`.
+ */
+type OwnWrites = WeakMap<Element, number>;
+
+/**
+ * Parks the element's current `tabindex` as the original and takes it out of
+ * the tab order. `own` is given while the observer is running (our write will
+ * be reported back); the first pass, before it observes, passes none.
+ */
+function park(el: Element, own: OwnWrites | null): void {
 	const current = el.getAttribute('tabindex');
-	if (el.hasAttribute(SAVED_TABINDEX_ATTR)) {
-		// Already ours. A value other than -1 means the host (or Svelte) wrote
-		// `tabindex` again meanwhile: that is the new original.
-		if (current === '-1') return;
-		el.setAttribute(SAVED_TABINDEX_ATTR, current ?? '');
-	} else {
-		el.setAttribute(SAVED_TABINDEX_ATTR, current ?? '');
-		if (current === '-1') return;
-	}
+	el.setAttribute(SAVED_TABINDEX_ATTR, current ?? '');
+	if (current === '-1') return;
 	el.setAttribute('tabindex', '-1');
+	if (own) own.set(el, (own.get(el) ?? 0) + 1);
 }
 
-function takeOutTree(root: Element): void {
-	if (root.matches(FOCUSABLE)) takeOut(root);
-	for (const el of root.querySelectorAll(FOCUSABLE)) takeOut(el);
+function takeOutTree(root: Element, own: OwnWrites | null): void {
+	const els = [...(root.matches(FOCUSABLE) ? [root] : []), ...root.querySelectorAll(FOCUSABLE)];
+	for (const el of els) {
+		if (!el.hasAttribute(SAVED_TABINDEX_ATTR)) park(el, own);
+	}
 }
 
 function putBack(row: Element): void {
@@ -73,23 +82,37 @@ export function outsideRowTabStops(
 	outside: boolean
 ): { update(outside: boolean): void; destroy(): void } {
 	let observer: MutationObserver | null = null;
+	let own: OwnWrites = new WeakMap();
 
 	function start(): void {
 		if (observer) return;
-		takeOutTree(row);
+		own = new WeakMap();
+		takeOutTree(row, null);
 		// The row's content can be drawn again while it is out there (a host
 		// snippet reacting to data): give what is added the same treatment.
 		observer = new MutationObserver((records) => {
 			for (const record of records) {
 				if (record.type === 'childList') {
 					for (const node of record.addedNodes) {
-						if (node instanceof Element) takeOutTree(node);
+						if (node instanceof Element) takeOutTree(node, own);
 					}
 				} else if (record.target !== row && record.target instanceof Element) {
-					// One we already hold counts even if it no longer matches (its
-					// `tabindex` was removed): what is put back must be the new state.
 					const el = record.target;
-					if (el.hasAttribute(SAVED_TABINDEX_ATTR) || el.matches(FOCUSABLE)) takeOut(el);
+					if (record.attributeName === 'tabindex') {
+						const pending = own.get(el) ?? 0;
+						if (pending > 0) {
+							// Our own write coming back.
+							own.set(el, pending - 1);
+							continue;
+						}
+						// The host wrote `tabindex` (a new value, or removed it): that is
+						// the new original, even if it is -1. One we already hold counts
+						// even if it no longer matches (the attribute is gone).
+						if (el.hasAttribute(SAVED_TABINDEX_ATTR) || el.matches(FOCUSABLE)) park(el, own);
+					} else if (!el.hasAttribute(SAVED_TABINDEX_ATTR) && el.matches(FOCUSABLE)) {
+						// href / contenteditable / controls made it focusable.
+						park(el, own);
+					}
 				}
 			}
 		});
@@ -105,6 +128,7 @@ export function outsideRowTabStops(
 		if (!observer) return;
 		observer.disconnect();
 		observer = null;
+		own = new WeakMap();
 		putBack(row);
 	}
 

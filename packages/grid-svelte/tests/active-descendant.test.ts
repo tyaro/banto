@@ -398,6 +398,42 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				expect(row.querySelector('[data-k="inside"]')!.hasAttribute('tabindex')).toBe(false);
 			});
 
+			it('keeps a -1 the host writes while the row is out there (a mode switch), until the host writes again', async () => {
+				const { container, grid } = setup();
+				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
+				const zero = row.querySelector<HTMLElement>('[data-k="zero"]')!;
+				const plain = row.querySelector<HTMLElement>('[data-k="plain"]')!;
+				await scrollTo(grid, HEADER + 500 * ROW);
+				await Promise.resolve();
+				await tick();
+
+				// Originally tabindex="0"; the host turns it off while it is out.
+				zero.setAttribute('tabindex', '-1');
+				// Originally none; the host writes -1 on it.
+				plain.setAttribute('tabindex', '-1');
+				await Promise.resolve();
+				await tick();
+				expect(zero.getAttribute('tabindex')).toBe('-1');
+				expect(plain.getAttribute('tabindex')).toBe('-1');
+
+				await scrollTo(grid, 0);
+				expect(zero.getAttribute('tabindex')).toBe('-1');
+				expect(plain.getAttribute('tabindex')).toBe('-1');
+
+				// Out again: the host switches it back on.
+				await scrollTo(grid, HEADER + 500 * ROW);
+				await Promise.resolve();
+				await tick();
+				zero.setAttribute('tabindex', '0');
+				await Promise.resolve();
+				await tick();
+				expect(zero.getAttribute('tabindex')).toBe('-1');
+				await scrollTo(grid, 0);
+				expect(zero.getAttribute('tabindex')).toBe('0');
+				expect(plain.getAttribute('tabindex')).toBe('-1');
+			});
+
 			it('does not take the focus away from a control in the row', async () => {
 				const { container, grid } = setup();
 				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
