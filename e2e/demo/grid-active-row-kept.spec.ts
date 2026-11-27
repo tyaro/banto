@@ -171,7 +171,7 @@ test('Tab skips the controls of the active row kept outside the window', async (
 	await expect(grid).toHaveAttribute('aria-activedescendant', /.+/);
 	const original = await controlTabindexes();
 	expect(original.length).toBeGreaterThan(0);
-	expect(original).not.toContain('-1');
+	expect(original).not.toContain('-32768');
 	const firstStops = await tabIntoRows();
 	const first = firstStops.at(-1)!;
 	expect(first.rowIndex).toBe(0);
@@ -188,7 +188,7 @@ test('Tab skips the controls of the active row kept outside the window', async (
 	// stays exposed (no `inert`, no `aria-hidden`).
 	const outside = await controlTabindexes();
 	expect(outside).toHaveLength(original.length);
-	expect(outside.every((value) => value === '-1')).toBe(true);
+	expect(outside.every((value) => value === '-32768')).toBe(true);
 	await expect(
 		grid.locator('.row.outside-window[inert], .row.outside-window[aria-hidden]')
 	).toHaveCount(0);

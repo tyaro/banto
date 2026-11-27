@@ -9,6 +9,7 @@ import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
 import { cellDomId, domIdPart, groupRowDomId } from '../src/core/domId';
+import { SUPPRESSED_TABINDEX } from '../src/outsideRowTabStops';
 import { GridState } from '../src/state.svelte';
 import type { GridColumn } from '../src/types';
 
@@ -267,7 +268,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			expect(container.querySelector('input[type="checkbox"]:checked')).toBeNull();
 			// Out of sight, its checkbox is no tab stop (Tab would jump the view there).
 			const box = cell.closest('.row')!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-			expect(box.tabIndex).toBe(-1);
+			expect(box.tabIndex).toBe(Number(SUPPRESSED_TABINDEX));
 			await scrollTo(grid, 0);
 			expect(box.isConnected).toBe(true);
 			expect(box.hasAttribute('tabindex')).toBe(false);
@@ -340,7 +341,9 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				await scrollTo(grid, HEADER + 500 * ROW);
 				expect(row.classList.contains('outside-window')).toBe(true);
 				expect(row.isConnected).toBe(true);
-				expect(Object.values(tabindexes(row)).every((value) => value === '-1')).toBe(true);
+				expect(Object.values(tabindexes(row)).every((value) => value === SUPPRESSED_TABINDEX)).toBe(
+					true
+				);
 				// Still exposed to assistive technology: only `tabindex` changed.
 				expect(row.hasAttribute('inert')).toBe(false);
 				expect(row.closest('[aria-hidden="true"]')).toBeNull();
@@ -356,7 +359,9 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 
 				// And again: nothing is left over from the first round.
 				await scrollTo(grid, HEADER + 500 * ROW);
-				expect(Object.values(tabindexes(row)).every((value) => value === '-1')).toBe(true);
+				expect(Object.values(tabindexes(row)).every((value) => value === SUPPRESSED_TABINDEX)).toBe(
+					true
+				);
 				await scrollTo(grid, 0);
 				expect(tabindexes(row)).toEqual(ORIGINAL);
 			});
@@ -380,10 +385,18 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				// MutationObserver callbacks are microtasks.
 				await Promise.resolve();
 				await tick();
-				expect(row.querySelector('[data-k="late"]')!.getAttribute('tabindex')).toBe('-1');
-				expect(row.querySelector('[data-k="late-three"]')!.getAttribute('tabindex')).toBe('-1');
-				expect(row.querySelector('[data-k="plain"]')!.getAttribute('tabindex')).toBe('-1');
-				expect(row.querySelector('[data-k="zero"]')!.getAttribute('tabindex')).toBe('-1');
+				expect(row.querySelector('[data-k="late"]')!.getAttribute('tabindex')).toBe(
+					SUPPRESSED_TABINDEX
+				);
+				expect(row.querySelector('[data-k="late-three"]')!.getAttribute('tabindex')).toBe(
+					SUPPRESSED_TABINDEX
+				);
+				expect(row.querySelector('[data-k="plain"]')!.getAttribute('tabindex')).toBe(
+					SUPPRESSED_TABINDEX
+				);
+				expect(row.querySelector('[data-k="zero"]')!.getAttribute('tabindex')).toBe(
+					SUPPRESSED_TABINDEX
+				);
 
 				await scrollTo(grid, 0);
 				expect(row.querySelector('[data-k="late"]')!.hasAttribute('tabindex')).toBe(false);
@@ -414,8 +427,8 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				plain.setAttribute('tabindex', '-1');
 				await Promise.resolve();
 				await tick();
-				expect(zero.getAttribute('tabindex')).toBe('-1');
-				expect(plain.getAttribute('tabindex')).toBe('-1');
+				expect(zero.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+				expect(plain.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
 
 				await scrollTo(grid, 0);
 				expect(zero.getAttribute('tabindex')).toBe('-1');
@@ -428,7 +441,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				zero.setAttribute('tabindex', '0');
 				await Promise.resolve();
 				await tick();
-				expect(zero.getAttribute('tabindex')).toBe('-1');
+				expect(zero.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
 				await scrollTo(grid, 0);
 				expect(zero.getAttribute('tabindex')).toBe('0');
 				expect(plain.getAttribute('tabindex')).toBe('-1');
@@ -444,7 +457,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 
 				await scrollTo(grid, HEADER + 500 * ROW);
 				expect(row.classList.contains('outside-window')).toBe(true);
-				expect(button.getAttribute('tabindex')).toBe('-1');
+				expect(button.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
 				expect(document.activeElement).toBe(button);
 				expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
 			});

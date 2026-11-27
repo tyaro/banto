@@ -9,16 +9,26 @@
  *
  * Only `tabindex` is touched: the original value is parked in a data
  * attribute and put back when the row is inside the window again. Focus is
- * never moved (a focused control in the row keeps it; `tabindex="-1"` is still
- * focusable).
+ * never moved (a focused control in the row keeps it; a negative `tabindex`
+ * is still focusable).
  */
 
 /** Holds the element's own `tabindex` while it is overridden ('' = it had none). */
 export const SAVED_TABINDEX_ATTR = 'data-banto-grid-tabindex';
 
 /**
+ * What we write into `tabindex` while a row is outside the window. A negative
+ * value, so Tab skips the element but a script can still focus it (like -1);
+ * and a value the host is not going to write itself, so "the value is this"
+ * means "the last write was ours" without counting writes: whatever else is
+ * there when the observer reports (or when the row comes back) is the host's
+ * latest word.
+ */
+export const SUPPRESSED_TABINDEX = '-32768';
+
+/**
  * Everything that can be a tab stop. Wider than strictly needed (a disabled
- * button, say): an extra `tabindex="-1"` is harmless and is taken off again.
+ * button, say): an extra negative `tabindex` is harmless and is taken off again.
  */
 const FOCUSABLE = [
 	'a[href]',
@@ -41,37 +51,31 @@ const FOCUSABLE = [
 const WATCHED = ['tabindex', 'href', 'contenteditable', 'controls'];
 
 /**
- * How many `tabindex` writes of ours the observer has not reported yet, per
- * element. The observer reports every attribute write (even one that stores
- * the same value) in write order, so a report that finds this count above
- * zero is our own echo; one that finds none is the host writing `tabindex`.
+ * Parks the element's current `tabindex` as the original ('' = none) and
+ * takes it out of the tab order.
  */
-type OwnWrites = WeakMap<Element, number>;
-
-/**
- * Parks the element's current `tabindex` as the original and takes it out of
- * the tab order. `own` is given while the observer is running (our write will
- * be reported back); the first pass, before it observes, passes none.
- */
-function park(el: Element, own: OwnWrites | null): void {
-	const current = el.getAttribute('tabindex');
-	el.setAttribute(SAVED_TABINDEX_ATTR, current ?? '');
-	if (current === '-1') return;
-	el.setAttribute('tabindex', '-1');
-	if (own) own.set(el, (own.get(el) ?? 0) + 1);
+function park(el: Element): void {
+	el.setAttribute(SAVED_TABINDEX_ATTR, el.getAttribute('tabindex') ?? '');
+	el.setAttribute('tabindex', SUPPRESSED_TABINDEX);
 }
 
-function takeOutTree(root: Element, own: OwnWrites | null): void {
+function takeOutTree(root: Element): void {
 	const els = [...(root.matches(FOCUSABLE) ? [root] : []), ...root.querySelectorAll(FOCUSABLE)];
 	for (const el of els) {
-		if (!el.hasAttribute(SAVED_TABINDEX_ATTR)) park(el, own);
+		if (!el.hasAttribute(SAVED_TABINDEX_ATTR)) park(el);
 	}
 }
 
+/**
+ * Decided by the value that is there now, not by the writes seen on the way:
+ * ours still there means the original comes back; anything else was written
+ * by the host after us and stays (no attribute included).
+ */
 function putBack(row: Element): void {
 	for (const el of row.querySelectorAll(`[${SAVED_TABINDEX_ATTR}]`)) {
 		const saved = el.getAttribute(SAVED_TABINDEX_ATTR);
 		el.removeAttribute(SAVED_TABINDEX_ATTR);
+		if (el.getAttribute('tabindex') !== SUPPRESSED_TABINDEX) continue;
 		if (saved === null || saved === '') el.removeAttribute('tabindex');
 		else el.setAttribute('tabindex', saved);
 	}
@@ -82,38 +86,36 @@ export function outsideRowTabStops(
 	outside: boolean
 ): { update(outside: boolean): void; destroy(): void } {
 	let observer: MutationObserver | null = null;
-	let own: OwnWrites = new WeakMap();
 
 	function start(): void {
 		if (observer) return;
-		own = new WeakMap();
-		takeOutTree(row, null);
+		takeOutTree(row);
 		// The row's content can be drawn again while it is out there (a host
 		// snippet reacting to data): give what is added the same treatment.
 		observer = new MutationObserver((records) => {
+			const written = new Set<Element>();
 			for (const record of records) {
 				if (record.type === 'childList') {
 					for (const node of record.addedNodes) {
-						if (node instanceof Element) takeOutTree(node, own);
+						if (node instanceof Element) takeOutTree(node);
 					}
 				} else if (record.target !== row && record.target instanceof Element) {
 					const el = record.target;
-					if (record.attributeName === 'tabindex') {
-						const pending = own.get(el) ?? 0;
-						if (pending > 0) {
-							// Our own write coming back.
-							own.set(el, pending - 1);
-							continue;
-						}
-						// The host wrote `tabindex` (a new value, or removed it): that is
-						// the new original, even if it is -1. One we already hold counts
-						// even if it no longer matches (the attribute is gone).
-						if (el.hasAttribute(SAVED_TABINDEX_ATTR) || el.matches(FOCUSABLE)) park(el, own);
-					} else if (!el.hasAttribute(SAVED_TABINDEX_ATTR) && el.matches(FOCUSABLE)) {
+					if (record.attributeName === 'tabindex') written.add(el);
+					else if (!el.hasAttribute(SAVED_TABINDEX_ATTR) && el.matches(FOCUSABLE)) {
 						// href / contenteditable / controls made it focusable.
-						park(el, own);
+						park(el);
 					}
 				}
+			}
+			// `tabindex` is judged once per element, by the value it has now:
+			// ours means the last write was ours (nothing to do); anything else is
+			// what the host wrote last, so it becomes the original (even a -1, or
+			// no attribute). One we already hold counts even if the element no
+			// longer matches (the attribute is gone).
+			for (const el of written) {
+				if (el.getAttribute('tabindex') === SUPPRESSED_TABINDEX) continue;
+				if (el.hasAttribute(SAVED_TABINDEX_ATTR) || el.matches(FOCUSABLE)) park(el);
 			}
 		});
 		observer.observe(row, {
@@ -126,9 +128,11 @@ export function outsideRowTabStops(
 
 	function stop(): void {
 		if (!observer) return;
+		// Reports not delivered yet are dropped: putBack reads the value that is
+		// there now, which already includes everything they would have said.
+		observer.takeRecords();
 		observer.disconnect();
 		observer = null;
-		own = new WeakMap();
 		putBack(row);
 	}
 
