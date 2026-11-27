@@ -147,28 +147,201 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 		expect(new Set(cells.map((cell) => cell.id)).size).toBe(4);
 	});
 
-	it('drops the attribute while the active row is scrolled out of the DOM, and restores it', async () => {
-		const { container } = render(BantoGrid<Row>, {
-			rows: makeRows(1_000),
-			columns,
-			rowHeight: 32,
-			getRowId: (row: Row) => row.id
+	// The active cell's row stays drawn while it is outside the virtualized
+	// window: with the attribute gone NVDA reads the whole table and drops to
+	// browse mode (on a wheel scroll, and on coming back to the grid by Tab).
+	describe('active row outside the virtualized window', () => {
+		const ROW = 32;
+		/** The header (32px in this stub) scrolls with the rows. */
+		const HEADER = 32;
+
+		async function scrollTo(grid: HTMLElement, top: number) {
+			grid.scrollTop = top;
+			await fireEvent.scroll(grid);
+		}
+
+		function inFlowRows(container: HTMLElement): HTMLElement[] {
+			return [...container.querySelectorAll<HTMLElement>('.row:not(.outside-window)')];
+		}
+
+		it('keeps the attribute and the gridcell while the row is scrolled out, above the window', async () => {
+			const { container } = render(BantoGrid<Row>, {
+				rows: makeRows(1_000),
+				columns,
+				rowHeight: ROW,
+				getRowId: (row: Row) => row.id
+			});
+			const grid = screen.getByRole('grid');
+			await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+			const id = grid.getAttribute('aria-activedescendant')!;
+			const cell = cellAt(container, 1, 'name');
+			expect(container.querySelector('.outside-window')).toBeNull();
+
+			await scrollTo(grid, HEADER + 500 * ROW);
+			expect(grid.getAttribute('aria-activedescendant')).toBe(id);
+			const active = activeDescendant(grid);
+			expect(active.getAttribute('role')).toBe('gridcell');
+			expect(active.classList.contains('active')).toBe(true);
+			// The same element: a keyed row is moved, not drawn again.
+			expect(active).toBe(cell);
+			expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
+
+			// One extra row, out of the flow, at its own place: the window's rows
+			// keep their order and offsets.
+			const outside = [...container.querySelectorAll<HTMLElement>('.row.outside-window')];
+			expect(outside).toHaveLength(1);
+			const row = outside[0];
+			expect(row.contains(active)).toBe(true);
+			expect(row.getAttribute('aria-rowindex')).toBe('3');
+			const block = container.querySelector<HTMLElement>('.rows-block')!;
+			const offsetY = Number(/translateY\((\d+)px\)/.exec(block.style.transform)![1]);
+			expect(offsetY).toBeGreaterThan(ROW);
+			expect(parseFloat(row.style.top) + offsetY).toBe(1 * ROW);
+			const flow = inFlowRows(container);
+			expect(flow[0].getAttribute('aria-rowindex')).toBe(String(offsetY / ROW + 2));
+			flow.forEach((el, i) => {
+				expect(el.getAttribute('aria-rowindex')).toBe(String(offsetY / ROW + 2 + i));
+				expect(el.style.top).toBe('');
+			});
+			// Above the window it comes first in the DOM, so rows stay in row order.
+			expect(block.firstElementChild).toBe(row);
+			// The scroll height is the row count alone.
+			const viewport = container.querySelector<HTMLElement>('.rows-viewport')!;
+			expect(viewport.style.height).toBe(`${1_000 * ROW}px`);
+			// Nothing was selected or scrolled on the way.
+			expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+			expect(container.querySelectorAll('.cell.active')).toHaveLength(1);
+
+			await scrollTo(grid, 0);
+			expect(container.querySelector('.outside-window')).toBeNull();
+			expect(grid.getAttribute('aria-activedescendant')).toBe(id);
+			expect(activeDescendant(grid)).toBe(cellAt(container, 1, 'name'));
+			expect(cellAt(container, 1, 'name').closest<HTMLElement>('.row')!.style.top).toBe('');
 		});
-		const grid = screen.getByRole('grid');
-		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
-		const id = grid.getAttribute('aria-activedescendant')!;
-		expect(document.getElementById(id)).not.toBeNull();
 
-		grid.scrollTop = 500 * 32;
-		await fireEvent.scroll(grid);
-		expect(cellAt(container, 1, 'name')).toBeNull();
-		expect(document.getElementById(id)).toBeNull();
-		expect(grid.hasAttribute('aria-activedescendant')).toBe(false);
+		it("keeps it below the window too, after the window's rows", async () => {
+			const { container } = render(BantoGrid<Row>, {
+				rows: makeRows(1_000),
+				columns,
+				rowHeight: ROW,
+				getRowId: (row: Row) => row.id
+			});
+			const grid = screen.getByRole('grid');
+			await scrollTo(grid, HEADER + 500 * ROW);
+			await fireEvent.pointerDown(cellAt(container, 500, 'category'));
+			const cell = cellAt(container, 500, 'category');
 
-		grid.scrollTop = 0;
-		await fireEvent.scroll(grid);
-		expect(grid.getAttribute('aria-activedescendant')).toBe(id);
-		expect(activeDescendant(grid)).toBe(cellAt(container, 1, 'name'));
+			await scrollTo(grid, 0);
+			expect(activeDescendant(grid)).toBe(cell);
+			const row = cell.closest<HTMLElement>('.row')!;
+			expect(row.classList.contains('outside-window')).toBe(true);
+			expect(row.style.top).toBe(`${500 * ROW}px`);
+			expect(row.getAttribute('aria-rowindex')).toBe('502');
+			expect(container.querySelector('.rows-block')!.lastElementChild).toBe(row);
+			expect(inFlowRows(container)[0].getAttribute('aria-rowindex')).toBe('2');
+		});
+
+		it('is still there when the grid element is focused again, and nothing moves', async () => {
+			const { container } = render(BantoGrid<Row>, {
+				rows: makeRows(1_000),
+				columns,
+				rowHeight: ROW,
+				selectable: true,
+				getRowId: (row: Row) => row.id
+			});
+			const grid = screen.getByRole('grid');
+			await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+			const cell = cellAt(container, 1, 'name');
+			await scrollTo(grid, HEADER + 500 * ROW);
+
+			grid.blur();
+			grid.focus();
+			await tick();
+			expect(document.activeElement).toBe(grid);
+			const active = activeDescendant(grid);
+			expect(active).toBe(cell);
+			expect(active.getAttribute('role')).toBe('gridcell');
+			// The cursor is not moved to the rows in view, and the view does not jump back.
+			expect(container.querySelectorAll('.cell.active')).toHaveLength(1);
+			expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+			expect(container.querySelector('input[type="checkbox"]:checked')).toBeNull();
+			// Out of sight, its checkbox is no tab stop (Tab would jump the view there).
+			const box = cell.closest('.row')!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+			expect(box.tabIndex).toBe(-1);
+			await scrollTo(grid, 0);
+			expect(box.isConnected).toBe(true);
+			expect(box.hasAttribute('tabindex')).toBe(false);
+		});
+
+		it('the first arrow key moves from it and brings the active cell back into view', async () => {
+			const { container } = render(BantoGrid<Row>, {
+				rows: makeRows(1_000),
+				columns,
+				rowHeight: ROW,
+				getRowId: (row: Row) => row.id
+			});
+			const grid = screen.getByRole('grid');
+			await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+			await scrollTo(grid, HEADER + 500 * ROW);
+
+			await fireEvent.keyDown(grid, { key: 'ArrowDown' });
+			// Row 2 is put at the top of the rows area.
+			expect(grid.scrollTop).toBe(HEADER + 2 * ROW);
+			await fireEvent.scroll(grid);
+			const active = activeDescendant(grid);
+			expect(active).toBe(cellAt(container, 2, 'name'));
+			expect(active.getAttribute('role')).toBe('gridcell');
+			expect(container.querySelector('.outside-window')).toBeNull();
+		});
+
+		it('keeps a group header row the same way', async () => {
+			const state = new GridState(columns);
+			state.groupBy = 'category';
+			const { container } = render(BantoGrid<Row>, {
+				rows: makeRows(1_000),
+				columns,
+				state,
+				rowHeight: ROW,
+				getRowId: (row: Row) => row.id
+			});
+			const grid = screen.getByRole('grid');
+			await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+			await fireEvent.keyDown(grid, { key: 'ArrowUp' });
+			const header = activeDescendant(grid);
+			expect(header.getAttribute('role')).toBe('row');
+
+			await scrollTo(grid, HEADER + 300 * ROW);
+			expect(activeDescendant(grid)).toBe(header);
+			expect(header.classList.contains('outside-window')).toBe(true);
+			expect(header.getAttribute('aria-rowindex')).toBe('2');
+			expect(container.querySelectorAll('.outside-window')).toHaveLength(1);
+		});
+
+		it('does not draw a row that is not fetched yet (server mode)', async () => {
+			const sparse: Row[] = [];
+			makeRows(3).forEach((row, i) => (sparse[i] = row));
+			const { container, rerender } = render(BantoGrid<Row>, {
+				rows: sparse,
+				columns,
+				mode: 'server',
+				totalRows: 1_000,
+				rowHeight: ROW,
+				getRowId: (row: Row) => row.id
+			});
+			const grid = screen.getByRole('grid');
+			await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+			const cell = cellAt(container, 1, 'name');
+
+			// A fetched row is kept like in client mode ...
+			await scrollTo(grid, HEADER + 500 * ROW);
+			expect(activeDescendant(grid)).toBe(cell);
+			expect(container.querySelectorAll('.outside-window')).toHaveLength(1);
+
+			// ... but once it is a hole again there is nothing to name.
+			await rerender({ rows: [] as Row[] });
+			expect(container.querySelector('.outside-window')).toBeNull();
+			expect(grid.hasAttribute('aria-activedescendant')).toBe(false);
+		});
 	});
 
 	it('does not name a row that is not fetched yet (server mode placeholder)', async () => {

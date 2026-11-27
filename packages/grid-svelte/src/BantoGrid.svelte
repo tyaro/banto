@@ -592,17 +592,71 @@
 	}
 
 	/**
+	 * The active cell's row when it is outside the virtualized window (#1016),
+	 * or null. That one row stays drawn, at its real place (out of sight), so
+	 * `aria-activedescendant` keeps a target: with the attribute gone NVDA
+	 * reads the whole table - the moment a wheel scroll takes the row out of
+	 * the window, or on coming back to the grid by Tab - and drops to browse
+	 * mode. A row not fetched yet (server mode) has no cell to name and is not
+	 * drawn; a group header row is.
+	 */
+	const activeRowOutsideWindow = $derived.by(() => {
+		const active = selection.active;
+		if (!active) return null;
+		const rowIndex = active.rowIndex;
+		if (rowIndex < 0 || rowIndex >= effectiveRowCount) return null;
+		if (rowIndex >= windowResult.start && rowIndex < windowResult.end) return null;
+		if (groupedEntries) return groupedEntries[rowIndex] ? rowIndex : null;
+		return rowAtDisplayIndex(rowIndex) === undefined ? null : rowIndex;
+	});
+
+	interface DrawnRow<T> {
+		item: T;
+		rowIndex: number;
+		/** Outside the window: taken out of the flow and placed at its own offset. */
+		outside: boolean;
+	}
+
+	/** The window's rows, plus the active row when it is outside (before or after, in row order). */
+	function withActiveRow<T>(items: T[], itemAt: (rowIndex: number) => T): DrawnRow<T>[] {
+		const drawn = items.map((item, i) => ({
+			item,
+			rowIndex: windowResult.start + i,
+			outside: false
+		}));
+		const rowIndex = activeRowOutsideWindow;
+		if (rowIndex === null) return drawn;
+		const extra = { item: itemAt(rowIndex), rowIndex, outside: true };
+		if (rowIndex < windowResult.start) drawn.unshift(extra);
+		else drawn.push(extra);
+		return drawn;
+	}
+
+	const drawnRows = $derived(
+		withActiveRow<TRow | undefined>(visibleRows, (rowIndex) => rowAtDisplayIndex(rowIndex))
+	);
+	const drawnEntries = $derived.by(() => {
+		const entries = groupedEntries;
+		return entries ? withActiveRow(visibleEntries, (rowIndex) => entries[rowIndex]) : [];
+	});
+
+	/** `top` of a row drawn outside the window, inside the (translated) rows block. */
+	function outsideTop(rowIndex: number): string {
+		return `${rowIndex * gridState.rowHeight - windowResult.offsetY}px`;
+	}
+
+	/**
 	 * Id of the element drawn for the active cell, or undefined when there is
-	 * none in the DOM: no active cell, a row outside the virtualized window, a
-	 * row not fetched yet (server mode placeholder), or a column that is gone.
-	 * The attribute is then left off, since it must never name a missing id.
+	 * none in the DOM: no active cell, a row not fetched yet (server mode
+	 * placeholder), or a column that is gone. The attribute is then left off,
+	 * since it must never name a missing id. A row outside the virtualized
+	 * window is still drawn (`activeRowOutsideWindow`), so it is named too.
 	 * On a group header row the row itself is the active descendant.
 	 */
 	const activeDescendantId = $derived.by(() => {
 		const active = selection.active;
 		if (!active) return undefined;
-		if (active.rowIndex < windowResult.start || active.rowIndex >= windowResult.end)
-			return undefined;
+		if (active.rowIndex < 0 || active.rowIndex >= effectiveRowCount) return undefined;
 		if (groupedEntries) {
 			const entry = groupedEntries[active.rowIndex];
 			if (entry?.kind === 'group') return groupRowDomId(gridId, entry.key);
@@ -2189,12 +2243,19 @@
 				></div>
 			{/if}
 
-			{#snippet dataRow(row: TRow, rowIndex: number)}
+			<!--
+			`outside` (#1016): the active cell's row, drawn although it is outside the
+			virtualized window. Its checkbox and links are no tab stops while it is
+			out there, so Tab does not jump the view to a row that is out of sight.
+			-->
+			{#snippet dataRow(row: TRow, rowIndex: number, outside: boolean)}
 				<div
 					class="row {rowClass?.(row) ?? ''}"
 					class:selected={selectable && isRowSelected(row)}
+					class:outside-window={outside}
 					role="row"
 					aria-rowindex={rowIndex + 2}
+					style:top={outside ? outsideTop(rowIndex) : undefined}
 					style:grid-template-columns={templateColumns}
 					style:height={`${gridState.rowHeight}px`}
 					style:--banto-grid-editor-height={`min(var(--banto-control-height), calc(${gridState.rowHeight}px - var(--banto-border-width)))`}
@@ -2222,6 +2283,7 @@
 									class="select-box"
 									checked={isRowSelected(row)}
 									aria-label={t.selectRowLabel(rowLabelFor(row))}
+									tabindex={outside ? -1 : undefined}
 									onchange={() => toggleRowSelected(row)}
 								/>
 							</label>
@@ -2285,6 +2347,7 @@
 									<a
 										class="cell-link"
 										href={linkInfo.href}
+										tabindex={outside ? -1 : undefined}
 										onclick={(event) => event.stopPropagation()}
 										ondblclick={(event) => event.stopPropagation()}
 									>
@@ -2352,6 +2415,7 @@
 									<a
 										class="cell-link"
 										href={view.href}
+										tabindex={outside ? -1 : undefined}
 										onclick={(event) => event.stopPropagation()}
 										ondblclick={(event) => event.stopPropagation()}
 									>
@@ -2392,8 +2456,7 @@
 					>
 						{#if groupedEntries}
 							<!-- Client mode, grouped (spec §4.3): group headers + rows flattened by buildGroupedView. -->
-							{#each visibleEntries as entry, i (entryKeyFor(entry))}
-								{@const rowIndex = windowResult.start + i}
+							{#each drawnEntries as { item: entry, rowIndex, outside } (entryKeyFor(entry))}
 								{#if entry.kind === 'group'}
 									<!--
 									role="row" (not "button"): this is still a grid row
@@ -2409,10 +2472,12 @@
 									<!-- svelte-ignore a11y_interactive_supports_focus -->
 									<div
 										class="row group-header-row"
+										class:outside-window={outside}
 										id={groupRowDomId(gridId, entry.key)}
 										role="row"
 										aria-rowindex={rowIndex + 2}
 										aria-expanded={!entry.collapsed}
+										style:top={outside ? outsideTop(rowIndex) : undefined}
 										style:height={`${gridState.rowHeight}px`}
 										onclick={() => handleGroupHeaderClick(rowIndex, entry.key)}
 									>
@@ -2433,12 +2498,11 @@
 										</span>
 									</div>
 								{:else}
-									{@render dataRow(entry.row, rowIndex)}
+									{@render dataRow(entry.row, rowIndex, outside)}
 								{/if}
 							{/each}
 						{:else}
-							{#each visibleRows as row, i (rowKeyFor(row, windowResult.start + i))}
-								{@const rowIndex = windowResult.start + i}
+							{#each drawnRows as { item: row, rowIndex, outside } (rowKeyFor(row, rowIndex))}
 								{#if row === undefined}
 									<!--
 									Server mode (spec §4.1, M5): this absolute row
@@ -2474,7 +2538,7 @@
 										{/each}
 									</div>
 								{:else}
-									{@render dataRow(row, rowIndex)}
+									{@render dataRow(row, rowIndex, outside)}
 								{/if}
 							{/each}
 						{/if}
@@ -2648,6 +2712,15 @@
 		border-bottom: var(--banto-border-width) solid var(--banto-border);
 		box-sizing: border-box;
 		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	/* The active cell's row, kept in the DOM while it is outside the virtualized
+	   window (#1016): out of the flow, at its own offset (inline `top`), so the
+	   rows of the window do not move. */
+	.row.outside-window {
+		position: absolute;
+		left: 0;
+		right: 0;
 	}
 
 	/* `--row-overlay` repeats the row's state colour for the pinned cells
