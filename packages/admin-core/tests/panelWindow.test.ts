@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	PANEL_CLOSED_EVENT,
+	PANEL_CLOSE_COMMAND,
 	PANEL_LIST_COMMAND,
 	PANEL_OPEN_COMMAND,
+	closePanelWindow,
 	createPanelPopOut,
 	listPanelWindows,
 	listenPanelClosed,
@@ -1027,5 +1029,389 @@ describe('createPanelPopOut: a panel put back is remembered until its layout is 
 		answers[0].resolve(true);
 		await settle();
 		expect(popOut.isPoppedOut('memo')).toBe(false);
+	});
+});
+
+describe('closePanelWindow', () => {
+	it('invokes the plugin command with the id and answers whether a window was closed', async () => {
+		const invoke = vi.fn(async () => true as unknown);
+		await expect(closePanelWindow('memo', { isTauri: () => true, invoke })).resolves.toBe(true);
+		expect(invoke).toHaveBeenCalledWith(PANEL_CLOSE_COMMAND, { id: 'memo' });
+		expect(PANEL_CLOSE_COMMAND).toBe('plugin:banto-tauri-panel|close');
+
+		invoke.mockResolvedValueOnce(false);
+		await expect(closePanelWindow('memo', { isTauri: () => true, invoke })).resolves.toBe(false);
+	});
+
+	it('does nothing outside Tauri', async () => {
+		const invoke = vi.fn(async () => true);
+		await expect(closePanelWindow('memo', { isTauri: () => false, invoke })).resolves.toBe(false);
+		expect(invoke).not.toHaveBeenCalled();
+	});
+
+	it("rejects with the plugin's error", async () => {
+		const invoke = vi.fn(async () => {
+			throw new Error('not allowed');
+		});
+		await expect(closePanelWindow('memo', { isTauri: () => true, invoke })).rejects.toThrow(
+			'not allowed'
+		);
+	});
+});
+
+describe('createPanelPopOut: closeWindows (Issue #1021)', () => {
+	const NOTES = { id: 'notes', title: 'Notes' };
+
+	function fakeStorage(initial: string[] = []) {
+		const state = { ids: initial };
+		return {
+			state,
+			storage: {
+				load: vi.fn(() => [...state.ids]),
+				save: vi.fn((ids: string[]) => {
+					state.ids = [...ids];
+				})
+			}
+		};
+	}
+
+	/**
+	 * A plugin with windows: `open` adds one, `list` answers them, `close`
+	 * takes one away (`closeError` makes it fail instead). Unlike the real one
+	 * it does not send the closed notice by itself: the test fires it, to
+	 * choose when it arrives.
+	 */
+	function fakePlugin() {
+		const plugin = {
+			windows: new Set<string>(),
+			closeError: null as Error | null,
+			invoke: vi.fn(async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+				const id = args?.id as string;
+				if (command === PANEL_LIST_COMMAND) return [...plugin.windows];
+				if (command === PANEL_OPEN_COMMAND) {
+					plugin.windows.add(id);
+					return undefined;
+				}
+				if (command === PANEL_CLOSE_COMMAND) {
+					if (plugin.closeError) throw plugin.closeError;
+					return plugin.windows.delete(id);
+				}
+				return undefined;
+			})
+		};
+		return plugin;
+	}
+
+	function setup(overrides: Partial<Parameters<typeof createPanelPopOut>[0]> = {}) {
+		const events = fakeListen();
+		const restore = vi.fn();
+		const plugin = fakePlugin();
+		const { state, storage } = fakeStorage();
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke: plugin.invoke,
+			listen: events.listen,
+			restore,
+			storage,
+			detach: () => true,
+			...overrides
+		});
+		return { popOut, plugin, restore, events, state };
+	}
+
+	const settle = async () => {
+		await tick();
+		await tick();
+	};
+
+	/** Connects, then pops `memo` and `notes` out. */
+	async function popOutBoth(popOut: ReturnType<typeof setup>['popOut']) {
+		popOut.connect();
+		await settle();
+		popOut.onPopOut?.(MEMO);
+		popOut.onPopOut?.(NOTES);
+		await settle();
+	}
+
+	it('closes every popped-out window, forgets the panels and does not restore them', async () => {
+		const { popOut, plugin, restore, events, state } = setup();
+		await popOutBoth(popOut);
+		expect([...state.ids].sort()).toEqual(['memo', 'notes']);
+		expect([...plugin.windows].sort()).toEqual(['memo', 'notes']);
+		const changed = vi.fn();
+		popOut.subscribe(changed);
+
+		const result = await popOut.closeWindows();
+
+		expect(result).toEqual({ closed: ['memo', 'notes'], failed: [] });
+		expect(plugin.invoke).toHaveBeenCalledWith(PANEL_CLOSE_COMMAND, { id: 'memo' });
+		expect(plugin.invoke).toHaveBeenCalledWith(PANEL_CLOSE_COMMAND, { id: 'notes' });
+		expect(plugin.windows.size).toBe(0);
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(popOut.isPoppedOut('notes')).toBe(false);
+		expect(state.ids).toEqual([]);
+		expect(changed).toHaveBeenCalled();
+
+		// The closed notices of those windows arrive afterwards: swallowed.
+		events.fire('memo');
+		events.fire('notes');
+		expect(restore).not.toHaveBeenCalled();
+		expect(state.ids).toEqual([]);
+	});
+
+	it('closes only the given ids', async () => {
+		const { popOut, restore, events, state } = setup();
+		await popOutBoth(popOut);
+
+		await expect(popOut.closeWindows(['memo'])).resolves.toEqual({ closed: ['memo'], failed: [] });
+
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(popOut.isPoppedOut('notes')).toBe(true);
+		expect(state.ids).toEqual(['notes']);
+		// The other window closes the usual way.
+		events.fire('notes');
+		expect(restore).toHaveBeenCalledTimes(1);
+		expect(restore).toHaveBeenCalledWith('notes');
+	});
+
+	it('swallows a closed notice that arrives before the plugin has answered', async () => {
+		const { popOut, plugin, restore, events, state } = setup();
+		await popOutBoth(popOut);
+		let answer!: (had: boolean) => void;
+		plugin.invoke.mockImplementationOnce(() => new Promise<unknown>((r) => (answer = r)));
+
+		const closing = popOut.closeWindows(['memo']);
+		events.fire('memo');
+		expect(restore).not.toHaveBeenCalled();
+		answer(true);
+
+		await expect(closing).resolves.toEqual({ closed: ['memo'], failed: [] });
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual(['notes']);
+		expect(restore).not.toHaveBeenCalled();
+	});
+
+	it('swallows only one notice per closed window', async () => {
+		const { popOut, restore, events } = setup();
+		await popOutBoth(popOut);
+		await popOut.closeWindows(['memo']);
+		events.fire('memo');
+		expect(restore).not.toHaveBeenCalled();
+
+		// The next window of the same panel comes back as usual.
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledWith('memo');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+	});
+
+	it('leaves a panel whose window could not be closed popped out, and restores it when that window closes later', async () => {
+		const { popOut, plugin, restore, events, state } = setup();
+		await popOutBoth(popOut);
+		const denied = new Error('banto-tauri-panel.close not allowed');
+		plugin.closeError = denied;
+
+		const result = await popOut.closeWindows();
+
+		expect(result.closed).toEqual([]);
+		expect(result.failed).toEqual([
+			{ id: 'memo', error: denied },
+			{ id: 'notes', error: denied }
+		]);
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect(popOut.isPoppedOut('notes')).toBe(true);
+		expect([...state.ids].sort()).toEqual(['memo', 'notes']);
+		expect(restore).not.toHaveBeenCalled();
+
+		// The user closes the window by hand: the usual way back.
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledWith('memo');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual(['notes']);
+	});
+
+	it('counts a window that went away while the close failed as closed', async () => {
+		const { popOut, plugin, restore, events, state } = setup();
+		await popOutBoth(popOut);
+		let fail!: (error: Error) => void;
+		plugin.invoke.mockImplementationOnce(() => new Promise<unknown>((_, r) => (fail = r)));
+
+		const closing = popOut.closeWindows(['memo']);
+		events.fire('memo');
+		fail(new Error('window not found'));
+
+		await expect(closing).resolves.toEqual({ closed: ['memo'], failed: [] });
+		expect(restore).not.toHaveBeenCalled();
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual(['notes']);
+		// No mark is left behind: a later notice for the id is a real one.
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledWith('memo');
+	});
+
+	it('forgets a remembered panel that has no window, and waits for no notice', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const events = fakeListen();
+		const restore = vi.fn();
+		const plugin = fakePlugin();
+		// The list fails, so the remembered panel stays "popped out" with no window.
+		plugin.invoke.mockRejectedValueOnce(new Error('list not allowed'));
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke: plugin.invoke,
+			listen: events.listen,
+			restore,
+			storage
+		});
+		popOut.connect();
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+
+		await expect(popOut.closeWindows()).resolves.toEqual({ closed: ['memo'], failed: [] });
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual([]);
+		expect(restore).not.toHaveBeenCalled();
+
+		// The plugin said there was no window, so no notice is owed: one that
+		// comes for the id later is a real one.
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledWith('memo');
+	});
+
+	it('closes the windows of given ids this object does not remember', async () => {
+		const { popOut, plugin, restore, events, state } = setup();
+		popOut.connect();
+		await settle();
+		plugin.windows.add('memo');
+
+		const result = await popOut.closeWindows(['memo', 'notes', 'memo']);
+
+		expect(result).toEqual({ closed: ['memo', 'notes'], failed: [] });
+		expect(plugin.windows.size).toBe(0);
+		expect(state.ids).toEqual([]);
+		events.fire('memo');
+		expect(restore).not.toHaveBeenCalled();
+		// `notes` had no window: nothing is swallowed for it.
+		events.fire('notes');
+		expect(restore).toHaveBeenCalledWith('notes');
+	});
+
+	it('does not close a window that is being opened', async () => {
+		const { popOut, plugin, restore } = setup();
+		popOut.connect();
+		await settle();
+		let opened!: () => void;
+		plugin.invoke.mockImplementationOnce(
+			() => new Promise<unknown>((r) => (opened = () => r(undefined)))
+		);
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+
+		const result = await popOut.closeWindows();
+
+		expect(result.closed).toEqual([]);
+		expect(result.failed.map((f) => f.id)).toEqual(['memo']);
+		expect(plugin.invoke).not.toHaveBeenCalledWith(PANEL_CLOSE_COMMAND, { id: 'memo' });
+		opened();
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect(restore).not.toHaveBeenCalled();
+	});
+
+	it('keeps a panel that is popped out again while the plugin is asked (generation)', async () => {
+		const { popOut, plugin, restore, events, state } = setup();
+		await popOutBoth(popOut);
+		let answer!: (had: boolean) => void;
+		plugin.invoke.mockImplementationOnce(() => new Promise<unknown>((r) => (answer = r)));
+
+		const closing = popOut.closeWindows(['memo']);
+		// The old window's notice comes, then the user pops the panel out again
+		// before the plugin has answered the close.
+		events.fire('memo');
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		answer(true);
+
+		const result = await closing;
+		expect(result.closed).toEqual([]);
+		expect(result.failed.map((f) => f.id)).toEqual(['memo']);
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect([...state.ids].sort()).toEqual(['memo', 'notes']);
+		expect(restore).not.toHaveBeenCalled();
+		// The new window's notice is not swallowed.
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledWith('memo');
+	});
+
+	it('a later connect() does not restore the forgotten panels', async () => {
+		const { popOut, restore, state } = setup();
+		await popOutBoth(popOut);
+		await popOut.closeWindows();
+
+		popOut.connect();
+		await settle();
+
+		expect(restore).not.toHaveBeenCalled();
+		expect(state.ids).toEqual([]);
+	});
+
+	it('drops the mark of a notice nobody will hear when the subscription stops', async () => {
+		const { popOut, restore, events } = setup();
+		const stop = popOut.connect();
+		await settle();
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		await popOut.closeWindows();
+
+		// The screen is left before the notice arrives, then entered again.
+		stop();
+		popOut.connect();
+		await settle();
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledWith('memo');
+	});
+
+	it('an object made later over the same storage closes what it read from it', async () => {
+		const first = setup();
+		await popOutBoth(first.popOut);
+		const { state, storage } = fakeStorage([...first.state.ids]);
+		// The screen was left and entered again: a new object, the same windows.
+		const second = setup({ storage, invoke: first.plugin.invoke });
+		second.popOut.connect();
+		await settle();
+		expect(second.popOut.isPoppedOut('memo')).toBe(true);
+		expect(second.restore).not.toHaveBeenCalled();
+
+		const result = await second.popOut.closeWindows();
+
+		expect(result.closed.sort()).toEqual(['memo', 'notes']);
+		expect(first.plugin.windows.size).toBe(0);
+		expect(state.ids).toEqual([]);
+		second.events.fire('memo');
+		expect(second.restore).not.toHaveBeenCalled();
+	});
+
+	it('shares one close between two calls made at once', async () => {
+		const { popOut, plugin } = setup();
+		await popOutBoth(popOut);
+		const [a, b] = await Promise.all([
+			popOut.closeWindows(['memo']),
+			popOut.closeWindows(['memo'])
+		]);
+		expect(a).toEqual({ closed: ['memo'], failed: [] });
+		expect(b).toEqual(a);
+		const closes = plugin.invoke.mock.calls.filter(([command]) => command === PANEL_CLOSE_COMMAND);
+		expect(closes).toHaveLength(1);
+	});
+
+	it('does nothing outside Tauri', async () => {
+		const { popOut, plugin } = setup({ isTauri: () => false });
+		await expect(popOut.closeWindows(['memo'])).resolves.toEqual({ closed: [], failed: [] });
+		expect(plugin.invoke).not.toHaveBeenCalled();
 	});
 });

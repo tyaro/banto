@@ -61,13 +61,18 @@ tauri::Builder::default()
 
 ## 2. Tauri: capability
 
-`src-tauri/capabilities/default.json` の `permissions` に、plugin のコマンドの許可を足す（`open` と `list` の 2 つ）。
+`src-tauri/capabilities/default.json` の `permissions` に、plugin のコマンドの許可を足す（`open`・`list`・`close` の 3 つ）。
 パネルの窓が自分のコマンド（データの取得など）を呼ぶなら、`windows` にパネルの窓のラベル（接頭辞 + `*`）も要る:
 
 ```jsonc
 {
 	"windows": ["main", "panel-*"],
-	"permissions": ["core:default", "banto-tauri-panel:allow-open", "banto-tauri-panel:allow-list"]
+	"permissions": [
+		"core:default",
+		"banto-tauri-panel:allow-open",
+		"banto-tauri-panel:allow-list",
+		"banto-tauri-panel:allow-close"
+	]
 }
 ```
 
@@ -75,6 +80,9 @@ tauri::Builder::default()
 `allow-list` を足し忘れると（v9.3.0 から上げたアプリは足す）、**窓に出したままアプリを閉じたパネルが、次の起動で dock に
 戻らない**（`onListError` に理由が渡る。パネルは「窓に出している」扱いのまま残るので、表示メニューなどから `focus` すれば
 窓が開き、その窓を閉じれば dock に戻る）。
+`allow-close` を足し忘れると（v9.3.0 から上げたアプリは足す）、**窓に出している間に dock の配置を既定に戻しても、窓が
+閉じない**（`closeWindows` の `failed` に理由が入る。パネルは窓と dock の両方に出て、「窓に出している」扱いのまま残る。
+窓を手で閉じれば片づく）。
 閉じた知らせの購読（`connect()` の `listen`）が失敗したとき（event の許可が無いなど）は、パネルを dock から外さず、
 `onError` に理由を渡す（戻す知らせが届かないので、外すとパネルの行き場がなくなる）。購読の登録が済む前に押されたときは、
 済むのを待ってから進む。待っている間（や `detach` の間）に `connect()` が止まったら窓は開かず（`detach` 済みなら `restore` で戻す。`onError` は呼ばない）。
@@ -147,6 +155,24 @@ $effect(() => popOut.connect());
 ときは次の `connect()`（次の起動・次に画面へ入ったとき）がもう一度 `restore` する。`isPoppedOut` は戻した時点で
 `false` になる（残るのは覚えだけ）。保存できた後は覚えが消えるので、利用者がその後に閉じたパネルは戻らない。
 
+**配置を既定に戻すとき**（#1021。`closeWindows`）: 既定の配置に戻す・保存した配置を読み直す、のように **dock が
+パネルを自分で取り戻す操作**では、窓に出していたパネルが窓と dock の両方に出る。その操作が**適用された後で**
+`popOut.closeWindows()` を呼ぶと、窓を閉じ、覚えから消し、`restore` は呼ばない（その窓の閉じた知らせでも呼ばない）。
+操作が断られたとき（`beforePanelChange` で取り消した、など）は呼ばない — パネルは窓にだけあるままでよい。
+
+```ts
+const outcome = await dockHost.replaceLayout(defaultLayout(), { saved: true, commit: 'reset' });
+if (outcome === 'applied') {
+	// 引数なし = 窓に出しているパネル全部。id を渡すと、覚えていない窓（storage なしで再読み込みした後など）も閉じる
+	const { failed } = await popOut.closeWindows(PANELS.map((p) => p.id));
+	if (failed.length > 0) console.error('closing the panel windows failed', failed);
+}
+```
+
+閉じられなかった窓（capability に `allow-close` が無い、など）は `failed` に入り、パネルは「窓に出している」扱いの
+まま残る（`closeWindows` は reject しない）。その窓をあとで閉じると `restore` が呼ばれるので、`restore` は dock に
+もうあるパネルに対して無害にしておく（`dock.open(id)` は、ドッキング済みの id には何もしない）。
+
 `createDockLayoutStore` の `commit` は、その報告がどうなったかの Promise を返す（`'saved'`・`'unchanged'`・
 `'failed'`・`'dropped'`。reject しない）。報告するのは `DockHost` で `restore` ではないので、全部の報告を 1 か所に
 通して、「`restore` より後の報告が保存できた」を待つ。テンプレートの `createLayoutSaveWatch`（`popout.ts`。
@@ -194,7 +220,8 @@ const isPoppedOut = (id: string) => (track(), popOut.isPoppedOut(id));
 ```
 
 dock を使わない画面から窓を開くだけなら `openPanelWindow({ id, title }, { isTauri, invoke })`、閉じた知らせだけ聞くなら
-`listenPanelClosed((id) => ..., { isTauri, listen })`、今開いている窓の id は `listPanelWindows({ isTauri, invoke })`。
+`listenPanelClosed((id) => ..., { isTauri, listen })`、今開いている窓の id は `listPanelWindows({ isTauri, invoke })`、窓を閉じるだけなら `closePanelWindow(id, { isTauri, invoke })`
+（`createPanelPopOut` で出したパネルの窓は、覚えも片づける `popOut.closeWindows` で閉じる）。
 
 ## 5. 実機で確かめること
 
@@ -211,7 +238,11 @@ Tauri の配線は CI ではコンパイルまでしか見ない。出す前に�
    同じパネルが出ない。そのあと窓を閉じると dock に戻る。
 7. 窓に出しているパネルは、表示メニュー（パネルの一覧）でチェックが付いている。選ぶと窓が前に出るだけで、dock には
    出ない。
-8. ブラウザ（LAN 配信）では pop-out のボタンが出ない。
+8. パネルを窓に出したまま、dock の配置を既定に戻す（テンプレートは表示メニューの「レイアウトを既定に戻す」）と、
+   その窓が閉じ、パネルは dock の既定の場所に 1 つだけ出る（capability に `banto-tauri-panel:allow-close` があるとき）。
+   表示メニューのチェックは付いたままで、選ぶと dock の側が閉じる（窓を前に出す扱いに戻らない）。再起動しても
+   窓は開かず、パネルは dock に 1 つ。未適用の入力があって戻すのを取り消したときは、窓は閉じない。
+9. ブラウザ（LAN 配信）では pop-out のボタンが出ない。
 
 ## 外すとき
 

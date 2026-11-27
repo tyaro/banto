@@ -10,6 +10,32 @@
 <tr>
 <td>
 
+`banto-tauri-panel:allow-close`
+
+</td>
+<td>
+
+Enables the close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`banto-tauri-panel:deny-close`
+
+</td>
+<td>
+
+Denies the close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `banto-tauri-panel:allow-list`
 
 </td>

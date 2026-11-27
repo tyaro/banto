@@ -3,7 +3,7 @@
 //! it (CI's headless build of the pure half) it does nothing.
 
 #[cfg(feature = "tauri")]
-const COMMANDS: &[&str] = &["open", "list"];
+const COMMANDS: &[&str] = &["open", "list", "close"];
 
 fn main() {
     #[cfg(feature = "tauri")]

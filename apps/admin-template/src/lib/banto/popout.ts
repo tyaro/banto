@@ -8,7 +8,9 @@
  * `banto://panel-closed` notice, the position / size memory, closing with
  * the main window - is the plugin `banto-tauri-panel`, registered in
  * `src-tauri/src/lib.rs` and allowed in `src-tauri/capabilities/default.json`
- * (`banto-tauri-panel:allow-open`, `banto-tauri-panel:allow-list`).
+ * (`banto-tauri-panel:allow-open`, `banto-tauri-panel:allow-list`,
+ * `banto-tauri-panel:allow-close` - the last one for `closeWindows`, which
+ * the dashboard's "reset layout" calls: #1021).
  *
  * This file only hands over what admin-core does not import itself:
  * `isTauri`, `invoke` and `listen`, a `localStorage` entry for the memory of

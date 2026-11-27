@@ -31,12 +31,15 @@
 ### 1. Rust の側は、新しい crate `crates/banto-tauri-panel`（Tauri v2 の plugin）に置く
 
 アプリは `tauri::Builder` に `.plugin(banto_tauri_panel::init())` を足し、capability に `banto-tauri-panel:allow-open` と
-`banto-tauri-panel:allow-list`（#1013 で追加）を足す。
+`banto-tauri-panel:allow-list`（#1013 で追加）・`banto-tauri-panel:allow-close`（#1021 で追加）を足す。
 plugin が持つもの:
 
 - コマンド `open`（`plugin:banto-tauri-panel|open`、引数は `id` と `title`）。同じ id の窓が開いていれば前に出すだけ。
 - コマンド `list`（`plugin:banto-tauri-panel|list`、引数なし。#1013 で追加）。今開いているパネルの窓の id を返す
   （plugin が作って、まだ閉じたのを見ていない窓）。
+- コマンド `close`（`plugin:banto-tauri-panel|close`、引数は `id`。#1021 で追加）。その id の窓を閉じる（plugin が
+  作った窓だけ。`destroy` なので、パネルの側は止められない）。窓を閉じたら `true`、窓が無ければ `false` を返す
+  （無い id はエラーにしない。呼ぶ側が欲しいのは「窓が無いこと」）。閉じた窓の記憶と下の知らせは、利用者が閉じたときと同じ。
 - 窓が無くなったら、メインの窓へ `banto://panel-closed`（payload はパネルの id）を出す。
 - 位置・大きさを id ごとに覚える（既定は app の data dir の `panel-windows.json`）。画面の外なら既定の位置・大きさで開く。
 - メインの窓が無くなったら、パネルの窓も閉じる（記憶は残す）。
@@ -113,6 +116,22 @@ id は webview から来て、窓のラベル・読み込むルート・記憶�
       （保存できていない以上、どちらが意図かは分からない。失う側より戻す側に倒す）。`restore` しても配置が変わらない
       とき（読み込みに失敗して既定が出ていて、そこにパネルがある、など）は報告が出ないので、次に何かが保存できるまで
       覚えが残る。
+  - **`closeWindows(ids?)` で、窓を閉じて `restore` せずに忘れる**（#1021）。dock が自分でパネルを取り戻す操作
+    （配置を既定に戻す）では、窓に出していたパネルが窓と dock の二重になる。アプリはその操作が**適用された後で**呼ぶ
+    （断られたら呼ばない）。閉じた（または窓が無かった）id は `isPoppedOut` を `false` にし、`storage` から消し、
+    その窓の `banto://panel-closed` では `restore` しない（`close` が `true` を返した窓の知らせを 1 回だけ読み捨てる。
+    答えより先に知らせが来た場合も同じ扱い）。`ids` を省くと覚えているパネル全部、渡すと覚えていない id も plugin に
+    聞く（`storage` なしで再読み込みした後の窓も閉じられる）。
+    - **閉じられなかった窓は、そのままにする**（`failed` に理由を返す。reject しない）: パネルは「窓に出している」扱いで
+      覚えにも残り、あとでその窓が閉じれば通常どおり `restore` する（dock にもうあるパネルへの `restore` は無害で
+      あること。`dock.open` はそう）。窓が実際に開いているので、表示メニューが「窓を前に出す」のままなのが正しい。
+      退けた案: 失敗しても忘れる — 窓は開いたままなのに、次の `panel-closed` で「知らないパネル」として `restore`
+      され、表示メニューからは窓に届かなくなる。
+    - 開いている途中の窓（pop-out・`focus` の最中）は閉じない（`failed`）。plugin に聞いている間に同じパネルがまた
+      窓に出されたら（id ごとの世代が進んでいたら）、忘れない。購読が止まったら、届かない知らせを待つ印は捨てる
+      （残すと、次の窓の知らせを読み捨ててしまう）。
+    - 退けた案: plugin の側で、`close` で閉じた窓の知らせを出さない — 「窓が無くなったら必ず知らせる」という plugin の
+      決まりが崩れ、`listenPanelClosed` だけで窓の有無を追っているコードが取りこぼす。
   - `isPoppedOut(id)`・`subscribe(cb)`・`focus(content)` を持つ。dock から見ると窓に出したパネルは閉じたパネルと区別が
     つかないので、パネルの一覧（表示メニュー）はこれを見て「表示中」にし、選ばれたら窓を前に出す（dock に出すと二重になる）。
     `focus` は窓に出していないパネルには何もしない。変化の知らせは購読関数（admin-core は Svelte に依存しない）。
@@ -121,7 +140,7 @@ id は webview から来て、窓のラベル・読み込むルート・記憶�
 
 ### 6. REST との対称（conventions §1）の対象にしない
 
-`open`・`list` はデータを書かず、監査も無い。この PC の窓を開くだけの desktop-only の操作で、REST の対は作らない
+`open`・`list`・`close` はデータを書かず、監査も無い。この PC の窓を開く・閉じるだけの desktop-only の操作で、REST の対は作らない
 （テンプレートの旧 `panel_open` と同じ分類）。plugin のコマンドは `lib.rs` のトップレベルのコマンドではないので、
 `verify:architecture` の rule 8 の走査には入らない。
 
@@ -163,7 +182,8 @@ id は webview から来て、窓のラベル・読み込むルート・記憶�
   アプリの capability の 4 か所で同じでなければならない。変えるときは全部を同じ PR で変える（下流の capability も変わる）。
 - `permissions/` は build が生成するファイルで、コミットしておく（Tauri の plugin の慣習。手で直さない）。コマンドを足したら
   `build.rs` の `COMMANDS` に足す。**コマンドを足すと、下流の capability に許可が 1 行増える**（`list` は v9.3.0 の後に
-  足した。許可が無いアプリでは `list` が失敗し、上の「何も戻さない」側に倒れる）。
+  足した。許可が無いアプリでは `list` が失敗し、上の「何も戻さない」側に倒れる。`close` も同じく後から足した。
+  許可が無いアプリでは `close` が失敗し、`closeWindows` の `failed` に入って窓は開いたまま残る）。
 - 記憶のファイルの形（`version` 1）を変えるときは `version` を上げる。古い版のファイルは空として読まれ、次の保存で置き換わる
   （記憶は便利のためのもので、失われても困らない）。
 - dock を外すアプリは、`src-tauri` の依存・`.plugin(...)`・capability の行を手で外す

@@ -8,6 +8,7 @@
     "core:window:allow-set-fullscreen",
     "core:window:allow-destroy",
     "banto-tauri-panel:allow-open",
-    "banto-tauri-panel:allow-list"
+    "banto-tauri-panel:allow-list",
+    "banto-tauri-panel:allow-close"
   ]
 }

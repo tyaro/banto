@@ -15,6 +15,9 @@
 //! - **list**: the ids of the panels whose window is open right now, so the
 //!   frontend can put back a panel whose window went away while nobody was
 //!   listening (`@banto/admin-core`'s `createPanelPopOut` asks on `connect()`).
+//! - **close**: closes the window of a panel id (only a window this plugin
+//!   built), for a frontend that has put the panel back into the dock itself -
+//!   a layout reset (`createPanelPopOut(...).closeWindows`, Issue #1021).
 //!
 //! Register it in the app's `tauri::Builder`:
 //!
@@ -25,9 +28,10 @@
 //! ```
 //!
 //! and allow its commands in the capability file
-//! (`"banto-tauri-panel:allow-open"`, `"banto-tauri-panel:allow-list"`). The
-//! frontend calls them through `@banto/admin-core`'s `openPanelWindow` /
-//! `listPanelWindows` (`createPanelPopOut` uses both).
+//! (`"banto-tauri-panel:allow-open"`, `"banto-tauri-panel:allow-list"`,
+//! `"banto-tauri-panel:allow-close"`). The frontend calls them through
+//! `@banto/admin-core`'s `openPanelWindow` / `listPanelWindows` /
+//! `closePanelWindow` (`createPanelPopOut` uses all three).
 //!
 //! # Two halves
 //!
