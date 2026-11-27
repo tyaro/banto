@@ -54,7 +54,8 @@
 	import CellEditError from './CellEditError.svelte';
 	import { defaultGridMessages, type GridMessages } from './messages';
 	import { getCellEditors, type CellEditors } from './cellEditors';
-	import { outsideRowTabStops } from './outsideRowTabStops';
+	import { cellControls, rowTabStops } from './rowTabStops';
+	import { headerTabStop } from './headerTabStop';
 
 	interface Props {
 		/**
@@ -1670,16 +1671,92 @@
 		});
 	}
 
+	/** The element of the active cell, if it is drawn. */
+	function activeCellEl(): HTMLElement | null {
+		if (!containerEl || !selection.active) return null;
+		const { rowIndex, field } = selection.active;
+		return containerEl.querySelector<HTMLElement>(
+			`[data-cell-row="${rowIndex}"][data-cell-field="${CSS.escape(field)}"]`
+		);
+	}
+
+	/**
+	 * F2 on a cell that is not editable (#1016): the focus goes to the first
+	 * control in it - a link, or whatever the host drew with `render`. Nothing
+	 * in a row is a tab stop (`rowTabStops`), so this is how the keyboard
+	 * reaches a second control of a cell, or one that Enter / Space do not
+	 * press (an input, a select). Returns whether there was one.
+	 */
+	function focusActiveCellControl(): boolean {
+		const cellEl = activeCellEl();
+		const first = cellEl ? cellControls(cellEl)[0] : undefined;
+		if (!first) return false;
+		first.focus({ preventScroll: true });
+		return document.activeElement === first;
+	}
+
+	/**
+	 * Keys on a control inside a data row (reached with F2, or with the
+	 * mouse), #1016. The control keeps every key of its own; on top of that:
+	 * - Tab / Shift+Tab walk the controls of the same cell. Past the last one
+	 *   Tab is the browser's (it leaves the grid body, like Tab on the grid
+	 *   element); before the first one Shift+Tab goes back to the grid
+	 *   element - natively it would land on the header, which comes after the
+	 *   grid element in the DOM.
+	 * - Escape / F2 go back to the grid element. The active cell stays.
+	 * Nothing here runs for a key the control already handled.
+	 */
+	function handleCellControlKeydown(event: KeyboardEvent) {
+		const container = containerEl;
+		const target = event.target;
+		if (!container || !(target instanceof HTMLElement) || event.defaultPrevented) return;
+		if (event.altKey || event.ctrlKey || event.metaKey) return;
+		const cellEl = target.closest<HTMLElement>('.row > .cell, .row > .select-cell');
+		if (!cellEl || !container.contains(cellEl)) return;
+		// The editor owns its keys (it stops them; this is the defensive twin
+		// of the `editing` guard in `handleContainerKeydown`).
+		if ((editorRootEl ?? editorEl)?.contains(target)) return;
+		if (event.key === 'Tab') {
+			const controls = cellControls(cellEl);
+			// The focused control itself first: a focusable wrapper around it
+			// also "contains" it and comes earlier. Otherwise the innermost
+			// control holding the target (focus inside a composite widget).
+			let index = controls.indexOf(target);
+			for (let i = controls.length - 1; index === -1 && i >= 0; i--) {
+				if (controls[i].contains(target)) index = i;
+			}
+			const next = controls[index + (event.shiftKey ? -1 : 1)];
+			if (index !== -1 && next) {
+				event.preventDefault();
+				next.focus();
+			} else if (event.shiftKey) {
+				event.preventDefault();
+				container.focus({ preventScroll: true });
+			}
+			return;
+		}
+		if (event.shiftKey) return;
+		if (event.key === 'Escape' || event.key === 'F2') {
+			event.preventDefault();
+			container.focus({ preventScroll: true });
+		}
+	}
+
 	function handleContainerKeydown(event: KeyboardEvent) {
-		// Header controls, filter inputs and row links own their keyboard
+		// Header controls, filter inputs and row controls own their keyboard
 		// actions. A retained cell selection must not intercept bubbled keys.
-		if (event.target !== event.currentTarget) return;
+		if (event.target !== event.currentTarget) {
+			handleCellControlKeydown(event);
+			return;
+		}
 		// While editing, the editor input/select's own onkeydown owns Escape/
 		// Enter/Tab/typing and stops propagation for every key, so this never
 		// runs; the guard is a defensive no-op if that ever changes.
 		if (editing) return;
-		// Outside an editor, Tab/Shift+Tab follow the browser's focus order,
-		// including header controls and row links, so focus can leave the grid.
+		// Outside an editor, Tab/Shift+Tab follow the browser's focus order:
+		// the grid element is the one tab stop of the body, the header row is
+		// another (`headerTabStop`), and the controls inside the rows are not
+		// tab stops (`rowTabStops`), #1016.
 		if (event.key === 'Tab') return;
 		if (!selection.active) {
 			enterFirstCellFromKeyboard(event);
@@ -1792,6 +1869,9 @@
 				if (activeColumn && activeRow && isEditable(activeColumn, activeRow)) {
 					event.preventDefault();
 					startEditing(selection.active.rowIndex, activeColumn, activeRow);
+				} else if (activeColumn && activeRow && focusActiveCellControl()) {
+					// #1016: into the cell's controls; Escape / F2 come back.
+					event.preventDefault();
 				}
 				break;
 			case ' ': {
@@ -1806,9 +1886,15 @@
 					// button keeps the key for it (`renderer: 'link'` as in the
 					// branch below, plus `cell` links and `render` controls);
 					// opening the row is Enter's job in a selectable grid.
+					// Shift+Space always selects (#1016): the row checkbox is not a
+					// tab stop, so a grid whose every column holds a control still
+					// has a keyboard path to selecting a row.
 					event.preventDefault();
 					const onControl =
-						!!activeColumn && !isEditable(activeColumn, activeRow) && navigateActiveLink();
+						!event.shiftKey &&
+						!!activeColumn &&
+						!isEditable(activeColumn, activeRow) &&
+						navigateActiveLink();
 					if (!onControl) toggleRowSelected(activeRow);
 					break;
 				}
@@ -2238,6 +2324,7 @@
 				role="row"
 				aria-rowindex={1}
 				bind:this={headerRowEl}
+				use:headerTabStop
 				style:grid-template-columns={templateColumns}
 			>
 				{#if selectable}
@@ -2257,6 +2344,7 @@
 								disabled={selectAllTargets.length === 0}
 								aria-label={selectAllLabel}
 								title={selectAllLabel}
+								data-banto-grid-header-stop
 								onchange={toggleAllSelected}
 							/>
 						</label>
@@ -2289,18 +2377,20 @@
 			{/if}
 
 			<!--
-			`outside` (#1016): the active cell's row, drawn although it is outside the
-			virtualized window. Nothing in it is a tab stop while it is out there
-			(`outsideRowTabStops`: the checkbox, the links, and whatever the host
-			drew with `render` / `cell`), so Tab does not jump the view to a row
-			that is out of sight.
+			Nothing in a row is a tab stop (`rowTabStops`, #1016: the checkbox, the
+			links, and whatever the host drew with `render` / `cell`): the body is
+			one tab stop, the grid element, and the controls are reached from the
+			active cell (Space / Enter / F2). Only the cell editor keeps its own.
+			`outside`: the active cell's row, drawn although it is outside the
+			virtualized window. Out there the editor is not a tab stop either, so
+			Tab does not jump the view to a row that is out of sight.
 			-->
 			{#snippet dataRow(row: TRow, rowIndex: number, outside: boolean)}
 				<div
 					class="row {rowClass?.(row) ?? ''}"
 					class:selected={selectable && isRowSelected(row)}
 					class:outside-window={outside}
-					use:outsideRowTabStops={outside}
+					use:rowTabStops={outside}
 					role="row"
 					aria-rowindex={rowIndex + 2}
 					style:top={outside ? outsideTop(rowIndex) : undefined}
@@ -2313,9 +2403,9 @@
 						Row selection (#713). The row's selected state is the checkbox's
 						checked state, not `aria-selected`: on this grid `aria-selected`
 						belongs to the cells of the copy / paste range, and a second
-						meaning on the row would contradict it. The box is a real tab
-						stop (like a row link), so it works without an active cell;
-						Space on the active cell is the other keyboard path.
+						meaning on the row would contradict it. The box is not
+						a tab stop (`rowTabStops`, #1016): Space on the active cell is
+						the keyboard path.
 						-->
 						<!-- svelte-ignore a11y_interactive_supports_focus -->
 						<div

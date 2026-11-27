@@ -95,8 +95,7 @@ describe.each([
 
 	it.each([
 		{ role: 'button', name: 'Name' },
-		{ role: 'button', name: 'Nameの絞り込み' },
-		{ role: 'link', name: 'Open Alpha' }
+		{ role: 'button', name: 'Nameの絞り込み' }
 	])('does not intercept a bubbled event from $name', async ({ role, name }) => {
 		const { container } = setup();
 		const selected = await selectCell(container, 0, 'category');
@@ -106,6 +105,22 @@ describe.each([
 		const event = tabEvent(shiftKey);
 		await fireEvent(target, event);
 		expect(event.defaultPrevented).toBe(false);
+		expect(container.querySelector('.cell.active')).toBe(selected);
+	});
+
+	// #1016: a control inside a row is not a tab stop. From its cell's only
+	// control Tab stays the browser's (out of the grid body); Shift+Tab goes
+	// back to the grid element (natively it would land on the header).
+	it('from the link Open Alpha: Tab is native, Shift+Tab goes to the grid element', async () => {
+		const { container } = setup();
+		const selected = await selectCell(container, 0, 'category');
+		const target = screen.getByRole('link', { name: 'Open Alpha' });
+		target.focus();
+		expect(document.activeElement).toBe(target);
+		const event = tabEvent(shiftKey);
+		await fireEvent(target, event);
+		expect(event.defaultPrevented).toBe(shiftKey);
+		expect(document.activeElement).toBe(shiftKey ? screen.getByRole('grid') : target);
 		expect(container.querySelector('.cell.active')).toBe(selected);
 	});
 });
@@ -162,7 +177,9 @@ describe('keyboard actions on focused grid descendants', () => {
 		expect(screen.queryByRole('textbox')).toBeNull();
 	});
 
-	it.each(['ArrowDown', 'Home', 'End', 'F2'])(
+	// Home / End on a header control belong to the header's roving tab stop
+	// (#1016, tab-stops.test.ts); they still never reach the cell selection.
+	it.each(['ArrowDown', 'F2'])(
 		'does not apply the grid %s shortcut while a child control has focus',
 		async (key) => {
 			const { container } = setup();

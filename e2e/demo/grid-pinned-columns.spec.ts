@@ -110,7 +110,7 @@ test('a keyboard move does not leave the active cell under the pinned block', as
 	expect(await grid.evaluate((el) => el.scrollLeft)).toBe(before);
 });
 
-test('Tab and Shift+Tab to a header control do not leave it under the pinned block', async ({
+test('moving along the header controls (ArrowLeft / ArrowRight, #1016) does not leave one under the pinned block', async ({
 	page
 }) => {
 	await page.goto('/ui-demo');
@@ -147,7 +147,7 @@ test('Tab and Shift+Tab to a header control do not leave it under the pinned blo
 
 	let checked = 0;
 	for (let i = 0; i < 12; i++) {
-		await page.keyboard.press('Shift+Tab');
+		await page.keyboard.press('ArrowLeft');
 		const gap = await probe();
 		if (gap !== null) {
 			expect(gap).toBeGreaterThanOrEqual(-1.5);
@@ -161,7 +161,7 @@ test('Tab and Shift+Tab to a header control do not leave it under the pinned blo
 
 	// And forward again.
 	for (let i = 0; i < 12; i++) {
-		await page.keyboard.press('Tab');
+		await page.keyboard.press('ArrowRight');
 		const gap = await probe();
 		if (gap !== null) expect(gap).toBeGreaterThanOrEqual(-1.5);
 	}

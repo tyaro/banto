@@ -209,11 +209,15 @@
 	style:width={`${width}px`}
 	style:left={pinnedLeft !== undefined ? `${pinnedLeft}px` : undefined}
 >
+	<!-- `data-banto-grid-header-stop` (`HEADER_STOP_ATTR`): the header row is one
+	     tab stop and `headerTabStop` (BantoGrid) owns the `tabindex` of the marked
+	     controls (#1016). A column that cannot be sorted is not one of them. -->
 	<div
 		class="cell-body"
 		class:sortable
 		role="button"
-		tabindex={sortable ? 0 : -1}
+		tabindex="-1"
+		data-banto-grid-header-stop={sortable ? '' : undefined}
 		onpointerdown={handleBodyPointerDown}
 		onkeydown={handleBodyKeydown}
 	>
@@ -232,6 +236,7 @@
 			type="button"
 			class="filter-button"
 			class:active={!!activeFilter}
+			data-banto-grid-header-stop
 			aria-label={t.filterAriaLabel(columnLabel)}
 			aria-describedby={activeFilter ? filterAppliedId : undefined}
 			title={appliedDescription}
