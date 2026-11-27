@@ -14,6 +14,7 @@
  */
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { filterButton } from '../grid-filter-button';
 import { DIAGONAL_MATRIX, comboLabel, primeThemeAndAuth } from './theme';
 
 async function gotoDemo(page: Page): Promise<void> {
@@ -962,7 +963,7 @@ test.describe('ui-demo BantoGrid date cell', () => {
 		await editor.fill('2026/11/25');
 		await page.keyboard.press('Alt+ArrowDown');
 		await expect(calendarOf(page)).toBeVisible();
-		const trigger = gridOf(page).getByRole('button', { name: '出荷番号の絞り込み', exact: true });
+		const trigger = filterButton(gridOf(page), '出荷番号');
 		await trigger.click();
 		await expect(calendarOf(page)).toBeHidden();
 		await expect(editor).toHaveCount(0);

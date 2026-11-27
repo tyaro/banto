@@ -1,6 +1,7 @@
 /** Synthetic IME/handled key events must not run the grid's edit commands. */
 import { readFileSync } from 'node:fs';
 import { expect, test, type Locator } from '@playwright/test';
+import { filterButton } from '../grid-filter-button';
 import { chooseItemsMode } from '../items-view-mode';
 import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 
@@ -96,7 +97,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await expect(cell).toHaveText(blurDraft);
 
 			const label = copy['grid.filterAriaLabel'].replace('{header}', copy['items.fieldName']);
-			const trigger = grid.getByRole('button', { name: label, exact: true });
+			const trigger = filterButton(grid, copy['items.fieldName'], copy['grid.filterButtonLabel']);
 			await trigger.click();
 			const dialog = grid.getByRole('dialog', { name: label, exact: true });
 			const value = dialog.getByRole('textbox', {

@@ -1532,19 +1532,46 @@
 		return pointer.pointerId === tap.pointerId && pointer.pointerType === tap.pointerType;
 	}
 
+	/**
+	 * The data cell of THIS grid that `target` is in, looking no further up than
+	 * `root`. The outermost match: a grid drawn inside a cell (`render`) has
+	 * cells of its own, and those belong to that grid.
+	 */
+	function dataCellFrom(target: EventTarget | null, root: Element): HTMLElement | null {
+		let found: HTMLElement | null = null;
+		let el = target instanceof Element ? target : null;
+		for (; el && el !== root; el = el.parentElement) {
+			if (el instanceof HTMLElement && el.dataset.cellRow !== undefined) found = el;
+		}
+		return found;
+	}
+
 	// The tap's deferred half of `handleCellPointerDown` (focus + active cell).
 	// Capture phase: a link or a `render` control in the cell stops its click
 	// from bubbling, and the active cell follows a press on those too.
-	function handleCellClickCapture(event: MouseEvent, rowIndex: number, field: string, row: TRow) {
+	//
+	// One listener, on `.scroll-content`, for every cell (#1035). Svelte does not
+	// delegate a capture listener, so `onclickcapture` on the cell put a real
+	// `click` listener on each one, and Chromium exposes an element that has a
+	// mouse button listener of its own as clickable: NVDA's browse mode then said
+	// "clickable" on every cell. `.scroll-content` is `role="presentation"`, out
+	// of the accessibility tree.
+	function handleCellClickCapture(event: MouseEvent) {
+		const cellEl = dataCellFrom(event.target, event.currentTarget as Element);
+		if (!cellEl) return;
+		const rowIndex = Number(cellEl.dataset.cellRow);
+		const field = cellEl.dataset.cellField;
+		if (field === undefined) return;
 		const tap = pendingTap;
 		pendingTap = null;
 		acceptedTap = null;
 		if (!tap || tap.rowIndex !== rowIndex || tap.field !== field) return;
 		if (!clickIsOfTap(event, tap)) return;
+		const row = rowAtDisplayIndex(rowIndex);
+		if (row === undefined) return;
 		// The cell being edited belongs to its editor: focusing the container
 		// here would blur (commit) it.
 		if (isCellBeingEdited(row, field)) return;
-		const cellEl = event.currentTarget as HTMLElement;
 		// A control inside the cell that took focus from this tap keeps it, as
 		// it does after a mouse press.
 		const focused = cellEl.ownerDocument.activeElement;
@@ -2345,7 +2372,13 @@
 		onfocusin={handleFocusIn}
 		onpaste={handlePaste}
 	>
-		<div class="scroll-content" role="presentation" style:width={`${totalColumnsWidth}px`}>
+		<!-- `onclickcapture` here, not on each cell: see `handleCellClickCapture` (#1035). -->
+		<div
+			class="scroll-content"
+			role="presentation"
+			style:width={`${totalColumnsWidth}px`}
+			onclickcapture={handleCellClickCapture}
+		>
 			<div
 				class="header-row"
 				role="row"
@@ -2481,6 +2514,9 @@
 						row/cell DOM nodes come and go under virtualization, so a
 						literal per-cell tabindex would be meaningless as soon as a
 						row scrolls out. Mouse users still get click/dblclick here.
+						Only handlers that Svelte delegates (so no `capture` one): a mouse
+						button listener of the cell's own makes Chromium expose every
+						cell as clickable (#1035).
 					-->
 						<!-- svelte-ignore a11y_interactive_supports_focus -->
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -2503,7 +2539,6 @@
 							class:error={isEditingCell && !!editing?.error}
 							onpointerdown={(event) => handleCellPointerDown(event, rowIndex, column.id)}
 							onmousedown={(event) => handleCellMouseDown(event, rowIndex, column.id, row)}
-							onclickcapture={(event) => handleCellClickCapture(event, rowIndex, column.id, row)}
 							onclick={() => handleCellClick(rowIndex, column, row)}
 							oncontextmenu={(event) => handleCellContextMenu(event, rowIndex, column.id, row)}
 							ondblclick={() => handleCellDoubleClick(rowIndex, column, row)}

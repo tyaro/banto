@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator } from '@playwright/test';
+import { filterButton } from '../grid-filter-button';
 import { chooseItemsMode } from '../items-view-mode';
 import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 
@@ -64,7 +65,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			// #1016: the header row is one tab stop; ArrowRight moves to the next control.
 			await page.keyboard.press('ArrowRight');
 			const label = copy['grid.filterAriaLabel'].replace('{header}', copy['items.fieldName']);
-			const trigger = grid.getByRole('button', { name: label, exact: true });
+			const trigger = filterButton(grid, copy['items.fieldName'], copy['grid.filterButtonLabel']);
 			await expectSolidFocus(trigger);
 			await expect(trigger).toHaveAttribute('aria-haspopup', 'dialog');
 			await expect(trigger).toHaveAttribute('aria-expanded', 'false');
@@ -157,7 +158,11 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 
 			await trigger.click();
 			const priceLabel = copy['grid.filterAriaLabel'].replace('{header}', copy['items.fieldPrice']);
-			const priceTrigger = grid.getByRole('button', { name: priceLabel, exact: true });
+			const priceTrigger = filterButton(
+				grid,
+				copy['items.fieldPrice'],
+				copy['grid.filterButtonLabel']
+			);
 			await priceTrigger.click();
 			await expect(dialog).toHaveCount(0);
 			const priceDialog = grid.getByRole('dialog', { name: priceLabel, exact: true });

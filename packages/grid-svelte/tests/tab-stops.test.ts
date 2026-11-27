@@ -6,7 +6,7 @@
  * `tabindex` (who is a tab stop) and drive the keys that move the focus;
  * the real Tab order is covered by e2e/demo/grid-tab-stops.spec.ts.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
@@ -117,9 +117,9 @@ describe('header row: one tab stop (roving tabindex)', () => {
 		expect(stops.map((el) => el.getAttribute('aria-label') ?? el.textContent?.trim())).toEqual([
 			expect.stringContaining('選択'),
 			'Name',
-			'Nameの絞り込み',
+			'絞り込み',
 			'Category',
-			'Categoryの絞り込み'
+			'絞り込み'
 		]);
 		expect(stops.map((el) => el.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1', '-1']);
 		expect(tabStops(container.querySelector('.header-row')!)).toEqual([stops[0]]);
@@ -175,7 +175,10 @@ describe('header row: one tab stop (roving tabindex)', () => {
 
 	it('does not take the arrow keys of the filter popover; closing it returns to the button', async () => {
 		const { container } = setup();
-		const filterButton = screen.getByRole('button', { name: 'Nameの絞り込み' });
+		const filterButton = within(screen.getByRole('columnheader', { name: 'Name' })).getByRole(
+			'button',
+			{ name: '絞り込み' }
+		);
 		filterButton.focus();
 		await fireEvent.click(filterButton);
 		const input = await waitFor(() => {
@@ -237,7 +240,10 @@ describe('header row: one tab stop (roving tabindex)', () => {
 		expect(tabStops(header())).toEqual([headerStops(container)[0]]);
 
 		// The column of the current stop is removed.
-		const nameFilter = screen.getByRole('button', { name: 'Nameの絞り込み' });
+		const nameFilter = within(screen.getByRole('columnheader', { name: 'Name' })).getByRole(
+			'button',
+			{ name: '絞り込み' }
+		);
 		nameFilter.focus();
 		expect(tabStops(header())).toEqual([nameFilter]);
 		await rerender({ columns: baseColumns.slice(1) });

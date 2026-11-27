@@ -239,8 +239,10 @@
 >
 	<!-- `role="toolbar"` with `display: contents` (same layout): NVDA stays out of browse
 	     mode on a focus inside a toolbar, so the arrow keys reach `headerTabStop` (#1016).
-	     No name: the controls inside already say which column they act on, and a name
-	     would be read once more on every move into the toolbar. The resize handle stays
+	     No name: the `columnheader` around it and the sort button already say the column,
+	     and a name would be read once more on every move into the toolbar. For the same
+	     reason the filter button's name has no column name in it (#1035): browse mode
+	     reads the sort button and the filter button one after the other. The resize handle stays
 	     outside (a separator is not a toolbar item). -->
 	<div class="header-toolbar" role="toolbar">
 		<!-- `data-banto-grid-header-stop` (`HEADER_STOP_ATTR`): the header row is one
@@ -271,7 +273,7 @@
 				class="filter-button"
 				class:active={!!activeFilter}
 				data-banto-grid-header-stop
-				aria-label={t.filterAriaLabel(columnLabel)}
+				aria-label={t.filterButtonLabel()}
 				aria-describedby={activeFilter ? filterAppliedId : undefined}
 				title={appliedDescription}
 				aria-haspopup="dialog"

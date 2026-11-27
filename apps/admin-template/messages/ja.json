@@ -84,6 +84,7 @@
   "grid.filterContains": "含む",
   "grid.filterStartsWith": "で始まる",
   "grid.filterEquals": "一致する",
+  "grid.filterButtonLabel": "絞り込み",
   "grid.filterAriaLabel": "{header}の絞り込み",
   "grid.filterAppliedDescription": "{header}の絞り込みを適用中",
   "grid.filterOperatorLabel": "絞り込み条件",

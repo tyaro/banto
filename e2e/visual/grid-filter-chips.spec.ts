@@ -1,6 +1,7 @@
 /** Applied filters show as chips above the grid; x removes one and the rows come back (#555 B-2). */
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
+import { filterButton } from '../grid-filter-button';
 import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 
 for (const [index, locale] of ['ja', 'en'].entries()) {
@@ -20,7 +21,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 
 		const header = copy['items.fieldName'];
 		const label = copy['grid.filterAriaLabel'].replace('{header}', header);
-		const trigger = grid.getByRole('button', { name: label, exact: true });
+		const trigger = filterButton(grid, header, copy['grid.filterButtonLabel']);
 		const dialog = grid.getByRole('dialog', { name: label, exact: true });
 		const value = dialog.getByRole('textbox', { name: copy['grid.filterValueLabel'], exact: true });
 		const original = (

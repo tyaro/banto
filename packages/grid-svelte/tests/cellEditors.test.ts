@@ -10,7 +10,7 @@
  * `relinquishFocus`). jsdom has no Popover API: the stand-in from the ui
  * tests is installed.
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { flushSync, tick, type Component } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import DateInput from '../../ui/src/DateInput.svelte';
@@ -201,12 +201,20 @@ describe('the day-range filter of a date column (§5.9, PR-6)', () => {
 		setup({
 			provided: { dateRange: DateRangeInput as unknown as Component<FilterDateRangeInputProps> }
 		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Dueの絞り込み' }));
+		await fireEvent.click(
+			within(screen.getByRole('columnheader', { name: 'Due' })).getByRole('button', {
+				name: '絞り込み'
+			})
+		);
 		const group = screen.getByRole('group', { name: '期間' });
 		expect(group.classList.contains('date-range-input')).toBe(true);
 		cleanup();
 		setup({});
-		await fireEvent.click(screen.getByRole('button', { name: 'Dueの絞り込み' }));
+		await fireEvent.click(
+			within(screen.getByRole('columnheader', { name: 'Due' })).getByRole('button', {
+				name: '絞り込み'
+			})
+		);
 		const native = screen.getByRole('group', { name: '期間' });
 		expect([...native.querySelectorAll('input')].map((input) => input.type)).toEqual([
 			'date',
@@ -227,7 +235,11 @@ describe('the day-range filter of a date column (§5.9, PR-6)', () => {
 			view.container.querySelector('[data-cell-row="0"][data-cell-field="due"]')!,
 			{ button: 0 }
 		);
-		await fireEvent.click(screen.getByRole('button', { name: 'Dueの絞り込み' }));
+		await fireEvent.click(
+			within(screen.getByRole('columnheader', { name: 'Due' })).getByRole('button', {
+				name: '絞り込み'
+			})
+		);
 		const start = screen.getByRole('textbox', { name: '開始日' });
 		await fireEvent.paste(start, { clipboardData: { getData: () => '2026-11-10' } });
 		expect(onRangePaste).not.toHaveBeenCalled();

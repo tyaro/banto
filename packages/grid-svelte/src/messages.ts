@@ -15,7 +15,13 @@ export interface GridMessages {
 	filterOpStartsWith?: () => string;
 	/** FilterPopover's TEXT_OPS 'eq' operator label. */
 	filterOpEquals?: () => string;
-	/** Filter button/popover aria-label (HeaderCell + FilterPopover), given the column's header text. */
+	/**
+	 * Name of the filter button in a column header (HeaderCell). No column name in it (#1035):
+	 * the button sits in its `columnheader`, which already has that name, and a screen reader
+	 * reading the header row would say the column name twice.
+	 */
+	filterButtonLabel?: () => string;
+	/** FilterPopover's dialog aria-label, given the column's header text. */
 	filterAriaLabel?: (header: string) => string;
 	/** Applied-filter state description, independent of the popover's open state. */
 	filterAppliedDescription?: (header: string) => string;
@@ -126,6 +132,7 @@ export const defaultGridMessages: Required<GridMessages> = {
 	filterOpContains: () => '含む',
 	filterOpStartsWith: () => 'で始まる',
 	filterOpEquals: () => '一致する',
+	filterButtonLabel: () => '絞り込み',
 	filterAriaLabel: (header) => `${header}の絞り込み`,
 	filterAppliedDescription: (header) => `${header}の絞り込みを適用中`,
 	filterValuePlaceholder: () => '値を入力',
