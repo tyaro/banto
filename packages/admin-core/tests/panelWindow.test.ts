@@ -957,6 +957,27 @@ describe('createPanelPopOut: a panel put back is remembered until its layout is 
 		expect(state.ids).toEqual(['chart']);
 	});
 
+	it('a pop-out writes its list again when an older one emptied the storage meanwhile', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const old = fakeRestore();
+		const stopOld = start(storage, old.restore).popOut.connect();
+		await settle();
+		// Entered again: the new pop-out reads `memo` and starts its own put-back.
+		stopOld();
+		const fresh = start(storage, fakeRestore().restore);
+		fresh.popOut.connect();
+		await settle();
+		// The old answer lands BEFORE the new pop-out: it rightly empties the storage...
+		old.answers[0].resolve(true);
+		await settle();
+		expect(state.ids).toEqual([]);
+		// ...and the new pop-out of `memo` must write it again, though its own last write was `memo`.
+		fresh.popOut.onPopOut?.(MEMO);
+		await settle();
+		expect(fresh.popOut.isPoppedOut('memo')).toBe(true);
+		expect(state.ids).toEqual(['memo']);
+	});
+
 	it('a late answer of a left screen does not erase a newer pop-out of the same panel', async () => {
 		const { state, storage } = fakeStorage(['memo']);
 		const old = fakeRestore();

@@ -398,11 +398,32 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	const stored = () => [...new Set([...popped, ...unsaved.keys()])];
 	const keyOf = (ids: string[]) => [...ids].sort().join('\n');
 	let lastStored = keyOf(stored());
-	/** Writes the list when it is not the one this object wrote (or read) last. */
+	/**
+	 * What the storage holds right now, as a key. Read again each time rather
+	 * than trusted from this object's last write: another `createPanelPopOut`
+	 * on the same storage (the screen left and entered again) may have
+	 * changed it since. Falls back to the last write when it cannot be read.
+	 */
+	const storedNow = (): string => {
+		if (!options.storage) return lastStored;
+		try {
+			const now: unknown = options.storage.load();
+			if (Array.isArray(now)) {
+				return keyOf(now.filter((other): other is string => typeof other === 'string'));
+			}
+		} catch {
+			// Unreadable: trust this object's own last write.
+		}
+		return lastStored;
+	};
+	/** Writes the list when the storage does not already hold it. */
 	const persist = () => {
 		const ids = stored();
 		const key = keyOf(ids);
-		if (key === lastStored) return;
+		if (key === storedNow()) {
+			lastStored = key;
+			return;
+		}
 		lastStored = key;
 		try {
 			options.storage?.save(ids);
