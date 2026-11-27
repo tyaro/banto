@@ -1886,9 +1886,15 @@
 					// button keeps the key for it (`renderer: 'link'` as in the
 					// branch below, plus `cell` links and `render` controls);
 					// opening the row is Enter's job in a selectable grid.
+					// Shift+Space always selects (#1016): the row checkbox is not a
+					// tab stop, so a grid whose every column holds a control still
+					// has a keyboard path to selecting a row.
 					event.preventDefault();
 					const onControl =
-						!!activeColumn && !isEditable(activeColumn, activeRow) && navigateActiveLink();
+						!event.shiftKey &&
+						!!activeColumn &&
+						!isEditable(activeColumn, activeRow) &&
+						navigateActiveLink();
 					if (!onControl) toggleRowSelected(activeRow);
 					break;
 				}

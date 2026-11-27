@@ -325,6 +325,20 @@ describe('body: only the grid element is a tab stop', () => {
 		await fireEvent.keyDown(screen.getByRole('grid'), { key: ' ' });
 		expect(container.querySelector<HTMLInputElement>('.row .select-box')!.checked).toBe(true);
 	});
+
+	it('Shift+Space selects the row also on a cell with a control', async () => {
+		const { container } = setup();
+		await selectCell(container, 0, 'open');
+		const grid = screen.getByRole('grid');
+		const clicks: string[] = [];
+		screen
+			.getByRole('link', { name: 'Open Alpha' })
+			.addEventListener('click', (e) => (e.preventDefault(), clicks.push('open')));
+		expect(key(grid, { key: ' ', shiftKey: true }).defaultPrevented).toBe(true);
+		await tick();
+		expect(container.querySelector<HTMLInputElement>('.row .select-box')!.checked).toBe(true);
+		expect(clicks).toEqual([]);
+	});
 });
 
 describe('F2 on a cell that is not editable: into its controls', () => {
