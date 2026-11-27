@@ -541,7 +541,7 @@ test('"save and close" holds the switch until the save is back: the pane closes 
 test('keyboard only: add a widget, move it, hide it', async ({ page }) => {
 	await openDashboard(page);
 	const host = dockHost(page);
-	const live = host.locator('[aria-live="polite"]');
+	const live = host.locator('.dock-live[aria-live="polite"]');
 	// Start without the memo, so that checking it is an "add".
 	await toggleWidget(page, MEMO);
 	await expect(pane(page, 'memo')).toHaveCount(0);
