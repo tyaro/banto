@@ -77,9 +77,14 @@
 		<!-- Static content from parse time (Issue #1024): before Svelte draws, the
 		     document has no children and a screen reader (NVDA) building its virtual
 		     buffer then reads the document URL. Visually hidden; removed by
-		     routes/+layout.svelte once the app is drawn. -->
+		     routes/+layout.svelte once the app is drawn. The wording is not written
+		     here: src/hooks.server.ts fills the placeholder below with the dictionary's
+		     `common.loading` of every locale (JSON keyed by locale, conventions §13)
+		     when it renders this shell (build and `vite dev`), and the script below
+		     picks the one for the `lang` the first script in <head> decided. -->
 		<p
 			id="banto-boot-status"
+			data-messages="%banto.bootStatus%"
 			style="
 				position: absolute;
 				width: 1px;
@@ -93,8 +98,15 @@
 			"
 		></p>
 		<script>
-			document.getElementById('banto-boot-status').textContent =
-				document.documentElement.lang === 'en' ? 'Loading' : '読み込み中';
+			(function () {
+				var status = document.getElementById('banto-boot-status');
+				try {
+					var messages = JSON.parse(status.dataset.messages);
+					status.textContent = messages[document.documentElement.lang] || '';
+				} catch (_) {
+					// Leave it empty: wording is never written here.
+				}
+			})();
 		</script>
 	</body>
 </html>
