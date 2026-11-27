@@ -247,6 +247,70 @@ describe('ThreePaneLayout - narrow', () => {
 		expect(screen.getByText('Line 1')).toBeTruthy();
 	});
 
+	it('a modal left drawer traps focus (and is not a dialog): Tab and Shift+Tab wrap inside (#1045)', async () => {
+		await mount({}, 800);
+		leftToggle().focus();
+		await fireEvent.click(leftToggle());
+		await flush();
+		const pane = leftPane();
+		// Only the Tab trap (#1045); a true modal (aria-modal, inert outside) is out of scope.
+		expect(pane.hasAttribute('role')).toBe(false);
+		expect(pane.hasAttribute('aria-modal')).toBe(false);
+		const a = screen.getByText('Node A');
+		const b = screen.getByText('Pick B');
+		expect(document.activeElement).toBe(a);
+		// Shift+Tab from the first wraps to the last; Tab from the last wraps to the first.
+		await fireEvent.keyDown(a, { key: 'Tab', shiftKey: true });
+		expect(document.activeElement).toBe(b);
+		await fireEvent.keyDown(b, { key: 'Tab' });
+		expect(document.activeElement).toBe(a);
+		// Focus that lands outside (the shell behind the scrim) is pulled back.
+		screen.getByText('Outside').focus();
+		expect(pane.contains(document.activeElement)).toBe(true);
+		// Esc still closes and gives focus back to the toggle.
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(state().leftDrawerOpen).toBe(false);
+		expect(document.activeElement).toBe(leftToggle());
+	});
+
+	it('a right drawer with nothing focusable keeps focus on the pane: Tab does not reach <body> (#1045)', async () => {
+		await mount({ rightEmpty: true }, 800);
+		rightToggle().focus();
+		await fireEvent.click(rightToggle());
+		await flush();
+		const pane = rightPane();
+		expect(document.activeElement).toBe(pane);
+		const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+		pane.dispatchEvent(tab);
+		expect(tab.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(pane);
+		const back = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			bubbles: true,
+			cancelable: true
+		});
+		pane.dispatchEvent(back);
+		expect(back.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(pane);
+		await fireEvent.keyDown(pane, { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+		expect(document.activeElement).toBe(rightToggle());
+	});
+
+	it('a non-modal drawer is neither a dialog nor a focus trap (#1045)', async () => {
+		await mount({ rightDrawerModal: false }, 800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		const pane = rightPane();
+		expect(pane.hasAttribute('aria-modal')).toBe(false);
+		expect(pane.hasAttribute('role')).toBe(false);
+		screen.getByText('Outside').focus();
+		expect(document.activeElement).toBe(screen.getByText('Outside'));
+	});
+
 	it('closes on Esc from anywhere, but not when the Esc was already consumed', async () => {
 		await mount({}, 800);
 		await fireEvent.click(rightToggle());
