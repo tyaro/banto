@@ -204,6 +204,7 @@
 	class:pinned={pinnedLeft !== undefined}
 	class:pinned-edge={pinnedEdge}
 	role="columnheader"
+	aria-label={columnLabel}
 	aria-sort={sortable ? ariaSort : undefined}
 	style:width={`${width}px`}
 	style:left={pinnedLeft !== undefined ? `${pinnedLeft}px` : undefined}

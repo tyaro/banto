@@ -32,12 +32,13 @@ function documentTitleScript(title: string): string {
 }
 
 /**
- * Records every title the document has had, from the first moment a `<title>` exists. Its
- * observer is created after the plugin's script has run (init scripts run in the order they
- * were added), so it sees what is left once that script has reacted to the same change.
+ * Records every title the document has had, from the first moment a `<title>` exists. The
+ * plugin's script (when given) and the recorder go into ONE init script, in that order: Playwright
+ * does not guarantee the order of separate init scripts, and the recorder's observer must be
+ * created after the plugin's so it sees what is left once that script has reacted to a change.
  */
-async function recordTitles(page: Page): Promise<void> {
-	await page.addInitScript(() => {
+async function recordTitles(page: Page, pluginScript = ''): Promise<void> {
+	const record = () => {
 		const seen: string[] = [];
 		(window as unknown as { __titles: string[] }).__titles = seen;
 		const note = () => {
@@ -50,7 +51,9 @@ async function recordTitles(page: Page): Promise<void> {
 			characterData: true
 		});
 		document.addEventListener('DOMContentLoaded', note);
-	});
+	};
+	await page.addInitScript(`${pluginScript}
+(${record.toString()})();`);
 }
 
 const titlesOf = (page: Page) =>
@@ -76,8 +79,7 @@ test.describe('panel window: what a screen reader is given (#1024)', () => {
 		page
 	}) => {
 		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
-		await page.addInitScript(documentTitleScript(PANEL_TITLE));
-		await recordTitles(page);
+		await recordTitles(page, documentTitleScript(PANEL_TITLE));
 		await page.goto('/panel/monthly');
 		await expect(page.getByRole('banner')).toHaveText(PANEL_TITLE);
 		await expect(page).toHaveTitle(PANEL_TITLE);
@@ -87,8 +89,7 @@ test.describe('panel window: what a screen reader is given (#1024)', () => {
 	test("the page's own title replaces the one the window was opened with", async ({ page }) => {
 		// A window opened with another text (the app's language was changed since, say).
 		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
-		await page.addInitScript(documentTitleScript('Monthly "updates" \\ </title>'));
-		await recordTitles(page);
+		await recordTitles(page, documentTitleScript('Monthly "updates" \\ </title>'));
 		await page.goto('/panel/monthly');
 		await expect(page).toHaveTitle(PANEL_TITLE);
 		expect(await titlesOf(page)).toEqual(['Monthly "updates" \\ </title>', PANEL_TITLE]);

@@ -193,6 +193,13 @@
 		 */
 		getRowLabel?: (row: TRow) => string;
 		/**
+		 * Accessible name of the grid (#1016), e.g. "商品の一覧". Without it the
+		 * grid is named by `messages.gridLabel`. The grid takes the focus back
+		 * once the bulk bar closes, and a screen reader reads the whole content of
+		 * a focused element that has no name.
+		 */
+		label?: string;
+		/**
 		 * Extra controls for the bulk bar (#713), e.g. a "delete" button. Gets
 		 * the selected ids, `clear()` (call it once the action is done) and, for
 		 * server mode's "all matching" selection, `allMatching` /
@@ -234,6 +241,7 @@
 		selectAllMatching = false,
 		onSelectionChange,
 		getRowLabel,
+		label,
 		bulkActions,
 		empty
 	}: Props = $props();
@@ -2044,6 +2052,7 @@
 		class:scrolled-x={scrollLeft > 0}
 		bind:this={containerEl}
 		role="grid"
+		aria-label={label ?? t.gridLabel()}
 		tabindex="0"
 		aria-rowcount={effectiveRowCount + 1}
 		aria-colcount={gridState.orderedColumns.length + (selectable ? 1 : 0)}
@@ -2062,7 +2071,12 @@
 			>
 				{#if selectable}
 					<!-- The label and tooltip say which rows the box acts on (#713). -->
-					<div class="select-cell select-header" class:pinned={pinActive} role="columnheader">
+					<div
+						class="select-cell select-header"
+						class:pinned={pinActive}
+						role="columnheader"
+						aria-label={t.selectColumnLabel()}
+					>
 						<label class="select-hit">
 							<input
 								type="checkbox"
