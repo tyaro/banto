@@ -88,7 +88,7 @@
 					<tr>
 						<th scope="row">{label}</th>
 						{#if choosing}
-							<td>
+							<td data-label={m['resource.conflictColTheirs']()}>
 								<label class="pick">
 									<input
 										type="radio"
@@ -100,7 +100,7 @@
 									<span>{formatAuditValue(conflict.theirs)}</span>
 								</label>
 							</td>
-							<td>
+							<td data-label={m['resource.conflictColMine']()}>
 								<label class="pick">
 									<input
 										type="radio"
@@ -113,8 +113,10 @@
 								</label>
 							</td>
 						{:else}
-							<td>{formatAuditValue(conflict.theirs)}</td>
-							<td>
+							<td data-label={m['resource.conflictColTheirs']()}>
+								{formatAuditValue(conflict.theirs)}
+							</td>
+							<td data-label={m['resource.conflictColMine']()}>
 								{formatAuditValue(conflict.mine)}
 								{#if !conflict.mineChanged}
 									<span class="muted">{m['resource.conflictMineUnchanged']()}</span>
@@ -226,6 +228,48 @@
 		align-items: center;
 		gap: var(--banto-space-2);
 		cursor: pointer;
+	}
+
+	/* Narrow viewport / large text (WCAG 1.4.10, #1044): the three columns do not
+	   fit, so each field becomes a block - the field name, then "their value" and
+	   "your value" one under the other, each led by its column name. */
+	@media (max-width: 480px) {
+		.table-wrap {
+			overflow-x: visible;
+		}
+
+		table,
+		tbody,
+		tr,
+		th,
+		td {
+			display: block;
+		}
+
+		thead {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+		}
+
+		tr {
+			border-bottom: var(--banto-border-width) solid var(--banto-border);
+			padding-block: var(--banto-space-1);
+		}
+
+		th,
+		td {
+			border-bottom: none;
+		}
+
+		td::before {
+			content: attr(data-label);
+			display: block;
+			color: var(--banto-text-muted);
+			font-weight: 600;
+		}
 	}
 
 	.actions {

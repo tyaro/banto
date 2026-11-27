@@ -3562,6 +3562,43 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			expect((await api('GET', `/api/items/${id}`)).price).toBe(150);
 			await expect(price).toHaveValue('160');
 
+			// #1044 (WCAG 1.4.4 / 1.4.10): at 320px wide and 200% text the dialog's
+			// table has no sideways scroll of its own, and no button runs into
+			// the next (both the list and the "choose per field" screens).
+			const fit = async () =>
+				dialog.evaluate((el) => {
+					const wrap = el.querySelector('.table-wrap')!;
+					const rects = [...el.querySelectorAll('.actions button')].map((b) =>
+						b.getBoundingClientRect()
+					);
+					const overlap = rects.some((a, i) =>
+						rects.some(
+							(b, j) =>
+								i < j &&
+								a.left < b.right - 1 &&
+								b.left < a.right - 1 &&
+								a.top < b.bottom - 1 &&
+								b.top < a.bottom - 1
+						)
+					);
+					const buttonsFit = [...el.querySelectorAll('.actions button')].every(
+						(b) => b.scrollHeight <= b.clientHeight
+					);
+					return { sideways: wrap.scrollWidth - wrap.clientWidth, overlap, buttonsFit };
+				});
+			const viewport = page.viewportSize();
+			await page.setViewportSize({ width: 320, height: 700 });
+			await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+			try {
+				expect(await fit()).toEqual({ sideways: 0, overlap: false, buttonsFit: true });
+				await dialog.getByRole('button', { name: '項目ごとに選ぶ', exact: true }).click();
+				expect(await fit()).toEqual({ sideways: 0, overlap: false, buttonsFit: true });
+				await dialog.getByRole('button', { name: '戻る', exact: true }).click();
+			} finally {
+				await page.evaluate(() => (document.documentElement.style.fontSize = ''));
+				if (viewport) await page.setViewportSize(viewport);
+			}
+
 			await dialog.getByRole('button', { name: '自分の値で上書き', exact: true }).click();
 			await expect(dialog).toBeHidden();
 			await expect

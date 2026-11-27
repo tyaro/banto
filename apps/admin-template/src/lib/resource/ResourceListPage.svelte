@@ -2060,8 +2060,8 @@
 	.view-trigger,
 	.columns-trigger,
 	.more-trigger {
-		height: var(--banto-control-height-sm);
-		padding: 0 var(--banto-space-3);
+		min-height: var(--banto-control-height-sm);
+		padding: var(--banto-space-1) var(--banto-space-3);
 		font-size: var(--banto-font-size-sm);
 	}
 
@@ -2109,6 +2109,8 @@
 		position: relative;
 		display: inline-flex;
 		align-items: center;
+		min-width: 0;
+		max-width: 100%;
 		color: var(--banto-text-muted);
 	}
 
@@ -2119,7 +2121,8 @@
 	}
 
 	.search-input {
-		height: var(--banto-control-height-sm);
+		min-width: 0;
+		min-height: var(--banto-control-height-sm);
 		width: 14em;
 		max-width: 100%;
 		padding-left: calc(var(--banto-space-2) * 2 + 14px);

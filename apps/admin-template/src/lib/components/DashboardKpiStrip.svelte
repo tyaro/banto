@@ -88,7 +88,7 @@
 	   without SurfaceCard's optional title/description header. */
 	.stat-row {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
 		gap: var(--banto-space-4);
 	}
 
@@ -163,6 +163,8 @@
 		font-weight: 650;
 		color: var(--banto-text);
 		font-variant-numeric: tabular-nums;
+		/* A long figure wraps instead of widening the page (200% text, #1044). */
+		overflow-wrap: anywhere;
 	}
 
 	/* Kiosk (#624 PR-2): KPIs readable from across the room. Keyed on the
@@ -210,6 +212,7 @@
 
 	.stat-value-row {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--banto-space-3);
 	}

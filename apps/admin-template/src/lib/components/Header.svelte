@@ -558,8 +558,8 @@
 		display: inline-flex;
 		align-items: center;
 		gap: var(--banto-space-2);
-		height: var(--banto-control-height-sm);
-		padding: 0 var(--banto-space-3);
+		min-height: var(--banto-control-height-sm);
+		padding: var(--banto-space-1) var(--banto-space-3);
 		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);
 		background: var(--banto-surface);
