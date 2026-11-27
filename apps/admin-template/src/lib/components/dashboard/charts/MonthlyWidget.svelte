@@ -3,6 +3,7 @@
 	import { LineChart } from '@banto/charts';
 	import { updatesByMonth } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
 	import ChartFit from './ChartFit.svelte';
 
@@ -20,7 +21,7 @@
 			area
 			label={m['dashboard.monthlyAria']()}
 			height={chartHeight}
-			formatY={(n) => n.toLocaleString()}
+			formatY={(n) => formatCount(n)}
 		/>
 	{/snippet}
 </ChartFit>

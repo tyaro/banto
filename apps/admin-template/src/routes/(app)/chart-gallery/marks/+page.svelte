@@ -10,6 +10,7 @@
 	import { BarChart, PieChart, type ChartMark } from '@banto/charts';
 	import { PageHeader } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 
 	interface StockRow {
 		category: string;
@@ -27,7 +28,7 @@
 
 	const select = (mark: ChartMark<StockRow>) => (selected = mark);
 	const markLabel = (mark: ChartMark<StockRow>) =>
-		m['chartGallery.marksOpen']({ category: mark.category, value: mark.value.toLocaleString() });
+		m['chartGallery.marksOpen']({ category: mark.category, value: formatCount(mark.value) });
 </script>
 
 <div class="page">
@@ -67,7 +68,7 @@
 		{#if selected}
 			{m['chartGallery.marksSelected']({
 				category: selected.category,
-				value: selected.value.toLocaleString()
+				value: formatCount(selected.value)
 			})}
 		{:else}
 			{m['chartGallery.marksNone']()}

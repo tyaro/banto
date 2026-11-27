@@ -36,6 +36,7 @@
 	import { replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import { PageHeader, StatusBadge } from '@banto/ui';
 	import {
 		getAuditConfig,
@@ -322,7 +323,7 @@
 						: m['audit.retentionUnlimited']();
 				const rows =
 					config.retentionRows !== null
-						? m['audit.retentionRowsValue']({ rows: config.retentionRows.toLocaleString() })
+						? m['audit.retentionRowsValue']({ rows: formatCount(config.retentionRows) })
 						: m['audit.retentionRowsUnlimited']();
 				retentionNote = m['audit.retentionNote']({ days, rows });
 			} catch {
@@ -353,7 +354,7 @@
 		{:else if auditLog.totalCount === 0}
 			{m['audit.emptyNote']()}
 		{:else}
-			{m['audit.recordCountNote']({ count: auditLog.totalCount.toLocaleString() })}
+			{m['audit.recordCountNote']({ count: formatCount(auditLog.totalCount) })}
 		{/if}
 	</p>
 

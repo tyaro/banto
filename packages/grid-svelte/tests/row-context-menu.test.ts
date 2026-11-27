@@ -133,7 +133,8 @@ describe('BantoGrid onRowContextMenu (#784)', () => {
 		expect(cellOf(container, 0, 'price').classList.contains('active')).toBe(true);
 		rightClick(cellOf(container, 2, 'price'));
 		await tick();
-		expect(inRange()).toBe(1);
+		// Collapsed to one cell: that is the cursor, so no cell carries aria-selected (#1034).
+		expect(inRange()).toBe(0);
 		expect(cellOf(container, 2, 'price').classList.contains('active')).toBe(true);
 	});
 

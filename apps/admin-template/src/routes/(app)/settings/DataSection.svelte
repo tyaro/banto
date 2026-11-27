@@ -13,6 +13,7 @@
 	 */
 	import { DatabaseBackup, ScrollText } from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { Button, SurfaceCard } from '@banto/ui';
 	import {
@@ -292,7 +293,7 @@
 							: m['audit.retentionUnlimited']()}
 						/ {auditConfig.retentionRows !== null
 							? m['audit.retentionRowsValue']({
-									rows: auditConfig.retentionRows.toLocaleString()
+									rows: formatCount(auditConfig.retentionRows)
 								})
 							: m['audit.retentionRowsUnlimited']()}
 					</strong>

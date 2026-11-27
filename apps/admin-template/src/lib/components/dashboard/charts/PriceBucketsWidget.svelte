@@ -10,13 +10,14 @@
 	import { priceBuckets } from '#lib/banto/dashboard.js';
 	import { PRICE_BANDS } from '#lib/banto/resources/items.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
 	import ChartFit from './ChartFit.svelte';
 
 	let { data, height, onSelect, selected }: DashboardWidgetProps = $props();
 
 	const buckets = $derived(priceBuckets(data.rows));
-	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
+	const countLabel = (n: number) => m['dashboard.countUnit']({ count: formatCount(n) });
 	// The buckets are in `PRICE_BANDS` order, so a slice's index is its band.
 	const select = $derived(
 		onSelect

@@ -17,6 +17,7 @@
 	} from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import {
 		categoryCountsTop,
@@ -47,7 +48,7 @@
 	const categoryTrend = $derived(categoryTrendByMonth(list.rows));
 	const schedule = $derived(inventorySchedule(list.rows));
 
-	const yen = (n: number) => `¥${n.toLocaleString()}`;
+	const yen = (n: number) => `¥${formatCount(n)}`;
 	// UTC getters (not toLocaleDateString): the schedule's dates are UTC
 	// midnight `YYYY-MM-DD` instants (see dashboard.ts inventorySchedule), and
 	// a locale-dependent format would make the visual regression snapshot
@@ -78,7 +79,7 @@
 					lines={[{ id: 'avg3', label: m['chartGallery.series3mAvg'](), y: (row) => row.avg3 }]}
 					label={m['chartGallery.comboAria']()}
 					height={280}
-					formatY={(n) => n.toLocaleString()}
+					formatY={(n) => formatCount(n)}
 				/>
 			</section>
 
@@ -92,7 +93,7 @@
 					value={(row) => row.count}
 					label={m['chartGallery.heatmapAria']()}
 					height={300}
-					formatValue={(n) => n.toLocaleString()}
+					formatValue={(n) => formatCount(n)}
 				/>
 			</section>
 
@@ -123,7 +124,7 @@
 					]}
 					label={m['chartGallery.radarAria']()}
 					height={280}
-					formatValue={(n) => n.toLocaleString()}
+					formatValue={(n) => formatCount(n)}
 				/>
 			</section>
 		</div>
@@ -143,7 +144,7 @@
 					}))}
 					label={m['chartGallery.categoryTrendAria']()}
 					height={280}
-					formatY={(n) => n.toLocaleString()}
+					formatY={(n) => formatCount(n)}
 				/>
 			</section>
 

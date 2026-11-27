@@ -9,6 +9,7 @@ import { Package } from '@lucide/svelte';
 import type { FormSchema } from '@banto/forms';
 import { nextDay, type FilterState } from '@banto/grid-svelte';
 import * as m from '#lib/paraglide/messages.js';
+import { formatCount } from '#lib/banto/i18n.js';
 // [scaffold:attachments] begin
 import { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';
 import { attachmentsClient } from '#lib/banto/attachmentsClient.js';
@@ -216,7 +217,7 @@ export const itemsResource = defineResource({
 		loadModes: ['client', 'server'],
 		columns: {
 			name: { width: 260 },
-			price: { width: 120, format: (value) => `¥${(value as number).toLocaleString()}` },
+			price: { width: 120, format: (value) => `¥${formatCount(value as number)}` },
 			stock: { width: 100 },
 			updatedAt: { width: 140 }
 		},
