@@ -14,7 +14,8 @@ import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 const APP = new URL('../../apps/admin-template/', import.meta.url);
 const readJson = (path: string) => JSON.parse(readFileSync(new URL(path, APP), 'utf8'));
 
-const locales: string[] = readJson('project.inlang/settings.json').locales;
+const settings = readJson('project.inlang/settings.json');
+const locales: string[] = settings.locales;
 const loading: Record<string, string> = Object.fromEntries(
 	locales.map((locale) => [locale, readJson(`messages/${locale}.json`)['common.loading']])
 );
@@ -42,6 +43,19 @@ test('the shell carries the loading wording of every locale, from the dictionary
 	await expect(page.locator('#banto-boot-status')).toHaveText(
 		loading[(await page.locator('html').getAttribute('lang')) ?? '']
 	);
+});
+
+test('the shell carries the locales of project.inlang for the first script', async ({ page }) => {
+	await page.route('**/*.js', (route) => route.abort());
+	await page.goto('/dashboard');
+	const carried = await page.locator('meta[name="banto-locales"]').getAttribute('content');
+	const { locales: carriedLocales, fallback } = JSON.parse(carried ?? '');
+	expect(carriedLocales).toEqual(locales);
+	expect(fallback).toBe(locales.includes('ja') ? 'ja' : settings.baseLocale);
+	// A stored locale that is not one of them falls back instead of being taken as is.
+	await page.addInitScript(() => localStorage.setItem('banto.locale', 'xx'));
+	await page.goto('/dashboard');
+	await expect(page.locator('html')).toHaveAttribute('lang', fallback);
 });
 
 for (const locale of locales) {
