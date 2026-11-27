@@ -3584,15 +3584,40 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 					const buttonsFit = [...el.querySelectorAll('.actions button')].every(
 						(b) => b.scrollHeight <= b.clientHeight
 					);
-					return { sideways: wrap.scrollWidth - wrap.clientWidth, overlap, buttonsFit };
+					const box = el.getBoundingClientRect();
+					const spill = [...el.querySelectorAll('.table-wrap th, .table-wrap td')].some(
+						(c) => c.getBoundingClientRect().right > box.right + 1
+					);
+					return {
+						sideways: wrap.scrollWidth - wrap.clientWidth,
+						overlap,
+						buttonsFit,
+						spill
+					};
 				});
 			const viewport = page.viewportSize();
 			await page.setViewportSize({ width: 320, height: 700 });
 			await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+			// Long field names / unbroken values must wrap, not spill out of the dialog.
+			await dialog.evaluate((el) => {
+				const th = el.querySelector('.table-wrap tbody th');
+				if (th)
+					th.textContent =
+						'非常に長い項目名'.repeat(6) + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.repeat(3);
+				el.querySelectorAll('.table-wrap tbody td').forEach((td) => {
+					td.append('x'.repeat(80));
+				});
+			});
+			const fits = { sideways: 0, overlap: false, buttonsFit: true, spill: false };
 			try {
-				expect(await fit()).toEqual({ sideways: 0, overlap: false, buttonsFit: true });
+				expect(await fit()).toEqual(fits);
+				// The stacked layout keeps table semantics and names each value's column.
+				const firstRow = dialog.getByTestId('conflict-changes').getByRole('row').nth(1);
+				await expect(firstRow.getByRole('rowheader')).toHaveCount(1);
+				await expect(firstRow.getByRole('cell').first()).toContainText('相手の値');
+				await expect(firstRow.getByRole('cell').nth(1)).toContainText('あなたの値');
 				await dialog.getByRole('button', { name: '項目ごとに選ぶ', exact: true }).click();
-				expect(await fit()).toEqual({ sideways: 0, overlap: false, buttonsFit: true });
+				expect(await fit()).toEqual(fits);
 				await dialog.getByRole('button', { name: '戻る', exact: true }).click();
 			} finally {
 				await page.evaluate(() => (document.documentElement.style.fontSize = ''));
