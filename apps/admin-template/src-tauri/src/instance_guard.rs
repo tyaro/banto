@@ -22,8 +22,10 @@
 //! The "come to the front" request travels over a loopback TCP port the
 //! first instance listens on; the port and a random token sit in a file next
 //! to the lock (see [`Endpoint`]). `tauri-plugin-single-instance` is not
-//! used: its key is the `identifier` alone and cannot carry the version, and
-//! it would add crates (conventions §3).
+//! used: its key is the `identifier`, and its optional `semver` feature only
+//! adds the SemVer-compatible part of the version (`1.2.x` and `1.3.0` would
+//! still collide), while #1028 lets any two different versions run side by
+//! side; it would also add crates (conventions §3).
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
@@ -461,8 +463,7 @@ pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::mpsc;
 
     #[test]
     fn key_has_identifier_version_and_dev_suffix() {
@@ -608,33 +609,39 @@ mod tests {
         ));
     }
 
-    /// A listener on a thread, counting the valid requests.
-    fn serving() -> (Endpoint, Arc<AtomicUsize>) {
+    /// A listener on a thread, sending one message per valid request. The
+    /// listener writes `ok` before it calls `on_activate`, so a test waits on
+    /// the channel instead of reading a counter right after the answer.
+    fn serving() -> (Endpoint, mpsc::Receiver<()>) {
         let (listener, endpoint) = bind_activation_listener().unwrap();
-        let count = Arc::new(AtomicUsize::new(0));
-        let (token, counter) = (endpoint.token.clone(), count.clone());
+        let (tx, rx) = mpsc::channel();
+        let token = endpoint.token.clone();
         std::thread::spawn(move || {
-            serve_activation(listener, token, || {
-                counter.fetch_add(1, Ordering::SeqCst);
+            serve_activation(listener, token, move || {
+                let _ = tx.send(());
             })
         });
-        (endpoint, count)
+        (endpoint, rx)
     }
+
+    const CALLBACK_WAIT: Duration = Duration::from_secs(5);
 
     #[test]
     fn running_instance_is_activated_through_the_endpoint_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = single_instance_endpoint_path(dir.path(), "k");
-        let (endpoint, count) = serving();
+        let (endpoint, activated) = serving();
         write_endpoint_file(&path, &endpoint).unwrap();
         assert!(activate_once(&path));
         assert!(activate_once(&path));
-        assert_eq!(count.load(Ordering::SeqCst), 2);
+        activated.recv_timeout(CALLBACK_WAIT).unwrap();
+        activated.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(activated.try_recv().is_err());
     }
 
     #[test]
     fn wrong_token_does_not_activate() {
-        let (endpoint, count) = serving();
+        let (endpoint, activated) = serving();
         let wrong = Endpoint {
             port: endpoint.port,
             token: "f".repeat(32),
@@ -642,7 +649,10 @@ mod tests {
         assert!(!matches!(request_activation(&wrong), Ok(true)));
         // The listener still serves the right one afterwards.
         assert!(matches!(request_activation(&endpoint), Ok(true)));
-        assert_eq!(count.load(Ordering::SeqCst), 1);
+        // Requests are served one at a time, so once the right one's
+        // callback ran, the wrong one has been answered (without one).
+        activated.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(activated.try_recv().is_err());
     }
 
     #[test]
