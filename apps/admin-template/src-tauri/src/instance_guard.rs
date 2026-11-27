@@ -745,23 +745,25 @@ mod tests {
 
     /// A listener on a thread, sending one message per valid request; its
     /// callback answers what `window_ready` holds at that moment (the
-    /// stand-in for "the main window exists"). Tests wait on the channel
-    /// instead of reading a counter.
-    fn serving_with(window_ready: Arc<AtomicBool>) -> (Endpoint, mpsc::Receiver<()>) {
+    /// stand-in for "the main window exists") and sends that same value, so
+    /// a test sees which answer (`ok` or `notready`) each request got. Tests
+    /// wait on the channel instead of reading a counter.
+    fn serving_with(window_ready: Arc<AtomicBool>) -> (Endpoint, mpsc::Receiver<bool>) {
         let (listener, endpoint) = bind_activation_listener().unwrap();
         let (tx, rx) = mpsc::channel();
         let token = endpoint.token.clone();
         std::thread::spawn(move || {
             serve_activation(listener, token, move || {
-                let _ = tx.send(());
-                window_ready.load(Ordering::SeqCst)
+                let ready = window_ready.load(Ordering::SeqCst);
+                let _ = tx.send(ready);
+                ready
             })
         });
         (endpoint, rx)
     }
 
     /// A listener whose window is there.
-    fn serving() -> (Endpoint, mpsc::Receiver<()>) {
+    fn serving() -> (Endpoint, mpsc::Receiver<bool>) {
         serving_with(Arc::new(AtomicBool::new(true)))
     }
 
@@ -775,8 +777,8 @@ mod tests {
         write_endpoint_file(&path, &endpoint).unwrap();
         assert!(activate_once(&path));
         assert!(activate_once(&path));
-        activated.recv_timeout(CALLBACK_WAIT).unwrap();
-        activated.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(activated.recv_timeout(CALLBACK_WAIT).unwrap());
+        assert!(activated.recv_timeout(CALLBACK_WAIT).unwrap());
         assert!(activated.try_recv().is_err());
     }
 
@@ -792,7 +794,7 @@ mod tests {
         assert!(matches!(request_activation(&endpoint), Ok(true)));
         // Requests are served one at a time, so once the right one's
         // callback ran, the wrong one has been answered (without one).
-        activated.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(activated.recv_timeout(CALLBACK_WAIT).unwrap());
         assert!(activated.try_recv().is_err());
     }
 
@@ -815,11 +817,11 @@ mod tests {
         let (endpoint, asked) = serving_with(ready.clone());
         // Valid request, callback ran, but the answer is not `ok`.
         assert!(matches!(request_activation(&endpoint), Ok(false)));
-        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(!asked.recv_timeout(CALLBACK_WAIT).unwrap());
         // Same listener, once the window is there.
         ready.store(true, Ordering::SeqCst);
         assert!(matches!(request_activation(&endpoint), Ok(true)));
-        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(asked.recv_timeout(CALLBACK_WAIT).unwrap());
         assert!(asked.try_recv().is_err());
     }
 
@@ -850,7 +852,7 @@ mod tests {
         write_endpoint_file(&endpoint_path, &endpoint).unwrap();
         let got = acquire_or_activate(&lock_path, &endpoint_path, Duration::ZERO, RETRY).unwrap();
         assert!(matches!(got, SingleInstance::Activated));
-        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(asked.recv_timeout(CALLBACK_WAIT).unwrap());
     }
 
     #[test]
@@ -871,14 +873,19 @@ mod tests {
             move || {
                 std::thread::sleep(RETRY * 3);
                 write_endpoint_file(&endpoint_path, &endpoint).unwrap();
-                // One `notready` went out.
-                asked.recv_timeout(CALLBACK_WAIT).unwrap();
+                // The first request found no window: it got `notready`.
+                assert!(!asked.recv_timeout(CALLBACK_WAIT).unwrap());
                 ready.store(true, Ordering::SeqCst);
+                asked
             }
         });
         let got = acquire_or_activate(&lock_path, &endpoint_path, CALLBACK_WAIT, RETRY).unwrap();
         assert!(matches!(got, SingleInstance::Activated));
-        first.join().unwrap();
+        // Requests between the store and the one that got `ok` may still
+        // have read `false`; the last one answered is the `ok`.
+        let asked = first.join().unwrap();
+        let rest: Vec<bool> = asked.try_iter().collect();
+        assert_eq!(rest.last(), Some(&true));
     }
 
     #[test]
@@ -898,8 +905,8 @@ mod tests {
         let got = acquire_or_activate(&lock_path, &endpoint_path, RETRY * 3, RETRY).unwrap();
         assert!(matches!(got, SingleInstance::NoAnswer));
         // It was asked more than once before giving up.
-        asked.recv_timeout(CALLBACK_WAIT).unwrap();
-        asked.recv_timeout(CALLBACK_WAIT).unwrap();
+        assert!(!asked.recv_timeout(CALLBACK_WAIT).unwrap());
+        assert!(!asked.recv_timeout(CALLBACK_WAIT).unwrap());
     }
 
     #[test]
