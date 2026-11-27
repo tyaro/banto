@@ -101,10 +101,10 @@ describe('messages can be swapped after mount', () => {
 			onDragStart: vi.fn(),
 			onDragMove: vi.fn(),
 			onDragEnd: vi.fn(),
-			messages: { filterAriaLabel: (h: string) => `A:${h}` }
+			messages: { filterButtonLabel: () => 'A' }
 		});
-		expect(screen.getByRole('button', { name: 'A:商品名' })).toBeTruthy();
-		await rerender({ messages: { filterAriaLabel: (h: string) => `B:${h}` } });
-		expect(screen.getByRole('button', { name: 'B:商品名' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'A' })).toBeTruthy();
+		await rerender({ messages: { filterButtonLabel: () => 'B' } });
+		expect(screen.getByRole('button', { name: 'B' })).toBeTruthy();
 	});
 });

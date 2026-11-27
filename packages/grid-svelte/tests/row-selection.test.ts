@@ -5,7 +5,7 @@
  * covered in rowSelection.test.ts; this file covers the wiring.
  * Same jsdom stubs as BantoGrid.test.ts so rows virtualize into view.
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
@@ -782,7 +782,11 @@ describe('BantoGrid accessible names for screen readers (#1016)', () => {
 		expect(names).toEqual(['選択', '商品名', '価格']);
 		expect(screen.getByRole('columnheader', { name: '商品名' })).toBeTruthy();
 		// The filter button keeps its own name.
-		expect(screen.getByRole('button', { name: '商品名の絞り込み' })).toBeTruthy();
+		expect(
+			within(screen.getByRole('columnheader', { name: '商品名' })).getByRole('button', {
+				name: '絞り込み'
+			})
+		).toBeTruthy();
 	});
 
 	it('names the grid, so focus returning to it does not read the whole content', () => {

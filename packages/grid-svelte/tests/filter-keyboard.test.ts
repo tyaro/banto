@@ -54,7 +54,11 @@ async function setup(mode: 'client' | 'server') {
 	)!;
 	await fireEvent.pointerDown(selected, { button: 0, pointerId: 1 });
 	await fireEvent.pointerUp(window, { pointerId: 1 });
-	await fireEvent.click(screen.getByRole('button', { name: 'Nameの絞り込み' }));
+	await fireEvent.click(
+		within(screen.getByRole('columnheader', { name: 'Name' })).getByRole('button', {
+			name: '絞り込み'
+		})
+	);
 	const dialog = screen.getByRole('dialog', { name: 'Nameの絞り込み' });
 	return { container, selected, dialog, onCellEdit, onParamsChange };
 }

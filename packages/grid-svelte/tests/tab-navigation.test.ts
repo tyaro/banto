@@ -5,7 +5,7 @@
  * jsdom does not perform native Tab navigation; these tests verify that
  * the event is left uncancelled and selection is unchanged.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
 import type { CellEdit, GridColumn } from '../src/types';
@@ -95,11 +95,13 @@ describe.each([
 
 	it.each([
 		{ role: 'button', name: 'Name' },
-		{ role: 'button', name: 'Nameの絞り込み' }
+		{ role: 'button', name: '絞り込み' }
 	])('does not intercept a bubbled event from $name', async ({ role, name }) => {
 		const { container } = setup();
 		const selected = await selectCell(container, 0, 'category');
-		const target = screen.getByRole(role, { name });
+		const target = within(screen.getByRole('columnheader', { name: 'Name' })).getByRole(role, {
+			name
+		});
 		target.focus();
 		expect(document.activeElement).toBe(target);
 		const event = tabEvent(shiftKey);
@@ -157,12 +159,13 @@ describe('keyboard actions on focused grid descendants', () => {
 	});
 
 	it.each([
-		{ role: 'button', name: 'Nameの絞り込み' },
+		{ role: 'button', name: '絞り込み' },
 		{ role: 'link', name: 'Open Alpha' }
 	])('preserves native Enter activation on $name', async ({ role, name }) => {
 		const { container } = setup();
 		const selected = await selectCell(container, 0, 'name');
-		const target = screen.getByRole(role, { name });
+		// The filter button has the same name in every column (#1035): the first is Name's.
+		const target = screen.getAllByRole(role, { name })[0];
 		target.focus();
 		const event = new KeyboardEvent('keydown', {
 			key: 'Enter',
@@ -184,7 +187,10 @@ describe('keyboard actions on focused grid descendants', () => {
 		async (key) => {
 			const { container } = setup();
 			const selected = await selectCell(container, 0, 'category');
-			const target = screen.getByRole('button', { name: 'Nameの絞り込み' });
+			const target = within(screen.getByRole('columnheader', { name: 'Name' })).getByRole(
+				'button',
+				{ name: '絞り込み' }
+			);
 			target.focus();
 			const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
 			await fireEvent(target, event);
