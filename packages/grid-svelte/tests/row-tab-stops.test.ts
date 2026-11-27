@@ -217,4 +217,17 @@ describe('rowTabStops: the rest of the row, always', () => {
 		);
 		expect(cellControls(get('cell')).map((el) => el.dataset.k)).toEqual(['a', 'b', 'c']);
 	});
+
+	it('cellControls: leaves out what cannot take focus (hidden input, hidden / display:none / visibility:hidden, inert)', () => {
+		const { get } = setupRow(
+			'<div class="cell" data-k="cell"><input type="hidden" data-k="h0" />' +
+				'<button data-k="a">a</button>' +
+				'<div hidden><button data-k="h1">x</button></div>' +
+				'<div style="display:none"><button data-k="h2">x</button></div>' +
+				'<button style="visibility:hidden" data-k="h3">x</button>' +
+				'<div inert><button data-k="h4">x</button></div>' +
+				'<button data-k="b">b</button></div>'
+		);
+		expect(cellControls(get('cell')).map((el) => el.dataset.k)).toEqual(['a', 'b']);
+	});
 });

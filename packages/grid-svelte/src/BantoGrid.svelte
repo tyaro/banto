@@ -1692,7 +1692,7 @@
 		const first = cellEl ? cellControls(cellEl)[0] : undefined;
 		if (!first) return false;
 		first.focus({ preventScroll: true });
-		return true;
+		return document.activeElement === first;
 	}
 
 	/**

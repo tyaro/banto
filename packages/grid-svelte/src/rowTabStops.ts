@@ -95,6 +95,26 @@ function putBack(els: Iterable<Element>): void {
 }
 
 /**
+ * Whether the browser would let `el` take focus: not a hidden input, not
+ * inside `hidden` / `inert`, not drawn with `display: none` or
+ * `visibility: hidden`. `checkVisibility` where there is one; a walk over the
+ * ancestors where there is not (jsdom).
+ */
+function canTakeFocus(el: HTMLElement): boolean {
+	if (el instanceof HTMLInputElement && el.type === 'hidden') return false;
+	if (el.closest('[inert]')) return false;
+	if (typeof el.checkVisibility === 'function') {
+		return el.checkVisibility({ visibilityProperty: true });
+	}
+	for (let node: Element | null = el; node; node = node.parentElement) {
+		if (node.hasAttribute('hidden')) return false;
+		if (getComputedStyle(node).display === 'none') return false;
+	}
+	const visibility = getComputedStyle(el).visibility;
+	return visibility !== 'hidden' && visibility !== 'collapse';
+}
+
+/**
  * The controls of a cell that were tab stops before this action took them
  * out, in DOM order: what the keyboard walks through after F2 on the cell
  * (BantoGrid `handleCellControlKeydown`). One the host itself keeps out of
@@ -105,6 +125,7 @@ export function cellControls(cell: Element): HTMLElement[] {
 	return [...cell.querySelectorAll<HTMLElement>(`[${SAVED_TABINDEX_ATTR}]`)].filter((el) => {
 		if (el.getAttribute('tabindex') !== SUPPRESSED_TABINDEX || el.matches(':disabled'))
 			return false;
+		if (!canTakeFocus(el)) return false;
 		const saved = el.getAttribute(SAVED_TABINDEX_ATTR);
 		return saved === '' || saved === null || Number(saved) >= 0;
 	});
