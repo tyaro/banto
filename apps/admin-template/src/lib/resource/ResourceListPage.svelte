@@ -120,7 +120,7 @@
 	} from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { saveErrorMessage } from '#lib/banto/connectionRecovery.js';
-	import { gridMessages } from '#lib/banto/i18n.js';
+	import { formatCount, gridMessages } from '#lib/banto/i18n.js';
 	import { getBantoMode, getUiSettings } from '#lib/banto/setup.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
@@ -1938,7 +1938,7 @@
 		onclick={() => void bulkDelete(context)}
 	>
 		{m['resource.bulkDelete']({
-			count: (context.allMatching ? context.matchingCount : context.ids.length).toLocaleString()
+			count: formatCount(context.allMatching ? context.matchingCount : context.ids.length)
 		})}
 	</button>
 {/snippet}

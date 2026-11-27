@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
+import { defaultGridMessages } from '../src/messages';
 import RowSelectionBindHarness from './RowSelectionBindHarness.svelte';
 import { GridState } from '../src/state.svelte';
 import type { GridBulkActionsContext, GridColumn } from '../src/types';
@@ -812,5 +813,26 @@ describe('BantoGrid accessible names for screen readers (#1016)', () => {
 		expect(screen.getByRole('group', { name: '一括操作' }).textContent).toContain(
 			'該当する全1,000件を選択中'
 		);
+	});
+});
+
+describe('default GridMessages digit grouping does not follow the device locale (#1016)', () => {
+	it('writes counts as ja even when a no-argument toLocaleString would use another locale', () => {
+		const original = Number.prototype.toLocaleString;
+		const spy = vi.spyOn(Number.prototype, 'toLocaleString').mockImplementation(function (
+			this: number,
+			locales?: unknown,
+			options?: unknown
+		) {
+			if (locales === undefined) return String(this).replace(/\B(?=(\d{3})+$)/g, '.');
+			return original.call(this, locales as string, options as Intl.NumberFormatOptions);
+		});
+		try {
+			expect(defaultGridMessages.selectAllRows(1000)).toBe('一覧の1,000件をすべて選択');
+			expect(defaultGridMessages.selectionStatus(1000)).toBe('1,000件を選択中');
+			expect(defaultGridMessages.selectAllMatching(1000)).toBe('該当する全1,000件を選択');
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });

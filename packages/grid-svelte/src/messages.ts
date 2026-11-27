@@ -148,12 +148,13 @@ export const defaultGridMessages: Required<GridMessages> = {
 	booleanTrue: () => 'はい',
 	booleanFalse: () => 'いいえ',
 	selectRowLabel: (rowLabel) => `${rowLabel}を選択`,
-	selectAllRows: (count) => `一覧の${count.toLocaleString()}件をすべて選択`,
+	selectAllRows: (count) => `一覧の${count.toLocaleString('ja')}件をすべて選択`,
 	selectAllLoadedRows: (loaded, total) =>
-		`読み込み済みの${loaded.toLocaleString()}件をすべて選択（全${total.toLocaleString()}件のうち）`,
-	selectionStatus: (count) => (count === 0 ? '選択なし' : `${count.toLocaleString()}件を選択中`),
-	selectAllMatching: (count) => `該当する全${count.toLocaleString()}件を選択`,
-	allMatchingStatus: (count) => `該当する全${count.toLocaleString()}件を選択中`,
+		`読み込み済みの${loaded.toLocaleString('ja')}件をすべて選択（全${total.toLocaleString('ja')}件のうち）`,
+	selectionStatus: (count) =>
+		count === 0 ? '選択なし' : `${count.toLocaleString('ja')}件を選択中`,
+	selectAllMatching: (count) => `該当する全${count.toLocaleString('ja')}件を選択`,
+	allMatchingStatus: (count) => `該当する全${count.toLocaleString('ja')}件を選択中`,
 	selectionClear: () => '選択を解除',
 	bulkBarLabel: () => '一括操作',
 	selectColumnLabel: () => '選択',
