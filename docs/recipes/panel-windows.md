@@ -157,14 +157,26 @@ $effect(() => popOut.connect());
 
 **配置を既定に戻すとき**（#1021。`closeWindows`）: 既定の配置に戻す・保存した配置を読み直す、のように **dock が
 パネルを自分で取り戻す操作**では、窓に出していたパネルが窓と dock の両方に出る。その操作が**適用された後で**
-`popOut.closeWindows()` を呼ぶと、窓を閉じ、覚えから消し、`restore` は呼ばない（その窓の閉じた知らせでも呼ばない）。
+`popOut.closeWindows()` を呼ぶと、窓を閉じ、覚えから消し、`restore` は呼ばない（その窓の閉じた知らせでも呼ばない。
+知らせが届く前に同じ id をもう一度閉じても同じ）。
 操作が断られたとき（`beforePanelChange` で取り消した、など）は呼ばない — パネルは窓にだけあるままでよい。
 
+**配置を保存しているなら `saved` を渡す**。保存済みの配置は、窓に出した時点からそのパネルを含まない。リセットの保存が
+失敗した・保存の前にアプリが終わったときに覚えが先に消えていると、次の起動で古い配置が読まれ、パネルがどこにも無くなる。
+`saved`（`restore` の戻り値と同じ「パネルが戻った配置を保存できた」の Promise）を渡すと、窓はすぐ閉じるが、id は
+それが `false` 以外で解決するまで `storage` に残り、解決しなかった・`false`・reject のときは次の `connect()` が
+そのパネルを `restore` する（読んだ配置にもうパネルがあれば、`dock.open(id)` は何もしない）。`saved` は**配置を
+差し替える前に**取る（差し替えの報告より後に取ると、その報告の保存を数えられない）。
+
 ```ts
+const saved = saves.next(); // createLayoutSaveWatch（下）。配置を保存しない dock では要らない
 const outcome = await dockHost.replaceLayout(defaultLayout(), { saved: true, commit: 'reset' });
 if (outcome === 'applied') {
-	// 引数なし = 窓に出しているパネル全部。id を渡すと、覚えていない窓（storage なしで再読み込みした後など）も閉じる
-	const { failed } = await popOut.closeWindows(PANELS.map((p) => p.id));
+	// ids なし = 窓に出しているパネル全部。id を渡すと、覚えていない窓（storage なしで再読み込みした後など）も閉じる
+	const { failed } = await popOut.closeWindows(
+		PANELS.map((p) => p.id),
+		{ saved }
+	);
 	if (failed.length > 0) console.error('closing the panel windows failed', failed);
 }
 ```

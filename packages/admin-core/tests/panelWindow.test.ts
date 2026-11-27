@@ -1409,6 +1409,138 @@ describe('createPanelPopOut: closeWindows (Issue #1021)', () => {
 		expect(closes).toHaveLength(1);
 	});
 
+	it('closing an id again before the closed notice has come does not restore it on that notice', async () => {
+		const { popOut, restore, events } = setup();
+		await popOutBoth(popOut);
+
+		await expect(popOut.closeWindows(['memo'])).resolves.toEqual({ closed: ['memo'], failed: [] });
+		// The notice of that window is still on its way; the id is closed again
+		// (no window any more: the plugin answers `false`).
+		await expect(popOut.closeWindows(['memo'])).resolves.toEqual({ closed: ['memo'], failed: [] });
+
+		events.fire('memo');
+		expect(restore).not.toHaveBeenCalled();
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+
+		// Only that one notice was owed: the next window comes back as usual.
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledTimes(1);
+	});
+
+	it('a panel popped out again before the late notice of its closed window stays out of the dock', async () => {
+		const { popOut, plugin, restore, events } = setup();
+		await popOutBoth(popOut);
+		await popOut.closeWindows(['memo']);
+		// Popped out again before the first window's notice has come...
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		// ...and the id is closed once more: a second window, a second notice.
+		let answer!: (had: boolean) => void;
+		plugin.invoke.mockImplementationOnce(() => new Promise<unknown>((r) => (answer = r)));
+		const closing = popOut.closeWindows(['memo']);
+		// The first window's notice, while the second close is in flight.
+		events.fire('memo');
+		expect(restore).not.toHaveBeenCalled();
+		plugin.windows.delete('memo');
+		answer(true);
+		await expect(closing).resolves.toEqual({ closed: ['memo'], failed: [] });
+		// The second window's notice.
+		events.fire('memo');
+		expect(restore).not.toHaveBeenCalled();
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+
+		// Nothing is owed any more.
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		events.fire('memo');
+		expect(restore).toHaveBeenCalledTimes(1);
+	});
+
+	it('with `saved`, keeps the closed ids in the storage until the layout is saved', async () => {
+		const { popOut, plugin, restore, events, state } = setup();
+		await popOutBoth(popOut);
+		let answer!: (saved: boolean) => void;
+		const saved = new Promise<boolean>((r) => (answer = r));
+
+		const result = await popOut.closeWindows(['memo', 'notes', 'clock'], { saved });
+
+		expect(result.closed.sort()).toEqual(['clock', 'memo', 'notes']);
+		expect(plugin.windows.size).toBe(0);
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(popOut.isPoppedOut('notes')).toBe(false);
+		// Still remembered - but not an id that had no window and was not popped out.
+		expect([...state.ids].sort()).toEqual(['memo', 'notes']);
+		events.fire('memo');
+		events.fire('notes');
+		expect(restore).not.toHaveBeenCalled();
+		expect([...state.ids].sort()).toEqual(['memo', 'notes']);
+
+		answer(true);
+		await settle();
+		expect(state.ids).toEqual([]);
+		expect(restore).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['never answers', () => new Promise<boolean>(() => {})],
+		['resolves false', () => Promise.resolve(false)],
+		['rejects', () => Promise.reject(new Error('the write failed'))]
+	])(
+		'with a `saved` that %s, the next start restores the panel - harmlessly',
+		async (_name, makeSaved) => {
+			const first = setup();
+			await popOutBoth(first.popOut);
+			await first.popOut.closeWindows(['memo'], { saved: makeSaved() });
+			await settle();
+			expect([...first.state.ids].sort()).toEqual(['memo', 'notes']);
+			first.plugin.windows.clear();
+
+			// The next start: the layout that was read may or may not have the panel
+			// (the reset was not saved / was saved without anybody hearing of it).
+			const { state, storage } = fakeStorage([...first.state.ids]);
+			const second = setup({ storage, invoke: first.plugin.invoke });
+			second.popOut.connect();
+			await settle();
+			await settle();
+
+			// Restored once each, like any panel whose window is gone; `restore`
+			// for a panel the dock already shows has to do nothing (`dock.open`).
+			expect(second.restore.mock.calls.map(([id]) => id).sort()).toEqual(['memo', 'notes']);
+			expect(second.popOut.isPoppedOut('memo')).toBe(false);
+			expect(state.ids).toEqual([]);
+		}
+	);
+
+	it('a panel popped out again while `saved` is awaited is not forgotten by that answer', async () => {
+		const { popOut, state } = setup();
+		await popOutBoth(popOut);
+		let answer!: (saved: boolean) => void;
+		await popOut.closeWindows(['memo'], { saved: new Promise<boolean>((r) => (answer = r)) });
+		popOut.onPopOut?.(MEMO);
+		await settle();
+
+		answer(true);
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect([...state.ids].sort()).toEqual(['memo', 'notes']);
+	});
+
+	it('with `saved`, a window that could not be closed stays popped out and remembered', async () => {
+		const { popOut, plugin, state } = setup();
+		await popOutBoth(popOut);
+		plugin.closeError = new Error('not allowed');
+
+		const result = await popOut.closeWindows(['memo'], { saved: Promise.resolve(true) });
+		await settle();
+
+		expect(result.failed.map((f) => f.id)).toEqual(['memo']);
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect([...state.ids].sort()).toEqual(['memo', 'notes']);
+	});
+
 	it('does nothing outside Tauri', async () => {
 		const { popOut, plugin } = setup({ isTauri: () => false });
 		await expect(popOut.closeWindows(['memo'])).resolves.toEqual({ closed: [], failed: [] });

@@ -252,7 +252,8 @@ export type {
 	PanelPopOutStorage,
 	PanelRestoreSaved,
 	PanelPopOut,
-	PanelWindowsClosed
+	PanelWindowsClosed,
+	PanelWindowsCloseOptions
 } from './panelWindow';
 export {
 	PANEL_CLOSED_EVENT,

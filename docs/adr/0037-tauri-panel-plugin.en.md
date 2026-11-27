@@ -137,12 +137,18 @@ from the frontend.
       puts the panel back (nothing was saved, so the intent is unknown; restoring is the safer side). When `restore`
       does not change the layout (the read failed, the default is shown and has the panel) nothing is reported, so
       the id stays until something is saved.
-  - **`closeWindows(ids?)` closes windows and forgets the panels without a `restore`** (#1021). When the dock takes
+  - **`closeWindows(ids?, { saved }?)` closes windows and forgets the panels without a `restore`** (#1021). When the dock takes
     the panels back by itself (a reset to the default layout), a popped-out panel would be in its window AND in the
     dock. The app calls it **after that change was applied** (not when it was refused). For an id whose window was
     closed (or that had none) `isPoppedOut` is `false`, the id leaves `storage`, and the `banto://panel-closed` of
     that window does not `restore` (one notice is swallowed per window `close` answered `true` for - also when the
-    notice arrives before the answer). Without `ids` it closes every remembered panel; with `ids` it asks the plugin
+    notice arrives before the answer; the notices owed are counted per id, so closing the same id again before the
+    notice - with no window left, or with a window popped out in between - does not lose what the earlier window is
+    owed). **With `saved`, the id leaves `storage` only once "the layout that has the panel back is saved" is known**
+    (treated like the promise `restore` returns, for the same reason: the saved layout lacks the panel, and the
+    reset's write is separate, later and fallible - forgetting first would leave the panel nowhere at a start after
+    a failed write or an exit before the write). An id that was not confirmed is restored by the next `connect()`
+    (`restore` has to be harmless when the layout read then already has the panel). Without `ids` it closes every remembered panel; with `ids` it asks the plugin
     for ids it does not remember too (a window left by a reload without `storage`).
     - **A window that could not be closed is left as it is** (reported in `failed`; never a rejection): the panel
       stays popped out and remembered, and when that window closes later it is restored as usual (a `restore` for a

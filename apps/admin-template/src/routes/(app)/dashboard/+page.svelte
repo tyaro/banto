@@ -410,14 +410,25 @@
 	// A window that cannot be closed (the capability lacks `banto-tauri-panel:allow-close`) stays,
 	// and its widget stays "in a window" in the View menu; closing it by hand is harmless then
 	// (`restore`'s `dock.open` does nothing for a docked widget).
+	//
+	// The windows go at once, but the pop-out's memory of those widgets waits for the reset to be
+	// saved (`saved`, like `restore` below - #1019): until then the provider still holds the layout
+	// WITHOUT them, and a start after a failed / dropped write, or after the app was closed first,
+	// would read that layout with nothing left to say the widgets are missing. Kept, the next
+	// `connect()` puts them back. Taken BEFORE the replacement: its report is the one that counts.
+	// (A refused reset leaves this promise unused; a later save answers it to nobody.)
 	function resetDockLayout() {
 		const host = dockHost;
 		if (!host) return;
+		const saved = layoutSaves.next();
 		void host
 			.replaceLayout(defaultDashboardLayout(), { saved: true, commit: 'reset' })
 			.then(async (outcome) => {
 				if (outcome !== 'applied') return;
-				const { failed } = await popOut.closeWindows(DASHBOARD_WIDGETS.map((def) => def.id));
+				const { failed } = await popOut.closeWindows(
+					DASHBOARD_WIDGETS.map((def) => def.id),
+					{ saved }
+				);
 				if (failed.length > 0) {
 					console.error(
 						`closing the pop-out windows failed: ${failed.map((f) => f.id).join(', ')}`,
