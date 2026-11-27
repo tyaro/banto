@@ -459,7 +459,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					expect(document.activeElement).toBe(grid);
 					expect(grid.scrollTop).toBe(500 * ROW);
 					expect(activeDescendant(grid)).toBe(cellAt(container, 0, 'name'));
-					expect(container.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
+					expect(container.querySelector('[role="gridcell"][aria-selected]')).toBeNull();
 				});
 
 				it('hands a focus() on a control out there to the grid element', async () => {
