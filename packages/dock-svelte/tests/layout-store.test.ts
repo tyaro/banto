@@ -752,3 +752,154 @@ describe('the order of writes (PR #881 review)', () => {
 		expect(provider.set).toHaveBeenLastCalledWith(SETTING_KEY, json(floating('b')));
 	});
 });
+
+describe('what became of a report (Issue #1019)', () => {
+	const flushPromises = async () => {
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+	};
+	/** The outcome so far (`undefined` while the promise is pending). */
+	function watch(outcome: Promise<string>) {
+		const seen: { value?: string } = {};
+		void outcome.then((value) => (seen.value = value));
+		return seen;
+	}
+
+	it("answers 'saved' once the provider took the write, not before", async () => {
+		const sent = deferred<{ revision: string }>();
+		const provider = fakeProvider();
+		provider.set.mockReturnValueOnce(sent.promise);
+		const { dock, report } = setup({ provider });
+		dock.layout = floating('moved');
+		const seen = watch(report());
+		vi.advanceTimersByTime(500);
+		await flushPromises();
+		expect(provider.set).toHaveBeenCalledTimes(1);
+		expect(seen.value).toBeUndefined();
+		sent.resolve({ revision: 'rev' });
+		await flushPromises();
+		expect(seen.value).toBe('saved');
+	});
+
+	it("answers 'failed' when the provider rejects or throws, and does not reject itself", async () => {
+		const provider = fakeProvider();
+		provider.set.mockRejectedValueOnce(new Error('offline'));
+		const { dock, report } = setup({ provider });
+		dock.layout = floating('moved');
+		const rejected = report();
+		vi.advanceTimersByTime(500);
+		await expect(rejected).resolves.toBe('failed');
+
+		provider.set.mockImplementationOnce(() => {
+			throw new Error('no session');
+		});
+		dock.layout = floating('again');
+		const thrown = report();
+		vi.advanceTimersByTime(500);
+		await expect(thrown).resolves.toBe('failed');
+	});
+
+	it('reports within the debounce share the one write and its answer', async () => {
+		const { dock, provider, report } = setup();
+		dock.layout = floating('moved', 10);
+		const first = report();
+		vi.advanceTimersByTime(200);
+		dock.layout = floating('moved', 99);
+		const second = report();
+		vi.advanceTimersByTime(500);
+		await expect(first).resolves.toBe('saved');
+		await expect(second).resolves.toBe('saved');
+		expect(provider.set).toHaveBeenCalledTimes(1);
+		expect(provider.set).toHaveBeenCalledWith(SETTING_KEY, json(floating('moved', 99)));
+	});
+
+	it('the earlier report shares the failure of the write that absorbed it', async () => {
+		const provider = fakeProvider();
+		provider.set.mockRejectedValueOnce(new Error('offline'));
+		const { dock, report } = setup({ provider });
+		dock.layout = floating('moved', 10);
+		const first = report();
+		dock.layout = floating('moved', 99);
+		const second = report();
+		vi.advanceTimersByTime(500);
+		await expect(first).resolves.toBe('failed');
+		await expect(second).resolves.toBe('failed');
+	});
+
+	it("answers 'unchanged' for the layout the store applied (nothing is sent)", async () => {
+		const { provider, report } = setup();
+		await expect(report()).resolves.toBe('unchanged');
+		vi.advanceTimersByTime(500);
+		expect(provider.set).not.toHaveBeenCalled();
+	});
+
+	it("answers 'dropped' when the session is gone - at the report, or by the time it is sent", async () => {
+		const { dock, provider, session, report } = setup();
+		dock.layout = floating('moved');
+		const armed = report();
+		session.switchTo('acct:2');
+		vi.advanceTimersByTime(500);
+		await expect(armed).resolves.toBe('dropped');
+		dock.layout = floating('later');
+		await expect(report()).resolves.toBe('dropped');
+		expect(provider.set).not.toHaveBeenCalled();
+	});
+
+	it("answers 'dropped' for a write the provider read replaced", async () => {
+		const read = deferred<string | null>();
+		const provider = fakeProvider(() => read.promise);
+		const { dock, store, report } = setup({ provider });
+		const loading = store.load();
+		dock.layout = floating('moved');
+		const outcome = report();
+		read.resolve(json(floating('theirs')));
+		await loading;
+		await expect(outcome).resolves.toBe('dropped');
+		vi.advanceTimersByTime(500);
+		expect(provider.set).not.toHaveBeenCalled();
+	});
+
+	it("a reset with reset: 'remove' answers 'saved' when the deletion landed, 'failed' when not", async () => {
+		const provider = fakeProvider();
+		const { store } = setup({ provider, reset: 'remove' });
+		const removed = store.commit(DEFAULT, 'reset');
+		vi.advanceTimersByTime(500);
+		await expect(removed).resolves.toBe('saved');
+		expect(provider.remove).toHaveBeenCalledTimes(1);
+
+		provider.remove.mockRejectedValueOnce(new Error('offline'));
+		const refused = store.commit(DEFAULT, 'reset');
+		vi.advanceTimersByTime(500);
+		await expect(refused).resolves.toBe('failed');
+	});
+
+	it('answers the write flushed by dispose, and one reported after it', async () => {
+		const { dock, provider, store, report } = setup();
+		dock.layout = floating('moved');
+		const pending = report();
+		store.dispose();
+		await expect(pending).resolves.toBe('saved');
+		dock.layout = floating('late');
+		await expect(report()).resolves.toBe('saved');
+		expect(provider.set).toHaveBeenCalledTimes(2);
+	});
+
+	it('a write waiting behind a slow one is answered in its turn', async () => {
+		const slow = deferred<{ revision: string }>();
+		const provider = fakeProvider();
+		provider.set.mockReturnValueOnce(slow.promise);
+		const { dock, report } = setup({ provider });
+		dock.layout = floating('a');
+		const first = watch(report());
+		vi.advanceTimersByTime(500);
+		dock.layout = floating('b');
+		const second = watch(report());
+		vi.advanceTimersByTime(500);
+		await flushPromises();
+		expect(first.value).toBeUndefined();
+		expect(second.value).toBeUndefined();
+		slow.reject(new Error('timeout'));
+		await flushPromises();
+		expect(first.value).toBe('failed');
+		expect(second.value).toBe('saved');
+	});
+});

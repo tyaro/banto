@@ -37,6 +37,12 @@
  * unconditional (no `ifRevision`): a layout is "the last arrangement wins", also across tabs.
  * The store sends its own writes one at a time, in the order they were armed (a provider need
  * not order them).
+ *
+ * Whether it was saved (Issue #1019): `commit` answers a promise of what became of the write that
+ * carries the reported layout (`DockLayoutSaveOutcome`). A dock that only passes `commit` as its
+ * `onLayoutCommit` ignores it; an app that must not forget something until the layout is really
+ * in the provider (admin-core's pop-out memory: a panel put back into the dock) waits for
+ * `'saved'`. The store itself does not retry a failed write - the next report is a new write.
  */
 import { collectPanelIds } from './core/tree';
 import type { ThreePaneLayoutCommitReason } from './threePane';
@@ -136,6 +142,21 @@ export interface DockLayoutStoreOptions<S extends DockLayoutScope = DockLayoutSc
 	storage?: Storage | null;
 }
 
+/**
+ * What became of a layout reported to `commit` (Issue #1019):
+ * - `'saved'`: the provider took a write that holds this layout or a later one - the write this
+ *   report was folded into (reports within the debounce share one write and one answer), a `set`
+ *   or, for a reset with `reset: 'remove'`, the deletion.
+ * - `'unchanged'`: nothing was sent, because the layout is the one the store itself applied (the
+ *   provider's value, the local copy or the default). It does NOT say the provider holds it: the
+ *   default drawn after a failed read is "unchanged" too.
+ * - `'failed'`: the provider refused the write (it rejected or threw), or could not be reached.
+ *   Nothing is retried.
+ * - `'dropped'`: the write was not sent - the session it was armed for is gone, or the answer of
+ *   `load()` replaced what was waiting (the read wins).
+ */
+export type DockLayoutSaveOutcome = 'saved' | 'unchanged' | 'failed' | 'dropped';
+
 export interface DockLayoutStore {
 	/** Read the provider once and apply the answer (see the module doc). Call after mount. */
 	load(): Promise<void>;
@@ -147,8 +168,12 @@ export interface DockLayoutStore {
 	 * its JSON text. `'user'` / `'narrow-switch'` are saved when the text differs from the baseline;
 	 * `'reset'` always (the `reset` option). A report after `dispose` (the host unmounts after the
 	 * page's cleanup and reports a change not yet reported) is sent at once.
+	 *
+	 * The promise tells what became of it (`DockLayoutSaveOutcome`) and never rejects, so it may be
+	 * left unawaited. It settles when the provider has answered the write - after the debounce, and
+	 * after the writes sent before it - also for a write flushed by `dispose`.
 	 */
-	commit(layout: unknown, reason: ThreePaneLayoutCommitReason): void;
+	commit(layout: unknown, reason: ThreePaneLayoutCommitReason): Promise<DockLayoutSaveOutcome>;
 	/** Unmount: flush a pending write if the session is still the same, then stop loading / seeding. */
 	dispose(): void;
 }
@@ -164,6 +189,11 @@ interface PendingWrite {
 	/** The provider it was armed for, and that provider's session then. */
 	provider: DockLayoutSettings;
 	sameSession: () => boolean;
+	/**
+	 * The `commit` promises this write answers: its own report's and those of the reports it
+	 * replaced during the debounce (a later layout saved says the earlier one is no longer owed).
+	 */
+	waiters: ((outcome: DockLayoutSaveOutcome) => void)[];
 }
 
 /** `provider.sessionGuard()`, or "always" for a provider without one. */
@@ -271,10 +301,16 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 		}
 	}
 
+	function settle(write: PendingWrite, outcome: DockLayoutSaveOutcome): void {
+		for (const resolve of write.waiters.splice(0)) resolve(outcome);
+	}
+
 	function dropPending(): void {
 		clearTimeout(timer);
 		timer = undefined;
+		const write = pending;
 		pending = null;
+		if (write !== null) settle(write, 'dropped');
 	}
 
 	/** A write armed for a session that is gone is dropped, not sent. */
@@ -283,7 +319,10 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 	}
 
 	function send(write: PendingWrite): Promise<void> {
-		if (!stillWanted(write)) return Promise.resolve();
+		if (!stillWanted(write)) {
+			settle(write, 'dropped');
+			return Promise.resolve();
+		}
 		let sent: Promise<unknown>;
 		try {
 			const { provider } = write;
@@ -292,18 +331,25 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 					? provider.remove(settingKey)
 					: provider.set(settingKey, write.json);
 		} catch {
+			settle(write, 'failed');
 			return Promise.resolve();
 		}
 		return Promise.resolve(sent).then(
-			() => {},
-			() => {}
+			() => settle(write, 'saved'),
+			() => settle(write, 'failed')
 		);
 	}
 
 	function flush(): void {
 		const write = pending;
-		dropPending();
-		if (write === null || !stillWanted(write)) return;
+		clearTimeout(timer);
+		timer = undefined;
+		pending = null;
+		if (write === null) return;
+		if (!stillWanted(write)) {
+			settle(write, 'dropped');
+			return;
+		}
 		// One at a time: an earlier write still on its way must not land after this one (a `set`
 		// finishing after the `remove` that followed it would bring the old value back).
 		const previous = sending;
@@ -314,20 +360,25 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 		});
 	}
 
-	function arm(json: string, wantRemove: boolean): void {
+	function arm(json: string, wantRemove: boolean): Promise<DockLayoutSaveOutcome> {
 		let provider: DockLayoutSettings;
 		try {
 			provider = options.provider();
 		} catch {
-			return;
+			// No provider to write to. What was waiting stays armed, as before.
+			return Promise.resolve('failed');
 		}
 		const remove = wantRemove && typeof provider.remove === 'function';
 		baseline = null;
-		pending = { json, remove, provider, sameSession: guardNow(provider) };
+		// The write this one replaces is not sent: its reports are answered by this one.
+		const waiters = pending?.waiters ?? [];
+		const outcome = new Promise<DockLayoutSaveOutcome>((resolve) => waiters.push(resolve));
+		pending = { json, remove, provider, sameSession: guardNow(provider), waiters };
 		clearTimeout(timer);
 		// After `dispose` nothing would flush a timer's write: send it now.
 		if (disposed) flush();
 		else timer = setTimeout(flush, debounceMs);
+		return outcome;
 	}
 
 	function canRemove(): boolean {
@@ -448,7 +499,7 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 		commit(layout, reason) {
 			if (!isCurrent()) {
 				dropPending();
-				return;
+				return Promise.resolve('dropped');
 			}
 			const json = typeof layout === 'string' ? layout : JSON.stringify(layout);
 			if (reason === 'reset') {
@@ -458,16 +509,15 @@ export function createDockLayoutStore<S extends DockLayoutScope = DockLayoutScop
 				resets++;
 				if (removeOnReset && canRemove()) removeKey(localKey);
 				else writeLocal(json);
-				arm(json, removeOnReset);
-				return;
+				return arm(json, removeOnReset);
 			}
 			writeLocal(json);
 			if (json === baseline) {
 				// What the store applied (a `DockHost` reports that too): nothing to save.
 				dropPending();
-				return;
+				return Promise.resolve('unchanged');
 			}
-			arm(json, false);
+			return arm(json, false);
 		},
 
 		dispose() {

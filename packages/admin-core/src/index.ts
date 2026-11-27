@@ -250,6 +250,7 @@ export type {
 	ListenPanelClosedOptions,
 	PanelPopOutOptions,
 	PanelPopOutStorage,
+	PanelRestoreSaved,
 	PanelPopOut
 } from './panelWindow';
 export {

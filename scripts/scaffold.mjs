@@ -540,6 +540,7 @@ function removeDock() {
 	// シェルの汎用の口としてコアに残る。
 	removeFile(`${APP}/src/lib/components/PanelIcon.svelte`, 'PanelIcon.svelte 削除');
 	removeFile(`${APP}/src/lib/banto/popout.ts`, 'popout.ts 削除');
+	removeFile(`${APP}/src/lib/banto/popout.test.ts`, 'popout.test.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockEscape.ts`, 'dockEscape.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockEscape.test.ts`, 'dockEscape.test.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dashboardMemo.svelte.ts`, 'dashboardMemo.svelte.ts 削除');

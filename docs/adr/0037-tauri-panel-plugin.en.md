@@ -108,6 +108,30 @@ from the frontend.
   - Putting the panels back on the main window's `CloseRequested` was rejected: it does not run on a kill or a
     crash, and the window may close before the (asynchronous) save of the restored dock is done. Reconciling at
     start-up works however the last run ended.
+  - **The id of a panel put back into the dock stays in `storage` until the layout that has it again is known to be
+    saved** (#1019). That save is made later, asynchronously, by another part (`@banto/dock-svelte`'s
+    `createDockLayoutStore`), and it can fail. If the memory were dropped when the panel is put back, a failed save
+    would lose the panel at the next start: the provider's old layout (the panel closed) wins and nothing remembers
+    it. `restore`'s return value carries this: nothing = forgotten at once (as before; for a dock whose layout is not
+    saved); a promise = kept until it resolves `true` (or nothing). On `false`, a rejection, or a run that ends
+    first, the id stays and the next `createPanelPopOut` (the next start, the next visit of the screen) restores the
+    panel again - that is the retry. `isPoppedOut` is `false` from before `restore` is called (a panel in the dock is
+    not shown as "in a window"). Once the save is confirmed nothing is remembered, so a panel the user closes
+    afterwards stays closed.
+    - admin-core does not import `@banto/dock-svelte` (conventions §4), so the app joins them. The layout store's
+      `commit` returns a promise of what became of the write (`'saved'`, `'unchanged'`, `'failed'`, `'dropped'`);
+      the template's `createLayoutSaveWatch` (`popout.ts`) turns "a report made after `restore` was saved" into
+      `restore`'s return value.
+    - Rejected: (a) `restore` calling the store's `commit` itself and returning its promise - the restored layout
+      is reported by `DockHost` (`onLayoutCommit`), not by `restore`, so it would be reported twice; (b) only an
+      `onSaved` notice on the store - it cannot tell which report was saved, and the success of a write already on
+      its way (a layout without the panel) would drop the memory; (c) retrying the write inside admin-core - it
+      knows neither the layout nor where it is saved; (d) preferring the local copy over the provider at the next
+      start - that changes the rule that the provider's copy is the one that counts, per user and across devices.
+    - Accepted limits: if, after a failed save, the user closes the panel and that save fails too, the next start
+      puts the panel back (nothing was saved, so the intent is unknown; restoring is the safer side). When `restore`
+      does not change the layout (the read failed, the default is shown and has the panel) nothing is reported, so
+      the id stays until something is saved.
   - It has `isPoppedOut(id)`, `subscribe(cb)` and `focus(content)`. A dock cannot tell a popped-out panel from a
     closed one, so a list of panels (the View menu) reads these to show it as on screen and, when it is selected,
     brings its window to the front (showing it in the dock would duplicate it). `focus` does nothing for a panel that
