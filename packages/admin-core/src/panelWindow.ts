@@ -348,6 +348,18 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
  * // <DockHost onPopOut={popOut.onPopOut} ... />
  * ```
  */
+/**
+ * Per panel id, how many times a panel was popped out by any
+ * `createPanelPopOut` in this page (Issue #1019). A late "saved" answer of a
+ * pop-out whose screen was left must not take an id out of the storage when
+ * a newer pop-out - another object on the same storage, after the screen was
+ * entered again - has put that panel out in a window since: the stored lists
+ * may even be equal, so only this tells them apart. Shared by every object on
+ * purpose; two docks with the same id only cost one more `restore`.
+ */
+const popOutEpochs = new Map<string, number>();
+const popOutEpochOf = (id: string) => popOutEpochs.get(id) ?? 0;
+
 export function createPanelPopOut<C extends PanelWindowContent = PanelWindowContent>(
 	options: PanelPopOutOptions<C>
 ): PanelPopOut<C> {
@@ -380,7 +392,7 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	// to be saved (#1019): id -> the `restore` call whose answer is awaited.
 	// Not "popped out" any more, yet still in `storage`, so that the next start
 	// restores them again if that save never lands.
-	const unsaved = new Map<string, object>();
+	const unsaved = new Map<string, { epoch: number }>();
 
 	/** What `storage` holds: the panels the next start has to look at. */
 	const stored = () => [...new Set([...popped, ...unsaved.keys()])];
@@ -405,6 +417,7 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 		// Out in a window again: an answer still awaited for an earlier put-back
 		// is about a layout that is no longer the one to save.
 		unsaved.delete(id);
+		popOutEpochs.set(id, popOutEpochOf(id) + 1);
 		if (popped.has(id)) return;
 		popped.add(id);
 		persist();
@@ -416,7 +429,7 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	 * for the id means the panel was popped out (or put back) again since.
 	 * `late` = the answer came as a promise.
 	 */
-	const confirmSaved = (id: string, call: object, late: boolean) => {
+	const confirmSaved = (id: string, call: { epoch: number }, late: boolean) => {
 		if (unsaved.get(id) !== call) return;
 		unsaved.delete(id);
 		if (popped.has(id)) return;
@@ -426,9 +439,15 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 		}
 		// A late answer may come after the screen was left and entered again,
 		// with another `createPanelPopOut` writing the same `storage` since
-		// (the write flushed on leaving is answered then). Take this one id out
-		// of what is stored now rather than write this object's own, possibly
-		// older, list over it.
+		// (the write flushed on leaving is answered then). The newer one may
+		// hold this same id again for a newer pop-out, which this old answer
+		// knows nothing of (and the lists can be equal, so they cannot tell).
+		// So the id is taken out only while no pop-out of it has happened since
+		// it was put back (`popOutEpochs`); otherwise it is left, and the next
+		// `connect()` looks at it again - at worst restoring a panel once more.
+		if (popOutEpochOf(id) !== call.epoch) return;
+		// Take this one id out of what is stored now rather than write this
+		// object's own, possibly older, list over it.
 		try {
 			const now: unknown = options.storage.load();
 			if (Array.isArray(now)) {
@@ -449,7 +468,7 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	 * nothing). A `restore` that throws leaves it stored too.
 	 */
 	const putBack = (id: string) => {
-		const call = {};
+		const call = { epoch: popOutEpochOf(id) };
 		const wasPopped = popped.delete(id);
 		unsaved.set(id, call);
 		// Already stored when it was popped out; a notice for a panel this

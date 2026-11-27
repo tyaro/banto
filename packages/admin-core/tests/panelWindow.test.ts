@@ -950,11 +950,42 @@ describe('createPanelPopOut: a panel put back is remembered until its layout is 
 		const { restore, answers } = fakeRestore();
 		start(storage, restore).popOut.connect();
 		await settle();
-		// The screen was left and entered again; the new pop-out remembered another panel.
+		// Another panel was stored meanwhile; this pop-out is still connected.
 		state.ids = ['memo', 'chart'];
 		answers[0].resolve(true);
 		await settle();
 		expect(state.ids).toEqual(['chart']);
+	});
+
+	it('a late answer of a left screen does not erase a newer pop-out of the same panel', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const old = fakeRestore();
+		const stopOld = start(storage, old.restore).popOut.connect();
+		await settle();
+		// The screen is left (its connection stops) and entered again: a new pop-out on the same
+		// storage pops `memo` out again.
+		stopOld();
+		const fresh = start(storage, fakeRestore().restore);
+		fresh.popOut.connect();
+		await settle();
+		fresh.popOut.onPopOut?.(MEMO);
+		await settle();
+		expect(fresh.popOut.isPoppedOut('memo')).toBe(true);
+		old.answers[0].resolve(true);
+		await settle();
+		expect(state.ids).toEqual(['memo']);
+		expect(fresh.popOut.isPoppedOut('memo')).toBe(true);
+	});
+
+	it('a late answer still takes its id out when nobody else has written', async () => {
+		const { state, storage } = fakeStorage(['memo', 'chart']);
+		const { restore, answers } = fakeRestore();
+		start(storage, restore).popOut.connect();
+		await settle();
+		answers[0].resolve(true);
+		answers[1]?.resolve(true);
+		await settle();
+		expect(state.ids).toEqual([]);
 	});
 
 	it('without a storage the answer changes nothing visible', async () => {
