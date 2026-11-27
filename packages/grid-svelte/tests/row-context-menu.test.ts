@@ -210,11 +210,34 @@ describe('BantoGrid onRowContextMenu (#784)', () => {
 	});
 
 	describe('without a pointer (no active cell yet)', () => {
-		it('the first arrow key enters the first cell without moving; Shift+F10 then opens the menu', async () => {
+		// #1016: focusing the grid element already puts the cursor on the first
+		// cell, so the first arrow key moves from there (the #784 "enters without
+		// moving" rule no longer applies once the grid has taken the focus).
+		it('focus enters the first cell, the first arrow key moves; Shift+F10 then opens that row menu', async () => {
 			const onRowContextMenu = vi.fn();
 			const { container } = render(BantoGrid<Row>, { rows, columns, getRowId, onRowContextMenu });
 			const grid = screen.getByRole('grid');
 			grid.focus();
+			await tick();
+			expect(cellOf(container, 0, 'name').classList.contains('active')).toBe(true);
+			const down = createEvent.keyDown(grid, { key: 'ArrowDown' });
+			grid.dispatchEvent(down);
+			await tick();
+			expect(down.defaultPrevented).toBe(true);
+			expect(cellOf(container, 1, 'name').classList.contains('active')).toBe(true);
+			expect(onRowContextMenu).not.toHaveBeenCalled();
+			await fireEvent.keyDown(grid, { key: 'F10', shiftKey: true });
+			await tick();
+			expect(onRowContextMenu).toHaveBeenCalledTimes(1);
+			expect(onRowContextMenu.mock.calls[0][0]).toBe(rows[1]);
+		});
+
+		// A key that arrives with no focus event before it (no cursor placed
+		// yet) still only enters the first cell.
+		it('without a focus event, the first arrow key enters the first cell without moving; Shift+F10 then opens the menu', async () => {
+			const onRowContextMenu = vi.fn();
+			const { container } = render(BantoGrid<Row>, { rows, columns, getRowId, onRowContextMenu });
+			const grid = screen.getByRole('grid');
 			const down = createEvent.keyDown(grid, { key: 'ArrowDown' });
 			grid.dispatchEvent(down);
 			await tick();
