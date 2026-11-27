@@ -25,8 +25,7 @@
  *   - apps/admin-template/elev/src/lib.rs の IDENTIFIER（ファイアウォールの helper の
  *     ビルド時の定数、ADR-0021 決定 5）… --identifier
  *   - src/app.html <title> + PWA の apple-mobile-web-app-title /
- *     Sidebar・ログイン画面のブランド表示 /
- *     panel ページの <title> 接尾辞 … --title
+ *     Sidebar・ログイン画面のブランド表示 … --title
  *   - static/manifest.webmanifest name / short_name（PWA インストール名）… --title
  *   - e2e のログイン見出しアサーション（first-admin / visual / a11y）… --title
  *   - Cargo.toml workspace.package.repository /
@@ -210,9 +209,7 @@ editFile('apps/admin-template/src/lib/banto/loginBrand.ts', 'ログイン画面�
 	if (!current) return undefined;
 	return replaceAll(s, current[0], `name: '${escapeTsSingleQuoted(args.title)}',`);
 });
-editFile('apps/admin-template/src/routes/panel/[id]/+page.svelte', '<title> 接尾辞', (s) =>
-	replaceAll(s, ` - ${oldBrand}</title>`, ` - ${args.title}</title>`)
-);
+// panel ページの <title> はパネルの名前だけ（#1024: 窓の題名と同じ）で、アプリ名を含まない。
 
 // --- 4. e2e のログイン見出しアサーション ------------------------------------
 
