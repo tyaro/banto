@@ -224,15 +224,12 @@ export function fitBandLabels(
 	const edge = 2;
 	const texts = labels.slice();
 	if (totalWidth > 0) {
-		const leftRoom = 2 * Math.max(0, centers[0] - edge);
-		const rightRoom = 2 * Math.max(0, totalWidth - centers[n - 1] - edge);
-		// A single label is both first and last: it must fit on both sides.
-		texts[0] = truncateLabel(
-			labels[0],
-			n === 1 ? Math.min(leftRoom, rightRoom) : leftRoom,
-			fontSize
-		);
-		if (n > 1) texts[n - 1] = truncateLabel(labels[n - 1], rightRoom, fontSize);
+		// Each end label is centred on its tick, so it may use twice the distance to
+		// the NEARER svg edge (a long last label can push its centre into the left
+		// half; a lone label is both first and last).
+		const room = (c: number) => 2 * Math.max(0, Math.min(c - edge, totalWidth - c - edge));
+		texts[0] = truncateLabel(labels[0], room(centers[0]), fontSize);
+		if (n > 1) texts[n - 1] = truncateLabel(labels[n - 1], room(centers[n - 1]), fontSize);
 	}
 	let kept = thinCategoryLabels(
 		centers,
