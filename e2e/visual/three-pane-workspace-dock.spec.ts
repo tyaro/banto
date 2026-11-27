@@ -236,7 +236,7 @@ test.describe('three-pane workspace on a dock', () => {
 		page
 	}) => {
 		await open(page, '?target=line-a-press');
-		const live = host(page).locator('[aria-live="polite"]');
+		const live = host(page).locator('.dock-live[aria-live="polite"]');
 
 		let menu = await openPaneMenu(page, DETAIL);
 		await expect(

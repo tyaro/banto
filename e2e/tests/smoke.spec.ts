@@ -5580,7 +5580,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
 		await floatDashboardMemo(page);
 		const host = page.locator('.dock-wrapper [data-dock-host]');
-		const live = host.locator('[aria-live="polite"]');
+		const live = host.locator('.dock-live[aria-live="polite"]');
 		const menuButton = host.getByRole('button', { name: 'メモのパネルの操作', exact: true });
 		const menu = page.getByRole('menu', { name: 'メモのパネルの操作', exact: true });
 		/** Focus the button, Enter: the menu opens with the focus on its first item. */
