@@ -11,10 +11,6 @@
 //!   before the page's own scripts run, so a screen reader that reads the
 //!   document while the app is still starting reads the panel's name (Issue
 //!   #1024).
-//! - **shown when loaded**: a panel window is built hidden and shown (and
-//!   focused) once its page has finished loading, so a screen reader is not
-//!   handed the loading document (Issue #1024). A page that never reports its
-//!   load is shown after `PanelConfig::reveal_timeout_ms` (3 seconds).
 //! - **geometry memory**: position and size are remembered per panel id and
 //!   restored on the next open; a remembered place that is no longer on any
 //!   monitor falls back to the default placement.
@@ -50,8 +46,7 @@
 //! The crate is split so that everything with a rule in it can be tested
 //! where Tauri cannot be built (CI's headless containers):
 //!
-//! - [`config`], [`geometry`], [`reveal`], [`store`], [`title`] - pure (std +
-//!   serde).
+//! - [`config`], [`geometry`], [`store`], [`title`] - pure (std + serde).
 //!   Built and tested with `--no-default-features`.
 //! - `plugin` (feature `tauri`, on by default) - the wiring only: it asks
 //!   Tauri for windows / monitors / events and hands the values to the pure
@@ -69,7 +64,6 @@
 
 pub mod config;
 pub mod geometry;
-pub mod reveal;
 pub mod store;
 pub mod title;
 
@@ -80,9 +74,6 @@ pub use config::{
     parse_background, validate_panel_id, BackgroundError, ConfigError, PanelConfig, PanelIdError,
 };
 pub use geometry::{is_on_screen, restorable, MonitorRect, PanelGeometry};
-pub use reveal::{
-    reveal_timeout, Reveal, RevealSignal, DEFAULT_REVEAL_TIMEOUT_MS, MAX_REVEAL_TIMEOUT_MS,
-};
 pub use store::GeometryStore;
 pub use title::document_title_script;
 

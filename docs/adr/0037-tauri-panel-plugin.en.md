@@ -49,15 +49,6 @@ capability. The plugin owns:
   When it builds the window it also hands it, through `initialization_script`, a script that puts `title` in the
   document's title (#1024): it runs before the page's own scripts and replaces the title once, when the `<title>` has
   been read; a title the page sets later goes through. No permission is added.
-  The window is **always built hidden and shown (and focused) once its page has finished loading** (#1024;
-  `WebviewWindowBuilder::on_page_load`, `PageLoadEvent::Finished`). Shown at once, a screen reader (NVDA) read the
-  loading document ("undefined" and the URL). It is shown when it is both placed (the remembered position, then the
-  size, applied - at once when there is none) and loaded, or the wait has been given up; and only once. The page's
-  report comes on another thread and may arrive before or after the placing, so the decision is the pure `Reveal`
-  (module `reveal`: it takes the three signals `Placed`, `Loaded`, `TimedOut` and answers `true` exactly once). A
-  later `Finished` from the page does nothing. So that a window cannot stay invisible when no report comes (or the
-  load fails), it is shown after `PanelConfig::reveal_timeout_ms` (default 3000; `0` does not wait; `validate`
-  refuses more than 60000). Moves and resizes while hidden are not remembered, as before.
 - The command `list` (`plugin:banto-tauri-panel|list`, no arguments; added with #1013): the ids of the panel windows
   open right now (built by the plugin and not yet seen destroyed).
 - The command `close` (`plugin:banto-tauri-panel|close`, argument `id`; added with #1021): closes that id's window
@@ -80,10 +71,10 @@ capability. The plugin owns:
 
 ### 2. Everything with a rule in it is a pure module, separated by a feature
 
-| Half                                                                        | Contents                                                                                                                                                                                                                                 | How it is checked                                                                                    |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Pure (`config`, `geometry`, `reveal`, `store`, `title`; std and serde only) | id validation, building labels and routes, the off-screen judgement, when a window is shown, the document-title script, reading and writing the memory's JSON (a broken file reads as empty; a write replaces the file from a temp file) | Unit tests. The rust job of `ci.yml` runs `cargo test -p banto-tauri-panel --no-default-features`    |
-| Tauri wiring (`plugin`; feature `tauri`, **on by default**)                 | Asks Tauri for windows, monitors and events and hands the values to the pure half                                                                                                                                                        | Code review, `tauri-check.yml` (compile and clippy on ubuntu and windows), a check on a real desktop |
+| Half                                                        | Contents                                                                                                                                                                              | How it is checked                                                                                    |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Pure (`config`, `geometry`, `store`; std and serde only)    | id validation, building labels and routes, the off-screen judgement, reading and writing the memory's JSON (a broken file reads as empty; a write replaces the file from a temp file) | Unit tests. The rust job of `ci.yml` runs `cargo test -p banto-tauri-panel --no-default-features`    |
+| Tauri wiring (`plugin`; feature `tauri`, **on by default**) | Asks Tauri for windows, monitors and events and hands the values to the pure half                                                                                                     | Code review, `tauri-check.yml` (compile and clippy on ubuntu and windows), a check on a real desktop |
 
 `tauri` is on by default so that an app only adds one dependency line. Only the places that build headless (the step
 in `ci.yml` and the external-consumer fixture) write `--no-default-features` / `default-features = false`.
