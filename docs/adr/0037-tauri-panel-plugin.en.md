@@ -38,8 +38,14 @@ An app adds `.plugin(banto_tauri_panel::init())` to its `tauri::Builder` and `ba
 `banto-tauri-panel:allow-list` (added with #1013) and `banto-tauri-panel:allow-close` (added with #1021) to its
 capability. The plugin owns:
 
-- The command `open` (`plugin:banto-tauri-panel|open`, arguments `id` and `title`). If the id's window is already
-  open it is only brought to the front.
+- The command `open` (`plugin:banto-tauri-panel|open`, arguments `id` and `title`, and an optional `background`).
+  If the id's window is already open it is only brought to the front. `background` (`"#rrggbb"`; added with #1015)
+  is the colour the window is built with, so it is not the webview's default white for the ~2 seconds before the page
+  is drawn. Its shape is checked by the pure `parse_background` and a bad value is an error (treated like
+  `validate_panel_id`). It is always opaque (WebView2 only knows an alpha of 0 or 255; `#rrggbbaa` is not accepted).
+  `Builder::background` sets a default, and the argument wins. The frontend passes the current screen's colour at
+  every open (`createPanelPopOut`'s `background`), so a theme change is followed. A window that is already open keeps
+  its colour. It is the same `open`, so no new capability permission.
 - The command `list` (`plugin:banto-tauri-panel|list`, no arguments; added with #1013): the ids of the panel windows
   open right now (built by the plugin and not yet seen destroyed).
 - The command `close` (`plugin:banto-tauri-panel|close`, argument `id`; added with #1021): closes that id's window
@@ -53,7 +59,7 @@ capability. The plugin owns:
 - Settings (`banto_tauri_panel::Builder`): the route shape (default `panel/{id}`), the main window's label (default
   `main`), the prefix of the panel windows' labels (default `panel-`), default and minimum size, **memory off**
   (`remember_geometry(false)`), **closing together off** (`close_with_main(false)`), where the memory is kept
-  (`store_path`). The title is passed from the frontend on every open.
+  (`store_path`), the windows' default background colour (`background`). The title is passed from the frontend on every open.
 - The plugin tracks **only the windows it built itself (label -> id)** and limits focusing, the closed notice,
   the memory and closing with the main window to them. An app window that merely has a label with the prefix is left
   alone. The settings are checked by the pure `PanelConfig::validate`: an empty prefix, invalid characters, an empty
