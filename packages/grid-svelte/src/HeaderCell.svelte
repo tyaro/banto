@@ -50,6 +50,12 @@
 		 * reactivity already drives the client-side filter/sort pipeline).
 		 */
 		onSortOrFilterChange?: () => void;
+		/**
+		 * Called with a sentence describing the sort right after this header toggled
+		 * it (#1016). BantoGrid reads it out through its live region: in focus mode a
+		 * screen reader says nothing when the sort button's name changes.
+		 */
+		onSortAnnounce?: (text: string) => void;
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's (and FilterPopover's) visible strings. Defaults reproduce today's Japanese output. */
 		messages?: Partial<GridMessages>;
 		/** Injected day-range input for a date / date-and-time column's filter (`CellEditors.dateRange`). */
@@ -70,6 +76,7 @@
 		onDragMove,
 		onDragEnd,
 		onSortOrFilterChange,
+		onSortAnnounce,
 		messages = {},
 		dateRangeInput
 	}: Props = $props();
@@ -98,6 +105,29 @@
 	const appliedDescription = $derived(
 		activeFilter ? t.filterAppliedDescription(columnLabel) : undefined
 	);
+
+	/** Toggles this column's sort (click, Enter / Space) and tells the grid and the screen reader. */
+	function toggleSort(additive: boolean) {
+		gridState.toggleSort(column.id, additive);
+		onSortOrFilterChange?.();
+		const entry = gridState.sort.findIndex((e) => e.field === column.id);
+		const total = gridState.sort.length;
+		let text: string;
+		if (entry === -1) {
+			text = total === 0 ? t.sortClearedStatus() : t.sortKeyRemovedStatus(columnLabel);
+		} else {
+			const asc = gridState.sort[entry].direction === 'asc';
+			text =
+				total === 1
+					? asc
+						? t.sortAscendingStatus(columnLabel)
+						: t.sortDescendingStatus(columnLabel)
+					: asc
+						? t.sortMultipleAscendingStatus(columnLabel, entry + 1)
+						: t.sortMultipleDescendingStatus(columnLabel, entry + 1);
+		}
+		onSortAnnounce?.(text);
+	}
 
 	function handleBodyPointerDown(event: PointerEvent) {
 		if (event.button !== 0) return;
@@ -129,8 +159,7 @@
 			if (isDragging) {
 				onDragEnd();
 			} else if (sortable) {
-				gridState.toggleSort(column.id, upEvent.shiftKey);
-				onSortOrFilterChange?.();
+				toggleSort(upEvent.shiftKey);
 			}
 		}
 
@@ -168,8 +197,7 @@
 		if (!sortable) return;
 		if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault();
-			gridState.toggleSort(column.id, event.shiftKey);
-			onSortOrFilterChange?.();
+			toggleSort(event.shiftKey);
 		}
 	}
 
@@ -209,61 +237,68 @@
 	style:width={`${width}px`}
 	style:left={pinnedLeft !== undefined ? `${pinnedLeft}px` : undefined}
 >
-	<!-- `data-banto-grid-header-stop` (`HEADER_STOP_ATTR`): the header row is one
-	     tab stop and `headerTabStop` (BantoGrid) owns the `tabindex` of the marked
-	     controls (#1016). A column that cannot be sorted is not one of them. -->
-	<div
-		class="cell-body"
-		class:sortable
-		role="button"
-		tabindex="-1"
-		data-banto-grid-header-stop={sortable ? '' : undefined}
-		onpointerdown={handleBodyPointerDown}
-		onkeydown={handleBodyKeydown}
-	>
-		<span class="label" style:text-align={column.align ?? 'left'}>{column.header}</span>
-		{#if sortEntry}
-			<span class="sort-arrow">{sortEntry.direction === 'asc' ? '▲' : '▼'}</span>
-			{#if showPriority}
-				<span class="sort-priority">{sortIndex + 1}</span>
+	<!-- `role="toolbar"` with `display: contents` (same layout): NVDA stays out of browse
+	     mode on a focus inside a toolbar, so the arrow keys reach `headerTabStop` (#1016).
+	     No name: the controls inside already say which column they act on, and a name
+	     would be read once more on every move into the toolbar. The resize handle stays
+	     outside (a separator is not a toolbar item). -->
+	<div class="header-toolbar" role="toolbar">
+		<!-- `data-banto-grid-header-stop` (`HEADER_STOP_ATTR`): the header row is one
+		     tab stop and `headerTabStop` (BantoGrid) owns the `tabindex` of the marked
+		     controls (#1016). A column that cannot be sorted is not one of them. -->
+		<div
+			class="cell-body"
+			class:sortable
+			role="button"
+			tabindex="-1"
+			data-banto-grid-header-stop={sortable ? '' : undefined}
+			onpointerdown={handleBodyPointerDown}
+			onkeydown={handleBodyKeydown}
+		>
+			<span class="label" style:text-align={column.align ?? 'left'}>{column.header}</span>
+			{#if sortEntry}
+				<span class="sort-arrow">{sortEntry.direction === 'asc' ? '▲' : '▼'}</span>
+				{#if showPriority}
+					<span class="sort-priority">{sortIndex + 1}</span>
+				{/if}
+			{/if}
+		</div>
+
+		{#if column.filterable}
+			<button
+				bind:this={filterButton}
+				type="button"
+				class="filter-button"
+				class:active={!!activeFilter}
+				data-banto-grid-header-stop
+				aria-label={t.filterAriaLabel(columnLabel)}
+				aria-describedby={activeFilter ? filterAppliedId : undefined}
+				title={appliedDescription}
+				aria-haspopup="dialog"
+				aria-expanded={filterOpen}
+				aria-controls={filterOpen ? filterId : undefined}
+				onclick={toggleFilter}
+			>
+				▾
+			</button>
+			{#if activeFilter}
+				<span id={filterAppliedId} hidden>{appliedDescription}</span>
+			{/if}
+			{#if filterOpen}
+				<FilterPopover
+					id={filterId}
+					trigger={filterButton}
+					{column}
+					current={activeFilter}
+					onApply={applyFilter}
+					onClear={clearFilter}
+					onClose={(reason) => closeFilter(reason === 'escape')}
+					{messages}
+					{dateRangeInput}
+				/>
 			{/if}
 		{/if}
 	</div>
-
-	{#if column.filterable}
-		<button
-			bind:this={filterButton}
-			type="button"
-			class="filter-button"
-			class:active={!!activeFilter}
-			data-banto-grid-header-stop
-			aria-label={t.filterAriaLabel(columnLabel)}
-			aria-describedby={activeFilter ? filterAppliedId : undefined}
-			title={appliedDescription}
-			aria-haspopup="dialog"
-			aria-expanded={filterOpen}
-			aria-controls={filterOpen ? filterId : undefined}
-			onclick={toggleFilter}
-		>
-			▾
-		</button>
-		{#if activeFilter}
-			<span id={filterAppliedId} hidden>{appliedDescription}</span>
-		{/if}
-		{#if filterOpen}
-			<FilterPopover
-				id={filterId}
-				trigger={filterButton}
-				{column}
-				current={activeFilter}
-				onApply={applyFilter}
-				onClear={clearFilter}
-				onClose={(reason) => closeFilter(reason === 'escape')}
-				{messages}
-				{dateRangeInput}
-			/>
-		{/if}
-	{/if}
 
 	{#if resizable}
 		<div
@@ -318,6 +353,12 @@
 	   sets `scrolled-x` on the scroll container). */
 	:global(.banto-grid.scrolled-x) .header-cell.pinned-edge {
 		box-shadow: var(--banto-grid-pinned-shadow);
+	}
+
+	/* The toolbar adds a role, not a box: the body and the filter button stay the
+	   header cell's flex items. */
+	.header-toolbar {
+		display: contents;
 	}
 
 	.cell-body {

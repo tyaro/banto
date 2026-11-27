@@ -889,6 +889,8 @@
 
 	// Text of the polite live region: set only when the grid itself changes
 	// the selection, so nothing is read when the grid mounts.
+	// Also read out the sort a header just changed (#1016), so the region is there
+	// whether or not rows can be selected.
 	let selectionAnnouncement = $state('');
 
 	// The bar goes away with the last selected row, however that happens (clear
@@ -2335,19 +2337,22 @@
 						role="columnheader"
 						aria-label={t.selectColumnLabel()}
 					>
-						<label class="select-hit">
-							<input
-								type="checkbox"
-								class="select-box"
-								checked={selectAll === 'all'}
-								indeterminate={selectAll === 'some'}
-								disabled={selectAllTargets.length === 0}
-								aria-label={selectAllLabel}
-								title={selectAllLabel}
-								data-banto-grid-header-stop
-								onchange={toggleAllSelected}
-							/>
-						</label>
+						<!-- A toolbar, like the other headers' (HeaderCell): see there (#1016). -->
+						<div class="header-toolbar" role="toolbar">
+							<label class="select-hit">
+								<input
+									type="checkbox"
+									class="select-box"
+									checked={selectAll === 'all'}
+									indeterminate={selectAll === 'some'}
+									disabled={selectAllTargets.length === 0}
+									aria-label={selectAllLabel}
+									title={selectAllLabel}
+									data-banto-grid-header-stop
+									onchange={toggleAllSelected}
+								/>
+							</label>
+						</div>
 					</div>
 				{/if}
 				{#each gridState.orderedColumns as column, fieldIndex (column.id)}
@@ -2362,6 +2367,7 @@
 						onDragMove={handleDragMove}
 						onDragEnd={handleDragEnd}
 						onSortOrFilterChange={notifyParamsChange}
+						onSortAnnounce={(text) => (selectionAnnouncement = text)}
 						{messages}
 						dateRangeInput={editors.dateRange}
 					/>
@@ -2700,8 +2706,8 @@
 			onReturn={returnFromEditError}
 		/>
 	{/if}
+	<div class="cell-sr-only" role="status" aria-live="polite">{selectionAnnouncement}</div>
 	{#if selectable}
-		<div class="cell-sr-only" role="status" aria-live="polite">{selectionAnnouncement}</div>
 		{#if bulkBarVisible}
 			<!-- Under the grid, so the rows do not move when it appears (#713). -->
 			<div
@@ -2887,6 +2893,11 @@
 		align-items: stretch;
 		justify-content: center;
 		min-width: 0;
+	}
+
+	/* A role, not a box (same as HeaderCell's). */
+	.header-toolbar {
+		display: contents;
 	}
 
 	.select-hit {

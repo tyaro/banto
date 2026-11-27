@@ -102,6 +102,18 @@ export interface GridMessages {
 	bulkBarLabel?: () => string;
 	/** Row selection: accessible name of the header cell holding the select-all checkbox (#1016). */
 	selectColumnLabel?: () => string;
+	/** Sort (#1016): read by the live region when the only sort becomes ascending on `header`. */
+	sortAscendingStatus?: (header: string) => string;
+	/** Sort: read when the only sort becomes descending on `header`. */
+	sortDescendingStatus?: (header: string) => string;
+	/** Sort: read when the last sort key is gone, so the rows are in their original order. */
+	sortClearedStatus?: () => string;
+	/** Sort, several columns (Shift+click): `header` is now the `priority`-th key, ascending. */
+	sortMultipleAscendingStatus?: (header: string, priority: number) => string;
+	/** Sort, several columns: `header` is now the `priority`-th key, descending. */
+	sortMultipleDescendingStatus?: (header: string, priority: number) => string;
+	/** Sort, several columns: `header` was dropped from the keys, others remain. */
+	sortKeyRemovedStatus?: (header: string) => string;
 	/**
 	 * Accessible name of the grid itself when the `label` prop is not given
 	 * (#1016). The grid element takes the focus back after the bulk bar closes,
@@ -158,5 +170,12 @@ export const defaultGridMessages: Required<GridMessages> = {
 	selectionClear: () => '選択を解除',
 	bulkBarLabel: () => '一括操作',
 	selectColumnLabel: () => '選択',
+	sortAscendingStatus: (header) => `${header}で昇順に並べ替え`,
+	sortDescendingStatus: (header) => `${header}で降順に並べ替え`,
+	sortClearedStatus: () => '並べ替えを解除',
+	sortMultipleAscendingStatus: (header, priority) => `${header}を第${priority}キーで昇順に並べ替え`,
+	sortMultipleDescendingStatus: (header, priority) =>
+		`${header}を第${priority}キーで降順に並べ替え`,
+	sortKeyRemovedStatus: (header) => `${header}を並べ替えから外しました`,
 	gridLabel: () => 'データ一覧'
 };

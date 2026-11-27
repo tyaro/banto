@@ -88,7 +88,15 @@ export function gridMessages(): Partial<GridMessages> {
 		selectionClear: () => m['grid.selectionClear'](),
 		bulkBarLabel: () => m['grid.bulkBarLabel'](),
 		selectColumnLabel: () => m['grid.selectColumnLabel'](),
-		gridLabel: () => m['grid.gridLabel']()
+		gridLabel: () => m['grid.gridLabel'](),
+		sortAscendingStatus: (header) => m['grid.sortAscendingStatus']({ header }),
+		sortDescendingStatus: (header) => m['grid.sortDescendingStatus']({ header }),
+		sortClearedStatus: () => m['grid.sortClearedStatus'](),
+		sortMultipleAscendingStatus: (header, priority) =>
+			m['grid.sortMultipleAscendingStatus']({ header, priority }),
+		sortMultipleDescendingStatus: (header, priority) =>
+			m['grid.sortMultipleDescendingStatus']({ header, priority }),
+		sortKeyRemovedStatus: (header) => m['grid.sortKeyRemovedStatus']({ header })
 	};
 }
 

@@ -64,11 +64,12 @@ function headerBox(): HTMLInputElement {
 }
 
 describe('BantoGrid row selection (#713)', () => {
-	it('draws no checkbox column, bar or live region unless selectable', () => {
+	it('draws no checkbox column or bar unless selectable', () => {
 		const { container } = render(BantoGrid<Row>, { rows, columns, getRowId });
 		expect(screen.queryByRole('checkbox')).toBeNull();
 		expect(container.querySelector('.bulk-bar')).toBeNull();
-		expect(screen.queryByRole('status')).toBeNull();
+		// The live region also reads out a sort (#1016), so it is there - and empty.
+		expect(screen.getByRole('status').textContent).toBe('');
 		expect(screen.getByRole('grid').getAttribute('aria-colcount')).toBe('2');
 		expect(container.querySelector<HTMLElement>('.header-row')!.style.gridTemplateColumns).toBe(
 			'150px 150px'

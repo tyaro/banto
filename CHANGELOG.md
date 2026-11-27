@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- fix(grid-svelte, admin-template): **見出しの部品の中を `role="toolbar"` で包み、並べ替えの結果を読み上げる**（#1016、NVDA の実機で見つけた）。見出しの部品（全選択・並べ替え・絞り込み）にフォーカスがあっても NVDA はブラウズモードのままで、←/→ が文字読みになり見出し行の roving tabindex（`headerTabStop`）に届かなかった。NVDA は祖先に `toolbar` があるとフォーカスモードにするので、各見出しの中を `<div role="toolbar">`（`display: contents`、見た目は同じ・名前なし）で包んだ（リサイズの separator は外）。また、フォーカスモードで並べ替えを Enter で押しても何も読まれなかったので、`role="status"` の領域が「IDで昇順に並べ替え」「並べ替えを解除」などと読む（`GridMessages` に `sortAscendingStatus` ほか 6 つ、admin-template は ja / en を追加。領域は `selectable` でなくても出る）。
 - fix(grid-svelte): **`BantoGrid` の Tab の止まり場を「本文 1 つ・見出し 1 つ・一括操作バー」にした**（#1016 の項目 5）。今までは見出しの全選択・列ごとの並べ替えと絞り込み・外枠・各行のチェックボックス・行のリンクや `render` / `cell` の部品がすべて止まり場で、一括操作バーまで Tab が遠かった（見出しだけで 12 回以上）。外枠から一括操作バーまで Tab 2 回になる（DOM の順で 外枠 → 見出し行 → バー）。
   - **見出し行は roving tabindex**（新しい action `headerTabStop`）: 部品（全選択 → 列ごとに並べ替え → 絞り込み）のうち 1 つだけ `tabindex="0"`。←/→ で前後、Home / End で端へ。最後に触った部品（キーでもマウスでも）へ Tab で戻る。並べ替えできない列・無効の全選択は入らず、列の並べ替え・非表示・固定で部品が変わっても 1 つのまま。並べ替えの Enter / Space と絞り込みのポップオーバーの動きは変わらない。
   - **本文は外枠だけ**: 行のチェックボックス・リンク・`render` / `cell` の部品（後から描き足したものも）を止まり場から外す。#1031 で範囲の外の行だけに付けていた番兵（`tabindex="-32768"` と `data-banto-grid-tabindex`）を全部の行へ広げた（action は `outsideRowTabStops` → `rowTabStops`）。編集中のエディタは今までどおり（範囲の外にある間だけ外す）。範囲の外の行にフォーカスを残さない #1031 の動きも変わらない。
