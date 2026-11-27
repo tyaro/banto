@@ -11,6 +11,7 @@
 import type { Component } from 'svelte';
 import { JapaneseYen, Package, TriangleAlert, Warehouse } from '@lucide/svelte';
 import * as m from '#lib/paraglide/messages.js';
+import { formatCount } from '#lib/banto/i18n.js';
 // [scaffold:charts] begin
 import { updatesByMonth } from './dashboard';
 // [scaffold:charts] end
@@ -38,7 +39,7 @@ export interface DashboardKpiDef {
 	sparkline?: (data: DashboardData) => number[];
 }
 
-const yen = (n: number) => `¥${n.toLocaleString()}`;
+const yen = (n: number) => `¥${formatCount(n)}`;
 
 export const DASHBOARD_KPIS: DashboardKpiDef[] = [
 	{
@@ -47,7 +48,7 @@ export const DASHBOARD_KPIS: DashboardKpiDef[] = [
 			return m['dashboard.statCount']();
 		},
 		icon: Package,
-		value: (data) => data.stats.count.toLocaleString()
+		value: (data) => formatCount(data.stats.count)
 	},
 	{
 		id: 'stockTotal',
@@ -58,7 +59,7 @@ export const DASHBOARD_KPIS: DashboardKpiDef[] = [
 		// [scaffold:charts] begin
 		sparkline: (data) => updatesByMonth(data.rows).map((mc) => mc.count),
 		// [scaffold:charts] end
-		value: (data) => data.stats.stockTotal.toLocaleString()
+		value: (data) => formatCount(data.stats.stockTotal)
 	},
 	{
 		id: 'avgPrice',
@@ -76,7 +77,7 @@ export const DASHBOARD_KPIS: DashboardKpiDef[] = [
 			return m['dashboard.statLowStock']({ threshold: LOW_STOCK_THRESHOLD });
 		},
 		icon: TriangleAlert,
-		value: (data) => data.stats.lowStockCount.toLocaleString(),
+		value: (data) => formatCount(data.stats.lowStockCount),
 		link: {
 			drill: { kind: 'lowStock' },
 			get title() {
