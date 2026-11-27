@@ -104,7 +104,7 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 `src/lib/banto/dashboardLayout.ts` とその `.test.ts`（既定の配置・dock の高さ・保存キー・保存値の確かめ。#716）・
 `src/lib/components/dashboard/MemoWidget.svelte`・`src/lib/components/PanelIcon.svelte`（#716）・
 `src/lib/banto/popout.ts` とその `.test.ts`・`src/lib/banto/dockEscape.ts` とその `.test.ts`（dock の gesture の
-Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とその `.test.ts`（dock の文言を `dock.*` から作る。`messages/{ja,en}.json` の `dock.*` キーも外す。#729）・`src/lib/banto/dockTitles.ts` とその `.test.ts`（保存済みレイアウトの title を今の言語で引き直す。#729）（レイアウトの保存の部品は `@banto/dock-svelte` の中にあるので、パッケージと一緒に外れる。ダッシュボードの `currentSessionScope`・`isCurrentSessionScope` の import と、ダッシュボードの dock の保存を見る `e2e/demo/dashboard-layout-commit.spec.ts` も外す。#791）・`src/routes/panel/[id]/`（ポップアウト先の
+Esc をどの層に譲るか。#433）・`src/lib/banto/dockMessages.ts` とその `.test.ts`（dock の文言を `dock.*` から作る。`messages/{ja,en}.json` の `dock.*` キーも外す。#729）・`src/lib/banto/dockTitles.ts` とその `.test.ts`（保存済みレイアウトの title を今の言語で引き直す。#729）（レイアウトの保存の部品は `@banto/dock-svelte` の中にあるので、パッケージと一緒に外れる。ダッシュボードの `currentSessionScope`・`isCurrentSessionScope` の import と、ダッシュボードの dock の保存を見る `e2e/demo/dashboard-layout-commit.spec.ts` も外す。#791。ドラッグのガイドと slide-out の重なりを見る `e2e/demo/dock-guides-on-screen.spec.ts` も外す。#1043）・`src/routes/panel/[id]/`（ポップアウト先の
 スタンドアロンウィンドウ用ルート）、メモ pane の draft と確認ダイアログ
 （`src/lib/banto/dashboardMemo.svelte.ts`・`src/lib/banto/settlePrompt.svelte.ts` と
 それぞれの `.test.ts`、`src/lib/components/DashboardMemoField.svelte`・
