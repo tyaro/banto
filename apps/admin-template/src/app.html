@@ -25,13 +25,27 @@
 		     without its own <svelte:head> override (only routes/panel/[id]
 		     sets a dynamic one, spec §5.3's pop-out windows). -->
 		<title>Banto</title>
+		<!-- The locales of project.inlang (and the one a visitor with nothing usable
+		     stored gets), as JSON, filled in by src/hooks.server.ts from Paraglide
+		     so a locale added to the dictionary needs no edit here (Issue #1024).
+		     The first script below reads it. -->
+		<meta name="banto-locales" content="%banto.locales%" />
 		<script>
 			// Apply the persisted theme + preset + locale before first paint to avoid a
 			// flash. Storage keys must match src/lib/settings.svelte.ts and
 			// src/lib/banto/locale.ts. Locale defaults to 'ja' (the effective
 			// default display locale; base/source locale is 'en') so a fresh tab
-			// renders exactly as before (ADR-0005).
+			// renders exactly as before (ADR-0005). The accepted locales and that
+			// default come from the <meta name="banto-locales"> above, not from a
+			// list written here.
 			(function () {
+				var fallback = 'ja';
+				var known = ['ja'];
+				try {
+					var carried = JSON.parse(document.querySelector('meta[name="banto-locales"]').content);
+					fallback = carried.fallback;
+					known = carried.locales;
+				} catch (_) {}
 				try {
 					var mode = localStorage.getItem('banto.theme') || 'system';
 					var dark =
@@ -44,12 +58,12 @@
 					document.documentElement.dataset.bantoDensity =
 						density === 'compact' || density === 'touch' ? density : 'standard';
 					var locale = localStorage.getItem('banto.locale');
-					document.documentElement.lang = locale === 'en' || locale === 'ja' ? locale : 'ja';
+					document.documentElement.lang = known.indexOf(locale) >= 0 ? locale : fallback;
 				} catch (_) {
 					document.documentElement.dataset.theme = 'light';
 					document.documentElement.dataset.bantoPreset = 'standard';
 					document.documentElement.dataset.bantoDensity = 'standard';
-					document.documentElement.lang = 'ja';
+					document.documentElement.lang = fallback;
 				}
 			})();
 		</script>
@@ -79,5 +93,39 @@
 		     of every page. The wrapper means nothing by itself, so it stays out of the
 		     accessibility tree. -->
 		<div style="display: contents" role="presentation">%sveltekit.body%</div>
+		<!-- Static content from parse time (Issue #1024): before Svelte draws, the
+		     document has no children and a screen reader (NVDA) building its virtual
+		     buffer then reads the document URL. Visually hidden; removed by
+		     routes/+layout.svelte once the app is drawn. The wording is not written
+		     here: src/hooks.server.ts fills the placeholder below with the dictionary's
+		     `common.loading` of every locale (JSON keyed by locale, conventions §13)
+		     when it renders this shell (build and `vite dev`), and the script below
+		     picks the one for the `lang` the first script in <head> decided. -->
+		<p
+			id="banto-boot-status"
+			data-messages="%banto.bootStatus%"
+			style="
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				margin: -1px;
+				padding: 0;
+				overflow: hidden;
+				clip-path: inset(50%);
+				white-space: nowrap;
+				border: 0;
+			"
+		></p>
+		<script>
+			(function () {
+				var status = document.getElementById('banto-boot-status');
+				try {
+					var messages = JSON.parse(status.dataset.messages);
+					status.textContent = messages[document.documentElement.lang] || '';
+				} catch (_) {
+					// Leave it empty: wording is never written here.
+				}
+			})();
+		</script>
 	</body>
 </html>
