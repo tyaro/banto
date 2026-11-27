@@ -26,6 +26,7 @@
 		resizeStep,
 		title = 'Line 1',
 		withTitleSnippet = false,
+		rightEmpty = false,
 		messages
 	}: {
 		leftWidth?: number;
@@ -52,6 +53,7 @@
 		resizeStep?: number;
 		title?: string;
 		withTitleSnippet?: boolean;
+		rightEmpty?: boolean;
 		messages?: UiMessages;
 	} = $props();
 </script>
@@ -89,7 +91,11 @@
 		<button type="button" onclick={() => (leftDrawerOpen = false)}>Pick B</button>
 	{/snippet}
 	{#snippet right()}
-		<button type="button">Detail</button>
+		{#if rightEmpty}
+			<p>Nothing to focus</p>
+		{:else}
+			<button type="button">Detail</button>
+		{/if}
 	{/snippet}
 	<button type="button">Body</button>
 </ThreePaneLayout>
