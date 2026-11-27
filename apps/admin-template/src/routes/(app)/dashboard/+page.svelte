@@ -401,11 +401,41 @@
 	// "Reset layout": the host puts the default in (asked through
 	// `beforePanelChange` like any replacement) and reports it as `'reset'`,
 	// for which the store DELETES the saved value (`reset: 'remove'`).
+	//
+	// #1021: the default has every widget in the dock, so a widget that is out in a window of its
+	// own (the pop-out below) would be on screen twice. Once the default is in, those windows are
+	// closed - and only then: a reset that was refused (the memo's unapplied input, a change made
+	// meanwhile) leaves them alone. Every widget's id is passed, not only the ones the pop-out
+	// remembers: the plugin closes just the windows it has, a window nobody remembered included.
+	// A window that cannot be closed (the capability lacks `banto-tauri-panel:allow-close`) stays,
+	// and its widget stays "in a window" in the View menu; closing it by hand is harmless then
+	// (`restore`'s `dock.open` does nothing for a docked widget).
+	//
+	// The windows go at once, but the pop-out's memory of those widgets waits for the reset to be
+	// saved (`saved`, like `restore` below - #1019): until then the provider still holds the layout
+	// WITHOUT them, and a start after a failed / dropped write, or after the app was closed first,
+	// would read that layout with nothing left to say the widgets are missing. Kept, the next
+	// `connect()` puts them back. Taken BEFORE the replacement: its report is the one that counts.
+	// (A refused reset leaves this promise unused; a later save answers it to nobody.)
 	function resetDockLayout() {
-		void dockHost?.replaceLayout(defaultDashboardLayout(), {
-			saved: true,
-			commit: 'reset'
-		});
+		const host = dockHost;
+		if (!host) return;
+		const saved = layoutSaves.next();
+		void host
+			.replaceLayout(defaultDashboardLayout(), { saved: true, commit: 'reset' })
+			.then(async (outcome) => {
+				if (outcome !== 'applied') return;
+				const { failed } = await popOut.closeWindows(
+					DASHBOARD_WIDGETS.map((def) => def.id),
+					{ saved }
+				);
+				if (failed.length > 0) {
+					console.error(
+						`closing the pop-out windows failed: ${failed.map((f) => f.id).join(', ')}`,
+						failed[0].error
+					);
+				}
+			});
 	}
 
 	const widgetOf = (id: string) => DASHBOARD_WIDGETS.find((def) => def.id === id);

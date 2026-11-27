@@ -9,7 +9,9 @@
  * right now (`isPoppedOut` / `subscribe` / `focus`, and - with a `storage` -
  * across a restart: `connect()` puts back the panels whose window is gone,
  * and a panel put back stays in that memory until `restore` says the dock's
- * layout was saved with it - Issue #1019).
+ * layout was saved with it - Issue #1019), and closes their windows when the
+ * dock has taken the panels back by itself (`closeWindows`, a layout reset -
+ * Issue #1021).
  *
  * What the plugin does on the Rust side - one window per id (opening again
  * only brings it to the front), the position / size memory per id, closing
@@ -43,6 +45,13 @@ export const PANEL_OPEN_COMMAND = 'plugin:banto-tauri-panel|open';
  * now (`string[]`). Needs `banto-tauri-panel:allow-list` in the capability.
  */
 export const PANEL_LIST_COMMAND = 'plugin:banto-tauri-panel|list';
+
+/**
+ * The plugin's command that closes the window of a panel id; it answers
+ * whether there was one (`boolean`). Needs `banto-tauri-panel:allow-close`
+ * in the capability.
+ */
+export const PANEL_CLOSE_COMMAND = 'plugin:banto-tauri-panel|close';
 
 /** What a panel window is opened from: the panel's id and the window title. */
 export interface PanelWindowContent {
@@ -101,6 +110,26 @@ export async function listPanelWindows(options: OpenPanelWindowOptions): Promise
 		throw new Error(`${PANEL_LIST_COMMAND} did not answer a list of panel ids`);
 	}
 	return answer as string[];
+}
+
+/**
+ * Asks the plugin to close the window of panel `id`. Resolves `true` when a
+ * window was closed - the main window then still gets its
+ * `banto://panel-closed`, like for any window that goes away - and `false`
+ * when the plugin had no window for the id. Rejects with the plugin's message
+ * (e.g. the capability lacks `banto-tauri-panel:allow-close`). Resolves
+ * `false` outside Tauri.
+ *
+ * On its own this only closes the window. A panel `createPanelPopOut` has out
+ * in a window is closed through its `closeWindows`, which also forgets it and
+ * does not `restore` it on that notice.
+ */
+export async function closePanelWindow(
+	id: string,
+	options: OpenPanelWindowOptions
+): Promise<boolean> {
+	if (!options.isTauri()) return false;
+	return (await options.invoke(PANEL_CLOSE_COMMAND, { id })) === true;
 }
 
 /**
@@ -251,6 +280,40 @@ export interface PanelPopOutOptions<C extends PanelWindowContent = PanelWindowCo
 	onListError?: (error: unknown) => void;
 }
 
+/** What `PanelPopOut.closeWindows` did. */
+export interface PanelWindowsClosed {
+	/**
+	 * The ids that have no window any more and are not popped out: a window
+	 * was closed, or there was none to close. Forgotten in `storage` too -
+	 * at once, or with `PanelWindowsCloseOptions.saved` once that says so.
+	 */
+	closed: string[];
+	/**
+	 * The ids whose window could not be closed, with the reason. Nothing
+	 * changed for them: a panel that was popped out still is.
+	 */
+	failed: { id: string; error: unknown }[];
+}
+
+/** Options of `PanelPopOut.closeWindows`. */
+export interface PanelWindowsCloseOptions {
+	/**
+	 * "The layout that has the panels back in the dock is saved" - the same
+	 * answer `restore` may return (`PanelRestoreSaved` as a promise), and for
+	 * the same reason: the dock's saved layout lacks a popped-out panel, and
+	 * the write of the layout that has it again (the reset) is later and
+	 * fallible. Given, the ids of the closed windows stay in `storage` until
+	 * it resolves to anything but `false`; while it is pending, and when it
+	 * resolves `false` or rejects, they are kept, and the next
+	 * `createPanelPopOut` over the same `storage` restores those panels at
+	 * its `connect()` (harmless when the layout read then has them already).
+	 * Take it BEFORE the change that puts the panels back is reported.
+	 *
+	 * Omitted = forgotten at once: for a dock whose layout is not saved.
+	 */
+	saved?: PromiseLike<boolean | void>;
+}
+
 export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> {
 	/**
 	 * Hand this to the dock (`DockHost` / `ThreePaneDock`'s `onPopOut`).
@@ -286,6 +349,42 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
 	 * shows - and outside Tauri. Rejects with the plugin's message.
 	 */
 	focus: (content: PanelWindowContent) => Promise<void>;
+	/**
+	 * Closes panel windows WITHOUT putting the panels back: for when the dock
+	 * has them again by other means - a layout reset that put every panel in
+	 * its default place (Issue #1021). Call it AFTER that change is in (and not
+	 * at all when it was refused): from here on the dock is what shows the
+	 * panels.
+	 *
+	 * `ids` omitted = the panels popped out here (`isPoppedOut`). Given = those
+	 * ids, popped out here or not - the plugin only closes a window it built,
+	 * so passing every panel of the dock also closes a window this object does
+	 * not know of (one left open by a run without `storage`).
+	 *
+	 * For each id whose window is closed (or that had none): `isPoppedOut` is
+	 * `false`, and `restore` is NOT called - not now, and not on the
+	 * `banto://panel-closed` of that window either (also when the id is closed
+	 * again before that notice has come). The id is gone from `storage` at
+	 * once, or - with `options.saved` - once the layout that has the panel back
+	 * is known to be saved (see `PanelWindowsCloseOptions.saved`).
+	 *
+	 * An id whose window could not be closed (the capability lacks
+	 * `banto-tauri-panel:allow-close`, the plugin's error) is reported in
+	 * `failed` and left as it was: still popped out, still remembered. Its
+	 * window is still there, so the menu keeps showing it as on screen
+	 * (`focus` brings it to the front), and closing that window later calls
+	 * `restore` as usual - which has to be harmless for a panel the dock
+	 * already shows (`@banto/dock-svelte`'s `dock.open` is). The same goes for
+	 * an id whose window is being opened at that moment (a pop-out or `focus`
+	 * in flight - nothing is asked of the plugin then), or that was popped out
+	 * again while the plugin was asked.
+	 *
+	 * Never rejects. Resolves with nothing done outside Tauri.
+	 */
+	closeWindows: (
+		ids?: readonly string[],
+		options?: PanelWindowsCloseOptions
+	) => Promise<PanelWindowsClosed>;
 }
 
 /**
@@ -326,6 +425,14 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
  * panel the user closes afterwards stays closed. A panel popped out again
  * while its save is still awaited is simply popped out: the older answer is
  * ignored.
+ *
+ * `closeWindows` is the other way a panel stops being popped out (Issue
+ * #1021): the dock took the panels back by itself (a layout reset), so their
+ * windows are closed and the panels are forgotten without a `restore` - the
+ * closed notice of such a window is swallowed. Like a put-back, the stored
+ * memory can wait for the save of the layout that has the panels again
+ * (`closeWindows`' `saved`). A window that could not be closed keeps its
+ * panel popped out (see `PanelPopOut.closeWindows`).
  *
  * If `list` fails, nothing is restored and `onListError` gets the reason.
  * Restoring blindly would be the other choice, and it is the worse one:
@@ -393,6 +500,21 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	// Not "popped out" any more, yet still in `storage`, so that the next start
 	// restores them again if that save never lands.
 	const unsaved = new Map<string, { epoch: number }>();
+	// Windows `closeWindows` is closing - the plugin has not answered yet
+	// (#1021). `noticed` = the closed notice came meanwhile (the window is
+	// gone, whatever the answer will be).
+	const closing = new Map<string, { noticed: boolean }>();
+	// Per id, how many windows `closeWindows` has closed whose closed notice
+	// has not come yet: those notices must not `restore` the panel - the dock
+	// already has it. A count, not a flag: closing an id again before the
+	// notice (no window then, or a new one after a pop-out in between) must
+	// not lose what is still owed for the earlier window.
+	const owed = new Map<string, number>();
+	// `closeWindows`' `saved` per id, for the close in flight to pick up.
+	const keeps = new Map<string, PromiseLike<boolean | void>>();
+	type CloseFailure = { error: unknown } | null;
+	// The closes in flight, so that asking twice shares the one answer.
+	const closes = new Map<string, Promise<CloseFailure>>();
 
 	/** What `storage` holds: the panels the next start has to look at. */
 	const stored = () => [...new Set([...popped, ...unsaved.keys()])];
@@ -482,6 +604,16 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 		}
 		persist();
 	};
+	/** Lets go of the stored id once `saved` resolves to anything but `false`. */
+	const awaitSaved = (id: string, call: { epoch: number }, saved: PromiseLike<unknown>) => {
+		void Promise.resolve(saved).then(
+			(answer) => {
+				if (answer !== false) confirmSaved(id, call, true);
+			},
+			// Not saved as far as anyone knows: kept for the next start.
+			() => {}
+		);
+	};
 	/**
 	 * The panel goes back into the dock: no longer popped out before `restore`
 	 * runs (so `restore` sees it as such), but kept in `storage` until
@@ -506,13 +638,92 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 			confirmSaved(id, call, false);
 			return;
 		}
-		void Promise.resolve(result as PromiseLike<unknown>).then(
-			(saved) => {
-				if (saved !== false) confirmSaved(id, call, true);
-			},
-			// Not saved as far as anyone knows: kept for the next start.
-			() => {}
-		);
+		awaitSaved(id, call, result as PromiseLike<unknown>);
+	};
+
+	/** A closed notice: the panel goes back, unless `closeWindows` closed that window. */
+	const onClosed = (id: string) => {
+		// The oldest window first: a notice owed for a window closed earlier is
+		// that window's, also while a later close of the id is in flight.
+		const owes = owed.get(id) ?? 0;
+		if (owes > 0) {
+			if (owes === 1) owed.delete(id);
+			else owed.set(id, owes - 1);
+			return;
+		}
+		const close = closing.get(id);
+		if (close) {
+			close.noticed = true;
+			return;
+		}
+		putBack(id);
+	};
+	/** `closeWindows` for one id: resolves to the reason when the panel is left as it was. */
+	const closeOne = async (id: string): Promise<CloseFailure> => {
+		if (opening.has(id)) {
+			// A pop-out or `focus` is opening this window right now: closing it
+			// would race with that. Left as it is, for the caller to see.
+			return { error: new Error(`the window of panel "${id}" is being opened`) };
+		}
+		const asked = generationOf(id);
+		const close = { noticed: false };
+		closing.set(id, close);
+		let had = false;
+		let failure: CloseFailure = null;
+		try {
+			had = await closePanelWindow(id, options);
+		} catch (error) {
+			failure = { error };
+		}
+		if (closing.get(id) === close) closing.delete(id);
+		const keep = keeps.get(id);
+		keeps.delete(id);
+		// Was there a window that is gone now?
+		let gone = had;
+		if (close.noticed) {
+			// The window went away while the plugin was asked - also when the
+			// plugin then answered with an error: gone is what was wanted, and
+			// its notice has been taken already.
+			failure = null;
+			had = false;
+			gone = true;
+		}
+		// The notice of the window just closed is still to come: one more is
+		// owed - while somebody listens. With no subscription it is never
+		// heard, and a mark left behind would swallow a later window's notice.
+		// No window (`had` is false) adds nothing and takes nothing away: a
+		// notice still owed for a close made before this one stays owed.
+		if (!failure && had && subscription !== null) owed.set(id, (owed.get(id) ?? 0) + 1);
+		if (failure) return failure;
+		// Popped out again (or focused) while the plugin was asked: the panel is
+		// out in a window that this answer knows nothing of.
+		if (generationOf(id) !== asked) {
+			return { error: new Error(`panel "${id}" was popped out again meanwhile`) };
+		}
+		const wasPopped = popped.delete(id);
+		if (keep !== undefined && (wasPopped || gone)) {
+			// The dock has the panel again, but the layout that says so is not
+			// known to be saved (the saved one lacks it since the pop-out): the
+			// id stays stored until `saved` answers, like after a put-back.
+			const call = { epoch: popOutEpochOf(id) };
+			unsaved.set(id, call);
+			persist();
+			if (wasPopped) notify();
+			awaitSaved(id, call, keep);
+		} else if (wasPopped) {
+			persist();
+			notify();
+		}
+		return null;
+	};
+	const closeShared = (id: string): Promise<CloseFailure> => {
+		const running = closes.get(id);
+		if (running) return running;
+		const started = closeOne(id).finally(() => {
+			if (closes.get(id) === started) closes.delete(id);
+		});
+		closes.set(id, started);
+		return started;
 	};
 
 	/**
@@ -607,7 +818,7 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	return {
 		onPopOut: options.isTauri() ? (content) => void popOut(content) : undefined,
 		connect: () => {
-			const { stop, ready } = subscribePanelClosed(putBack, options);
+			const { stop, ready } = subscribePanelClosed(onClosed, options);
 			subscription = ready;
 			// After the registration, so a window that closes from now on is
 			// heard: one that closed before is simply not in the plugin's answer.
@@ -615,7 +826,11 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 			// can still be put back.
 			void ready.then(() => reconcile(() => subscription === ready));
 			return () => {
-				if (subscription === ready) subscription = null;
+				if (subscription === ready) {
+					subscription = null;
+					// Nobody hears the notices these marks wait for any more (#1021).
+					owed.clear();
+				}
 				stop();
 			};
 		},
@@ -644,6 +859,23 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 			} finally {
 				if (owns) opening.delete(id);
 			}
+		},
+		closeWindows: async (ids, closeOptions) => {
+			const result: PanelWindowsClosed = { closed: [], failed: [] };
+			if (!options.isTauri()) return result;
+			const targets = [...new Set(ids ?? popped)];
+			// Before the closes start (or are joined): a close already in flight
+			// for an id takes this answer too. A call without `saved` does not
+			// take away the one an earlier call gave - keeping is the safe side.
+			const saved = closeOptions?.saved;
+			if (saved !== undefined) for (const id of targets) keeps.set(id, saved);
+			const answers = await Promise.all(targets.map((id) => closeShared(id)));
+			targets.forEach((id, i) => {
+				const failure = answers[i];
+				if (failure) result.failed.push({ id, error: failure.error });
+				else result.closed.push(id);
+			});
+			return result;
 		}
 	};
 }

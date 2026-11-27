@@ -1,4 +1,4 @@
-//! The Tauri half (ADR-0037): the plugin, its commands (`open`, `list`) and
+//! The Tauri half (ADR-0037): the plugin, its commands (`open`, `list`, `close`) and
 //! its event handling. Wiring only - every rule (which id is valid, which label is a
 //! panel's, where the window goes, what the file holds) is decided by the
 //! pure modules, which is where the tests are. CI's headless job does not
@@ -20,8 +20,8 @@ use crate::store::GeometryStore;
 use crate::PANEL_CLOSED_EVENT;
 
 /// The plugin's name: the frontend invokes `plugin:banto-tauri-panel|open`
-/// (and `|list`) and the capability file allows `banto-tauri-panel:allow-open`
-/// (and `allow-list`). Must equal
+/// (and `|list`, `|close`) and the capability file allows
+/// `banto-tauri-panel:allow-open` (and `allow-list`, `allow-close`). Must equal
 /// `links` in Cargo.toml (Tauri derives the ACL's plugin name from it).
 pub const PLUGIN_NAME: &str = "banto-tauri-panel";
 
@@ -180,6 +180,43 @@ fn list(state: State<'_, PanelState>) -> Vec<String> {
     state.tracked_ids()
 }
 
+/// Closes the window of panel `id`, if this plugin has one open. Answers
+/// `true` when a window was closed and `false` when there was none (never
+/// opened, or already gone) - an unknown id is not an error, the caller only
+/// wants the window not to be there. Only windows this plugin built are
+/// closed; an app window that merely has the label is left alone (`false`).
+///
+/// For the frontend that puts the panel back into the dock by itself (a
+/// layout reset: `@banto/admin-core`'s `createPanelPopOut(...).closeWindows`,
+/// Issue #1021). The window goes the usual way from there: its geometry is
+/// kept and the main window still gets `banto://panel-closed` - `true` tells
+/// the caller that this notice is on its way, so it can tell it from one of a
+/// window the user closed.
+///
+/// `destroy`, not `close`: nothing in a panel can veto it (the same as when
+/// the main window closes). `async` like `open`: window work from a
+/// synchronous command can deadlock on Windows.
+///
+/// Like `open` outside conventions §1: no data is written, there is no REST
+/// twin.
+#[tauri::command]
+async fn close<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, PanelState>,
+    id: String,
+) -> Result<bool, String> {
+    validate_panel_id(&id).map_err(|err| err.to_string())?;
+    let label = state.config.label_for(&id);
+    if !state.is_tracked(&label) {
+        return Ok(false);
+    }
+    let Some(window) = app.get_webview_window(&label) else {
+        return Ok(false);
+    };
+    window.destroy().map_err(|err| err.to_string())?;
+    Ok(true)
+}
+
 /// Takes the window's current place into the memory. Skipped while the
 /// window is hidden (the restore above is still moving it), minimised,
 /// maximised or fullscreen - none of those is a place to reopen at.
@@ -321,7 +358,7 @@ impl Builder {
     pub fn build<R: Runtime>(self) -> TauriPlugin<R> {
         let config = self.config;
         PluginBuilder::new(PLUGIN_NAME)
-            .invoke_handler(tauri::generate_handler![open, list])
+            .invoke_handler(tauri::generate_handler![open, list, close])
             .setup(move |app, _api| {
                 // A bad configuration stops the app at start-up with the
                 // reason (an `Err`, not a panic).
