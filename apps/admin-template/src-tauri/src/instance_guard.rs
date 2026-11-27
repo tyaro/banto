@@ -687,7 +687,7 @@ pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
 
     #[test]
@@ -957,6 +957,9 @@ mod tests {
             panic!("the first lock must be acquired");
         };
         let stop = AtomicBool::new(false);
+        // Counts the workers that have tried the lock at least once, so a
+        // few CPUs cannot let `stop` come before some worker ever ran.
+        let tried = AtomicUsize::new(0);
         std::thread::scope(|scope| {
             // Starts of the other key come and go ...
             let other = scope.spawn(|| {
@@ -971,12 +974,18 @@ mod tests {
                 .map(|_| {
                     scope.spawn(|| {
                         let mut held = 0;
-                        while !stop.load(Ordering::SeqCst) {
+                        loop {
                             assert!(matches!(
                                 try_lock_file(&own_lock).unwrap(),
                                 LockAttempt::Held
                             ));
                             held += 1;
+                            if held == 1 {
+                                tried.fetch_add(1, Ordering::SeqCst);
+                            }
+                            if stop.load(Ordering::SeqCst) {
+                                break;
+                            }
                         }
                         held
                     })
@@ -984,6 +993,9 @@ mod tests {
                 .collect();
             for _ in 0..200 {
                 tidy(dir.path(), "9.3.0");
+            }
+            while tried.load(Ordering::SeqCst) < second_starts.len() {
+                std::thread::yield_now();
             }
             stop.store(true, Ordering::SeqCst);
             other.join().unwrap();
