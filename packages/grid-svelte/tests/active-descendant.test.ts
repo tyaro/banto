@@ -5,6 +5,7 @@
  * tell which cell the cursor is on).
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
 import { cellDomId, domIdPart, groupRowDomId } from '../src/core/domId';
@@ -211,5 +212,101 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 		const active = activeDescendant(grid);
 		expect(active).toBe(header);
 		expect(active.getAttribute('role')).toBe('row');
+	});
+});
+
+/**
+ * Reached by Tab there is no active cell yet. NVDA then stays in browse mode
+ * and takes the arrow keys for itself, so the key that would create the cursor
+ * never arrives: the cursor is placed as soon as the grid element is focused.
+ */
+describe('BantoGrid: focus on the grid element places the cursor (#1016)', () => {
+	it('names the first cell of the first row in view, without selecting anything', async () => {
+		const { container } = render(BantoGrid<Row>, {
+			rows: makeRows(1_000),
+			columns,
+			rowHeight: 32,
+			selectable: true,
+			getRowId: (row: Row) => row.id
+		});
+		const grid = screen.getByRole('grid');
+		grid.focus();
+		await tick();
+		const first = cellAt(container, 0, 'name');
+		expect(activeDescendant(grid)).toBe(first);
+		expect(first.classList.contains('active')).toBe(true);
+		// Only the cursor: no cell range, no row selection, no scrolling.
+		expect(container.querySelector('[role="gridcell"][aria-selected="true"]')).toBeNull();
+		expect(container.querySelector('input[type="checkbox"]:checked')).toBeNull();
+		expect(grid.scrollTop).toBe(0);
+	});
+
+	it('after scrolling, names the first row in view at that time', async () => {
+		const { container } = render(BantoGrid<Row>, {
+			rows: makeRows(1_000),
+			columns,
+			rowHeight: 32,
+			getRowId: (row: Row) => row.id
+		});
+		const grid = screen.getByRole('grid');
+		// The header (32px in this stub) scrolls with the rows.
+		grid.scrollTop = 32 + 500 * 32;
+		await fireEvent.scroll(grid);
+		grid.focus();
+		await tick();
+		expect(activeDescendant(grid)).toBe(cellAt(container, 500, 'name'));
+		expect(grid.scrollTop).toBe(32 + 500 * 32);
+	});
+
+	it('leaves an existing active cell where it is', async () => {
+		const { container } = render(BantoGrid<Row>, {
+			rows: makeRows(5),
+			columns,
+			getRowId: (row: Row) => row.id
+		});
+		const grid = screen.getByRole('grid');
+		await fireEvent.pointerDown(cellAt(container, 2, 'category'));
+		grid.focus();
+		await tick();
+		expect(activeDescendant(grid)).toBe(cellAt(container, 2, 'category'));
+	});
+
+	it('names the group header row when that is the first row in view', async () => {
+		const state = new GridState(columns);
+		state.groupBy = 'category';
+		const { container } = render(BantoGrid<Row>, {
+			rows: makeRows(4),
+			columns,
+			state,
+			getRowId: (row: Row) => row.id
+		});
+		const grid = screen.getByRole('grid');
+		grid.focus();
+		await tick();
+		expect(activeDescendant(grid)).toBe(container.querySelector('.group-header-row'));
+	});
+
+	it('does not place the cursor when a header button takes the focus', async () => {
+		const { container } = render(BantoGrid<Row>, {
+			rows: makeRows(3),
+			columns,
+			getRowId: (row: Row) => row.id
+		});
+		const grid = screen.getByRole('grid');
+		const button = screen.getByRole('button', { name: 'Name' });
+		button.focus();
+		await tick();
+		expect(document.activeElement).toBe(button);
+		expect(grid.hasAttribute('aria-activedescendant')).toBe(false);
+		expect(container.querySelector('.cell.active')).toBeNull();
+	});
+
+	it('does nothing with no rows', async () => {
+		render(BantoGrid<Row>, { rows: [] as Row[], columns, getRowId: (row: Row) => row.id });
+		const grid = screen.getByRole('grid');
+		grid.focus();
+		await tick();
+		expect(document.activeElement).toBe(grid);
+		expect(grid.hasAttribute('aria-activedescendant')).toBe(false);
 	});
 });

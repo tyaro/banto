@@ -1125,8 +1125,13 @@
 	 * (`scrollActiveIntoView`).
 	 */
 	function handleFocusIn(event: FocusEvent) {
-		if (!containerEl || !pinActive) return;
+		if (!containerEl) return;
 		const target = event.target;
+		if (target === containerEl) {
+			placeCursorOnGridFocus();
+			return;
+		}
+		if (!pinActive) return;
 		if (!(target instanceof Element)) return;
 		const cell = target.closest('.cell, .header-cell');
 		if (!cell || !containerEl.contains(cell) || cell.classList.contains('pinned')) return;
@@ -1143,6 +1148,46 @@
 			cellPinned: false
 		});
 		if (next !== containerEl.scrollLeft) containerEl.scrollLeft = next;
+	}
+
+	/** Display indices of the first and the last row in the viewport (`count` > 0). */
+	function rowsInView(count: number): { firstInView: number; lastInView: number } {
+		const rowHeight = gridState.rowHeight;
+		const firstInView = Math.min(
+			count - 1,
+			Math.max(0, Math.floor(effectiveScrollTop / rowHeight))
+		);
+		const lastInView = Math.min(
+			count - 1,
+			Math.max(firstInView, Math.ceil((effectiveScrollTop + rowsViewportHeight) / rowHeight) - 1)
+		);
+		return { firstInView, lastInView };
+	}
+
+	/**
+	 * Focus landed on the grid element itself with no active cell (reached by
+	 * Tab, or handed back by code): put the cursor on the first row in view,
+	 * first column, so `aria-activedescendant` is there from the start (#1016).
+	 * Without it NVDA stays in browse mode, reads the whole table and takes the
+	 * arrow keys for itself, so the key that would create the cursor never
+	 * arrives. Only the cursor is placed: no range (`anchor` stays null, no
+	 * cell turns `aria-selected`), no row selection, no scrolling. A group
+	 * header in view counts (the row is then the active descendant); a row not
+	 * fetched yet does not. With nothing to land on, nothing changes and the
+	 * first navigation key still enters the grid (`enterFirstCellFromKeyboard`).
+	 */
+	function placeCursorOnGridFocus() {
+		if (selection.active || editing) return;
+		const field = orderedFieldIds[0];
+		if (field === undefined) return;
+		const count = effectiveRowCount;
+		if (count === 0) return;
+		const { firstInView, lastInView } = rowsInView(count);
+		for (let i = firstInView; i <= lastInView; i++) {
+			if (rowAtDisplayIndex(i) === undefined && !isGroupHeaderAt(i)) continue;
+			selection.active = { rowIndex: i, field };
+			return;
+		}
 	}
 
 	function activeCellHasRendererLink(column: GridColumn<TRow>): boolean {
@@ -1484,15 +1529,7 @@
 		if (field === undefined) return;
 		const count = effectiveRowCount;
 		if (count === 0) return;
-		const rowHeight = gridState.rowHeight;
-		const firstInView = Math.min(
-			count - 1,
-			Math.max(0, Math.floor(effectiveScrollTop / rowHeight))
-		);
-		const lastInView = Math.min(
-			count - 1,
-			Math.max(firstInView, Math.ceil((effectiveScrollTop + rowsViewportHeight) / rowHeight) - 1)
-		);
+		const { firstInView, lastInView } = rowsInView(count);
 		// [first data row in view, first data row in display order]
 		let inView = -1;
 		let first = -1;
