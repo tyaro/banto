@@ -180,3 +180,22 @@ export function scrollLeftToReveal(params: {
 	}
 	return scrollLeft;
 }
+
+/**
+ * Whether any part of a cell is in the free (not covered by the pinned block)
+ * part of the viewport, #1036. Same inputs as `scrollLeftToReveal`; a pinned
+ * cell is always in view, and a viewport that was never measured
+ * (`viewportWidth` <= 0) counts as in view.
+ */
+export function cellInViewHorizontally(params: {
+	cellLeft: number;
+	cellWidth: number;
+	scrollLeft: number;
+	viewportWidth: number;
+	pinnedWidth: number;
+	cellPinned: boolean;
+}): boolean {
+	const { cellLeft, cellWidth, scrollLeft, viewportWidth, pinnedWidth, cellPinned } = params;
+	if (cellPinned || viewportWidth <= 0) return true;
+	return cellLeft + cellWidth > scrollLeft + pinnedWidth && cellLeft < scrollLeft + viewportWidth;
+}

@@ -121,6 +121,12 @@ export interface GridMessages {
 	/** Sort, several columns: `header` was dropped from the keys, others remain. */
 	sortKeyRemovedStatus?: (header: string) => string;
 	/**
+	 * Read by the live region when an action key (Enter, Space, F2, the menu
+	 * keys) only scrolled to the active cell because it was off screen (#1036):
+	 * the key did nothing else, pressing it again acts.
+	 */
+	scrolledToActiveCell?: () => string;
+	/**
 	 * Accessible name of the grid itself when the `label` prop is not given
 	 * (#1016). The grid element takes the focus back after the bulk bar closes,
 	 * and a screen reader reads that element's whole content unless it has a name.
@@ -184,5 +190,6 @@ export const defaultGridMessages: Required<GridMessages> = {
 	sortMultipleDescendingStatus: (header, priority) =>
 		`${header}を第${priority}キーで降順に並べ替え`,
 	sortKeyRemovedStatus: (header) => `${header}を並べ替えから外しました`,
+	scrolledToActiveCell: () => '選択中のセルまでスクロールしました。もう一度押すと実行します',
 	gridLabel: () => 'データ一覧'
 };

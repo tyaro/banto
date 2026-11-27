@@ -133,6 +133,7 @@
   "grid.sortMultipleAscendingStatus": "{header}を第{priority}キーで昇順に並べ替え",
   "grid.sortMultipleDescendingStatus": "{header}を第{priority}キーで降順に並べ替え",
   "grid.sortKeyRemovedStatus": "{header}を並べ替えから外しました",
+  "grid.scrolledToActiveCell": "選択中のセルまでスクロールしました。もう一度押すと実行します",
   "validation.required": "必須項目です",
   "validation.min": "{min}以上で入力してください",
   "validation.max": "{max}以下で入力してください",
