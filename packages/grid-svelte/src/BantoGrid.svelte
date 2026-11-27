@@ -1718,7 +1718,13 @@
 		if ((editorRootEl ?? editorEl)?.contains(target)) return;
 		if (event.key === 'Tab') {
 			const controls = cellControls(cellEl);
-			const index = controls.findIndex((el) => el === target || el.contains(target));
+			// The focused control itself first: a focusable wrapper around it
+			// also "contains" it and comes earlier. Otherwise the innermost
+			// control holding the target (focus inside a composite widget).
+			let index = controls.indexOf(target);
+			for (let i = controls.length - 1; index === -1 && i >= 0; i--) {
+				if (controls[i].contains(target)) index = i;
+			}
 			const next = controls[index + (event.shiftKey ? -1 : 1)];
 			if (index !== -1 && next) {
 				event.preventDefault();

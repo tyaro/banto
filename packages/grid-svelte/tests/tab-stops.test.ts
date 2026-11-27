@@ -356,6 +356,38 @@ describe('F2 on a cell that is not editable: into its controls', () => {
 		expect(container.querySelector('.cell.active')).toBe(active);
 	});
 
+	it('walks a focusable wrapper and the control inside it in order', async () => {
+		const wrapped = createRawSnippet<[Row]>((row) => ({
+			render: () =>
+				`<span><div tabindex="0" data-act="wrap-${row().id}">` +
+				`<button type="button" data-act="inner-${row().id}">inner</button></div>` +
+				`<button type="button" data-act="after-${row().id}">after</button></span>`
+		}));
+		const { container } = setup({
+			columns: [
+				...baseColumns.filter((c) => c.id !== 'actions'),
+				{ id: 'actions', header: 'Actions', accessor: () => '', sortable: false, render: wrapped }
+			]
+		});
+		await reported();
+		const grid = screen.getByRole('grid');
+		await selectCell(container, 0, 'actions');
+		const wrap = container.querySelector<HTMLElement>('[data-act="wrap-1"]')!;
+		const inner = container.querySelector<HTMLElement>('[data-act="inner-1"]')!;
+		const after = container.querySelector<HTMLElement>('[data-act="after-1"]')!;
+
+		key(grid, { key: 'F2' });
+		expect(document.activeElement).toBe(wrap);
+		key(wrap, { key: 'Tab' });
+		expect(document.activeElement).toBe(inner);
+		expect(key(inner, { key: 'Tab' }).defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(after);
+		key(after, { key: 'Tab', shiftKey: true });
+		expect(document.activeElement).toBe(inner);
+		expect(key(inner, { key: 'Tab', shiftKey: true }).defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(wrap);
+	});
+
 	it('reaches a `cell` link the same way, and F2 on it comes back', async () => {
 		const { container } = setup();
 		await reported();
