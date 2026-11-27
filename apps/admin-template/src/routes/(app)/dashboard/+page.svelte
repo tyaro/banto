@@ -36,7 +36,7 @@
 		type PanelContent
 	} from '@banto/dock-svelte';
 	import { getUiSettings } from '#lib/banto/setup.js';
-	import { createAppPanelPopOut } from '#lib/banto/popout.js';
+	import { createAppPanelPopOut, createLayoutSaveWatch } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import { dockMessages } from '#lib/banto/dockMessages.js';
 	import {
@@ -382,6 +382,16 @@
 	// close, a View menu choice, the page's own `dock.*` call - never a step of a
 	// drag. The local copy saves immediately; the provider gets one write 500ms
 	// after the last report. A layout the store applied is not written back.
+	//
+	// Every report goes through `reportLayout` (#1019): the store answers what became of each one
+	// (saved / failed / ...), and `layoutSaves` turns that into "the layout as it is from now on is
+	// saved" for the pop-out's `restore` below, which must not forget a widget before that.
+	const layoutSaves = createLayoutSaveWatch();
+	const reportLayout: typeof dockLayout.commit = (layout, reason) => {
+		const outcome = dockLayout.commit(layout, reason);
+		layoutSaves.track(outcome);
+		return outcome;
+	};
 
 	// Unmount: flush (not drop) a pending provider save, so navigating away
 	// right after a drag still persists the final layout - unless the session
@@ -459,12 +469,23 @@
 		// window hidden from the dock - the same path as the pane's ✕.
 		// `dock.open` opens it floating; the View menu's `showPanel` would dock
 		// it at its default place.) Also runs if the window could not be opened.
+		//
+		// What it returns (#1019): "the layout with the widget back in it is saved". The saved
+		// layout lacks the widget since the pop-out, and at the next start the provider's copy wins
+		// over this browser's - so until that write has landed the pop-out keeps the id in its
+		// memory, and a start after a failed write puts the widget back again. Taken BEFORE the
+		// dock changes: only a report made from here on carries the widget. A write that fails
+		// leaves it pending (nothing retries here; the next start does), and a later report that is
+		// saved resolves it - then the layout as the user left it is what counts, a widget closed
+		// again included.
 		restore: (id) => {
+			const saved = layoutSaves.next();
 			dock.open(id);
 			// The host reports a settled layout to be saved (`onLayoutCommit`), but the one-column
 			// display (900px or less) unmounts it: report this one ourselves there, so a widget put
 			// back while the page is narrow is saved - and shown by the stack, which reads `dock`.
-			if (!dockHost) dockLayout.commit(dock.layout, 'user');
+			if (!dockHost) void reportLayout(dock.layout, 'user');
+			return saved;
 		},
 		// The pop-out did not happen: the window could not be opened (then
 		// `restore` has already run), or the closed-notice subscription failed
@@ -589,7 +610,7 @@
 					{beforePanelChange}
 					isEscapeBlocked={isDockEscapeBlocked}
 					messages={dockMessages()}
-					onLayoutCommit={dockLayout.commit}
+					onLayoutCommit={reportLayout}
 				/>
 			</div>
 		{/if}

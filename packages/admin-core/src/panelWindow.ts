@@ -7,7 +7,9 @@
  * `createPanelPopOut` puts the two together in the shape a dock takes
  * (`onPopOut` + a subscription), and knows which panels are out in a window
  * right now (`isPoppedOut` / `subscribe` / `focus`, and - with a `storage` -
- * across a restart: `connect()` puts back the panels whose window is gone).
+ * across a restart: `connect()` puts back the panels whose window is gone,
+ * and a panel put back stays in that memory until `restore` says the dock's
+ * layout was saved with it - Issue #1019).
  *
  * What the plugin does on the Rust side - one window per id (opening again
  * only brings it to the front), the position / size memory per id, closing
@@ -164,11 +166,22 @@ function subscribePanelClosed(
  * memory.
  */
 export interface PanelPopOutStorage {
-	/** The ids last saved (`[]` when nothing was). Read once, when the pop-out is created. */
+	/**
+	 * The ids last saved (`[]` when nothing was). Read when the pop-out is
+	 * created, and again when a `restore` promise confirms a save later
+	 * (#1019: only that id is taken out of what is stored then).
+	 */
 	load: () => string[];
 	/** Called with the whole list each time it changes. */
 	save: (ids: string[]) => void;
 }
+
+/**
+ * What `restore` may return to say when the dock's layout is saved with the
+ * panel back in it (Issue #1019, see `PanelPopOutOptions.restore`): `false`
+ * = not saved, keep the panel in the memory; a promise = wait for it.
+ */
+export type PanelRestoreSaved = void | boolean | PromiseLike<boolean | void>;
 
 export interface PanelPopOutOptions<C extends PanelWindowContent = PanelWindowContent>
 	extends OpenPanelWindowOptions, ListenPanelClosedOptions {
@@ -183,8 +196,31 @@ export interface PanelPopOutOptions<C extends PanelWindowContent = PanelWindowCo
 	 * Puts the panel back into the dock - e.g. `(id) => dock.open(id)`. Called
 	 * when the panel's window is gone, and when the window could not be
 	 * opened after `detach` had already taken the panel out.
+	 *
+	 * What it returns says when the panel may be forgotten in `storage`
+	 * (Issue #1019). The dock's saved layout lacks the panel since the pop-out,
+	 * and saving the layout that has it again is somebody else's write, later
+	 * and fallible; if the memory were dropped before that write landed, a
+	 * failed write would lose the panel at the next start (the old layout, no
+	 * memory).
+	 * - nothing: forgotten at once - for a dock whose layout is not saved,
+	 *   or an app that accepts that risk (the behaviour before #1019).
+	 * - a promise (`PanelRestoreSaved`): the id stays in `storage` until it
+	 *   resolves to anything but `false` - resolve it when the layout with
+	 *   the panel is saved. While it is pending, and when it resolves `false`
+	 *   or rejects, the id is kept: the next `createPanelPopOut` over the
+	 *   same `storage` (the next start, or the next visit of the screen)
+	 *   reads it and `connect()` restores the panel again. `false` returned
+	 *   at once does the same.
+	 *
+	 * `isPoppedOut(id)` is `false` from the call on either way: only the
+	 * stored memory waits.
+	 *
+	 * Typed `unknown` (read it as `PanelRestoreSaved`) so that a `restore`
+	 * written before #1019 keeps compiling whatever its expression happens
+	 * to return (`(id) => list.push(id)`): any other value is "nothing".
 	 */
-	restore: (id: string) => void;
+	restore: (id: string) => unknown;
 	/**
 	 * The pop-out did not happen: the window could not be opened (after
 	 * `restore` has run), or the closed-notice subscription failed, in which
@@ -199,6 +235,11 @@ export interface PanelPopOutOptions<C extends PanelWindowContent = PanelWindowCo
 	 * panel is in neither place at the next start. With it, the next
 	 * `connect()` restores every remembered id whose window is not open.
 	 * Omitted = remembered only as long as this object lives.
+	 *
+	 * The list also holds the panels that were put back but whose layout is
+	 * not known to be saved yet (see `restore`, Issue #1019): to the next
+	 * reader they are the same thing - panels to restore unless their window
+	 * is open.
 	 */
 	storage?: PanelPopOutStorage;
 	/**
@@ -276,6 +317,16 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
  * not mounted (e.g. a narrow display without one): keep `connect()` running
  * then too, or a window closed meanwhile does not bring its panel back.
  *
+ * Putting a panel back is only finished when the dock's layout is saved with
+ * it (Issue #1019). `restore` may return a promise of that; until it resolves
+ * `true` the id stays in `storage`, though `isPoppedOut` is already `false`.
+ * A save that fails, a main window closed before the save, a session that
+ * ended first - each leaves the id there, and the next start restores the
+ * panel again (a retry). Once the save is confirmed the id is gone, so a
+ * panel the user closes afterwards stays closed. A panel popped out again
+ * while its save is still awaited is simply popped out: the older answer is
+ * ignored.
+ *
  * If `list` fails, nothing is restored and `onListError` gets the reason.
  * Restoring blindly would be the other choice, and it is the worse one:
  * with a window still open (a reload, coming back to the screen) the panel
@@ -290,6 +341,7 @@ export interface PanelPopOut<C extends PanelWindowContent = PanelWindowContent> 
  * 	invoke,
  * 	listen: async (event, cb) => (await import('@tauri-apps/api/event')).listen(event, cb),
  * 	detach: async (c) => (await dockHost?.closePanel(c.id)) === 'applied',
+ * 	// Without a saved layout. With one: return a promise of "saved" (above).
  * 	restore: (id) => dock.open(id)
  * });
  * $effect(() => popOut.connect());
@@ -324,27 +376,103 @@ export function createPanelPopOut<C extends PanelWindowContent = PanelWindowCont
 	const generationOf = (id: string) => generation.get(id) ?? 0;
 	const startOpening = (id: string) => generation.set(id, generationOf(id) + 1);
 	const listeners = new Set<() => void>();
+	// Put back into the dock, but the layout that has them again is not known
+	// to be saved (#1019): id -> the `restore` call whose answer is awaited.
+	// Not "popped out" any more, yet still in `storage`, so that the next start
+	// restores them again if that save never lands.
+	const unsaved = new Map<string, object>();
 
-	const changed = () => {
+	/** What `storage` holds: the panels the next start has to look at. */
+	const stored = () => [...new Set([...popped, ...unsaved.keys()])];
+	const keyOf = (ids: string[]) => [...ids].sort().join('\n');
+	let lastStored = keyOf(stored());
+	/** Writes the list when it is not the one this object wrote (or read) last. */
+	const persist = () => {
+		const ids = stored();
+		const key = keyOf(ids);
+		if (key === lastStored) return;
+		lastStored = key;
 		try {
-			options.storage?.save([...popped]);
+			options.storage?.save(ids);
 		} catch {
 			// Best effort: a failed write only loses the memory across a restart.
 		}
+	};
+	const notify = () => {
 		for (const cb of [...listeners]) cb();
 	};
 	const remember = (id: string) => {
+		// Out in a window again: an answer still awaited for an earlier put-back
+		// is about a layout that is no longer the one to save.
+		unsaved.delete(id);
 		if (popped.has(id)) return;
 		popped.add(id);
-		changed();
+		persist();
+		notify();
 	};
-	const forget = (id: string) => {
-		if (popped.delete(id)) changed();
+	/**
+	 * The layout with the panel back in it is saved: the stored memory lets go
+	 * of it. `call` is the `restore` call this answers - not the latest one
+	 * for the id means the panel was popped out (or put back) again since.
+	 * `late` = the answer came as a promise.
+	 */
+	const confirmSaved = (id: string, call: object, late: boolean) => {
+		if (unsaved.get(id) !== call) return;
+		unsaved.delete(id);
+		if (popped.has(id)) return;
+		if (!late || !options.storage) {
+			persist();
+			return;
+		}
+		// A late answer may come after the screen was left and entered again,
+		// with another `createPanelPopOut` writing the same `storage` since
+		// (the write flushed on leaving is answered then). Take this one id out
+		// of what is stored now rather than write this object's own, possibly
+		// older, list over it.
+		try {
+			const now: unknown = options.storage.load();
+			if (Array.isArray(now)) {
+				const ids = now.filter((other): other is string => typeof other === 'string');
+				if (ids.includes(id)) options.storage.save(ids.filter((other) => other !== id));
+				lastStored = keyOf(stored());
+				return;
+			}
+		} catch {
+			// Unreadable or unwritable: fall back to this object's list.
+		}
+		persist();
 	};
-	/** The panel goes back into the dock: forgotten first, so `restore` sees it as not popped out. */
+	/**
+	 * The panel goes back into the dock: no longer popped out before `restore`
+	 * runs (so `restore` sees it as such), but kept in `storage` until
+	 * `restore` says the layout was saved (#1019; at once when it returns
+	 * nothing). A `restore` that throws leaves it stored too.
+	 */
 	const putBack = (id: string) => {
-		forget(id);
-		options.restore(id);
+		const call = {};
+		const wasPopped = popped.delete(id);
+		unsaved.set(id, call);
+		// Already stored when it was popped out; a notice for a panel this
+		// object did not know is stored now.
+		persist();
+		if (wasPopped) notify();
+		const result = options.restore(id);
+		if (result === false) return;
+		const thenable =
+			typeof result === 'object' &&
+			result !== null &&
+			typeof (result as { then?: unknown }).then === 'function';
+		if (!thenable) {
+			confirmSaved(id, call, false);
+			return;
+		}
+		void Promise.resolve(result as PromiseLike<unknown>).then(
+			(saved) => {
+				if (saved !== false) confirmSaved(id, call, true);
+			},
+			// Not saved as far as anyone knows: kept for the next start.
+			() => {}
+		);
 	};
 
 	/**

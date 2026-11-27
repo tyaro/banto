@@ -66,6 +66,7 @@ export {
 export {
 	createDockLayoutStore,
 	DOCK_LAYOUT_SAVE_DEBOUNCE_MS,
+	type DockLayoutSaveOutcome,
 	type DockLayoutScope,
 	type DockLayoutSettings,
 	type DockLayoutStore,

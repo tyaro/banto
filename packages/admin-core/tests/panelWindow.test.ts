@@ -755,3 +755,225 @@ describe('createPanelPopOut: which panels are out (#1013, #1014)', () => {
 		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, { id: 'memo', title: 'Memo' });
 	});
 });
+
+describe('createPanelPopOut: a panel put back is remembered until its layout is saved (Issue #1019)', () => {
+	/** A storage in memory; `state.ids` is what a restart would find. */
+	function fakeStorage(initial: string[] = []) {
+		const state = { ids: initial };
+		return {
+			state,
+			storage: {
+				load: vi.fn(() => [...state.ids]),
+				save: vi.fn((ids: string[]) => {
+					state.ids = [...ids];
+				})
+			}
+		};
+	}
+
+	/** One `restore` whose "saved" answer the test gives by hand, per call. */
+	function fakeRestore() {
+		const answers: { resolve: (saved: boolean | void) => void; reject: (e: unknown) => void }[] =
+			[];
+		const restore = vi.fn(
+			(_id: string) =>
+				new Promise<boolean | void>((resolve, reject) => answers.push({ resolve, reject }))
+		);
+		return { restore, answers };
+	}
+
+	/** A start of the app: the plugin lists `open`, the pop-out reads `storage`. */
+	function start(
+		storage: ReturnType<typeof fakeStorage>['storage'],
+		restore: (id: string) => void | boolean | Promise<boolean | void>,
+		open: string[] = []
+	) {
+		const events = fakeListen();
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke: vi.fn(async (command: string) => (command === PANEL_LIST_COMMAND ? open : undefined)),
+			listen: events.listen,
+			detach: () => true,
+			restore,
+			storage
+		});
+		return { popOut, events };
+	}
+
+	const settle = async () => {
+		for (let i = 0; i < 6; i++) await Promise.resolve();
+	};
+
+	it('keeps the id stored while restore has not answered, though the panel is no longer popped out', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const { restore, answers } = fakeRestore();
+		const { popOut } = start(storage, restore);
+		popOut.connect();
+		await settle();
+		expect(restore).toHaveBeenCalledWith('memo');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual(['memo']);
+
+		answers[0].resolve(true);
+		await settle();
+		expect(state.ids).toEqual([]);
+	});
+
+	it('a promise that resolves nothing also lets go of it', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const { restore, answers } = fakeRestore();
+		start(storage, restore).popOut.connect();
+		await settle();
+		answers[0].resolve();
+		await settle();
+		expect(state.ids).toEqual([]);
+	});
+
+	it.each([
+		['resolves false', (a: { resolve: (saved: boolean) => void }) => a.resolve(false)],
+		['rejects', (a: { reject: (e: unknown) => void }) => a.reject(new Error('offline'))]
+	])(
+		'keeps it for the next start when restore %s, and that start restores it again',
+		async (_n, answer) => {
+			const { state, storage } = fakeStorage(['memo']);
+			const first = fakeRestore();
+			start(storage, first.restore).popOut.connect();
+			await settle();
+			answer(first.answers[0]);
+			await settle();
+			expect(state.ids).toEqual(['memo']);
+
+			// The next start: nothing but the storage survives.
+			const second = fakeRestore();
+			const { popOut } = start(storage, second.restore);
+			expect(popOut.isPoppedOut('memo')).toBe(true);
+			popOut.connect();
+			await settle();
+			expect(second.restore).toHaveBeenCalledTimes(1);
+			expect(second.restore).toHaveBeenCalledWith('memo');
+			second.answers[0].resolve(true);
+			await settle();
+			expect(state.ids).toEqual([]);
+		}
+	);
+
+	it('restore returning false at once keeps it too; returning nothing forgets at once (as before #1019)', async () => {
+		const kept = fakeStorage(['memo']);
+		start(kept.storage, () => false).popOut.connect();
+		await settle();
+		expect(kept.state.ids).toEqual(['memo']);
+
+		const forgotten = fakeStorage(['memo']);
+		start(forgotten.storage, () => {}).popOut.connect();
+		await settle();
+		expect(forgotten.state.ids).toEqual([]);
+	});
+
+	it('keeps it when restore throws', async () => {
+		const { state, storage } = fakeStorage();
+		const { popOut, events } = start(storage, () => {
+			throw new Error('dock is gone');
+		});
+		popOut.connect();
+		await settle();
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		expect(() => events.fire('memo')).toThrow('dock is gone');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		expect(state.ids).toEqual(['memo']);
+	});
+
+	it('once confirmed, nothing brings the panel back at the next start (the user may have closed it)', async () => {
+		const { state, storage } = fakeStorage();
+		const { restore, answers } = fakeRestore();
+		const { popOut, events } = start(storage, restore);
+		popOut.connect();
+		await settle();
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		events.fire('memo');
+		answers[0].resolve(true);
+		await settle();
+		expect(state.ids).toEqual([]);
+
+		const next = fakeRestore();
+		start(storage, next.restore).popOut.connect();
+		await settle();
+		expect(next.restore).not.toHaveBeenCalled();
+	});
+
+	it('a panel popped out again meanwhile stays remembered: the older answer is ignored', async () => {
+		const { state, storage } = fakeStorage();
+		const { restore, answers } = fakeRestore();
+		const { popOut, events } = start(storage, restore);
+		popOut.connect();
+		await settle();
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		events.fire('memo');
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+
+		answers[0].resolve(true);
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(true);
+		expect(state.ids).toEqual(['memo']);
+
+		// Put back a second time: only this call's answer counts.
+		events.fire('memo');
+		expect(state.ids).toEqual(['memo']);
+		answers[1].resolve(true);
+		await settle();
+		expect(state.ids).toEqual([]);
+	});
+
+	it('other panels come and go in the storage while one waits', async () => {
+		const { state, storage } = fakeStorage();
+		const { restore, answers } = fakeRestore();
+		const { popOut, events } = start(storage, restore);
+		popOut.connect();
+		await settle();
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		events.fire('memo');
+		popOut.onPopOut?.({ id: 'chart', title: 'Chart' });
+		await settle();
+		expect([...state.ids].sort()).toEqual(['chart', 'memo']);
+		answers[0].resolve(true);
+		await settle();
+		expect(state.ids).toEqual(['chart']);
+	});
+
+	it('a late answer takes only its own id out of what another pop-out stored since', async () => {
+		const { state, storage } = fakeStorage(['memo']);
+		const { restore, answers } = fakeRestore();
+		start(storage, restore).popOut.connect();
+		await settle();
+		// The screen was left and entered again; the new pop-out remembered another panel.
+		state.ids = ['memo', 'chart'];
+		answers[0].resolve(true);
+		await settle();
+		expect(state.ids).toEqual(['chart']);
+	});
+
+	it('without a storage the answer changes nothing visible', async () => {
+		const events = fakeListen();
+		const { restore, answers } = fakeRestore();
+		const popOut = createPanelPopOut({
+			isTauri: () => true,
+			invoke: vi.fn(async () => []),
+			listen: events.listen,
+			restore
+		});
+		popOut.connect();
+		await settle();
+		popOut.onPopOut?.(MEMO);
+		await settle();
+		events.fire('memo');
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+		answers[0].resolve(true);
+		await settle();
+		expect(popOut.isPoppedOut('memo')).toBe(false);
+	});
+});

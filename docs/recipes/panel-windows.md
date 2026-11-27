@@ -111,7 +111,8 @@ const popOut = createPanelPopOut<PanelContent>({
 	listen: async (event, cb) => (await import('@tauri-apps/api/event')).listen(event, cb),
 	// 窓を開く前に、パネルを dock から外す。false を返すと取りやめ（窓は開かない）
 	detach: async (content) => (await dockHost?.closePanel(content.id)) === 'applied',
-	// 窓が閉じたら（開けなかったときも）、パネルを dock に戻す
+	// 窓が閉じたら（開けなかったときも）、パネルを dock に戻す。dock の配置を保存しているなら、
+	// 「戻した配置が保存できた」の Promise を返す（下の「戻した配置が保存できるまで覚えておく」）
 	restore: (id) => dock.open(id),
 	// 窓に出しているパネルの id の覚え（次の起動まで残す所）。キーは dock ごと・利用者ごとに分ける
 	storage: {
@@ -135,9 +136,44 @@ $effect(() => popOut.connect());
   レイアウトで上書きされる（テンプレートのダッシュボードは `dockLayout.load()` の完了を待つ）。
 - `connect()` を dock の mount に結び付けない。狭い画面などで `DockHost` を外している間も、閉じた窓のパネルは
   戻す必要がある。`DockHost` が無い間は `onLayoutCommit` が来ないので、`restore` の中で自分で保存する
-  （テンプレートは `if (!dockHost) dockLayout.commit(dock.layout, 'user')`）。
+  （テンプレートは `if (!dockHost) void reportLayout(dock.layout, 'user')`）。
 - `list` に失敗したら何も戻さない（`onListError`）。確かめずに戻すと、窓が開いたままのとき（再読み込み・画面の出入り）に
   同じパネルが dock と窓の両方に出るため。
+
+**戻した配置が保存できるまで覚えておく**（#1019。dock の配置を provider に保存しているアプリ）: パネルを dock に
+戻しても、その配置の保存（`createDockLayoutStore` なら 500ms 後の書き込み）が失敗すると、次の起動では provider の
+古い配置（パネルが閉じた状態）が読まれる。そのとき覚えが消えていると、パネルはまた dock に無くなる。`restore` が
+**Promise を返す**と、`true`（または値なし）で解決するまで id を `storage` に残し、解決しなかった・`false`・reject の
+ときは次の `connect()`（次の起動・次に画面へ入ったとき）がもう一度 `restore` する。`isPoppedOut` は戻した時点で
+`false` になる（残るのは覚えだけ）。保存できた後は覚えが消えるので、利用者がその後に閉じたパネルは戻らない。
+
+`createDockLayoutStore` の `commit` は、その報告がどうなったかの Promise を返す（`'saved'`・`'unchanged'`・
+`'failed'`・`'dropped'`。reject しない）。報告するのは `DockHost` で `restore` ではないので、全部の報告を 1 か所に
+通して、「`restore` より後の報告が保存できた」を待つ。テンプレートの `createLayoutSaveWatch`（`popout.ts`。
+30 行ほどなので写してよい）がそれをする:
+
+```ts
+const layoutSaves = createLayoutSaveWatch();
+const reportLayout: typeof dockLayout.commit = (layout, reason) => {
+	const outcome = dockLayout.commit(layout, reason);
+	layoutSaves.track(outcome); // 全部の報告を、報告した順に渡す
+	return outcome;
+};
+// <DockHost {dock} onLayoutCommit={reportLayout} ... />
+
+restore: (id) => {
+	const saved = layoutSaves.next(); // dock を変える前に取る（これより後の報告だけを数える）
+	dock.open(id);
+	if (!dockHost) void reportLayout(dock.layout, 'user'); // DockHost が無い間は自分で報告する
+	return saved; // 保存できたら true。失敗の間は解決しない（＝覚えたまま）
+};
+```
+
+- 「後の報告」に限るのは、戻す前から送信中だった書き込み（パネルを含まない配置）の成功で忘れないため。
+- 後の報告なら**どれでもよい**のは、書き込みが配置の全体を運ぶため。失敗の後でも、次に保存できた時点の配置が
+  provider に入る（利用者がそのときまでにパネルを閉じていれば、閉じた配置が入り、次の起動でも閉じている）。
+- 書き込みの再試行はしない。失敗したら覚えが残り、次の起動（次に画面へ入ったとき）に戻し直して書き直す。
+- 配置を保存しない dock は今までどおり `restore: (id) => dock.open(id)`（何も返さない＝その場で忘れる）でよい。
 
 **窓に出しているパネルを「表示中」として扱う**: dock から見ると、窓に出したパネルは閉じたパネルと区別がつかない。
 パネルの一覧（表示メニューなど）を持つ画面は、`popOut.isPoppedOut(id)` が真のパネルを**チェック付き**で出し、選ばれたら

@@ -907,6 +907,14 @@ $effect(() => () => store.dispose()); // 残りの書き込みを flush
   （`DockHost` はそれも `'user'` で報告するが、基準と同じ文字列なので書かない）。基準と違う `commit` を、最後の
   報告から 500ms（`debounceMs`）後に 1 回書く。`dispose()` は残りを flush する。`dispose()` の後に届いた報告
   （ページの後始末の後で `DockHost` が unmount の報告をする）は、その場で書く。
+- **保存できたか（`commit` の戻り値、#1019）**: `commit` は `Promise<DockLayoutSaveOutcome>` を返す（reject しないので、
+  `onLayoutCommit={store.commit}` のように受けずに渡してよい）。`'saved'` = その配置か、それより後の配置を運ぶ書き込みを
+  provider が受けた（debounce の間の報告は 1 回の書き込みにまとまり、同じ答えになる。`reset: 'remove'` の削除も
+  `'saved'`）。`'unchanged'` = 部品が入れた配置と同じなので送っていない（provider にその値がある、とは限らない:
+  読み込みに失敗して出した既定も同じ答え）。`'failed'` = provider が断った（reject・例外）。再試行はしない（次の
+  報告が次の書き込み）。`'dropped'` = 送らなかった（セッションが替わった、`load()` の答えが待っていた書き込みに
+  勝った）。`dispose()` の flush と、その後に届いた報告の分も解決する。配置が保存できるまで何かを残しておきたい
+  アプリ（pop-out で dock に戻したパネルの覚え。[panel-windows.md](../../docs/recipes/panel-windows.md)）が使う。
 - **読み込み**: `load()` は 1 回だけ。provider の値が、最初の描画にも、答えが届く前の利用者の操作にも勝つ。
   ただし、答えを待つ間に届いた `'reset'`（利用者の「既定に戻す」）には勝たない: 答えを捨て、reset の書き込み
   （または削除）をそのまま送る。
