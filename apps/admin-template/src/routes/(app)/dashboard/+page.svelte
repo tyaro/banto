@@ -54,6 +54,7 @@
 	import {
 		createDashboardMemo,
 		createPanelChangeHandler,
+		settleBeforeReset,
 		trackClosePending,
 		memoSaveCommand,
 		provideDashboardMemoPane
@@ -418,9 +419,24 @@
 	// would read that layout with nothing left to say the widgets are missing. Kept, the next
 	// `connect()` puts them back. Taken BEFORE the replacement: its report is the one that counts.
 	// (A refused reset leaves this promise unused; a later save answers it to nobody.)
-	function resetDockLayout() {
+	//
+	// #1042: an unsaved memo is asked about first, with the prompt a close of it shows; cancelled
+	// (or a save that failed / was typed over) = no reset. Nothing unsaved = no question.
+	async function resetDockLayout() {
+		if (!dockHost) return;
+		closing += 1;
+		let go: boolean;
+		try {
+			go = await settleBeforeReset({
+				coordinator: memo.serial,
+				ask: (dirtyKeys) => memoPrompt.ask(dirtyKeys),
+				onSettled: noteMemoSettled
+			});
+		} finally {
+			closing -= 1;
+		}
 		const host = dockHost;
-		if (!host) return;
+		if (!go || !host) return;
 		const saved = layoutSaves.next();
 		void host
 			.replaceLayout(defaultDashboardLayout(), { saved: true, commit: 'reset' })
@@ -574,7 +590,7 @@
 				kind: 'action',
 				id: 'reset-layout',
 				label: m['dashboard.resetLayout'](),
-				onSelect: resetDockLayout
+				onSelect: () => void resetDockLayout()
 			}
 		];
 	});

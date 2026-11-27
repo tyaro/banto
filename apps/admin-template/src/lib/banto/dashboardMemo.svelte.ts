@@ -110,6 +110,23 @@ export function createPanelChangeHandler(
 }
 
 /**
+ * "Reset layout" (#1042): the memo is asked about the same way a close of it is (the
+ * save / discard / cancel prompt), before the default goes in - the reset takes the pane out of
+ * its place, though the draft outlives it. `true` = go on with the reset (nothing unsaved, or
+ * saved / discarded in the prompt); `false` = leave the layout as it is. With no unsaved memo
+ * nothing is asked. The draft belongs to the page, so a memo in a pop-out window counts the same.
+ */
+export async function settleBeforeReset(options: {
+	coordinator: Pick<DraftCoordinator, 'settle'>;
+	ask: SettleAsk;
+	onSettled?: (result: DraftSettleResult) => void;
+}): Promise<boolean> {
+	const result = await options.coordinator.settle([MEMO_PANEL_ID], options.ask);
+	options.onSettled?.(result);
+	return canDiscardAfterSettle(result);
+}
+
+/**
  * Tell `onPending(true / false)` while a `close` change is being decided - from the moment
  * the host asks until the answer is back (the prompt, the save or discard behind it, and the
  * cancel). Released on every way out, a rejection and a throw included. Only a `close` is
