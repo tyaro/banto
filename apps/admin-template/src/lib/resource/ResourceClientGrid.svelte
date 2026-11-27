@@ -185,6 +185,7 @@
 			{columns}
 			state={gridState}
 			messages={gridMessages()}
+			label={m['resource.gridLabel']({ resource: label })}
 			getRowId={(row) => row.id}
 			{onRowClick}
 			onCellEdit={handleCellEdit}

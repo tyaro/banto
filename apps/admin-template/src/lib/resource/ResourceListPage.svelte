@@ -1870,6 +1870,7 @@
 		<ResourceServerGrid
 			bind:this={serverGridRef}
 			resource={name}
+			label={def.label}
 			{columns}
 			state={serverGridState}
 			{search}

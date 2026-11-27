@@ -100,6 +100,14 @@ export interface GridMessages {
 	selectionClear?: () => string;
 	/** Row selection: accessible name of the bulk bar. */
 	bulkBarLabel?: () => string;
+	/** Row selection: accessible name of the header cell holding the select-all checkbox (#1016). */
+	selectColumnLabel?: () => string;
+	/**
+	 * Accessible name of the grid itself when the `label` prop is not given
+	 * (#1016). The grid element takes the focus back after the bulk bar closes,
+	 * and a screen reader reads that element's whole content unless it has a name.
+	 */
+	gridLabel?: () => string;
 }
 
 export const defaultGridMessages: Required<GridMessages> = {
@@ -140,12 +148,14 @@ export const defaultGridMessages: Required<GridMessages> = {
 	booleanTrue: () => 'はい',
 	booleanFalse: () => 'いいえ',
 	selectRowLabel: (rowLabel) => `${rowLabel}を選択`,
-	selectAllRows: (count) => `一覧の${count}件をすべて選択`,
+	selectAllRows: (count) => `一覧の${count.toLocaleString()}件をすべて選択`,
 	selectAllLoadedRows: (loaded, total) =>
-		`読み込み済みの${loaded}件をすべて選択（全${total}件のうち）`,
-	selectionStatus: (count) => (count === 0 ? '選択なし' : `${count}件を選択中`),
-	selectAllMatching: (count) => `該当する全${count}件を選択`,
-	allMatchingStatus: (count) => `該当する全${count}件を選択中`,
+		`読み込み済みの${loaded.toLocaleString()}件をすべて選択（全${total.toLocaleString()}件のうち）`,
+	selectionStatus: (count) => (count === 0 ? '選択なし' : `${count.toLocaleString()}件を選択中`),
+	selectAllMatching: (count) => `該当する全${count.toLocaleString()}件を選択`,
+	allMatchingStatus: (count) => `該当する全${count.toLocaleString()}件を選択中`,
 	selectionClear: () => '選択を解除',
-	bulkBarLabel: () => '一括操作'
+	bulkBarLabel: () => '一括操作',
+	selectColumnLabel: () => '選択',
+	gridLabel: () => 'データ一覧'
 };

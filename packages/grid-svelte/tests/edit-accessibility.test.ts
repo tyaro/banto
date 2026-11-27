@@ -42,9 +42,18 @@ function setup(
 	});
 }
 
+/** The editor named `name` (the column header is named the same way, #1016, so it is left out). */
+function editorNamed(container: HTMLElement, name: string) {
+	const found = within(container)
+		.getAllByLabelText(name)
+		.filter((el) => el.getAttribute('role') !== 'columnheader');
+	expect(found).toHaveLength(1);
+	return found[0] as HTMLInputElement | HTMLSelectElement;
+}
+
 async function open(container: HTMLElement, name: string) {
 	await fireEvent.doubleClick(container.querySelector('[data-cell-field="value"]')!);
-	return within(container).getByLabelText(name) as HTMLInputElement | HTMLSelectElement;
+	return editorNamed(container, name);
 }
 
 function associatedError(editor: HTMLElement) {
@@ -136,7 +145,7 @@ describe('inline editor accessibility', () => {
 		expect(onSave).toHaveBeenCalledTimes(1);
 		expect(editor.closest('[role="gridcell"]')?.getAttribute('aria-busy')).toBe('true');
 		expect(editor.disabled).toBe(false);
-		expect(within(container).getByLabelText('Value')).toBe(editor);
+		expect(editorNamed(container, 'Value')).toBe(editor);
 		expect(editor.getAttribute('aria-invalid')).toBe('false');
 		expect(editor.hasAttribute('aria-describedby')).toBe(false);
 		expect(document.getElementById(errorId)).toBeNull();

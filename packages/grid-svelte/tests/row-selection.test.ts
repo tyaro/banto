@@ -771,3 +771,46 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 		expect(document.activeElement).toBe(screen.getByRole('grid'));
 	});
 });
+
+describe('BantoGrid accessible names for screen readers (#1016)', () => {
+	it('names a column header by the column name only, not by its filter button or checkbox', () => {
+		const filterable = columns.map((c) => ({ ...c, filterable: true }));
+		render(BantoGrid<Row>, { rows, columns: filterable, getRowId, selectable: true });
+		const names = screen.getAllByRole('columnheader').map((h) => h.getAttribute('aria-label'));
+		expect(names).toEqual(['選択', '商品名', '価格']);
+		expect(screen.getByRole('columnheader', { name: '商品名' })).toBeTruthy();
+		// The filter button keeps its own name.
+		expect(screen.getByRole('button', { name: '商品名の絞り込み' })).toBeTruthy();
+	});
+
+	it('names the grid, so focus returning to it does not read the whole content', () => {
+		const { unmount } = render(BantoGrid<Row>, { rows, columns, getRowId });
+		expect(screen.getByRole('grid', { name: 'データ一覧' })).toBeTruthy();
+		unmount();
+		render(BantoGrid<Row>, { rows, columns, getRowId, label: '商品の一覧' });
+		expect(screen.getByRole('grid', { name: '商品の一覧' })).toBeTruthy();
+	});
+
+	it('groups the digits of a count in the select-all name and the bulk bar', async () => {
+		const sparse: (Row | undefined)[] = [];
+		sparse[0] = rows[0];
+		render(BantoGrid<Row>, {
+			rows: sparse,
+			columns,
+			getRowId,
+			mode: 'server',
+			totalRows: 1000,
+			selectable: true,
+			selectAllMatching: true
+		});
+		const header = screen.getByRole('checkbox', { name: /をすべて選択/ });
+		expect(header.getAttribute('aria-label')).toBe(
+			'読み込み済みの1件をすべて選択（全1,000件のうち）'
+		);
+		await fireEvent.click(header);
+		await fireEvent.click(screen.getByRole('button', { name: '該当する全1,000件を選択' }));
+		expect(screen.getByRole('group', { name: '一括操作' }).textContent).toContain(
+			'該当する全1,000件を選択中'
+		);
+	});
+});

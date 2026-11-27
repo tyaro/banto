@@ -62,14 +62,23 @@ export function gridMessages(): Partial<GridMessages> {
 		booleanTrue: () => m['grid.booleanTrue'](),
 		booleanFalse: () => m['grid.booleanFalse'](),
 		selectRowLabel: (rowLabel) => m['grid.selectRowLabel']({ rowLabel }),
-		selectAllRows: (count) => m['grid.selectAllRows']({ count }),
-		selectAllLoadedRows: (loaded, total) => m['grid.selectAllLoadedRows']({ loaded, total }),
+		// Counts are grouped by digit (1,000) like the bulk delete button's (#1016).
+		selectAllRows: (count) => m['grid.selectAllRows']({ count: count.toLocaleString() }),
+		selectAllLoadedRows: (loaded, total) =>
+			m['grid.selectAllLoadedRows']({
+				loaded: loaded.toLocaleString(),
+				total: total.toLocaleString()
+			}),
 		selectionStatus: (count) =>
-			count === 0 ? m['grid.selectionNone']() : m['grid.selectionStatus']({ count }),
-		selectAllMatching: (count) => m['grid.selectAllMatching']({ count }),
-		allMatchingStatus: (count) => m['grid.allMatchingStatus']({ count }),
+			count === 0
+				? m['grid.selectionNone']()
+				: m['grid.selectionStatus']({ count: count.toLocaleString() }),
+		selectAllMatching: (count) => m['grid.selectAllMatching']({ count: count.toLocaleString() }),
+		allMatchingStatus: (count) => m['grid.allMatchingStatus']({ count: count.toLocaleString() }),
 		selectionClear: () => m['grid.selectionClear'](),
-		bulkBarLabel: () => m['grid.bulkBarLabel']()
+		bulkBarLabel: () => m['grid.bulkBarLabel'](),
+		selectColumnLabel: () => m['grid.selectColumnLabel'](),
+		gridLabel: () => m['grid.gridLabel']()
 	};
 }
 

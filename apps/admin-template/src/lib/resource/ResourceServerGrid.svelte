@@ -32,6 +32,8 @@
 	interface Props {
 		/** The resource name (`createWindowedListResource` / `invalidate`). */
 		resource: string;
+		/** The resource's label, for the grid's accessible name (#1016). */
+		label: string;
 		columns: GridColumn<ResourceRow>[];
 		/**
 		 * Owned by the parent page (ResourceListPage, spec M15 Phase C
@@ -97,6 +99,7 @@
 
 	let {
 		resource,
+		label,
 		columns,
 		state: gridState,
 		search,
@@ -307,6 +310,7 @@
 		mode="server"
 		state={gridState}
 		messages={gridMessages()}
+		label={m['resource.gridLabel']({ resource: label })}
 		rows={windowed.rows}
 		totalRows={windowed.totalCount}
 		{columns}
