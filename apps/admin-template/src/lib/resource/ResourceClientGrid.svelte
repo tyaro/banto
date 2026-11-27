@@ -25,6 +25,7 @@
 	import type { Snippet } from 'svelte';
 	import { createListResource, invalidate } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import { LoadingState } from '@banto/ui';
 	import type { ResourceRow } from './types';
@@ -171,7 +172,7 @@
 	}
 </script>
 
-<p class="note">{m['resource.rowCount']({ count: list.totalCount.toLocaleString() })}</p>
+<p class="note">{m['resource.rowCount']({ count: formatCount(list.totalCount) })}</p>
 
 {#if list.loading && list.rows.length === 0}
 	<div class="loading">

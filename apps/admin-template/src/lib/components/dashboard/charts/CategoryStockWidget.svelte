@@ -8,6 +8,7 @@
 	import { BarChart } from '@banto/charts';
 	import { byCategory } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
 	import ChartFit from './ChartFit.svelte';
 
@@ -31,7 +32,7 @@
 			horizontal
 			label={m['dashboard.categoryStockAria']()}
 			height={chartHeight}
-			formatValue={(n) => n.toLocaleString()}
+			formatValue={(n) => formatCount(n)}
 			onMarkActivate={select}
 			markSelected={isSelected}
 		/>

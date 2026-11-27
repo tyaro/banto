@@ -70,6 +70,7 @@
 	// [scaffold:dock] end
 	import { goto } from '$app/navigation';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import { DASHBOARD_ROW_LIMIT, createDashboardData } from '#lib/banto/dashboardData.svelte.js';
 	import { drillHref, type DashboardDrill } from '#lib/banto/dashboardDrill.js';
 	import { DASHBOARD_WIDGETS, type DashboardSelect } from '#lib/banto/dashboardWidgets.js';
@@ -149,9 +150,9 @@
 	}
 	// The read left rows out (the limit): say so next to the count, in one sentence.
 	const summary = $derived.by(() => {
-		const base = m['dashboard.summary']({ count: data.totalCount.toLocaleString() });
+		const base = m['dashboard.summary']({ count: formatCount(data.totalCount) });
 		if (!data.truncated) return base;
-		const note = m['dashboard.truncatedNote']({ limit: DASHBOARD_ROW_LIMIT.toLocaleString() });
+		const note = m['dashboard.truncatedNote']({ limit: formatCount(DASHBOARD_ROW_LIMIT) });
 		return m['dashboard.summaryWithNote']({ summary: base, note });
 	});
 
@@ -602,7 +603,7 @@
 	<!-- At the page root, not in PageHeader's actions: the header is a
 	     containing block for fixed descendants (annotation.svelte.ts). -->
 	<AnnotationDrawer>
-		<p>{m['dashboard.aboutNote']({ count: data.totalCount.toLocaleString() })}</p>
+		<p>{m['dashboard.aboutNote']({ count: formatCount(data.totalCount) })}</p>
 	</AnnotationDrawer>
 
 	<DashboardSelectionBar
