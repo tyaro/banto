@@ -21,6 +21,7 @@
 mod elevated_launch;
 mod firewall_change;
 mod firewall_status;
+mod instance_guard;
 mod keyring_store;
 mod leftover_writes;
 
@@ -5407,6 +5408,14 @@ fn exit_startup_refused(reason: impl std::fmt::Display) -> ! {
 
 pub fn run() {
     if let Err(err) = tauri::Builder::default()
+        // Issue #1028: first, so its `setup` (run inside `build`, before any
+        // window and before the `setup` closure below) takes the
+        // single-instance lock and the data folder lock ahead of everything
+        // that touches the data folder. A second start of the same version
+        // raises the running window and exits there; another version (or a
+        // dev build) that finds the data folder taken shows the startup
+        // dialog and exits. See `instance_guard`.
+        .plugin(instance_guard::init())
         // Pop-out panel windows of the dock (spec §5.3 v2, ADR-0037):
         // `banto-tauri-panel` owns the Tauri half - open / focus
         // (`plugin:banto-tauri-panel|open`), the list of the open panel
@@ -5435,7 +5444,17 @@ pub fn run() {
                     data_dir.display()
                 ));
             }
-            let db_path = data_dir.join("admin-template.sqlite3");
+            let db_path = data_dir.join(instance_guard::DB_FILE_NAME);
+            // Issue #1028: the database (and the staged restore right below)
+            // is only touched by the process that holds the data folder
+            // lock. `instance_guard`'s plugin took it before this closure;
+            // if it is not registered, stop instead of opening the database
+            // unguarded.
+            if app.try_state::<instance_guard::InstanceGuards>().is_none() {
+                exit_startup_refused(
+                    "データフォルダのロックを取っていません（instance_guard の plugin が登録されていません）",
+                );
+            }
 
             // Spec M17: apply any staged restore BEFORE `init_db`/the pool is
             // created - see `BackupService::apply_pending_restore_at_startup`'s
