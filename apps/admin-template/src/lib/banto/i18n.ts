@@ -39,6 +39,7 @@ export function gridMessages(): Partial<GridMessages> {
 		filterOpContains: () => m['grid.filterContains'](),
 		filterOpStartsWith: () => m['grid.filterStartsWith'](),
 		filterOpEquals: () => m['grid.filterEquals'](),
+		filterButtonLabel: () => m['grid.filterButtonLabel'](),
 		filterAriaLabel: (header) => m['grid.filterAriaLabel']({ header }),
 		filterAppliedDescription: (header) => m['grid.filterAppliedDescription']({ header }),
 		filterOperatorLabel: () => m['grid.filterOperatorLabel'](),

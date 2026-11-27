@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator } from '@playwright/test';
+import { filterButton } from '../grid-filter-button';
 import { chooseItemsMode } from '../items-view-mode';
 import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 
@@ -44,7 +45,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 				'{header}',
 				copy['items.fieldName']
 			);
-			const trigger = grid.getByRole('button', { name: label, exact: true });
+			const trigger = filterButton(grid, copy['items.fieldName'], copy['grid.filterButtonLabel']);
 			const original = (
 				await grid.locator('[data-cell-row="0"][data-cell-field="name"]').innerText()
 			).trim();
@@ -72,7 +73,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await value.press('Enter');
 			await expect(dialog).toHaveCount(0);
 			await expect(trigger).toBeFocused();
-			await expect(trigger).toHaveAccessibleName(label);
+			await expect(trigger).toHaveAccessibleName(copy['grid.filterButtonLabel']);
 			await expect(trigger).toHaveAccessibleDescription(description);
 			await expect(trigger).toHaveAttribute('title', description);
 			await expect(trigger).toHaveAttribute('aria-expanded', 'false');
@@ -119,7 +120,11 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await page.emulateMedia({ forcedColors: 'none' });
 
 			const priceLabel = copy['grid.filterAriaLabel'].replace('{header}', copy['items.fieldPrice']);
-			const priceTrigger = grid.getByRole('button', { name: priceLabel, exact: true });
+			const priceTrigger = filterButton(
+				grid,
+				copy['items.fieldPrice'],
+				copy['grid.filterButtonLabel']
+			);
 			await priceTrigger.click();
 			const priceDialog = grid.getByRole('dialog', { name: priceLabel, exact: true });
 			const price = priceDialog.getByRole('spinbutton', {

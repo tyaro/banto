@@ -84,6 +84,7 @@
   "grid.filterContains": "Contains",
   "grid.filterStartsWith": "Starts with",
   "grid.filterEquals": "Equals",
+  "grid.filterButtonLabel": "Filter",
   "grid.filterAriaLabel": "Filter {header}",
   "grid.filterAppliedDescription": "A filter is applied to {header}",
   "grid.filterOperatorLabel": "Filter operator",

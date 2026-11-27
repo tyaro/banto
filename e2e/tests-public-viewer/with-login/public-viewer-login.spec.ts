@@ -25,6 +25,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { E2E_ADMIN } from '../../first-admin';
+import { filterButton } from '../../grid-filter-button';
 import { reloadAndReadIdentity } from '../../reload-identity';
 import { expectCheckOutageKeepsTheSession } from '../../tests/session-check-outage';
 
@@ -163,7 +164,7 @@ test.describe.serial('Banto viewer-public mode with accounts', () => {
 		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
 		await mainNav.getByRole('link', { name: '商品' }).click();
 		await expect(page).toHaveURL(/\/items$/);
-		await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
+		await filterButton(page, '商品名').click();
 		const nameFilter = page.getByRole('dialog', { name: '商品名の絞り込み' });
 		await nameFilter.getByPlaceholder('値を入力').fill(SEARCH);
 		await nameFilter.getByRole('button', { name: '適用' }).click();
@@ -220,7 +221,7 @@ test.describe.serial('Banto viewer-public mode with accounts', () => {
 		await expect(page).toHaveURL(/\/items$/);
 
 		const expectNoOldSession = async () => {
-			await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
+			await filterButton(page, '商品名').click();
 			await expect(
 				page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 			).toHaveValue('');

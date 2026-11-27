@@ -58,8 +58,15 @@ function setup(
 	const query = within(view.container);
 	return { ...view, query, state, onParamsChange };
 }
-async function open(view: ReturnType<typeof setup>, name = 'Nameの絞り込み') {
-	const trigger = view.query.getByRole('button', { name });
+/** The filter button of `column`: its name is the same in every column (#1035). */
+function filterButton(view: ReturnType<typeof setup>, column: string) {
+	return within(view.query.getByRole('columnheader', { name: column })).getByRole('button', {
+		name: '絞り込み'
+	});
+}
+async function open(view: ReturnType<typeof setup>, column = 'Name') {
+	const name = `${column}の絞り込み`;
+	const trigger = filterButton(view, column);
 	trigger.focus();
 	await fireEvent.click(trigger);
 	const dialog = view.query.getByRole('dialog', { name });
@@ -72,7 +79,10 @@ it('names controls, focuses the value once and connects the expanded trigger', a
 		filterOperatorLabel: () => 'Filter operator',
 		filterValueLabel: () => 'Filter value'
 	});
-	const button = view.query.getByRole('button', { name: 'Nameの絞り込み' });
+	const button = within(view.query.getByRole('columnheader', { name: 'Name' })).getByRole(
+		'button',
+		{ name: '絞り込み' }
+	);
 	expect(button.getAttribute('aria-haspopup')).toBe('dialog');
 	expect(button.getAttribute('aria-expanded')).toBe('false');
 	expect(button.hasAttribute('aria-controls')).toBe(false);
@@ -90,8 +100,8 @@ it('names controls, focuses the value once and connects the expanded trigger', a
 
 it('uses independent IDs for identical grids and falls back to the column ID', async () => {
 	const cols = [{ ...columns[0], header: '  ' }];
-	const first = await open(setup('client', {}, cols), 'nameの絞り込み');
-	const second = await open(setup('client', {}, cols), 'nameの絞り込み');
+	const first = await open(setup('client', {}, cols), 'name');
+	const second = await open(setup('client', {}, cols), 'name');
 	expect(first.dialog.id).not.toBe(second.dialog.id);
 	expect(document.getElementById(first.trigger.getAttribute('aria-controls')!)).toBe(first.dialog);
 	expect(document.getElementById(second.trigger.getAttribute('aria-controls')!)).toBe(
@@ -163,7 +173,10 @@ it('closes on the same trigger click and switches to another column without reop
 	await fireEvent.click(first.trigger);
 	expect(view.query.queryByRole('dialog')).toBeNull();
 	const reopened = await open(view);
-	const other = view.query.getByRole('button', { name: 'Priceの絞り込み' });
+	const other = within(view.query.getByRole('columnheader', { name: 'Price' })).getByRole(
+		'button',
+		{ name: '絞り込み' }
+	);
 	const oldFocus = vi.spyOn(reopened.trigger, 'focus');
 	await fireEvent.pointerDown(other, { button: 0 });
 	other.focus();
@@ -207,7 +220,7 @@ describe.each(['client', 'server'] as const)('%s filter actions', (mode) => {
 
 	it('keeps numeric zero and clears an erased value without sending NaN', async () => {
 		const view = setup(mode);
-		let controls = await open(view, 'Priceの絞り込み');
+		let controls = await open(view, 'Price');
 		await fireEvent.input(controls.input, { target: { value: '0' } });
 		await fireEvent.click(within(controls.dialog).getByRole('button', { name: '適用' }));
 		expect(view.state.filters).toEqual([{ field: 'price', op: 'eq', value: 0 }]);
@@ -218,7 +231,7 @@ describe.each(['client', 'server'] as const)('%s filter actions', (mode) => {
 			});
 		}
 		expect(document.activeElement).toBe(controls.trigger);
-		controls = await open(view, 'Priceの絞り込み');
+		controls = await open(view, 'Price');
 		expect(controls.input.value).toBe('0');
 		await fireEvent.input(controls.input, { target: { value: '' } });
 		const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
@@ -268,7 +281,10 @@ function expectApplied(trigger: HTMLElement, description?: string) {
 describe.each(['client', 'server'] as const)('%s applied filter descriptions', (mode) => {
 	it('keeps applied state independent of opening, draft changes, cancellation and clearing', async () => {
 		const view = setup(mode);
-		const trigger = view.query.getByRole('button', { name: 'Nameの絞り込み' });
+		const trigger = within(view.query.getByRole('columnheader', { name: 'Name' })).getByRole(
+			'button',
+			{ name: '絞り込み' }
+		);
 		expectApplied(trigger);
 		expect(trigger.getAttribute('aria-expanded')).toBe('false');
 		let controls = await open(view);
@@ -314,13 +330,13 @@ describe.each(['client', 'server'] as const)('%s applied filter descriptions', (
 
 	it('describes numeric zero as applied and removes the description on empty-value clearing', async () => {
 		const view = setup(mode);
-		let controls = await open(view, 'Priceの絞り込み');
+		let controls = await open(view, 'Price');
 		await fireEvent.input(controls.input, { target: { value: '0' } });
 		expectApplied(controls.trigger);
 		await fireEvent.keyDown(controls.input, { key: 'Enter' });
 		expectApplied(controls.trigger, 'Priceの絞り込みを適用中');
 		expect(view.state.filters).toEqual([{ field: 'price', op: 'eq', value: 0 }]);
-		controls = await open(view, 'Priceの絞り込み');
+		controls = await open(view, 'Price');
 		await fireEvent.input(controls.input, { target: { value: '' } });
 		expectApplied(controls.trigger, 'Priceの絞り込みを適用中');
 		await fireEvent.keyDown(controls.input, { key: 'Enter' });
@@ -342,7 +358,10 @@ it('reflects existing and hydrated external filters without firing callbacks', a
 		columns,
 		state
 	);
-	const trigger = view.query.getByRole('button', { name: 'Priceの絞り込み' });
+	const trigger = within(view.query.getByRole('columnheader', { name: 'Price' })).getByRole(
+		'button',
+		{ name: '絞り込み' }
+	);
 	expectApplied(trigger, 'Price: filter applied');
 	state.removeFilter('price');
 	await tick();
@@ -362,7 +381,7 @@ it('uses column-ID fallback and unique description IDs across columns and identi
 		state.setFilter({ field: 'price', op: 'eq', value: 0 });
 		const view = setup('server', {}, cols, state);
 		for (const label of ['name', 'Price']) {
-			const trigger = view.query.getByRole('button', { name: `${label}の絞り込み` });
+			const trigger = filterButton(view, label);
 			const description = expectApplied(trigger, `${label}の絞り込みを適用中`)!;
 			expect(view.container.contains(description)).toBe(true);
 			ids.push(description.id);
