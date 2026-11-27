@@ -216,4 +216,13 @@
 		align-items: center;
 		gap: var(--banto-space-3);
 	}
+
+	/* The sparkline takes only what is left (flex-basis 0, up to its own width),
+	   so it never forces the row to wrap: the default tile keeps its height, and
+	   the value alone wraps when it is long or the text is large (#1044). */
+	.stat-value-row > :global(.banto-sparkline) {
+		flex: 1 1 0;
+		min-width: 0;
+		max-width: 72px;
+	}
 </style>

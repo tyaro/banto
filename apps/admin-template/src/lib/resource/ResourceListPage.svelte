@@ -2061,7 +2061,7 @@
 	.columns-trigger,
 	.more-trigger {
 		min-height: var(--banto-control-height-sm);
-		padding: var(--banto-space-1) var(--banto-space-3);
+		padding: 0 var(--banto-space-3);
 		font-size: var(--banto-font-size-sm);
 	}
 
@@ -2123,6 +2123,8 @@
 	.search-input {
 		min-width: 0;
 		min-height: var(--banto-control-height-sm);
+		height: auto;
+		padding-block: 0;
 		width: 14em;
 		max-width: 100%;
 		padding-left: calc(var(--banto-space-2) * 2 + 14px);

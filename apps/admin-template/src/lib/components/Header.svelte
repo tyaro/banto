@@ -559,7 +559,7 @@
 		align-items: center;
 		gap: var(--banto-space-2);
 		min-height: var(--banto-control-height-sm);
-		padding: var(--banto-space-1) var(--banto-space-3);
+		padding: 0 var(--banto-space-3);
 		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);
 		background: var(--banto-surface);
@@ -590,6 +590,8 @@
 		color: var(--banto-text-muted);
 		font: inherit;
 		font-size: var(--banto-font-size-xs);
+		/* Keeps the pill at its min-height at the default size (#1044). */
+		line-height: 1.2;
 	}
 
 	.search-icon-only {
