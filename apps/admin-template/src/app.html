@@ -73,6 +73,11 @@
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
-		<div style="display: contents">%sveltekit.body%</div>
+		<!-- role="presentation" (#1024): Svelte puts its delegated listeners (click, ...) on
+		     this element, and Chromium exposes an element with a click listener as
+		     "clickable" - a screen reader then said "clickable" before the first landmark
+		     of every page. The wrapper means nothing by itself, so it stays out of the
+		     accessibility tree. -->
+		<div style="display: contents" role="presentation">%sveltekit.body%</div>
 	</body>
 </html>
