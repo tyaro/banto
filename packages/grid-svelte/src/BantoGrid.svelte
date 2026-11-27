@@ -54,6 +54,7 @@
 	import CellEditError from './CellEditError.svelte';
 	import { defaultGridMessages, type GridMessages } from './messages';
 	import { getCellEditors, type CellEditors } from './cellEditors';
+	import { outsideRowTabStops } from './outsideRowTabStops';
 
 	interface Props {
 		/**
@@ -2245,14 +2246,17 @@
 
 			<!--
 			`outside` (#1016): the active cell's row, drawn although it is outside the
-			virtualized window. Its checkbox and links are no tab stops while it is
-			out there, so Tab does not jump the view to a row that is out of sight.
+			virtualized window. Nothing in it is a tab stop while it is out there
+			(`outsideRowTabStops`: the checkbox, the links, and whatever the host
+			drew with `render` / `cell`), so Tab does not jump the view to a row
+			that is out of sight.
 			-->
 			{#snippet dataRow(row: TRow, rowIndex: number, outside: boolean)}
 				<div
 					class="row {rowClass?.(row) ?? ''}"
 					class:selected={selectable && isRowSelected(row)}
 					class:outside-window={outside}
+					use:outsideRowTabStops={outside}
 					role="row"
 					aria-rowindex={rowIndex + 2}
 					style:top={outside ? outsideTop(rowIndex) : undefined}
@@ -2283,7 +2287,6 @@
 									class="select-box"
 									checked={isRowSelected(row)}
 									aria-label={t.selectRowLabel(rowLabelFor(row))}
-									tabindex={outside ? -1 : undefined}
 									onchange={() => toggleRowSelected(row)}
 								/>
 							</label>
@@ -2347,7 +2350,6 @@
 									<a
 										class="cell-link"
 										href={linkInfo.href}
-										tabindex={outside ? -1 : undefined}
 										onclick={(event) => event.stopPropagation()}
 										ondblclick={(event) => event.stopPropagation()}
 									>
@@ -2415,7 +2417,6 @@
 									<a
 										class="cell-link"
 										href={view.href}
-										tabindex={outside ? -1 : undefined}
 										onclick={(event) => event.stopPropagation()}
 										ondblclick={(event) => event.stopPropagation()}
 									>

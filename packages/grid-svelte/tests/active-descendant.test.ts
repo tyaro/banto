@@ -5,7 +5,7 @@
  * tell which cell the cursor is on).
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
-import { tick } from 'svelte';
+import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
 import { cellDomId, domIdPart, groupRowDomId } from '../src/core/domId';
@@ -271,6 +271,147 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			await scrollTo(grid, 0);
 			expect(box.isConnected).toBe(true);
 			expect(box.hasAttribute('tabindex')).toBe(false);
+		});
+
+		// What the host draws with `render` / `cell` is out of the Tab order too
+		// while the row is out of sight (review of #1031), and comes back as it was.
+		describe('tab stops inside it', () => {
+			const controls = createRawSnippet<[Row]>((row) => ({
+				render: () =>
+					`<span class="controls">` +
+					`<button type="button" data-k="plain">open ${row().id}</button>` +
+					`<span data-k="zero" tabindex="0">zero</span>` +
+					`<span data-k="two" tabindex="2">two</span>` +
+					`<button type="button" data-k="minus" tabindex="-1">minus</button>` +
+					`<input data-k="input" />` +
+					`<span data-k="editable" contenteditable="true">edit</span>` +
+					`</span>`
+			}));
+			const withControls: GridColumn<Row>[] = [
+				...columns,
+				{ id: 'open', header: 'Open', accessor: () => '', render: controls },
+				{
+					id: 'link',
+					header: 'Link',
+					accessor: 'name',
+					cell: (row) => ({ text: row.name, href: `/rows/${row.id}` })
+				}
+			];
+			const KEYS = ['plain', 'zero', 'two', 'minus', 'input', 'editable'];
+
+			function setup() {
+				const { container } = render(BantoGrid<Row>, {
+					rows: makeRows(1_000),
+					columns: withControls,
+					rowHeight: ROW,
+					selectable: true,
+					getRowId: (row: Row) => row.id
+				});
+				return { container, grid: screen.getByRole('grid') };
+			}
+
+			function tabindexes(row: HTMLElement): Record<string, string | null> {
+				const out: Record<string, string | null> = {};
+				for (const key of KEYS) {
+					out[key] = row.querySelector(`[data-k="${key}"]`)!.getAttribute('tabindex');
+				}
+				out.link = row.querySelector('a.cell-link')!.getAttribute('tabindex');
+				out.box = row.querySelector('input[type="checkbox"]')!.getAttribute('tabindex');
+				return out;
+			}
+
+			const ORIGINAL = {
+				plain: null,
+				zero: '0',
+				two: '2',
+				minus: '-1',
+				input: null,
+				editable: null,
+				link: null,
+				box: null
+			};
+
+			it('takes every focusable element out of the Tab order, and puts each back as it was', async () => {
+				const { container, grid } = setup();
+				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
+				expect(tabindexes(row)).toEqual(ORIGINAL);
+
+				await scrollTo(grid, HEADER + 500 * ROW);
+				expect(row.classList.contains('outside-window')).toBe(true);
+				expect(row.isConnected).toBe(true);
+				expect(Object.values(tabindexes(row)).every((value) => value === '-1')).toBe(true);
+				// Still exposed to assistive technology: only `tabindex` changed.
+				expect(row.hasAttribute('inert')).toBe(false);
+				expect(row.closest('[aria-hidden="true"]')).toBeNull();
+				// Rows of the window are untouched.
+				const inWindow = inFlowRows(container)[0];
+				expect(inWindow.querySelector('[data-k="plain"]')!.hasAttribute('tabindex')).toBe(false);
+				expect(inWindow.querySelector('[data-k="two"]')!.getAttribute('tabindex')).toBe('2');
+
+				await scrollTo(grid, 0);
+				expect(row.classList.contains('outside-window')).toBe(false);
+				expect(tabindexes(row)).toEqual(ORIGINAL);
+				expect(row.querySelector('[data-banto-grid-tabindex]')).toBeNull();
+
+				// And again: nothing is left over from the first round.
+				await scrollTo(grid, HEADER + 500 * ROW);
+				expect(Object.values(tabindexes(row)).every((value) => value === '-1')).toBe(true);
+				await scrollTo(grid, 0);
+				expect(tabindexes(row)).toEqual(ORIGINAL);
+			});
+
+			it('treats what is drawn or changed while the row is out there the same way', async () => {
+				const { container, grid } = setup();
+				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
+				await scrollTo(grid, HEADER + 500 * ROW);
+				const host = row.querySelector<HTMLElement>('.controls')!;
+
+				// Added later (a host snippet drawn again), nested too.
+				host.insertAdjacentHTML(
+					'beforeend',
+					'<span><button type="button" data-k="late">late</button>' +
+						'<span data-k="late-three" tabindex="3">three</span></span>'
+				);
+				// The host writes `tabindex` again on an element that is already out.
+				row.querySelector('[data-k="plain"]')!.setAttribute('tabindex', '5');
+				row.querySelector('[data-k="zero"]')!.removeAttribute('tabindex');
+				// MutationObserver callbacks are microtasks.
+				await Promise.resolve();
+				await tick();
+				expect(row.querySelector('[data-k="late"]')!.getAttribute('tabindex')).toBe('-1');
+				expect(row.querySelector('[data-k="late-three"]')!.getAttribute('tabindex')).toBe('-1');
+				expect(row.querySelector('[data-k="plain"]')!.getAttribute('tabindex')).toBe('-1');
+				expect(row.querySelector('[data-k="zero"]')!.getAttribute('tabindex')).toBe('-1');
+
+				await scrollTo(grid, 0);
+				expect(row.querySelector('[data-k="late"]')!.hasAttribute('tabindex')).toBe(false);
+				expect(row.querySelector('[data-k="late-three"]')!.getAttribute('tabindex')).toBe('3');
+				// The value written while it was out is the one that comes back.
+				expect(row.querySelector('[data-k="plain"]')!.getAttribute('tabindex')).toBe('5');
+				expect(row.querySelector('[data-k="zero"]')!.hasAttribute('tabindex')).toBe(false);
+
+				// Inside the window nothing is watched any more.
+				host.insertAdjacentHTML('beforeend', '<button type="button" data-k="inside">in</button>');
+				await Promise.resolve();
+				expect(row.querySelector('[data-k="inside"]')!.hasAttribute('tabindex')).toBe(false);
+			});
+
+			it('does not take the focus away from a control in the row', async () => {
+				const { container, grid } = setup();
+				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
+				const button = row.querySelector<HTMLElement>('[data-k="plain"]')!;
+				button.focus();
+				expect(document.activeElement).toBe(button);
+
+				await scrollTo(grid, HEADER + 500 * ROW);
+				expect(row.classList.contains('outside-window')).toBe(true);
+				expect(button.getAttribute('tabindex')).toBe('-1');
+				expect(document.activeElement).toBe(button);
+				expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+			});
 		});
 
 		it('the first arrow key moves from it and brings the active cell back into view', async () => {
