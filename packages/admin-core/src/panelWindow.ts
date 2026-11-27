@@ -72,6 +72,14 @@ export interface PanelWindowEnvironment {
 export interface OpenPanelWindowOptions extends PanelWindowEnvironment {
 	/** Pass `@tauri-apps/api/core`'s `invoke`. */
 	invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+	/**
+	 * The background colour (`"#rrggbb"`) a new window is built with, so it is
+	 * not white until its page is drawn (Issue #1015). Called each time a
+	 * window is opened, so it follows a theme change; return `undefined` to
+	 * leave the plugin's own default. Only `openPanelWindow` (and so
+	 * `createPanelPopOut`) uses it; the plugin refuses any other shape.
+	 */
+	background?: () => string | undefined;
 }
 
 export interface ListenPanelClosedOptions extends PanelWindowEnvironment {
@@ -94,7 +102,17 @@ export async function openPanelWindow(
 	options: OpenPanelWindowOptions
 ): Promise<void> {
 	if (!options.isTauri()) return;
-	await options.invoke(PANEL_OPEN_COMMAND, { id: content.id, title: content.title });
+	const args: Record<string, unknown> = { id: content.id, title: content.title };
+	// A throwing `background` is the app's bug, but a colour is a nicety: it
+	// must not keep the window from opening.
+	let background: string | undefined;
+	try {
+		background = options.background?.();
+	} catch {
+		background = undefined;
+	}
+	if (typeof background === 'string' && background !== '') args.background = background;
+	await options.invoke(PANEL_OPEN_COMMAND, args);
 }
 
 /**

@@ -22,6 +22,10 @@
 //! - **close**: closes the window of a panel id (only a window this plugin
 //!   built), for a frontend that has put the panel back into the dock itself -
 //!   a layout reset (`createPanelPopOut(...).closeWindows`, Issue #1021).
+//! - **background**: `open` takes an optional `background` (`"#rrggbb"`) that
+//!   the window is built with, so a window opened in a dark theme is not
+//!   white until its page is drawn (Issue #1015). `Builder::background` sets
+//!   a default for calls that pass none.
 //!
 //! Register it in the app's `tauri::Builder`:
 //!
@@ -66,7 +70,9 @@ pub mod title;
 #[cfg(feature = "tauri")]
 mod plugin;
 
-pub use config::{validate_panel_id, ConfigError, PanelConfig, PanelIdError};
+pub use config::{
+    parse_background, validate_panel_id, BackgroundError, ConfigError, PanelConfig, PanelIdError,
+};
 pub use geometry::{is_on_screen, restorable, MonitorRect, PanelGeometry};
 pub use store::GeometryStore;
 pub use title::document_title_script;

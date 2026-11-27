@@ -9,12 +9,13 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
+use tauri::window::Color;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, Runtime, State,
     WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 
-use crate::config::{validate_panel_id, PanelConfig, DEFAULT_STORE_FILE};
+use crate::config::{parse_background, validate_panel_id, PanelConfig, DEFAULT_STORE_FILE};
 use crate::geometry::{restorable, MonitorRect, PanelGeometry};
 use crate::store::GeometryStore;
 use crate::title::document_title_script;
@@ -103,14 +104,26 @@ impl PanelState {
 /// Not a mutating operation in the sense of conventions §1 (no data is
 /// written, nothing is audited): it is desktop integration, with no REST
 /// twin - the same class as the template's former `panel_open`.
+///
+/// `background` (`"#rrggbb"`, optional) is the window's background colour
+/// while its page is still loading; without it the configured default
+/// ([`PanelConfig::background`]) is used, and without that the webview's own.
+/// A malformed value is an error, like a bad id. It only applies to a window
+/// that is built here: one already open keeps its colour. Always opaque -
+/// WebView2 only knows an alpha of 0 or 255 (Issue #1015).
 #[tauri::command]
 async fn open<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, PanelState>,
     id: String,
     title: String,
+    background: Option<String>,
 ) -> Result<(), String> {
     validate_panel_id(&id).map_err(|err| err.to_string())?;
+    let background = match background.as_deref().or(state.config.background.as_deref()) {
+        Some(value) => Some(parse_background(value).map_err(|err| err.to_string())?),
+        None => None,
+    };
     let config = &state.config;
     let label = config.label_for(&id);
 
@@ -155,6 +168,9 @@ async fn open<R: Runtime>(
             .initialization_script(title_script)
             .inner_size(config.default_size.0, config.default_size.1)
             .min_inner_size(config.min_size.0, config.min_size.1);
+    if let Some((r, g, b)) = background {
+        builder = builder.background_color(Color(r, g, b, 255));
+    }
     if restore.is_some() {
         // Built hidden, moved, then shown: the window never flashes at the
         // default place first. Position before size, so the size is applied
@@ -358,6 +374,14 @@ impl Builder {
     /// the app's data dir).
     pub fn store_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.config.store_path = Some(path.into());
+        self
+    }
+
+    /// Default background colour (`"#rrggbb"`) of a panel window until its
+    /// page is drawn, for an `open` call that passes none. A bad value makes
+    /// the plugin's `setup` fail ([`PanelConfig::validate`]).
+    pub fn background(mut self, color: impl Into<String>) -> Self {
+        self.config.background = Some(color.into());
         self
     }
 
