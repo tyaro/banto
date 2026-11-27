@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- fix(grid-svelte): **`BantoGrid` のセルへ移るたびに NVDA が「選択なし」と読むのをやめた**（#1034、#1016 の NVDA 実機確認で見つけた）。データのセル（`role="gridcell"`）はコピー・貼り付けの範囲を表す `aria-selected` をいつも持ち、範囲の外は `aria-selected="false"` だったため。範囲が 1 セルだけ（範囲の選択をしていない。クリックやキー移動だけ）のあいだは `aria-selected` を付けず、Shift+矢印・ドラッグなどで 2 セル以上に広げたときだけ、範囲の中を `true`・外を `false` にする。grid の外枠に `aria-multiselectable` は付けない（複数選択の入れ物の中のセルを Chromium が「選択できる」と伝え、NVDA がまた「選択なし」と読むおそれがあるため）。行の選択（`selectable` のチェックボックス）は今までどおり別物で、行に `aria-selected` は付けない。
+  - **消費側への注意**: 範囲を広げていないあいだ、セルに `aria-selected` 属性が無くなる（今までは `"false"` か、1 セルの範囲の `"true"`）。`[role="gridcell"][aria-selected="false"]` で探すテストや、クリック直後に `[aria-selected="true"]` が 1 つあることを期待するテストは、属性なし・範囲を広げたあとで確かめるように直す。
 - fix(admin-template): 引数なしの `toLocaleString()` を `formatCount`（表示言語の桁区切り）に寄せ、端末のロケールで件数・金額の表示が変わらないようにした。再発防止に eslint の `no-restricted-syntax` を足した（#1037）
 - fix(grid-svelte, admin-template): **見出しの部品の中を `role="toolbar"` で包み、並べ替えの結果を読み上げる**（#1016、NVDA の実機で見つけた）。見出しの部品（全選択・並べ替え・絞り込み）にフォーカスがあっても NVDA はブラウズモードのままで、←/→ が文字読みになり見出し行の roving tabindex（`headerTabStop`）に届かなかった。NVDA は祖先に `toolbar` があるとフォーカスモードにするので、各見出しの中を `<div role="toolbar">`（`display: contents`、見た目は同じ・名前なし）で包んだ（リサイズの separator は外）。また、フォーカスモードで並べ替えを Enter で押しても何も読まれなかったので、`role="status"` の領域が「IDで昇順に並べ替え」「並べ替えを解除」などと読む（`GridMessages` に `sortAscendingStatus` ほか 6 つ、admin-template は ja / en を追加。領域は `selectable` でなくても出る）。
   - **消費側への注意**: grid の知らせの領域（`role="status"`・`aria-live="polite"`）は、今まで `selectable` のときだけだったが、並べ替えの知らせのため常に置く。grid を含む範囲で `[aria-live="polite"]` を 1 つと決めて探すテストは、2 つ見つかる（このリポジトリのドックの E2E は `.dock-live` で探すように直した）。
