@@ -14,6 +14,7 @@
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 
 	let { data, height }: DashboardWidgetProps = $props();
 
@@ -33,7 +34,7 @@
 			accessor: 'stock',
 			width: 80,
 			align: 'right',
-			format: (value) => Number(value).toLocaleString()
+			format: (value) => formatCount(Number(value))
 		}
 	];
 </script>

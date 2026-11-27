@@ -3,6 +3,7 @@
 	import { BarChart } from '@banto/charts';
 	import { stockByCategoryPriceBand } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
 	import ChartFit from './ChartFit.svelte';
 
@@ -24,7 +25,7 @@
 			stacked
 			label={m['dashboard.stackedBarAria']()}
 			height={chartHeight}
-			formatValue={(n) => n.toLocaleString()}
+			formatValue={(n) => formatCount(n)}
 		/>
 	{/snippet}
 </ChartFit>

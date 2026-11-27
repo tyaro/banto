@@ -96,6 +96,23 @@ export default tseslint.config(
 			'svelte/prefer-svelte-reactivity': 'off'
 		}
 	},
+	{
+		// admin-template: a no-argument `toLocaleString()` follows the device's
+		// locale, not the display language (#1037). Use `formatCount` from
+		// `#lib/banto/i18n.js` (or pass `getLocale()` explicitly).
+		files: ['apps/admin-template/src/**/*.{ts,svelte}'],
+		ignores: ['**/*.test.ts'],
+		rules: {
+			'no-restricted-syntax': [
+				'error',
+				{
+					selector: "CallExpression[callee.property.name='toLocaleString'][arguments.length=0]",
+					message:
+						'Use formatCount() from #lib/banto/i18n.js (device locale leaks otherwise, #1037).'
+				}
+			]
+		}
+	},
 	// Disable stylistic rules that fight Prettier's formatting.
 	prettierConfig,
 	svelte.configs.prettier

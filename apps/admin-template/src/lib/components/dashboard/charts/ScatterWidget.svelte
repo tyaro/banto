@@ -3,14 +3,15 @@
 	import { ScatterChart } from '@banto/charts';
 	import { scatterSample } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
 	import ChartFit from './ChartFit.svelte';
 
 	let { data, height }: DashboardWidgetProps = $props();
 
 	const scatterRows = $derived(scatterSample(data.rows));
-	const yen = (n: number) => `¥${n.toLocaleString()}`;
-	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
+	const yen = (n: number) => `¥${formatCount(n)}`;
+	const countLabel = (n: number) => m['dashboard.countUnit']({ count: formatCount(n) });
 </script>
 
 <ChartFit {height}>

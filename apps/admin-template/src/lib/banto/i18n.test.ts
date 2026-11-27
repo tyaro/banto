@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as m from '#lib/paraglide/messages.js';
 import { overwriteGetLocale, type Locale } from '#lib/paraglide/runtime.js';
 import { formatCount, gridMessages } from './i18n.js';
@@ -26,6 +26,23 @@ describe('count digit grouping follows the display language (#1016)', () => {
 			);
 			expect(m['resource.bulkDeleteDone']({ count: formatCount(1000) })).toContain('1,000');
 			expect(m['resource.bulkDeleteTooMany']({ max: formatCount(1000) })).toContain('1,000');
+		}
+	});
+});
+
+describe('formatCount passes the display locale to toLocaleString (#1037)', () => {
+	afterEach(() => {
+		use('en');
+		vi.restoreAllMocks();
+	});
+
+	it('uses getLocale(), not the device locale', () => {
+		const spy = vi.spyOn(Number.prototype, 'toLocaleString');
+		for (const l of ['en', 'ja'] as const) {
+			use(l);
+			spy.mockClear();
+			expect(formatCount(1234567)).toBe('1,234,567');
+			expect(spy).toHaveBeenCalledWith(l);
 		}
 	});
 });

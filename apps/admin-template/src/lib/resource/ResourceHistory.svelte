@@ -20,6 +20,7 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { EmptyState, ErrorState, LoadingState } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import { listAuditLog } from '#lib/banto/auditLogAdmin.js';
 	import { auditLogLink } from '#lib/banto/auditLogQuery.js';
 	import { resources } from '#lib/banto/resources/index.js';
@@ -160,8 +161,8 @@
 		{#if state.total > state.rows.length}
 			<p class="note">
 				{m['resource.historyTruncated']({
-					shown: state.rows.length.toLocaleString(),
-					total: state.total.toLocaleString()
+					shown: formatCount(state.rows.length),
+					total: formatCount(state.total)
 				})}
 			</p>
 		{/if}

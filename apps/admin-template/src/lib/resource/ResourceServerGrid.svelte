@@ -26,6 +26,7 @@
 	import type { Snippet } from 'svelte';
 	import { createWindowedListResource, invalidate } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import type { ResourceRow } from './types';
 
@@ -290,7 +291,7 @@
 	}
 </script>
 
-<p class="note">{m['resource.rowCount']({ count: windowed.totalCount.toLocaleString() })}</p>
+<p class="note">{m['resource.rowCount']({ count: formatCount(windowed.totalCount) })}</p>
 
 {#if windowed.failures.length > 0}
 	<div class="load-error" role="alert">

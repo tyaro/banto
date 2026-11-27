@@ -7,6 +7,7 @@
 	import { BoxPlot, downloadSvg, Histogram, ParetoChart } from '@banto/charts';
 	import { categoryCounts, priceByCategoryGroups, priceValues } from '#lib/banto/dashboard.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 	import type { DashboardWidgetProps } from '#lib/banto/dashboardWidgets.js';
 
 	let { data }: DashboardWidgetProps = $props();
@@ -25,8 +26,8 @@
 		if (svg) downloadSvg(svg, 'price-histogram.svg');
 	}
 
-	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
-	const yen = (n: number) => `¥${n.toLocaleString()}`;
+	const countLabel = (n: number) => m['dashboard.countUnit']({ count: formatCount(n) });
+	const yen = (n: number) => `¥${formatCount(n)}`;
 </script>
 
 <div class="spc-panel">
