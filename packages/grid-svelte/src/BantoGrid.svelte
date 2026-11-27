@@ -2349,7 +2349,6 @@
 		aria-label={label ?? t.gridLabel()}
 		tabindex="0"
 		aria-activedescendant={activeDescendantId}
-		aria-multiselectable="true"
 		aria-rowcount={effectiveRowCount + 1}
 		aria-colcount={gridState.orderedColumns.length + (selectable ? 1 : 0)}
 		onscroll={handleScroll}

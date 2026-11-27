@@ -57,12 +57,14 @@ function setup() {
 }
 
 describe('BantoGrid gridcell aria-selected (#1034)', () => {
-	it('puts no aria-selected on any cell with no range, and marks the grid multiselectable', () => {
+	it('puts no aria-selected on any cell with no range, and does not mark the grid multiselectable', () => {
 		const { container } = setup();
 		expect(container.querySelectorAll('[role="gridcell"]').length).toBeGreaterThan(0);
 		expect(container.querySelector('[role="gridcell"][aria-selected]')).toBeNull();
-		expect(container.querySelector('[role="grid"]')!.getAttribute('aria-multiselectable')).toBe(
-			'true'
+		// Chromium may expose cells of a multiselectable grid as selectable, and NVDA
+		// then says "not selected" again (#1034), so the grid stays without it.
+		expect(container.querySelector('[role="grid"]')!.hasAttribute('aria-multiselectable')).toBe(
+			false
 		);
 	});
 
