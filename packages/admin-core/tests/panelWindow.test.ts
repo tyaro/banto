@@ -68,6 +68,54 @@ describe('openPanelWindow', () => {
 	});
 });
 
+describe('openPanelWindow: background (Issue #1015)', () => {
+	it('passes the colour the app gives', async () => {
+		const invoke = vi.fn(async () => undefined);
+		await openPanelWindow(MEMO, { isTauri: () => true, invoke, background: () => '#1e1e2e' });
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, {
+			id: 'memo',
+			title: 'Memo',
+			background: '#1e1e2e'
+		});
+	});
+
+	it('leaves the argument out when there is no colour', async () => {
+		for (const background of [undefined, () => undefined, () => '']) {
+			const invoke = vi.fn(async () => undefined);
+			await openPanelWindow(MEMO, { isTauri: () => true, invoke, background });
+			expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, { id: 'memo', title: 'Memo' });
+		}
+	});
+
+	it('reads the colour at every open, so a theme change is followed', async () => {
+		const invoke = vi.fn(async (_command: string, _args?: Record<string, unknown>) => undefined);
+		let color = '#ffffff';
+		const options = { isTauri: () => true, invoke, background: () => color };
+		await openPanelWindow(MEMO, options);
+		color = '#101010';
+		await openPanelWindow(MEMO, options);
+		expect(invoke.mock.calls.map((c) => c[1]?.background)).toEqual(['#ffffff', '#101010']);
+	});
+
+	it('still opens the window when the colour function throws', async () => {
+		const invoke = vi.fn(async () => undefined);
+		await openPanelWindow(MEMO, {
+			isTauri: () => true,
+			invoke,
+			background: () => {
+				throw new Error('no document');
+			}
+		});
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, { id: 'memo', title: 'Memo' });
+	});
+
+	it('does not read the colour outside Tauri', async () => {
+		const background = vi.fn(() => '#000000');
+		await openPanelWindow(MEMO, { isTauri: () => false, invoke: vi.fn(), background });
+		expect(background).not.toHaveBeenCalled();
+	});
+});
+
 describe('listenPanelClosed', () => {
 	it('listens on banto://panel-closed and hands the id over', async () => {
 		const { listen, unlisten, fire } = fakeListen();
@@ -155,6 +203,25 @@ describe('createPanelPopOut', () => {
 		const stop = popOut.connect();
 		expect(events.listen).not.toHaveBeenCalled();
 		stop();
+	});
+
+	it('hands the background to the window it opens, read at each open (Issue #1015)', async () => {
+		let color: string | undefined = '#0b0b0b';
+		const { popOut, invoke } = setup({ background: () => color });
+		popOut.onPopOut!(MEMO);
+		await tick();
+		await tick();
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, {
+			id: 'memo',
+			title: 'Memo',
+			background: '#0b0b0b'
+		});
+
+		color = undefined;
+		popOut.onPopOut!({ id: 'other', title: 'Other' });
+		await tick();
+		await tick();
+		expect(invoke).toHaveBeenCalledWith(PANEL_OPEN_COMMAND, { id: 'other', title: 'Other' });
 	});
 
 	it('detaches the panel, then opens its window', async () => {

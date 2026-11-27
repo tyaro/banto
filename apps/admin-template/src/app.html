@@ -53,6 +53,23 @@
 				}
 			})();
 		</script>
+		<!-- The page's own background until the theme CSS arrives (Issue #1015). That
+		     CSS is loaded by the app's script, so without this the webview shows
+		     its default white for the first moments of a window - the pop-out
+		     panel window above all, in the dark theme. `:where()` has no
+		     specificity, so the theme's `html { background: var(--banto-bg) }`
+		     replaces it the moment it exists. Raw values on purpose (no token
+		     exists yet): the same colours as `--banto-neutral-2` (light) and
+		     `--banto-neutral-1` (dark) in packages/theme/src/css/banto.css at the
+		     default --banto-brand-hue (258); change them together with that hue. -->
+		<style>
+			:where(html) {
+				background: oklch(0.977 0.004 258);
+			}
+			:where(html[data-theme='dark']) {
+				background: oklch(0.2 0.009 258);
+			}
+		</style>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
