@@ -154,6 +154,26 @@ describe('fitBandLabels (#1047 review)', () => {
 		}
 	});
 
+	it('fits a single label on both sides when the right margin is larger than the left', () => {
+		const total = 320;
+		const left = 48;
+		const label = 'あ'.repeat(20);
+		const right = rightMarginForBandLabel(label, 1, {
+			baseRight: 16,
+			left,
+			totalWidth: total,
+			fontSize: 22
+		});
+		expect(right).toBe(128);
+		const center = left + (total - left - right) / 2;
+		expect(center).toBe(120);
+		const out = fitBandLabels([label], [center], { fontSize: 22, totalWidth: total });
+		expect(out).toHaveLength(1);
+		const half = estimateLabelWidth(out[0].text, 22) / 2;
+		expect(center - half).toBeGreaterThanOrEqual(0);
+		expect(center + half).toBeLessThanOrEqual(total);
+	});
+
 	it('does not cut labels that fit, and returns nothing for no labels', () => {
 		const out = fitBandLabels(['a', 'b', 'c'], [40, 100, 160], { totalWidth: 200 });
 		expect(out.map((l) => l.text)).toEqual(['a', 'b', 'c']);

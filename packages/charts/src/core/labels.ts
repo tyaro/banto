@@ -224,12 +224,15 @@ export function fitBandLabels(
 	const edge = 2;
 	const texts = labels.slice();
 	if (totalWidth > 0) {
-		texts[0] = truncateLabel(labels[0], 2 * Math.max(0, centers[0] - edge), fontSize);
-		texts[n - 1] = truncateLabel(
-			labels[n - 1],
-			2 * Math.max(0, totalWidth - centers[n - 1] - edge),
+		const leftRoom = 2 * Math.max(0, centers[0] - edge);
+		const rightRoom = 2 * Math.max(0, totalWidth - centers[n - 1] - edge);
+		// A single label is both first and last: it must fit on both sides.
+		texts[0] = truncateLabel(
+			labels[0],
+			n === 1 ? Math.min(leftRoom, rightRoom) : leftRoom,
 			fontSize
 		);
+		if (n > 1) texts[n - 1] = truncateLabel(labels[n - 1], rightRoom, fontSize);
 	}
 	let kept = thinCategoryLabels(
 		centers,
