@@ -6,8 +6,13 @@
 // each time (the band tab, the pane, the region's pin button).
 import { cleanup, render, screen } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
+import { compile } from 'svelte/compiler';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import DockHostHarness from './DockHostHarness.svelte';
+// @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
+import autoHideSource from '../src/DockAutoHide.svelte?raw';
+// @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
+import hostSource from '../src/DockHost.svelte?raw';
 import { createDockState } from '../src/state.svelte';
 import type { DockCapabilities } from '../src/core/policy';
 import type { DockLayout } from '../src/types';
@@ -261,5 +266,117 @@ describe('DockHost auto-hide', () => {
 		expect(flyout()!.querySelector('input')).toBe(input);
 		expect((input as HTMLInputElement).value).toBe('typed');
 		expect(document.activeElement).toBe(bandTab());
+	});
+});
+
+// #1043: an open slide-out is above the floating windows. The order is the layers' (CSS), so
+// the components' own style sheets are put in the document (the test build injects none):
+// compiled as they are, minus the scoping class.
+describe('the slide-out and the floating windows (#1043)', () => {
+	function addStyles(): () => void {
+		const added = [hostSource, autoHideSource].map((source: string) => {
+			const { css } = compile(source, { css: 'external', cssHash: () => 'scoped' });
+			const el = document.createElement('style');
+			el.textContent = css!.code.replaceAll('.scoped', '');
+			document.head.append(el);
+			return el;
+		});
+		return () => added.forEach((el) => el.remove());
+	}
+
+	const withWindows = (): DockLayout => ({
+		...layout(),
+		floating: [
+			{ id: 'a', title: 'Memo', x: 500, y: 100, width: 300, height: 200, open: true },
+			{ id: 'b', title: 'Stock', x: 560, y: 160, width: 300, height: 200, open: true }
+		]
+	});
+	const z = (el: Element) => Number(getComputedStyle(el).zIndex);
+	const area = () => document.querySelector<HTMLElement>('.flyout-area')!;
+	const floatingLayer = () => document.querySelector<HTMLElement>('.floating-layer')!;
+	const windowZ = () =>
+		[...document.querySelectorAll<HTMLElement>('[role="dialog"]')].map((w) => [
+			w.getAttribute('aria-label'),
+			w.style.zIndex
+		]);
+
+	it('the slide-out layer is above the floating layer, whatever window was raised; closing it leaves their order', async () => {
+		const removeStyles = addStyles();
+		try {
+			const dock = createDockState(withWindows());
+			render(DockHostHarness, { dock, capabilities });
+			await unpin();
+			// Raise the back window first: it is the front-most floating window from here on.
+			dock.focus('a');
+			await settle();
+			const order = windowZ();
+			const saved = dock.layout.floating.map((w) => w.id);
+			expect(order).toEqual([
+				['Memo', '2'],
+				['Stock', '1']
+			]);
+
+			bandTab().click();
+			await settle();
+			expect(flyout()!.hidden).toBe(false);
+			// Both layers are boxes of the host (one stacking context decides between them: the
+			// auto-hide root in between has no box), and the windows' own z-index only counts
+			// inside the floating layer.
+			const host = document.querySelector('[data-dock-host]')!;
+			const root = area().parentElement!;
+			expect(getComputedStyle(root).display).toBe('contents');
+			expect(root.parentElement).toBe(host);
+			expect(floatingLayer().parentElement).toBe(host);
+			expect(area().contains(flyout())).toBe(true);
+			expect(getComputedStyle(area()).position).toBe('absolute');
+			expect(z(floatingLayer())).toBe(1);
+			expect(z(area())).toBe(2);
+			expect(z(area())).toBeGreaterThan(z(floatingLayer()));
+			// Still below what a drag draws over everything (the snap guide is 20).
+			expect(z(area())).toBeLessThan(20);
+
+			// A window raised while it is open (by the app): the slide-out stays above.
+			dock.focus('b');
+			await settle();
+			expect(dock.flyoutPanel).toBe('R');
+			expect(windowZ()).toEqual([
+				['Memo', '1'],
+				['Stock', '2']
+			]);
+			expect(z(area())).toBeGreaterThan(z(floatingLayer()));
+			dock.focus('a');
+			await settle();
+
+			// Closed (Esc): the windows are in the order they were in.
+			flyout()!.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+			);
+			await settle();
+			expect(dock.flyoutPanel).toBeNull();
+			expect(windowZ()).toEqual(order);
+			expect(dock.layout.floating.map((w) => w.id)).toEqual(saved);
+		} finally {
+			removeStyles();
+		}
+	});
+
+	it('a modal shown inside the slide-out is not held in its layer (it goes above the page by its own z-index)', async () => {
+		const removeStyles = addStyles();
+		try {
+			const dock = createDockState(withWindows());
+			render(DockHostHarness, { dock, capabilities });
+			await unpin();
+			bandTab().click();
+			await settle();
+			expect(z(area())).toBe(2);
+			const modal = document.createElement('div');
+			modal.setAttribute('aria-modal', 'true');
+			flyout()!.append(modal);
+			expect(getComputedStyle(area()).zIndex).not.toBe('2');
+			modal.remove();
+			expect(z(area())).toBe(2);
+		} finally {
+			removeStyles();
+		}
 	});
 });
