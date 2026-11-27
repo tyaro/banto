@@ -18,7 +18,8 @@
 	import { boxStats, type BoxStats } from './core/boxplot';
 	import { linearScale, bandScale, niceTicks } from './core/scale';
 	import { seriesColorVar } from './core/color';
-	import { leftMarginForTicks } from './core/labels';
+	import { estimateLabelWidth, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
+	import { thinCategoryLabels } from './core/ticks-time';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -58,14 +59,23 @@
 	let tickFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	// Lazy (`$derived.by`): the ticks/formatters are declared below.
-	const MARGIN = $derived.by((): ChartMargin => ({
-		...DEFAULT_MARGIN,
-		left: leftMarginForTicks(valueTicks.map(formatValueDisplay), DEFAULT_MARGIN.left, {
-			fontSize: tickFontSize,
-			totalWidth: plotWidth
-		}),
-		...margins
-	}));
+	const MARGIN = $derived.by((): ChartMargin => {
+		const left =
+			margins?.left ??
+			leftMarginForTicks(valueTicks.map(formatValueDisplay), DEFAULT_MARGIN.left, {
+				fontSize: tickFontSize,
+				totalWidth: plotWidth
+			});
+		// The last group label is centred in the last band; reserve room so a
+		// large font on a narrow chart doesn't clip it (never below `margins.right`).
+		const right = rightMarginForBandLabel(groups[groups.length - 1]?.label ?? '', groups.length, {
+			baseRight: margins?.right ?? DEFAULT_MARGIN.right,
+			left,
+			totalWidth: plotWidth,
+			fontSize: tickFontSize
+		});
+		return { ...DEFAULT_MARGIN, ...margins, left, right };
+	});
 	const CATEGORY_PADDING = 0.35;
 	const CAP_RATIO = 0.5; // whisker cap width as a fraction of the band width
 	const OUTLIER_RADIUS = 3;
@@ -141,14 +151,19 @@
 					{formatValueDisplay(tick)}
 				</text>
 			{/each}
-			{#each groups as g, i (i)}
+			<!-- Group labels are thinned when crowded (same `thinCategoryLabels` as BarChart). -->
+			{@const shownGroups = thinCategoryLabels(
+				groups.map((_, i) => catScale.center(i)),
+				groups.map((g) => estimateLabelWidth(g.label, tickFontSize))
+			)}
+			{#each shownGroups as i (i)}
 				<text
 					x={catScale.center(i)}
 					y={m.innerTop + m.innerHeight + 16}
 					class="tick-label"
 					text-anchor="middle"
 				>
-					{g.label}
+					{groups[i].label}
 				</text>
 			{/each}
 

@@ -408,7 +408,8 @@ describe('chart wiring', () => {
 		const src = SOURCES[name];
 		expect(src).toMatch(/trackFontSize\(/);
 		expect(src).toMatch(/\{@attach \w+ === 0 \? track\w+Font : null\}/);
-		const calls = src.match(/(leftMarginFor(Ticks)?|rightMarginFor(Ticks|LastTick))\(/g) ?? [];
+		const calls =
+			src.match(/(leftMarginFor(Ticks)?|rightMarginFor(Ticks|LastTick|BandLabel))\(/g) ?? [];
 		const withFont = src.match(/fontSize: \w+FontSize/g) ?? [];
 		expect(calls.length).toBeGreaterThan(0);
 		expect(withFont.length).toBe(calls.length);
@@ -419,7 +420,9 @@ describe('chart wiring', () => {
 		(name) => {
 			const src = SOURCES[name];
 			const calls =
-				src.match(/(leftMarginFor(Ticks)?|rightMarginFor(Ticks|LastTick))\([\s\S]*?\}\s*\)/g) ?? [];
+				src.match(
+					/(leftMarginFor(Ticks)?|rightMarginFor(Ticks|LastTick|BandLabel))\([\s\S]*?\}\s*\)/g
+				) ?? [];
 			for (const call of calls) expect(call).toContain('totalWidth: plotWidth');
 			if (calls.length > 0) expect(src).toContain('bind:width={plotWidth}');
 		}

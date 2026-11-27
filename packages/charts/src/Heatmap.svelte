@@ -12,8 +12,13 @@
 	import { bandScale } from './core/scale';
 	import { heatmapGrid, heatmapCellKey } from './core/heatmap';
 	import { sequentialColor, SEQ_RAMP } from './core/color';
-	import { everyNthIndex } from './core/ticks-time';
-	import { leftMarginFor, truncateLabel } from './core/labels';
+	import { thinCategoryLabels } from './core/ticks-time';
+	import {
+		estimateLabelWidth,
+		leftMarginFor,
+		rightMarginForBandLabel,
+		truncateLabel
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { Accessor, ChartMargin } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -45,8 +50,6 @@
 		messages = {}
 	}: Props = $props();
 
-	const MIN_X_TICK_SPACING = 32;
-
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 	const rampColors = $derived(ramp ?? [...SEQ_RAMP]);
 
@@ -61,17 +64,16 @@
 	let tickFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	const MARGIN = $derived.by((): ChartMargin => {
-		return {
-			top: 8,
-			right: 16,
-			bottom: 26,
-			left: leftMarginFor(grid.yCats, { fontSize: tickFontSize, totalWidth: plotWidth })
-		};
+		const left = leftMarginFor(grid.yCats, { fontSize: tickFontSize, totalWidth: plotWidth });
+		// The last x label is centred in the last cell column; reserve room so a
+		// large font on a narrow chart doesn't clip it.
+		const right = rightMarginForBandLabel(
+			String(grid.xCats[grid.xCats.length - 1] ?? ''),
+			grid.xCats.length,
+			{ baseRight: 16, left, totalWidth: plotWidth, fontSize: tickFontSize }
+		);
+		return { top: 8, right, bottom: 26, left };
 	});
-
-	function maxXTicksFor(innerWidth: number): number {
-		return Math.max(2, Math.floor(innerWidth / MIN_X_TICK_SPACING));
-	}
 
 	function plotMetrics(width: number, plotHeight: number) {
 		return {
@@ -137,7 +139,10 @@
 					{shown}{#if shown !== yCat}<title>{yCat}</title>{/if}
 				</text>
 			{/each}
-			{@const xTickIndices = everyNthIndex(grid.xCats.length, maxXTicksFor(m.innerWidth))}
+			{@const xTickIndices = thinCategoryLabels(
+				grid.xCats.map((_, i) => xScale.center(i)),
+				grid.xCats.map((c) => estimateLabelWidth(String(c), tickFontSize))
+			)}
 			{#each xTickIndices as i (i)}
 				<text
 					x={xScale.center(i)}

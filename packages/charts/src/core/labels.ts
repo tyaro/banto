@@ -170,3 +170,24 @@ export function rightMarginForLastTick(lastLabel: string, options: TickMarginOpt
 	// No absolute cap (as before); with `totalWidth`, at most 40% of it.
 	return Math.min(margin, widthCap(Infinity, totalWidth));
 }
+
+/**
+ * Right margin for a band (categorical) x axis whose LAST label is centred in
+ * the last band: the label overhangs the plot's right edge by half its width
+ * minus half a band step, so a large font on a narrow chart clips it. Solves
+ * `step = (totalWidth - left - right) / count` for the `right` that keeps the
+ * label inside; never below `baseRight` (a caller's `margins.right` or the
+ * default 16), and with `totalWidth` capped at 40% of it like the other
+ * margins. Without `totalWidth` (SSR, tests) it returns `baseRight`.
+ */
+export function rightMarginForBandLabel(
+	lastLabel: string,
+	count: number,
+	options: TickMarginOptions & { baseRight?: number; left?: number } = {}
+): number {
+	const { fontSize = 11, gap = 4, totalWidth = 0, baseRight = 16, left = 0 } = options;
+	if (count <= 0 || totalWidth <= 0) return baseRight;
+	const half = estimateLabelWidth(lastLabel, fontSize) / 2 + gap;
+	const needed = Math.ceil((half - (totalWidth - left) / (2 * count)) / (1 - 1 / (2 * count)));
+	return Math.max(baseRight, Math.min(needed, widthCap(Infinity, totalWidth)));
+}

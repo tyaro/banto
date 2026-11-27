@@ -75,6 +75,7 @@ export {
 	estimateLabelWidth,
 	leftMarginFor,
 	rightMarginForLastTick,
+	rightMarginForBandLabel,
 	type AxisMarginOptions
 } from './core/labels';
 export {
