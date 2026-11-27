@@ -960,6 +960,7 @@ mod tests {
         // Counts the workers that have tried the lock at least once, so a
         // few CPUs cannot let `stop` come before some worker ever ran.
         let tried = AtomicUsize::new(0);
+        let failures = std::sync::Mutex::new(Vec::<String>::new());
         std::thread::scope(|scope| {
             // Starts of the other key come and go ...
             let other = scope.spawn(|| {
@@ -975,14 +976,23 @@ mod tests {
                     scope.spawn(|| {
                         let mut held = 0;
                         loop {
-                            assert!(matches!(
-                                try_lock_file(&own_lock).unwrap(),
-                                LockAttempt::Held
-                            ));
-                            held += 1;
-                            if held == 1 {
+                            // A failure is recorded, not panicked on, so the
+                            // first try always counts and `stop` still comes.
+                            let outcome = match try_lock_file(&own_lock) {
+                                Ok(LockAttempt::Held) => None,
+                                Ok(LockAttempt::Acquired(_)) => {
+                                    Some("a second start acquired the lock".to_string())
+                                }
+                                Err(error) => Some(format!("the lock attempt failed: {error}")),
+                            };
+                            if held == 0 {
                                 tried.fetch_add(1, Ordering::SeqCst);
                             }
+                            if let Some(reason) = outcome {
+                                failures.lock().unwrap().push(reason);
+                                break;
+                            }
+                            held += 1;
                             if stop.load(Ordering::SeqCst) {
                                 break;
                             }
@@ -994,14 +1004,25 @@ mod tests {
             for _ in 0..200 {
                 tidy(dir.path(), "9.3.0");
             }
-            while tried.load(Ordering::SeqCst) < second_starts.len() {
+            // Wait until every worker tried once, but never forever: a
+            // failed worker has counted itself too, and a stuck one runs
+            // into the deadline. `stop` comes before any join or assert.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while tried.load(Ordering::SeqCst) < second_starts.len() && Instant::now() < deadline {
                 std::thread::yield_now();
             }
             stop.store(true, Ordering::SeqCst);
             other.join().unwrap();
-            for start in second_starts {
-                assert!(start.join().unwrap() > 0);
-            }
+            let held: Vec<_> = second_starts
+                .into_iter()
+                .map(|start| start.join().unwrap())
+                .collect();
+            let failures = failures.lock().unwrap();
+            assert!(failures.is_empty(), "same-key starts failed: {failures:?}");
+            assert!(
+                held.iter().all(|&count| count > 0),
+                "every worker must hold-check once, got {held:?}"
+            );
         });
         assert!(own_lock.exists());
     }
