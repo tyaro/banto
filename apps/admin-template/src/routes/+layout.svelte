@@ -45,6 +45,13 @@
 		initLocale();
 	});
 
+	// Issue #1024: drop the static "loading" line app.html places outside the
+	// app's root (so a screen reader never meets an empty document). The splash
+	// or the page below takes over from here.
+	$effect(() => {
+		document.getElementById('banto-boot-status')?.remove();
+	});
+
 	// Issue #321: a protected route opened before startup finished was
 	// deferred by its guard (`#lib/banto/startupGate.ts`) - nothing of it has
 	// run. Keep the splash up instead of the error page, and re-run the loads
