@@ -27,7 +27,8 @@
 //! # Order
 //!
 //! single-instance lock -> remove the old endpoint file -> data folder lock
-//! -> publish the endpoint (listener, then the file) and start serving.
+//! -> publish the endpoint (listener, then the file) and start serving
+//! -> tidy the single-instance files of other keys (see "Leftover files").
 //!
 //! The endpoint is published only by a process that already holds the
 //! database, so "the running one answered" never comes from a process that
@@ -38,6 +39,18 @@
 //! lock again (the first one may have gone away - then this start goes on as
 //! a normal one) and asks again. No `ok` in that time = the "already
 //! running" dialog, exit code 1.
+//!
+//! # Leftover files
+//!
+//! The lock files stay behind when a process ends (only the locks go), and
+//! each version has a single-instance file of its own, so they would pile
+//! up over the updates (#1046). Nobody removes its own file: a start that
+//! still has the old file open could lock it after the removal while the
+//! next start locks a new file under the same name, and two processes would
+//! each think they are the instance of that key. Instead the process that
+//! holds the data folder lock removes the files of *other* keys, and only
+//! those it can lock at that moment - see [`remove_other_keys_files`] for
+//! why that is safe.
 //!
 //! The "come to the front" request travels over a loopback TCP port the
 //! first instance listens on; the port and a random token sit in a file next
@@ -95,33 +108,46 @@ const ACTIVATE_NOT_READY: &str = "notready";
 /// for no reason; with it the dev start goes on to the data folder lock and
 /// says why it cannot run.
 pub(crate) fn single_instance_key(identifier: &str, version: &str, debug_build: bool) -> String {
-    let clean = |text: &str| -> String {
-        text.chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect()
-    };
-    let mut key = format!("{}-v{}", clean(identifier), clean(version));
+    let mut key = single_instance_key_prefix(identifier);
+    key.push_str(&clean_key_part(version));
     if debug_build {
         key.push_str("-dev");
     }
     key
 }
 
+/// What every key of this `identifier` starts with, whatever the version
+/// and the build: the part [`remove_other_keys_files`] matches on.
+pub(crate) fn single_instance_key_prefix(identifier: &str) -> String {
+    format!("{}-v", clean_key_part(identifier))
+}
+
+fn clean_key_part(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+const SINGLE_INSTANCE_FILE_PREFIX: &str = "single-instance-";
+const SINGLE_INSTANCE_LOCK_SUFFIX: &str = ".lock";
+
 /// Lock file of the single-instance guard, in the app data dir.
 pub(crate) fn single_instance_lock_path(data_dir: &Path, key: &str) -> PathBuf {
-    data_dir.join(format!("single-instance-{key}.lock"))
+    data_dir.join(format!(
+        "{SINGLE_INSTANCE_FILE_PREFIX}{key}{SINGLE_INSTANCE_LOCK_SUFFIX}"
+    ))
 }
 
 /// Where the running instance publishes its [`Endpoint`]. A file of its
 /// own: on Windows the locked file cannot be read through another handle.
 pub(crate) fn single_instance_endpoint_path(data_dir: &Path, key: &str) -> PathBuf {
-    data_dir.join(format!("single-instance-{key}.port"))
+    data_dir.join(format!("{SINGLE_INSTANCE_FILE_PREFIX}{key}.port"))
 }
 
 /// Lock file of the data folder guard: next to the database, its file name
@@ -174,35 +200,6 @@ pub(crate) fn already_running_message() -> String {
 #[derive(Debug)]
 pub(crate) struct FileLock {
     _file: File,
-    /// This attempt created the file (it did not exist before).
-    created: bool,
-}
-
-impl FileLock {
-    /// Gives the lock up for good because the process is about to refuse the
-    /// start (#1046): removes the file, but only when this process created
-    /// it, so a start that is turned away leaves no trace. A file that was
-    /// already there is left alone: it may belong to a run that is still
-    /// going, or to an earlier one.
-    ///
-    /// The file is removed while the lock is still held, then the handle
-    /// goes. A start that already opened the old file and locks it later
-    /// would hold a lock nobody else sees; that only weakens the
-    /// single-instance check (the data folder lock still guards the
-    /// database), and std opens files with `FILE_SHARE_DELETE` on Windows,
-    /// so the removal works there too.
-    pub(crate) fn discard_if_created(self, path: &Path) {
-        if self.created {
-            if let Err(err) = std::fs::remove_file(path) {
-                if err.kind() != io::ErrorKind::NotFound {
-                    eprintln!(
-                        "banto: 二重起動の検査用のロック {} を消せません: {err}",
-                        path.display()
-                    );
-                }
-            }
-        }
-    }
 }
 
 /// Result of one non-blocking attempt.
@@ -217,24 +214,94 @@ pub(crate) enum LockAttempt {
 /// `Err` = the attempt itself failed (cannot create the file, the file
 /// system has no locks); "someone else has it" is `Ok(LockAttempt::Held)`.
 pub(crate) fn try_lock_file(path: &Path) -> io::Result<LockAttempt> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true);
-    // `create_new` first, so the caller knows whether the file is its own.
-    let (file, created) = match options.clone().create_new(true).open(path) {
-        Ok(file) => (file, true),
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            (options.create(true).truncate(false).open(path)?, false)
-        }
-        Err(err) => return Err(err),
-    };
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
     match file.try_lock() {
-        Ok(()) => Ok(LockAttempt::Acquired(FileLock {
-            _file: file,
-            created,
-        })),
+        Ok(()) => Ok(LockAttempt::Acquired(FileLock { _file: file })),
         Err(TryLockError::WouldBlock) => Ok(LockAttempt::Held),
         Err(TryLockError::Error(err)) => Err(err),
     }
+}
+
+/// Removes the single-instance files (`.lock` and `.port`) of the other
+/// keys of this app - other versions, or the other build kind - that nobody
+/// holds (#1046). Returns how many lock files went. Best effort: whatever
+/// cannot be listed, opened, locked or removed stays.
+///
+/// **Call it only while this process holds the data folder lock**, and never
+/// for a start that is being refused. `own_key` is never touched.
+///
+/// A file goes only when its lock could be taken right now, and it is
+/// removed while that lock is held. Why this cannot break a guard:
+///
+/// - Nobody runs under that key: a running process would hold the lock.
+/// - A start of that key may have opened the file just before and lock it
+///   just after; the next start of that key then creates a new file and
+///   locks that one, so for a moment two starts each believe they are the
+///   instance of that key. Both go on to the data folder lock, which this
+///   process holds, so both are refused: neither publishes an endpoint, and
+///   neither opens the database. Starts that come after them only ever see
+///   the new file. That is the difference to a refused start removing its
+///   own file (the first shape of #1046): there the remover is about to
+///   exit, and the start left with the removed file is of the *same* key
+///   and may be the one that stays.
+/// - A second start of that key that is waiting in [`acquire_or_activate`]
+///   opens the path again each round, so it moves to the new file too.
+/// - The own key is skipped, so the same-version hand-over (#1029) never
+///   meets a removed file through this function. Two processes never run it
+///   at once either: it needs the data folder lock.
+///
+/// What is left: if this process is killed in the instant between the
+/// removal and that other start's attempt at the data folder lock (the two
+/// calls follow each other directly in [`init`]), that start runs while
+/// holding a lock on the removed file, and later starts of its key get the
+/// "data folder in use" dialog instead of raising its window, until it is
+/// restarted. The database stays exclusive in that case as well.
+///
+/// Windows: std opens files with `FILE_SHARE_DELETE`, so the removal works
+/// while handles are open.
+pub(crate) fn remove_other_keys_files(data_dir: &Path, key_prefix: &str, own_key: &str) -> usize {
+    let Ok(entries) = std::fs::read_dir(data_dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(key) = name.to_str().and_then(|name| {
+            name.strip_prefix(SINGLE_INSTANCE_FILE_PREFIX)?
+                .strip_suffix(SINGLE_INSTANCE_LOCK_SUFFIX)
+        }) else {
+            continue;
+        };
+        if key == own_key || !key.starts_with(key_prefix) {
+            continue;
+        }
+        let lock_path = entry.path();
+        // No `create`: a file that went away in the meantime stays away.
+        let Ok(file) = OpenOptions::new().read(true).write(true).open(&lock_path) else {
+            continue;
+        };
+        if file.try_lock().is_err() {
+            continue;
+        }
+        // Its endpoint first: only a process that holds the data folder
+        // lock publishes one, so this one is stale.
+        let _ = std::fs::remove_file(single_instance_endpoint_path(data_dir, key));
+        match std::fs::remove_file(&lock_path) {
+            Ok(()) => removed += 1,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => eprintln!(
+                "banto: ほかの版の二重起動の検査用のロック {} を消せません: {err}",
+                lock_path.display()
+            ),
+        }
+        // The lock goes with `file`, after the removal.
+    }
+    removed
 }
 
 // ---------------------------------------------------------------------------
@@ -491,31 +558,14 @@ fn raise_main_window<R: Runtime>(app: &tauri::AppHandle<R>) -> bool {
 /// goes (published later, by [`publish_endpoint`]).
 struct SingleInstanceHold {
     _lock: FileLock,
-    lock_path: PathBuf,
     endpoint_path: PathBuf,
-}
-
-impl SingleInstanceHold {
-    /// Call before refusing the start: removes the lock file this process
-    /// created (see [`FileLock::discard_if_created`]).
-    fn discard(self) {
-        self._lock.discard_if_created(&self.lock_path);
-    }
 }
 
 /// Takes the single-instance lock, or hands over to the running instance
 /// and exits. `None` = the lock could not be tried (no check, no endpoint).
-fn guard_single_instance<R: Runtime>(
-    app: &tauri::AppHandle<R>,
-    data_dir: &Path,
-) -> Option<SingleInstanceHold> {
-    let key = single_instance_key(
-        &app.config().identifier,
-        &app.package_info().version.to_string(),
-        cfg!(debug_assertions),
-    );
-    let lock_path = single_instance_lock_path(data_dir, &key);
-    let endpoint_path = single_instance_endpoint_path(data_dir, &key);
+fn guard_single_instance(data_dir: &Path, key: &str) -> Option<SingleInstanceHold> {
+    let lock_path = single_instance_lock_path(data_dir, key);
+    let endpoint_path = single_instance_endpoint_path(data_dir, key);
     let lock = match acquire_or_activate(
         &lock_path,
         &endpoint_path,
@@ -551,7 +601,6 @@ fn guard_single_instance<R: Runtime>(
     }
     Some(SingleInstanceHold {
         _lock: lock,
-        lock_path,
         endpoint_path,
     })
 }
@@ -603,28 +652,29 @@ pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
                     data_dir.display()
                 ));
             }
-            let single_instance = guard_single_instance(app, &data_dir);
+            let identifier = &app.config().identifier;
+            let key = single_instance_key(
+                identifier,
+                &app.package_info().version.to_string(),
+                cfg!(debug_assertions),
+            );
+            let single_instance = guard_single_instance(&data_dir, &key);
             let lock_path = data_lock_path(&data_dir.join(DB_FILE_NAME));
             let data = match try_lock_file(&lock_path) {
                 Ok(LockAttempt::Acquired(lock)) => lock,
                 Ok(LockAttempt::Held) => {
-                    if let Some(hold) = single_instance {
-                        hold.discard();
-                    }
                     crate::exit_startup_refused(data_in_use_message(&data_dir))
                 }
-                Err(err) => {
-                    if let Some(hold) = single_instance {
-                        hold.discard();
-                    }
-                    crate::exit_startup_refused(data_lock_error_message(&lock_path, &err))
-                }
+                Err(err) => crate::exit_startup_refused(data_lock_error_message(&lock_path, &err)),
             };
             // Only now, with the database secured (see "Order" in the
             // module doc).
             if let Some(hold) = &single_instance {
                 publish_endpoint(app, &hold.endpoint_path);
             }
+            // Only with the data folder lock held, and never on a path that
+            // refuses the start (see the function's doc).
+            remove_other_keys_files(&data_dir, &single_instance_key_prefix(identifier), &key);
             app.manage(InstanceGuards {
                 _single_instance: single_instance,
                 _data: data,
@@ -710,44 +760,238 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn refused_start_removes_the_lock_file_it_created() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = single_instance_lock_path(dir.path(), "app-v1");
-        let LockAttempt::Acquired(lock) = try_lock_file(&path).unwrap() else {
-            panic!("the first attempt must get the lock");
-        };
-        assert!(path.exists());
-        lock.discard_if_created(&path);
-        assert!(!path.exists());
+    /// The files a run of `key` leaves behind: the lock file (unlocked) and
+    /// an endpoint file.
+    fn leftover_files(dir: &Path, key: &str) -> (PathBuf, PathBuf) {
+        let lock_path = single_instance_lock_path(dir, key);
+        let endpoint_path = single_instance_endpoint_path(dir, key);
+        drop(try_lock_file(&lock_path).unwrap());
+        std::fs::write(&endpoint_path, "1\n").unwrap();
+        (lock_path, endpoint_path)
+    }
+
+    const APP: &str = "dev.banto.admin";
+
+    fn key_of(version: &str) -> String {
+        single_instance_key(APP, version, false)
+    }
+
+    fn tidy(dir: &Path, own_version: &str) -> usize {
+        remove_other_keys_files(dir, &single_instance_key_prefix(APP), &key_of(own_version))
     }
 
     #[test]
-    fn refused_start_keeps_a_lock_file_that_was_already_there() {
+    fn free_files_of_other_keys_are_removed() {
         let dir = tempfile::tempdir().unwrap();
-        let path = single_instance_lock_path(dir.path(), "app-v1");
-        // A file left by an earlier run, nobody holds it.
-        drop(try_lock_file(&path).unwrap());
-        let LockAttempt::Acquired(lock) = try_lock_file(&path).unwrap() else {
-            panic!("a free file must be lockable");
-        };
-        lock.discard_if_created(&path);
-        assert!(path.exists());
+        let (old_lock, old_endpoint) = leftover_files(dir.path(), &key_of("9.2.0"));
+        let (dev_lock, dev_endpoint) =
+            leftover_files(dir.path(), &single_instance_key(APP, "9.3.0", true));
+        // A refused start leaves a lock file only.
+        let refused_lock = single_instance_lock_path(dir.path(), &key_of("9.1.0"));
+        drop(try_lock_file(&refused_lock).unwrap());
+        assert_eq!(tidy(dir.path(), "9.3.0"), 3);
+        for gone in [
+            &old_lock,
+            &old_endpoint,
+            &dev_lock,
+            &dev_endpoint,
+            &refused_lock,
+        ] {
+            assert!(!gone.exists(), "{} must be gone", gone.display());
+        }
+        // The names are free again: that key starts as usual.
+        assert!(matches!(
+            try_lock_file(&old_lock).unwrap(),
+            LockAttempt::Acquired(_)
+        ));
     }
 
     #[test]
-    fn the_start_turned_away_by_a_holder_cannot_disturb_it() {
+    fn held_files_of_other_keys_stay() {
         let dir = tempfile::tempdir().unwrap();
-        let path = single_instance_lock_path(dir.path(), "app-v1");
-        let LockAttempt::Acquired(running) = try_lock_file(&path).unwrap() else {
-            panic!("the first attempt must get the lock");
+        let lock_path = single_instance_lock_path(dir.path(), &key_of("9.2.0"));
+        let endpoint_path = single_instance_endpoint_path(dir.path(), &key_of("9.2.0"));
+        let LockAttempt::Acquired(held) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the first lock must be acquired");
         };
-        // The second start gets `Held`: it has no `FileLock`, so there is
-        // nothing it could discard. The running side keeps file and lock.
-        assert!(matches!(try_lock_file(&path).unwrap(), LockAttempt::Held));
-        assert!(path.exists());
-        assert!(matches!(try_lock_file(&path).unwrap(), LockAttempt::Held));
+        std::fs::write(&endpoint_path, "1\n").unwrap();
+        assert_eq!(tidy(dir.path(), "9.3.0"), 0);
+        assert!(lock_path.exists());
+        assert!(endpoint_path.exists());
+        // Still the same lock: the holder was not disturbed.
+        assert!(matches!(
+            try_lock_file(&lock_path).unwrap(),
+            LockAttempt::Held
+        ));
+        drop(held);
+        assert_eq!(tidy(dir.path(), "9.3.0"), 1);
+        assert!(!lock_path.exists());
+        assert!(!endpoint_path.exists());
+    }
+
+    #[test]
+    fn own_key_and_unrelated_files_stay() {
+        let dir = tempfile::tempdir().unwrap();
+        // Own key: free (as in a start whose lock could not be tried) ...
+        let (own_lock, own_endpoint) = leftover_files(dir.path(), &key_of("9.3.0"));
+        // ... another app's key, the data folder lock, and look-alikes.
+        let (foreign_lock, foreign_endpoint) = leftover_files(
+            dir.path(),
+            &single_instance_key("com.example.other", "1.0.0", false),
+        );
+        let data_lock = data_lock_path(&dir.path().join(DB_FILE_NAME));
+        drop(try_lock_file(&data_lock).unwrap());
+        let others = [
+            dir.path().join(DB_FILE_NAME),
+            dir.path().join("single-instance-.lock"),
+            dir.path().join(format!("{}.lock", key_of("9.2.0"))),
+            dir.path()
+                .join(format!("single-instance-{}.lock.bak", key_of("9.2.0"))),
+        ];
+        for path in &others {
+            std::fs::write(path, "").unwrap();
+        }
+        assert_eq!(tidy(dir.path(), "9.3.0"), 0);
+        for kept in [
+            &own_lock,
+            &own_endpoint,
+            &foreign_lock,
+            &foreign_endpoint,
+            &data_lock,
+        ]
+        .into_iter()
+        .chain(&others)
+        {
+            assert!(kept.exists(), "{} must stay", kept.display());
+        }
+        // Held by this process, the own file stays as well.
+        let LockAttempt::Acquired(_own) = try_lock_file(&own_lock).unwrap() else {
+            panic!("the own lock must be acquired");
+        };
+        assert_eq!(tidy(dir.path(), "9.3.0"), 0);
+        assert!(own_lock.exists());
+    }
+
+    #[test]
+    fn tidying_a_missing_folder_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(tidy(&dir.path().join("missing"), "9.3.0"), 0);
+    }
+
+    /// The race of the #1046 review: version 9.2.0 is started twice while
+    /// 9.3.0 (which holds the data folder lock) removes the 9.2.0 file. One
+    /// 9.2.0 start has the old file open and locks it after the removal,
+    /// the other one locks the new file of the same name.
+    #[test]
+    fn starts_of_another_key_that_race_the_removal_are_both_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_lock = data_lock_path(&dir.path().join(DB_FILE_NAME));
+        let old_key = key_of("9.2.0");
+        let (lock_path, endpoint_path) = leftover_files(dir.path(), &old_key);
+
+        // 9.3.0 is the running one.
+        let LockAttempt::Acquired(running) = try_lock_file(&data_lock).unwrap() else {
+            panic!("the data folder lock must be acquired");
+        };
+        // First 9.2.0 start: has opened the file, has not locked it yet.
+        let early = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        assert_eq!(tidy(dir.path(), "9.3.0"), 1);
+        assert!(!lock_path.exists());
+        // It now locks the removed file; the second start locks a new one.
+        early.try_lock().unwrap();
+        let LockAttempt::Acquired(late) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the new file must be lockable");
+        };
+        // Both think they are the 9.2.0 instance - and both are stopped at
+        // the data folder lock, before the endpoint and the database.
+        assert!(matches!(
+            try_lock_file(&data_lock).unwrap(),
+            LockAttempt::Held
+        ));
+        assert!(matches!(
+            try_lock_file(&data_lock).unwrap(),
+            LockAttempt::Held
+        ));
+        assert!(!endpoint_path.exists());
+        // 9.3.0 tidies again (a later start of it would): the new file is
+        // held, so it stays.
+        assert_eq!(tidy(dir.path(), "9.3.0"), 0);
+        assert!(lock_path.exists());
+
+        // The refused starts exit, then 9.3.0 does: its data folder lock
+        // goes. From here on 9.2.0 behaves as ever: one start is the
+        // instance, the next one raises its window.
+        drop(early);
+        drop(late);
         drop(running);
+        let first = acquire_or_activate(&lock_path, &endpoint_path, Duration::ZERO, RETRY).unwrap();
+        let SingleInstance::First(_first) = first else {
+            panic!("the first 9.2.0 start must be the instance");
+        };
+        let LockAttempt::Acquired(_data) = try_lock_file(&data_lock).unwrap() else {
+            panic!("the data folder lock must be free again");
+        };
+        // 9.2.0 tidies in its turn; its own file stays.
+        remove_other_keys_files(dir.path(), &single_instance_key_prefix(APP), &old_key);
+        let (endpoint, asked) = serving();
+        write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+        let second =
+            acquire_or_activate(&lock_path, &endpoint_path, Duration::ZERO, RETRY).unwrap();
+        assert!(matches!(second, SingleInstance::Activated));
+        assert!(asked.recv_timeout(CALLBACK_WAIT).unwrap());
+    }
+
+    /// Same-key starts side by side while another key's file is removed
+    /// again and again: the own key keeps exactly one holder, and every
+    /// other start gets `Held` (the hand-over path), never a second lock.
+    #[test]
+    fn same_key_starts_keep_one_holder_while_other_keys_are_tidied() {
+        let dir = tempfile::tempdir().unwrap();
+        let own_lock = single_instance_lock_path(dir.path(), &key_of("9.3.0"));
+        let old_lock = single_instance_lock_path(dir.path(), &key_of("9.2.0"));
+        let LockAttempt::Acquired(_running) = try_lock_file(&own_lock).unwrap() else {
+            panic!("the first lock must be acquired");
+        };
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            // Starts of the other key come and go ...
+            let other = scope.spawn(|| {
+                while !stop.load(Ordering::SeqCst) {
+                    // `Err` is fine here: on a file system without POSIX
+                    // delete, a name that is being removed cannot be opened.
+                    let _ = try_lock_file(&old_lock);
+                }
+            });
+            // ... and second starts of the own key.
+            let second_starts: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut held = 0;
+                        while !stop.load(Ordering::SeqCst) {
+                            assert!(matches!(
+                                try_lock_file(&own_lock).unwrap(),
+                                LockAttempt::Held
+                            ));
+                            held += 1;
+                        }
+                        held
+                    })
+                })
+                .collect();
+            for _ in 0..200 {
+                tidy(dir.path(), "9.3.0");
+            }
+            stop.store(true, Ordering::SeqCst);
+            other.join().unwrap();
+            for start in second_starts {
+                assert!(start.join().unwrap() > 0);
+            }
+        });
+        assert!(own_lock.exists());
     }
 
     #[test]
