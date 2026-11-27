@@ -19,16 +19,23 @@ const ja: Record<string, string> = JSON.parse(
 	readFileSync(new URL('../../apps/admin-template/messages/ja.json', import.meta.url), 'utf8')
 );
 const PANEL_TITLE = ja['panels.monthly'];
-/** The shell's own title (app.html's `<title>`), read from the file so a renamed copy (`scripts/rename.mjs --title`) still matches. */
-const SHELL_TITLE = (() => {
-	const html = readFileSync(
-		new URL('../../apps/admin-template/src/app.html', import.meta.url),
-		'utf8'
+/** app.html as shipped, read from the file so a renamed copy (`scripts/rename.mjs --title`) still matches. */
+const APP_HTML = readFileSync(
+	new URL('../../apps/admin-template/src/app.html', import.meta.url),
+	'utf8'
+);
+
+/**
+ * The shell's own title as the browser reports it (`document.title`): parsed from app.html by
+ * the page itself, so entities and runs of whitespace come out the same way as in the title the
+ * page is measured against.
+ */
+async function shellTitle(page: Page): Promise<string> {
+	return page.evaluate(
+		(html) => new DOMParser().parseFromString(html, 'text/html').title,
+		APP_HTML
 	);
-	const match = /<title>([^<]*)<\/title>/.exec(html);
-	if (!match) throw new Error('app.html has no <title>');
-	return match[1];
-})();
+}
 
 /** `document_title_script` of `crates/banto-tauri-panel/src/title.rs`, composed the same way. */
 function documentTitleScript(title: string): string {
@@ -111,7 +118,7 @@ test.describe('panel window: what a screen reader is given (#1024)', () => {
 		await recordTitles(page);
 		await page.goto('/panel/monthly');
 		await expect(page).toHaveTitle(PANEL_TITLE);
-		expect(await titlesOf(page)).toEqual([SHELL_TITLE, PANEL_TITLE]);
+		expect(await titlesOf(page)).toEqual([await shellTitle(page), PANEL_TITLE]);
 	});
 
 	for (const path of ['/panel/monthly', '/dashboard']) {
