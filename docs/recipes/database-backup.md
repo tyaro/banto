@@ -14,6 +14,12 @@ Banto の対応 DB は **SQLite（既定）と PostgreSQL**。V2 でアプリ全
 - 既定はローカル SQLite。デスクトップ（Tauri）では
   `%APPDATA%\dev.banto.admin\admin-template.sqlite3`（Windows、識別子はリネーム後の値）、
   `banto-serve` では `./banto-dev.sqlite3`。
+- デスクトップ版は、このデータフォルダを **1 つのプロセスだけ**が使う（#1028）。同じ版をもう一度起動すると、
+  起動中の窓が前に出るだけで 2 つめは起動しない。版の違うもの（や `pnpm tauri dev`）を同時に起動すると、
+  2 つめは「データフォルダは別のプロセスが使っています」のダイアログを出して終わる。仕組みは DB の隣の
+  `admin-template.sqlite3.lock`（OS のファイルロック。プロセスが終われば外れ、ファイルは残ってよい）と
+  `single-instance-<identifier>-v<版>.lock`・`.port`。どれも消してよいファイルで、バックアップの対象ではない。
+  `banto-serve` はこのロックを取らない（同じ DB ファイルをデスクトップ版と同時に開かないこと）。
 - `banto-serve` の環境変数 `BANTO_DB` を `postgres://` URL にすると PostgreSQL 経路になる。
 - **PostgreSQL のときは添付ファイルの保存先 `BANTO_ATTACHMENTS_DIR` の指定が必須**
   （DB ごとに `pg_<ホスト>_<ポート>_<DB名>_<ハッシュ>` のサブディレクトリを分ける。
