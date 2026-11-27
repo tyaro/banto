@@ -412,9 +412,14 @@
 		box-shadow: var(--banto-focus-ring);
 	}
 
-	/* Its own stacking context, like `.docked-layer`: painted above the docked tree by DOM
-	   order, below the floating layer (z-index 1), whatever z-index the slid-out pane uses -
-	   except while the slid-out pane shows a modal, which must stay above the floating windows. */
+	/* Its own stacking context, like `.docked-layer`, whatever z-index the slid-out pane uses,
+	   and above the floating layer (z-index 1, `DockHost`): a slide-out is opened for a moment,
+	   so it is not left under a floating window lying over that side (#1043). The layer decides
+	   it, not the windows' own order: raising a window keeps it under the slide-out, and closing
+	   the slide-out leaves the windows' order as it was. The area itself takes no pointer, so the
+	   windows beside the slide-out are still reached. Except while the slid-out pane shows a
+	   modal: then the area is no stacking context, so the modal and its scrim go above the
+	   floating windows and the page by their own z-index (the scrim covers the rest anyway). */
 	.flyout-area {
 		position: absolute;
 		pointer-events: none;
@@ -422,6 +427,7 @@
 
 	.flyout-area:not(:has([aria-modal='true'])) {
 		isolation: isolate;
+		z-index: 2;
 	}
 
 	.flyout {

@@ -5541,12 +5541,27 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		try {
 			const from = { x: barBox.x + 30, y: barBox.y + barBox.height / 2 };
-			// The left outer button: 8 px in from the side, 32 px, at mid height (`core/edges.ts`).
-			const to = { x: hostBox.x + 24, y: hostBox.y + hostBox.height / 2 };
 			await page.mouse.move(from.x, from.y);
 			await page.mouse.down();
 			await page.mouse.move(from.x + 12, from.y + 12, { steps: 3 });
+			// The left outer button: 8 px in from the side, 32 px, at the middle of the part of the
+			// host that is on screen (`core/edges.ts`, #1043: the dock is taller than the viewport,
+			// so the middle of the host itself may be off screen) - where it is drawn is asked.
+			const leftButton = host.locator('.guide-button.outer[data-dock-edge="left"]');
+			await expect(leftButton).toBeInViewport({ ratio: 1 });
+			const buttonBox = await leftButton.boundingBox();
+			if (!buttonBox) throw new Error('left outer button not visible');
+			expect(Math.abs(buttonBox.x - (hostBox.x + 8))).toBeLessThan(3);
+			const to = {
+				x: buttonBox.x + buttonBox.width / 2,
+				y: buttonBox.y + buttonBox.height / 2
+			};
 			await page.mouse.move(to.x, to.y, { steps: 12 });
+			// Every outer button is on screen, the bottom one too (#1043).
+			for (const edge of ['left', 'right', 'top', 'bottom'])
+				await expect(host.locator(`.guide-button.outer[data-dock-edge="${edge}"]`)).toBeInViewport({
+					ratio: 1
+				});
 			// Only during the drag: the four outer buttons, the left one active.
 			await expect(host.locator('.guide-button.outer')).toHaveCount(4);
 			await expect(host.locator('.guide-button.outer.active')).toHaveAttribute(

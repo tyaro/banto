@@ -20,6 +20,7 @@ import {
 	createDashboardMemo,
 	trackClosePending,
 	createPanelChangeHandler,
+	settleBeforeReset,
 	memoSaveCommand,
 	memoText
 } from './dashboardMemo.svelte';
@@ -497,5 +498,41 @@ describe('trackClosePending (#886 review: the swap waits for the close to be dec
 		const handler = trackClosePending(() => true, onPending);
 		expect(handler({ kind: 'dock', panelId: MEMO_PANEL_ID, remount: true } as never)).toBe(true);
 		expect(onPending).not.toHaveBeenCalled();
+	});
+});
+
+describe('settleBeforeReset (#1042: the layout reset asks about an unsaved memo)', () => {
+	it('unsaved memo -> asked; cancel keeps everything and stops the reset', async () => {
+		const { provider } = heldProvider();
+		const memo = memoWith(provider);
+		memo.register();
+		const ask = vi.fn(async () => 'cancel' as const);
+		memo.draft.setValue(MEMO_FIELD, 'keep');
+		await expect(settleBeforeReset({ coordinator: memo.serial, ask })).resolves.toBe(false);
+		expect(ask).toHaveBeenCalledTimes(1);
+		expect(memo.draft.dirty).toBe(true);
+		memo.dispose();
+	});
+
+	it('unsaved memo -> discard goes on with the reset', async () => {
+		const { provider } = heldProvider();
+		const memo = memoWith(provider);
+		memo.register();
+		memo.draft.setValue(MEMO_FIELD, 'throw away');
+		await expect(
+			settleBeforeReset({ coordinator: memo.serial, ask: async () => 'discard' })
+		).resolves.toBe(true);
+		expect(memo.draft.dirty).toBe(false);
+		memo.dispose();
+	});
+
+	it('nothing unsaved -> no question, the reset goes on', async () => {
+		const { provider } = heldProvider();
+		const memo = memoWith(provider);
+		memo.register();
+		const ask = vi.fn(async () => 'cancel' as const);
+		await expect(settleBeforeReset({ coordinator: memo.serial, ask })).resolves.toBe(true);
+		expect(ask).not.toHaveBeenCalled();
+		memo.dispose();
 	});
 });
