@@ -25,6 +25,7 @@
 		type DashboardFilter
 	} from '#lib/banto/dashboardPeriod.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 
 	interface Props {
 		/** The page's filter: the selection shown here, and the period the list link carries. */
@@ -76,7 +77,7 @@
 		};
 	});
 	const truncatedNote = $derived(
-		truncated ? m['dashboard.truncatedNote']({ limit: DASHBOARD_ROW_LIMIT.toLocaleString() }) : ''
+		truncated ? m['dashboard.truncatedNote']({ limit: formatCount(DASHBOARD_ROW_LIMIT) }) : ''
 	);
 
 	let bar = $state<HTMLElement>();

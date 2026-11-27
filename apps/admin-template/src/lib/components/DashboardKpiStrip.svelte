@@ -21,6 +21,7 @@
 		type DashboardFilter
 	} from '#lib/banto/dashboardPeriod.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { formatCount } from '#lib/banto/i18n.js';
 
 	/**
 	 * `filter` is the page's period: a tile that opens the list carries it (#882 D3). The selection
@@ -37,9 +38,7 @@
 		hasSelection(filter.selection) ? m['dashboard.selectionNotCarried']() : ''
 	);
 	const truncatedNote = $derived(
-		data.truncated
-			? m['dashboard.truncatedNote']({ limit: DASHBOARD_ROW_LIMIT.toLocaleString() })
-			: ''
+		data.truncated ? m['dashboard.truncatedNote']({ limit: formatCount(DASHBOARD_ROW_LIMIT) }) : ''
 	);
 </script>
 
