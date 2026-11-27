@@ -49,10 +49,12 @@
 		type RowId
 	} from './core/rowSelection';
 	import { buildGroupedView, type FlatEntry } from './core/group';
+	import { cellDomId, groupRowDomId } from './core/domId';
 	import HeaderCell from './HeaderCell.svelte';
 	import CellEditError from './CellEditError.svelte';
 	import { defaultGridMessages, type GridMessages } from './messages';
 	import { getCellEditors, type CellEditors } from './cellEditors';
+	import { outsideRowTabStops } from './outsideRowTabStops';
 
 	interface Props {
 		/**
@@ -252,8 +254,9 @@
 	// `messages` is an i18n layer 1 override bundle; merged reactively so a
 	// parent that swaps it later (a locale switch) is followed.
 	const t = $derived({ ...defaultGridMessages, ...messages });
-	// Only one editor is mounted per grid; keep its error reference local to
-	// this instance without deriving DOM IDs from row or column identifiers.
+	// Unique per grid instance: the prefix of every DOM id this grid makes.
+	// Only one editor is mounted per grid, so its error id needs no row or
+	// column in it (cell ids do: see `cellIdFor`).
 	const gridId = $props.id();
 	const editErrorId = `${gridId}-edit-error`;
 
@@ -577,6 +580,135 @@
 	const pinnedWidth = $derived(
 		pinActive ? stuckOffsets[stuckCount - 1] + columnWidths[stuckCount - 1] : 0
 	);
+
+	// --- Active cell for assistive tech (#1016) ---
+	// DOM focus stays on the grid element; the cell cursor is `selection.active`.
+	// `aria-activedescendant` is what tells a screen reader which cell that is
+	// (and, pointing at a `gridcell`, what makes NVDA treat the grid as a
+	// widget to pass keys to instead of browsing it). Ids come from the row key
+	// and the column id, not the display index, so a cell keeps its id while
+	// rows are sorted, filtered or scrolled.
+	function cellIdFor(row: TRow, columnId: string): string {
+		return cellDomId(gridId, getRowId(row), columnId);
+	}
+
+	/**
+	 * The active cell's row when it is outside the virtualized window (#1016),
+	 * or null. That one row stays drawn, at its real place (out of sight), so
+	 * `aria-activedescendant` keeps a target: with the attribute gone NVDA
+	 * reads the whole table - the moment a wheel scroll takes the row out of
+	 * the window, or on coming back to the grid by Tab - and drops to browse
+	 * mode. A row not fetched yet (server mode) has no cell to name and is not
+	 * drawn; a group header row is.
+	 */
+	const activeRowOutsideWindow = $derived.by(() => {
+		const active = selection.active;
+		if (!active) return null;
+		const rowIndex = active.rowIndex;
+		if (rowIndex < 0 || rowIndex >= effectiveRowCount) return null;
+		if (rowIndex >= windowResult.start && rowIndex < windowResult.end) return null;
+		if (groupedEntries) return groupedEntries[rowIndex] ? rowIndex : null;
+		return rowAtDisplayIndex(rowIndex) === undefined ? null : rowIndex;
+	});
+
+	interface DrawnRow<T> {
+		item: T;
+		rowIndex: number;
+		/** Outside the window: taken out of the flow and placed at its own offset. */
+		outside: boolean;
+	}
+
+	/** The window's rows, plus the active row when it is outside (before or after, in row order). */
+	function withActiveRow<T>(items: T[], itemAt: (rowIndex: number) => T): DrawnRow<T>[] {
+		const drawn = items.map((item, i) => ({
+			item,
+			rowIndex: windowResult.start + i,
+			outside: false
+		}));
+		const rowIndex = activeRowOutsideWindow;
+		if (rowIndex === null) return drawn;
+		const extra = { item: itemAt(rowIndex), rowIndex, outside: true };
+		if (rowIndex < windowResult.start) drawn.unshift(extra);
+		else drawn.push(extra);
+		return drawn;
+	}
+
+	const drawnRows = $derived(
+		withActiveRow<TRow | undefined>(visibleRows, (rowIndex) => rowAtDisplayIndex(rowIndex))
+	);
+	const drawnEntries = $derived.by(() => {
+		const entries = groupedEntries;
+		return entries ? withActiveRow(visibleEntries, (rowIndex) => entries[rowIndex]) : [];
+	});
+
+	/**
+	 * Focus is never left inside the row drawn outside the window (#1016): a
+	 * control there is out of sight, yet Enter / Space would still press it.
+	 * The grid element takes the focus instead - the active cell, the range and
+	 * the scroll position stay, and `aria-activedescendant` still names the
+	 * active cell. Called when the row goes out with the focus in it (the
+	 * effect below) and when something in it is focused while it is out there
+	 * (`handleFocusIn`: a script's `.focus()`, a drawer handing the focus back).
+	 * The cell editor is left alone: taking its focus would commit the draft,
+	 * and the edit session outlives a scroll as it always has.
+	 *
+	 * `restoreScroll`: a `.focus()` without `preventScroll` has already brought
+	 * the row into view by the time `focusin` arrives (Chromium scrolls first).
+	 * The scroll event of that jump has not been delivered yet, so `scrollTop`
+	 * / `scrollLeft` (the state) still hold where the grid was: put it back, in
+	 * the same task, before anything is painted.
+	 * Returns whether the focus was moved.
+	 */
+	function takeFocusFromOutsideRow(target: EventTarget | null, restoreScroll = false): boolean {
+		const container = containerEl;
+		if (!container || !(target instanceof Element) || target === container) return false;
+		const row = target.closest('.row.outside-window');
+		if (!row || !container.contains(row)) return false;
+		const editorRoot = editorRootEl ?? editorEl;
+		if (editorRoot?.contains(target)) return false;
+		if (restoreScroll) {
+			if (container.scrollTop !== scrollTop) container.scrollTop = scrollTop;
+			if (container.scrollLeft !== scrollLeft) container.scrollLeft = scrollLeft;
+		}
+		container.focus({ preventScroll: true });
+		return true;
+	}
+
+	// The active row has just gone out of the window (or the cursor moved to a
+	// row out there) with the focus inside it. Runs after the DOM update, so
+	// the row already carries `outside-window`.
+	$effect(() => {
+		if (activeRowOutsideWindow === null) return;
+		untrack(() => {
+			takeFocusFromOutsideRow(containerEl?.ownerDocument.activeElement ?? null);
+		});
+	});
+
+	/** `top` of a row drawn outside the window, inside the (translated) rows block. */
+	function outsideTop(rowIndex: number): string {
+		return `${rowIndex * gridState.rowHeight - windowResult.offsetY}px`;
+	}
+
+	/**
+	 * Id of the element drawn for the active cell, or undefined when there is
+	 * none in the DOM: no active cell, a row not fetched yet (server mode
+	 * placeholder), or a column that is gone. The attribute is then left off,
+	 * since it must never name a missing id. A row outside the virtualized
+	 * window is still drawn (`activeRowOutsideWindow`), so it is named too.
+	 * On a group header row the row itself is the active descendant.
+	 */
+	const activeDescendantId = $derived.by(() => {
+		const active = selection.active;
+		if (!active) return undefined;
+		if (active.rowIndex < 0 || active.rowIndex >= effectiveRowCount) return undefined;
+		if (groupedEntries) {
+			const entry = groupedEntries[active.rowIndex];
+			if (entry?.kind === 'group') return groupRowDomId(gridId, entry.key);
+		}
+		const row = rowAtDisplayIndex(active.rowIndex);
+		if (row === undefined || !orderedFieldIds.includes(active.field)) return undefined;
+		return cellIdFor(row, active.field);
+	});
 
 	/** Keyed `{#each}` block key for a (possibly sparse-hole) visible row. */
 	function rowKeyFor(row: TRow | undefined, rowIndex: number): string | number {
@@ -1091,8 +1223,14 @@
 	 * (`scrollActiveIntoView`).
 	 */
 	function handleFocusIn(event: FocusEvent) {
-		if (!containerEl || !pinActive) return;
+		if (!containerEl) return;
 		const target = event.target;
+		if (target === containerEl) {
+			placeCursorOnGridFocus();
+			return;
+		}
+		if (takeFocusFromOutsideRow(target, true)) return;
+		if (!pinActive) return;
 		if (!(target instanceof Element)) return;
 		const cell = target.closest('.cell, .header-cell');
 		if (!cell || !containerEl.contains(cell) || cell.classList.contains('pinned')) return;
@@ -1109,6 +1247,46 @@
 			cellPinned: false
 		});
 		if (next !== containerEl.scrollLeft) containerEl.scrollLeft = next;
+	}
+
+	/** Display indices of the first and the last row in the viewport (`count` > 0). */
+	function rowsInView(count: number): { firstInView: number; lastInView: number } {
+		const rowHeight = gridState.rowHeight;
+		const firstInView = Math.min(
+			count - 1,
+			Math.max(0, Math.floor(effectiveScrollTop / rowHeight))
+		);
+		const lastInView = Math.min(
+			count - 1,
+			Math.max(firstInView, Math.ceil((effectiveScrollTop + rowsViewportHeight) / rowHeight) - 1)
+		);
+		return { firstInView, lastInView };
+	}
+
+	/**
+	 * Focus landed on the grid element itself with no active cell (reached by
+	 * Tab, or handed back by code): put the cursor on the first row in view,
+	 * first column, so `aria-activedescendant` is there from the start (#1016).
+	 * Without it NVDA stays in browse mode, reads the whole table and takes the
+	 * arrow keys for itself, so the key that would create the cursor never
+	 * arrives. Only the cursor is placed: no range (`anchor` stays null, no
+	 * cell turns `aria-selected`), no row selection, no scrolling. A group
+	 * header in view counts (the row is then the active descendant); a row not
+	 * fetched yet does not. With nothing to land on, nothing changes and the
+	 * first navigation key still enters the grid (`enterFirstCellFromKeyboard`).
+	 */
+	function placeCursorOnGridFocus() {
+		if (selection.active || editing) return;
+		const field = orderedFieldIds[0];
+		if (field === undefined) return;
+		const count = effectiveRowCount;
+		if (count === 0) return;
+		const { firstInView, lastInView } = rowsInView(count);
+		for (let i = firstInView; i <= lastInView; i++) {
+			if (rowAtDisplayIndex(i) === undefined && !isGroupHeaderAt(i)) continue;
+			selection.active = { rowIndex: i, field };
+			return;
+		}
 	}
 
 	function activeCellHasRendererLink(column: GridColumn<TRow>): boolean {
@@ -1450,15 +1628,7 @@
 		if (field === undefined) return;
 		const count = effectiveRowCount;
 		if (count === 0) return;
-		const rowHeight = gridState.rowHeight;
-		const firstInView = Math.min(
-			count - 1,
-			Math.max(0, Math.floor(effectiveScrollTop / rowHeight))
-		);
-		const lastInView = Math.min(
-			count - 1,
-			Math.max(firstInView, Math.ceil((effectiveScrollTop + rowsViewportHeight) / rowHeight) - 1)
-		);
+		const { firstInView, lastInView } = rowsInView(count);
 		// [first data row in view, first data row in display order]
 		let inView = -1;
 		let first = -1;
@@ -2054,6 +2224,7 @@
 		role="grid"
 		aria-label={label ?? t.gridLabel()}
 		tabindex="0"
+		aria-activedescendant={activeDescendantId}
 		aria-rowcount={effectiveRowCount + 1}
 		aria-colcount={gridState.orderedColumns.length + (selectable ? 1 : 0)}
 		onscroll={handleScroll}
@@ -2117,12 +2288,22 @@
 				></div>
 			{/if}
 
-			{#snippet dataRow(row: TRow, rowIndex: number)}
+			<!--
+			`outside` (#1016): the active cell's row, drawn although it is outside the
+			virtualized window. Nothing in it is a tab stop while it is out there
+			(`outsideRowTabStops`: the checkbox, the links, and whatever the host
+			drew with `render` / `cell`), so Tab does not jump the view to a row
+			that is out of sight.
+			-->
+			{#snippet dataRow(row: TRow, rowIndex: number, outside: boolean)}
 				<div
 					class="row {rowClass?.(row) ?? ''}"
 					class:selected={selectable && isRowSelected(row)}
+					class:outside-window={outside}
+					use:outsideRowTabStops={outside}
 					role="row"
 					aria-rowindex={rowIndex + 2}
+					style:top={outside ? outsideTop(rowIndex) : undefined}
 					style:grid-template-columns={templateColumns}
 					style:height={`${gridState.rowHeight}px`}
 					style:--banto-grid-editor-height={`min(var(--banto-control-height), calc(${gridState.rowHeight}px - var(--banto-border-width)))`}
@@ -2184,6 +2365,7 @@
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<div
 							class="cell"
+							id={cellIdFor(row, column.id)}
 							role="gridcell"
 							aria-selected={isInRange}
 							aria-busy={isEditingCell ? !!editing?.pending : undefined}
@@ -2319,8 +2501,7 @@
 					>
 						{#if groupedEntries}
 							<!-- Client mode, grouped (spec §4.3): group headers + rows flattened by buildGroupedView. -->
-							{#each visibleEntries as entry, i (entryKeyFor(entry))}
-								{@const rowIndex = windowResult.start + i}
+							{#each drawnEntries as { item: entry, rowIndex, outside } (entryKeyFor(entry))}
 								{#if entry.kind === 'group'}
 									<!--
 									role="row" (not "button"): this is still a grid row
@@ -2336,9 +2517,12 @@
 									<!-- svelte-ignore a11y_interactive_supports_focus -->
 									<div
 										class="row group-header-row"
+										class:outside-window={outside}
+										id={groupRowDomId(gridId, entry.key)}
 										role="row"
 										aria-rowindex={rowIndex + 2}
 										aria-expanded={!entry.collapsed}
+										style:top={outside ? outsideTop(rowIndex) : undefined}
 										style:height={`${gridState.rowHeight}px`}
 										onclick={() => handleGroupHeaderClick(rowIndex, entry.key)}
 									>
@@ -2359,12 +2543,11 @@
 										</span>
 									</div>
 								{:else}
-									{@render dataRow(entry.row, rowIndex)}
+									{@render dataRow(entry.row, rowIndex, outside)}
 								{/if}
 							{/each}
 						{:else}
-							{#each visibleRows as row, i (rowKeyFor(row, windowResult.start + i))}
-								{@const rowIndex = windowResult.start + i}
+							{#each drawnRows as { item: row, rowIndex, outside } (rowKeyFor(row, rowIndex))}
 								{#if row === undefined}
 									<!--
 									Server mode (spec §4.1, M5): this absolute row
@@ -2400,7 +2583,7 @@
 										{/each}
 									</div>
 								{:else}
-									{@render dataRow(row, rowIndex)}
+									{@render dataRow(row, rowIndex, outside)}
 								{/if}
 							{/each}
 						{/if}
@@ -2574,6 +2757,15 @@
 		border-bottom: var(--banto-border-width) solid var(--banto-border);
 		box-sizing: border-box;
 		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	/* The active cell's row, kept in the DOM while it is outside the virtualized
+	   window (#1016): out of the flow, at its own offset (inline `top`), so the
+	   rows of the window do not move. */
+	.row.outside-window {
+		position: absolute;
+		left: 0;
+		right: 0;
 	}
 
 	/* `--row-overlay` repeats the row's state colour for the pinned cells
