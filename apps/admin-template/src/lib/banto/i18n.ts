@@ -96,7 +96,8 @@ export function gridMessages(): Partial<GridMessages> {
 			m['grid.sortMultipleAscendingStatus']({ header, priority }),
 		sortMultipleDescendingStatus: (header, priority) =>
 			m['grid.sortMultipleDescendingStatus']({ header, priority }),
-		sortKeyRemovedStatus: (header) => m['grid.sortKeyRemovedStatus']({ header })
+		sortKeyRemovedStatus: (header) => m['grid.sortKeyRemovedStatus']({ header }),
+		scrolledToActiveCell: () => m['grid.scrolledToActiveCell']()
 	};
 }
 

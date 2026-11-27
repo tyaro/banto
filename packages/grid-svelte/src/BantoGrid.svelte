@@ -34,6 +34,7 @@
 		contentXAt,
 		fitPinnedCount,
 		pinnedOffsets,
+		cellInViewHorizontally,
 		scrollLeftToReveal
 	} from './core/pinning';
 	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
@@ -1245,6 +1246,66 @@
 	}
 
 	/**
+	 * Whether any part of the active cell is on screen (#1036). The active cell
+	 * does not follow a wheel / scrollbar scroll, so it can be far from what the
+	 * user is looking at - outside the virtualized window (its row is still in
+	 * the DOM, `.row.outside-window`), or drawn but scrolled out of the
+	 * viewport, or in a column scrolled out sideways / under the pinned block.
+	 * A sliver in view counts as in view. A group header spans the full width,
+	 * so only its rows' direction counts.
+	 *
+	 * Read from the element, not from the `scrollTop` / `scrollLeft` state: the
+	 * scroll event that updates them may not have been delivered yet. A viewport
+	 * that was never measured (0) counts as "in view", so nothing is held back
+	 * on a guess.
+	 */
+	function activeCellInView(): boolean {
+		if (!containerEl || !selection.active) return true;
+		const { rowIndex, field } = selection.active;
+
+		if (rowsViewportHeight > 0) {
+			const top = Math.max(0, containerEl.scrollTop - headerHeight);
+			const rowTop = rowIndex * gridState.rowHeight;
+			if (rowTop + gridState.rowHeight <= top || rowTop >= top + rowsViewportHeight) return false;
+		}
+		if (isGroupHeaderAt(rowIndex)) return true;
+
+		const fieldIndex = orderedFieldIds.indexOf(field);
+		if (fieldIndex === -1) return true;
+		let x = selectColumnWidth;
+		for (let i = 0; i < fieldIndex; i++) x += widthOf(gridState.orderedColumns[i]);
+		return cellInViewHorizontally({
+			cellLeft: x,
+			cellWidth: widthOf(gridState.orderedColumns[fieldIndex]),
+			scrollLeft: containerEl.scrollLeft,
+			viewportWidth: containerEl.clientWidth,
+			pinnedWidth,
+			cellPinned: fieldIndex < stuckCount
+		});
+	}
+
+	/**
+	 * Keys that do something to the active cell or its row (open, edit, select,
+	 * toggle a group, row menu), as opposed to keys that move the active cell.
+	 * The menu keys only count when the host wired a row menu: otherwise they
+	 * are the browser's.
+	 */
+	function isActionKey(event: KeyboardEvent): boolean {
+		switch (event.key) {
+			case 'Enter':
+			case ' ':
+			case 'F2':
+				return true;
+			case 'ContextMenu':
+				return Boolean(onRowContextMenu);
+			case 'F10':
+				return event.shiftKey && Boolean(onRowContextMenu);
+			default:
+				return false;
+		}
+	}
+
+	/**
 	 * Tab / Shift+Tab stays native (#713). A link or header button inside a
 	 * column that is not pinned can land under the stuck block; pull it out
 	 * from under it. Cell selection moves have their own path
@@ -1793,6 +1854,18 @@
 		const rowCount = effectiveRowCount;
 		const activeColumn = gridState.orderedColumns.find((c) => c.id === selection.active!.field);
 		const activeRow = rowAtDisplayIndex(selection.active!.rowIndex);
+
+		// #1036: the active cell stays where it was while the user scrolls with
+		// the wheel or the scrollbar, so an action key would act on a row that
+		// is not on screen. Show the cell first and do nothing else; the same
+		// key pressed again (the cell is in view now) acts as usual. Keys that
+		// move the active cell are not held back: they bring it into view anyway.
+		if (isActionKey(event) && !activeCellInView()) {
+			event.preventDefault();
+			scrollActiveIntoView();
+			announce(t.scrolledToActiveCell());
+			return;
+		}
 
 		switch (event.key) {
 			case 'ContextMenu':

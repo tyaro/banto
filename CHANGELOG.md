@@ -22,6 +22,12 @@
 
 ## [Unreleased]
 
+- fix(grid-svelte, admin-template): **`BantoGrid` の今のセルが画面の外にあるとき、操作のキーは、まず今のセルまでスクロールして見せるだけにした**（#1036、#1031 の NVDA の実機確認で見つけた。#1016 より前からある挙動）。外枠（`role="grid"`）にフォーカスがあるままホイールやスクロールバーで遠くまでスクロールして Enter を押すと、画面の外にある今のセルの行が開いていた（`onRowClick`・行のリンク。見えていない行が開いたように見える）。今のセルが画面の外にあるときの Enter・Space・Shift+Space・F2（`onRowContextMenu` があれば ContextMenu・Shift+F10 も）は、今のセルまでスクロールするだけで操作はせず、もう一度押すとふつうに操作する。スクロールは矢印キーで動いたときと同じ仕組み（`scrollActiveIntoView`）。
+  - **「画面の外」**: 行が仮想化の描画範囲の外にある（`.row.outside-window`）、描かれているが見える範囲から外れている（オーバースキャンの行）、列が横に外れている（固定列の下に隠れている場合も）のどれか。少しでも見えていれば操作する。グループの見出し行は全幅なので、行の向きだけを見る。
+  - **変えていないもの**: 移動のキー（矢印・Home / End・PageUp / PageDown。今のセルから動いて画面に入る）、コピー（Ctrl+C）・貼り付け、編集中のキー、行の中の部品にフォーカスがあるときのキー、今のセルが無いときの最初のキー（見えている最初の行に入る、#784）、マウスの操作。
+  - **知らせ**: スクロールだけしたことを `role="status"` の領域で知らせる（スクリーンリーダーには画面のスクロールが伝わらず、キーが効かなかったように聞こえるため）。`GridMessages` に `scrolledToActiveCell` を足した（省略可。既定は「選択中のセルまでスクロールしました。もう一度押すと実行します」）。admin-template は `grid.scrolledToActiveCell`（ja / en）を足して `gridMessages()` でつないだ。
+  - `core/pinning.ts` に `cellInViewHorizontally`（`scrollLeftToReveal` と同じ入力で、少しでも見えているかを返す）を足した。
+  - **消費側への注意**: 今のセルが画面の外にあるとき、操作のキーの 1 回目は操作をしない（`onRowClick`・`onRowContextMenu`・編集の開始・行の選択・グループの開閉が呼ばれず、スクロールと知らせだけが起きる）。「セルを選ぶ → スクロールで離れる → Enter」の 1 回で行が開く前提の手順・E2E は、Enter を 2 回にするか、スクロールで離れないように直す。`GridMessages` を全部の鍵で実装している（`Required<GridMessages>`）コードは `scrolledToActiveCell` を足す。文言を自前で持つアプリは、この鍵を足さないと既定の日本語が読まれる。
 - fix(grid-svelte, admin-template): **見出しの部品の中を `role="toolbar"` で包み、並べ替えの結果を読み上げる**（#1016、NVDA の実機で見つけた）。見出しの部品（全選択・並べ替え・絞り込み）にフォーカスがあっても NVDA はブラウズモードのままで、←/→ が文字読みになり見出し行の roving tabindex（`headerTabStop`）に届かなかった。NVDA は祖先に `toolbar` があるとフォーカスモードにするので、各見出しの中を `<div role="toolbar">`（`display: contents`、見た目は同じ・名前なし）で包んだ（リサイズの separator は外）。また、フォーカスモードで並べ替えを Enter で押しても何も読まれなかったので、`role="status"` の領域が「IDで昇順に並べ替え」「並べ替えを解除」などと読む（`GridMessages` に `sortAscendingStatus` ほか 6 つ、admin-template は ja / en を追加。領域は `selectable` でなくても出る）。
   - **消費側への注意**: grid の知らせの領域（`role="status"`・`aria-live="polite"`）は、今まで `selectable` のときだけだったが、並べ替えの知らせのため常に置く。grid を含む範囲で `[aria-live="polite"]` を 1 つと決めて探すテストは、2 つ見つかる（このリポジトリのドックの E2E は `.dock-live` で探すように直した）。
 - fix(grid-svelte): **`BantoGrid` の Tab の止まり場を「本文 1 つ・見出し 1 つ・一括操作バー」にした**（#1016 の項目 5）。今までは見出しの全選択・列ごとの並べ替えと絞り込み・外枠・各行のチェックボックス・行のリンクや `render` / `cell` の部品がすべて止まり場で、一括操作バーまで Tab が遠かった（見出しだけで 12 回以上）。外枠から一括操作バーまで Tab 2 回になる（DOM の順で 外枠 → 見出し行 → バー）。

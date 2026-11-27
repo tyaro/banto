@@ -132,6 +132,7 @@
   "grid.sortMultipleAscendingStatus": "Sort key {priority}: {header}, ascending",
   "grid.sortMultipleDescendingStatus": "Sort key {priority}: {header}, descending",
   "grid.sortKeyRemovedStatus": "{header} removed from the sort",
+  "grid.scrolledToActiveCell": "Scrolled to the current cell. Press the key again to act on it.",
   "validation.required": "This field is required",
   "validation.min": "Enter a value of at least {min}",
   "validation.max": "Enter a value of at most {max}",
