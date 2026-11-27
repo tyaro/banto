@@ -17,6 +17,7 @@ use tauri::{
 use crate::config::{validate_panel_id, PanelConfig, DEFAULT_STORE_FILE};
 use crate::geometry::{restorable, MonitorRect, PanelGeometry};
 use crate::store::GeometryStore;
+use crate::title::document_title_script;
 use crate::PANEL_CLOSED_EVENT;
 
 /// The plugin's name: the frontend invokes `plugin:banto-tauri-panel|open`
@@ -144,9 +145,14 @@ async fn open<R: Runtime>(
         None
     };
 
+    // The document is named after the panel before the page's own scripts
+    // run (Issue #1024; the script and its reason are in `title.rs`). An
+    // initialization script needs no permission of its own.
+    let title_script = document_title_script(&title);
     let mut builder =
         WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(config.route_for(&id).into()))
             .title(title)
+            .initialization_script(title_script)
             .inner_size(config.default_size.0, config.default_size.1)
             .min_inner_size(config.min_size.0, config.min_size.1);
     if restore.is_some() {

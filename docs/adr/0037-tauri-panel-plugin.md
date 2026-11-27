@@ -35,6 +35,9 @@
 plugin が持つもの:
 
 - コマンド `open`（`plugin:banto-tauri-panel|open`、引数は `id` と `title`）。同じ id の窓が開いていれば前に出すだけ。
+  窓を作るとき、`title` を文書の題名にも入れる script を `initialization_script` で渡す（#1024。ページの script が
+  動く前に走り、`<title>` を読み終えた時点で 1 回だけ置き換える。ページが後から付ける題名はそのまま通る。
+  権限は増えない）。
 - コマンド `list`（`plugin:banto-tauri-panel|list`、引数なし。#1013 で追加）。今開いているパネルの窓の id を返す
   （plugin が作って、まだ閉じたのを見ていない窓）。
 - コマンド `close`（`plugin:banto-tauri-panel|close`、引数は `id`。#1021 で追加）。その id の窓を閉じる（plugin が

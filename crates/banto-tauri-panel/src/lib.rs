@@ -7,6 +7,10 @@
 //! - **closed notice**: when a panel window is gone, the main window gets
 //!   `banto://panel-closed` with the panel id, so the frontend can put the
 //!   panel back into the dock (`@banto/admin-core`'s `listenPanelClosed`).
+//! - **document title**: the window's document is named after the panel
+//!   before the page's own scripts run, so a screen reader that reads the
+//!   document while the app is still starting reads the panel's name (Issue
+//!   #1024).
 //! - **geometry memory**: position and size are remembered per panel id and
 //!   restored on the next open; a remembered place that is no longer on any
 //!   monitor falls back to the default placement.
@@ -38,8 +42,8 @@
 //! The crate is split so that everything with a rule in it can be tested
 //! where Tauri cannot be built (CI's headless containers):
 //!
-//! - [`config`], [`geometry`], [`store`] - pure (std + serde). Built and
-//!   tested with `--no-default-features`.
+//! - [`config`], [`geometry`], [`store`], [`title`] - pure (std + serde).
+//!   Built and tested with `--no-default-features`.
 //! - `plugin` (feature `tauri`, on by default) - the wiring only: it asks
 //!   Tauri for windows / monitors / events and hands the values to the pure
 //!   half. Covered by code review, `tauri-check.yml` (compile + clippy) and a
@@ -57,6 +61,7 @@
 pub mod config;
 pub mod geometry;
 pub mod store;
+pub mod title;
 
 #[cfg(feature = "tauri")]
 mod plugin;
@@ -64,6 +69,7 @@ mod plugin;
 pub use config::{validate_panel_id, ConfigError, PanelConfig, PanelIdError};
 pub use geometry::{is_on_screen, restorable, MonitorRect, PanelGeometry};
 pub use store::GeometryStore;
+pub use title::document_title_script;
 
 #[cfg(feature = "tauri")]
 pub use plugin::{init, Builder, PLUGIN_NAME};
