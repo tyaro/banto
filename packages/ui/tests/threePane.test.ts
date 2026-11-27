@@ -301,6 +301,37 @@ describe('ThreePaneLayout - narrow', () => {
 		expect(document.activeElement).toBe(rightToggle());
 	});
 
+	it('an open modal drawer makes the shell outside the layout inert, and gives it back on close (#1050)', async () => {
+		await mount({}, 800);
+		const outside = screen.getByText('Outside');
+		const stayed = document.createElement('button');
+		stayed.setAttribute('inert', '');
+		outside.after(stayed);
+		const layer = document.createElement('div');
+		layer.setAttribute('aria-modal', 'true');
+		outside.after(layer);
+		expect(outside.hasAttribute('inert')).toBe(false);
+		await fireEvent.click(leftToggle());
+		await flush();
+		expect(outside.hasAttribute('inert')).toBe(true);
+		// A modal layer the app has open above us is left usable.
+		expect(layer.hasAttribute('inert')).toBe(false);
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(outside.hasAttribute('inert')).toBe(false);
+		// What was inert before stays inert.
+		expect(stayed.hasAttribute('inert')).toBe(true);
+		stayed.remove();
+		layer.remove();
+	});
+
+	it('a non-modal drawer does not make the shell inert (#1050)', async () => {
+		await mount({ rightDrawerModal: false }, 800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		expect(screen.getByText('Outside').hasAttribute('inert')).toBe(false);
+	});
+
 	it('a non-modal drawer is neither a dialog nor a focus trap (#1045)', async () => {
 		await mount({ rightDrawerModal: false }, 800);
 		await fireEvent.click(rightToggle());

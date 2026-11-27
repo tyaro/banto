@@ -29,7 +29,13 @@
 	import IconButton from './IconButton.svelte';
 	import PanelLeft from './icons/PanelLeft.svelte';
 	import PanelRight from './icons/PanelRight.svelte';
-	import { attachFocusTrap, focusablesIn, hasVisibleLayerAbove, restoreFocus } from './layering';
+	import {
+		attachFocusTrap,
+		focusablesIn,
+		hasVisibleLayerAbove,
+		inertOutside,
+		restoreFocus
+	} from './layering';
 	import { defaultUiMessages } from './messages';
 	import {
 		clampPaneWidth,
@@ -436,8 +442,12 @@
 		// pane itself keeps it (it is `tabindex="-1"`), so focus never leaves for the shell behind
 		// the scrim or falls to `<body>`.
 		const detachTrap = modal ? attachFocusTrap(pane) : null;
+		// ...and the shell around the layout (header, sidebar) goes inert too: the scrim only covers
+		// the layout, and `aria-modal` hides the rest from assistive technology, so clicks must stop.
+		const releaseOutside = modal && rootEl ? inertOutside(rootEl) : null;
 		return () => {
 			detachTrap?.();
+			releaseOutside?.();
 			pane.removeEventListener('keydown', onPane);
 			if (modal) window.removeEventListener('keydown', onWindow);
 		};

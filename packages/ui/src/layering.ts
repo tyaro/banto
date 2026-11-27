@@ -253,6 +253,58 @@ export function attachFocusTrap(panel: HTMLElement): () => void {
 	};
 }
 
+const inertHolds = new WeakMap<Element, { count: number; wasInert: boolean }>();
+
+/**
+ * Make everything outside `el` inert while a modal layer that lives inside the page flow is open
+ * (ThreePaneLayout's overlaid drawer, #1050): at each level from `el` up to `<body>`, every
+ * sibling of the path gets `inert` (no click, no Tab, hidden from assistive technology), so the
+ * app's header and sidebar behind a scrim that only covers the layout stop being reachable. The
+ * path itself is left alone, and so is any sibling that holds a modal layer (`aria-modal="true"`)
+ * or a `data-esc-layer` right now - a layer the app opened above us must stay usable.
+ *
+ * Returns a release function that undoes exactly what this call did. Holds are counted per
+ * element, so two layers stacked on the same shell release independently, and an element that was
+ * `inert` already stays `inert` after the last release.
+ */
+export function inertOutside(el: HTMLElement): () => void {
+	const held: Element[] = [];
+	for (
+		let node: Element = el;
+		node !== document.body && node.parentElement;
+		node = node.parentElement
+	) {
+		for (const sibling of Array.from(node.parentElement.children)) {
+			if (sibling === node) continue;
+			if (sibling.matches('script, style, link')) continue;
+			if (
+				sibling.matches(MODAL_LAYER_SELECTOR) ||
+				sibling.querySelector(`${MODAL_LAYER_SELECTOR}, [data-esc-layer]`)
+			)
+				continue;
+			const hold = inertHolds.get(sibling);
+			if (hold) hold.count++;
+			else {
+				inertHolds.set(sibling, { count: 1, wasInert: sibling.hasAttribute('inert') });
+				sibling.setAttribute('inert', '');
+			}
+			held.push(sibling);
+		}
+	}
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		for (const sibling of held) {
+			const hold = inertHolds.get(sibling);
+			if (!hold) continue;
+			if (--hold.count > 0) continue;
+			inertHolds.delete(sibling);
+			if (!hold.wasInert) sibling.removeAttribute('inert');
+		}
+	};
+}
+
 /**
  * Can focus go back to `el`? Connected, not `<body>` / `<html>` (a layer
  * opened while nothing had focus must not count as "restored"), not inside
