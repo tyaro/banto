@@ -1075,6 +1075,17 @@
 
 	// --- Cell selection / navigation (spec §4.5) ---
 	const selection = new CellSelection();
+	/**
+	 * Whether the copy / paste range covers two or more cells (#1034). A single
+	 * cell is only the cursor, not a selection: the cells then carry no
+	 * `aria-selected` at all, so a screen reader does not say "not selected" on
+	 * every move. Once the range is widened, the cells inside are `true` and the
+	 * ones outside `false`.
+	 */
+	const rangeSpansCells = $derived.by(() => {
+		const range = selection.getRange(orderedFieldIds);
+		return !!range && (range.rowStart !== range.rowEnd || range.fieldStart !== range.fieldEnd);
+	});
 
 	/**
 	 * Hiding a column (spec §4.4) can strand cell state that names it: the
@@ -2338,6 +2349,7 @@
 		aria-label={label ?? t.gridLabel()}
 		tabindex="0"
 		aria-activedescendant={activeDescendantId}
+		aria-multiselectable="true"
 		aria-rowcount={effectiveRowCount + 1}
 		aria-colcount={gridState.orderedColumns.length + (selectable ? 1 : 0)}
 		onscroll={handleScroll}
@@ -2488,7 +2500,7 @@
 							class="cell"
 							id={cellIdFor(row, column.id)}
 							role="gridcell"
-							aria-selected={isInRange}
+							aria-selected={rangeSpansCells ? isInRange : undefined}
 							aria-busy={isEditingCell ? !!editing?.pending : undefined}
 							data-cell-row={rowIndex}
 							data-cell-field={column.id}
