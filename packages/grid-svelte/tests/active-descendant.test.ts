@@ -447,19 +447,117 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				expect(plain.getAttribute('tabindex')).toBe('-1');
 			});
 
-			it('does not take the focus away from a control in the row', async () => {
-				const { container, grid } = setup();
-				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
-				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
-				const button = row.querySelector<HTMLElement>('[data-k="plain"]')!;
-				button.focus();
-				expect(document.activeElement).toBe(button);
+			describe('focus never stays inside it', () => {
+				it('moves the focus to the grid element when the row goes out with a control focused', async () => {
+					const { container, grid } = setup();
+					await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+					const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
+					const button = row.querySelector<HTMLElement>('[data-k="plain"]')!;
+					button.focus();
+					expect(document.activeElement).toBe(button);
 
-				await scrollTo(grid, HEADER + 500 * ROW);
-				expect(row.classList.contains('outside-window')).toBe(true);
-				expect(button.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
-				expect(document.activeElement).toBe(button);
-				expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+					await scrollTo(grid, HEADER + 500 * ROW);
+					expect(row.classList.contains('outside-window')).toBe(true);
+					expect(button.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
+					expect(document.activeElement).toBe(grid);
+					expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+					expect(activeDescendant(grid)).toBe(cellAt(container, 0, 'name'));
+					expect(container.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
+				});
+
+				it('hands a focus() on a control out there to the grid element', async () => {
+					const { container, grid } = setup();
+					await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+					const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
+					await scrollTo(grid, HEADER + 500 * ROW);
+					expect(row.classList.contains('outside-window')).toBe(true);
+
+					for (const key of ['plain', 'minus', 'input']) {
+						(document.body as HTMLElement).focus();
+						row.querySelector<HTMLElement>(`[data-k="${key}"]`)!.focus();
+						expect(document.activeElement).toBe(grid);
+					}
+					row.querySelector<HTMLElement>('input[type="checkbox"]')!.focus();
+					expect(document.activeElement).toBe(grid);
+					expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+					expect(activeDescendant(grid)).toBe(cellAt(container, 0, 'name'));
+				});
+
+				it('puts the scroll position back when that focus() brought the row into view', async () => {
+					const { container, grid } = setup();
+					await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+					const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
+					const button = row.querySelector<HTMLElement>('[data-k="plain"]')!;
+					await scrollTo(grid, HEADER + 500 * ROW);
+
+					// What a browser does for a focus() without `preventScroll`: it
+					// scrolls to the element first, and `focusin` arrives before the
+					// scroll event of that jump.
+					button.addEventListener(
+						'focusin',
+						() => {
+							grid.scrollTop = 0;
+							grid.scrollLeft = 40;
+						},
+						{ capture: true, once: true }
+					);
+					button.focus();
+					expect(document.activeElement).toBe(grid);
+					expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+					expect(grid.scrollLeft).toBe(0);
+					await tick();
+					expect(row.classList.contains('outside-window')).toBe(true);
+					expect(activeDescendant(grid)).toBe(cellAt(container, 0, 'name'));
+				});
+
+				it('leaves the cell editor alone: the edit goes on, nothing is committed', async () => {
+					const edits: unknown[] = [];
+					const { container } = render(BantoGrid<Row>, {
+						rows: makeRows(1_000),
+						columns: [{ ...columns[0], editable: true }, columns[1]],
+						rowHeight: ROW,
+						getRowId: (row: Row) => row.id,
+						onCellEdit: (edit: unknown) => {
+							edits.push(edit);
+						}
+					});
+					const grid = screen.getByRole('grid');
+					await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+					grid.focus();
+					await fireEvent.keyDown(grid, { key: 'F2' });
+					await tick();
+					const editor = cellAt(container, 0, 'name').querySelector<HTMLInputElement>('input')!;
+					expect(document.activeElement).toBe(editor);
+
+					await scrollTo(grid, HEADER + 500 * ROW);
+					expect(editor.closest('.row')!.classList.contains('outside-window')).toBe(true);
+					expect(document.activeElement).toBe(editor);
+					expect(edits).toEqual([]);
+				});
+
+				it('leaves the focus on a control of a row inside the window', async () => {
+					const { container, grid } = setup();
+					await fireEvent.pointerDown(cellAt(container, 0, 'name'));
+					const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
+					const button = row.querySelector<HTMLElement>('[data-k="plain"]')!;
+					button.focus();
+					expect(document.activeElement).toBe(button);
+
+					// Still inside the window (overscan included): nothing moves.
+					await scrollTo(grid, HEADER + 1 * ROW);
+					expect(row.classList.contains('outside-window')).toBe(false);
+					expect(document.activeElement).toBe(button);
+
+					// With the active row out there, a row of the window is not touched either.
+					await scrollTo(grid, HEADER + 500 * ROW);
+					expect(document.activeElement).toBe(grid);
+					const inside = cellAt(container, 500, 'name')
+						.closest<HTMLElement>('.row')!
+						.querySelector<HTMLElement>('[data-k="plain"]')!;
+					inside.focus();
+					expect(document.activeElement).toBe(inside);
+					expect(activeDescendant(grid)).toBe(cellAt(container, 0, 'name'));
+				});
 			});
 		});
 

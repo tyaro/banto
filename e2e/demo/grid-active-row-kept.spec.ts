@@ -223,3 +223,132 @@ test('Tab skips the controls of the active row kept outside the window', async (
 	expect(back.isOpenButton).toBe(first.isOpenButton);
 	expect(backStops).toHaveLength(firstStops.length);
 });
+
+/**
+ * Review of #1031: the focus is never left inside the kept row. A control
+ * there is out of sight, yet Enter would still press it (the row's "open"
+ * button opened the drawer of a record the user could not see). The grid
+ * element takes the focus instead, and nothing scrolls.
+ */
+test.describe('focus does not stay in the active row kept outside the window', () => {
+	const openButtonOfRow0 = '.row[aria-rowindex="2"] [data-resource-open] button';
+
+	async function openItems(page: import('@playwright/test').Page) {
+		await page.goto('/items');
+		const grid = page.getByRole('grid').first();
+		await expect(grid).toBeVisible({ timeout: 60_000 });
+		await expect(grid.locator('.row [role="gridcell"]').first()).toBeVisible({ timeout: 60_000 });
+		// Row 0 becomes the active row.
+		await grid.focus();
+		await expect(grid).toHaveAttribute('aria-activedescendant', /.+/);
+		return grid;
+	}
+
+	const focusState = (grid: import('@playwright/test').Locator) =>
+		grid.evaluate((el) => {
+			const focused = document.activeElement;
+			return {
+				onGrid: focused === el,
+				inOutsideRow: !!focused?.closest('.row.outside-window'),
+				scrollTop: el.scrollTop,
+				activeRowIndex:
+					Number(
+						document
+							.getElementById(el.getAttribute('aria-activedescendant') ?? '')
+							?.closest('.row')
+							?.getAttribute('aria-rowindex')
+					) - 2
+			};
+		});
+
+	test('a wheel scroll with the "open" button focused hands the focus to the grid', async ({
+		page
+	}) => {
+		const grid = await openItems(page);
+		const isOnOpenButton = () =>
+			grid.evaluate(
+				(el, selector) => document.activeElement === el.querySelector(selector),
+				openButtonOfRow0
+			);
+		for (let i = 0; i < 80 && !(await isOnOpenButton()); i++) await page.keyboard.press('Tab');
+		expect(await isOnOpenButton()).toBe(true);
+
+		const box = (await grid.boundingBox())!;
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.wheel(0, 8_000);
+		await expect(grid.locator('.row.outside-window')).toHaveCount(1);
+		await expect.poll(async () => (await focusState(grid)).onGrid).toBe(true);
+		const scrolled = await focusState(grid);
+		expect(scrolled.scrollTop).toBeGreaterThan(4_000);
+		expect(scrolled.activeRowIndex).toBe(0);
+
+		// A key no longer goes to the button that is out of sight: the grid
+		// element gets it, as the action on the active cell (which is what a
+		// screen reader has announced). On this list Enter on a cell opens the
+		// record, so the drawer itself is no evidence either way.
+		await page.evaluate(() => {
+			const w = window as unknown as { __keyTargets: (string | null)[] };
+			w.__keyTargets = [];
+			document.addEventListener(
+				'keydown',
+				(event) => w.__keyTargets.push((event.target as Element).getAttribute('role')),
+				true
+			);
+		});
+		await page.keyboard.press('Enter');
+		expect(
+			await page.evaluate(
+				() => (window as unknown as { __keyTargets: (string | null)[] }).__keyTargets
+			)
+		).toEqual(['grid']);
+	});
+
+	for (const moved of [false, true]) {
+		test(`closing the drawer ${moved ? 'after moving to the next record ' : ''}with the row scrolled out gives the focus to the grid, without a jump`, async ({
+			page
+		}) => {
+			const grid = await openItems(page);
+			await grid.locator(openButtonOfRow0).click();
+			const drawer = page.getByRole('dialog');
+			await expect(drawer).toBeVisible();
+			if (moved) {
+				const before = page.url();
+				await page.keyboard.press('Alt+ArrowDown');
+				await expect.poll(() => page.url()).not.toBe(before);
+			}
+
+			const rowHeight = await grid.evaluate(
+				(el) => el.querySelector<HTMLElement>('.rows-block > .row')!.getBoundingClientRect().height
+			);
+			const far = rowHeight * 200;
+			await grid.evaluate((el, top) => {
+				el.scrollTop = top;
+			}, far);
+			await expect(grid.locator('.row.outside-window')).toHaveCount(1);
+			// Every scroll event from here on is recorded. The drawer hands the
+			// focus back with a plain focus(), which scrolls to the row before the
+			// grid can refuse it; the grid puts the position back in the same task,
+			// so the event that follows reports the old position and nothing else
+			// was ever painted.
+			await grid.evaluate((el) => {
+				const w = window as unknown as { __gridScrolls: number[] };
+				w.__gridScrolls = [];
+				el.addEventListener('scroll', () => w.__gridScrolls.push(el.scrollTop));
+			});
+
+			await page.keyboard.press('Escape');
+			await expect(drawer).toHaveCount(0);
+			await expect.poll(async () => (await focusState(grid)).onGrid).toBe(true);
+			await page.waitForTimeout(300);
+			const closed = await focusState(grid);
+			expect(closed.onGrid).toBe(true);
+			expect(closed.inOutsideRow).toBe(false);
+			expect(closed.scrollTop).toBe(far);
+			const scrolls = await page.evaluate(
+				() => (window as unknown as { __gridScrolls: number[] }).__gridScrolls
+			);
+			expect(scrolls.filter((top) => top !== far)).toEqual([]);
+			await expect(grid.locator('.row.outside-window')).toHaveCount(1);
+		});
+	}
+});

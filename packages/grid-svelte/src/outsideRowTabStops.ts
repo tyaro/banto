@@ -9,8 +9,8 @@
  *
  * Only `tabindex` is touched: the original value is parked in a data
  * attribute and put back when the row is inside the window again. Focus is
- * never moved (a focused control in the row keeps it; a negative `tabindex`
- * is still focusable).
+ * not this action's business (a negative `tabindex` is still focusable):
+ * BantoGrid moves it to the grid element (`takeFocusFromOutsideRow`).
  */
 
 /** Holds the element's own `tabindex` while it is overridden ('' = it had none). */

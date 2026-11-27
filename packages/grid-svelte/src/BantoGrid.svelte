@@ -641,6 +641,49 @@
 		return entries ? withActiveRow(visibleEntries, (rowIndex) => entries[rowIndex]) : [];
 	});
 
+	/**
+	 * Focus is never left inside the row drawn outside the window (#1016): a
+	 * control there is out of sight, yet Enter / Space would still press it.
+	 * The grid element takes the focus instead - the active cell, the range and
+	 * the scroll position stay, and `aria-activedescendant` still names the
+	 * active cell. Called when the row goes out with the focus in it (the
+	 * effect below) and when something in it is focused while it is out there
+	 * (`handleFocusIn`: a script's `.focus()`, a drawer handing the focus back).
+	 * The cell editor is left alone: taking its focus would commit the draft,
+	 * and the edit session outlives a scroll as it always has.
+	 *
+	 * `restoreScroll`: a `.focus()` without `preventScroll` has already brought
+	 * the row into view by the time `focusin` arrives (Chromium scrolls first).
+	 * The scroll event of that jump has not been delivered yet, so `scrollTop`
+	 * / `scrollLeft` (the state) still hold where the grid was: put it back, in
+	 * the same task, before anything is painted.
+	 * Returns whether the focus was moved.
+	 */
+	function takeFocusFromOutsideRow(target: EventTarget | null, restoreScroll = false): boolean {
+		const container = containerEl;
+		if (!container || !(target instanceof Element) || target === container) return false;
+		const row = target.closest('.row.outside-window');
+		if (!row || !container.contains(row)) return false;
+		const editorRoot = editorRootEl ?? editorEl;
+		if (editorRoot?.contains(target)) return false;
+		if (restoreScroll) {
+			if (container.scrollTop !== scrollTop) container.scrollTop = scrollTop;
+			if (container.scrollLeft !== scrollLeft) container.scrollLeft = scrollLeft;
+		}
+		container.focus({ preventScroll: true });
+		return true;
+	}
+
+	// The active row has just gone out of the window (or the cursor moved to a
+	// row out there) with the focus inside it. Runs after the DOM update, so
+	// the row already carries `outside-window`.
+	$effect(() => {
+		if (activeRowOutsideWindow === null) return;
+		untrack(() => {
+			takeFocusFromOutsideRow(containerEl?.ownerDocument.activeElement ?? null);
+		});
+	});
+
 	/** `top` of a row drawn outside the window, inside the (translated) rows block. */
 	function outsideTop(rowIndex: number): string {
 		return `${rowIndex * gridState.rowHeight - windowResult.offsetY}px`;
@@ -1186,6 +1229,7 @@
 			placeCursorOnGridFocus();
 			return;
 		}
+		if (takeFocusFromOutsideRow(target, true)) return;
 		if (!pinActive) return;
 		if (!(target instanceof Element)) return;
 		const cell = target.closest('.cell, .header-cell');
