@@ -174,6 +174,35 @@ pub(crate) fn already_running_message() -> String {
 #[derive(Debug)]
 pub(crate) struct FileLock {
     _file: File,
+    /// This attempt created the file (it did not exist before).
+    created: bool,
+}
+
+impl FileLock {
+    /// Gives the lock up for good because the process is about to refuse the
+    /// start (#1046): removes the file, but only when this process created
+    /// it, so a start that is turned away leaves no trace. A file that was
+    /// already there is left alone: it may belong to a run that is still
+    /// going, or to an earlier one.
+    ///
+    /// The file is removed while the lock is still held, then the handle
+    /// goes. A start that already opened the old file and locks it later
+    /// would hold a lock nobody else sees; that only weakens the
+    /// single-instance check (the data folder lock still guards the
+    /// database), and std opens files with `FILE_SHARE_DELETE` on Windows,
+    /// so the removal works there too.
+    pub(crate) fn discard_if_created(self, path: &Path) {
+        if self.created {
+            if let Err(err) = std::fs::remove_file(path) {
+                if err.kind() != io::ErrorKind::NotFound {
+                    eprintln!(
+                        "banto: 二重起動の検査用のロック {} を消せません: {err}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Result of one non-blocking attempt.
@@ -188,14 +217,21 @@ pub(crate) enum LockAttempt {
 /// `Err` = the attempt itself failed (cannot create the file, the file
 /// system has no locks); "someone else has it" is `Ok(LockAttempt::Held)`.
 pub(crate) fn try_lock_file(path: &Path) -> io::Result<LockAttempt> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    // `create_new` first, so the caller knows whether the file is its own.
+    let (file, created) = match options.clone().create_new(true).open(path) {
+        Ok(file) => (file, true),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            (options.create(true).truncate(false).open(path)?, false)
+        }
+        Err(err) => return Err(err),
+    };
     match file.try_lock() {
-        Ok(()) => Ok(LockAttempt::Acquired(FileLock { _file: file })),
+        Ok(()) => Ok(LockAttempt::Acquired(FileLock {
+            _file: file,
+            created,
+        })),
         Err(TryLockError::WouldBlock) => Ok(LockAttempt::Held),
         Err(TryLockError::Error(err)) => Err(err),
     }
@@ -455,7 +491,16 @@ fn raise_main_window<R: Runtime>(app: &tauri::AppHandle<R>) -> bool {
 /// goes (published later, by [`publish_endpoint`]).
 struct SingleInstanceHold {
     _lock: FileLock,
+    lock_path: PathBuf,
     endpoint_path: PathBuf,
+}
+
+impl SingleInstanceHold {
+    /// Call before refusing the start: removes the lock file this process
+    /// created (see [`FileLock::discard_if_created`]).
+    fn discard(self) {
+        self._lock.discard_if_created(&self.lock_path);
+    }
 }
 
 /// Takes the single-instance lock, or hands over to the running instance
@@ -506,6 +551,7 @@ fn guard_single_instance<R: Runtime>(
     }
     Some(SingleInstanceHold {
         _lock: lock,
+        lock_path,
         endpoint_path,
     })
 }
@@ -562,9 +608,17 @@ pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
             let data = match try_lock_file(&lock_path) {
                 Ok(LockAttempt::Acquired(lock)) => lock,
                 Ok(LockAttempt::Held) => {
+                    if let Some(hold) = single_instance {
+                        hold.discard();
+                    }
                     crate::exit_startup_refused(data_in_use_message(&data_dir))
                 }
-                Err(err) => crate::exit_startup_refused(data_lock_error_message(&lock_path, &err)),
+                Err(err) => {
+                    if let Some(hold) = single_instance {
+                        hold.discard();
+                    }
+                    crate::exit_startup_refused(data_lock_error_message(&lock_path, &err))
+                }
             };
             // Only now, with the database secured (see "Order" in the
             // module doc).
@@ -654,6 +708,46 @@ mod tests {
             try_lock_file(&path).unwrap(),
             LockAttempt::Acquired(_)
         ));
+    }
+
+    #[test]
+    fn refused_start_removes_the_lock_file_it_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = single_instance_lock_path(dir.path(), "app-v1");
+        let LockAttempt::Acquired(lock) = try_lock_file(&path).unwrap() else {
+            panic!("the first attempt must get the lock");
+        };
+        assert!(path.exists());
+        lock.discard_if_created(&path);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn refused_start_keeps_a_lock_file_that_was_already_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = single_instance_lock_path(dir.path(), "app-v1");
+        // A file left by an earlier run, nobody holds it.
+        drop(try_lock_file(&path).unwrap());
+        let LockAttempt::Acquired(lock) = try_lock_file(&path).unwrap() else {
+            panic!("a free file must be lockable");
+        };
+        lock.discard_if_created(&path);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn the_start_turned_away_by_a_holder_cannot_disturb_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = single_instance_lock_path(dir.path(), "app-v1");
+        let LockAttempt::Acquired(running) = try_lock_file(&path).unwrap() else {
+            panic!("the first attempt must get the lock");
+        };
+        // The second start gets `Held`: it has no `FileLock`, so there is
+        // nothing it could discard. The running side keeps file and lock.
+        assert!(matches!(try_lock_file(&path).unwrap(), LockAttempt::Held));
+        assert!(path.exists());
+        assert!(matches!(try_lock_file(&path).unwrap(), LockAttempt::Held));
+        drop(running);
     }
 
     #[test]
