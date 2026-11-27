@@ -114,7 +114,9 @@ export function createPanelChangeHandler(
  * save / discard / cancel prompt), before the default goes in - the reset takes the pane out of
  * its place, though the draft outlives it. `true` = go on with the reset (nothing unsaved, or
  * saved / discarded in the prompt); `false` = leave the layout as it is. With no unsaved memo
- * nothing is asked. The draft belongs to the page, so a memo in a pop-out window counts the same.
+ * nothing is asked. What is asked about is the draft the dashboard page holds. A pop-out window is
+ * not a second editor: the dashboard's detach closes the original pane (and settles its draft)
+ * before it opens the window, and the native `/panel/[id]` window shows the memo statically.
  */
 export async function settleBeforeReset(options: {
 	coordinator: Pick<DraftCoordinator, 'settle'>;
