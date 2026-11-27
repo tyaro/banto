@@ -49,6 +49,7 @@
 		type RowId
 	} from './core/rowSelection';
 	import { buildGroupedView, type FlatEntry } from './core/group';
+	import { cellDomId, groupRowDomId } from './core/domId';
 	import HeaderCell from './HeaderCell.svelte';
 	import CellEditError from './CellEditError.svelte';
 	import { defaultGridMessages, type GridMessages } from './messages';
@@ -252,8 +253,9 @@
 	// `messages` is an i18n layer 1 override bundle; merged reactively so a
 	// parent that swaps it later (a locale switch) is followed.
 	const t = $derived({ ...defaultGridMessages, ...messages });
-	// Only one editor is mounted per grid; keep its error reference local to
-	// this instance without deriving DOM IDs from row or column identifiers.
+	// Unique per grid instance: the prefix of every DOM id this grid makes.
+	// Only one editor is mounted per grid, so its error id needs no row or
+	// column in it (cell ids do: see `cellIdFor`).
 	const gridId = $props.id();
 	const editErrorId = `${gridId}-edit-error`;
 
@@ -577,6 +579,38 @@
 	const pinnedWidth = $derived(
 		pinActive ? stuckOffsets[stuckCount - 1] + columnWidths[stuckCount - 1] : 0
 	);
+
+	// --- Active cell for assistive tech (#1016) ---
+	// DOM focus stays on the grid element; the cell cursor is `selection.active`.
+	// `aria-activedescendant` is what tells a screen reader which cell that is
+	// (and, pointing at a `gridcell`, what makes NVDA treat the grid as a
+	// widget to pass keys to instead of browsing it). Ids come from the row key
+	// and the column id, not the display index, so a cell keeps its id while
+	// rows are sorted, filtered or scrolled.
+	function cellIdFor(row: TRow, columnId: string): string {
+		return cellDomId(gridId, getRowId(row), columnId);
+	}
+
+	/**
+	 * Id of the element drawn for the active cell, or undefined when there is
+	 * none in the DOM: no active cell, a row outside the virtualized window, a
+	 * row not fetched yet (server mode placeholder), or a column that is gone.
+	 * The attribute is then left off, since it must never name a missing id.
+	 * On a group header row the row itself is the active descendant.
+	 */
+	const activeDescendantId = $derived.by(() => {
+		const active = selection.active;
+		if (!active) return undefined;
+		if (active.rowIndex < windowResult.start || active.rowIndex >= windowResult.end)
+			return undefined;
+		if (groupedEntries) {
+			const entry = groupedEntries[active.rowIndex];
+			if (entry?.kind === 'group') return groupRowDomId(gridId, entry.key);
+		}
+		const row = rowAtDisplayIndex(active.rowIndex);
+		if (row === undefined || !orderedFieldIds.includes(active.field)) return undefined;
+		return cellIdFor(row, active.field);
+	});
 
 	/** Keyed `{#each}` block key for a (possibly sparse-hole) visible row. */
 	function rowKeyFor(row: TRow | undefined, rowIndex: number): string | number {
@@ -2054,6 +2088,7 @@
 		role="grid"
 		aria-label={label ?? t.gridLabel()}
 		tabindex="0"
+		aria-activedescendant={activeDescendantId}
 		aria-rowcount={effectiveRowCount + 1}
 		aria-colcount={gridState.orderedColumns.length + (selectable ? 1 : 0)}
 		onscroll={handleScroll}
@@ -2184,6 +2219,7 @@
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<div
 							class="cell"
+							id={cellIdFor(row, column.id)}
 							role="gridcell"
 							aria-selected={isInRange}
 							aria-busy={isEditingCell ? !!editing?.pending : undefined}
@@ -2336,6 +2372,7 @@
 									<!-- svelte-ignore a11y_interactive_supports_focus -->
 									<div
 										class="row group-header-row"
+										id={groupRowDomId(gridId, entry.key)}
 										role="row"
 										aria-rowindex={rowIndex + 2}
 										aria-expanded={!entry.collapsed}
