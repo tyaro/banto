@@ -17,12 +17,10 @@
 	 *    `banto-tauri-panel` plugin opens (its default route `panel/{id}`,
 	 *    ADR-0037) - not verifiable here, verify on a machine with webkit2gtk.
 	 */
-	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { getSessionController, resolveSettled } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
 	import { bantoReady } from '#lib/banto/setup.js';
-	import { notifyAppPanelReady } from '#lib/banto/popout.js';
 	import { createDashboardData } from '#lib/banto/dashboardData.svelte.js';
 	import { findDashboardWidget } from '#lib/banto/dashboardWidgets.js';
 	import PanelIcon from '#lib/components/PanelIcon.svelte';
@@ -46,17 +44,6 @@
 			if (result.outcome === 'unverified') authState = 'unverified';
 			else authState = result.snapshot.status === 'active' ? 'ok' : 'unauthenticated';
 		})();
-	});
-
-	// The plugin builds this window hidden and shows it when the page says it has drawn
-	// (`RevealOn::Ready`, #1024). This route is client-rendered: when the webview reports the
-	// load as finished the document is still empty, and a screen reader handed that reads
-	// "undefined" and the URL. So: once, after the first content (the status line below) is in
-	// the DOM. Not after the session check or the data - the window would stay away that long.
-	// No `requestAnimationFrame` here: a hidden window may not get a frame. Without this call the
-	// window still appears, on the plugin's timeout (3 seconds). Nothing happens in a browser.
-	onMount(() => {
-		void tick().then(() => notifyAppPanelReady(page.params.id ?? ''));
 	});
 
 	// This window is its own document (its own JS heap, no cache shared with the main window), so

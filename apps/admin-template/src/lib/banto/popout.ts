@@ -18,11 +18,6 @@
  * (#1014). It keeps the `@tauri-apps/api` imports in `lib/banto`
  * (conventions §10), out of the route.
  *
- * `notifyAppPanelReady` is the other direction: the panel window's own page
- * (`routes/panel/[id]`) tells the plugin that it has drawn, which is when
- * the plugin shows the window (#1024; `src-tauri/src/lib.rs` registers the
- * plugin with `RevealOn::Ready`).
- *
  * It also holds the joint between the two packages that must not know each
  * other (conventions §4: admin-core imports no option): `createLayoutSaveWatch`
  * turns what `@banto/dock-svelte`'s layout store answers to each `commit`
@@ -32,7 +27,6 @@ import { createSubscriber } from 'svelte/reactivity';
 import { invoke } from '@tauri-apps/api/core'; // safe to import outside Tauri (see setup.ts) - only ever CALLED when isTauri()
 import {
 	createPanelPopOut,
-	notifyPanelReady,
 	type PanelPopOut,
 	type PanelPopOutOptions,
 	type PanelPopOutStorage,
@@ -125,27 +119,6 @@ export function createLayoutSaveWatch(): LayoutSaveWatch {
 			return new Promise<boolean>((resolve) => waiting.push({ after, resolve }));
 		}
 	};
-}
-
-/**
- * `notifyPanelReady` with this app's Tauri functions filled in: the page of
- * a panel window calls it once its first content is in the DOM, and the
- * plugin (registered with `RevealOn::Ready`) shows the window then (#1024).
- * Without the call the window only appears when the plugin's timeout is over
- * (3 seconds). Never rejects: a notice that could not be sent ends the same
- * way. Nothing happens in a plain browser.
- */
-export async function notifyAppPanelReady(id: string): Promise<void> {
-	try {
-		await notifyPanelReady(id, {
-			isTauri,
-			// Dynamic import, like `listen` below: the event module talks to a
-			// Tauri IPC channel that does not exist in a browser tab.
-			emit: async (event, payload) => (await import('@tauri-apps/api/event')).emit(event, payload)
-		});
-	} catch {
-		// The plugin shows the window when its timeout is over.
-	}
 }
 
 export interface AppPanelPopOutOptions<C extends PanelWindowContent> extends Pick<

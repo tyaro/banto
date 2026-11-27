@@ -248,7 +248,6 @@ export type {
 	PanelWindowEnvironment,
 	OpenPanelWindowOptions,
 	ListenPanelClosedOptions,
-	NotifyPanelReadyOptions,
 	PanelPopOutOptions,
 	PanelPopOutStorage,
 	PanelRestoreSaved,
@@ -258,7 +257,6 @@ export type {
 } from './panelWindow';
 export {
 	PANEL_CLOSED_EVENT,
-	PANEL_READY_EVENT,
 	PANEL_OPEN_COMMAND,
 	PANEL_LIST_COMMAND,
 	PANEL_CLOSE_COMMAND,
@@ -266,7 +264,6 @@ export {
 	listPanelWindows,
 	closePanelWindow,
 	listenPanelClosed,
-	notifyPanelReady,
 	createPanelPopOut
 } from './panelWindow';
 

@@ -58,21 +58,6 @@ capability. The plugin owns:
   later `Finished` from the page does nothing. So that a window cannot stay invisible when no report comes (or the
   load fails), it is shown after `PanelConfig::reveal_timeout_ms` (default 3000; `0` does not wait; `validate`
   refuses more than 60000). Moves and resizes while hidden are not remembered, as before.
-  **What is waited for is chosen with `PanelConfig::reveal_on`** (added after #1024 was checked on a real desktop).
-  When the load finishes, the document of a page that draws itself afterwards (an SPA) is still empty, and NVDA reads
-  an empty document shown at that moment as "undefined" and the URL. `RevealOn::PageLoad` (the default) shows on
-  `Finished` as described above (nothing is asked of the page; existing apps are unchanged). `RevealOn::Ready` shows
-  **when the page says it has drawn** (`Finished` alone does not show). The notice is the Tauri event
-  `banto://panel-ready` (the payload is the panel id), which the page sends with `@banto/admin-core`'s
-  `notifyPanelReady`. It is an event and not a command so that no permission is added (emitting an event is part of
-  `core:default`; a command would need an `allow-ready` in the app's capability). An event does not carry the window
-  that emitted it, so the payload's id says whose notice it is: before it builds the window the plugin makes one
-  listener for that window (made first, so no notice can come before it), which hands only a notice naming its own id
-  to `Reveal` (the signal `Ready`; the pure `ready_panel_id` checks the payload). The listener is removed on the
-  window's `Destroyed`, and at once when the window could not be built - none is left behind. Another window of the
-  same app could name someone else's id, but all that does is show a window early, and only the app's own windows
-  listed in the capability can emit. The `reveal_timeout_ms` way out applies to both choices (with `Ready`, a page
-  that does not tell keeps its window away until then).
 - The command `list` (`plugin:banto-tauri-panel|list`, no arguments; added with #1013): the ids of the panel windows
   open right now (built by the plugin and not yet seen destroyed).
 - The command `close` (`plugin:banto-tauri-panel|close`, argument `id`; added with #1021): closes that id's window

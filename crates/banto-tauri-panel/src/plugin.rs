@@ -12,16 +12,16 @@ use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{
-    AppHandle, Emitter, EventId, Listener, Manager, PhysicalPosition, PhysicalSize, RunEvent,
-    Runtime, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, Runtime, State,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
 use crate::config::{parse_background, validate_panel_id, PanelConfig, DEFAULT_STORE_FILE};
 use crate::geometry::{restorable, MonitorRect, PanelGeometry};
-use crate::reveal::{ready_panel_id, reveal_timeout, Reveal, RevealOn, RevealSignal};
+use crate::reveal::{reveal_timeout, Reveal, RevealSignal};
 use crate::store::GeometryStore;
 use crate::title::document_title_script;
-use crate::{PANEL_CLOSED_EVENT, PANEL_READY_EVENT};
+use crate::PANEL_CLOSED_EVENT;
 
 /// The plugin's name: the frontend invokes `plugin:banto-tauri-panel|open`
 /// (and `|list`, `|close`) and the capability file allows
@@ -29,36 +29,20 @@ use crate::{PANEL_CLOSED_EVENT, PANEL_READY_EVENT};
 /// `links` in Cargo.toml (Tauri derives the ACL's plugin name from it).
 pub const PLUGIN_NAME: &str = "banto-tauri-panel";
 
-/// A window this plugin built.
-struct Tracked {
-    /// The panel id it shows.
-    id: String,
-    /// The listener that waits for this window's page to tell it is drawn
-    /// ([`RevealOn::Ready`]; `None` otherwise). Kept so it is removed with
-    /// the window.
-    ready_listener: Option<EventId>,
-}
-
 struct PanelState {
     config: PanelConfig,
     /// `None` when the memory is off, or no place to keep it was found.
     store: Mutex<Option<GeometryStore>>,
-    /// Windows this plugin built, by label. Only these are focused,
+    /// Windows this plugin built: label -> panel id. Only these are focused,
     /// remembered, announced and closed with the main window; a window of
     /// the app that merely shares the prefix is not ours.
-    windows: Mutex<HashMap<String, Tracked>>,
+    windows: Mutex<HashMap<String, String>>,
 }
 
 impl PanelState {
-    fn track(&self, label: &str, id: &str, ready_listener: Option<EventId>) {
+    fn track(&self, label: &str, id: &str) {
         let mut guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        guard.insert(
-            label.to_string(),
-            Tracked {
-                id: id.to_string(),
-                ready_listener,
-            },
-        );
+        guard.insert(label.to_string(), id.to_string());
     }
 
     fn is_tracked(&self, label: &str) -> bool {
@@ -68,16 +52,12 @@ impl PanelState {
 
     fn id_of(&self, label: &str) -> Option<String> {
         let guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        guard.get(label).map(|tracked| tracked.id.clone())
+        guard.get(label).cloned()
     }
 
-    /// Forgets the window. Answers the listener that was waiting for its
-    /// page, for the caller to remove.
-    fn untrack(&self, label: &str) -> Option<EventId> {
+    fn untrack(&self, label: &str) {
         let mut guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        guard
-            .remove(label)
-            .and_then(|tracked| tracked.ready_listener)
+        guard.remove(label);
     }
 
     fn tracked_labels(&self) -> Vec<String> {
@@ -88,7 +68,7 @@ impl PanelState {
     /// The panel ids of the tracked windows, sorted (the map has no order).
     fn tracked_ids(&self) -> Vec<String> {
         let guard = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        let mut ids: Vec<String> = guard.values().map(|tracked| tracked.id.clone()).collect();
+        let mut ids: Vec<String> = guard.values().cloned().collect();
         ids.sort();
         ids
     }
@@ -130,23 +110,12 @@ fn reveal_window<R: Runtime>(window: &WebviewWindow<R>) {
 /// it is already open. `async` on purpose: creating a window from a
 /// synchronous command deadlocks on Windows.
 ///
-/// A new window is built hidden and shown (and focused) once its page is
-/// there (Issue #1024): a screen reader reads a document as soon as its
-/// window has the focus, and a window shown earlier was read as the loading
-/// document ("undefined" and the URL). [`PanelConfig::reveal_on`] says what
-/// is waited for:
-///
-/// - [`RevealOn::PageLoad`] (default): the webview reports the finished
-///   load. Nothing is asked of the page.
-/// - [`RevealOn::Ready`]: the page emits [`PANEL_READY_EVENT`] with its
-///   panel id once it has drawn (`@banto/admin-core`'s `notifyPanelReady`) -
-///   for a page that draws itself after the load, whose document is still
-///   empty when the load ends. The notice is heard by a listener made for
-///   this window, which only takes a notice that names this window's panel
-///   id and is removed when the window is destroyed.
-///
-/// Either way the window is shown after [`PanelConfig::reveal_timeout_ms`]
-/// at the latest. When to show is decided by the pure [`Reveal`].
+/// A new window is built hidden and shown (and focused) once its page has
+/// finished loading (Issue #1024): a screen reader reads a document as soon
+/// as its window has the focus, and a window shown earlier was read as the
+/// loading document ("undefined" and the URL). A page that never reports its
+/// load is shown after [`PanelConfig::reveal_timeout_ms`]. When to show is
+/// decided by the pure [`Reveal`].
 ///
 /// Not a mutating operation in the sense of conventions §1 (no data is
 /// written, nothing is audited): it is desktop integration, with no REST
@@ -219,58 +188,25 @@ async fn open<R: Runtime>(
         builder = builder.background_color(Color(r, g, b, 255));
     }
     // Always built hidden. It is shown once it is BOTH placed (below) and
-    // its page is there (`reveal_on`: loaded, or drawn) - or the wait for
-    // the page is over (Issue #1024):
-    // - a window shown while its page is loading, or loaded but not yet
-    //   drawn, hands a screen reader a document with nothing in it;
+    // loaded - or the wait for the page is over (Issue #1024):
+    // - a window shown while its page is loading hands a screen reader the
+    //   loading document;
     // - a restored window never flashes at the default place first.
     // `reveal` answers "show now" exactly once, whoever asks: the page's
-    // load (the main thread), the page's notice (the thread its IPC call
-    // runs on), this command, or the timeout's thread.
-    let reveal = Arc::new(Reveal::new(config.reveal_on));
+    // report (the main thread), this command, or the timeout's thread.
+    let reveal = Arc::new(Reveal::new());
     let on_loaded = Arc::clone(&reveal);
     let builder = builder.visible(false).on_page_load(move |window, payload| {
         // `Finished` comes again on every later full load of the page;
-        // `reveal` ignores those - and all of them when it waits for the
-        // page's notice instead.
+        // `reveal` ignores those.
         if matches!(payload.event(), PageLoadEvent::Finished)
             && on_loaded.signal(RevealSignal::Loaded)
         {
             reveal_window(&window);
         }
     });
-    // The page's notice ("I have drawn"), only when that is what is waited
-    // for. One listener per window, made BEFORE the window so no notice can
-    // come first, and removed with the window (`Destroyed`, or right here
-    // when the window could not be built) - none is left behind.
-    //
-    // An event does not say which window emitted it; the payload does (the
-    // panel id). A notice for another panel is not this window's: every
-    // listener hears every notice and only the one whose id it names acts.
-    let ready_listener = (config.reveal_on == RevealOn::Ready).then(|| {
-        let on_ready = Arc::clone(&reveal);
-        let (handle, own_label, own_id) = (app.clone(), label.clone(), id.clone());
-        app.listen_any(PANEL_READY_EVENT, move |event| {
-            if ready_panel_id(event.payload()).as_deref() != Some(own_id.as_str()) {
-                return;
-            }
-            if on_ready.signal(RevealSignal::Ready) {
-                if let Some(window) = handle.get_webview_window(&own_label) {
-                    reveal_window(&window);
-                }
-            }
-        })
-    });
-    let window = match builder.build() {
-        Ok(window) => window,
-        Err(err) => {
-            if let Some(listener) = ready_listener {
-                app.unlisten(listener);
-            }
-            return Err(err.to_string());
-        }
-    };
-    state.track(&label, &id, ready_listener);
+    let window = builder.build().map_err(|err| err.to_string())?;
+    state.track(&label, &id);
 
     if let Some(geometry) = restore {
         // Position before size, so the size is applied on the monitor (and
@@ -281,8 +217,7 @@ async fn open<R: Runtime>(
     }
 
     // The way out: a window must not stay invisible because its page never
-    // reported (no finished load, a failed one, or a page that does not send
-    // the notice the app waits for).
+    // reported a finished load (or failed without one).
     match reveal_timeout(config.reveal_timeout_ms) {
         Some(timeout) => {
             let on_timeout = Arc::clone(&reveal);
@@ -410,10 +345,7 @@ fn on_window_event<R: Runtime>(app: &AppHandle<R>, label: &str, event: &WindowEv
         match event {
             WindowEvent::Moved(_) | WindowEvent::Resized(_) => record(app, &state, label, &id),
             WindowEvent::Destroyed => {
-                // The window's listener for its page's notice goes with it.
-                if let Some(listener) = state.untrack(label) {
-                    app.unlisten(listener);
-                }
+                state.untrack(label);
                 state.persist();
                 // Best effort: the main window may already be gone (the app
                 // is closing) - then nobody needs the notice.
@@ -516,19 +448,8 @@ impl Builder {
         self
     }
 
-    /// What a panel window waits for before it is shown (default
-    /// [`RevealOn::PageLoad`]: the finished load). [`RevealOn::Ready`] waits
-    /// for the page to tell that it has drawn - the page then has to call
-    /// `@banto/admin-core`'s `notifyPanelReady`, or its window only appears
-    /// when [`Self::reveal_timeout_ms`] is over. Issue #1024.
-    pub fn reveal_on(mut self, on: RevealOn) -> Self {
-        self.config.reveal_on = on;
-        self
-    }
-
-    /// How long (milliseconds) a panel window waits for its page
-    /// ([`Self::reveal_on`]) before it is shown anyway (default 3000; `0` =
-    /// do not wait).
+    /// How long (milliseconds) a panel window waits for its page to finish
+    /// loading before it is shown anyway (default 3000; `0` = do not wait).
     /// More than 60000 makes the plugin's `setup` fail
     /// ([`PanelConfig::validate`]). Issue #1024.
     pub fn reveal_timeout_ms(mut self, timeout_ms: u64) -> Self {

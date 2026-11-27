@@ -4,7 +4,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::reveal::{RevealOn, DEFAULT_REVEAL_TIMEOUT_MS, MAX_REVEAL_TIMEOUT_MS};
+use crate::reveal::{DEFAULT_REVEAL_TIMEOUT_MS, MAX_REVEAL_TIMEOUT_MS};
 
 /// Longest panel id accepted.
 pub const MAX_PANEL_ID_LEN: usize = 64;
@@ -179,17 +179,9 @@ pub struct PanelConfig {
     /// webview's own default. A colour the frontend passes to `open` wins over
     /// this one (Issue #1015).
     pub background: Option<String>,
-    /// What a panel window, built hidden, waits for before it is shown
-    /// (Issue #1024; see [`crate::reveal`]). Default
-    /// [`RevealOn::PageLoad`]: the page finished loading, nothing is asked
-    /// of the page. [`RevealOn::Ready`] waits for the page to tell that it
-    /// has drawn (`@banto/admin-core`'s `notifyPanelReady`) - for a page that
-    /// draws itself after the load; a page that does not tell is only shown
-    /// when [`Self::reveal_timeout_ms`] is over.
-    pub reveal_on: RevealOn,
     /// How long (milliseconds) a panel window, built hidden, waits for its
-    /// page ([`Self::reveal_on`]) before it is shown anyway - the way out for
-    /// a page that never reports (Issue #1024; see [`crate::reveal`]).
+    /// page to finish loading before it is shown anyway - the way out for a
+    /// page that never reports its load (Issue #1024; see [`crate::reveal`]).
     /// `0` = do not wait: the window is shown as soon as it is placed. At
     /// most [`MAX_REVEAL_TIMEOUT_MS`].
     pub reveal_timeout_ms: u64,
@@ -207,7 +199,6 @@ impl Default for PanelConfig {
             close_with_main: true,
             store_path: None,
             background: None,
-            reveal_on: RevealOn::PageLoad,
             reveal_timeout_ms: DEFAULT_REVEAL_TIMEOUT_MS,
         }
     }
@@ -308,7 +299,6 @@ mod tests {
         assert!(c.close_with_main);
         assert_eq!(c.store_path, None);
         assert_eq!(c.background, None);
-        assert_eq!(c.reveal_on, RevealOn::PageLoad);
         assert_eq!(c.reveal_timeout_ms, 3_000);
     }
 

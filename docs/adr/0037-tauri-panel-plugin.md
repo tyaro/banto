@@ -51,18 +51,6 @@ plugin が持つもの:
   置いた。ページがあとでもう一度 `Finished` を知らせても何もしない。知らせが来ない・失敗したときに窓が見えないままに
   ならないよう、`PanelConfig::reveal_timeout_ms`（既定 3000）だけ待って見せる（`0` は待たない。60000 を超える値は
   `validate` が断る）。隠れている間の移動・大きさの変更は、今までどおり記憶に入れない。
-  **何を待って見せるかは `PanelConfig::reveal_on` で選ぶ**（#1024 の実機の結果から足した）。読み込みが終わった時点では、
-  読み込みの後に自分で描くページ（SPA）の文書はまだ空で、そこで見せると NVDA は空の文書を「未定義」と URL で読む。
-  `RevealOn::PageLoad`（既定）は上のとおり `Finished` で見せる（ページに何も求めない。今までのアプリはそのまま）。
-  `RevealOn::Ready` は、**ページが「描けた」と知らせたとき**に見せる（`Finished` だけでは見せない）。知らせは Tauri の
-  event `banto://panel-ready`（payload はパネルの id）で、ページが `@banto/admin-core` の `notifyPanelReady` で送る。
-  コマンドにしなかったのは、権限を増やさないため（event の emit は `core:default` に含まれる。コマンドなら
-  `allow-ready` をアプリの capability に足すことになる）。event は送り元の窓を運ばないので、誰の知らせかは payload の
-  id で決める: plugin は窓を作る前に、その窓のための listener を 1 つ張り（先に張るので、知らせが先に来ることは無い）、
-  自分の id を名乗る知らせだけを `Reveal` に渡す（合図 `Ready`。純粋な `ready_panel_id` が payload を検査する）。
-  listener は窓の `Destroyed` で外し、窓を作れなかったときはその場で外す（残らない）。同じアプリの別の窓が他人の id を
-  名乗れば見せられるが、起きるのは「窓が早く出る」だけで、capability に入っている自分のアプリの窓にしか送れない。
-  どちらの選び方でも `reveal_timeout_ms` の逃げ道は効く（`Ready` でページが知らせないと、その時間まで窓が出ない）。
 - コマンド `list`（`plugin:banto-tauri-panel|list`、引数なし。#1013 で追加）。今開いているパネルの窓の id を返す
   （plugin が作って、まだ閉じたのを見ていない窓）。
 - コマンド `close`（`plugin:banto-tauri-panel|close`、引数は `id`。#1021 で追加）。その id の窓を閉じる（plugin が
