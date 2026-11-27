@@ -14,9 +14,16 @@ import { GridState } from '../src/state.svelte';
 import type { GridColumn } from '../src/types';
 
 const ROW = 32;
-/** The header (32px in this stub) scrolls with the rows. */
-const HEADER = 32;
+/**
+ * The header row is `position: sticky; top: 0`: it does not scroll away, it
+ * covers the top `HEADER` px of the grid. Rows are laid out from 0 right
+ * after it, so the rows on screen are `[scrollTop, scrollTop + ROWS_VIEWPORT)`
+ * (measured in a real browser, #1036). Taller than a row on purpose: a row
+ * wholly behind the header must not pass for one in view.
+ */
+const HEADER = 40;
 const VIEWPORT = 400;
+const ROWS_VIEWPORT = VIEWPORT - HEADER;
 let clientWidth = 0;
 
 beforeAll(() => {
@@ -133,13 +140,13 @@ describe('BantoGrid action keys while the active cell is off screen (#1036)', ()
 	it('Enter only scrolls to the active cell (outside the virtualized window), then opens the row', async () => {
 		const { container, grid, opened } = renderGrid();
 		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
-		await scrollTo(grid, HEADER + 500 * ROW);
+		await scrollTo(grid, 500 * ROW);
 		expect(container.querySelector('.row.outside-window')).not.toBeNull();
 
 		await fireEvent.keyDown(grid, { key: 'Enter' });
 		expect(opened).toEqual([]);
-		// Row 1 is the first row under the header again.
-		expect(grid.scrollTop).toBe(HEADER + 1 * ROW);
+		// Row 1 is the first row under the sticky header again.
+		expect(grid.scrollTop).toBe(1 * ROW);
 		expect(statusText(container)).toBe(SCROLLED);
 		// The active cell did not move.
 		expect(cellAt(container, 1, 'name').classList.contains('active')).toBe(true);
@@ -152,35 +159,123 @@ describe('BantoGrid action keys while the active cell is off screen (#1036)', ()
 	it('acts on the second press even before the scroll event of the first one arrives', async () => {
 		const { container, grid, opened } = renderGrid();
 		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
-		await scrollTo(grid, HEADER + 500 * ROW);
+		await scrollTo(grid, 500 * ROW);
 		await fireEvent.keyDown(grid, { key: 'Enter' });
 		await fireEvent.keyDown(grid, { key: 'Enter' });
 		expect(opened.map((row) => row.id)).toEqual([2]);
 	});
 
-	it('holds Enter back for a row that is drawn (overscan) but scrolled out of the viewport', async () => {
+	it('holds Enter back for a row that is drawn (overscan) but wholly behind the sticky header', async () => {
 		const { container, grid, opened } = renderGrid();
 		await fireEvent.pointerDown(cellAt(container, 0, 'name'));
-		// Row 0 is just above the viewport.
-		await scrollTo(grid, HEADER + 1 * ROW);
+		// Row 0 (0..32) is covered by the header: the grid is scrolled by less
+		// than the header's height, and still nothing of the row shows.
+		expect(ROW).toBeLessThan(HEADER);
+		await scrollTo(grid, ROW);
 		expect(container.querySelector('.row.outside-window')).toBeNull();
 		expect(cellAt(container, 0, 'name')).not.toBeNull();
 
 		await fireEvent.keyDown(grid, { key: 'Enter' });
 		expect(opened).toEqual([]);
-		expect(grid.scrollTop).toBe(HEADER);
+		// Row 0 right under the header.
+		expect(grid.scrollTop).toBe(0);
 		expect(statusText(container)).toBe(SCROLLED);
+
+		await fireEvent.keyUp(grid, { key: 'Enter' });
+		await fireEvent.scroll(grid);
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		expect(opened.map((row) => row.id)).toEqual([1]);
 	});
 
-	it('acts at once while a part of the active row is in view', async () => {
+	it('acts at once while a part of the active row shows just under the header', async () => {
 		const { container, grid, opened } = renderGrid();
 		await fireEvent.pointerDown(cellAt(container, 0, 'name'));
-		await scrollTo(grid, HEADER + ROW - 1);
+		// The last pixel of row 0 is below the header.
+		await scrollTo(grid, ROW - 1);
 
 		await fireEvent.keyDown(grid, { key: 'Enter' });
 		expect(opened.map((row) => row.id)).toEqual([1]);
-		expect(grid.scrollTop).toBe(HEADER + ROW - 1);
+		expect(grid.scrollTop).toBe(ROW - 1);
 		expect(statusText(container)).toBe('');
+	});
+
+	it('judges the bottom edge without the header: the viewport of the rows is shorter by it', async () => {
+		const { container, grid, opened } = renderGrid();
+		// Rows show in 0..360: row 11 (352..384) has a part in view, row 12
+		// (384..416) has none, although 384 is less than the grid's 400.
+		expect(ROWS_VIEWPORT).toBe(360);
+		await fireEvent.pointerDown(cellAt(container, 11, 'name'));
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		expect(opened.map((row) => row.id)).toEqual([12]);
+		expect(grid.scrollTop).toBe(0);
+
+		await fireEvent.pointerDown(cellAt(container, 12, 'name'));
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		expect(opened.map((row) => row.id)).toEqual([12]);
+		expect(grid.scrollTop).toBe(13 * ROW - ROWS_VIEWPORT);
+		expect(statusText(container)).toBe(SCROLLED);
+	});
+
+	it('ArrowUp to the row above shows it under the header, not behind it', async () => {
+		const { container, grid } = renderGrid();
+		await fireEvent.pointerDown(cellAt(container, 5, 'name'));
+		// Row 5 is the first row under the header.
+		await scrollTo(grid, 5 * ROW);
+		await fireEvent.keyDown(grid, { key: 'ArrowUp' });
+		expect(cellAt(container, 4, 'name').classList.contains('active')).toBe(true);
+		expect(grid.scrollTop).toBe(4 * ROW);
+	});
+
+	it('a held key does not act: its repeats are swallowed until it is released', async () => {
+		const { container, grid, opened } = renderGrid();
+		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+		await scrollTo(grid, 500 * ROW);
+
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		await fireEvent.scroll(grid);
+		for (let i = 0; i < 3; i++) {
+			const notPrevented = await fireEvent.keyDown(grid, { key: 'Enter', repeat: true });
+			expect(notPrevented).toBe(false);
+		}
+		expect(opened).toEqual([]);
+		expect(grid.scrollTop).toBe(1 * ROW);
+
+		await fireEvent.keyUp(grid, { key: 'Enter' });
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		expect(opened.map((row) => row.id)).toEqual([2]);
+		// In view and pressed on its own: a repeat is the usual repeat again.
+		await fireEvent.keyDown(grid, { key: 'Enter', repeat: true });
+		expect(opened.map((row) => row.id)).toEqual([2, 2]);
+	});
+
+	it('a new press acts even when the keyup was not seen (it is not a repeat)', async () => {
+		const { container, grid, opened } = renderGrid();
+		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+		await scrollTo(grid, 500 * ROW);
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		await fireEvent.keyDown(grid, { key: 'Enter', repeat: true });
+		expect(opened).toEqual([]);
+		await fireEvent.keyDown(grid, { key: 'Enter' });
+		expect(opened.map((row) => row.id)).toEqual([2]);
+	});
+
+	it('holding Space does not toggle the selection, and another key is not held back', async () => {
+		const { container, grid } = renderGrid({ selectable: true, onRowClick: undefined });
+		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
+		const checked = () => container.querySelectorAll('.row input[type="checkbox"]:checked').length;
+		await scrollTo(grid, 500 * ROW);
+
+		await fireEvent.keyDown(grid, { key: ' ' });
+		await fireEvent.scroll(grid);
+		await fireEvent.keyDown(grid, { key: ' ', repeat: true });
+		await fireEvent.keyDown(grid, { key: ' ', repeat: true });
+		expect(checked()).toBe(0);
+
+		// A different key while Space is still down is a press of its own.
+		await fireEvent.keyDown(grid, { key: 'ArrowDown' });
+		expect(cellAt(container, 2, 'name').classList.contains('active')).toBe(true);
+		await fireEvent.keyDown(grid, { key: ' ' });
+		expect(checked()).toBe(1);
 	});
 
 	it('holds Enter back for a row below the viewport, and scrolls it to the bottom edge', async () => {
@@ -199,16 +294,16 @@ describe('BantoGrid action keys while the active cell is off screen (#1036)', ()
 		await fireEvent.keyDown(grid, { key: 'Enter' });
 		expect(opened).toEqual([]);
 		// The row's bottom edge at the viewport's.
-		expect(grid.scrollTop).toBe((active + 1) * ROW - (VIEWPORT - HEADER) + HEADER);
+		expect(grid.scrollTop).toBe((active + 1) * ROW - ROWS_VIEWPORT);
 	});
 
 	it('arrow keys move from the active cell as before, with no announcement', async () => {
 		const { container, grid, opened } = renderGrid();
 		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
-		await scrollTo(grid, HEADER + 500 * ROW);
+		await scrollTo(grid, 500 * ROW);
 
 		await fireEvent.keyDown(grid, { key: 'ArrowDown' });
-		expect(grid.scrollTop).toBe(HEADER + 2 * ROW);
+		expect(grid.scrollTop).toBe(2 * ROW);
 		await fireEvent.scroll(grid);
 		expect(cellAt(container, 2, 'name').classList.contains('active')).toBe(true);
 		expect(statusText(container)).toBe('');
@@ -224,13 +319,13 @@ describe('BantoGrid action keys while the active cell is off screen (#1036)', ()
 		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
 		const checked = () => container.querySelectorAll('.row input[type="checkbox"]:checked').length;
 
-		await scrollTo(grid, HEADER + 500 * ROW);
+		await scrollTo(grid, 500 * ROW);
 		await fireEvent.keyDown(grid, { key: ' ' });
 		expect(checked()).toBe(0);
 		expect(statusText(container)).toBe(SCROLLED);
-		expect(grid.scrollTop).toBe(HEADER + 1 * ROW);
+		expect(grid.scrollTop).toBe(1 * ROW);
 
-		await scrollTo(grid, HEADER + 500 * ROW);
+		await scrollTo(grid, 500 * ROW);
 		await fireEvent.keyDown(grid, { key: ' ', shiftKey: true });
 		expect(checked()).toBe(0);
 
@@ -250,10 +345,10 @@ describe('BantoGrid action keys while the active cell is off screen (#1036)', ()
 		const editor = () => container.querySelector('.cell input, .cell textarea');
 
 		for (const key of ['F2', 'Enter']) {
-			await scrollTo(grid, HEADER + 500 * ROW);
+			await scrollTo(grid, 500 * ROW);
 			await fireEvent.keyDown(grid, { key });
 			expect(editor()).toBeNull();
-			expect(grid.scrollTop).toBe(HEADER + 1 * ROW);
+			expect(grid.scrollTop).toBe(1 * ROW);
 		}
 
 		await fireEvent.scroll(grid);
@@ -268,12 +363,12 @@ describe('BantoGrid action keys while the active cell is off screen (#1036)', ()
 		});
 		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
 
-		await scrollTo(grid, HEADER + 500 * ROW);
+		await scrollTo(grid, 500 * ROW);
 		await fireEvent.keyDown(grid, { key: 'F10', shiftKey: true });
 		expect(menus).toEqual([]);
-		expect(grid.scrollTop).toBe(HEADER + 1 * ROW);
+		expect(grid.scrollTop).toBe(1 * ROW);
 
-		await scrollTo(grid, HEADER + 500 * ROW);
+		await scrollTo(grid, 500 * ROW);
 		await fireEvent.keyDown(grid, { key: 'ContextMenu' });
 		expect(menus).toEqual([]);
 
@@ -285,10 +380,10 @@ describe('BantoGrid action keys while the active cell is off screen (#1036)', ()
 	it('leaves the menu key to the browser when no row menu is wired', async () => {
 		const { container, grid } = renderGrid();
 		await fireEvent.pointerDown(cellAt(container, 1, 'name'));
-		await scrollTo(grid, HEADER + 500 * ROW);
+		await scrollTo(grid, 500 * ROW);
 		const notPrevented = await fireEvent.keyDown(grid, { key: 'ContextMenu' });
 		expect(notPrevented).toBe(true);
-		expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+		expect(grid.scrollTop).toBe(500 * ROW);
 		expect(statusText(container)).toBe('');
 	});
 

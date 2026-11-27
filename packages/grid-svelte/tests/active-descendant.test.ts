@@ -153,8 +153,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 	// browse mode (on a wheel scroll, and on coming back to the grid by Tab).
 	describe('active row outside the virtualized window', () => {
 		const ROW = 32;
-		/** The header (32px in this stub) scrolls with the rows. */
-		const HEADER = 32;
+		// The header row is sticky: the rows on screen start at `scrollTop` (#1036).
 
 		async function scrollTo(grid: HTMLElement, top: number) {
 			grid.scrollTop = top;
@@ -178,7 +177,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			const cell = cellAt(container, 1, 'name');
 			expect(container.querySelector('.outside-window')).toBeNull();
 
-			await scrollTo(grid, HEADER + 500 * ROW);
+			await scrollTo(grid, 500 * ROW);
 			expect(grid.getAttribute('aria-activedescendant')).toBe(id);
 			const active = activeDescendant(grid);
 			expect(active.getAttribute('role')).toBe('gridcell');
@@ -210,7 +209,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			const viewport = container.querySelector<HTMLElement>('.rows-viewport')!;
 			expect(viewport.style.height).toBe(`${1_000 * ROW}px`);
 			// Nothing was selected or scrolled on the way.
-			expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+			expect(grid.scrollTop).toBe(500 * ROW);
 			expect(container.querySelectorAll('.cell.active')).toHaveLength(1);
 
 			await scrollTo(grid, 0);
@@ -228,7 +227,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				getRowId: (row: Row) => row.id
 			});
 			const grid = screen.getByRole('grid');
-			await scrollTo(grid, HEADER + 500 * ROW);
+			await scrollTo(grid, 500 * ROW);
 			await fireEvent.pointerDown(cellAt(container, 500, 'category'));
 			const cell = cellAt(container, 500, 'category');
 
@@ -253,7 +252,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			const grid = screen.getByRole('grid');
 			await fireEvent.pointerDown(cellAt(container, 1, 'name'));
 			const cell = cellAt(container, 1, 'name');
-			await scrollTo(grid, HEADER + 500 * ROW);
+			await scrollTo(grid, 500 * ROW);
 
 			grid.blur();
 			grid.focus();
@@ -264,7 +263,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			expect(active.getAttribute('role')).toBe('gridcell');
 			// The cursor is not moved to the rows in view, and the view does not jump back.
 			expect(container.querySelectorAll('.cell.active')).toHaveLength(1);
-			expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+			expect(grid.scrollTop).toBe(500 * ROW);
 			expect(container.querySelector('input[type="checkbox"]:checked')).toBeNull();
 			// Out of sight, its checkbox is no tab stop (Tab would jump the view there).
 			const box = cell.closest('.row')!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
@@ -356,7 +355,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					Object.fromEntries(Object.entries(ORIGINAL).map(([key, value]) => [key, value ?? '']))
 				);
 
-				await scrollTo(grid, HEADER + 500 * ROW);
+				await scrollTo(grid, 500 * ROW);
 				expect(row.classList.contains('outside-window')).toBe(true);
 				expect(row.isConnected).toBe(true);
 				expect(allOut(row)).toBe(true);
@@ -371,7 +370,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				expect(allOut(row)).toBe(true);
 
 				// And again: nothing piles up over the rounds.
-				await scrollTo(grid, HEADER + 500 * ROW);
+				await scrollTo(grid, 500 * ROW);
 				await scrollTo(grid, 0);
 				expect(allOut(row)).toBe(true);
 				expect(originals(row).two).toBe('2');
@@ -382,7 +381,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				const { container, grid } = setup();
 				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
 				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
-				await scrollTo(grid, HEADER + 500 * ROW);
+				await scrollTo(grid, 500 * ROW);
 				const host = row.querySelector<HTMLElement>('.controls')!;
 
 				// Added later (a host snippet drawn again), nested too.
@@ -423,7 +422,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 				await fireEvent.pointerDown(cellAt(container, 0, 'name'));
 				const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
 				const zero = row.querySelector<HTMLElement>('[data-k="zero"]')!;
-				await scrollTo(grid, HEADER + 500 * ROW);
+				await scrollTo(grid, 500 * ROW);
 				await Promise.resolve();
 				await tick();
 
@@ -454,11 +453,11 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					button.focus();
 					expect(document.activeElement).toBe(button);
 
-					await scrollTo(grid, HEADER + 500 * ROW);
+					await scrollTo(grid, 500 * ROW);
 					expect(row.classList.contains('outside-window')).toBe(true);
 					expect(button.getAttribute('tabindex')).toBe(SUPPRESSED_TABINDEX);
 					expect(document.activeElement).toBe(grid);
-					expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+					expect(grid.scrollTop).toBe(500 * ROW);
 					expect(activeDescendant(grid)).toBe(cellAt(container, 0, 'name'));
 					expect(container.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
 				});
@@ -467,7 +466,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					const { container, grid } = setup();
 					await fireEvent.pointerDown(cellAt(container, 0, 'name'));
 					const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
-					await scrollTo(grid, HEADER + 500 * ROW);
+					await scrollTo(grid, 500 * ROW);
 					expect(row.classList.contains('outside-window')).toBe(true);
 
 					for (const key of ['plain', 'minus', 'input']) {
@@ -477,7 +476,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					}
 					row.querySelector<HTMLElement>('input[type="checkbox"]')!.focus();
 					expect(document.activeElement).toBe(grid);
-					expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+					expect(grid.scrollTop).toBe(500 * ROW);
 					expect(activeDescendant(grid)).toBe(cellAt(container, 0, 'name'));
 				});
 
@@ -486,7 +485,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					await fireEvent.pointerDown(cellAt(container, 0, 'name'));
 					const row = cellAt(container, 0, 'name').closest<HTMLElement>('.row')!;
 					const button = row.querySelector<HTMLElement>('[data-k="plain"]')!;
-					await scrollTo(grid, HEADER + 500 * ROW);
+					await scrollTo(grid, 500 * ROW);
 
 					// What a browser does for a focus() without `preventScroll`: it
 					// scrolls to the element first, and `focusin` arrives before the
@@ -501,7 +500,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					);
 					button.focus();
 					expect(document.activeElement).toBe(grid);
-					expect(grid.scrollTop).toBe(HEADER + 500 * ROW);
+					expect(grid.scrollTop).toBe(500 * ROW);
 					expect(grid.scrollLeft).toBe(0);
 					await tick();
 					expect(row.classList.contains('outside-window')).toBe(true);
@@ -527,7 +526,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					const editor = cellAt(container, 0, 'name').querySelector<HTMLInputElement>('input')!;
 					expect(document.activeElement).toBe(editor);
 
-					await scrollTo(grid, HEADER + 500 * ROW);
+					await scrollTo(grid, 500 * ROW);
 					expect(editor.closest('.row')!.classList.contains('outside-window')).toBe(true);
 					expect(document.activeElement).toBe(editor);
 					expect(edits).toEqual([]);
@@ -542,12 +541,12 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 					expect(document.activeElement).toBe(button);
 
 					// Still inside the window (overscan included): nothing moves.
-					await scrollTo(grid, HEADER + 1 * ROW);
+					await scrollTo(grid, 1 * ROW);
 					expect(row.classList.contains('outside-window')).toBe(false);
 					expect(document.activeElement).toBe(button);
 
 					// With the active row out there, a row of the window is not touched either.
-					await scrollTo(grid, HEADER + 500 * ROW);
+					await scrollTo(grid, 500 * ROW);
 					expect(document.activeElement).toBe(grid);
 					const inside = cellAt(container, 500, 'name')
 						.closest<HTMLElement>('.row')!
@@ -568,11 +567,11 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			});
 			const grid = screen.getByRole('grid');
 			await fireEvent.pointerDown(cellAt(container, 1, 'name'));
-			await scrollTo(grid, HEADER + 500 * ROW);
+			await scrollTo(grid, 500 * ROW);
 
 			await fireEvent.keyDown(grid, { key: 'ArrowDown' });
 			// Row 2 is put at the top of the rows area.
-			expect(grid.scrollTop).toBe(HEADER + 2 * ROW);
+			expect(grid.scrollTop).toBe(2 * ROW);
 			await fireEvent.scroll(grid);
 			const active = activeDescendant(grid);
 			expect(active).toBe(cellAt(container, 2, 'name'));
@@ -596,7 +595,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			const header = activeDescendant(grid);
 			expect(header.getAttribute('role')).toBe('row');
 
-			await scrollTo(grid, HEADER + 300 * ROW);
+			await scrollTo(grid, 300 * ROW);
 			expect(activeDescendant(grid)).toBe(header);
 			expect(header.classList.contains('outside-window')).toBe(true);
 			expect(header.getAttribute('aria-rowindex')).toBe('2');
@@ -619,7 +618,7 @@ describe('BantoGrid aria-activedescendant (#1016)', () => {
 			const cell = cellAt(container, 1, 'name');
 
 			// A fetched row is kept like in client mode ...
-			await scrollTo(grid, HEADER + 500 * ROW);
+			await scrollTo(grid, 500 * ROW);
 			expect(activeDescendant(grid)).toBe(cell);
 			expect(container.querySelectorAll('.outside-window')).toHaveLength(1);
 
@@ -708,13 +707,13 @@ describe('BantoGrid: focus on the grid element places the cursor (#1016)', () =>
 			getRowId: (row: Row) => row.id
 		});
 		const grid = screen.getByRole('grid');
-		// The header (32px in this stub) scrolls with the rows.
-		grid.scrollTop = 32 + 500 * 32;
+		// The header row is sticky: row 500 is the first row under it (#1036).
+		grid.scrollTop = 500 * 32;
 		await fireEvent.scroll(grid);
 		grid.focus();
 		await tick();
 		expect(activeDescendant(grid)).toBe(cellAt(container, 500, 'name'));
-		expect(grid.scrollTop).toBe(32 + 500 * 32);
+		expect(grid.scrollTop).toBe(500 * 32);
 	});
 
 	it('leaves an existing active cell where it is', async () => {
