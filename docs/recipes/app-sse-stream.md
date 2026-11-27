@@ -174,9 +174,9 @@ pub fn plant_router(
 ### 1 画面に配信を何本も開かない
 
 `fetch` で読む SSE は、開いている間 HTTP の接続を 1 本占める。ブラウザーは HTTP/1.1 で同じ出どころへの同時の接続を
-6 本までに制限する（banto-serve は HTTP/2 を話さないので、この上限に当たる）。Chromium 156 で実測すると、`fetch` の SSE は
-6 本目まで開き、7 本目以降と、その間のふつうの `fetch` は応答が返らず待たされた（2026-11-28、#757）。画面の
-`/api/events` の 1 本もこの 6 本に入る。値の種類ごとに配信を開くと、同じ PC でタブを数枚開いただけで上限に届く。**配信は 1 画面 1 本にまとめ、種類は `event:` の名前で分ける。**
+制限する（banto-serve は HTTP/2 を話さないので、この上限に当たる）。Chromium 156＋banto-serve（HTTP/1.1）での実測では、
+`fetch` の SSE は 6 本目まで開き、7 本目以降と、その間のふつうの `fetch` は応答が返らず待たされた（2026-11-28、#757）。
+ほかのブラウザー・版では数が違いうる。Tauri の WebView2（同じ Chromium 系）では測っていない。画面の `/api/events` の 1 本もこの上限に入る。値の種類ごとに配信を開くと、同じ PC でタブを数枚開いただけで上限に届く。**配信は 1 画面 1 本にまとめ、種類は `event:` の名前で分ける。**
 
 ```rust
 fn frames(&self) -> impl futures_util::Stream<Item = SseFrame> + Send + 'static {
