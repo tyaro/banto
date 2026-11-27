@@ -60,8 +60,11 @@
 	// here): `DashboardWidgetFrame` measures the body's content box, as in a pane of the dock.
 </script>
 
+<!-- The panel's name alone, the same text as the native window's title (#1024): the
+     `banto-tauri-panel` plugin names the document with it before this page has loaded, so
+     the title a screen reader reads does not change when the page takes over. -->
 <svelte:head>
-	<title>{def?.title ?? id} - Banto</title>
+	<title>{def?.title ?? id}</title>
 </svelte:head>
 
 {#if authState === 'checking'}

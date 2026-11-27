@@ -46,6 +46,9 @@ capability. The plugin owns:
   `Builder::background` sets a default, and the argument wins. The frontend passes the current screen's colour at
   every open (`createPanelPopOut`'s `background`), so a theme change is followed. A window that is already open keeps
   its colour. It is the same `open`, so no new capability permission.
+  When it builds the window it also hands it, through `initialization_script`, a script that puts `title` in the
+  document's title (#1024): it runs before the page's own scripts and replaces the title once, when the `<title>` has
+  been read; a title the page sets later goes through. No permission is added.
 - The command `list` (`plugin:banto-tauri-panel|list`, no arguments; added with #1013): the ids of the panel windows
   open right now (built by the plugin and not yet seen destroyed).
 - The command `close` (`plugin:banto-tauri-panel|close`, argument `id`; added with #1021): closes that id's window

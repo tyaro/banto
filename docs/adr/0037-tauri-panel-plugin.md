@@ -40,6 +40,9 @@ plugin が持つもの:
   （WebView2 は背景の alpha を 0 と 255 しか扱えない。`#rrggbbaa` は受けない）。`Builder::background` の既定があり、引数の
   値が優先。フロントは開くたびに今の画面の色を渡す（`createPanelPopOut` の `background`）ので、テーマの切り替えに追従する。
   すでに開いている窓の色は変えない。同じ `open` なので capability の追加は要らない。
+  窓を作るとき、`title` を文書の題名にも入れる script を `initialization_script` で渡す（#1024。ページの script が
+  動く前に走り、`<title>` を読み終えた時点で 1 回だけ置き換える。ページが後から付ける題名はそのまま通る。
+  権限は増えない）。
 - コマンド `list`（`plugin:banto-tauri-panel|list`、引数なし。#1013 で追加）。今開いているパネルの窓の id を返す
   （plugin が作って、まだ閉じたのを見ていない窓）。
 - コマンド `close`（`plugin:banto-tauri-panel|close`、引数は `id`。#1021 で追加）。その id の窓を閉じる（plugin が
