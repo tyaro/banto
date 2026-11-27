@@ -22,6 +22,16 @@ import {
 import type { TreeMessages } from '@banto/tree-svelte';
 import type { UiMessages } from '@banto/ui';
 import * as m from '#lib/paraglide/messages.js';
+import { getLocale } from '#lib/paraglide/runtime.js';
+
+/**
+ * Digit-grouped count in the app's display language (1,000 / 1.000 ...), never
+ * the device's locale: the screen-reader text and the bulk delete button read
+ * the same way as the rest of the UI (#1016).
+ */
+export function formatCount(count: number): string {
+	return count.toLocaleString(getLocale());
+}
 
 /** @banto/grid-svelte `messages` prop: FilterPopover / HeaderCell / BantoGrid / ColumnsMenu strings. */
 export function gridMessages(): Partial<GridMessages> {
@@ -62,14 +72,23 @@ export function gridMessages(): Partial<GridMessages> {
 		booleanTrue: () => m['grid.booleanTrue'](),
 		booleanFalse: () => m['grid.booleanFalse'](),
 		selectRowLabel: (rowLabel) => m['grid.selectRowLabel']({ rowLabel }),
-		selectAllRows: (count) => m['grid.selectAllRows']({ count }),
-		selectAllLoadedRows: (loaded, total) => m['grid.selectAllLoadedRows']({ loaded, total }),
+		// Counts are grouped by digit in the display language (formatCount), like the bulk delete button's (#1016).
+		selectAllRows: (count) => m['grid.selectAllRows']({ count: formatCount(count) }),
+		selectAllLoadedRows: (loaded, total) =>
+			m['grid.selectAllLoadedRows']({
+				loaded: formatCount(loaded),
+				total: formatCount(total)
+			}),
 		selectionStatus: (count) =>
-			count === 0 ? m['grid.selectionNone']() : m['grid.selectionStatus']({ count }),
-		selectAllMatching: (count) => m['grid.selectAllMatching']({ count }),
-		allMatchingStatus: (count) => m['grid.allMatchingStatus']({ count }),
+			count === 0
+				? m['grid.selectionNone']()
+				: m['grid.selectionStatus']({ count: formatCount(count) }),
+		selectAllMatching: (count) => m['grid.selectAllMatching']({ count: formatCount(count) }),
+		allMatchingStatus: (count) => m['grid.allMatchingStatus']({ count: formatCount(count) }),
 		selectionClear: () => m['grid.selectionClear'](),
-		bulkBarLabel: () => m['grid.bulkBarLabel']()
+		bulkBarLabel: () => m['grid.bulkBarLabel'](),
+		selectColumnLabel: () => m['grid.selectColumnLabel'](),
+		gridLabel: () => m['grid.gridLabel']()
 	};
 }
 

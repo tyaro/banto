@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
+import { defaultGridMessages } from '../src/messages';
 import RowSelectionBindHarness from './RowSelectionBindHarness.svelte';
 import { GridState } from '../src/state.svelte';
 import type { GridBulkActionsContext, GridColumn } from '../src/types';
@@ -769,5 +770,69 @@ describe('BantoGrid "all matching" selection in server mode (#713)', () => {
 		await tick();
 		expect(container.querySelector('.bulk-bar')).toBeNull();
 		expect(document.activeElement).toBe(screen.getByRole('grid'));
+	});
+});
+
+describe('BantoGrid accessible names for screen readers (#1016)', () => {
+	it('names a column header by the column name only, not by its filter button or checkbox', () => {
+		const filterable = columns.map((c) => ({ ...c, filterable: true }));
+		render(BantoGrid<Row>, { rows, columns: filterable, getRowId, selectable: true });
+		const names = screen.getAllByRole('columnheader').map((h) => h.getAttribute('aria-label'));
+		expect(names).toEqual(['選択', '商品名', '価格']);
+		expect(screen.getByRole('columnheader', { name: '商品名' })).toBeTruthy();
+		// The filter button keeps its own name.
+		expect(screen.getByRole('button', { name: '商品名の絞り込み' })).toBeTruthy();
+	});
+
+	it('names the grid, so focus returning to it does not read the whole content', () => {
+		const { unmount } = render(BantoGrid<Row>, { rows, columns, getRowId });
+		expect(screen.getByRole('grid', { name: 'データ一覧' })).toBeTruthy();
+		unmount();
+		render(BantoGrid<Row>, { rows, columns, getRowId, label: '商品の一覧' });
+		expect(screen.getByRole('grid', { name: '商品の一覧' })).toBeTruthy();
+	});
+
+	it('groups the digits of a count in the select-all name and the bulk bar', async () => {
+		const sparse: (Row | undefined)[] = [];
+		sparse[0] = rows[0];
+		render(BantoGrid<Row>, {
+			rows: sparse,
+			columns,
+			getRowId,
+			mode: 'server',
+			totalRows: 1000,
+			selectable: true,
+			selectAllMatching: true
+		});
+		const header = screen.getByRole('checkbox', { name: /をすべて選択/ });
+		expect(header.getAttribute('aria-label')).toBe(
+			'読み込み済みの1件をすべて選択（全1,000件のうち）'
+		);
+		await fireEvent.click(header);
+		await fireEvent.click(screen.getByRole('button', { name: '該当する全1,000件を選択' }));
+		expect(screen.getByRole('group', { name: '一括操作' }).textContent).toContain(
+			'該当する全1,000件を選択中'
+		);
+	});
+});
+
+describe('default GridMessages digit grouping does not follow the device locale (#1016)', () => {
+	it('writes counts as ja even when a no-argument toLocaleString would use another locale', () => {
+		const original = Number.prototype.toLocaleString;
+		const spy = vi.spyOn(Number.prototype, 'toLocaleString').mockImplementation(function (
+			this: number,
+			locales?: unknown,
+			options?: unknown
+		) {
+			if (locales === undefined) return String(this).replace(/\B(?=(\d{3})+$)/g, '.');
+			return original.call(this, locales as string, options as Intl.NumberFormatOptions);
+		});
+		try {
+			expect(defaultGridMessages.selectAllRows(1000)).toBe('一覧の1,000件をすべて選択');
+			expect(defaultGridMessages.selectionStatus(1000)).toBe('1,000件を選択中');
+			expect(defaultGridMessages.selectAllMatching(1000)).toBe('該当する全1,000件を選択');
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });

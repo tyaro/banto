@@ -259,7 +259,7 @@ sparkline は組み込みの `renderer` にしていない（`@banto/grid-svelte
 </BantoGrid>
 ```
 
-- props: `selectable`、`selectedRowIds`（bindable。`getRowId` の値を選んだ順に持つ配列）、`allMatchingSelected`（bindable。server モードの「絞り込んだ全件」。下の項目）、`onSelectionChange(ids)`、`getRowLabel(row)`（チェックボックスの名前に使う行の呼び名。既定は `render` でない先頭の表示列の文字、無ければ行の id）、`bulkActions`（バーに差し込む snippet。`{ ids, clear, allMatching, matchingCount }` を受け取る）。グリッドは一括の処理を持たず、選んだ id を渡すだけ。
+- props: `selectable`、`selectedRowIds`（bindable。`getRowId` の値を選んだ順に持つ配列）、`allMatchingSelected`（bindable。server モードの「絞り込んだ全件」。下の項目）、`onSelectionChange(ids)`、`getRowLabel(row)`（チェックボックスの名前に使う行の呼び名。既定は `render` でない先頭の表示列の文字、無ければ行の id）、`label`（grid の外枠の名前。既定は `messages.gridLabel`。帯を閉じたあとフォーカスが外枠に戻るので、名前が無いと読み上げが中身を全部読む）、`bulkActions`（バーに差し込む snippet。`{ ids, clear, allMatching, matchingCount }` を受け取る）。グリッドは一括の処理を持たず、選んだ id を渡すだけ。
 - チェックボックスの列は `GridColumn` ではない。列メニュー・列の並べ替え（ドラッグ）・幅の変更・並び替え・絞り込み・セルの範囲選択・コピー / 貼り付け・CSV の対象にならず、`GridState`（保存ビュー）にも入らない。グループ化したときはグループ見出しの行にチェックボックスは出ない（行にだけ出る）。
 - **全選択が対象にする行**はヘッダーのチェックボックスの名前とツールチップに出る。client モードは一覧の全行（絞り込み後。畳んだグループの中の行も含む）、server モードは**読み込み済みの行だけ**（「読み込み済みの 40 件をすべて選択（全 1200 件のうち）」）。読み込んでいない行まで含めて選ぶには、下の「該当する全件を選択」を使う。
 - **該当する全件を選択（server モードだけ。`selectAllMatching` で明示したグリッドだけ）**。`selectAllMatching` は既定 false で、false のあいだはボタンが出ず、`allMatchingSelected` も常に false（選択は今までどおり `ids` だけ）。一括処理が `ids` しか見ない画面に出すと、バーは「全 100 件」と言うのに処理は読み込み済みの分だけになるので、**全件モードを条件で処理できる画面だけ** `selectAllMatching` を付ける。付けたら、全件モードの処理は利用側が条件で行う責任を持つ（下の 2 項）。読み込み済みの行がすべて選ばれていて、`totalRows` がその数より多いとき、バーに「該当する全 1200 件を選択」のボタンが出る。押すと全件モードに入り、バーは「該当する全 1200 件を選択中」になる。全件モードの間は、読み込み済みの行も、あとから読み込まれた行も選択済みとして描く。client モードには無い（全選択がもとから絞り込んだ全件を対象にする）。
