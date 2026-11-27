@@ -325,6 +325,35 @@ describe('ThreePaneLayout - narrow', () => {
 		layer.remove();
 	});
 
+	it('an open modal drawer leaves live regions and their ancestors announcing, and freezes the rest beside them (#1050)', async () => {
+		await mount({}, 800);
+		const outside = screen.getByText('Outside');
+		const wrap = document.createElement('div');
+		const toast = document.createElement('div');
+		toast.setAttribute('aria-live', 'polite');
+		const status = document.createElement('p');
+		status.setAttribute('role', 'status');
+		const quiet = document.createElement('div');
+		quiet.setAttribute('aria-live', 'off');
+		const sibling = document.createElement('button');
+		wrap.append(toast, status, quiet, sibling);
+		outside.after(wrap);
+		await fireEvent.click(leftToggle());
+		await flush();
+		expect(outside.hasAttribute('inert')).toBe(true);
+		expect(wrap.hasAttribute('inert')).toBe(false);
+		expect(toast.hasAttribute('inert')).toBe(false);
+		expect(status.hasAttribute('inert')).toBe(false);
+		expect(quiet.hasAttribute('inert')).toBe(true);
+		expect(sibling.hasAttribute('inert')).toBe(true);
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(outside.hasAttribute('inert')).toBe(false);
+		expect(quiet.hasAttribute('inert')).toBe(false);
+		expect(sibling.hasAttribute('inert')).toBe(false);
+		wrap.remove();
+	});
+
 	it('a non-modal drawer does not make the shell inert (#1050)', async () => {
 		await mount({ rightDrawerModal: false }, 800);
 		await fireEvent.click(rightToggle());
