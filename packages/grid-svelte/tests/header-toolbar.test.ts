@@ -152,6 +152,29 @@ describe('the sort is read out', () => {
 		expect(status()).toBe('Categoryを並べ替えから外しました');
 	});
 
+	it('re-announces a sentence identical to the last one: the region is emptied, then refilled', async () => {
+		setup({ messages: { sortAscendingStatus: () => 'sorted' } });
+		await fireEvent.keyDown(sortButton('Name'), { key: 'Enter' });
+		expect(status()).toBe('sorted');
+		await fireEvent.keyDown(sortButton('Category'), { key: 'Enter' });
+		// Same text again: without the empty step the DOM would not change.
+		expect(status()).toBe('');
+		await new Promise((r) => setTimeout(r, 10));
+		expect(status()).toBe('sorted');
+	});
+
+	it('does not let a deferred re-announcement overwrite a newer selection message', async () => {
+		setup({ messages: { sortAscendingStatus: () => 'sorted' } });
+		await fireEvent.keyDown(sortButton('Name'), { key: 'Enter' });
+		await fireEvent.keyDown(sortButton('Category'), { key: 'Enter' });
+		expect(status()).toBe('');
+		await fireEvent.click(screen.getAllByRole('checkbox')[1]);
+		const selected = status();
+		expect(selected).not.toBe('');
+		await new Promise((r) => setTimeout(r, 10));
+		expect(status()).toBe(selected);
+	});
+
 	it('uses the messages the host passes', async () => {
 		setup({
 			messages: {

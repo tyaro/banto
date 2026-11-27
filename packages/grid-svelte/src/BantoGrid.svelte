@@ -892,6 +892,28 @@
 	// Also read out the sort a header just changed (#1016), so the region is there
 	// whether or not rows can be selected.
 	let selectionAnnouncement = $state('');
+	// Bumped by every write to the region, so a deferred re-announcement (below)
+	// that a newer message overtook is dropped instead of overwriting it.
+	let announceSeq = 0;
+
+	// A live region only speaks when its text changes. Two sorts in a row can give
+	// the same sentence (two columns both labelled "Date", or a host that passes one
+	// fixed sentence), and then assigning it again changes nothing in the DOM and
+	// nothing is read. In that case empty the region first and put the sentence back
+	// on the next task, so the browser sees a real removal + insertion (the
+	// clear-then-set way is read reliably by NVDA/Chromium, unlike a zero-width
+	// suffix that screen readers may diff away).
+	function announce(text: string) {
+		const seq = ++announceSeq;
+		if (text !== selectionAnnouncement) {
+			selectionAnnouncement = text;
+			return;
+		}
+		selectionAnnouncement = '';
+		setTimeout(() => {
+			if (seq === announceSeq) selectionAnnouncement = text;
+		}, 0);
+	}
 
 	// The bar goes away with the last selected row, however that happens (clear
 	// button, a reload that drops the rows, a server filter change, the host
@@ -941,6 +963,7 @@
 		allMatchingIds = null;
 		if (allMatchingSelected) allMatchingSelected = false;
 		selectedRowIds = next;
+		announceSeq++;
 		selectionAnnouncement = t.selectionStatus(next.length);
 		onSelectionChange?.(next);
 	}
@@ -977,6 +1000,7 @@
 		}
 		allMatchingIds = [...selectedRowIds];
 		allMatchingSelected = true;
+		announceSeq++;
 		selectionAnnouncement = t.allMatchingStatus(matchingCount);
 		onSelectionChange?.(selectedRowIds);
 	}
@@ -1000,6 +1024,7 @@
 			else if (verdict === 'leave-keep') {
 				allMatchingIds = null;
 				allMatchingSelected = false;
+				announceSeq++;
 				selectionAnnouncement = t.selectionStatus(selectedRowIds.length);
 			} else setSelectedRowIds([]);
 		});
@@ -2367,7 +2392,7 @@
 						onDragMove={handleDragMove}
 						onDragEnd={handleDragEnd}
 						onSortOrFilterChange={notifyParamsChange}
-						onSortAnnounce={(text) => (selectionAnnouncement = text)}
+						onSortAnnounce={announce}
 						{messages}
 						dateRangeInput={editors.dateRange}
 					/>
