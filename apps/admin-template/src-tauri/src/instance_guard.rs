@@ -26,9 +26,18 @@
 //!
 //! # Order
 //!
-//! single-instance lock -> remove the old endpoint file -> data folder lock
-//! -> publish the endpoint (listener, then the file) and start serving
-//! -> tidy the single-instance files of other keys (see "Leftover files").
+//! single-instance lock -> data folder lock -> check the single-instance
+//! lock again ([`reguard_single_instance`]) -> replace the old endpoint file
+//! by the own one (listener, then the file) and start serving -> tidy the
+//! single-instance files of other keys (see "Leftover files").
+//!
+//! Everything after the data folder lock is done by one process at a time,
+//! and only that process touches endpoint files: a start that is going to be
+//! refused removes nothing, so it cannot take away the endpoint of the
+//! process that runs. A start that is refused at the data folder lock asks
+//! the endpoint of its own key once more before the dialog
+//! ([`activate_data_holder`]): if the process that has the database is of
+//! the same key after all, its window comes to the front.
 //!
 //! The endpoint is published only by a process that already holds the
 //! database, so "the running one answered" never comes from a process that
@@ -50,7 +59,10 @@
 //! each think they are the instance of that key. Instead the process that
 //! holds the data folder lock removes the files of *other* keys, and only
 //! those it can lock at that moment - see [`remove_other_keys_files`] for
-//! why that is safe.
+//! why that is safe. A start of another key that was caught by the removal
+//! with the old file open finds out once it has the data folder lock, and
+//! moves its lock to the file that is at the path now
+//! ([`reguard_single_instance`]).
 //!
 //! The "come to the front" request travels over a loopback TCP port the
 //! first instance listens on; the port and a random token sit in a file next
@@ -227,6 +239,53 @@ pub(crate) fn try_lock_file(path: &Path) -> io::Result<LockAttempt> {
     }
 }
 
+/// Makes sure the single-instance lock of this process is on the file that
+/// is at `lock_path` *now*. Returns the lock to keep and whether it is a new
+/// one. **Call it only while this process holds the data folder lock.**
+///
+/// Why: a process of another key that holds the data folder lock removes
+/// free lock files ([`remove_other_keys_files`]). A start that had the file
+/// open at that moment locks the removed file. Usually it is refused at the
+/// data folder lock; if the remover has ended by then, it is not, and it
+/// would run with a lock nobody else can see.
+///
+/// How: lock the path through a second handle (the file is created if it
+/// is gone).
+///
+/// - It works: no lock was on the file at the path, so `held` is on another
+///   (removed) file. The new lock is kept and `held` is closed.
+/// - It is refused: some handle has the lock on the file at the path.
+///   Normally that is `held` itself - `File::try_lock` is `LockFileEx` on
+///   Windows (per handle) and `flock` on Unix (per open file description),
+///   so a second handle of the same process is refused like anyone else's.
+///   `held` stays.
+/// - It cannot be tried (on a file system without POSIX delete the name of a
+///   removed file cannot be opened while handles are open): `held` stays.
+///
+/// No second process of this key runs next to this one, whatever the
+/// outcome: this process has the data folder lock, so every other start -
+/// also one that holds a single-instance lock of this key on some file - is
+/// refused there, before it publishes an endpoint or opens the database. And
+/// the lock kept here stays good for the life of this process: files are
+/// removed only under the data folder lock, which is not free again before
+/// this process ends.
+///
+/// One case looks like "refused, it is mine" and is not: `held` is on a
+/// removed file, and another start of this key has just locked the new file
+/// and is on its way to being refused at the data folder lock (or shows that
+/// dialog). Telling the two apart needs the file identity, which std does
+/// not give on Windows without `unsafe`. Nothing lasting comes of it: later
+/// starts get the free lock on the path, are refused at the data folder lock
+/// and then raise this window through [`activate_data_holder`].
+pub(crate) fn reguard_single_instance(held: FileLock, lock_path: &Path) -> (FileLock, bool) {
+    match try_lock_file(lock_path) {
+        // `held` is dropped here: the old handle is closed after the new
+        // lock is in place.
+        Ok(LockAttempt::Acquired(fresh)) => (fresh, true),
+        Ok(LockAttempt::Held) | Err(_) => (held, false),
+    }
+}
+
 /// Removes the single-instance files (`.lock` and `.port`) of the other
 /// keys of this app - other versions, or the other build kind - that nobody
 /// holds (#1046). Returns how many lock files went. Best effort: whatever
@@ -255,12 +314,26 @@ pub(crate) fn try_lock_file(path: &Path) -> io::Result<LockAttempt> {
 ///   meets a removed file through this function. Two processes never run it
 ///   at once either: it needs the data folder lock.
 ///
-/// What is left: if this process is killed in the instant between the
-/// removal and that other start's attempt at the data folder lock (the two
-/// calls follow each other directly in [`init`]), that start runs while
-/// holding a lock on the removed file, and later starts of its key get the
-/// "data folder in use" dialog instead of raising its window, until it is
-/// restarted. The database stays exclusive in that case as well.
+/// - That other start may still get the data folder lock later: the OS
+///   held it up between opening (or locking) the old file and trying the
+///   data folder lock, and this process has ended in the meantime - killed
+///   or closed by the user, it makes no difference. It then holds a lock on
+///   a file that is no longer at the path. It notices right after the data
+///   folder lock ([`reguard_single_instance`]) and locks the file that is
+///   at the path now, so the next start of its key meets a held lock and
+///   raises its window as ever.
+///
+/// What is left:
+///
+/// - A version from before the re-check (#1046) does not do it. If such a
+///   start is caught as above, later starts of its key get the "data folder
+///   in use" dialog instead of raising its window, until it is restarted.
+/// - One start of that key can be between its single-instance lock (on the
+///   new file) and its exit at the very moment of the re-check; see
+///   [`reguard_single_instance`]. Later starts still raise the window
+///   ([`activate_data_holder`]); only that one start may show the dialog.
+///
+/// The database stays exclusive in every case.
 ///
 /// Windows: std opens files with `FILE_SHARE_DELETE`, so the removal works
 /// while handles are open.
@@ -445,16 +518,21 @@ pub(crate) fn serve_activation(
     }
 }
 
-/// Asks the instance at `endpoint` to come to the front. `Ok(true)` = it
-/// raised its window; `Ok(false)` = it has no window yet, or something else
-/// answered on that port.
-pub(crate) fn request_activation(endpoint: &Endpoint) -> io::Result<bool> {
+/// Sends the request to `endpoint` and returns the reply line.
+fn ask_activation(endpoint: &Endpoint) -> io::Result<String> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port));
     let mut stream = TcpStream::connect_timeout(&addr, ACTIVATE_IO_TIMEOUT)?;
     stream.set_read_timeout(Some(ACTIVATE_IO_TIMEOUT))?;
     stream.set_write_timeout(Some(ACTIVATE_IO_TIMEOUT))?;
     stream.write_all(activation_request(&endpoint.token).as_bytes())?;
-    Ok(is_activation_ok(&read_line(&mut stream)?))
+    read_line(&mut stream)
+}
+
+/// Asks the instance at `endpoint` to come to the front. `Ok(true)` = it
+/// raised its window; `Ok(false)` = it has no window yet, or something else
+/// answered on that port.
+pub(crate) fn request_activation(endpoint: &Endpoint) -> io::Result<bool> {
+    Ok(is_activation_ok(&ask_activation(endpoint)?))
 }
 
 /// Publishes the endpoint: written to a temporary file, then renamed, so a
@@ -524,6 +602,56 @@ pub(crate) fn acquire_or_activate(
     }
 }
 
+/// What a start that was refused at the data folder lock learned from the
+/// endpoint of its own key.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DataHolder {
+    /// The process that has the database is of this key and raised its main
+    /// window: exit quietly.
+    Raised,
+    /// It is of this key, but had no window to raise within the wait.
+    NoWindow,
+    /// Nobody answers for this key: another key has the database.
+    OtherKey,
+}
+
+/// For a start that did not get the data folder lock: asks the endpoint of
+/// its own key, in case the process that has the database is of the same
+/// key although this start was not stopped at the single-instance lock.
+/// That happens when the running process could not put its single-instance
+/// lock on the file at the path (see [`reguard_single_instance`]), or when
+/// this start could not try the lock at all.
+///
+/// Only a process that holds the data folder lock publishes an endpoint, and
+/// only such a process removes one, so an endpoint that answers with the
+/// token of this key is the process that has the database. A leftover file
+/// of an earlier run answers nothing (or something else does, without the
+/// token): `OtherKey` at once, no waiting. Rounds repeat every `retry` only
+/// while the answer is `notready` (the same-key process is still building
+/// its window), until `wait` has passed.
+pub(crate) fn activate_data_holder(
+    endpoint_path: &Path,
+    wait: Duration,
+    retry: Duration,
+) -> DataHolder {
+    let deadline = Instant::now() + wait;
+    loop {
+        let reply = std::fs::read_to_string(endpoint_path)
+            .ok()
+            .and_then(|text| Endpoint::parse(&text))
+            .and_then(|endpoint| ask_activation(&endpoint).ok());
+        match reply.as_deref().map(str::trim) {
+            Some(ACTIVATE_OK) => return DataHolder::Raised,
+            Some(ACTIVATE_NOT_READY) => {}
+            _ => return DataHolder::OtherKey,
+        }
+        if Instant::now() >= deadline {
+            return DataHolder::NoWindow;
+        }
+        std::thread::sleep(retry);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
@@ -554,55 +682,52 @@ fn raise_main_window<R: Runtime>(app: &tauri::AppHandle<R>) -> bool {
     window.show().is_ok() && window.set_focus().is_ok()
 }
 
-/// The single-instance lock of this process and where its endpoint file
-/// goes (published later, by [`publish_endpoint`]).
+/// The single-instance lock of this process. Checked again once the data
+/// folder lock is held ([`SingleInstanceHold::reguarded`]).
 struct SingleInstanceHold {
     _lock: FileLock,
-    endpoint_path: PathBuf,
+}
+
+impl SingleInstanceHold {
+    /// See [`reguard_single_instance`]. Only with the data folder lock held.
+    fn reguarded(self, lock_path: &Path) -> Self {
+        let (lock, replaced) = reguard_single_instance(self._lock, lock_path);
+        if replaced {
+            println!(
+                "banto: 二重起動の検査用のロック {} が起動の途中で片付けられていたため、取り直しました",
+                lock_path.display()
+            );
+        }
+        Self { _lock: lock }
+    }
 }
 
 /// Takes the single-instance lock, or hands over to the running instance
 /// and exits. `None` = the lock could not be tried (no check, no endpoint).
-fn guard_single_instance(data_dir: &Path, key: &str) -> Option<SingleInstanceHold> {
-    let lock_path = single_instance_lock_path(data_dir, key);
-    let endpoint_path = single_instance_endpoint_path(data_dir, key);
-    let lock = match acquire_or_activate(
-        &lock_path,
-        &endpoint_path,
-        ACTIVATE_WAIT,
-        ACTIVATE_RETRY_WAIT,
-    ) {
-        Ok(SingleInstance::First(lock)) => lock,
-        Ok(SingleInstance::Activated) => {
-            println!("banto: すでに起動しています。起動中の窓を前に出しました");
-            std::process::exit(0);
-        }
-        Ok(SingleInstance::NoAnswer) => crate::exit_startup_refused(already_running_message()),
-        Err(err) => {
-            // Not a reason to refuse the start: the data folder lock below
-            // is the guard that protects the database.
-            eprintln!(
+///
+/// The endpoint file of an earlier holder is left alone here: this start may
+/// still be refused at the data folder lock, and then the file may belong to
+/// the process that runs (see "Order" in the module doc).
+fn guard_single_instance(lock_path: &Path, endpoint_path: &Path) -> Option<SingleInstanceHold> {
+    let lock =
+        match acquire_or_activate(lock_path, endpoint_path, ACTIVATE_WAIT, ACTIVATE_RETRY_WAIT) {
+            Ok(SingleInstance::First(lock)) => lock,
+            Ok(SingleInstance::Activated) => {
+                println!("banto: すでに起動しています。起動中の窓を前に出しました");
+                std::process::exit(0);
+            }
+            Ok(SingleInstance::NoAnswer) => crate::exit_startup_refused(already_running_message()),
+            Err(err) => {
+                // Not a reason to refuse the start: the data folder lock below
+                // is the guard that protects the database.
+                eprintln!(
                 "banto: 二重起動の検査用のロック {} を確保できません（検査なしで続けます）: {err}",
                 lock_path.display()
             );
-            return None;
-        }
-    };
-    // The endpoint of the previous holder (it crashed, or lost the data
-    // folder lock) must not be read by a second start while this process has
-    // not published its own yet.
-    if let Err(err) = std::fs::remove_file(&endpoint_path) {
-        if err.kind() != io::ErrorKind::NotFound {
-            eprintln!(
-                "banto: 古い二重起動の連絡先 {} を消せません: {err}",
-                endpoint_path.display()
-            );
-        }
-    }
-    Some(SingleInstanceHold {
-        _lock: lock,
-        endpoint_path,
-    })
+                return None;
+            }
+        };
+    Some(SingleInstanceHold { _lock: lock })
 }
 
 /// Opens the listener, writes the endpoint file and starts serving. Call it
@@ -611,7 +736,20 @@ fn guard_single_instance(data_dir: &Path, key: &str) -> Option<SingleInstanceHol
 ///
 /// Without the listener a second start cannot raise this window; it then
 /// shows `already_running_message` instead.
+///
+/// The endpoint file of an earlier holder (it crashed, or was closed) goes
+/// first, so it is not left behind when the own one cannot be published.
+/// Until then a second start may read it: nothing answers there with that
+/// token, so it just asks again in the next round.
 fn publish_endpoint<R: Runtime>(app: &tauri::AppHandle<R>, endpoint_path: &Path) {
+    if let Err(err) = std::fs::remove_file(endpoint_path) {
+        if err.kind() != io::ErrorKind::NotFound {
+            eprintln!(
+                "banto: 古い二重起動の連絡先 {} を消せません: {err}",
+                endpoint_path.display()
+            );
+        }
+    }
     match bind_activation_listener() {
         Ok((listener, endpoint)) => {
             if let Err(err) = write_endpoint_file(endpoint_path, &endpoint) {
@@ -658,19 +796,39 @@ pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
                 &app.package_info().version.to_string(),
                 cfg!(debug_assertions),
             );
-            let single_instance = guard_single_instance(&data_dir, &key);
+            let single_lock_path = single_instance_lock_path(&data_dir, &key);
+            let endpoint_path = single_instance_endpoint_path(&data_dir, &key);
+            let single_instance = guard_single_instance(&single_lock_path, &endpoint_path);
             let lock_path = data_lock_path(&data_dir.join(DB_FILE_NAME));
             let data = match try_lock_file(&lock_path) {
                 Ok(LockAttempt::Acquired(lock)) => lock,
                 Ok(LockAttempt::Held) => {
-                    crate::exit_startup_refused(data_in_use_message(&data_dir))
+                    // The holder may be of this key after all (see
+                    // `activate_data_holder`).
+                    match activate_data_holder(&endpoint_path, ACTIVATE_WAIT, ACTIVATE_RETRY_WAIT) {
+                        DataHolder::Raised => {
+                            println!("banto: すでに起動しています。起動中の窓を前に出しました");
+                            std::process::exit(0);
+                        }
+                        DataHolder::NoWindow => {
+                            crate::exit_startup_refused(already_running_message())
+                        }
+                        DataHolder::OtherKey => {
+                            crate::exit_startup_refused(data_in_use_message(&data_dir))
+                        }
+                    }
                 }
                 Err(err) => crate::exit_startup_refused(data_lock_error_message(&lock_path, &err)),
             };
+            // From here on this process is the one that stays. Its
+            // single-instance lock may be on a file that another key's
+            // process removed while this start was under way: put it on the
+            // file at the path before anyone is told to rely on it.
+            let single_instance = single_instance.map(|hold| hold.reguarded(&single_lock_path));
             // Only now, with the database secured (see "Order" in the
             // module doc).
-            if let Some(hold) = &single_instance {
-                publish_endpoint(app, &hold.endpoint_path);
+            if single_instance.is_some() {
+                publish_endpoint(app, &endpoint_path);
             }
             // Only with the data folder lock held, and never on a path that
             // refuses the start (see the function's doc).
@@ -1025,6 +1183,216 @@ mod tests {
             );
         });
         assert!(own_lock.exists());
+    }
+
+    /// What `init` does once the data folder lock is held.
+    fn reguard(held: FileLock, lock_path: &Path) -> (FileLock, bool) {
+        reguard_single_instance(held, lock_path)
+    }
+
+    /// The second point of the #1046 review: 9.2.0 is held up by the OS with
+    /// the old file open, 9.3.0 removes that file and ends, and 9.2.0 goes
+    /// on and gets the data folder lock. It must end up with its lock on
+    /// the file at the path, so the next 9.2.0 start is handed over.
+    #[test]
+    fn start_left_with_a_removed_file_moves_its_lock_to_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_lock = data_lock_path(&dir.path().join(DB_FILE_NAME));
+        let old_key = key_of("9.2.0");
+        let (lock_path, endpoint_path) = leftover_files(dir.path(), &old_key);
+
+        // 9.3.0 is the running one.
+        let LockAttempt::Acquired(running) = try_lock_file(&data_lock).unwrap() else {
+            panic!("the data folder lock must be acquired");
+        };
+        // The 9.2.0 start has opened the file and is held up there. It
+        // goes on in a thread of its own once 9.3.0 has ended.
+        let early = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        let (resume, resumed) = mpsc::channel::<()>();
+        let (started, has_started) = mpsc::channel::<bool>();
+        let (stop, stopped) = mpsc::channel::<()>();
+        let old_version = {
+            let (lock_path, data_lock, endpoint_path) =
+                (lock_path.clone(), data_lock.clone(), endpoint_path.clone());
+            std::thread::spawn(move || {
+                resumed.recv().unwrap();
+                // Locks the removed file: "I am the 9.2.0 instance".
+                early.try_lock().unwrap();
+                let held = FileLock { _file: early };
+                let LockAttempt::Acquired(_data) = try_lock_file(&data_lock).unwrap() else {
+                    panic!("9.2.0 must get the data folder lock after 9.3.0 ended");
+                };
+                let (_single, replaced) = reguard(held, &lock_path);
+                let (endpoint, asked) = serving();
+                write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+                started.send(replaced).unwrap();
+                // Runs (keeps both locks) until the test is done.
+                stopped.recv().unwrap();
+                asked.try_recv().unwrap_or(false)
+            })
+        };
+        // 9.3.0 removes the file of 9.2.0 and is closed by the user.
+        assert_eq!(tidy(dir.path(), "9.3.0"), 1);
+        assert!(!lock_path.exists());
+        drop(running);
+        resume.send(()).unwrap();
+        assert!(
+            has_started.recv_timeout(CALLBACK_WAIT).unwrap(),
+            "the lock must have been taken anew on the path"
+        );
+        assert!(lock_path.exists());
+
+        // The next 9.2.0 start is stopped at the single-instance lock and
+        // raises the window of the running one.
+        assert!(matches!(
+            try_lock_file(&lock_path).unwrap(),
+            LockAttempt::Held
+        ));
+        let second =
+            acquire_or_activate(&lock_path, &endpoint_path, Duration::ZERO, RETRY).unwrap();
+        assert!(matches!(second, SingleInstance::Activated));
+        stop.send(()).unwrap();
+        assert!(old_version.join().unwrap(), "the window must be raised");
+        // 9.2.0 has ended: its lock on the path is gone with it.
+        assert!(matches!(
+            try_lock_file(&lock_path).unwrap(),
+            LockAttempt::Acquired(_)
+        ));
+    }
+
+    /// The usual start: the file was not removed, so the second handle is
+    /// refused by the own lock (also inside one process) and nothing changes.
+    #[test]
+    fn untouched_lock_is_kept_by_the_recheck() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = single_instance_lock_path(dir.path(), &key_of("9.3.0"));
+        let LockAttempt::Acquired(held) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the first lock must be acquired");
+        };
+        let (kept, replaced) = reguard(held, &lock_path);
+        assert!(!replaced);
+        assert!(matches!(
+            try_lock_file(&lock_path).unwrap(),
+            LockAttempt::Held
+        ));
+        // It is the one lock on that file: gone with it.
+        drop(kept);
+        assert!(matches!(
+            try_lock_file(&lock_path).unwrap(),
+            LockAttempt::Acquired(_)
+        ));
+    }
+
+    /// The case the re-check cannot see: the lock of the running process is
+    /// on a removed file, and another start of its key holds the new file
+    /// (on its way to being refused). The running one keeps its lock; later
+    /// starts are refused at the data folder lock and then raise its window
+    /// through the endpoint, which no refused start removes.
+    #[test]
+    fn start_refused_at_the_data_lock_still_raises_a_same_key_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_lock = data_lock_path(&dir.path().join(DB_FILE_NAME));
+        let key = key_of("9.2.0");
+        let (lock_path, endpoint_path) = leftover_files(dir.path(), &key);
+
+        // The running 9.2.0: lock on a file that is removed afterwards.
+        let LockAttempt::Acquired(held) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the first lock must be acquired");
+        };
+        std::fs::remove_file(&lock_path).unwrap();
+        // Another 9.2.0 start has the new file when the running one checks.
+        let LockAttempt::Acquired(passing) = try_lock_file(&lock_path).unwrap() else {
+            panic!("the new file must be lockable");
+        };
+        let LockAttempt::Acquired(_data) = try_lock_file(&data_lock).unwrap() else {
+            panic!("the data folder lock must be acquired");
+        };
+        let (_held, replaced) = reguard(held, &lock_path);
+        assert!(!replaced);
+        let (endpoint, asked) = serving();
+        write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+        // That start is refused and exits.
+        drop(passing);
+
+        // A later start: first at the single-instance lock ...
+        let later = acquire_or_activate(&lock_path, &endpoint_path, Duration::ZERO, RETRY).unwrap();
+        let SingleInstance::First(_later) = later else {
+            panic!("nobody holds the file at the path");
+        };
+        // ... refused at the data folder lock, with the endpoint still there.
+        assert!(matches!(
+            try_lock_file(&data_lock).unwrap(),
+            LockAttempt::Held
+        ));
+        assert_eq!(
+            activate_data_holder(&endpoint_path, Duration::ZERO, RETRY),
+            DataHolder::Raised
+        );
+        assert!(asked.recv_timeout(CALLBACK_WAIT).unwrap());
+    }
+
+    #[test]
+    fn data_holder_of_another_key_is_told_apart_without_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint_path = single_instance_endpoint_path(dir.path(), "k");
+        let long = Duration::from_secs(60);
+        let started = Instant::now();
+        // No endpoint file at all.
+        assert_eq!(
+            activate_data_holder(&endpoint_path, long, RETRY),
+            DataHolder::OtherKey
+        );
+        // A leftover file of an earlier run: nobody listens there.
+        let (listener, endpoint) = bind_activation_listener().unwrap();
+        drop(listener);
+        write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+        assert_eq!(
+            activate_data_holder(&endpoint_path, long, RETRY),
+            DataHolder::OtherKey
+        );
+        // Someone listens, but not for this token.
+        let (live, asked) = serving();
+        let wrong = Endpoint {
+            port: live.port,
+            token: new_token(),
+        };
+        write_endpoint_file(&endpoint_path, &wrong).unwrap();
+        assert_eq!(
+            activate_data_holder(&endpoint_path, long, RETRY),
+            DataHolder::OtherKey
+        );
+        assert!(asked.try_recv().is_err());
+        assert!(started.elapsed() < Duration::from_secs(30));
+    }
+
+    #[test]
+    fn data_holder_of_the_same_key_is_asked_until_its_window_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint_path = single_instance_endpoint_path(dir.path(), "k");
+        let ready = Arc::new(AtomicBool::new(false));
+        let (endpoint, asked) = serving_with(ready.clone());
+        write_endpoint_file(&endpoint_path, &endpoint).unwrap();
+        // No window within the wait.
+        assert_eq!(
+            activate_data_holder(&endpoint_path, Duration::ZERO, RETRY),
+            DataHolder::NoWindow
+        );
+        assert!(!asked.recv_timeout(CALLBACK_WAIT).unwrap());
+        // The window comes while this start keeps asking.
+        let flip = std::thread::spawn(move || {
+            while !asked.recv_timeout(CALLBACK_WAIT).unwrap() {
+                ready.store(true, Ordering::SeqCst);
+            }
+        });
+        assert_eq!(
+            activate_data_holder(&endpoint_path, Duration::from_secs(30), RETRY),
+            DataHolder::Raised
+        );
+        flip.join().unwrap();
     }
 
     #[test]
