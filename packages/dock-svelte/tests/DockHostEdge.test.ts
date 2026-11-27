@@ -17,7 +17,7 @@ import { cleanup, render } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import DockHostHarness from './DockHostHarness.svelte';
-import { computeEdgeDrop, edgeButtons } from '../src/core/edges';
+import { computeEdgeDrop, edgeButtons, edgeGuideRect, visibleHostRect } from '../src/core/edges';
 import type { DockPanelChange } from '../src/core/lifecycle';
 import { dockPanelAtEdge } from '../src/core/tree';
 import { createDockState } from '../src/state.svelte';
@@ -103,6 +103,150 @@ describe('computeEdgeDrop / edgeButtons (core/edges)', () => {
 		expect(edgeButtons(400, 80)[0].rect).toEqual({ x: 8, y: 31, width: 18, height: 18 });
 		expect(edgeButtons(400, 60)).toEqual([]);
 		expect(computeEdgeDrop(10, 30, 400, 60)).toBeNull();
+	});
+});
+
+// #1043: a host that is not wholly on screen. The buttons go to the part that is.
+describe('the outer-edge buttons of a host partly off screen (core/edges, #1043)', () => {
+	const viewport = { x: 0, y: 0, width: 1280, height: 800 };
+	const regions = (buttons: ReturnType<typeof edgeButtons>) =>
+		Object.fromEntries(buttons.map((b) => [b.region, b.rect]));
+
+	it('visibleHostRect: the host cut by the viewport and the scroll containers, host-local', () => {
+		// Wholly on screen: the whole host.
+		expect(visibleHostRect({ x: 100, y: 50, width: 1000, height: 600 }, [viewport])).toEqual({
+			x: 0,
+			y: 0,
+			width: 1000,
+			height: 600
+		});
+		// Taller than the viewport, its top at 115: 685 px of it show.
+		expect(visibleHostRect({ x: 100, y: 115, width: 1000, height: 1100 }, [viewport])).toEqual({
+			x: 0,
+			y: 0,
+			width: 1000,
+			height: 685
+		});
+		// Scrolled: 300 px out at the top.
+		expect(visibleHostRect({ x: 100, y: -300, width: 1000, height: 1100 }, [viewport])).toEqual({
+			x: 0,
+			y: 300,
+			width: 1000,
+			height: 800
+		});
+		// A scroll container (under a 64 px header) cuts it further, on both axes.
+		expect(
+			visibleHostRect({ x: 100, y: -300, width: 1000, height: 1100 }, [
+				viewport,
+				{ x: 240, y: 64, width: 1040, height: 736 }
+			])
+		).toEqual({ x: 140, y: 364, width: 860, height: 736 });
+		// Not on screen at all: nothing (never a negative size).
+		expect(visibleHostRect({ x: 0, y: 900, width: 1000, height: 600 }, [viewport])).toMatchObject({
+			width: 1000,
+			height: 0
+		});
+	});
+
+	it('a host taller than the viewport: every button is in the part on screen, at the middle of its sides', () => {
+		// The issue's case: the bottom button was at y = 1060 of a 1100 px host (off an 800 px viewport).
+		expect(edgeButtons(1000, 1100)[3].rect.y).toBe(1060);
+		const visible = visibleHostRect({ x: 100, y: 115, width: 1000, height: 1100 }, [viewport]);
+		expect(regions(edgeButtons(1000, 1100, {}, visible))).toEqual({
+			left: { x: 8, y: 326.5, width: 32, height: 32 },
+			right: { x: 960, y: 326.5, width: 32, height: 32 },
+			top: { x: 484, y: 8, width: 32, height: 32 },
+			bottom: { x: 484, y: 645, width: 32, height: 32 }
+		});
+		// Only where the button is drawn is a target.
+		expect(computeEdgeDrop(500, 660, 1000, 1100, visible)).toBe('bottom');
+		expect(computeEdgeDrop(500, 1076, 1000, 1100, visible)).toBeNull();
+		expect(computeEdgeDrop(24, 342, 1000, 1100, visible)).toBe('left');
+		expect(computeEdgeDrop(24, 550, 1000, 1100, visible)).toBeNull();
+	});
+
+	it('a host out at the top (scrolled): the top button comes down to the part on screen', () => {
+		const visible = visibleHostRect({ x: 0, y: -300, width: 1000, height: 1100 }, [viewport]);
+		expect(regions(edgeButtons(1000, 1100, {}, visible))).toEqual({
+			left: { x: 8, y: 684, width: 32, height: 32 },
+			right: { x: 960, y: 684, width: 32, height: 32 },
+			top: { x: 484, y: 308, width: 32, height: 32 },
+			bottom: { x: 484, y: 1060, width: 32, height: 32 }
+		});
+	});
+
+	it('a host out at the left and the right: the side buttons come in', () => {
+		const visible = visibleHostRect({ x: -200, y: 0, width: 2000, height: 600 }, [viewport]);
+		expect(regions(edgeButtons(2000, 600, {}, visible))).toMatchObject({
+			left: { x: 208, y: 284 },
+			right: { x: 1440, y: 284 },
+			top: { x: 824, y: 8 },
+			bottom: { x: 824, y: 560 }
+		});
+	});
+
+	it('a host wholly on screen, or smaller than it: as before', () => {
+		for (const [w, h] of [
+			[1000, 600],
+			[400, 80],
+			[400, 60]
+		]) {
+			const visible = visibleHostRect({ x: 20, y: 30, width: w, height: h }, [viewport]);
+			expect(edgeButtons(w, h, {}, visible)).toEqual(edgeButtons(w, h));
+			for (const edge of ['left', 'right', 'top', 'bottom'] as const)
+				expect(edgeGuideRect(w, h, edge, {}, visible)).toEqual(edgeGuideRect(w, h, edge));
+		}
+		// The quarter of the host (`EDGE_DOCK_RATIO`).
+		expect(edgeGuideRect(1000, 600, 'left')).toEqual({ x: 0, y: 0, width: 250, height: 600 });
+		expect(edgeGuideRect(1000, 600, 'bottom')).toEqual({ x: 0, y: 450, width: 1000, height: 150 });
+	});
+
+	it('little of the host on screen: smaller buttons that do not meet, none when they would not fit', () => {
+		const strip = visibleHostRect({ x: 0, y: 720, width: 1000, height: 1100 }, [viewport]);
+		expect(strip.height).toBe(80);
+		const buttons = edgeButtons(1000, 1100, {}, strip);
+		expect(buttons.map((b) => b.rect.width)).toEqual([18, 18, 18, 18]);
+		expect(regions(buttons).top.y + 18).toBeLessThanOrEqual(regions(buttons).bottom.y);
+		const sliver = visibleHostRect({ x: 0, y: 760, width: 1000, height: 1100 }, [viewport]);
+		expect(edgeButtons(1000, 1100, {}, sliver)).toEqual([]);
+	});
+
+	it('the snap guide: the part of the quarter on screen, at least a strip around the button', () => {
+		const visible = { x: 0, y: 0, width: 1000, height: 685 };
+		// The sides: the quarter, as tall as what shows.
+		expect(edgeGuideRect(1000, 1100, 'left', {}, visible)).toEqual({
+			x: 0,
+			y: 0,
+			width: 250,
+			height: 685
+		});
+		expect(edgeGuideRect(1000, 1100, 'right', {}, visible)).toEqual({
+			x: 750,
+			y: 0,
+			width: 250,
+			height: 685
+		});
+		// The top quarter (275 px) is on screen whole.
+		expect(edgeGuideRect(1000, 1100, 'top', {}, visible)).toEqual({
+			x: 0,
+			y: 0,
+			width: 1000,
+			height: 275
+		});
+		// The bottom quarter (825..1100) is not on screen: a strip around the button (32 + 2 * 8).
+		const bottom = edgeGuideRect(1000, 1100, 'bottom', {}, visible);
+		expect(bottom).toEqual({ x: 0, y: 637, width: 1000, height: 48 });
+		const button = edgeButtons(1000, 1100, {}, visible)[3].rect;
+		expect(button.y).toBeGreaterThanOrEqual(bottom.y);
+		expect(button.y + button.height).toBeLessThanOrEqual(bottom.y + bottom.height);
+		// Scrolled until part of it shows: that part.
+		expect(
+			edgeGuideRect(1000, 1100, 'bottom', {}, { x: 0, y: 200, width: 1000, height: 800 })
+		).toEqual({ x: 0, y: 825, width: 1000, height: 175 });
+		// Scrolled to the end: the whole quarter.
+		expect(
+			edgeGuideRect(1000, 1100, 'bottom', {}, { x: 0, y: 300, width: 1000, height: 800 })
+		).toEqual({ x: 0, y: 825, width: 1000, height: 275 });
 	});
 });
 
@@ -430,5 +574,137 @@ describe('a drop on the outer edge of the host (DockHost)', () => {
 		await tick();
 		expect(document.activeElement).toBe(outside);
 		outside.remove();
+	});
+});
+
+// #1043. The viewport here is 1000 x 600 (`clientWidth` / `clientHeight` of every element,
+// `<html>` included); the host is 1000 x 2000, so 600 px of it show.
+describe('a host taller than the viewport (DockHost, #1043)', () => {
+	let top = 0;
+	const hostEl = () => document.querySelector<HTMLElement>('[data-dock-host]')!;
+	const outer = (edge: string) =>
+		document.querySelector<HTMLElement>(`.guide-button.outer[data-dock-edge="${edge}"]`)!;
+	const box = (el: HTMLElement) => [el.style.left, el.style.top, el.style.width, el.style.height];
+
+	/** Every element is the 1000 x 2000 host at `top`, but `clipper` (a box of its own). */
+	function tall(clipper?: { el: Element; top: number }) {
+		top = 0;
+		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+			this: Element
+		) {
+			const y = this === clipper?.el ? clipper.top : top;
+			return {
+				left: 0,
+				top: y,
+				right: 1000,
+				bottom: y + 2000,
+				width: 1000,
+				height: 2000,
+				x: 0,
+				y,
+				toJSON: () => ({})
+			} as DOMRect;
+		});
+	}
+
+	it('the buttons are in the part on screen; a drop on the bottom one docks along the bottom of the HOST', () => {
+		tall();
+		const { dock } = mount(mixed());
+		dragTo(titlebarOf('F'), 500, 576);
+		expect(box(outer('left'))).toEqual(['8px', '284px', '32px', '32px']);
+		expect(box(outer('right'))).toEqual(['960px', '284px', '32px', '32px']);
+		expect(box(outer('top'))).toEqual(['484px', '8px', '32px', '32px']);
+		// Was 1960px: 1360 px below the viewport.
+		expect(box(outer('bottom'))).toEqual(['484px', '560px', '32px', '32px']);
+		expect(outer('bottom').classList.contains('active')).toBe(true);
+		// The bottom quarter (1500..2000) is not on screen: the guide is a strip around the button.
+		expect(box(document.querySelector<HTMLElement>('.snap-guide')!)).toEqual([
+			'0px',
+			'552px',
+			'1000px',
+			'48px'
+		]);
+		release(500, 576);
+		expect(dock.layout.floating).toEqual([]);
+		expect(dock.layout.docked).toMatchObject({
+			type: 'split',
+			direction: 'column',
+			sizes: [0.75, 0.25],
+			children: [{ id: 's' }, { id: 'f' }]
+		});
+	});
+
+	it('where the bottom button was (the bottom of the host) is not a target any more', () => {
+		tall();
+		const { dock } = mount(mixed());
+		// Scrolled to the end, the pointer over the old place of the TOP button (host-local y 24).
+		top = -1400;
+		dragTo(titlebarOf('F'), 500, -1376);
+		expect(document.querySelector('.guide-button.active')).toBeNull();
+		release(500, -1376);
+		expect(dock.layout.docked).toEqual(mixed().docked);
+	});
+
+	it('a scroll during the drag moves the buttons with the part on screen, without a pointer move', () => {
+		tall();
+		const { dock } = mount(mixed());
+		dragTo(titlebarOf('F'), 500, 576);
+		top = -1400;
+		window.dispatchEvent(new Event('scroll'));
+		flushSync();
+		expect(box(outer('top'))).toEqual(['484px', '1408px', '32px', '32px']);
+		expect(box(outer('left'))).toEqual(['8px', '1684px', '32px', '32px']);
+		expect(box(outer('bottom'))).toEqual(['484px', '1960px', '32px', '32px']);
+		// The pointer did not move: it is still on the bottom button, and the quarter shows now.
+		expect(outer('bottom').classList.contains('active')).toBe(true);
+		expect(box(document.querySelector<HTMLElement>('.snap-guide')!)).toEqual([
+			'0px',
+			'1500px',
+			'1000px',
+			'500px'
+		]);
+		// A scroll of an inner container is seen too (it does not bubble: listened in capture).
+		top = -700;
+		hostEl().parentElement!.dispatchEvent(new Event('scroll'));
+		flushSync();
+		expect(box(outer('top'))).toEqual(['484px', '708px', '32px', '32px']);
+		// The bottom button stays where the pointer is: at the bottom of what shows.
+		expect(box(outer('bottom'))).toEqual(['484px', '1260px', '32px', '32px']);
+		expect(outer('bottom').classList.contains('active')).toBe(true);
+		release(500, 576);
+		expect(dock.layout.docked).toMatchObject({
+			direction: 'column',
+			sizes: [0.75, 0.25],
+			children: [{ id: 's' }, { id: 'f' }]
+		});
+		// The listeners went with the drag.
+		top = 0;
+		window.dispatchEvent(new Event('scroll'));
+		flushSync();
+		expect(document.querySelectorAll('.guide-button')).toHaveLength(0);
+	});
+
+	it('a scroll container around the host cuts it too (a header above the scrolled area)', () => {
+		const { dock } = mount(mixed());
+		const scroller = hostEl().parentElement!;
+		scroller.style.overflow = 'auto';
+		// The scroller's box starts 100 px down (1000 x 600, like every `clientWidth` / `clientHeight`).
+		tall({ el: scroller, top: 100 });
+		try {
+			dragTo(titlebarOf('F'), 500, 124);
+			// 100..600 of the host show: the top button is under the scroller's top, not the viewport's.
+			expect(box(outer('top'))).toEqual(['484px', '108px', '32px', '32px']);
+			expect(box(outer('left'))).toEqual(['8px', '334px', '32px', '32px']);
+			expect(box(outer('bottom'))).toEqual(['484px', '560px', '32px', '32px']);
+			expect(outer('top').classList.contains('active')).toBe(true);
+			release(500, 124);
+			expect(dock.layout.docked).toMatchObject({
+				direction: 'column',
+				sizes: [0.25, 0.75],
+				children: [{ id: 'f' }, { id: 's' }]
+			});
+		} finally {
+			scroller.style.overflow = '';
+		}
 	});
 });

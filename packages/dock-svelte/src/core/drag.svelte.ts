@@ -57,7 +57,7 @@ import { getContext, setContext, tick } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
 import type { DockPanelChange, DockPanelChangeOutcome, PanelLifecycle } from './lifecycle';
 import { resolveCapabilities, type DockPolicy } from './policy';
-import { collectPanelIds, EDGE_DOCK_RATIO, findNode, findParent } from './tree';
+import { collectPanelIds, findNode, findParent } from './tree';
 import { homeMark, type DockState } from '../state.svelte';
 import type { DockEdge, DockNode, DropRegion } from '../types';
 import {
@@ -68,7 +68,65 @@ import {
 	type GuideButton,
 	type GuideSizing
 } from './dropzones';
-import { edgeButtons } from './edges';
+import { edgeButtons, edgeGuideRect, visibleHostRect } from './edges';
+
+/** A scroll container around the host, and the axes it cuts its content off on. */
+interface Clipper {
+	el: HTMLElement;
+	x: boolean;
+	y: boolean;
+}
+
+/**
+ * The ancestors of `el` that cut it off (#1043): every one whose `overflow` is not `visible`
+ * on an axis (a scroll container, `hidden`, `clip`). `<html>` is left out (the viewport stands
+ * for it), and so is a `<body>` whose `overflow` the viewport takes over (`<html>` has none of
+ * its own). Read once per drag; the boxes are measured on every hover update (`clipRects`).
+ */
+function clippingAncestors(el: HTMLElement | null): Clipper[] {
+	const out: Clipper[] = [];
+	const root = document.documentElement;
+	const cuts = (value: string) => value !== '' && value !== 'visible';
+	for (let p = el?.parentElement ?? null; p && p !== root; p = p.parentElement) {
+		const cs = getComputedStyle(p);
+		const x = cuts(cs.overflowX);
+		const y = cuts(cs.overflowY);
+		if (!x && !y) continue;
+		if (p === document.body) {
+			const rs = getComputedStyle(root);
+			if (!cuts(rs.overflowX) && !cuts(rs.overflowY)) continue;
+		}
+		out.push({ el: p, x, y });
+	}
+	return out;
+}
+
+/**
+ * What cuts the host off right now, in client px: the viewport, and the padding box of each
+ * of `clippers` on the axes it cuts (on the other axis: the viewport's extent, no extra cut).
+ */
+function clipRects(clippers: readonly Clipper[]): Rect[] {
+	const root = document.documentElement;
+	// Without the scrollbars when the layout is known (0 where nothing is laid out, e.g. jsdom).
+	const viewport: Rect = {
+		x: 0,
+		y: 0,
+		width: root.clientWidth || window.innerWidth,
+		height: root.clientHeight || window.innerHeight
+	};
+	const out = [viewport];
+	for (const { el, x, y } of clippers) {
+		if (!el.isConnected) continue;
+		const r = el.getBoundingClientRect();
+		out.push({
+			x: x ? r.left + el.clientLeft : viewport.x,
+			y: y ? r.top + el.clientTop : viewport.y,
+			width: x ? el.clientWidth : viewport.width,
+			height: y ? el.clientHeight : viewport.height
+		});
+	}
+	return out;
+}
 
 /** Where a drag originated - determines which `DockState` method finishes it (see `#finish`). */
 export type DragSource = 'floating' | 'docked';
@@ -157,6 +215,8 @@ export class DragController {
 	#getLifecycle: () => PanelLifecycle | undefined;
 	/** The guide buttons' sizing of the current drag (`readGuideSizing` at `start`). */
 	#sizing: GuideSizing = {};
+	/** The scroll containers around the host that cut it off (`clippingAncestors` at `start`, #1043). */
+	#clippers: Clipper[] = [];
 
 	/**
 	 * `getPolicy` supplies the host's clamp options and pane capabilities (see
@@ -248,6 +308,7 @@ export class DragController {
 
 		// The guide buttons' size for the host's density (touch: bigger, #663 ④), read once per drag.
 		this.#sizing = readGuideSizing(this.#getHostEl());
+		this.#clippers = clippingAncestors(this.#getHostEl());
 		this.state = {
 			panelId: opts.panelId,
 			title: opts.title,
@@ -273,6 +334,15 @@ export class DragController {
 	/** The owning pointer moved (routed by the `GestureOwner`). */
 	update(clientX: number, clientY: number): void {
 		this.#recomputeHover(clientX, clientY);
+	}
+
+	/**
+	 * Lay the guides out again where the pointer already is (#1043): the page was scrolled or
+	 * resized under a drag, so the part of the host on screen - where the outer-edge buttons
+	 * sit - and what is under the pointer changed without a pointer move. No-op outside a drag.
+	 */
+	refresh(): void {
+		if (this.state) this.#recomputeHover(this.state.clientX, this.state.clientY);
 	}
 
 	/**
@@ -321,13 +391,21 @@ export class DragController {
 			// something else is docked - with an empty tree (or only the dragged pane) a drop
 			// behaves as before.
 			if (this.#edgesOffered(this.state.panelId)) {
-				edges = edgeButtons(hostRect.width, hostRect.height, this.#sizing);
+				// Laid out in the part of the host that is on screen (#1043): a host taller than the
+				// viewport keeps every button reachable. The drop itself is still the host's edge.
+				const visible = visibleHostRect(
+					{ x: hostRect.left, y: hostRect.top, width: hostRect.width, height: hostRect.height },
+					clipRects(this.#clippers)
+				);
+				edges = edgeButtons(hostRect.width, hostRect.height, this.#sizing, visible);
 				hoverEdge = inHost ? hitGuideButton(edges, x, y) : null;
 				if (hoverEdge)
-					guideRect = dropRegionRect(
-						{ x: 0, y: 0, width: hostRect.width, height: hostRect.height },
+					guideRect = edgeGuideRect(
+						hostRect.width,
+						hostRect.height,
 						hoverEdge,
-						EDGE_DOCK_RATIO
+						this.#sizing,
+						visible
 					);
 			}
 
