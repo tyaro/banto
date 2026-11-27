@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPanelPopOut, type PanelPopOutStorage } from '@banto/admin-core';
 import { createDockLayoutStore, createDockState, type DockLayout } from '@banto/dock-svelte';
-import { createLayoutSaveWatch } from './popout';
+import { createLayoutSaveWatch, cssColorToHex, readPageBackground } from './popout';
 
 const SETTING_KEY = 'dock.test';
 const LAYOUT_STORAGE_KEY = 'banto.dock.test';
@@ -260,4 +260,82 @@ describe('createLayoutSaveWatch', () => {
 			expect(seen.value).toBe(true);
 		}
 	);
+});
+
+describe('the pop-out window background (Issue #1015)', () => {
+	it('reads rgb() in its comma and space forms', () => {
+		expect(cssColorToHex('rgb(30, 30, 46)')).toBe('#1e1e2e');
+		expect(cssColorToHex('rgb(30 30 46)')).toBe('#1e1e2e');
+		expect(cssColorToHex('rgba(255, 255, 255, 1)')).toBe('#ffffff');
+		expect(cssColorToHex('rgb(0 0 0 / 100%)')).toBe('#000000');
+		expect(cssColorToHex('rgb(100% 0% 50%)')).toBe('#ff0080');
+		expect(cssColorToHex('  RGB(1, 2, 3)  ')).toBe('#010203');
+	});
+
+	it('reads color(srgb ...)', () => {
+		expect(cssColorToHex('color(srgb 0 0 0)')).toBe('#000000');
+		expect(cssColorToHex('color(srgb 1 0.5 0 / 1)')).toBe('#ff8000');
+	});
+
+	it('refuses what is not an opaque colour it can read', () => {
+		for (const value of [
+			'',
+			'transparent',
+			'red',
+			'rgba(0, 0, 0, 0)',
+			'rgba(0, 0, 0, 0.5)',
+			'rgb(0 0 0 / 50%)',
+			'rgb(1, 2)',
+			'rgb(a, b, c)',
+			'oklch(0.245 0.011 258)',
+			'color(display-p3 1 0 0)',
+			'#102030'
+		]) {
+			expect(cssColorToHex(value), value).toBeUndefined();
+		}
+	});
+
+	it('clamps and rounds the channels', () => {
+		expect(cssColorToHex('rgb(300, -5, 127.6)')).toBe('#ff0080');
+	});
+
+	const env = (colors: Record<string, string>, rasterize?: (c: string) => string | undefined) => ({
+		elements: () => ['body', 'html'] as unknown as Element[],
+		computed: (e: Element) => colors[e as unknown as string],
+		rasterize
+	});
+
+	it('takes the first element whose background is not transparent', () => {
+		expect(readPageBackground(env({ body: 'rgb(1, 2, 3)', html: 'rgb(9, 9, 9)' }))).toBe('#010203');
+		expect(readPageBackground(env({ body: 'rgba(0, 0, 0, 0)', html: 'rgb(9, 9, 9)' }))).toBe(
+			'#090909'
+		);
+	});
+
+	it('hands a colour it cannot read to the rasterizer, and gives up without one', () => {
+		const rasterize = vi.fn(() => '#1d2126');
+		expect(
+			readPageBackground(
+				env({ body: 'rgba(0, 0, 0, 0)', html: 'oklch(0.245 0.011 258)' }, rasterize)
+			)
+		).toBe('#1d2126');
+		expect(rasterize).toHaveBeenCalledWith('oklch(0.245 0.011 258)');
+		expect(
+			readPageBackground(env({ body: 'rgba(0, 0, 0, 0)', html: 'oklch(0.245 0.011 258)' }))
+		).toBeUndefined();
+	});
+
+	it('is undefined when every layer is transparent, and never throws', () => {
+		expect(
+			readPageBackground(env({ body: 'rgba(0, 0, 0, 0)', html: 'rgba(0, 0, 0, 0)' }))
+		).toBeUndefined();
+		expect(
+			readPageBackground({
+				elements: () => {
+					throw new Error('no document');
+				},
+				computed: () => ''
+			})
+		).toBeUndefined();
+	});
 });

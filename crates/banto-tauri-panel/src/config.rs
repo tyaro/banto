@@ -51,6 +51,8 @@ pub enum ConfigError {
     /// `main_label` starts with `label_prefix`: the main window could not be
     /// told from a panel's.
     MainLabelHasPanelPrefix,
+    /// `background` is not `#rrggbb` (see [`parse_background`]).
+    InvalidBackground,
 }
 
 impl fmt::Display for ConfigError {
@@ -65,11 +67,53 @@ impl fmt::Display for ConfigError {
             ConfigError::MainLabelHasPanelPrefix => {
                 write!(f, "main_label starts with label_prefix")
             }
+            ConfigError::InvalidBackground => {
+                write!(f, "background must be a colour like \"#rrggbb\"")
+            }
         }
     }
 }
 
 impl std::error::Error for ConfigError {}
+
+/// Why a window background colour was refused by [`parse_background`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackgroundError {
+    /// Not `#rrggbb`: no leading `#`, not 7 characters, or a character that
+    /// is not a hex digit.
+    InvalidFormat,
+}
+
+impl fmt::Display for BackgroundError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BackgroundError::InvalidFormat => {
+                write!(f, "background must be a colour like \"#rrggbb\"")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BackgroundError {}
+
+/// Reads a window background colour, `"#rrggbb"` (hex digits of either
+/// case), as `(red, green, blue)`. Nothing else is accepted - no alpha, no
+/// short form, no colour name: WebView2 (Windows) only knows an alpha of 0 or
+/// 255, so the plugin always builds an opaque colour, and one fixed shape is
+/// all the frontend needs to send (Issue #1015).
+pub fn parse_background(value: &str) -> Result<(u8, u8, u8), BackgroundError> {
+    let hex = value
+        .strip_prefix('#')
+        .ok_or(BackgroundError::InvalidFormat)?;
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(BackgroundError::InvalidFormat);
+    }
+    let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16);
+    match (channel(0), channel(2), channel(4)) {
+        (Ok(r), Ok(g), Ok(b)) => Ok((r, g, b)),
+        _ => Err(BackgroundError::InvalidFormat),
+    }
+}
 
 /// A panel id comes from the webview and ends up in a window label, in the
 /// route the window loads and as a key of the geometry file. Only ASCII
@@ -120,6 +164,12 @@ pub struct PanelConfig {
     /// Where the geometry memory is kept. `None` = `panel-windows.json` in
     /// the app's data dir.
     pub store_path: Option<PathBuf>,
+    /// Background colour (`"#rrggbb"`) a panel window is built with, for the
+    /// moment before its page is drawn (otherwise the webview is white for
+    /// about 2 seconds, which stands out in a dark theme). `None` = the
+    /// webview's own default. A colour the frontend passes to `open` wins over
+    /// this one (Issue #1015).
+    pub background: Option<String>,
 }
 
 impl Default for PanelConfig {
@@ -133,6 +183,7 @@ impl Default for PanelConfig {
             remember_geometry: true,
             close_with_main: true,
             store_path: None,
+            background: None,
         }
     }
 }
@@ -157,6 +208,9 @@ impl PanelConfig {
         }
         if self.main_label.starts_with(self.label_prefix.as_str()) {
             return Err(ConfigError::MainLabelHasPanelPrefix);
+        }
+        if let Some(background) = &self.background {
+            parse_background(background).map_err(|_| ConfigError::InvalidBackground)?;
         }
         Ok(())
     }
@@ -225,6 +279,55 @@ mod tests {
         assert!(c.remember_geometry);
         assert!(c.close_with_main);
         assert_eq!(c.store_path, None);
+        assert_eq!(c.background, None);
+    }
+
+    #[test]
+    fn background_is_read_as_rgb() {
+        assert_eq!(parse_background("#000000"), Ok((0, 0, 0)));
+        assert_eq!(parse_background("#ffffff"), Ok((255, 255, 255)));
+        assert_eq!(parse_background("#1A2b3C"), Ok((0x1a, 0x2b, 0x3c)));
+    }
+
+    #[test]
+    fn background_of_any_other_shape_is_refused() {
+        for value in [
+            "",
+            "#",
+            "000000",
+            "#fff",
+            "#12345",
+            "#1234567",
+            "#12345678",
+            "#gggggg",
+            "#12 456",
+            "red",
+            "rgb(0,0,0)",
+            "#+12345",
+            " #123456",
+            "#123456 ",
+            "#ｆｆｆｆｆｆ",
+        ] {
+            assert_eq!(
+                parse_background(value),
+                Err(BackgroundError::InvalidFormat),
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_default_background_is_refused_by_validate() {
+        let with = |background: Option<&str>| PanelConfig {
+            background: background.map(str::to_string),
+            ..PanelConfig::default()
+        };
+        assert_eq!(with(None).validate(), Ok(()));
+        assert_eq!(with(Some("#1e1e2e")).validate(), Ok(()));
+        assert_eq!(
+            with(Some("dark")).validate(),
+            Err(ConfigError::InvalidBackground)
+        );
     }
 
     #[test]

@@ -135,6 +135,123 @@ export interface AppPanelPopOutOptions<C extends PanelWindowContent> extends Pic
 	storageKey: string | null;
 }
 
+// --- The window's background colour (Issue #1015) -------------------------
+//
+// What the current screen's background is, as `#rrggbb`, so a pop-out window
+// is built in that colour and is not white until its page is drawn. The plugin
+// takes it as `open`'s `background`; `createAppPanelPopOut` hands
+// `readPageBackground` to admin-core, which asks at every open, so a theme
+// change is followed. `cssColorToHex` is pure (tested without a DOM).
+
+/** Smallest alpha treated as "this layer paints the background itself". */
+const OPAQUE = 1;
+
+const hex2 = (n: number) =>
+	Math.min(255, Math.max(0, Math.round(n)))
+		.toString(16)
+		.padStart(2, '0');
+
+/** A number or a percentage of `scale` (`rgb(50% ...)`, `alpha 50%`). */
+function component(token: string, scale: number): number | undefined {
+	if (!/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?%?$/i.test(token)) return undefined;
+	const value = Number.parseFloat(token);
+	return token.endsWith('%') ? (value / 100) * scale : value;
+}
+
+/**
+ * Reads the CSS colour `value` (what `getComputedStyle(...).backgroundColor`
+ * gives) as `#rrggbb`, or `undefined` when it is not an opaque colour this
+ * can read: `rgb()` / `rgba()` (comma or space separated, `/ alpha`) and
+ * `color(srgb r g b)`. Anything else - `transparent`, an alpha below 1, a
+ * keyword, `oklch()`, ... - is `undefined`. (Browsers keep an `oklch()`
+ * colour as written when computing it, so the theme's own colours come back
+ * as that; `readPageBackground` has a fallback for them.)
+ */
+export function cssColorToHex(value: string): string | undefined {
+	const match = /^\s*(rgba?|color)\(\s*([^)]*?)\s*\)\s*$/i.exec(value);
+	if (!match) return undefined;
+	const isColorFn = match[1].toLowerCase() === 'color';
+	// "r g b / a" and "r, g, b, a" differ only in their separators.
+	const tokens = match[2].split(/[\s,/]+/).filter((t) => t !== '');
+	if (isColorFn && tokens.shift()?.toLowerCase() !== 'srgb') return undefined;
+	if (tokens.length !== 3 && tokens.length !== 4) return undefined;
+	if (tokens.length === 4) {
+		const alpha = component(tokens[3], 1);
+		if (alpha === undefined || alpha < OPAQUE) return undefined;
+	}
+	const channels = tokens.slice(0, 3).map((t) => component(t, isColorFn ? 1 : 255));
+	if (channels.some((c) => c === undefined)) return undefined;
+	const [r, g, b] = channels.map((c) => (isColorFn ? c! * 255 : c!));
+	return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+}
+
+/**
+ * What the DOM side needs: injected so the walk is testable without a
+ * browser's computed styles (the default reads the real `document`).
+ */
+export interface BackgroundEnvironment {
+	/** Elements to look at, innermost first (default: `body`, `documentElement`). */
+	elements: () => Element[];
+	/** `getComputedStyle(element).backgroundColor`. */
+	computed: (element: Element) => string;
+	/**
+	 * Turns a colour `cssColorToHex` cannot read (`oklch()`, a keyword, ...)
+	 * into `#rrggbb` by painting it - or `undefined` when it cannot.
+	 */
+	rasterize?: (color: string) => string | undefined;
+}
+
+/** Paints `color` on a 1x1 canvas and reads the pixel back (any CSS colour the browser knows). */
+function rasterizeWithCanvas(color: string): string | undefined {
+	try {
+		const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+		if (!context) return undefined;
+		// An unparsable colour leaves `fillStyle` at its old value; a sentinel
+		// tells that apart from "painted black".
+		context.fillStyle = '#010203';
+		context.fillStyle = color;
+		context.clearRect(0, 0, 1, 1);
+		context.fillRect(0, 0, 1, 1);
+		const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+		if (a !== 255) return undefined;
+		return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+	} catch {
+		return undefined;
+	}
+}
+
+const domEnvironment: BackgroundEnvironment = {
+	elements: () => [document.body, document.documentElement].filter((e) => e != null),
+	computed: (element) => getComputedStyle(element).backgroundColor,
+	rasterize: rasterizeWithCanvas
+};
+
+/**
+ * The background of the current screen as `#rrggbb`: the first of `body`,
+ * then `html` (the theme paints `html`) whose background is not transparent.
+ * `undefined` when there is none or it cannot be read - the plugin's own
+ * default applies then. Never throws (a colour is a nicety).
+ */
+export function readPageBackground(
+	environment: BackgroundEnvironment = domEnvironment
+): string | undefined {
+	try {
+		for (const element of environment.elements()) {
+			const value = environment.computed(element).trim();
+			if (value === '' || value === 'transparent' || /^rgba\(.*[\s,/]0\)$/i.test(value)) continue;
+			const direct = cssColorToHex(value);
+			if (direct) return direct;
+			// Readable but not a plain colour (oklch, a keyword): let the
+			// browser convert it.
+			const painted = environment.rasterize?.(value);
+			if (painted) return painted;
+		}
+	} catch {
+		// fall through
+	}
+	return undefined;
+}
+
 /**
  * `createPanelPopOut` with this app's Tauri functions filled in. In a plain
  * browser the result's `onPopOut` is `undefined` (the dock then draws no
@@ -154,6 +271,7 @@ export function createAppPanelPopOut<C extends PanelWindowContent>(
 		// Dynamic import: `listen` talks to a Tauri IPC channel that does not
 		// exist in a browser tab (same reasoning as setup.ts's event provider).
 		listen: async (event, cb) => (await import('@tauri-apps/api/event')).listen(event, cb),
+		background: readPageBackground,
 		storage: storageKey === null ? undefined : panelPopOutLocalStorage(storageKey),
 		...rest
 	});

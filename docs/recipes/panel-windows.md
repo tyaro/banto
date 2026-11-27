@@ -231,6 +231,15 @@ const isPoppedOut = (id: string) => (track(), popOut.isPoppedOut(id));
 <DockHost {dock} onPopOut={popOut.onPopOut} ... />
 ```
 
+**窓の背景色**（#1015）: 窓を開いてからページが描かれるまでの約 2 秒、webview は既定の白で、ダークテーマでは目立つ。
+`createPanelPopOut`（と `openPanelWindow`）の `background: () => string | undefined` に、**今の画面の背景色を
+`#rrggbb` で返す関数**を渡すと、窓はその色で作られる（開くたびに呼ぶので、テーマの切り替えに追従する。`undefined` なら
+渡さず、plugin の既定のまま）。テンプレートは `createAppPanelPopOut` が `readPageBackground`（`body` → `html` の
+背景色。`oklch()` の色は canvas で変換する）を渡している。plugin 側の既定は `Builder::new().background("#1e1e2e")`
+（引数が無い呼び出しだけに効く。`#rrggbb` 以外は起動時にエラー）。**パネルの窓の HTML も、CSS が届くまで背景が付く**
+ようにしておく（テンプレートの `app.html` の `<style>`: 白い窓を作り直した直後は、webview の背景ではなくページの
+背景が見えるため）。透明度は渡せない（WebView2 は背景の alpha を 0 と 255 しか扱わないので、plugin は常に不透明）。
+
 dock を使わない画面から窓を開くだけなら `openPanelWindow({ id, title }, { isTauri, invoke })`、閉じた知らせだけ聞くなら
 `listenPanelClosed((id) => ..., { isTauri, listen })`、今開いている窓の id は `listPanelWindows({ isTauri, invoke })`、窓を閉じるだけなら `closePanelWindow(id, { isTauri, invoke })`
 （`createPanelPopOut` で出したパネルの窓は、覚えも片づける `popOut.closeWindows` で閉じる）。
@@ -255,6 +264,8 @@ Tauri の配線は CI ではコンパイルまでしか見ない。出す前に�
    表示メニューのチェックは付いたままで、選ぶと dock の側が閉じる（窓を前に出す扱いに戻らない）。再起動しても
    窓は開かず、パネルは dock に 1 つ。未適用の入力があって戻すのを取り消したときは、窓は閉じない。
 9. ブラウザ（LAN 配信）では pop-out のボタンが出ない。
+10. ダークテーマで、パネルを窓に出す。窓の中が白く光らず、最初から暗い背景で開く（#1015）。テーマを切り替えてから
+    別のパネルを出すと、その色で開く。
 
 ## 外すとき
 

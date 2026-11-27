@@ -34,7 +34,12 @@
 `banto-tauri-panel:allow-list`（#1013 で追加）・`banto-tauri-panel:allow-close`（#1021 で追加）を足す。
 plugin が持つもの:
 
-- コマンド `open`（`plugin:banto-tauri-panel|open`、引数は `id` と `title`）。同じ id の窓が開いていれば前に出すだけ。
+- コマンド `open`（`plugin:banto-tauri-panel|open`、引数は `id` と `title`、省略可の `background`）。同じ id の窓が開いていれば前に出すだけ。
+  `background`（`"#rrggbb"`。#1015 で追加）は、窓を作るときの背景色。ページが描かれるまでの約 2 秒、webview が既定の白に
+  なるのを避ける。形は純粋な `parse_background` で検査し、違えばエラー（`validate_panel_id` と同じ扱い）。常に不透明にする
+  （WebView2 は背景の alpha を 0 と 255 しか扱えない。`#rrggbbaa` は受けない）。`Builder::background` の既定があり、引数の
+  値が優先。フロントは開くたびに今の画面の色を渡す（`createPanelPopOut` の `background`）ので、テーマの切り替えに追従する。
+  すでに開いている窓の色は変えない。同じ `open` なので capability の追加は要らない。
 - コマンド `list`（`plugin:banto-tauri-panel|list`、引数なし。#1013 で追加）。今開いているパネルの窓の id を返す
   （plugin が作って、まだ閉じたのを見ていない窓）。
 - コマンド `close`（`plugin:banto-tauri-panel|close`、引数は `id`。#1021 で追加）。その id の窓を閉じる（plugin が
@@ -45,7 +50,7 @@ plugin が持つもの:
 - メインの窓が無くなったら、パネルの窓も閉じる（記憶は残す）。
 - 設定（`banto_tauri_panel::Builder`）: ルートの形（既定 `panel/{id}`）、メインの窓のラベル（既定 `main`）、パネルの窓のラベルの接頭辞
   （既定 `panel-`）、既定と最小の大きさ、**記憶を切る**（`remember_geometry(false)`）、**一緒に閉じるのを切る**
-  （`close_with_main(false)`）、記憶の保存先（`store_path`）。題名は開くたびにフロントから渡す。
+  （`close_with_main(false)`）、記憶の保存先（`store_path`）、窓の既定の背景色（`background`）。題名は開くたびにフロントから渡す。
 - plugin は**自分が作った窓（ラベル → id）だけ**を追跡し、前に出す・閉じた知らせ・記憶・メインと一緒に閉じる、の対象を
   それに限る。ラベルが接頭辞に合うだけの、アプリ自身の窓には触らない。設定は `PanelConfig::validate`（純粋）で
   検査し、空の接頭辞・不正な文字・空のメインのラベル・接頭辞で始まるメインのラベルは `setup` が `Err` を返して
