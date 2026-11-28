@@ -926,12 +926,21 @@
 		}
 	}
 
-	/** `Drawer` or `Modal` from the per-user "form display" setting (same props). */
-	const Panel = $derived(settings.formPresentation === 'dialog' ? Modal : Drawer);
+	/**
+	 * `Drawer` or `Modal` from the per-user "form display" setting (same props).
+	 * Fixed when the panel opens and kept while it is open (and while it closes):
+	 * swapping the component would rebuild `ResourceDetail` and drop an unsaved
+	 * draft without `confirmLeaveRecord`. A change takes effect on the next open.
+	 */
+	let panelPresentation = $state(settings.formPresentation);
+	const Panel = $derived(panelPresentation === 'dialog' ? Modal : Drawer);
 
 	function showInDrawer(id: string | number): void {
 		drawerGeneration++;
-		if (!drawerOpen) drawerOpenedWith = id;
+		if (!drawerOpen) {
+			drawerOpenedWith = id;
+			panelPresentation = settings.formPresentation;
+		}
 		drawerId = id;
 		drawerOpen = true;
 		lastOpenedId = normalizeId(id);
