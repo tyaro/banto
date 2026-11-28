@@ -66,6 +66,17 @@ test('the header search pill keeps its shortcut inside the frame at 200% text', 
 	expect(gap.right).toBeGreaterThanOrEqual(0);
 });
 
+test('the header search pill keeps the control height at 100% text', async ({ page }) => {
+	await open(page, '/items', 1440);
+	await page.evaluate(() => (document.documentElement.style.fontSize = ''));
+	const m = await page.locator('.search-pill').evaluate((el) => ({
+		pill: el.getBoundingClientRect().height,
+		kbd: el.querySelector('kbd')!.getBoundingClientRect().height
+	}));
+	expect(m.pill, JSON.stringify(m)).toBe(28);
+	expect(m.pill - m.kbd, JSON.stringify(m)).toBeGreaterThanOrEqual(3);
+});
+
 test('a small button grows with its label instead of overflowing at 200% text', async ({
 	page
 }) => {

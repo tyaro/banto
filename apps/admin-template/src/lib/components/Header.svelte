@@ -558,9 +558,10 @@
 		display: inline-flex;
 		align-items: center;
 		gap: var(--banto-space-2);
-		/* rem-based floor: equals the control height at the default size, and grows
-		   with the root text size so the shortcut stays inside (#1044). */
-		height: max(var(--banto-control-height-sm), 1.6rem);
+		/* The frame grows with its content, and is never shorter than the control
+		   height, so the shortcut stays inside at 200% text (#1044). */
+		height: auto;
+		min-height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
 		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);
@@ -585,7 +586,8 @@
 	}
 
 	.search-pill kbd {
-		padding: var(--banto-space-1) var(--banto-space-1);
+		padding: 1px var(--banto-space-1);
+		line-height: 1;
 		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-sm);
 		background: var(--banto-surface-subtle);
