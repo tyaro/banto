@@ -249,7 +249,8 @@
 		threePaneLeft: () => m['tree.workspace.paneTree'](),
 		threePaneRight: () => m['tree.workspace.paneDetail'](),
 		threePaneResizeLeft: () => m['tree.workspace.resizeTree'](),
-		threePaneResizeRight: () => m['tree.workspace.resizeDetail']()
+		threePaneResizeRight: () => m['tree.workspace.resizeDetail'](),
+		overlayClose: () => m['common.close']()
 	});
 </script>
 

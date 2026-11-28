@@ -378,11 +378,51 @@ describe('Modal / Drawer: Esc layering and focus', () => {
 		const paletteOverlay = palette.parentElement as HTMLElement;
 		paletteOverlay.style.position = 'fixed';
 		paletteOverlay.style.zIndex = '1000';
+		// The backdrop follows the new order on the next microtask (layering.ts, MutationObserver).
+		await flush();
 		await escape();
 		expect(screen.queryByRole('dialog', { name: 'コマンドパレット' })).toBeNull();
 		expect(state()).toBe('open');
 		await escape();
 		expect(state()).toBe('closed');
+	});
+
+	it('makes the page outside inert while open, a nested Modal takes over, and closing gives it back (#1055)', async () => {
+		const { opener, dialog } = await openOverlay();
+		const outside = screen.getByTestId('outside');
+		expect(outside.hasAttribute('inert')).toBe(true);
+		expect(opener.hasAttribute('inert')).toBe(true);
+		expect(dialog.closest('[inert]')).toBeNull();
+		// A nested Modal: the outer panel's own controls are behind it now.
+		await fireEvent.click(screen.getByTestId('open-nested'));
+		await flush();
+		expect(screen.getByTestId('field').closest('[inert]')).not.toBeNull();
+		expect(screen.getByTestId('nested-ok').closest('[inert]')).toBeNull();
+		await escape();
+		expect(nestedState()).toBe('closed');
+		expect(screen.getByTestId('field').closest('[inert]')).toBeNull();
+		expect(outside.hasAttribute('inert')).toBe(true);
+		await escape();
+		expect(state()).toBe('closed');
+		expect(outside.hasAttribute('inert')).toBe(false);
+		// Released before focus is given back: the opener was inert until then.
+		expect(document.activeElement).toBe(opener);
+	});
+
+	it('the palette over a Drawer: the Drawer is behind it, and comes back when the palette closes (#1055)', async () => {
+		const { dialog } = await openOverlay();
+		await fireEvent.click(screen.getByTestId('open-palette'));
+		await flush();
+		const palette = screen.getByRole('dialog', { name: 'コマンドパレット' });
+		const paletteOverlay = palette.parentElement as HTMLElement;
+		paletteOverlay.style.position = 'fixed';
+		paletteOverlay.style.zIndex = '1000';
+		await flush();
+		expect(palette.closest('[inert]')).toBeNull();
+		expect(dialog.closest('[inert]')).not.toBeNull();
+		await escape();
+		expect(dialog.closest('[inert]')).toBeNull();
+		expect(screen.getByTestId('outside').hasAttribute('inert')).toBe(true);
 	});
 
 	it('traps Tab inside and pulls stray focus back', async () => {

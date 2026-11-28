@@ -15,6 +15,8 @@
 	 *   underneath (§7.2.1). The only exception is another keypad field: one tap moves there.
 	 * - While open the surface carries `data-esc-layer`, so `@banto/ui` layers yield Esc to
 	 *   it; Esc cancels unless something already consumed it (§7.3).
+	 *   It also carries `data-modal-exempt`: a modal layer makes the page around it `inert`
+	 *   (`@banto/ui` layering, #1055), and the keys for a field inside that modal must stay usable.
 	 * - Hardware keys / scanners typing into the field cancel the keys (one owner of the
 	 *   value, §6.3). A hardware Enter with an unconfirmed change only closes the keys
 	 *   (consumed in the capture phase); held-down Enter repeats never pass through.
@@ -564,6 +566,7 @@
 			class:bottom={session.placement === 'bottom'}
 			popover="manual"
 			data-esc-layer
+			data-modal-exempt
 			data-touch-keys-surface={session.placement}
 			{@attach surface}
 		>

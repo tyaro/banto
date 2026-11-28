@@ -345,7 +345,8 @@
 		threePaneLeft: () => m['uiDemo.threePane.tree'](),
 		threePaneRight: () => m['uiDemo.threePane.detail'](),
 		threePaneResizeLeft: () => m['uiDemo.threePane.treeWidth'](),
-		threePaneResizeRight: () => m['uiDemo.threePane.detailWidth']()
+		threePaneResizeRight: () => m['uiDemo.threePane.detailWidth'](),
+		overlayClose: () => m['common.close']()
 	};
 	type DemoView = 'list' | 'cards' | 'map';
 	const demoViews: SegmentedOption<DemoView>[] = [

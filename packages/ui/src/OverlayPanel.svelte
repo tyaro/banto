@@ -46,7 +46,8 @@
 		hasVisibleLayerAbove,
 		isCloseAllowed,
 		LAYER_INACTIVE_ATTR,
-		restoreFocus
+		restoreFocus,
+		trackModalLayer
 	} from './layering';
 	import { defaultUiMessages } from './messages';
 	import type { OverlayProps } from './overlay';
@@ -196,12 +197,20 @@
 
 	onDestroy(() => clearTimeout(leaveTimer));
 
-	// Promise 4 while open (`panelEl` is bound inside `{#if open}`).
+	// Promises 4 and 8 while open (`panelEl` is bound inside `{#if open}`): the
+	// focus trap, and everything outside the panel `inert`. Both end the moment
+	// `open` turns false - before the `tick()` above gives focus back to an
+	// opener that was inert until then.
 	$effect(() => {
 		if (!open) return;
 		const node = panelEl;
 		if (!node) return;
-		return attachFocusTrap(node);
+		const detachTrap = attachFocusTrap(node);
+		const release = trackModalLayer(node);
+		return () => {
+			release();
+			detachTrap();
+		};
 	});
 
 	/** The trigger of the menu `active` was in (Menu marks it `aria-expanded`), or null. */

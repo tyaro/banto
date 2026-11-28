@@ -13,7 +13,7 @@
 		type CommandPaletteItem
 	} from './commandPalette';
 	import { defaultUiMessages, type UiMessages } from './messages';
-	import { attachFocusTrap, hasVisibleLayerAbove, restoreFocus } from './layering';
+	import { attachFocusTrap, hasVisibleLayerAbove, restoreFocus, trackModalLayer } from './layering';
 
 	interface Props {
 		items: readonly T[];
@@ -147,7 +147,13 @@
 	$effect(() => {
 		const node = paletteEl;
 		if (!node) return;
-		return attachFocusTrap(node);
+		const detachTrap = attachFocusTrap(node);
+		// Promise 8 (layering.ts): the page around the palette is inert while it is open.
+		const release = trackModalLayer(node);
+		return () => {
+			release();
+			detachTrap();
+		};
 	});
 
 	async function execute(item: T): Promise<void> {

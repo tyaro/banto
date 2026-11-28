@@ -129,8 +129,11 @@ export {
 	LAYER_MARKER_ATTR,
 	LAYER_SELECTOR,
 	MENU_LAYER_SELECTOR,
+	MODAL_EXEMPT_ATTR,
 	MODAL_LAYER_SELECTOR,
 	restoreFocus,
+	trackModalLayer,
+	type ModalLayerOptions,
 	type OverlayCloseSource
 } from './layering';
 export { closeOpenMenus } from './openMenus';

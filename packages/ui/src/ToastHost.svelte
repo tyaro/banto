@@ -56,7 +56,8 @@
 	</div>
 {/snippet}
 
-<div class="toast-host">
+<!-- Drawn above every modal layer (--banto-z-toast) and still usable: out of the modal backdrop (layering.ts). -->
+<div class="toast-host" data-modal-exempt>
 	<div class="toast-group" class:empty={polite.length === 0} role="status" aria-live="polite">
 		{#each polite as toast (toast.id)}
 			{@render toastItem(toast)}
