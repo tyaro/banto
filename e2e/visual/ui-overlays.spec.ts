@@ -97,8 +97,10 @@ test.describe('ui-demo Modal / Drawer behaviour', () => {
 		page
 	}) => {
 		// The Drawer makes the page (the Modal's opener included) inert. A Modal that opens from
-		// there (a portal that was mounted before) must get its first focus after the registration
-		// hands its ancestors back - the browser refuses focus into an inert subtree.
+		// there (the demo's `.modal-host`, mounted before and after the Drawer in document order, so
+		// it stacks above it) must get its first focus after the registration hands its ancestors
+		// back - the browser refuses focus into an inert subtree. (A host BEFORE the Drawer would
+		// stay below it and rightly not take focus.)
 		await page.getByTestId('ui-demo-open-drawer').click();
 		const drawer = page.getByRole('dialog', { name: '見本のドロワー' });
 		await expect(drawer).toBeVisible();

@@ -1804,29 +1804,6 @@
 <!-- Outside the cards: under the glass preset SurfaceCard has a
      backdrop-filter, which would make it the containing block of the
      palette's (and the Modal / Drawer's) fixed overlay. -->
-<Modal
-	open={modalOpen}
-	title={m['uiDemo.overlay.modalTitle']()}
-	messages={overlayMessages}
-	onclose={() => {
-		modalOpen = false;
-		overlayClosed += 1;
-	}}
->
-	<div class="stack">
-		<p class="body-text">{m['uiDemo.overlay.modalBody']()}</p>
-		<div class="field">
-			<label class="caption" for="ui-demo-modal-date">{m['uiDemo.overlay.modalDate']()}</label>
-			<DateInput
-				id="ui-demo-modal-date"
-				bind:value={modalDate}
-				locale={getLocale()}
-				messages={dateMessages}
-			/>
-		</div>
-	</div>
-</Modal>
-
 <Drawer
 	open={drawerOpen}
 	title={m['uiDemo.overlay.drawerTitle']()}
@@ -1864,6 +1841,35 @@
 	</Modal>
 </Drawer>
 
+<!-- After the Drawer on purpose: two overlays at the same z-index stack by document order,
+     so a Modal opened while the Drawer is up (from a container the Drawer made inert, #1055)
+     is the topmost layer and takes the first focus. The wrapper is the already-mounted container
+     the Drawer's backdrop makes inert. -->
+<div class="modal-host">
+	<Modal
+		open={modalOpen}
+		title={m['uiDemo.overlay.modalTitle']()}
+		messages={overlayMessages}
+		onclose={() => {
+			modalOpen = false;
+			overlayClosed += 1;
+		}}
+	>
+		<div class="stack">
+			<p class="body-text">{m['uiDemo.overlay.modalBody']()}</p>
+			<div class="field">
+				<label class="caption" for="ui-demo-modal-date">{m['uiDemo.overlay.modalDate']()}</label>
+				<DateInput
+					id="ui-demo-modal-date"
+					bind:value={modalDate}
+					locale={getLocale()}
+					messages={dateMessages}
+				/>
+			</div>
+		</div>
+	</Modal>
+</div>
+
 <CommandPalette
 	bind:open={paletteOpen}
 	items={paletteItems}
@@ -1879,6 +1885,9 @@
 />
 
 <style>
+	.modal-host {
+		display: contents;
+	}
 	/* The frame decides narrow by its own width: the box's corner narrows it. */
 	.three-pane-box {
 		height: 16rem;
