@@ -102,6 +102,40 @@ test('the outer guide buttons of a dock taller than the viewport are all on scre
 	expect(Math.abs(memoBox.y + memoBox.height - (after.y + after.height))).toBeLessThan(8);
 });
 
+test('the top outer guide button is below the sticky header when the dock is scrolled under it', async ({
+	page
+}) => {
+	await openDashboard(page);
+	const memoWindow = await floatMemo(page);
+	const header = page.locator('header').first();
+	const headerBox = await header.boundingBox();
+	if (!headerBox) throw new Error('header not visible');
+	const headerBottom = headerBox.y + headerBox.height;
+
+	await memoWindow.locator('.titlebar').scrollIntoViewIfNeeded();
+	const barBox = await memoWindow.locator('.titlebar').boundingBox();
+	if (!barBox) throw new Error('memo window not visible');
+	const from = { x: barBox.x + 30, y: barBox.y + barBox.height / 2 };
+	await page.mouse.move(from.x, from.y);
+	await page.mouse.down();
+	try {
+		await page.mouse.move(from.x + 12, from.y + 12, { steps: 3 });
+		// The page scrolls under the drag until the dock's top is under the sticky header.
+		await page.mouse.wheel(0, 260);
+		await expect
+			.poll(async () => ((await dockHost(page).boundingBox())?.y ?? 0) < headerBottom - 10)
+			.toBe(true);
+		await page.mouse.move(from.x + 20, from.y + 20, { steps: 2 });
+		const topBox = await outer(page, 'top').boundingBox();
+		if (!topBox) throw new Error('top button not visible');
+		// Not under the header (#1058: it was at y=9..41, behind the 48px header).
+		expect(topBox.y).toBeGreaterThanOrEqual(headerBottom);
+		await expect(outer(page, 'top')).toBeInViewport({ ratio: 1 });
+	} finally {
+		await page.mouse.up();
+	}
+});
+
 test('the slide-out of an auto-hidden pane is above a floating window lying over it', async ({
 	page
 }) => {

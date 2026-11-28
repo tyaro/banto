@@ -9,6 +9,7 @@
  */
 import { getContext, setContext } from 'svelte';
 import type { ClampOptions } from './geometry';
+import type { OverlayInset } from './edges';
 
 /**
  * What the UI offers for one pane. Every field defaults to `true`; return
@@ -62,6 +63,12 @@ export interface DockPolicy {
 	 * are fixed, the collapse / lock / pin-back buttons are not drawn. Omitted = `true`.
 	 */
 	readonly arrange?: boolean;
+	/**
+	 * What covers the top / bottom of the viewport from outside the host (a fixed / sticky
+	 * header, #1058): read on every hover update of a drag, taken off the part of the host the
+	 * outer-edge buttons are laid out in. Omitted = nothing covers it.
+	 */
+	readonly overlayInset?: () => OverlayInset | undefined;
 }
 
 const NO_POLICY: DockPolicy = { clamp: undefined, capabilities: undefined };

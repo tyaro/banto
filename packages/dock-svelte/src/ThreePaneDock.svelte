@@ -59,6 +59,7 @@
 	import DockHost from './DockHost.svelte';
 	import type { GestureCancelReason, GestureKind } from './core/gesture.svelte';
 	import type { ClampOptions } from './core/geometry';
+	import type { OverlayInset } from './core/edges';
 	import type { DockPanelChange, DockPanelChangeOutcome } from './core/lifecycle';
 	import {
 		titleBarFocusTarget,
@@ -153,6 +154,8 @@
 		iconContent?: Snippet<[string]>;
 		onPopOut?: (content: PanelContent) => void;
 		clamp?: ClampOptions;
+		/** Passed to `DockHost` (#1058): what a fixed / sticky header or footer covers of the viewport. */
+		overlayInset?: () => OverlayInset | undefined;
 		/** Per-pane capabilities, passed to `DockHost`. The centre's are fixed (module doc). */
 		capabilities?: (panelId: string) => DockCapabilities | undefined;
 		canStartGesture?: (kind: GestureKind, panelId: string | null) => boolean;
@@ -208,6 +211,7 @@
 		iconContent,
 		onPopOut,
 		clamp,
+		overlayInset,
 		capabilities,
 		canStartGesture,
 		onGestureEnd,
@@ -1069,6 +1073,7 @@
 		{onPopOut}
 		messages={t}
 		{clamp}
+		{overlayInset}
 		capabilities={paneCaps}
 		canStartGesture={gestureCanStart}
 		onGestureEnd={gestureEnded}

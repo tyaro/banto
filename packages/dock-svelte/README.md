@@ -144,7 +144,8 @@ host の 1/4（`EDGE_DOCK_RATIO`。分割の比率は左・上なら `[0.25, 0.7
   （host の辺に沿って入る。見えている範囲の辺ではない）。枠は host の 1/4 のうち見えている部分で、ほとんど見えて
   いないときは、ボタンを囲む細い帯（ボタン + 上下 8px）を見えている範囲の端に出す。host がすべて見えているときは
   今までどおり。純関数は `visibleHostRect`（見えている範囲）・`edgeButtons` / `computeEdgeDrop` の任意の引数
-  `visible`・`edgeGuideRect`（枠）。固定・sticky のヘッダのように、祖先でない要素が host に被さる分は見ない。
+  `visible`・`edgeGuideRect`（枠）。固定・sticky のヘッダのように、祖先でない要素が host に被さる分は自動では見ないので、消費側が `DockHost`（`ThreePaneDock` も）の `overlayInset` に渡す（#1058、下記）。
+- **固定・sticky の要素が上下に被さるとき（#1058）**: `DockHost` の `overlayInset?: () => { top?: number; bottom?: number }` に、viewport の上端・下端から被さっている px を返す関数を渡す（省くと 0 ＝今までどおり）。外周のボタンは、その分を引いた範囲の各辺の真ん中に出る（上のボタンがヘッダの裏に入らない）。ドラッグ中の更新のたびに呼ぶので、ヘッダの高さが変わっても（文字 200% など）追える。落とした先は変わらない。例: `overlayInset={() => ({ top: document.querySelector('header')?.getBoundingClientRect().bottom })}`。純関数は `insetViewport(viewport, inset)`（`visibleHostRect` の `clips` に渡す）。
 - 外周のボタンは区画の十字より先に判定する。host の縁に接する小さい区画で十字のボタンと外周のボタンが重なるときは、
   重なった十字のボタンを出さず、外周が勝つ。縁に重なった浮動 window の上でも外周のボタンが勝つ。
 - 外周を出すのは、ドラッグしている pane のほかに docked の pane があるときだけ。docked が空（またはドラッグしている
