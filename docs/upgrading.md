@@ -1467,3 +1467,70 @@ tauri::Builder::default().plugin(banto_tauri_panel::init())
 2. 取り込んだなら: pop-out の窓が開き、同じ id では前に出るだけ、閉じるとパネルが dock に戻り、メインを閉じると窓も閉じること。
 3. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。
 4. 同期記録に「v9.3.0 取込済」を書く。
+
+### 例 17: v9.3.x → v10.0.0（モーダルの外側の `inert`・grid の NVDA 対応・pop-out の直し・単一起動。A と B・挙動の変更）
+
+モーダルな層の外側を `inert` にし（#1055、[ADR-0038](adr/0038-modal-backdrop-inert.md)）、`BantoGrid` を NVDA で読める形にそろえ
+（#1016・#1034・#1035・#1036）、pop-out のパネルの窓の残りを直し（#1013〜#1024）、テンプレートのデスクトップ版に
+二重起動の防止を足した（#1028・#1046）。API の削除・改名はなく、migration もない。
+それでも **major**: 既存のコードを書き換えずにタグだけ上げても、次の 3 つの実行時の挙動・意味が変わる
+（[publishing.md「バージョニング規約」](publishing.md#バージョニング規約)の「既存の機能のままで実行時の値・意味が変わるものは `major`」）。
+
+1. `Modal`・`Drawer`・`ConfirmDialog`・`CommandPalette`（と `ThreePaneLayout` の重ねたペイン）が開いている間、外側が `inert`。
+   トーストのボタン（「取り消し」など）も押せない。
+2. `BantoGrid` で今のセルが画面の外にあると、操作のキーの 1 回目はスクロールと知らせだけ
+   （`onRowClick`・`onRowContextMenu`・編集の開始・行の選択・グループの開閉は呼ばれない）。
+3. `GridMessages.filterAriaLabel` は絞り込みのポップオーバー（dialog）の名前専用。見出しのボタンの名前は新しいキー `filterButtonLabel`。
+
+| 経路 | 項目 | 取り込み |
+| ---- | ---- | -------- |
+| A | `@banto/ui` を上げる | **モーダルの外側が `inert`**。モーダルより上に描いて使わせたい要素には `data-modal-exempt`。自作のモーダルな層は `trackModalLayer(要素)`。`ThreePaneLayout` の重ねたペインは真のモーダル（✕ が付く。文言は `messages.overlayClose`）で、戻すなら `leftDrawerModal` / `rightDrawerModal` を false。`ErrorState` の `action` は `role="alert"` の外に出る |
+| A | `@banto/grid-svelte` を上げる | **画面の外の今のセルへの操作のキーは 1 回目がスクロールだけ**。**絞り込みのボタンの名前は「絞り込み」**（訳すなら `filterButtonLabel`）。Tab の止まり場は本文 1 つ・見出し 1 つ・一括操作バー。列見出し・外枠の名前、件数の桁区切り、`aria-selected`・`aria-activedescendant` が変わる。`Required<GridMessages>` は `scrolledToActiveCell`・`filterButtonLabel`・`selectColumnLabel`・`gridLabel` を足す |
+| A | `@banto/dock-svelte` を上げる | 外周のガイドボタンは host のうち見えている範囲に出る。sticky のヘッダーを重ねる画面は `overlayInset`。**`DockLayoutStore` を自前で実装・モックしている型は、`commit` の戻り値を `Promise<DockLayoutSaveOutcome>` に**（`void` を返す実装は型検査で落ちる） |
+| A | `@banto/admin-core`・`banto-tauri-panel` を上げる（pop-out を使うアプリ） | capability に `banto-tauri-panel:allow-list`・`allow-close` を足す。`createPanelPopOut` に `storage`・`background`、配置のリセットの後に `closeWindows()`。`PanelPopOut` の自前の実装は `closeWindows` ほかを足す。Rust は `PanelConfig` の `..` なしの構造体リテラルと `ConfigError` の `_` なしの `match` が落ちる |
+| A | `@banto/charts`・`@banto/theme`・`@banto/forms`・`@banto/attachments` を上げる | 文字 200%・狭い幅の直し（軸のラベルの間引き・内寄せ、`.banto-btn` の `min-height`）と、知らせの要素の外へ出した操作部。コードの書き換えは要らない。visual の基準画像は作り直しが要ることがある |
+| B | 単一起動（`src-tauri/src/instance_guard.rs`・`lib.rs`） | 取り込みは任意。すでに `instance_guard.rs` を写している下流は #1046 の分を含めて写し直す。旧版をすべて終了してから新しい版を起動する |
+| B | pop-out の配線（`popout.ts`・`dashboardLayout.ts`・ダッシュボードの `+page.svelte`・`capabilities/default.json`） | pop-out を使うなら、capability と一緒にまとめて写す |
+| B | `src/app.html`・`src/hooks.server.ts`・`src/routes/+layout.svelte` | 読み込み中の文言（#1024）。**3 つ一緒に**写す（`app.html` だけだと `%banto.…%` が残る）。自前の `hooks.server.ts` があれば `transformPageChunk` を足す |
+| B | `ConnectionBanner.svelte`・`StartupSplash.svelte`・`+error.svelte`・`ResourceServerGrid.svelte`・`ResourceListPage.svelte`・`LanReachCheckPanel.svelte` | 知らせの要素と操作部の分離。写している下流は写し直す |
+| B | `i18n.ts`・`messages/{ja,en}.json`・`ResourceClientGrid`/`ResourceServerGrid` の `label`・`ConflictDialog.svelte`・`DashboardKpiStrip.svelte` ほか | grid の文言（`grid.filterButtonLabel` ほか）と表示言語の桁区切り（`formatCount`）、200% の直し。取り込みは任意 |
+| C | DB・設定キー・配布物 | 変更なし（`tauri.conf.json` は版数のみ）。単一起動を取り込むと、データフォルダに `*.lock`・`*.port` が増える |
+
+pop-out を使うアプリの capability の例:
+
+```json
+// src-tauri/capabilities/default.json の permissions
+"banto-tauri-panel:allow-open",
+"banto-tauri-panel:allow-list",
+"banto-tauri-panel:allow-close"
+```
+
+進め方:
+
+1. A のタグを上げ、`pnpm check`・`cargo test` を通す。型エラーが出るのは、`DockLayoutStore`・`PanelPopOut` の自前の実装・モック、
+   `Required<GridMessages>`、Rust の `PanelConfig` の構造体リテラル・`ConfigError` の `match` だけ。
+2. モーダルが開いている間に外側を操作させている画面を洗う。使わせたい要素に `data-modal-exempt` を付ける。
+   期限付きの取り消しをトーストのボタンにだけ出している画面は、猶予中にモーダル（コマンドパレットを含む）を開かせない・
+   モーダルの間はタイマーを止める・取り消しをモーダルの中からも使えるようにする、のどれかにする。
+3. grid の E2E を直す: 絞り込みのボタンは列見出しから辿る
+   （`getByRole('columnheader', { name: '商品名' }).getByRole('button', { name: '絞り込み' })`）。
+   「スクロールで離れてから Enter」は 2 回押す。Tab で行の部品へ進む手順は、今のセルからの Space / Enter / F2 に直す。
+   `aria-selected="false"`・`[aria-live="polite"]` の数・`.row` の数・桁区切りなしの件数で探しているものを直す。
+4. dock の E2E で外周のボタンを「host の辺の真ん中」と決め打ちしているものは、
+   `.guide-button.outer[data-dock-edge="left"]` などの `boundingBox()` で聞く。dock の上に sticky のヘッダーがあれば `overlayInset` を渡す。
+5. pop-out を使うアプリは、capability の 2 行を足し、[panel-windows.md](recipes/panel-windows.md) の
+   「配置を既定に戻すとき」「戻した配置が保存できるまで覚えておく」に沿って配線を直す。
+6. コピーしたテンプレートは、B の差分を機能ごとに読んで写す。
+
+確認項目:
+
+1. `pnpm check`・`pnpm build`・`pnpm verify:architecture`・`cargo test`。
+2. モーダルを開いている間、外側（ヘッダー・サイドバー・トーストのボタン）が押せず、`data-modal-exempt` の要素は押せること。
+   閉じるとフォーカスが元へ戻ること。
+3. `BantoGrid` で、セルを選んでスクロールで離れて Enter を押すと、1 回目は今のセルへ戻るだけで、2 回目で行が開くこと。
+   スクリーンリーダーを使う運用があれば、NVDA でセルの移動・並べ替え・絞り込みを読ませる。
+4. pop-out を使うアプリは、窓に出したままメインを閉じて起動し直すとパネルが dock に戻ること、
+   「レイアウトを既定に戻す」で窓が閉じて二重にならないこと。
+5. 単一起動を取り込んだデスクトップ版は、同じ版の 2 つめが起動せず、起動中の窓が前に出ること。
+6. `pnpm scaffold --dry-run` が 4 プリセットで通ること（scaffold を使う派生アプリ）。visual の基準画像を Linux で作り直す。
+7. 同期記録に「v10.0.0 取込済（`data-modal-exempt` の要否・capability の 2 行・単一起動の有無）」を書く。
