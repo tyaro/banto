@@ -125,6 +125,21 @@
   1 / 2 / 4 段に置く。ライトは surface 1・bg 2）。
 - **状態 4 色**（danger / warning / success / info）は色相を固定し、ブランドに追従させない。
   `--banto-info`・`--banto-info-tint`・`--banto-info-tint-text` を新設（warning と同じ組。塗りは作らない）。
+- **状態の段**（#1068）: 黄とオレンジを両方使う画面（設備の状態を 5 段で色分けする監視画面など）のために、
+  黄の段 **caution** を足した。並びは neutral < success < caution < warning < danger。色相は固定で
+  ブランドに追従しない。既存の `--banto-warning` 系の値は変えていない。
+  - `--banto-caution`・`--banto-caution-tint`・`--banto-caution-tint-text`: warning と同じ組（文字色・淡い地・
+    その上の文字。塗りボタンは作らない）。明るいテーマで 4.5:1 を満たす黄はオリーブ色になる。
+  - `--banto-neutral-fill`・`--banto-success-fill`・`--banto-caution-fill`・`--banto-warning-fill`・
+    `--banto-danger-fill`: ランプ・アイコン・帯など、**上に文字を載せない**状態表示の色。基準は
+    WCAG 1.4.11 の 3:1（bg / surface / raised、glass の面の上でも）で、文字の 4.5:1 ではないので、黄を
+    黄のまま保てる。`-solid`（ボタンの地。対になる `--banto-on-*` がある）とは別物で、上に載せる文字色は
+    用意しない。neutral はニュートラルの 10 段を指す。
+  - caution と warning の見分け: 文字色・tint-text・fill のどれも OKLab 距離 0.09 以上
+    （チャートと状態色の間の下限 `STATUS_MIN` と同じ値）。fill は色相の差 40 度以上、ダークの fill は
+    明度の差 0.10 以上。値と実測は計画書の付録 A.3、検査は `packages/theme/tests/contrast.test.ts`。
+  - 状態と段の対応（どの状態を何色にするか）は利用側が決める。色だけに頼らず、アイコン・文字を併記する。
+    `StatusBadge`・grid の `tone` にはこの段を足していない（別に判断する）。
 - **チャートの色**（#557 の 3）も固定でブランドに追従させない。カテゴリ 8 色（`--banto-chart-1..8`）は
   色覚の違い（1 型・2 型・3 型、Machado 2009 のシミュレーション）でも隣り合う系列が見分けられるよう、
   OKLab 距離で選び直した（旧配色は系列 2 と 4 がどちらも緑で、2 型では全ペアの最小が 0.016 まで縮んでいた）。

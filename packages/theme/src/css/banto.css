@@ -35,7 +35,7 @@
      :root (not on a nested element: the derived tokens are computed on :root
      and on each [data-theme] element, and the hue is inherited from :root). Lightness and chroma are chosen so white on the
      light solid and the dark text on the dark solid stay >= 4.5:1 at any hue.
-     The state hues (danger / warning / success / info) are fixed on purpose -
+     The state hues (danger / warning / caution / success / info) are fixed on purpose -
      they must not change meaning with the brand. */
 	--banto-brand-hue: 258;
 
@@ -338,6 +338,12 @@
 
 	--banto-warning: oklch(0.555 0.132 58);
 
+	/* Caution (#1068): the yellow step between success and warning, for screens
+	   that need both a yellow and an orange state (neutral < success < caution <
+	   warning < danger). A yellow that keeps 4.5:1 as TEXT on a light surface is
+	   an olive, so lamps / icons use --banto-caution-fill below instead. */
+	--banto-caution: oklch(0.52 0.104 104);
+
 	--banto-success: oklch(0.525 0.148 149);
 
 	--banto-info: oklch(0.54 0.105 235);
@@ -477,6 +483,29 @@
 
 	--banto-warning-tint-text: oklch(0.473 0.125 46);
 
+	--banto-caution-tint: oklch(0.955 0.1 107);
+
+	--banto-caution-tint-text: oklch(0.47 0.095 102);
+
+	/* State fills (#1068): the colour of a lamp, an icon or a bar that shows a
+	   state WITHOUT text on it - >= 3:1 against bg / surface / raised (WCAG
+	   1.4.11), also on the glass surfaces, instead of the 4.5:1 of the text
+	   colours above, so the yellow can stay a yellow. Five steps in order of
+	   severity; which state maps to which step is the app's decision. Not a
+	   button fill: there is no on-colour for these (that is -solid +
+	   --banto-on-*). Fixed hues, like the other state colours; the neutral step
+	   follows the neutral scale. Checked in tests/contrast.test.ts (contrast,
+	   gamut, caution vs warning). */
+	--banto-neutral-fill: var(--banto-neutral-10);
+
+	--banto-success-fill: oklch(0.6 0.17 148);
+
+	--banto-caution-fill: oklch(0.615 0.126 98);
+
+	--banto-warning-fill: oklch(0.64 0.165 50);
+
+	--banto-danger-fill: oklch(0.58 0.22 27);
+
 	/* Info (#557): neutral notices that are neither success nor a warning.
 	   Same pairs as warning (no solid - there is no "info" button). */
 	--banto-info-tint: oklch(0.955 0.022 235);
@@ -521,6 +550,7 @@
 	--banto-brand-accent: oklch(0.7 0.14 calc(var(--banto-brand-hue) + 40));
 	--banto-danger: oklch(0.69 0.199 25);
 	--banto-warning: oklch(0.769 0.165 70);
+	--banto-caution: oklch(0.87 0.175 100);
 	--banto-success: oklch(0.723 0.192 150);
 	--banto-info: oklch(0.72 0.12 235);
 
@@ -586,6 +616,16 @@
 	--banto-success-tint-text: oklch(0.8 0.182 152);
 	--banto-warning-tint: color-mix(in srgb, var(--banto-warning-tint-text) 18%, transparent);
 	--banto-warning-tint-text: oklch(0.837 0.164 84);
+	--banto-caution-tint: color-mix(in srgb, var(--banto-caution-tint-text) 18%, transparent);
+	--banto-caution-tint-text: oklch(0.91 0.16 106);
+	/* State fills (#1068, see the light block). On a dark surface the yellow can
+	   be bright: caution / warning / danger also step down in lightness, which
+	   survives a colour-vision deficiency. --banto-neutral-fill is not repeated:
+	   it points at step 10, which is redefined above. */
+	--banto-success-fill: oklch(0.723 0.192 150);
+	--banto-caution-fill: oklch(0.87 0.175 100);
+	--banto-warning-fill: oklch(0.74 0.17 55);
+	--banto-danger-fill: oklch(0.69 0.199 25);
 	--banto-info-tint: color-mix(in srgb, var(--banto-info-tint-text) 18%, transparent);
 	--banto-info-tint-text: oklch(0.8 0.1 235);
 

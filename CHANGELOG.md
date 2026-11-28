@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- feat(theme): 状態を色で 5 段に分けるトークンを足した（追加のみ。既存のトークンの値と画面は変わらない。#1068）。並びは neutral < success < caution < warning < danger。(1) 黄の段 **caution**: `--banto-caution`（文字色）・`--banto-caution-tint`・`--banto-caution-tint-text`（warning と同じ組。ライト `oklch(0.52 0.104 104)`・`oklch(0.955 0.1 107)`・`oklch(0.47 0.095 102)`、ダーク `oklch(0.87 0.175 100)`・18% の膜・`oklch(0.91 0.16 106)`）。今の `--banto-warning`（琥珀〜オレンジ）だけでは黄とオレンジを両方は表せなかった。(2) ランプ・アイコン・帯の色 `--banto-neutral-fill`・`--banto-success-fill`・`--banto-caution-fill`・`--banto-warning-fill`・`--banto-danger-fill`: 上に文字を載せない状態表示用で、面（bg / surface / raised、glass の surface / raised）に 3:1 以上（WCAG 1.4.11）。文字の 4.5:1 より緩いので黄が黄のまま残る（ライトの 4.5:1 の黄はオリーブ色になる）。`-solid`（ボタンの地）とは別で、上に載せる文字色は無い。色相は固定でブランドに追従しない（neutral だけニュートラルの 10 段）。caution と warning は、文字色・tint-text・fill のどれも OKLab 距離 0.09 以上、fill は色相の差 40 度以上を `contrast.test.ts` で固定した。**状態と段の対応は利用側が決める。色だけに頼らず、アイコン・文字を併記する**（README「状態の段のトークン」）。`StatusBadge`・grid の `tone` には段を足していない。glass の上書きは不要（状態色は glass で変えていない）。
+
 - feat(admin-template): リソースの一覧から開く行の詳細（編集・履歴。新規作成は今までどおりページで開く）を**ドロワーで出すかダイアログで出すか**を、設定 → 外観の「入力の表示」で利用者ごとに選べるようにした（追加。既定は従来どおりドロワーで、既定のままなら見た目も挙動も変わらない）。`ResourceListPage.svelte` が設定に応じて `Drawer` と `Modal`（同じ props）を出し分ける。保存先は localStorage `banto.formPresentation` と UI 設定キー `ui.formPresentation`（値 `drawer` | `dialog`。不正な値は既定に戻る）。共通パッケージ（packages/*）の変更なし。テンプレートを写したアプリ（経路 B）が取り込むファイル: `apps/admin-template/src/lib/settings.svelte.ts`・`apps/admin-template/src/lib/resource/ResourceListPage.svelte`・`apps/admin-template/src/routes/(app)/settings/AppearanceSection.svelte`・`apps/admin-template/messages/{ja,en}.json`（`settings.formPresentation*` の 4 キー）。
 - chore(fixtures): v10.0.0 のタグ後の外部利用 fixture の ref を `v10.0.0` に更新した。[10.0.0] に「検証した組み合わせ」を追記。
 
