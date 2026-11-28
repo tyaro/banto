@@ -87,7 +87,10 @@
  * order they close (the order of those that remain is kept).
  * Equal z-indexes paint in document order, so OverlayPanel (Modal, Drawer,
  * ConfirmDialog) also raises its own z-index over the equals opened before
- * it ({@link modalLayerLift}): on top by the rules = drawn on top.
+ * it ({@link liftModalLayer}): on top by the rules = drawn on top. That lift
+ * is for the paint only: two tracked layers are compared by their z-index
+ * **without** it (else a third sibling at 900 would lose to the second one,
+ * lifted to 901); against an untracked layer the z-index counts as painted.
  *
  * - Only the `inert` this module set is removed. An element that was already
  *   `inert` is left alone, and one whose `inert` the app writes while a layer
@@ -222,17 +225,38 @@ function modalOrderOf(el: Element): number {
 	return found;
 }
 
-/** Is the active layer `el` above `self` (see the module doc)? */
+/**
+ * The part of `el`'s effective z-index that is the lift of the tracked layer
+ * at `order` ({@link liftModalLayer}): the layer's lift when `el` takes its
+ * z-index from that layer (it is the layer, or sits in it without a z-index
+ * of its own), else `0`.
+ */
+function liftWithin(el: Element, order: number): number {
+	const entry = modalBackdrops.get(el.ownerDocument)?.entries[order];
+	if (!entry || entry.lift === 0) return 0;
+	return hasOwnZIndexWithin(el, entry.layer) ? 0 : entry.lift;
+}
+
+/** Is the active layer `el` above `self` (see the module doc)? `selfZ` = `effectiveZIndex(self)`. */
 function isAbove(el: Element, self: Element, selfZ: number): boolean {
 	if (isInOpenPopover(el)) return true;
 	if (self.contains(el)) return hasOwnZIndexWithin(el, self);
 	const z = effectiveZIndex(el);
-	if (z !== selfZ) return z > selfZ;
-	// Equal z: between two registered modal layers the one opened later is on
-	// top (its backdrop makes the other inert, whatever the document order).
 	const order = modalOrderOf(el);
 	const selfOrder = modalOrderOf(self);
-	if (order !== -1 && selfOrder !== -1 && order !== selfOrder) return order > selfOrder;
+	// Two registered modal layers: judged by the z-index they have **without
+	// their lift** - the lift only draws what the order of opening decided, so
+	// it must not decide in turn (a third sibling at 900 would lose to the
+	// second one, lifted to 901). At equal z the one opened later is on top
+	// (its backdrop makes the other inert, whatever the document order).
+	if (order !== -1 && selfOrder !== -1 && order !== selfOrder) {
+		const base = z - liftWithin(el, order);
+		const selfBase = selfZ - liftWithin(self, selfOrder);
+		return base !== selfBase ? base > selfBase : order > selfOrder;
+	}
+	// One of the two is not registered: what is painted decides - the z-index
+	// as it is (lift included), then the document order.
+	if (z !== selfZ) return z > selfZ;
 	return (self.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
@@ -429,7 +453,10 @@ export interface ModalLayerOptions {
 interface ModalEntry {
 	layer: HTMLElement;
 	backdrop?: () => Element | null | undefined;
-	/** What {@link modalLayerLift} told this layer to add to its z-index. */
+	/**
+	 * How much of the layer's z-index is its lift ({@link liftModalLayer}): for
+	 * the paint only, taken off again when two tracked layers are compared.
+	 */
 	lift: number;
 }
 
@@ -606,25 +633,36 @@ function syncModalBackdrop(doc: Document, state: ModalBackdrop): void {
 }
 
 /**
- * How much the tracked layer `layer` must add to its z-index to be **drawn**
- * above the tracked layers it is above by the rules: at the same z-index the
- * one registered last is on top, but CSS paints equal z-indexes in document
- * order - a Modal that sits before an open Drawer in the DOM would be usable
- * and yet painted under the Drawer's scrim. One more than the highest lift
- * among the other open layers that share its z-index (before their lift);
- * `0` when there is none, so a single layer keeps the theme's number.
+ * Raise the tracked layer `layer` so that it is **drawn** above the tracked
+ * layers it is above by the rules: at the same z-index the one registered
+ * last is on top, but CSS paints equal z-indexes in document order - a Modal
+ * that sits before an open Drawer in the DOM would be usable and yet painted
+ * under the Drawer's scrim. The lift is one more than the highest lift among
+ * the other open layers that share its z-index (theirs **without** their
+ * lift); `0` when there is none, so a single layer keeps the theme's number.
+ *
+ * `apply` writes the lift onto the element that carries the z-index (it is
+ * called with `0` too). What the z-index really moved by is remembered and
+ * left out when two tracked layers are compared, so the lift never changes
+ * who is on top among them - three siblings opened in a row are 900 / 901 /
+ * 902 on screen and 900 / 900 / 900, in the order of opening, for the rules.
+ * Against a layer nobody tracked the z-index counts as painted, lift
+ * included; the backdrop is brought in line with that before this returns,
+ * so the caller can move focus right after.
  *
  * Package-internal (OverlayPanel: Modal / Drawer / ConfirmDialog, the layers
  * that share `--banto-z-modal`). Call it right after {@link trackModalLayer},
- * with the previous lift taken off the element, and apply the answer.
+ * with the previous lift taken off the element. Returns the lift.
  */
-export function modalLayerLift(layer: HTMLElement): number {
-	const entries = modalBackdrops.get(layer.ownerDocument)?.entries ?? [];
+export function liftModalLayer(layer: HTMLElement, apply: (lift: number) => void): number {
+	const doc = layer.ownerDocument;
+	const state = modalBackdrops.get(doc);
+	const entries = state?.entries ?? [];
 	// Registered twice: the latest speaks.
 	const index = entries.map((entry) => entry.layer).lastIndexOf(layer);
-	if (index === -1) return 0;
+	if (!state || index === -1) return 0;
 	const own = entries[index];
-	const z = effectiveZIndex(layer);
+	const z = effectiveZIndex(layer) - own.lift;
 	let lift = 0;
 	for (const entry of entries.slice(0, index)) {
 		// Nested either way: the stacking context of the outer one decides, not a number.
@@ -632,7 +670,10 @@ export function modalLayerLift(layer: HTMLElement): number {
 		if (!entry.layer.isConnected) continue;
 		if (effectiveZIndex(entry.layer) - entry.lift === z) lift = Math.max(lift, entry.lift + 1);
 	}
-	own.lift = lift;
+	apply(lift);
+	// Measured, not assumed: an `apply` that could not write leaves the rules as they were.
+	own.lift = effectiveZIndex(layer) - z;
+	syncModalBackdrop(doc, state);
 	return lift;
 }
 

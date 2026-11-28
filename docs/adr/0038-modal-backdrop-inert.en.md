@@ -52,8 +52,18 @@ document order as before**. Esc so closes the upper layer only and never disagre
 CSS paints equal z-indexes in document order, so the rule alone would leave the upper layer drawn under the lower one's
 scrim. `OverlayPanel` (`Modal`, `Drawer`, `ConfirmDialog` - all at `--banto-z-modal`) therefore raises its own z-index
 after registering, by one more than the layers already open at the same z-index (`--overlay-lift`; a single open layer
-gets 0 = the theme's number). Once raised, rule 2 gives the same answer. An app that tracks its own layer at the same
-z-index as a @banto/ui layer decides its paint order itself (a different z-index is the simple way).
+gets 0 = the theme's number). An app that tracks its own layer at the same z-index as a @banto/ui layer decides its
+paint order itself (a different z-index is the simple way).
+
+**The lift is for the paint only; it takes no part in deciding who is above.** Two tracked layers (rules 2 and 3) are
+compared by their z-index without the lift (the theme's number). Compared as raised, three sibling layers opened in a
+row go wrong: the second is at 901, the third registers at 900, rule 2 puts the second one above, and the third becomes
+`inert` and has its first focus refused. Without the lift all three are 900, rule 3 (the registration order) alone
+decides, and the answer matches the paint (900 / 901 / 902). What is taken off is the measured change of the z-index
+around the lift (0 when nothing could be written). **Against an untracked layer the comparison is as painted** (the
+raised z-index, then the document order): a layer with no registration order must not be judged "above" while it is
+drawn below. `OverlayPanel` does it in this order, synchronously: register, raise, bring the backdrop in line (an
+untracked layer that the lift put below joins it), then the first focus.
 
 Adding and removing `inert` per layer (reference counts) was rejected: computing "the set that must be inert now" and
 writing only the difference to what we set keeps one state under out-of-order closes and DOM changes.
@@ -111,7 +121,9 @@ without Esc. Non-modal drawers (`leftDrawerModal` / `rightDrawerModal` false) do
   judged "above" this way stays out of the backdrop.
 - While two or more `Modal` / `Drawer` are stacked, the later one's z-index is `--banto-z-modal` plus one per layer. An
   untracked layer at that same value (an open off-canvas sidebar = `--banto-z-sidebar`) is then below it wherever it is in
-  the document, and part of the backdrop.
+  the document, and part of the backdrop. A tracked layer placed just above `--banto-z-modal` (+1, +2 ...) is above by
+  the rules (its own number is higher) and yet can meet the painted number of a stacked `Modal` / `Drawer`. Put other
+  layers well apart (the command palette is at 1000).
 - Making a control inside a live region `inert` puts it back into the accessibility tree on close; an `aria-atomic`
   region may be read again.
 - For a layer inside a shadow DOM, only what is outside the shadow root becomes the backdrop.

@@ -15,7 +15,7 @@
  */
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { MODAL_EXEMPT_ATTR, hasVisibleLayerAbove, trackModalLayer } from '../src/index';
-import { modalLayerLift } from '../src/layering';
+import { liftModalLayer } from '../src/layering';
 
 beforeAll(() => {
 	Element.prototype.getClientRects = function (this: Element) {
@@ -76,6 +76,13 @@ function shell() {
 	const scrim = el('div', frame, { 'data-scrim': '' });
 	const footer = el('footer', app);
 	return { app, header, headerButton, main, aside, frame, pane, center, scrim, footer };
+}
+
+/** What OverlayPanel does after registering: the lift goes onto the overlay's z-index. */
+function lift(l: { overlay: HTMLElement; panel: HTMLElement }, base = 900): number {
+	return liftModalLayer(l.panel, (n) => {
+		l.overlay.style.zIndex = String(base + n);
+	});
 }
 
 const inert = (node: Element) => node.hasAttribute('inert');
@@ -390,17 +397,13 @@ describe('trackModalLayer: layers stacked', () => {
 		expect(hasVisibleLayerAbove({ except: late.panel })).toBe(false);
 	});
 
-	it('modalLayerLift: one above the open layers that share the z-index, 0 otherwise', () => {
-		const lift = (l: { overlay: HTMLElement; panel: HTMLElement }) => {
-			const n = modalLayerLift(l.panel);
-			l.overlay.style.zIndex = String(900 + n);
-			return n;
-		};
+	it('liftModalLayer: one above the open layers that share the z-index, 0 otherwise', () => {
 		const high = layer(1000);
 		const a = layer(900);
 		const b = layer(900);
 		const c = layer(900);
-		expect(modalLayerLift(a.panel)).toBe(0);
+		// Not registered: nothing to lift, nothing written.
+		expect(liftModalLayer(a.panel, () => expect.unreachable())).toBe(0);
 		track(high.panel);
 		const releaseB = track(b.panel);
 		// Alone at its z-index (the palette above is another number): the theme's value.
@@ -422,6 +425,136 @@ describe('trackModalLayer: layers stacked', () => {
 		b.overlay.style.zIndex = '900';
 		track(b.panel);
 		expect(lift(b)).toBe(3);
+	});
+
+	it('equal z, three siblings opened in a row: the lift draws, it does not decide (the third is on top)', () => {
+		// Document order c, a, b; opened a, b, c - the third comes first in the document.
+		const c = layer(900);
+		const a = layer(900);
+		const b = layer(900);
+		const outside = el('button');
+		const releaseA = track(a.panel);
+		expect(lift(a)).toBe(0);
+		const releaseB = track(b.panel);
+		expect(lift(b)).toBe(1);
+		// The third registers at 900 while the second is drawn at 901: still the top, at once.
+		const releaseC = track(c.panel);
+		expect(blocked(c.panel)).toBe(false);
+		expect(inert(a.overlay)).toBe(true);
+		expect(inert(b.overlay)).toBe(true);
+		expect(lift(c)).toBe(2);
+		expect([a, b, c].map((l) => l.overlay.style.zIndex)).toEqual(['900', '901', '902']);
+		expect(blocked(c.panel)).toBe(false);
+		expect(inert(a.overlay)).toBe(true);
+		expect(inert(b.overlay)).toBe(true);
+		expect(inert(outside)).toBe(true);
+		// Esc and the focus trap agree.
+		expect(hasVisibleLayerAbove({ except: c.panel })).toBe(false);
+		expect(hasVisibleLayerAbove({ except: b.panel })).toBe(true);
+		expect(hasVisibleLayerAbove({ except: a.panel })).toBe(true);
+		// The middle one closes first: nothing changes for the top.
+		b.panel.setAttribute('data-layer-inactive', 'true');
+		releaseB();
+		expect(blocked(c.panel)).toBe(false);
+		expect(inert(a.overlay)).toBe(true);
+		expect(inert(b.overlay)).toBe(true);
+		// Then the top: the first one is back, with the lift of the others out of the way.
+		c.panel.setAttribute('data-layer-inactive', 'true');
+		releaseC();
+		expect(blocked(a.panel)).toBe(false);
+		expect(inert(c.overlay)).toBe(true);
+		expect(inert(outside)).toBe(true);
+		expect(hasVisibleLayerAbove({ except: a.panel })).toBe(false);
+		releaseA();
+		expect(inertCount()).toBe(0);
+	});
+
+	it('equal z, three siblings: the lowest closes first, then a fourth opens above the lifted ones', () => {
+		const d = layer(900);
+		const a = layer(900);
+		const b = layer(900);
+		const c = layer(900);
+		const releaseA = track(a.panel);
+		lift(a);
+		const releaseB = track(b.panel);
+		lift(b);
+		const releaseC = track(c.panel);
+		lift(c);
+		a.panel.setAttribute('data-layer-inactive', 'true');
+		releaseA();
+		expect(blocked(c.panel)).toBe(false);
+		expect(inert(b.overlay)).toBe(true);
+		// Registered at 900, against 901 and 902 on screen.
+		const releaseD = track(d.panel);
+		expect(blocked(d.panel)).toBe(false);
+		expect(inert(c.overlay)).toBe(true);
+		expect(lift(d)).toBe(3);
+		expect(blocked(d.panel)).toBe(false);
+		d.panel.setAttribute('data-layer-inactive', 'true');
+		releaseD();
+		expect(blocked(c.panel)).toBe(false);
+		expect(inert(b.overlay)).toBe(true);
+		c.panel.setAttribute('data-layer-inactive', 'true');
+		releaseC();
+		expect(blocked(b.panel)).toBe(false);
+		releaseB();
+		expect(inertCount()).toBe(0);
+	});
+
+	it('a lifted layer still loses to a tracked layer with a higher z-index of its own', () => {
+		const a = layer(900);
+		const b = layer(900);
+		const palette = layer(901);
+		track(palette.panel);
+		track(a.panel);
+		lift(a);
+		track(b.panel);
+		// Drawn at 901 like the palette, and opened later - but its own number is 900.
+		expect(lift(b)).toBe(1);
+		expect(blocked(palette.panel)).toBe(false);
+		expect(inert(b.overlay)).toBe(true);
+	});
+
+	it('against an untracked layer the lifted z-index counts as painted', async () => {
+		const a = layer(900);
+		const b = layer(900);
+		// Later in the document, at 900 and at 901: nobody registered them.
+		const same = el('div', document.body, { role: 'dialog' });
+		same.style.position = 'fixed';
+		same.style.zIndex = '900';
+		const raised = el('div', document.body, { role: 'dialog' });
+		raised.style.position = 'fixed';
+		raised.style.zIndex = '901';
+		track(a.panel);
+		lift(a);
+		// One layer at 900: both are above it (document order, a higher number).
+		expect(blocked(same)).toBe(false);
+		expect(blocked(raised)).toBe(false);
+		track(b.panel);
+		// Before the lift `b` is at 900 on screen too.
+		expect(blocked(same)).toBe(false);
+		// Lifted to 901: the one at 900 is drawn under it and joins the backdrop - in the same
+		// task, so the first focus that follows meets the final backdrop. The one at 901 is
+		// equal as painted and later in the document: still above.
+		expect(lift(b)).toBe(1);
+		expect(inert(same)).toBe(true);
+		expect(blocked(raised)).toBe(false);
+		expect(hasVisibleLayerAbove({ except: b.panel })).toBe(true);
+		raised.remove();
+		expect(hasVisibleLayerAbove({ except: b.panel })).toBe(false);
+	});
+
+	it('liftModalLayer: an apply that writes nothing leaves the rules as they were', () => {
+		const early = layer(900);
+		const late = layer(900);
+		track(late.panel);
+		track(early.panel);
+		// No element to write to: the lift is not taken off a number that never had it (899
+		// would put `early` under `late`).
+		expect(liftModalLayer(early.panel, () => {})).toBe(1);
+		expect(blocked(early.panel)).toBe(false);
+		expect(inert(late.overlay)).toBe(true);
+		expect(hasVisibleLayerAbove({ except: early.panel })).toBe(false);
 	});
 
 	it('equal z: an untracked layer is still placed by the document order', () => {
