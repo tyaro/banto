@@ -90,6 +90,12 @@
 		margin: 0;
 	}
 
+	@media (max-width: 480px) {
+		.actions {
+			max-width: 100%;
+		}
+	}
+
 	.actions {
 		display: flex;
 		flex-wrap: wrap;

@@ -558,7 +558,10 @@
 		display: inline-flex;
 		align-items: center;
 		gap: var(--banto-space-2);
-		height: var(--banto-control-height-sm);
+		/* The frame grows with its content, and is never shorter than the control
+		   height, so the shortcut stays inside at 200% text (#1044). */
+		height: auto;
+		min-height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
 		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);

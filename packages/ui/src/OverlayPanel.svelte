@@ -340,6 +340,26 @@
 		}
 	}
 
+	/* Narrow viewport / large text (WCAG 1.4.10, #1044): the margins around and
+	   inside a modal leave the content a few dozen px, so they shrink. */
+	@media (max-width: 480px) {
+		.overlay--modal {
+			padding: var(--banto-space-2);
+		}
+
+		.panel--modal {
+			max-width: calc(100vw - 2 * var(--banto-space-2));
+		}
+
+		.panel--modal .header {
+			padding: var(--banto-space-3);
+		}
+
+		.panel--modal .body {
+			padding: var(--banto-space-3);
+		}
+	}
+
 	.header {
 		flex: 0 0 auto;
 		display: flex;

@@ -2060,7 +2060,7 @@
 	.view-trigger,
 	.columns-trigger,
 	.more-trigger {
-		height: var(--banto-control-height-sm);
+		min-height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
 		font-size: var(--banto-font-size-sm);
 	}
@@ -2112,6 +2112,13 @@
 		color: var(--banto-text-muted);
 	}
 
+	@media (max-width: 480px) {
+		.search {
+			min-width: 0;
+			max-width: 100%;
+		}
+	}
+
 	.search :global(svg) {
 		position: absolute;
 		left: var(--banto-space-2);
@@ -2119,7 +2126,10 @@
 	}
 
 	.search-input {
-		height: var(--banto-control-height-sm);
+		min-width: 0;
+		min-height: var(--banto-control-height-sm);
+		height: auto;
+		padding-block: 0;
 		width: 14em;
 		max-width: 100%;
 		padding-left: calc(var(--banto-space-2) * 2 + 14px);

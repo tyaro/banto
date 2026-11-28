@@ -1216,7 +1216,9 @@ input.banto-switch[type='checkbox'][role='switch']:disabled {
 	align-items: center;
 	justify-content: center;
 	gap: var(--banto-space-2);
-	height: var(--banto-control-height);
+	/* min-height, not height: the label may wrap at a larger text size
+	   (WCAG 1.4.4, #1044). The block padding only matters once it wraps. */
+	min-height: var(--banto-control-height);
 	padding: 0 var(--banto-space-4);
 	border-radius: var(--banto-radius-md);
 	border: var(--banto-border-width) solid transparent;
@@ -1226,9 +1228,15 @@ input.banto-switch[type='checkbox'][role='switch']:disabled {
 	transition: background var(--banto-duration-fast) var(--banto-ease-out);
 }
 .banto-btn--sm {
-	height: var(--banto-control-height-sm);
+	min-height: var(--banto-control-height-sm);
 	padding: 0 var(--banto-space-3);
 	font-size: var(--banto-font-size-md);
+}
+@media (max-width: 480px) {
+	.banto-btn,
+	.banto-btn--sm {
+		padding-block: var(--banto-space-1);
+	}
 }
 .banto-btn--primary {
 	background: var(--banto-primary-solid);

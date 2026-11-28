@@ -213,4 +213,27 @@
 		align-items: center;
 		gap: var(--banto-space-3);
 	}
+
+	/* Narrow viewport / large text (WCAG 1.4.10, #1044): the tile may be narrower
+	   than 200px, the value may wrap, and the sparkline takes only what is left.
+	   Only below 480px, so the default layout is the same as before. */
+	@media (max-width: 480px) {
+		.stat-row {
+			grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+		}
+
+		:global(.shell:not(.kiosk)) .stat-value {
+			overflow-wrap: anywhere;
+		}
+
+		:global(.shell:not(.kiosk)) .stat-value-row {
+			flex-wrap: wrap;
+		}
+
+		:global(.shell:not(.kiosk)) .stat-value-row > :global(.banto-sparkline) {
+			flex: 1 1 0;
+			min-width: 0;
+			max-width: 72px;
+		}
+	}
 </style>

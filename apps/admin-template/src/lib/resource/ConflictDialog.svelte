@@ -73,22 +73,28 @@
 		{choosing ? m['resource.conflictChooseHint']() : m['resource.conflictBody']()}
 	</p>
 	<div class="table-wrap">
-		<table data-testid="conflict-changes">
+		<!-- svelte-ignore a11y_no_redundant_roles -->
+		<table data-testid="conflict-changes" role="table">
 			<caption class="sr-only">{m['resource.conflictCaption']()}</caption>
-			<thead>
-				<tr>
-					<th scope="col">{m['resource.changesColField']()}</th>
-					<th scope="col">{m['resource.conflictColTheirs']()}</th>
-					<th scope="col">{m['resource.conflictColMine']()}</th>
+			<!-- svelte-ignore a11y_no_redundant_roles -->
+			<thead role="rowgroup">
+				<!-- svelte-ignore a11y_no_redundant_roles -->
+				<tr role="row">
+					<th scope="col" role="columnheader">{m['resource.changesColField']()}</th>
+					<th scope="col" role="columnheader">{m['resource.conflictColTheirs']()}</th>
+					<th scope="col" role="columnheader">{m['resource.conflictColMine']()}</th>
 				</tr>
 			</thead>
-			<tbody>
+			<!-- svelte-ignore a11y_no_redundant_roles -->
+			<tbody role="rowgroup">
 				{#each conflicts as conflict (conflict.field)}
 					{@const label = auditFieldLabel(resource, conflict.field)}
-					<tr>
-						<th scope="row">{label}</th>
+					<!-- svelte-ignore a11y_no_redundant_roles -->
+					<tr role="row">
+						<th scope="row" role="rowheader">{label}</th>
 						{#if choosing}
-							<td>
+							<td role="cell">
+								<span class="cell-label">{m['resource.conflictColTheirs']()}</span>
 								<label class="pick">
 									<input
 										type="radio"
@@ -100,7 +106,8 @@
 									<span>{formatAuditValue(conflict.theirs)}</span>
 								</label>
 							</td>
-							<td>
+							<td role="cell">
+								<span class="cell-label">{m['resource.conflictColMine']()}</span>
 								<label class="pick">
 									<input
 										type="radio"
@@ -113,8 +120,12 @@
 								</label>
 							</td>
 						{:else}
-							<td>{formatAuditValue(conflict.theirs)}</td>
-							<td>
+							<td role="cell">
+								<span class="cell-label">{m['resource.conflictColTheirs']()}</span>
+								{formatAuditValue(conflict.theirs)}
+							</td>
+							<td role="cell">
+								<span class="cell-label">{m['resource.conflictColMine']()}</span>
 								{formatAuditValue(conflict.mine)}
 								{#if !conflict.mineChanged}
 									<span class="muted">{m['resource.conflictMineUnchanged']()}</span>
@@ -214,7 +225,19 @@
 
 	tbody th {
 		font-weight: 600;
-		white-space: nowrap;
+	}
+
+	@media (min-width: 481px) {
+		tbody th {
+			white-space: nowrap;
+		}
+	}
+
+	/* The per-cell column name is only for the stacked narrow layout; on the
+	   wide table the column header says it (display:none keeps it out of the
+	   accessibility tree too). */
+	.cell-label {
+		display: none;
 	}
 
 	.muted {
@@ -226,6 +249,47 @@
 		align-items: center;
 		gap: var(--banto-space-2);
 		cursor: pointer;
+	}
+
+	/* Narrow viewport / large text (WCAG 1.4.10, #1044): the three columns do not
+	   fit, so each field becomes a block - the field name, then "their value" and
+	   "your value" one under the other, each led by its column name. */
+	@media (max-width: 480px) {
+		.table-wrap {
+			overflow-x: visible;
+		}
+
+		table,
+		tbody,
+		tr,
+		th,
+		td {
+			display: block;
+		}
+
+		thead {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+		}
+
+		tr {
+			border-bottom: var(--banto-border-width) solid var(--banto-border);
+			padding-block: var(--banto-space-1);
+		}
+
+		th,
+		td {
+			border-bottom: none;
+		}
+
+		.cell-label {
+			display: block;
+			color: var(--banto-text-muted);
+			font-weight: 600;
+		}
 	}
 
 	.actions {
