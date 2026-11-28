@@ -464,21 +464,21 @@
 					)
 				)}
 				{#each categories as cat, i (i)}
-					{#if shownRows.has(i)}
-						<!-- Cut with an ellipsis when the margin hit its cap (full text in <title>). -->
-						{@const full = String(cat ?? '')}
-						{@const shown = truncateLabel(full, m.innerLeft - 8, tickFontSize)}
-						<text
-							x={m.innerLeft - 8}
-							y={catScale.center(i)}
-							class="tick-label"
-							text-anchor="end"
-							dominant-baseline="middle"
-							{@attach i === 0 ? trackTickFont : null}
-						>
-							{shown}{#if shown !== full}<title>{full}</title>{/if}
-						</text>
-					{/if}
+					<!-- Thinned rows stay in the DOM (visibility hidden) so the row-0 font tracker survives. -->
+					<!-- Cut with an ellipsis when the margin hit its cap (full text in <title>). -->
+					{@const full = String(cat ?? '')}
+					{@const shown = truncateLabel(full, m.innerLeft - 8, tickFontSize)}
+					<text
+						x={m.innerLeft - 8}
+						y={catScale.center(i)}
+						class="tick-label"
+						text-anchor="end"
+						dominant-baseline="middle"
+						visibility={shownRows.has(i) ? undefined : 'hidden'}
+						{@attach i === 0 ? trackTickFont : null}
+					>
+						{shown}{#if shown !== full}<title>{full}</title>{/if}
+					</text>
 				{/each}
 				<line
 					x1={m.innerLeft}

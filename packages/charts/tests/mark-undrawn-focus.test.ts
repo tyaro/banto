@@ -244,3 +244,23 @@ describe('tooltip follows focus and pointer separately', () => {
 		expect(tip(container)).toBeNull();
 	});
 });
+
+describe('horizontal bar row labels and the font tracker', () => {
+	it('thinned rows stay in the DOM (hidden), so the row-0 font tracker is never removed', async () => {
+		const many = Array.from({ length: 12 }, (_, i) => ({ name: `C${i}`, a: i + 1, b: 1 }));
+		const { container } = render(BarChart, {
+			data: many,
+			category: cat,
+			series: [{ id: 'a', label: 'A', value: valA }],
+			horizontal: true,
+			height: 80,
+			label: '棒'
+		});
+		await flush();
+		const labels = [...container.querySelectorAll<SVGTextElement>('text.tick-label')].filter((t) =>
+			/^C\d+$/.test((t.textContent ?? '').trim())
+		);
+		expect(labels).toHaveLength(12);
+		expect(labels.some((t) => t.getAttribute('visibility') === 'hidden')).toBe(true);
+	});
+});
