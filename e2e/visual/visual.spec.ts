@@ -514,3 +514,51 @@ test.describe('extended calendar', () => {
 		});
 	}
 });
+
+// BantoGrid `rowTone` (#1069): the ui-demo shipments grid with its rows painted
+// by state (`?rowTone=1`; without the query the page is the plain ui-demo
+// baseline). One shot holds every overlap: a selected toned row (the selection
+// ground, the tone as a band on the checkbox cell), a toned row at rest with
+// the active cell on it, a hovered toned row, and - the grid is scrolled
+// sideways at this width - the pinned checkbox / code cells keeping each row's
+// ground while the other cells pass under them. The card only, so the other
+// ui-demo cards do not move this baseline.
+test.describe('grid row tone', () => {
+	for (const combo of DIAGONAL_MATRIX) {
+		test(`ui-demo-grid-row-tone ${comboLabel(combo)} 800x900`, async ({ page }) => {
+			await page.setViewportSize({ width: 800, height: 900 });
+			await primeThemeAndAuth(page, combo);
+			await page.goto('/ui-demo?rowTone=1');
+			await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+			const card = page.getByTestId('ui-demo-grid-date');
+			const grid = card.getByRole('grid');
+			// The sample's frame fits the header and three rows; the bulk bar and the
+			// sideways scrollbar of this scene need more, or the first row scrolls away.
+			await card.evaluate((el: HTMLElement) => {
+				el.style.height = '16rem';
+			});
+			await grid.scrollIntoViewIfNeeded();
+			const row = (index: number) => grid.locator(`.row:has([data-cell-row="${index}"])`);
+			await expect(row(0)).toHaveAttribute('data-row-tone', 'success');
+			await expect(row(1)).toHaveAttribute('data-row-tone', 'danger');
+			await expect(row(2)).toHaveAttribute('data-row-tone', 'warning');
+
+			// selected + toned
+			await row(0).getByRole('checkbox').click();
+			await expect(row(0)).toHaveClass(/selected/);
+			// sideways, so the unpinned cells are under the pinned ones
+			await grid.evaluate((el) => {
+				el.scrollLeft = 60;
+			});
+			await expect(grid).toHaveClass(/scrolled-x/);
+			// the active cell on a toned row at rest (a display-only cell: no editor opens)
+			const active = grid.locator('[data-cell-row="1"][data-cell-field="state"]');
+			await active.click();
+			await expect(active).toHaveClass(/active/);
+			// hover on another toned row
+			await grid.locator('[data-cell-row="2"][data-cell-field="state"]').hover();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(card).toHaveScreenshot(`ui-demo-grid-row-tone-${comboLabel(combo)}-800x900.png`);
+		});
+	}
+});

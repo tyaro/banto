@@ -24,6 +24,7 @@
 
 - feat(admin-template): リソースの一覧から開く行の詳細（編集・履歴。新規作成は今までどおりページで開く）を**ドロワーで出すかダイアログで出すか**を、設定 → 外観の「入力の表示」で利用者ごとに選べるようにした（追加。既定は従来どおりドロワーで、既定のままなら見た目も挙動も変わらない）。`ResourceListPage.svelte` が設定に応じて `Drawer` と `Modal`（同じ props）を出し分ける。保存先は localStorage `banto.formPresentation` と UI 設定キー `ui.formPresentation`（値 `drawer` | `dialog`。不正な値は既定に戻る）。共通パッケージ（packages/*）の変更なし。テンプレートを写したアプリ（経路 B）が取り込むファイル: `apps/admin-template/src/lib/settings.svelte.ts`・`apps/admin-template/src/lib/resource/ResourceListPage.svelte`・`apps/admin-template/src/routes/(app)/settings/AppearanceSection.svelte`・`apps/admin-template/messages/{ja,en}.json`（`settings.formPresentation*` の 4 キー）。
 - chore(fixtures): v10.0.0 のタグ後の外部利用 fixture の ref を `v10.0.0` に更新した。[10.0.0] に「検証した組み合わせ」を追記。
+- feat(grid): `BantoGrid` に、**行全体の地を役割の色で塗る** `rowTone?: (row) => CellTone | undefined` を足した（#1069。追加。指定しなければ見た目も DOM も変わらない）。警報・履歴の一覧で、行を重要度で塗るための物。地は theme の tint のトークン（`--banto-<tone>-tint`、neutral は `--banto-surface-subtle`）で、行の文字は `--banto-text` のまま（明・暗・Glass で 4.5:1 以上を試験で固定）。ホバーは tint を面の色へ 40% 戻す（地が淡くなる）。選択中の行は、ほかの選択中の行と同じ選択の地にし、tone はチェックボックスのセルの左端の帯（`--banto-<tone>`）で残す。固定したセルにも同じ地を重ねる（`rowClass` の独自の背景は今までどおり固定したセルに出ない）。tone 付きの行（選択中を除く）では、セルの `tone` の文字は `-tint-text` に、`link` は本文の色と下線に、バッジは面の色の地に替わる。行には `data-row-tone` が付く（セルの `data-tone` とは別）。見た目だけで、ARIA は変えない: 状態は列の文字やアイコンでも伝えること。`rowClass` と併用できる。ui-demo の出荷のグリッドは `/ui-demo?rowTone=1` のときだけ行を塗る（基準画像の場面 `ui-demo-grid-row-tone-*` を追加。既存の基準画像は変わらない）。
 
 ## [10.0.0] - 2026-11-28
 

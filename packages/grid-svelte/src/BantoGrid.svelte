@@ -17,6 +17,7 @@
 		DEFAULT_COLUMN_WIDTH,
 		type CellEdit,
 		type CellRange,
+		type CellTone,
 		type FilterState,
 		type GridBulkActionsContext,
 		type GridColumn,
@@ -123,6 +124,18 @@
 		 * rows, since neither has a real `TRow` to compute a class from.
 		 */
 		rowClass?: (row: TRow) => string | undefined;
+		/**
+		 * Optional role colour for a data row's whole ground (#1069: an alarm
+		 * list paints the row by severity). The grid draws it from the theme's
+		 * tint tokens and layers it with hover, the row selection, the active
+		 * cell and the pinned cells, so the caller writes no CSS. Sets
+		 * `data-row-tone` on the `.row` element (the cells' own `data-tone` is
+		 * `GridColumn.tone`). Looks only: no ARIA changes, so the state must
+		 * also be in a column (text or an icon). Works together with
+		 * `rowClass`. Returning `undefined` paints nothing. Like `rowClass`,
+		 * not applied to placeholder or group header rows.
+		 */
+		rowTone?: (row: TRow) => CellTone | undefined;
 		/** Server mode: fires after a sort toggle / filter apply / filter clear so the caller can re-fetch. */
 		onParamsChange?: (params: { sort: SortState[]; filters: FilterState[] }) => void;
 		/** Server mode: fires when the virtualized window's [start, end) actually changes (not on every scroll tick). */
@@ -237,6 +250,7 @@
 		onParamsChange,
 		onVisibleRangeChange,
 		rowClass,
+		rowTone,
 		messages = {},
 		cellEditors,
 		selectable = false,
@@ -2575,6 +2589,7 @@
 					class="row {rowClass?.(row) ?? ''}"
 					class:selected={selectable && isRowSelected(row)}
 					class:outside-window={outside}
+					data-row-tone={rowTone?.(row) ?? undefined}
 					use:rowTabStops={outside}
 					role="row"
 					aria-rowindex={rowIndex + 2}
@@ -3062,6 +3077,57 @@
 		background: var(--row-overlay);
 	}
 
+	/*
+	 * Row tone (#1069): the row's ground from the theme's tint tokens.
+	 * `--row-tint` repeats it for the pinned cells, like `--row-overlay`
+	 * (the dark tints are translucent films, the pinned cells are opaque).
+	 * Hover takes the tint 40% back towards the surface: the ground gets
+	 * paler, so no text on it loses contrast while the pointer is over the row
+	 * (the neutral tone is a surface step, it takes the usual hover step).
+	 * A selected row has the selection ground of any other selected row, and
+	 * keeps its tone as a band at the left edge (on the checkbox cell, which
+	 * is the first cell of every selectable row and stays put when pinned).
+	 */
+	.row[data-row-tone='success'] {
+		--row-tone: var(--banto-success);
+		--row-tone-tint: var(--banto-success-tint);
+	}
+	.row[data-row-tone='warning'] {
+		--row-tone: var(--banto-warning);
+		--row-tone-tint: var(--banto-warning-tint);
+	}
+	.row[data-row-tone='danger'] {
+		--row-tone: var(--banto-danger);
+		--row-tone-tint: var(--banto-danger-tint);
+	}
+	.row[data-row-tone='info'] {
+		--row-tone: var(--banto-info);
+		--row-tone-tint: var(--banto-info-tint);
+	}
+	.row[data-row-tone='neutral'] {
+		--row-tone: var(--banto-text-muted);
+		--row-tone-tint: var(--banto-surface-subtle);
+	}
+
+	.row[data-row-tone]:not(.selected) {
+		--row-tint: var(--row-tone-tint);
+		background:
+			linear-gradient(var(--row-overlay, transparent), var(--row-overlay, transparent)),
+			var(--row-tint);
+	}
+
+	.row[data-row-tone]:not(.selected):hover {
+		--row-overlay: color-mix(in srgb, var(--banto-surface) 40%, transparent);
+	}
+
+	.row[data-row-tone='neutral']:not(.selected):hover {
+		--row-overlay: var(--banto-surface-hover);
+	}
+
+	.row.selected[data-row-tone] > .select-cell {
+		box-shadow: inset var(--banto-space-1) 0 0 var(--row-tone);
+	}
+
 	/* Server mode (spec §4.1, M5): a not-yet-fetched sparse-array hole. */
 	.placeholder-row:hover {
 		--row-overlay: transparent;
@@ -3284,6 +3350,7 @@
 		background:
 			linear-gradient(var(--cell-overlay, transparent), var(--cell-overlay, transparent)),
 			linear-gradient(var(--row-overlay, transparent), var(--row-overlay, transparent)),
+			linear-gradient(var(--row-tint, transparent), var(--row-tint, transparent)),
 			var(--banto-surface);
 	}
 
@@ -3355,6 +3422,29 @@
 	}
 	.cell[data-tone] {
 		color: var(--cell-tone);
+	}
+
+	/*
+	 * On a toned row (#1069) the text-grade hues fall short of 4.5:1 (they are
+	 * made for the plain surfaces), so the cell's own tone, the link and the
+	 * badge switch to the colours made for a tint: the -tint-text of the tone
+	 * (the neutral tone: the body text), and the body text with an underline
+	 * for the link. The badge becomes a pill of the plain surface: its own
+	 * tint is the row's colour when the two tones match, and would vanish.
+	 * Not on a selected row, which has the plain selection ground.
+	 */
+	.row[data-row-tone]:not(.selected) .cell[data-tone] {
+		color: var(--cell-tint-text);
+	}
+	.row[data-row-tone]:not(.selected) .cell[data-tone='neutral'] {
+		color: var(--banto-text);
+	}
+	.row[data-row-tone]:not(.selected) .cell-link {
+		color: var(--banto-text);
+		text-decoration: underline;
+	}
+	.row[data-row-tone]:not(.selected) .cell-badge {
+		background: var(--banto-surface);
 	}
 
 	.cell-badge {
