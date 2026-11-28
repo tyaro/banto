@@ -11,12 +11,12 @@ import { describe, expect, it } from 'vitest';
 const css = readFileSync(new URL('../src/css/banto.css', import.meta.url), 'utf8');
 
 /** Body of the first rule whose selector line is `selector`. */
-function block(selector: string): string {
-	const start = css.indexOf(`\n${selector} {`);
-	if (start < 0) throw new Error(`banto.css: no rule "${selector}"`);
-	const open = css.indexOf('{', start);
-	const close = css.indexOf('\n}', open);
-	return css.slice(open + 1, close);
+function block(selector: string, source = css): string {
+	const start = source.indexOf(`\n${selector} {`);
+	if (start < 0) throw new Error(`css: no rule "${selector}"`);
+	const open = source.indexOf('{', start);
+	const close = source.indexOf('\n}', open);
+	return source.slice(open + 1, close);
 }
 
 const LIGHT = block(':root,\n[data-theme]');
@@ -174,7 +174,7 @@ describe('state text colours >= 4.5:1 on every surface, at every --banto-brand-h
 	];
 
 	for (const [theme, rules, surfaces] of themes) {
-		for (const state of ['danger', 'warning', 'success', 'info']) {
+		for (const state of ['danger', 'warning', 'caution', 'success', 'info']) {
 			for (const [surface, neutral] of surfaces) {
 				it(`${theme}: --banto-${state} on ${surface}`, () => {
 					const t = fixedToken(rules, `--banto-${state}`);
@@ -202,7 +202,7 @@ describe('state text colours >= 4.5:1 on every surface, at every --banto-brand-h
 
 describe('state -tint-text >= 4.6:1 on its own -tint over every surface, at every --banto-brand-hue', () => {
 	const MIN = 4.6;
-	const states = ['danger', 'warning', 'success', 'info'];
+	const states = ['danger', 'warning', 'caution', 'success', 'info'];
 
 	// light: the -tint is an opaque colour, so the surface does not matter
 	for (const state of states) {
@@ -246,4 +246,351 @@ describe('state -tint-text >= 4.6:1 on its own -tint over every surface, at ever
 			}
 		});
 	}
+});
+
+/*
+ * State steps (#1068): neutral < success < caution < warning < danger.
+ * `--banto-<state>-fill` is the colour of a lamp / icon / bar (no text on it),
+ * so its floor is the 3:1 of WCAG 1.4.11, not the 4.5:1 of the text colours.
+ */
+const FILL_STATES = ['success', 'caution', 'warning', 'danger'] as const;
+
+const STANDARD_SURFACES: [string, string, [string, string][]][] = [
+	[
+		'light',
+		LIGHT,
+		[
+			['bg', '--banto-neutral-2'],
+			['surface', '--banto-neutral-1'],
+			['raised', '--banto-neutral-1']
+		]
+	],
+	[
+		'dark',
+		DARK,
+		[
+			['bg', '--banto-neutral-1'],
+			['surface', '--banto-neutral-2'],
+			['raised', '--banto-neutral-4']
+		]
+	]
+];
+
+/** `--banto-neutral-fill: var(--banto-neutral-N)` (declared once, the step differs per theme). */
+function neutralFill(rules: string): (hue: number) => Rgb {
+	const m = /--banto-neutral-fill:\s*var\((--banto-neutral-\d+)\)/.exec(LIGHT);
+	if (!m) throw new Error('banto.css: --banto-neutral-fill is not var(--banto-neutral-N)');
+	return rgb(rules, m[1]);
+}
+
+/** The fill of a step as a function of the brand hue (only the neutral one follows it). */
+function fill(rules: string, state: string): (hue: number) => Rgb {
+	if (state === 'neutral') return neutralFill(rules);
+	const t = fixedToken(rules, `--banto-${state}-fill`);
+	const c = oklchToSrgb(t, t.hue);
+	return () => c;
+}
+
+describe('state fills (lamp / icon) >= 3:1 on every surface, at every --banto-brand-hue', () => {
+	for (const [theme, rules, surfaces] of STANDARD_SURFACES) {
+		for (const state of ['neutral', ...FILL_STATES]) {
+			for (const [surface, neutral] of surfaces) {
+				it(`${theme}: --banto-${state}-fill on ${surface}`, () => {
+					const { ratio, hue } = worst(fill(rules, state), rgb(rules, neutral));
+					expect(ratio, `worst at hue ${hue}`).toBeGreaterThanOrEqual(3);
+				});
+			}
+		}
+		for (const state of FILL_STATES) {
+			it(`${theme}: --banto-${state}-fill is inside the sRGB gamut`, () => {
+				const t = fixedToken(rules, `--banto-${state}-fill`);
+				for (const v of oklchToLinear(t, t.hue)) {
+					expect(v).toBeGreaterThanOrEqual(0);
+					expect(v).toBeLessThanOrEqual(1);
+				}
+			});
+		}
+	}
+});
+
+/*
+ * Glass (banto-glass.css) does not redefine the state colours, so the new
+ * tokens are checked against what it does to the ground: a card is a
+ * translucent film of a neutral step over the page, and the page carries the
+ * brand glows. Model: every glow composited as laid out in CSS (centre, px
+ * radii, fade-out stop; the first layer on top) at grid points over the area
+ * the page is painted on, for a few screen sizes. The radii are fixed px, so on
+ * a narrow screen the two top glows overlap and are stronger than either alone
+ * (#1072). The film percentages and glow strengths are read from
+ * banto-glass.css. Not modelled: `saturate(1.5)` of the backdrop filter, and
+ * content of the app behind the card.
+ *
+ * Text or a lamp put straight on the glass PAGE under a glow's peak is not
+ * covered (the existing state text colours do not hold 4.5:1 there either);
+ * state colours belong on a surface.
+ */
+const glassCss = readFileSync(new URL('../src/css/banto-glass.css', import.meta.url), 'utf8');
+
+interface GlassModel {
+	films: { name: string; neutral: string; alpha: number }[];
+	glows: {
+		name: string;
+		alpha: number;
+		colour: (hue: number) => Rgb;
+		/** radii in CSS px, centre as a fraction of the area, and where the colour has faded out (0..1) */
+		rx: number;
+		ry: number;
+		cx: number;
+		cy: number;
+		end: number;
+	}[];
+}
+
+function glassModel(rules: string, glass: string): GlassModel {
+	const films = ['--banto-surface', '--banto-surface-raised'].map((name) => {
+		const m = new RegExp(
+			String.raw`${name}:\s*color-mix\(in srgb,\s*var\((--banto-neutral-\d+)\)\s*(\d+)%,\s*transparent\)`
+		).exec(glass);
+		if (!m) throw new Error(`banto-glass.css: ${name} is not a neutral film`);
+		return { name, neutral: m[1], alpha: Number(m[2]) / 100 };
+	});
+	const start = glass.indexOf('--banto-bg-image:');
+	const image = glass.slice(start, glass.indexOf(';', start));
+	const glows: GlassModel['glows'] = [];
+	for (const g of image.matchAll(
+		/radial-gradient\(\s*(\d+)px (\d+)px at (-?[\d.]+)% (-?[\d.]+)%,\s*(color-mix\(.*?transparent\s*\)|rgb\([^)]*\)),\s*transparent (\d+)%\s*\)/g
+	)) {
+		const geo = {
+			rx: Number(g[1]),
+			ry: Number(g[2]),
+			cx: Number(g[3]) / 100,
+			cy: Number(g[4]) / 100,
+			end: Number(g[6]) / 100
+		};
+		const mix =
+			/color-mix\(\s*in srgb,\s*var\((--banto-[a-z-]+)\)\s*(\d+)%,\s*transparent\s*\)/.exec(g[5]);
+		const plain = /rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)/.exec(g[5]);
+		if (mix) {
+			glows.push({ name: mix[1], alpha: Number(mix[2]) / 100, colour: rgb(rules, mix[1]), ...geo });
+		} else if (plain) {
+			const c = [Number(plain[1]) / 255, Number(plain[2]) / 255, Number(plain[3]) / 255] as Rgb;
+			glows.push({
+				name: `rgb(${plain[1]} ${plain[2]} ${plain[3]})`,
+				alpha: Number(plain[4]),
+				colour: () => c,
+				...geo
+			});
+		}
+	}
+	if (glows.length !== 3) throw new Error('banto-glass.css: expected 3 glows in --banto-bg-image');
+	return { films, glows };
+}
+
+/** `top` at `alpha` over `base`, composited in gamma-encoded sRGB (as `color-mix(in srgb)` does). */
+const over = (top: Rgb, alpha: number, base: Rgb) =>
+	base.map((v, i) => alpha * top[i] + (1 - alpha) * v) as Rgb;
+
+/** Area the page ground is painted over (viewport, CSS px) and the grid resolution used on it. */
+const AREAS: [number, number][] = [
+	[320, 600],
+	[375, 667],
+	[768, 1024],
+	[1440, 900]
+];
+const GRID = 24;
+
+describe('glass: caution text >= 4.5:1 and the state fills >= 3:1 on the glass surfaces', () => {
+	const themes: [string, string, string, string][] = [
+		['light', LIGHT, block(":root[data-banto-preset='glass']", glassCss), '--banto-neutral-2'],
+		[
+			'dark',
+			DARK,
+			block(":root[data-theme='dark'][data-banto-preset='glass']", glassCss),
+			'--banto-neutral-1'
+		]
+	];
+
+	it('the model reads banto-glass.css', () => {
+		const light = glassModel(LIGHT, themes[0][2]);
+		expect(light.films.map((f) => f.alpha)).toEqual([0.62, 0.55]);
+		expect(light.glows.map((g) => g.alpha)).toEqual([0.16, 0.14, 0.1]);
+	});
+
+	for (const [theme, rules, glass, page] of themes) {
+		const model = glassModel(rules, glass);
+		/** Lowest contrast of `fg` over every film x glow x brand hue; `tint` adds the 18% film of a dark -tint. */
+		const worstOnGlass = (fg: (hue: number) => Rgb, tint = 0) => {
+			let min = { ratio: Infinity, where: '' };
+			for (const film of model.films) {
+				for (const glow of model.glows) {
+					const { ratio, hue } = worst(fg, (h) => {
+						const ground = over(
+							rgb(rules, film.neutral)(h),
+							film.alpha,
+							over(glow.colour(h), glow.alpha, rgb(rules, page)(h))
+						);
+						return tint ? over(fg(h), tint, ground) : ground;
+					});
+					if (ratio < min.ratio)
+						min = { ratio, where: `${film.name} over ${glow.name}, hue ${hue}` };
+				}
+			}
+			// The glows have fixed px radii, so on a narrow area they overlap: composite all
+			// of them as laid out in CSS (first layer on top), at grid points over the area.
+			for (let hue = 0; hue < 360; hue += STEP) {
+				const glowColours = model.glows.map((g) => g.colour(hue));
+				const pageColour = rgb(rules, page)(hue);
+				const fgColour = fg(hue);
+				for (const film of model.films) {
+					const filmColour = rgb(rules, film.neutral)(hue);
+					for (const [w, h] of AREAS) {
+						for (let gx = 0; gx <= GRID; gx++) {
+							for (let gy = 0; gy <= GRID; gy++) {
+								const x = (w * gx) / GRID;
+								const y = (h * gy) / GRID;
+								let ground = pageColour;
+								for (let i = model.glows.length - 1; i >= 0; i--) {
+									const glow = model.glows[i];
+									const t = Math.hypot((x - glow.cx * w) / glow.rx, (y - glow.cy * h) / glow.ry);
+									const a = glow.alpha * Math.max(0, 1 - t / glow.end);
+									if (a > 0) ground = over(glowColours[i], a, ground);
+								}
+								ground = over(filmColour, film.alpha, ground);
+								if (tint) ground = over(fgColour, tint, ground);
+								const ratio = contrast(fgColour, ground);
+								if (ratio < min.ratio)
+									min = {
+										ratio,
+										where: `${film.name} over stacked glows, ${w}x${h} at (${x}, ${y}), hue ${hue}`
+									};
+							}
+						}
+					}
+				}
+			}
+			return min;
+		};
+
+		it(`${theme}: --banto-caution (text)`, () => {
+			const t = fixedToken(rules, '--banto-caution');
+			const c = oklchToSrgb(t, t.hue);
+			const { ratio, where } = worstOnGlass(() => c);
+			expect(ratio, where).toBeGreaterThanOrEqual(4.5);
+		});
+
+		for (const state of ['neutral', ...FILL_STATES]) {
+			it(`${theme}: --banto-${state}-fill`, () => {
+				const { ratio, where } = worstOnGlass(fill(rules, state));
+				expect(ratio, where).toBeGreaterThanOrEqual(3);
+			});
+		}
+	}
+
+	// light: the -tint is opaque, so glass changes nothing (checked above). dark: the
+	// 18% film of the text colour now sits on the glass surface instead of an opaque one.
+	it('dark: --banto-caution-tint-text on its tint', () => {
+		const [, rules, glass, page] = themes[1];
+		const model = glassModel(rules, glass);
+		const t = fixedToken(rules, '--banto-caution-tint-text');
+		const fg = oklchToSrgb(t, t.hue);
+		for (const film of model.films) {
+			for (const glow of model.glows) {
+				const { ratio, hue } = worst(
+					() => fg,
+					(h) =>
+						over(
+							fg,
+							0.18,
+							over(
+								rgb(rules, film.neutral)(h),
+								film.alpha,
+								over(glow.colour(h), glow.alpha, rgb(rules, page)(h))
+							)
+						)
+				);
+				expect(ratio, `${film.name} over ${glow.name}, hue ${hue}`).toBeGreaterThanOrEqual(4.5);
+			}
+		}
+	});
+});
+
+/*
+ * Yellow vs orange (#1068): the reason --banto-caution exists is that a screen
+ * can show caution AND warning side by side, so the two must not read as the
+ * same colour. Floors (measured values in the PR / README):
+ *
+ * - OKLab distance >= 0.09 between caution and warning, for the text colour,
+ *   the -tint-text and the -fill, light and dark. 0.09 is the floor
+ *   chart-palette.test.ts already uses between a chart series and a state
+ *   colour (STATUS_MIN, normal colour vision), i.e. this repo's existing
+ *   meaning of "two colours a reader can tell apart".
+ * - The fills (lamps: the case with no label next to the colour) also keep
+ *   >= 40 degrees of OKLCH hue between caution and warning (a yellow and an
+ *   orange, not two ambers), and every pair of the five steps keeps >= 0.09.
+ * - Dark fills: caution is >= 0.10 lighter than warning. A lightness step
+ *   survives a red-green colour-vision deficiency, where the hue gap shrinks.
+ *   The light theme cannot have this: 3:1 against a white surface caps the
+ *   luminance of every fill at about the same level, so there the hue carries
+ *   the difference (and the README tells the app to add an icon or a label).
+ *
+ * Not checked: the light -tint grounds. --banto-warning-tint is already a pale
+ * yellow (hue 95) and its value is kept for compatibility, so the caution tint
+ * can only sit next to it (about 0.05); a badge is told apart by its
+ * -tint-text and its label.
+ */
+describe('caution (yellow) and warning (orange) are told apart', () => {
+	const MIN_DISTANCE = 0.09;
+	const MIN_FILL_HUE_GAP = 40;
+	const MIN_DARK_FILL_LIGHTNESS_GAP = 0.1;
+
+	/** OKLab coordinates of an in-gamut oklch() token (no conversion needed). */
+	const lab = (t: Oklch & { hue: number }) => {
+		const h = (t.hue * Math.PI) / 180;
+		return [t.l, t.c * Math.cos(h), t.c * Math.sin(h)];
+	};
+	const distance = (x: number[], y: number[]) => Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+
+	for (const [theme, rules] of [
+		['light', LIGHT],
+		['dark', DARK]
+	] as const) {
+		for (const suffix of ['', '-tint-text', '-fill']) {
+			it(`${theme}: --banto-caution${suffix} vs --banto-warning${suffix}`, () => {
+				const caution = fixedToken(rules, `--banto-caution${suffix}`);
+				const warning = fixedToken(rules, `--banto-warning${suffix}`);
+				expect(distance(lab(caution), lab(warning))).toBeGreaterThanOrEqual(MIN_DISTANCE);
+			});
+		}
+
+		it(`${theme}: the fills keep a yellow / orange hue gap`, () => {
+			const caution = fixedToken(rules, '--banto-caution-fill');
+			const warning = fixedToken(rules, '--banto-warning-fill');
+			expect(caution.hue - warning.hue).toBeGreaterThanOrEqual(MIN_FILL_HUE_GAP);
+		});
+
+		it(`${theme}: every pair of the five fills`, () => {
+			const chromatic = FILL_STATES.map((s) => lab(fixedToken(rules, `--banto-${s}-fill`)));
+			for (let i = 0; i < chromatic.length; i++) {
+				for (let j = i + 1; j < chromatic.length; j++) {
+					expect(
+						distance(chromatic[i], chromatic[j]),
+						`${FILL_STATES[i]} / ${FILL_STATES[j]}`
+					).toBeGreaterThanOrEqual(MIN_DISTANCE);
+				}
+			}
+			// the neutral step is a grey (chroma <= 0.016 at any brand hue): its distance
+			// to a chromatic fill is at least that fill's chroma minus 0.016
+			for (const s of FILL_STATES) {
+				expect(fixedToken(rules, `--banto-${s}-fill`).c - 0.016, s).toBeGreaterThanOrEqual(
+					MIN_DISTANCE
+				);
+			}
+		});
+	}
+
+	it('dark: the caution fill is lighter than the warning fill', () => {
+		const caution = fixedToken(DARK, '--banto-caution-fill');
+		const warning = fixedToken(DARK, '--banto-warning-fill');
+		expect(caution.l - warning.l).toBeGreaterThanOrEqual(MIN_DARK_FILL_LIGHTNESS_GAP);
+	});
 });

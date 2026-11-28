@@ -238,6 +238,62 @@ popover の最上位の層に出すので、重なり順のトークンも要ら
 }
 ```
 
+## 状態の段のトークン（次の版から）
+
+状態を色で段に分けるためのトークン（#1068）。段は 5 つで、並びは
+**neutral < success < caution < warning < danger**（灰・緑・黄・オレンジ・赤）。黄の段 `caution` を足したので、
+黄とオレンジを同じ画面で使い分けられる。既存の `--banto-warning` 系・`--banto-info` 系の値は変わらない。
+
+- **どの状態をどの段にするかは利用側が決める**（例: 停止 = neutral、運転 = success、点検推奨 = caution、
+  品質低下 = warning、異常 = danger）。theme が持つのは色の段だけで、状態の定義・ランプの部品は持たない。
+- **色だけに頼らない。** アイコン・文字（状態名）を必ず併記する。黄・オレンジ・緑・赤は、色覚の違いや
+  画面・照明によって見分けにくくなる。theme が確かめているのは正常色覚での差だけ。
+- 色相は固定で、`--banto-brand-hue` に追従しない（`--banto-neutral-fill` だけニュートラルの段に従う）。
+
+| 段      | 文字色（4.5:1）      | 淡い地 / その上の文字（4.5:1）                            | fill（3:1）            |
+| ------- | -------------------- | --------------------------------------------------------- | ---------------------- |
+| neutral | `--banto-text-muted` | （なし。`--banto-surface-muted` と `--banto-text-muted`） | `--banto-neutral-fill` |
+| success | `--banto-success`    | `--banto-success-tint` / `--banto-success-tint-text`      | `--banto-success-fill` |
+| caution | `--banto-caution`    | `--banto-caution-tint` / `--banto-caution-tint-text`      | `--banto-caution-fill` |
+| warning | `--banto-warning`    | `--banto-warning-tint` / `--banto-warning-tint-text`      | `--banto-warning-fill` |
+| danger  | `--banto-danger`     | `--banto-danger-tint` / `--banto-danger-tint-text`        | `--banto-danger-fill`  |
+
+使い分け:
+
+- **fill** は、ランプ・アイコン・帯のように**上に文字を載せない**状態表示の色。面（bg / surface / raised、
+  glass の surface / raised）に対して 3:1 以上（WCAG 1.4.11）。文字の 4.5:1 より緩いので、黄が黄のまま残る。
+  上に文字を載せる前提の色ではない（対になる文字色は無い。ボタンの地は `-solid` と `--banto-on-*`）。
+- **文字色**は、面の上に状態を文字で書くときの色（4.5:1 以上）。明るいテーマの `--banto-caution` は、4.5:1 を
+  満たすためにオリーブ色になる。黄らしく見せたい所は fill のランプ・アイコンと文字を並べる。
+- **淡い地と文字**は、バッジ・通知の「淡い地 + 濃い文字」。明るいテーマの `--banto-caution-tint` と
+  `--banto-warning-tint` はどちらも淡い黄で近い（warning の値を変えていないため）。文字の色と文言で見分ける。
+
+| fill    | Light                             | Dark                               |
+| ------- | --------------------------------- | ---------------------------------- |
+| neutral | `var(--banto-neutral-10)`         | `var(--banto-neutral-10)`          |
+| success | `oklch(0.6 0.17 148)` `#0e9a3f`   | `oklch(0.723 0.192 150)` `#1ec55f` |
+| caution | `oklch(0.615 0.126 98)` `#998405` | `oklch(0.87 0.175 100)` `#f0d621`  |
+| warning | `oklch(0.62 0.16 50)` `#cf630d`   | `oklch(0.74 0.17 55)` `#fa8927`    |
+| danger  | `oklch(0.58 0.22 27)` `#df2225`   | `oklch(0.69 0.199 25)` `#ff5c59`   |
+
+明るいテーマの fill は「白い面に 3:1」で明るさの上限が決まるので、黄は辛子色になる（濃色の表示では明るい黄）。
+caution と warning は、文字色・tint-text・fill のどれも OKLab 距離 0.09 以上、fill は色相の差 40 度以上、
+ダークの fill は明度の差 0.10 以上を保つ。
+
+```css
+.lamp {
+	background: var(--banto-caution-fill); /* 文字は載せない。隣に状態名を書く */
+}
+.state-label {
+	color: var(--banto-caution);
+}
+```
+
+保証の範囲: glass では、面（カード）の上に置いた場合だけを、背景の光を重ねた最悪点（狭い画面を含む）で確かめている。glass のページの地（背景の光の真上）に
+直接置いた場合は保証しない（既存の状態色と同じ）。`@banto/ui` の `StatusBadge` と `@banto/grid-svelte` の
+`tone` には caution の段を足していない。条件は `packages/theme/tests/contrast.test.ts` が CSS から読んで確かめる。
+値と実測は [visual-refresh-plan.md](../../docs/design/visual-refresh-plan.md) の付録 A.3。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ
