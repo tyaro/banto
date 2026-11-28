@@ -357,3 +357,38 @@ export function thinKeepEnd(xs: number[], widths: number[], gap = 4): number[] {
 export function clipsLeft(label: string, x: number, fontSize = 11): boolean {
 	return x - estimateLabelWidth(label, fontSize) / 2 < 0;
 }
+
+/** Where and how an x tick label is drawn. */
+export interface EdgeLabelPlacement {
+	/** The text to draw (cut with an ellipsis when it does not fit; `full` keeps the original for a `<title>`). */
+	text: string;
+	full: string;
+	anchor: 'middle' | 'start';
+	/** Centre (px) of the drawn extent - what collision thinning should use for this label. */
+	centre: number;
+	/** Estimated drawn width (px) of `text`. */
+	width: number;
+}
+
+/**
+ * Anchor and text for an x tick label at `x` in an svg `svgWidth` px wide.
+ * Centred while its left half stays inside; otherwise 'start' so it reads
+ * inward from the edge, and when even that crosses the svg's right edge it is
+ * cut with an ellipsis to the remaining width (the caller keeps the full text
+ * in a `<title>`). `centre`/`width` describe the real drawn extent, so
+ * collision thinning done afterwards sees where the label actually sits.
+ */
+export function placeEdgeLabel(
+	label: string,
+	x: number,
+	fontSize: number,
+	svgWidth: number
+): EdgeLabelPlacement {
+	const w = estimateLabelWidth(label, fontSize);
+	if (!clipsLeft(label, x, fontSize)) {
+		return { text: label, full: label, anchor: 'middle', centre: x, width: w };
+	}
+	const text = truncateLabel(label, Math.max(0, svgWidth - x), fontSize);
+	const tw = estimateLabelWidth(text, fontSize);
+	return { text, full: label, anchor: 'start', centre: x + tw / 2, width: tw };
+}

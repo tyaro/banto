@@ -4,6 +4,7 @@ import {
 	leftMarginForFirstLabel,
 	originLabelsCollide,
 	clipsLeft,
+	placeEdgeLabel,
 	thinKeepEnd,
 	thinValueLabels,
 	thinVerticalLabels
@@ -153,5 +154,47 @@ describe('first x label at a capped left margin', () => {
 		expect(margin).toBeGreaterThanOrEqual(0);
 		expect(clipsLeft('2024-01', 80, 22)).toBe(false);
 		expect(clipsLeft('2024-01', 48, 11)).toBe(false);
+	});
+});
+
+describe('placeEdgeLabel keeps both ends inside the svg', () => {
+	const extent = (p: ReturnType<typeof placeEdgeLabel>, x: number) =>
+		p.anchor === 'start' ? [x, x + p.width] : [x - p.width / 2, x + p.width / 2];
+
+	it('a label that fits stays centred and unchanged', () => {
+		const p = placeEdgeLabel('2024-01', 48, 11, 400);
+		expect(p).toMatchObject({ anchor: 'middle', text: '2024-01', full: '2024-01' });
+	});
+
+	it('100px svg, 22px, x=40: start-anchored and cut so the right end is inside', () => {
+		const p = placeEdgeLabel('2024-01', 40, 22, 100);
+		expect(estimateLabelWidth('2024-01', 22)).toBeGreaterThan(60);
+		expect(p.anchor).toBe('start');
+		expect(p.text).not.toBe('2024-01');
+		expect(p.text.endsWith('…')).toBe(true);
+		expect(p.full).toBe('2024-01');
+		const [l, r] = extent(p, 40);
+		expect(l).toBeGreaterThanOrEqual(0);
+		expect(r).toBeLessThanOrEqual(100);
+		expect(p.width).toBeCloseTo(estimateLabelWidth(p.text, 22), 6);
+	});
+
+	it('start-anchored but fitting: full text, extent inside, centre reflects the shift', () => {
+		const p = placeEdgeLabel('2024-01', 20, 11, 200);
+		expect(p.anchor).toBe('start');
+		expect(p.text).toBe('2024-01');
+		expect(p.centre).toBeCloseTo(20 + p.width / 2, 6);
+	});
+
+	it('thinning with the real extent does not leave the shifted first label overlapping the next', () => {
+		const first = placeEdgeLabel('2024-01', 10, 11, 300);
+		const labels = [first.text, '2024-02'];
+		const xs = [first.centre, 40];
+		const kept = thinValueLabels(labels, xs, { fontSize: 11 });
+		if (kept.length === 2) {
+			const r0 = first.centre + first.width / 2;
+			const l1 = 40 - estimateLabelWidth('2024-02', 11) / 2;
+			expect(r0).toBeLessThanOrEqual(l1);
+		}
 	});
 });

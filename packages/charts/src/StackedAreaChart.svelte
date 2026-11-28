@@ -25,7 +25,7 @@
 		leftMarginForTicks,
 		originLabelsCollide,
 		thinVerticalLabels,
-		clipsLeft
+		placeEdgeLabel
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { stackSeries } from './core/stack';
@@ -280,23 +280,34 @@
 
 			<!-- X labels. -->
 			{@const xCandidates = everyNthIndex(count, maxXTicksFor(m.innerWidth))}
+			{@const xPlace = new Map(
+				xCandidates.map((i) => [
+					i,
+					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth)
+				])
+			)}
 			{@const xTicks = dropCollidingTicks(
 				xCandidates,
-				xCandidates.map((i) => xAt(i)),
-				xCandidates.map((i) => estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize))
+				xCandidates.map((i) => (i === count - 1 ? xAt(i) : xPlace.get(i)!.centre)),
+				xCandidates.map((i) =>
+					i === count - 1
+						? estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize)
+						: xPlace.get(i)!.width
+				)
 			)}
 			{#each xTicks as i (i)}
 				<text
 					x={xAt(i)}
 					y={m.innerBottom + 18}
 					class="tick-label"
-					text-anchor={i === count - 1
-						? 'end'
-						: clipsLeft(formatXValue(xLabels[i]), xAt(i), tickFontSize)
-							? 'start'
-							: 'middle'}
+					text-anchor={i === count - 1 ? 'end' : xPlace.get(i)!.anchor}
 				>
-					{formatXValue(xLabels[i])}
+					{i === count - 1
+						? formatXValue(xLabels[i])
+						: xPlace.get(i)!
+								.text}{#if i !== count - 1 && xPlace.get(i)!.text !== xPlace.get(i)!.full}<title>
+							{xPlace.get(i)!.full}
+						</title>{/if}
 				</text>
 			{/each}
 

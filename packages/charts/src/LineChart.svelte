@@ -38,7 +38,7 @@
 		originLabelsCollide,
 		rightMarginForTicks,
 		thinVerticalLabels,
-		clipsLeft
+		placeEdgeLabel
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import {
@@ -579,23 +579,34 @@
 			<!-- X labels. The right-edge tick is anchored 'end' so it doesn't
 			     overhang the right margin and clip. -->
 			{@const xCandidates = xTickIndices(maxXTicksFor(m.innerWidth))}
+			{@const xPlace = new Map(
+				xCandidates.map((i) => [
+					i,
+					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth)
+				])
+			)}
 			{@const xTicks = dropCollidingTicks(
 				xCandidates,
-				xCandidates.map((i) => xAt(i)),
-				xCandidates.map((i) => estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize))
+				xCandidates.map((i) => (i === range[1] ? xAt(i) : xPlace.get(i)!.centre)),
+				xCandidates.map((i) =>
+					i === range[1]
+						? estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize)
+						: xPlace.get(i)!.width
+				)
 			)}
 			{#each xTicks as i (i)}
 				<text
 					x={xAt(i)}
 					y={m.innerBottom + 18}
 					class="tick-label x-tick"
-					text-anchor={i === range[1]
-						? 'end'
-						: clipsLeft(formatXValue(xLabels[i]), xAt(i), tickFontSize)
-							? 'start'
-							: 'middle'}
+					text-anchor={i === range[1] ? 'end' : xPlace.get(i)!.anchor}
 				>
-					{formatXValue(xLabels[i])}
+					{i === range[1]
+						? formatXValue(xLabels[i])
+						: xPlace.get(i)!
+								.text}{#if i !== range[1] && xPlace.get(i)!.text !== xPlace.get(i)!.full}<title>
+							{xPlace.get(i)!.full}
+						</title>{/if}
 				</text>
 			{/each}
 

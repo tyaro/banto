@@ -13,7 +13,7 @@
 		rightMarginForLastTick,
 		thinValueLabels,
 		thinVerticalLabels,
-		clipsLeft
+		placeEdgeLabel
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { seriesColorVar } from './core/color';
@@ -190,14 +190,17 @@
 				</text>
 			{/each}
 			<!-- X labels thinned by their drawn widths (first and last kept); gridlines stay at every tick. -->
+			{@const xPlace = xTicks.map((t) =>
+				placeEdgeLabel(formatXValue(t), xScale(t), tickFontSize, width)
+			)}
 			{@const shownX = new Set(
 				thinValueLabels(
-					xTicks.map((t) => formatXValue(t)),
-					xTicks.map((t) => xScale(t)),
+					xPlace.map((p) => p.text),
+					xPlace.map((p) => p.centre),
 					{ fontSize: tickFontSize }
 				).map((i) => xTicks[i])
 			)}
-			{#each xTicks as tick (tick)}
+			{#each xTicks as tick, ti (tick)}
 				<line
 					x1={xScale(tick)}
 					x2={xScale(tick)}
@@ -210,11 +213,11 @@
 						x={xScale(tick)}
 						y={m.innerTop + m.innerHeight + 16}
 						class="tick-label"
-						text-anchor={clipsLeft(formatXValue(tick), xScale(tick), tickFontSize)
-							? 'start'
-							: 'middle'}
+						text-anchor={xPlace[ti].anchor}
 					>
-						{formatXValue(tick)}
+						{xPlace[ti].text}{#if xPlace[ti].text !== xPlace[ti].full}<title>
+								{xPlace[ti].full}
+							</title>{/if}
 					</text>
 				{/if}
 			{/each}

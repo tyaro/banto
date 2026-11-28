@@ -29,7 +29,7 @@
 		rightMarginForLastTick,
 		thinValueLabels,
 		thinVerticalLabels,
-		clipsLeft
+		placeEdgeLabel
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
@@ -238,24 +238,27 @@
 				</text>
 			{/each}
 			<!-- X labels thinned by their drawn widths (first and last kept). -->
+			{@const xPlace = xTicks.map((t) =>
+				placeEdgeLabel(formatValueDisplay(t), xScale(t), tickFontSize, width)
+			)}
 			{@const shownX = new Set(
 				thinValueLabels(
-					xTicks.map((t) => formatValueDisplay(t)),
-					xTicks.map((t) => xScale(t)),
+					xPlace.map((p) => p.text),
+					xPlace.map((p) => p.centre),
 					{ fontSize: tickFontSize }
 				).map((i) => xTicks[i])
 			)}
-			{#each xTicks as tick (tick)}
+			{#each xTicks as tick, ti (tick)}
 				{#if shownX.has(tick)}
 					<text
 						x={xScale(tick)}
 						y={m.innerTop + m.innerHeight + 16}
 						class="tick-label"
-						text-anchor={clipsLeft(formatValueDisplay(tick), xScale(tick), tickFontSize)
-							? 'start'
-							: 'middle'}
+						text-anchor={xPlace[ti].anchor}
 					>
-						{formatValueDisplay(tick)}
+						{xPlace[ti].text}{#if xPlace[ti].text !== xPlace[ti].full}<title>
+								{xPlace[ti].full}
+							</title>{/if}
 					</text>
 				{/if}
 			{/each}
