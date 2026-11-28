@@ -359,12 +359,17 @@ export function clipsLeft(label: string, x: number, fontSize = 11): boolean {
 	return x - estimateLabelWidth(label, fontSize) / 2 < 0;
 }
 
+/** True when a label centred on `x` would leave the svg on the right (`svgWidth` px wide). */
+export function clipsRight(label: string, x: number, svgWidth: number, fontSize = 11): boolean {
+	return x + estimateLabelWidth(label, fontSize) / 2 > svgWidth;
+}
+
 /** Where and how an x tick label is drawn. */
 export interface EdgeLabelPlacement {
 	/** The text to draw (cut with an ellipsis when it does not fit; `full` keeps the original for a `<title>`). */
 	text: string;
 	full: string;
-	anchor: 'middle' | 'start';
+	anchor: 'middle' | 'start' | 'end';
 	/** Centre (px) of the drawn extent - what collision thinning should use for this label. */
 	centre: number;
 	/** Estimated drawn width (px) of `text`. */
@@ -372,21 +377,31 @@ export interface EdgeLabelPlacement {
 }
 
 /**
- * Anchor and text for an x tick label at `x` in an svg `svgWidth` px wide.
- * Centred while its left half stays inside; otherwise 'start' so it reads
- * inward from the edge, and when even that crosses the svg's right edge it is
- * cut with an ellipsis to the remaining width (the caller keeps the full text
- * in a `<title>`). `centre`/`width` describe the real drawn extent, so
- * collision thinning done afterwards sees where the label actually sits.
+ * Anchor and text for a tick label at `x` in an svg `svgWidth` px wide.
+ * Centred while both halves stay inside; 'start' when only the left half
+ * crosses (reads inward from the edge) and 'end' when only the right half does
+ * (a last label whose right margin hit its cap). When even that crosses the
+ * svg (it is wider than the room on that side) it is cut with an ellipsis to
+ * the remaining width (the caller keeps the full text in a `<title>`).
+ * `centre`/`width` describe the real drawn extent, so collision thinning done
+ * afterwards sees where the label actually sits. `forceEnd` right-aligns the
+ * label at `x` regardless (the last tick of a line / stacked-area axis).
  */
 export function placeEdgeLabel(
 	label: string,
 	x: number,
 	fontSize: number,
-	svgWidth: number
+	svgWidth: number,
+	forceEnd = false
 ): EdgeLabelPlacement {
 	const w = estimateLabelWidth(label, fontSize);
-	if (!clipsLeft(label, x, fontSize)) {
+	const left = clipsLeft(label, x, fontSize);
+	if (forceEnd || (!left && clipsRight(label, x, svgWidth, fontSize))) {
+		const text = truncateLabel(label, Math.max(0, x), fontSize);
+		const tw = estimateLabelWidth(text, fontSize);
+		return { text, full: label, anchor: 'end', centre: x - tw / 2, width: tw };
+	}
+	if (!left) {
 		return { text: label, full: label, anchor: 'middle', centre: x, width: w };
 	}
 	const text = truncateLabel(label, Math.max(0, svgWidth - x), fontSize);

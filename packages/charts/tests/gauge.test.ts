@@ -153,4 +153,40 @@ describe('gaugeLayout (range labels)', () => {
 		expect(b1).toBeLessThanOrEqual(width);
 		expect(l.maxLabel).toContain('…');
 	});
+
+	it('keeps both labels whole when they fit side by side (svg 211px, 29.7px, 0 and 100000)', () => {
+		const l = gaugeLayout({
+			...base,
+			width: 211,
+			plotHeight: 160,
+			minText: '0',
+			maxText: '100000',
+			fontSize: 29.7
+		});
+		expect(l.rOuter).toBeGreaterThanOrEqual(36);
+		expect(l.minLabel).toBe('0');
+		expect(l.maxLabel).toBe('100000');
+		const d = (l.rOuter + 14) * Math.SQRT1_2;
+		const [, a1] = box(l.minLabel, 211 / 2 - d, 29.7);
+		const [b0, b1] = box(l.maxLabel, 211 / 2 + d, 29.7);
+		expect(a1).toBeLessThanOrEqual(b0);
+		expect(b1).toBeLessThanOrEqual(211);
+	});
+
+	it('keeps 1,000,000 and 9,000,000 whole at 300px / 11px when they fit (Codex example)', () => {
+		const l = gaugeLayout({
+			...base,
+			width: 300,
+			plotHeight: 160,
+			minText: '1,000,000',
+			maxText: '9,000,000',
+			fontSize: 11
+		});
+		expect(l.minLabel).toBe('1,000,000');
+		expect(l.maxLabel).toBe('9,000,000');
+		const d = (l.rOuter + 14) * Math.SQRT1_2;
+		const [, a1] = box(l.minLabel, 150 - d, 11);
+		const [b0] = box(l.maxLabel, 150 + d, 11);
+		expect(a1).toBeLessThan(b0);
+	});
 });

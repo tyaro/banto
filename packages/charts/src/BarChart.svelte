@@ -17,7 +17,6 @@
 	import { roundedTopBarPath } from './core/path';
 	import { seriesColorVar } from './core/color';
 	import {
-		estimateLabelWidth,
 		leftMarginFor,
 		leftMarginForFirstLabel,
 		fitBandLabels,
@@ -27,7 +26,8 @@
 		rightMarginForLastTick,
 		truncateLabel,
 		thinVerticalLabels,
-		thinKeepEnd
+		thinKeepEnd,
+		placeEdgeLabel
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { handleMarkKeydown, isKeyboardFocus, onMarkDetached } from './internal/mark-keys';
@@ -421,16 +421,19 @@
 				)}
 				<!-- Value labels are thinned so neighbours never collide (large root
 				     font / narrow plot); gridlines stay at every tick. -->
+				{@const tickPlace = valueTicks.map((t) =>
+					placeEdgeLabel(formatValueDisplay(t), valueScale(t), tickFontSize, width)
+				)}
 				{@const shownTicks = new Set(
 					thinKeepEnd(
-						valueTicks.map((t) => valueScale(t)),
-						valueTicks.map((t) => estimateLabelWidth(formatValueDisplay(t), tickFontSize)),
+						tickPlace.map((p) => p.centre),
+						tickPlace.map((p) => p.width),
 						// No extra gap: estimateLabelWidth already over-counts digits and the narrow
 						// ',' / '.', and a 4px gap thinned labels the standard density shows legibly.
 						0
 					).map((i) => valueTicks[i])
 				)}
-				{#each valueTicks as tick (tick)}
+				{#each valueTicks as tick, ti (tick)}
 					<line
 						x1={valueScale(tick)}
 						x2={valueScale(tick)}
@@ -443,9 +446,11 @@
 							x={valueScale(tick)}
 							y={m.innerTop + m.innerHeight + 16}
 							class="tick-label"
-							text-anchor="middle"
+							text-anchor={tickPlace[ti].anchor}
 						>
-							{formatValueDisplay(tick)}
+							{tickPlace[ti].text}{#if tickPlace[ti].text !== tickPlace[ti].full}<title>
+									{tickPlace[ti].full}
+								</title>{/if}
 						</text>
 					{/if}
 				{/each}

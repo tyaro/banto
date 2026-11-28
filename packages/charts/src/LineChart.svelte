@@ -32,7 +32,6 @@
 	import { dropCollidingTicks, everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
 	import {
-		estimateLabelWidth,
 		leftMarginForFirstLabel,
 		leftMarginForTicks,
 		originLabelsCollide,
@@ -505,32 +504,24 @@
 			{@const xPlace = new Map(
 				xCandidates.map((i) => [
 					i,
-					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth)
+					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth, i === range[1])
 				])
 			)}
 			{@const xTicks = dropCollidingTicks(
 				xCandidates,
-				xCandidates.map((i) => (i === range[1] ? xAt(i) : xPlace.get(i)!.centre)),
-				xCandidates.map((i) =>
-					i === range[1]
-						? estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize)
-						: xPlace.get(i)!.width
-				)
+				xCandidates.map((i) => xPlace.get(i)!.centre),
+				xCandidates.map((i) => xPlace.get(i)!.width)
 			)}
 			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
 			{@const originCollides =
 				count > 0 &&
 				xTicks.length > 0 &&
-				originLabelsCollide(
-					xTicks[0] === range[1] ? formatXValue(xLabels[xTicks[0]]) : xPlace.get(xTicks[0])!.text,
-					formatYValue(leftTicks[0] ?? 0),
-					{
-						fontSize: tickFontSize,
-						xBaseline: 18,
-						xAnchor: xTicks[0] === range[1] ? 'end' : xPlace.get(xTicks[0])!.anchor,
-						xOffset: xAt(xTicks[0]) - m.innerLeft
-					}
-				)}
+				originLabelsCollide(xPlace.get(xTicks[0])!.text, formatYValue(leftTicks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 18,
+					xAnchor: xPlace.get(xTicks[0])!.anchor,
+					xOffset: xAt(xTicks[0]) - m.innerLeft
+				})}
 			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
 			{@const shownY = new Set(
 				thinVerticalLabels(
@@ -606,12 +597,9 @@
 					x={xAt(i)}
 					y={m.innerBottom + 18}
 					class="tick-label x-tick"
-					text-anchor={i === range[1] ? 'end' : xPlace.get(i)!.anchor}
+					text-anchor={xPlace.get(i)!.anchor}
 				>
-					{i === range[1]
-						? formatXValue(xLabels[i])
-						: xPlace.get(i)!
-								.text}{#if i !== range[1] && xPlace.get(i)!.text !== xPlace.get(i)!.full}<title>
+					{xPlace.get(i)!.text}{#if xPlace.get(i)!.text !== xPlace.get(i)!.full}<title>
 							{xPlace.get(i)!.full}
 						</title>{/if}
 				</text>

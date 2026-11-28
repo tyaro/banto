@@ -81,6 +81,7 @@ export {
 	thinVerticalLabels,
 	thinKeepEnd,
 	clipsLeft,
+	clipsRight,
 	placeEdgeLabel,
 	originLabelsCollide,
 	fitBandLabels,

@@ -159,7 +159,11 @@ describe('first x label at a capped left margin', () => {
 
 describe('placeEdgeLabel keeps both ends inside the svg', () => {
 	const extent = (p: ReturnType<typeof placeEdgeLabel>, x: number) =>
-		p.anchor === 'start' ? [x, x + p.width] : [x - p.width / 2, x + p.width / 2];
+		p.anchor === 'start'
+			? [x, x + p.width]
+			: p.anchor === 'end'
+				? [x - p.width, x]
+				: [x - p.width / 2, x + p.width / 2];
 
 	it('a label that fits stays centred and unchanged', () => {
 		const p = placeEdgeLabel('2024-01', 48, 11, 400);
@@ -177,6 +181,60 @@ describe('placeEdgeLabel keeps both ends inside the svg', () => {
 		expect(l).toBeGreaterThanOrEqual(0);
 		expect(r).toBeLessThanOrEqual(100);
 		expect(p.width).toBeCloseTo(estimateLabelWidth(p.text, 22), 6);
+	});
+
+	it('100px svg, 22px, x=60, 7 ASCII chars: crosses the right edge and is too wide to end-anchor -> cut, inside', () => {
+		const label = 'ABCDEFG';
+		const w = estimateLabelWidth(label, 22);
+		expect(60 - w / 2).toBeLessThan(0 + w); // sanity: wide label
+		expect(60 + w / 2).toBeGreaterThan(100);
+		const p = placeEdgeLabel(label, 60, 22, 100);
+		expect(p.anchor).toBe('end');
+		expect(p.text.endsWith('…')).toBe(true);
+		expect(p.full).toBe(label);
+		const [l, r] = extent(p, 60);
+		expect(l).toBeGreaterThanOrEqual(0);
+		expect(r).toBeLessThanOrEqual(100);
+	});
+
+	it('crossing only the right edge: end-anchored, whole text, inside', () => {
+		const label = 'ABCD';
+		const w = estimateLabelWidth(label, 22);
+		expect(60 - w / 2).toBeGreaterThanOrEqual(0);
+		expect(60 + w / 2).toBeGreaterThan(80);
+		const p = placeEdgeLabel(label, 60, 22, 80);
+		expect(p).toMatchObject({ anchor: 'end', text: label, full: label });
+		expect(p.centre).toBeCloseTo(60 - p.width / 2, 6);
+		expect(extent(p, 60)[1]).toBeLessThanOrEqual(80);
+	});
+
+	it('a last label wider than the room on its left is cut with an ellipsis (end-anchored)', () => {
+		const p = placeEdgeLabel('2024-01-01 00:00', 90, 22, 100, true);
+		expect(p.anchor).toBe('end');
+		expect(p.text.endsWith('…')).toBe(true);
+		expect(p.full).toBe('2024-01-01 00:00');
+		const [l, r] = extent(p, 90);
+		expect(l).toBeGreaterThanOrEqual(0);
+		expect(r).toBeLessThanOrEqual(100);
+	});
+
+	it('forceEnd keeps a fitting last label whole, right-aligned at x', () => {
+		const p = placeEdgeLabel('2024-01', 190, 11, 200, true);
+		expect(p).toMatchObject({ anchor: 'end', text: '2024-01' });
+		expect(p.centre).toBeCloseTo(190 - p.width / 2, 6);
+	});
+
+	it('horizontal value axis: first tick is start-anchored, last tick end-anchored, both inside', () => {
+		const width = 100;
+		const fs = 22;
+		const first = placeEdgeLabel('10,000', 4, fs, width);
+		const last = placeEdgeLabel('10,000', 96, fs, width);
+		expect(first.anchor).toBe('start');
+		expect(last.anchor).toBe('end');
+		expect(extent(first, 4)[0]).toBeGreaterThanOrEqual(0);
+		expect(extent(last, 96)[1]).toBeLessThanOrEqual(width);
+		expect(extent(first, 4)[1]).toBeLessThanOrEqual(width);
+		expect(extent(last, 96)[0]).toBeGreaterThanOrEqual(0);
 	});
 
 	it('start-anchored but fitting: full text, extent inside, centre reflects the shift', () => {
@@ -201,8 +259,8 @@ describe('placeEdgeLabel keeps both ends inside the svg', () => {
 
 // #1056 (review): the origin collision is judged on the x label that survives thinning.
 describe('origin collision uses the surviving first x label', () => {
-	const fontSize = 30;
-	const svgWidth = 211;
+	const fontSize = 28;
+	const svgWidth = 240;
 	const innerLeft = 100;
 	const ticks = [1000, 1200, 1400, 1600, 1800, 2000];
 	const xs = ticks.map((t) => innerLeft + ((t - 1000) / 1000) * (svgWidth - innerLeft - 8));

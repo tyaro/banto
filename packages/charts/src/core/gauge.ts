@@ -123,7 +123,7 @@ export function gaugeLayout(i: GaugeLayoutInput): GaugeLayout {
 	// together must leave `LABEL_SEPARATION` between them.
 	const d = (rOuter + GAUGE_LABEL_GAP) * Math.SQRT1_2;
 	const edgeMax = 2 * (i.width / 2 - EDGE_PAD - d);
-	const pairMax = 2 * d - LABEL_SEPARATION;
+	const pairMax = 2 * (2 * d - LABEL_SEPARATION);
 	const minIsShort = wMin <= wMax;
 	const shortW = Math.min(wMin, wMax);
 	const shortFit = Math.min(shortW, Math.max(0, edgeMax));
