@@ -1804,8 +1804,8 @@
 	     clear that filter for them - explain the mismatch instead, and let
 	     them dismiss the notice once they've seen it. -->
 	{#if filterExclusionNotice}
-		<div class="filter-exclusion-notice" role="status">
-			<span>
+		<div class="filter-exclusion-notice">
+			<span role="status">
 				{m['resource.filterExcludedNotice']({ resource: def.label, id: filterExclusionNotice.id })}
 			</span>
 			<button

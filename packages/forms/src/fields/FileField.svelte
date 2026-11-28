@@ -373,8 +373,8 @@
 	{#if hasParent && loading}
 		<p class="note" role="status">{t.loading()}</p>
 	{:else if loadError}
-		<p class="problem" role="alert">
-			<span>{loadError}</span>
+		<p class="problem">
+			<span role="alert">{loadError}</span>
 			<button type="button" class="action" onclick={() => void load()}>{t.reload()}</button>
 		</p>
 	{/if}

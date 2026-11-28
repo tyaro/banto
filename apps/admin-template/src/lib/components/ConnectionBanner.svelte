@@ -6,7 +6,7 @@
 	 *
 	 * - Shown only while a monitor exists (`connectionMonitoring`); Tauri and
 	 *   demo never create one, so it is never in their DOM.
-	 * - The region itself stays mounted (`role="status"`, polite) so the
+	 * - The sentence stays mounted (`role="status"`, polite; no control inside) so the
 	 *   change of its text is what gets announced - once per state change,
 	 *   not on every render. Nothing here moves focus: the banner appears
 	 *   and goes without touching what the user is typing in.
@@ -28,28 +28,39 @@
 </script>
 
 {#if connectionMonitoring()}
-	<div class="connection-region" role="status" aria-live="polite" data-testid="connection-region">
+	<!--
+		The strip itself is not a live region: the "Retry" button must not sit inside one
+		(Issue #1055: a modal makes everything outside it inert except live regions, and a
+		live region holding a control would stay clickable behind it). Only the sentence is
+		`role="status"`, and it stays mounted so a change of its text is what gets announced.
+	-->
+	<div
+		class="connection-region"
+		class:connection-banner={kind}
+		data-connection={kind ?? undefined}
+		data-testid="connection-region"
+	>
+		{#if kind === 'offline'}
+			<WifiOff size={18} aria-hidden="true" />
+		{:else if kind}
+			<TriangleAlert size={18} aria-hidden="true" />
+		{/if}
+		<p class="message" role="status" aria-live="polite">
+			{#if kind}
+				<strong>
+					{kind === 'offline' ? m['connection.offline']() : m['connection.reconnecting']()}
+				</strong>
+				<span class="warning">{m['connection.reloadWarning']()}</span>
+			{/if}
+		</p>
 		{#if kind}
-			<div class="connection-banner" data-connection={kind}>
-				{#if kind === 'offline'}
-					<WifiOff size={18} aria-hidden="true" />
-				{:else}
-					<TriangleAlert size={18} aria-hidden="true" />
-				{/if}
-				<p class="message">
-					<strong>
-						{kind === 'offline' ? m['connection.offline']() : m['connection.reconnecting']()}
-					</strong>
-					<span class="warning">{m['connection.reloadWarning']()}</span>
-				</p>
-				<button
-					type="button"
-					class="banto-btn banto-btn--secondary banto-btn--sm"
-					onclick={() => void retryConnection()}
-				>
-					{m['connection.retry']()}
-				</button>
-			</div>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary banto-btn--sm"
+				onclick={() => void retryConnection()}
+			>
+				{m['connection.retry']()}
+			</button>
 		{/if}
 	</div>
 {/if}

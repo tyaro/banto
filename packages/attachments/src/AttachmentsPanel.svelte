@@ -253,8 +253,8 @@
 	{#if loading}
 		<p class="message" role="status" aria-live="polite">{t.loading()}</p>
 	{:else if error}
-		<div class="message message--error" role="alert">
-			<p>{error}</p>
+		<div class="message message--error">
+			<p role="alert">{error}</p>
 			<button type="button" onclick={retry}>{t.retry()}</button>
 		</div>
 	{:else if items.length === 0}
