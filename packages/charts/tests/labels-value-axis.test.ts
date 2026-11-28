@@ -198,3 +198,61 @@ describe('placeEdgeLabel keeps both ends inside the svg', () => {
 		}
 	});
 });
+
+// #1056 (review): the origin collision is judged on the x label that survives thinning.
+describe('origin collision uses the surviving first x label', () => {
+	const fontSize = 30;
+	const svgWidth = 211;
+	const innerLeft = 100;
+	const ticks = [1000, 1200, 1400, 1600, 1800, 2000];
+	const xs = ticks.map((t) => innerLeft + ((t - 1000) / 1000) * (svgWidth - innerLeft - 8));
+	const place = ticks.map((t, i) =>
+		placeEdgeLabel(`¥${t.toLocaleString('en-US')}`, xs[i], fontSize, svgWidth)
+	);
+	const kept = thinValueLabels(
+		place.map((p) => p.text),
+		place.map((p) => p.centre),
+		{ fontSize }
+	);
+	const collides = (yLabel: string) => {
+		if (kept.length === 0) return false;
+		const f = Math.min(...kept);
+		return originLabelsCollide(place[f].text, yLabel, {
+			fontSize,
+			xBaseline: 16,
+			xAnchor: place[f].anchor,
+			xOffset: xs[f] - innerLeft
+		});
+	};
+
+	it('thinning drops the first label in this geometry', () => {
+		expect(kept).not.toContain(0);
+	});
+
+	it('keeps the y "100" when the first x label was thinned away', () => {
+		// the old judgement (first candidate, before thinning) hid it
+		expect(
+			originLabelsCollide(place[0].text, '100', {
+				fontSize,
+				xBaseline: 16,
+				xAnchor: place[0].anchor,
+				xOffset: xs[0] - innerLeft
+			})
+		).toBe(true);
+		expect(collides('100')).toBe(false);
+	});
+
+	it('still hides y when the surviving first label really overlaps', () => {
+		expect(
+			originLabelsCollide('¥1,000', '100', { fontSize: 22, xBaseline: 16, xAnchor: 'middle' })
+		).toBe(true);
+		expect(
+			originLabelsCollide('¥1,000', '100', {
+				fontSize: 22,
+				xBaseline: 16,
+				xAnchor: 'end',
+				xOffset: 0
+			})
+		).toBe(true);
+	});
+});

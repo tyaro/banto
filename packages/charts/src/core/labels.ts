@@ -289,11 +289,12 @@ export function thinValueLabels(
 /**
  * True when the y label at the plot's bottom-left (end-anchored at
  * `innerLeft - yGap`, centred on the x axis) would collide with the first x
- * label (`xAnchor` 'middle' on the plot's left edge, or 'start'; baseline
+ * label (`xAnchor` 'middle' on the plot's left edge, or 'start'/'end'; baseline
  * `xBaseline` px below the axis). At the standard font the x label sits
  * below the y label, so nothing is dropped; a large font pushes them into each
  * other, and then the caller omits the y label (the origin is implied by the
- * axis). Glyph boxes use digit height (~0.72em).
+ * axis). Pass the label that survived thinning, with its drawn text and anchor,
+ * not the first candidate. Glyph boxes use digit height (~0.72em).
  */
 export function originLabelsCollide(
 	xLabel: string,
@@ -301,7 +302,7 @@ export function originLabelsCollide(
 	options: {
 		fontSize?: number;
 		xBaseline?: number;
-		xAnchor?: 'middle' | 'start';
+		xAnchor?: 'middle' | 'start' | 'end';
 		/** Distance (px) of the x label's anchor from the plot's left edge (0 = on the edge; a band centre for a band axis). */
 		xOffset?: number;
 		yGap?: number;
@@ -312,7 +313,7 @@ export function originLabelsCollide(
 	// vertical: x label top (below the axis) vs. bottom of the y label centred on the axis
 	if (xBaseline - 0.72 * fontSize >= 0.36 * fontSize) return false;
 	const xw = estimateLabelWidth(xLabel, fontSize);
-	const xLeft = xOffset + (xAnchor === 'middle' ? -xw / 2 : 0);
+	const xLeft = xOffset + (xAnchor === 'middle' ? -xw / 2 : xAnchor === 'end' ? -xw : 0);
 	const yRight = -yGap;
 	const yLeft = yRight - estimateLabelWidth(yLabel, fontSize);
 	const xRight = xLeft + xw;

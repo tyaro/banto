@@ -204,12 +204,26 @@
 			{@const xScale = linearScale(domain, [m.innerLeft, m.innerLeft + m.innerWidth])}
 			{@const valueScale = linearScale([0, domainMax], [m.innerTop + m.innerHeight, m.innerTop])}
 
-			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
-			{@const originCollides = originLabelsCollide(
-				formatValueDisplay(xTicks[0] ?? 0),
-				formatCount(valueTicks[0] ?? 0),
-				{ fontSize: tickFontSize, xBaseline: 16 }
+			<!-- X labels thinned by their drawn widths (first and last kept). -->
+			{@const xPlace = xTicks.map((t) =>
+				placeEdgeLabel(formatValueDisplay(t), xScale(t), tickFontSize, width)
 			)}
+			{@const shownXIdx = thinValueLabels(
+				xPlace.map((p) => p.text),
+				xPlace.map((p) => p.centre),
+				{ fontSize: tickFontSize }
+			)}
+			{@const shownX = new Set(shownXIdx.map((i) => xTicks[i]))}
+			{@const firstShownX = shownXIdx.length > 0 ? Math.min(...shownXIdx) : undefined}
+			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
+			{@const originCollides =
+				firstShownX !== undefined &&
+				originLabelsCollide(xPlace[firstShownX].text, formatCount(valueTicks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 16,
+					xAnchor: xPlace[firstShownX].anchor,
+					xOffset: xScale(xTicks[firstShownX]) - m.innerLeft
+				})}
 			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
 			{@const shownY = new Set(
 				thinVerticalLabels(
@@ -237,17 +251,6 @@
 					{formatCount(tick)}
 				</text>
 			{/each}
-			<!-- X labels thinned by their drawn widths (first and last kept). -->
-			{@const xPlace = xTicks.map((t) =>
-				placeEdgeLabel(formatValueDisplay(t), xScale(t), tickFontSize, width)
-			)}
-			{@const shownX = new Set(
-				thinValueLabels(
-					xPlace.map((p) => p.text),
-					xPlace.map((p) => p.centre),
-					{ fontSize: tickFontSize }
-				).map((i) => xTicks[i])
-			)}
 			{#each xTicks as tick, ti (tick)}
 				{#if shownX.has(tick)}
 					<text

@@ -499,12 +499,17 @@
 				)}
 				{@const xLabels = categories.map((cat) => String(cat ?? ''))}
 				<!-- The bottom y label yields to the first category label when a large font makes them meet. -->
+				{@const bandLabels = fitBandLabels(
+					xLabels,
+					xLabels.map((_, i) => catScaleX.center(i)),
+					{ fontSize: tickFontSize, totalWidth: width }
+				)}
 				{@const originCollides =
-					xLabels.length > 0 &&
-					originLabelsCollide(xLabels[0], formatValueDisplay(valueTicks[0] ?? 0), {
+					bandLabels.length > 0 &&
+					originLabelsCollide(bandLabels[0].text, formatValueDisplay(valueTicks[0] ?? 0), {
 						fontSize: tickFontSize,
 						xBaseline: 16,
-						xOffset: catScaleX.center(0) - m.innerLeft
+						xOffset: catScaleX.center(bandLabels[0].index) - m.innerLeft
 					})}
 				<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
 				{@const shownY = new Set(
@@ -535,7 +540,7 @@
 				{/each}
 				<!-- Category labels are thinned when crowded (many categories / large
 				     root font); bars stay at every category. -->
-				{#each fitBandLabels( xLabels, xLabels.map( (_, i) => catScaleX.center(i) ), { fontSize: tickFontSize, totalWidth: width } ) as lb (lb.index)}
+				{#each bandLabels as lb (lb.index)}
 					<text
 						x={catScaleX.center(lb.index)}
 						y={m.innerTop + m.innerHeight + 16}

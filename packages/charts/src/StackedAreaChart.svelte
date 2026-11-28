@@ -227,13 +227,36 @@
 		{#snippet plot()}
 			{@const m = metrics}
 			<!-- Gridlines + y ticks (recessive, rule 4). -->
+			{@const xCandidates = everyNthIndex(count, maxXTicksFor(m.innerWidth))}
+			{@const xPlace = new Map(
+				xCandidates.map((i) => [
+					i,
+					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth)
+				])
+			)}
+			{@const xTicks = dropCollidingTicks(
+				xCandidates,
+				xCandidates.map((i) => (i === count - 1 ? xAt(i) : xPlace.get(i)!.centre)),
+				xCandidates.map((i) =>
+					i === count - 1
+						? estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize)
+						: xPlace.get(i)!.width
+				)
+			)}
 			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
 			{@const originCollides =
 				count > 0 &&
-				originLabelsCollide(formatXValue(xLabels[0]), formatYValue(ticks[0] ?? 0), {
-					fontSize: tickFontSize,
-					xBaseline: 18
-				})}
+				xTicks.length > 0 &&
+				originLabelsCollide(
+					xTicks[0] === count - 1 ? formatXValue(xLabels[xTicks[0]]) : xPlace.get(xTicks[0])!.text,
+					formatYValue(ticks[0] ?? 0),
+					{
+						fontSize: tickFontSize,
+						xBaseline: 18,
+						xAnchor: xTicks[0] === count - 1 ? 'end' : xPlace.get(xTicks[0])!.anchor,
+						xOffset: xAt(xTicks[0]) - m.innerLeft
+					}
+				)}
 			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
 			{@const shownY = new Set(
 				thinVerticalLabels(
@@ -279,22 +302,6 @@
 			/>
 
 			<!-- X labels. -->
-			{@const xCandidates = everyNthIndex(count, maxXTicksFor(m.innerWidth))}
-			{@const xPlace = new Map(
-				xCandidates.map((i) => [
-					i,
-					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth)
-				])
-			)}
-			{@const xTicks = dropCollidingTicks(
-				xCandidates,
-				xCandidates.map((i) => (i === count - 1 ? xAt(i) : xPlace.get(i)!.centre)),
-				xCandidates.map((i) =>
-					i === count - 1
-						? estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize)
-						: xPlace.get(i)!.width
-				)
-			)}
 			{#each xTicks as i (i)}
 				<text
 					x={xAt(i)}
