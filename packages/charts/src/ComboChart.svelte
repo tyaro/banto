@@ -19,7 +19,13 @@
 	 * combined series list).
 	 */
 	import { linearScale, bandScale, niceTicks } from './core/scale';
-	import { fitBandLabels, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
+	import {
+		fitBandLabels,
+		leftMarginForTicks,
+		originLabelsCollide,
+		rightMarginForBandLabel,
+		thinVerticalLabels
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { roundedTopBarPath, linePath } from './core/path';
 	import { seriesColorVar } from './core/color';
@@ -238,6 +244,27 @@
 			{/each}
 
 			<!-- Gridlines + y ticks (shared axis, spec §6.4 rule 2) -->
+			<!-- The bottom y label yields to the first category label when a large font makes them meet. -->
+			{@const xLabels = categories.map((c) => formatXValue(c))}
+			{@const bandLabels = fitBandLabels(
+				xLabels,
+				xLabels.map((_, i) => catScale.center(i)),
+				{ fontSize: tickFontSize, totalWidth: width }
+			)}
+			{@const originCollides =
+				bandLabels.length > 0 &&
+				originLabelsCollide(bandLabels[0].text, formatYValue(valueTicks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 18,
+					xOffset: catScale.center(bandLabels[0].index) - m.innerLeft
+				})}
+			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+			{@const shownY = new Set(
+				thinVerticalLabels(
+					valueTicks.map((t) => valueScale(t)),
+					tickFontSize
+				)
+			)}
 			{#each valueTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -252,6 +279,7 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={!shownY.has(ti) || (ti === 0 && originCollides) ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}
@@ -275,8 +303,7 @@
 
 			<!-- X category labels, thinned when crowded (same `thinCategoryLabels` as BarChart;
 			     end labels cut to the svg edge, the last one always kept). -->
-			{@const xLabels = categories.map((c) => formatXValue(c))}
-			{#each fitBandLabels( xLabels, xLabels.map( (_, i) => catScale.center(i) ), { fontSize: tickFontSize, totalWidth: width } ) as lb (lb.index)}
+			{#each bandLabels as lb (lb.index)}
 				<text
 					x={catScale.center(lb.index)}
 					y={m.innerTop + m.innerHeight + 18}

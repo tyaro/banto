@@ -23,11 +23,17 @@
 	// Rough size estimate for flip decisions; exact pixel overflow doesn't
 	// matter here since we always clamp to >= 0 below too.
 	const ESTIMATED_WIDTH = 180;
+	// The rendered box (bound below): a large font makes it wider than the estimate,
+	// and the flip/clamp must use the real width so it never leaves the container.
+	let measuredWidth = $state(0);
+	const boxWidth = $derived(
+		measuredWidth > 0 ? Math.min(measuredWidth, containerWidth) : ESTIMATED_WIDTH
+	);
 	const estimatedHeight = $derived(28 + rows.length * 18 + (title ? 16 : 0));
 
 	const left = $derived(
-		x + OFFSET + ESTIMATED_WIDTH > containerWidth
-			? Math.max(0, x - OFFSET - ESTIMATED_WIDTH)
+		x + OFFSET + boxWidth > containerWidth
+			? Math.max(0, Math.min(x - OFFSET - boxWidth, containerWidth - boxWidth))
 			: x + OFFSET
 	);
 	const top = $derived(
@@ -37,7 +43,12 @@
 	);
 </script>
 
-<div class="chart-tooltip" style:left={`${left}px`} style:top={`${top}px`}>
+<div
+	class="chart-tooltip"
+	bind:offsetWidth={measuredWidth}
+	style:left={`${left}px`}
+	style:top={`${top}px`}
+>
 	{#if title}<div class="tt-title">{title}</div>{/if}
 	{#each rows as row (row.label)}
 		<div class="tt-row">
@@ -53,7 +64,8 @@
 		position: absolute;
 		pointer-events: none;
 		z-index: 20;
-		max-width: 220px;
+		max-width: min(max(220px, 15em), 100%);
+		box-sizing: border-box;
 		background: var(--banto-surface-overlay);
 		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-md);
@@ -88,6 +100,9 @@
 
 	.tt-label {
 		color: var(--banto-text-muted);
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 

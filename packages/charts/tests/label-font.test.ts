@@ -312,13 +312,13 @@ describe('caps and the radar follow the label size (D9-b)', () => {
 		);
 	});
 
-	it('a narrow chart (240px, 16px labels) stops both value-axis margins at 40% of the width', () => {
+	it('a narrow chart (240px, 16px labels) stops both value-axis margins at 45% of the width', () => {
 		const totalWidth = 240;
 		const values = ['0', '500,000,000', '1,000,000,000'];
 		const left = leftMarginForTicks(values, 48, { fontSize: 16, totalWidth });
 		const right = rightMarginForTicks(['0%', '50%', '100%'], 40, { fontSize: 16, totalWidth });
-		expect(left).toBe(Math.floor(totalWidth * 0.4));
-		expect(right).toBeLessThanOrEqual(Math.floor(totalWidth * 0.4));
+		expect(left).toBe(Math.floor(totalWidth * 0.45));
+		expect(right).toBeLessThanOrEqual(Math.floor(totalWidth * 0.45));
 		// without the width the font-scaled absolute cap alone would leave no plot area
 		expect(leftMarginForTicks(values, 48, { fontSize: 16 })).toBeGreaterThan(left);
 		expect(totalWidth - left - right).toBeGreaterThan(0);
@@ -410,7 +410,7 @@ describe('chart wiring', () => {
 		expect(src).toMatch(/\{@attach \w+ === 0 \? track\w+Font : null\}/);
 		const calls =
 			src.match(
-				/(leftMarginFor(Ticks)?|rightMarginFor(Ticks|LastTick|BandLabel)|fitBandLabels)\(/g
+				/(leftMarginFor(Ticks|FirstLabel)?|rightMarginFor(Ticks|LastTick|BandLabel)|fitBandLabels|thinValueLabels|originLabelsCollide|horizontalOriginLabelsCollide)\(/g
 			) ?? [];
 		const withFont = src.match(/fontSize: \w+FontSize/g) ?? [];
 		expect(calls.length).toBeGreaterThan(0);
@@ -432,5 +432,17 @@ describe('chart wiring', () => {
 
 	it.each(Object.keys(SOURCES))('%s has no raw px font size left', (name) => {
 		expect(SOURCES[name]).not.toMatch(/font-size:\s*[\d.]+(px|rem)/);
+	});
+});
+
+describe('value-axis tick margin at 200% text on a 320px chart (#1056)', () => {
+	it('keeps "500件" (29.7px font, 77.8px wide) inside the 211px svg', () => {
+		const left = leftMarginForTicks(['0件', '100件', '500件'], 48, {
+			fontSize: 29.7152,
+			totalWidth: 211
+		});
+		// end-anchored label sits at x = left - 8 and is 77.8px wide
+		expect(left - 8 - 77.8).toBeGreaterThanOrEqual(0);
+		expect(left).toBeLessThanOrEqual(Math.floor(211 * 0.45));
 	});
 });

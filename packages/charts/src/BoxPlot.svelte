@@ -18,7 +18,12 @@
 	import { boxStats, type BoxStats } from './core/boxplot';
 	import { linearScale, bandScale, niceTicks } from './core/scale';
 	import { seriesColorVar } from './core/color';
-	import { fitBandLabels, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
+	import {
+		fitBandLabels,
+		leftMarginForTicks,
+		rightMarginForBandLabel,
+		thinVerticalLabels
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -131,6 +136,13 @@
 				CATEGORY_PADDING
 			)}
 
+			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+			{@const shownY = new Set(
+				thinVerticalLabels(
+					valueTicks.map((t) => valueScale(t)),
+					tickFontSize
+				)
+			)}
 			{#each valueTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -145,6 +157,7 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={shownY.has(ti) ? undefined : 'hidden'}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatValueDisplay(tick)}

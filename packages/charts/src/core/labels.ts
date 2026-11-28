@@ -1,4 +1,4 @@
-import { thinCategoryLabels } from './ticks-time';
+import { dropCollidingTicks, thinCategoryLabels, thinCenteredTicks } from './ticks-time';
 
 /**
  * Axis-label width estimation (pure, Vitest-covered - spec §6.2 keeps number
@@ -92,14 +92,23 @@ function defaultMax(fontSize: number): number {
  */
 const MAX_TICK_MARGIN_RATIO = 0.4;
 
+/**
+ * Value-axis tick labels (numbers + a unit such as 件) are short, so they may
+ * take a little more than the category cap: at 200% text on a 320px chart
+ * ("500件" = 29.7px font, 77.8px wide, 211px svg) the label needs 86px, 41%,
+ * and the 40% cap clipped its left edge by ~2px. Category labels keep 40%
+ * (they are truncated with an ellipsis instead).
+ */
+const MAX_VALUE_TICK_MARGIN_RATIO = 0.45;
+
 export interface TickMarginOptions extends AxisMarginOptions {
 	/** Measured container width (px). Unknown/0 -> only the absolute `max` applies. */
 	totalWidth?: number;
 }
 
 /** `max`, further capped at 40% of `totalWidth` when the width is known. */
-function widthCap(max: number, totalWidth: number): number {
-	return totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * MAX_TICK_MARGIN_RATIO)) : max;
+function widthCap(max: number, totalWidth: number, ratio: number = MAX_TICK_MARGIN_RATIO): number {
+	return totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * ratio)) : max;
 }
 
 /**
@@ -125,7 +134,7 @@ function growMargin(labels: string[], base: number, gap: number, o: TickMarginOp
 	const max = Math.floor(o.max ?? defaultMax(fontSize));
 	let widest = 0;
 	for (const label of labels) widest = Math.max(widest, estimateLabelWidth(label, fontSize));
-	const cap = Math.max(base, widthCap(max, totalWidth));
+	const cap = Math.max(base, widthCap(max, totalWidth, MAX_VALUE_TICK_MARGIN_RATIO));
 	return Math.min(cap, Math.max(base, Math.ceil(widest + gap)));
 }
 
@@ -240,4 +249,233 @@ export function fitBandLabels(
 	return kept
 		.filter((i) => texts[i] !== '')
 		.map((i) => ({ index: i, text: texts[i], full: labels[i] }));
+}
+
+/**
+ * Left margin needed so the FIRST middle-anchored x label of a value axis
+ * (centred on the plot's left edge) doesn't leave the svg: half its width plus
+ * a small pad. Callers take `max(baseLeft, ...)` so layouts whose labels already
+ * fit are unchanged. With `totalWidth`, capped at 40% of it like the other margins.
+ */
+export function leftMarginForFirstLabel(
+	firstLabel: string,
+	options: TickMarginOptions = {}
+): number {
+	const { fontSize = 11, gap = 4, totalWidth = 0 } = options;
+	const margin = Math.ceil(estimateLabelWidth(firstLabel, fontSize) / 2 + gap);
+	return Math.min(margin, widthCap(Infinity, totalWidth));
+}
+
+/**
+ * Indices of the labels of a continuous (value) axis to draw: all while they
+ * fit, otherwise thinned evenly with the first and last kept. `xs[i]` is the
+ * centre of label `i`; widths are estimated at `fontSize` (same measure as
+ * `fitBandLabels`, no DOM). Only the labels are thinned - callers keep every
+ * gridline.
+ */
+export function thinValueLabels(
+	labels: string[],
+	xs: number[],
+	options: { fontSize?: number; gap?: number } = {}
+): number[] {
+	const { fontSize = 11, gap = 4 } = options;
+	return thinKeepEnd(
+		xs,
+		labels.map((l) => estimateLabelWidth(l, fontSize)),
+		gap
+	);
+}
+
+/**
+ * True when the y label at the plot's bottom-left (end-anchored at
+ * `innerLeft - yGap`, centred on the x axis) would collide with the first x
+ * label (`xAnchor` 'middle' on the plot's left edge, or 'start'/'end'; baseline
+ * `xBaseline` px below the axis). At the standard font the x label sits
+ * below the y label, so nothing is dropped; a large font pushes them into each
+ * other, and then the caller omits the y label (the origin is implied by the
+ * axis). Pass the label that survived thinning, with its drawn text and anchor,
+ * not the first candidate. Glyph boxes use digit height (~0.72em).
+ */
+export function originLabelsCollide(
+	xLabel: string,
+	yLabel: string,
+	options: {
+		fontSize?: number;
+		xBaseline?: number;
+		xAnchor?: 'middle' | 'start' | 'end';
+		/** Distance (px) of the x label's anchor from the plot's left edge (0 = on the edge; a band centre for a band axis). */
+		xOffset?: number;
+		yGap?: number;
+	} = {}
+): boolean {
+	const { fontSize = 11, xBaseline = 16, xAnchor = 'middle', xOffset = 0, yGap = 8 } = options;
+	if (xLabel === '' || yLabel === '') return false;
+	// vertical: x label top (below the axis) vs. bottom of the y label centred on the axis
+	if (xBaseline - 0.72 * fontSize >= 0.36 * fontSize) return false;
+	const xw = estimateLabelWidth(xLabel, fontSize);
+	const xLeft = xOffset + (xAnchor === 'middle' ? -xw / 2 : xAnchor === 'end' ? -xw : 0);
+	const yRight = -yGap;
+	const yLeft = yRight - estimateLabelWidth(yLabel, fontSize);
+	const xRight = xLeft + xw;
+	return xLeft < yRight && yLeft < xRight;
+}
+
+/**
+ * Horizontal bar chart: true when a bottom value label (its drawn centre
+ * `xOffset` px right of the plot's left edge, as `placeEdgeLabel` reports, baseline `xBaseline` below the
+ * axis) would collide with the lowest category label (end-anchored at
+ * `innerLeft - gap`, vertically centred `catCenterAbove` px above the axis).
+ * At the standard font the value labels sit well below the category labels;
+ * a large font (or a low band) pushes the origin value label into the lowest
+ * category name, and then the caller omits the VALUE label (the category name
+ * carries the meaning; the gridline still marks the value). Widths are
+ * estimates, so both boxes get a safety margin (width x1.15, half an em of slack)
+ * to stay correct on fonts wider than the estimate; heights are line boxes
+ * (~1.5em), like the E2E check measures them.
+ */
+export function horizontalOriginLabelsCollide(
+	valueLabel: string,
+	categoryLabel: string,
+	options: {
+		fontSize?: number;
+		xBaseline?: number;
+		xOffset?: number;
+		catCenterAbove: number;
+		gap?: number;
+		/** Width (px) the category label is cut to (the left margin), when it is capped. */
+		catMaxWidth?: number;
+	}
+): boolean {
+	const {
+		fontSize = 11,
+		xBaseline = 16,
+		xOffset = 0,
+		catCenterAbove,
+		gap = 8,
+		catMaxWidth
+	} = options;
+	if (valueLabel === '' || categoryLabel === '') return false;
+	// Boxes are judged as the browser draws them: line boxes (~1.5em tall, taller than the glyphs
+	// for CJK / fallback fonts). Vertically they collide when either centre lies inside the other's box.
+	const valueCentre = xBaseline - 0.36 * fontSize;
+	const catCentre = -catCenterAbove;
+	if (Math.abs(valueCentre - catCentre) >= 0.75 * fontSize) return false;
+	// Horizontally: the estimated widths get a margin, and the category label's right edge a slack of
+	// half an em (a wider real font / the end anchor's rounding), so a Linux font cannot slip through.
+	const vw = estimateLabelWidth(valueLabel, fontSize) * 1.15;
+	const cw = Math.min(estimateLabelWidth(categoryLabel, fontSize) * 1.15, catMaxWidth ?? Infinity);
+	const slack = 0.5 * fontSize;
+	return xOffset - vw / 2 < -gap + slack && xOffset + vw / 2 > -gap - cw;
+}
+
+/**
+ * Indices of the y tick labels of a vertical value axis to draw: all while
+ * they fit, otherwise thinned evenly with the first (the origin) and the last
+ * (the top) kept. `ys[i]` is the screen y of tick `i` (ticks in ascending value
+ * order, so `ys` descends); a label is `fontSize * 1.1` px high. Only the
+ * labels are thinned - callers keep every gridline. A pane with room for every
+ * label keeps all of them.
+ */
+export function thinVerticalLabels(ys: number[], fontSize = 11): number[] {
+	return thinKeepEnd(
+		ys.map((y) => -y),
+		ys.map(() => fontSize * 1.1),
+		0
+	);
+}
+
+/**
+ * `thinCenteredTicks` with an explicit priority for a space too small for both
+ * ends: it keeps only the FIRST tick there, which silently dropped the last one
+ * (the upper bound of a value axis, the latest category). Here the LAST wins
+ * (the end that tells the scale / the newest), so the result is never empty and
+ * a lone label is the last one. Otherwise identical (first and last both kept
+ * while they fit).
+ */
+export function thinKeepEnd(xs: number[], widths: number[], gap = 4): number[] {
+	const kept = thinCenteredTicks(xs, widths, gap);
+	return xs.length > 1 && kept.length === 1 && kept[0] === 0 ? [xs.length - 1] : kept;
+}
+
+/**
+ * True when a label centred on `x` would leave the svg on the left (the first
+ * x label of a value axis sits on the plot's left edge, and the left margin
+ * could not grow enough - it is capped at 40% of the width). The caller then
+ * anchors it 'start' so it reads inward from the edge instead of being cut.
+ */
+export function clipsLeft(label: string, x: number, fontSize = 11): boolean {
+	return x - estimateLabelWidth(label, fontSize) / 2 < 0;
+}
+
+/** True when a label centred on `x` would leave the svg on the right (`svgWidth` px wide). */
+export function clipsRight(label: string, x: number, svgWidth: number, fontSize = 11): boolean {
+	return x + estimateLabelWidth(label, fontSize) / 2 > svgWidth;
+}
+
+/** Where and how an x tick label is drawn. */
+export interface EdgeLabelPlacement {
+	/** The text to draw (cut with an ellipsis when it does not fit; `full` keeps the original for a `<title>`). */
+	text: string;
+	full: string;
+	anchor: 'middle' | 'start' | 'end';
+	/** Centre (px) of the drawn extent - what collision thinning should use for this label. */
+	centre: number;
+	/** Estimated drawn width (px) of `text`. */
+	width: number;
+}
+
+/**
+ * Anchor and text for a tick label at `x` in an svg `svgWidth` px wide.
+ * Centred while both halves stay inside; 'start' when only the left half
+ * crosses (reads inward from the edge) and 'end' when only the right half does
+ * (a last label whose right margin hit its cap). When even that crosses the
+ * svg (it is wider than the room on that side) it is cut with an ellipsis to
+ * the remaining width (the caller keeps the full text in a `<title>`).
+ * `centre`/`width` describe the real drawn extent, so collision thinning done
+ * afterwards sees where the label actually sits. `forceEnd` right-aligns the
+ * label at `x` regardless (the last tick of a line / stacked-area axis).
+ */
+export function placeEdgeLabel(
+	label: string,
+	x: number,
+	fontSize: number,
+	svgWidth: number,
+	forceEnd = false
+): EdgeLabelPlacement {
+	const w = estimateLabelWidth(label, fontSize);
+	const left = clipsLeft(label, x, fontSize);
+	if (forceEnd || (!left && clipsRight(label, x, svgWidth, fontSize))) {
+		const text = truncateLabel(label, Math.max(0, x), fontSize);
+		const tw = estimateLabelWidth(text, fontSize);
+		return { text, full: label, anchor: 'end', centre: x - tw / 2, width: tw };
+	}
+	if (!left) {
+		return { text: label, full: label, anchor: 'middle', centre: x, width: w };
+	}
+	const text = truncateLabel(label, Math.max(0, svgWidth - x), fontSize);
+	const tw = estimateLabelWidth(text, fontSize);
+	return { text, full: label, anchor: 'start', centre: x + tw / 2, width: tw };
+}
+
+/**
+ * `dropCollidingTicks` for labels already placed by `placeEdgeLabel`. That
+ * function takes the LAST label's anchor `x` (its box extends left of it) and
+ * every earlier label's centre, while `placeEdgeLabel` reports each label's
+ * drawn centre: passing those centres straight in shifted the last label left
+ * by half its width twice. The last label's anchor is rebuilt here as its
+ * drawn right edge (centre + width / 2), so its left edge is its true one for
+ * any anchor.
+ */
+export function dropCollidingPlaced(
+	indices: number[],
+	places: EdgeLabelPlacement[],
+	gap = 4
+): number[] {
+	const last = places.length - 1;
+	return dropCollidingTicks(
+		indices,
+		places.map((p, k) => (k === last ? p.centre + p.width / 2 : p.centre)),
+		places.map((p) => p.width),
+		gap
+	);
 }

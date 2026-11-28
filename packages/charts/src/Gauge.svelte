@@ -10,7 +10,15 @@
 	 * `value: null` (no reading) draws no value arc and shows a placeholder.
 	 */
 	import { arcPath, polarToCartesian } from './core/pie';
-	import { gaugeAngle, gaugeColorVar, GAUGE_START_DEG, type GaugeThresholds } from './core/gauge';
+	import {
+		gaugeAngle,
+		gaugeColorVar,
+		gaugeLayout,
+		GAUGE_LABEL_GAP,
+		GAUGE_START_DEG,
+		type GaugeThresholds
+	} from './core/gauge';
+	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import { defaultChartMessages, type ChartMessages } from './messages';
 
@@ -38,11 +46,12 @@
 		messages = {}
 	}: Props = $props();
 
+	const HERO_BASE_FONT_SIZE = 32;
 	const TRACK_WIDTH = 14;
 	const SIDE_PAD = 16;
 	const TOP_PAD = 16;
 	const BOTTOM_PAD = 30;
-	const LABEL_GAP = 14;
+	const LABEL_GAP = GAUGE_LABEL_GAP;
 	// Vertical extent (relative to rOuter) of the 270deg arc's bounding box:
 	// top point sits at r above center, the two open-mouth ends sit at
 	// r*sin(45deg) below center (see core/gauge.ts's angle-convention note).
@@ -52,21 +61,33 @@
 
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 
+	// Rendered range-label font (read from the min label, 11px until it can be read).
+	let rangeFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
+	const trackRangeFont = trackFontSize((px) => (rangeFontSize = px));
+
+	// Rendered centre-value font (the 2xl token; 32px until it can be read).
+	let heroFontSize = $state(HERO_BASE_FONT_SIZE);
+	const trackHeroFont = trackFontSize((px) => (heroFontSize = px));
+
 	function geometry(width: number, plotHeight: number) {
-		const rOuter = Math.max(
-			10,
-			Math.min(
-				(width - SIDE_PAD * 2) / 2,
-				(plotHeight - TOP_PAD - BOTTOM_PAD) / ARC_VERTICAL_FACTOR
-			)
-		);
-		const cx = width / 2;
-		const cy = TOP_PAD + rOuter;
-		const rInner = Math.max(1, rOuter - TRACK_WIDTH);
-		return { cx, cy, rOuter, rInner };
+		return gaugeLayout({
+			width,
+			plotHeight,
+			minText: formatValueDisplay(min),
+			maxText: formatValueDisplay(max),
+			fontSize: rangeFontSize,
+			sidePad: SIDE_PAD,
+			topPad: TOP_PAD,
+			bottomPad: BOTTOM_PAD,
+			trackWidth: TRACK_WIDTH,
+			verticalFactor: ARC_VERTICAL_FACTOR,
+			heroText: heroText(),
+			heroFontSize
+		});
 	}
 
 	const hasValue = $derived(value !== null && Number.isFinite(value));
+	const heroText = () => (hasValue ? formatValueDisplay(value as number) : t.gaugeNoValue());
 	const endAngle = $derived(gaugeAngle(hasValue ? (value as number) : min, min, max));
 	const colorVar = $derived(gaugeColorVar(hasValue ? (value as number) : NaN, thresholds));
 </script>
@@ -98,8 +119,11 @@
 				class="range-label"
 				text-anchor="middle"
 				dominant-baseline="hanging"
+				{@attach trackRangeFont}
 			>
-				{formatValueDisplay(min)}
+				{#if g.minLabel !== formatValueDisplay(min)}<title>
+						{formatValueDisplay(min)}
+					</title>{/if}{g.minLabel}
 			</text>
 			<text
 				x={maxPoint.x}
@@ -108,11 +132,20 @@
 				text-anchor="middle"
 				dominant-baseline="hanging"
 			>
-				{formatValueDisplay(max)}
+				{#if g.maxLabel !== formatValueDisplay(max)}<title>
+						{formatValueDisplay(max)}
+					</title>{/if}{g.maxLabel}
 			</text>
 
-			<text x={g.cx} y={g.cy} class="hero-value" text-anchor="middle" dominant-baseline="middle">
-				{hasValue ? formatValueDisplay(value as number) : t.gaugeNoValue()}
+			<text
+				x={g.cx}
+				y={g.cy}
+				class="hero-value"
+				text-anchor="middle"
+				dominant-baseline="middle"
+				{@attach trackHeroFont}
+			>
+				{heroText()}
 			</text>
 		{/snippet}
 	</ChartContainer>

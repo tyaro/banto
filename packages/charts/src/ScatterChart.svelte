@@ -6,7 +6,15 @@
 	 * minimum without a separate invisible hit-circle.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
-	import { leftMarginForTicks, rightMarginForLastTick } from './core/labels';
+	import {
+		leftMarginForFirstLabel,
+		leftMarginForTicks,
+		originLabelsCollide,
+		rightMarginForLastTick,
+		thinValueLabels,
+		thinVerticalLabels,
+		placeEdgeLabel
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { seriesColorVar } from './core/color';
 	import { getValue, toNumber, type Accessor, type ChartMargin } from './types';
@@ -64,10 +72,19 @@
 					fontSize: tickFontSize
 				})
 			),
-			left: leftMarginForTicks(
-				yTicks.map((t) => formatYValue(t)),
-				m.left,
-				{ totalWidth: plotWidth, fontSize: tickFontSize }
+			// The first x tick is middle-anchored on the plot's left edge: half of it
+			// overhangs to the left, as do the y labels.
+			left: Math.max(
+				leftMarginForTicks(
+					yTicks.map((t) => formatYValue(t)),
+					m.left,
+					{ totalWidth: plotWidth, fontSize: tickFontSize }
+				),
+				margins?.left ??
+					leftMarginForFirstLabel(formatXValue(xTicks[0] ?? 0), {
+						totalWidth: plotWidth,
+						fontSize: tickFontSize
+					})
 			)
 		};
 	});
@@ -139,6 +156,33 @@
 				[m.innerTop + m.innerHeight, m.innerTop]
 			)}
 
+			<!-- X labels thinned by their drawn widths (first and last kept); gridlines stay at every tick. -->
+			{@const xPlace = xTicks.map((t) =>
+				placeEdgeLabel(formatXValue(t), xScale(t), tickFontSize, width)
+			)}
+			{@const shownXIdx = thinValueLabels(
+				xPlace.map((p) => p.text),
+				xPlace.map((p) => p.centre),
+				{ fontSize: tickFontSize }
+			)}
+			{@const shownX = new Set(shownXIdx.map((i) => xTicks[i]))}
+			{@const firstShownX = shownXIdx.length > 0 ? Math.min(...shownXIdx) : undefined}
+			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
+			{@const originCollides =
+				firstShownX !== undefined &&
+				originLabelsCollide(xPlace[firstShownX].text, formatYValue(yTicks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 16,
+					xAnchor: xPlace[firstShownX].anchor,
+					xOffset: xScale(xTicks[firstShownX]) - m.innerLeft
+				})}
+			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+			{@const shownY = new Set(
+				thinVerticalLabels(
+					yTicks.map((t) => yScale(t)),
+					tickFontSize
+				)
+			)}
 			{#each yTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -153,12 +197,13 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={!shownY.has(ti) || (ti === 0 && originCollides) ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}
 				</text>
 			{/each}
-			{#each xTicks as tick (tick)}
+			{#each xTicks as tick, ti (tick)}
 				<line
 					x1={xScale(tick)}
 					x2={xScale(tick)}
@@ -166,14 +211,18 @@
 					y2={m.innerTop + m.innerHeight}
 					class="gridline"
 				/>
-				<text
-					x={xScale(tick)}
-					y={m.innerTop + m.innerHeight + 16}
-					class="tick-label"
-					text-anchor="middle"
-				>
-					{formatXValue(tick)}
-				</text>
+				{#if shownX.has(tick)}
+					<text
+						x={xScale(tick)}
+						y={m.innerTop + m.innerHeight + 16}
+						class="tick-label"
+						text-anchor={xPlace[ti].anchor}
+					>
+						{xPlace[ti].text}{#if xPlace[ti].text !== xPlace[ti].full}<title>
+								{xPlace[ti].full}
+							</title>{/if}
+					</text>
+				{/if}
 			{/each}
 
 			<line

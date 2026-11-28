@@ -29,9 +29,17 @@
 	import { linePathSegments, areaPathSegments } from './core/path';
 	import { seriesNumber, seriesSegments } from './core/series';
 	import { resolveBand } from './core/band';
-	import { dropCollidingTicks, everyNthIndex } from './core/ticks-time';
+	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
-	import { estimateLabelWidth, leftMarginForTicks, rightMarginForTicks } from './core/labels';
+	import {
+		leftMarginForFirstLabel,
+		leftMarginForTicks,
+		originLabelsCollide,
+		rightMarginForTicks,
+		thinVerticalLabels,
+		placeEdgeLabel,
+		dropCollidingPlaced
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import {
 		fullViewport,
@@ -218,10 +226,21 @@
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	const MARGIN = $derived.by(() => {
 		const base = { ...DEFAULT_MARGIN, ...margins };
-		const left = leftMarginForTicks(leftTicks.map(formatYValue), base.left, {
-			totalWidth: plotWidth,
-			fontSize: tickFontSize
-		});
+		// The first x label is middle-anchored on the plot's left edge: reserve half
+		// of it (an explicit `margins.left` still wins as-is).
+		const left = Math.max(
+			leftMarginForTicks(leftTicks.map(formatYValue), base.left, {
+				totalWidth: plotWidth,
+				fontSize: tickFontSize
+			}),
+			margins?.left ??
+				(count > 0
+					? leftMarginForFirstLabel(formatXValue(xLabels[range[0]]), {
+							totalWidth: plotWidth,
+							fontSize: tickFontSize
+						})
+					: 0)
+		);
 		if (!hasRight) return { ...base, left };
 		const right = rightMarginForTicks(rightTicks.map(formatYRightValue), base.right, {
 			totalWidth: plotWidth,
@@ -482,6 +501,34 @@
 			{/each}
 
 			<!-- Gridlines + left y ticks (recessive, rule 4). -->
+			{@const xCandidates = xTickIndices(maxXTicksFor(m.innerWidth))}
+			{@const xPlace = new Map(
+				xCandidates.map((i) => [
+					i,
+					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth, i === range[1])
+				])
+			)}
+			{@const xTicks = dropCollidingPlaced(
+				xCandidates,
+				xCandidates.map((i) => xPlace.get(i)!)
+			)}
+			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
+			{@const originCollides =
+				count > 0 &&
+				xTicks.length > 0 &&
+				originLabelsCollide(xPlace.get(xTicks[0])!.text, formatYValue(leftTicks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 18,
+					xAnchor: xPlace.get(xTicks[0])!.anchor,
+					xOffset: xAt(xTicks[0]) - m.innerLeft
+				})}
+			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+			{@const shownY = new Set(
+				thinVerticalLabels(
+					leftTicks.map((t) => leftScale(t)),
+					tickFontSize
+				)
+			)}
 			{#each leftTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -496,6 +543,7 @@
 					class="tick-label y-tick"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={!shownY.has(ti) || (ti === 0 && originCollides) ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}
@@ -544,20 +592,16 @@
 
 			<!-- X labels. The right-edge tick is anchored 'end' so it doesn't
 			     overhang the right margin and clip. -->
-			{@const xCandidates = xTickIndices(maxXTicksFor(m.innerWidth))}
-			{@const xTicks = dropCollidingTicks(
-				xCandidates,
-				xCandidates.map((i) => xAt(i)),
-				xCandidates.map((i) => estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize))
-			)}
 			{#each xTicks as i (i)}
 				<text
 					x={xAt(i)}
 					y={m.innerBottom + 18}
 					class="tick-label x-tick"
-					text-anchor={i === range[1] ? 'end' : 'middle'}
+					text-anchor={xPlace.get(i)!.anchor}
 				>
-					{formatXValue(xLabels[i])}
+					{xPlace.get(i)!.text}{#if xPlace.get(i)!.text !== xPlace.get(i)!.full}<title>
+							{xPlace.get(i)!.full}
+						</title>{/if}
 				</text>
 			{/each}
 

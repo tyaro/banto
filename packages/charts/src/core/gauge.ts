@@ -1,3 +1,5 @@
+import { estimateLabelWidth, truncateLabel } from './labels';
+
 /**
  * Gauge arc-angle + threshold-color math (spec §6.1 Gauge). The track sweeps
  * 270deg, from 135deg to 405deg in `core/pie.ts`'s angle convention (0deg =
@@ -58,4 +60,101 @@ export function gaugeColorVar(value: number, thresholds: GaugeThresholds = {}): 
 	if (thresholds.warningLow !== undefined && value <= thresholds.warningLow)
 		return 'var(--banto-warning)';
 	return 'var(--banto-primary)';
+}
+
+/** Gap (px) between the arc and the min/max labels, measured along the +/-45deg diagonal. */
+export const GAUGE_LABEL_GAP = 14;
+/** Smallest outer radius (px) the dial shrinks to for the labels; below this the labels are cut instead. */
+export const GAUGE_MIN_FIT_RADIUS = 36;
+const GAUGE_ABSOLUTE_MIN_RADIUS = 10;
+const LABEL_SEPARATION = 4;
+/** Margin (px) kept between the centre value and the inner edge of the track. */
+const GAUGE_HERO_PAD = 2;
+const EDGE_PAD = 2;
+
+export interface GaugeLayoutInput {
+	width: number;
+	plotHeight: number;
+	minText: string;
+	maxText: string;
+	fontSize: number;
+	sidePad: number;
+	topPad: number;
+	bottomPad: number;
+	trackWidth: number;
+	/** Vertical extent of the 270deg arc relative to rOuter. */
+	verticalFactor: number;
+	/**
+	 * Centre value text and its rendered font size (px). When given, the dial
+	 * is never shrunk below the radius whose inner circle holds that text; the
+	 * range labels are cut instead. Omitted: only `GAUGE_MIN_FIT_RADIUS` applies.
+	 */
+	heroText?: string;
+	heroFontSize?: number;
+}
+
+export interface GaugeLayout {
+	cx: number;
+	cy: number;
+	rOuter: number;
+	rInner: number;
+	/** Text to draw for the min / max label (truncated with an ellipsis when it cannot fit). */
+	minLabel: string;
+	maxLabel: string;
+}
+
+/**
+ * Dial geometry plus the two range labels. The labels sit at +/-45deg off the
+ * bottom, `GAUGE_LABEL_GAP` outside the arc, centred there. The radius shrinks
+ * (down to `GAUGE_MIN_FIT_RADIUS`) so the wider label stays inside the svg;
+ * whatever still does not fit - the edge or the gap between the two labels - is
+ * cut with an ellipsis (the component keeps the full text in a `<title>`).
+ * Unchanged while everything fits.
+ */
+export function gaugeLayout(i: GaugeLayoutInput): GaugeLayout {
+	const wMin = estimateLabelWidth(i.minText, i.fontSize);
+	const wMax = estimateLabelWidth(i.maxText, i.fontSize);
+	const half = Math.max(wMin, wMax) / 2;
+	const rLabelFit = (i.width / 2 - EDGE_PAD - half) / Math.SQRT1_2 - GAUGE_LABEL_GAP;
+	const rBase = Math.min(
+		(i.width - i.sidePad * 2) / 2,
+		(i.plotHeight - i.topPad - i.bottomPad) / i.verticalFactor
+	);
+	let rFloor = GAUGE_MIN_FIT_RADIUS;
+	if (i.heroText !== undefined && i.heroFontSize !== undefined) {
+		// Half-diagonal of the estimated text box (width x ~1em high) plus a margin.
+		const hw = estimateLabelWidth(i.heroText, i.heroFontSize) / 2;
+		const hh = i.heroFontSize / 2;
+		rFloor = Math.max(rFloor, Math.hypot(hw, hh) + GAUGE_HERO_PAD + i.trackWidth);
+	}
+	const rOuter = Math.max(
+		GAUGE_ABSOLUTE_MIN_RADIUS,
+		Math.min(rBase, Math.max(rLabelFit, Math.min(rBase, rFloor)))
+	);
+	const cx = i.width / 2;
+	const cy = i.topPad + rOuter;
+	const rInner = Math.max(1, rOuter - i.trackWidth);
+
+	// Label centres sit `d` from cx; each may reach the svg edge, and the two
+	// together must leave `LABEL_SEPARATION` between them.
+	const d = (rOuter + GAUGE_LABEL_GAP) * Math.SQRT1_2;
+	const edgeMax = 2 * (i.width / 2 - EDGE_PAD - d);
+	const pairMax = 2 * (2 * d - LABEL_SEPARATION);
+	const minIsShort = wMin <= wMax;
+	const shortW = Math.min(wMin, wMax);
+	const shortFit = Math.min(shortW, Math.max(0, edgeMax));
+	const longMax = Math.max(0, Math.min(edgeMax, pairMax - shortFit));
+	const shortMax = Math.max(
+		0,
+		Math.min(edgeMax, pairMax - Math.min(Math.max(wMin, wMax), longMax))
+	);
+	const fit = (text: string, max: number) => truncateLabel(text, max, i.fontSize);
+	return {
+		cx,
+		cy,
+		rOuter,
+		rInner,
+		minLabel: fit(i.minText, minIsShort ? shortMax : longMax),
+		maxLabel: fit(i.maxText, minIsShort ? longMax : shortMax)
+	};
 }

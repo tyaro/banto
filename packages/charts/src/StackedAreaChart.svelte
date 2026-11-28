@@ -19,7 +19,14 @@
 	 * the running total.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
-	import { leftMarginForTicks } from './core/labels';
+	import {
+		leftMarginForFirstLabel,
+		leftMarginForTicks,
+		originLabelsCollide,
+		thinVerticalLabels,
+		placeEdgeLabel,
+		dropCollidingPlaced
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { stackSeries } from './core/stack';
 	import { bandAreaPath, linePath, type Point } from './core/path';
@@ -115,10 +122,21 @@
 		const m = { ...DEFAULT_MARGIN, ...margins };
 		return {
 			...m,
-			left: leftMarginForTicks(
-				ticks.map((t) => formatYValue(t)),
-				m.left,
-				{ totalWidth: plotWidth, fontSize: tickFontSize }
+			// The first x label is middle-anchored on the plot's left edge: reserve half
+			// of it (an explicit `margins.left` still wins as-is).
+			left: Math.max(
+				leftMarginForTicks(
+					ticks.map((t) => formatYValue(t)),
+					m.left,
+					{ totalWidth: plotWidth, fontSize: tickFontSize }
+				),
+				margins?.left ??
+					(count > 0
+						? leftMarginForFirstLabel(formatXValue(xLabels[0]), {
+								totalWidth: plotWidth,
+								fontSize: tickFontSize
+							})
+						: 0)
 			)
 		};
 	});
@@ -209,6 +227,34 @@
 		{#snippet plot()}
 			{@const m = metrics}
 			<!-- Gridlines + y ticks (recessive, rule 4). -->
+			{@const xCandidates = everyNthIndex(count, maxXTicksFor(m.innerWidth))}
+			{@const xPlace = new Map(
+				xCandidates.map((i) => [
+					i,
+					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth, i === count - 1)
+				])
+			)}
+			{@const xTicks = dropCollidingPlaced(
+				xCandidates,
+				xCandidates.map((i) => xPlace.get(i)!)
+			)}
+			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
+			{@const originCollides =
+				count > 0 &&
+				xTicks.length > 0 &&
+				originLabelsCollide(xPlace.get(xTicks[0])!.text, formatYValue(ticks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 18,
+					xAnchor: xPlace.get(xTicks[0])!.anchor,
+					xOffset: xAt(xTicks[0]) - m.innerLeft
+				})}
+			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+			{@const shownY = new Set(
+				thinVerticalLabels(
+					ticks.map((t) => scale(t)),
+					tickFontSize
+				)
+			)}
 			{#each ticks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -223,6 +269,7 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={!shownY.has(ti) || (ti === 0 && originCollides) ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}
@@ -246,15 +293,16 @@
 			/>
 
 			<!-- X labels. -->
-			{@const xTicks = everyNthIndex(count, maxXTicksFor(m.innerWidth))}
 			{#each xTicks as i (i)}
 				<text
 					x={xAt(i)}
 					y={m.innerBottom + 18}
 					class="tick-label"
-					text-anchor={i === count - 1 ? 'end' : 'middle'}
+					text-anchor={xPlace.get(i)!.anchor}
 				>
-					{formatXValue(xLabels[i])}
+					{xPlace.get(i)!.text}{#if xPlace.get(i)!.text !== xPlace.get(i)!.full}<title>
+							{xPlace.get(i)!.full}
+						</title>{/if}
 				</text>
 			{/each}
 

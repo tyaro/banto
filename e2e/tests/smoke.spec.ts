@@ -4577,6 +4577,59 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// #1056 (WCAG 1.4.4): at 200% text the axis labels of the dashboard charts and of the gallery
+	// stay inside their svg, and the labels of one chart do not run into each other.
+	test('13k5b. charts: at 200% text the axis labels stay inside the svg and do not overlap', async () => {
+		test.skip(!HAS_CHARTS || !HAS_DOCK, 'needs @banto/charts and @banto/dock-svelte');
+		const problems = () =>
+			page.evaluate(() => {
+				const out: string[] = [];
+				document.querySelectorAll('svg').forEach((svg, n) => {
+					const box = svg.getBoundingClientRect();
+					if (box.width === 0) return;
+					const texts = [...svg.querySelectorAll('text.tick-label, text.range-label')]
+						.filter(
+							(t) =>
+								t.getAttribute('visibility') !== 'hidden' && (t.textContent ?? '').trim() !== ''
+						)
+						.map((t) => ({ text: (t.textContent ?? '').trim(), r: t.getBoundingClientRect() }));
+					const name =
+						svg.getAttribute('aria-label') ?? svg.parentElement?.getAttribute('aria-label');
+					texts.forEach((a, i) => {
+						if (a.r.left < box.left - 1 || a.r.right > box.right + 1)
+							out.push(`${name ?? n}: "${a.text}" leaves the svg`);
+						texts.forEach((b, j) => {
+							if (i >= j) return;
+							const across = a.r.left < b.r.right - 1 && b.r.left < a.r.right - 1;
+							// A real collision: the centre of one label lies inside the other's box (the
+							// boxes carry line-height padding, so merely touching does not count).
+							const ca = (a.r.top + a.r.bottom) / 2;
+							const cb = (b.r.top + b.r.bottom) / 2;
+							const hit = (ca > b.r.top && ca < b.r.bottom) || (cb > a.r.top && cb < a.r.bottom);
+							if (across && hit) out.push(`${name ?? n}: "${a.text}" overlaps "${b.text}"`);
+						});
+					});
+				});
+				return out;
+			});
+		await page.goto('/dashboard');
+		await resetDashboardLayout(page);
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+		try {
+			await expect(page.getByRole('img', { name: '価格と在庫の散布図' })).toBeVisible();
+			await page.waitForTimeout(500);
+			expect(await problems()).toEqual([]);
+			await page.goto('/chart-gallery');
+			await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+			await expect(page.getByRole('img', { name: '在庫充足率のゲージ' })).toBeVisible();
+			await page.waitForTimeout(500);
+			expect(await problems()).toEqual([]);
+		} finally {
+			await page.evaluate(() => (document.documentElement.style.fontSize = ''));
+		}
+	});
+
 	// #716 W3 (downstream-requests-2026-11-plan §4.13.3): the page holds ONE period. The KPI strip
 	// and the widgets registered with `usesPeriod` draw the rows it leaves - narrowed in the page,
 	// from the one read. The period is the page's state only: nothing is written, a reload starts
