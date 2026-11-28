@@ -190,7 +190,7 @@ describe('trackModalLayer: live regions', () => {
 		expect(inert(s.headerButton)).toBe(true);
 	});
 
-	it.each([
+	it.each<[string, keyof HTMLElementTagNameMap, string]>([
 		['href', 'a', '#'],
 		['tabindex', 'span', '0'],
 		['contenteditable', 'span', 'true'],
