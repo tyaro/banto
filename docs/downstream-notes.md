@@ -32,7 +32,6 @@ CHANGELOG [10.0.0] の移行の手順・消費側への注意 13 項目と、upg
   （tyaro の指摘 #1059 issuecomment-7232451014）。
 - **#1057**: 知らせの要素の中に操作部を置かない。ConnectionBanner・StartupSplash・`+error`・ErrorState などを
   写した下流は写し直す。
-- **banto-industrial#1333（キオスク表示の窓の部品）は banto に入れない**（2026-11-26 オーナー判断、コメント済み）。
 
 ## v9.3.0
 
@@ -62,13 +61,14 @@ CHANGELOG [10.0.0] の移行の手順・消費側への注意 13 項目と、upg
 
 - PR #972 本文の「下流への影響」8 点。
 - **#939 → temp-scada**: `ThreePaneDock` の `defaultPlaces` で `pinDesignerDefaultPlaces` を置き換えられる。
+- **#947 → banto-industrial**（PR #950、`BoundServer::from_listener`）: 通常の証明書更新は listener を作り直さず
+  acceptor を差し替える。作り直すのは失効と本当の再作成だけ（PR #950 本文の移る手順）。
+  v9.1.0 の #980・#981 で 5 秒の受け入れと `ListenerWrites` を置き換えられる（v9.1.0 の節）。
 
-## v8.x 以前・版の特定できないもの
+## v8.x 以前・版によらないもの
 
 - v8 の分は CHANGELOG [8.0.0] の「消費側への注意」と upgrading、
   [docs/reviews/downstream-usability-d1-2026-11.md](reviews/downstream-usability-d1-2026-11.md) §6。
 - **#925（v8.0.0）**: 自前の `Cargo.lock` を持つ下流は `libsqlite3-sys` が自動では上がらない
   （CHANGELOG [8.0.0] に案内あり）。
-- **#947 → banto-industrial**（版は CHANGELOG から特定できず）: 通常の証明書更新は listener を作り直さず
-  acceptor を差し替える。作り直すのは失効と本当の再作成だけ（PR #950 本文の移る手順）。
-  v9.1.0 の #980・#981 で 5 秒の受け入れと `ListenerWrites` を置き換えられる（上の v9.1.0 の節）。
+- **banto-industrial#1333（キオスク表示の窓の部品）は banto に入れない**（2026-11-26 オーナー判断、コメント済み）。
