@@ -24,12 +24,13 @@
 		leftMarginForTicks,
 		originLabelsCollide,
 		thinVerticalLabels,
-		placeEdgeLabel
+		placeEdgeLabel,
+		dropCollidingPlaced
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { stackSeries } from './core/stack';
 	import { bandAreaPath, linePath, type Point } from './core/path';
-	import { dropCollidingTicks, everyNthIndex } from './core/ticks-time';
+	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
 	import { getValue, toNumber, type Accessor, type ChartMargin, type TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -233,10 +234,9 @@
 					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth, i === count - 1)
 				])
 			)}
-			{@const xTicks = dropCollidingTicks(
+			{@const xTicks = dropCollidingPlaced(
 				xCandidates,
-				xCandidates.map((i) => xPlace.get(i)!.centre),
-				xCandidates.map((i) => xPlace.get(i)!.width)
+				xCandidates.map((i) => xPlace.get(i)!)
 			)}
 			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
 			{@const originCollides =

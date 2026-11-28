@@ -2,14 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
 	estimateLabelWidth,
 	leftMarginForFirstLabel,
+	leftMarginFor,
+	truncateLabel,
 	originLabelsCollide,
 	clipsLeft,
 	placeEdgeLabel,
+	dropCollidingPlaced,
 	thinKeepEnd,
 	thinValueLabels,
 	thinVerticalLabels
 } from '../src/core/labels';
-import { thinCenteredTicks } from '../src/core/ticks-time';
+import { dropCollidingTicks, thinCenteredTicks } from '../src/core/ticks-time';
 
 // #1056: text 200% (11px -> 22px labels) on the value axes.
 describe('thinValueLabels', () => {
@@ -313,4 +316,52 @@ describe('origin collision uses the surviving first x label', () => {
 			})
 		).toBe(true);
 	});
+});
+
+describe('dropCollidingPlaced (x labels of a line / stacked-area axis)', () => {
+	// 284px svg, 2024-01..2024-03 at 13px, the last label right-aligned on its x (forceEnd).
+	const xs = [40, 150, 260];
+	const labels = ['2024-01', '2024-02', '2024-03'];
+	const places = xs.map((x, i) => placeEdgeLabel(labels[i], x, 13, 284, i === 2));
+
+	it('keeps all three when the old anchor-based check (main) keeps them', () => {
+		const widths = labels.map((l) => estimateLabelWidth(l, 13));
+		const main = dropCollidingTicks([0, 1, 2], xs, widths);
+		expect(main).toEqual([0, 1, 2]);
+		expect(dropCollidingPlaced([0, 1, 2], places)).toEqual(main);
+	});
+
+	it('does not drop the middle label for a last-label box counted twice', () => {
+		// feeding the drawn centre as the last anchor subtracts half the width twice
+		const doubled = dropCollidingTicks(
+			[0, 1, 2],
+			places.map((p) => p.centre),
+			places.map((p) => p.width)
+		);
+		expect(doubled).not.toEqual([0, 1, 2]);
+		expect(dropCollidingPlaced([0, 1, 2], places)).toEqual([0, 1, 2]);
+	});
+
+	it('still drops a label that really collides', () => {
+		const tight = [40, 60, 260].map((x, i) => placeEdgeLabel(labels[i], x, 13, 284, i === 2));
+		expect(dropCollidingPlaced([0, 1, 2], tight)).toEqual([1, 2]);
+	});
+});
+
+describe("horizontal bar category labels at the standard font keep main's truncation", () => {
+	// main: left = leftMarginFor(categories); the PR takes max() with the first value tick's half width.
+	const names = ['オレンジジュース', 'スポーツドリンク', 'アップルジュース'];
+	for (const total of [200, 240, 284, 320, 400]) {
+		it(`plot ${total}px`, () => {
+			const base = leftMarginFor(names, { fontSize: 11, totalWidth: total });
+			const left = Math.max(
+				base,
+				leftMarginForFirstLabel('0件', { fontSize: 11, totalWidth: total })
+			);
+			expect(left).toBe(base);
+			for (const n of names) {
+				expect(truncateLabel(n, left - 8, 11)).toBe(truncateLabel(n, base - 8, 11));
+			}
+		});
+	}
 });

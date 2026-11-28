@@ -29,7 +29,7 @@
 	import { linePathSegments, areaPathSegments } from './core/path';
 	import { seriesNumber, seriesSegments } from './core/series';
 	import { resolveBand } from './core/band';
-	import { dropCollidingTicks, everyNthIndex } from './core/ticks-time';
+	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
 	import {
 		leftMarginForFirstLabel,
@@ -37,7 +37,8 @@
 		originLabelsCollide,
 		rightMarginForTicks,
 		thinVerticalLabels,
-		placeEdgeLabel
+		placeEdgeLabel,
+		dropCollidingPlaced
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import {
@@ -507,10 +508,9 @@
 					placeEdgeLabel(formatXValue(xLabels[i]), xAt(i), tickFontSize, plotWidth, i === range[1])
 				])
 			)}
-			{@const xTicks = dropCollidingTicks(
+			{@const xTicks = dropCollidingPlaced(
 				xCandidates,
-				xCandidates.map((i) => xPlace.get(i)!.centre),
-				xCandidates.map((i) => xPlace.get(i)!.width)
+				xCandidates.map((i) => xPlace.get(i)!)
 			)}
 			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
 			{@const originCollides =

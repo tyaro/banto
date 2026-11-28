@@ -1,4 +1,4 @@
-import { thinCategoryLabels, thinCenteredTicks } from './ticks-time';
+import { dropCollidingTicks, thinCategoryLabels, thinCenteredTicks } from './ticks-time';
 
 /**
  * Axis-label width estimation (pure, Vitest-covered - spec §6.2 keeps number
@@ -407,4 +407,27 @@ export function placeEdgeLabel(
 	const text = truncateLabel(label, Math.max(0, svgWidth - x), fontSize);
 	const tw = estimateLabelWidth(text, fontSize);
 	return { text, full: label, anchor: 'start', centre: x + tw / 2, width: tw };
+}
+
+/**
+ * `dropCollidingTicks` for labels already placed by `placeEdgeLabel`. That
+ * function takes the LAST label's anchor `x` (its box extends left of it) and
+ * every earlier label's centre, while `placeEdgeLabel` reports each label's
+ * drawn centre: passing those centres straight in shifted the last label left
+ * by half its width twice. The last label's anchor is rebuilt here as its
+ * drawn right edge (centre + width / 2), so its left edge is its true one for
+ * any anchor.
+ */
+export function dropCollidingPlaced(
+	indices: number[],
+	places: EdgeLabelPlacement[],
+	gap = 4
+): number[] {
+	const last = places.length - 1;
+	return dropCollidingTicks(
+		indices,
+		places.map((p, k) => (k === last ? p.centre + p.width / 2 : p.centre)),
+		places.map((p) => p.width),
+		gap
+	);
 }
