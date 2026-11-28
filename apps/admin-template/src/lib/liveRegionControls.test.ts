@@ -68,8 +68,6 @@ const ALLOWED = new Set(['packages/ui/src/CalendarPeriodView.svelte']);
 const RENDER_ALLOWED = new Set([
 	'packages/ui/src/ToastHost.svelte',
 	'packages/ui/src/MonthCalendar.svelte',
-	'packages/ui/src/ErrorState.svelte',
-	'apps/admin-template/src/routes/(app)/settings/LanReachCheckPanel.svelte',
 	'apps/admin-template/src/routes/(app)/settings/FirewallRuleStatusPanel.svelte'
 ]);
 

@@ -21,12 +21,14 @@
 	let { icon: Icon = OctagonAlert, title, description, action }: Props = $props();
 </script>
 
-<div class="state" role="alert">
+<div class="state">
 	<Icon size={32} aria-hidden="true" />
-	<h2>{title}</h2>
-	{#if description}
-		<p>{description}</p>
-	{/if}
+	<div class="text" role="alert">
+		<h2>{title}</h2>
+		{#if description}
+			<p>{description}</p>
+		{/if}
+	</div>
 	{#if action}
 		<div class="action">
 			{@render action()}
@@ -44,6 +46,13 @@
 		padding: var(--banto-space-8) var(--banto-space-6);
 		text-align: center;
 		color: var(--banto-danger);
+	}
+
+	.text {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--banto-space-2);
 	}
 
 	h2 {
