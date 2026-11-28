@@ -16,6 +16,7 @@ import {
 	DEFAULT_TOAST_DURATION_MS,
 	defaultUiMessages,
 	ToastHost,
+	trackModalLayer,
 	type ToastKind
 } from '../src/index';
 
@@ -313,6 +314,26 @@ describe('ToastHost', () => {
 		flushSync();
 		expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
 		expect(screen.queryByRole('button', { name: defaultUiMessages.toastClose() })).toBeNull();
+	});
+
+	it('while a modal layer is open the toast text is not inert but its buttons are; closed, they return', () => {
+		const store = createToastStore();
+		render(ToastHost, { store });
+		store.push('error', 'save failed');
+		flushSync();
+		const dialog = document.createElement('div');
+		dialog.setAttribute('role', 'dialog');
+		dialog.setAttribute('aria-modal', 'true');
+		document.body.append(dialog);
+		const release = trackModalLayer(dialog);
+		const button = screen.getByRole('button', { name: defaultUiMessages.toastClose() });
+		expect(button.closest('[inert]')).toBe(button);
+		const text = screen.getByText('save failed');
+		expect(text.closest('[inert]')).toBeNull();
+		expect(alertRegion().closest('[inert]')).toBeNull();
+		release();
+		expect(document.querySelector('[inert]')).toBeNull();
+		dialog.remove();
 	});
 
 	it('the action button is focusable, runs the handler once and removes the toast', async () => {

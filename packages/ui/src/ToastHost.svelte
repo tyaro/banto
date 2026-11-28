@@ -56,8 +56,8 @@
 	</div>
 {/snippet}
 
-<!-- Drawn above every modal layer (--banto-z-toast) and still usable: out of the modal backdrop (layering.ts). -->
-<div class="toast-host" data-modal-exempt>
+<!-- Live regions: while a modal is open the text is still announced, the buttons are inert (layering.ts). -->
+<div class="toast-host">
 	<div class="toast-group" class:empty={polite.length === 0} role="status" aria-live="polite">
 		{#each polite as toast (toast.id)}
 			{@render toastItem(toast)}

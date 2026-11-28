@@ -190,6 +190,26 @@ describe('trackModalLayer: live regions', () => {
 		expect(inert(s.headerButton)).toBe(true);
 	});
 
+	it('a control that only gains an attribute later is blocked (href, tabindex, contenteditable, role)', async () => {
+		const s = shell();
+		const banner = el('div', s.app, { role: 'status' });
+		const link = el('a', banner);
+		const custom = el('span', banner);
+		const editable = el('span', banner);
+		const fake = el('span', banner);
+		const text = el('span', banner);
+		track(s.pane);
+		expect(inert(link) || inert(custom) || inert(editable) || inert(fake)).toBe(false);
+		link.setAttribute('href', '#');
+		custom.setAttribute('tabindex', '0');
+		editable.setAttribute('contenteditable', 'true');
+		fake.setAttribute('role', 'button');
+		await settle();
+		for (const control of [link, custom, editable, fake]) expect(inert(control)).toBe(true);
+		expect(inert(text)).toBe(false);
+		expect(inert(banner)).toBe(false);
+	});
+
 	it('a control added later to a live region is blocked too', async () => {
 		const s = shell();
 		const banner = el('div', s.app, { 'aria-live': 'assertive' });

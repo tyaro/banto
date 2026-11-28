@@ -334,8 +334,9 @@ export function isCloseAllowed(source: OverlayCloseSource, dirty: boolean): bool
 /**
  * Keeps an element (and what is inside it) out of the modal backdrop: it is
  * never made `inert` by {@link trackModalLayer}. For what is drawn above every
- * modal layer and must stay usable while one is open - ToastHost, the touch
- * keys' surface, an app's always-on-top host. Not for page content.
+ * modal layer and must stay usable while one is open - the touch keys'
+ * surface, an app's always-on-top host (not ToastHost: its text is announced,
+ * but its buttons are as unreachable by keyboard as the rest). Not for page content.
  */
 export const MODAL_EXEMPT_ATTR = 'data-modal-exempt';
 
@@ -353,6 +354,13 @@ const LIVE_CONTROL_SELECTOR = `${FOCUSABLE_SELECTOR}, [tabindex], [contenteditab
 const BACKDROP_SKIPPED_TAGS = new Set(['script', 'style', 'link', 'meta', 'template', 'noscript']);
 
 /**
+ * The attributes {@link LIVE_CONTROL_SELECTOR} reads (`tabindex`, `href`,
+ * `contenteditable`, `role`, ...), taken from the selector itself so the two
+ * cannot drift: an attribute that alone makes something operable must be seen.
+ */
+const LIVE_CONTROL_ATTRS = [...new Set(LIVE_CONTROL_SELECTOR.match(/(?<=\[)[a-z-]+/g))];
+
+/**
  * Attribute changes that can change the backdrop: who is inert, what is a
  * live region or exempt, and which layers exist and show (an app's layer is
  * often shown by a class or a style).
@@ -367,7 +375,8 @@ const BACKDROP_OBSERVED_ATTRS = [
 	'style',
 	MODAL_EXEMPT_ATTR,
 	LAYER_MARKER_ATTR,
-	LAYER_INACTIVE_ATTR
+	LAYER_INACTIVE_ATTR,
+	...LIVE_CONTROL_ATTRS
 ];
 
 export interface ModalLayerOptions {

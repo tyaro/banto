@@ -46,8 +46,10 @@ writing only the difference to what we set keeps one state under out-of-order cl
 ### 3. What stays out of the backdrop
 
 - **`data-modal-exempt`** (`MODAL_EXEMPT_ATTR`): what is drawn above every modal and is used while one is open.
-  `ToastHost` (`--banto-z-toast` is above the modals; the notice of a failed save inside a modal, and its close button)
-  and the keys of `@banto/touch-keys-svelte` (typing into a field inside a modal).
+  The keys of `@banto/touch-keys-svelte` (typing into a field inside a modal; kept apart so they do not take focus
+  from the field). `ToastHost` does not have it: `attachFocusTrap()` returns Tab to the modal, so a toast button
+  would be reachable by pointer only. Toasts are treated as the live regions below: the text is announced, the
+  buttons are `inert` while a modal is open.
 - **Live regions** (`aria-live` other than off, `role="status" | "alert" | "log"`, `<output>`): `inert` also silences
   announcements, so a live region and its ancestors are not made inert. Instead **the controls inside it (buttons, links
   ...) are made `inert` one by one**. The notice is read; the button behind the modal cannot be pressed. Not putting
