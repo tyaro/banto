@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { estimateLabelWidth } from '../src/core/labels';
 import {
 	GAUGE_END_DEG,
 	GAUGE_START_DEG,
 	gaugeAngle,
 	gaugeColorVar,
+	gaugeLayout,
 	gaugeRatio
 } from '../src/core/gauge';
 
@@ -101,5 +103,54 @@ describe('gaugeColorVar', () => {
 
 	it('supports a warning-only threshold set (no danger)', () => {
 		expect(gaugeColorVar(1000, { warning: 50 })).toBe('var(--banto-warning)');
+	});
+});
+
+describe('gaugeLayout (range labels)', () => {
+	const base = {
+		sidePad: 16,
+		topPad: 16,
+		bottomPad: 30,
+		trackWidth: 14,
+		verticalFactor: 1 + Math.sin(Math.PI / 4)
+	};
+	const box = (text: string, cx: number, fs: number) => {
+		const w = estimateLabelWidth(text, fs);
+		return [cx - w / 2, cx + w / 2];
+	};
+
+	it('keeps the radius at normal size', () => {
+		const l = gaugeLayout({
+			...base,
+			width: 300,
+			plotHeight: 160,
+			minText: '0',
+			maxText: '100',
+			fontSize: 11
+		});
+		expect(l.rOuter).toBeCloseTo((160 - 16 - 30) / base.verticalFactor, 5);
+		expect(l.minLabel).toBe('0');
+		expect(l.maxLabel).toBe('100');
+	});
+
+	it('keeps range labels apart and inside the svg for a narrow dial with long values at 200%', () => {
+		const width = 211;
+		const fs = 29.7;
+		const l = gaugeLayout({
+			...base,
+			width,
+			plotHeight: 160,
+			minText: '0',
+			maxText: '1,000,000',
+			fontSize: fs
+		});
+		expect(l.rOuter).toBeGreaterThanOrEqual(36);
+		const d = (l.rOuter + 14) * Math.SQRT1_2;
+		const [a0, a1] = box(l.minLabel, width / 2 - d, fs);
+		const [b0, b1] = box(l.maxLabel, width / 2 + d, fs);
+		expect(a1).toBeLessThan(b0);
+		expect(a0).toBeGreaterThanOrEqual(0);
+		expect(b1).toBeLessThanOrEqual(width);
+		expect(l.maxLabel).toContain('…');
 	});
 });

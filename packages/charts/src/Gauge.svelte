@@ -10,8 +10,14 @@
 	 * `value: null` (no reading) draws no value arc and shows a placeholder.
 	 */
 	import { arcPath, polarToCartesian } from './core/pie';
-	import { gaugeAngle, gaugeColorVar, GAUGE_START_DEG, type GaugeThresholds } from './core/gauge';
-	import { estimateLabelWidth } from './core/labels';
+	import {
+		gaugeAngle,
+		gaugeColorVar,
+		gaugeLayout,
+		GAUGE_LABEL_GAP,
+		GAUGE_START_DEG,
+		type GaugeThresholds
+	} from './core/gauge';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import { defaultChartMessages, type ChartMessages } from './messages';
@@ -44,7 +50,7 @@
 	const SIDE_PAD = 16;
 	const TOP_PAD = 16;
 	const BOTTOM_PAD = 30;
-	const LABEL_GAP = 14;
+	const LABEL_GAP = GAUGE_LABEL_GAP;
 	// Vertical extent (relative to rOuter) of the 270deg arc's bounding box:
 	// top point sits at r above center, the two open-mouth ends sit at
 	// r*sin(45deg) below center (see core/gauge.ts's angle-convention note).
@@ -59,27 +65,18 @@
 	const trackRangeFont = trackFontSize((px) => (rangeFontSize = px));
 
 	function geometry(width: number, plotHeight: number) {
-		// The min/max labels sit at +/-45deg off the bottom, `LABEL_GAP` outside the
-		// arc and centred there: half of the wider one must stay inside the svg, so a
-		// large font shrinks the dial instead of clipping "100%" (no-op while it fits).
-		const half =
-			Math.max(
-				estimateLabelWidth(formatValueDisplay(min), rangeFontSize),
-				estimateLabelWidth(formatValueDisplay(max), rangeFontSize)
-			) / 2;
-		const rLabelFit = (width / 2 - 2 - half) / Math.SQRT1_2 - LABEL_GAP;
-		const rOuter = Math.max(
-			10,
-			Math.min(
-				(width - SIDE_PAD * 2) / 2,
-				(plotHeight - TOP_PAD - BOTTOM_PAD) / ARC_VERTICAL_FACTOR,
-				rLabelFit
-			)
-		);
-		const cx = width / 2;
-		const cy = TOP_PAD + rOuter;
-		const rInner = Math.max(1, rOuter - TRACK_WIDTH);
-		return { cx, cy, rOuter, rInner };
+		return gaugeLayout({
+			width,
+			plotHeight,
+			minText: formatValueDisplay(min),
+			maxText: formatValueDisplay(max),
+			fontSize: rangeFontSize,
+			sidePad: SIDE_PAD,
+			topPad: TOP_PAD,
+			bottomPad: BOTTOM_PAD,
+			trackWidth: TRACK_WIDTH,
+			verticalFactor: ARC_VERTICAL_FACTOR
+		});
 	}
 
 	const hasValue = $derived(value !== null && Number.isFinite(value));
@@ -116,7 +113,9 @@
 				dominant-baseline="hanging"
 				{@attach trackRangeFont}
 			>
-				{formatValueDisplay(min)}
+				{#if g.minLabel !== formatValueDisplay(min)}<title>
+						{formatValueDisplay(min)}
+					</title>{/if}{g.minLabel}
 			</text>
 			<text
 				x={maxPoint.x}
@@ -125,7 +124,9 @@
 				text-anchor="middle"
 				dominant-baseline="hanging"
 			>
-				{formatValueDisplay(max)}
+				{#if g.maxLabel !== formatValueDisplay(max)}<title>
+						{formatValueDisplay(max)}
+					</title>{/if}{g.maxLabel}
 			</text>
 
 			<text x={g.cx} y={g.cy} class="hero-value" text-anchor="middle" dominant-baseline="middle">
