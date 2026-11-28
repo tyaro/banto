@@ -36,7 +36,9 @@
 		leftMarginForFirstLabel,
 		leftMarginForTicks,
 		originLabelsCollide,
-		rightMarginForTicks
+		rightMarginForTicks,
+		thinVerticalLabels,
+		clipsLeft
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import {
@@ -506,6 +508,13 @@
 					fontSize: tickFontSize,
 					xBaseline: 18
 				})}
+			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+			{@const shownY = new Set(
+				thinVerticalLabels(
+					leftTicks.map((t) => leftScale(t)),
+					tickFontSize
+				)
+			)}
 			{#each leftTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -520,7 +529,7 @@
 					class="tick-label y-tick"
 					text-anchor="end"
 					dominant-baseline="middle"
-					visibility={ti === 0 && originCollides ? 'hidden' : undefined}
+					visibility={!shownY.has(ti) || (ti === 0 && originCollides) ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}
@@ -580,7 +589,11 @@
 					x={xAt(i)}
 					y={m.innerBottom + 18}
 					class="tick-label x-tick"
-					text-anchor={i === range[1] ? 'end' : 'middle'}
+					text-anchor={i === range[1]
+						? 'end'
+						: clipsLeft(formatXValue(xLabels[i]), xAt(i), tickFontSize)
+							? 'start'
+							: 'middle'}
 				>
 					{formatXValue(xLabels[i])}
 				</text>

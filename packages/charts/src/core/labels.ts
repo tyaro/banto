@@ -270,7 +270,7 @@ export function thinValueLabels(
 	options: { fontSize?: number; gap?: number } = {}
 ): number[] {
 	const { fontSize = 11, gap = 4 } = options;
-	return thinCenteredTicks(
+	return thinKeepEnd(
 		xs,
 		labels.map((l) => estimateLabelWidth(l, fontSize)),
 		gap
@@ -308,4 +308,43 @@ export function originLabelsCollide(
 	const yLeft = yRight - estimateLabelWidth(yLabel, fontSize);
 	const xRight = xLeft + xw;
 	return xLeft < yRight && yLeft < xRight;
+}
+
+/**
+ * Indices of the y tick labels of a vertical value axis to draw: all while
+ * they fit, otherwise thinned evenly with the first (the origin) and the last
+ * (the top) kept. `ys[i]` is the screen y of tick `i` (ticks in ascending value
+ * order, so `ys` descends); a label is `fontSize * 1.1` px high. Only the
+ * labels are thinned - callers keep every gridline. A pane with room for every
+ * label keeps all of them.
+ */
+export function thinVerticalLabels(ys: number[], fontSize = 11): number[] {
+	return thinKeepEnd(
+		ys.map((y) => -y),
+		ys.map(() => fontSize * 1.1),
+		0
+	);
+}
+
+/**
+ * `thinCenteredTicks` with an explicit priority for a space too small for both
+ * ends: it keeps only the FIRST tick there, which silently dropped the last one
+ * (the upper bound of a value axis, the latest category). Here the LAST wins
+ * (the end that tells the scale / the newest), so the result is never empty and
+ * a lone label is the last one. Otherwise identical (first and last both kept
+ * while they fit).
+ */
+export function thinKeepEnd(xs: number[], widths: number[], gap = 4): number[] {
+	const kept = thinCenteredTicks(xs, widths, gap);
+	return xs.length > 1 && kept.length === 1 && kept[0] === 0 ? [xs.length - 1] : kept;
+}
+
+/**
+ * True when a label centred on `x` would leave the svg on the left (the first
+ * x label of a value axis sits on the plot's left edge, and the left margin
+ * could not grow enough - it is capped at 40% of the width). The caller then
+ * anchors it 'start' so it reads inward from the edge instead of being cut.
+ */
+export function clipsLeft(label: string, x: number, fontSize = 11): boolean {
+	return x - estimateLabelWidth(label, fontSize) / 2 < 0;
 }

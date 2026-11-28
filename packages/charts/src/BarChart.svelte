@@ -16,7 +16,6 @@
 	import { stackSeries, type StackSegment } from './core/stack';
 	import { roundedTopBarPath } from './core/path';
 	import { seriesColorVar } from './core/color';
-	import { thinCenteredTicks } from './core/ticks-time';
 	import {
 		estimateLabelWidth,
 		leftMarginFor,
@@ -26,7 +25,9 @@
 		rightMarginForBandLabel,
 		leftMarginForTicks,
 		rightMarginForLastTick,
-		truncateLabel
+		truncateLabel,
+		thinVerticalLabels,
+		thinKeepEnd
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { handleMarkKeydown, isKeyboardFocus, onMarkDetached } from './internal/mark-keys';
@@ -421,7 +422,7 @@
 				<!-- Value labels are thinned so neighbours never collide (large root
 				     font / narrow plot); gridlines stay at every tick. -->
 				{@const shownTicks = new Set(
-					thinCenteredTicks(
+					thinKeepEnd(
 						valueTicks.map((t) => valueScale(t)),
 						valueTicks.map((t) => estimateLabelWidth(formatValueDisplay(t), tickFontSize)),
 						// No extra gap: estimateLabelWidth already over-counts digits and the narrow
@@ -456,7 +457,7 @@
 				<!-- A low pane: when the labels are taller than the band step they are thinned
 				     (first and last kept), like the x labels of a band axis; bars stay at every category. -->
 				{@const shownRows = new Set(
-					thinCenteredTicks(
+					thinKeepEnd(
 						categories.map((_, i) => catScale.center(i)),
 						categories.map(() => tickFontSize * 1.1),
 						0
@@ -505,6 +506,13 @@
 						xBaseline: 16,
 						xOffset: catScaleX.center(0) - m.innerLeft
 					})}
+				<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+				{@const shownY = new Set(
+					thinVerticalLabels(
+						valueTicks.map((t) => valueScale(t)),
+						tickFontSize
+					)
+				)}
 				{#each valueTicks as tick, ti (tick)}
 					<line
 						x1={m.innerLeft}
@@ -519,7 +527,7 @@
 						class="tick-label"
 						text-anchor="end"
 						dominant-baseline="middle"
-						visibility={ti === 0 && originCollides ? 'hidden' : undefined}
+						visibility={!shownY.has(ti) || (ti === 0 && originCollides) ? 'hidden' : undefined}
 						{@attach ti === 0 ? trackTickFont : null}
 					>
 						{formatValueDisplay(tick)}

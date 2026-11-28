@@ -27,7 +27,9 @@
 		leftMarginForTicks,
 		originLabelsCollide,
 		rightMarginForLastTick,
-		thinValueLabels
+		thinValueLabels,
+		thinVerticalLabels,
+		clipsLeft
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
@@ -208,6 +210,13 @@
 				formatCount(valueTicks[0] ?? 0),
 				{ fontSize: tickFontSize, xBaseline: 16 }
 			)}
+			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+			{@const shownY = new Set(
+				thinVerticalLabels(
+					valueTicks.map((t) => valueScale(t)),
+					tickFontSize
+				)
+			)}
 			{#each valueTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -222,7 +231,7 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
-					visibility={ti === 0 && originCollides ? 'hidden' : undefined}
+					visibility={!shownY.has(ti) || (ti === 0 && originCollides) ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatCount(tick)}
@@ -242,7 +251,9 @@
 						x={xScale(tick)}
 						y={m.innerTop + m.innerHeight + 16}
 						class="tick-label"
-						text-anchor="middle"
+						text-anchor={clipsLeft(formatValueDisplay(tick), xScale(tick), tickFontSize)
+							? 'start'
+							: 'middle'}
 					>
 						{formatValueDisplay(tick)}
 					</text>

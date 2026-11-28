@@ -23,7 +23,8 @@
 		fitBandLabels,
 		leftMarginForTicks,
 		originLabelsCollide,
-		rightMarginForBandLabel
+		rightMarginForBandLabel,
+		thinVerticalLabels
 	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { roundedTopBarPath, linePath } from './core/path';
@@ -251,6 +252,13 @@
 					xBaseline: 18,
 					xOffset: catScale.center(0) - m.innerLeft
 				})}
+			<!-- Y labels thinned by their height when the pane is low (0 and the top kept); gridlines stay at every tick. -->
+			{@const shownY = new Set(
+				thinVerticalLabels(
+					valueTicks.map((t) => valueScale(t)),
+					tickFontSize
+				)
+			)}
 			{#each valueTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -265,7 +273,7 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
-					visibility={ti === 0 && originCollides ? 'hidden' : undefined}
+					visibility={!shownY.has(ti) || (ti === 0 && originCollides) ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}

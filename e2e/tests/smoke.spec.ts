@@ -4601,16 +4601,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 						texts.forEach((b, j) => {
 							if (i >= j) return;
 							const across = a.r.left < b.r.right - 1 && b.r.left < a.r.right - 1;
-							// Two labels of one column of end-anchored y labels (same right edge): their
-							// crowding is a matter of the pane's height, not of the width.
-							const sameColumn = Math.abs(a.r.right - b.r.right) <= 2;
 							// A real collision: the centre of one label lies inside the other's box (the
 							// boxes carry line-height padding, so merely touching does not count).
 							const ca = (a.r.top + a.r.bottom) / 2;
 							const cb = (b.r.top + b.r.bottom) / 2;
 							const hit = (ca > b.r.top && ca < b.r.bottom) || (cb > a.r.top && cb < a.r.bottom);
-							if (across && !sameColumn && hit)
-								out.push(`${name ?? n}: "${a.text}" overlaps "${b.text}"`);
+							if (across && hit) out.push(`${name ?? n}: "${a.text}" overlaps "${b.text}"`);
 						});
 					});
 				});
