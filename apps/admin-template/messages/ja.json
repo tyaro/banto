@@ -481,7 +481,7 @@
   "settings.formPresentationHeading": "入力の表示",
   "settings.formPresentationDrawer": "ドロワー",
   "settings.formPresentationDialog": "ダイアログ",
-  "settings.formPresentationNote": "行の詳細と新規作成のフォームを、横から出るドロワーと、画面中央のダイアログのどちらで開くか選びます。",
+  "settings.formPresentationNote": "一覧から開く行の詳細を、横から出るドロワーと、画面中央のダイアログのどちらで開くか選びます。",
   "settings.launcherPositionHeading": "ドックの位置",
   "settings.launcherPositionTop": "上",
   "settings.launcherPositionBottom": "下",

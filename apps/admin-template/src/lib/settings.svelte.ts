@@ -77,7 +77,7 @@ export type NavLayout = 'sidebar' | 'launcher' | 'menubar';
 export const NAV_LAYOUT_DEFAULT: NavLayout = 'sidebar';
 
 /**
- * How a resource's row detail / create form opens: in the side drawer or in a
+ * How a resource's row detail (opened from the list) opens: in the side drawer or in a
  * centred dialog. A per-user appearance setting; `ResourceListPage` picks
  * `Drawer` or `Modal` from it (same props, same `OverlayPanel`).
  */
@@ -210,7 +210,7 @@ class Settings {
 	themeDensity: ThemeDensity = $state(loadThemeDensity());
 	kiosk: boolean = $state(loadKiosk());
 	navLayout: NavLayout = $state(loadNavLayout());
-	/** Whether a resource's detail / create form opens in the drawer or a dialog. */
+	/** Whether a resource's row detail opens in the drawer or a dialog. */
 	formPresentation: FormPresentation = $state(loadFormPresentation());
 	/** The dock's screen edge (only used while `navLayout === 'launcher'`). */
 	launcherPosition: LauncherPosition = $state(loadLauncherPosition());
