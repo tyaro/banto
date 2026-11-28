@@ -4,8 +4,11 @@ import {
 	leftMarginFor,
 	leftMarginForTicks,
 	rightMarginForTicks,
-	rightMarginForLastTick
+	rightMarginForLastTick,
+	rightMarginForBandLabel,
+	fitBandLabels
 } from '../src/core/labels';
+import { thinCategoryLabels } from '../src/core/ticks-time';
 // @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
 import LineChartSrc from '../src/LineChart.svelte?raw';
 // @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
@@ -14,6 +17,10 @@ import StackedAreaChartSrc from '../src/StackedAreaChart.svelte?raw';
 import ComboChartSrc from '../src/ComboChart.svelte?raw';
 // @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
 import ScatterChartSrc from '../src/ScatterChart.svelte?raw';
+// @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
+import HeatmapSrc from '../src/Heatmap.svelte?raw';
+// @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
+import BoxPlotSrc from '../src/BoxPlot.svelte?raw';
 
 describe('estimateLabelWidth', () => {
 	it('estimates CJK characters as ~13px each at the 11px tick font', () => {
@@ -69,6 +76,146 @@ describe('rightMarginForLastTick', () => {
 
 	it('never shrinks below the minimum', () => {
 		expect(rightMarginForLastTick('1', { min: 16 })).toBe(16);
+	});
+});
+
+describe('rightMarginForBandLabel (#1047)', () => {
+	const opts = { baseRight: 16, left: 48, fontSize: 22 };
+
+	it('keeps the base margin without a measured width or when the label fits in the band', () => {
+		expect(rightMarginForBandLabel('2026-11', 6, { ...opts })).toBe(16);
+		expect(rightMarginForBandLabel('A', 3, { ...opts, totalWidth: 600 })).toBe(16);
+	});
+
+	it('grows so the last label stays inside the svg at a large font on a narrow chart', () => {
+		const total = 538;
+		const count = 12;
+		const right = rightMarginForBandLabel('2026-11', count, { ...opts, totalWidth: total });
+		expect(right).toBeGreaterThan(16);
+		// Centre of the last band + half the label must not pass the svg edge.
+		const step = (total - opts.left - right) / count;
+		const centre = total - right - step / 2;
+		expect(centre + estimateLabelWidth('2026-11', 22) / 2).toBeLessThanOrEqual(total);
+	});
+
+	it('never goes below a larger caller margin and is capped at 40% of the width', () => {
+		expect(rightMarginForBandLabel('x', 2, { ...opts, baseRight: 40, totalWidth: 600 })).toBe(40);
+		const capped = rightMarginForBandLabel('a very very long category label', 2, {
+			...opts,
+			totalWidth: 200
+		});
+		expect(capped).toBeLessThanOrEqual(80);
+	});
+});
+
+describe('x label thinning on band axes (#1047)', () => {
+	it('keeps every label that fits and thins crowded ones so none overlap', () => {
+		const centers = Array.from({ length: 12 }, (_, i) => 30 + i * 30);
+		const narrow = centers.map(() => 20);
+		expect(thinCategoryLabels(centers, narrow)).toHaveLength(12);
+		const wide = centers.map(() => 60); // 200% font: labels wider than the step
+		const kept = thinCategoryLabels(centers, wide);
+		expect(kept.length).toBeLessThan(12);
+		expect(kept[0]).toBe(0);
+		expect(kept[kept.length - 1]).toBe(11);
+		for (let k = 1; k < kept.length; k++) {
+			expect(centers[kept[k - 1]] + 30).toBeLessThan(centers[kept[k]] - 30);
+		}
+	});
+});
+
+describe('fitBandLabels (#1047 review)', () => {
+	it('keeps the last label, inside the svg, on a 320px chart at 22px with a 12 fullwidth char end label', () => {
+		const total = 320;
+		const left = 48;
+		const count = 12;
+		const last = 'あいうえおかきくけこさし';
+		const labels = Array.from({ length: count }, (_, i) => (i === count - 1 ? last : `${i + 1}月`));
+		const right = rightMarginForBandLabel(last, count, {
+			baseRight: 16,
+			left,
+			totalWidth: total,
+			fontSize: 22
+		});
+		expect(right).toBe(128);
+		const step = (total - left - right) / count;
+		const centers = labels.map((_, i) => left + step * (i + 0.5));
+		const out = fitBandLabels(labels, centers, { fontSize: 22, totalWidth: total });
+		const lastOut = out[out.length - 1];
+		expect(lastOut.index).toBe(count - 1);
+		expect(lastOut.full).toBe(last);
+		expect(lastOut.text).not.toBe(last);
+		const half = estimateLabelWidth(lastOut.text, 22) / 2;
+		expect(centers[count - 1] + half).toBeLessThanOrEqual(total);
+		for (const l of out) {
+			const w = estimateLabelWidth(l.text, 22) / 2;
+			expect(centers[l.index] - w).toBeGreaterThanOrEqual(0);
+			expect(centers[l.index] + w).toBeLessThanOrEqual(total);
+		}
+	});
+
+	it('fits a single label on both sides when the right margin is larger than the left', () => {
+		const total = 320;
+		const left = 48;
+		const label = 'あ'.repeat(20);
+		const right = rightMarginForBandLabel(label, 1, {
+			baseRight: 16,
+			left,
+			totalWidth: total,
+			fontSize: 22
+		});
+		expect(right).toBe(128);
+		const center = left + (total - left - right) / 2;
+		expect(center).toBe(120);
+		const out = fitBandLabels([label], [center], { fontSize: 22, totalWidth: total });
+		expect(out).toHaveLength(1);
+		const half = estimateLabelWidth(out[0].text, 22) / 2;
+		expect(center - half).toBeGreaterThanOrEqual(0);
+		expect(center + half).toBeLessThanOrEqual(total);
+	});
+
+	it('fits two labels when a long last label pushes its centre into the left half', () => {
+		const total = 600;
+		const left = 48;
+		const labels = ['A', 'あ'.repeat(24)];
+		const right = rightMarginForBandLabel(labels[1], 2, {
+			baseRight: 16,
+			left,
+			totalWidth: total,
+			fontSize: 22
+		});
+		const step = (total - left - right) / 2;
+		const centers = labels.map((_, i) => left + step * (i + 0.5));
+		const out = fitBandLabels(labels, centers, { fontSize: 22, totalWidth: total });
+		expect(out.length).toBeGreaterThan(0);
+		for (const l of out) {
+			const w = estimateLabelWidth(l.text, 22) / 2;
+			expect(centers[l.index] - w).toBeGreaterThanOrEqual(0);
+			expect(centers[l.index] + w).toBeLessThanOrEqual(total);
+		}
+	});
+
+	it('does not cut labels that fit, and returns nothing for no labels', () => {
+		const out = fitBandLabels(['a', 'b', 'c'], [40, 100, 160], { totalWidth: 200 });
+		expect(out.map((l) => l.text)).toEqual(['a', 'b', 'c']);
+		expect(fitBandLabels([], [], { totalWidth: 200 })).toEqual([]);
+	});
+});
+
+describe('ComboChart with no data (#1047 review)', () => {
+	it('does not call formatX for the last category when there is none', () => {
+		expect(ComboChartSrc).toContain('categories.length > 0 ? formatXValue(');
+	});
+});
+
+describe('Heatmap / ComboChart / BoxPlot use the shared x label handling (#1047)', () => {
+	it.each([
+		['Heatmap', HeatmapSrc],
+		['ComboChart', ComboChartSrc],
+		['BoxPlot', BoxPlotSrc]
+	])('%s thins labels and reserves the last band label', (_n, src) => {
+		expect(src).toContain('fitBandLabels(');
+		expect(src).toContain('rightMarginForBandLabel(');
 	});
 });
 
