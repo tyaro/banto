@@ -14,7 +14,10 @@
 	 *   centre (left from the left edge, right from the right edge), one at a
 	 *   time, with a scrim. Open = focus moves in, the centre goes `inert`; Esc,
 	 *   the scrim or the app (`leftDrawerOpen = false`) closes and focus goes
-	 *   back to where it was (else the toggle). A non-modal layer that follows
+	 *   back to where it was (else the toggle). A modal drawer traps
+	 *   focus (#1045: Tab wraps inside; with nothing focusable inside, the pane
+	 *   itself holds focus), but outside clicks are not blocked and it is not
+	 *   `aria-modal` (a true modal is out of scope). A non-modal layer that follows
 	 *   `layering.ts`'s promises: `data-esc-layer` while open, Esc at window
 	 *   level (modal drawers only; a non-modal drawer closes on Esc only with
 	 *   focus inside it) that yields to a layer above, `visibility: hidden` + `inert` when
@@ -27,7 +30,7 @@
 	import IconButton from './IconButton.svelte';
 	import PanelLeft from './icons/PanelLeft.svelte';
 	import PanelRight from './icons/PanelRight.svelte';
-	import { focusablesIn, hasVisibleLayerAbove, restoreFocus } from './layering';
+	import { attachFocusTrap, focusablesIn, hasVisibleLayerAbove, restoreFocus } from './layering';
 	import { defaultUiMessages } from './messages';
 	import {
 		clampPaneWidth,
@@ -430,7 +433,12 @@
 		// A non-modal drawer sits beside live work in the centre (a grid cell
 		// edit, a search box): their Esc must not close it, so no window listener.
 		if (modal) window.addEventListener('keydown', onWindow);
+		// A modal drawer traps focus (#1045): Tab wraps inside, and with nothing focusable the
+		// pane itself keeps it (it is `tabindex="-1"`), so focus never leaves for the shell behind
+		// the scrim or falls to `<body>`.
+		const detachTrap = modal ? attachFocusTrap(pane) : null;
 		return () => {
+			detachTrap?.();
 			pane.removeEventListener('keydown', onPane);
 			if (modal) window.removeEventListener('keydown', onWindow);
 		};
