@@ -59,6 +59,33 @@ export function visibleHostRect(host: Rect, clips: readonly Rect[]): Rect {
 	};
 }
 
+/**
+ * How much of the viewport's top / bottom is covered by something that is not an ancestor of
+ * the host - a `position: fixed` / `sticky` header or footer (#1058). Client px, from the
+ * viewport edge; missing / negative / not finite = 0.
+ */
+export interface OverlayInset {
+	top?: number;
+	bottom?: number;
+}
+
+/**
+ * `viewport` (client px) minus the covered `inset` at its top and bottom: a clip for
+ * `visibleHostRect`. `inset` absent or 0 = the viewport itself (as before). The two together
+ * never leave a negative height.
+ */
+export function insetViewport(viewport: Rect, inset?: OverlayInset): Rect {
+	const part = (n: number | undefined) => (n !== undefined && Number.isFinite(n) && n > 0 ? n : 0);
+	const top = Math.min(part(inset?.top), viewport.height);
+	const bottom = Math.min(part(inset?.bottom), viewport.height - top);
+	return {
+		x: viewport.x,
+		y: viewport.y + top,
+		width: viewport.width,
+		height: viewport.height - top - bottom
+	};
+}
+
 /** `visible` cut to the `width` x `height` host; the whole host when it is not given. */
 function visiblePart(width: number, height: number, visible?: Rect): Rect {
 	if (!visible) return { x: 0, y: 0, width, height };
