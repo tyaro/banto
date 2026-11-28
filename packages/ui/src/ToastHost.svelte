@@ -56,6 +56,7 @@
 	</div>
 {/snippet}
 
+<!-- Live regions: while a modal is open the text is still announced, the buttons are inert (layering.ts). -->
 <div class="toast-host">
 	<div class="toast-group" class:empty={polite.length === 0} role="status" aria-live="polite">
 		{#each polite as toast (toast.id)}

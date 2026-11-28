@@ -312,6 +312,59 @@ test.describe('three-pane workspace', () => {
 		await expect(page.locator('.three-pane__title')).toHaveText('溶接機');
 	});
 
+	// #1055: the drawer is a true modal - what `aria-modal` hides is what cannot be reached.
+	test('at 320px the open tree drawer is a modal dialog: the header behind it is out of reach, Tab stays inside, × closes and focus returns', async ({
+		page
+	}) => {
+		await page.setViewportSize({ width: 320, height: 800 });
+		await page.goto(PATH);
+		const toggle = page.getByRole('button', { name: '対象のツリー', exact: true });
+		const userMenu = page.getByRole('button', { name: 'ユーザーメニューを開く', exact: true });
+		await expect(userMenu).toBeVisible();
+		// Taken before the drawer opens: an inert element is not in the accessibility tree.
+		const userMenuEl = await userMenu.elementHandle();
+		const box = await userMenu.boundingBox();
+		if (!userMenuEl || !box) throw new Error('the user menu button is not laid out');
+		const blocked = () => userMenuEl.evaluate((el) => el.closest('[inert]') !== null);
+		expect(await blocked()).toBe(false);
+
+		await toggle.click();
+		const dialog = page.getByRole('dialog', { name: '対象のツリー', exact: true });
+		await expect(dialog).toBeVisible();
+		await expect(dialog).toHaveAttribute('aria-modal', 'true');
+		const close = dialog.getByRole('button', { name: '閉じる', exact: true });
+		await expect(close).toBeFocused();
+
+		// the header outside the frame: inert, and a press where its button is does nothing
+		expect(await blocked()).toBe(true);
+		await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+		await expect(page.getByRole('menu')).toHaveCount(0);
+		await expect(dialog).toBeVisible();
+
+		// Tab and Shift+Tab never leave the drawer
+		const inDrawer = () =>
+			page.evaluate(
+				() => document.activeElement?.closest('[role="dialog"][aria-modal="true"]') !== null
+			);
+		for (let i = 0; i < 12; i++) {
+			await page.keyboard.press('Tab');
+			expect(await inDrawer()).toBe(true);
+		}
+		for (let i = 0; i < 4; i++) {
+			await page.keyboard.press('Shift+Tab');
+			expect(await inDrawer()).toBe(true);
+		}
+
+		// × closes it: no dialog, focus back on the toggle, the header usable again
+		await close.click();
+		await expect(dialog).toHaveCount(0);
+		await expect(tree(page)).toBeHidden();
+		await expect(toggle).toBeFocused();
+		expect(await blocked()).toBe(false);
+		await userMenu.click();
+		await expect(page.getByRole('menu')).toBeVisible();
+	});
+
 	test('rapid picks settle on the last target and leave one URL entry per target', async ({
 		page
 	}) => {

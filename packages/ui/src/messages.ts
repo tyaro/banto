@@ -26,7 +26,7 @@ export interface UiMessages {
 	commandPaletteRecent?: () => string;
 	/** ToastHost: the close button's accessible name. */
 	toastClose?: () => string;
-	/** Modal / Drawer: the close (×) button's accessible name and tooltip. */
+	/** Modal / Drawer, and ThreePaneLayout's modal drawer (narrow): the close (×) button's accessible name and tooltip. */
 	overlayClose?: () => string;
 	/** ConfirmDialog: the confirm button when the caller gives no `confirmLabel`. */
 	confirmOk?: () => string;

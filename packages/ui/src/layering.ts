@@ -39,6 +39,11 @@
  *    be visible from its first frame (never transition `visibility` on open).
  * 7. Non-modal layers (sidebar, retreated tree) cannot trap, so whoever
  *    **opens a lower one closes the upper one first** (caller's job).
+ * 8. A layer that says `aria-modal="true"` **makes everything outside it
+ *    `inert`** ({@link trackModalLayer}, #1055, ADR-0038) - what `aria-modal`
+ *    hides from assistive technology is exactly what clicks and Tab cannot
+ *    reach. One place in this module knows which tracked layer is on top and
+ *    owns the `inert` it sets; see "The modal backdrop" below.
  *
  * ## What counts as "above"
  *
@@ -51,13 +56,57 @@
  * - it is in an open popover (the browser's top layer, above any z-index);
  * - its effective z-index ({@link effectiveZIndex}, read from CSS - so the
  *   theme's `--banto-z-*` tokens decide, nothing is copied here) is higher;
- * - its z-index is equal and it comes later in document order (CSS paint
- *   order), so two equal layers never both yield;
+ * - its z-index is equal and it was **opened later** - when both belong to a
+ *   layer registered with {@link trackModalLayer} (Modal, Drawer, ...; a layer
+ *   inside one counts as that one). The backdrop of the later one makes the
+ *   earlier one `inert` wherever the two sit in the document, so Esc and the
+ *   focus trap must agree with it;
+ * - its z-index is equal, the registration does not tell (one of the two is
+ *   not registered) and it comes later in document order (CSS paint order).
+ *   Either way two equal layers never both yield;
  * - it sits **inside** `except` with its own positioned z-index (a Modal
  *   opened from a Drawer's content, a popup menu inside a dialog). A nested
  *   layer without its own z-index is part of `except`, not above it.
  *
  * `except` itself and its ancestors never count.
+ *
+ * ## The modal backdrop (promise 8)
+ *
+ * Modal, Drawer, ConfirmDialog, CommandPalette and ThreePaneLayout's modal
+ * drawer call {@link trackModalLayer} while open. Per document, the topmost
+ * tracked layer decides the backdrop: walking from `<body>` down to the
+ * layer, every element beside that path gets `inert`. Among tracked layers:
+ * nested inside another = above it; else the higher z-index (what is drawn
+ * above stays above, whoever opened last - a palette at 1000 over a modal at
+ * 900); at the same z-index **the one registered last** - not the document
+ * order: a dialog of the layout that sits before the page's Drawer in the DOM
+ * and opens while the Drawer is up must be usable, not part of the Drawer's
+ * backdrop. A registration is one "open": a layer that closes and opens
+ * again registers anew and so goes above its equals. A lower tracked layer
+ * is just part of the backdrop until the upper one is released, in whatever
+ * order they close (the order of those that remain is kept).
+ * Equal z-indexes paint in document order, so OverlayPanel (Modal, Drawer,
+ * ConfirmDialog) also raises its own z-index over the equals opened before
+ * it ({@link liftModalLayer}): on top by the rules = drawn on top. That lift
+ * is for the paint only: two tracked layers are compared by their z-index
+ * **without** it (else a third sibling at 900 would lose to the second one,
+ * lifted to 901); against an untracked layer the z-index counts as painted.
+ *
+ * - Only the `inert` this module set is removed. An element that was already
+ *   `inert` is left alone, and one whose `inert` the app writes while a layer
+ *   is open (a sidebar that turns off-canvas) is handed over to the app.
+ * - {@link MODAL_EXEMPT_ATTR} keeps an element out of the backdrop: what is
+ *   drawn above every modal and must stay usable (ToastHost, the touch keys).
+ * - Live regions (`aria-live`, `role="status" | "alert" | "log"`, `<output>`)
+ *   keep announcing: they are not made inert, the controls inside them are
+ *   (a "retry" in a status banner cannot be pressed behind the modal).
+ * - The backdrop follows the DOM while a layer is open (MutationObserver): a
+ *   banner or a portal's content that appears later is covered too.
+ * - A layer nobody tracked that is **above** the top one by the rules above
+ *   (an app's own dialog in a portal, an open off-canvas sidebar) is kept out
+ *   of the backdrop - Esc yields to it, so it must be usable. It does not
+ *   make the rest inert itself: an app's own modal layer calls
+ *   {@link trackModalLayer} for that.
  *
  * {@link hasVisibleMenuLayer} and {@link hasVisibleModalLayer} apply the same
  * rules to the menus / the `aria-modal="true"` layers only - what keyboard
@@ -158,11 +207,55 @@ function isInOpenPopover(el: Element): boolean {
 	}
 }
 
-/** Is the active layer `el` above `self` (see the module doc)? */
+/**
+ * When was the tracked modal layer that `el` belongs to registered
+ * ({@link trackModalLayer}): its place in the order of opening, or `-1` when
+ * `el` is in none. The innermost tracked layer around `el` (or `el` itself)
+ * speaks for it; registered twice, the latest counts.
+ */
+function modalOrderOf(el: Element): number {
+	const entries = modalBackdrops.get(el.ownerDocument)?.entries;
+	if (!entries) return -1;
+	let found = -1;
+	for (let index = 0; index < entries.length; index += 1) {
+		const layer = entries[index].layer;
+		if (!layer.contains(el)) continue;
+		if (found === -1 || entries[found].layer.contains(layer)) found = index;
+	}
+	return found;
+}
+
+/**
+ * The part of `el`'s effective z-index that is the lift of the tracked layer
+ * at `order` ({@link liftModalLayer}): the layer's lift when `el` takes its
+ * z-index from that layer (it is the layer, or sits in it without a z-index
+ * of its own), else `0`.
+ */
+function liftWithin(el: Element, order: number): number {
+	const entry = modalBackdrops.get(el.ownerDocument)?.entries[order];
+	if (!entry || entry.lift === 0) return 0;
+	return hasOwnZIndexWithin(el, entry.layer) ? 0 : entry.lift;
+}
+
+/** Is the active layer `el` above `self` (see the module doc)? `selfZ` = `effectiveZIndex(self)`. */
 function isAbove(el: Element, self: Element, selfZ: number): boolean {
 	if (isInOpenPopover(el)) return true;
 	if (self.contains(el)) return hasOwnZIndexWithin(el, self);
 	const z = effectiveZIndex(el);
+	const order = modalOrderOf(el);
+	const selfOrder = modalOrderOf(self);
+	// Two registered modal layers: judged by the z-index they have **without
+	// their lift** - the lift only draws what the order of opening decided, so
+	// it must not decide in turn (a third sibling at 900 would lose to the
+	// second one, lifted to 901). At equal z the one opened later is on top
+	// (its backdrop makes the other inert, whatever the document order).
+	if (order !== -1 && selfOrder !== -1 && order !== selfOrder) {
+		const base = z - liftWithin(el, order);
+		const selfBase = selfZ - liftWithin(self, selfOrder);
+		return base !== selfBase ? base > selfBase : order > selfOrder;
+	}
+	// One of the two is not registered: what is painted decides - the z-index
+	// as it is (lift included), then the document order.
 	if (z !== selfZ) return z > selfZ;
 	return (self.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
@@ -296,4 +389,326 @@ export type OverlayCloseSource = 'escape' | 'overlay' | 'close-button';
 export function isCloseAllowed(source: OverlayCloseSource, dirty: boolean): boolean {
 	if (source === 'close-button') return true;
 	return !dirty;
+}
+
+// --- the modal backdrop (promise 8, #1055) -----------------------------------
+
+/**
+ * Keeps an element (and what is inside it) out of the modal backdrop: it is
+ * never made `inert` by {@link trackModalLayer}. For what is drawn above every
+ * modal layer and must stay usable while one is open - the touch keys'
+ * surface, an app's always-on-top host (not ToastHost: its text is announced,
+ * but its buttons are as unreachable by keyboard as the rest). Not for page content.
+ */
+export const MODAL_EXEMPT_ATTR = 'data-modal-exempt';
+
+/** Elements that announce changes: `inert` would silence them. */
+const LIVE_REGION_SELECTOR =
+	'[aria-live]:not([aria-live="off"]), [role="status"], [role="alert"], [role="log"], output';
+
+/** A subtree holding one of these is not made inert as a whole. */
+const BACKDROP_KEEP_SELECTOR = `[${MODAL_EXEMPT_ATTR}], ${LIVE_REGION_SELECTOR}`;
+
+/** What can be operated inside a live region (made inert one by one). */
+const LIVE_CONTROL_SELECTOR = `${FOCUSABLE_SELECTOR}, [tabindex], [contenteditable], summary, area[href], iframe, [role="button"], [role="link"]`;
+
+/** Never rendered, nothing to block. */
+const BACKDROP_SKIPPED_TAGS = new Set(['script', 'style', 'link', 'meta', 'template', 'noscript']);
+
+/**
+ * The attributes {@link LIVE_CONTROL_SELECTOR} reads (`tabindex`, `href`,
+ * `contenteditable`, `role`, ...), taken from the selector itself so the two
+ * cannot drift: an attribute that alone makes something operable must be seen.
+ */
+const LIVE_CONTROL_ATTRS = [...new Set(LIVE_CONTROL_SELECTOR.match(/(?<=\[)[a-z-]+/g))];
+
+/**
+ * Attribute changes that can change the backdrop: who is inert, what is a
+ * live region or exempt, and which layers exist and show (an app's layer is
+ * often shown by a class or a style).
+ */
+const BACKDROP_OBSERVED_ATTRS = [
+	'inert',
+	'role',
+	'aria-live',
+	'aria-modal',
+	'hidden',
+	'class',
+	'style',
+	MODAL_EXEMPT_ATTR,
+	LAYER_MARKER_ATTR,
+	LAYER_INACTIVE_ATTR,
+	...LIVE_CONTROL_ATTRS
+];
+
+export interface ModalLayerOptions {
+	/**
+	 * The layer's scrim when it is **not** an ancestor of the layer (a sibling,
+	 * like ThreePaneLayout's): kept out of the backdrop while this layer is on
+	 * top, so a click on it still arrives. Read on every update.
+	 */
+	backdrop?: () => Element | null | undefined;
+}
+
+interface ModalEntry {
+	layer: HTMLElement;
+	backdrop?: () => Element | null | undefined;
+	/**
+	 * How much of the layer's z-index is its lift ({@link liftModalLayer}): for
+	 * the paint only, taken off again when two tracked layers are compared.
+	 */
+	lift: number;
+}
+
+interface ModalBackdrop {
+	/** Tracked layers, in the order they were opened - what decides between equal z-indexes. */
+	entries: ModalEntry[];
+	/** The elements whose `inert` this module set (and so may remove). */
+	applied: Set<HTMLElement>;
+	/** The layer the backdrop was last built around. */
+	top: HTMLElement | null;
+	observer: MutationObserver | null;
+}
+
+const modalBackdrops = new WeakMap<Document, ModalBackdrop>();
+
+/**
+ * Is the tracked layer `el` above the tracked layer `other`? Nested inside =
+ * above; else the module's z rules, where equal z = registered later
+ * ({@link isAbove}).
+ */
+function isModalAbove(el: HTMLElement, other: HTMLElement): boolean {
+	if (other.contains(el)) return true;
+	if (el.contains(other)) return false;
+	return isAbove(el, other, effectiveZIndex(other));
+}
+
+function topModalEntry(doc: Document, entries: readonly ModalEntry[]): ModalEntry | null {
+	let top: ModalEntry | null = null;
+	for (const entry of entries) {
+		// A layer that left the DOM before its release decides nothing.
+		if (!doc.body?.contains(entry.layer)) continue;
+		if (!top || isModalAbove(entry.layer, top.layer)) top = entry;
+	}
+	return top;
+}
+
+/** Is `el` inside an `inert` that this module did not set? */
+function isInsideForeignInert(el: Element, applied: ReadonlySet<Element>): boolean {
+	for (
+		let node = el.closest('[inert]');
+		node;
+		node = node.parentElement?.closest('[inert]') ?? null
+	) {
+		if (!applied.has(node)) return true;
+	}
+	return false;
+}
+
+/**
+ * The layers nobody tracked that are **above** the tracked `layer` by the
+ * module's rules (an app's own dialog in a portal, an open off-canvas
+ * sidebar, a menu): they are drawn over the modal and Esc already yields to
+ * them, so they are not part of its backdrop. "Active" as elsewhere, except
+ * that our own `inert` does not count - a layer that appears inside an
+ * element we made inert is found and let out.
+ */
+function untrackedLayersAbove(
+	doc: Document,
+	layer: HTMLElement,
+	applied: ReadonlySet<Element>
+): Element[] {
+	const z = effectiveZIndex(layer);
+	const above: Element[] = [];
+	for (const el of doc.querySelectorAll(LAYER_SELECTOR)) {
+		if (el === layer || el.contains(layer) || layer.contains(el)) continue;
+		if (el.closest(`[${LAYER_INACTIVE_ATTR}]`) || !isRendered(el)) continue;
+		if (isInsideForeignInert(el, applied)) continue;
+		if (isAbove(el, layer, z)) above.push(el);
+	}
+	return above;
+}
+
+/**
+ * Collect into `want` what must be inert around the modal layer: under
+ * `parent` (on the path from `<body>` to the layer), every child beside the
+ * path. `inert` cannot be lifted by a descendant, so a child that holds
+ * something to keep (`kept`: the layer, its scrim, the layers above it; an
+ * exempt element; a live region) is not taken as a whole - the walk goes one
+ * level down instead.
+ */
+function collectBackdrop(
+	parent: Element,
+	kept: readonly Element[],
+	applied: ReadonlySet<HTMLElement>,
+	want: Set<HTMLElement>
+): void {
+	for (const child of parent.children) {
+		if (kept.includes(child)) continue;
+		// `inert` is an HTML attribute: an <svg> beside the path is left as it is.
+		if (!(child instanceof HTMLElement) || BACKDROP_SKIPPED_TAGS.has(child.localName)) continue;
+		if (kept.some((el) => child.contains(el))) {
+			collectBackdrop(child, kept, applied, want);
+			continue;
+		}
+		if (child.hasAttribute(MODAL_EXEMPT_ATTR)) continue;
+		// Already inert and not ours: nothing to add, nothing to walk into.
+		if (child.hasAttribute('inert') && !applied.has(child)) continue;
+		if (child.matches(LIVE_REGION_SELECTOR)) {
+			// Still announced; only what can be operated inside is blocked.
+			for (const control of child.querySelectorAll<HTMLElement>(LIVE_CONTROL_SELECTOR)) {
+				want.add(control);
+			}
+			continue;
+		}
+		if (child.querySelector(BACKDROP_KEEP_SELECTOR)) {
+			collectBackdrop(child, kept, applied, want);
+			continue;
+		}
+		want.add(child);
+	}
+}
+
+/**
+ * An `inert` written by someone else on an element we hold: the claim passes
+ * to them. Set again = theirs now (not removed on release); removed = the next
+ * update puts ours back.
+ */
+function yieldForeignInert(state: ModalBackdrop, records: readonly MutationRecord[]): void {
+	for (const record of records) {
+		if (record.type === 'attributes' && record.attributeName === 'inert') {
+			state.applied.delete(record.target as HTMLElement);
+		}
+	}
+}
+
+/** Bring the document's `inert` in line with the topmost tracked layer. */
+function syncModalBackdrop(doc: Document, state: ModalBackdrop): void {
+	yieldForeignInert(state, state.observer?.takeRecords() ?? []);
+	const top = topModalEntry(doc, state.entries);
+	state.top = top?.layer ?? null;
+	const want = new Set<HTMLElement>();
+	if (top && doc.body) {
+		const kept: Element[] = [top.layer, ...untrackedLayersAbove(doc, top.layer, state.applied)];
+		const scrim = top.backdrop?.();
+		if (scrim) kept.push(scrim);
+		collectBackdrop(doc.body, kept, state.applied, want);
+	}
+	for (const el of [...state.applied]) {
+		if (want.has(el)) continue;
+		state.applied.delete(el);
+		el.removeAttribute('inert');
+	}
+	for (const el of want) {
+		// Inert already (ours, or someone else's inside a subtree we walked): leave it.
+		if (state.applied.has(el) || el.hasAttribute('inert')) continue;
+		el.setAttribute('inert', '');
+		state.applied.add(el);
+	}
+	if (state.entries.length === 0) {
+		state.observer?.disconnect();
+		state.observer = null;
+		modalBackdrops.delete(doc);
+		return;
+	}
+	if (state.observer) {
+		// Our own writes are not news.
+		state.observer.takeRecords();
+		return;
+	}
+	if (typeof MutationObserver !== 'function' || !doc.body) return;
+	state.observer = new MutationObserver((records) => {
+		yieldForeignInert(state, records);
+		// What changes inside the top layer cannot change what is outside it.
+		const layer = state.top;
+		if (layer && records.every((record) => layer.contains(record.target))) return;
+		syncModalBackdrop(doc, state);
+	});
+	state.observer.observe(doc.body, {
+		subtree: true,
+		childList: true,
+		attributes: true,
+		attributeFilter: BACKDROP_OBSERVED_ATTRS
+	});
+}
+
+/**
+ * Raise the tracked layer `layer` so that it is **drawn** above the tracked
+ * layers it is above by the rules: at the same z-index the one registered
+ * last is on top, but CSS paints equal z-indexes in document order - a Modal
+ * that sits before an open Drawer in the DOM would be usable and yet painted
+ * under the Drawer's scrim. The lift is one more than the highest lift among
+ * the other open layers that share its z-index (theirs **without** their
+ * lift); `0` when there is none, so a single layer keeps the theme's number.
+ *
+ * `apply` writes the lift onto the element that carries the z-index (it is
+ * called with `0` too). What the z-index really moved by is remembered and
+ * left out when two tracked layers are compared, so the lift never changes
+ * who is on top among them - three siblings opened in a row are 900 / 901 /
+ * 902 on screen and 900 / 900 / 900, in the order of opening, for the rules.
+ * Against a layer nobody tracked the z-index counts as painted, lift
+ * included; the backdrop is brought in line with that before this returns,
+ * so the caller can move focus right after.
+ *
+ * Package-internal (OverlayPanel: Modal / Drawer / ConfirmDialog, the layers
+ * that share `--banto-z-modal`). Call it right after {@link trackModalLayer},
+ * with the previous lift taken off the element. Returns the lift.
+ */
+export function liftModalLayer(layer: HTMLElement, apply: (lift: number) => void): number {
+	const doc = layer.ownerDocument;
+	const state = modalBackdrops.get(doc);
+	const entries = state?.entries ?? [];
+	// Registered twice: the latest speaks.
+	const index = entries.map((entry) => entry.layer).lastIndexOf(layer);
+	if (!state || index === -1) return 0;
+	const own = entries[index];
+	const z = effectiveZIndex(layer) - own.lift;
+	let lift = 0;
+	for (const entry of entries.slice(0, index)) {
+		// Nested either way: the stacking context of the outer one decides, not a number.
+		if (entry.layer.contains(layer) || layer.contains(entry.layer)) continue;
+		if (!entry.layer.isConnected) continue;
+		if (effectiveZIndex(entry.layer) - entry.lift === z) lift = Math.max(lift, entry.lift + 1);
+	}
+	apply(lift);
+	// Measured, not assumed: an `apply` that could not write leaves the rules as they were.
+	own.lift = effectiveZIndex(layer) - z;
+	syncModalBackdrop(doc, state);
+	return lift;
+}
+
+/**
+ * Tell the document that the modal layer `layer` (the element that says
+ * `aria-modal="true"`) is open, and return the function that takes it back
+ * (promise 8; safe to call twice). While it is the topmost tracked layer,
+ * everything outside it is `inert` - see "The modal backdrop" in the module
+ * doc for what is kept (exempt elements, live regions) and whose `inert` is
+ * whose.
+ *
+ * Call it when the layer opens and release it the moment it starts closing,
+ * **before** focus is given back (the opener is inert until then). Layers may
+ * be released in any order. Among layers at the same z-index the one
+ * registered last is on top, wherever it is in the document - so register on
+ * open, not on mount.
+ */
+export function trackModalLayer(layer: HTMLElement, options: ModalLayerOptions = {}): () => void {
+	const doc = layer.ownerDocument;
+	const state: ModalBackdrop = modalBackdrops.get(doc) ?? {
+		entries: [],
+		applied: new Set(),
+		top: null,
+		observer: null
+	};
+	modalBackdrops.set(doc, state);
+	const entry: ModalEntry = { layer, backdrop: options.backdrop, lift: 0 };
+	state.entries.push(entry);
+	syncModalBackdrop(doc, state);
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		// `state` lives as long as it has an entry, so it is still the document's.
+		state.entries = state.entries.filter((item) => item !== entry);
+		syncModalBackdrop(doc, state);
+	};
 }

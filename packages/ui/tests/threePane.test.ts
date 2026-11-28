@@ -87,6 +87,9 @@ const rightHandle = () => handle(defaultUiMessages.threePaneResizeRight());
 const values = (el: HTMLElement) =>
 	['aria-valuenow', 'aria-valuemin', 'aria-valuemax'].map((a) => Number(el.getAttribute(a)));
 const center = () => screen.getByText('Body').closest('.three-pane__center') as HTMLElement;
+/** The × of a modal drawer (first in the pane). */
+const closeButton = (pane: HTMLElement) =>
+	pane.querySelector('.three-pane__close button') as HTMLElement | null;
 
 function pointer(target: EventTarget, type: string, init: Record<string, number>): void {
 	const event = new Event(type, { bubbles: true, cancelable: true });
@@ -237,26 +240,30 @@ describe('ThreePaneLayout - narrow', () => {
 		expect(isInert(leftPane())).toBe(false);
 		expect(leftPane().hasAttribute('data-esc-layer')).toBe(true);
 		expect(isInert(center())).toBe(true);
-		expect(document.activeElement).toBe(screen.getByText('Node A'));
+		// Like Modal / Drawer: the × comes first, focus lands on it.
+		expect(document.activeElement).toBe(closeButton(leftPane()));
 		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
 		await flush();
 		expect(state().leftDrawerOpen).toBe(false);
 		expect(isInert(center())).toBe(false);
+		expect(closeButton(leftPane())).toBeNull();
 		expect(document.activeElement).toBe(leftToggle());
 		// The target's name stays in the band.
 		expect(screen.getByText('Line 1')).toBeTruthy();
 	});
 
-	it('a modal left drawer traps focus (and is not a dialog): Tab and Shift+Tab wrap inside (#1045)', async () => {
+	it('a modal left drawer is a named modal dialog that traps focus: Tab and Shift+Tab wrap inside (#1045, #1055)', async () => {
 		await mount({}, 800);
+		expect(leftPane().hasAttribute('role')).toBe(false);
 		leftToggle().focus();
 		await fireEvent.click(leftToggle());
 		await flush();
 		const pane = leftPane();
-		// Only the Tab trap (#1045); a true modal (aria-modal, inert outside) is out of scope.
-		expect(pane.hasAttribute('role')).toBe(false);
-		expect(pane.hasAttribute('aria-modal')).toBe(false);
-		const a = screen.getByText('Node A');
+		expect(pane.getAttribute('role')).toBe('dialog');
+		expect(pane.getAttribute('aria-modal')).toBe('true');
+		expect(pane.getAttribute('aria-label')).toBe(L);
+		const a = closeButton(pane) as HTMLElement;
+		expect(a.getAttribute('aria-label')).toBe(defaultUiMessages.overlayClose());
 		const b = screen.getByText('Pick B');
 		expect(document.activeElement).toBe(a);
 		// Shift+Tab from the first wraps to the last; Tab from the last wraps to the first.
@@ -271,42 +278,90 @@ describe('ThreePaneLayout - narrow', () => {
 		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
 		await flush();
 		expect(state().leftDrawerOpen).toBe(false);
+		expect(pane.hasAttribute('role')).toBe(false);
+		expect(pane.hasAttribute('aria-modal')).toBe(false);
 		expect(document.activeElement).toBe(leftToggle());
 	});
 
-	it('a right drawer with nothing focusable keeps focus on the pane: Tab does not reach <body> (#1045)', async () => {
+	it('a right drawer with nothing focusable of its own holds focus on the ×: Tab does not reach <body>, × closes (#1045, #1055)', async () => {
 		await mount({ rightEmpty: true }, 800);
 		rightToggle().focus();
 		await fireEvent.click(rightToggle());
 		await flush();
 		const pane = rightPane();
-		expect(document.activeElement).toBe(pane);
+		const close = closeButton(pane) as HTMLElement;
+		expect(document.activeElement).toBe(close);
 		const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
-		pane.dispatchEvent(tab);
+		close.dispatchEvent(tab);
 		expect(tab.defaultPrevented).toBe(true);
-		expect(document.activeElement).toBe(pane);
+		expect(document.activeElement).toBe(close);
 		const back = new KeyboardEvent('keydown', {
 			key: 'Tab',
 			shiftKey: true,
 			bubbles: true,
 			cancelable: true
 		});
-		pane.dispatchEvent(back);
+		close.dispatchEvent(back);
 		expect(back.defaultPrevented).toBe(true);
-		expect(document.activeElement).toBe(pane);
-		await fireEvent.keyDown(pane, { key: 'Escape' });
+		expect(document.activeElement).toBe(close);
+		await fireEvent.click(close);
 		await flush();
 		expect(state().rightDrawerOpen).toBe(false);
 		expect(document.activeElement).toBe(rightToggle());
 	});
 
-	it('a non-modal drawer is neither a dialog nor a focus trap (#1045)', async () => {
+	it('a modal drawer makes the document outside it inert and gives it back on close (#1055)', async () => {
+		const { container } = await mount({}, 800);
+		const outside = screen.getByText('Outside');
+		const live = screen.getByTestId('state');
+		leftToggle().focus();
+		await fireEvent.click(leftToggle());
+		await flush();
+		// Outside the frame, and the frame's own centre and other pane.
+		expect(isInert(outside)).toBe(true);
+		expect(isInert(center())).toBe(true);
+		expect(isInert(rightPane())).toBe(true);
+		// The pane, the scrim (a click must arrive) and a live region stay.
+		expect(leftPane().closest('[inert]')).toBeNull();
+		expect(container.querySelector('.three-pane__scrim')?.closest('[inert]')).toBeNull();
+		expect(live.closest('[inert]')).toBeNull();
+		await fireEvent.click(container.querySelector('.three-pane__scrim') as Element);
+		await flush();
+		expect(state().leftDrawerOpen).toBe(false);
+		expect(isInert(outside)).toBe(false);
+		expect(isInert(center())).toBe(false);
+		// The closed drawers are inert by the frame itself, as before.
+		expect(isInert(leftPane())).toBe(true);
+		expect(isInert(rightPane())).toBe(true);
+	});
+
+	it('gives the outside back when the frame unmounts or turns wide with the drawer open (#1055)', async () => {
+		const outer = document.createElement('button');
+		document.body.append(outer);
+		const { unmount } = await mount({}, 800);
+		await fireEvent.click(leftToggle());
+		await flush();
+		expect(isInert(outer)).toBe(true);
+		await resize(1200);
+		expect(isInert(outer)).toBe(false);
+		await resize(800);
+		await fireEvent.click(leftToggle());
+		await flush();
+		expect(isInert(outer)).toBe(true);
+		unmount();
+		expect(isInert(outer)).toBe(false);
+		outer.remove();
+	});
+
+	it('a non-modal drawer is neither a dialog nor a focus trap, has no × and leaves the outside alone (#1045, #1055)', async () => {
 		await mount({ rightDrawerModal: false }, 800);
 		await fireEvent.click(rightToggle());
 		await flush();
 		const pane = rightPane();
 		expect(pane.hasAttribute('aria-modal')).toBe(false);
 		expect(pane.hasAttribute('role')).toBe(false);
+		expect(closeButton(pane)).toBeNull();
+		expect(isInert(screen.getByText('Outside'))).toBe(false);
 		screen.getByText('Outside').focus();
 		expect(document.activeElement).toBe(screen.getByText('Outside'));
 	});
@@ -355,18 +410,24 @@ describe('ThreePaneLayout - narrow', () => {
 		await flush();
 		expect(state().rightDrawerOpen).toBe(true);
 		expect(state().leftDrawerOpen).toBe(false);
-		expect(document.activeElement).toBe(screen.getByText('Detail'));
+		expect(document.activeElement).toBe(closeButton(rightPane()));
+		expect(closeButton(leftPane())).toBeNull();
+		expect(leftPane().hasAttribute('role')).toBe(false);
+		expect(rightPane().getAttribute('role')).toBe('dialog');
 	});
 
 	it('resets an open drawer when the frame turns wide, leaving focus in the pane', async () => {
 		await mount({}, 800);
 		await fireEvent.click(leftToggle());
 		await flush();
-		expect(document.activeElement).toBe(screen.getByText('Node A'));
+		expect(document.activeElement).toBe(closeButton(leftPane()));
 		await resize(1200);
 		expect(state().leftDrawerOpen).toBe(false);
 		expect(isInert(leftPane())).toBe(false);
 		expect(isInert(center())).toBe(false);
+		// The × left with the drawer: focus moved on to the pane's content, not to <body>.
+		expect(closeButton(leftPane())).toBeNull();
+		expect(leftPane().getAttribute('role')).toBeNull();
 		expect(document.activeElement).toBe(screen.getByText('Node A'));
 		// Back to narrow: the drawer is closed, focus inside goes to the toggle.
 		await resize(800);
@@ -374,15 +435,28 @@ describe('ThreePaneLayout - narrow', () => {
 		expect(document.activeElement).toBe(leftToggle());
 	});
 
-	it('keeps a left drawer that starts open in a narrow frame, without taking focus', async () => {
+	it('keeps a left drawer that starts open in a narrow frame: a dialog from the start, focus inside (#1055)', async () => {
 		await mount({ leftDrawerOpen: true }, 800);
 		await flush();
 		expect(state().leftDrawerOpen).toBe(true);
 		expect(isInert(center())).toBe(true);
 		expect(isInert(leftPane())).toBe(false);
-		expect(document.activeElement).toBe(document.body);
+		expect(leftPane().getAttribute('aria-modal')).toBe('true');
+		expect(isInert(screen.getByText('Outside'))).toBe(true);
+		expect(document.activeElement).toBe(closeButton(leftPane()));
+		// No opener to go back to: Esc puts focus on the toggle.
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(state().leftDrawerOpen).toBe(false);
+		expect(document.activeElement).toBe(leftToggle());
+	});
+
+	it('a left drawer that starts open closes when the frame turns wide', async () => {
+		await mount({ leftDrawerOpen: true }, 800);
+		await flush();
 		await resize(1200);
 		expect(state().leftDrawerOpen).toBe(false);
+		expect(isInert(screen.getByText('Outside'))).toBe(false);
 	});
 
 	it('keeps a right drawer that starts open in a narrow frame', async () => {
@@ -390,7 +464,7 @@ describe('ThreePaneLayout - narrow', () => {
 		await flush();
 		expect(state().rightDrawerOpen).toBe(true);
 		expect(isInert(center())).toBe(true);
-		expect(document.activeElement).toBe(document.body);
+		expect(document.activeElement).toBe(closeButton(rightPane()));
 	});
 
 	it('drops a drawer that starts open once the frame measures wide', async () => {
@@ -604,7 +678,7 @@ describe('ThreePaneLayout - outside hooks (#655)', () => {
 		await flush();
 		expect(isInert(center())).toBe(true);
 		expect(scrim()).not.toBeNull();
-		expect(document.activeElement).toBe(screen.getByText('Detail'));
+		expect(document.activeElement).toBe(closeButton(rightPane()));
 	});
 });
 

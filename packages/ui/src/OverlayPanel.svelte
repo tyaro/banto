@@ -46,7 +46,9 @@
 		hasVisibleLayerAbove,
 		isCloseAllowed,
 		LAYER_INACTIVE_ATTR,
-		restoreFocus
+		liftModalLayer,
+		restoreFocus,
+		trackModalLayer
 	} from './layering';
 	import { defaultUiMessages } from './messages';
 	import type { OverlayProps } from './overlay';
@@ -170,9 +172,6 @@
 			openHandled = isOpen;
 			clearTimeout(leaveTimer);
 			if (isOpen) {
-				// Reopened during the exit motion: the same DOM stays, so the
-				// mount-time `focusFirst` does not run again - do it here.
-				if (leaving) void tick().then(() => panelEl && focusFirst(panelEl));
 				leaving = false;
 				// A modal layer is the only active layer (#670): menus open now
 				// (a popover would stay above the scrim) are closed. Focus that
@@ -196,12 +195,35 @@
 
 	onDestroy(() => clearTimeout(leaveTimer));
 
-	// Promise 4 while open (`panelEl` is bound inside `{#if open}`).
+	// Promises 4 and 8 while open (`panelEl` is bound inside `{#if open}`): the
+	// focus trap, and everything outside the panel `inert`. Both end the moment
+	// `open` turns false - before the `tick()` above gives focus back to an
+	// opener that was inert until then.
 	$effect(() => {
 		if (!open) return;
 		const node = panelEl;
 		if (!node) return;
-		return attachFocusTrap(node);
+		const detachTrap = attachFocusTrap(node);
+		// Opened last = on top, also on screen: among the layers that share `--banto-z-modal`
+		// the registration decides, but equal z-indexes paint in document order (a Modal that
+		// sits before an open Drawer in the DOM). The lift is for the paint only - the rules
+		// compare tracked layers without it, so a third sibling is on top like the second was -
+		// and stays through the exit motion.
+		const overlay = untrack(() => overlayEl);
+		overlay?.style.removeProperty('--overlay-lift');
+		const release = trackModalLayer(node);
+		liftModalLayer(node, (lift) => {
+			if (lift > 0) overlay?.style.setProperty('--overlay-lift', String(lift));
+		});
+		// Focus first AFTER the registration and the lift (both leave the backdrop up to date,
+		// synchronously): a sibling container (a portal) that was already inert behind another
+		// modal is handed back, and the browser refuses focus into an inert subtree. Also
+		// covers a reopen during the exit motion.
+		untrack(() => focusFirst(node));
+		return () => {
+			release();
+			detachTrap();
+		};
 	});
 
 	/** The trigger of the menu `active` was in (Menu marks it `aria-expanded`), or null. */
@@ -239,7 +261,6 @@
 			aria-label={title}
 			aria-describedby={describedBy}
 			style:width
-			use:focusFirst
 		>
 			<div class="header">
 				{#if title}<h3>{title}</h3>{/if}
@@ -261,7 +282,8 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		z-index: var(--banto-z-modal);
+		/* `--overlay-lift`: set while a layer opened earlier shares the z-index (see the script). */
+		z-index: calc(var(--banto-z-modal) + var(--overlay-lift, 0));
 		display: flex;
 		background: var(--banto-scrim);
 		opacity: 1;

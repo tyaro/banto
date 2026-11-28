@@ -14,14 +14,18 @@
 	 *   centre (left from the left edge, right from the right edge), one at a
 	 *   time, with a scrim. Open = focus moves in, the centre goes `inert`; Esc,
 	 *   the scrim or the app (`leftDrawerOpen = false`) closes and focus goes
-	 *   back to where it was (else the toggle). A modal drawer traps
-	 *   focus (#1045: Tab wraps inside; with nothing focusable inside, the pane
-	 *   itself holds focus), but outside clicks are not blocked and it is not
-	 *   `aria-modal` (a true modal is out of scope). A non-modal layer that follows
-	 *   `layering.ts`'s promises: `data-esc-layer` while open, Esc at window
-	 *   level (modal drawers only; a non-modal drawer closes on Esc only with
-	 *   focus inside it) that yields to a layer above, `visibility: hidden` + `inert` when
-	 *   closed, never transitioning `visibility` on open.
+	 *   back to where it was (else the toggle). A modal drawer is a true modal
+	 *   (#1055, ADR-0038): while open the pane is `role="dialog"` +
+	 *   `aria-modal="true"` (named like the pane), it traps focus (#1045) and
+	 *   everything outside it - the centre, the band, and the app around the
+	 *   frame - is `inert` (`trackModalLayer`, the same backdrop as Modal /
+	 *   Drawer). A × at the top of the pane closes it too (`overlayClose`), so
+	 *   a pane with nothing focusable still has a way out besides Esc. A
+	 *   non-modal drawer stays an `aside`. Both follow `layering.ts`'s promises:
+	 *   `data-esc-layer` while open, Esc at window level (modal drawers only; a
+	 *   non-modal drawer closes on Esc only with focus inside it) that yields
+	 *   to a layer above, `visibility: hidden` + `inert` when closed, never
+	 *   transitioning `visibility` on open.
 	 *
 	 * The panes stay mounted across every switch (wide <-> narrow, fold,
 	 * drawer), so a tree keeps its expansion and scroll.
@@ -30,8 +34,16 @@
 	import IconButton from './IconButton.svelte';
 	import PanelLeft from './icons/PanelLeft.svelte';
 	import PanelRight from './icons/PanelRight.svelte';
-	import { attachFocusTrap, focusablesIn, hasVisibleLayerAbove, restoreFocus } from './layering';
+	import X from './icons/X.svelte';
+	import {
+		attachFocusTrap,
+		focusablesIn,
+		hasVisibleLayerAbove,
+		restoreFocus,
+		trackModalLayer
+	} from './layering';
 	import { defaultUiMessages } from './messages';
+	import { closeOpenMenus } from './openMenus';
 	import {
 		clampPaneWidth,
 		fitPaneWidths,
@@ -236,6 +248,9 @@
 	const modalOverlay = $derived(
 		(leftOverlay && leftDrawerModal) || (rightOverlay && rightDrawerModal)
 	);
+	/** The pane is a modal dialog right now (`role="dialog"`, `aria-modal`, the ×). */
+	const leftModal = $derived(leftOverlay && leftDrawerModal);
+	const rightModal = $derived(rightOverlay && rightDrawerModal);
 	const leftHidden = $derived(isNarrow ? !leftDrawerOpen : leftCollapsed);
 	const rightHidden = $derived(isNarrow ? !rightDrawerOpen : rightCollapsed);
 
@@ -354,21 +369,29 @@
 	): void {
 		const track = tracks[side];
 		const pane = side === 'left' ? leftEl : rightEl;
-		// Unmeasured: the state is a placeholder (wide). Wait for the real one, so
-		// a drawer that starts open is the baseline, not an "opening" that takes focus.
+		// Unmeasured: the state is a placeholder (wide). Wait for the real one.
 		if (!measured) return;
+		const focusIn = () =>
+			tick().then(() => {
+				if (!pane || !(side === 'left' ? leftOverlay : rightOverlay)) return;
+				(focusablesIn(pane)[0] ?? pane).focus();
+			});
 		if (!track.ready) {
 			Object.assign(track, { ready: true, hidden, overlay, modal });
+			// A modal drawer that starts open is a dialog from its first frame: the
+			// rest of the document is inert, so focus belongs inside (#1055). There
+			// is no opener to remember - closing goes to the toggle.
+			if (overlay && modal) void focusIn();
 			return;
 		}
 		// A non-modal drawer opens beside the work: focus stays where it is.
 		if (overlay && modal && !track.overlay) {
 			const active = document.activeElement;
 			track.trigger = active instanceof HTMLElement && active !== document.body ? active : null;
-			void tick().then(() => {
-				if (!pane || !(side === 'left' ? leftOverlay : rightOverlay)) return;
-				(focusablesIn(pane)[0] ?? pane).focus();
-			});
+			// Like Modal / Drawer (#670): a menu left open would stay above the scrim
+			// (a popover) while its trigger is inert.
+			closeOpenMenus(document, pane);
+			void focusIn();
 		}
 		if (hidden && !track.hidden) {
 			const active = document.activeElement;
@@ -382,6 +405,12 @@
 		} else if (!overlay && track.overlay) {
 			// Drawer gone because the frame went wide: the pane is in the row now.
 			track.trigger = null;
+			// The × goes with the drawer: focus on it would fall to `<body>`, so it
+			// moves on to the pane's content.
+			const active = document.activeElement;
+			if (pane && active && pane.contains(active) && active.closest('.three-pane__close')) {
+				void tick().then(() => (focusablesIn(pane)[0] ?? pane).focus());
+			}
 		}
 		track.hidden = hidden;
 		track.overlay = overlay;
@@ -433,17 +462,33 @@
 		// A non-modal drawer sits beside live work in the centre (a grid cell
 		// edit, a search box): their Esc must not close it, so no window listener.
 		if (modal) window.addEventListener('keydown', onWindow);
-		// A modal drawer traps focus (#1045): Tab wraps inside, and with nothing focusable the
-		// pane itself keeps it (it is `tabindex="-1"`), so focus never leaves for the shell behind
-		// the scrim or falls to `<body>`.
+		// A modal drawer traps focus (#1045): Tab wraps inside, so focus never leaves for the
+		// shell behind the scrim or falls to `<body>`.
 		const detachTrap = modal ? attachFocusTrap(pane) : null;
+		// ...and is a true modal (#1055, layering.ts promise 8): everything outside the pane is
+		// inert - the frame's own centre and band, and the app around the frame. The scrim is a
+		// sibling of the pane, so it is named: a click on it must still arrive.
+		const root = rootEl;
+		const release = modal
+			? trackModalLayer(pane, {
+					backdrop: () => root?.querySelector(':scope > [data-three-pane-scrim]')
+				})
+			: null;
 		return () => {
+			release?.();
 			detachTrap?.();
 			pane.removeEventListener('keydown', onPane);
 			if (modal) window.removeEventListener('keydown', onWindow);
 		};
 	});
 </script>
+
+<!-- The × of a modal drawer: first in the pane, so focus lands on it on open (like Modal / Drawer). -->
+{#snippet closeBar()}
+	<div class="three-pane__close">
+		<IconButton label={t.overlayClose()} icon={X} size="sm" onclick={closeDrawers} />
+	</div>
+{/snippet}
 
 <div
 	class="three-pane"
@@ -458,6 +503,8 @@
 			id={leftId}
 			class="three-pane__side three-pane__side--left"
 			class:is-open={leftOverlay}
+			role={leftModal ? 'dialog' : undefined}
+			aria-modal={leftModal ? 'true' : undefined}
 			aria-label={t.threePaneLeft()}
 			style:--three-pane-width="{leftStyleWidth}px"
 			hidden={!isNarrow && leftCollapsed}
@@ -465,6 +512,7 @@
 			tabindex="-1"
 			data-esc-layer={leftOverlay ? '' : undefined}
 		>
+			{#if leftModal}{@render closeBar()}{/if}
 			<div class="three-pane__body">{@render left()}</div>
 			{#if leftInRow}
 				<!-- A focusable separator (with aria-valuenow) is a widget in ARIA; Svelte's table lists it as static. -->
@@ -519,6 +567,8 @@
 			id={rightId}
 			class="three-pane__side three-pane__side--right"
 			class:is-open={rightOverlay}
+			role={rightModal ? 'dialog' : undefined}
+			aria-modal={rightModal ? 'true' : undefined}
 			aria-label={t.threePaneRight()}
 			style:--three-pane-width="{rightStyleWidth}px"
 			hidden={!isNarrow && rightCollapsed}
@@ -526,6 +576,7 @@
 			tabindex="-1"
 			data-esc-layer={rightOverlay ? '' : undefined}
 		>
+			{#if rightModal}{@render closeBar()}{/if}
 			{#if rightInRow}
 				<!-- A focusable separator (with aria-valuenow) is a widget in ARIA; Svelte's table lists it as static. -->
 				<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -625,6 +676,13 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		font-weight: 600;
+	}
+
+	.three-pane__close {
+		flex: 0 0 auto;
+		display: flex;
+		justify-content: flex-end;
+		padding: var(--banto-space-1) var(--banto-space-2);
 	}
 
 	.three-pane__body {
