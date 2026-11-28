@@ -17,7 +17,13 @@ import { cleanup, render } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import DockHostHarness from './DockHostHarness.svelte';
-import { computeEdgeDrop, edgeButtons, edgeGuideRect, visibleHostRect } from '../src/core/edges';
+import {
+	computeEdgeDrop,
+	edgeButtons,
+	edgeGuideRect,
+	insetViewport,
+	visibleHostRect
+} from '../src/core/edges';
 import type { DockPanelChange } from '../src/core/lifecycle';
 import { dockPanelAtEdge } from '../src/core/tree';
 import { createDockState } from '../src/state.svelte';
@@ -706,5 +712,43 @@ describe('a host taller than the viewport (DockHost, #1043)', () => {
 		} finally {
 			scroller.style.overflow = '';
 		}
+	});
+});
+
+// #1058: a fixed / sticky header that is not an ancestor of the host covers the top of the viewport.
+describe('what covers the viewport is taken off the visible part (core/edges, #1058)', () => {
+	const viewport = { x: 0, y: 0, width: 1280, height: 800 };
+
+	it('insetViewport: nothing / 0 / junk = the viewport itself', () => {
+		expect(insetViewport(viewport)).toEqual(viewport);
+		expect(insetViewport(viewport, {})).toEqual(viewport);
+		expect(insetViewport(viewport, { top: 0, bottom: -5 })).toEqual(viewport);
+		expect(insetViewport(viewport, { top: Number.NaN, bottom: Infinity })).toEqual(viewport);
+	});
+
+	it('insetViewport: the top and the bottom are cut, never to a negative height', () => {
+		expect(insetViewport(viewport, { top: 48 })).toEqual({ x: 0, y: 48, width: 1280, height: 752 });
+		expect(insetViewport(viewport, { top: 48, bottom: 40 })).toEqual({
+			x: 0,
+			y: 48,
+			width: 1280,
+			height: 712
+		});
+		expect(insetViewport(viewport, { top: 700, bottom: 700 }).height).toBe(0);
+	});
+
+	it('a host scrolled under a 48px header: its visible part starts below the header, and so do the buttons', () => {
+		// The dashboard's dock: 900 high, its top 260 px above the viewport top (scrolled).
+		const host = { x: 0, y: -260, width: 1000, height: 900 };
+		const plain = visibleHostRect(host, [viewport]);
+		const covered = visibleHostRect(host, [insetViewport(viewport, { top: 48 })]);
+		expect(plain.y).toBe(260);
+		expect(covered.y).toBe(308);
+		expect(covered.height).toBe(plain.height - 48);
+		const top = edgeButtons(1000, 900, {}, covered).find((b) => b.region === 'top');
+		// In host-local px, y=308 is the viewport's y=48 = the header's bottom edge.
+		expect(top && top.rect.y).toBeGreaterThanOrEqual(308);
+		const before = edgeButtons(1000, 900, {}, plain).find((b) => b.region === 'top');
+		expect(before && before.rect.y).toBeLessThan(308);
 	});
 });

@@ -546,6 +546,14 @@
 	});
 	const onPopOut = popOut.onPopOut;
 
+	// The shell's header is `position: sticky` and not an ancestor of the dock, so a dock scrolled
+	// under it is not "clipped" as far as the dock can tell: say how much of the viewport's top it
+	// covers (#1058), so the outer guide buttons of a drag are not drawn under it. Measured on every
+	// hover update, so a taller header (larger text) is followed.
+	const dockOverlayInset = () => ({
+		top: Math.max(0, document.querySelector('header')?.getBoundingClientRect().bottom ?? 0)
+	});
+
 	// No-op in browser mode. Connecting also puts back the widgets that were out in a window whose
 	// window is gone (#1013: the app was closed with it open), so it waits until that sticks: the
 	// provider's layout has been read (it replaces what is shown, a restored widget included). It
@@ -656,6 +664,7 @@
 					{onPopOut}
 					{beforePanelChange}
 					isEscapeBlocked={isDockEscapeBlocked}
+					overlayInset={dockOverlayInset}
 					messages={dockMessages()}
 					onLayoutCommit={reportLayout}
 				/>

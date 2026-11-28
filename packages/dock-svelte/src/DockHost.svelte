@@ -80,6 +80,7 @@
 		type GestureKind as DockGestureKind
 	} from './core/gesture.svelte';
 	import type { ClampOptions } from './core/geometry';
+	import type { OverlayInset } from './core/edges';
 	import {
 		PanelLifecycle,
 		setPanelLifecycle,
@@ -143,6 +144,17 @@
 		 * the user moves/resizes (the result then becomes the new preference).
 		 */
 		clamp?: ClampOptions;
+		/**
+		 * How much of the viewport's top / bottom something outside the dock covers (#1058): a
+		 * `position: fixed` / `sticky` header or footer that is not an ancestor of the host, so
+		 * the host's clipping ancestors do not account for it. px from the viewport edge; the
+		 * outer-edge guide buttons of a drag are laid out below / above it, not under it.
+		 * Called on every hover update of a drag (so a header whose height changes - larger
+		 * text - is followed without any wiring); keep it cheap. Omitted = nothing covers the
+		 * viewport (as before).
+		 * `() => ({ top: document.querySelector('header')?.getBoundingClientRect().bottom })`
+		 */
+		overlayInset?: () => OverlayInset | undefined;
 		/**
 		 * Per-pane capabilities (close / move / undock; default all allowed). For
 		 * a pane an app must keep, such as a central canvas:
@@ -268,6 +280,7 @@
 		onPopOut,
 		messages = {},
 		clamp,
+		overlayInset,
 		capabilities,
 		canStartGesture,
 		onGestureEnd,
@@ -290,6 +303,9 @@
 		},
 		get arrange() {
 			return arrange;
+		},
+		get overlayInset() {
+			return overlayInset;
 		}
 	};
 	setDockPolicy(policy);
