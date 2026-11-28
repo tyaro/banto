@@ -148,7 +148,14 @@ export {
 } from './core/dropzones';
 
 /** Outer-edge drop targets of the whole host (#694 PR-1, buttons since PR-2; laid out in the part of the host on screen since #1043). */
-export { computeEdgeDrop, edgeButtons, edgeGuideRect, visibleHostRect } from './core/edges';
+export {
+	computeEdgeDrop,
+	edgeButtons,
+	edgeGuideRect,
+	insetViewport,
+	visibleHostRect
+} from './core/edges';
+export type { OverlayInset } from './core/edges';
 
 /** The default place of a pane hidden from the dock (#782 PR5; `DockState.dismiss` / `show` use these). */
 export { dockShareOf, hasDefaultPlace, placeAtDefault } from './core/defaultPlace';

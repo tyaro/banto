@@ -68,7 +68,13 @@ import {
 	type GuideButton,
 	type GuideSizing
 } from './dropzones';
-import { edgeButtons, edgeGuideRect, visibleHostRect } from './edges';
+import {
+	edgeButtons,
+	edgeGuideRect,
+	insetViewport,
+	type OverlayInset,
+	visibleHostRect
+} from './edges';
 
 /** A scroll container around the host, and the axes it cuts its content off on. */
 interface Clipper {
@@ -104,8 +110,9 @@ function clippingAncestors(el: HTMLElement | null): Clipper[] {
 /**
  * What cuts the host off right now, in client px: the viewport, and the padding box of each
  * of `clippers` on the axes it cuts (on the other axis: the viewport's extent, no extra cut).
+ * `inset` (#1058) takes what covers the viewport's top / bottom off the viewport's box.
  */
-function clipRects(clippers: readonly Clipper[]): Rect[] {
+function clipRects(clippers: readonly Clipper[], inset?: OverlayInset): Rect[] {
 	const root = document.documentElement;
 	// Without the scrollbars when the layout is known (0 where nothing is laid out, e.g. jsdom).
 	const viewport: Rect = {
@@ -114,7 +121,8 @@ function clipRects(clippers: readonly Clipper[]): Rect[] {
 		width: root.clientWidth || window.innerWidth,
 		height: root.clientHeight || window.innerHeight
 	};
-	const out = [viewport];
+	// What a fixed / sticky element outside the host covers (#1058) is not on screen either.
+	const out = [insetViewport(viewport, inset)];
 	for (const { el, x, y } of clippers) {
 		if (!el.isConnected) continue;
 		const r = el.getBoundingClientRect();
@@ -395,7 +403,7 @@ export class DragController {
 				// viewport keeps every button reachable. The drop itself is still the host's edge.
 				const visible = visibleHostRect(
 					{ x: hostRect.left, y: hostRect.top, width: hostRect.width, height: hostRect.height },
-					clipRects(this.#clippers)
+					clipRects(this.#clippers, this.#getPolicy()?.overlayInset?.())
 				);
 				edges = edgeButtons(hostRect.width, hostRect.height, this.#sizing, visible);
 				hoverEdge = inHost ? hitGuideButton(edges, x, y) : null;
