@@ -9,8 +9,10 @@
  * Static check over the .svelte sources: it parses each file and looks for a
  * focusable element (button, link with href, form control, summary, anything
  * with a tabindex) among the descendants of a live-region element, through
- * `{#if}` / `{#each}` / `{#snippet}` blocks. It does not follow components
- * rendered inside a region (`<Foo />`, `{@render}`) - keep those out of
+ * `{#if}` / `{#each}` / `{#snippet}` blocks. It does not follow where a
+ * snippet is rendered (`{@render}`), so a live region that holds a
+ * `{@render}` fails unless its file is listed in RENDER_ALLOWED (reviewed by
+ * hand). Components (`<Foo />`) are not followed either - keep those out of
  * regions by hand.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -49,6 +51,27 @@ for (const pkg of readdirSync(join(repoRoot, 'packages'))) {
  * Each entry is a file and the reason; do not add to this list for a notice or a banner.
  */
 const ALLOWED = new Set(['packages/ui/src/CalendarPeriodView.svelte']);
+
+/**
+ * Known gap: live regions that render a snippet (`{@render}`), whose controls this check cannot
+ * see. Each is to be made safe in the later stage of #1055 by marking the controls inside
+ * `inert` individually, so it is not rewritten here.
+ * - ToastHost: `role="status"` / `role="alert"` groups render `toastItem`, which holds the
+ *   action and close buttons.
+ * - MonthCalendar: the heading `aria-live="polite"` renders `headingButton` (year / month button).
+ * - ErrorState: the `role="alert"` box renders the caller's `action` snippet (usually a button).
+ * - LanReachCheckPanel: the `role="status"` box renders `issuedUrl`, which holds a button.
+ * - FirewallRuleStatusPanel: the `role="status"` box renders `ruleStatus`, which holds text only
+ *   (checked by hand; listed because the check cannot tell).
+ * Do not add to this list for a notice or a banner; split the controls out instead.
+ */
+const RENDER_ALLOWED = new Set([
+	'packages/ui/src/ToastHost.svelte',
+	'packages/ui/src/MonthCalendar.svelte',
+	'packages/ui/src/ErrorState.svelte',
+	'apps/admin-template/src/routes/(app)/settings/LanReachCheckPanel.svelte',
+	'apps/admin-template/src/routes/(app)/settings/FirewallRuleStatusPanel.svelte'
+]);
 
 // The compiler's AST is loosely typed here on purpose.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,6 +139,24 @@ function findFocusable(node: Node): string[] {
 	return hits;
 }
 
+function hasRender(node: Node): boolean {
+	return children(node).some((c) => c.type === 'RenderTag' || hasRender(c));
+}
+
+/** Live regions that render a snippet; the controls inside are invisible to this check. */
+function renderingRegions(source: string): string[] {
+	const ast = parse(source, { modern: true });
+	const found: string[] = [];
+	const walk = (node: Node) => {
+		if (isLiveRegion(node) && hasRender(node)) {
+			found.push(`<${node.name}> at offset ${node.start} renders a snippet`);
+		}
+		for (const child of children(node)) walk(child);
+	};
+	walk(ast.fragment);
+	return found;
+}
+
 function violations(source: string): string[] {
 	const ast = parse(source, { modern: true });
 	const found: string[] = [];
@@ -139,6 +180,31 @@ describe('live regions hold no controls (Issue #1055)', () => {
 		).toHaveLength(1);
 		expect(violations('<p aria-live="polite">x</p><button>go</button>')).toHaveLength(0);
 		expect(violations('<span role="alert"><a href="/x">x</a></span>')).toHaveLength(1);
+	});
+
+	it('detects a live region that renders a snippet (self-check)', () => {
+		expect(
+			renderingRegions('<div role="status">{#each a as t}{@render item(t)}{/each}</div>')
+		).toHaveLength(1);
+		expect(renderingRegions('<div>{@render item(1)}</div><p role="status">x</p>')).toHaveLength(0);
+	});
+
+	it('lets only the listed files render a snippet inside a live region', () => {
+		const all: string[] = [];
+		for (const root of roots) {
+			for (const file of svelteFiles(root)) {
+				const rel = relative(repoRoot, file).replaceAll('\\', '/');
+				if (ALLOWED.has(rel) || RENDER_ALLOWED.has(rel)) continue;
+				for (const v of renderingRegions(readFileSync(file, 'utf8'))) all.push(`${rel}: ${v}`);
+			}
+		}
+		expect(all).toEqual([]);
+	});
+
+	it('keeps RENDER_ALLOWED honest (each file still renders a snippet in a region)', () => {
+		for (const rel of RENDER_ALLOWED) {
+			expect(renderingRegions(readFileSync(join(repoRoot, rel), 'utf8')).length).toBeGreaterThan(0);
+		}
 	});
 
 	it('finds no focusable element inside role=status / role=alert / aria-live in the sources', () => {
