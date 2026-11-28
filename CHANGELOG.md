@@ -22,6 +22,119 @@
 
 ## [Unreleased]
 
+## [10.0.0] - 2026-11-28
+
+**v10.0.0 — モーダルな層（`Modal`・`Drawer`・`ConfirmDialog`・`CommandPalette`・`ThreePaneLayout` の重ねたペイン）の外側を `inert` にした（#1055、[ADR-0038](docs/adr/0038-modal-backdrop-inert.md)）。`BantoGrid` を NVDA で読める形にそろえた（#1016・#1034・#1035・#1036: 今のセルの `aria-activedescendant`、Tab の止まり場、列見出し・絞り込みのボタンの名前、画面の外の今のセルへのキー）。pop-out のパネルの窓の直し（#1013・#1014・#1015・#1019・#1021・#1024、plugin のコマンド `list`・`close` と `background`）、デスクトップ版の二重起動の防止（#1028・#1046）、文字 200%・幅 320px の崩れ（#1044・#1047・#1056）、dock の外周のガイドボタン（#1043・#1058）ほか。** 版の種類: major。理由: 公開 API の削除・改名は無いが、**既存のコードを書き換えずにタグだけ上げても、実行時の挙動・意味が変わる**ものが 3 つある（[docs/publishing.md](docs/publishing.md)「バージョニング規約」の「既存の機能のままで実行時の値・意味が変わるものは `major`」）。
+
+1. **モーダルの外側が `inert` になる（#1055）**: `Modal`・`Drawer`・`ConfirmDialog`・`CommandPalette`（と `ThreePaneLayout` の重ねたペイン）が開いている間、その外側はクリックも Tab も届かず、支援技術からも外れる。**トーストのアクション（「取り消し」など）も押せない**（文は読まれる）。
+2. **`BantoGrid` で今のセルが画面の外にあるとき、操作のキーの 1 回目はスクロールと知らせだけ（#1036）**: `onRowClick`・`onRowContextMenu`・編集の開始・行の選択・グループの開閉は呼ばれない。
+3. **`GridMessages.filterAriaLabel` は絞り込みのポップオーバー（dialog）の名前だけに使う（#1035）**: 見出しの絞り込みのボタンの名前は新しいキー `filterButtonLabel`（既定「絞り込み」）で、`filterAriaLabel` を渡していてもボタンの名前には使われない。
+
+公開 API の削除・改名は無い（`crates/*/src` の `pub` の行の削除は、`banto-tauri-panel` の `pub use config::{…}` に名前を足した書き直しだけ。`packages/*/src/index.ts` の export は並べ替えと追加だけ）。migration は増えない（v9.3.0 の DB はそのまま使える）。
+
+移行の手順（v9.3.0 から）:
+
+1. 依存のタグを `v9.3.0` から `v10.0.0` に上げる（npm と Rust を同じタグに）。
+2. **モーダルが開いている間に、その外側を操作させている画面を洗う。** 常に手前のツールバーなど、モーダルより上に描いて開いている間も使わせたい要素には `data-modal-exempt` を付ける。**期限付きの取り消しをトーストのボタンにだけ出している画面**は、猶予中にモーダル（コマンドパレットを含む）を開かせない・モーダルの間はタイマーを止める・取り消しをモーダルの中からも使えるようにする、のどれかで取り消しを保証する。
+3. **「セルを選ぶ → スクロールで離れる → Enter」の 1 回で行が開く前提の手順・E2E** は、Enter を 2 回にするか、スクロールで離れないように直す。
+4. **`messages.filterAriaLabel` を渡しているアプリ**は、ボタンの名前を訳すなら `filterButtonLabel` を足す。絞り込みのボタンを「商品名の絞り込み」のような名前で探している E2E は、列見出しから辿る形に直す。
+5. **型検査で落ちるもの**（下の A の「移行注意」）を直す: `DockLayoutStore` の自前の実装・モック（`commit` の戻り値が Promise）、`Required<GridMessages>`（`scrolledToActiveCell` ほか）、`PanelPopOut` の自前の実装（`closeWindows` ほか）、Rust の `PanelConfig` の `..` なしの構造体リテラルと `ConfigError` の `_` なしの `match`。
+6. **pop-out を使うアプリ**は、capability に `"banto-tauri-panel:allow-list"`・`"banto-tauri-panel:allow-close"` を足す（`allow-open` の隣）。
+7. コピーしたテンプレートを取り込むなら下の B。DB・設定は変更なし。詳しい手順は [docs/upgrading.md](docs/upgrading.md) の例 17。
+
+派生アプリへの影響: 依存のタグを上げるだけで動きが変わるのは、上の 3 つと、下の A の「挙動の変化」に挙げたもの。型エラーになるのは、下の A の「移行注意」に挙げた自前の実装・モック・網羅の書き方だけ（公開の union への種類の追加は、Rust の `ConfigError::InvalidBackground` の 1 つ）。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v9.3.0` → `v10.0.0`（npm と Rust を同じタグに）。**モーダルの外側の `inert`・grid の画面の外の今のセルへのキー・`filterAriaLabel` の意味（major の理由）。** API の削除・改名は無い。追加: ui（`trackModalLayer`・`MODAL_EXEMPT_ATTR`・`ThreePaneLayout` の `overlayClose`）、grid-svelte（`label`・`GridMessages` のキー）、dock-svelte（`overlayInset`・`visibleHostRect` ほか・`commit` の戻り値）、admin-core（`listPanelWindows`・`closePanelWindow`・`createPanelPopOut` の `storage`・`closeWindows` ほか）、charts（軸ラベルの配置の関数）、`banto-tauri-panel`（コマンド `list`・`close`、`background`）。 |
+| B. コピーしたテンプレート        | あり | デスクトップ版の単一起動（`instance_guard.rs`）、pop-out の配線（`popout.ts`・ダッシュボード・capability）、`app.html`・`hooks.server.ts`（読み込み中の文言）、知らせの要素と操作部の分離（`ConnectionBanner` ほか）、衝突ダイアログ・KPI の 200% 対応、表示言語の桁区切り、辞書。取り込みは任意（下の B）。                                                                                                                                                                                                                                                                                                         |
+| C. DB・設定・配布資産            | なし | migration・設定キーの追加は無い。`tauri.conf.json` は版数のみ。デスクトップ版の単一起動を取り込んだアプリは、データフォルダに `*.lock`・`*.port` の小さいファイルが増える。                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/ui`・`@banto/grid-svelte`・`@banto/dock-svelte`・`@banto/admin-core`・`@banto/charts`・`@banto/theme`・`@banto/forms`・`@banto/attachments`・`@banto/touch-keys-svelte`・`banto-tauri-panel`（ほかのパッケージ・クレートは版数のみ）。
+- 更新: `v9.3.0` → `v10.0.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。渡さなければ・呼ばなければ今までどおり）:
+  - ui: `trackModalLayer`・`ModalLayerOptions`・`MODAL_EXEMPT_ATTR`（`data-modal-exempt`）、`ThreePaneLayout` の `messages.overlayClose`（既定「閉じる」）。
+  - grid-svelte: `BantoGrid` の `label`、`GridMessages` の `filterButtonLabel`・`scrolledToActiveCell`・`selectColumnLabel`・`gridLabel`（どれも省略でき、既定は日本語）。
+  - dock-svelte: `DockHost`・`ThreePaneDock` の `overlayInset`（型 `OverlayInset`）、`visibleHostRect`・`edgeGuideRect`・`insetViewport`、型 `DockLayoutSaveOutcome`。
+  - admin-core: `PANEL_LIST_COMMAND`・`PANEL_CLOSE_COMMAND`・`listPanelWindows`・`closePanelWindow`、`createPanelPopOut` の `storage`（型 `PanelPopOutStorage`）・`background`・`restore` の戻り値（型 `PanelRestoreSaved`）と、戻り値の `isPoppedOut`・`subscribe`・`focus`・`closeWindows`（型 `PanelWindowsClosed`・`PanelWindowsCloseOptions`）。
+  - charts: 軸ラベルの配置の関数（`placeEdgeLabel`・`fitBandLabels`・`thinValueLabels` ほか）と型 `BandLabel`。
+  - banto-tauri-panel: コマンド `list`・`close`（permission `allow-list`・`allow-close`）、`open` の省略可の引数 `background` と `Builder::background`・`parse_background`・`BackgroundError`、`title::document_title_script`。
+- 挙動の変化（タグを上げるだけで変わるもの。コードの書き換えは要らない）:
+  - **ui（major の理由、#1055）**: `Modal`・`Drawer`・`ConfirmDialog`・`CommandPalette` が開いている間、その外側の要素は `inert`（これまではスクリムとフォーカスの閉じ込めだけ）。`role="dialog"`・`role="menu"`・`data-esc-layer` を名乗る、モーダルより上の層は自動で外れる。知らせの要素（`role="status"` など）は読み上げのため残すが、その中の操作部（トーストのアクション・閉じるボタンを含む）はモーダルの間 `inert`。
+  - **ui（#1055・#1045）**: `ThreePaneLayout` の幅が狭いときに重ねて開いたペイン（モーダルの引き出し）は、`role="dialog"`・`aria-modal="true"` の真のモーダルになる。Tab は中に閉じ込め、外はすべて `inert`、✕ が付き、開いたときの最初のフォーカスは ✕。開いている間は `hasVisibleModalLayer()` が真で、`shortcut.ts` のショートカット（Ctrl+K など）は効かない。非モーダルの引き出し（`leftDrawerModal` / `rightDrawerModal` が false）と幅が広いときは変わらない。
+  - **ui・forms・attachments（#1055 の前段）**: `ErrorState` の `action` のボタンは `role="alert"` の外（兄弟）に出る。`AttachmentsPanel`・`FileField` の読み込み失敗のボタンも知らせの要素の外。見た目と読み上げの内容は変えない。
+  - **grid-svelte（major の理由、#1036）**: 今のセルが画面の外（仮想化の描画範囲の外・見える範囲の外・貼り付く見出しの裏）にあるとき、操作のキーの 1 回目は、今のセルまでスクロールして `role="status"` で知らせるだけ。押したままの自動リピートでは操作しない。移動のキーとコピーは変わらない。
+  - **grid-svelte（major の理由、#1035）**: 見出しの絞り込みのボタンの名前は「絞り込み」だけ（今までは「商品名の絞り込み」）。`filterAriaLabel` はポップオーバーの名前専用。データのセルは `click` の capture のリスナーを持たない（`.scroll-content` に 1 つ）。
+  - grid-svelte（#1016）: 外枠に `aria-activedescendant`、データのセルとグループ見出しの行に `id`。Tab で外枠に入ると、見えている最初の行の最初の列へカーソルを置く（その後の最初の矢印キーはそこから 1 つ動く）。Tab の止まり場は「本文 1 つ・見出し 1 つ・一括操作バー」で、行の中のフォーカスできる要素にはいつも `tabindex="-32768"` と `data-banto-grid-tabindex` が付く。見出しは roving tabindex（←/→）で、中を `role="toolbar"` で包む。列見出しの名前は列名だけ、外枠に名前が付き、件数は桁区切りになる。知らせの領域（`role="status"`）を常に置く。今のセルの行が描画範囲の外にある間、`.row` が 1 つ多い（`.row.outside-window`）。
+  - grid-svelte（#1034）: 範囲を広げていないあいだ、セルに `aria-selected` 属性が無い。
+  - dock-svelte（#1043）: viewport より縦に長い dock では、ドラッグ中の外周のガイドボタンが、host のうち画面に見えている範囲に出る（host がすべて見えているときは今までどおり）。引き出した pane（flyout）は浮動 window の層より前に出る。
+  - theme・ui（#1044）: `.banto-btn` / `.banto-btn--sm` は高さ固定をやめて `min-height`（文字が折り返すと枠が伸びる）。`Modal` は幅 480px 以下で余白を詰める。
+  - charts（#1047・#1056）: 幅が足りないとき・文字 200% のとき、軸のラベルを間引く・内寄せにする・省略する。ゲージの半径の下限が変わる。visual の基準画像を持つアプリは、狭いカード・200% の画像の作り直しが要ることがある。
+  - banto-tauri-panel（#1024 の続き）: パネルの窓の文書の題名を、最初から窓の題名にする（capability は増えない。コマンドの引数・戻り値も変わらない）。
+- 移行注意（ソース互換の破壊。自前の実装・モック・網羅の書き方に限る）:
+  1. **`DockLayoutStore` を自分で実装・モックしている型**: `commit` の戻り値を `Promise<DockLayoutSaveOutcome>` に合わせる（`void` を返す実装は型検査で落ちる。呼ぶ側は戻り値を受けなくてよい）。
+  2. **`Required<GridMessages>` で全部のキーを実装しているコード**: `scrolledToActiveCell`・`filterButtonLabel`・`selectColumnLabel`・`gridLabel` を足す（省略可の型のままなら足さなくてもコンパイルでき、日本語の既定が使われる）。
+  3. **`PanelPopOut` を自分で実装している（モックなど）コード**: `closeWindows`（と `isPoppedOut`・`subscribe`・`focus`）を足す。
+  4. **Rust の `PanelConfig` を `..` なしの構造体リテラルで作っているコード**: 新しい欄 `background` で落ちる（`..PanelConfig::default()` を使う）。**`ConfigError` を `_` なしの `match` で列挙しているコード**: `InvalidBackground` の分岐か `_` を足す。
+- 消費側への注意（確かめるもの）:
+  1. **モーダルの間に外側を操作させている画面**: モーダルより上に描いて使わせたい要素に `data-modal-exempt`。アプリ自作のモーダルな層（`aria-modal="true"` と `attachFocusTrap`）は、開いている間 `trackModalLayer(要素)` を呼ぶと同じ背景の管理に入る（呼ばなくても動くが、その層の外側は `inert` にならない）。
+  2. **トーストのアクションに期限付きの取り消しを出している画面**: モーダル（コマンドパレットを含む）の間は押せず、タイマーは進む。猶予中の取り消しを保証する（移行の手順 2）。
+  3. **`ThreePaneLayout` の重ねたペイン**: ✕ の文言を訳すなら `messages` に `overlayClose`。重ねたペインを開いたまま枠の外（ヘッダーなど）を操作させたいアプリ、中身から外の要素へ Tab で出る前提の作りがあるアプリは、`leftDrawerModal` / `rightDrawerModal` を false にする。
+  4. **`ErrorState` の `action` のボタンを `getByRole('alert')` の中から探す試験**: 外から（`getByRole('button', { name })`）探す。
+  5. **grid の画面の外の今のセル**: 「セルを選ぶ → スクロールで離れる → Enter」の 1 回で行が開く前提の手順・E2E を直す。
+  6. **grid の絞り込みのボタンを名前で探すコード・テスト**: `getByRole('columnheader', { name: '商品名' }).getByRole('button', { name: '絞り込み' })` のように列見出しから辿る。`filterAriaLabel` を渡しているアプリは `filterButtonLabel` を足す。
+  7. **grid の名前・件数の文字で探す E2E**: `'価格の絞り込み'` を含む名前で見出しを探すもの、1,000 以上の件数を `/該当する全\d+件を選択/` のように探すものは外れる。`getByLabelText('列名')` は列見出しにも当たる。自前の `GridMessages` で件数の文を書いているアプリは、揃えるなら `count.toLocaleString(表示言語)` を通す。
+  8. **grid の Tab の順に頼る手順・E2E**: 「Tab で行のボタン・リンク・チェックボックスへ進む」「見出しの部品を Tab で順に進む」は、今のセルからのキー（Space / Enter / F2）と見出しの ←/→ に直す。行の部品を `[tabindex="0"]` で探すコードは役割や `data-*` で探す。
+  9. **grid の `aria-selected`・`aria-live`・`.row` を数えるテスト**: `[role="gridcell"][aria-selected="false"]` やクリック直後の `[aria-selected="true"]` は属性なしになる。grid を含む範囲の `[aria-live="polite"]` は 2 つ見つかることがある。`.row` は `.row:not(.outside-window)` で数える。セルの `id` の形は公開の約束ではない（セルは `data-cell-row`・`data-cell-field` で探す）。
+  10. **dock の上に固定・sticky のヘッダーやバーを重ねている画面**: `overlayInset={() => ({ top: document.querySelector('header')?.getBoundingClientRect().bottom })}` のように渡す（下に被さるものは `bottom`）。渡さなければ、その下に外周のボタンが入ることがある。
+  11. **外周のボタンの位置を「host の辺の真ん中」と決め打ちしている E2E**（`hostBox.y + hostBox.height / 2` へドラッグする、など）: dock が画面に収まっていないと当たらない。`.guide-button.outer[data-dock-edge="left"]` などの `boundingBox()` で聞く。引き出した pane と浮動 window が重なる画面の基準画像は作り直す。
+  12. **pop-out を使うアプリの capability**: `"banto-tauri-panel:allow-list"`・`"banto-tauri-panel:allow-close"` を足す。足さなくても今までどおり動くが、`list` が失敗して「窓に出したままメインを閉じたパネルを次の起動で dock に戻す」直し（#1013）が効かず、`closeWindows`・`closePanelWindow` は失敗する（窓は開いたまま）。
+  13. **`createPanelPopOut` を自分で配線しているアプリ**: `storage` を渡すと次の起動で戻る。`connect()` は保存した dock のレイアウトを読み終えてから呼ぶ。パネルを dock に入れ直す操作（配置のリセットなど）は、適用された後で `popOut.closeWindows()` を呼ぶ。dock の配置を provider に保存しているなら、`restore` から「保存できた」の Promise を返す。`PanelPopOutStorage` の `load` は、後から届いた保存の確認のときにも呼ばれる。窓の背景色は `background` を渡すと効く（[panel-windows.md](docs/recipes/panel-windows.md)）。
+- 依存を上げずに留まれるか: できる（`v9.3.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 変更あり（取り込みは任意。取り込まなくても、A のタグを上げたテンプレートは今までどおり動く。ただし A の「挙動の変化」「移行注意」は写しの有無によらず当たる。`git diff --stat v9.3.0 v10.0.0 -- apps/admin-template/src` で洗った一式）:
+  - **デスクトップ版の二重起動の防止（#1028・#1046）**: `src-tauri/src/instance_guard.rs`（新）、`src-tauri/src/lib.rs`（`mod instance_guard;`・`run()` の最初の `.plugin(instance_guard::init())`・`setup` の `InstanceGuards` の確認）。
+  - **pop-out の配線（#1013・#1014・#1015・#1019・#1021）**: `src/lib/banto/popout.ts`（`createLayoutSaveWatch`・`readPageBackground`・`cssColorToHex` ほか）・`popout.test.ts`（新）、`src/lib/banto/dashboardLayout.ts`（`DASHBOARD_POPOUT_STORAGE_KEY`）、`src/routes/(app)/dashboard/+page.svelte`（`reportLayout`・`restore`・`resetDockLayout`・表示メニュー）、`src/routes/panel/[id]/+page.svelte`、`src-tauri/capabilities/default.json`（`allow-list`・`allow-close`）。
+  - **読み込み中の文言と「クリック可能」の直し（#1024）**: `src/app.html`（`#banto-boot-status`・`<meta name="banto-locales">`・`role="presentation"`・`<style>`）、`src/hooks.server.ts`（新。`transformPageChunk`）、`src/routes/+layout.svelte`。
+  - **知らせの要素と操作部の分離（#1055 の前段）**: `src/lib/components/ConnectionBanner.svelte`・`StartupSplash.svelte`、`src/routes/+error.svelte`、`src/lib/resource/ResourceServerGrid.svelte`・`ResourceListPage.svelte`、`src/routes/(app)/settings/LanReachCheckPanel.svelte`（`issuedUrl`・`recordList` の snippet は無くなった）。試験は `src/lib/liveRegionControls.test.ts`（新）。
+  - **文字 200%・幅 320px（#1044）**: `src/lib/resource/ConflictDialog.svelte`、`src/lib/components/DashboardKpiStrip.svelte`・`Header.svelte`、`src/lib/banto/dashboardKpis.ts`。
+  - **未保存のメモの確認（#1042）と IME の見張り（#1012）**: `src/lib/banto/dashboardMemo.svelte.ts`・`dashboardMemo.test.ts`（新）、ダッシュボードの `+page.svelte`。
+  - **表示言語の桁区切り（#1016・#1037）と grid の名前**: `src/lib/banto/i18n.ts`（`formatCount`・`gridMessages()`）・`i18n.test.ts`（新）、`src/lib/resource/ResourceClientGrid.svelte`・`ResourceServerGrid.svelte`（`label`）・`ResourceHistory.svelte`、`src/lib/banto/resources/items.ts`、`src/lib/components/dashboard/` の各ウィジェット、`src/routes/(app)/audit-log/+page.svelte`・`chart-gallery/`・`settings/DataSection.svelte`・`tree/workspace/+page.svelte`・`ui-demo/+page.svelte`。
+  - **辞書**: `messages/{ja,en}.json`（`grid.filterButtonLabel`・`grid.selectColumnLabel`・`grid.gridLabel`・`resource.gridLabel` ほか。足すだけ）。
+  - **ルートのスクリプト**: `scripts/scaffold.mjs`・`scripts/rename.mjs`・`scripts/verify-architecture.mjs`。
+  - **E2E**: `e2e/grid-filter-button.ts`（新。`filterButton()`）、`e2e/demo/dock-guides-on-screen.spec.ts`・`grid-active-row-kept.spec.ts`・`grid-tab-stops.spec.ts`（新）、`e2e/visual/boot-status.spec.ts`・`grid-sticky-header.spec.ts`・`panel-window-sr.spec.ts`・`reflow-200.spec.ts`（新）、`e2e/tests/smoke.spec.ts`、visual の基準画像。
+- 写している下流への注意:
+  - **`instance_guard.rs` を写している下流（#1028 を先に取り込んだアプリ）**: #1046 の変更（`remove_other_keys_files`・`single_instance_key_prefix`・`clean_key_part`、ファイル名の定数、`reguard_single_instance`・`activate_data_holder`・`DataHolder`・`ask_activation`、`guard_single_instance` の引数、`init()` の順序）を含めて写し直す。`lib.rs` の変更は無い。`remove_other_keys_files` はデータフォルダのロックを持っている間にだけ呼ぶ。
+  - **`instance_guard.rs` を新しく写すアプリ**: DB のファイル名を変えているなら `instance_guard::DB_FILE_NAME` を合わせる。同じ DB を 2 つのデスクトップのプロセスで開く運用はできなくなる。ロックを持たない旧版（#1028 より前）との間には排他が効かないので、**旧版をすべて終了してから**新しい版を起動する。`banto-serve` はこのロックを取らない。
+  - **`app.html` を写すなら `hooks.server.ts` を必ず一緒に**: `app.html` だけを写すと、配信する HTML に `%banto.…%` が残り、保存済みの言語を初期表示で `ja` に落とし、読み込み中の文言も空のままになる。すでに `src/hooks.server.ts` を持つ下流は、ファイルを置き換えず、その `handle` の `resolve(event, { transformPageChunk })` に同じ置き換えを足す。「クリック可能」の直し（`%sveltekit.body%` を包む `<div>` の `role="presentation"`）は、`app.html` がアプリの持ち物なので自分で写す。
+  - **`ConnectionBanner.svelte`・`StartupSplash.svelte`・`routes/+error.svelte`・`ResourceServerGrid.svelte`・`ResourceListPage.svelte`・`LanReachCheckPanel.svelte` を写している下流**: 写し直す（知らせの要素の中に操作部を残した写しは、A を上げた後、モーダルの間その操作部の扱いがテンプレートと揃わない）。`data-testid="connection-region"` は外側の要素のまま。`StartupSplash` の「再接続」を `getByRole('alert').getByRole('button')` で探している E2E は `getByRole('button', { name: '再接続' })` にする。
+  - **grid の辞書**: `messages/{ja,en}.json` の `grid.filterButtonLabel` ほかと `i18n.ts` の `gridMessages()` を取り込まないと、英語の表示でも絞り込みのボタン・知らせが日本語の既定で読まれる。`ResourceClientGrid`/`ResourceServerGrid` の `label` も一緒に写す。
+- 取り込む手順: ① 依存を `v10.0.0` に上げる。② pop-out を使うアプリは capability の 2 行と `popout.ts`・ダッシュボードの配線をまとめて写す。③ `app.html`・`hooks.server.ts`・`+layout.svelte` は 3 つ一緒に写す。④ 単一起動は `instance_guard.rs` と `lib.rs` の 3 か所を写す。⑤ 残りは機能ごとに写す。
+- 詳しい手順と確認項目は [upgrading.md の例 17](docs/upgrading.md)。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 追加なし（v9.3.0 の DB をそのまま使え、旧版のバイナリへそのまま戻せる）。
+- 設定キー: 追加・変更なし。`tauri.conf.json` は版数のみ。
+- capability: テンプレートの `src-tauri/capabilities/default.json` に `banto-tauri-panel:allow-list`・`banto-tauri-panel:allow-close` が増える。
+- データフォルダ: 単一起動（`instance_guard.rs`）を取り込んだデスクトップ版では、`app_data_dir()` に `*.lock`・`*.port` の小さいファイルが増える。ほかの版の分は、正常に起動した側が片付ける（#1046）。手で消してよいのは、デスクトップ版がすべて止まっているときだけ。
+- 配布物: 変更なし。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm verify:architecture` / `cargo test` / `pnpm dev`（画面が描画される）。
+2. **モーダルを開く画面で**: 開いている間に外側（ヘッダー・サイドバー・トーストのボタン）が押せないこと、`data-modal-exempt` を付けた要素は押せること、閉じるとフォーカスが元へ戻ること。期限付きの取り消しがある画面は、猶予中にコマンドパレットを開いても取り消しを失わないこと。
+3. **`BantoGrid` を使う画面で**: セルを選んでスクロールで離れて Enter を押すと、1 回目は今のセルへ戻るだけで、2 回目で行が開くこと。絞り込みのボタン・並べ替え・Tab の順（本文 1 つ・見出し 1 つ）が期待どおりであること。
+4. pop-out を使うアプリ: 窓に出したままメインを閉じて起動し直すとパネルが dock に戻ること、「レイアウトを既定に戻す」で窓が閉じて二重にならないこと。
+5. 単一起動を取り込んだデスクトップ版: 同じ版の 2 つめを起動すると、2 つめは起動せず、起動中の窓が前に出ること。
+6. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。visual の基準画像（Linux で生成）は作り直しが要ることがある。
+
+### 変更の一覧
+
 - fix(ui, touch-keys-svelte, admin-template): **`ThreePaneLayout` の幅が狭いときに重ねて開いたペイン（モーダルの引き出し）を、真のモーダルにした**（#1055、#1045 で見送った分。[ADR-0038](docs/adr/0038-modal-backdrop-inert.md)）。開いている間、ペインは `role="dialog"`・`aria-modal="true"`（名前はペインの名前）になり、**ペインの外はすべて `inert`**（枠の中央・帯だけでなく、枠の外のアプリのヘッダーやサイドバーも。クリックも Tab も届かず、支援技術からも外れる）。ペインの上端に「閉じる」✕ を置いた（中にフォーカスできる要素が無いペインでも Esc 以外で閉じられる。Esc と背景のクリックもそのまま）。最初から開いた状態で始めたときも、フォーカスは中へ入る。非モーダルの引き出し（`leftDrawerModal` / `rightDrawerModal` を false）と幅が広いときは変わらない。あわせて、**モーダルな層の外側を `inert` にする仕組みを `layering.ts` の 1 か所にまとめ**（層の約束 8、新規 export `trackModalLayer`・`MODAL_EXEMPT_ATTR`・型 `ModalLayerOptions`）、`Modal`・`Drawer`・`ConfirmDialog`・`CommandPalette` も同じ仕組みを使う: 登録された層のうちいちばん上のものの外側が `inert` になり、上の層（ペインの中から開いた `Modal`、確認ダイアログ、コマンドパレット）が開けばそちらに移り、閉じれば戻る（閉じる順は問わない）。登録された層どうしは、z-index が同じなら**後から開いたほうが上**（文書の順ではない。DOM でページの `Drawer` より前にあるレイアウト側のダイアログも、後から開けば上になって操作できる。Esc も上の層だけを閉じ、`Modal`・`Drawer`・`ConfirmDialog` は重ねた分だけ自分の z-index を上げて画面でも上に描く。上げた分は描画のためだけで、登録された層どうしの上下の判定には使わないので、兄弟の層を 3 つ以上続けて開いても最後に開いたものが上になり、最初のフォーカスが入る。登録されていない層とは、描かれているとおり上げた後の z-index で比べる）。外すのは自分が付けた `inert` だけ（元から `inert` の要素・開いている間にアプリが `inert` を書いた要素は残す）。知らせの要素（`aria-live`・`role="status" | "alert" | "log"`・`<output>`）は読み上げを止めないよう `inert` にせず、**その中の操作部（ボタン・リンク）だけを `inert` にする**（接続バナーの「再試行」などが背後で押せない）。開いている間に現れた要素（バナー・ポータルの中身）にも追従する。`@banto/touch-keys-svelte` のキーは `data-modal-exempt` で外してあり、モーダルが開いていても使える。`ToastHost`（トースト）はほかの知らせと同じ扱い: 文は読まれ（モーダルの中から出た保存の失敗の知らせも）、ボタン（閉じる・取り消しなど）はモーダルが開いている間は `inert`（フォーカストラップが Tab をモーダルへ戻すので、キーボードと同じくポインターでも押せない）。知らせの中の操作部の `tabindex`・`href`・`contenteditable` だけが後から付いた場合も追従する。 すでに別のモーダルの背後で `inert` になっているコンテナ（先にマウント済みのポータルなど）の中で `Modal`・`Drawer`・`CommandPalette` を開いても、最初のフォーカスが拒まれない（フォーカスは層の登録のあとに行う）。
   - **消費側への注意**: (1) `Modal`・`Drawer`・`ConfirmDialog`・`CommandPalette` が開いている間、**その外側の要素は `inert` になる**（これまではスクリムとフォーカスの閉じ込めだけ）。モーダルより上に描いて開いている間も使わせたい要素（常に手前のツールバーなど）には `data-modal-exempt` を付ける。`role="dialog"`・`role="menu"`・`data-esc-layer` を名乗る、モーダルより上（z-index、同じなら文書の順で後）の層は自動で外れる。(2) アプリ自作のモーダルな層（`aria-modal="true"` を自分で付けて `attachFocusTrap` を使っているもの）は、開いている間 `trackModalLayer(要素)` を呼ぶと同じ背景の管理に入る（呼ばなくても動くが、その層の外側は `inert` にならない）。(3) `ThreePaneLayout` のモーダルの引き出しに ✕ が付く。文言は `messages` の `overlayClose`（既定「閉じる」。英語などに切り替えるアプリは `ThreePaneLayout` の `messages` にも `overlayClose` を渡す）。開いたときの最初のフォーカスは、中身の先頭ではなく ✕ になる（`Modal`・`Drawer` と同じ）。引き出しが開いている間は `hasVisibleModalLayer()` が真になるので、`shortcut.ts` のショートカット（Ctrl+K など）はその間は効かない（`Modal` の上と同じ）。重ねたペインを開いたまま枠の外（ヘッダーなど）を操作させたいアプリは、`leftDrawerModal` / `rightDrawerModal` を false にする。(4) 知らせの要素の中に置いた操作部は、モーダルが開いている間は押せない。**トーストのアクション（「取り消し」など）も同じ**で、文は読まれるがボタンはモーダルの間 `inert` になる。期限付きの操作（例: 数秒の猶予の後に削除し、取り消しをトーストのボタンにだけ出す）では、猶予中にモーダル（コマンドパレットを含む）を開いたままにすると、タイマーは進むのに取り消しが押せない。そうした画面は、猶予中はモーダルを開かせない、モーダルが開いている間はタイマーを止める、または取り消しをモーダルの中や最前面からも使えるようにするなどで、猶予中の取り消しを保証する。
 - fix(ui, forms, attachments, admin-template): **知らせの要素（`role="status"`・`role="alert"`・`aria-live`）の中に操作部（ボタン・リンク）を置かない形にそろえた**（#1055 の前段。モーダルで外側を `inert` にするとき、知らせの要素だけは読み上げのため残すので、中の操作部が背後で押せてしまうのを先に無くす）。`ConnectionBanner` の「再試行」、`StartupSplash` の「再接続」、`+error.svelte` の「再試行」「ホームへ」、`ResourceServerGrid` の「再読み込み」、`ResourceListPage` の絞り込み除外の知らせの「閉じる」、`AttachmentsPanel` の読み込み失敗の「再試行」、`FileField` の読み込み失敗の「再読み込み」を、文だけの読み上げ領域と操作部（その兄弟）に分けた。見た目（並び・余白）と読み上げの内容・時機は変えない（`ConnectionBanner` は文の `<p>` が常に載ったまま、ボタンだけ出入りする）。`+error.svelte` は、読み上げるのが message の文だけになった（タイトル・ステータスは含めない）。`apps/admin-template/src/lib/liveRegionControls.test.ts` が、知らせの要素の中にフォーカスできる要素が無いことを全 .svelte で確かめる。例外は次のとおり。日付ピッカーの見出し（`CalendarPeriodView`、ピッカー自身のダイアログの中）は許可済み。`ToastHost`（トーストの操作・閉じるボタン）、`MonthCalendar` の見出し（年月のボタン）、`ErrorState`（`action` の snippet）と `LanReachCheckPanel`（`issuedUrl` の中のボタン）は、この PR で文と操作部を分けた（`ErrorState` は `role="alert"` を見出し・説明の `<div>` だけに付け、`action` はその兄弟。`LanReachCheckPanel` は `role="status"` を文だけの `<div>` に付け、コピーのボタンと QR はその外）。残る `ToastHost`（トーストの操作・閉じるボタン）、`MonthCalendar` の見出し（年月のボタン）は、`{@render}` の snippet の中で操作部を描くので静的には追えず、この PR では直さない（`FirewallRuleStatusPanel` の `ruleStatus` は文だけで操作部は無いが、テストが見分けられないので並べる）。テストが「知らせの要素の中で `{@render}` する」ことを検出し、この 3 ファイルだけを既知の例外として許す（増えたら落ちる）。後段（#1055 の本体）で、これらは中の操作部を個別に `inert` にして守る。**消費側への注意**: `ConnectionBanner.svelte`・`StartupSplash.svelte`・`routes/+error.svelte`・`ResourceServerGrid.svelte`・`ResourceListPage.svelte` を写している下流は写し直す。`data-testid="connection-region"` は外側の要素のまま（中にボタンが入る）。`StartupSplash` の「再接続」を `getByRole('alert').getByRole('button')` で探している e2e は `getByRole('button', { name: '再接続' })` にする。`ErrorState` は公開部品なので、`action` のボタンが `role="alert"` の外（兄弟）に出る。`getByRole('alert')` の中からボタンを探す試験は外から（`getByRole('button', { name })`）探す。`LanReachCheckPanel` を写している下流は写し直す（`issuedUrl`・`recordList` の snippet は無くなった）。
