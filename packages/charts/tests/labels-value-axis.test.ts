@@ -5,6 +5,7 @@ import {
 	originLabelsCollide,
 	thinValueLabels
 } from '../src/core/labels';
+import { thinCenteredTicks } from '../src/core/ticks-time';
 
 // #1056: text 200% (11px -> 22px labels) on the value axes.
 describe('thinValueLabels', () => {
@@ -62,5 +63,33 @@ describe('originLabelsCollide', () => {
 		expect(
 			originLabelsCollide('2024-01', '0', { fontSize: 22, xBaseline: 18, xAnchor: 'start' })
 		).toBe(false);
+	});
+});
+
+// A low pane: 12 categories in ~150px of plot (step 12.5px) at 12px labels.
+describe('vertical category labels of a horizontal bar chart', () => {
+	it('are thinned by their height, keeping the first and last, never overlapping', () => {
+		const ys = Array.from({ length: 12 }, (_, i) => 14 + i * 12.5);
+		const kept = thinCenteredTicks(
+			ys,
+			ys.map(() => 12 * 1.1),
+			0
+		);
+		expect(kept.length).toBeLessThan(12);
+		expect(kept[0]).toBe(0);
+		expect(kept[kept.length - 1]).toBe(11);
+		for (let k = 1; k < kept.length; k++)
+			expect(ys[kept[k]] - ys[kept[k - 1]]).toBeGreaterThanOrEqual(13.2);
+	});
+
+	it('keeps every label when the pane is high enough (layout unchanged)', () => {
+		const ys = Array.from({ length: 12 }, (_, i) => 20 + i * 24);
+		expect(
+			thinCenteredTicks(
+				ys,
+				ys.map(() => 12.1),
+				0
+			)
+		).toHaveLength(12);
 	});
 });

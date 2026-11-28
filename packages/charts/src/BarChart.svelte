@@ -448,25 +448,36 @@
 						</text>
 					{/if}
 				{/each}
+				{@const catScale = bandScale(
+					data.length,
+					[m.innerTop, m.innerTop + m.innerHeight],
+					CATEGORY_PADDING
+				)}
+				<!-- A low pane: when the labels are taller than the band step they are thinned
+				     (first and last kept), like the x labels of a band axis; bars stay at every category. -->
+				{@const shownRows = new Set(
+					thinCenteredTicks(
+						categories.map((_, i) => catScale.center(i)),
+						categories.map(() => tickFontSize * 1.1),
+						0
+					)
+				)}
 				{#each categories as cat, i (i)}
-					{@const catScale = bandScale(
-						data.length,
-						[m.innerTop, m.innerTop + m.innerHeight],
-						CATEGORY_PADDING
-					)}
-					<!-- Cut with an ellipsis when the margin hit its cap (full text in <title>). -->
-					{@const full = String(cat ?? '')}
-					{@const shown = truncateLabel(full, m.innerLeft - 8, tickFontSize)}
-					<text
-						x={m.innerLeft - 8}
-						y={catScale.center(i)}
-						class="tick-label"
-						text-anchor="end"
-						dominant-baseline="middle"
-						{@attach i === 0 ? trackTickFont : null}
-					>
-						{shown}{#if shown !== full}<title>{full}</title>{/if}
-					</text>
+					{#if shownRows.has(i)}
+						<!-- Cut with an ellipsis when the margin hit its cap (full text in <title>). -->
+						{@const full = String(cat ?? '')}
+						{@const shown = truncateLabel(full, m.innerLeft - 8, tickFontSize)}
+						<text
+							x={m.innerLeft - 8}
+							y={catScale.center(i)}
+							class="tick-label"
+							text-anchor="end"
+							dominant-baseline="middle"
+							{@attach i === 0 ? trackTickFont : null}
+						>
+							{shown}{#if shown !== full}<title>{full}</title>{/if}
+						</text>
+					{/if}
 				{/each}
 				<line
 					x1={m.innerLeft}
