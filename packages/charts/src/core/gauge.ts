@@ -68,6 +68,8 @@ export const GAUGE_LABEL_GAP = 14;
 export const GAUGE_MIN_FIT_RADIUS = 36;
 const GAUGE_ABSOLUTE_MIN_RADIUS = 10;
 const LABEL_SEPARATION = 4;
+/** Margin (px) kept between the centre value and the inner edge of the track. */
+const GAUGE_HERO_PAD = 2;
 const EDGE_PAD = 2;
 
 export interface GaugeLayoutInput {
@@ -82,6 +84,13 @@ export interface GaugeLayoutInput {
 	trackWidth: number;
 	/** Vertical extent of the 270deg arc relative to rOuter. */
 	verticalFactor: number;
+	/**
+	 * Centre value text and its rendered font size (px). When given, the dial
+	 * is never shrunk below the radius whose inner circle holds that text; the
+	 * range labels are cut instead. Omitted: only `GAUGE_MIN_FIT_RADIUS` applies.
+	 */
+	heroText?: string;
+	heroFontSize?: number;
 }
 
 export interface GaugeLayout {
@@ -111,9 +120,16 @@ export function gaugeLayout(i: GaugeLayoutInput): GaugeLayout {
 		(i.width - i.sidePad * 2) / 2,
 		(i.plotHeight - i.topPad - i.bottomPad) / i.verticalFactor
 	);
+	let rFloor = GAUGE_MIN_FIT_RADIUS;
+	if (i.heroText !== undefined && i.heroFontSize !== undefined) {
+		// Half-diagonal of the estimated text box (width x ~1em high) plus a margin.
+		const hw = estimateLabelWidth(i.heroText, i.heroFontSize) / 2;
+		const hh = i.heroFontSize / 2;
+		rFloor = Math.max(rFloor, Math.hypot(hw, hh) + GAUGE_HERO_PAD + i.trackWidth);
+	}
 	const rOuter = Math.max(
 		GAUGE_ABSOLUTE_MIN_RADIUS,
-		Math.min(rBase, Math.max(rLabelFit, Math.min(rBase, GAUGE_MIN_FIT_RADIUS)))
+		Math.min(rBase, Math.max(rLabelFit, Math.min(rBase, rFloor)))
 	);
 	const cx = i.width / 2;
 	const cy = i.topPad + rOuter;

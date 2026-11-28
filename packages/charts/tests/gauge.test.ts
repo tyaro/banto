@@ -189,4 +189,39 @@ describe('gaugeLayout (range labels)', () => {
 		const [b0] = box(l.maxLabel, 150 + d, 11);
 		expect(a1).toBeLessThan(b0);
 	});
+
+	it('keeps the centre value inside the inner circle at 200% text, cutting the range labels instead', () => {
+		const heroFontSize = 64;
+		const l = gaugeLayout({
+			...base,
+			width: 211,
+			plotHeight: 160,
+			minText: '0',
+			maxText: '1,000,000',
+			fontSize: 22,
+			heroText: '88',
+			heroFontSize
+		});
+		const hw = estimateLabelWidth('88', heroFontSize) / 2;
+		expect(Math.hypot(hw, heroFontSize / 2)).toBeLessThanOrEqual(l.rInner);
+		const d = (l.rOuter + 14) * Math.SQRT1_2;
+		const [lo, hi] = box(l.maxLabel, l.cx + d, 22);
+		expect(hi).toBeLessThanOrEqual(211);
+		const [, minHi] = box(l.minLabel, l.cx - d, 22);
+		expect(minHi).toBeLessThan(lo);
+	});
+
+	it('does not change the radius at normal size when a centre value is given', () => {
+		const input = {
+			...base,
+			width: 300,
+			plotHeight: 160,
+			minText: '0',
+			maxText: '100',
+			fontSize: 11
+		};
+		expect(gaugeLayout({ ...input, heroText: '88', heroFontSize: 32 }).rOuter).toBe(
+			gaugeLayout(input).rOuter
+		);
+	});
 });

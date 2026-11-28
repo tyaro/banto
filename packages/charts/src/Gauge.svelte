@@ -46,6 +46,7 @@
 		messages = {}
 	}: Props = $props();
 
+	const HERO_BASE_FONT_SIZE = 32;
 	const TRACK_WIDTH = 14;
 	const SIDE_PAD = 16;
 	const TOP_PAD = 16;
@@ -64,6 +65,10 @@
 	let rangeFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackRangeFont = trackFontSize((px) => (rangeFontSize = px));
 
+	// Rendered centre-value font (the 2xl token; 32px until it can be read).
+	let heroFontSize = $state(HERO_BASE_FONT_SIZE);
+	const trackHeroFont = trackFontSize((px) => (heroFontSize = px));
+
 	function geometry(width: number, plotHeight: number) {
 		return gaugeLayout({
 			width,
@@ -75,11 +80,14 @@
 			topPad: TOP_PAD,
 			bottomPad: BOTTOM_PAD,
 			trackWidth: TRACK_WIDTH,
-			verticalFactor: ARC_VERTICAL_FACTOR
+			verticalFactor: ARC_VERTICAL_FACTOR,
+			heroText: heroText(),
+			heroFontSize
 		});
 	}
 
 	const hasValue = $derived(value !== null && Number.isFinite(value));
+	const heroText = () => (hasValue ? formatValueDisplay(value as number) : t.gaugeNoValue());
 	const endAngle = $derived(gaugeAngle(hasValue ? (value as number) : min, min, max));
 	const colorVar = $derived(gaugeColorVar(hasValue ? (value as number) : NaN, thresholds));
 </script>
@@ -129,8 +137,15 @@
 					</title>{/if}{g.maxLabel}
 			</text>
 
-			<text x={g.cx} y={g.cy} class="hero-value" text-anchor="middle" dominant-baseline="middle">
-				{hasValue ? formatValueDisplay(value as number) : t.gaugeNoValue()}
+			<text
+				x={g.cx}
+				y={g.cy}
+				class="hero-value"
+				text-anchor="middle"
+				dominant-baseline="middle"
+				{@attach trackHeroFont}
+			>
+				{heroText()}
 			</text>
 		{/snippet}
 	</ChartContainer>
