@@ -292,6 +292,53 @@ const columns: GridColumn<Job>[] = [
 - コピー・CSV は従来どおり生の値（`format` も `renderer` も通さない）。列メニュー・列の並べ替え・グループ化・仮想スクロール・server モードの挙動は変わらない。
 - `tone: (value, row) => success | warning | danger | info | neutral | null` は素の文字・`cell`・`renderer` のセルに役割の色を付ける（`render` には効かない）。色は theme の `--banto-success` などの状態色トークンのみで、バッジは `-tint` の組。値は `data-tone` にも出る。色だけに意味を持たせず、`format` やバッジの文字でも伝えること。
 
+## 行の地を役割の色で塗る（`rowTone`、#1069）
+
+警報・履歴の一覧のように、行全体の地を重要度で塗るときは `rowTone` を渡す。
+返すのはセルの `tone` と同じ `CellTone`（`success` / `warning` / `danger` / `info` / `neutral`）で、`undefined` を返した行は塗らない。
+
+```svelte
+<script lang="ts">
+	import { BantoGrid, type CellTone, type GridColumn } from '@banto/grid-svelte';
+
+	interface Alarm {
+		id: number;
+		device: string;
+		level: 'fault' | 'check' | 'ok';
+	}
+	const label = { fault: '異常', check: '点検推奨', ok: '正常' } as const;
+
+	const columns: GridColumn<Alarm>[] = [
+		{ id: 'device', header: '設備', accessor: 'device', pinned: 'left' },
+		// 状態は文字（バッジ）でも出す: 行の色だけに意味を持たせない
+		{
+			id: 'level',
+			header: '状態',
+			accessor: 'level',
+			renderer: 'badge',
+			format: (v) => label[v as Alarm['level']],
+			tone: (v) => (v === 'fault' ? 'danger' : v === 'check' ? 'warning' : 'success')
+		}
+	];
+
+	const rowTone = (row: Alarm): CellTone | undefined =>
+		row.level === 'fault' ? 'danger' : row.level === 'check' ? 'warning' : undefined;
+</script>
+
+<BantoGrid {rows} {columns} getRowId={(row) => row.id} {rowTone} />
+```
+
+- **色だけに頼らない（前提）**: `rowTone` は見た目だけで、ARIA もセルの中身も変えない（スクリーンリーダーには伝わらず、色の見分けにくい人にも届かない）。状態は必ず列にも置く（上の例のバッジの文字、アイコン＋文字など）。行の色は、その列を補う物として使う。
+- **地と文字**: 地は theme の tint のトークン（`--banto-success-tint` / `--banto-warning-tint` / `--banto-danger-tint` / `--banto-info-tint`、`neutral` は `--banto-surface-subtle`）。行の文字は `--banto-text` のまま。明・暗・Glass のどれでも 4.5:1 以上（`tests/row-tone-contrast.test.ts` が、theme の CSS とこのコンポーネントの CSS から計算して固定している）。利用側が CSS を書く必要は無い。
+- **セルの色つきの文字**: tone 付きの行（選択中を除く）では、文字用の状態色（`--banto-danger` など）は地に対して 4.5:1 に届かないので、グリッドが差し替える。セルの `tone` の文字は `-tint-text`（`neutral` は本文の色）、`link` は本文の色＋下線、バッジは面の色（`--banto-surface`）の地。コピー範囲（`in-range`）の中では、tint の上に範囲の色が重なるので、セルの `tone` の文字も本文の色に戻る。`render` / `cell` で自前に描く中身の色は差し替えないので、tint の上で読める色（`--banto-text`、`--banto-<tone>-tint-text`）を使う。
+- **ホバー**: tint を面の色へ 40% 戻す（地が少し淡くなる）。濃くしないので、ホバー中に文字のコントラストは下がらない。`neutral` はふつうの行と同じホバーの色。
+- **選択中の行**: ほかの選択中の行と同じ選択の地になり、tone はチェックボックスのセルの左端の帯（`--banto-<tone>`）で残る。選択が tone の地に埋もれないようにするため。セルの色の差し替えも選択中は掛からない（ふつうの行と同じ）。
+- **今のセル・範囲選択・編集**: 今のセルの枠と範囲選択の色は tone の地の上に重なる。編集中のセルは今までどおり面の色の地。
+- **固定した列**: 固定したセル（とチェックボックスのセル）にも同じ地を重ねる（不透明の面の上に tint。ダークの tint は半透明だが、下をくぐるセルは透けない）。
+- **`rowClass` と併用できる**: 両方を渡すと、行にクラスと `data-row-tone` の両方が付く。`rowClass` の独自の背景は今までどおり固定したセルには出ないので、行の地を塗る用途は `rowTone` を使う。
+- **属性**: 行（`.row`）に `data-row-tone="danger"` などが付く（セルの `data-tone` とは別）。並べ替え・絞り込み・行の更新のあとも、その行のデータから決まる。グループ見出しの行と、server モードの未読み込みの行には付かない。
+- forced-colors（ハイコントラスト）では OS の配色が優先され、tone の地や帯は当てにできない。ここでも、状態は列の文字で伝える。
+
 ## セルに小さな折れ線（sparkline）を描く例（#713）
 
 sparkline は組み込みの `renderer` にしていない（`@banto/grid-svelte` は `@banto/charts` に依存しない）。
@@ -468,7 +515,7 @@ const columns: GridColumn<Item>[] = [
 - **幅が足りないとき**: 固定した列（とチェックボックスの列）の幅の合計が、グリッドの幅から 120px（`MIN_SCROLLABLE_WIDTH`）を引いた分を超えると、収まらない後ろの固定列から順に固定をやめる（並びはそのまま。ほかの列がスクロールで見えなくなるのを防ぐ）。1 列も収まらなければ、チェックボックスの列も固定しない。
 - **キーボード**: 矢印や Tab でアクティブなセルが動くとき、固定した列の下に隠れないようにスクロールする（固定した列の幅を引く）。固定した列のセルへ動いたときはスクロールしない。
 - **グループ化**: グループ見出しの行は列をまたぐので固定しない。固定した列があるあいだは、見出しの中身（開閉の印・ラベル・集計）を左端に留める。
-- **行の背景**: 固定したセルは不透明（下をくぐるセルを隠すため）で、ホバー・行選択・範囲選択の色はグリッドが重ねる。`rowClass` で行に付けた独自の背景は、固定したセルには出ない。
+- **行の背景**: 固定したセルは不透明（下をくぐるセルを隠すため）で、ホバー・行選択・範囲選択の色はグリッドが重ねる。`rowClass` で行に付けた独自の背景は、固定したセルには出ない。行の地を役割の色で塗るなら `rowTone`（上の節。固定したセルにも重なる）を使う。
 - 行の仮想化・server モード（未読み込みの行の仮の表示も固定する）・列のリサイズ（後ろの固定列の位置が追従する）・セル編集（編集中のセルとエラーの表示は固定した列でもそのまま）と併用できる。横方向の仮想化は無いので、固定した列は常に描画される。
 
 ## 日付のセルと注入（date-time-pickers PR-4）

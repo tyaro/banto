@@ -97,7 +97,14 @@
 	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
-	import { BantoGrid, columnsFromSchema, type CellEdit, type GridColumn } from '@banto/grid-svelte';
+	import { page } from '$app/state';
+	import {
+		BantoGrid,
+		columnsFromSchema,
+		type CellEdit,
+		type CellTone,
+		type GridColumn
+	} from '@banto/grid-svelte';
 	import {
 		columnValidationMessages,
 		dateInputMessages,
@@ -884,6 +891,14 @@
 		shipments = shipments.map((row) => (ids.includes(row.code) ? { ...row, express: true } : row));
 		clear();
 	}
+	// Row tone (#1069): `/ui-demo?rowTone=1` paints the rows by their state.
+	// Off without the query, so the page (and its baseline) stays as it is;
+	// the visual suite opens the query for the row tone scene. The state is
+	// also in the badge column: the row colour is never the only sign.
+	const rowToneOn = $derived(page.url.searchParams.has('rowTone'));
+	function shipmentTone(row: Shipment): CellTone {
+		return row.late ? 'danger' : row.progress >= 1 ? 'success' : 'warning';
+	}
 	const timeMessages: UiMessages = {
 		timePickerOpen: () => m['timePicker.open'](),
 		timePickerList: () => m['timePicker.list'](),
@@ -1660,6 +1675,7 @@
 				messages={gridMessages()}
 				selectable
 				bind:selectedRowIds={selectedShipments}
+				rowTone={rowToneOn ? shipmentTone : undefined}
 			>
 				{#snippet bulkActions({ ids, clear })}
 					<button
