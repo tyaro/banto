@@ -273,7 +273,7 @@ popover の最上位の層に出すので、重なり順のトークンも要ら
 | neutral | `var(--banto-neutral-10)`         | `var(--banto-neutral-10)`          |
 | success | `oklch(0.6 0.17 148)` `#0e9a3f`   | `oklch(0.723 0.192 150)` `#1ec55f` |
 | caution | `oklch(0.615 0.126 98)` `#998405` | `oklch(0.87 0.175 100)` `#f0d621`  |
-| warning | `oklch(0.64 0.165 50)` `#d8670e`  | `oklch(0.74 0.17 55)` `#fa8927`    |
+| warning | `oklch(0.62 0.16 50)` `#cf630d`   | `oklch(0.74 0.17 55)` `#fa8927`    |
 | danger  | `oklch(0.58 0.22 27)` `#df2225`   | `oklch(0.69 0.199 25)` `#ff5c59`   |
 
 明るいテーマの fill は「白い面に 3:1」で明るさの上限が決まるので、黄は辛子色になる（濃色の表示では明るい黄）。
@@ -289,7 +289,7 @@ caution と warning は、文字色・tint-text・fill のどれも OKLab 距離
 }
 ```
 
-保証の範囲: glass では、面（カード）の上に置いた場合だけを確かめている。glass のページの地（背景の光の真上）に
+保証の範囲: glass では、面（カード）の上に置いた場合だけを、背景の光を重ねた最悪点（狭い画面を含む）で確かめている。glass のページの地（背景の光の真上）に
 直接置いた場合は保証しない（既存の状態色と同じ）。`@banto/ui` の `StatusBadge` と `@banto/grid-svelte` の
 `tone` には caution の段を足していない。条件は `packages/theme/tests/contrast.test.ts` が CSS から読んで確かめる。
 値と実測は [visual-refresh-plan.md](../../docs/design/visual-refresh-plan.md) の付録 A.3。

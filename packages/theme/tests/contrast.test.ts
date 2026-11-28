@@ -317,11 +317,13 @@ describe('state fills (lamp / icon) >= 3:1 on every surface, at every --banto-br
  * Glass (banto-glass.css) does not redefine the state colours, so the new
  * tokens are checked against what it does to the ground: a card is a
  * translucent film of a neutral step over the page, and the page carries the
- * brand glows. Model: the page under ONE glow at its peak strength (the three
- * glows sit in different corners and fade out before they meet), then the
- * surface / raised film on top. The film percentages and the glow strengths are
- * read from banto-glass.css. Not modelled: `saturate(1.5)` of the backdrop
- * filter, and content of the app behind the card.
+ * brand glows. Model: every glow composited as laid out in CSS (centre, px
+ * radii, fade-out stop; the first layer on top) at grid points over the area
+ * the page is painted on, for a few screen sizes. The radii are fixed px, so on
+ * a narrow screen the two top glows overlap and are stronger than either alone
+ * (#1072). The film percentages and glow strengths are read from
+ * banto-glass.css. Not modelled: `saturate(1.5)` of the backdrop filter, and
+ * content of the app behind the card.
  *
  * Text or a lamp put straight on the glass PAGE under a glow's peak is not
  * covered (the existing state text colours do not hold 4.5:1 there either);
@@ -331,7 +333,17 @@ const glassCss = readFileSync(new URL('../src/css/banto-glass.css', import.meta.
 
 interface GlassModel {
 	films: { name: string; neutral: string; alpha: number }[];
-	glows: { name: string; alpha: number; colour: (hue: number) => Rgb }[];
+	glows: {
+		name: string;
+		alpha: number;
+		colour: (hue: number) => Rgb;
+		/** radii in CSS px, centre as a fraction of the area, and where the colour has faded out (0..1) */
+		rx: number;
+		ry: number;
+		cx: number;
+		cy: number;
+		end: number;
+	}[];
 }
 
 function glassModel(rules: string, glass: string): GlassModel {
@@ -345,14 +357,30 @@ function glassModel(rules: string, glass: string): GlassModel {
 	const start = glass.indexOf('--banto-bg-image:');
 	const image = glass.slice(start, glass.indexOf(';', start));
 	const glows: GlassModel['glows'] = [];
-	for (const m of image.matchAll(
-		/color-mix\(\s*in srgb,\s*var\((--banto-[a-z-]+)\)\s*(\d+)%,\s*transparent\s*\)/g
+	for (const g of image.matchAll(
+		/radial-gradient\(\s*(\d+)px (\d+)px at (-?[\d.]+)% (-?[\d.]+)%,\s*(color-mix\(.*?transparent\s*\)|rgb\([^)]*\)),\s*transparent (\d+)%\s*\)/g
 	)) {
-		glows.push({ name: m[1], alpha: Number(m[2]) / 100, colour: rgb(rules, m[1]) });
-	}
-	for (const m of image.matchAll(/rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)/g)) {
-		const c = [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255] as Rgb;
-		glows.push({ name: `rgb(${m[1]} ${m[2]} ${m[3]})`, alpha: Number(m[4]), colour: () => c });
+		const geo = {
+			rx: Number(g[1]),
+			ry: Number(g[2]),
+			cx: Number(g[3]) / 100,
+			cy: Number(g[4]) / 100,
+			end: Number(g[6]) / 100
+		};
+		const mix =
+			/color-mix\(\s*in srgb,\s*var\((--banto-[a-z-]+)\)\s*(\d+)%,\s*transparent\s*\)/.exec(g[5]);
+		const plain = /rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)/.exec(g[5]);
+		if (mix) {
+			glows.push({ name: mix[1], alpha: Number(mix[2]) / 100, colour: rgb(rules, mix[1]), ...geo });
+		} else if (plain) {
+			const c = [Number(plain[1]) / 255, Number(plain[2]) / 255, Number(plain[3]) / 255] as Rgb;
+			glows.push({
+				name: `rgb(${plain[1]} ${plain[2]} ${plain[3]})`,
+				alpha: Number(plain[4]),
+				colour: () => c,
+				...geo
+			});
+		}
 	}
 	if (glows.length !== 3) throw new Error('banto-glass.css: expected 3 glows in --banto-bg-image');
 	return { films, glows };
@@ -361,6 +389,15 @@ function glassModel(rules: string, glass: string): GlassModel {
 /** `top` at `alpha` over `base`, composited in gamma-encoded sRGB (as `color-mix(in srgb)` does). */
 const over = (top: Rgb, alpha: number, base: Rgb) =>
 	base.map((v, i) => alpha * top[i] + (1 - alpha) * v) as Rgb;
+
+/** Area the page ground is painted over (viewport, CSS px) and the grid resolution used on it. */
+const AREAS: [number, number][] = [
+	[320, 600],
+	[375, 667],
+	[768, 1024],
+	[1440, 900]
+];
+const GRID = 24;
 
 describe('glass: caution text >= 4.5:1 and the state fills >= 3:1 on the glass surfaces', () => {
 	const themes: [string, string, string, string][] = [
@@ -396,6 +433,39 @@ describe('glass: caution text >= 4.5:1 and the state fills >= 3:1 on the glass s
 					});
 					if (ratio < min.ratio)
 						min = { ratio, where: `${film.name} over ${glow.name}, hue ${hue}` };
+				}
+			}
+			// The glows have fixed px radii, so on a narrow area they overlap: composite all
+			// of them as laid out in CSS (first layer on top), at grid points over the area.
+			for (let hue = 0; hue < 360; hue += STEP) {
+				const glowColours = model.glows.map((g) => g.colour(hue));
+				const pageColour = rgb(rules, page)(hue);
+				const fgColour = fg(hue);
+				for (const film of model.films) {
+					const filmColour = rgb(rules, film.neutral)(hue);
+					for (const [w, h] of AREAS) {
+						for (let gx = 0; gx <= GRID; gx++) {
+							for (let gy = 0; gy <= GRID; gy++) {
+								const x = (w * gx) / GRID;
+								const y = (h * gy) / GRID;
+								let ground = pageColour;
+								for (let i = model.glows.length - 1; i >= 0; i--) {
+									const glow = model.glows[i];
+									const t = Math.hypot((x - glow.cx * w) / glow.rx, (y - glow.cy * h) / glow.ry);
+									const a = glow.alpha * Math.max(0, 1 - t / glow.end);
+									if (a > 0) ground = over(glowColours[i], a, ground);
+								}
+								ground = over(filmColour, film.alpha, ground);
+								if (tint) ground = over(fgColour, tint, ground);
+								const ratio = contrast(fgColour, ground);
+								if (ratio < min.ratio)
+									min = {
+										ratio,
+										where: `${film.name} over stacked glows, ${w}x${h} at (${x}, ${y}), hue ${hue}`
+									};
+							}
+						}
+					}
 				}
 			}
 			return min;
