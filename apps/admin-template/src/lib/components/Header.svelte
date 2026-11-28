@@ -586,8 +586,7 @@
 	}
 
 	.search-pill kbd {
-		padding: 1px var(--banto-space-1);
-		line-height: 1;
+		padding: var(--banto-space-1) var(--banto-space-1);
 		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-sm);
 		background: var(--banto-surface-subtle);
