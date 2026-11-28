@@ -303,7 +303,7 @@ describe('narrow containers (150px) keep a plot area', () => {
 
 	it('left margin: 30-char labels at width 150 leave innerWidth > 0', () => {
 		const left = leftMarginForTicks(long, 48, { totalWidth: 150 });
-		expect(left).toBeLessThanOrEqual(Math.floor(150 * 0.4));
+		expect(left).toBeLessThanOrEqual(Math.floor(150 * 0.45));
 		expect(150 - left - right).toBeGreaterThan(0);
 		// without the width the absolute cap alone (140px) would collapse the plot
 		expect(150 - leftMarginForTicks(long, 48) - right).toBeLessThanOrEqual(0);
@@ -312,7 +312,7 @@ describe('narrow containers (150px) keep a plot area', () => {
 	it('right margin: capped by the same policy, never below the base', () => {
 		expect(rightMarginForTicks(['0', '100'], 40, { totalWidth: 380 })).toBe(40);
 		const r = rightMarginForTicks(long, 16, { totalWidth: 150 });
-		expect(r).toBeLessThanOrEqual(60);
+		expect(r).toBeLessThanOrEqual(67);
 		expect(r).toBeGreaterThanOrEqual(16);
 		expect(rightMarginForTicks(['1'.repeat(130)], 16)).toBe(140);
 		expect(rightMarginForTicks(['1'.repeat(130)], 80, { totalWidth: 100 })).toBe(80);

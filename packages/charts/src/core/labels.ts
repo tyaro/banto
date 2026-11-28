@@ -92,14 +92,23 @@ function defaultMax(fontSize: number): number {
  */
 const MAX_TICK_MARGIN_RATIO = 0.4;
 
+/**
+ * Value-axis tick labels (numbers + a unit such as 件) are short, so they may
+ * take a little more than the category cap: at 200% text on a 320px chart
+ * ("500件" = 29.7px font, 77.8px wide, 211px svg) the label needs 86px, 41%,
+ * and the 40% cap clipped its left edge by ~2px. Category labels keep 40%
+ * (they are truncated with an ellipsis instead).
+ */
+const MAX_VALUE_TICK_MARGIN_RATIO = 0.45;
+
 export interface TickMarginOptions extends AxisMarginOptions {
 	/** Measured container width (px). Unknown/0 -> only the absolute `max` applies. */
 	totalWidth?: number;
 }
 
 /** `max`, further capped at 40% of `totalWidth` when the width is known. */
-function widthCap(max: number, totalWidth: number): number {
-	return totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * MAX_TICK_MARGIN_RATIO)) : max;
+function widthCap(max: number, totalWidth: number, ratio: number = MAX_TICK_MARGIN_RATIO): number {
+	return totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * ratio)) : max;
 }
 
 /**
@@ -125,7 +134,7 @@ function growMargin(labels: string[], base: number, gap: number, o: TickMarginOp
 	const max = Math.floor(o.max ?? defaultMax(fontSize));
 	let widest = 0;
 	for (const label of labels) widest = Math.max(widest, estimateLabelWidth(label, fontSize));
-	const cap = Math.max(base, widthCap(max, totalWidth));
+	const cap = Math.max(base, widthCap(max, totalWidth, MAX_VALUE_TICK_MARGIN_RATIO));
 	return Math.min(cap, Math.max(base, Math.ceil(widest + gap)));
 }
 
