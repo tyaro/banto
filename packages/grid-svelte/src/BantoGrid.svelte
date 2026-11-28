@@ -3446,6 +3446,15 @@
 	.row[data-row-tone]:not(.selected) .cell-badge {
 		background: var(--banto-surface);
 	}
+	/*
+	 * In the copy range the primary wash lies on top of the row's tint, which
+	 * pushes the -tint-text of the cell's own tone under 4.5:1 (dark theme). So
+	 * the cell's tone gives way to the body text there, as it does on a
+	 * selected row (the link and the neutral tone already use the body text).
+	 */
+	.row[data-row-tone]:not(.selected) .cell.in-range[data-tone] {
+		color: var(--banto-text);
+	}
 
 	.cell-badge {
 		display: inline-block;

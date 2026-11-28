@@ -330,7 +330,7 @@ const columns: GridColumn<Job>[] = [
 
 - **色だけに頼らない（前提）**: `rowTone` は見た目だけで、ARIA もセルの中身も変えない（スクリーンリーダーには伝わらず、色の見分けにくい人にも届かない）。状態は必ず列にも置く（上の例のバッジの文字、アイコン＋文字など）。行の色は、その列を補う物として使う。
 - **地と文字**: 地は theme の tint のトークン（`--banto-success-tint` / `--banto-warning-tint` / `--banto-danger-tint` / `--banto-info-tint`、`neutral` は `--banto-surface-subtle`）。行の文字は `--banto-text` のまま。明・暗・Glass のどれでも 4.5:1 以上（`tests/row-tone-contrast.test.ts` が、theme の CSS とこのコンポーネントの CSS から計算して固定している）。利用側が CSS を書く必要は無い。
-- **セルの色つきの文字**: tone 付きの行（選択中を除く）では、文字用の状態色（`--banto-danger` など）は地に対して 4.5:1 に届かないので、グリッドが差し替える。セルの `tone` の文字は `-tint-text`（`neutral` は本文の色）、`link` は本文の色＋下線、バッジは面の色（`--banto-surface`）の地。`render` / `cell` で自前に描く中身の色は差し替えないので、tint の上で読める色（`--banto-text`、`--banto-<tone>-tint-text`）を使う。
+- **セルの色つきの文字**: tone 付きの行（選択中を除く）では、文字用の状態色（`--banto-danger` など）は地に対して 4.5:1 に届かないので、グリッドが差し替える。セルの `tone` の文字は `-tint-text`（`neutral` は本文の色）、`link` は本文の色＋下線、バッジは面の色（`--banto-surface`）の地。コピー範囲（`in-range`）の中では、tint の上に範囲の色が重なるので、セルの `tone` の文字も本文の色に戻る。`render` / `cell` で自前に描く中身の色は差し替えないので、tint の上で読める色（`--banto-text`、`--banto-<tone>-tint-text`）を使う。
 - **ホバー**: tint を面の色へ 40% 戻す（地が少し淡くなる）。濃くしないので、ホバー中に文字のコントラストは下がらない。`neutral` はふつうの行と同じホバーの色。
 - **選択中の行**: ほかの選択中の行と同じ選択の地になり、tone はチェックボックスのセルの左端の帯（`--banto-<tone>`）で残る。選択が tone の地に埋もれないようにするため。セルの色の差し替えも選択中は掛からない（ふつうの行と同じ）。
 - **今のセル・範囲選択・編集**: 今のセルの枠と範囲選択の色は tone の地の上に重なる。編集中のセルは今までどおり面の色の地。

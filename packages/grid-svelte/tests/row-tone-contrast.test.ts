@@ -153,8 +153,8 @@ const hoverOverlay = (tone: Tone) =>
 const inRangeOverlay = declared(gridRule('.cell.in-range'), 'background')!;
 const rowText = declared(gridRule('.cell'), 'color')!;
 
-type GroundState = 'at rest' | 'hover' | 'in the copy range';
-const STATES: GroundState[] = ['at rest', 'hover', 'in the copy range'];
+type GroundState = 'at rest' | 'hover' | 'in the copy range' | 'hover in the copy range';
+const STATES: GroundState[] = ['at rest', 'hover', 'in the copy range', 'hover in the copy range'];
 
 /** The ground under a cell of a toned (not selected) row, layer by layer. */
 function ground(theme: Theme, tone: Tone, state: GroundState, hue: number): Rgb {
@@ -163,6 +163,10 @@ function ground(theme: Theme, tone: Tone, state: GroundState, hue: number): Rgb 
 	const rest = over(paint(theme, rowToneTokens(tone).tint, hue), surface.rgb);
 	if (state === 'hover') return over(paint(theme, hoverOverlay(tone), hue), rest);
 	if (state === 'in the copy range') return over(paint(theme, inRangeOverlay, hue), rest);
+	if (state === 'hover in the copy range') {
+		const hovered = over(paint(theme, hoverOverlay(tone), hue), rest);
+		return over(paint(theme, inRangeOverlay, hue), hovered);
+	}
 	return rest;
 }
 
@@ -251,6 +255,17 @@ describe('text on a toned row >= 4.5:1 in light / dark / Glass, at every --banto
 					const { ratio, hue } = worst(theme, rowText, (h) => ground(theme, tone, state, h));
 					expect(ratio, `worst at hue ${hue}`).toBeGreaterThanOrEqual(4.5);
 				});
+			}
+			// In the copy range the cell's own tone gives way to the body text.
+			for (const cellTone of TONES) {
+				for (const state of ['in the copy range', 'hover in the copy range'] as const) {
+					it(`${theme.name}: ${cellTone} cell text in the copy range of a ${tone} row, ${state}`, () => {
+						const color = declared(gridRule(`${TONED} .cell.in-range[data-tone]`), 'color')!;
+						expect(color).toBe('var(--banto-text)');
+						const { ratio, hue } = worst(theme, color, (h) => ground(theme, tone, state, h));
+						expect(ratio, `worst at hue ${hue}`).toBeGreaterThanOrEqual(4.5);
+					});
+				}
 			}
 			// A cell's own tone (`GridColumn.tone`) on the row's tone: every pair.
 			for (const cellTone of ['success', 'warning', 'danger', 'info']) {
