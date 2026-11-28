@@ -66,15 +66,20 @@ test('the header search pill keeps its shortcut inside the frame at 200% text', 
 	expect(gap.right).toBeGreaterThanOrEqual(0);
 });
 
-test('the header search pill keeps the control height at 100% text', async ({ page }) => {
+test('the header search pill keeps the shortcut inside its frame at 100% text', async ({
+	page
+}) => {
 	await open(page, '/items', 1440);
 	await page.evaluate(() => (document.documentElement.style.fontSize = ''));
 	const m = await page.locator('.search-pill').evaluate((el) => ({
 		pill: el.getBoundingClientRect().height,
 		kbd: el.querySelector('kbd')!.getBoundingClientRect().height
 	}));
-	expect(m.pill, JSON.stringify(m)).toBe(28);
-	// The shortcut keeps its themed padding, so it sits just inside the 28px frame.
+	// Never shorter than the control height (28px). Where the shortcut's line is taller
+	// (Linux fonts: 27px + the 1px borders), the frame grows by that pixel instead of
+	// letting the shortcut stick out as the fixed 28px did before #1044.
+	expect(m.pill, JSON.stringify(m)).toBeGreaterThanOrEqual(28);
+	expect(m.pill, JSON.stringify(m)).toBeLessThanOrEqual(30);
 	expect(m.pill - m.kbd, JSON.stringify(m)).toBeGreaterThanOrEqual(0);
 });
 
