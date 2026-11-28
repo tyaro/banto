@@ -123,6 +123,7 @@
 	import { formatCount, gridMessages } from '#lib/banto/i18n.js';
 	import { getBantoMode, getUiSettings } from '#lib/banto/setup.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
+	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
 	import { isAuditLogAvailable } from '#lib/banto/auditLogAdmin.js';
@@ -925,9 +926,21 @@
 		}
 	}
 
+	/**
+	 * `Drawer` or `Modal` from the per-user "form display" setting (same props).
+	 * Fixed when the panel opens and kept while it is open (and while it closes):
+	 * swapping the component would rebuild `ResourceDetail` and drop an unsaved
+	 * draft without `confirmLeaveRecord`. A change takes effect on the next open.
+	 */
+	let panelPresentation = $state(settings.formPresentation);
+	const Panel = $derived(panelPresentation === 'dialog' ? Modal : Drawer);
+
 	function showInDrawer(id: string | number): void {
 		drawerGeneration++;
-		if (!drawerOpen) drawerOpenedWith = id;
+		if (!drawerOpen) {
+			drawerOpenedWith = id;
+			panelPresentation = settings.formPresentation;
+		}
 		drawerId = id;
 		drawerOpen = true;
 		lastOpenedId = normalizeId(id);
@@ -1999,7 +2012,8 @@
 	{/key}
 {/snippet}
 
-<Drawer
+<!-- The record panel: the drawer (default) or, per the user's appearance setting, a centred dialog. Same props, same OverlayPanel. -->
+<Panel
 	open={drawerOpen}
 	title={drawerId === null
 		? undefined
@@ -2042,7 +2056,7 @@
 			{/if}
 		</div>
 	{/if}
-</Drawer>
+</Panel>
 
 <style>
 	.page {

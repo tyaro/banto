@@ -377,3 +377,44 @@ describe('settings: the header colour-mode toggle', () => {
 		expect(settings.themeMode).toBe('dark');
 	});
 });
+
+describe('settings: form presentation (drawer / dialog)', () => {
+	it('defaults to the drawer with nothing stored', async () => {
+		const settings = await loadSettings();
+		expect(settings.formPresentation).toBe('drawer');
+	});
+
+	it('loads a stored dialog', async () => {
+		const settings = await loadSettings({ 'banto.formPresentation': 'dialog' });
+		expect(settings.formPresentation).toBe('dialog');
+	});
+
+	it.each([['modal'], [''], ['Drawer']])(
+		'an unknown value %j falls back to the drawer',
+		async (stored) => {
+			const settings = await loadSettings({ 'banto.formPresentation': stored });
+			expect(settings.formPresentation).toBe('drawer');
+		}
+	);
+
+	it('setFormPresentation writes localStorage and the provider', async () => {
+		const settings = await loadSettings();
+		settings.setFormPresentation('dialog');
+		expect(settings.formPresentation).toBe('dialog');
+		expect(store.get('banto.formPresentation')).toBe('dialog');
+		expect(mocks.set).toHaveBeenCalledWith('ui.formPresentation', 'dialog');
+	});
+
+	it('syncFromProvider: reads the saved value, and an invalid one resets to the drawer', async () => {
+		const settings = await loadSettings({ 'banto.formPresentation': 'dialog' });
+		providerHolds({ 'ui.formPresentation': 'drawer' });
+		await settings.syncFromProvider();
+		expect(settings.formPresentation).toBe('drawer');
+		providerHolds({ 'ui.formPresentation': 'dialog' });
+		await settings.syncFromProvider();
+		expect(settings.formPresentation).toBe('dialog');
+		providerHolds({ 'ui.formPresentation': 'bogus' });
+		await settings.syncFromProvider();
+		expect(settings.formPresentation).toBe('drawer');
+	});
+});

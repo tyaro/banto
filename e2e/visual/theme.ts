@@ -197,3 +197,16 @@ export async function primeDensity(
 		{ cacheKey: DENSITY_KEY, providerKey: DENSITY_PROVIDER_KEY, value: density }
 	);
 }
+
+/**
+ * Forces the dialog form presentation (settings.svelte.ts `formPresentation`)
+ * before first paint: the cache key and the demo provider's key (`banto.ui.`
+ * + `ui.formPresentation`), like `primeMenubar`. Call alongside
+ * `primeThemeAndAuth`, before the test's first `page.goto()`.
+ */
+export async function primeFormDialog(page: Page): Promise<void> {
+	await page.addInitScript(() => {
+		window.localStorage.setItem('banto.formPresentation', 'dialog');
+		window.localStorage.setItem('banto.ui.ui.formPresentation', 'dialog');
+	});
+}

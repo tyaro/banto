@@ -10,6 +10,7 @@
 	import type { Component } from 'svelte';
 	import type { ThemeDensity, ThemePreset } from '@banto/theme';
 	import {
+		AppWindow,
 		Check,
 		Languages,
 		MonitorPlay,
@@ -32,6 +33,7 @@
 		LAUNCHER_OPACITY_MIN,
 		LAUNCHER_OPACITY_STEP,
 		settings,
+		type FormPresentation,
 		type LauncherPosition,
 		type NavLayout
 	} from '#lib/settings.svelte.js';
@@ -59,6 +61,12 @@
 		{ value: 'touch', label: m['settings.densityTouch'](), icon: Pointer }
 	];
 
+	// How a resource's detail / create form opens: drawer (default) or dialog.
+	const formPresentations: SegmentedOption<FormPresentation>[] = [
+		{ value: 'drawer', label: m['settings.formPresentationDrawer'](), icon: PanelRight },
+		{ value: 'dialog', label: m['settings.formPresentationDialog'](), icon: AppWindow }
+	];
+
 	// Navigation layout (nav-launcher-plan.md §3, D1: shown as "Dock", the
 	// value is 'launcher'). The opacity slider only matters for the dock.
 	const navLayouts: { value: NavLayout; label: string; icon: Component }[] = [
@@ -80,6 +88,7 @@
 	// Ids for the headings that name the segmented controls (aria-labelledby).
 	const uid = $props.id();
 	const densityHeadingId = `${uid}-density`;
+	const formPresentationHeadingId = `${uid}-form-presentation`;
 	const launcherPositionHeadingId = `${uid}-launcher-position`;
 
 	// --- i18n layer ② (ADR-0005): the language picker ---------
@@ -177,6 +186,16 @@
 			labelledby={densityHeadingId}
 			onchange={(value) => settings.setThemeDensity(value)}
 		/>
+
+		<h4 id={formPresentationHeadingId}>{m['settings.formPresentationHeading']()}</h4>
+		<SegmentedControl
+			options={formPresentations}
+			value={settings.formPresentation}
+			name="form-presentation"
+			labelledby={formPresentationHeadingId}
+			onchange={(value) => settings.setFormPresentation(value)}
+		/>
+		<p class="note">{m['settings.formPresentationNote']()}</p>
 
 		<p class="note">
 			{m['settings.themeNote']()}
