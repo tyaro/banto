@@ -27,7 +27,6 @@
 		getReachCheckStatus,
 		issueReachCheck,
 		type ReachCheckRefusal,
-		type ReachRecord,
 		type ServerStatus
 	} from '#lib/banto/serverAdmin.js';
 	import {
