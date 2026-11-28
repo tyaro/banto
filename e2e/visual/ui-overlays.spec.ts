@@ -93,27 +93,75 @@ test.describe('ui-demo Modal / Drawer behaviour', () => {
 		await expect(opener).toBeFocused();
 	});
 
-	test('Modal opened from a container already inert behind another modal still takes focus (#1055)', async ({
+	test('a Modal opened while a Drawer is up is the layer on top, though it comes first in the document (#1055)', async ({
 		page
 	}) => {
-		// The Drawer makes the page (the Modal's opener included) inert. A Modal that opens from
-		// there (the demo's `.modal-host`, mounted before and after the Drawer in document order, so
-		// it stacks above it) must get its first focus after the registration hands its ancestors
-		// back - the browser refuses focus into an inert subtree. (A host BEFORE the Drawer would
-		// stay below it and rightly not take focus.)
+		// The demo's Modal sits BEFORE the Drawer in the DOM, at the same z-index (a dialog of the
+		// layout over a page's drawer). Opened last, it is the top layer: the Drawer goes into its
+		// backdrop, not the other way round. Its opener is inert behind the Drawer, hence the
+		// scripted click (an app opens such a dialog from code: a session that ran out).
 		await page.getByTestId('ui-demo-open-drawer').click();
 		const drawer = page.getByRole('dialog', { name: '見本のドロワー' });
 		await expect(drawer).toBeVisible();
 		await page.getByTestId('ui-demo-open-modal').evaluate((el: HTMLElement) => el.click());
 		const modal = page.getByRole('dialog', { name: '見本のモーダル' });
 		await expect(modal).toBeVisible();
+		const order = await page.evaluate(() => {
+			const find = (name: string) =>
+				document.querySelector(`[role="dialog"][aria-label="${name}"]`) as HTMLElement;
+			const modalEl = find('見本のモーダル');
+			const drawerEl = find('見本のドロワー');
+			return {
+				modalBeforeDrawer:
+					(modalEl.compareDocumentPosition(drawerEl) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+				modalInert: modalEl.closest('[inert]') !== null,
+				drawerInert: drawerEl.closest('[inert]') !== null,
+				// Drawn on top as well: equal z-indexes would paint the Drawer (later in the DOM)
+				// and its scrim over the Modal.
+				paintedAbove:
+					Number(getComputedStyle(modalEl.parentElement as Element).zIndex) >
+					Number(getComputedStyle(drawerEl.parentElement as Element).zIndex)
+			};
+		});
+		expect(order).toEqual({
+			modalBeforeDrawer: true,
+			modalInert: false,
+			drawerInert: true,
+			paintedAbove: true
+		});
 		await expect(modal.getByRole('button', { name: '閉じる' })).toBeFocused();
-		const inside = await page.evaluate(() =>
-			document
-				.querySelector('[role="dialog"][aria-label="見本のモーダル"]')
-				?.contains(document.activeElement)
+		// Tab stays in the Modal; Esc closes it alone and gives the Drawer back.
+		await page.keyboard.press('Tab');
+		expect(await modal.evaluate((el: HTMLElement) => el.contains(document.activeElement))).toBe(
+			true
 		);
-		expect(inside).toBe(true);
+		await page.keyboard.press('Escape');
+		await expect(modal).toBeHidden();
+		await expect(drawer).toBeVisible();
+		await expect(drawer.locator('xpath=..')).not.toHaveAttribute('inert', '');
+		await page.keyboard.press('Escape');
+		await expect(drawer).toBeHidden();
+	});
+
+	test('Modal opened in a container already inert behind another modal still takes focus (#1055)', async ({
+		page
+	}) => {
+		// The demo's `.modal-host` is mounted from the start, so the Drawer's backdrop has made it
+		// inert by the time the Modal opens inside it. The first focus must come after the
+		// registration hands the host back - the browser refuses focus into an inert subtree.
+		await page.getByTestId('ui-demo-open-drawer').click();
+		const drawer = page.getByRole('dialog', { name: '見本のドロワー' });
+		await expect(drawer).toBeVisible();
+		await expect(page.locator('.modal-host')).toHaveAttribute('inert', '');
+		await page.getByTestId('ui-demo-open-hosted').click();
+		const modal = page.getByRole('dialog', { name: 'ページ側のモーダル' });
+		await expect(modal).toBeVisible();
+		await expect(page.locator('.modal-host')).not.toHaveAttribute('inert', '');
+		await expect(modal.getByRole('button', { name: '閉じる' })).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(modal).toBeHidden();
+		await expect(drawer).toBeVisible();
+		await expect(page.getByTestId('ui-demo-open-hosted')).toBeFocused();
 	});
 });
 

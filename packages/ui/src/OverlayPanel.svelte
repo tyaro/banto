@@ -46,6 +46,7 @@
 		hasVisibleLayerAbove,
 		isCloseAllowed,
 		LAYER_INACTIVE_ATTR,
+		modalLayerLift,
 		restoreFocus,
 		trackModalLayer
 	} from './layering';
@@ -203,7 +204,14 @@
 		const node = panelEl;
 		if (!node) return;
 		const detachTrap = attachFocusTrap(node);
+		// Opened last = on top, also on screen: among the layers that share `--banto-z-modal`
+		// the registration decides, but equal z-indexes paint in document order (a Modal that
+		// sits before an open Drawer in the DOM). The lift stays through the exit motion.
+		const overlay = untrack(() => overlayEl);
+		overlay?.style.removeProperty('--overlay-lift');
 		const release = trackModalLayer(node);
+		const lift = modalLayerLift(node);
+		if (lift > 0) overlay?.style.setProperty('--overlay-lift', String(lift));
 		// Focus first AFTER the registration: a sibling container (a portal) that was already
 		// inert behind another modal is handed back by the registration, and the browser
 		// refuses focus into an inert subtree. Also covers a reopen during the exit motion.
@@ -270,7 +278,8 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		z-index: var(--banto-z-modal);
+		/* `--overlay-lift`: set while a layer opened earlier shares the z-index (see the script). */
+		z-index: calc(var(--banto-z-modal) + var(--overlay-lift, 0));
 		display: flex;
 		background: var(--banto-scrim);
 		opacity: 1;

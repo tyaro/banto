@@ -28,10 +28,32 @@ PR #1050 tried `inertOutside` (make the siblings outside `inert` when the pane o
 ### 1. `layering.ts` holds, per document, "the topmost modal layer"
 
 A modal layer calls `trackModalLayer(layer)` while it is open (`Modal`, `Drawer`, `ConfirmDialog`, `CommandPalette`, the
-modal drawer of `ThreePaneLayout`). The topmost tracked layer (nested inside another = above it; otherwise the existing
-"above" rules = z-index, then document order) decides the backdrop: on the way from `<body>` down to that layer, every
-element beside the path gets `inert`. A lower layer is part of the backdrop until the upper one closes. The order in which
-layers close does not matter (the backdrop is rebuilt on every change).
+modal drawer of `ThreePaneLayout`). The topmost tracked layer decides the backdrop: on the way from `<body>` down to that
+layer, every element beside the path gets `inert`. A lower layer is part of the backdrop until the upper one closes. The
+order in which layers close does not matter (the backdrop is rebuilt on every change).
+
+**Which tracked layer is above which** is decided in this order:
+
+1. Nested inside another layer = above it.
+2. Different z-indexes: the higher number is above, whoever opened last (a command palette at 1000 stays above a `Modal`
+   at 900 opened after it - what is drawn on top is on top).
+3. Equal z-indexes: **the one registered (opened) last is above**, not the later one in the document. A dialog of the
+   layout (a "your session ran out" confirmation) can sit before a page's `Drawer` in the DOM; by document order it would
+   stay `inert` as the Drawer's backdrop although it opened last.
+
+A registration is one "open". A layer that closes and opens again registers anew, so it becomes the top among its equals
+(also when it was the lower one: "what opened just now is on top", consistently). The order of the layers that remain
+does not change when another one closes.
+
+The "above" test of Esc and of the focus pull-back (`hasVisibleLayerAbove` and friends) follows the same rule: at equal
+z-indexes, when both are tracked layers (or inside one) the registration order decides; **when either is untracked, the
+document order as before**. Esc so closes the upper layer only and never disagrees with the `inert` of the backdrop.
+
+CSS paints equal z-indexes in document order, so the rule alone would leave the upper layer drawn under the lower one's
+scrim. `OverlayPanel` (`Modal`, `Drawer`, `ConfirmDialog` - all at `--banto-z-modal`) therefore raises its own z-index
+after registering, by one more than the layers already open at the same z-index (`--overlay-lift`; a single open layer
+gets 0 = the theme's number). Once raised, rule 2 gives the same answer. An app that tracks its own layer at the same
+z-index as a @banto/ui layer decides its paint order itself (a different z-index is the simple way).
 
 Adding and removing `inert` per layer (reference counts) was rejected: computing "the set that must be inert now" and
 writing only the difference to what we set keeps one state under out-of-order closes and DOM changes.
@@ -54,7 +76,8 @@ writing only the difference to what we set keeps one state under out-of-order cl
   announcements, so a live region and its ancestors are not made inert. Instead **the controls inside it (buttons, links
   ...) are made `inert` one by one**. The notice is read; the button behind the modal cannot be pressed. Not putting
   controls inside live regions is the real fix (done alongside #1055); this guards what is left.
-- **Untracked layers that are above** (an app's own dialog, an open off-canvas sidebar; by the existing "above" rules):
+- **Untracked layers that are above** (an app's own dialog, an open off-canvas sidebar; by the existing "above" rules =
+  z-index, then document order - an untracked layer has no registration order):
   Esc already yields to them, so they stay usable. One that appears later inside an element we made inert is found and
   let out. Such a layer does not make the rest inert, though: an app's own modal layer calls `trackModalLayer`.
 
@@ -86,6 +109,9 @@ without Esc. Non-modal drawers (`leftDrawerModal` / `rightDrawerModal` false) do
 - "Above" compares z-index numbers, so a number inside another stacking context (the pane is `z-index: 2` inside its
   frame) can disagree with what is really drawn on top (the same limit as the existing Esc rules). An untracked layer
   judged "above" this way stays out of the backdrop.
+- While two or more `Modal` / `Drawer` are stacked, the later one's z-index is `--banto-z-modal` plus one per layer. An
+  untracked layer at that same value (an open off-canvas sidebar = `--banto-z-sidebar`) is then below it wherever it is in
+  the document, and part of the backdrop.
 - Making a control inside a live region `inert` puts it back into the accessibility tree on close; an `aria-atomic`
   region may be read again.
 - For a layer inside a shadow DOM, only what is outside the shadow root becomes the backdrop.

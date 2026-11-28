@@ -364,6 +364,7 @@
 	let modalOpen = $state(false);
 	let drawerOpen = $state(false);
 	let nestedOpen = $state(false);
+	let hostedOpen = $state(false);
 	let drawerNote = $state('');
 	let overlayClosed = $state(0);
 	const overlayMessages = { overlayClose: () => m['common.close']() };
@@ -371,6 +372,7 @@
 	function closeDrawer(): void {
 		drawerOpen = false;
 		nestedOpen = false;
+		hostedOpen = false;
 		drawerNote = '';
 		overlayClosed += 1;
 	}
@@ -1804,6 +1806,31 @@
 <!-- Outside the cards: under the glass preset SurfaceCard has a
      backdrop-filter, which would make it the containing block of the
      palette's (and the Modal / Drawer's) fixed overlay. -->
+<!-- Before the Drawer in the document on purpose: opened while the Drawer is up, it is
+     still the layer on top - the one opened last, not the later one in the DOM (#1055). -->
+<Modal
+	open={modalOpen}
+	title={m['uiDemo.overlay.modalTitle']()}
+	messages={overlayMessages}
+	onclose={() => {
+		modalOpen = false;
+		overlayClosed += 1;
+	}}
+>
+	<div class="stack">
+		<p class="body-text">{m['uiDemo.overlay.modalBody']()}</p>
+		<div class="field">
+			<label class="caption" for="ui-demo-modal-date">{m['uiDemo.overlay.modalDate']()}</label>
+			<DateInput
+				id="ui-demo-modal-date"
+				bind:value={modalDate}
+				locale={getLocale()}
+				messages={dateMessages}
+			/>
+		</div>
+	</div>
+</Modal>
+
 <Drawer
 	open={drawerOpen}
 	title={m['uiDemo.overlay.drawerTitle']()}
@@ -1827,6 +1854,14 @@
 			>
 				{m['uiDemo.overlay.openNested']()}
 			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				data-testid="ui-demo-open-hosted"
+				onclick={() => (hostedOpen = true)}
+			>
+				{m['uiDemo.overlay.openHosted']()}
+			</button>
 		</div>
 	</div>
 	<!-- Rendered inside the drawer's body on purpose: a nested layer with its
@@ -1841,32 +1876,16 @@
 	</Modal>
 </Drawer>
 
-<!-- After the Drawer on purpose: two overlays at the same z-index stack by document order,
-     so a Modal opened while the Drawer is up (from a container the Drawer made inert, #1055)
-     is the topmost layer and takes the first focus. The wrapper is the already-mounted container
-     the Drawer's backdrop makes inert. -->
+<!-- A dialog of the page mounted elsewhere, opened from the Drawer: its wrapper is
+     already inert behind the Drawer when it opens (#1055). -->
 <div class="modal-host">
 	<Modal
-		open={modalOpen}
-		title={m['uiDemo.overlay.modalTitle']()}
+		open={hostedOpen}
+		title={m['uiDemo.overlay.hostedTitle']()}
 		messages={overlayMessages}
-		onclose={() => {
-			modalOpen = false;
-			overlayClosed += 1;
-		}}
+		onclose={() => (hostedOpen = false)}
 	>
-		<div class="stack">
-			<p class="body-text">{m['uiDemo.overlay.modalBody']()}</p>
-			<div class="field">
-				<label class="caption" for="ui-demo-modal-date">{m['uiDemo.overlay.modalDate']()}</label>
-				<DateInput
-					id="ui-demo-modal-date"
-					bind:value={modalDate}
-					locale={getLocale()}
-					messages={dateMessages}
-				/>
-			</div>
-		</div>
+		<p class="body-text">{m['uiDemo.overlay.hostedBody']()}</p>
 	</Modal>
 </div>
 

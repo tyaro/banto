@@ -56,8 +56,14 @@
  * - it is in an open popover (the browser's top layer, above any z-index);
  * - its effective z-index ({@link effectiveZIndex}, read from CSS - so the
  *   theme's `--banto-z-*` tokens decide, nothing is copied here) is higher;
- * - its z-index is equal and it comes later in document order (CSS paint
- *   order), so two equal layers never both yield;
+ * - its z-index is equal and it was **opened later** - when both belong to a
+ *   layer registered with {@link trackModalLayer} (Modal, Drawer, ...; a layer
+ *   inside one counts as that one). The backdrop of the later one makes the
+ *   earlier one `inert` wherever the two sit in the document, so Esc and the
+ *   focus trap must agree with it;
+ * - its z-index is equal, the registration does not tell (one of the two is
+ *   not registered) and it comes later in document order (CSS paint order).
+ *   Either way two equal layers never both yield;
  * - it sits **inside** `except` with its own positioned z-index (a Modal
  *   opened from a Drawer's content, a popup menu inside a dialog). A nested
  *   layer without its own z-index is part of `except`, not above it.
@@ -68,11 +74,20 @@
  *
  * Modal, Drawer, ConfirmDialog, CommandPalette and ThreePaneLayout's modal
  * drawer call {@link trackModalLayer} while open. Per document, the topmost
- * tracked layer (nested inside another = above it; else the "above" rules
- * above) decides the backdrop: walking from `<body>` down to the layer, every
- * element beside that path gets `inert`. A lower tracked layer is just part
- * of the backdrop until the upper one is released, in whatever order they
- * close.
+ * tracked layer decides the backdrop: walking from `<body>` down to the
+ * layer, every element beside that path gets `inert`. Among tracked layers:
+ * nested inside another = above it; else the higher z-index (what is drawn
+ * above stays above, whoever opened last - a palette at 1000 over a modal at
+ * 900); at the same z-index **the one registered last** - not the document
+ * order: a dialog of the layout that sits before the page's Drawer in the DOM
+ * and opens while the Drawer is up must be usable, not part of the Drawer's
+ * backdrop. A registration is one "open": a layer that closes and opens
+ * again registers anew and so goes above its equals. A lower tracked layer
+ * is just part of the backdrop until the upper one is released, in whatever
+ * order they close (the order of those that remain is kept).
+ * Equal z-indexes paint in document order, so OverlayPanel (Modal, Drawer,
+ * ConfirmDialog) also raises its own z-index over the equals opened before
+ * it ({@link modalLayerLift}): on top by the rules = drawn on top.
  *
  * - Only the `inert` this module set is removed. An element that was already
  *   `inert` is left alone, and one whose `inert` the app writes while a layer
@@ -189,12 +204,35 @@ function isInOpenPopover(el: Element): boolean {
 	}
 }
 
+/**
+ * When was the tracked modal layer that `el` belongs to registered
+ * ({@link trackModalLayer}): its place in the order of opening, or `-1` when
+ * `el` is in none. The innermost tracked layer around `el` (or `el` itself)
+ * speaks for it; registered twice, the latest counts.
+ */
+function modalOrderOf(el: Element): number {
+	const entries = modalBackdrops.get(el.ownerDocument)?.entries;
+	if (!entries) return -1;
+	let found = -1;
+	for (let index = 0; index < entries.length; index += 1) {
+		const layer = entries[index].layer;
+		if (!layer.contains(el)) continue;
+		if (found === -1 || entries[found].layer.contains(layer)) found = index;
+	}
+	return found;
+}
+
 /** Is the active layer `el` above `self` (see the module doc)? */
 function isAbove(el: Element, self: Element, selfZ: number): boolean {
 	if (isInOpenPopover(el)) return true;
 	if (self.contains(el)) return hasOwnZIndexWithin(el, self);
 	const z = effectiveZIndex(el);
 	if (z !== selfZ) return z > selfZ;
+	// Equal z: between two registered modal layers the one opened later is on
+	// top (its backdrop makes the other inert, whatever the document order).
+	const order = modalOrderOf(el);
+	const selfOrder = modalOrderOf(self);
+	if (order !== -1 && selfOrder !== -1 && order !== selfOrder) return order > selfOrder;
 	return (self.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
@@ -391,10 +429,12 @@ export interface ModalLayerOptions {
 interface ModalEntry {
 	layer: HTMLElement;
 	backdrop?: () => Element | null | undefined;
+	/** What {@link modalLayerLift} told this layer to add to its z-index. */
+	lift: number;
 }
 
 interface ModalBackdrop {
-	/** Tracked layers, in the order they were opened. */
+	/** Tracked layers, in the order they were opened - what decides between equal z-indexes. */
 	entries: ModalEntry[];
 	/** The elements whose `inert` this module set (and so may remove). */
 	applied: Set<HTMLElement>;
@@ -405,7 +445,11 @@ interface ModalBackdrop {
 
 const modalBackdrops = new WeakMap<Document, ModalBackdrop>();
 
-/** Is the tracked layer `el` above the tracked layer `other`? Nested inside = above; else the module's z rules. */
+/**
+ * Is the tracked layer `el` above the tracked layer `other`? Nested inside =
+ * above; else the module's z rules, where equal z = registered later
+ * ({@link isAbove}).
+ */
 function isModalAbove(el: HTMLElement, other: HTMLElement): boolean {
 	if (other.contains(el)) return true;
 	if (el.contains(other)) return false;
@@ -562,6 +606,37 @@ function syncModalBackdrop(doc: Document, state: ModalBackdrop): void {
 }
 
 /**
+ * How much the tracked layer `layer` must add to its z-index to be **drawn**
+ * above the tracked layers it is above by the rules: at the same z-index the
+ * one registered last is on top, but CSS paints equal z-indexes in document
+ * order - a Modal that sits before an open Drawer in the DOM would be usable
+ * and yet painted under the Drawer's scrim. One more than the highest lift
+ * among the other open layers that share its z-index (before their lift);
+ * `0` when there is none, so a single layer keeps the theme's number.
+ *
+ * Package-internal (OverlayPanel: Modal / Drawer / ConfirmDialog, the layers
+ * that share `--banto-z-modal`). Call it right after {@link trackModalLayer},
+ * with the previous lift taken off the element, and apply the answer.
+ */
+export function modalLayerLift(layer: HTMLElement): number {
+	const entries = modalBackdrops.get(layer.ownerDocument)?.entries ?? [];
+	// Registered twice: the latest speaks.
+	const index = entries.map((entry) => entry.layer).lastIndexOf(layer);
+	if (index === -1) return 0;
+	const own = entries[index];
+	const z = effectiveZIndex(layer);
+	let lift = 0;
+	for (const entry of entries.slice(0, index)) {
+		// Nested either way: the stacking context of the outer one decides, not a number.
+		if (entry.layer.contains(layer) || layer.contains(entry.layer)) continue;
+		if (!entry.layer.isConnected) continue;
+		if (effectiveZIndex(entry.layer) - entry.lift === z) lift = Math.max(lift, entry.lift + 1);
+	}
+	own.lift = lift;
+	return lift;
+}
+
+/**
  * Tell the document that the modal layer `layer` (the element that says
  * `aria-modal="true"`) is open, and return the function that takes it back
  * (promise 8; safe to call twice). While it is the topmost tracked layer,
@@ -571,7 +646,9 @@ function syncModalBackdrop(doc: Document, state: ModalBackdrop): void {
  *
  * Call it when the layer opens and release it the moment it starts closing,
  * **before** focus is given back (the opener is inert until then). Layers may
- * be released in any order.
+ * be released in any order. Among layers at the same z-index the one
+ * registered last is on top, wherever it is in the document - so register on
+ * open, not on mount.
  */
 export function trackModalLayer(layer: HTMLElement, options: ModalLayerOptions = {}): () => void {
 	const doc = layer.ownerDocument;
@@ -582,7 +659,7 @@ export function trackModalLayer(layer: HTMLElement, options: ModalLayerOptions =
 		observer: null
 	};
 	modalBackdrops.set(doc, state);
-	const entry: ModalEntry = { layer, backdrop: options.backdrop };
+	const entry: ModalEntry = { layer, backdrop: options.backdrop, lift: 0 };
 	state.entries.push(entry);
 	syncModalBackdrop(doc, state);
 	let released = false;

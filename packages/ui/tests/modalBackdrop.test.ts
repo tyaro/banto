@@ -14,7 +14,8 @@
  * `settle()` waits for it.
  */
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { MODAL_EXEMPT_ATTR, trackModalLayer } from '../src/index';
+import { MODAL_EXEMPT_ATTR, hasVisibleLayerAbove, trackModalLayer } from '../src/index';
+import { modalLayerLift } from '../src/layering';
 
 beforeAll(() => {
 	Element.prototype.getClientRects = function (this: Element) {
@@ -287,7 +288,7 @@ describe('trackModalLayer: layers stacked', () => {
 		expect(inertCount()).toBe(0);
 	});
 
-	it('the topmost is decided by z-index, not by who opened last; equal z = later in the document', () => {
+	it('a higher z-index stays on top, whoever opened last', () => {
 		const high = layer(1000);
 		const low = layer(900);
 		const releaseHigh = track(high.panel);
@@ -299,12 +300,142 @@ describe('trackModalLayer: layers stacked', () => {
 		expect(blocked(low.panel)).toBe(false);
 		expect(inert(high.overlay)).toBe(true);
 		releaseLow();
+		expect(inertCount()).toBe(0);
+	});
+
+	it('equal z: the layer registered last is on top, even when it comes first in the document', () => {
+		// A dialog of the layout, before the page's drawer in the DOM, opened while the drawer is up.
+		const early = layer(900);
+		const late = layer(900);
+		const outside = el('button');
+		const releaseLate = track(late.panel);
+		expect(inert(early.overlay)).toBe(true);
+		const releaseEarly = track(early.panel);
+		expect(blocked(early.panel)).toBe(false);
+		expect(inert(late.overlay)).toBe(true);
+		expect(inert(outside)).toBe(true);
+		// Esc and the focus trap agree: only the upper one acts.
+		expect(hasVisibleLayerAbove({ except: early.panel })).toBe(false);
+		expect(hasVisibleLayerAbove({ except: late.panel })).toBe(true);
+		// Closed: back to the one below.
+		early.panel.setAttribute('data-layer-inactive', 'true');
+		releaseEarly();
+		expect(blocked(late.panel)).toBe(false);
+		expect(inert(early.overlay)).toBe(true);
+		expect(inert(outside)).toBe(true);
+		expect(hasVisibleLayerAbove({ except: late.panel })).toBe(false);
+		releaseLate();
+		expect(inertCount()).toBe(0);
+	});
+
+	it('equal z, document order = opening order: unchanged (the later one is on top)', () => {
 		const first = layer(900);
 		const second = layer(900);
-		track(second.panel);
 		track(first.panel);
+		track(second.panel);
 		expect(inert(first.overlay)).toBe(true);
 		expect(blocked(second.panel)).toBe(false);
+		expect(hasVisibleLayerAbove({ except: first.panel })).toBe(true);
+		expect(hasVisibleLayerAbove({ except: second.panel })).toBe(false);
+	});
+
+	it('equal z, three layers closed out of order: the last opened of those left decides', () => {
+		const a = layer(900);
+		const b = layer(900);
+		const c = layer(900);
+		// Opened c, a, b: b on top, then a, then c - none of it the document order.
+		const releaseC = track(c.panel);
+		const releaseA = track(a.panel);
+		const releaseB = track(b.panel);
+		expect(blocked(b.panel)).toBe(false);
+		expect(inert(a.overlay)).toBe(true);
+		expect(inert(c.overlay)).toBe(true);
+		// The lowest goes first: nothing changes for the top.
+		c.panel.setAttribute('data-layer-inactive', 'true');
+		releaseC();
+		expect(blocked(b.panel)).toBe(false);
+		expect(inert(a.overlay)).toBe(true);
+		expect(inert(c.overlay)).toBe(true);
+		b.panel.setAttribute('data-layer-inactive', 'true');
+		releaseB();
+		expect(blocked(a.panel)).toBe(false);
+		expect(inert(b.overlay)).toBe(true);
+		releaseA();
+		expect(inertCount()).toBe(0);
+	});
+
+	it('equal z: a layer that closes and opens again goes above the one that stayed', () => {
+		const early = layer(900);
+		const late = layer(900);
+		const releaseEarly = track(early.panel);
+		track(late.panel);
+		expect(blocked(late.panel)).toBe(false);
+		releaseEarly();
+		track(early.panel);
+		expect(blocked(early.panel)).toBe(false);
+		expect(inert(late.overlay)).toBe(true);
+	});
+
+	it('equal z: a layer inside a registered one counts as that one against the others', () => {
+		const early = layer(900);
+		const late = layer(900);
+		// No z-index of its own: part of `early` (a popup menu in the dialog).
+		const menu = el('div', early.panel, { role: 'menu' });
+		track(late.panel);
+		track(early.panel);
+		early.panel.removeAttribute('role');
+		// Only the menu is left to be "above": it is, as part of the layer opened last.
+		expect(hasVisibleLayerAbove({ except: late.panel })).toBe(true);
+		menu.remove();
+		expect(hasVisibleLayerAbove({ except: late.panel })).toBe(false);
+	});
+
+	it('modalLayerLift: one above the open layers that share the z-index, 0 otherwise', () => {
+		const lift = (l: { overlay: HTMLElement; panel: HTMLElement }) => {
+			const n = modalLayerLift(l.panel);
+			l.overlay.style.zIndex = String(900 + n);
+			return n;
+		};
+		const high = layer(1000);
+		const a = layer(900);
+		const b = layer(900);
+		const c = layer(900);
+		expect(modalLayerLift(a.panel)).toBe(0);
+		track(high.panel);
+		const releaseB = track(b.panel);
+		// Alone at its z-index (the palette above is another number): the theme's value.
+		expect(lift(b)).toBe(0);
+		track(a.panel);
+		expect(lift(a)).toBe(1);
+		const nested = layer(900, a.panel);
+		track(nested.panel);
+		// Inside `a`: its stacking context decides; `b` at 900 is the only other one.
+		expect(lift(nested)).toBe(1);
+		track(c.panel);
+		expect(lift(c)).toBe(2);
+		// Higher z-index = above, as between any two layers: the backdrop agrees with the paint.
+		expect(blocked(high.panel)).toBe(false);
+		expect(inert(c.overlay)).toBe(true);
+		b.panel.setAttribute('data-layer-inactive', 'true');
+		releaseB();
+		b.panel.removeAttribute('data-layer-inactive');
+		b.overlay.style.zIndex = '900';
+		track(b.panel);
+		expect(lift(b)).toBe(3);
+	});
+
+	it('equal z: an untracked layer is still placed by the document order', () => {
+		const early = layer(900);
+		const late = layer(900);
+		const app = el('div', document.body, { role: 'dialog' });
+		app.style.position = 'fixed';
+		app.style.zIndex = '900';
+		track(late.panel);
+		track(early.panel);
+		// Later in the document than the top one, nobody registered it: kept usable, as before.
+		expect(blocked(app)).toBe(false);
+		expect(blocked(early.panel)).toBe(false);
+		expect(inert(late.overlay)).toBe(true);
 	});
 
 	it('three layers, closed from the middle', () => {
