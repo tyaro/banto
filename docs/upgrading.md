@@ -8,7 +8,8 @@ Banto を使うアプリ（banto-industrial の banto-hub・chronogazer など�
 [ADR-0011](adr/0011-git-tag-distribution.md)）。
 
 > 本書は日本語のみ。リリースごとの案内の雛形は [release-notes-template.md](release-notes-template.md)、
-> 版ごとの実際の変更は [CHANGELOG.md](../CHANGELOG.md)。
+> 版ごとの実際の変更は [CHANGELOG.md](../CHANGELOG.md)。特定の下流に固有の注意は
+> [downstream-notes.md](downstream-notes.md)。
 
 ## 1. 最初に知ること: 取り込み経路は 3 種類ある
 
