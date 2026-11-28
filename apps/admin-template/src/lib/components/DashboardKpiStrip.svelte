@@ -88,7 +88,7 @@
 	   without SurfaceCard's optional title/description header. */
 	.stat-row {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 		gap: var(--banto-space-4);
 	}
 
@@ -163,8 +163,6 @@
 		font-weight: 650;
 		color: var(--banto-text);
 		font-variant-numeric: tabular-nums;
-		/* A long figure wraps instead of widening the page (200% text, #1044). */
-		overflow-wrap: anywhere;
 	}
 
 	/* Kiosk (#624 PR-2): KPIs readable from across the room. Keyed on the
@@ -212,17 +210,30 @@
 
 	.stat-value-row {
 		display: flex;
-		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--banto-space-3);
 	}
 
-	/* The sparkline takes only what is left (flex-basis 0, up to its own width),
-	   so it never forces the row to wrap: the default tile keeps its height, and
-	   the value alone wraps when it is long or the text is large (#1044). */
-	.stat-value-row > :global(.banto-sparkline) {
-		flex: 1 1 0;
-		min-width: 0;
-		max-width: 72px;
+	/* Narrow viewport / large text (WCAG 1.4.10, #1044): the tile may be narrower
+	   than 200px, the value may wrap, and the sparkline takes only what is left.
+	   Only below 480px, so the default layout is the same as before. */
+	@media (max-width: 480px) {
+		.stat-row {
+			grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+		}
+
+		:global(.shell:not(.kiosk)) .stat-value {
+			overflow-wrap: anywhere;
+		}
+
+		:global(.shell:not(.kiosk)) .stat-value-row {
+			flex-wrap: wrap;
+		}
+
+		:global(.shell:not(.kiosk)) .stat-value-row > :global(.banto-sparkline) {
+			flex: 1 1 0;
+			min-width: 0;
+			max-width: 72px;
+		}
 	}
 </style>

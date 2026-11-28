@@ -1219,7 +1219,7 @@ input.banto-switch[type='checkbox'][role='switch']:disabled {
 	/* min-height, not height: the label may wrap at a larger text size
 	   (WCAG 1.4.4, #1044). The block padding only matters once it wraps. */
 	min-height: var(--banto-control-height);
-	padding: var(--banto-space-1) var(--banto-space-4);
+	padding: 0 var(--banto-space-4);
 	border-radius: var(--banto-radius-md);
 	border: var(--banto-border-width) solid transparent;
 	font: inherit;
@@ -1229,8 +1229,14 @@ input.banto-switch[type='checkbox'][role='switch']:disabled {
 }
 .banto-btn--sm {
 	min-height: var(--banto-control-height-sm);
-	padding: var(--banto-space-1) var(--banto-space-3);
+	padding: 0 var(--banto-space-3);
 	font-size: var(--banto-font-size-md);
+}
+@media (max-width: 480px) {
+	.banto-btn,
+	.banto-btn--sm {
+		padding-block: var(--banto-space-1);
+	}
 }
 .banto-btn--primary {
 	background: var(--banto-primary-solid);

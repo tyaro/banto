@@ -2109,9 +2109,14 @@
 		position: relative;
 		display: inline-flex;
 		align-items: center;
-		min-width: 0;
-		max-width: 100%;
 		color: var(--banto-text-muted);
+	}
+
+	@media (max-width: 480px) {
+		.search {
+			min-width: 0;
+			max-width: 100%;
+		}
 	}
 
 	.search :global(svg) {

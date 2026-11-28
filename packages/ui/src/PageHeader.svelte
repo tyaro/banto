@@ -90,8 +90,13 @@
 		margin: 0;
 	}
 
+	@media (max-width: 480px) {
+		.actions {
+			max-width: 100%;
+		}
+	}
+
 	.actions {
-		max-width: 100%;
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;

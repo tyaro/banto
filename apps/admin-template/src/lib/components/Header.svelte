@@ -558,7 +558,9 @@
 		display: inline-flex;
 		align-items: center;
 		gap: var(--banto-space-2);
-		min-height: var(--banto-control-height-sm);
+		/* rem-based floor: equals the control height at the default size, and grows
+		   with the root text size so the shortcut stays inside (#1044). */
+		height: max(var(--banto-control-height-sm), 1.6rem);
 		padding: 0 var(--banto-space-3);
 		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);
@@ -590,8 +592,6 @@
 		color: var(--banto-text-muted);
 		font: inherit;
 		font-size: var(--banto-font-size-xs);
-		/* Keeps the pill at its min-height at the default size (#1044). */
-		line-height: 1.2;
 	}
 
 	.search-icon-only {
