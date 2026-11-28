@@ -1,4 +1,4 @@
-import { thinCategoryLabels } from './ticks-time';
+import { thinCategoryLabels, thinCenteredTicks } from './ticks-time';
 
 /**
  * Axis-label width estimation (pure, Vitest-covered - spec §6.2 keeps number
@@ -240,4 +240,72 @@ export function fitBandLabels(
 	return kept
 		.filter((i) => texts[i] !== '')
 		.map((i) => ({ index: i, text: texts[i], full: labels[i] }));
+}
+
+/**
+ * Left margin needed so the FIRST middle-anchored x label of a value axis
+ * (centred on the plot's left edge) doesn't leave the svg: half its width plus
+ * a small pad. Callers take `max(baseLeft, ...)` so layouts whose labels already
+ * fit are unchanged. With `totalWidth`, capped at 40% of it like the other margins.
+ */
+export function leftMarginForFirstLabel(
+	firstLabel: string,
+	options: TickMarginOptions = {}
+): number {
+	const { fontSize = 11, gap = 4, totalWidth = 0 } = options;
+	const margin = Math.ceil(estimateLabelWidth(firstLabel, fontSize) / 2 + gap);
+	return Math.min(margin, widthCap(Infinity, totalWidth));
+}
+
+/**
+ * Indices of the labels of a continuous (value) axis to draw: all while they
+ * fit, otherwise thinned evenly with the first and last kept. `xs[i]` is the
+ * centre of label `i`; widths are estimated at `fontSize` (same measure as
+ * `fitBandLabels`, no DOM). Only the labels are thinned - callers keep every
+ * gridline.
+ */
+export function thinValueLabels(
+	labels: string[],
+	xs: number[],
+	options: { fontSize?: number; gap?: number } = {}
+): number[] {
+	const { fontSize = 11, gap = 4 } = options;
+	return thinCenteredTicks(
+		xs,
+		labels.map((l) => estimateLabelWidth(l, fontSize)),
+		gap
+	);
+}
+
+/**
+ * True when the y label at the plot's bottom-left (end-anchored at
+ * `innerLeft - yGap`, centred on the x axis) would collide with the first x
+ * label (`xAnchor` 'middle' on the plot's left edge, or 'start'; baseline
+ * `xBaseline` px below the axis). At the standard font the x label sits
+ * below the y label, so nothing is dropped; a large font pushes them into each
+ * other, and then the caller omits the y label (the origin is implied by the
+ * axis). Glyph boxes use digit height (~0.72em).
+ */
+export function originLabelsCollide(
+	xLabel: string,
+	yLabel: string,
+	options: {
+		fontSize?: number;
+		xBaseline?: number;
+		xAnchor?: 'middle' | 'start';
+		/** Distance (px) of the x label's anchor from the plot's left edge (0 = on the edge; a band centre for a band axis). */
+		xOffset?: number;
+		yGap?: number;
+	} = {}
+): boolean {
+	const { fontSize = 11, xBaseline = 16, xAnchor = 'middle', xOffset = 0, yGap = 8 } = options;
+	if (xLabel === '' || yLabel === '') return false;
+	// vertical: x label top (below the axis) vs. bottom of the y label centred on the axis
+	if (xBaseline - 0.72 * fontSize >= 0.36 * fontSize) return false;
+	const xw = estimateLabelWidth(xLabel, fontSize);
+	const xLeft = xOffset + (xAnchor === 'middle' ? -xw / 2 : 0);
+	const yRight = -yGap;
+	const yLeft = yRight - estimateLabelWidth(yLabel, fontSize);
+	const xRight = xLeft + xw;
+	return xLeft < yRight && yLeft < xRight;
 }

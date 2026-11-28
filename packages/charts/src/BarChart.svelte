@@ -16,10 +16,14 @@
 	import { stackSeries, type StackSegment } from './core/stack';
 	import { roundedTopBarPath } from './core/path';
 	import { seriesColorVar } from './core/color';
-	import { thinCategoryLabels, thinCenteredTicks } from './core/ticks-time';
+	import { thinCenteredTicks } from './core/ticks-time';
 	import {
 		estimateLabelWidth,
 		leftMarginFor,
+		leftMarginForFirstLabel,
+		fitBandLabels,
+		originLabelsCollide,
+		rightMarginForBandLabel,
 		leftMarginForTicks,
 		rightMarginForLastTick,
 		truncateLabel
@@ -125,6 +129,10 @@
 	let tickFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	const MARGIN = $derived.by((): ChartMargin => {
+		const leftMargin = leftMarginForTicks(valueTicks.map(formatValueDisplay), 48, {
+			fontSize: tickFontSize,
+			totalWidth: plotWidth
+		});
 		const base = horizontal
 			? {
 					top: 8,
@@ -133,20 +141,30 @@
 						{ fontSize: tickFontSize, totalWidth: plotWidth }
 					),
 					bottom: 26,
-					left: leftMarginFor(
-						categories.map((cat) => String(cat ?? '')),
-						{ fontSize: tickFontSize, totalWidth: plotWidth }
+					// The first value tick is middle-anchored on the plot's left edge: reserve half of it.
+					left: Math.max(
+						leftMarginFor(
+							categories.map((cat) => String(cat ?? '')),
+							{ fontSize: tickFontSize, totalWidth: plotWidth }
+						),
+						leftMarginForFirstLabel(formatValueDisplay(valueTicks[0] ?? 0), {
+							fontSize: tickFontSize,
+							totalWidth: plotWidth
+						})
 					)
 				}
 			: {
 					top: 8,
-					right: 16,
 					bottom: 26,
 					// Vertical: the value tick labels, never below the previous 48px.
-					left: leftMarginForTicks(valueTicks.map(formatValueDisplay), 48, {
-						fontSize: tickFontSize,
-						totalWidth: plotWidth
-					})
+					left: leftMargin,
+					// The last category label is centred in the last band: reserve room so a
+					// large font on a narrow chart doesn't clip it (never below 16).
+					right: rightMarginForBandLabel(
+						categories.length > 0 ? String(categories[categories.length - 1] ?? '') : '',
+						categories.length,
+						{ baseRight: 16, left: leftMargin, totalWidth: plotWidth, fontSize: tickFontSize }
+					)
 				};
 		return { ...base, ...margins };
 	});
@@ -462,6 +480,20 @@
 					[domainMin, domainMax],
 					[m.innerTop + m.innerHeight, m.innerTop]
 				)}
+				{@const catScaleX = bandScale(
+					data.length,
+					[m.innerLeft, m.innerLeft + m.innerWidth],
+					CATEGORY_PADDING
+				)}
+				{@const xLabels = categories.map((cat) => String(cat ?? ''))}
+				<!-- The bottom y label yields to the first category label when a large font makes them meet. -->
+				{@const originCollides =
+					xLabels.length > 0 &&
+					originLabelsCollide(xLabels[0], formatValueDisplay(valueTicks[0] ?? 0), {
+						fontSize: tickFontSize,
+						xBaseline: 16,
+						xOffset: catScaleX.center(0) - m.innerLeft
+					})}
 				{#each valueTicks as tick, ti (tick)}
 					<line
 						x1={m.innerLeft}
@@ -476,35 +508,23 @@
 						class="tick-label"
 						text-anchor="end"
 						dominant-baseline="middle"
+						visibility={ti === 0 && originCollides ? 'hidden' : undefined}
 						{@attach ti === 0 ? trackTickFont : null}
 					>
 						{formatValueDisplay(tick)}
 					</text>
 				{/each}
-				{@const catScaleX = bandScale(
-					data.length,
-					[m.innerLeft, m.innerLeft + m.innerWidth],
-					CATEGORY_PADDING
-				)}
 				<!-- Category labels are thinned when crowded (many categories / large
 				     root font); bars stay at every category. -->
-				{@const shownCats = new Set(
-					thinCategoryLabels(
-						categories.map((_, i) => catScaleX.center(i)),
-						categories.map((cat) => estimateLabelWidth(String(cat ?? ''), tickFontSize))
-					)
-				)}
-				{#each categories as cat, i (i)}
-					{#if shownCats.has(i)}
-						<text
-							x={catScaleX.center(i)}
-							y={m.innerTop + m.innerHeight + 16}
-							class="tick-label"
-							text-anchor="middle"
-						>
-							{cat}
-						</text>
-					{/if}
+				{#each fitBandLabels( xLabels, xLabels.map( (_, i) => catScaleX.center(i) ), { fontSize: tickFontSize, totalWidth: width } ) as lb (lb.index)}
+					<text
+						x={catScaleX.center(lb.index)}
+						y={m.innerTop + m.innerHeight + 16}
+						class="tick-label"
+						text-anchor="middle"
+					>
+						{lb.text}{#if lb.text !== lb.full}<title>{lb.full}</title>{/if}
+					</text>
 				{/each}
 				<line
 					x1={m.innerLeft}

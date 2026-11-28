@@ -31,7 +31,13 @@
 	import { resolveBand } from './core/band';
 	import { dropCollidingTicks, everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
-	import { estimateLabelWidth, leftMarginForTicks, rightMarginForTicks } from './core/labels';
+	import {
+		estimateLabelWidth,
+		leftMarginForFirstLabel,
+		leftMarginForTicks,
+		originLabelsCollide,
+		rightMarginForTicks
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import {
 		fullViewport,
@@ -218,10 +224,21 @@
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	const MARGIN = $derived.by(() => {
 		const base = { ...DEFAULT_MARGIN, ...margins };
-		const left = leftMarginForTicks(leftTicks.map(formatYValue), base.left, {
-			totalWidth: plotWidth,
-			fontSize: tickFontSize
-		});
+		// The first x label is middle-anchored on the plot's left edge: reserve half
+		// of it (an explicit `margins.left` still wins as-is).
+		const left = Math.max(
+			leftMarginForTicks(leftTicks.map(formatYValue), base.left, {
+				totalWidth: plotWidth,
+				fontSize: tickFontSize
+			}),
+			margins?.left ??
+				(count > 0
+					? leftMarginForFirstLabel(formatXValue(xLabels[range[0]]), {
+							totalWidth: plotWidth,
+							fontSize: tickFontSize
+						})
+					: 0)
+		);
 		if (!hasRight) return { ...base, left };
 		const right = rightMarginForTicks(rightTicks.map(formatYRightValue), base.right, {
 			totalWidth: plotWidth,
@@ -482,6 +499,13 @@
 			{/each}
 
 			<!-- Gridlines + left y ticks (recessive, rule 4). -->
+			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
+			{@const originCollides =
+				count > 0 &&
+				originLabelsCollide(formatXValue(xLabels[range[0]]), formatYValue(leftTicks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 18
+				})}
 			{#each leftTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -496,6 +520,7 @@
 					class="tick-label y-tick"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={ti === 0 && originCollides ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}

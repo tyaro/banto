@@ -76,6 +76,9 @@ export {
 	leftMarginFor,
 	rightMarginForLastTick,
 	rightMarginForBandLabel,
+	leftMarginForFirstLabel,
+	thinValueLabels,
+	originLabelsCollide,
 	fitBandLabels,
 	type BandLabel,
 	type AxisMarginOptions

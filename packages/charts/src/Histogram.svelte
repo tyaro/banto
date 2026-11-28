@@ -22,7 +22,13 @@
 	import { linearScale, niceTicks } from './core/scale';
 	import { linePath, roundedTopBarPath } from './core/path';
 	import { seriesColorVar } from './core/color';
-	import { leftMarginForTicks, rightMarginForLastTick } from './core/labels';
+	import {
+		leftMarginForFirstLabel,
+		leftMarginForTicks,
+		originLabelsCollide,
+		rightMarginForLastTick,
+		thinValueLabels
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -75,10 +81,17 @@
 	const MARGIN = $derived.by((): ChartMargin => {
 		const m = {
 			...DEFAULT_MARGIN,
-			left: leftMarginForTicks(valueTicks.map(formatCount), DEFAULT_MARGIN.left, {
-				fontSize: tickFontSize,
-				totalWidth: plotWidth
-			}),
+			// The first x tick is middle-anchored on the plot's left edge: reserve half of it.
+			left: Math.max(
+				leftMarginForTicks(valueTicks.map(formatCount), DEFAULT_MARGIN.left, {
+					fontSize: tickFontSize,
+					totalWidth: plotWidth
+				}),
+				leftMarginForFirstLabel(formatValueDisplay(xTicks[0] ?? 0), {
+					fontSize: tickFontSize,
+					totalWidth: plotWidth
+				})
+			),
 			...margins
 		};
 		return {
@@ -189,6 +202,12 @@
 			{@const xScale = linearScale(domain, [m.innerLeft, m.innerLeft + m.innerWidth])}
 			{@const valueScale = linearScale([0, domainMax], [m.innerTop + m.innerHeight, m.innerTop])}
 
+			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
+			{@const originCollides = originLabelsCollide(
+				formatValueDisplay(xTicks[0] ?? 0),
+				formatCount(valueTicks[0] ?? 0),
+				{ fontSize: tickFontSize, xBaseline: 16 }
+			)}
 			{#each valueTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -203,20 +222,31 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={ti === 0 && originCollides ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatCount(tick)}
 				</text>
 			{/each}
+			<!-- X labels thinned by their drawn widths (first and last kept). -->
+			{@const shownX = new Set(
+				thinValueLabels(
+					xTicks.map((t) => formatValueDisplay(t)),
+					xTicks.map((t) => xScale(t)),
+					{ fontSize: tickFontSize }
+				).map((i) => xTicks[i])
+			)}
 			{#each xTicks as tick (tick)}
-				<text
-					x={xScale(tick)}
-					y={m.innerTop + m.innerHeight + 16}
-					class="tick-label"
-					text-anchor="middle"
-				>
-					{formatValueDisplay(tick)}
-				</text>
+				{#if shownX.has(tick)}
+					<text
+						x={xScale(tick)}
+						y={m.innerTop + m.innerHeight + 16}
+						class="tick-label"
+						text-anchor="middle"
+					>
+						{formatValueDisplay(tick)}
+					</text>
+				{/if}
 			{/each}
 
 			<line

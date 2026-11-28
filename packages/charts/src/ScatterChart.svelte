@@ -6,7 +6,13 @@
 	 * minimum without a separate invisible hit-circle.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
-	import { leftMarginForTicks, rightMarginForLastTick } from './core/labels';
+	import {
+		leftMarginForFirstLabel,
+		leftMarginForTicks,
+		originLabelsCollide,
+		rightMarginForLastTick,
+		thinValueLabels
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { seriesColorVar } from './core/color';
 	import { getValue, toNumber, type Accessor, type ChartMargin } from './types';
@@ -64,10 +70,19 @@
 					fontSize: tickFontSize
 				})
 			),
-			left: leftMarginForTicks(
-				yTicks.map((t) => formatYValue(t)),
-				m.left,
-				{ totalWidth: plotWidth, fontSize: tickFontSize }
+			// The first x tick is middle-anchored on the plot's left edge: half of it
+			// overhangs to the left, as do the y labels.
+			left: Math.max(
+				leftMarginForTicks(
+					yTicks.map((t) => formatYValue(t)),
+					m.left,
+					{ totalWidth: plotWidth, fontSize: tickFontSize }
+				),
+				margins?.left ??
+					leftMarginForFirstLabel(formatXValue(xTicks[0] ?? 0), {
+						totalWidth: plotWidth,
+						fontSize: tickFontSize
+					})
 			)
 		};
 	});
@@ -139,6 +154,12 @@
 				[m.innerTop + m.innerHeight, m.innerTop]
 			)}
 
+			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
+			{@const originCollides = originLabelsCollide(
+				formatXValue(xTicks[0] ?? 0),
+				formatYValue(yTicks[0] ?? 0),
+				{ fontSize: tickFontSize, xBaseline: 16 }
+			)}
 			{#each yTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -153,11 +174,20 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={ti === 0 && originCollides ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}
 				</text>
 			{/each}
+			<!-- X labels thinned by their drawn widths (first and last kept); gridlines stay at every tick. -->
+			{@const shownX = new Set(
+				thinValueLabels(
+					xTicks.map((t) => formatXValue(t)),
+					xTicks.map((t) => xScale(t)),
+					{ fontSize: tickFontSize }
+				).map((i) => xTicks[i])
+			)}
 			{#each xTicks as tick (tick)}
 				<line
 					x1={xScale(tick)}
@@ -166,14 +196,16 @@
 					y2={m.innerTop + m.innerHeight}
 					class="gridline"
 				/>
-				<text
-					x={xScale(tick)}
-					y={m.innerTop + m.innerHeight + 16}
-					class="tick-label"
-					text-anchor="middle"
-				>
-					{formatXValue(tick)}
-				</text>
+				{#if shownX.has(tick)}
+					<text
+						x={xScale(tick)}
+						y={m.innerTop + m.innerHeight + 16}
+						class="tick-label"
+						text-anchor="middle"
+					>
+						{formatXValue(tick)}
+					</text>
+				{/if}
 			{/each}
 
 			<line

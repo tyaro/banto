@@ -11,6 +11,8 @@
 	 */
 	import { arcPath, polarToCartesian } from './core/pie';
 	import { gaugeAngle, gaugeColorVar, GAUGE_START_DEG, type GaugeThresholds } from './core/gauge';
+	import { estimateLabelWidth } from './core/labels';
+	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import { defaultChartMessages, type ChartMessages } from './messages';
 
@@ -52,12 +54,26 @@
 
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 
+	// Rendered range-label font (read from the min label, 11px until it can be read).
+	let rangeFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
+	const trackRangeFont = trackFontSize((px) => (rangeFontSize = px));
+
 	function geometry(width: number, plotHeight: number) {
+		// The min/max labels sit at +/-45deg off the bottom, `LABEL_GAP` outside the
+		// arc and centred there: half of the wider one must stay inside the svg, so a
+		// large font shrinks the dial instead of clipping "100%" (no-op while it fits).
+		const half =
+			Math.max(
+				estimateLabelWidth(formatValueDisplay(min), rangeFontSize),
+				estimateLabelWidth(formatValueDisplay(max), rangeFontSize)
+			) / 2;
+		const rLabelFit = (width / 2 - 2 - half) / Math.SQRT1_2 - LABEL_GAP;
 		const rOuter = Math.max(
 			10,
 			Math.min(
 				(width - SIDE_PAD * 2) / 2,
-				(plotHeight - TOP_PAD - BOTTOM_PAD) / ARC_VERTICAL_FACTOR
+				(plotHeight - TOP_PAD - BOTTOM_PAD) / ARC_VERTICAL_FACTOR,
+				rLabelFit
 			)
 		);
 		const cx = width / 2;
@@ -98,6 +114,7 @@
 				class="range-label"
 				text-anchor="middle"
 				dominant-baseline="hanging"
+				{@attach trackRangeFont}
 			>
 				{formatValueDisplay(min)}
 			</text>

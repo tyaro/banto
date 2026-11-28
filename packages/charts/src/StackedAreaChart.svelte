@@ -19,11 +19,16 @@
 	 * the running total.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
-	import { leftMarginForTicks } from './core/labels';
+	import {
+		estimateLabelWidth,
+		leftMarginForFirstLabel,
+		leftMarginForTicks,
+		originLabelsCollide
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { stackSeries } from './core/stack';
 	import { bandAreaPath, linePath, type Point } from './core/path';
-	import { everyNthIndex } from './core/ticks-time';
+	import { dropCollidingTicks, everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
 	import { getValue, toNumber, type Accessor, type ChartMargin, type TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -115,10 +120,21 @@
 		const m = { ...DEFAULT_MARGIN, ...margins };
 		return {
 			...m,
-			left: leftMarginForTicks(
-				ticks.map((t) => formatYValue(t)),
-				m.left,
-				{ totalWidth: plotWidth, fontSize: tickFontSize }
+			// The first x label is middle-anchored on the plot's left edge: reserve half
+			// of it (an explicit `margins.left` still wins as-is).
+			left: Math.max(
+				leftMarginForTicks(
+					ticks.map((t) => formatYValue(t)),
+					m.left,
+					{ totalWidth: plotWidth, fontSize: tickFontSize }
+				),
+				margins?.left ??
+					(count > 0
+						? leftMarginForFirstLabel(formatXValue(xLabels[0]), {
+								totalWidth: plotWidth,
+								fontSize: tickFontSize
+							})
+						: 0)
 			)
 		};
 	});
@@ -209,6 +225,13 @@
 		{#snippet plot()}
 			{@const m = metrics}
 			<!-- Gridlines + y ticks (recessive, rule 4). -->
+			<!-- The bottom y label yields to the first x label when a large font makes them meet. -->
+			{@const originCollides =
+				count > 0 &&
+				originLabelsCollide(formatXValue(xLabels[0]), formatYValue(ticks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 18
+				})}
 			{#each ticks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -223,6 +246,7 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={ti === 0 && originCollides ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}
@@ -246,7 +270,12 @@
 			/>
 
 			<!-- X labels. -->
-			{@const xTicks = everyNthIndex(count, maxXTicksFor(m.innerWidth))}
+			{@const xCandidates = everyNthIndex(count, maxXTicksFor(m.innerWidth))}
+			{@const xTicks = dropCollidingTicks(
+				xCandidates,
+				xCandidates.map((i) => xAt(i)),
+				xCandidates.map((i) => estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize))
+			)}
 			{#each xTicks as i (i)}
 				<text
 					x={xAt(i)}
