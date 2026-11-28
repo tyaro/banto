@@ -19,7 +19,12 @@
 	 * combined series list).
 	 */
 	import { linearScale, bandScale, niceTicks } from './core/scale';
-	import { fitBandLabels, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
+	import {
+		fitBandLabels,
+		leftMarginForTicks,
+		originLabelsCollide,
+		rightMarginForBandLabel
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { roundedTopBarPath, linePath } from './core/path';
 	import { seriesColorVar } from './core/color';
@@ -238,6 +243,14 @@
 			{/each}
 
 			<!-- Gridlines + y ticks (shared axis, spec §6.4 rule 2) -->
+			<!-- The bottom y label yields to the first category label when a large font makes them meet. -->
+			{@const originCollides =
+				categories.length > 0 &&
+				originLabelsCollide(formatXValue(categories[0]), formatYValue(valueTicks[0] ?? 0), {
+					fontSize: tickFontSize,
+					xBaseline: 18,
+					xOffset: catScale.center(0) - m.innerLeft
+				})}
 			{#each valueTicks as tick, ti (tick)}
 				<line
 					x1={m.innerLeft}
@@ -252,6 +265,7 @@
 					class="tick-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					visibility={ti === 0 && originCollides ? 'hidden' : undefined}
 					{@attach ti === 0 ? trackTickFont : null}
 				>
 					{formatYValue(tick)}
