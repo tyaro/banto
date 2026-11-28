@@ -130,7 +130,8 @@ describe('ErrorState', () => {
 		const alert = screen.getByRole('alert');
 		expect(screen.getByRole('heading', { level: 2, name: 'Failed' })).toBeTruthy();
 		expect(alert.textContent).toContain('Try again');
-		expect(alert.textContent).toContain('Retry');
+		expect(alert.textContent).not.toContain('Retry');
+		expect(container.querySelector('.action')?.textContent).toContain('Retry');
 		expect(container.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
 		expect(container.querySelector('svg')?.getAttribute('width')).toBe('32');
 	});

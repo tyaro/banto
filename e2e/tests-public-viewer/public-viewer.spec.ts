@@ -108,7 +108,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 			await expect(monitor).toHaveURL(/\/items$/);
 			await monitor.unroute('**/api/**', serverDown);
 
-			await monitor.getByRole('alert').getByRole('button', { name: '再接続' }).click();
+			await monitor.getByRole('button', { name: '再接続' }).click();
 			await expect(monitor).toHaveURL(/\/items$/);
 			await expect(monitor.getByRole('grid')).toBeVisible();
 			await expect(monitor.getByRole('banner').getByText('閲覧者')).toBeVisible();

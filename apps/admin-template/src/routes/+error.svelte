@@ -27,9 +27,10 @@
 	}
 </script>
 
-<div class="error-page" role="alert">
+<div class="error-page">
 	<SurfaceCard title={m['app.error.title']()} description={`${page.status}`}>
-		<p class="message">{page.error?.message ?? ''}</p>
+		<!-- Only the sentence is the alert; the buttons are not inside it (Issue #1055). -->
+		<p class="message" role="alert">{page.error?.message ?? ''}</p>
 		<div class="actions">
 			<button type="button" class="banto-btn banto-btn--primary" onclick={retry}>
 				{m['app.error.retry']()}

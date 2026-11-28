@@ -3236,7 +3236,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await page.unroute('**/api/**', serverDown);
 		}
 
-		await page.getByRole('alert').getByRole('button', { name: '再接続' }).click();
+		await page.getByRole('button', { name: '再接続' }).click();
 		await expect(page).toHaveURL(/\/dashboard$/);
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
