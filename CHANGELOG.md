@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- chore(fixtures): v10.0.0 のタグ後の外部利用 fixture の ref を `v10.0.0` に更新した。[10.0.0] に「検証した組み合わせ」を追記。
+
 ## [10.0.0] - 2026-11-28
 
 **v10.0.0 — モーダルな層（`Modal`・`Drawer`・`ConfirmDialog`・`CommandPalette`・`ThreePaneLayout` の重ねたペイン）の外側を `inert` にした（#1055、[ADR-0038](docs/adr/0038-modal-backdrop-inert.md)）。`BantoGrid` を NVDA で読める形にそろえた（#1016・#1034・#1035・#1036: 今のセルの `aria-activedescendant`、Tab の止まり場、列見出し・絞り込みのボタンの名前、画面の外の今のセルへのキー）。pop-out のパネルの窓の直し（#1013・#1014・#1015・#1019・#1021・#1024、plugin のコマンド `list`・`close` と `background`）、デスクトップ版の二重起動の防止（#1028・#1046）、文字 200%・幅 320px の崩れ（#1044・#1047・#1056）、dock の外周のガイドボタン（#1043・#1058）ほか。** 版の種類: major。理由: 公開 API の削除・改名は無いが、**既存のコードを書き換えずにタグだけ上げても、実行時の挙動・意味が変わる**ものが 3 つある（[docs/publishing.md](docs/publishing.md)「バージョニング規約」の「既存の機能のままで実行時の値・意味が変わるものは `major`」）。
@@ -216,6 +218,24 @@
 - fix(admin-core, admin-template): pop-out で**窓に出しているパネルが表示メニューでチェックなしになり、選ぶと窓と dock の二重になっていた**のを直した（#1014）。`createPanelPopOut` の戻り値に `isPoppedOut(id)`・`subscribe(cb)`（変化の知らせ。admin-core は Svelte に依存しないので購読関数）・`focus(content)`（窓を前に出す。窓に出していないパネルには何もしない）を足した。テンプレートのダッシュボードの表示メニューは、窓に出しているパネルをチェック付きで出し、選ぶと窓を前に出すだけにした（閉じるのは窓の ✕）。`createAppPanelPopOut` は `svelte/reactivity` の `createSubscriber` で包んだ、反応する `isPoppedOut` を返す。`PanelPopOut` を自分で実装している（モックなど）コードは 3 つのメンバーを足す。`focus` が窓を開く間に、`connect()` の照合が遅れて返した「窓なし」で `restore` が走り dock と窓の二重になるのを防ぐ（開く操作の開始以前に聞いた list の結果は、その id には使わない）。`focus` が窓を開けなかったときは、list で確かめて窓が無ければ dock に戻す（失敗は従来どおり reject）。
 - fix(admin-template): ダッシュボードでドッキングしたペインの ✕・⧉ を押すと Svelte の `state_unsafe_mutation` が出ていたのを直した。IME の見張りの `focusout` が、ボタンと一緒にペインが消える後片付けの中で `$state` を書いていた。値が変わるときだけ microtask で書く（#1012）。
 - chore(fixtures): v9.3.0 のタグ後の外部利用 fixture の ref を `v9.3.0` に更新した。[9.3.0] に「検証した組み合わせ」を追記。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `ab25b8d4`、`workflow_dispatch`）: [run 46109217404](https://github.com/tyaro/banto/actions/runs/46109217404)（success）。
+  - タグの push（`v10.0.0`、main の `ab25b8d4121990fc4fd44f9aaaefcc739fc7f47b`）: [run 46109420923](https://github.com/tyaro/banto/actions/runs/46109420923)（success）。npm（Git 依存 → dev + Playwright → check → build）、npm diagnostic、Rust（Git 依存 → cargo check）の各ジョブとも success。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った。v9.3.0 からは Rust だけが変わった）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 26.13.1                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.59.1                          |
+    | SvelteKit          | 3.4.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.1（20ddd0171 2026-11-25） |
 
 ## [9.3.0] - 2026-11-27
 
