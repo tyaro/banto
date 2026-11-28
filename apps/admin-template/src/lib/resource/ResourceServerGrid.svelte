@@ -294,8 +294,8 @@
 <p class="note">{m['resource.rowCount']({ count: formatCount(windowed.totalCount) })}</p>
 
 {#if windowed.failures.length > 0}
-	<div class="load-error" role="alert">
-		<p>
+	<div class="load-error">
+		<p role="alert">
 			<strong>{m['resource.loadError']()}</strong>
 			<span>{m['resource.loadErrorDesc']()}</span>
 		</p>

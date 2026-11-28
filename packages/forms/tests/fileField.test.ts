@@ -516,7 +516,7 @@ describe('BantoForm: an existing record (fileParentId)', () => {
 			true
 		);
 		expect(store.validateAll()).toBe(true);
-		await fireEvent.click(within(alert).getByRole('button', { name: '再読み込み' }));
+		await fireEvent.click(screen.getByRole('button', { name: '再読み込み' }));
 		expect((await screen.findByRole('listitem')).textContent).toContain('spec.pdf');
 		expect(screen.queryByRole('alert')).toBeNull();
 	});

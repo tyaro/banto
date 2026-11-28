@@ -27,7 +27,6 @@
 		getReachCheckStatus,
 		issueReachCheck,
 		type ReachCheckRefusal,
-		type ReachRecord,
 		type ServerStatus
 	} from '#lib/banto/serverAdmin.js';
 	import {
@@ -132,13 +131,98 @@
 	}
 </script>
 
-{#snippet issuedUrl(issued: IssuedReachUrl | null, remainingMs: number)}
-	<p class="reach-remaining">
-		{m['settings.reachRemaining']({ time: formatRemaining(remainingMs) })}
-	</p>
-	{#if issued}
-		<div class="reach-url">
-			<code>{issued.url}</code>
+<div class="reach-check">
+	<h4>{m['settings.reachHeading']()}</h4>
+	<p class="note">{m['settings.reachDesc']()}</p>
+
+	<div class="reach-state" data-reach-state={view.kind}>
+		<div role="status" aria-live="polite">
+			{#if view.kind === 'loading'}
+				<p class="note">{m['settings.reachLoading']()}</p>
+			{:else if view.kind === 'unreadable'}
+				<p class="error">{m['settings.reachUnreadable']()}</p>
+			{:else if view.kind === 'unverified'}
+				<p>{m['settings.reachUnverified']()}</p>
+			{:else if view.kind === 'pending' || view.kind === 'selfAccess'}
+				{#if view.kind === 'selfAccess'}
+					<p class="error">{m['settings.reachSelfAccess']({ time: formatTime(view.at) })}</p>
+				{/if}
+				<p>{m['settings.reachPending']()}</p>
+				<p class="reach-remaining">
+					{m['settings.reachRemaining']({ time: formatRemaining(view.remainingMs) })}
+				</p>
+				{#if view.issued}
+					<div class="reach-url"><code>{view.issued.url}</code></div>
+					{#if copied === 'failed'}
+						<p class="error">{m['settings.reachCopyFailed']()}</p>
+					{/if}
+				{:else}
+					<p class="note">{m['settings.reachPendingNoUrl']()}</p>
+				{/if}
+			{:else if view.kind === 'verified' || view.kind === 'stale'}
+				<p class:reach-verified={view.kind === 'verified'}>
+					{m['settings.reachVerified']()}
+				</p>
+				{#if view.kind === 'stale'}
+					<p class="note">{m['settings.reachStale']()}</p>
+				{/if}
+				<div class:reach-dim={view.kind === 'stale'}>
+					{#each view.records as record, index (`${record.issueId}-${record.at}`)}
+						{#if index === 1}
+							<p class="note">{m['settings.reachOtherRecords']()}</p>
+						{/if}
+						<dl
+							class="firewall-values reach-record"
+							data-reach-record={index === 0 ? 'latest' : 'older'}
+						>
+							<div class="firewall-row">
+								<dt>{m['settings.reachRecordAt']()}</dt>
+								<dd>
+									{m['settings.reachRecordAtValue']({
+										time: formatTime(record.at),
+										minutes: minutesSince(record.at, controller.now)
+									})}
+								</dd>
+							</div>
+							<div class="firewall-row">
+								<dt>{m['settings.reachRecordPeer']()}</dt>
+								<dd><code>{record.peerIp}</code></dd>
+							</div>
+							<div class="firewall-row">
+								<dt>{m['settings.reachRecordUrl']()}</dt>
+								<dd><code>{recordUrl(record)}</code></dd>
+							</div>
+						</dl>
+					{/each}
+				</div>
+				<p class="note">{m['settings.reachVerifiedNote']()}</p>
+			{:else if view.kind === 'expired'}
+				<p>{m['settings.reachExpired']()}</p>
+				<p class="note">{m['settings.reachExpiredNote']()}</p>
+				<ul class="reach-hints">
+					<li>{m['settings.reachHintNetwork']()}</li>
+					<li>{m['settings.reachHintFirewall']()}</li>
+					<li>{m['settings.reachHintVendor']()}</li>
+					<li>{m['settings.reachHintIsolation']()}</li>
+				</ul>
+			{/if}
+
+			{#if controller.issueProblem?.kind === 'refused'}
+				<p class="error" data-reach-refusal={controller.issueProblem.reason}>
+					{refusalText(controller.issueProblem.reason)}
+				</p>
+			{:else if controller.issueProblem?.kind === 'changed'}
+				<p class="error">{m['settings.reachChanged']()}</p>
+			{:else if controller.issueProblem?.kind === 'failed'}
+				<p class="error">
+					{m['settings.reachIssueFailed']()}
+					{controller.issueProblem.message ?? ''}
+				</p>
+			{/if}
+		</div>
+
+		{#if (view.kind === 'pending' || view.kind === 'selfAccess') && view.issued}
+			{@const issued = view.issued}
 			<button
 				type="button"
 				class="banto-btn banto-btn--secondary firewall-copy"
@@ -146,94 +230,7 @@
 			>
 				{copied === 'ok' ? m['settings.reachCopied']() : m['settings.reachCopyUrl']()}
 			</button>
-		</div>
-		{#if copied === 'failed'}
-			<p class="error">{m['settings.reachCopyFailed']()}</p>
-		{/if}
-		{@render qr(issued.qrSvg)}
-	{:else}
-		<p class="note">{m['settings.reachPendingNoUrl']()}</p>
-	{/if}
-{/snippet}
-
-{#snippet recordList(records: ReachRecord[], now: number)}
-	{#each records as record, index (`${record.issueId}-${record.at}`)}
-		{#if index === 1}
-			<p class="note">{m['settings.reachOtherRecords']()}</p>
-		{/if}
-		<dl class="firewall-values reach-record" data-reach-record={index === 0 ? 'latest' : 'older'}>
-			<div class="firewall-row">
-				<dt>{m['settings.reachRecordAt']()}</dt>
-				<dd>
-					{m['settings.reachRecordAtValue']({
-						time: formatTime(record.at),
-						minutes: minutesSince(record.at, now)
-					})}
-				</dd>
-			</div>
-			<div class="firewall-row">
-				<dt>{m['settings.reachRecordPeer']()}</dt>
-				<dd><code>{record.peerIp}</code></dd>
-			</div>
-			<div class="firewall-row">
-				<dt>{m['settings.reachRecordUrl']()}</dt>
-				<dd><code>{recordUrl(record)}</code></dd>
-			</div>
-		</dl>
-	{/each}
-{/snippet}
-
-<div class="reach-check">
-	<h4>{m['settings.reachHeading']()}</h4>
-	<p class="note">{m['settings.reachDesc']()}</p>
-
-	<div class="reach-state" role="status" aria-live="polite" data-reach-state={view.kind}>
-		{#if view.kind === 'loading'}
-			<p class="note">{m['settings.reachLoading']()}</p>
-		{:else if view.kind === 'unreadable'}
-			<p class="error">{m['settings.reachUnreadable']()}</p>
-		{:else if view.kind === 'unverified'}
-			<p>{m['settings.reachUnverified']()}</p>
-		{:else if view.kind === 'pending'}
-			<p>{m['settings.reachPending']()}</p>
-			{@render issuedUrl(view.issued, view.remainingMs)}
-		{:else if view.kind === 'selfAccess'}
-			<p class="error">{m['settings.reachSelfAccess']({ time: formatTime(view.at) })}</p>
-			<p>{m['settings.reachPending']()}</p>
-			{@render issuedUrl(view.issued, view.remainingMs)}
-		{:else if view.kind === 'verified' || view.kind === 'stale'}
-			<p class:reach-verified={view.kind === 'verified'}>
-				{m['settings.reachVerified']()}
-			</p>
-			{#if view.kind === 'stale'}
-				<p class="note">{m['settings.reachStale']()}</p>
-			{/if}
-			<div class:reach-dim={view.kind === 'stale'}>
-				{@render recordList(view.records, controller.now)}
-			</div>
-			<p class="note">{m['settings.reachVerifiedNote']()}</p>
-		{:else if view.kind === 'expired'}
-			<p>{m['settings.reachExpired']()}</p>
-			<p class="note">{m['settings.reachExpiredNote']()}</p>
-			<ul class="reach-hints">
-				<li>{m['settings.reachHintNetwork']()}</li>
-				<li>{m['settings.reachHintFirewall']()}</li>
-				<li>{m['settings.reachHintVendor']()}</li>
-				<li>{m['settings.reachHintIsolation']()}</li>
-			</ul>
-		{/if}
-
-		{#if controller.issueProblem?.kind === 'refused'}
-			<p class="error" data-reach-refusal={controller.issueProblem.reason}>
-				{refusalText(controller.issueProblem.reason)}
-			</p>
-		{:else if controller.issueProblem?.kind === 'changed'}
-			<p class="error">{m['settings.reachChanged']()}</p>
-		{:else if controller.issueProblem?.kind === 'failed'}
-			<p class="error">
-				{m['settings.reachIssueFailed']()}
-				{controller.issueProblem.message ?? ''}
-			</p>
+			{@render qr(issued.qrSvg)}
 		{/if}
 	</div>
 
