@@ -20,6 +20,7 @@ Banto（番頭）は **PC1台から始めて、必要に応じて LAN 内へ共�
   - [docs/roadmap.md](docs/roadmap.md) — マイルストーン計画と §7 実施プロセス
   - [docs/template-scope.md](docs/template-scope.md) — 何を入れる/入れない、削除可能性の判定
   - [docs/publishing.md](docs/publishing.md) — 配布（git tag / `path:` 依存）
+  - [docs/downstream-notes.md](docs/downstream-notes.md) — 下流（banto-industrial・temp-scada）の追従メモ（版ごと）
   - [docs/maintainers.md](docs/maintainers.md) — 保守者向けの手引き（PR・CI・リリースの運用、
     決まっていること、教訓）
   - [docs/design/](docs/design/) — 個別機能の実装計画・設計書（attachments-plan /
