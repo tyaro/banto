@@ -132,7 +132,6 @@
 	onMount(() => {
 		const active = document.activeElement;
 		opener = active instanceof HTMLElement ? active : null;
-		inputEl?.focus();
 		return () => {
 			destroyed = true;
 			const previous = opener;
@@ -150,6 +149,8 @@
 		const detachTrap = attachFocusTrap(node);
 		// Promise 8 (layering.ts): the page around the palette is inert while it is open.
 		const release = trackModalLayer(node);
+		// Focus after the registration: an already inert portal container is handed back by it.
+		inputEl?.focus();
 		return () => {
 			release();
 			detachTrap();

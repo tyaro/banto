@@ -92,6 +92,27 @@ test.describe('ui-demo Modal / Drawer behaviour', () => {
 		await expect(drawer).toBeHidden();
 		await expect(opener).toBeFocused();
 	});
+
+	test('Modal opened from a container already inert behind another modal still takes focus (#1055)', async ({
+		page
+	}) => {
+		// The Drawer makes the page (the Modal's opener included) inert. A Modal that opens from
+		// there (a portal that was mounted before) must get its first focus after the registration
+		// hands its ancestors back - the browser refuses focus into an inert subtree.
+		await page.getByTestId('ui-demo-open-drawer').click();
+		const drawer = page.getByRole('dialog', { name: '見本のドロワー' });
+		await expect(drawer).toBeVisible();
+		await page.getByTestId('ui-demo-open-modal').evaluate((el: HTMLElement) => el.click());
+		const modal = page.getByRole('dialog', { name: '見本のモーダル' });
+		await expect(modal).toBeVisible();
+		await expect(modal.getByRole('button', { name: '閉じる' })).toBeFocused();
+		const inside = await page.evaluate(() =>
+			document
+				.querySelector('[role="dialog"][aria-label="見本のモーダル"]')
+				?.contains(document.activeElement)
+		);
+		expect(inside).toBe(true);
+	});
 });
 
 // Standard: the panels rest at `transform: none`, so a Modal placed in the

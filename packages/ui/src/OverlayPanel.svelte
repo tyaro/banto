@@ -171,9 +171,6 @@
 			openHandled = isOpen;
 			clearTimeout(leaveTimer);
 			if (isOpen) {
-				// Reopened during the exit motion: the same DOM stays, so the
-				// mount-time `focusFirst` does not run again - do it here.
-				if (leaving) void tick().then(() => panelEl && focusFirst(panelEl));
 				leaving = false;
 				// A modal layer is the only active layer (#670): menus open now
 				// (a popover would stay above the scrim) are closed. Focus that
@@ -207,6 +204,10 @@
 		if (!node) return;
 		const detachTrap = attachFocusTrap(node);
 		const release = trackModalLayer(node);
+		// Focus first AFTER the registration: a sibling container (a portal) that was already
+		// inert behind another modal is handed back by the registration, and the browser
+		// refuses focus into an inert subtree. Also covers a reopen during the exit motion.
+		untrack(() => focusFirst(node));
 		return () => {
 			release();
 			detachTrap();
@@ -248,7 +249,6 @@
 			aria-label={title}
 			aria-describedby={describedBy}
 			style:width
-			use:focusFirst
 		>
 			<div class="header">
 				{#if title}<h3>{title}</h3>{/if}
