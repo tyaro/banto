@@ -12,8 +12,12 @@
 	import { bandScale } from './core/scale';
 	import { heatmapGrid, heatmapCellKey } from './core/heatmap';
 	import { sequentialColor, SEQ_RAMP } from './core/color';
-	import { everyNthIndex } from './core/ticks-time';
-	import { leftMarginFor, truncateLabel } from './core/labels';
+	import {
+		fitBandLabels,
+		leftMarginFor,
+		rightMarginForBandLabel,
+		truncateLabel
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { Accessor, ChartMargin } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -45,8 +49,6 @@
 		messages = {}
 	}: Props = $props();
 
-	const MIN_X_TICK_SPACING = 32;
-
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 	const rampColors = $derived(ramp ?? [...SEQ_RAMP]);
 
@@ -61,17 +63,17 @@
 	let tickFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	const MARGIN = $derived.by((): ChartMargin => {
-		return {
-			top: 8,
-			right: 16,
-			bottom: 26,
-			left: leftMarginFor(grid.yCats, { fontSize: tickFontSize, totalWidth: plotWidth })
-		};
+		const left = leftMarginFor(grid.yCats, { fontSize: tickFontSize, totalWidth: plotWidth });
+		// The last x label is centred in the last cell column; reserve room so a
+		// large font on a narrow chart doesn't clip it. (Heatmap has no `margins`
+		// prop, so the base is the fixed 16.)
+		const right = rightMarginForBandLabel(
+			String(grid.xCats[grid.xCats.length - 1] ?? ''),
+			grid.xCats.length,
+			{ baseRight: 16, left, totalWidth: plotWidth, fontSize: tickFontSize }
+		);
+		return { top: 8, right, bottom: 26, left };
 	});
-
-	function maxXTicksFor(innerWidth: number): number {
-		return Math.max(2, Math.floor(innerWidth / MIN_X_TICK_SPACING));
-	}
 
 	function plotMetrics(width: number, plotHeight: number) {
 		return {
@@ -137,15 +139,16 @@
 					{shown}{#if shown !== yCat}<title>{yCat}</title>{/if}
 				</text>
 			{/each}
-			{@const xTickIndices = everyNthIndex(grid.xCats.length, maxXTicksFor(m.innerWidth))}
-			{#each xTickIndices as i (i)}
+			<!-- End labels are cut to the room left to the svg edge (full text in <title>);
+			     the last one is always kept. -->
+			{#each fitBandLabels( grid.xCats.map( (c) => String(c) ), grid.xCats.map( (_, i) => xScale.center(i) ), { fontSize: tickFontSize, totalWidth: width } ) as lb (lb.index)}
 				<text
-					x={xScale.center(i)}
+					x={xScale.center(lb.index)}
 					y={m.innerTop + m.innerHeight + 16}
 					class="tick-label"
 					text-anchor="middle"
 				>
-					{grid.xCats[i]}
+					{lb.text}{#if lb.text !== lb.full}<title>{lb.full}</title>{/if}
 				</text>
 			{/each}
 		{/snippet}

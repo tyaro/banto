@@ -19,10 +19,9 @@
 	 * combined series list).
 	 */
 	import { linearScale, bandScale, niceTicks } from './core/scale';
-	import { leftMarginForTicks } from './core/labels';
+	import { fitBandLabels, leftMarginForTicks, rightMarginForBandLabel } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { roundedTopBarPath, linePath } from './core/path';
-	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
 	import {
 		getValue,
@@ -96,18 +95,22 @@
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	const MARGIN = $derived.by(() => {
 		const m = { ...DEFAULT_MARGIN, ...margins };
-		return {
-			...m,
-			left: leftMarginForTicks(
-				valueTicks.map((t) => formatYValue(t)),
-				m.left,
-				{ totalWidth: plotWidth, fontSize: tickFontSize }
-			)
-		};
+		const left = leftMarginForTicks(
+			valueTicks.map((t) => formatYValue(t)),
+			m.left,
+			{ totalWidth: plotWidth, fontSize: tickFontSize }
+		);
+		// The last category label is centred in the last band; reserve room so a
+		// large font on a narrow chart doesn't clip it (never below `margins.right`).
+		const right = rightMarginForBandLabel(
+			categories.length > 0 ? formatXValue(categories[categories.length - 1]) : '',
+			categories.length,
+			{ baseRight: m.right, left, totalWidth: plotWidth, fontSize: tickFontSize }
+		);
+		return { ...m, left, right };
 	});
 	const RADIUS = 4;
 	const CATEGORY_PADDING = 0.3;
-	const MIN_TICK_SPACING = 60;
 
 	const formatYValue = $derived(formatY ?? ((n: number) => n.toLocaleString()));
 	const formatXValue = $derived(formatX ?? ((v: unknown) => String(v ?? '')));
@@ -138,10 +141,6 @@
 			colorVar: seriesColorVar(bars.length + i)
 		}))
 	]);
-
-	function maxXTicksFor(innerWidth: number): number {
-		return Math.max(2, Math.min(8, Math.floor(innerWidth / MIN_TICK_SPACING)));
-	}
 
 	function plotMetrics(width: number, plotHeight: number) {
 		return {
@@ -274,16 +273,17 @@
 				class="axis-line"
 			/>
 
-			<!-- X category labels, thinned when crowded (same everyNthIndex convention as LineChart). -->
-			{@const xTickIndices = everyNthIndex(data.length, maxXTicksFor(m.innerWidth))}
-			{#each xTickIndices as i (i)}
+			<!-- X category labels, thinned when crowded (same `thinCategoryLabels` as BarChart;
+			     end labels cut to the svg edge, the last one always kept). -->
+			{@const xLabels = categories.map((c) => formatXValue(c))}
+			{#each fitBandLabels( xLabels, xLabels.map( (_, i) => catScale.center(i) ), { fontSize: tickFontSize, totalWidth: width } ) as lb (lb.index)}
 				<text
-					x={catScale.center(i)}
+					x={catScale.center(lb.index)}
 					y={m.innerTop + m.innerHeight + 18}
 					class="tick-label"
 					text-anchor="middle"
 				>
-					{formatXValue(categories[i])}
+					{lb.text}{#if lb.text !== lb.full}<title>{lb.full}</title>{/if}
 				</text>
 			{/each}
 
