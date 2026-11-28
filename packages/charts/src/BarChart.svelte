@@ -21,6 +21,7 @@
 		leftMarginForFirstLabel,
 		fitBandLabels,
 		originLabelsCollide,
+		horizontalOriginLabelsCollide,
 		rightMarginForBandLabel,
 		leftMarginForTicks,
 		rightMarginForLastTick,
@@ -433,6 +434,24 @@
 						0
 					).map((i) => valueTicks[i])
 				)}
+				{@const catBand = bandScale(
+					data.length,
+					[m.innerTop, m.innerTop + m.innerHeight],
+					CATEGORY_PADDING
+				)}
+				{@const lastFull = String(categories[categories.length - 1] ?? '')}
+				<!-- A large font can push a value label near the origin into the lowest category
+				     name. The value label is the one omitted (the category name carries the
+				     meaning and its gridline stays), not the name. -->
+				{@const valueLabelClear = (ti: number) =>
+					categories.length === 0 ||
+					!horizontalOriginLabelsCollide(tickPlace[ti].text, lastFull, {
+						fontSize: tickFontSize,
+						catMaxWidth: m.innerLeft - 8,
+						xBaseline: 16,
+						xOffset: tickPlace[ti].centre - m.innerLeft,
+						catCenterAbove: m.innerTop + m.innerHeight - catBand.center(categories.length - 1)
+					})}
 				{#each valueTicks as tick, ti (tick)}
 					<line
 						x1={valueScale(tick)}
@@ -441,7 +460,7 @@
 						y2={m.innerTop + m.innerHeight}
 						class="gridline"
 					/>
-					{#if shownTicks.has(tick)}
+					{#if shownTicks.has(tick) && valueLabelClear(ti)}
 						<text
 							x={valueScale(tick)}
 							y={m.innerTop + m.innerHeight + 16}

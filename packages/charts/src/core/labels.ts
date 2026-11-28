@@ -321,6 +321,54 @@ export function originLabelsCollide(
 }
 
 /**
+ * Horizontal bar chart: true when a bottom value label (its drawn centre
+ * `xOffset` px right of the plot's left edge, as `placeEdgeLabel` reports, baseline `xBaseline` below the
+ * axis) would collide with the lowest category label (end-anchored at
+ * `innerLeft - gap`, vertically centred `catCenterAbove` px above the axis).
+ * At the standard font the value labels sit well below the category labels;
+ * a large font (or a low band) pushes the origin value label into the lowest
+ * category name, and then the caller omits the VALUE label (the category name
+ * carries the meaning; the gridline still marks the value). Widths are
+ * estimates, so both boxes get a safety margin (width x1.15, half an em of slack)
+ * to stay correct on fonts wider than the estimate; heights are line boxes
+ * (~1.5em), like the E2E check measures them.
+ */
+export function horizontalOriginLabelsCollide(
+	valueLabel: string,
+	categoryLabel: string,
+	options: {
+		fontSize?: number;
+		xBaseline?: number;
+		xOffset?: number;
+		catCenterAbove: number;
+		gap?: number;
+		/** Width (px) the category label is cut to (the left margin), when it is capped. */
+		catMaxWidth?: number;
+	}
+): boolean {
+	const {
+		fontSize = 11,
+		xBaseline = 16,
+		xOffset = 0,
+		catCenterAbove,
+		gap = 8,
+		catMaxWidth
+	} = options;
+	if (valueLabel === '' || categoryLabel === '') return false;
+	// Boxes are judged as the browser draws them: line boxes (~1.5em tall, taller than the glyphs
+	// for CJK / fallback fonts). Vertically they collide when either centre lies inside the other's box.
+	const valueCentre = xBaseline - 0.36 * fontSize;
+	const catCentre = -catCenterAbove;
+	if (Math.abs(valueCentre - catCentre) >= 0.75 * fontSize) return false;
+	// Horizontally: the estimated widths get a margin, and the category label's right edge a slack of
+	// half an em (a wider real font / the end anchor's rounding), so a Linux font cannot slip through.
+	const vw = estimateLabelWidth(valueLabel, fontSize) * 1.15;
+	const cw = Math.min(estimateLabelWidth(categoryLabel, fontSize) * 1.15, catMaxWidth ?? Infinity);
+	const slack = 0.5 * fontSize;
+	return xOffset - vw / 2 < -gap + slack && xOffset + vw / 2 > -gap - cw;
+}
+
+/**
  * Indices of the y tick labels of a vertical value axis to draw: all while
  * they fit, otherwise thinned evenly with the first (the origin) and the last
  * (the top) kept. `ys[i]` is the screen y of tick `i` (ticks in ascending value

@@ -84,6 +84,7 @@ export {
 	clipsRight,
 	placeEdgeLabel,
 	originLabelsCollide,
+	horizontalOriginLabelsCollide,
 	fitBandLabels,
 	type BandLabel,
 	type AxisMarginOptions

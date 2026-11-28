@@ -5,6 +5,7 @@ import {
 	leftMarginFor,
 	truncateLabel,
 	originLabelsCollide,
+	horizontalOriginLabelsCollide,
 	clipsLeft,
 	placeEdgeLabel,
 	dropCollidingPlaced,
@@ -69,6 +70,38 @@ describe('originLabelsCollide', () => {
 	it('keeps it when the x label sits clear of the y label (start-anchored)', () => {
 		expect(
 			originLabelsCollide('2024-01', '0', { fontSize: 22, xBaseline: 18, xAnchor: 'start' })
+		).toBe(false);
+	});
+});
+
+// #1056: horizontal bar chart, the origin value label vs. the lowest category name.
+describe('horizontalOriginLabelsCollide', () => {
+	const cat = 'アップルジュース';
+	it('never drops the origin value label at the standard font, whatever the band height', () => {
+		for (const above of [0, 4, 8, 20, 40]) {
+			expect(horizontalOriginLabelsCollide('0', cat, { fontSize: 11, catCenterAbove: above })).toBe(
+				false
+			);
+		}
+	});
+
+	it('drops it at 200% when the last band is low (Linux fonts wider than the estimate)', () => {
+		// dashboard: 22px labels, band step ~16px -> category centre 8px above the axis
+		expect(horizontalOriginLabelsCollide('0', cat, { fontSize: 22, catCenterAbove: 8 })).toBe(true);
+		// also for a lower band (the line boxes overlap more)
+		expect(horizontalOriginLabelsCollide('0', cat, { fontSize: 22, catCenterAbove: 6 })).toBe(true);
+	});
+
+	it('keeps it when the band is tall enough or the value label is far from the names', () => {
+		expect(horizontalOriginLabelsCollide('0', cat, { fontSize: 22, catCenterAbove: 30 })).toBe(
+			false
+		);
+		expect(
+			horizontalOriginLabelsCollide('500', cat, {
+				fontSize: 22,
+				catCenterAbove: 8,
+				xOffset: 120
+			})
 		).toBe(false);
 	});
 });
