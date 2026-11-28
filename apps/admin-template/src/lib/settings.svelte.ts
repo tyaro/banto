@@ -36,6 +36,7 @@ const PRESET_KEY = 'banto.preset';
 const DENSITY_KEY = 'banto.density';
 const KIOSK_KEY = 'banto.kiosk';
 const NAV_LAYOUT_KEY = 'banto.navLayout';
+const FORM_PRESENTATION_KEY = 'banto.formPresentation';
 const LAUNCHER_OPACITY_KEY = 'banto.launcherOpacity';
 const LAUNCHER_POSITION_KEY = 'banto.launcherPosition';
 
@@ -45,6 +46,7 @@ const PRESET_SETTING = 'theme.preset';
 const DENSITY_SETTING = 'theme.density';
 const KIOSK_SETTING = 'shell.kiosk';
 const NAV_LAYOUT_SETTING = 'shell.navLayout';
+const FORM_PRESENTATION_SETTING = 'ui.formPresentation';
 const LAUNCHER_OPACITY_SETTING = 'shell.launcherOpacity';
 const LAUNCHER_POSITION_SETTING = 'shell.launcherPosition';
 
@@ -73,6 +75,20 @@ export type NavLayout = 'sidebar' | 'launcher' | 'menubar';
  * anywhere else.
  */
 export const NAV_LAYOUT_DEFAULT: NavLayout = 'sidebar';
+
+/**
+ * How a resource's row detail / create form opens: in the side drawer or in a
+ * centred dialog. A per-user appearance setting; `ResourceListPage` picks
+ * `Drawer` or `Modal` from it (same props, same `OverlayPanel`).
+ */
+export type FormPresentation = 'drawer' | 'dialog';
+
+/** Form presentation default: the drawer, so an existing app looks and behaves as before. */
+export const FORM_PRESENTATION_DEFAULT: FormPresentation = 'drawer';
+
+export function isFormPresentation(value: unknown): value is FormPresentation {
+	return value === 'drawer' || value === 'dialog';
+}
 
 /**
  * Which screen edge the dock sits on (nav-launcher-plan.md §3, D4). The same
@@ -157,6 +173,12 @@ function loadNavLayout(): NavLayout {
 	return isNavLayout(stored) ? stored : NAV_LAYOUT_DEFAULT;
 }
 
+function loadFormPresentation(): FormPresentation {
+	if (typeof localStorage === 'undefined') return FORM_PRESENTATION_DEFAULT;
+	const stored = localStorage.getItem(FORM_PRESENTATION_KEY);
+	return isFormPresentation(stored) ? stored : FORM_PRESENTATION_DEFAULT;
+}
+
 function loadLauncherPosition(): LauncherPosition {
 	if (typeof localStorage === 'undefined') return LAUNCHER_POSITION_DEFAULT;
 	const stored = localStorage.getItem(LAUNCHER_POSITION_KEY);
@@ -188,6 +210,8 @@ class Settings {
 	themeDensity: ThemeDensity = $state(loadThemeDensity());
 	kiosk: boolean = $state(loadKiosk());
 	navLayout: NavLayout = $state(loadNavLayout());
+	/** Whether a resource's detail / create form opens in the drawer or a dialog. */
+	formPresentation: FormPresentation = $state(loadFormPresentation());
 	/** The dock's screen edge (only used while `navLayout === 'launcher'`). */
 	launcherPosition: LauncherPosition = $state(loadLauncherPosition());
 	/** Whole percent (40-100, step 5), written to the root's `--banto-shell-launcher-opacity`. */
@@ -252,6 +276,12 @@ class Settings {
 		localStorage.setItem(NAV_LAYOUT_KEY, layout);
 	}
 
+	/** Apply + cache locally, WITHOUT the provider write. */
+	#applyFormPresentation(presentation: FormPresentation) {
+		this.formPresentation = presentation;
+		localStorage.setItem(FORM_PRESENTATION_KEY, presentation);
+	}
+
 	/** Apply + cache locally, WITHOUT the provider write (nav-launcher-plan.md §3, D4). */
 	#applyLauncherPosition(position: LauncherPosition) {
 		this.launcherPosition = position;
@@ -306,6 +336,12 @@ class Settings {
 		persistRemote(NAV_LAYOUT_SETTING, layout);
 	}
 
+	setFormPresentation(presentation: FormPresentation) {
+		this.#changedSinceSync.add(FORM_PRESENTATION_SETTING);
+		this.#applyFormPresentation(presentation);
+		persistRemote(FORM_PRESENTATION_SETTING, presentation);
+	}
+
 	setLauncherPosition(position: LauncherPosition) {
 		this.#changedSinceSync.add(LAUNCHER_POSITION_SETTING);
 		this.#applyLauncherPosition(position);
@@ -337,6 +373,7 @@ class Settings {
 		this.#applyThemeDensity(this.themeDensity);
 		this.#applyKiosk(this.kiosk);
 		this.#applyNavLayout(this.navLayout);
+		this.#applyFormPresentation(this.formPresentation);
 		this.#applyLauncherPosition(this.launcherPosition);
 		this.#applyLauncherOpacity(this.launcherOpacity);
 	}
@@ -363,16 +400,25 @@ class Settings {
 		const generation = ++this.#syncGeneration;
 		this.#changedSinceSync.clear();
 		try {
-			const [mode, preset, density, kiosk, navLayout, launcherPosition, launcherOpacity] =
-				await Promise.all([
-					read(MODE_SETTING),
-					read(PRESET_SETTING),
-					read(DENSITY_SETTING),
-					read(KIOSK_SETTING),
-					read(NAV_LAYOUT_SETTING),
-					read(LAUNCHER_POSITION_SETTING),
-					read(LAUNCHER_OPACITY_SETTING)
-				]);
+			const [
+				mode,
+				preset,
+				density,
+				kiosk,
+				navLayout,
+				formPresentation,
+				launcherPosition,
+				launcherOpacity
+			] = await Promise.all([
+				read(MODE_SETTING),
+				read(PRESET_SETTING),
+				read(DENSITY_SETTING),
+				read(KIOSK_SETTING),
+				read(NAV_LAYOUT_SETTING),
+				read(FORM_PRESENTATION_SETTING),
+				read(LAUNCHER_POSITION_SETTING),
+				read(LAUNCHER_OPACITY_SETTING)
+			]);
 			if (generation !== this.#syncGeneration) return;
 			const fresh = (key: string): boolean => !this.#changedSinceSync.has(key);
 			if (fresh(MODE_SETTING) && isThemeMode(mode)) this.#applyThemeMode(mode);
@@ -382,6 +428,10 @@ class Settings {
 				this.#applyKiosk(kiosk === 'true');
 			if (fresh(NAV_LAYOUT_SETTING))
 				this.#applyNavLayout(isNavLayout(navLayout) ? navLayout : NAV_LAYOUT_DEFAULT);
+			if (fresh(FORM_PRESENTATION_SETTING))
+				this.#applyFormPresentation(
+					isFormPresentation(formPresentation) ? formPresentation : FORM_PRESENTATION_DEFAULT
+				);
 			if (fresh(LAUNCHER_POSITION_SETTING))
 				this.#applyLauncherPosition(
 					isLauncherPosition(launcherPosition) ? launcherPosition : LAUNCHER_POSITION_DEFAULT

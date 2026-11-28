@@ -123,6 +123,7 @@
 	import { formatCount, gridMessages } from '#lib/banto/i18n.js';
 	import { getBantoMode, getUiSettings } from '#lib/banto/setup.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
+	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
 	import { isAuditLogAvailable } from '#lib/banto/auditLogAdmin.js';
@@ -924,6 +925,9 @@
 			// Router not ready yet: the URL keeps its old value; the drawer is right.
 		}
 	}
+
+	/** `Drawer` or `Modal` from the per-user "form display" setting (same props). */
+	const Panel = $derived(settings.formPresentation === 'dialog' ? Modal : Drawer);
 
 	function showInDrawer(id: string | number): void {
 		drawerGeneration++;
@@ -1999,7 +2003,8 @@
 	{/key}
 {/snippet}
 
-<Drawer
+<!-- The record panel: the drawer (default) or, per the user's appearance setting, a centred dialog. Same props, same OverlayPanel. -->
+<Panel
 	open={drawerOpen}
 	title={drawerId === null
 		? undefined
@@ -2042,7 +2047,7 @@
 			{/if}
 		</div>
 	{/if}
-</Drawer>
+</Panel>
 
 <style>
 	.page {
